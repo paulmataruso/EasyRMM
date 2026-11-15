@@ -19,13 +19,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/paulmataruso/easyrm/internal/agent"
+	"github.com/paulmataruso/easyrm/internal/alerting"
 	"github.com/paulmataruso/easyrm/internal/auth"
 	"github.com/paulmataruso/easyrm/internal/audit"
 	"github.com/paulmataruso/easyrm/internal/config"
 	"github.com/paulmataruso/easyrm/internal/device"
 	"github.com/paulmataruso/easyrm/internal/enrollment"
+	"github.com/paulmataruso/easyrm/internal/job"
 	"github.com/paulmataruso/easyrm/internal/meshcentral"
 	"github.com/paulmataruso/easyrm/internal/organization"
+	"github.com/paulmataruso/easyrm/internal/script"
 	"github.com/paulmataruso/easyrm/internal/site"
 	"github.com/paulmataruso/easyrm/pkg/middleware"
 )
@@ -74,6 +77,9 @@ func (s *Server) setupRouter() {
 	siteStore := site.NewStore(s.pool)
 	deviceStore := device.NewStore(s.pool)
 	enrollmentStore := enrollment.NewStore(s.pool)
+	scriptStore := script.NewStore(s.pool)
+	jobStore := job.NewStore(s.pool)
+	alertStore := alerting.NewStore(s.pool)
 
 	// Initialize agent hub and handlers
 	agentHub := agent.NewHub(s.logger)
@@ -85,6 +91,9 @@ func (s *Server) setupRouter() {
 	enrollmentHandler := enrollment.NewHandler(enrollmentStore, deviceStore, auditStore, s.cfg, s.logger)
 	agentHandler := agent.NewHandler(agentHub, deviceStore, s.logger)
 	meshHandler := meshcentral.NewHandler(meshClient, deviceStore, s.logger)
+	scriptHandler := script.NewHandler(scriptStore, auditStore, s.logger)
+	jobHandler := job.NewHandler(jobStore, auditStore, s.logger)
+	alertHandler := alerting.NewHandler(alertStore, auditStore, s.logger)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -165,6 +174,46 @@ func (s *Server) setupRouter() {
 				r.Get("/", enrollmentHandler.ListTokens)
 				r.Post("/", enrollmentHandler.CreateToken)
 				r.Delete("/{tokenID}", enrollmentHandler.RevokeToken)
+			})
+
+			// Scripts
+			r.Route("/scripts", func(r chi.Router) {
+				r.Get("/", scriptHandler.List)
+				r.Post("/", scriptHandler.Create)
+				r.Route("/{scriptID}", func(r chi.Router) {
+					r.Get("/", scriptHandler.Get)
+					r.Put("/", scriptHandler.Update)
+					r.Delete("/", scriptHandler.Delete)
+				})
+			})
+
+			// Jobs
+			r.Route("/jobs", func(r chi.Router) {
+				r.Get("/", jobHandler.List)
+				r.Post("/", jobHandler.Create)
+				r.Route("/{jobID}", func(r chi.Router) {
+					r.Get("/", jobHandler.Get)
+					r.Get("/results", jobHandler.GetResults)
+				})
+			})
+
+			// Alerts
+			r.Route("/alerts", func(r chi.Router) {
+				r.Get("/", alertHandler.ListAlerts)
+				r.Route("/{alertID}", func(r chi.Router) {
+					r.Post("/acknowledge", alertHandler.AcknowledgeAlert)
+					r.Post("/resolve", alertHandler.ResolveAlert)
+				})
+			})
+
+			// Alert rules
+			r.Route("/alert-rules", func(r chi.Router) {
+				r.Get("/", alertHandler.ListRules)
+				r.Post("/", alertHandler.CreateRule)
+				r.Route("/{ruleID}", func(r chi.Router) {
+					r.Put("/", alertHandler.UpdateRule)
+					r.Delete("/", alertHandler.DeleteRule)
+				})
 			})
 
 			// Dashboard

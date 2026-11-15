@@ -8,6 +8,8 @@ import { DevicesPage } from './pages/DevicesPage';
 import { DeviceDetailPage } from './pages/DeviceDetailPage';
 import { OrganizationsPage } from './pages/OrganizationsPage';
 import { EnrollPage } from './pages/EnrollPage';
+import { ScriptsPage } from './pages/ScriptsPage';
+import { AlertsPage } from './pages/AlertsPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 
 const queryClient = new QueryClient({
@@ -72,7 +74,7 @@ function AppContent() {
       case '/organizations':
         return <OrganizationsPage />;
       case '/scripts':
-        return <PlaceholderPage name="Scripts" />;
+        return <ScriptsPage />;
       case '/jobs':
         return <PlaceholderPage name="Jobs" />;
       case '/software':
@@ -80,7 +82,7 @@ function AppContent() {
       case '/monitoring':
         return <PlaceholderPage name="Monitoring" />;
       case '/alerts':
-        return <PlaceholderPage name="Alerts" />;
+        return <AlertsPage />;
       case '/reports':
         return <PlaceholderPage name="Reports" />;
       case '/settings':
