@@ -9,6 +9,7 @@ All containers use `network_mode: host`. Defaults below are configurable.
 | 15432/tcp | `127.0.0.1` | PostgreSQL | No | Database (non-default port avoids clashing with a host PostgreSQL) |
 | 14430/tcp | `127.0.0.1` | MeshCentral | No | MeshCentral HTTP with TLS offloaded to the edge |
 | 18080/tcp | `127.0.0.1` | easyrmm-server | No | Only in `offload` mode, behind an upstream NGINX |
+| 18081/tcp | `127.0.0.1` | easyrmm-server | No | Liveness (`/healthz`) and readiness (`/readyz`) probes used by the container health check |
 
 Endpoints only make **outbound** connections to 443. No inbound endpoint
 connectivity is ever required.

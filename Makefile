@@ -49,7 +49,7 @@ test-db-stop: ## Stop (and thereby remove) the test database container
 .PHONY: test-integration
 test-integration: ## Go unit + integration tests against PostgreSQL, with coverage gates
 	EASYRMM_TEST_DATABASE_URL="$${EASYRMM_TEST_DATABASE_URL:-$(TEST_DB_URL)}" \
-		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverprofile=coverage.txt ./...
+		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./server/... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
 
 .PHONY: check

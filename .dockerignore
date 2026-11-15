@@ -1,0 +1,18 @@
+# Keep the build context small and free of secrets.
+.git
+.github
+.claude
+.impeccable
+**/node_modules
+web/dist
+server/internal/webui/dist/*
+!server/internal/webui/dist/.gitkeep
+coverage*
+*.out
+.env
+.env.*
+deploy/.env
+docs
+tests
+**/*.md
+!web/**/*.md

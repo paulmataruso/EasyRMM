@@ -544,11 +544,12 @@ func (s *Service) SetAssignments(ctx context.Context, c access.Caller, id uuid.U
 	if err != nil {
 		return nil, err
 	}
+	var u User
+	var kept int
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(lockUserAdmin)); err != nil {
 			return err
 		}
-		var u User
 		if err := s.getTx(ctx, tx, c, id, &u); err != nil {
 			return err
 		}
@@ -566,6 +567,7 @@ func (s *Service) SetAssignments(ctx context.Context, c access.Caller, id uuid.U
 				keep = append(keep, a)
 			}
 		}
+		kept = len(keep)
 		if len(keep)+len(grants) == 0 {
 			return apperr.Invalid("assignments", "Grant at least one role. To remove all access, disable the account.")
 		}
@@ -593,7 +595,15 @@ func (s *Service) SetAssignments(ctx context.Context, c access.Caller, id uuid.U
 	if err != nil {
 		return nil, err
 	}
-	return s.Get(ctx, c, id)
+	after, err := s.Get(ctx, c, id)
+	if errors.Is(err, apperr.ErrNotFound) && len(grants) == 0 {
+		// The caller removed every role they can see: the change succeeded
+		// but the user is now outside their view. Report that, rather than
+		// a not-found error for a change that was made.
+		u.Assignments, u.HiddenAssignments, u.CanManage = []Assignment{}, kept, false
+		return &u, nil
+	}
+	return after, err
 }
 
 // SetStatus enables or disables an account. Disabling signs the user out
