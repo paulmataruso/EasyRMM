@@ -132,6 +132,8 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) error {
 			return BadRequest("The request body is empty.")
 		case errors.As(err, &syntaxErr), errors.Is(err, io.ErrUnexpectedEOF):
 			return BadRequest("The request body is not valid JSON.")
+		case errors.As(err, &typeErr) && typeErr.Field == "":
+			return BadRequest("The request body must be a JSON object.")
 		case errors.As(err, &typeErr):
 			return Validation(map[string]string{typeErr.Field: "has the wrong type"})
 		case strings.HasPrefix(err.Error(), "json: unknown field "):

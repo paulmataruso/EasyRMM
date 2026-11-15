@@ -12,11 +12,27 @@ module="github.com/paulmataruso/easyrmm"
 
 # package (relative to the module)        minimum %
 floors=(
+  # Security-critical: authorization, secrets, sessions/CSRF, tenant access.
   "server/internal/rbac                    90"
   "server/internal/secrets                 90"
+  "server/internal/httpapi                 95"
+  "server/internal/access                  95"
   "server/internal/auth                    85"
-  "server/internal/audit                   80"
-  "server/internal/database                75"
+  "server/internal/users                   88"
+  "server/internal/tenancy                 88"
+  "server/internal/audit                   85"
+  # Everything else.
+  "server/internal/database                85"
+  "server/internal/config                  90"
+  "server/internal/apperr                  85"
+  "server/internal/mailer                  90"
+  "server/internal/webui                   95"
+  "server/internal/app                     85"
+  "server/internal/httpapi/authapi         85"
+  "server/internal/httpapi/tenancyapi      85"
+  "server/internal/httpapi/usersapi        85"
+  "server/internal/httpapi/auditapi        85"
+  "server/cmd/easyrmm-server               80"
 )
 
 if [[ ! -f "$profile" ]]; then

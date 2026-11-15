@@ -221,13 +221,18 @@ func (r *certReloader) get(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 // (scanners, aborted handshakes) to debug level.
 type quietTLSErrors struct{ slog.Handler }
 
+// Enabled accepts every record: the level is decided per message in Handle.
+// (slog.NewLogLogger consults Enabled with its fixed level before Handle,
+// so delegating here would drop server errors along with the noise.)
+func (q quietTLSErrors) Enabled(context.Context, slog.Level) bool { return true }
+
 func (q quietTLSErrors) Handle(ctx context.Context, rec slog.Record) error {
 	if strings.Contains(rec.Message, "TLS handshake error") {
 		rec.Level = slog.LevelDebug
 	} else {
 		rec.Level = slog.LevelWarn
 	}
-	if !q.Enabled(ctx, rec.Level) {
+	if !q.Handler.Enabled(ctx, rec.Level) {
 		return nil
 	}
 	return q.Handler.Handle(ctx, rec)

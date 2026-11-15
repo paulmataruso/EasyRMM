@@ -152,9 +152,10 @@ func TestDecodeJSON(t *testing.T) {
 		{"invalid json", `{"name":}`, "application/json", http.StatusBadRequest, "bad_request", ""},
 		{"unexpected eof", `{"name":"x"`, "application/json", http.StatusBadRequest, "bad_request", ""},
 		{"wrong type", `{"count":"seven"}`, "application/json", http.StatusUnprocessableEntity, "validation_failed", "count"},
+		{"string instead of object", `"seven"`, "application/json", http.StatusBadRequest, "bad_request", ""},
 		{"unknown field", `{"name":"x","admin":true}`, "application/json", http.StatusUnprocessableEntity, "validation_failed", "admin"},
 		{"trailing value", `{"name":"x"} {"name":"y"}`, "application/json", http.StatusBadRequest, "bad_request", ""},
-		{"not an object", `[1,2]`, "application/json", http.StatusUnprocessableEntity, "validation_failed", ""},
+		{"array instead of object", `[1,2]`, "application/json", http.StatusBadRequest, "bad_request", ""},
 		{"too large", `{"name":"` + strings.Repeat("a", MaxJSONBody) + `"}`, "application/json", http.StatusRequestEntityTooLarge, "body_too_large", ""},
 	}
 	for _, c := range cases {
