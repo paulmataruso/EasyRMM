@@ -41,19 +41,21 @@ Last updated: 2026-11-15.
 
 ## Remote access (MeshCentral)
 
-| Feature | Status |
-|---|---|
-| MeshCentral deployment and configuration | Not started |
-| Control-channel client and user/group sync | Not started |
-| Edge gateway and session launch | Not started |
-| Remote desktop / terminal / files embedding | Not started |
+| Feature | Status | Notes |
+|---|---|---|
+| MeshCentral deployment and configuration | Tested | Pinned MeshCentral 1.3.1 container (host networking, loopback only, read-only, no capabilities); `config.json` written by the server; service account bootstrap; restart on configuration change. Integration tests run against the real container. No UI by design |
+| Control-channel client | Tested | One `control.ashx` connection as the service account, request correlation, reconnect with backoff, keepalive, events; login token never logged |
+| Device groups and accounts in step with EasyRMM | Complete | A group per site, an account per user with remote rights, rights per site from RBAC; event-driven plus every five minutes; repairs drift, adopts lost groups, removes stale ones. Status under **Settings → Remote access** |
+| Edge gateway on the MeshCentral hostname | Tested | Agent/browser split, grant cookie, blocked features, revocation of open sessions within 15 s (ADR-0014). Verified end to end with a real MeshAgent; no UI by design |
+| Devices list and device page | Complete | Devices discovered from MeshCentral, filters by organization, site, status and name, row travel with j/k, recent remote sessions from the audit log. Moving and retiring devices are not available yet |
+| Remote desktop / terminal / files | Complete | Started from a device's page into a full-window embedded session; each start is authorized and audited; reconnect, switch between kinds, full screen. Covered by Go integration tests with a live terminal session through the relay, Vitest page tests and a browser end-to-end test of the error paths. The desktop and files views are MeshCentral's, embedded; they are not exercised by an automated test with a graphical session |
 
 ## Endpoint
 
 | Feature | Status |
 |---|---|
 | Go agent: enrollment, identity, protocol | Not started |
-| MeshAgent install and correlation | Not started |
+| MeshAgent install and correlation | Not started (today MeshCentral agents can only join through MeshCentral itself; EasyRMM builds no installers yet) |
 | Windows MSI / EXE / PowerShell | Not started |
 | Linux DEB / RPM / script | Not started |
 | Coordinated updates and uninstall | Not started |

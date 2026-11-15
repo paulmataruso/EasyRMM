@@ -31,7 +31,9 @@ is not affiliated with or endorsed by the MeshCentral project.
 | github.com/pressly/goose/v3 | MIT |
 | github.com/google/uuid | BSD-3-Clause |
 | github.com/pquerna/otp | Apache-2.0 |
-| golang.org/x/crypto, golang.org/x/time, golang.org/x/sync, golang.org/x/text | BSD-3-Clause |
+| github.com/coder/websocket | ISC |
+| github.com/boombuler/barcode | MIT |
+| golang.org/x/crypto, golang.org/x/net, golang.org/x/time, golang.org/x/sync, golang.org/x/text | BSD-3-Clause |
 
 Frontend packages are listed in the generated inventory once the web
 application is built.

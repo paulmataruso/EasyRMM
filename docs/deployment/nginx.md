@@ -82,3 +82,11 @@ Notes:
   policy). Do not add conflicting ones in NGINX.
 * NGINX on the host uses host networking naturally; if NGINX runs in a
   container, give it `network_mode: host` as well.
+* The certificate for the MeshCentral name must be one browsers trust:
+  remote sessions are embedded from it.
+* MeshCentral reads the certificate its agents pin from
+  `https://127.0.0.1:443` (this NGINX), asking for the MeshCentral host name.
+  If NGINX does not listen on loopback port 443, set `EASYRMM_MESH_CERT_URL`
+  to an address where it presents that certificate. After a renewal,
+  MeshCentral reloads the certificate the first time an agent reports a
+  mismatch, and the agents reconnect.

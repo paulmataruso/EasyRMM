@@ -26,8 +26,22 @@ MeshCentral features that would open more ports are disabled: HTTP redirect
 
 Both resolve to the same address. A wildcard record works too.
 
+The two names must share a registrable domain (`rmm.example.com` and
+`mesh.rmm.example.com`, not `rmm.example.com` and `remote.example.net`).
+Remote sessions run in an iframe on the MeshCentral name, and the cookie that
+admits them is `SameSite=Strict`, so browsers send it only when the console
+and MeshCentral are the same site. Remote sessions also need HTTPS with a
+certificate browsers trust.
+
+The edge routes by `Host`: the console name goes to the application, the
+MeshCentral name to the remote-access gateway, anything else gets HTTP 421.
+MeshCentral itself listens on loopback only and never sees a request the
+gateway has not checked.
+
 ## Firewall
 
 Allow inbound TCP 443 (and 80 if using HTTP-01). Deny everything else
 inbound. Outbound: 443 to Let's Encrypt (ACME) and to the EasyPatch server if
-integrated; SMTP to your relay if e-mail notifications are enabled.
+integrated; SMTP to your relay if e-mail notifications are enabled; and 443
+to `github.com` (GitHub releases) when MeshCentral first starts, to download
+its agent binaries (about 120 MiB, kept in its data directory afterwards).

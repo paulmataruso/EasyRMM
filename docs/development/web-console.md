@@ -35,6 +35,12 @@ Session cookies are `Secure` in production. The script above sets
 `EASYRMM_DEV_INSECURE_COOKIES=true` so they work over plain HTTP on loopback;
 never set it on a real deployment.
 
+No MeshCentral runs in this setup, so the Devices pages show remote access
+as unavailable and the device list stays empty. Embedded remote sessions need
+HTTPS on two host names under one parent domain (ADR-0014); they are covered
+by the Go integration tests against a real MeshCentral and agent
+(`make test-mesh`, `make test-integration`), not by the console's dev setup.
+
 ## Layout
 
 | Path | Contents |
@@ -42,7 +48,7 @@ never set it on a real deployment.
 | `src/api/` | Fetch client (CSRF token, error envelope, session-ended handling), query hooks, API types |
 | `src/auth/` | Session state and the sign-in stages (setup, sign-in, second factor, enrollment, signed in) |
 | `src/components/` | Shared UI: buttons, cards, fields, tables, dialogs, toasts, layout |
-| `src/pages/` | One folder per area: auth, organizations, settings, account |
+| `src/pages/` | One folder per area: auth, organizations, devices (list, device page, full-window remote session), settings, account |
 | `src/lib/` | Formatting, URL state, keyboard row travel, theme |
 | `src/test/` | Test harness: a fake API (`fakeApi.ts`), fixtures, render helpers |
 | `e2e/` | Playwright end-to-end suite |
@@ -57,7 +63,8 @@ never set it on a real deployment.
   Playwright suite. Playwright starts `scripts/e2e/start-server.sh` and a
   `vite preview` of the production build, then walks through first-run setup,
   authenticator enrollment, organizations and sites, an invitation, the
-  invited technician's restricted view, and the audit log. It needs
+  invited technician's restricted view, the devices and remote-access pages
+  without a MeshCentral, and the audit log. It needs
   `make test-db` first. Point `CHROME_PATH` at a Chromium binary to use one
   that is already installed.
 * The Impeccable design detector runs in CI:

@@ -35,6 +35,31 @@ All notable changes to this project are documented here. The format follows
   a real server and PostgreSQL. actionlint for workflow files. Dependabot for
   npm and Docker.
 
+- Remote access through MeshCentral 1.3.1 (ADR-0004, ADR-0005, ADR-0014):
+  a hardened `meshcentral` container on loopback with its configuration
+  written by the server; a control-channel client; device groups and
+  accounts kept in step with sites, users and roles; a gateway on the
+  MeshCentral hostname that admits agents, and browsers only with a
+  session launched from the console; one-time, audited session launches;
+  open sessions closed when the EasyRMM session ends.
+- Devices discovered from MeshCentral: API (`/api/v1/devices`), devices list
+  and device page with recent remote sessions, and full-window remote
+  desktop, terminal and files sessions. **Settings → Remote access** shows
+  the connection to MeshCentral.
+- Start-up refuses a MeshCentral hostname that does not share a parent
+  domain with the console's, since browsers would not admit the embedded
+  sessions.
+- Integration tests against the real MeshCentral container, including a
+  MeshAgent in a locked-down container connecting through the gateway and a
+  live terminal session over the relay.
+
 ### Fixed
+- Deleting a site that still has devices returned HTTP 500 instead of 409:
+  PostgreSQL reports `ON DELETE RESTRICT` violations with their own error
+  code, which is now recognized. Deleting an organization with sites only
+  got its 409 because of the order PostgreSQL checked constraints in; it no
+  longer depends on that.
+- The "cannot delete" messages no longer suggest moving sites or devices,
+  which EasyRMM cannot do yet.
 - Docker smoke test: two negated checks (`! grep`, `! test`) could never fail
   the step; they now do.

@@ -8,7 +8,7 @@ listen on loopback; only the server's TLS edge listens publicly.
 |---|---|---|
 | `postgres` | `127.0.0.1:15432` | `/srv/easyrmm/postgres` |
 | `server` | `:443`, `:80` (optional), `127.0.0.1:18081` (health) | `/srv/easyrmm/server` |
-| `meshcentral` *(phase 5)* | `127.0.0.1:14430` | `/srv/easyrmm/meshcentral` |
+| `meshcentral` | `127.0.0.1:14430` | `/srv/easyrmm/meshcentral` (its data), `/srv/easyrmm/meshcentral-config` (configuration written by the server) |
 
 See [network.md](../architecture/network.md) for the full port plan.
 
@@ -18,9 +18,12 @@ See [network.md](../architecture/network.md) for the full port plan.
 * Two DNS names pointing at the host: the main name (for example
   `rmm.example.com`) and the remote-access name (default
   `mesh.rmm.example.com`). A wildcard record works. The separate name keeps
-  MeshCentral in its own browser origin (ADR-0004).
+  MeshCentral in its own browser origin (ADR-0004). Both names must share a
+  parent domain; see [network.md](../architecture/network.md#host-names).
 * Inbound TCP 443, plus TCP 80 if you use Let's Encrypt HTTP-01 validation.
-* Nothing else listening on 443, 80, 15432 or 18081.
+* Outbound HTTPS to `github.com` the first time MeshCentral starts: it
+  downloads its agent binaries (about 120 MiB) from GitHub releases.
+* Nothing else listening on 443, 80, 15432, 14430 or 18081.
 
 ## Install
 
@@ -53,6 +56,30 @@ someone with access to the server can claim it.
 Both host names must be covered by the certificate (`manual`) or be
 reachable for validation (`acme`).
 
+## Remote access (MeshCentral)
+
+The `meshcentral` container provides remote desktop, terminal and files.
+EasyRMM owns its configuration: the server writes `config.json` into
+`/srv/easyrmm/meshcentral-config` on every start (mode 600, read-only to the
+container), and the container's start script restarts MeshCentral when it
+changes. Do not edit it by hand.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `EASYRMM_MESH_ENABLED` | `true` | `false` runs EasyRMM without remote access; then start only `postgres` and `server` |
+| `EASYRMM_MESH_PUBLIC_URL` | `https://mesh.` + the public host | The remote-access name agents and browsers use |
+| `EASYRMM_MESH_CERT_URL` | this server's HTTPS listener | Where MeshCentral reads the certificate agents pin. In `offload` mode, `https://127.0.0.1:443` (your proxy). `file:///easyrmm/config/<name>.pem` also works |
+
+EasyRMM keeps MeshCentral in step with its own data: a device group per site,
+an account per user with remote-session rights, limited to the sites their
+roles cover. Administrators see the connection under **Settings → Remote
+access**. MeshCentral's own web interface, account pages, invitations and
+sharing links are not reachable; sessions start only from a device's page in
+the console.
+
+Devices appear in EasyRMM when a MeshCentral agent connects. EasyRMM does
+not build agent installers yet (phase 6).
+
 ## Security posture of the containers
 
 * The server runs as UID 65532 on a distroless image with a read-only root
@@ -63,6 +90,10 @@ reachable for validation (`acme`).
 * PostgreSQL listens on loopback only and uses SCRAM-SHA-256. The server
   connects with two roles: `easyrmm_owner` (migrations only) and
   `easyrmm_app` (runtime, data access only, subject to row-level security).
+* MeshCentral runs as UID 65532 with a read-only root filesystem, every
+  capability dropped and `no-new-privileges`. It listens on
+  `127.0.0.1:14430` only, with TLS offloaded to the server's edge, and trusts
+  forwarded client addresses only from loopback.
 * Secrets are passed as environment variables from `deploy/.env`. Every
   `EASYRMM_*` secret also accepts a `_FILE` variant (for example
   `EASYRMM_SECRET_KEY_FILE`) if you prefer files mounted from a secret store.
@@ -72,6 +103,7 @@ reachable for validation (`acme`).
 ```bash
 docker compose ps                    # health of each container
 docker compose logs -f server        # structured JSON logs
+docker compose logs -f meshcentral   # remote-access service
 docker compose pull && docker compose up -d   # upgrade (migrations run automatically)
 docker compose exec server easyrmm-server version
 ```

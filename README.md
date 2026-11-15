@@ -3,9 +3,11 @@
 Open-source remote monitoring and management for Windows and Linux endpoints.
 It is self-hosted, multi-tenant and built for MSPs.
 
-> **Status: early development.** The architecture is settled and the security
-> core of the server is implemented and tested. It is not ready for production
-> use yet. [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) tracks what
+> **Status: early development.** The server, the technician console, tenancy,
+> users and roles, the audit log and remote access through MeshCentral are
+> implemented and tested. Endpoint installers and the RMM features (inventory,
+> monitoring, scripts, patching) are not built yet. It is not ready for
+> production use. [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) tracks what
 > works today, and [`ROADMAP.md`](ROADMAP.md) shows what comes next.
 
 ## What it is
@@ -70,6 +72,7 @@ Some directories are created as their phase starts. See the roadmap.
 
 ```bash
 make test-db                 # disposable PostgreSQL 18 on 127.0.0.1:55432
+make test-mesh               # disposable MeshCentral for the remote-access tests
 export EASYRMM_TEST_DATABASE_URL='postgres://postgres:easyrmm-test-only@127.0.0.1:55432/postgres?sslmode=disable'
 make check                   # format, vet, lint, unit + integration tests, coverage floors
 make web-test                # console typecheck and unit tests

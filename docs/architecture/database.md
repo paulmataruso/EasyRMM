@@ -43,6 +43,19 @@ The settings are transaction-local (`set_config(…, true)`) and are written by
 | `settings` | Platform key/value |
 | `audit_log` | Append-only hash chain (see ADR-0007) |
 
+## Remote access (migration 00002)
+
+| Table | Notes |
+|---|---|
+| `devices` | Managed endpoints. Today they are discovered from MeshCentral: `mesh_node_id` links the row to a MeshCentral node, `remote_online` and `last_seen_at` follow the agent's connection. Site-scoped row-level security like the tenancy tables; `(organization_id, site_id)` → `sites` with `ON DELETE RESTRICT`, so a site with devices cannot be deleted |
+| `mesh_sites` | The MeshCentral device group of each site (`mesh_id`) and the name last written to it. Platform scope only: written by the synchronizer, never by user requests |
+| `remote_grants` | One row per remote session launched from the console: SHA-256 of the one-time launch token and, once redeemed, of the gateway cookie; the EasyRMM session, user, device and kind. The grant is valid only while that session is. Rows whose session has ended, and launch links never opened, are deleted after a day. Platform scope only |
+
+The MeshCentral keys EasyRMM shares with MeshCentral (the login-token key and
+MeshCentral's session key) are stored sealed with `EASYRMM_SECRET_KEY` in
+`settings` under `meshcentral.secrets`, and written to MeshCentral's
+`config.json` at start-up.
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).
