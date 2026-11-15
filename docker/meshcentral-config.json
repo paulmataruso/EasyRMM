@@ -1,0 +1,49 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Ylianst/MeshCentral/master/meshcentral-config-schema.json",
+  "settings": {
+    "cert": "meshcentral",
+    "port": 4430,
+    "aliasPort": 443,
+    "redirPort": 0,
+    "agentPort": 4430,
+    "agentAliasPort": 443,
+    "exactPorts": true,
+    "tlsOffload": false,
+    "selfUpdate": false,
+    "allowLoginToken": true,
+    "allowFraming": true,
+    "webRTC": false,
+    "newAccounts": false,
+    "newAccountsRights": [],
+    "managementScope": true,
+    "agentPing": 60,
+    "agentPong": 60,
+    "compression": true,
+    "wsCompression": true,
+    "agentWsCompression": true,
+    "maxInvalidLogin": {
+      "time": 10,
+      "count": 10,
+      "coolofftime": 30
+    }
+  },
+  "domains": {
+    "": {
+      "title": "EasyRMM Remote Access",
+      "title2": "",
+      "newAccounts": false,
+      "localSessionRecording": false,
+      "minify": true,
+      "consentMessages": {
+        "title": "Remote Access",
+        "desktop": "An administrator is requesting remote desktop access. Allow?",
+        "terminal": "An administrator is requesting remote terminal access. Allow?",
+        "files": "An administrator is requesting remote file access. Allow?"
+      },
+      "agentConfig": {
+        "disconnectTime": 300
+      },
+      "certUrl": "https://127.0.0.1:4430"
+    }
+  }
+}

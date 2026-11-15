@@ -1,0 +1,152 @@
+# EasyRMM Docker Compose — Host Networking
+# All containers use network_mode: host. Caddy is the single public entry point (443/80).
+# Internal services bind to 127.0.0.1 and are not directly reachable from outside.
+
+services:
+  # ── PostgreSQL 17 ──────────────────────────────────────────────
+  easyrmmdb:
+    image: postgres:17-alpine
+    network_mode: host
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      POSTGRES_DB: ${EASYRM_DB_NAME:-easyrm}
+      POSTGRES_USER: ${EASYRM_DB_USER:-easyrm}
+      POSTGRES_PASSWORD: ${EASYRM_DB_PASSWORD:?Set EASYRM_DB_PASSWORD in .env}
+    # Listen on localhost only — not reachable from the network
+    command: >
+      postgres
+        -c listen_addresses=127.0.0.1
+        -c port=5432
+        -c max_connections=100
+        -c shared_buffers=256MB
+        -c log_timezone=UTC
+        -c timezone=UTC
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${EASYRM_DB_USER:-easyrm}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── MeshCentral ────────────────────────────────────────────────
+  # Internal only — Caddy proxies /mesh/* and /meshagent* to port 4430.
+  meshcentral:
+    image: node:22-alpine
+    network_mode: host
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    working_dir: /opt/meshcentral
+    environment:
+      NODE_ENV: production
+    # Install meshcentral on first run, then start it
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        if [ ! -f node_modules/.package-lock.json ]; then
+          npm install meshcentral
+        fi
+        node node_modules/meshcentral
+    volumes:
+      - ./data/meshcentral:/opt/meshcentral/meshcentral-data
+      - ./data/meshcentral-files:/opt/meshcentral/meshcentral-files
+      - ./docker/meshcentral-config.json:/opt/meshcentral/meshcentral-data/config.json:ro
+      # node_modules persisted so npm install only runs once
+      - meshcentral-modules:/opt/meshcentral/node_modules
+    depends_on:
+      easyrmmdb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:4430 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  # ── EasyRMM Backend (Go) ──────────────────────────────────────
+  easyrmmserver:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.server
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      EASYRM_HOST: "127.0.0.1"
+      EASYRM_PORT: "8443"
+      EASYRM_PUBLIC_URL: "https://${EASYRM_DOMAIN:?Set EASYRM_DOMAIN in .env}"
+      EASYRM_DB_HOST: "127.0.0.1"
+      EASYRM_DB_PORT: "5432"
+      EASYRM_DB_NAME: ${EASYRM_DB_NAME:-easyrm}
+      EASYRM_DB_USER: ${EASYRM_DB_USER:-easyrm}
+      EASYRM_DB_PASSWORD: ${EASYRM_DB_PASSWORD}
+      EASYRM_DB_SSLMODE: "disable"
+      EASYRM_CSRF_SECRET: ${EASYRM_CSRF_SECRET:?Set EASYRM_CSRF_SECRET in .env}
+      EASYRM_COOKIE_DOMAIN: ${EASYRM_DOMAIN}
+      EASYRM_COOKIE_SECURE: "true"
+      EASYRM_MESH_URL: "https://${EASYRM_DOMAIN}/mesh"
+      EASYRM_MESH_INTERNAL_URL: "http://127.0.0.1:4430"
+      EASYRM_MESH_ADMIN_USER: ${EASYRM_MESH_ADMIN_USER:-easyrmadmin}
+      EASYRM_MESH_ADMIN_PASSWORD: ${EASYRM_MESH_ADMIN_PASSWORD}
+      EASYRM_MESH_LOGIN_TOKEN_KEY: ${EASYRM_MESH_LOGIN_TOKEN_KEY}
+      EASYRM_EASYPATCH_ENABLED: ${EASYRM_EASYPATCH_ENABLED:-false}
+      EASYRM_EASYPATCH_URL: ${EASYRM_EASYPATCH_URL:-}
+      EASYRM_EASYPATCH_API_KEY: ${EASYRM_EASYPATCH_API_KEY:-}
+      EASYRM_ADMIN_EMAIL: ${EASYRM_ADMIN_EMAIL:-admin@localhost}
+      EASYRM_ADMIN_PASSWORD: ${EASYRM_ADMIN_PASSWORD:-}
+    volumes:
+      - ./data/easyrm/config:/app/config
+      - ./data/easyrm/logs:/app/logs
+      - ./data/easyrm/agents:/app/agents:ro
+      - ./data/easyrm/uploads:/app/uploads
+      # Temp dir needed for read_only filesystem
+      - easyrm-tmp:/tmp
+    depends_on:
+      easyrmmdb:
+        condition: service_healthy
+      meshcentral:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8443/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Caddy Reverse Proxy ────────────────────────────────────────
+  # Single public entry point: ports 443 (HTTPS) and 80 (redirect + ACME).
+  caddy:
+    image: caddy:2-alpine
+    network_mode: host
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      EASYRM_DOMAIN: ${EASYRM_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy/data:/data
+      - ./data/caddy/config:/config
+    depends_on:
+      easyrmmserver:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:80/healthz || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  # MeshCentral node_modules — npm install is slow; persist between restarts
+  meshcentral-modules:
+  # Temp directory for the read-only Go container
+  easyrm-tmp:
