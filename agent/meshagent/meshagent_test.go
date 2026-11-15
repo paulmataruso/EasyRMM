@@ -1,0 +1,151 @@
+package meshagent
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/paulmataruso/easyrmm/agent/host"
+)
+
+const nodeHex = "284B953F153B329D15BCB32D4FF0D8A8E588030A9D00AE38EA0BDBD50855E59F4CE162723EAA1EBC8878B08ADC51D6C7"
+
+// fakeAgent is a MeshAgent stand-in: it prints a node id for -nodeid and
+// otherwise records that it ran and exits after a moment.
+const fakeAgent = `#!/bin/sh
+if [ "$1" = -nodeid ]; then echo ` + nodeHex + `; exit 0; fi
+echo run >> runs.log
+touch meshagent.db
+sleep 0.2
+`
+
+func download(content string) func(io.Writer) error {
+	return func(w io.Writer) error {
+		_, err := io.WriteString(w, content)
+		return err
+	}
+}
+
+func newManager(t *testing.T, mode Mode, run host.Runner) *Manager {
+	t.Helper()
+	return &Manager{
+		Dir: filepath.Join(t.TempDir(), "meshagent"), Mode: mode,
+		Systemd:      host.Systemd{Dir: filepath.Join(t.TempDir(), "units"), Run: run},
+		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
+		RestartDelay: 50 * time.Millisecond,
+	}
+}
+
+func TestChildMode(t *testing.T) {
+	m := newManager(t, ModeChild, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if m.Installed() {
+		t.Fatal("installed before installing")
+	}
+	if err := m.Start(ctx); err == nil {
+		t.Error("started without being installed")
+	}
+	if id, err := m.NodeID(ctx); id != "" || err != nil {
+		t.Errorf("node id before the first run = %q, %v", id, err)
+	}
+	if err := m.Install(ctx, download(fakeAgent), []byte("MeshID=0x1\n")); err != nil {
+		t.Fatal(err)
+	}
+	if !m.Installed() {
+		t.Fatal("not installed")
+	}
+	st, _ := os.Stat(filepath.Join(m.Dir, "meshagent.msh"))
+	if st.Mode().Perm() != 0o600 {
+		t.Errorf("settings mode = %v", st.Mode().Perm())
+	}
+	if err := m.Start(ctx); err != nil { // already running: no second copy
+		t.Fatal(err)
+	}
+	// The child exits after a moment and is restarted.
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		b, _ := os.ReadFile(filepath.Join(m.Dir, "runs.log"))
+		if strings.Count(string(b), "run") >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("MeshAgent was not restarted: %q", b)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	id, err := m.NodeID(ctx)
+	if err != nil || id != nodeHex {
+		t.Errorf("node id = %q, %v", id, err)
+	}
+	cancel()
+
+	// A broken binary's node id is refused.
+	if err := os.WriteFile(filepath.Join(m.Dir, "meshagent"), []byte("#!/bin/sh\necho nonsense\n"), 0o755); err != nil { //nolint:gosec // test executable
+		t.Fatal(err)
+	}
+	if _, err := m.NodeID(context.Background()); err == nil {
+		t.Error("nonsense node id accepted")
+	}
+	if err := os.WriteFile(filepath.Join(m.Dir, "meshagent"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil { //nolint:gosec // test executable
+		t.Fatal(err)
+	}
+	if _, err := m.NodeID(context.Background()); err == nil {
+		t.Error("failing -nodeid hidden")
+	}
+}
+
+func TestInstallFailures(t *testing.T) {
+	m := newManager(t, ModeChild, nil)
+	ctx := context.Background()
+	if err := m.Install(ctx, func(io.Writer) error { return errors.New("network down") }, []byte("x")); err == nil {
+		t.Error("failed download hidden")
+	}
+	if m.Installed() {
+		t.Error("a failed download left MeshAgent installed")
+	}
+	entries, _ := os.ReadDir(m.Dir)
+	if len(entries) != 0 {
+		t.Errorf("leftovers: %v", entries)
+	}
+	m.Dir = "/dev/null/meshagent"
+	if err := m.Install(ctx, download("x"), nil); err == nil {
+		t.Error("install into an impossible directory")
+	}
+}
+
+func TestSystemdMode(t *testing.T) {
+	var calls []string
+	run := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil, nil
+	}
+	m := newManager(t, ModeSystemd, run)
+	ctx := context.Background()
+	if err := m.Install(ctx, download(fakeAgent), []byte("MeshID=0x1\n")); err != nil {
+		t.Fatal(err)
+	}
+	unit, err := os.ReadFile(filepath.Join(m.Systemd.Dir, Unit))
+	if err != nil || !strings.Contains(string(unit), "ExecStart="+filepath.Join(m.Dir, "meshagent")+"\n") ||
+		!strings.Contains(string(unit), "WorkingDirectory="+m.Dir+"\n") {
+		t.Errorf("unit = %q, %v", unit, err)
+	}
+	if !strings.Contains(strings.Join(calls, ";"), "enable --now "+Unit) {
+		t.Errorf("calls = %v", calls)
+	}
+	if err := m.Remove(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(m.Dir); !errors.Is(err, os.ErrNotExist) {
+		t.Error("MeshAgent directory kept")
+	}
+	if _, err := os.Stat(filepath.Join(m.Systemd.Dir, Unit)); !errors.Is(err, os.ErrNotExist) {
+		t.Error("unit kept")
+	}
+}
