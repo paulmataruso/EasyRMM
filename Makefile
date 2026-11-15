@@ -6,6 +6,12 @@ TEST_DB_CONTAINER ?= easyrmm-testdb
 TEST_DB_PORT ?= 55432
 TEST_DB_URL ?= postgres://postgres:easyrmm-test-only@127.0.0.1:$(TEST_DB_PORT)/postgres?sslmode=disable
 POSTGRES_IMAGE ?= postgres:18.6-alpine3.24
+# The MeshCentral release EasyRMM is tested with (keep in step with
+# deploy/docker-compose.yml), and a glibc image the test MeshAgent runs in.
+MESHCENTRAL_IMAGE ?= ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d
+TEST_AGENT_IMAGE ?= debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+TEST_MESH_DIR ?= $(or $(TMPDIR),/tmp)/easyrmm-testmesh
+TEST_MESH_URL ?= http://127.0.0.1:24430
 
 .PHONY: help
 help: ## Show this help
@@ -46,9 +52,24 @@ test-db: ## Start a disposable PostgreSQL for integration tests (host networking
 test-db-stop: ## Stop (and thereby remove) the test database container
 	docker container stop $(TEST_DB_CONTAINER)
 
+.PHONY: test-mesh
+test-mesh: ## Start a disposable MeshCentral for integration tests (host networking)
+	MESHCENTRAL_IMAGE=$(MESHCENTRAL_IMAGE) EASYRMM_TEST_MESH_DIR=$(TEST_MESH_DIR) ./scripts/test-meshcentral.sh
+
+.PHONY: test-mesh-stop
+test-mesh-stop: ## Stop the test MeshCentral
+	MESHCENTRAL_IMAGE=$(MESHCENTRAL_IMAGE) ./scripts/test-meshcentral.sh stop
+
+.PHONY: print-test-agent-image
+print-test-agent-image:
+	@echo $(TEST_AGENT_IMAGE)
+
 .PHONY: test-integration
-test-integration: ## Go unit + integration tests against PostgreSQL, with coverage gates
+test-integration: ## Go unit + integration tests against PostgreSQL and MeshCentral, with coverage gates
 	EASYRMM_TEST_DATABASE_URL="$${EASYRMM_TEST_DATABASE_URL:-$(TEST_DB_URL)}" \
+	EASYRMM_TEST_MESH_DIR="$${EASYRMM_TEST_MESH_DIR:-$(TEST_MESH_DIR)/config}" \
+	EASYRMM_TEST_MESH_URL="$${EASYRMM_TEST_MESH_URL:-$(TEST_MESH_URL)}" \
+	EASYRMM_TEST_AGENT_IMAGE="$${EASYRMM_TEST_AGENT_IMAGE:-$(TEST_AGENT_IMAGE)}" \
 		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./server/... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
 

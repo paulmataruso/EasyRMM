@@ -14,10 +14,11 @@ type Kind uint8
 
 // Kinds.
 const (
-	KindInvalid   Kind = iota + 1 // the request is malformed or fails validation
-	KindNotFound                  // the object does not exist or is outside the caller's scope
-	KindForbidden                 // the caller may see the object but not perform the action
-	KindConflict                  // the request conflicts with current state
+	KindInvalid     Kind = iota + 1 // the request is malformed or fails validation
+	KindNotFound                    // the object does not exist or is outside the caller's scope
+	KindForbidden                   // the caller may see the object but not perform the action
+	KindConflict                    // the request conflicts with current state
+	KindUnavailable                 // a dependency the request needs is temporarily unavailable
 )
 
 // Error is a user-facing error.
@@ -55,6 +56,12 @@ func Forbidden() error { return ErrForbidden }
 // Conflict builds a conflict error with a stable code.
 func Conflict(code, msg string) *Error {
 	return &Error{Kind: KindConflict, Code: code, Message: msg}
+}
+
+// Unavailable builds an error for a dependency that is down, such as the
+// remote-access server.
+func Unavailable(code, msg string) *Error {
+	return &Error{Kind: KindUnavailable, Code: code, Message: msg}
 }
 
 // Invalid builds a validation error for a single field.

@@ -208,8 +208,11 @@ func migrateSQL(ctx context.Context, sqlDB *sql.DB, log *slog.Logger) error {
 // IsUniqueViolation reports whether err is a unique-constraint violation.
 func IsUniqueViolation(err error) bool { return hasCode(err, "23505") }
 
-// IsForeignKeyViolation reports whether err is a foreign-key violation.
-func IsForeignKeyViolation(err error) bool { return hasCode(err, "23503") }
+// IsForeignKeyViolation reports whether err is a foreign-key violation:
+// a missing referenced row, or a referenced row still in use. PostgreSQL
+// reports the latter as restrict_violation (23001) for ON DELETE RESTRICT
+// constraints and foreign_key_violation (23503) for NO ACTION ones.
+func IsForeignKeyViolation(err error) bool { return hasCode(err, "23503") || hasCode(err, "23001") }
 
 // IsCheckViolation reports whether err is a check-constraint violation.
 func IsCheckViolation(err error) bool { return hasCode(err, "23514") }

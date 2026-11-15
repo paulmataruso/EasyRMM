@@ -10,9 +10,12 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
 
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 )
@@ -66,7 +69,23 @@ type Config struct {
 	ArgonMaxParallel  int
 	WebDir            string // optional override of the embedded UI
 	SMTP              SMTPConfig
+	Mesh              MeshConfig
 	DevInsecureCookie bool // only for local development over plain HTTP
+}
+
+// MeshConfig configures the MeshCentral remote-access integration.
+type MeshConfig struct {
+	// Enabled turns remote access on. MeshCentral must then run alongside
+	// the server (the meshcentral service in the Compose file).
+	Enabled bool
+	// InternalURL is MeshCentral's plain-HTTP loopback listener.
+	InternalURL *url.URL
+	// ConfigDir is where the server writes MeshCentral's config.json; the
+	// MeshCentral container mounts it read-only.
+	ConfigDir string
+	// CertURL is where MeshCentral reads the certificate agents pin: the TLS
+	// listener serving the MeshCentral hostname, reached over loopback.
+	CertURL string
 }
 
 // SMTPConfig configures outbound e-mail. Empty Host disables e-mail.
@@ -121,6 +140,18 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		},
 	}
 	c.DatabaseMigrationURL = l.secret("EASYRMM_DATABASE_MIGRATION_URL")
+	c.Mesh = MeshConfig{
+		Enabled:   l.boolean("EASYRMM_MESH_ENABLED", true),
+		ConfigDir: l.str("EASYRMM_MESH_CONFIG_DIR", "/var/lib/easyrmm-meshcentral"),
+	}
+	if raw := l.str("EASYRMM_MESH_INTERNAL_URL", "http://127.0.0.1:14430"); raw != "" && c.Mesh.Enabled {
+		u, err := url.Parse(raw)
+		if err != nil {
+			l.errs = append(l.errs, fmt.Errorf("EASYRMM_MESH_INTERNAL_URL: %w", err))
+		} else {
+			c.Mesh.InternalURL = u
+		}
+	}
 	c.DatabaseMaxConns = int32(l.integer("EASYRMM_DATABASE_MAX_CONNS", 20)) //nolint:gosec // validated below
 
 	c.PublicURL = l.httpsURL("EASYRMM_PUBLIC_URL", true)
@@ -166,6 +197,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		c.SecretKeys = append(c.SecretKeys, k)
 	}
 
+	c.Mesh.CertURL = l.str("EASYRMM_MESH_CERT_URL", defaultCertURL(c))
 	c.validate(l)
 	if len(l.errs) > 0 {
 		return nil, errors.Join(l.errs...)
@@ -248,6 +280,43 @@ func (c *Config) validate(l *loader) {
 	}
 	if c.DevInsecureCookie && c.TLSMode != TLSOffload {
 		add("EASYRMM_DEV_INSECURE_COOKIES is only allowed with EASYRMM_TLS_MODE=offload")
+	}
+	c.validateMesh(add)
+}
+
+// defaultCertURL is the loopback address of the listener that serves the
+// MeshCentral hostname: our own HTTPS listener, or in offload mode the
+// reverse proxy, assumed on 443.
+func defaultCertURL(c *Config) string {
+	port := "443"
+	if c.TLSMode != TLSOffload {
+		if _, p, err := net.SplitHostPort(c.ListenHTTPS); err == nil && p != "" {
+			port = p
+		}
+	}
+	return "https://127.0.0.1:" + port
+}
+
+func (c *Config) validateMesh(add func(string, ...any)) {
+	if !c.Mesh.Enabled {
+		return
+	}
+	if c.MeshPublicURL == nil {
+		add("EASYRMM_MESH_PUBLIC_URL is required when remote access is enabled (set EASYRMM_MESH_ENABLED=false to run without it)")
+	} else if c.PublicURL != nil && !SameSite(c.PublicURL.Hostname(), c.MeshPublicURL.Hostname()) {
+		add("EASYRMM_MESH_PUBLIC_URL (%s) must share a parent domain with EASYRMM_PUBLIC_URL (%s), for example rmm.example.com and mesh.rmm.example.com: browsers admit embedded remote sessions only from the same site",
+			c.MeshPublicURL.Hostname(), c.PublicURL.Hostname())
+	}
+	if u := c.Mesh.InternalURL; u == nil || u.Scheme != "http" || u.Port() == "" || (u.Path != "" && u.Path != "/") {
+		add("EASYRMM_MESH_INTERNAL_URL must be http://<loopback address>:<port>")
+	} else if ip := net.ParseIP(u.Hostname()); ip == nil || !ip.IsLoopback() {
+		add("EASYRMM_MESH_INTERNAL_URL must use a loopback address, got %q", u.Hostname())
+	}
+	if !filepath.IsAbs(c.Mesh.ConfigDir) {
+		add("EASYRMM_MESH_CONFIG_DIR must be an absolute path")
+	}
+	if !strings.HasPrefix(c.Mesh.CertURL, "https://") && !strings.HasPrefix(c.Mesh.CertURL, "file:///") {
+		add("EASYRMM_MESH_CERT_URL must be an https:// or file:/// URL")
 	}
 }
 
@@ -371,4 +440,18 @@ func parsePrefix(s string) (netip.Prefix, error) {
 		return netip.Prefix{}, err
 	}
 	return netip.PrefixFrom(a, a.BitLen()), nil
+}
+
+// SameSite reports whether browsers treat two host names as the same site:
+// the same registrable domain under the Public Suffix List, or the same IP
+// address.
+func SameSite(a, b string) bool {
+	a, b = strings.ToLower(strings.TrimSuffix(a, ".")), strings.ToLower(strings.TrimSuffix(b, "."))
+	ipA, ipB := net.ParseIP(a), net.ParseIP(b)
+	if ipA != nil || ipB != nil {
+		return ipA != nil && ipB != nil && ipA.Equal(ipB)
+	}
+	da, errA := publicsuffix.EffectiveTLDPlusOne(a)
+	db, errB := publicsuffix.EffectiveTLDPlusOne(b)
+	return errA == nil && errB == nil && da == db
 }

@@ -32,6 +32,11 @@ floors=(
   "server/internal/httpapi/tenancyapi      85"
   "server/internal/httpapi/usersapi        85"
   "server/internal/httpapi/auditapi        85"
+  "server/internal/httpapi/remoteapi       85"
+  # Remote access: the MeshCentral client, and the service and gateway that
+  # decide who reaches MeshCentral.
+  "server/internal/meshcentral             85"
+  "server/internal/remote                  88"
   "server/cmd/easyrmm-server               80"
 )
 

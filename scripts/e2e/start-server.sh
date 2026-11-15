@@ -9,6 +9,9 @@
 #   EASYRMM_E2E_RUN_DIR    where to keep the data directory (default web/e2e/.run)
 #   EASYRMM_E2E_PORT       offload listener (default 18180); health is PORT+11
 #
+# Remote access is enabled but no MeshCentral runs: the console shows devices
+# and reports remote access as unavailable.
+#
 # Playwright starts this script (web/playwright.config.ts) and stops it when the
 # suite ends. It expects bin/easyrmm-server to be built with the web UI embedded
 # (make e2e does both).
@@ -45,8 +48,8 @@ SQL
 hostport=$(printf '%s' "$admin_url" | sed -E 's#^[a-z]+://[^@]*@([^/?]+).*#\1#')
 
 rm -rf "$run_dir"
-mkdir -p "$run_dir/data"
-chmod 700 "$run_dir/data"
+mkdir -p "$run_dir/data" "$run_dir/meshcentral"
+chmod 700 "$run_dir/data" "$run_dir/meshcentral"
 
 EASYRMM_PUBLIC_URL=https://rmm.localhost \
 EASYRMM_TLS_MODE=offload \
@@ -55,6 +58,8 @@ EASYRMM_LISTEN_OFFLOAD=127.0.0.1:$port \
 EASYRMM_LISTEN_HEALTH=127.0.0.1:$((port + 11)) \
 EASYRMM_DEV_INSECURE_COOKIES=true \
 EASYRMM_DATA_DIR=$run_dir/data \
+EASYRMM_MESH_CONFIG_DIR=$run_dir/meshcentral \
+EASYRMM_MESH_INTERNAL_URL=http://127.0.0.1:$((port + 12)) \
 EASYRMM_DATABASE_URL="postgres://easyrmm_app:$app_pw@$hostport/$db?sslmode=disable" \
 EASYRMM_DATABASE_MIGRATION_URL="postgres://easyrmm_owner:$owner_pw@$hostport/$db?sslmode=disable" \
 EASYRMM_SECRET_KEY=$(openssl rand -base64 32) \

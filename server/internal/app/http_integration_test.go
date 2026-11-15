@@ -36,6 +36,8 @@ type harness struct {
 	srv     *httptest.Server
 	dataDir string
 	mail    *captureMailer
+	db      *testdb.Instance
+	cfg     *config.Config
 }
 
 type sentMail struct{ to, subject, body string }
@@ -54,6 +56,13 @@ func (m *captureMailer) Send(_ context.Context, to, subject, body string) error 
 
 func newHarness(t *testing.T, withMail bool) *harness {
 	t.Helper()
+	return newHarnessWith(t, withMail, nil)
+}
+
+// newHarnessWith lets a test adjust the configuration before the server is
+// built.
+func newHarnessWith(t *testing.T, withMail bool, adjust func(*config.Config)) *harness {
+	t.Helper()
 	inst := testdb.New(t)
 	raw := make([]byte, 32)
 	_, _ = rand.Read(raw)
@@ -65,8 +74,11 @@ func newHarness(t *testing.T, withMail bool) *harness {
 		RequireMFA: true, SessionIdle: 2 * time.Hour, SessionMaxAge: 12 * time.Hour,
 		PasswordResetTTL: 30 * time.Minute, ArgonMaxParallel: 4, AuditRetention: 365 * 24 * time.Hour,
 	}
+	if adjust != nil {
+		adjust(cfg)
+	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := &harness{t: t, dataDir: cfg.DataDir}
+	h := &harness{t: t, dataDir: cfg.DataDir, db: inst, cfg: cfg}
 	var mailer interface {
 		Send(context.Context, string, string, string) error
 	}

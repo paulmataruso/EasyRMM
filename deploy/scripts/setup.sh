@@ -104,17 +104,25 @@ if [[ $(id -u) -ne 0 ]]; then
   echo "  ${data_root}/server (owner 65532:65532, mode 700)" >&2
   echo "  ${data_root}/postgres (mode 700)" >&2
   echo "  ${data_root}/tls (mode 750)" >&2
+  echo "  ${data_root}/meshcentral-config (owner 65532:65532, mode 700)" >&2
+  echo "  ${data_root}/meshcentral/{data,files,backups} (owner 65532:65532, mode 700)" >&2
   exit 0
 fi
 install -d -m 0755 "$data_root"
 install -d -m 0700 -o 65532 -g 65532 "$data_root/server"
 install -d -m 0700 "$data_root/postgres"
 install -d -m 0750 -o root -g 65532 "$data_root/tls"
+install -d -m 0700 -o 65532 -g 65532 "$data_root/meshcentral-config"
+install -d -m 0755 "$data_root/meshcentral"
+for d in data files backups; do
+  install -d -m 0700 -o 65532 -g 65532 "$data_root/meshcentral/$d"
+done
 echo "Data directories ready under ${data_root}."
 echo
 echo "Next:"
 echo "  1. Point DNS for ${hostname} and ${mesh_hostname:-mesh.${hostname}} at this server."
-echo "  2. Allow inbound TCP 443 (and 80 for ACME HTTP-01)."
+echo "  2. Allow inbound TCP 443 (and 80 for ACME HTTP-01), and outbound HTTPS to"
+echo "     github.com for MeshCentral's first-start agent download."
 echo "  3. docker compose up -d"
 echo "  4. Open https://${hostname}/ and enter the setup token from:"
 echo "       ${data_root}/server/setup-token"

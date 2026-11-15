@@ -6,7 +6,8 @@
 # Every service uses host networking: there are no bridge networks and no
 # port mappings. Internal services listen on loopback only; the server's TLS
 # edge is the only public listener (443, plus 80 for ACME HTTP-01 and
-# redirects). See docs/deployment/docker.md and docs/architecture/network.md.
+# redirects). MeshCentral is reached only through that edge, on its own
+# hostname. See docs/deployment/docker.md and docs/architecture/network.md.
 
 name: easyrmm
 
@@ -86,9 +87,14 @@ services:
       EASYRMM_SMTP_FROM: ${EASYRMM_SMTP_FROM:-}
       EASYRMM_SMTP_TLS: ${EASYRMM_SMTP_TLS:-starttls}
       EASYRMM_LOG_LEVEL: ${EASYRMM_LOG_LEVEL:-info}
+      EASYRMM_MESH_ENABLED: ${EASYRMM_MESH_ENABLED:-true}
+      EASYRMM_MESH_CERT_URL: ${EASYRMM_MESH_CERT_URL:-}
     volumes:
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/server:/var/lib/easyrmm
       - ${EASYRMM_TLS_DIR:-/srv/easyrmm/tls}:/etc/easyrmm/tls:ro
+      # The server writes MeshCentral's configuration here (it holds the
+      # shared login key); MeshCentral mounts it read-only.
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/meshcentral-config:/var/lib/easyrmm-meshcentral
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -98,4 +104,41 @@ services:
     # cap_net_bind_service file capability from taking effect. The image has
     # no setuid binaries and the container keeps no other capability.
     stop_grace_period: 30s
+    logging: *logging
+
+  # Remote desktop, terminal and file access (ADR-0004, ADR-0005). It listens
+  # on 127.0.0.1:14430 only; agents and browsers reach it through the
+  # server's edge on the MeshCentral hostname, which admits browsers only
+  # with a session launched from the EasyRMM console. The start script waits
+  # for the configuration the server writes, creates the service account
+  # EasyRMM acts as, and restarts MeshCentral when the configuration changes.
+  # Set EASYRMM_MESH_ENABLED=false and run `docker compose up -d server
+  # postgres` to run without remote access.
+  meshcentral:
+    image: ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d
+    network_mode: host
+    restart: unless-stopped
+    user: "65532:65532"
+    entrypoint: ["/bin/bash", "/easyrmm/start.sh"]
+    environment:
+      HOME: /tmp
+    volumes:
+      - ../docker/meshcentral/start.sh:/easyrmm/start.sh:ro
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/meshcentral-config:/easyrmm/config:ro
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/meshcentral/data:/opt/meshcentral/meshcentral-data
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/meshcentral/files:/opt/meshcentral/meshcentral-files
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/meshcentral/backups:/opt/meshcentral/meshcentral-backups
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:14430/health.ashx"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # The first start downloads the agent binaries (about 120 MiB).
+      start_period: 5m
     logging: *logging

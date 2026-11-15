@@ -5,10 +5,12 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/remote"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
 )
@@ -206,4 +209,84 @@ func TestRunFailures(t *testing.T) {
 	if err := <-done; err == nil || !strings.Contains(err.Error(), "health listener") {
 		t.Fatalf("health listener failure not reported: %v", err)
 	}
+}
+
+func TestRunWithRemoteAccess(t *testing.T) {
+	inst := testdb.New(t)
+	cfg := runConfig(t, inst)
+	cfg.MeshPublicURL, _ = url.Parse("https://mesh.rmm.test")
+	internal, _ := url.Parse("http://" + freeAddr(t)) // MeshCentral is not running
+	cfg.Mesh = config.MeshConfig{Enabled: true, InternalURL: internal, ConfigDir: t.TempDir(), CertURL: "https://127.0.0.1:443"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, cfg, discard()) }()
+	resp, _ := get(t, &http.Client{}, "http://"+cfg.ListenOffload+"/api/v1/health", "rmm.test")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("health: %d", resp.StatusCode)
+	}
+	path := filepath.Join(cfg.Mesh.ConfigDir, "config.json")
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("MeshCentral config: %v", err)
+	}
+	raw, _ := os.ReadFile(path) //nolint:gosec // test directory
+	var mc struct {
+		Settings struct {
+			Cert      string   `json:"cert"`
+			Port      int      `json:"port"`
+			AliasPort int      `json:"aliasPort"`
+			Framing   []string `json:"allowedFramingOrigins"`
+			Key       string   `json:"loginCookieEncryptionKey"`
+		} `json:"settings"`
+	}
+	if err := json.Unmarshal(raw, &mc); err != nil {
+		t.Fatal(err)
+	}
+	port, _ := strconv.Atoi(internal.Port())
+	if mc.Settings.Cert != "mesh.rmm.test" || mc.Settings.Port != port || mc.Settings.AliasPort != 443 ||
+		len(mc.Settings.Framing) != 1 || mc.Settings.Framing[0] != "https://rmm.test" || len(mc.Settings.Key) != 160 {
+		t.Fatalf("MeshCentral settings: %+v", mc.Settings)
+	}
+	// The MeshCentral hostname reaches the gateway.
+	if resp, body := get(t, &http.Client{}, "http://"+cfg.ListenOffload+"/", "mesh.rmm.test"); resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "Remote session required") {
+		t.Fatalf("mesh host through Run: %d %s", resp.StatusCode, body)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+
+	// The same key is used on the next start, so the file does not change.
+	before, _ := os.ReadFile(path) //nolint:gosec // test directory
+	if err := writeMeshConfig(cfg, mustSecrets(t, inst, cfg), discard()); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(path) //nolint:gosec // test directory
+	if string(before) != string(after) {
+		t.Fatal("MeshCentral configuration changed between starts")
+	}
+	// An unwritable directory is reported, not fatal.
+	cfg.Mesh.ConfigDir = "/proc/easyrmm-no-such-dir"
+	if err := writeMeshConfig(cfg, mustSecrets(t, inst, cfg), discard()); err == nil {
+		t.Fatal("writing into an unusable directory succeeded")
+	}
+}
+
+func mustSecrets(t *testing.T, inst *testdb.Instance, cfg *config.Config) *remote.Secrets {
+	t.Helper()
+	sealer, err := secrets.NewSealer(cfg.SecretKeys...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := remote.LoadSecrets(context.Background(), inst.DB, sealer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }

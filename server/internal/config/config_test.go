@@ -148,3 +148,88 @@ func TestSecretFilesAndKeyRotation(t *testing.T) {
 		t.Errorf("missing secret file: %v", err)
 	}
 }
+
+func TestRemoteAccessSettings(t *testing.T) {
+	c, err := LoadFrom(env(base()), noFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := c.Mesh
+	if !m.Enabled || m.InternalURL.String() != "http://127.0.0.1:14430" || m.ConfigDir != "/var/lib/easyrmm-meshcentral" || m.CertURL != "https://127.0.0.1:443" {
+		t.Errorf("remote access defaults: %+v", m)
+	}
+
+	// The certificate is read from our own HTTPS listener...
+	e := base()
+	e["EASYRMM_LISTEN_HTTPS"] = ":8443"
+	if c, err := LoadFrom(env(e), noFiles); err != nil || c.Mesh.CertURL != "https://127.0.0.1:8443" {
+		t.Errorf("cert URL with a custom HTTPS port: %v %v", c, err)
+	}
+	// ...or, behind a proxy, from the proxy.
+	e = base()
+	e["EASYRMM_TLS_MODE"] = "offload"
+	e["EASYRMM_TRUSTED_PROXIES"] = "127.0.0.1/32"
+	e["EASYRMM_LISTEN_HTTPS"] = ":8443"
+	if c, err := LoadFrom(env(e), noFiles); err != nil || c.Mesh.CertURL != "https://127.0.0.1:443" {
+		t.Errorf("cert URL in offload mode: %v %v", c, err)
+	}
+
+	e = base()
+	e["EASYRMM_MESH_ENABLED"] = "false"
+	e["EASYRMM_MESH_INTERNAL_URL"] = "not a url at all ::"
+	if c, err := LoadFrom(env(e), noFiles); err != nil || c.Mesh.Enabled {
+		t.Errorf("disabled remote access still validated: %v", err)
+	}
+
+	for _, c := range []struct {
+		key, value, want string
+	}{
+		{"EASYRMM_MESH_INTERNAL_URL", "http://10.0.0.5:14430", "loopback"},
+		{"EASYRMM_MESH_INTERNAL_URL", "https://127.0.0.1:14430", "EASYRMM_MESH_INTERNAL_URL"},
+		{"EASYRMM_MESH_INTERNAL_URL", "http://127.0.0.1", "EASYRMM_MESH_INTERNAL_URL"},
+		{"EASYRMM_MESH_INTERNAL_URL", "http://127.0.0.1:14430/mesh", "EASYRMM_MESH_INTERNAL_URL"},
+		{"EASYRMM_MESH_INTERNAL_URL", "http://%zz", "EASYRMM_MESH_INTERNAL_URL"},
+		{"EASYRMM_MESH_CONFIG_DIR", "relative/dir", "EASYRMM_MESH_CONFIG_DIR"},
+		{"EASYRMM_MESH_CERT_URL", "http://127.0.0.1:80", "EASYRMM_MESH_CERT_URL"},
+		{"EASYRMM_MESH_PUBLIC_URL", "https://mesh.example.com/sub", "without a path"},
+		{"EASYRMM_MESH_PUBLIC_URL", "", "EASYRMM_MESH_PUBLIC_URL is required"},
+		{"EASYRMM_MESH_PUBLIC_URL", "https://remote.example.net", "must share a parent domain"},
+	} {
+		e := base()
+		e[c.key] = c.value
+		_, err := LoadFrom(env(e), noFiles)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s=%q: %v, want an error mentioning %q", c.key, c.value, err, c.want)
+		}
+	}
+	e = base()
+	e["EASYRMM_MESH_CERT_URL"] = "file:///etc/easyrmm/proxy.pem"
+	if _, err := LoadFrom(env(e), noFiles); err != nil {
+		t.Errorf("file certificate URL rejected: %v", err)
+	}
+}
+
+func TestSameSite(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"rmm.example.com", "mesh.rmm.example.com", true},
+		{"rmm.example.com", "remote.example.com", true},
+		{"RMM.Example.com.", "mesh.example.COM", true},
+		{"rmm.example.co.uk", "mesh.example.co.uk", true},
+		{"rmm.example.com", "mesh.example.net", false},
+		// A public suffix is not a shared parent domain.
+		{"acme.co.uk", "globex.co.uk", false},
+		{"a.github.io", "b.github.io", false},
+		{"rmm.localhost", "mesh.rmm.localhost", true},
+		{"192.0.2.10", "192.0.2.10", true},
+		{"192.0.2.10", "192.0.2.11", false},
+		{"192.0.2.10", "mesh.example.com", false},
+		{"com", "com", false},
+	} {
+		if got := SameSite(c.a, c.b); got != c.want {
+			t.Errorf("SameSite(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}

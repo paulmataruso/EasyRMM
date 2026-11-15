@@ -151,6 +151,21 @@ func TestCompositeForeignKeyKeepsOrgAndSiteConsistent(t *testing.T) {
 	}
 }
 
+// ON DELETE RESTRICT reports restrict_violation, not foreign_key_violation;
+// both mean "still referenced" to the services that delete things.
+func TestRestrictViolationIsAForeignKeyViolation(t *testing.T) {
+	inst := testdb.New(t)
+	f := seed(t, inst.DB)
+	err := inst.DB.InTx(context.Background(), database.System, func(tx pgx.Tx) error {
+		// sites.organization_id is ON DELETE RESTRICT.
+		_, err := tx.Exec(context.Background(), `DELETE FROM organizations WHERE id = $1`, f.orgA)
+		return err
+	})
+	if !database.IsForeignKeyViolation(err) {
+		t.Fatalf("want a foreign key violation deleting an organization with sites, got %v", err)
+	}
+}
+
 func TestScopeDoesNotLeakAcrossTransactions(t *testing.T) {
 	inst := testdb.New(t)
 	seed(t, inst.DB)

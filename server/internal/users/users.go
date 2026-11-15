@@ -108,11 +108,23 @@ type Service struct {
 	auth   *auth.Service
 	hasher *auth.Hasher
 	now    func() time.Time
+
+	onChange func()
 }
 
 // New builds the service.
 func New(db *database.DB, auditLog *audit.Logger, authSvc *auth.Service, hasher *auth.Hasher) *Service {
 	return &Service{db: db, audit: auditLog, auth: authSvc, hasher: hasher, now: time.Now}
+}
+
+// OnChange registers a function called after changes that affect remote
+// access: names, sites, roles and account status. It must not block.
+func (s *Service) OnChange(f func()) { s.onChange = f }
+
+func (s *Service) changed() {
+	if s.onChange != nil {
+		s.onChange()
+	}
 }
 
 // NormalizeEmail lower-cases and trims an address and checks its shape.
@@ -531,6 +543,7 @@ func (s *Service) UpdateProfile(ctx context.Context, c access.Caller, id uuid.UU
 	if err != nil {
 		return nil, err
 	}
+	s.changed()
 	return s.Get(ctx, c, id)
 }
 
@@ -595,6 +608,7 @@ func (s *Service) SetAssignments(ctx context.Context, c access.Caller, id uuid.U
 	if err != nil {
 		return nil, err
 	}
+	s.changed()
 	after, err := s.Get(ctx, c, id)
 	if errors.Is(err, apperr.ErrNotFound) && len(grants) == 0 {
 		// The caller removed every role they can see: the change succeeded
@@ -644,6 +658,7 @@ func (s *Service) SetStatus(ctx context.Context, c access.Caller, id uuid.UUID, 
 	if err != nil {
 		return nil, err
 	}
+	s.changed()
 	return s.Get(ctx, c, id)
 }
 
@@ -748,7 +763,7 @@ func (s *Service) IssuePasswordLink(ctx context.Context, c access.Caller, id uui
 
 // Delete removes an account. Its audit history remains.
 func (s *Service) Delete(ctx context.Context, c access.Caller, id uuid.UUID) error {
-	return s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
+	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		u, err := s.loadForChange(ctx, tx, c, id)
 		if err != nil {
 			return err
@@ -765,6 +780,10 @@ func (s *Service) Delete(ctx context.Context, c access.Caller, id uuid.UUID) err
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.delete", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(), Details: map[string]any{"email": u.Email}})
 	})
+	if err == nil {
+		s.changed()
+	}
+	return err
 }
 
 // UpdateOwnProfile lets a signed-in user change their display name.
@@ -775,13 +794,17 @@ func (s *Service) UpdateOwnProfile(ctx context.Context, actor audit.Actor, userI
 	if err := f.Err(); err != nil {
 		return err
 	}
-	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `UPDATE users SET display_name = $2 WHERE id = $1`, userID, name); err != nil {
 			return err
 		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: actor, Action: "user.update", Outcome: audit.Success,
 			TargetType: "user", TargetID: userID.String(), Details: map[string]any{"displayName": name, "self": true}})
 	})
+	if err == nil {
+		s.changed()
+	}
+	return err
 }
 
 // ErrSetupDone is returned when first-run setup has already completed.

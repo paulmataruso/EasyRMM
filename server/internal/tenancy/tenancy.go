@@ -92,13 +92,24 @@ type DeviceGroupInput struct {
 
 // Service implements tenancy operations.
 type Service struct {
-	db    *database.DB
-	audit *audit.Logger
+	db       *database.DB
+	audit    *audit.Logger
+	onChange func()
 }
 
 // New builds the service.
 func New(db *database.DB, auditLog *audit.Logger) *Service {
 	return &Service{db: db, audit: auditLog}
+}
+
+// OnChange registers a function called after changes that affect remote
+// access: names, sites, roles and account status. It must not block.
+func (s *Service) OnChange(f func()) { s.onChange = f }
+
+func (s *Service) changed() {
+	if s.onChange != nil {
+		s.onChange()
+	}
 }
 
 func checkName(f apperr.Fields, name string) {
@@ -269,6 +280,7 @@ func (s *Service) UpdateOrganization(ctx context.Context, c access.Caller, id uu
 	if err != nil {
 		return nil, mapOrgWriteError(err)
 	}
+	s.changed()
 	return s.GetOrganization(ctx, c, id)
 }
 
@@ -283,7 +295,7 @@ func (s *Service) DeleteOrganization(ctx context.Context, c access.Caller, id uu
 		return err
 	}
 	if org.SiteCount > 0 {
-		return apperr.Conflict("organization_not_empty", "Delete or move this organization's sites before deleting it.")
+		return apperr.Conflict("organization_not_empty", "Delete this organization's sites before deleting it.")
 	}
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `DELETE FROM organizations WHERE id = $1`, id)
@@ -300,7 +312,7 @@ func (s *Service) DeleteOrganization(ctx context.Context, c access.Caller, id uu
 	case errors.Is(err, pgx.ErrNoRows):
 		return apperr.NotFound()
 	case database.IsForeignKeyViolation(err):
-		return apperr.Conflict("organization_not_empty", "Delete or move this organization's sites before deleting it.")
+		return apperr.Conflict("organization_not_empty", "Delete this organization's sites before deleting it.")
 	}
 	return err
 }
@@ -393,6 +405,7 @@ func (s *Service) CreateSite(ctx context.Context, c access.Caller, orgID uuid.UU
 	if err != nil {
 		return nil, mapSiteWriteError(err)
 	}
+	s.changed()
 	return s.GetSite(ctx, c, id)
 }
 
@@ -430,12 +443,12 @@ func (s *Service) UpdateSite(ctx context.Context, c access.Caller, id uuid.UUID,
 	if err != nil {
 		return nil, mapSiteWriteError(err)
 	}
+	s.changed()
 	return s.GetSite(ctx, c, id)
 }
 
 // DeleteSite removes a site and its device groups. Sites that still have
-// enrolled devices cannot be deleted (enforced by foreign keys once devices
-// reference sites).
+// devices cannot be deleted (enforced by the devices foreign key).
 func (s *Service) DeleteSite(ctx context.Context, c access.Caller, id uuid.UUID) error {
 	cur, err := s.GetSite(ctx, c, id)
 	if err != nil {
@@ -459,7 +472,10 @@ func (s *Service) DeleteSite(ctx context.Context, c access.Caller, id uuid.UUID)
 	case errors.Is(err, pgx.ErrNoRows):
 		return apperr.NotFound()
 	case database.IsForeignKeyViolation(err):
-		return apperr.Conflict("site_not_empty", "This site still has devices. Move or retire them before deleting the site.")
+		// Moving and retiring devices are not available yet, so the message only states the rule.
+		return apperr.Conflict("site_not_empty", "This site still has devices, so it cannot be deleted.")
+	case err == nil:
+		s.changed()
 	}
 	return err
 }

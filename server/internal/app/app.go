@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,9 +24,12 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/authapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
+	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
+	"github.com/paulmataruso/easyrmm/server/internal/remote"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
 	"github.com/paulmataruso/easyrmm/server/internal/users"
@@ -55,6 +59,12 @@ type Deps struct {
 	Tenancy  *tenancy.Service
 	Users    *users.Service
 	Setup    *usersapi.Setup
+
+	// Remote access; nil when it is disabled.
+	Mesh        *meshcentral.Client
+	Remote      *remote.Service
+	Gateway     *remote.Gateway
+	MeshSecrets *remote.Secrets
 }
 
 // Build constructs the services over an open database.
@@ -82,10 +92,79 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	if err != nil {
 		return nil, err
 	}
-	return &Deps{
+	d := &Deps{
 		DB: db, Audit: auditLog, Auth: authSvc, Sessions: sessions,
 		Tenancy: tenancy.New(db, auditLog), Users: usersSvc, Setup: setup,
-	}, nil
+	}
+	if cfg.Mesh.Enabled {
+		if err := buildRemote(ctx, cfg, d, sealer, log); err != nil {
+			return nil, err
+		}
+	}
+	return d, nil
+}
+
+// buildRemote assembles the MeshCentral integration.
+func buildRemote(ctx context.Context, cfg *config.Config, d *Deps, sealer *secrets.Sealer, log *slog.Logger) error {
+	sec, err := remote.LoadSecrets(ctx, d.DB, sealer)
+	if err != nil {
+		return err
+	}
+	var svc *remote.Service
+	client, err := meshcentral.NewClient(meshcentral.ClientOptions{
+		BaseURL: cfg.Mesh.InternalURL.String(),
+		Key:     sec.LoginKey,
+		Log:     log,
+		OnEvent: func(ev meshcentral.Event) { svc.HandleEvent(ev) },
+		OnReady: func() { svc.Changed() },
+	})
+	if err != nil {
+		return err
+	}
+	svc = remote.New(d.DB, d.Audit, client, remote.Config{MeshURL: cfg.MeshPublicURL, LoginKey: sec.LoginKey}, log)
+	gw, err := remote.NewGateway(svc, remote.GatewayConfig{Upstream: cfg.Mesh.InternalURL, Secure: !cfg.DevInsecureCookie}, log)
+	if err != nil {
+		return err
+	}
+	d.Tenancy.OnChange(svc.Changed)
+	d.Users.OnChange(svc.Changed)
+	d.Mesh, d.Remote, d.Gateway, d.MeshSecrets = client, svc, gw, sec
+	return nil
+}
+
+// MeshServerConfig is the MeshCentral configuration EasyRMM writes.
+func MeshServerConfig(cfg *config.Config, sec *remote.Secrets) meshcentral.ServerConfig {
+	port := 443
+	if p := cfg.MeshPublicURL.Port(); p != "" {
+		port, _ = strconv.Atoi(p)
+	}
+	return meshcentral.ServerConfig{
+		Hostname:      cfg.MeshPublicURL.Hostname(),
+		Listen:        cfg.Mesh.InternalURL.Host,
+		PublicPort:    port,
+		TrustedProxy:  cfg.Mesh.InternalURL.Hostname(),
+		FramingOrigin: cfg.PublicURL.Scheme + "://" + cfg.PublicURL.Host,
+		CertURL:       cfg.Mesh.CertURL,
+		LoginKey:      sec.LoginKey,
+		SessionKey:    sec.SessionKey,
+	}
+}
+
+// writeMeshConfig writes MeshCentral's config.json. MeshCentral's start
+// script restarts it when the file changes.
+func writeMeshConfig(cfg *config.Config, sec *remote.Secrets, log *slog.Logger) error {
+	content, err := MeshServerConfig(cfg, sec).Render()
+	if err != nil {
+		return err
+	}
+	changed, err := meshcentral.WriteConfig(cfg.Mesh.ConfigDir, content)
+	if err != nil {
+		return err
+	}
+	if changed {
+		log.Info("wrote MeshCentral configuration", "dir", cfg.Mesh.ConfigDir)
+	}
+	return nil
 }
 
 // Handler builds the complete HTTP handler for the application origin.
@@ -93,6 +172,9 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	mux := http.NewServeMux()
 	authapi.New(d.Auth, d.Sessions).Register(mux)
 	tenancyapi.New(d.Tenancy).Register(mux)
+	if d.Remote != nil {
+		remoteapi.New(d.Remote).Register(mux)
+	}
 	usersapi.New(d.Users, d.Setup).Register(mux)
 	auditapi.New(d.Audit).Register(mux)
 	mux.Handle("GET /api/v1/health", httpapi.Handle(func(w http.ResponseWriter, _ *http.Request) error {
@@ -123,14 +205,20 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 		d.Sessions.CSRF,
 	)
 	publicHost := strings.ToLower(cfg.PublicURL.Hostname())
+	meshHost := ""
+	if d.Gateway != nil {
+		meshHost = strings.ToLower(cfg.MeshPublicURL.Hostname())
+	}
 	hosts := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.ToLower(strings.TrimSuffix(hostOnly(r.Host), ".")) != publicHost {
-			// The MeshCentral hostname is routed here once remote access is
-			// configured; anything else is not ours.
+		switch strings.ToLower(strings.TrimSuffix(hostOnly(r.Host), ".")) {
+		case publicHost:
+			app.ServeHTTP(w, r)
+		case meshHost:
+			// Remote access: agents, and browsers holding a session grant.
+			d.Gateway.ServeHTTP(w, r)
+		default:
 			httpapi.WriteError(w, r, &httpapi.Error{Status: http.StatusMisdirectedRequest, Code: "unknown_host", Message: "This server does not serve that hostname."})
-			return
 		}
-		app.ServeHTTP(w, r)
 	})
 	return httpapi.Chain(hosts,
 		httpapi.Recover,
@@ -186,7 +274,20 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var wg sync.WaitGroup
-	wg.Go(func() { maintain(ctx, db, cfg.AuditRetention, log) })
+	var tasks []func(context.Context) error
+	if deps.Remote != nil {
+		if err := writeMeshConfig(cfg, deps.MeshSecrets, log); err != nil {
+			// Remote access stays unavailable; everything else works.
+			log.Error("remote access: writing the MeshCentral configuration failed", "error", err, "dir", cfg.Mesh.ConfigDir)
+		}
+		wg.Go(func() { deps.Mesh.Run(ctx) })
+		wg.Go(func() { deps.Remote.Run(ctx) })
+		wg.Go(func() { deps.Gateway.Run(ctx) })
+		tasks = append(tasks, deps.Remote.CleanupGrants)
+	} else {
+		log.Info("remote access is disabled (EASYRMM_MESH_ENABLED=false)")
+	}
+	wg.Go(func() { maintain(ctx, db, cfg.AuditRetention, log, tasks...) })
 	healthErr := make(chan error, 1)
 	if cfg.ListenHealth != "" {
 		wg.Go(func() { healthErr <- serveHealth(ctx, cfg.ListenHealth, db, log) })
@@ -264,13 +365,18 @@ func serveHealth(ctx context.Context, addr string, db *database.DB, log *slog.Lo
 
 // maintain removes expired sessions and reset tokens hourly and enforces
 // audit retention daily.
-func maintain(ctx context.Context, db *database.DB, retention time.Duration, log *slog.Logger) {
+func maintain(ctx context.Context, db *database.DB, retention time.Duration, log *slog.Logger, tasks ...func(context.Context) error) {
 	var lastPurge time.Time
 	tick := time.NewTicker(time.Hour)
 	defer tick.Stop()
 	for {
 		if err := Cleanup(ctx, db); err != nil && ctx.Err() == nil {
 			log.Error("maintenance: cleanup failed", "error", err)
+		}
+		for _, t := range tasks {
+			if err := t(ctx); err != nil && ctx.Err() == nil {
+				log.Error("maintenance: cleanup failed", "error", err)
+			}
 		}
 		if time.Since(lastPurge) >= 24*time.Hour {
 			n, err := PurgeAudit(ctx, db, retention)
