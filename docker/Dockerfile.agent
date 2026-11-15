@@ -1,0 +1,18 @@
+FROM golang:1.23-alpine AS builder
+
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+ARG VERSION=dev
+
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -ldflags="-s -w -X main.version=${VERSION}" \
+    -o easyrmmagent ./cmd/easyrmmagent
+
+FROM scratch
+COPY --from=builder /build/easyrmmagent /easyrmmagent
+ENTRYPOINT ["/easyrmmagent"]

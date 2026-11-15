@@ -7,6 +7,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { DevicesPage } from './pages/DevicesPage';
 import { DeviceDetailPage } from './pages/DeviceDetailPage';
 import { OrganizationsPage } from './pages/OrganizationsPage';
+import { EnrollPage } from './pages/EnrollPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 
 const queryClient = new QueryClient({
@@ -26,6 +27,7 @@ const pageTitles: Record<string, { title: string; subtitle?: string }> = {
   '/alerts': { title: 'Alerts', subtitle: 'Active alerts and notification rules' },
   '/reports': { title: 'Reports', subtitle: 'Compliance and operational reports' },
   '/settings': { title: 'Settings', subtitle: 'System configuration' },
+  '/settings/enrollment': { title: 'Enrollment Tokens', subtitle: 'Manage device enrollment' },
 };
 
 function AppContent() {
@@ -82,7 +84,9 @@ function AppContent() {
       case '/reports':
         return <PlaceholderPage name="Reports" />;
       case '/settings':
-        return <PlaceholderPage name="Settings" />;
+        return <EnrollPage />;
+      case '/settings/enrollment':
+        return <EnrollPage />;
       default:
         return <PlaceholderPage name="Page Not Found" />;
     }
