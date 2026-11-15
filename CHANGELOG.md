@@ -53,7 +53,28 @@ All notable changes to this project are documented here. The format follows
   MeshAgent in a locked-down container connecting through the gateway and a
   live terminal session over the relay.
 
+- EasyRMM agent for Linux (`agent/`, ADR-0015): enrollment with a
+  deployment token, an Ed25519 device key and signed requests with replay
+  protection, a heartbeat every minute, MeshAgent installed from the
+  server's own MeshCentral and linked to the device, `status` and
+  `uninstall` commands.
+- Deployment tokens per site (optional device group, expiry, device limit,
+  revocation) and the **Devices → Add devices** page: one-time install
+  command, agent downloads with SHA-256, token list.
+- Agent API under `/api/agent/v1/` with a checksum-verifying install script
+  and the Linux agent builds (`make build-agents`; included in the Docker
+  image, served from `EASYRMM_AGENT_DIR`).
+- Devices no longer depend on remote access: they are listed with their
+  agent's online state, version and enrollment even when MeshCentral is
+  turned off. The session reports which optional features the server has.
+- Guide: [Installing the EasyRMM agent](docs/deployment/agents.md).
+
 ### Fixed
+- A device that disconnected from MeshCentral stayed online until the next
+  five-minute sync: MeshCentral sends `nodeconnect` events without the
+  `etype` the synchronizer filtered on.
+- The first-run setup rate limiter was shared by every server instance in
+  one process (tests), so one instance's attempts could refuse another's.
 - Deleting a site that still has devices returned HTTP 500 instead of 409:
   PostgreSQL reports `ON DELETE RESTRICT` violations with their own error
   code, which is now recognized. Deleting an organization with sites only

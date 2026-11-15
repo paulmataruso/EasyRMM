@@ -47,18 +47,21 @@ Last updated: 2026-11-15.
 | Control-channel client | Tested | One `control.ashx` connection as the service account, request correlation, reconnect with backoff, keepalive, events; login token never logged |
 | Device groups and accounts in step with EasyRMM | Complete | A group per site, an account per user with remote rights, rights per site from RBAC; event-driven plus every five minutes; repairs drift, adopts lost groups, removes stale ones. Status under **Settings → Remote access** |
 | Edge gateway on the MeshCentral hostname | Tested | Agent/browser split, grant cookie, blocked features, revocation of open sessions within 15 s (ADR-0014). Verified end to end with a real MeshAgent; no UI by design |
-| Devices list and device page | Complete | Devices discovered from MeshCentral, filters by organization, site, status and name, row travel with j/k, recent remote sessions from the audit log. Moving and retiring devices are not available yet |
+| Devices list and device page | Complete | Enrolled and MeshCentral-discovered devices; filters by organization, site, status and name; row travel with j/k; agent version, enrollment and remote-access state; recent remote sessions from the audit log. Listed with remote access turned off too. Moving, renaming and retiring devices are not available yet |
 | Remote desktop / terminal / files | Complete | Started from a device's page into a full-window embedded session; each start is authorized and audited; reconnect, switch between kinds, full screen. Covered by Go integration tests with a live terminal session through the relay, Vitest page tests and a browser end-to-end test of the error paths. The desktop and files views are MeshCentral's, embedded; they are not exercised by an automated test with a graphical session |
 
 ## Endpoint
 
-| Feature | Status |
-|---|---|
-| Go agent: enrollment, identity, protocol | Not started |
-| MeshAgent install and correlation | Not started (today MeshCentral agents can only join through MeshCentral itself; EasyRMM builds no installers yet) |
-| Windows MSI / EXE / PowerShell | Not started |
-| Linux DEB / RPM / script | Not started |
-| Coordinated updates and uninstall | Not started |
+| Feature | Status | Notes |
+|---|---|---|
+| Deployment tokens | Complete | Per site and optional device group, expiry, device limit, revocation; shown once, stored hashed; audited. Console **Devices → Add devices** creates, lists and revokes them (ADR-0015) |
+| Go agent: enrollment, identity, heartbeat | Complete | `easyrmm-agent` for Linux: Ed25519 device key, signed requests with replay protection, heartbeat every minute with backoff, `status` command. Device online state and facts in the console. Integration tests run the real agent binary in a container against a real server and MeshCentral |
+| MeshAgent install and correlation | Complete | The agent fetches MeshAgent and its site's settings from MeshCentral through EasyRMM, runs it under systemd (or as a child process without systemd), and reports its node id; the server links the node within the device's site, merges a discovered duplicate, and audits it. Covered end to end, including a remote session to the enrolled device and offline detection |
+| Linux install script | Complete | `curl … /api/agent/v1/install.sh \| sudo sh -s -- --token …`, checksum-verified download, HTTPS only; agents for x86-64, ARM64, ARMv7 and x86 built into the Docker image. Tested by the browser end-to-end test (token to enrolled device) and the integration tests; not yet run on a range of distributions |
+| Uninstall | Tested | `easyrmm-agent uninstall` removes the agent, MeshAgent and their state; the device stays listed as offline. No console action to remove a device yet |
+| Windows agent, MSI / EXE / PowerShell | Not started | Needs Windows CI runners |
+| Linux DEB / RPM packages | Not started | The install script covers Linux for now |
+| Coordinated agent updates | Not started | Reinstalling with the script updates the binary today |
 
 ## Core RMM
 

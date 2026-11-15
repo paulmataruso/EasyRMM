@@ -77,8 +77,9 @@ access**. MeshCentral's own web interface, account pages, invitations and
 sharing links are not reachable; sessions start only from a device's page in
 the console.
 
-Devices appear in EasyRMM when a MeshCentral agent connects. EasyRMM does
-not build agent installers yet (phase 6).
+Devices join with the EasyRMM agent, which installs MeshAgent from this
+server: see [Installing the EasyRMM agent](agents.md). The image includes the
+Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).
 
 ## Security posture of the containers
 
@@ -133,5 +134,6 @@ once.
 docker compose build server          # uses docker/server/Dockerfile
 ```
 
-The image build runs the web interface build (Node) and the Go build in
-separate stages; the final image contains only the static server binary.
+The image build runs the web interface build (Node), the Go build and the
+Linux agent builds in separate stages; the final image contains only the
+static server binary and the agent binaries it serves.

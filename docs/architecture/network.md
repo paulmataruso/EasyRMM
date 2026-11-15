@@ -21,7 +21,7 @@ MeshCentral features that would open more ports are disabled: HTTP redirect
 
 | Name | Purpose |
 |---|---|
-| `rmm.example.com` | Web UI, API, companion-agent gateway |
+| `rmm.example.com` | Web UI, API, EasyRMM agent API (`/api/agent/`) and installers |
 | `mesh.rmm.example.com` (configurable) | MeshCentral agents and embedded remote sessions (separate browser origin, ADR-0004) |
 
 Both resolve to the same address. A wildcard record works too.
@@ -37,6 +37,13 @@ The edge routes by `Host`: the console name goes to the application, the
 MeshCentral name to the remote-access gateway, anything else gets HTTP 421.
 MeshCentral itself listens on loopback only and never sees a request the
 gateway has not checked.
+
+The EasyRMM agent talks to the console name under `/api/agent/v1/`:
+enrollment with a deployment token, signed heartbeats, MeshAgent and its
+settings (fetched by the server from MeshCentral over loopback), the install
+script and the agent downloads. These routes take no browser session or
+CSRF token; enrollment is rate-limited per address and everything after it
+is signed with the device's key (ADR-0015).
 
 ## Firewall
 

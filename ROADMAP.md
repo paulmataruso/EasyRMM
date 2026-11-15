@@ -10,7 +10,7 @@ feature in it is **Complete** in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STA
 | 3. GitHub foundation | Repository, CI (lint, tests, coverage floors, security scanning), templates, branch protection | In progress |
 | 4. Server foundation | Config, HTTP API, auth flows, organizations/sites/groups, users and roles, audit API, Docker deployment, web console (EasyPatch design system), dashboard | Implemented and tested locally; waiting for its first CI run on GitHub |
 | 5. MeshCentral integration | Container and config, control client, user/group sync, edge gateway, session launch, embedded desktop/terminal/files | Implemented and tested locally (including a real agent end to end); waiting for its first CI run on GitHub |
-| 6. Unified endpoint installation | Go agent, enrollment, MeshAgent install and correlation, MSI/EXE/PowerShell, DEB/RPM/script, updates, uninstall | Not started |
+| 6. Unified endpoint installation | Go agent, enrollment, MeshAgent install and correlation, MSI/EXE/PowerShell, DEB/RPM/script, updates, uninstall | In progress: Linux agent, deployment tokens, MeshAgent install and correlation, install script and uninstall done and tested locally. Windows agent and packages, DEB/RPM, coordinated updates to do |
 | 7. Core RMM | Inventory, telemetry, monitoring, alerts, scripts, jobs, software deployment | Not started |
 | 8. EasyPatch | EasyPatch changes (integration credentials, external ids…), connector, native patch UI | Not started |
 | 9. Production hardening | Security review, performance and soak tests, backup/restore drills, release pipeline, documentation completion | Not started |
@@ -22,5 +22,8 @@ feature in it is **Complete** in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STA
    required check.
 2. Licence the EasyPatch-derived stylesheet and logo construction to
    EasyRMM (ADR-0013).
-3. Phase 6: the EasyRMM agent, enrollment, and installers that bundle the
-   MeshAgent (ADR-0008, ADR-0009), so devices can be added from the console.
+3. Phase 6, remainder: the Windows agent as a service with an MSI and a
+   PowerShell one-liner (needs Windows CI runners), DEB/RPM packages, and
+   coordinated agent updates.
+4. Phase 7: inventory, monitoring and scripts over the agent channel
+   (ADR-0009).
