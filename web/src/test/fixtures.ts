@@ -41,6 +41,8 @@ export function device(id: string, name: string, extra: Partial<Device> = {}): D
     hostname: name.toLowerCase(),
     osDescription: "Windows 11 Pro, version 24H2",
     platform: "windows",
+    online: extra.online ?? extra.remoteOnline ?? true,
+    agent: null,
     remoteAgent: true,
     remoteOnline: true,
     lastSeenAt: T,

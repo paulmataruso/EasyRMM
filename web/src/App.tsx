@@ -20,6 +20,7 @@ import { SettingsPage } from "./pages/settings/SettingsPage";
 import { UserDetailPage } from "./pages/settings/UserDetailPage";
 import { AccountPage } from "./pages/account/AccountPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { AddDevicesPage } from "./pages/devices/AddDevicesPage";
 import { DevicesPage } from "./pages/devices/DevicesPage";
 import { DeviceDetailPage } from "./pages/devices/DeviceDetailPage";
 import { RemoteSessionPage } from "./pages/devices/RemoteSessionPage";
@@ -95,6 +96,7 @@ export function App() {
         <Route path="organizations/:id" element={<OrganizationDetailPage />} />
         <Route path="sites/:id" element={<SiteDetailPage />} />
         <Route path="devices" element={<DevicesPage />} />
+        <Route path="devices/add" element={<AddDevicesPage />} />
         <Route path="devices/:id" element={<DeviceDetailPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="users/:id" element={<UserDetailPage />} />

@@ -1,4 +1,4 @@
-import type { Assignment, AuditEntry, AuditOutcome, Device, RemoteKind, Role, User } from "../api/types";
+import type { Assignment, AuditEntry, AuditOutcome, Device, EnrollmentTokenStatus, RemoteKind, Role, User } from "../api/types";
 import { Badge, Dot, type Tone } from "./ui";
 
 export const ROLE_NAMES: Record<Role, string> = {
@@ -77,6 +77,10 @@ const ACTIONS: Record<string, string> = {
   "user.password_link": "Issued password link",
   "user.delete": "Deleted user",
   "device.remote_session": "Started remote session",
+  "device.enroll": "Enrolled device",
+  "device.remote_link": "Connected remote access",
+  "enrollment_token.create": "Created deployment token",
+  "enrollment_token.revoke": "Revoked deployment token",
 };
 
 export function actionLabel(action: string): string {
@@ -90,6 +94,7 @@ export const ACTION_GROUPS: [string, string][] = [
   ["site", "Sites"],
   ["device_group", "Device groups"],
   ["device", "Devices"],
+  ["enrollment_token", "Deployment tokens"],
   ["user", "Users"],
   ["setup", "Setup"],
 ];
@@ -111,22 +116,38 @@ export const REMOTE_KIND_NAMES: Record<RemoteKind, string> = {
   files: "Files",
 };
 
-/** Online, offline, or no remote-access agent. */
-export function DeviceStatusBadge({ device }: { device: Pick<Device, "remoteAgent" | "remoteOnline"> }) {
-  if (!device.remoteAgent) {
+/** Online, offline, or no agent at all. */
+export function DeviceStatusBadge({ device }: { device: Pick<Device, "online" | "agent" | "remoteAgent"> }) {
+  if (!device.agent && !device.remoteAgent) {
     return (
-      <Badge tone="neutral" title="No remote-access agent has connected for this device.">
+      <Badge tone="neutral" title="No agent has connected for this device.">
         No agent
       </Badge>
     );
   }
-  return device.remoteOnline ? (
+  return device.online ? (
     <Badge tone="ok" icon={<Dot tone="ok" />}>
       Online
     </Badge>
   ) : (
     <Badge tone="neutral" icon={<Dot tone="neutral" />}>
       Offline
+    </Badge>
+  );
+}
+
+const TOKEN_STATUS: Record<EnrollmentTokenStatus, { label: string; tone: Tone; title: string }> = {
+  active: { label: "Usable", tone: "ok", title: "Devices can enroll with this token." },
+  expired: { label: "Expired", tone: "neutral", title: "The token has expired." },
+  revoked: { label: "Revoked", tone: "neutral", title: "The token was revoked." },
+  used_up: { label: "Used up", tone: "neutral", title: "As many devices as the token allows have enrolled." },
+};
+
+export function TokenStatusBadge({ status }: { status: EnrollmentTokenStatus }) {
+  const s = TOKEN_STATUS[status] ?? { label: status, tone: "neutral" as Tone, title: "" };
+  return (
+    <Badge tone={s.tone} title={s.title}>
+      {s.label}
     </Badge>
   );
 }

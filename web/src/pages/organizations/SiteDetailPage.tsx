@@ -1,13 +1,15 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router";
-import { FolderTree, Pencil, Plus, Trash2 } from "lucide-react";
+import { FolderTree, MonitorDown, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, fieldError } from "../../api/client";
 import { useApi, useApiMutation, useList } from "../../api/hooks";
 import type { DeviceGroup, DeviceGroupInput, Organization, Site } from "../../api/types";
+import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog, Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import {
   Button,
+  buttonClasses,
   Card,
   EmptyState,
   ErrorState,
@@ -27,6 +29,7 @@ export function SiteDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const toast = useToast();
+  const { can } = useAuth();
   const site = useApi<Site>(`/sites/${id}`);
   const org = useApi<Organization>(site.data ? `/organizations/${site.data.organizationId}` : null);
   const groups = useList<DeviceGroup>(`/sites/${id}/device-groups`);
@@ -75,6 +78,12 @@ export function SiteDetailPage() {
         subtitle={[s.timezone, s.address].filter(Boolean).join(" · ")}
         actions={
           <>
+            {can("enrollment.manage") && (
+              <Link to={`/devices/add?siteId=${s.id}`} className={buttonClasses("secondary")}>
+                <MonitorDown className="size-4" aria-hidden />
+                Add devices
+              </Link>
+            )}
             {s.canManage && (
               <Button icon={<Pencil className="size-4" aria-hidden />} onClick={() => setEditing(true)}>
                 Edit

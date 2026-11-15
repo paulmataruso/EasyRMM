@@ -1,22 +1,22 @@
 import { useId, useRef } from "react";
 import { Link, useNavigate } from "react-router";
-import { Monitor } from "lucide-react";
-import { ApiError } from "../../api/client";
+import { Monitor, Plus } from "lucide-react";
 import { useApi, useList, usePrefetch, useSites } from "../../api/hooks";
 import type { Device, RemoteAccessStatus } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { OrganizationSelect, SearchInput } from "../../components/Filters";
 import { DeviceStatusBadge } from "../../components/StatusBadges";
-import { Alert, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Toolbar } from "../../components/ui";
+import { Alert, buttonClasses, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { useUrlState } from "../../lib/urlState";
 import { platformName } from "./platform";
 
-/** The server's cap on one list response (remote.MaxDevices). */
+/** The server's cap on one list response (devices.MaxList). */
 const MAX_DEVICES = 5000;
 
 export function DevicesPage() {
+  const { can } = useAuth();
   const url = useUrlState();
   const navigate = useNavigate();
   const prefetch = usePrefetch();
@@ -29,13 +29,19 @@ export function DevicesPage() {
 
   const params = { q: search || undefined, organizationId: organizationId || undefined, siteId: siteId || undefined, status: status || undefined };
   const list = useList<Device>("/devices", params, { refetchInterval: 30_000, keepPrevious: true });
-  const disabled = list.error instanceof ApiError && list.error.status === 404;
+  const canEnroll = can("enrollment.manage");
+  const addLink = (
+    <Link to={siteId ? `/devices/add?siteId=${encodeURIComponent(siteId)}` : "/devices/add"} className={buttonClasses("primary")}>
+      <Plus className="size-4" aria-hidden />
+      Add devices
+    </Link>
+  );
 
   useRowKeys(tableRef, (link) => link.dataset.id && prefetch(`/devices/${link.dataset.id}`));
 
   return (
     <>
-      <PageHeader title="Devices" subtitle="Computers in the organizations you support. Status refreshes every 30 seconds." />
+      <PageHeader title="Devices" subtitle="Computers in the organizations you support. Status refreshes every 30 seconds." actions={canEnroll && addLink} />
       <RemoteAccessWarning />
       <Toolbar>
         <SearchInput value={search} onChange={(v) => url.set({ q: v })} placeholder="Name or hostname" className="max-w-xs" />
@@ -46,16 +52,18 @@ export function DevicesPage() {
 
       {list.isPending ? (
         <Spinner />
-      ) : disabled ? (
-        <EmptyState title="Remote access is turned off" icon={<Monitor className="size-8" aria-hidden />}>
-          EasyRMM discovers devices through remote access, which is turned off on this server.
-        </EmptyState>
       ) : list.isError ? (
         <ErrorState error={list.error} onRetry={() => void list.refetch()} />
       ) : list.items.length === 0 ? (
-        <EmptyState title={filtered ? "No devices match these filters" : "No devices yet"} icon={<Monitor className="size-8" aria-hidden />}>
+        <EmptyState
+          title={filtered ? "No devices match these filters" : "No devices yet"}
+          icon={<Monitor className="size-8" aria-hidden />}
+          action={!filtered && canEnroll ? addLink : undefined}
+        >
           {!filtered &&
-            "A device appears here when its remote-access agent first connects, in the site its agent was installed for. EasyRMM cannot build agent installers yet."}
+            (canEnroll
+              ? "Install the EasyRMM agent on a computer with a deployment token, and it appears here in the token's site."
+              : "A device appears here once the EasyRMM agent is installed on it. Ask an administrator who manages enrollment for a deployment token.")}
         </EmptyState>
       ) : (
         <>
@@ -100,7 +108,7 @@ export function DevicesPage() {
                         {d.osDescription || platformName(d.platform)}
                       </td>
                       <td className="hidden whitespace-nowrap text-muted sm:table-cell" title={formatDateTime(d.lastSeenAt)}>
-                        {d.remoteOnline ? "Now" : formatRelative(d.lastSeenAt)}
+                        {d.online ? "Now" : formatRelative(d.lastSeenAt)}
                       </td>
                     </tr>
                   ))}
@@ -111,7 +119,7 @@ export function DevicesPage() {
           <p className="mt-2 text-xs text-muted">
             {list.items.length >= MAX_DEVICES
               ? `Showing the first ${plural(list.items.length, "device")}; filter to narrow the list`
-              : `${plural(list.items.length, "device")}, ${list.items.filter((d) => d.remoteOnline).length.toLocaleString()} online`}
+              : `${plural(list.items.length, "device")}, ${list.items.filter((d) => d.online).length.toLocaleString()} online`}
             <span className="hidden sm:inline">
               . Press <kbd>j</kbd> and <kbd>k</kbd> to move between rows, <kbd>/</kbd> to search.
             </span>
@@ -124,12 +132,13 @@ export function DevicesPage() {
 
 /** Tells administrators when MeshCentral cannot be reached; everyone else finds out when a session cannot start. */
 export function RemoteAccessWarning() {
-  const { can } = useAuth();
-  const status = useApi<RemoteAccessStatus>(can("settings.manage") ? "/remote-access/status" : null, undefined, { refetchInterval: 60_000 });
+  const { can, session } = useAuth();
+  const enabled = can("settings.manage") && session?.features.remoteAccess === true;
+  const status = useApi<RemoteAccessStatus>(enabled ? "/remote-access/status" : null, undefined, { refetchInterval: 60_000 });
   if (!status.data || status.data.connected) return null;
   return (
     <Alert tone="warn" title="Remote access is unavailable" className="mb-4">
-      EasyRMM cannot reach MeshCentral, so device status may be out of date and remote sessions cannot start.{" "}
+      EasyRMM cannot reach MeshCentral, so remote sessions cannot start and remote-access status may be out of date.{" "}
       <Link to="/settings?tab=remote" className="font-medium text-accent hover:underline">
         View details
       </Link>

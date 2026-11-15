@@ -60,6 +60,7 @@ EASYRMM_DEV_INSECURE_COOKIES=true \
 EASYRMM_DATA_DIR=$run_dir/data \
 EASYRMM_MESH_CONFIG_DIR=$run_dir/meshcentral \
 EASYRMM_MESH_INTERNAL_URL=http://127.0.0.1:$((port + 12)) \
+EASYRMM_AGENT_DIR=$root/bin/agents \
 EASYRMM_DATABASE_URL="postgres://easyrmm_app:$app_pw@$hostport/$db?sslmode=disable" \
 EASYRMM_DATABASE_MIGRATION_URL="postgres://easyrmm_owner:$owner_pw@$hostport/$db?sslmode=disable" \
 EASYRMM_SECRET_KEY=$(openssl rand -base64 32) \

@@ -1,7 +1,9 @@
 // The technician console, end to end, against a real server and database: first-run setup,
-// mandatory two-factor enrollment, tenancy, invitations, scoped access and the audit trail.
+// mandatory two-factor enrollment, tenancy, invitations, scoped access, device enrollment and the
+// audit trail.
 // The suite is one ordered story because each step builds on the server state of the last.
 
+import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { totp } from "./totp";
@@ -223,6 +225,57 @@ test("devices and remote access report honestly when MeshCentral is not running"
   await expect(page.getByText("Not found")).toBeVisible();
 });
 
+/** A device key as the agent sends it: the raw Ed25519 public key, base64. */
+function devicePublicKey(): string {
+  return generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("base64");
+}
+
+test("a deployment token enrolls a device, which then reports in", async () => {
+  const page = admin;
+  await page.goto("/devices");
+  await page.getByRole("link", { name: "Add devices" }).first().click();
+  await expect(page.getByRole("heading", { name: "Add devices" })).toBeVisible();
+  // The agents this server hands out (make build-agents), with the checksums the installer verifies.
+  await expect(page.getByText("Linux x86-64")).toBeVisible();
+  const sums = await page.request.get("/api/agent/v1/download/SHA256SUMS");
+  expect(await sums.text()).toMatch(/^[0-9a-f]{64} {2}easyrmm-agent-linux-amd64$/m);
+
+  await page.getByLabel(/^Site/).selectOption({ label: "Downtown clinic" });
+  await page.getByLabel(/^Device group/).selectOption({ label: "Reception" });
+  await page.getByLabel(/^Token name/).fill("Downtown rollout");
+  await page.getByLabel("Device limit").fill("1");
+  await page.getByRole("button", { name: "Create token" }).click();
+  const command = await page.locator("pre", { hasText: "install.sh" }).innerText();
+  expect(command).toContain("curl -fsSL https://rmm.localhost/api/agent/v1/install.sh | sudo sh -s -- --token ert_");
+  const token = /--token (ert_[A-Za-z0-9_-]+)/.exec(command)?.[1] ?? "";
+  expect(token).toHaveLength(47);
+
+  // A device enrolls the way the agent does: its own key, its facts, the token.
+  const facts = { hostname: "dt-reception-01", os: "Debian GNU/Linux 13 (trixie)", platform: "linux", arch: "amd64", agentVersion: "0.6.0-e2e" };
+  const enroll = await page.request.post("/api/agent/v1/enroll", { data: { token, publicKey: devicePublicKey(), facts } });
+  expect(enroll.status(), await enroll.text()).toBe(201);
+  // The token allowed one device.
+  const again = await page.request.post("/api/agent/v1/enroll", { data: { token, publicKey: devicePublicKey(), facts: { ...facts, hostname: "dt-reception-02" } } });
+  expect(again.status()).toBe(401);
+
+  await page.getByRole("button", { name: "Create another token" }).click();
+  await page.getByLabel("Which tokens").selectOption("all");
+  const row = page.getByRole("row", { name: /Downtown rollout/ });
+  await expect(row).toContainText("1 of 1");
+  await expect(row).toContainText("Used up");
+
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Devices" }).click();
+  const device = page.getByRole("row", { name: /dt-reception-01/ });
+  await expect(device).toContainText("Online");
+  await expect(device).toContainText("Debian GNU/Linux 13 (trixie)");
+  await device.getByRole("link", { name: "dt-reception-01" }).click();
+  await expect(page.getByRole("heading", { name: "dt-reception-01" })).toBeVisible();
+  await expect(page.getByText("0.6.0-e2e")).toBeVisible();
+  await expect(page.getByText("Reception", { exact: true })).toBeVisible();
+  // MeshCentral is not running here, so remote access has not been set up on the device.
+  await expect(page.getByText("Not set up yet")).toBeVisible();
+});
+
 test("a deep link survives sign-in and the second factor", async () => {
   const page = admin;
   await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: "Sign out" }).click();
@@ -240,7 +293,7 @@ test("a deep link survives sign-in and the second factor", async () => {
 
 test("the audit log records everything and its hash chain verifies", async () => {
   const page = admin;
-  for (const label of ["Created organization", "Created site", "Created device group", "Invited user"]) {
+  for (const label of ["Created organization", "Created site", "Created device group", "Invited user", "Created deployment token", "Enrolled device"]) {
     await expect(page.getByRole("cell", { name: new RegExp(label) }).first()).toBeVisible();
   }
   await page.getByLabel("Area").selectOption({ label: "Users" });

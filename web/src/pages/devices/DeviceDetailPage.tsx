@@ -21,15 +21,27 @@ export function allowedKinds(d: Pick<Device, "canDesktop" | "canTerminal" | "can
 }
 
 /** Why sessions cannot start on a device right now, or null when they can. */
-export function unavailableReason(d: Pick<Device, "remoteAgent" | "remoteOnline">): string | null {
-  if (!d.remoteAgent) return "This device has no remote-access agent.";
-  if (!d.remoteOnline) return "The device is offline.";
+export function unavailableReason(d: Pick<Device, "remoteAgent" | "remoteOnline" | "online">): string | null {
+  if (!d.remoteAgent) return "Remote access is not set up on this device.";
+  if (!d.remoteOnline) return d.online ? "Remote access is not connected." : "The device is offline.";
   return null;
+}
+
+/** The remote-access part of a device, in a few words, and what it means when that is not obvious. */
+export function remoteAccessState(d: Pick<Device, "remoteAgent" | "remoteOnline" | "agent">, enabled: boolean): { label: string; hint?: string } {
+  if (!enabled) return { label: "Turned off on this server" };
+  if (d.remoteAgent) return { label: d.remoteOnline ? "Connected" : "Not connected" };
+  if (d.agent)
+    return {
+      label: "Not set up yet",
+      hint: "The EasyRMM agent installs MeshAgent shortly after enrolling. If this lasts, run “easyrmm-agent status” on the device.",
+    };
+  return { label: "Not installed" };
 }
 
 export function DeviceDetailPage() {
   const { id = "" } = useParams();
-  const { can } = useAuth();
+  const { can, session } = useAuth();
   const device = useApi<Device>(`/devices/${id}`, undefined, { refetchInterval: 30_000 });
   const showHistory = can("audit.view");
 
@@ -38,6 +50,7 @@ export function DeviceDetailPage() {
   const d = device.data;
   const kinds = allowedKinds(d);
   const reason = unavailableReason(d);
+  const remote = remoteAccessState(d, session?.features.remoteAccess === true);
 
   return (
     <>
@@ -73,9 +86,9 @@ export function DeviceDetailPage() {
 
       {kinds.length > 0 && reason && (
         <Alert tone="info" className="mb-5" title={reason}>
-          {d.remoteAgent
-            ? `Last seen ${formatRelative(d.lastSeenAt)}. Remote sessions can start again once the device reconnects; this page checks every 30 seconds.`
-            : "Remote sessions need the agent to be installed and connected."}
+          {d.online
+            ? "The device is checking in, but its MeshAgent is not connected to MeshCentral. Remote sessions can start once it reconnects; this page checks every 30 seconds."
+            : `Last seen ${formatRelative(d.lastSeenAt)}. Remote sessions can start again once the device reconnects; this page checks every 30 seconds.`}
         </Alert>
       )}
 
@@ -84,7 +97,7 @@ export function DeviceDetailPage() {
           <KeyValueList
             items={[
               ["Status", <DeviceStatusBadge key="s" device={d} />],
-              ["Last seen", d.remoteOnline ? "Now" : <span title={formatDateTime(d.lastSeenAt)}>{formatRelative(d.lastSeenAt)}</span>],
+              ["Last seen", d.online ? "Now" : <span title={formatDateTime(d.lastSeenAt)}>{formatRelative(d.lastSeenAt)}</span>],
               ["Hostname", d.hostname || "—"],
               ["Operating system", d.osDescription || platformName(d.platform)],
               [
@@ -100,6 +113,24 @@ export function DeviceDetailPage() {
                 </Link>,
               ],
               ["Device group", d.deviceGroupName || <span className="text-muted">None</span>],
+              [
+                "EasyRMM agent",
+                d.agent ? (
+                  <span key="a">
+                    {d.agent.version} <span className="text-muted">({d.agent.arch})</span>
+                  </span>
+                ) : (
+                  <span className="text-muted">Not installed</span>
+                ),
+              ],
+              [
+                "Remote access",
+                <span key="r">
+                  {remote.label}
+                  {remote.hint && <span className="block text-xs text-muted">{remote.hint}</span>}
+                </span>,
+              ],
+              ...(d.agent ? [["Enrolled", formatDateTime(d.agent.enrolledAt)] as [string, string]] : []),
               ["First seen", formatDateTime(d.createdAt)],
             ]}
           />

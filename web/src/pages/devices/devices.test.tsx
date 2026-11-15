@@ -39,7 +39,7 @@ function deviceList(r: FakeRequest) {
     items: DEVICES.filter(
       (d) =>
         (!q || d.name.toLowerCase().includes(q) || d.hostname.includes(q)) &&
-        (!status || d.remoteOnline === (status === "online")) &&
+        (!status || d.online === (status === "online")) &&
         (!r.query.get("organizationId") || d.organizationId === r.query.get("organizationId")) &&
         (!r.query.get("siteId") || d.siteId === r.query.get("siteId")),
     ),
@@ -104,9 +104,27 @@ describe("devices", () => {
 
   it("says plainly how devices arrive when there are none", async () => {
     installFakeApi({ ...baseRoutes(TECHNICIAN), ...lists, "GET /devices": ok({ items: [] }) });
-    renderApp("/devices");
+    const { unmount } = renderApp("/devices");
     expect(await screen.findByText("No devices yet")).toBeInTheDocument();
-    expect(screen.getByText(/EasyRMM cannot build agent installers yet/)).toBeInTheDocument();
+    expect(screen.getByText(/Ask an administrator who manages enrollment/)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Add devices" })).not.toBeInTheDocument();
+    unmount();
+
+    // Someone who manages enrollment is sent to the deployment page.
+    const admin = sessionView({ permissions: [...sessionView().permissions, "enrollment.manage"] });
+    installFakeApi({ ...baseRoutes(admin), ...lists, "GET /devices": ok({ items: [] }), "GET /remote-access/status": ok(STATUS) });
+    const second = renderApp("/devices");
+    expect(await screen.findByText(/Install the EasyRMM agent on a computer with a deployment token/)).toBeInTheDocument();
+    const links = screen.getAllByRole("link", { name: "Add devices" });
+    expect(links).toHaveLength(2);
+    for (const link of links) expect(link).toHaveAttribute("href", "/devices/add");
+    second.unmount();
+
+    // With a site filter, the site carries over.
+    installFakeApi({ ...baseRoutes(admin), ...lists, "GET /devices": ok({ items: [] }), "GET /remote-access/status": ok(STATUS) });
+    renderApp("/devices?siteId=s2");
+    expect(await screen.findByText("No devices match these filters")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Add devices" })).toHaveAttribute("href", "/devices/add?siteId=s2");
   });
 
   it("warns administrators when MeshCentral cannot be reached", async () => {
@@ -121,10 +139,38 @@ describe("devices", () => {
     expect(screen.getByRole("link", { name: "View details" })).toHaveAttribute("href", "/settings?tab=remote");
   });
 
-  it("explains a server with remote access turned off", async () => {
-    installFakeApi({ ...baseRoutes(TECHNICIAN), ...lists, "GET /devices": fail(404, "not_found", "Not found.") });
+  it("lists enrolled devices on a server with remote access turned off", async () => {
+    const enrolled = device("d9", "BUILD-01", {
+      platform: "linux",
+      remoteAgent: false,
+      remoteOnline: false,
+      online: true,
+      canDesktop: false,
+      canTerminal: false,
+      canFiles: false,
+      agent: { version: "1.4.0", arch: "arm64", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z" },
+    });
+    // No /remote-access/status route: an administrator's page must not ask for it when the feature is off.
+    installFakeApi({
+      ...baseRoutes(sessionView({ features: { remoteAccess: false } })),
+      ...lists,
+      "GET /devices": ok({ items: [enrolled] }),
+      "GET /devices/:id": ok(enrolled),
+      "GET /audit": ok({ items: [] }),
+    });
     renderApp("/devices");
-    expect(await screen.findByText("Remote access is turned off")).toBeInTheDocument();
+    const row = await screen.findByRole("row", { name: /BUILD-01/ });
+    expect(within(row).getByText("Online")).toBeInTheDocument();
+    expect(within(row).getByText("Now")).toBeInTheDocument();
+    expect(screen.getByText("1 device, 1 online")).toBeInTheDocument();
+
+    await userEvent.setup().click(within(row).getByRole("link", { name: "BUILD-01" }));
+    expect(await screen.findByRole("heading", { name: "BUILD-01" })).toBeInTheDocument();
+    expect(screen.getByText("Turned off on this server")).toBeInTheDocument();
+    expect(screen.getByText("1.4.0")).toBeInTheDocument();
+    expect(screen.getByText("(arm64)")).toBeInTheDocument();
+    expect(screen.getByText("Enrolled")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remote desktop" })).not.toBeInTheDocument();
   });
 
   it("is in the navigation only for people who can view devices", async () => {
@@ -177,8 +223,34 @@ describe("device detail", () => {
     renderApp("/devices/d2");
     expect(await screen.findByText("The device is offline.")).toBeInTheDocument();
     for (const name of ["Remote desktop", "Terminal", "Files"]) expect(screen.getByRole("button", { name })).toBeDisabled();
+    expect(screen.getByText("Not connected")).toBeInTheDocument();
+    expect(screen.getByText("Not installed")).toBeInTheDocument();
     // No audit.view: no session history.
     expect(screen.queryByText("Remote sessions")).not.toBeInTheDocument();
+  });
+
+  it("tells a checking-in device apart from one whose MeshAgent is down", async () => {
+    const agent = { version: "1.4.0", arch: "amd64", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z" };
+    installFakeApi({
+      ...baseRoutes(TECHNICIAN),
+      "GET /devices/:id": ok(device("d4", "SRV-01", { platform: "linux", online: true, remoteOnline: false, agent })),
+    });
+    const { unmount } = renderApp("/devices/d4");
+    expect(await screen.findByText("Remote access is not connected.")).toBeInTheDocument();
+    expect(screen.getByText(/The device is checking in, but its MeshAgent is not connected/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Terminal" })).toBeDisabled();
+    unmount();
+
+    // Enrolled, but MeshAgent has not linked yet: no session buttons, and a pointer to what to check.
+    installFakeApi({
+      ...baseRoutes(TECHNICIAN),
+      "GET /devices/:id": ok(device("d5", "SRV-02", { platform: "linux", online: true, remoteAgent: false, remoteOnline: false, canDesktop: false, canTerminal: false, canFiles: false, agent })),
+    });
+    renderApp("/devices/d5");
+    expect(await screen.findByText("Not set up yet")).toBeInTheDocument();
+    expect(screen.getByText(/easyrmm-agent status/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
+    expect(screen.getByText("Online")).toBeInTheDocument();
   });
 
   it("shows read-only people the device without session buttons", async () => {

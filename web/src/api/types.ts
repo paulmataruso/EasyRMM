@@ -56,6 +56,13 @@ export interface SessionView {
   expiresAt: string;
   permissions: Permission[];
   isSuperAdmin: boolean;
+  /** Optional parts of the server that are turned on. */
+  features: Features;
+}
+
+export interface Features {
+  /** MeshCentral is configured, so remote sessions can be offered. */
+  remoteAccess: boolean;
 }
 
 export interface AuthOptions {
@@ -231,6 +238,10 @@ export interface Device {
   hostname: string;
   osDescription: string;
   platform: Platform;
+  /** The EasyRMM agent or remote access reported in recently. */
+  online: boolean;
+  /** The EasyRMM agent, when the device enrolled with one. */
+  agent: DeviceAgent | null;
   remoteAgent: boolean;
   remoteOnline: boolean;
   lastSeenAt: string | null;
@@ -239,6 +250,62 @@ export interface Device {
   canDesktop: boolean;
   canTerminal: boolean;
   canFiles: boolean;
+}
+
+export interface DeviceAgent {
+  version: string;
+  arch: string;
+  online: boolean;
+  lastSeenAt: string | null;
+  enrolledAt: string;
+}
+
+export type EnrollmentTokenStatus = "active" | "expired" | "revoked" | "used_up";
+
+export interface EnrollmentToken {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  siteId: string;
+  siteName: string;
+  deviceGroupId: string | null;
+  deviceGroupName?: string;
+  name: string;
+  expiresAt: string;
+  maxUses: number | null;
+  uses: number;
+  createdByName?: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  status: EnrollmentTokenStatus;
+}
+
+export interface EnrollmentTokenInput {
+  name: string;
+  deviceGroupId: string | null;
+  expiresInDays: number;
+  maxUses: number | null;
+}
+
+/** A created token; the secret is in no other response. */
+export interface NewEnrollmentToken {
+  token: EnrollmentToken;
+  secret: string;
+  serverUrl: string;
+}
+
+export interface AgentBuild {
+  os: string;
+  arch: string;
+  file: string;
+  size: number;
+  sha256: string;
+}
+
+export interface AgentDownloads {
+  serverUrl: string;
+  items: AgentBuild[];
 }
 
 export interface RemoteLaunch {
