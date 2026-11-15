@@ -215,3 +215,46 @@ export interface AuditVerifyResult {
   checked: number;
   firstBadId?: number;
 }
+
+export type Platform = "windows" | "linux" | "macos" | "other";
+export type RemoteKind = "desktop" | "terminal" | "files";
+
+export interface Device {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  siteId: string;
+  siteName: string;
+  deviceGroupId: string | null;
+  deviceGroupName?: string;
+  name: string;
+  hostname: string;
+  osDescription: string;
+  platform: Platform;
+  remoteAgent: boolean;
+  remoteOnline: boolean;
+  lastSeenAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  canDesktop: boolean;
+  canTerminal: boolean;
+  canFiles: boolean;
+}
+
+export interface RemoteLaunch {
+  grantId: string;
+  url: string;
+  expiresAt: string;
+  kind: RemoteKind;
+  deviceId: string;
+}
+
+export interface RemoteAccessStatus {
+  address: string;
+  connected: boolean;
+  lastSyncAt?: string;
+  lastError?: string;
+  lastErrorAt?: string;
+  devices: number;
+  devicesOnline: number;
+}

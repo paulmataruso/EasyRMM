@@ -20,6 +20,9 @@ import { SettingsPage } from "./pages/settings/SettingsPage";
 import { UserDetailPage } from "./pages/settings/UserDetailPage";
 import { AccountPage } from "./pages/account/AccountPage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import { DevicesPage } from "./pages/devices/DevicesPage";
+import { DeviceDetailPage } from "./pages/devices/DeviceDetailPage";
+import { RemoteSessionPage } from "./pages/devices/RemoteSessionPage";
 
 const stageRoutes: Record<Exclude<AuthStage, "loading" | "error" | "ready">, string> = {
   setup: "/setup",
@@ -83,11 +86,16 @@ export function App() {
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/welcome" element={<ResetPasswordPage invite />} />
 
+      {/* Remote sessions take the whole window. */}
+      <Route path="/devices/:id/remote/:kind" element={<Gate stage="ready"><RemoteSessionPage /></Gate>} />
+
       <Route element={<Gate stage="ready"><AppLayout /></Gate>}>
         <Route index element={<DashboardPage />} />
         <Route path="organizations" element={<OrganizationsPage />} />
         <Route path="organizations/:id" element={<OrganizationDetailPage />} />
         <Route path="sites/:id" element={<SiteDetailPage />} />
+        <Route path="devices" element={<DevicesPage />} />
+        <Route path="devices/:id" element={<DeviceDetailPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="users/:id" element={<UserDetailPage />} />
         <Route path="account" element={<AccountPage />} />

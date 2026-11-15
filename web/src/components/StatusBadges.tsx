@@ -1,5 +1,5 @@
-import type { Assignment, AuditEntry, AuditOutcome, Role, User } from "../api/types";
-import { Badge, type Tone } from "./ui";
+import type { Assignment, AuditEntry, AuditOutcome, Device, RemoteKind, Role, User } from "../api/types";
+import { Badge, Dot, type Tone } from "./ui";
 
 export const ROLE_NAMES: Record<Role, string> = {
   super_admin: "Super Administrator",
@@ -76,6 +76,7 @@ const ACTIONS: Record<string, string> = {
   "user.mfa_reset": "Reset second factor",
   "user.password_link": "Issued password link",
   "user.delete": "Deleted user",
+  "device.remote_session": "Started remote session",
 };
 
 export function actionLabel(action: string): string {
@@ -88,6 +89,7 @@ export const ACTION_GROUPS: [string, string][] = [
   ["organization", "Organizations"],
   ["site", "Sites"],
   ["device_group", "Device groups"],
+  ["device", "Devices"],
   ["user", "Users"],
   ["setup", "Setup"],
 ];
@@ -97,7 +99,34 @@ export function auditTarget(e: AuditEntry): string {
   const d = e.details ?? {};
   const name = typeof d.name === "string" ? d.name : typeof d.email === "string" ? d.email : null;
   if (name) return name;
+  if (typeof d.device === "string") return typeof d.kind === "string" ? `${d.device} (${REMOTE_KIND_NAMES[d.kind as RemoteKind] ?? d.kind})` : d.device;
   if (e.targetType === "session") return "Session";
   if (e.actorType === "user" && e.targetType === "user" && e.targetId === e.actorId) return "Own account";
   return e.targetType ? e.targetType.replace(/_/g, " ") : "—";
+}
+
+export const REMOTE_KIND_NAMES: Record<RemoteKind, string> = {
+  desktop: "Remote desktop",
+  terminal: "Terminal",
+  files: "Files",
+};
+
+/** Online, offline, or no remote-access agent. */
+export function DeviceStatusBadge({ device }: { device: Pick<Device, "remoteAgent" | "remoteOnline"> }) {
+  if (!device.remoteAgent) {
+    return (
+      <Badge tone="neutral" title="No remote-access agent has connected for this device.">
+        No agent
+      </Badge>
+    );
+  }
+  return device.remoteOnline ? (
+    <Badge tone="ok" icon={<Dot tone="ok" />}>
+      Online
+    </Badge>
+  ) : (
+    <Badge tone="neutral" icon={<Dot tone="neutral" />}>
+      Offline
+    </Badge>
+  );
 }

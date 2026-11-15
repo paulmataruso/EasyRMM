@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
-import { Building2, LayoutDashboard, LogOut, Menu, Moon, Settings, Sun, UserCircle, X } from "lucide-react";
+import { Building2, LayoutDashboard, LogOut, Menu, Monitor, Moon, Settings, Sun, UserCircle, X } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { applyTheme, getStoredTheme, storeTheme, type Theme } from "../lib/theme";
 import { cx } from "./ui";
@@ -75,7 +75,10 @@ export function AppLayout() {
     { to: "/", label: "Dashboard", icon: <LayoutDashboard className="size-4" aria-hidden />, end: true },
     { to: "/organizations", label: "Organizations", icon: <Building2 className="size-4" aria-hidden /> },
   ];
-  if (can("user.view") || can("audit.view")) {
+  if (can("device.view")) {
+    nav.push({ to: "/devices", label: "Devices", icon: <Monitor className="size-4" aria-hidden /> });
+  }
+  if (can("user.view") || can("audit.view") || can("settings.manage")) {
     nav.push({ to: "/settings", label: "Settings", icon: <Settings className="size-4" aria-hidden /> });
   }
 

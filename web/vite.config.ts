@@ -41,7 +41,7 @@ export default defineConfig({
       exclude: ["src/**/*.test.{ts,tsx}", "src/test/**", "src/main.tsx"],
       reporter: ["text-summary", "lcov"],
       // Floors just under the current numbers, so coverage can only ratchet up.
-      thresholds: { lines: 78, statements: 74, branches: 73, functions: 63 },
+      thresholds: { lines: 80, statements: 77, branches: 75, functions: 66 },
     },
   },
 });

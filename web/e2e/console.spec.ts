@@ -203,6 +203,26 @@ test("the technician accepts, enrolls, and sees only their organization", async 
   await context.close();
 });
 
+test("devices and remote access report honestly when MeshCentral is not running", async () => {
+  // start-server.sh enables remote access but runs no MeshCentral.
+  const page = admin;
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Devices" }).click();
+  await expect(page.getByRole("heading", { name: "Devices" })).toBeVisible();
+  await expect(page.getByText("No devices yet")).toBeVisible();
+  await expect(page.getByText("Remote access is unavailable")).toBeVisible();
+
+  await page.getByRole("link", { name: "View details" }).click();
+  await expect(page).toHaveURL(/\/settings\?tab=remote$/);
+  await expect(page.getByText("EasyRMM cannot reach MeshCentral")).toBeVisible();
+  await expect(page.getByText("https://mesh.rmm.localhost")).toBeVisible();
+
+  // A session link for a device that does not exist goes nowhere, and says so.
+  await page.goto("/devices/00000000-0000-4000-8000-000000000000/remote/desktop");
+  await expect(page.getByText("Device not found")).toBeVisible();
+  await page.getByRole("link", { name: "Back to the device" }).click();
+  await expect(page.getByText("Not found")).toBeVisible();
+});
+
 test("a deep link survives sign-in and the second factor", async () => {
   const page = admin;
   await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: "Sign out" }).click();

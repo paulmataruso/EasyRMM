@@ -1,6 +1,6 @@
 // Fictional records shaped like the API's JSON, for page tests.
 
-import type { AuditEntry, DeviceGroup, Organization, RoleView, SessionItem, Site, User } from "../api/types";
+import type { AuditEntry, Device, DeviceGroup, Organization, RoleView, SessionItem, Site, User } from "../api/types";
 
 const T = "2026-11-01T10:00:00Z";
 
@@ -27,6 +27,30 @@ export function site(id: string, organizationId: string, name: string, extra: Pa
 
 export function group(id: string, siteId: string, name: string, extra: Partial<DeviceGroup> = {}): DeviceGroup {
   return { id, organizationId: "o1", siteId, name, description: "", createdAt: T, updatedAt: T, ...extra };
+}
+
+export function device(id: string, name: string, extra: Partial<Device> = {}): Device {
+  return {
+    id,
+    organizationId: "o1",
+    organizationName: "Northwind Traders",
+    siteId: "s1",
+    siteName: "Head office",
+    deviceGroupId: null,
+    name,
+    hostname: name.toLowerCase(),
+    osDescription: "Windows 11 Pro, version 24H2",
+    platform: "windows",
+    remoteAgent: true,
+    remoteOnline: true,
+    lastSeenAt: T,
+    createdAt: T,
+    updatedAt: T,
+    canDesktop: true,
+    canTerminal: true,
+    canFiles: true,
+    ...extra,
+  };
 }
 
 export function person(id: string, displayName: string, email: string, extra: Partial<User> = {}): User {
