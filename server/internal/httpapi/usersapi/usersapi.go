@@ -257,6 +257,8 @@ type Setup struct {
 	svc  *users.Service
 	path string
 	log  *slog.Logger
+	// Ten setup attempts at once per address, then one every 10 seconds.
+	limit *auth.KeyedLimiter
 
 	mu   sync.Mutex
 	hash [32]byte
@@ -266,7 +268,8 @@ type Setup struct {
 // NewSetup prepares first-run setup. When no account exists it writes a new
 // token to <dataDir>/setup-token (mode 0600) and logs where to find it.
 func NewSetup(ctx context.Context, svc *users.Service, dataDir string, log *slog.Logger) (*Setup, error) {
-	s := &Setup{svc: svc, path: filepath.Join(dataDir, "setup-token"), log: log}
+	s := &Setup{svc: svc, path: filepath.Join(dataDir, "setup-token"), log: log,
+		limit: auth.NewKeyedLimiter(10*time.Second, 10, 10_000)}
 	needed, err := svc.NeedsSetup(ctx)
 	if err != nil {
 		return nil, err
@@ -335,7 +338,7 @@ func (a *API) completeSetup(w http.ResponseWriter, r *http.Request) error {
 	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
 		return err
 	}
-	if !setupLimiter.Allow(httpapi.ClientIP(r).String()) {
+	if !a.setup.limit.Allow(httpapi.ClientIP(r).String()) {
 		return httpapi.ErrTooMany
 	}
 	s := a.setup
@@ -359,6 +362,3 @@ func (a *API) completeSetup(w http.ResponseWriter, r *http.Request) error {
 	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
-
-// Ten setup attempts at once per address, then one every 10 seconds.
-var setupLimiter = auth.NewKeyedLimiter(10*time.Second, 10, 10_000)

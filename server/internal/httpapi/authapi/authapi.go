@@ -21,11 +21,18 @@ import (
 type API struct {
 	svc      *auth.Service
 	sessions *httpapi.Sessions
+	features Features
+}
+
+// Features are the optional parts of the server that are switched on.
+type Features struct {
+	// RemoteAccess is MeshCentral remote access (EASYRMM_MESH_ENABLED).
+	RemoteAccess bool `json:"remoteAccess"`
 }
 
 // New builds the auth API.
-func New(svc *auth.Service, sessions *httpapi.Sessions) *API {
-	return &API{svc: svc, sessions: sessions}
+func New(svc *auth.Service, sessions *httpapi.Sessions, features Features) *API {
+	return &API{svc: svc, sessions: sessions, features: features}
 }
 
 // Register mounts the routes.
@@ -77,10 +84,12 @@ type SessionView struct {
 	ExpiresAt    time.Time         `json:"expiresAt"`
 	Permissions  []rbac.Permission `json:"permissions"`
 	IsSuperAdmin bool              `json:"isSuperAdmin"`
+	Features     Features          `json:"features"`
 }
 
 func (a *API) view(id *httpapi.Identity) SessionView {
-	v := SessionView{State: id.Session.State, User: id.User, CSRFToken: id.CSRFToken, ExpiresAt: id.Session.ExpiresAt, Permissions: []rbac.Permission{}}
+	v := SessionView{State: id.Session.State, User: id.User, CSRFToken: id.CSRFToken, ExpiresAt: id.Session.ExpiresAt,
+		Permissions: []rbac.Permission{}, Features: a.features}
 	if id.Principal != nil {
 		v.Permissions = id.Principal.Permissions()
 		v.IsSuperAdmin = id.Principal.IsSuperAdmin()

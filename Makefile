@@ -70,11 +70,21 @@ test-integration: ## Go unit + integration tests against PostgreSQL and MeshCent
 	EASYRMM_TEST_MESH_DIR="$${EASYRMM_TEST_MESH_DIR:-$(TEST_MESH_DIR)/config}" \
 	EASYRMM_TEST_MESH_URL="$${EASYRMM_TEST_MESH_URL:-$(TEST_MESH_URL)}" \
 	EASYRMM_TEST_AGENT_IMAGE="$${EASYRMM_TEST_AGENT_IMAGE:-$(TEST_AGENT_IMAGE)}" \
-		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./server/... -coverprofile=coverage.txt ./...
+		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
 
 .PHONY: check
 check: fmt-check vet lint test-integration ## Everything CI runs for Go code
+
+.PHONY: build-agents
+build-agents: ## Build the Linux agents into bin/agents (serve them with EASYRMM_AGENT_DIR=bin/agents)
+	@mkdir -p bin/agents
+	@for arch in amd64 arm64 arm 386; do \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch GOARM=7 $(GO) build -trimpath \
+			-ldflags "-s -w -X main.Version=$$(git describe --tags --always --dirty 2>/dev/null || echo dev)" \
+			-o bin/agents/easyrmm-agent-linux-$$arch ./agent/cmd/easyrmm-agent || exit 1; \
+	done
+	@ls -l bin/agents
 
 .PHONY: build
 build: ## Build the server binary into bin/
@@ -99,5 +109,5 @@ web-test: web-deps ## Typecheck and unit-test the web console, with coverage flo
 	cd web && npm run typecheck && npm run test:coverage
 
 .PHONY: e2e
-e2e: web build ## Browser end-to-end tests against a real server (needs `make test-db`)
+e2e: web build build-agents ## Browser end-to-end tests against a real server (needs `make test-db`)
 	cd web && EASYRMM_E2E_ADMIN_URL="$${EASYRMM_E2E_ADMIN_URL:-$(TEST_DB_URL)}" npx playwright test

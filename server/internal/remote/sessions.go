@@ -18,6 +18,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
@@ -92,7 +93,7 @@ func (s *Service) StartSession(ctx context.Context, c access.Caller, sessionID, 
 	if !ok {
 		return nil, apperr.Invalid("kind", "Choose desktop, terminal or files.")
 	}
-	d, err := s.GetDevice(ctx, c, deviceID)
+	d, err := devices.Lookup(ctx, s.db, c, deviceID)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +106,7 @@ func (s *Service) StartSession(ctx context.Context, c access.Caller, sessionID, 
 		})
 		return nil, err
 	}
-	if d.meshNodeID == "" {
+	if d.MeshNodeID == "" {
 		return nil, errNoAgent
 	}
 	if !d.RemoteOnline {
@@ -156,7 +157,7 @@ func (s *Service) StartSession(ctx context.Context, c access.Caller, sessionID, 
 // ensureAccess makes sure the caller's MeshCentral account exists and holds
 // the rights EasyRMM grants at the device's site, without waiting for the
 // next reconciliation.
-func (s *Service) ensureAccess(ctx context.Context, c access.Caller, d *Device) error {
+func (s *Service) ensureAccess(ctx context.Context, c access.Caller, d *devices.Device) error {
 	meshID, err := s.meshOf(ctx, d.SiteID)
 	if err != nil {
 		return err

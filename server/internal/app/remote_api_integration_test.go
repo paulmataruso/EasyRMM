@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/server/internal/config"
@@ -170,7 +171,23 @@ func TestRemoteAPI(t *testing.T) {
 func TestRemoteAccessDisabled(t *testing.T) {
 	h := newHarness(t, false)
 	admin, _ := setUp(t, h)
-	wantStatus(t, admin.do("GET", "/api/v1/devices", nil), http.StatusNotFound, "not_found")
+	// Devices are listed without remote access; sessions are not offered.
+	var list struct{ Items []deviceView }
+	admin.expect(http.StatusOK, "GET", "/api/v1/devices", nil, &list)
+	if len(list.Items) != 0 {
+		t.Errorf("devices = %+v", list.Items)
+	}
+	wantStatus(t, admin.do("GET", "/api/v1/remote-access/status", nil), http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("POST", "/api/v1/devices/"+uuid.NewString()+"/remote-sessions", map[string]string{"kind": "desktop"}), http.StatusNotFound, "not_found")
+	var s struct {
+		Features struct {
+			RemoteAccess *bool `json:"remoteAccess"`
+		} `json:"features"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/auth/session", nil, &s)
+	if s.Features.RemoteAccess == nil || *s.Features.RemoteAccess {
+		t.Errorf("features.remoteAccess = %v", s.Features.RemoteAccess)
+	}
 	if r := admin.meshGet("/"); r.status != http.StatusMisdirectedRequest {
 		t.Fatalf("mesh host with remote access disabled: %d", r.status)
 	}

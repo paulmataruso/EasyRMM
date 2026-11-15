@@ -106,8 +106,10 @@ func (s *Service) DevicesChanged() {
 
 // HandleEvent reacts to MeshCentral events: any device event (added,
 // removed, renamed, connected, disconnected) schedules a device refresh.
+// MeshCentral 1.3.1 sends connection changes as "nodeconnect" without an
+// etype, so those are matched by action.
 func (s *Service) HandleEvent(ev meshcentral.Event) {
-	if ev.Type != "node" {
+	if ev.Type != "node" && ev.Action != "nodeconnect" {
 		return
 	}
 	s.DevicesChanged()
@@ -359,14 +361,42 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 	if err != nil {
 		return fmt.Errorf("listing devices: %w", err)
 	}
-	present := []string{}
+	// Empty, not nil: a NULL array would match nothing in the deletes below.
+	present, sites, types, online := []string{}, []uuid.UUID{}, []int32{}, []bool{}
+	for _, n := range nodes {
+		if site, ok := known[n.MeshID]; ok {
+			present = append(present, n.ID)
+			sites = append(sites, site)
+			types = append(types, int32(n.Agent.Type)) //nolint:gosec // MeshCentral agent types are small numbers
+			online = append(online, n.AgentConnected())
+		}
+	}
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		// Enrolled devices (ADR-0015) keep the facts their EasyRMM agent
+		// reports; MeshCentral only says whether MeshAgent is connected. A
+		// link to a node in another site's group is refused: the node id an
+		// agent reports is not proof that the node is that device.
+		if _, err := tx.Exec(ctx, `
+			UPDATE devices d SET mesh_node_id = NULL, mesh_agent_type = NULL, remote_online = false
+			FROM unnest($1::text[], $2::uuid[]) AS n(node, site)
+			WHERE d.mesh_node_id = n.node AND d.agent_public_key IS NOT NULL AND d.site_id <> n.site`,
+			present, sites); err != nil {
+			return fmt.Errorf("unlinking devices: %w", err)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE devices d SET mesh_agent_type = n.type, remote_online = n.online,
+			    last_seen_at = CASE WHEN n.online OR d.remote_online THEN now() ELSE d.last_seen_at END
+			FROM unnest($1::text[], $2::int[], $3::bool[]) AS n(node, type, online)
+			WHERE d.mesh_node_id = n.node AND d.agent_public_key IS NOT NULL
+			  AND (d.mesh_agent_type, d.remote_online) IS DISTINCT FROM (n.type, n.online)`,
+			present, types, online); err != nil {
+			return fmt.Errorf("updating enrolled devices: %w", err)
+		}
 		for _, n := range nodes {
 			site, ok := known[n.MeshID]
 			if !ok {
 				continue
 			}
-			present = append(present, n.ID)
 			hostname := n.OSName
 			if hostname == "" {
 				hostname = n.Name
@@ -378,6 +408,8 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 			if name == "" {
 				name = "Unnamed device"
 			}
+			// Discovered devices follow MeshCentral; the conflict update skips
+			// enrolled ones, handled above.
 			_, err := tx.Exec(ctx, `
 				INSERT INTO devices (organization_id, site_id, name, hostname, os_description, platform,
 				                     mesh_node_id, mesh_agent_type, remote_online, last_seen_at)
@@ -394,7 +426,8 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 				    mesh_agent_type = EXCLUDED.mesh_agent_type,
 				    remote_online = EXCLUDED.remote_online,
 				    last_seen_at = CASE WHEN EXCLUDED.remote_online OR devices.remote_online THEN now() ELSE devices.last_seen_at END
-				WHERE (devices.organization_id, devices.site_id, devices.name, devices.hostname, devices.os_description,
+				WHERE devices.agent_public_key IS NULL
+				  AND (devices.organization_id, devices.site_id, devices.name, devices.hostname, devices.os_description,
 				       devices.platform, devices.mesh_agent_type, devices.remote_online)
 				   IS DISTINCT FROM (EXCLUDED.organization_id, EXCLUDED.site_id, EXCLUDED.name, EXCLUDED.hostname,
 				       EXCLUDED.os_description, EXCLUDED.platform, EXCLUDED.mesh_agent_type, EXCLUDED.remote_online)`,
@@ -404,7 +437,14 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 				return fmt.Errorf("recording device %s: %w", n.ID, err)
 			}
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM devices WHERE mesh_node_id IS NOT NULL AND NOT (mesh_node_id = ANY ($1))`, present)
+		// A node MeshCentral no longer has: a discovered device goes with it,
+		// an enrolled one only loses its remote-access link.
+		if _, err := tx.Exec(ctx, `
+			UPDATE devices SET mesh_node_id = NULL, mesh_agent_type = NULL, remote_online = false
+			WHERE agent_public_key IS NOT NULL AND mesh_node_id IS NOT NULL AND NOT (mesh_node_id = ANY ($1))`, present); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `DELETE FROM devices WHERE agent_public_key IS NULL AND mesh_node_id IS NOT NULL AND NOT (mesh_node_id = ANY ($1))`, present)
 		return err
 	})
 	return err

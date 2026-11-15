@@ -29,11 +29,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral/meshtest"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
@@ -52,6 +54,7 @@ type rig struct {
 	ten   *tenancy.Service
 	mesh  *meshcentral.Client
 	svc   *Service
+	dev   *devices.Service
 	env   meshtest.Env
 	sys   access.Caller
 	log   *slog.Logger
@@ -78,6 +81,7 @@ func newRig(t *testing.T) *rig {
 	}
 	meshURL, _ := url.Parse(fmt.Sprintf("https://%s:%d", env.Hostname, env.PublicPort))
 	r.svc = New(inst.DB, r.audit, r.mesh, Config{MeshURL: meshURL, LoginKey: env.Key}, log)
+	r.dev = devices.New(inst.DB, true)
 	go r.mesh.Run(ctx)
 	r.waitFor(20*time.Second, "the MeshCentral control connection", r.mesh.Connected)
 	t.Cleanup(r.cleanup)
@@ -575,29 +579,29 @@ func TestRemoteSessionLaunch(t *testing.T) {
 	sess := r.session(techID)
 
 	// Listing and status.
-	list, err := r.svc.ListDevices(r.ctx, tech, DeviceQuery{})
+	list, err := r.dev.List(r.ctx, tech, devices.Query{})
 	if err != nil || len(list) != 3 {
 		t.Fatalf("tech devices = %d, %v", len(list), err)
 	}
 	if list[2].Name != "web-01" || !list[2].CanDesktop || !list[2].RemoteAgent || list[1].RemoteAgent {
 		t.Errorf("devices = %+v %+v", list[1], list[2])
 	}
-	if l, _ := r.svc.ListDevices(r.ctx, tech, DeviceQuery{Status: "online"}); len(l) != 1 {
+	if l, _ := r.dev.List(r.ctx, tech, devices.Query{Status: "online"}); len(l) != 1 {
 		t.Errorf("online devices = %d", len(l))
 	}
-	if l, _ := r.svc.ListDevices(r.ctx, tech, DeviceQuery{Search: "DB", SiteID: hq.ID, OrganizationID: acme.ID}); len(l) != 1 || l[0].ID != offline {
+	if l, _ := r.dev.List(r.ctx, tech, devices.Query{Search: "DB", SiteID: hq.ID, OrganizationID: acme.ID}); len(l) != 1 || l[0].ID != offline {
 		t.Errorf("search = %+v", l)
 	}
-	if _, err := r.svc.ListDevices(r.ctx, tech, DeviceQuery{Status: "asleep"}); err == nil {
+	if _, err := r.dev.List(r.ctx, tech, devices.Query{Status: "asleep"}); err == nil {
 		t.Error("bad status filter accepted")
 	}
-	if l, _ := r.svc.ListDevices(r.ctx, stranger, DeviceQuery{}); len(l) != 0 {
+	if l, _ := r.dev.List(r.ctx, stranger, devices.Query{}); len(l) != 0 {
 		t.Errorf("stranger sees %d devices", len(l))
 	}
-	if d, err := r.svc.GetDevice(r.ctx, viewer, online); err != nil || d.CanDesktop || d.CanTerminal || d.CanFiles {
+	if d, err := r.dev.Get(r.ctx, viewer, online); err != nil || d.CanDesktop || d.CanTerminal || d.CanFiles {
 		t.Errorf("viewer device = %+v, %v", d, err)
 	}
-	if _, err := r.svc.GetDevice(r.ctx, stranger, online); !errors.Is(err, apperr.ErrNotFound) {
+	if _, err := r.dev.Get(r.ctx, stranger, online); !errors.Is(err, apperr.ErrNotFound) {
 		t.Errorf("stranger GetDevice = %v", err)
 	}
 	if st := r.svc.Status(r.ctx); st.Devices != 2 || st.DevicesOnline != 1 {
@@ -844,9 +848,9 @@ func TestAgentEndToEnd(t *testing.T) {
 	})
 
 	// The agent connects through the gateway and its device appears.
-	var dev *Device
+	var dev *devices.Device
 	r.waitFor(2*time.Minute, "the agent's device to come online", func() bool {
-		list, err := r.svc.ListDevices(r.ctx, tech, DeviceQuery{Status: "online"})
+		list, err := r.dev.List(r.ctx, tech, devices.Query{Status: "online"})
 		if err == nil && len(list) == 1 {
 			dev = list[0]
 		}
@@ -854,6 +858,12 @@ func TestAgentEndToEnd(t *testing.T) {
 	})
 	if dev.Platform != "linux" || !dev.RemoteAgent || !dev.CanTerminal || dev.Hostname == "" || dev.SiteID != hq.ID || dev.LastSeenAt == nil {
 		t.Errorf("device = %+v", dev)
+	}
+	// What `meshagent -nodeid` prints is MeshCentral's node id once encoded
+	// the way MeshCentral does; the EasyRMM agent reports it (ADR-0015).
+	printed := docker(t, "exec", name, "./meshagent", "-nodeid")
+	if key, err := agentproto.MeshNodeKey(printed); err != nil || key != dev.MeshNodeID {
+		t.Errorf("meshagent -nodeid = %q, encoded %q (%v); MeshCentral's node id is %q", printed, key, err, dev.MeshNodeID)
 	}
 
 	// Open a terminal like MeshCentral's page does: an authenticated relay
@@ -876,14 +886,14 @@ func TestAgentEndToEnd(t *testing.T) {
 	raw, _ := json.Marshal(readUntil(t, ctl, "authcookie", 15*time.Second))
 	_ = json.Unmarshal(raw, &ac)
 	tunnel := hex.EncodeToString([]byte(uuid.NewString()[:8]))
-	relay, err := r.dial(b, "/meshrelay.ashx?browser=1&p=1&nodeid="+dev.meshNodeID+"&id="+tunnel+"&auth="+ac.Cookie)
+	relay, err := r.dial(b, "/meshrelay.ashx?browser=1&p=1&nodeid="+dev.MeshNodeID+"&id="+tunnel+"&auth="+ac.Cookie)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = relay.CloseNow() }()
 	send(t, ctl, map[string]any{
-		"action": "msg", "type": "tunnel", "nodeid": dev.meshNodeID, "usage": 1,
-		"value": "*/meshrelay.ashx?p=1&nodeid=" + dev.meshNodeID + "&id=" + tunnel + "&rauth=" + ac.Rcookie,
+		"action": "msg", "type": "tunnel", "nodeid": dev.MeshNodeID, "usage": 1,
+		"value": "*/meshrelay.ashx?p=1&nodeid=" + dev.MeshNodeID + "&id=" + tunnel + "&rauth=" + ac.Rcookie,
 	})
 	ctx, cancel := context.WithTimeout(r.ctx, 60*time.Second)
 	defer cancel()
@@ -942,7 +952,7 @@ func TestAgentEndToEnd(t *testing.T) {
 	docker(t, "stop", "-t", "2", name)
 	deadline := time.Now().Add(time.Minute)
 	for {
-		_, err := r.svc.GetDevice(r.ctx, r.sys, dev.ID)
+		_, err := r.dev.Get(r.ctx, r.sys, dev.ID)
 		if errors.Is(err, apperr.ErrNotFound) {
 			break
 		}

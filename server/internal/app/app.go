@@ -17,13 +17,19 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/authapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/devicesapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/enrollapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
@@ -59,6 +65,10 @@ type Deps struct {
 	Tenancy  *tenancy.Service
 	Users    *users.Service
 	Setup    *usersapi.Setup
+	Devices  *devices.Service
+	Agents   *agents.Service
+	// AgentBuilds are the agent binaries the server hands out.
+	AgentBuilds *agents.Builds
 
 	// Remote access; nil when it is disabled.
 	Mesh        *meshcentral.Client
@@ -96,11 +106,27 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 		DB: db, Audit: auditLog, Auth: authSvc, Sessions: sessions,
 		Tenancy: tenancy.New(db, auditLog), Users: usersSvc, Setup: setup,
 	}
+	var mesh agents.MeshAgents
 	if cfg.Mesh.Enabled {
 		if err := buildRemote(ctx, cfg, d, sealer, log); err != nil {
 			return nil, err
 		}
+		files, err := meshcentral.NewFiles(cfg.Mesh.InternalURL.String(), d.MeshSecrets.LoginKey)
+		if err != nil {
+			return nil, err
+		}
+		mesh = remote.NewMeshAgents(d.Remote, files)
 	}
+	d.Devices = devices.New(db, cfg.Mesh.Enabled)
+	d.Agents = agents.New(db, auditLog, mesh, log)
+	builds, err := agents.LoadBuilds(cfg.AgentDir)
+	if err != nil {
+		return nil, err
+	}
+	if len(builds.List()) == 0 {
+		log.Warn("no EasyRMM agent builds found; the console cannot offer agent downloads", "dir", cfg.AgentDir)
+	}
+	d.AgentBuilds = builds
 	return d, nil
 }
 
@@ -170,8 +196,10 @@ func writeMeshConfig(cfg *config.Config, sec *remote.Secrets, log *slog.Logger) 
 // Handler builds the complete HTTP handler for the application origin.
 func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error) {
 	mux := http.NewServeMux()
-	authapi.New(d.Auth, d.Sessions).Register(mux)
+	authapi.New(d.Auth, d.Sessions, authapi.Features{RemoteAccess: d.Remote != nil}).Register(mux)
 	tenancyapi.New(d.Tenancy).Register(mux)
+	devicesapi.New(d.Devices).Register(mux)
+	enrollapi.New(d.Agents, d.AgentBuilds, cfg.PublicURL.String()).Register(mux)
 	if d.Remote != nil {
 		remoteapi.New(d.Remote).Register(mux)
 	}
@@ -204,6 +232,13 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 		d.Sessions.Load,
 		d.Sessions.CSRF,
 	)
+	agentAPI, err := agentapi.New(d.Agents, d.AgentBuilds, cfg.PublicURL.String(), log)
+	if err != nil {
+		return nil, err
+	}
+	// Agents carry no browser session: their routes skip the session and
+	// CSRF layers and authenticate every request themselves.
+	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
 	publicHost := strings.ToLower(cfg.PublicURL.Hostname())
 	meshHost := ""
 	if d.Gateway != nil {
@@ -212,6 +247,10 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	hosts := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch strings.ToLower(strings.TrimSuffix(hostOnly(r.Host), ".")) {
 		case publicHost:
+			if strings.HasPrefix(r.URL.Path, agentproto.PathPrefix) {
+				agentHandler.ServeHTTP(w, r)
+				return
+			}
 			app.ServeHTTP(w, r)
 		case meshHost:
 			// Remote access: agents, and browsers holding a session grant.
@@ -287,6 +326,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	} else {
 		log.Info("remote access is disabled (EASYRMM_MESH_ENABLED=false)")
 	}
+	tasks = append(tasks, deps.Agents.Cleanup)
 	wg.Go(func() { maintain(ctx, db, cfg.AuditRetention, log, tasks...) })
 	healthErr := make(chan error, 1)
 	if cfg.ListenHealth != "" {

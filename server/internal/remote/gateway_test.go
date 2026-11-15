@@ -326,12 +326,23 @@ func TestHandleEventSchedulesDeviceRefresh(t *testing.T) {
 		t.Fatal("account event scheduled a device refresh")
 	default:
 	}
-	s.HandleEvent(meshcentral.Event{Type: "node", Action: "nodeconnect"})
-	s.HandleEvent(meshcentral.Event{Type: "node", Action: "changenode"}) // coalesced
+	s.HandleEvent(meshcentral.Event{Type: "node", Action: "changenode"})
+	s.HandleEvent(meshcentral.Event{Type: "node", Action: "addnode"}) // coalesced
 	select {
 	case <-s.devices:
 	default:
 		t.Fatal("device event did not schedule a refresh")
+	}
+	// Connection changes carry no etype (as MeshCentral 1.3.1 sends them).
+	s.HandleEvent(meshcentral.Event{Action: "nodeconnect"})
+	select {
+	case <-s.devices:
+	default:
+		t.Fatal("a disconnection did not schedule a refresh")
+	}
+	s.HandleEvent(meshcentral.Event{Action: "ifchange"})
+	if len(s.devices) != 0 {
+		t.Fatal("an unrelated event scheduled a refresh")
 	}
 	s.Changed()
 	s.Changed()

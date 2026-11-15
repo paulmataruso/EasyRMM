@@ -59,15 +59,17 @@ type Config struct {
 	SecretKeys []secrets.Key // first is primary
 	DataDir    string
 
-	RequireMFA        bool
-	SessionIdle       time.Duration
-	SessionMaxAge     time.Duration
-	AuditRetention    time.Duration
-	PasswordResetTTL  time.Duration
-	LogLevel          string
-	LogFormat         string // "json" or "text"
-	ArgonMaxParallel  int
-	WebDir            string // optional override of the embedded UI
+	RequireMFA       bool
+	SessionIdle      time.Duration
+	SessionMaxAge    time.Duration
+	AuditRetention   time.Duration
+	PasswordResetTTL time.Duration
+	LogLevel         string
+	LogFormat        string // "json" or "text"
+	ArgonMaxParallel int
+	WebDir           string // optional override of the embedded UI
+	// AgentDir holds the EasyRMM agent builds the server hands out.
+	AgentDir          string
 	SMTP              SMTPConfig
 	Mesh              MeshConfig
 	DevInsecureCookie bool // only for local development over plain HTTP
@@ -129,6 +131,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		LogFormat:         l.str("EASYRMM_LOG_FORMAT", "json"),
 		ArgonMaxParallel:  l.integer("EASYRMM_ARGON2_MAX_PARALLEL", 4),
 		WebDir:            l.str("EASYRMM_WEB_DIR", ""),
+		AgentDir:          l.str("EASYRMM_AGENT_DIR", "/usr/share/easyrmm/agents"),
 		DevInsecureCookie: l.boolean("EASYRMM_DEV_INSECURE_COOKIES", false),
 		SMTP: SMTPConfig{
 			Host:     l.str("EASYRMM_SMTP_HOST", ""),

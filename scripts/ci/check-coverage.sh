@@ -21,6 +21,10 @@ floors=(
   "server/internal/users                   88"
   "server/internal/tenancy                 88"
   "server/internal/audit                   85"
+  # Agent identity: enrollment, request signatures, and their HTTP surface.
+  "internal/agentproto                     95"
+  "server/internal/agents                  88"
+  "server/internal/httpapi/agentapi        88"
   # Everything else.
   "server/internal/database                85"
   "server/internal/config                  90"
@@ -33,11 +37,22 @@ floors=(
   "server/internal/httpapi/usersapi        85"
   "server/internal/httpapi/auditapi        85"
   "server/internal/httpapi/remoteapi       85"
+  "server/internal/httpapi/devicesapi      85"
+  "server/internal/httpapi/enrollapi       85"
+  "server/internal/devices                 88"
   # Remote access: the MeshCentral client, and the service and gateway that
   # decide who reaches MeshCentral.
   "server/internal/meshcentral             85"
   "server/internal/remote                  88"
   "server/cmd/easyrmm-server               80"
+  # The endpoint agent. Its end-to-end run in a container is not
+  # instrumented; these floors come from its unit tests.
+  "agent/client                            90"
+  "agent/runner                            90"
+  "agent/host                              85"
+  "agent/meshagent                         80"
+  "agent/state                             75"
+  "agent/cmd/easyrmm-agent                 75"
 )
 
 if [[ ! -f "$profile" ]]; then

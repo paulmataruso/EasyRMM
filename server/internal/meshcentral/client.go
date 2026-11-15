@@ -31,7 +31,9 @@ func (e *CommandError) Error() string {
 }
 
 // Event is a MeshCentral server event delivered on the control channel, for
-// example a device connecting ({"etype":"node","action":"nodeconnect"}).
+// example a device change ({"etype":"node","action":"changenode"}). Some
+// events have no etype: a device connecting or disconnecting arrives as
+// {"action":"nodeconnect","conn":0|1,...}.
 type Event struct {
 	Type   string          `json:"etype"`
 	Action string          `json:"action"`

@@ -10,7 +10,10 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
@@ -223,7 +226,7 @@ func TestSessionLaunchDependsOnMeshCentral(t *testing.T) {
 	if err := svc.SyncDevices(r.ctx); err != nil {
 		t.Fatal(err)
 	}
-	list, err := svc.ListDevices(r.ctx, tech, DeviceQuery{})
+	list, err := r.dev.List(r.ctx, tech, devices.Query{})
 	if err != nil || len(list) != 3 {
 		t.Fatalf("devices = %d, %v", len(list), err)
 	}
@@ -240,7 +243,7 @@ func TestSessionLaunchDependsOnMeshCentral(t *testing.T) {
 	if err := svc.SyncDevices(r.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if d, _ := svc.GetDevice(r.ctx, tech, web.ID); !d.UpdatedAt.Equal(before) {
+	if d, _ := r.dev.Get(r.ctx, tech, web.ID); !d.UpdatedAt.Equal(before) {
 		t.Error("an unchanged device was rewritten")
 	}
 
@@ -270,5 +273,69 @@ func TestSessionLaunchDependsOnMeshCentral(t *testing.T) {
 	f.set()
 	if valid, err := svc.SessionsValid(r.ctx, []uuid.UUID{sess, uuid.New()}); err != nil || !valid[sess] || len(valid) != 1 {
 		t.Errorf("SessionsValid = %v %v", valid, err)
+	}
+}
+
+// TestSyncKeepsEnrolledDevices checks how MeshCentral's device list treats
+// devices the EasyRMM agent enrolled: their facts stay the agent's, a
+// vanished node only unlinks them, and a node in another site's group is
+// never kept linked.
+func TestSyncKeepsEnrolledDevices(t *testing.T) {
+	r := newRig(t)
+	acme := r.org("Acme")
+	hq := r.site(acme.ID, "HQ")
+	branch := r.site(acme.ID, "Branch")
+	_, tech := r.user("Tess Tech", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: acme.ID})
+	r.reconcile()
+	hqMesh, branchMesh := r.meshOfSite(hq.ID), r.meshOfSite(branch.ID)
+
+	enrolled := func(name, node string) uuid.UUID {
+		var id uuid.UUID
+		err := r.db.InTx(r.ctx, database.System, func(tx pgx.Tx) error {
+			return tx.QueryRow(r.ctx, `INSERT INTO devices (organization_id, site_id, name, hostname, os_description, platform,
+					mesh_node_id, agent_public_key, enrolled_at, agent_last_seen_at)
+				VALUES ($1, $2, $3, $3, 'Agent OS', 'linux', $4, $5, now(), now()) RETURNING id`,
+				acme.ID, hq.ID, name, node, []byte(uuid.NewString()[:32])).Scan(&id)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+	kept := enrolled("agent-name", "node//enrolled-a")
+	gone := enrolled("gone", "node//enrolled-b")
+	moved := enrolled("moved", "node//enrolled-c")
+
+	f := &flakyMesh{Mesh: r.mesh, nodes: []meshcentral.Node{
+		{ID: "node//enrolled-a", MeshID: hqMesh, Name: "mesh-name", OSDesc: "Mesh OS", Agent: meshcentral.AgentInfo{Type: 4}, Conn: 1},
+		{ID: "node//enrolled-c", MeshID: branchMesh, Name: "elsewhere", Agent: meshcentral.AgentInfo{Type: 6}, Conn: 1},
+	}}
+	svc := New(r.db, r.audit, f, r.svc.cfg, r.log)
+	if err := svc.SyncDevices(r.ctx); err != nil {
+		t.Fatal(err)
+	}
+	d, err := r.dev.Get(r.ctx, tech, kept)
+	if err != nil || d.Name != "agent-name" || d.OSDescription != "Agent OS" || d.Platform != "linux" || !d.RemoteOnline || !d.CanDesktop {
+		t.Errorf("enrolled device after sync = %+v, %v", d, err)
+	}
+	if d, err := r.dev.Get(r.ctx, tech, gone); err != nil || d.RemoteAgent || d.RemoteOnline || d.Agent == nil {
+		t.Errorf("enrolled device whose node vanished = %+v, %v", d, err)
+	}
+	if d, err := r.dev.Get(r.ctx, tech, moved); err != nil || d.RemoteAgent || d.SiteID != hq.ID {
+		t.Errorf("enrolled device claiming another site's node = %+v, %v", d, err)
+	}
+	// The other site's node is a discovered device of its own there.
+	list, _ := r.dev.List(r.ctx, tech, devices.Query{SiteID: branch.ID})
+	if len(list) != 1 || list[0].Name != "elsewhere" || list[0].Agent != nil || !list[0].RemoteAgent {
+		t.Errorf("branch devices = %+v", list)
+	}
+
+	// Disconnecting updates the enrolled device's connection only.
+	f.nodes[0].Conn = 0
+	if err := svc.SyncDevices(r.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := r.dev.Get(r.ctx, tech, kept); d.RemoteOnline || !d.RemoteAgent || !d.Online {
+		t.Errorf("after MeshAgent disconnects: %+v", d)
 	}
 }

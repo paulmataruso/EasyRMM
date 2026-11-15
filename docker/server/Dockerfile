@@ -25,6 +25,7 @@ RUN apk add --no-cache libcap
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY internal/ internal/
 COPY server/ server/
 COPY --from=web /src/web/dist/ server/internal/webui/dist/
 ARG VERSION=dev
@@ -33,6 +34,25 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
       -ldflags "-s -w -X github.com/paulmataruso/easyrmm/server/internal/app.Version=${VERSION}" \
       -o /out/easyrmm-server ./server/cmd/easyrmm-server \
  && setcap cap_net_bind_service=+ep /out/easyrmm-server
+
+# --- Agents ------------------------------------------------------------------
+# The EasyRMM agent for every Linux architecture the installer supports. The
+# server hands these out (ADR-0015); they are static and the same for every
+# server.
+FROM ${GO_IMAGE} AS agents
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY internal/ internal/
+COPY agent/ agent/
+ARG VERSION=dev
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    set -e; mkdir -p /out/agents; \
+    for arch in amd64 arm64 arm 386; do \
+      CGO_ENABLED=0 GOOS=linux GOARCH=$arch GOARM=7 go build -trimpath -buildvcs=false \
+        -ldflags "-s -w -X main.Version=${VERSION}" \
+        -o /out/agents/easyrmm-agent-linux-$arch ./agent/cmd/easyrmm-agent; \
+    done
 
 # --- Runtime -----------------------------------------------------------------
 FROM ${RUNTIME_IMAGE}
@@ -43,6 +63,7 @@ LABEL org.opencontainers.image.title="EasyRMM server" \
       org.opencontainers.image.licenses="AGPL-3.0-or-later" \
       org.opencontainers.image.version="${VERSION}"
 COPY --from=server /out/easyrmm-server /usr/local/bin/easyrmm-server
+COPY --from=agents /out/agents/ /usr/share/easyrmm/agents/
 USER 65532:65532
 ENV EASYRMM_DATA_DIR=/var/lib/easyrmm
 HEALTHCHECK --interval=30s --timeout=6s --start-period=90s --retries=3 \
