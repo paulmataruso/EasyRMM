@@ -87,6 +87,22 @@ const (
 	ScopeSite
 )
 
+// String returns the scope's name.
+func (k ScopeKind) String() string {
+	switch k {
+	case ScopeGlobal:
+		return "global"
+	case ScopeOrganization:
+		return "organization"
+	case ScopeSite:
+		return "site"
+	}
+	return "unknown"
+}
+
+// MarshalText encodes the scope by name for JSON.
+func (k ScopeKind) MarshalText() ([]byte, error) { return []byte(k.String()), nil }
+
 // RoleDef describes a built-in role.
 type RoleDef struct {
 	Role        Role

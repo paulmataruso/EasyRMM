@@ -197,7 +197,7 @@ func (l *Logger) List(ctx context.Context, scope database.Scope, q Query) ([]Ent
 			WHERE ($1::uuid IS NULL OR organization_id = $1)
 			  AND ($2::uuid IS NULL OR actor_id = $2)
 			  AND ($3::uuid IS NULL OR device_id = $3)
-			  AND ($4 = '' OR action = $4 OR action LIKE $4 || '.%')
+			  AND ($4 = '' OR action = $4 OR left(action, length($4) + 1) = $4 || '.')
 			  AND ($5 = 0 OR id < $5)
 			ORDER BY id DESC
 			LIMIT $6`,

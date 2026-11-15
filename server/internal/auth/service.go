@@ -712,10 +712,23 @@ func (s *Service) ChangePassword(ctx context.Context, sess *Session, user *User,
 	})
 }
 
+// InviteTTL is how long an invitation link stays valid.
+const InviteTTL = 72 * time.Hour
+
 // IssueResetToken creates a password reset token for a user inside tx and
 // returns the link to deliver. Used by self-service reset and by
 // administrators helping a user who cannot sign in.
 func (s *Service) IssueResetToken(ctx context.Context, tx pgx.Tx, userID uuid.UUID, meta RequestMeta) (string, error) {
+	return s.issueToken(ctx, tx, userID, s.cfg.PasswordResetTTL, "/reset-password", meta)
+}
+
+// IssueInviteToken creates the link a newly invited user opens to choose
+// their password. It is a password reset token with a longer lifetime.
+func (s *Service) IssueInviteToken(ctx context.Context, tx pgx.Tx, userID uuid.UUID, meta RequestMeta) (string, error) {
+	return s.issueToken(ctx, tx, userID, InviteTTL, "/welcome", meta)
+}
+
+func (s *Service) issueToken(ctx context.Context, tx pgx.Tx, userID uuid.UUID, ttl time.Duration, path string, meta RequestMeta) (string, error) {
 	token, hash, err := NewToken()
 	if err != nil {
 		return "", err
@@ -730,13 +743,16 @@ func (s *Service) IssueResetToken(ctx context.Context, tx pgx.Tx, userID uuid.UU
 		ip = &a
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO password_reset_tokens (token_hash, user_id, expires_at, source_ip) VALUES ($1, $2, $3, $4)`,
-		hash, userID, s.now().Add(s.cfg.PasswordResetTTL), ip); err != nil {
+		hash, userID, s.now().Add(ttl), ip); err != nil {
 		return "", err
 	}
 	// The token travels in the URL fragment so it never reaches server or
 	// proxy access logs.
-	return strings.TrimRight(s.cfg.PublicURL, "/") + "/reset-password#token=" + token, nil
+	return strings.TrimRight(s.cfg.PublicURL, "/") + path + "#token=" + token, nil
 }
+
+// Mailer returns the configured mailer, or nil.
+func (s *Service) Mailer() Mailer { return s.mailer }
 
 // RequestPasswordReset e-mails a reset link if the address belongs to an
 // active account. It always appears to succeed.

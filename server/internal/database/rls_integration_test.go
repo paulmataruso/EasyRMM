@@ -277,10 +277,10 @@ func TestTransactionRollsBackOnErrorAndPanic(t *testing.T) {
 	if err == nil {
 		t.Fatal("write succeeded in a read-only transaction")
 	}
-	// A cancelled context fails cleanly before any work.
+	// A canceled context fails cleanly before any work.
 	cctx, cancel := context.WithCancel(ctx)
 	cancel()
 	if err := inst.DB.InTx(cctx, database.System, func(pgx.Tx) error { return nil }); err == nil {
-		t.Fatal("transaction began on a cancelled context")
+		t.Fatal("transaction began on a canceled context")
 	}
 }

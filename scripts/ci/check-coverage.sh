@@ -24,19 +24,27 @@ if [[ ! -f "$profile" ]]; then
   exit 1
 fi
 
-# Sum statements and covered statements per package directory.
+# Sum statements and covered statements per package directory. With
+# -coverpkg every test binary reports every package, so the same block can
+# appear several times: count each block once, covered if any run hit it.
 summary=$(awk -v mod="$module/" '
-  NR == 1 { next }   # mode line
+  /^mode:/ { next }
   {
-    split($1, loc, ":"); file = loc[1]
-    sub(mod, "", file)
-    n = split(file, parts, "/"); dir = parts[1]
-    for (i = 2; i < n; i++) dir = dir "/" parts[i]
-    stmts = $2; hits = $3
-    total[dir] += stmts
-    if (hits > 0) covered[dir] += stmts
+    block = $1
+    stmts[block] = $2
+    if ($3 > 0) hit[block] = 1
   }
-  END { for (d in total) printf "%s %.1f\n", d, (covered[d] / total[d]) * 100 }
+  END {
+    for (b in stmts) {
+      split(b, loc, ":"); file = loc[1]
+      sub(mod, "", file)
+      n = split(file, parts, "/"); dir = parts[1]
+      for (i = 2; i < n; i++) dir = dir "/" parts[i]
+      total[dir] += stmts[b]
+      if (b in hit) covered[dir] += stmts[b]
+    }
+    for (d in total) printf "%s %.1f\n", d, (covered[d] / total[d]) * 100
+  }
 ' "$profile" | sort)
 
 echo "Package coverage:"
