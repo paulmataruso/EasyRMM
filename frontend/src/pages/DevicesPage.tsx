@@ -3,7 +3,11 @@ import { Monitor, Wifi, WifiOff, AlertTriangle, Search, RefreshCw } from 'lucide
 import { api } from '../lib/api';
 import type { Device, DeviceListResponse } from '../types';
 
-export function DevicesPage() {
+interface DevicesPageProps {
+  onSelectDevice?: (id: string) => void;
+}
+
+export function DevicesPage({ onSelectDevice }: DevicesPageProps) {
   const [devices, setDevices] = useState<Device[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -136,6 +140,7 @@ export function DevicesPage() {
                   key={d.id}
                   className="border-t cursor-pointer transition-colors"
                   style={{ borderColor: 'var(--color-border)' }}
+                  onClick={() => onSelectDevice?.(d.id)}
                   onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-bg-hover)'; }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                 >

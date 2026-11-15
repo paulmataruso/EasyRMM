@@ -5,6 +5,7 @@ import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './components/auth/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { DevicesPage } from './pages/DevicesPage';
+import { DeviceDetailPage } from './pages/DeviceDetailPage';
 import { OrganizationsPage } from './pages/OrganizationsPage';
 import { PlaceholderPage } from './pages/PlaceholderPage';
 
@@ -54,14 +55,18 @@ function AppContent() {
     return <LoginPage />;
   }
 
-  const pageInfo = pageTitles[currentPath] || { title: 'Not Found' };
+  const deviceDetailMatch = currentPath.match(/^\/devices\/([a-f0-9-]+)$/);
+  const pageInfo = pageTitles[deviceDetailMatch ? '/devices' : currentPath] || { title: 'Not Found' };
 
   function renderPage() {
+    if (deviceDetailMatch) {
+      return <DeviceDetailPage deviceId={deviceDetailMatch[1]} onBack={() => navigate('/devices')} />;
+    }
     switch (currentPath) {
       case '/':
         return <DashboardPage />;
       case '/devices':
-        return <DevicesPage />;
+        return <DevicesPage onSelectDevice={(id) => navigate(`/devices/${id}`)} />;
       case '/organizations':
         return <OrganizationsPage />;
       case '/scripts':

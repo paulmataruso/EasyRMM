@@ -24,6 +24,7 @@ import (
 	"github.com/paulmataruso/easyrm/internal/config"
 	"github.com/paulmataruso/easyrm/internal/device"
 	"github.com/paulmataruso/easyrm/internal/enrollment"
+	"github.com/paulmataruso/easyrm/internal/meshcentral"
 	"github.com/paulmataruso/easyrm/internal/organization"
 	"github.com/paulmataruso/easyrm/internal/site"
 	"github.com/paulmataruso/easyrm/pkg/middleware"
@@ -76,12 +77,14 @@ func (s *Server) setupRouter() {
 
 	// Initialize agent hub and handlers
 	agentHub := agent.NewHub(s.logger)
+	meshClient := meshcentral.NewClient(s.cfg.MeshCentral)
 	authHandler := auth.NewHandler(authStore, s.cfg.Auth)
 	orgHandler := organization.NewHandler(orgStore, auditStore, s.logger)
 	siteHandler := site.NewHandler(siteStore, orgStore, auditStore, s.logger)
 	deviceHandler := device.NewHandler(deviceStore, auditStore, s.logger)
 	enrollmentHandler := enrollment.NewHandler(enrollmentStore, deviceStore, auditStore, s.cfg, s.logger)
 	agentHandler := agent.NewHandler(agentHub, deviceStore, s.logger)
+	meshHandler := meshcentral.NewHandler(meshClient, deviceStore, s.logger)
 
 	// API routes
 	r.Route("/api/v1", func(r chi.Router) {
@@ -150,8 +153,12 @@ func (s *Server) setupRouter() {
 					r.Get("/", deviceHandler.Get)
 					r.Put("/", deviceHandler.Update)
 					r.Delete("/", deviceHandler.Delete)
+					r.Get("/remote-access", meshHandler.GetRemoteAccessToken)
 				})
 			})
+
+			// MeshCentral
+			r.Get("/mesh/config", meshHandler.GetMeshConfig)
 
 			// Enrollment tokens
 			r.Route("/enrollment-tokens", func(r chi.Router) {
