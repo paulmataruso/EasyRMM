@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Enforces per-package statement coverage floors from a Go cover profile.
+#
+# Floors are deliberately per package: security-critical packages carry a
+# higher bar, and a high average elsewhere cannot hide an untested
+# authorization module. Raise floors as coverage improves; never lower one to
+# make a build pass.
+set -euo pipefail
+
+profile="${1:-coverage.txt}"
+module="github.com/paulmataruso/easyrmm"
+
+# package (relative to the module)        minimum %
+floors=(
+  "server/internal/rbac                    90"
+  "server/internal/secrets                 90"
+  "server/internal/auth                    85"
+  "server/internal/audit                   80"
+  "server/internal/database                75"
+)
+
+if [[ ! -f "$profile" ]]; then
+  echo "coverage profile $profile not found" >&2
+  exit 1
+fi
+
+# Sum statements and covered statements per package directory.
+summary=$(awk -v mod="$module/" '
+  NR == 1 { next }   # mode line
+  {
+    split($1, loc, ":"); file = loc[1]
+    sub(mod, "", file)
+    n = split(file, parts, "/"); dir = parts[1]
+    for (i = 2; i < n; i++) dir = dir "/" parts[i]
+    stmts = $2; hits = $3
+    total[dir] += stmts
+    if (hits > 0) covered[dir] += stmts
+  }
+  END { for (d in total) printf "%s %.1f\n", d, (covered[d] / total[d]) * 100 }
+' "$profile" | sort)
+
+echo "Package coverage:"
+echo "$summary" | awk '{ printf "  %-40s %6.1f%%\n", $1, $2 }'
+
+fail=0
+for entry in "${floors[@]}"; do
+  read -r pkg min <<<"$entry"
+  actual=$(echo "$summary" | awk -v p="$pkg" '$1 == p { print $2 }')
+  if [[ -z "$actual" ]]; then
+    echo "FAIL: no coverage data for $pkg (floor ${min}%)" >&2
+    fail=1
+    continue
+  fi
+  if awk -v a="$actual" -v m="$min" 'BEGIN { exit !(a + 0 < m + 0) }'; then
+    echo "FAIL: $pkg coverage ${actual}% is below the ${min}% floor" >&2
+    fail=1
+  fi
+done
+
+if [[ $fail -ne 0 ]]; then
+  exit 1
+fi
+echo "Coverage floors met."

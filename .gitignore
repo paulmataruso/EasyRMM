@@ -1,50 +1,61 @@
-# Binaries
+# Build output
 /bin/
+/dist/
+/build/
 *.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+*.msi
+*.deb
+*.rpm
+*.test
+*.out
+coverage*.txt
+coverage*.html
 
 # Go
 /vendor/
-*.test
-*.out
 go.work
 go.work.sum
 
-# Data directories (persistent storage)
-/data/postgres/
-/data/meshcentral/
-/data/meshcentral-files/
-/data/easyrm/logs/
-/data/easyrm/backups/
-/data/caddy/data/
-/data/caddy/config/
+# Node / web
+node_modules/
+/web/dist/
+/web/coverage/
+/web/.vite/
+/tests/e2e/test-results/
+/tests/e2e/playwright-report/
+/tests/e2e/.auth/
 
-# Environment and secrets
+# Embedded web assets are produced by the build
+/server/internal/webui/dist/*
+!/server/internal/webui/dist/.gitkeep
+
+# Secrets and local configuration — never commit
 .env
-.env.local
-secrets/
+.env.*
+!.env.example
 *.pem
 *.key
+*.p12
+*.pfx
+secrets/
 
-# Frontend
-/frontend/node_modules/
-/frontend/dist/
-/frontend/.vite/
+# Runtime data (bind mounts)
+/data/
 
-# IDE
+# Claude Code / Impeccable local state
+.claude/settings.local.json
+.impeccable/config.local.json
+.impeccable/hook.cache.json
+.impeccable/hook-*.log
+
+# Editors and OS
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Build artifacts
-/dist/
-/build/
+# Impeccable engine binary (downloaded by the launcher / installer; ~23 MB)
+/.claude/skills/impeccable/scripts/bin/

@@ -1,0 +1,48 @@
+# Orchestrates every check that must pass before a pull request can merge.
+# Each area lives in its own reusable workflow; the final "CI result" job is
+# the single required status check for branch protection.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend:
+    name: Backend
+    uses: ./.github/workflows/backend-tests.yml
+
+  integration:
+    name: Integration
+    uses: ./.github/workflows/integration-tests.yml
+
+  security:
+    name: Security
+    uses: ./.github/workflows/security.yml
+    permissions:
+      contents: read
+      security-events: write
+      pull-requests: read
+
+  result:
+    name: CI result
+    if: always()
+    needs: [backend, integration, security]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every job to succeed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          echo "$NEEDS" | jq -e 'to_entries | all(.value.result == "success")' > /dev/null

@@ -1,0 +1,10 @@
+# Default owner for everything in the repository.
+*                                @paulmataruso
+
+# Security-critical areas require the owner's review.
+/server/internal/auth/           @paulmataruso
+/server/internal/rbac/           @paulmataruso
+/server/internal/secrets/        @paulmataruso
+/server/internal/audit/          @paulmataruso
+/server/migrations/              @paulmataruso
+/.github/workflows/              @paulmataruso
