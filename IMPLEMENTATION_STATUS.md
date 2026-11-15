@@ -18,25 +18,26 @@ Last updated: 2026-11-15.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Secret sealing (AES-256-GCM, key rotation) | Tested | `server/internal/secrets` (94% coverage) |
-| Password hashing and policy (Argon2id, NIST 800-63B) | Tested | `server/internal/auth/password.go` |
-| RBAC model (5 roles, platform/organization/site scopes, escalation guard) | Tested | `server/internal/rbac` (93% coverage) |
-| Database schema, migrations, split owner/app roles | Tested | `server/migrations/00001_core.sql` |
-| Tenant isolation through PostgreSQL row-level security | Tested | Integration tests cover reads, writes, moves and inserts across tenants |
-| Audit log (append-only, hash-chained, tamper detection) | Tested | Backend only; no API or UI yet |
-| Sessions (idle/absolute expiry, rotation, revocation) | Tested | Backend service only; no HTTP endpoints yet |
-| Password login, lockout, rate limiting | Tested | Backend service only |
-| TOTP MFA, replay protection, recovery codes | Tested | Backend service only |
-| Password change and reset (e-mail and admin-issued links) | Tested | Backend service only; SMTP mailer not implemented |
+| Secret sealing (AES-256-GCM, key rotation) | Tested | `server/internal/secrets`; infrastructure, no UI by design |
+| Password hashing and policy (Argon2id, NIST 800-63B) | Complete | Server policy plus instant feedback in every password form |
+| RBAC model (5 roles, platform/organization/site scopes, escalation guard) | Complete | Enforced by the API; the console hides what a role cannot do and shows the server's refusal otherwise |
+| Database schema, migrations, split owner/app roles | Tested | `server/migrations`; infrastructure |
+| Tenant isolation through PostgreSQL row-level security | Complete | Go integration tests across tenants; browser end-to-end test shows a technician cannot see another organization |
+| Audit log (append-only, hash-chained, tamper detection) | Complete | API with organization/area/user filters and keyset paging; console Audit log tab; chain verification for super administrators |
+| Sessions (idle/absolute expiry, rotation, revocation) | Complete | Account page lists sessions and signs them out |
+| Password login, lockout, rate limiting | Complete | Sign-in page; locked users shown and unlockable on the user page |
+| TOTP MFA, replay protection, recovery codes | Complete | Enrollment at first sign-in (QR and key), verification, recovery codes, new codes from the Account page, administrator reset |
+| Password change and reset (e-mail and admin-issued links) | Complete | SMTP mailer (STARTTLS or implicit TLS); without SMTP the console shows a one-time link to pass on |
 | WebAuthn / passkeys | Not started | Planned additional factor |
-| HTTP API, CSRF, security headers | Not started | |
-| First-run setup | Not started | |
-| Organizations, sites, device groups | In progress | Schema and RLS done; service, API and UI not started |
-| User and role management | In progress | Model and escalation rules done; API and UI not started |
-| Configuration and TLS edge (ACME/manual/offload) | Not started | |
-| Docker Compose deployment (host networking) | Not started | |
-| Web UI foundation (Impeccable) | Not started | |
-| CI pipeline | Implemented | Lint, unit and integration tests, coverage floors, gitleaks, govulncheck, licences, Trivy, CodeQL, dependency review |
+| HTTP API, CSRF, security headers | Complete | Strict JSON, error envelope, CSRF token bound to the session, Fetch Metadata/Origin checks; the console refreshes a rotated CSRF token once |
+| First-run setup | Complete | One-time token from the data directory; console setup page; covered end to end |
+| Organizations, sites, device groups | Complete | API and console (list with live filter, detail pages, create/edit/delete with typed confirmation) |
+| User and role management | Complete | Invitations, role editor, disable/enable, unlock, MFA reset, password links, delete; last super administrator protected |
+| Configuration and TLS edge (ACME/manual/offload) | Tested | Configured through environment variables; no UI by design |
+| Docker Compose deployment (host networking) | Tested | Compose smoke test defined in CI; run locally, not yet on GitHub |
+| Web console foundation (EasyPatch design system, ADR-0013) | Complete | Sign-in flows, shell, dashboard, organizations, settings, account; dark and light themes; Vitest unit tests and Playwright end-to-end tests |
+| CI pipeline | Implemented | Go, frontend (typecheck, unit, build, design detector, Playwright) and Docker workflows plus security scanning. Not yet run on GitHub: pushing workflow files needs a token with the `workflow` scope |
+| Licence clearance for EasyPatch-derived styles and logo | Not started | Owner action before a public release (ADR-0013) |
 
 ## Remote access (MeshCentral)
 

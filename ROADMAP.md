@@ -8,7 +8,7 @@ feature in it is **Complete** in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STA
 | 1. Research and discovery | MeshCentral/MeshAgent, Tactical RMM, EasyPatch, Impeccable, stack, risks | Done (`docs/architecture/research-report.md`) |
 | 2. Architecture | System, data, network, MeshCentral, installer, identity, auth, EasyPatch; ADRs | Done (`docs/architecture/`) |
 | 3. GitHub foundation | Repository, CI (lint, tests, coverage floors, security scanning), templates, branch protection | In progress |
-| 4. Server foundation | Config, HTTP API, auth flows, organizations/sites/groups, users and roles, audit API, Docker deployment, web foundation with Impeccable, dashboard | In progress |
+| 4. Server foundation | Config, HTTP API, auth flows, organizations/sites/groups, users and roles, audit API, Docker deployment, web console (EasyPatch design system), dashboard | Implemented and tested locally; waiting for its first CI run on GitHub |
 | 5. MeshCentral integration | Container and config, control client, user/group sync, edge gateway, session launch, embedded desktop/terminal/files | Not started |
 | 6. Unified endpoint installation | Go agent, enrollment, MeshAgent install and correlation, MSI/EXE/PowerShell, DEB/RPM/script, updates, uninstall | Not started |
 | 7. Core RMM | Inventory, telemetry, monitoring, alerts, scripts, jobs, software deployment | Not started |
@@ -17,13 +17,11 @@ feature in it is **Complete** in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STA
 
 ## Next steps
 
-1. HTTP API layer: routing, security middleware (CSRF, security headers,
-   request limits, real-IP handling), session cookies, auth endpoints,
-   first-run setup.
-2. Organizations, sites and device groups, plus user and role management,
-   with tests for permissions and tenant isolation.
-3. Server configuration, TLS edge (ACME/manual/offload) and the Docker
-   Compose deployment with host networking.
-4. Web foundation: Impeccable init, PRODUCT.md and DESIGN.md, sign-in and
-   MFA, shell and navigation, dashboard, organization management.
-5. Playwright end-to-end suite in CI.
+1. Push the branch and let CI run on GitHub (needs a token with the
+   `workflow` scope), then enable branch protection with "CI result" as the
+   required check.
+2. Licence the EasyPatch-derived stylesheet and logo construction to
+   EasyRMM (ADR-0013).
+3. Phase 5: MeshCentral container and configuration, control-channel client,
+   user and group sync, edge gateway and session launch, embedded remote
+   desktop, terminal and files.

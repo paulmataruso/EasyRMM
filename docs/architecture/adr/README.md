@@ -17,4 +17,5 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 | [0009](0009-agent-protocol.md) | Agent protocol: device keys, WebSocket with HTTPS polling fallback | Accepted |
 | [0010](0010-easypatch-integration.md) | EasyPatch integration through a service API | Accepted |
 | [0011](0011-licensing.md) | AGPL-3.0 for EasyRMM | Accepted |
-| [0012](0012-frontend-stack-and-impeccable.md) | React/TypeScript frontend designed with Impeccable | Accepted |
+| [0012](0012-frontend-stack-and-impeccable.md) | React/TypeScript frontend designed with Impeccable | Accepted; styling superseded by 0013 |
+| [0013](0013-easypatch-design-system.md) | The console shares EasyPatch's design system | Accepted |

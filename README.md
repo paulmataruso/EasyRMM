@@ -54,7 +54,7 @@ them is in [`docs/architecture/research-report.md`](docs/architecture/research-r
 | Path | Contents |
 |---|---|
 | `server/` | Go server (modular monolith), migrations |
-| `web/` | React + TypeScript frontend, designed with Impeccable |
+| `web/` | Technician console: React + TypeScript, sharing EasyPatch's design system |
 | `agents/` | Go endpoint agent (Windows, Linux) |
 | `installers/` | MSI, packages and install scripts |
 | `meshcentral/` | MeshCentral configuration and integration assets |
@@ -72,7 +72,12 @@ Some directories are created as their phase starts. See the roadmap.
 make test-db                 # disposable PostgreSQL 18 on 127.0.0.1:55432
 export EASYRMM_TEST_DATABASE_URL='postgres://postgres:easyrmm-test-only@127.0.0.1:55432/postgres?sslmode=disable'
 make check                   # format, vet, lint, unit + integration tests, coverage floors
+make web-test                # console typecheck and unit tests
+make e2e                     # build everything, browser tests against a real server
 ```
+
+Console development is described in
+[docs/development/web-console.md](docs/development/web-console.md).
 
 [CONTRIBUTING.md](CONTRIBUTING.md) explains the workflow.
 

@@ -1,0 +1,19 @@
+<!-- EasyRMM logo: EasyPatch's ring badge carrying a monitored screen. viewBox cropped to the artwork (original canvas: 0 0 512 512). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="62 62 388 388">
+  <defs>
+    <linearGradient id="aqua" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#35f2ed"/>
+      <stop offset="1" stop-color="#00a9d6"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#b4ff43"/>
+      <stop offset="1" stop-color="#00c985"/>
+    </linearGradient>
+  </defs>
+  <circle cx="256" cy="256" r="185" fill="#102b39" stroke="#1c5667" stroke-width="18"/>
+  <rect x="146" y="150" width="220" height="148" rx="18" fill="#0c2230" stroke="url(#aqua)" stroke-width="22"/>
+  <path d="M170 232 H212 L234 190 L262 276 L286 214 L302 232 H342"
+    fill="none" stroke="url(#green)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M238 306 h36 v30 h-36z" fill="url(#aqua)"/>
+  <rect x="190" y="334" width="132" height="22" rx="11" fill="url(#aqua)"/>
+</svg>

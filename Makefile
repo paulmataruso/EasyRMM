@@ -58,3 +58,25 @@ check: fmt-check vet lint test-integration ## Everything CI runs for Go code
 .PHONY: build
 build: ## Build the server binary into bin/
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o bin/easyrmm-server ./server/cmd/easyrmm-server
+
+# --- Web console --------------------------------------------------------------
+
+web/node_modules/.package-lock.json: web/package-lock.json
+	cd web && npm ci --no-audit --no-fund
+
+.PHONY: web-deps
+web-deps: web/node_modules/.package-lock.json ## Install the web console's locked dependencies
+
+.PHONY: web
+web: web-deps ## Build the web console and stage it for embedding in the server binary
+	cd web && npm run build
+	find server/internal/webui/dist -mindepth 1 ! -name .gitkeep -delete
+	cp -R web/dist/. server/internal/webui/dist/
+
+.PHONY: web-test
+web-test: web-deps ## Typecheck and unit-test the web console, with coverage floors
+	cd web && npm run typecheck && npm run test:coverage
+
+.PHONY: e2e
+e2e: web build ## Browser end-to-end tests against a real server (needs `make test-db`)
+	cd web && EASYRMM_E2E_ADMIN_URL="$${EASYRMM_E2E_ADMIN_URL:-$(TEST_DB_URL)}" npx playwright test

@@ -1,0 +1,103 @@
+import type { Assignment, AuditEntry, AuditOutcome, Role, User } from "../api/types";
+import { Badge, type Tone } from "./ui";
+
+export const ROLE_NAMES: Record<Role, string> = {
+  super_admin: "Super Administrator",
+  org_admin: "Organization Administrator",
+  site_admin: "Site Administrator",
+  technician: "Technician",
+  read_only: "Read-Only",
+};
+
+export function roleName(role: Role): string {
+  return ROLE_NAMES[role] ?? role;
+}
+
+/** "Technician · Contoso / London" */
+export function describeAssignment(a: Assignment): string {
+  const scope = a.siteId ? `${a.organizationName ?? "Organization"} / ${a.siteName ?? "Site"}` : a.organizationId ? (a.organizationName ?? "Organization") : "All organizations";
+  return `${roleName(a.role)} · ${scope}`;
+}
+
+export function userState(u: Pick<User, "status" | "locked" | "passwordSet" | "mfaEnabled">): { label: string; tone: Tone; title: string } {
+  if (u.status === "disabled") return { label: "Disabled", tone: "neutral", title: "This account cannot sign in." };
+  if (u.locked) return { label: "Locked", tone: "danger", title: "Locked after repeated failed sign-ins. Unlock it, or it unlocks on its own after the lockout period." };
+  if (!u.passwordSet) return { label: "Invited", tone: "info", title: "The invitation has not been accepted yet." };
+  if (!u.mfaEnabled) return { label: "MFA pending", tone: "warn", title: "Sets up an authenticator app at next sign-in." };
+  return { label: "Active", tone: "ok", title: "Can sign in." };
+}
+
+export function UserStatusBadge({ user }: { user: Pick<User, "status" | "locked" | "passwordSet" | "mfaEnabled"> }) {
+  const s = userState(user);
+  return (
+    <Badge tone={s.tone} title={s.title}>
+      {s.label}
+    </Badge>
+  );
+}
+
+const OUTCOME: Record<AuditOutcome, { label: string; tone: Tone }> = {
+  success: { label: "Success", tone: "ok" },
+  failure: { label: "Failed", tone: "danger" },
+  denied: { label: "Denied", tone: "warn" },
+};
+
+export function OutcomeBadge({ outcome }: { outcome: AuditOutcome }) {
+  const o = OUTCOME[outcome] ?? { label: outcome, tone: "neutral" as Tone };
+  return <Badge tone={o.tone}>{o.label}</Badge>;
+}
+
+const ACTIONS: Record<string, string> = {
+  "auth.login": "Signed in",
+  "auth.logout": "Signed out",
+  "auth.mfa_enroll": "Set up authenticator",
+  "auth.mfa_verify": "Verified second factor",
+  "auth.password_change": "Changed password",
+  "auth.password_reset": "Reset password",
+  "auth.password_reset_request": "Requested password reset",
+  "auth.recovery_codes_regenerate": "Replaced recovery codes",
+  "auth.session_revoke": "Ended a session",
+  "setup.complete": "Completed first-run setup",
+  "organization.create": "Created organization",
+  "organization.update": "Updated organization",
+  "organization.delete": "Deleted organization",
+  "site.create": "Created site",
+  "site.update": "Updated site",
+  "site.delete": "Deleted site",
+  "device_group.create": "Created device group",
+  "device_group.update": "Updated device group",
+  "device_group.delete": "Deleted device group",
+  "user.invite": "Invited user",
+  "user.update": "Updated user",
+  "user.roles_change": "Changed roles",
+  "user.disable": "Disabled user",
+  "user.enable": "Enabled user",
+  "user.unlock": "Unlocked user",
+  "user.mfa_reset": "Reset second factor",
+  "user.password_link": "Issued password link",
+  "user.delete": "Deleted user",
+};
+
+export function actionLabel(action: string): string {
+  return ACTIONS[action] ?? action;
+}
+
+/** Audit areas offered as filters (action prefixes the server accepts). */
+export const ACTION_GROUPS: [string, string][] = [
+  ["auth", "Sign-in and security"],
+  ["organization", "Organizations"],
+  ["site", "Sites"],
+  ["device_group", "Device groups"],
+  ["user", "Users"],
+  ["setup", "Setup"],
+];
+
+/** What an audit entry acted on, from its details (names and emails are recorded at the time). */
+export function auditTarget(e: AuditEntry): string {
+  const d = e.details ?? {};
+  const name = typeof d.name === "string" ? d.name : typeof d.email === "string" ? d.email : null;
+  if (name) return name;
+  if (e.targetType === "session") return "Session";
+  if (e.actorType === "user" && e.targetType === "user" && e.targetId === e.actorId) return "Own account";
+  return e.targetType ? e.targetType.replace(/_/g, " ") : "—";
+}

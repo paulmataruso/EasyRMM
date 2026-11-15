@@ -91,7 +91,9 @@ jobs:
           grep -E '(\*|0\.0\.0\.0|\[::\]):80 ' listeners.txt
           grep -q '127.0.0.1:15432' listeners.txt
           grep -q '127.0.0.1:18081' listeners.txt
-          ! grep -E '(\*|0\.0\.0\.0|\[::\]):(15432|18081) ' listeners.txt
+          if grep -E '(\*|0\.0\.0\.0|\[::\]):(15432|18081) ' listeners.txt; then
+            echo "PostgreSQL or the MeshCentral backend is listening publicly" >&2; exit 1
+          fi
           sudo docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec -T server easyrmm-server version
           [ "$(sudo docker inspect -f '{{.Config.User}}' easyrmm-server-1)" = "65532:65532" ]
       - name: HTTP redirects to HTTPS for our host names only
@@ -113,7 +115,9 @@ jobs:
           code=$(sudo "${c[@]}" -o /dev/null -w '%{http_code}' -X POST "$base/api/v1/setup" \
             --data "{\"token\":\"$token\",\"email\":\"a@ci.example.com\",\"displayName\":\"CI\",\"password\":\"correct horse battery staple\",\"organizationName\":\"CI Org\"}")
           [ "$code" = 204 ]
-          ! sudo test -e /srv/easyrmm-ci/server/setup-token
+          if sudo test -e /srv/easyrmm-ci/server/setup-token; then
+            echo "the setup token survived a completed setup" >&2; exit 1
+          fi
           sudo "${c[@]}" -f "$base/api/v1/setup" | grep -q '"required":false'
           # Security headers on the real edge.
           sudo "${c[@]}" -D - -o /dev/null "$base/api/v1/health" | tee h.txt
