@@ -16,6 +16,7 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
+	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 )
 
@@ -29,7 +30,7 @@ import (
 func (s *Service) Enroll(ctx context.Context, ip netip.Addr, req agentproto.EnrollRequest) (*agentproto.EnrollResponse, error) {
 	// Every request reads the database; this only keeps junk from loading
 	// it. New devices from one address have a stricter limit below.
-	if !s.lookups.Allow(ip.String()) {
+	if !s.lookups.Allow(auth.LimitKey(ip)) {
 		return nil, ErrRateLimited
 	}
 	if !strings.HasPrefix(req.Token, agentproto.TokenPrefix) || len(req.Token) > 100 {
@@ -68,7 +69,7 @@ func (s *Service) Enroll(ctx context.Context, ip netip.Addr, req agentproto.Enro
 // refuse answers a token that is not valid. Unknown tokens count against
 // the address's enrollment limit, so it ends in ErrRateLimited.
 func (s *Service) refuse(ip netip.Addr) error {
-	if !s.enroll.Allow(ip.String()) {
+	if !s.enroll.Allow(auth.LimitKey(ip)) {
 		return ErrRateLimited
 	}
 	return ErrTokenInvalid
@@ -128,7 +129,7 @@ func (s *Service) enrollSite(ctx context.Context, tx pgx.Tx, ip netip.Addr, hash
 	if err != nil {
 		return nil, err
 	}
-	if !s.enroll.Allow(ip.String()) {
+	if !s.enroll.Allow(auth.LimitKey(ip)) {
 		return nil, ErrRateLimited
 	}
 	if st := tokenStatus(revoked, expires, maxUses, uses, s.now()); st != TokenActive {

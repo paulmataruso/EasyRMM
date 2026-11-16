@@ -424,10 +424,19 @@ function KeyStep({ availability, busy, error, onUse }: { availability: KeyAvaila
 /**
  * Authenticator enrollment: scan the QR code, confirm a code, then show the recovery codes once.
  * `onConfirmed` receives the session the server returns once the authenticator is active.
+ * Signed-in users (`needsPassword`) confirm their password before the secret is shown.
  */
-export function MfaEnrollment({ onDone, onConfirmed, submitLabel = "Turn on two-factor authentication" }: {
+export function MfaEnrollment({
+  onDone,
+  onConfirmed,
+  onCancel,
+  needsPassword = false,
+  submitLabel = "Turn on two-factor authentication",
+}: {
   onDone: () => void;
   onConfirmed?: (session: SessionView) => void;
+  onCancel?: () => void;
+  needsPassword?: boolean;
   submitLabel?: string;
 }) {
   const [setup, setSetup] = useState<TotpEnrollment | null>(null);
@@ -439,10 +448,10 @@ export function MfaEnrollment({ onDone, onConfirmed, submitLabel = "Turn on two-
   const started = useRef(false);
 
   useEffect(() => {
-    if (started.current) return;
+    if (needsPassword || started.current) return;
     started.current = true;
     api.post<TotpEnrollment>("/auth/mfa/totp/begin").then(setSetup).catch(setSetupError);
-  }, []);
+  }, [needsPassword]);
 
   async function confirm(e: FormEvent) {
     e.preventDefault();
@@ -460,6 +469,7 @@ export function MfaEnrollment({ onDone, onConfirmed, submitLabel = "Turn on two-
   }
 
   if (codes) return <RecoveryCodesView codes={codes} onDone={onDone} />;
+  if (!setup && needsPassword) return <TotpPasswordStep onReady={setSetup} onCancel={onCancel} />;
   if (setupError) return <InlineError error={setupError} />;
   if (!setup) return <Spinner label="Preparing authenticator setup…" />;
 
@@ -492,6 +502,54 @@ export function MfaEnrollment({ onDone, onConfirmed, submitLabel = "Turn on two-
       <Button type="submit" variant="primary" loading={busy} disabled={code.trim().length < 6}>
         {submitLabel}
       </Button>
+    </form>
+  );
+}
+
+/** The password check before a signed-in user sees a new authenticator secret. */
+function TotpPasswordStep({ onReady, onCancel }: { onReady: (setup: TotpEnrollment) => void; onCancel?: () => void }) {
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (!password) return;
+    setBusy(true);
+    setError(null);
+    try {
+      onReady(await api.post<TotpEnrollment>("/auth/mfa/totp/begin", { password }));
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="flex flex-col gap-3.5" noValidate>
+      <p className="text-sm text-muted">Enter your password to see the code for your authenticator app.</p>
+      <TextField
+        label="Password"
+        type="password"
+        autoComplete="current-password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        error={fieldError(error, "password")}
+        required
+        autoFocus
+      />
+      <InlineError error={error} fields={["password"]} />
+      <div className="flex justify-end gap-2">
+        {onCancel && (
+          <Button onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+        )}
+        <Button type="submit" variant="primary" loading={busy} disabled={!password}>
+          Continue
+        </Button>
+      </div>
     </form>
   );
 }

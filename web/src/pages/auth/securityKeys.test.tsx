@@ -294,6 +294,32 @@ describe("security keys on the account page", () => {
     expect((server.call("POST /auth/security-keys/finish").body as { name: string }).name).toBe("Phone");
   });
 
+  it("sets up an authenticator app next to the keys after the password", async () => {
+    const user = userEvent.setup();
+    stubWebAuthn();
+    const server = installFakeApi({
+      ...routes(),
+      "POST /auth/mfa/totp/begin": (req) =>
+        (req.body as { password?: string }).password === "my password"
+          ? ok({ secret: "JBSWY3DPEHPK3PXPJBSWY3DP", uri: "otpauth://totp/x", qrCodeSvg: "data:image/svg+xml;base64,PHN2Zy8+" })
+          : fail(422, "validation_failed", "Check the form.", { password: "Your password is not correct." }),
+    });
+    renderApp("/account");
+    await user.click(await screen.findByRole("button", { name: "Set up authenticator" }));
+    const dialog = screen.getByRole("dialog", { name: "Set up authenticator" });
+    // Nothing is started until the password is in: a stolen session cannot add an authenticator.
+    expect(server.callsTo("POST /auth/mfa/totp/begin")).toHaveLength(0);
+    await user.type(within(dialog).getByLabelText(/^Password/), "wrong");
+    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+    expect(await within(dialog).findByText("Your password is not correct.")).toBeInTheDocument();
+    expect(within(dialog).queryByText("JBSW Y3DP EHPK 3PXP JBSW Y3DP")).not.toBeInTheDocument();
+    await user.clear(within(dialog).getByLabelText(/^Password/));
+    await user.type(within(dialog).getByLabelText(/^Password/), "my password");
+    await user.click(within(dialog).getByRole("button", { name: "Continue" }));
+    expect(await within(dialog).findByText("JBSW Y3DP EHPK 3PXP JBSW Y3DP")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText(/^Verification code/)).toBeInTheDocument();
+  });
+
   it("removes a key after the password, and explains the last one", async () => {
     const user = userEvent.setup();
     stubWebAuthn();

@@ -223,7 +223,7 @@ func (c *client) signIn(email, password, secret string) string {
 			Secret    string `json:"secret"`
 			QRCodeSVG string `json:"qrCodeSvg"`
 		}
-		c.expect(http.StatusOK, "POST", "/api/v1/auth/mfa/totp/begin", nil, &enr)
+		c.expect(http.StatusOK, "POST", "/api/v1/auth/mfa/totp/begin", map[string]string{}, &enr)
 		if !strings.HasPrefix(enr.QRCodeSVG, "data:image/svg+xml;base64,") {
 			t.Fatalf("qr code is not an svg data url: %.40s", enr.QRCodeSVG)
 		}
@@ -313,7 +313,7 @@ func TestHTTPEndToEnd(t *testing.T) {
 		var enr struct {
 			Secret string `json:"secret"`
 		}
-		admin.expect(http.StatusOK, "POST", "/api/v1/auth/mfa/totp/begin", nil, &enr)
+		admin.expect(http.StatusOK, "POST", "/api/v1/auth/mfa/totp/begin", map[string]string{}, &enr)
 		adminSecret = enr.Secret
 		if r := admin.do("POST", "/api/v1/auth/mfa/totp/confirm", map[string]string{"code": "000000"}); r.status != http.StatusUnauthorized {
 			t.Fatalf("wrong enrollment code: %d %s", r.status, r.body)
@@ -601,6 +601,7 @@ func TestHTTPPasswordResetByEmail(t *testing.T) {
 	if !bytes.Equal(r1.body, r2.body) {
 		t.Fatal("reset responses differ between known and unknown accounts")
 	}
+	h.deps.Auth.Wait() // the e-mail goes out after the answer
 	h.mail.mu.Lock()
 	sent := append([]sentMail(nil), h.mail.sent...)
 	h.mail.mu.Unlock()

@@ -4,7 +4,7 @@ import { KeyRound, LogOut, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, fieldError } from "../../api/client";
 import { pathKey, useApi, useApiMutation, useList } from "../../api/hooks";
-import type { AuthOptions, RecoveryCodes, SecurityKey, SessionItem } from "../../api/types";
+import type { AuthOptions, RecoveryCodes, SecurityKey, SessionItem, SessionView } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { keyAvailability } from "../../auth/webauthn";
 import { Dialog } from "../../components/Dialog";
@@ -66,13 +66,16 @@ function ProfileCard() {
 
 function PasswordCard() {
   const toast = useToast();
+  const { applySession } = useAuth();
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
   const [confirm, setConfirm] = useState("");
   const local = next ? passwordProblem(next, confirm) : null;
-  const save = useApiMutation((body: { currentPassword: string; newPassword: string }) => api.post("/auth/password", body), {
+  // The session continues under a new token, so the server returns it (with a new CSRF token).
+  const save = useApiMutation((body: { currentPassword: string; newPassword: string }) => api.post<SessionView>("/auth/password", body), {
     invalidate: ["/auth/sessions", "/audit"],
-    onSuccess: () => {
+    onSuccess: (view) => {
+      applySession(view);
       setCurrent("");
       setNext("");
       setConfirm("");
@@ -171,8 +174,10 @@ function SecondFactorCard() {
       <Dialog open={enrollOpen} onClose={() => setEnrollOpen(false)} title="Set up authenticator" dismissible={false}>
         {enrollOpen && (
           <MfaEnrollment
+            needsPassword
             onConfirmed={(view) => applySession(view)}
             onDone={() => setEnrollOpen(false)}
+            onCancel={() => setEnrollOpen(false)}
           />
         )}
       </Dialog>

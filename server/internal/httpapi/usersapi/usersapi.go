@@ -338,7 +338,7 @@ func (a *API) completeSetup(w http.ResponseWriter, r *http.Request) error {
 	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
 		return err
 	}
-	if !a.setup.limit.Allow(httpapi.ClientIP(r).String()) {
+	if !a.setup.limit.Allow(auth.LimitKey(httpapi.ClientIP(r))) {
 		return httpapi.ErrTooMany
 	}
 	s := a.setup

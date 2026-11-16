@@ -96,6 +96,15 @@ Reached only through the authentication service, at platform scope, like
 | `user_webauthn_credentials` | One row per registered security key or passkey: its owner, credential id (unique across all users), the name its owner gave it (unique per user), the credential as go-webauthn records it (public key, signature counter, flags, transports, AAGUID), when it was added and last used. Removed with the user, by the owner, or by an administrator's second-factor reset |
 | `webauthn_challenges` | A ceremony in progress: what the server asked the browser for, keyed by its challenge, for five minutes. Registration and the sign-in step belong to a session (and go with it); passkey sign-in has none yet. Each is deleted when answered; expired ones are deleted when the next one starts |
 
+## Sign-in hardening (migration 00016)
+
+| Column | Notes |
+|---|---|
+| `users.mfa_failed_attempts` | Wrong authenticator or recovery codes in a row, across sign-ins. Ten lock the account like wrong passwords do; a correct second factor, a password reset or an unlock clears it |
+| `sessions.reauth_failures` | Wrong passwords entered to confirm a change from this session; the fifth ends it |
+
+See `docs/security/sign-in.md`.
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

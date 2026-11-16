@@ -272,7 +272,7 @@ func canRegisterKey(sess *Session) bool {
 // users enter their password again, so a stolen session alone cannot add a
 // key that outlives it; while setting up a second factor at sign-in the
 // password was just entered.
-func (s *Service) BeginKeyRegistration(ctx context.Context, sess *Session, password string) (*protocol.CredentialCreation, error) {
+func (s *Service) BeginKeyRegistration(ctx context.Context, sess *Session, password string, meta RequestMeta) (*protocol.CredentialCreation, error) {
 	if s.wa == nil {
 		return nil, ErrWebAuthnUnavailable
 	}
@@ -280,10 +280,7 @@ func (s *Service) BeginKeyRegistration(ctx context.Context, sess *Session, passw
 		return nil, ErrWrongState
 	}
 	if sess.State == StateActive {
-		if !s.mfaLimit.Allow("confirm:" + sess.UserID.String()) {
-			return nil, ErrRateLimited
-		}
-		if err := s.confirmPassword(ctx, sess.UserID, password); err != nil {
+		if err := s.reauthenticate(ctx, sess, password, "auth.webauthn_add", meta); err != nil {
 			return nil, err
 		}
 	}
@@ -491,14 +488,11 @@ func (s *Service) FinishKeyMFA(ctx context.Context, sess *Session, user *User, b
 	var token string
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		if failure != nil {
-			var failures int
-			if err := tx.QueryRow(ctx, `UPDATE sessions SET mfa_failures = mfa_failures + 1 WHERE id = $1 RETURNING mfa_failures`, sess.ID).Scan(&failures); err != nil {
+			// A key's answer cannot be guessed, so a refused key counts
+			// against this session only, not the account (see codeFailed).
+			failures, err := s.sessionMFAFailed(ctx, tx, sess.ID)
+			if err != nil {
 				return err
-			}
-			if failures >= s.cfg.MaxMFAFailures {
-				if _, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at = now(), revoked_reason = 'mfa_failures' WHERE id = $1`, sess.ID); err != nil {
-					return err
-				}
 			}
 			return s.audit.Write(ctx, tx, audit.Event{Actor: userActor(sess.UserID, user.Email, meta), Action: "auth.mfa_verify", Outcome: audit.Failure,
 				TargetType: "session", TargetID: sess.ID.String(), Details: map[string]any{"method": "webauthn", "failures": failures, "reason": keyReason(failure)}})
@@ -510,7 +504,7 @@ func (s *Service) FinishKeyMFA(ctx context.Context, sess *Session, user *User, b
 		if token, err = s.rotate(ctx, tx, sess.ID, StateActive); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1`, sess.UserID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now(), mfa_failed_attempts = 0 WHERE id = $1`, sess.UserID); err != nil {
 			return err
 		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: userActor(sess.UserID, user.Email, meta), Action: "auth.mfa_verify", Outcome: audit.Success,
@@ -550,7 +544,7 @@ func (s *Service) BeginPasskeyLogin(ctx context.Context, meta RequestMeta) (*pro
 	if s.wa == nil {
 		return nil, ErrWebAuthnUnavailable
 	}
-	if meta.IP.IsValid() && !s.ipLimit.Allow("passkey:"+meta.IP.String()) {
+	if meta.IP.IsValid() && !s.ipLimit.Allow("passkey:"+LimitKey(meta.IP)) {
 		return nil, ErrRateLimited
 	}
 	assertion, data, err := s.wa.BeginDiscoverableLogin(webauthn.WithUserVerification(protocol.VerificationRequired))
@@ -570,7 +564,7 @@ func (s *Service) FinishPasskeyLogin(ctx context.Context, body []byte, meta Requ
 	if s.wa == nil {
 		return "", nil, ErrWebAuthnUnavailable
 	}
-	if meta.IP.IsValid() && !s.ipLimit.Allow("passkey:"+meta.IP.String()) {
+	if meta.IP.IsValid() && !s.ipLimit.Allow("passkey:"+LimitKey(meta.IP)) {
 		return "", nil, ErrRateLimited
 	}
 	var u *waUser
@@ -630,7 +624,7 @@ func (s *Service) FinishPasskeyLogin(ctx context.Context, body []byte, meta Requ
 		if token, sess, err = s.createSession(ctx, tx, u.id, StateActive, meta); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1`, u.id); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now(), mfa_failed_attempts = 0 WHERE id = $1`, u.id); err != nil {
 			return err
 		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: userActor(u.id, u.email, meta), Action: "auth.login", Outcome: audit.Success,
@@ -678,10 +672,7 @@ func (s *Service) RemoveSecurityKey(ctx context.Context, sess *Session, user *Us
 	if sess.State != StateActive {
 		return ErrWrongState
 	}
-	if !s.mfaLimit.Allow("confirm:" + sess.UserID.String()) {
-		return ErrRateLimited
-	}
-	if err := s.confirmPassword(ctx, sess.UserID, password); err != nil {
+	if err := s.reauthenticate(ctx, sess, password, "auth.webauthn_remove", meta); err != nil {
 		return err
 	}
 	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {

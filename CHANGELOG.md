@@ -274,6 +274,25 @@ All notable changes to this project are documented here. The format follows
   device's page; `GET /api/v1/software` remains.
 
 ### Security
+- Sign-in hardening from the Phase 9 security review (migration 00016):
+  - An authenticator app whose set-up was started but never confirmed no
+    longer works as a second factor. Before, a session could start set-up
+    without the password (for a user who signs in with security keys) and
+    keep the secret as a hidden way in that outlived the session; starting
+    set-up from a signed-in session now asks for the password.
+  - Wrong authenticator or recovery codes count across sign-ins: ten in a
+    row lock the account like wrong passwords do. Before, someone with the
+    password could try five codes per sign-in indefinitely.
+  - Every change that asks for the password again (password, recovery
+    codes, second factors) is rate-limited and audited, and five wrong
+    passwords end the session that tried them.
+  - Changing the password gives the current session a new token.
+  - Forgot-password answers before looking the address up and sends the
+    e-mail afterwards, so its timing reveals nothing; each account gets at
+    most a few reset e-mails an hour; an invited user who has not set a
+    password is sent a new invitation instead of a 30-minute reset link.
+  - Per-address limits (sign-in, passkeys, reset, setup, enrollment) count
+    an IPv6 client's /64 as one address.
 - The remote-access gateway now refuses TCP and UDP tunnels through
   agents (ADR-0022). MeshCentral lets anyone with remote-control rights on
   a device ask its agent to connect to any port on the device or its

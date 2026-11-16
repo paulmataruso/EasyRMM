@@ -17,6 +17,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
+	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
@@ -168,7 +169,7 @@ func (s *Service) askApproval(ctx context.Context, tx pgx.Tx, ip netip.Addr, has
 	}
 
 	// A new device.
-	if !s.enroll.Allow(ip.String()) {
+	if !s.enroll.Allow(auth.LimitKey(ip)) {
 		return nil, false, ErrRateLimited
 	}
 	var (

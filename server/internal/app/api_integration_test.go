@@ -41,7 +41,7 @@ func (c *client) enroll(email, password string) (string, []string) {
 	var enr struct {
 		Secret string `json:"secret"`
 	}
-	c.expect(http.StatusOK, "POST", "/api/v1/auth/mfa/totp/begin", nil, &enr)
+	c.expect(http.StatusOK, "POST", "/api/v1/auth/mfa/totp/begin", map[string]string{}, &enr)
 	var done struct {
 		RecoveryCodes []string    `json:"recoveryCodes"`
 		Session       sessionView `json:"session"`
@@ -137,7 +137,7 @@ func TestAuthAPI(t *testing.T) {
 		t.Fatalf("recovery codes: %d", len(codes))
 	}
 	// Enrollment is over: neither enrollment step nor MFA verification applies.
-	wantStatus(t, rita.do("POST", "/api/v1/auth/mfa/totp/begin", nil), http.StatusConflict, "wrong_state")
+	wantStatus(t, rita.do("POST", "/api/v1/auth/mfa/totp/begin", map[string]string{}), http.StatusConflict, "wrong_state")
 	wantStatus(t, rita.do("POST", "/api/v1/auth/mfa/totp/confirm", map[string]string{"code": "123456"}), http.StatusConflict, "wrong_state")
 	wantStatus(t, rita.do("POST", "/api/v1/auth/mfa/verify", map[string]string{"code": "123456"}), http.StatusForbidden, "mfa_required")
 	wantStatus(t, rita.do("POST", "/api/v1/auth/mfa/verify", "x"), http.StatusForbidden, "mfa_required")
@@ -219,7 +219,19 @@ func TestAuthAPI(t *testing.T) {
 		t.Fatalf("wrong current password: %s", r.body)
 	}
 	wantStatus(t, rita.do("POST", "/api/v1/auth/password", "x"), http.StatusBadRequest, "")
-	rita.expect(http.StatusNoContent, "POST", "/api/v1/auth/password", map[string]string{"currentPassword": "a long and unusual passphrase", "newPassword": "another long passphrase"}, nil)
+	before := rita.csrf
+	var changed struct {
+		CSRFToken string `json:"csrfToken"`
+		State     string `json:"state"`
+	}
+	rita.expect(http.StatusOK, "POST", "/api/v1/auth/password", map[string]string{"currentPassword": "a long and unusual passphrase", "newPassword": "another long passphrase"}, &changed)
+	// This session continues under a new token and CSRF token; the old CSRF
+	// token is refused.
+	if changed.State != "active" || changed.CSRFToken == "" || changed.CSRFToken == before {
+		t.Fatalf("session after a password change: %+v", changed)
+	}
+	wantStatus(t, rita.do("POST", "/api/v1/auth/mfa/recovery-codes", map[string]string{"password": "another long passphrase"}), http.StatusForbidden, "csrf_failed")
+	rita.csrf = changed.CSRFToken
 	wantStatus(t, other.do("GET", "/api/v1/auth/session", nil), http.StatusUnauthorized, "")
 	wantStatus(t, third.do("GET", "/api/v1/auth/session", nil), http.StatusUnauthorized, "")
 	rita.expect(http.StatusOK, "GET", "/api/v1/auth/session", nil, nil)

@@ -121,6 +121,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	ac.PublicURL = cfg.PublicURL.String()
 	ac.Issuer = "EasyRMM (" + cfg.PublicURL.Hostname() + ")"
 	authSvc := auth.NewService(db, auditLog, hasher, sealer, mail, ac)
+	authSvc.SetLogger(log)
 	var consoles []string
 	for _, o := range cfg.Origins() {
 		consoles = append(consoles, originString(o.Console))
@@ -449,6 +450,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	runErr := e.run(ctx)
 	cancel()
 	wg.Wait()
+	// Reset e-mail already accepted is sent before the server exits.
+	deps.Auth.Wait()
 	if runErr != nil {
 		return runErr
 	}

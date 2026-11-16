@@ -225,8 +225,15 @@ type enrollmentView struct {
 }
 
 func (a *API) beginTOTP(w http.ResponseWriter, r *http.Request) error {
+	var req passwordConfirm
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
 	id := httpapi.IdentityFrom(r.Context())
-	enr, err := a.svc.BeginTOTPEnrollment(r.Context(), id.Session, id.User)
+	enr, err := a.svc.BeginTOTPEnrollment(r.Context(), id.Session, id.User, req.Password, httpapi.Meta(r))
+	if errors.Is(err, auth.ErrInvalidCredentials) {
+		return httpapi.Validation(map[string]string{"password": "Your password is not correct."})
+	}
 	if err != nil {
 		return mapAuthError(err)
 	}
@@ -299,7 +306,7 @@ func (a *API) changePassword(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	id := httpapi.IdentityFrom(r.Context())
-	err := a.svc.ChangePassword(r.Context(), id.Session, id.User, req.CurrentPassword, req.NewPassword, httpapi.Meta(r))
+	token, err := a.svc.ChangePassword(r.Context(), id.Session, id.User, req.CurrentPassword, req.NewPassword, httpapi.Meta(r))
 	if errors.Is(err, auth.ErrInvalidCredentials) {
 		return httpapi.Validation(map[string]string{"currentPassword": "Your current password is not correct."})
 	}
@@ -309,8 +316,8 @@ func (a *API) changePassword(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return mapAuthError(err)
 	}
-	w.WriteHeader(http.StatusNoContent)
-	return nil
+	// The session continues under a new token (and so a new CSRF token).
+	return a.respondWithToken(w, r, token, id.Session.ExpiresAt)
 }
 
 func (a *API) listSessions(w http.ResponseWriter, r *http.Request) error {
@@ -471,7 +478,7 @@ func (a *API) beginKey(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	id := httpapi.IdentityFrom(r.Context())
-	creation, err := a.svc.BeginKeyRegistration(r.Context(), id.Session, req.Password)
+	creation, err := a.svc.BeginKeyRegistration(r.Context(), id.Session, req.Password, httpapi.Meta(r))
 	if errors.Is(err, auth.ErrInvalidCredentials) {
 		return httpapi.Validation(map[string]string{"password": "Your password is not correct."})
 	}

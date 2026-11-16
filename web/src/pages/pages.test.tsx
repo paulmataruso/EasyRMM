@@ -362,7 +362,12 @@ describe("account", () => {
 
   it("changes the password", async () => {
     const user = userEvent.setup();
-    const server = installFakeApi({ ...routes, "POST /auth/password": noContent, "GET /audit": ok({ items: [] }) });
+    const server = installFakeApi({
+      ...routes,
+      "POST /auth/password": ok(sessionView({ csrfToken: "csrf-after-change" })),
+      "DELETE /auth/sessions/:id": noContent,
+      "GET /audit": ok({ items: [] }),
+    });
     renderApp("/account");
     const card = (await screen.findByRole("heading", { name: "Password" })).closest("section") ?? document.body;
     const change = within(card as HTMLElement).getByRole("button", { name: "Change password" });
@@ -376,6 +381,11 @@ describe("account", () => {
     expect(await screen.findByText("Password changed. Your other sessions were signed out.")).toBeInTheDocument();
     expect(server.call("POST /auth/password").body).toEqual({ currentPassword: "old password value", newPassword: "a brand new passphrase" });
     expect(screen.getByLabelText(/^Current password/)).toHaveValue("");
+    // The session goes on under the token the server returned, so later changes carry its new CSRF token.
+    const row = (await screen.findByText("Firefox on Windows")).closest("tr") as HTMLElement;
+    await user.click(within(row).getByRole("button", { name: "Sign out" }));
+    await screen.findByText("That session was signed out.");
+    expect(server.call("DELETE /auth/sessions/:id").headers["x-csrf-token"]).toBe("csrf-after-change");
   });
 
   it("lists sessions and signs another one out", async () => {

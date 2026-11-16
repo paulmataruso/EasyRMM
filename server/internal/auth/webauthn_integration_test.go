@@ -51,7 +51,7 @@ func (e *env) register(t *testing.T, token, password, name string, key *webauthn
 	e.svc.ResetLimits()
 	e.now = e.now.Add(time.Second) // keys are listed oldest first
 	s, u := e.session(t, token)
-	creation, err := e.svc.BeginKeyRegistration(ctx, s, password)
+	creation, err := e.svc.BeginKeyRegistration(ctx, s, password, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func TestWebAuthnNeedsAName(t *testing.T) {
 			t.Errorf("%q passkey finish: %v", url, err)
 		}
 		s := &auth.Session{State: auth.StateActive}
-		if _, err := ip.svc.BeginKeyRegistration(ctx, s, ""); !errors.Is(err, auth.ErrWebAuthnUnavailable) {
+		if _, err := ip.svc.BeginKeyRegistration(ctx, s, "", meta); !errors.Is(err, auth.ErrWebAuthnUnavailable) {
 			t.Errorf("%q register: %v", url, err)
 		}
 		if _, err := ip.svc.FinishKeyRegistration(ctx, s, &auth.User{}, "x", nil, meta); !errors.Is(err, auth.ErrWebAuthnUnavailable) {
@@ -205,8 +205,25 @@ func TestSecurityKeyAsTheOnlySecondFactor(t *testing.T) {
 	// A user with keys can still add an authenticator app, and keeps
 	// working recovery codes.
 	sess, user := e.session(t, active)
-	if _, err := e.svc.BeginTOTPEnrollment(ctx, sess, user); err != nil {
+	if _, err := e.svc.BeginTOTPEnrollment(ctx, sess, user, "", meta); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("totp set-up without the password: %v", err)
+	}
+	pending, err := e.svc.BeginTOTPEnrollment(ctx, sess, user, goodPassword, meta)
+	if err != nil {
 		t.Fatalf("totp next to keys: %v", err)
+	}
+
+	// Until it is confirmed, the new authenticator does not sign in: a
+	// session that started set-up and walked away (or was stolen) has not
+	// added a second factor.
+	e.svc.ResetLimits()
+	tok, half, err := e.svc.Login(ctx, "kim@example.com", goodPassword, meta)
+	if err != nil || half.State != auth.StateMFARequired {
+		t.Fatalf("login: %v %v", half, err)
+	}
+	hs, hu := e.session(t, tok)
+	if _, err := e.svc.VerifyMFA(ctx, hs, hu, codeFor(t, pending.Secret, e.now), meta); !errors.Is(err, auth.ErrInvalidCode) {
+		t.Fatalf("a pending authenticator signed in: %v", err)
 	}
 }
 
@@ -472,7 +489,7 @@ func TestSecurityKeysFromTheAccountPage(t *testing.T) {
 	// The browser is told which keys exist, so it does not make a second
 	// credential on the same key.
 	s, _ := e.session(t, token)
-	creation, err := e.svc.BeginKeyRegistration(ctx, s, goodPassword)
+	creation, err := e.svc.BeginKeyRegistration(ctx, s, goodPassword, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -486,7 +503,7 @@ func TestSecurityKeysFromTheAccountPage(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := e.svc.BeginKeyRegistration(ctx, s, goodPassword); !errors.Is(err, auth.ErrTooManyKeys) {
+	if _, err := e.svc.BeginKeyRegistration(ctx, s, goodPassword, meta); !errors.Is(err, auth.ErrTooManyKeys) {
 		t.Fatalf("eleventh: %v", err)
 	}
 	keys, err := e.svc.SecurityKeys(ctx, id)
@@ -524,7 +541,7 @@ func TestSecurityKeysFromTheAccountPage(t *testing.T) {
 
 	// Only while signed in.
 	s.State = auth.StateMFARequired
-	if _, err := e.svc.BeginKeyRegistration(ctx, s, goodPassword); !errors.Is(err, auth.ErrWrongState) {
+	if _, err := e.svc.BeginKeyRegistration(ctx, s, goodPassword, meta); !errors.Is(err, auth.ErrWrongState) {
 		t.Errorf("register mid sign-in: %v", err)
 	}
 	if _, err := e.svc.FinishKeyRegistration(ctx, s, u, "x", nil, meta); !errors.Is(err, auth.ErrWrongState) {
@@ -588,7 +605,7 @@ func TestRegistrationRefusals(t *testing.T) {
 	}
 	s, u := e.session(t, tok)
 	try := func(mutate func(*webauthntest.Authenticator)) error {
-		creation, err := e.svc.BeginKeyRegistration(ctx, s, "")
+		creation, err := e.svc.BeginKeyRegistration(ctx, s, "", meta)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -627,10 +644,16 @@ func TestRegistrationRaces(t *testing.T) {
 	ivy, key, token := e.keyUser(t, "ivy@example.com")
 	s, u := e.session(t, token)
 
-	// Confirming the password is rate-limited.
+	// Confirming the password is rate-limited. Wrong passwords also end the
+	// session that tried them (TestReauthentication), so try from a spare.
+	spare, err := e.mfa(t, "ivy@example.com", key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sp, _ := e.session(t, spare)
 	limited := false
 	for i := 0; i < 15 && !limited; i++ {
-		_, err := e.svc.BeginKeyRegistration(ctx, s, "wrong-password-1")
+		_, err := e.svc.BeginKeyRegistration(ctx, sp, "wrong-password-1", meta)
 		limited = errors.Is(err, auth.ErrRateLimited)
 	}
 	if !limited {
@@ -639,12 +662,11 @@ func TestRegistrationRaces(t *testing.T) {
 
 	// An answer is accepted once.
 	e.svc.ResetLimits()
-	creation, err := e.svc.BeginKeyRegistration(ctx, s, goodPassword)
+	creation, err := e.svc.BeginKeyRegistration(ctx, s, goodPassword, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
-	spare := webauthntest.New(t, rpID, origin)
-	answer := spare.Create(t, asJSON(t, creation))
+	answer := webauthntest.New(t, rpID, origin).Create(t, asJSON(t, creation))
 	if _, err := e.svc.FinishKeyRegistration(ctx, s, u, "Spare", answer, meta); err != nil {
 		t.Fatal(err)
 	}
@@ -676,11 +698,11 @@ func TestRegistrationRaces(t *testing.T) {
 	}
 	s2, u2 := e.session(t, second)
 	e.svc.ResetLimits()
-	c1, err := e.svc.BeginKeyRegistration(ctx, s, goodPassword)
+	c1, err := e.svc.BeginKeyRegistration(ctx, s, goodPassword, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c2, err := e.svc.BeginKeyRegistration(ctx, s2, goodPassword)
+	c2, err := e.svc.BeginKeyRegistration(ctx, s2, goodPassword, meta)
 	if err != nil {
 		t.Fatal(err)
 	}

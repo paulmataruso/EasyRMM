@@ -645,7 +645,7 @@ func (s *Service) SetStatus(ctx context.Context, c access.Caller, id uuid.UUID, 
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE users SET status = $2, failed_logins = 0, locked_until = NULL WHERE id = $1`, id, status); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE users SET status = $2, failed_logins = 0, mfa_failed_attempts = 0, locked_until = NULL WHERE id = $1`, id, status); err != nil {
 			return err
 		}
 		action := "user.enable"
@@ -670,7 +670,7 @@ func (s *Service) Unlock(ctx context.Context, c access.Caller, id uuid.UUID) (*U
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = $1`, id); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE users SET failed_logins = 0, mfa_failed_attempts = 0, locked_until = NULL WHERE id = $1`, id); err != nil {
 			return err
 		}
 		org, site := auditOrg(u.all)

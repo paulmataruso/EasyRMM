@@ -16,8 +16,10 @@ sign-in, people set up one of these:
 * **Authenticator app.** Six-digit codes (TOTP) from an app such as Microsoft
   Authenticator, Google Authenticator or 1Password.
 
-The other kind can be added later from **Account**. Someone with both can
-use either at the second-factor step.
+The other kind can be added later from **Account**, after entering the
+password again. Someone with both can use either at the second-factor step.
+An authenticator app counts only once its first code has been confirmed:
+set-up that was started and abandoned adds nothing that signs in.
 
 The first second factor, of either kind, comes with ten **recovery codes**.
 Each signs in once in place of the second factor. **Account → New recovery
@@ -68,14 +70,50 @@ or an administrator resets their second factor.
 ## Failed attempts
 
 * **Password.** Five failures in a row lock the account for a minute, twice
-  as long after each further failure, up to 30 minutes. Sign-in attempts are also limited
-  per client address.
+  as long after each further failure, up to 30 minutes. Sign-in attempts are
+  also limited per client address.
 * **Second-factor step.** Five wrong codes or refused keys end that sign-in;
   the person starts again with their password. Attempts are limited per
-  person.
+  person. Wrong authenticator or recovery codes also count across sign-ins:
+  ten in a row lock the account on the same schedule as wrong passwords, so
+  someone who knows the password cannot keep guessing codes by signing in
+  again. A correct second factor, a password reset or an administrator's
+  **Unlock** starts the count over.
 * **Passkey sign-in.** Refused passkeys are audited and limited per client
   address. They do not lock the account: no password was tried, and a lock
-  would let anyone lock a known person out.
+  would let anyone lock a known person out. For the same reason a passkey
+  still signs in while the account is locked.
+* **Confirming a change.** Changing the password, adding or removing a
+  second factor and replacing recovery codes ask for the password again.
+  Five wrong passwords end the session that tried them, and attempts are
+  limited per person.
+
+Limits per client address count an IPv6 client's whole /64 network as one
+address, since a single host usually has one to itself.
+
+The lockout is a trade-off: anyone who knows a person's email address can
+keep their password sign-in locked by sending a wrong password now and then.
+Passkeys keep working, every failure is audited with its source address, and
+an administrator can **Unlock** the account. If this happens, block the
+source at your firewall or reverse proxy.
+
+## Sessions
+
+A sign-in session ends after two hours without use, or twelve hours at most
+(`EASYRMM_SESSION_IDLE_TIMEOUT`, `EASYRMM_SESSION_MAX_AGE`). It gets a new
+token when the second factor is verified and when the password is changed,
+so a token copied earlier stops working. Changing the password also signs out
+the person's other sessions.
+
+## Password reset
+
+**Forgot password** answers the same way whether or not the address has an
+account, and answers before looking it up; the e-mail goes out afterwards,
+so the time taken reveals nothing either. Each account gets at most three
+reset e-mails at once and then one every 20 minutes, however many addresses
+ask. A reset link works once, for 30 minutes (`EASYRMM_PASSWORD_RESET_TTL`),
+and only the newest link works. Someone invited who has not chosen a
+password yet is sent a new invitation link instead, valid for 72 hours.
 
 ## When someone loses their second factor
 
@@ -91,8 +129,11 @@ Confirm who is asking before you reset.
 | Action | Recorded when |
 |---|---|
 | `auth.login` | A sign-in, with `method: passkey` for passkey sign-in (successes and failures) |
-| `auth.mfa_verify` | The second-factor step, with `method: webauthn` for a key (successes and failures, with the reason) |
-| `auth.mfa_enroll` | An authenticator app is set up |
-| `auth.webauthn_add` | A security key or passkey is added (its name, whether it is synced), or a registration is refused (with the reason) |
-| `auth.webauthn_remove` | A security key or passkey is removed by its owner |
+| `auth.mfa_verify` | The second-factor step, with `method: webauthn` for a key (successes and failures, with the reason; `inARow` and `lockedUntil` when wrong codes lock the account; `denied` while it is locked) |
+| `auth.mfa_enroll` | An authenticator app is set up, or a wrong password was entered to start set-up |
+| `auth.password_change` | A password change (successes, and wrong current passwords with `signedOut` when the session ended) |
+| `auth.recovery_codes_regenerate` | New recovery codes (successes and wrong passwords) |
+| `auth.password_reset_request` | A reset e-mail for an account (`invitation` when a new invitation was sent; `denied` past the per-account limit) |
+| `auth.webauthn_add` | A security key or passkey is added (its name, whether it is synced), or a registration is refused (with the reason, or a wrong password) |
+| `auth.webauthn_remove` | A security key or passkey is removed by its owner (or a wrong password) |
 | `user.mfa_reset` | An administrator resets someone's second factor (with how many keys were removed) |
