@@ -1,12 +1,14 @@
 # Backup and restore
 
-A complete backup has four parts. All four are needed to restore.
+A complete backup has four parts, five with `manual` TLS. All are needed to
+restore.
 
 | Part | Where | Why |
 |---|---|---|
 | Database | PostgreSQL in the `postgres` container | Everything: tenants, devices, users, audit log |
 | `deploy/.env` | Next to `docker-compose.yml` | **The encryption key** (`EASYRMM_SECRET_KEY`) and database passwords. The database's secrets are sealed with the key: authenticator-app secrets, MeshCentral's service account, the EasyPatch and audit-forwarding credentials, the internal certificate authority agents trust and the job-signing key they pinned. Without it, authenticator apps stop working (recovery codes and security keys still do) and every agent has to be reinstalled |
 | `/srv/easyrmm/server` | Data directory | The ACME account and certificates (`acme` mode); empty in the other modes |
+| `/srv/easyrmm/tls` (`EASYRMM_TLS_DIR`) | `manual` TLS only | Your certificate and key. Back them up wherever you manage certificates, or include the directory here |
 | `/srv/easyrmm/meshcentral` | MeshCentral's data | **MeshCentral's server identity** (the keys its agents trust), its device records and the downloaded agent binaries. Without it, every remote-access agent has to be reinstalled |
 
 `/srv/easyrmm/meshcentral-config` needs no backup: the server rewrites it on
@@ -32,6 +34,8 @@ docker compose exec -T -u postgres postgres pg_dump -p 15432 \
 # Configuration and data directory.
 tar -C /path/to/easyrmm/deploy -czf /var/backups/easyrmm/env-$ts.tgz .env
 tar -C /srv/easyrmm -czf /var/backups/easyrmm/server-$ts.tgz server
+# With manual TLS, unless your certificates are backed up elsewhere:
+# tar -C /srv/easyrmm -czf /var/backups/easyrmm/tls-$ts.tgz tls
 
 # MeshCentral keeps its database in files; stop it for a consistent copy.
 # Open remote sessions drop and agents reconnect on their own when it is back.
@@ -57,8 +61,11 @@ commands failed and that a fresh deployment did not start; both are fixed.
 
 ## Restore onto a new host
 
-1. Install Docker, clone the repository at the same release, and restore
-   `deploy/.env`, `/srv/easyrmm/server` and `/srv/easyrmm/meshcentral`.
+1. Install Docker, then clone the repository at the same release or unpack
+   that release's deployment bundle ([Upgrading](upgrading.md) describes
+   both). Restore `deploy/.env`, `/srv/easyrmm/server`,
+   `/srv/easyrmm/meshcentral` and, with `manual` TLS, your certificate
+   files.
    Keep the ownership `setup.sh` gives them: `65532:65532`, mode 700, for
    `server` and for the `data`, `files` and `backups` directories inside
    `meshcentral`.
@@ -81,8 +88,9 @@ commands failed and that a fresh deployment did not start; both are fixed.
        < /var/backups/easyrmm/db-<timestamp>.dump
    ```
 
-5. Start the server: `docker compose up -d`. It applies any newer migrations
-   and serves the restored data.
+5. Start the server: `docker compose up -d`. It serves the restored data.
+   To move to a newer release as well, restore onto the same release first,
+   check it, then upgrade as in [Upgrading](upgrading.md).
 
 6. Verify the audit chain as a super administrator:
    `GET /api/v1/audit/verify` returns `checked` and, if the chain is broken,
