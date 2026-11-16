@@ -27,7 +27,7 @@ describe("script text", () => {
   });
 
   it("explains why a device cannot run scripts", () => {
-    const agent = { version: "1", arch: "amd64", online: true, lastSeenAt: null, enrolledAt: "2026-10-01T00:00:00Z" };
+    const agent = { version: "1", arch: "amd64", sha256: "", online: true, lastSeenAt: null, enrolledAt: "2026-10-01T00:00:00Z", update: null };
     expect(cannotRunReason(device("d", "x", { platform: "linux", agent, canRunScripts: true }))).toBeNull();
     expect(cannotRunReason(device("d", "x", { platform: "linux", agent: null, canRunScripts: false }))).toMatch(/no EasyRMM agent/);
     expect(cannotRunReason(device("d", "x", { platform: "linux", agent, canRunScripts: false }))).toMatch(/role/);

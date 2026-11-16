@@ -24,14 +24,15 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		return nil, apperr.Invalid("facts", err.Error())
 	}
 	linked := false
+	var update *agentproto.SignedUpdate
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		// The name follows the hostname until someone renames the device.
 		tag, err := tx.Exec(ctx, `UPDATE devices SET
 				name = CASE WHEN name = hostname THEN $2 ELSE name END,
 				hostname = $2, os_description = $3, platform = $4, agent_version = $5, agent_arch = $6,
-				agent_last_seen_at = now()
+				agent_sha256 = NULLIF($7, ''), agent_last_seen_at = now()
 			WHERE id = $1 AND agent_public_key IS NOT NULL`,
-			d.ID, f.hostname, f.os, f.platform, f.version, f.arch)
+			d.ID, f.hostname, f.os, f.platform, f.version, f.arch, f.sha256)
 		if err != nil {
 			return err
 		}
@@ -39,9 +40,22 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 			return ErrUnknownDevice
 		}
 		if f.meshNode != "" && f.meshNode != d.MeshNodeID {
-			linked, err = s.link(ctx, tx, d, f, ip)
+			if linked, err = s.link(ctx, tx, d, f, ip); err != nil {
+				return err
+			}
 		}
-		return err
+		// The update is an extra: when settling it fails, the heartbeat
+		// still counts.
+		sp, err := tx.Begin(ctx)
+		if err != nil {
+			return err
+		}
+		if update, err = s.planUpdate(ctx, sp, d, f, req.Update, ip); err != nil {
+			s.log.Error("agents: settling the agent update failed", "error", err, "device_id", d.ID)
+			update = nil
+			return sp.Rollback(ctx)
+		}
+		return sp.Commit(ctx)
 	})
 	if errors.Is(err, ErrUnknownDevice) {
 		return nil, err
@@ -60,6 +74,7 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		HeartbeatSeconds: int(HeartbeatInterval.Seconds()),
 		MeshAgent:        agentproto.MeshAgentInfo{Available: available},
 		JobKey:           s.jobKey,
+		Update:           update,
 	}, nil
 }
 

@@ -155,7 +155,7 @@ describe("devices", () => {
       canDesktop: false,
       canTerminal: false,
       canFiles: false,
-      agent: { version: "1.4.0", arch: "arm64", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z" },
+      agent: { version: "1.4.0", arch: "arm64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null },
     });
     // No /remote-access/status route: an administrator's page must not ask for it when the feature is off.
     installFakeApi({
@@ -310,7 +310,7 @@ describe("device detail", () => {
   });
 
   it("tells a checking-in device apart from one whose MeshAgent is down", async () => {
-    const agent = { version: "1.4.0", arch: "amd64", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z" };
+    const agent = { version: "1.4.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null };
     installFakeApi({
       ...baseRoutes(TECHNICIAN),
       ...unreportedRoutes(),

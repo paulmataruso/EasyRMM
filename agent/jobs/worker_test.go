@@ -365,3 +365,60 @@ func TestJournalRefusesStrangeRunIDs(t *testing.T) {
 		t.Error("a missing journal is empty")
 	}
 }
+
+func TestWorkerPausesForUpdates(t *testing.T) {
+	release := make(chan struct{})
+	var mu sync.Mutex
+	ran := map[string]int{}
+	h := newHarness(t, t.TempDir(), func(ctx context.Context, p agentproto.JobPayload, root string) agentproto.ResultRequest {
+		mu.Lock()
+		ran[p.RunID]++
+		mu.Unlock()
+		if p.RunID == run1 {
+			<-release
+		}
+		return echoExec(ctx, p, root)
+	})
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for !cond() {
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting until %s", what)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	if h.w.Busy() {
+		t.Fatal("busy without jobs")
+	}
+	h.srv.polls <- &agentproto.PollResponse{Jobs: []agentproto.SignedJob{h.job(run1, "long")}}
+	waitFor("the job runs", h.w.Busy)
+
+	// Paused, the running job finishes; a delivered one does not start.
+	h.w.Pause()
+	h.srv.polls <- &agentproto.PollResponse{Jobs: []agentproto.SignedJob{h.job(run2, "two")}}
+	close(release)
+	if run, _ := h.srv.result(t); run != run1 {
+		t.Fatalf("result of %s", run)
+	}
+	waitFor("the worker is idle", func() bool { return !h.w.Busy() })
+	time.Sleep(100 * time.Millisecond)
+	mu.Lock()
+	if ran[run2] != 0 {
+		t.Error("started a job while paused")
+	}
+	mu.Unlock()
+
+	// Resumed, the job delivered again runs.
+	h.w.Resume()
+	h.srv.polls <- &agentproto.PollResponse{Jobs: []agentproto.SignedJob{h.job(run2, "two")}}
+	if run, _ := h.srv.result(t); run != run2 {
+		t.Fatalf("result of %s", run)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if ran[run2] != 1 {
+		t.Errorf("runs %v", ran)
+	}
+}

@@ -255,14 +255,49 @@ export interface Device {
   canFiles: boolean;
   /** The caller may run scripts here and the device has the EasyRMM agent. */
   canRunScripts: boolean;
+  /** The caller may update the device's agent (device.edit) and it has one (ADR-0027). */
+  canUpdateAgent: boolean;
 }
 
 export interface DeviceAgent {
   version: string;
   arch: string;
+  /** SHA-256 of the agent's executable; empty for agents too old to update themselves. */
+  sha256: string;
   online: boolean;
   lastSeenAt: string | null;
   enrolledAt: string;
+  /** Where the agent stands against the server's build; null when the server has none for its platform. */
+  update: AgentUpdate | null;
+}
+
+/** Where an agent stands against the build the server serves (ADR-0027). */
+export type AgentUpdateStatus = "current" | "available" | "queued" | "updating" | "failed" | "unsupported";
+
+export interface AgentUpdate {
+  status: AgentUpdateStatus;
+  /** The server's build's version, "" when unknown. */
+  version: string;
+  attempts: number;
+  error: string;
+  requested: boolean;
+}
+
+export type AgentUpdateMode = "automatic" | "manual" | "off";
+
+export interface AgentUpdatePolicy {
+  mode: AgentUpdateMode;
+  maxConcurrent: number;
+}
+
+/** The rollout's setting and the fleet's state. Fleet keys are statuses, and "none" for devices without a build. */
+export interface AgentUpdateSettings extends AgentUpdatePolicy {
+  stored: boolean;
+  updatedAt: string | null;
+  updatedBy?: string;
+  version: string;
+  builds: AgentBuild[];
+  fleet: Partial<Record<AgentUpdateStatus | "none", number>>;
 }
 
 export type EnrollmentTokenStatus = "active" | "expired" | "revoked" | "used_up";
@@ -390,6 +425,8 @@ export interface AgentBuild {
   file: string;
   size: number;
   sha256: string;
+  /** The builds' version from the server's VERSION file, "" when unknown. */
+  version: string;
 }
 
 /** An address the server answers on: its public URL, or one of its IP addresses (ADR-0016). */

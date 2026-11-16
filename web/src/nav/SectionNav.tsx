@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { Link, useLocation, useNavigate } from "react-router";
 import {
   ArrowLeft,
+  ArrowUpCircle,
   Bell,
   Building2,
   ChevronRight,
@@ -661,6 +662,7 @@ export function settingsParts(can: (p: Permission) => boolean): { id: string; la
     { id: "users", label: "Users", icon: <UsersRound className="size-4" aria-hidden />, show: can("user.view") },
     { id: "audit", label: "Audit log", icon: <ScrollText className="size-4" aria-hidden />, show: can("audit.view") },
     { id: "remote", label: "Remote access", icon: <MonitorSmartphone className="size-4" aria-hidden />, show: can("settings.manage") },
+    { id: "agent-updates", label: "Agent updates", icon: <ArrowUpCircle className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "forwarding", label: "Audit forwarding", icon: <Send className="size-4" aria-hidden />, show: can("settings.manage") },
   ]
     .filter((p) => p.show)

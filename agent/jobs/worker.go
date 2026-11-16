@@ -47,6 +47,9 @@ type Worker struct {
 	key    atomic.Pointer[ed25519.PublicKey]
 	keySet chan struct{}
 	once   sync.Once
+	// paused holds new jobs back while the agent updates (ADR-0027).
+	paused  atomic.Bool
+	resumed chan struct{}
 
 	mu      sync.Mutex
 	active  map[string]*active
@@ -76,6 +79,7 @@ func (w *Worker) init() {
 			w.Execute = Execute
 		}
 		w.keySet = make(chan struct{}, 1)
+		w.resumed = make(chan struct{}, 1)
 		w.active = map[string]*active{}
 		w.pending = map[string]agentproto.ResultRequest{}
 		w.done = map[string]time.Time{}
@@ -102,6 +106,32 @@ func (w *Worker) SetKey(encoded string) error {
 	return nil
 }
 
+// Pause stops the worker from asking for jobs and from starting delivered
+// ones, which the server delivers again later; scripts already running
+// go on. The agent pauses before it updates itself.
+func (w *Worker) Pause() {
+	w.init()
+	w.paused.Store(true)
+}
+
+// Resume undoes Pause.
+func (w *Worker) Resume() {
+	w.init()
+	w.paused.Store(false)
+	select {
+	case w.resumed <- struct{}{}:
+	default:
+	}
+}
+
+// Busy reports whether any job is being run or waits to start.
+func (w *Worker) Busy() bool {
+	w.init()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return len(w.active) > 0
+}
+
 // Run polls for jobs until ctx ends, then waits for running scripts to
 // stop and records their results for the next start.
 func (w *Worker) Run(ctx context.Context) error {
@@ -113,6 +143,13 @@ func (w *Worker) Run(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 			case <-w.keySet:
+			}
+			continue
+		}
+		if w.paused.Load() {
+			select {
+			case <-ctx.Done():
+			case <-w.resumed:
 			}
 			continue
 		}
@@ -193,6 +230,9 @@ func (w *Worker) accept(ctx context.Context, sj agentproto.SignedJob) {
 			Status: agentproto.RunFailed, Error: capitalize(msg) + ". It was not run.", FinishedAt: time.Now().UTC(),
 		})
 		return
+	}
+	if w.paused.Load() {
+		return // delivered again once the agent has updated
 	}
 	rec := record{RunID: p.RunID, JobID: p.JobID, State: stateReceived, ExpiresAt: p.ExpiresAt}
 	if err := w.journal().put(rec); err != nil {

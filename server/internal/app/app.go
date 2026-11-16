@@ -27,6 +27,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentupdatesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/alertsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditfwdapi"
@@ -169,6 +170,11 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 		log.Warn("no EasyRMM agent builds found; the console cannot offer agent downloads", "dir", cfg.AgentDir)
 	}
 	d.AgentBuilds = builds
+	if len(builds.List()) > 0 && builds.Version() == "" {
+		log.Warn("the agent builds have no "+agents.VersionFile+" file; agent updates still work, but the console cannot show versions", "dir", cfg.AgentDir)
+	}
+	d.Agents.SetUpdates(builds, jobKey)
+	d.Devices.SetBuilds(d.Agents.BuildLookup)
 	return d, nil
 }
 
@@ -284,6 +290,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	inventoryapi.New(d.Inventory).Register(mux)
 	alertsapi.New(d.Monitoring).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)
+	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
 	mux.Handle("GET /api/v1/health", httpapi.Handle(func(w http.ResponseWriter, _ *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": Version})
 		return nil

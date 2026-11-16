@@ -19,6 +19,7 @@ import { DeviceAlertsCard } from "../alerts/DeviceAlertsCard";
 import { SoftwarePanel } from "./DeviceSoftware";
 import { platformName } from "./platform";
 import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
+import { AgentLine } from "./agentUpdate";
 import { openSessionWindow, sessionPath } from "./sessionWindow";
 
 /** The remote-access part of a device, in a few words, and what it means when that is not obvious. */
@@ -164,16 +165,7 @@ export function DeviceDetailPage() {
                 </Link>,
               ],
               ["Device group", d.deviceGroupName || <span className="text-muted">None</span>],
-              [
-                "EasyRMM agent",
-                d.agent ? (
-                  <span key="a">
-                    {d.agent.version} <span className="text-muted">({d.agent.arch})</span>
-                  </span>
-                ) : (
-                  <span className="text-muted">Not installed</span>
-                ),
-              ],
+              ["EasyRMM agent", <AgentLine key="a" device={d} />],
               [
                 "Remote access",
                 <span key="r">

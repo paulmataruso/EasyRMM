@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -21,6 +22,7 @@ func asService() (started bool, code int) {
 		return false, 0
 	}
 	e := newEnv(io.Discard, io.Discard)
+	e.service = true
 	if lf, err := openLog(filepath.Join(e.paths.Logs(), logName), 10<<20); err == nil {
 		defer func() { _ = lf.Close() }()
 		e.log = slog.New(slog.NewTextHandler(lf, nil))
@@ -48,6 +50,10 @@ func (s *service) Execute(_ []string, req <-chan svc.ChangeRequest, status chan<
 	for {
 		select {
 		case err := <-done:
+			if errors.Is(err, errServiceRestart) {
+				s.e.log.Info("stopping so that Windows starts the agent again")
+				return true, 1
+			}
 			if err != nil {
 				s.e.log.Error("the agent stopped", "error", err)
 				return true, 1

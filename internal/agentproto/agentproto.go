@@ -61,6 +61,10 @@ type Facts struct {
 	Platform     string `json:"platform"` // windows, linux, macos
 	Arch         string `json:"arch"`     // GOARCH of the agent
 	AgentVersion string `json:"agentVersion"`
+	// AgentSHA256 is the SHA-256 of the agent's executable, in lowercase
+	// hex. Agents that can update themselves report it (ADR-0027); the
+	// server compares it with the build it serves.
+	AgentSHA256 string `json:"agentSha256,omitempty"`
 	// MeshNodeID is MeshAgent's node identifier as `meshagent -nodeid`
 	// prints it (96 hex digits), once MeshAgent is installed.
 	MeshNodeID string `json:"meshNodeId,omitempty"`
@@ -124,6 +128,8 @@ type HeartbeatRequest struct {
 	// Metrics are the device's current measurements (ADR-0018); older
 	// agents send none.
 	Metrics *Metrics `json:"metrics,omitempty"`
+	// Update reports a failed update attempt (ADR-0027).
+	Update *UpdateReport `json:"update,omitempty"`
 }
 
 // HeartbeatResponse carries the server's current instructions.
@@ -136,6 +142,9 @@ type HeartbeatResponse struct {
 	// device, empty when it holds none. The agent uploads its inventory
 	// when its own hash differs (ADR-0018).
 	InventoryHash string `json:"inventoryHash"`
+	// Update tells the agent to replace itself with another build
+	// (ADR-0027).
+	Update *SignedUpdate `json:"update,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.

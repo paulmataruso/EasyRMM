@@ -1,11 +1,13 @@
 // Package runner is the agent's main loop: heartbeats with the device's
-// metrics, its inventory when the server's copy is out of date, and
-// MeshAgent once the server offers it. Jobs run beside it (package jobs).
+// metrics, its inventory when the server's copy is out of date, MeshAgent
+// once the server offers it, and updates of the agent itself. Jobs run
+// beside it (package jobs).
 package runner
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"math/rand/v2"
@@ -25,6 +27,24 @@ type MeshAgent interface {
 	NodeID(ctx context.Context) (string, error)
 }
 
+// Updater is the agent's self-update (package update, ADR-0027).
+type Updater interface {
+	// Report returns a failed update attempt to report, or nil.
+	Report() *agentproto.UpdateReport
+	// Reached is told that a heartbeat got through.
+	Reached()
+	// Unreached is told that a heartbeat failed; true means a new build was
+	// undone and the agent must restart.
+	Unreached() bool
+	// Apply acts on a heartbeat answer's update instruction, nil for none;
+	// true means a new build is in place and the agent must restart.
+	Apply(ctx context.Context, u *agentproto.SignedUpdate) bool
+}
+
+// ErrRestart ends Run when the agent must restart into another build of
+// itself.
+var ErrRestart = errors.New("runner: the agent must restart into another build")
+
 // Runner runs an enrolled agent.
 type Runner struct {
 	Client *client.Client
@@ -40,6 +60,8 @@ type Runner struct {
 	// Inventory collects the device's inventory (ADR-0018); nil never
 	// uploads one.
 	Inventory func(ctx context.Context) agentproto.Inventory
+	// Update updates the agent (ADR-0027); nil never does.
+	Update Updater
 
 	// Timing, shortened by tests.
 	MinRetry    time.Duration // first retry after a failure (5 s)
@@ -81,7 +103,8 @@ func (r *Runner) defaults() {
 	}
 }
 
-// Run sends heartbeats until ctx ends.
+// Run sends heartbeats until ctx ends, or returns ErrRestart when the
+// agent must restart into another build.
 func (r *Runner) Run(ctx context.Context) error {
 	r.defaults()
 	if r.Mesh != nil && r.Mesh.Installed() {
@@ -91,7 +114,10 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 	}
 	for {
-		wait := r.beat(ctx)
+		wait, restart := r.beat(ctx)
+		if restart {
+			return ErrRestart
+		}
 		select {
 		case <-ctx.Done():
 			return nil
@@ -101,8 +127,8 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 // beat sends one heartbeat and acts on the answer. It returns how long to
-// wait before the next one.
-func (r *Runner) beat(ctx context.Context) time.Duration {
+// wait before the next one, or that the agent must restart.
+func (r *Runner) beat(ctx context.Context) (time.Duration, bool) {
 	f := r.Facts()
 	if r.Mesh != nil && r.Mesh.Installed() {
 		id, err := r.Mesh.NodeID(ctx)
@@ -117,14 +143,23 @@ func (r *Runner) beat(ctx context.Context) time.Duration {
 		m := r.Metrics(ctx)
 		req.Metrics = &m
 	}
+	if r.Update != nil {
+		req.Update = r.Update.Report()
+	}
 	resp, err := r.Client.Heartbeat(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return 0
+			return 0, false
 		}
-		return r.failed(err)
+		if r.Update != nil && r.Update.Unreached() {
+			return 0, true
+		}
+		return r.failed(err), false
 	}
 	r.failures = 0
+	if r.Update != nil {
+		r.Update.Reached()
+	}
 	if r.OnJobKey != nil && resp.JobKey != "" {
 		r.OnJobKey(resp.JobKey)
 	}
@@ -155,8 +190,12 @@ func (r *Runner) beat(ctx context.Context) time.Duration {
 			}
 		}
 	}
+	if r.Update != nil && r.Update.Apply(ctx, resp.Update) {
+		r.save()
+		return 0, true
+	}
 	r.save()
-	return next
+	return next, false
 }
 
 // syncInventory collects the inventory when it is due and uploads it when

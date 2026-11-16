@@ -24,7 +24,7 @@ func TestBeatSendsMetricsAndSyncsTheInventory(t *testing.T) {
 	ctx := context.Background()
 	beat := func() {
 		t.Helper()
-		if wait := r.beat(ctx); wait < 50*time.Second {
+		if wait, _ := r.beat(ctx); wait < 50*time.Second {
 			t.Fatalf("beat failed: next in %s", wait)
 		}
 	}

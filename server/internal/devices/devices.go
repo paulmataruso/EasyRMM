@@ -25,12 +25,70 @@ const AgentOnlineWindow = 3 * time.Minute
 
 // Agent is the EasyRMM agent of an enrolled device.
 type Agent struct {
-	Version    string     `json:"version"`
-	Arch       string     `json:"arch"`
+	Version string `json:"version"`
+	Arch    string `json:"arch"`
+	// SHA256 is the SHA-256 of the agent's executable as it reported it;
+	// empty for agents too old to update themselves (ADR-0027).
+	SHA256     string     `json:"sha256"`
 	Online     bool       `json:"online"`
 	LastSeenAt *time.Time `json:"lastSeenAt"`
 	EnrolledAt time.Time  `json:"enrolledAt"`
+	// Update is where the agent stands against the build the server serves
+	// for its platform; nil when the server serves none.
+	Update *AgentUpdate `json:"update"`
+
+	// The update the server holds for the agent, if any.
+	updateState, updateTarget string
 }
+
+// AgentUpdate is where a device's agent stands against the server's build
+// (ADR-0027).
+type AgentUpdate struct {
+	// Status is one of the Update* constants.
+	Status string `json:"status"`
+	// Version is the version of the server's build, "" when unknown.
+	Version string `json:"version"`
+	// Attempts and Error describe failed attempts at this build.
+	Attempts int    `json:"attempts"`
+	Error    string `json:"error"`
+	// Requested: someone asked for the update in the console.
+	Requested bool `json:"requested"`
+}
+
+// Update statuses.
+const (
+	UpdateCurrent     = "current"     // runs the server's build
+	UpdateAvailable   = "available"   // runs another build; no update planned
+	UpdateQueued      = "queued"      // waits for its turn or its next attempt
+	UpdateUpdating    = "updating"    // was told to update
+	UpdateFailed      = "failed"      // failed every attempt; waits for someone to ask again
+	UpdateUnsupported = "unsupported" // too old to update itself
+)
+
+// UpdateStatus classifies an agent from the SHA-256 of its executable, the
+// SHA-256 of the server's build for its platform, and the state and target
+// of the update the server holds for it ("" for none).
+func UpdateStatus(agentSHA, buildSHA, state, target string) string {
+	switch {
+	case agentSHA == "":
+		return UpdateUnsupported
+	case agentSHA == buildSHA:
+		return UpdateCurrent
+	case target != buildSHA:
+		return UpdateAvailable
+	case state == "sent":
+		return UpdateUpdating
+	case state == "queued":
+		return UpdateQueued
+	case state == "failed":
+		return UpdateFailed
+	}
+	return UpdateAvailable
+}
+
+// BuildLookup returns the SHA-256 and version of the agent build the
+// server serves for a platform and architecture.
+type BuildLookup func(platform, arch string) (sha256, version string, ok bool)
 
 // Device is a managed endpoint as the console shows it.
 type Device struct {
@@ -64,6 +122,9 @@ type Device struct {
 	// the EasyRMM agent (ADR-0017). Whether a script's shell suits the
 	// device is checked per script.
 	CanRunScripts bool `json:"canRunScripts"`
+	// CanUpdateAgent: the caller holds device.edit here and the device has
+	// the EasyRMM agent (ADR-0027).
+	CanUpdateAgent bool `json:"canUpdateAgent"`
 
 	// MeshNodeID is MeshCentral's node identifier, empty without MeshAgent.
 	MeshNodeID string `json:"-"`
@@ -87,29 +148,37 @@ var agentOnline = fmt.Sprintf("coalesce(d.agent_last_seen_at > now() - interval 
 var columns = `d.id, d.organization_id, o.name, d.site_id, s.name, d.device_group_id, coalesce(g.name, ''),
 	d.name, d.hostname, d.os_description, d.platform, coalesce(d.mesh_node_id, ''), d.remote_online,
 	greatest(d.last_seen_at, d.agent_last_seen_at), d.created_at, d.updated_at,
-	d.enrolled_at, coalesce(d.agent_version, ''), coalesce(d.agent_arch, ''), d.agent_last_seen_at, ` + agentOnline
+	d.enrolled_at, coalesce(d.agent_version, ''), coalesce(d.agent_arch, ''), d.agent_last_seen_at, ` + agentOnline + `,
+	coalesce(d.agent_sha256, ''), coalesce(u.state, ''), coalesce(u.target_sha256, ''), coalesce(u.attempts, 0),
+	coalesce(u.error, ''), coalesce(u.requested, false)`
 
 const from = ` FROM devices d
 	JOIN sites s ON s.id = d.site_id
 	JOIN organizations o ON o.id = d.organization_id
-	LEFT JOIN device_groups g ON g.id = d.device_group_id`
+	LEFT JOIN device_groups g ON g.id = d.device_group_id
+	LEFT JOIN agent_updates u ON u.device_id = d.id`
 
 func scan(row pgx.Row) (*Device, error) {
 	var (
 		d          Device
 		enrolledAt *time.Time
 		a          Agent
+		u          AgentUpdate
 	)
 	err := row.Scan(&d.ID, &d.OrganizationID, &d.OrganizationName, &d.SiteID, &d.SiteName, &d.DeviceGroupID, &d.DeviceGroupName,
 		&d.Name, &d.Hostname, &d.OSDescription, &d.Platform, &d.MeshNodeID, &d.RemoteOnline,
 		&d.LastSeenAt, &d.CreatedAt, &d.UpdatedAt,
-		&enrolledAt, &a.Version, &a.Arch, &a.LastSeenAt, &a.Online)
+		&enrolledAt, &a.Version, &a.Arch, &a.LastSeenAt, &a.Online,
+		&a.SHA256, &a.updateState, &a.updateTarget, &u.Attempts, &u.Error, &u.Requested)
 	if err != nil {
 		return nil, err
 	}
 	d.RemoteAgent = d.MeshNodeID != ""
 	if enrolledAt != nil {
 		a.EnrolledAt = *enrolledAt
+		if a.updateState != "" {
+			a.Update = &u // completed by Service.decorate
+		}
 		d.Agent = &a
 	}
 	d.Online = d.RemoteOnline || a.Online
@@ -120,6 +189,7 @@ func scan(row pgx.Row) (*Device, error) {
 type Service struct {
 	db     *database.DB
 	remote bool
+	builds BuildLookup
 }
 
 // New returns a Service. remote says whether remote access is enabled on
@@ -128,6 +198,10 @@ func New(db *database.DB, remote bool) *Service {
 	return &Service{db: db, remote: remote}
 }
 
+// SetBuilds tells the service which agent builds the server serves, so
+// devices show whether their agent is up to date (ADR-0027).
+func (s *Service) SetBuilds(b BuildLookup) { s.builds = b }
+
 func (s *Service) decorate(c access.Caller, d *Device) {
 	r := rbac.Site(d.OrganizationID, d.SiteID)
 	ok := s.remote && d.RemoteAgent
@@ -135,6 +209,35 @@ func (s *Service) decorate(c access.Caller, d *Device) {
 	d.CanTerminal = ok && c.Can(rbac.PermTerminal, r)
 	d.CanFiles = ok && c.Can(rbac.PermFiles, r)
 	d.CanRunScripts = d.Agent != nil && c.Can(rbac.PermScriptRun, r)
+	d.CanUpdateAgent = d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
+	s.updateStatus(d)
+}
+
+// updateStatus fills in the agent's update status against the server's
+// build, or leaves it nil when the server serves none for the device.
+func (s *Service) updateStatus(d *Device) {
+	a := d.Agent
+	if a == nil {
+		return
+	}
+	var sha, version string
+	ok := false
+	if s.builds != nil {
+		sha, version, ok = s.builds(d.Platform, a.Arch)
+	}
+	if !ok {
+		a.Update = nil
+		return
+	}
+	u := a.Update
+	if u == nil || a.updateTarget != sha {
+		u = &AgentUpdate{} // an update to an earlier build is moot
+	}
+	u.Status, u.Version = UpdateStatus(a.SHA256, sha, a.updateState, a.updateTarget), version
+	if u.Status == UpdateCurrent || u.Status == UpdateUnsupported {
+		u.Attempts, u.Error, u.Requested = 0, "", false
+	}
+	a.Update = u
 }
 
 // List returns the devices the caller can see, by name.

@@ -202,6 +202,18 @@ All notable changes to this project are documented here. The format follows
   are typed for each session and never stored. The session takes the size
   of the window, and connects again at the new size when the window is
   resized.
+- Coordinated agent updates (ADR-0027). Agents follow the server's build:
+  the server hands it out a few devices at a time (20 by default), and
+  **Settings → Agent updates** sets whether that happens automatically,
+  only when asked, or not at all, shows how many agents are up to date,
+  and updates every outdated agent at once; a device's page shows its
+  agent's update status and updates it alone. The agent waits for running
+  scripts, checks the download against a signed instruction, test-runs it,
+  restarts into it in place, and goes back to its previous build when the
+  new one crashes or cannot reach the server for 10 minutes. Failed
+  attempts are retried after 15 minutes and an hour, then marked failed;
+  every outcome is audited. Agents installed before this release report no
+  build hash and need the install command once more.
 - The console's libraries are served as a chunk of their own, which
   browsers keep across EasyRMM upgrades.
 - When the server cannot open its stored certificate authority or job key,

@@ -135,4 +135,41 @@ func TestBuilds(t *testing.T) {
 	if _, err := LoadBuilds(filepath.Join(dir, "notes.txt")); err == nil {
 		t.Error("a file as the build directory was accepted")
 	}
+
+	// Lookups by platform; no VERSION file, no version.
+	if got, ok := b.For("linux", "amd64"); !ok || got.File != "easyrmm-agent-linux-amd64" || got.Version != "" {
+		t.Errorf("For(linux, amd64) = %+v %v", got, ok)
+	}
+	if _, ok := b.For("windows", "amd64"); ok {
+		t.Error("found a build that is not there")
+	}
+	if sha, _, ok := (&Service{builds: b}).BuildLookup("linux", "arm64"); !ok || sha == "" {
+		t.Error("BuildLookup missed a build")
+	}
+	if _, _, ok := (&Service{}).BuildLookup("linux", "arm64"); ok {
+		t.Error("BuildLookup without builds found one")
+	}
+}
+
+func TestBuildsVersion(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("easyrmm-agent-linux-amd64", "x")
+	write(VersionFile, "v1.4.0-2-gabcdef0\n")
+	b, err := LoadBuilds(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := b.For("linux", "amd64"); b.Version() != "v1.4.0-2-gabcdef0" || got.Version != b.Version() {
+		t.Errorf("version %q, build %+v", b.Version(), got)
+	}
+	write(VersionFile, "not a version!")
+	if _, err := LoadBuilds(dir); err == nil || !strings.Contains(err.Error(), "not a version") {
+		t.Errorf("a bad VERSION file: %v", err)
+	}
 }

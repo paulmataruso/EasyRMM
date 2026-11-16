@@ -243,7 +243,7 @@ describe("deployment helpers", () => {
   it("formats sizes, architectures and the install command", () => {
     expect([formatBytes(512), formatBytes(2048), formatBytes(7_065_760)]).toEqual(["512 B", "2.0 KB", "6.7 MB"]);
     expect([archName("amd64"), archName("arm"), archName("riscv64")]).toEqual(["x86-64", "ARMv7 32-bit", "riscv64"]);
-    const b = (arch: string, os = "linux") => ({ os, arch, file: `easyrmm-agent-${os}-${arch}`, size: 1, sha256: "" });
+    const b = (arch: string, os = "linux") => ({ os, arch, file: `easyrmm-agent-${os}-${arch}`, size: 1, sha256: "", version: "" });
     expect([b("386"), b("riscv64"), b("arm"), b("arm64", "windows"), b("amd64", "windows"), b("amd64"), b("arm64")].sort(byArch).map((x) => x.file)).toEqual([
       "easyrmm-agent-windows-amd64",
       "easyrmm-agent-windows-arm64",

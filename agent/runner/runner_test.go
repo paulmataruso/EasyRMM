@@ -32,6 +32,8 @@ type server struct {
 	uploads    [][]byte
 	invStatus  int
 	heartbeats []agentproto.HeartbeatRequest
+	// update is the heartbeat answer's update instruction, JSON.
+	update string
 }
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +49,11 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		var req agentproto.HeartbeatRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		s.heartbeats = append(s.heartbeats, req)
-		_, _ = io.WriteString(w, `{"heartbeatSeconds":60,"inventoryHash":"`+s.invHash+`","meshAgent":{"available":`+map[bool]string{true: "true", false: "false"}[s.available]+`}}`)
+		update := ""
+		if s.update != "" {
+			update = `,"update":` + s.update
+		}
+		_, _ = io.WriteString(w, `{"heartbeatSeconds":60,"inventoryHash":"`+s.invHash+`","meshAgent":{"available":`+map[bool]string{true: "true", false: "false"}[s.available]+`}`+update+`}`)
 	case agentproto.PathInventory:
 		if s.invStatus != 0 {
 			w.WriteHeader(s.invStatus)
@@ -121,7 +127,7 @@ func TestBeatInstallsMeshAgentWhenOffered(t *testing.T) {
 	r := newRunner(t, s, m)
 	ctx := context.Background()
 
-	if wait := r.beat(ctx); wait < 54*time.Second || wait > 66*time.Second {
+	if wait, _ := r.beat(ctx); wait < 54*time.Second || wait > 66*time.Second {
 		t.Errorf("next heartbeat in %v", wait)
 	}
 	st, _ := r.Store.LoadStatus()
@@ -130,7 +136,7 @@ func TestBeatInstallsMeshAgentWhenOffered(t *testing.T) {
 	}
 
 	s.available = true
-	if wait := r.beat(ctx); wait != r.AfterSetup {
+	if wait, _ := r.beat(ctx); wait != r.AfterSetup {
 		t.Errorf("after installing, next heartbeat in %v", wait)
 	}
 	if !m.installed || m.binary != "ELF" || m.settings != "MeshID=0x1" {
@@ -184,7 +190,8 @@ func TestBeatFailuresBackOff(t *testing.T) {
 	r := newRunner(t, s, nil)
 	var waits []time.Duration
 	for range 4 {
-		waits = append(waits, r.beat(context.Background()))
+		w, _ := r.beat(context.Background())
+		waits = append(waits, w)
 	}
 	for i, want := range []time.Duration{5, 10, 20, 40} {
 		w := want * time.Second
@@ -197,18 +204,18 @@ func TestBeatFailuresBackOff(t *testing.T) {
 		t.Errorf("status = %+v", st)
 	}
 	r.failures = 20
-	if w := r.beat(context.Background()); w > r.MaxRetry*11/10 {
+	if w, _ := r.beat(context.Background()); w > r.MaxRetry*11/10 {
 		t.Errorf("backoff not capped: %v", w)
 	}
 
 	s.status, s.code = http.StatusUnauthorized, "device_unknown"
 	r.failures = 0
-	if w := r.beat(context.Background()); w < r.MaxRetry*9/10 {
+	if w, _ := r.beat(context.Background()); w < r.MaxRetry*9/10 {
 		t.Errorf("unknown device retried after %v", w)
 	}
 	s.code = "clock_skew"
 	r.failures = 0
-	if w := r.beat(context.Background()); w > 6*time.Second {
+	if w, _ := r.beat(context.Background()); w > 6*time.Second {
 		t.Errorf("clock skew retried after %v", w)
 	}
 
@@ -221,7 +228,7 @@ func TestBeatFailuresBackOff(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if w := r.beat(ctx); w != 0 {
+	if w, _ := r.beat(ctx); w != 0 {
 		t.Errorf("canceled beat waits %v", w)
 	}
 }

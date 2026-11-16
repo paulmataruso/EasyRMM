@@ -71,6 +71,7 @@ export function device(id: string, name: string, extra: Partial<Device> = {}): D
     canTerminal: true,
     canFiles: true,
     canRunScripts: false,
+    canUpdateAgent: false,
     ...extra,
   };
 }

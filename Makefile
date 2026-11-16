@@ -81,16 +81,16 @@ check: fmt-check vet lint test-integration ## Everything CI runs for Go code
 .PHONY: build-agents
 build-agents: ## Build the Windows and Linux agents into bin/agents (serve them with EASYRMM_AGENT_DIR=bin/agents)
 	@mkdir -p bin/agents
-	@for arch in amd64 arm64; do \
-		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch $(GO) build -trimpath \
-			-ldflags "-s -w -X main.Version=$$(git describe --tags --always --dirty 2>/dev/null || echo dev)" \
+	@v=$$(git describe --tags --always --dirty 2>/dev/null || echo dev); \
+	for arch in amd64 arm64; do \
+		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch $(GO) build -trimpath -ldflags "-s -w -X main.Version=$$v" \
 			-o bin/agents/easyrmm-agent-windows-$$arch.exe ./agent/cmd/easyrmm-agent || exit 1; \
-	done
-	@for arch in amd64 arm64 arm 386; do \
-		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch GOARM=7 $(GO) build -trimpath \
-			-ldflags "-s -w -X main.Version=$$(git describe --tags --always --dirty 2>/dev/null || echo dev)" \
+	done; \
+	for arch in amd64 arm64 arm 386; do \
+		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch GOARM=7 $(GO) build -trimpath -ldflags "-s -w -X main.Version=$$v" \
 			-o bin/agents/easyrmm-agent-linux-$$arch ./agent/cmd/easyrmm-agent || exit 1; \
-	done
+	done; \
+	echo "$$v" > bin/agents/VERSION
 	@ls -l bin/agents
 
 .PHONY: build

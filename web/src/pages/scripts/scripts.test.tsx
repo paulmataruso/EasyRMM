@@ -8,7 +8,7 @@ import { renderApp } from "../../test/render";
 
 const location = () => screen.getByTestId("location").textContent;
 
-const AGENT = { version: "1.4.0", arch: "amd64", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z" };
+const AGENT = { version: "1.4.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null };
 
 const SCRIPTS: Script[] = [
   script("sc1", "Disk usage", { description: "Shows free space on every mount.", body: "df -h\n" }),

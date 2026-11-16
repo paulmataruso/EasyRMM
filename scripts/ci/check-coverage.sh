@@ -50,6 +50,8 @@ floors=(
   # Audit forwarding: every tenant's records leave the server through it.
   "server/internal/auditfwd                88"
   "server/internal/httpapi/auditfwdapi     90"
+  # Agent updates: they replace the program every endpoint runs.
+  "server/internal/httpapi/agentupdatesapi 90"
   # Remote access: the MeshCentral client, and the service and gateway that
   # decide who reaches MeshCentral.
   "server/internal/meshcentral             85"
@@ -64,6 +66,7 @@ floors=(
   "agent/state                             75"
   "agent/cmd/easyrmm-agent                 75"
   "agent/jobs                              80"
+  "agent/update                            80"
   "agent/inventory                         90"
   "agent/metrics                           90"
 )

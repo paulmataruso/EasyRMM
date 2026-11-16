@@ -38,6 +38,7 @@ import (
 	"github.com/paulmataruso/easyrmm/agent/metrics"
 	"github.com/paulmataruso/easyrmm/agent/runner"
 	"github.com/paulmataruso/easyrmm/agent/state"
+	"github.com/paulmataruso/easyrmm/agent/update"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -85,6 +86,8 @@ type env struct {
 	// Checks of the machine, replaced by tests.
 	isRoot      func() bool
 	hasServices func() bool
+	// service: the Windows service manager runs the agent.
+	service bool //nolint:unused // set and read in the Windows-only files
 }
 
 func newEnv(stdout, stderr io.Writer) *env {
@@ -339,11 +342,12 @@ func (e *env) run(ctx context.Context) error {
 		Facts:  func() agentproto.Facts { return host.Facts(Version) },
 		Log:    e.log,
 	}
+	var mesh *meshagent.Manager
 	if supported() {
 		// Windows MeshAgent runs only as a service; an agent that was only
 		// enrolled goes without it.
 		if m := e.mesh(cfg); !m.Windows || m.Mode != meshagent.ModeChild {
-			r.Mesh = m
+			r.Mesh, mesh = m, m
 		}
 		// Both read the machine itself, as host.Facts does, whatever root
 		// the agent keeps its own files under.
@@ -355,18 +359,65 @@ func (e *env) run(ctx context.Context) error {
 	if !supported() {
 		return r.Run(ctx)
 	}
+	up := e.updater(cfg, c)
+	if up != nil {
+		if up.Settle() {
+			return e.restart(up.Exe)
+		}
+		sum := up.SHA256
+		r.Facts = func() agentproto.Facts {
+			f := host.Facts(Version)
+			f.AgentSHA256 = sum
+			return f
+		}
+		r.Update = up
+	}
 	w := &jobs.Worker{Client: c, DeviceID: cfg.DeviceID, Dir: e.store.JobsDir(), Log: e.log}
 	if cfg.JobKey != "" {
 		if err := w.SetKey(cfg.JobKey); err != nil {
 			return fmt.Errorf("the pinned job key in the configuration is damaged: %w", err)
 		}
 	}
+	if up != nil {
+		up.Jobs = w
+	}
 	r.OnJobKey = e.pinJobKey(cfg, w)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	var g sync.WaitGroup
 	g.Go(func() { _ = w.Run(ctx) })
 	err = r.Run(ctx)
+	cancel()
 	g.Wait()
+	if errors.Is(err, runner.ErrRestart) {
+		// The new build starts its own MeshAgent child.
+		if mesh != nil {
+			mesh.Wait()
+		}
+		return e.restart(up.Exe)
+	}
 	return err
+}
+
+// updater returns the agent's self-update (ADR-0027), or nil when the agent
+// cannot read its own executable.
+func (e *env) updater(cfg *state.Config, c *client.Client) *update.Updater {
+	exe, sum, err := update.Self()
+	if err != nil {
+		e.log.Warn("reading the agent's own executable failed; it cannot update itself", "error", err)
+		return nil
+	}
+	return &update.Updater{
+		Client: c, DeviceID: cfg.DeviceID, Version: Version, SHA256: sum, Exe: exe, Dir: e.store.Dir, Log: e.log,
+		// The key pinned for jobs signs updates too.
+		Key: func() ed25519.PublicKey {
+			k, err := agentproto.DecodeKey(cfg.JobKey)
+			if err != nil {
+				return nil
+			}
+			return k
+		},
+	}
 }
 
 // pinJobKey pins the server's job-signing key the first time it is seen
@@ -460,6 +511,12 @@ func (e *env) uninstall(ctx context.Context) error {
 	later, err := host.RemoveExecutable(e.paths.Binary())
 	if err != nil {
 		return err
+	}
+	// What an interrupted update left beside it (ADR-0027).
+	for _, ext := range []string{".new", ".old", ".failed"} {
+		if l, err := host.RemoveExecutable(e.paths.Binary() + ext); err == nil && l {
+			later = true
+		}
 	}
 	if e.paths.Windows() {
 		// Empty program folders go too; Remove leaves a folder with files.

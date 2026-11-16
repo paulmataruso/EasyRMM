@@ -4,6 +4,7 @@ package agents
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"log/slog"
 	"strings"
@@ -52,6 +53,9 @@ type Service struct {
 	waits                  *waitHub
 	approvalWait           time.Duration
 	jobKey                 string
+	// Agent updates (ADR-0027); nil without builds.
+	builds    *Builds
+	updateKey ed25519.PrivateKey
 }
 
 // New returns a Service. mesh may be nil.
@@ -111,6 +115,7 @@ func (s *Service) Cleanup(ctx context.Context) error {
 type facts struct {
 	hostname, os, platform, arch, version string
 	meshNode                              string // MeshCentral encoding, "" if none
+	sha256                                string // the agent's executable, "" if not reported
 }
 
 // cleanFacts validates what an agent reports. Free text is cut to the
@@ -131,6 +136,9 @@ func cleanFacts(f agentproto.Facts) (facts, error) {
 		out.platform = f.Platform
 	default:
 		out.platform = "other"
+	}
+	if agentproto.ValidSHA256(f.AgentSHA256) {
+		out.sha256 = f.AgentSHA256
 	}
 	if f.MeshNodeID != "" {
 		key, err := agentproto.MeshNodeKey(f.MeshNodeID)

@@ -61,6 +61,8 @@ type Manager struct {
 
 	mu    sync.Mutex
 	child *exec.Cmd
+	// supervised ends when the child supervisor has stopped MeshAgent.
+	supervised sync.WaitGroup
 }
 
 // NewManager returns a manager for this machine's MeshAgent.
@@ -177,9 +179,14 @@ func (m *Manager) startChild(ctx context.Context) error {
 		return err
 	}
 	m.child = cmd
-	go m.supervise(ctx, cmd)
+	m.supervised.Go(func() { m.supervise(ctx, cmd) })
 	return nil
 }
+
+// Wait waits until a child MeshAgent started with Start has exited, after
+// Start's context ended. The agent waits before it restarts into a new
+// build, which starts MeshAgent again.
+func (m *Manager) Wait() { m.supervised.Wait() }
 
 func (m *Manager) spawn(ctx context.Context) (*exec.Cmd, error) {
 	cmd := exec.CommandContext(ctx, m.binary()) //nolint:gosec // our own installed MeshAgent

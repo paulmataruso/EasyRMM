@@ -68,6 +68,19 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(f.mesh)
 	case agentproto.PathMeshSettings:
 		_, _ = io.WriteString(w, "MeshID=0x1")
+	case agentproto.PathJobsPoll:
+		_, _ = io.WriteString(w, `{"jobs":[],"cancel":["r9"]}`)
+	case agentproto.PathJobStart("r1"):
+		_, _ = io.WriteString(w, `{"proceed":true}`)
+	case agentproto.PathJobStart("r2"):
+		_, _ = io.WriteString(w, `{"proceed":`)
+	case agentproto.PathJobResult("r1"):
+		var in agentproto.ResultRequest
+		if err := json.Unmarshal(body, &in); err != nil || in.Status != agentproto.RunSucceeded {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case agentproto.PathInventory:
 		if string(body) == "bad" {
 			w.WriteHeader(http.StatusBadRequest)
@@ -212,5 +225,108 @@ func TestPrivateCA(t *testing.T) {
 	}
 	if c.Server() != srv.URL {
 		t.Errorf("Server() = %s", c.Server())
+	}
+}
+
+func TestDownload(t *testing.T) {
+	build := bytes.Repeat([]byte{0x42}, 3000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			t.Error("a build download is signed; it needs no identity")
+		}
+		switch r.URL.EscapedPath() {
+		case agentproto.PathAgentDownload("easyrmm-agent-linux-amd64"):
+			_, _ = w.Write(build)
+		case agentproto.PathAgentDownload("short"):
+			w.Header().Set("Content-Length", strconv.Itoa(len(build)+5))
+			_, _ = w.Write(build)
+		case agentproto.PathAgentDownload("a%2Fb"):
+			_, _ = io.WriteString(w, "escaped")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":{"code":"not_found","message":"no such build"}}`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c, err := New(Options{Server: srv.URL, Version: "9.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	if err := c.Download(ctx, "easyrmm-agent-linux-amd64", &buf); err != nil || !bytes.Equal(buf.Bytes(), build) {
+		t.Errorf("download = %d bytes, %v", buf.Len(), err)
+	}
+	if err := c.Download(ctx, "short", io.Discard); err == nil {
+		t.Error("a truncated download was accepted")
+	}
+	// A file name cannot reach another path.
+	buf.Reset()
+	if err := c.Download(ctx, "a/b", &buf); err != nil || buf.String() != "escaped" {
+		t.Errorf("escaped name = %q, %v", buf.String(), err)
+	}
+	if err := c.Download(ctx, "missing", io.Discard); Code(err) != "not_found" {
+		t.Errorf("missing build: %v", err)
+	}
+	if err := c.Download(ctx, "easyrmm-agent-linux-amd64", failingWriter{}); err == nil {
+		t.Error("a failed write was not reported")
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("disk full") }
+
+func TestJobCalls(t *testing.T) {
+	c, _ := newPair(t)
+	ctx := context.Background()
+	pub, key, _ := ed25519.GenerateKey(rand.Reader)
+	if _, err := c.Enroll(ctx, "ert_good", pub, agentproto.Facts{}); err != nil {
+		t.Fatal(err)
+	}
+	c.SetIdentity("dev-1", key)
+
+	if p, err := c.Poll(ctx); err != nil || len(p.Cancel) != 1 || p.Cancel[0] != "r9" {
+		t.Errorf("poll = %+v, %v", p, err)
+	}
+	if s, err := c.Start(ctx, "r1"); err != nil || !s.Proceed {
+		t.Errorf("start = %+v, %v", s, err)
+	}
+	if _, err := c.Start(ctx, "r2"); err == nil || !strings.Contains(err.Error(), "reading the server's answer") {
+		t.Errorf("a cut-off answer: %v", err)
+	}
+	if err := c.Result(ctx, "r1", agentproto.ResultRequest{Status: agentproto.RunSucceeded}); err != nil {
+		t.Errorf("result: %v", err)
+	}
+	if err := c.Result(ctx, "r1", agentproto.ResultRequest{Status: "bogus"}); err == nil {
+		t.Error("a refused result was accepted")
+	}
+}
+
+func TestUnreachableServer(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	c, err := New(Options{Server: srv.URL, Version: "9.9"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv.Close()
+	ctx := context.Background()
+	pub, key, _ := ed25519.GenerateKey(rand.Reader)
+	if _, err := c.Enroll(ctx, "ert_good", pub, agentproto.Facts{}); err == nil || Code(err) != "" {
+		t.Errorf("enroll: %v", err)
+	}
+	c.SetIdentity("dev-1", key)
+	if _, err := c.Heartbeat(ctx, agentproto.HeartbeatRequest{}); err == nil {
+		t.Error("heartbeat to a closed server succeeded")
+	}
+	if _, err := c.MeshSettings(ctx); err == nil {
+		t.Error("settings from a closed server")
+	}
+	if err := c.Result(ctx, "r1", agentproto.ResultRequest{}); err == nil {
+		t.Error("result to a closed server succeeded")
+	}
+	if err := c.Download(ctx, "x", io.Discard); err == nil {
+		t.Error("download from a closed server succeeded")
 	}
 }

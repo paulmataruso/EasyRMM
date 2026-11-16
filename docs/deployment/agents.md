@@ -270,6 +270,48 @@ tries again after 15 minutes. See [Inventory and health](../operations/inventory
 | `enrollment_rejected` | The device was rejected under **Waiting for approval**. Uninstall the agent; installing it again asks anew |
 | `too_many_waiting` | 10,000 devices already wait for approval; approve or reject some, and the agent asks again |
 
+## Updating agents
+
+Agents follow the server: when the server ships another agent build (a new
+server image, or new files in its agent directory), it updates the agents,
+a few at a time (ADR-0027). **Settings → Agent updates** sets how:
+
+* **Automatically** (the default): every agent on another build is updated.
+* **When asked**: only agents someone asks for, with **Update agent** on a
+  device's page (needs the *edit devices* permission) or **Update … outdated
+  agents** on the settings page.
+* **Off**: no update starts.
+
+**Devices at once** (default 20) limits how many update at the same time;
+the next starts when one comes back with the new build. The page also counts
+the agents that are up to date, waiting, updating, failed, or unable to
+update themselves.
+
+An agent that is told to update:
+
+1. waits for scripts that are running (up to 10 minutes) and takes no new
+   ones;
+2. downloads the build from the server, checks its size and SHA-256 against
+   the signed instruction, and runs it with `version` to check that it starts;
+3. keeps the running build as `easyrmm-agent.old` (`.exe.old` on Windows),
+   puts the new one in its place and restarts into it. On Windows the
+   service stops with an error and Windows starts it again 10 seconds later;
+   the System event log records the stop.
+
+The new build is confirmed when it reaches the server. If it crashes three
+times, or cannot reach the server for 10 minutes, the agent puts the
+previous build back and reports why; the device's page shows it, the server
+tries again after 15 minutes and then after an hour, and after three
+attempts marks the update failed until someone asks again. Every update is
+in the audit log (`device.agent_update`).
+
+Agents installed before EasyRMM could update them do not report their build
+and show **Cannot update itself**: run the install command on the computer
+once more, and they update themselves from then on.
+
+To hold a release back, set the mode to **When asked** before upgrading the
+server, try it on a few devices, then switch back to **Automatically**.
+
 ## Uninstalling
 
 On Windows, in PowerShell as administrator:
@@ -304,4 +346,6 @@ EASYRMM_AGENT_DIR=$PWD/bin/agents bin/easyrmm-server serve
 ```
 
 Files must be named `easyrmm-agent-<os>-<arch>` (`.exe` for Windows). The
-server computes their checksums when it starts.
+server computes their checksums when it starts; a `VERSION` file beside them
+names the builds in the console. Agents update to these builds (see
+[Updating agents](#updating-agents)).

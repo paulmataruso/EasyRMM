@@ -14,7 +14,9 @@
 * Jobs are durable rows; delivery is at-least-once with idempotent job ids;
   results are accepted once.
 * Server-to-agent job payloads are signed with the server's job-signing key;
-  agent releases are signed with an offline release key embedded in the agent.
+  agent releases are signed with an offline release key embedded in the agent
+  (refined by ADR-0027: update instructions are signed with the job key and
+  name the build's SHA-256; a release key is deferred).
 * Exponential backoff with full jitter, retry caps, and automatic recovery.
 * Credential rotation and revocation are server-driven.
 

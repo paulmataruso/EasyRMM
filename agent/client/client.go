@@ -177,6 +177,24 @@ func (c *Client) MeshAgent(ctx context.Context, goos, goarch string, w io.Writer
 	return nil
 }
 
+// Download downloads one of the server's agent builds into w (ADR-0027).
+// The caller checks what it got against the update it acts on.
+func (c *Client) Download(ctx context.Context, file string, w io.Writer) error {
+	resp, err := c.do(ctx, http.MethodGet, agentproto.PathAgentDownload(url.PathEscape(file)), nil, false)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	n, err := io.Copy(w, resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.ContentLength >= 0 && n != resp.ContentLength {
+		return fmt.Errorf("got %d of %d bytes", n, resp.ContentLength)
+	}
+	return nil
+}
+
 // MeshSettings returns the MeshAgent settings for the device's site.
 func (c *Client) MeshSettings(ctx context.Context) ([]byte, error) {
 	resp, err := c.do(ctx, http.MethodGet, agentproto.PathMeshSettings, nil, true)

@@ -140,8 +140,10 @@ shell script):
 
 Uninstalling the package removes both agents, their services, credentials and
 files, and notifies the server (best effort; the server also revokes on
-request). Updates of both components are coordinated by the server and
-signed (agent releases with an offline Ed25519 release key).
+request). The server rolls its agent build out a few devices at a time, with
+instructions signed by its job key that name the build's SHA-256, and an
+agent goes back to its previous build when the new one does not reach the
+server (ADR-0027). MeshCentral updates MeshAgent itself.
 
 ## 7. Agent communication
 

@@ -9,7 +9,7 @@ import { SHOWN_PACKAGES } from "./DeviceSoftware";
 
 const location = () => screen.getByTestId("location").textContent;
 
-const AGENT = { version: "1.4.0", arch: "amd64", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z" };
+const AGENT = { version: "1.4.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null };
 const SERVER = device("d1", "DB-01", { platform: "linux", osDescription: "Debian GNU/Linux 13 (trixie)", agent: AGENT });
 
 const TECHNICIAN = sessionView({ isSuperAdmin: false, permissions: ["org.view", "site.view", "device.view", "software.view"] });

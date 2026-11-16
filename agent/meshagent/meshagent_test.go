@@ -87,7 +87,15 @@ func TestChildMode(t *testing.T) {
 	if err != nil || id != nodeHex {
 		t.Errorf("node id = %q, %v", id, err)
 	}
+	// Wait returns once the child has stopped with the context.
 	cancel()
+	waited := make(chan struct{})
+	go func() { m.Wait(); close(waited) }()
+	select {
+	case <-waited:
+	case <-time.After(15 * time.Second):
+		t.Fatal("Wait did not return after the context ended")
+	}
 
 	// A broken binary's node id is refused.
 	if err := os.WriteFile(filepath.Join(m.Dir, "meshagent"), []byte("#!/bin/sh\necho nonsense\n"), 0o755); err != nil { //nolint:gosec // test executable

@@ -36,9 +36,10 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
  && setcap cap_net_bind_service=+ep /out/easyrmm-server
 
 # --- Agents ------------------------------------------------------------------
-# The EasyRMM agent for every Linux architecture the installer supports. The
-# server hands these out (ADR-0015); they are static and the same for every
-# server.
+# The EasyRMM agent for every platform the installers support. The server
+# hands these out (ADR-0015) and updates enrolled agents to them (ADR-0027);
+# they are static and the same for every server. VERSION names their
+# version for the console.
 FROM ${GO_IMAGE} AS agents
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -57,7 +58,8 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
       CGO_ENABLED=0 GOOS=linux GOARCH=$arch GOARM=7 go build -trimpath -buildvcs=false \
         -ldflags "-s -w -X main.Version=${VERSION}" \
         -o /out/agents/easyrmm-agent-linux-$arch ./agent/cmd/easyrmm-agent; \
-    done
+    done; \
+    echo "${VERSION}" > /out/agents/VERSION
 
 # --- Runtime -----------------------------------------------------------------
 FROM ${RUNTIME_IMAGE}
