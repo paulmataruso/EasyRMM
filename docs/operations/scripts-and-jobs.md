@@ -14,6 +14,10 @@ The design is in [ADR-0017](../architecture/adr/0017-scripts-and-jobs.md).
 A script runs only on devices of its shell's platform: the device picker
 lists those, and a device's **Run script** lists only scripts for it.
 
+Installing, updating and removing software has a form of its own, which
+runs EasyRMM's scripts for each package manager: see
+[Installing, updating and removing software](software.md).
+
 ## The library
 
 Every script belongs to one level, chosen when it is added:

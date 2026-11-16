@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"runtime"
+	"sync/atomic"
 	"time"
 
 	"github.com/paulmataruso/easyrmm/agent/client"
@@ -80,7 +81,13 @@ type Runner struct {
 	invHash     string
 	invAt       time.Time
 	invFailed   time.Time
+	invStale    atomic.Bool
 }
+
+// RefreshInventory has the inventory collected again at the next heartbeat,
+// as after a job that may have installed or removed software. It is safe
+// to call from any goroutine.
+func (r *Runner) RefreshInventory() { r.invStale.Store(true) }
 
 func (r *Runner) defaults() {
 	if r.MinRetry == 0 {
@@ -201,7 +208,7 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, bool) {
 // syncInventory collects the inventory when it is due and uploads it when
 // the server's copy differs.
 func (r *Runner) syncInventory(ctx context.Context, serverHash string) {
-	if r.inv == nil || time.Since(r.invAt) >= r.InventoryEvery {
+	if stale := r.invStale.Swap(false); r.inv == nil || stale || time.Since(r.invAt) >= r.InventoryEvery {
 		inv := r.Inventory(ctx)
 		b, err := json.Marshal(inv)
 		if err != nil {

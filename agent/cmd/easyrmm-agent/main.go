@@ -372,7 +372,7 @@ func (e *env) run(ctx context.Context) error {
 		}
 		r.Update = up
 	}
-	w := &jobs.Worker{Client: c, DeviceID: cfg.DeviceID, Dir: e.store.JobsDir(), Log: e.log}
+	w := &jobs.Worker{Client: c, DeviceID: cfg.DeviceID, Dir: e.store.JobsDir(), Log: e.log, Finished: r.RefreshInventory}
 	if cfg.JobKey != "" {
 		if err := w.SetKey(cfg.JobKey); err != nil {
 			return fmt.Errorf("the pinned job key in the configuration is damaged: %w", err)

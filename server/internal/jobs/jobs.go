@@ -21,10 +21,14 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Job runs a snapshot of a script on devices. Counts and runs cover only the
-// runs the caller can see.
+// Job runs a snapshot of a script on devices: a library script, or one of
+// EasyRMM's own for a software action. Counts and runs cover only the runs
+// the caller can see.
 type Job struct {
-	ID             uuid.UUID  `json:"id"`
+	ID uuid.UUID `json:"id"`
+	// Kind is KindScript or KindSoftware; Software is the software action.
+	Kind           string     `json:"kind"`
+	Software       *Software  `json:"software"`
 	ScriptID       *uuid.UUID `json:"scriptId"`
 	ScriptName     string     `json:"scriptName"`
 	Shell          string     `json:"shell"`
@@ -130,17 +134,7 @@ type target struct {
 // check, or nothing runs.
 func (s *Service) CreateJob(ctx context.Context, c access.Caller, in JobInput) (*Job, error) {
 	f := apperr.Fields{}
-	ids := slices.Clone(in.DeviceIDs)
-	slices.SortFunc(ids, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
-	ids = slices.Compact(ids)
-	switch {
-	case len(ids) == 0:
-		f.Add("deviceIds", "Choose at least one device.")
-	case len(ids) > MaxDevices:
-		f.Add("deviceIds", fmt.Sprintf("Choose at most %d devices.", MaxDevices))
-	case slices.Contains(ids, uuid.Nil):
-		f.Add("deviceIds", "A device id is missing.")
-	}
+	ids := checkDevices(f, in.DeviceIDs)
 	args := in.Args
 	if args == nil {
 		args = []string{}
@@ -155,13 +149,9 @@ func (s *Service) CreateJob(ctx context.Context, c access.Caller, in JobInput) (
 		}
 	}
 	if in.TimeoutSeconds != 0 {
-		f.Check(in.TimeoutSeconds >= MinTimeout && in.TimeoutSeconds <= MaxTimeout, "timeoutSeconds", "Use 1 second to 4 hours.")
+		checkTimeout(f, in.TimeoutSeconds)
 	}
-	wait := in.WaitHours
-	if wait == 0 {
-		wait = DefaultWaitHours
-	}
-	f.Check(wait >= MinWaitHours && wait <= MaxWaitHours, "waitHours", "Wait 1 hour to 7 days.")
+	wait := checkWait(f, in.WaitHours)
 	if in.ScriptID == uuid.Nil {
 		f.Add("scriptId", "Choose a script.")
 	}
@@ -169,31 +159,98 @@ func (s *Service) CreateJob(ctx context.Context, c access.Caller, in JobInput) (
 		return nil, err
 	}
 
-	jobID := uuid.New()
-	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
+	sp := &spec{}
+	return s.create(ctx, c, ids, wait, sp, func(ctx context.Context, tx pgx.Tx) ([]target, error) {
 		sc, err := s.getScript(ctx, tx, c, in.ScriptID, false)
 		if errors.Is(err, apperr.ErrNotFound) {
-			return apperr.Invalid("scriptId", "That script does not exist or you cannot read it.")
+			return nil, apperr.Invalid("scriptId", "That script does not exist or you cannot read it.")
 		}
 		if err != nil {
-			return err
-		}
-		targets, err := s.targets(ctx, tx, c, sc, ids)
-		if err != nil {
-			return err
+			return nil, err
 		}
 		timeout := sc.TimeoutSeconds
 		if in.TimeoutSeconds != 0 {
 			timeout = in.TimeoutSeconds
 		}
+		*sp = spec{
+			kind: KindScript, scriptID: &sc.ID, name: sc.Name, shell: sc.Shell, body: sc.Body, args: args, timeout: timeout,
+			auditAction: "device.script_run",
+			details:     map[string]any{"script": sc.Name, "scriptId": sc.ID.String(), "shell": sc.Shell, "argCount": len(args)},
+		}
+		org, site := sc.level()
+		return s.targets(ctx, tx, c, ids, rule{
+			perm: rbac.PermScriptRun, verb: "run scripts", org: org, site: site,
+			platforms: agentproto.ShellPlatforms(sc.Shell), runsOn: shellName(sc.Shell) + " scripts run on",
+		})
+	})
+}
+
+// checkDevices validates a job's device ids and returns them sorted,
+// without duplicates.
+func checkDevices(f apperr.Fields, in []uuid.UUID) []uuid.UUID {
+	ids := slices.Clone(in)
+	slices.SortFunc(ids, func(a, b uuid.UUID) int { return strings.Compare(a.String(), b.String()) })
+	ids = slices.Compact(ids)
+	switch {
+	case len(ids) == 0:
+		f.Add("deviceIds", "Choose at least one device.")
+	case len(ids) > MaxDevices:
+		f.Add("deviceIds", fmt.Sprintf("Choose at most %d devices.", MaxDevices))
+	case slices.Contains(ids, uuid.Nil):
+		f.Add("deviceIds", "A device id is missing.")
+	}
+	return ids
+}
+
+func checkTimeout(f apperr.Fields, seconds int) {
+	f.Check(seconds >= MinTimeout && seconds <= MaxTimeout, "timeoutSeconds", "Use 1 second to 4 hours.")
+}
+
+// checkWait validates how long a job waits for offline devices and returns
+// it, the default for zero.
+func checkWait(f apperr.Fields, hours int) int {
+	if hours == 0 {
+		hours = DefaultWaitHours
+	}
+	f.Check(hours >= MinWaitHours && hours <= MaxWaitHours, "waitHours", "Wait 1 hour to 7 days.")
+	return hours
+}
+
+// spec is what a new job runs, and how its runs are audited.
+type spec struct {
+	kind     string
+	scriptID *uuid.UUID
+	software *Software
+	name     string
+	shell    string
+	body     string
+	args     []string
+	timeout  int
+	// auditAction and details describe each run in the audit log, with the
+	// device, job, script hash and timeout added.
+	auditAction string
+	details     map[string]any
+}
+
+// create inserts a job and its runs. resolve finds and checks the devices
+// in the job's transaction, and may fill in sp there: a library script is
+// read in the same transaction.
+func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, wait int, sp *spec,
+	resolve func(context.Context, pgx.Tx) ([]target, error)) (*Job, error) {
+	jobID := uuid.New()
+	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		targets, err := resolve(ctx, tx)
+		if err != nil {
+			return err
+		}
 		now := s.now()
 		expires := now.Add(time.Duration(wait) * time.Hour)
-		sum := sha256.Sum256([]byte(sc.Body))
-		label := c.Actor.Label
+		sum := sha256.Sum256([]byte(sp.body))
 		if _, err := tx.Exec(ctx, `INSERT INTO jobs (id, script_id, script_name, shell, body, body_sha256, args, timeout_seconds,
-				expires_at, created_by, created_by_label, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-			jobID, sc.ID, sc.Name, sc.Shell, sc.Body, sum[:], args, timeout, expires, nullUUID(c.Actor.ID), truncateRunes(label, 320), now); err != nil {
+				expires_at, created_by, created_by_label, created_at, kind, software)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+			jobID, sp.scriptID, sp.name, sp.shell, sp.body, sum[:], sp.args, sp.timeout, expires, nullUUID(c.Actor.ID),
+			truncateRunes(c.Actor.Label, 320), now, sp.kind, sp.software); err != nil {
 			return err
 		}
 		for _, t := range targets {
@@ -202,13 +259,16 @@ func (s *Service) CreateJob(ctx context.Context, c access.Caller, in JobInput) (
 				VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`, jobID, t.org, t.site, t.id, expires, now).Scan(&runID); err != nil {
 				return err
 			}
+			details := map[string]any{
+				"device": t.name, "jobId": jobID.String(), "sha256": hex.EncodeToString(sum[:]), "timeoutSeconds": sp.timeout,
+			}
+			for k, v := range sp.details {
+				details[k] = v
+			}
 			if err := s.audit.Write(ctx, tx, audit.Event{
-				Actor: c.Actor, Action: "device.script_run", Outcome: audit.Success,
+				Actor: c.Actor, Action: sp.auditAction, Outcome: audit.Success,
 				OrganizationID: t.org, SiteID: t.site, DeviceID: t.id, TargetType: "job_run", TargetID: runID.String(),
-				Details: map[string]any{
-					"device": t.name, "script": sc.Name, "scriptId": sc.ID.String(), "shell": sc.Shell, "sha256": hex.EncodeToString(sum[:]),
-					"jobId": jobID.String(), "argCount": len(args), "timeoutSeconds": timeout,
-				},
+				Details: details,
 			}); err != nil {
 				return err
 			}
@@ -222,8 +282,18 @@ func (s *Service) CreateJob(ctx context.Context, c access.Caller, in JobInput) (
 	return s.GetJob(ctx, c, jobID)
 }
 
+// rule is who may start a job on which devices.
+type rule struct {
+	perm rbac.Permission
+	verb string // "run scripts"
+	// org and site limit the devices to a script's organization or site.
+	org, site uuid.UUID
+	platforms []string
+	runsOn    string // "Bash scripts run on"
+}
+
 // targets resolves and checks the devices of a new job.
-func (s *Service) targets(ctx context.Context, tx pgx.Tx, c access.Caller, sc *Script, ids []uuid.UUID) ([]target, error) {
+func (s *Service) targets(ctx context.Context, tx pgx.Tx, c access.Caller, ids []uuid.UUID, r rule) ([]target, error) {
 	rows, err := tx.Query(ctx, `SELECT d.id, d.organization_id, d.site_id, d.name, d.platform, d.agent_public_key IS NOT NULL
 		FROM devices d WHERE d.id = ANY ($1) ORDER BY lower(d.name), d.id`, ids)
 	if err != nil {
@@ -247,35 +317,33 @@ func (s *Service) targets(ctx context.Context, tx pgx.Tx, c access.Caller, sc *S
 	if missing := len(ids) - len(found); missing > 0 {
 		return nil, apperr.Invalid("deviceIds", fmt.Sprintf("%d %s", missing, pick(missing, "device does not exist or is not visible to you.", "devices do not exist or are not visible to you.")))
 	}
-	org, site := sc.level()
-	platforms := agentproto.ShellPlatforms(sc.Shell)
 	var forbidden, outside, noAgent, wrongOS []string
 	for _, t := range found {
 		switch {
-		case !c.Can(rbac.PermScriptRun, rbac.Site(t.org, t.site)):
+		case !c.Can(r.perm, rbac.Site(t.org, t.site)):
 			forbidden = append(forbidden, t.name)
-		case !covers(org, site, t.org, t.site):
+		case !covers(r.org, r.site, t.org, t.site):
 			outside = append(outside, t.name)
 		case !t.enrolled:
 			noAgent = append(noAgent, t.name)
-		case !slices.Contains(platforms, t.platform):
+		case !slices.Contains(r.platforms, t.platform):
 			wrongOS = append(wrongOS, t.name)
 		}
 	}
 	switch {
 	case len(forbidden) > 0:
-		return nil, apperr.Invalid("deviceIds", "You cannot run scripts on "+names(forbidden)+".")
+		return nil, apperr.Invalid("deviceIds", "You cannot "+r.verb+" on "+names(forbidden)+".")
 	case len(outside) > 0:
 		where := "its organization"
-		if site != uuid.Nil {
+		if r.site != uuid.Nil {
 			where = "its site"
 		}
 		return nil, apperr.Invalid("deviceIds", "This script runs only on devices in "+where+", not on "+names(outside)+".")
 	case len(noAgent) > 0:
-		return nil, apperr.Invalid("deviceIds", names(noAgent)+" "+pick(len(noAgent), "has", "have")+" no EasyRMM agent to run scripts.")
+		return nil, apperr.Invalid("deviceIds", names(noAgent)+" "+pick(len(noAgent), "has", "have")+" no EasyRMM agent to "+r.verb+".")
 	case len(wrongOS) > 0:
-		os := platformName(platforms)
-		return nil, apperr.Invalid("deviceIds", shellName(sc.Shell)+" scripts run on "+os+"; "+names(wrongOS)+" "+pick(len(wrongOS), "is", "are")+" not "+article(os)+" "+os+" device.")
+		os := platformName(r.platforms)
+		return nil, apperr.Invalid("deviceIds", r.runsOn+" "+os+"; "+names(wrongOS)+" "+pick(len(wrongOS), "is", "are")+" not "+article(os)+" "+os+" device.")
 	}
 	return found, nil
 }
@@ -338,15 +406,22 @@ type JobQuery struct {
 	ScriptID       uuid.UUID
 	// Status is "", "open" (some run has not ended) or "finished".
 	Status string
+	// Kind is "", KindScript or KindSoftware.
+	Kind string
 }
 
-const jobColumns = `j.id, j.script_id, j.script_name, j.shell, encode(j.body_sha256, 'hex'), j.args, j.timeout_seconds,
+const jobColumns = `j.id, j.kind, j.software, j.script_id, j.script_name, j.shell, encode(j.body_sha256, 'hex'), j.args, j.timeout_seconds,
 	j.expires_at, j.created_by_label, j.created_at`
+
+// jobDest is where jobColumns are scanned into.
+func jobDest(j *Job) []any {
+	return []any{&j.ID, &j.Kind, &j.Software, &j.ScriptID, &j.ScriptName, &j.Shell, &j.SHA256, &j.Args, &j.TimeoutSeconds,
+		&j.ExpiresAt, &j.CreatedBy, &j.CreatedAt}
+}
 
 func scanJob(row pgx.Row, extra ...any) (*Job, error) {
 	var j Job
-	dst := append([]any{&j.ID, &j.ScriptID, &j.ScriptName, &j.Shell, &j.SHA256, &j.Args, &j.TimeoutSeconds,
-		&j.ExpiresAt, &j.CreatedBy, &j.CreatedAt}, extra...)
+	dst := append(jobDest(&j), extra...)
 	if err := row.Scan(dst...); err != nil {
 		return nil, err
 	}
@@ -363,6 +438,11 @@ func (s *Service) ListJobs(ctx context.Context, c access.Caller, q JobQuery) ([]
 	case "", "open", "finished":
 	default:
 		return nil, apperr.Invalid("status", "Use open or finished.")
+	}
+	switch q.Kind {
+	case "", KindScript, KindSoftware:
+	default:
+		return nil, apperr.Invalid("kind", "Use script or software.")
 	}
 	if !c.CanAnywhere(rbac.PermJobView) {
 		return []*Job{}, nil
@@ -382,8 +462,9 @@ func (s *Service) ListJobs(ctx context.Context, c access.Caller, q JobQuery) ([]
 			  AND ($3 = '' OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.status IN ('queued', 'sent', 'running')) = ($3 = 'open'))
 			  AND ($5::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.organization_id = $5))
 			  AND ($6::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.site_id = $6))
+			  AND ($7 = '' OR j.kind = $7)
 			ORDER BY j.created_at DESC, j.id LIMIT $4`,
-			nullUUID(q.DeviceID), nullUUID(q.ScriptID), q.Status, MaxList, nullUUID(q.OrganizationID), nullUUID(q.SiteID))
+			nullUUID(q.DeviceID), nullUUID(q.ScriptID), q.Status, MaxList, nullUUID(q.OrganizationID), nullUUID(q.SiteID), q.Kind)
 		if err != nil {
 			return err
 		}
@@ -533,9 +614,8 @@ func (s *Service) GetRun(ctx context.Context, c access.Caller, id uuid.UUID) (*R
 		var stdout, stderr, body string
 		var err error
 		job := &Job{}
-		r, err = scanRun(tx.QueryRow(ctx, `SELECT `+runColumns+`, r.stdout, r.stderr, `+jobColumns+`, j.body`+runFrom+` WHERE r.id = $1`, id),
-			&stdout, &stderr, &job.ID, &job.ScriptID, &job.ScriptName, &job.Shell, &job.SHA256, &job.Args, &job.TimeoutSeconds,
-			&job.ExpiresAt, &job.CreatedBy, &job.CreatedAt, &body)
+		dst := append(append([]any{&stdout, &stderr}, jobDest(job)...), &body)
+		r, err = scanRun(tx.QueryRow(ctx, `SELECT `+runColumns+`, r.stdout, r.stderr, `+jobColumns+`, j.body`+runFrom+` WHERE r.id = $1`, id), dst...)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.NotFound()
 		}

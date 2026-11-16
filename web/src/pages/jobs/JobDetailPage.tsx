@@ -1,9 +1,9 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { CircleStop, RotateCcw } from "lucide-react";
 import { api } from "../../api/client";
 import { useApi, useApiMutation, usePrefetch } from "../../api/hooks";
-import type { Job, JobRun, Script } from "../../api/types";
+import type { Job, JobRun, Script, SoftwareAction } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
@@ -13,6 +13,8 @@ import { useRowKeys } from "../../lib/rowKeys";
 import { CodeView, JobStateBadge, RunStatusBadge, StatusBreakdown } from "../scripts/parts";
 import { RunScriptDialog } from "../scripts/RunScriptDialog";
 import { formatElapsed, formatSeconds, runElapsed, SHELL_NAMES } from "../scripts/scriptText";
+import { SoftwareDialog } from "../software/SoftwareDialog";
+import { MANAGERS, VERBS } from "../software/softwareText";
 
 /** Refresh every few seconds until every run has ended. */
 const OPEN_INTERVAL = 3_000;
@@ -68,6 +70,12 @@ export function JobDetailPage() {
             <RunsTable jobId={j.id} runs={runs} />
           </Card>
           <Card title="Script as run">
+            {j.software && (
+              <p className="mb-3 text-sm text-muted">
+                EasyRMM&rsquo;s own script for {j.software.manager === "system" ? "the Linux package manager" : MANAGERS[j.software.manager].label}. The
+                package reaches it as an argument, never as script text.
+              </p>
+            )}
             <CodeView code={j.body ?? ""} label="Script as run" />
           </Card>
         </div>
@@ -77,35 +85,7 @@ export function JobDetailPage() {
             items={[
               ["Status", <JobStateBadge key="s" job={j} />],
               ["Progress", <StatusBreakdown key="p" job={j} />],
-              [
-                "Script",
-                j.scriptId ? (
-                  <Link key="sc" to={`/scripts/${j.scriptId}`} className="text-accent hover:underline">
-                    {j.scriptName}
-                  </Link>
-                ) : (
-                  <span key="sc">
-                    {j.scriptName} <span className="text-muted">(deleted from the library)</span>
-                  </span>
-                ),
-              ],
-              ["Shell", SHELL_NAMES[j.shell] ?? j.shell],
-              [
-                "Arguments",
-                j.args.length === 0 ? (
-                  <span key="a" className="text-muted">
-                    None
-                  </span>
-                ) : (
-                  <ol key="a" className="flex flex-wrap gap-1">
-                    {j.args.map((a, i) => (
-                      <li key={i}>
-                        <Mono className="whitespace-pre-wrap">{a === "" ? " " : a}</Mono>
-                      </li>
-                    ))}
-                  </ol>
-                ),
-              ],
+              ...(j.software ? softwareDetails(j.software) : scriptDetails(j)),
               ["Timeout", formatSeconds(j.timeoutSeconds)],
               ...(!j.finished ? [["Waits until", formatDateTime(j.expiresAt)] as [string, string]] : []),
               ["Started", formatDateTime(j.createdAt)],
@@ -132,8 +112,78 @@ export function JobDetailPage() {
   );
 }
 
+type Row = [string, ReactNode];
+
+/** What a library script job ran. */
+function scriptDetails(j: Job): Row[] {
+  return [
+    [
+      "Script",
+      j.scriptId ? (
+        <Link key="sc" to={`/scripts/${j.scriptId}`} className="text-accent hover:underline">
+          {j.scriptName}
+        </Link>
+      ) : (
+        <span key="sc">
+          {j.scriptName} <span className="text-muted">(deleted from the library)</span>
+        </span>
+      ),
+    ],
+    ["Shell", SHELL_NAMES[j.shell] ?? j.shell],
+    [
+      "Arguments",
+      j.args.length === 0 ? (
+        <span key="a" className="text-muted">
+          None
+        </span>
+      ) : (
+        <ol key="a" className="flex flex-wrap gap-1">
+          {j.args.map((a, i) => (
+            <li key={i}>
+              <Mono className="whitespace-pre-wrap">{a === "" ? " " : a}</Mono>
+            </li>
+          ))}
+        </ol>
+      ),
+    ],
+  ];
+}
+
+/** What a software job asked for (ADR-0028). */
+function softwareDetails(sw: SoftwareAction): Row[] {
+  return [
+    ["Action", VERBS[sw.action]],
+    ["Package", <Mono key="pkg">{sw.package}</Mono>],
+    ...(sw.version ? [["Version", <Mono key="v">{sw.version}</Mono>] as Row] : []),
+    ["Package manager", MANAGERS[sw.manager].label],
+  ];
+}
+
 /** Runs the same script on the same devices with the same arguments, after checking them in the dialog. */
 function RunAgain({ job }: { job: Job }) {
+  return job.software ? <SoftwareAgain job={job} software={job.software} /> : <ScriptAgain job={job} />;
+}
+
+/** Asks for the same software action on the same devices. */
+function SoftwareAgain({ job, software }: { job: Job; software: SoftwareAction }) {
+  const { can } = useAuth();
+  const [open, setOpen] = useState(false);
+  if (!can("software.manage")) return null;
+  return (
+    <>
+      <Button icon={<RotateCcw className="size-4" aria-hidden />} onClick={() => setOpen(true)}>
+        Run again
+      </Button>
+      <SoftwareDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        preset={{ ...software, deviceIds: (job.runs ?? []).map((r) => r.deviceId), timeoutSeconds: job.timeoutSeconds }}
+      />
+    </>
+  );
+}
+
+function ScriptAgain({ job }: { job: Job }) {
   const { can } = useAuth();
   const [open, setOpen] = useState(false);
   // The script may be gone, or out of the caller's reach; then there is nothing to offer.

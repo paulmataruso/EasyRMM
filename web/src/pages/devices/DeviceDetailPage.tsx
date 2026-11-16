@@ -137,7 +137,7 @@ export function DeviceDetailPage() {
           ) : inventory.isError ? (
             <ErrorState error={inventory.error} onRetry={() => void inventory.refetch()} />
           ) : (
-            <SoftwarePanel deviceId={d.id} inventory={inventory.data.inventory} />
+            <SoftwarePanel device={d} inventory={inventory.data.inventory} />
           )}
         </div>
       )}

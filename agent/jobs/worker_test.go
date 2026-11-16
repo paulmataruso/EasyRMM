@@ -195,6 +195,21 @@ func TestWorkerRunsEachJobOnce(t *testing.T) {
 	}
 }
 
+func TestWorkerSaysWhenARunEnds(t *testing.T) {
+	ended := make(chan struct{}, 4)
+	h := newHarness(t, t.TempDir(), echoExec)
+	h.w.Finished = func() { ended <- struct{}{} }
+	h.srv.polls <- &agentproto.PollResponse{Jobs: []agentproto.SignedJob{h.job(run1, "apt-get install -y jq")}}
+	if run, _ := h.srv.result(t); run != run1 {
+		t.Fatalf("result for %s", run)
+	}
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Finished was not called")
+	}
+}
+
 func TestWorkerRefusesJobsItCannotTrust(t *testing.T) {
 	h := newHarness(t, t.TempDir(), func(context.Context, agentproto.JobPayload, string) agentproto.ResultRequest {
 		t.Error("an untrusted job ran")

@@ -72,6 +72,7 @@ export function device(id: string, name: string, extra: Partial<Device> = {}): D
     canFiles: true,
     canRunScripts: false,
     canUpdateAgent: false,
+    canManageSoftware: false,
     ...extra,
   };
 }
@@ -193,6 +194,8 @@ export function jobRun(id: string, deviceId: string, deviceName: string, status:
 export function job(id: string, scriptName: string, extra: Partial<Job> = {}): Job {
   return {
     id,
+    kind: "script",
+    software: null,
     scriptId: "sc1",
     scriptName,
     shell: "bash",

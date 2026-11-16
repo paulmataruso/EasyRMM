@@ -58,6 +58,19 @@ func TestBeatSendsMetricsAndSyncsTheInventory(t *testing.T) {
 		t.Errorf("collected %d, uploaded %d", collected, uploads())
 	}
 
+	// A finished job asks for the inventory again before the hour is up
+	// (ADR-0028): collected, and not uploaded when nothing changed.
+	r.RefreshInventory()
+	beat()
+	if collected != 2 || uploads() != 1 {
+		t.Errorf("after a refresh: collected %d, uploaded %d", collected, uploads())
+	}
+	beat()
+	if collected != 2 {
+		t.Errorf("collected %d times: a refresh is used once", collected)
+	}
+	collected-- // the counts below go on from before the refresh
+
 	// A change found at the next collection is uploaded.
 	r.InventoryEvery = time.Nanosecond
 	kernel = "6.8.1"

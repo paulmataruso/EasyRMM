@@ -125,6 +125,9 @@ type Device struct {
 	// CanUpdateAgent: the caller holds device.edit here and the device has
 	// the EasyRMM agent (ADR-0027).
 	CanUpdateAgent bool `json:"canUpdateAgent"`
+	// CanManageSoftware: the caller holds software.manage here and the
+	// device has the EasyRMM agent on Windows or Linux (ADR-0028).
+	CanManageSoftware bool `json:"canManageSoftware"`
 
 	// MeshNodeID is MeshCentral's node identifier, empty without MeshAgent.
 	MeshNodeID string `json:"-"`
@@ -210,6 +213,7 @@ func (s *Service) decorate(c access.Caller, d *Device) {
 	d.CanFiles = ok && c.Can(rbac.PermFiles, r)
 	d.CanRunScripts = d.Agent != nil && c.Can(rbac.PermScriptRun, r)
 	d.CanUpdateAgent = d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
+	d.CanManageSoftware = d.Agent != nil && (d.Platform == "windows" || d.Platform == "linux") && c.Can(rbac.PermSoftwareManage, r)
 	s.updateStatus(d)
 }
 

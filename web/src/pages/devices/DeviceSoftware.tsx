@@ -1,9 +1,12 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
+import { PackagePlus } from "lucide-react";
 import { useList } from "../../api/hooks";
-import type { Inventory, Package } from "../../api/types";
+import type { Device, Inventory, Package } from "../../api/types";
 import { SearchInput } from "../../components/Filters";
-import { Card, EmptyState, ErrorState, Spinner, TableWrap, Toolbar } from "../../components/ui";
+import { Button, Card, EmptyState, ErrorState, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
+import { SoftwareDialog, type SoftwarePreset } from "../software/SoftwareDialog";
+import { rowsAreManaged } from "../software/softwareText";
 
 /** Rows drawn at once; a filter narrows the rest. A server lists up to 20,000 packages. */
 export const SHOWN_PACKAGES = 300;
@@ -16,9 +19,34 @@ const MANAGERS: Record<string, string> = {
   pacman: "pacman (Arch)",
 };
 
-/** The packages installed on one device, as its agent last reported them. */
-export function SoftwarePanel({ deviceId, inventory }: { deviceId: string; inventory: Inventory | null }) {
-  const packages = useList<Package>(`/devices/${deviceId}/software`, undefined, { enabled: inventory !== null, staleTime: 60_000 });
+/**
+ * The packages installed on one device, as its agent last reported them, and
+ * where the caller may, the way to install, update and remove them (ADR-0028).
+ */
+export function SoftwarePanel({ device, inventory }: { device: Device; inventory: Inventory | null }) {
+  const [preset, setPreset] = useState<SoftwarePreset | null>(null);
+  const manage = device.canManageSoftware;
+  const install = manage ? (
+    <Button icon={<PackagePlus className="size-4" aria-hidden />} onClick={() => setPreset({})}>
+      Install software
+    </Button>
+  ) : null;
+  return (
+    <>
+      <Packages device={device} inventory={inventory} install={install} onAction={manage ? setPreset : undefined} />
+      {manage && <SoftwareDialog open={preset !== null} onClose={() => setPreset(null)} device={device} preset={preset ?? undefined} />}
+    </>
+  );
+}
+
+function Packages({ device, inventory, install, onAction }: {
+  device: Device;
+  inventory: Inventory | null;
+  install: ReactNode;
+  /** Set where packages can be updated or removed. */
+  onAction?: (preset: SoftwarePreset) => void;
+}) {
+  const packages = useList<Package>(`/devices/${device.id}/software`, undefined, { enabled: inventory !== null, staleTime: 60_000 });
   const [filter, setFilter] = useState("");
   const windows = inventory?.packageManager === "windows";
   const noun = windows ? "program" : "package";
@@ -32,7 +60,9 @@ export function SoftwarePanel({ deviceId, inventory }: { deviceId: string; inven
   if (!inventory) {
     return (
       <Card>
-        <EmptyState title="No inventory yet">The agent reports the installed software shortly after it starts, then once an hour.</EmptyState>
+        <EmptyState title="No inventory yet" action={install}>
+          The agent reports the installed software shortly after it starts, then once an hour.
+        </EmptyState>
       </Card>
     );
   }
@@ -41,7 +71,7 @@ export function SoftwarePanel({ deviceId, inventory }: { deviceId: string; inven
   if (packages.items.length === 0) {
     return (
       <Card>
-        <EmptyState title={windows ? "No programs found" : "No packages found"}>
+        <EmptyState title={windows ? "No programs found" : "No packages found"} action={install}>
           {windows
             ? "The agent reads the programs listed in Windows' Apps & features. This device reported none."
             : "The agent reads dpkg, RPM, apk and pacman databases. This device has none it recognises, or software installed some other way."}
@@ -50,6 +80,7 @@ export function SoftwarePanel({ deviceId, inventory }: { deviceId: string; inven
     );
   }
 
+  const rowActions = onAction && rowsAreManaged(inventory, device) ? onAction : undefined;
   const shown = matches.slice(0, SHOWN_PACKAGES);
   const readout = filter
     ? `${matches.length.toLocaleString()} of ${plural(packages.items.length, noun)}`
@@ -59,6 +90,7 @@ export function SoftwarePanel({ deviceId, inventory }: { deviceId: string; inven
       <p className="mb-3 text-xs text-muted">
         From {MANAGERS[inventory.packageManager] ?? inventory.packageManager}, reported{" "}
         <span title={formatDateTime(inventory.receivedAt)}>{formatRelative(inventory.receivedAt)}</span>.
+        {install && " After a software job ends, the agent reports again at its next check-in."}
       </p>
       <Toolbar>
         <SearchInput
@@ -70,6 +102,7 @@ export function SoftwarePanel({ deviceId, inventory }: { deviceId: string; inven
           className="max-w-md"
           readout={readout}
         />
+        {install && <div className="ml-auto self-center">{install}</div>}
       </Toolbar>
       {matches.length === 0 ? (
         <Card>
@@ -86,6 +119,11 @@ export function SoftwarePanel({ deviceId, inventory }: { deviceId: string; inven
                 <th scope="col">Version</th>
                 {windows && <th scope="col">Publisher</th>}
                 <th scope="col">Architecture</th>
+                {rowActions && (
+                  <th scope="col">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -95,6 +133,21 @@ export function SoftwarePanel({ deviceId, inventory }: { deviceId: string; inven
                   <td className="font-mono text-xs break-all">{p.version}</td>
                   {windows && <td className="text-muted">{p.publisher || "—"}</td>}
                   <td className="text-muted">{p.arch || "—"}</td>
+                  {rowActions && (
+                    <td className="text-right whitespace-nowrap">
+                      <Button size="sm" variant="ghost" aria-label={`Update ${p.name}`} onClick={() => rowActions({ action: "upgrade", manager: "system", package: p.name })}>
+                        Update
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="danger-ghost"
+                        aria-label={`Uninstall ${p.name}`}
+                        onClick={() => rowActions({ action: "uninstall", manager: "system", package: p.name })}
+                      >
+                        Uninstall
+                      </Button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -105,6 +158,11 @@ export function SoftwarePanel({ deviceId, inventory }: { deviceId: string; inven
             </p>
           )}
         </TableWrap>
+      )}
+      {windows && install && (
+        <p className="mt-3 text-xs text-muted">
+          Windows lists programs by display name. To update or remove one, use Install software with its winget or Chocolatey package ID.
+        </p>
       )}
     </>
   );

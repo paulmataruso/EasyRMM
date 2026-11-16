@@ -29,6 +29,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("DELETE /api/v1/scripts/{id}", a.deleteScript)
 	r("GET /api/v1/jobs", a.listJobs)
 	r("POST /api/v1/jobs", a.createJob)
+	r("POST /api/v1/jobs/software", a.createSoftwareJob)
 	r("GET /api/v1/jobs/{id}", a.getJob)
 	r("POST /api/v1/jobs/{id}/cancel", a.cancelJob)
 	r("GET /api/v1/job-runs", a.listRuns)
@@ -134,6 +135,7 @@ func (a *API) listJobs(w http.ResponseWriter, r *http.Request) error {
 	}
 	items, err := a.svc.ListJobs(r.Context(), httpapi.Caller(r), jobs.JobQuery{
 		OrganizationID: org, SiteID: site, DeviceID: device, ScriptID: script, Status: r.URL.Query().Get("status"),
+		Kind: r.URL.Query().Get("kind"),
 	})
 	if err != nil {
 		return err
@@ -148,6 +150,20 @@ func (a *API) createJob(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	j, err := a.svc.CreateJob(r.Context(), httpapi.Caller(r), in)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusCreated, j)
+	return nil
+}
+
+// createSoftwareJob installs, updates or removes a package (ADR-0028).
+func (a *API) createSoftwareJob(w http.ResponseWriter, r *http.Request) error {
+	var in jobs.SoftwareInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	j, err := a.svc.CreateSoftwareJob(r.Context(), httpapi.Caller(r), in)
 	if err != nil {
 		return err
 	}

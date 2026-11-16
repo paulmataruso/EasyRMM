@@ -11,7 +11,7 @@ feature in it is **Complete** in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STA
 | 4. Server foundation | Config, HTTP API, auth flows, organizations/sites/groups, users and roles, audit API, Docker deployment, web console (EasyPatch design system), dashboard | Implemented and tested locally; waiting for its first CI run on GitHub |
 | 5. MeshCentral integration | Container and config, control client, user/group sync, edge gateway, session launch, embedded desktop/terminal/files | Implemented and tested locally (including a real agent end to end); waiting for its first CI run on GitHub |
 | 6. Unified endpoint installation | Go agent, enrollment, MeshAgent install and correlation, MSI/EXE/PowerShell, DEB/RPM/script, updates, uninstall | In progress: Linux and Windows agents, deployment tokens and approval, MeshAgent install and correlation, install scripts, uninstall and coordinated agent updates (ADR-0027) done; the Windows agent verified on Windows Server 2025. MSI and DEB/RPM packages to do |
-| 7. Core RMM | Inventory, telemetry, monitoring, alerts, scripts, jobs, software deployment | In progress: inventory, telemetry, alerts, scripts and jobs done (see `IMPLEMENTATION_STATUS.md`); software deployment and reporting to do |
+| 7. Core RMM | Inventory, telemetry, monitoring, alerts, scripts, jobs, software deployment | In progress: inventory, telemetry, alerts, scripts, jobs and software deployment (ADR-0028) done (see `IMPLEMENTATION_STATUS.md`); reporting to do |
 | 8. EasyPatch | EasyPatch changes (integration credentials, external ids…), connector, native patch UI | Not started |
 | 9. Production hardening | Security review, performance and soak tests, backup/restore drills, release pipeline, documentation completion | Not started |
 
@@ -24,4 +24,5 @@ feature in it is **Complete** in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STA
    EasyRMM (ADR-0013).
 3. Phase 6, remainder: an MSI for the Windows agent (needs Windows CI
    runners) and DEB/RPM packages.
-4. Phase 7, remainder: software deployment and reporting.
+4. Phase 7, remainder: reporting. Run the winget and Chocolatey software
+   scripts on Windows.

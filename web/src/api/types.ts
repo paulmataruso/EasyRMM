@@ -257,6 +257,8 @@ export interface Device {
   canRunScripts: boolean;
   /** The caller may update the device's agent (device.edit) and it has one (ADR-0027). */
   canUpdateAgent: boolean;
+  /** The caller may install and remove software here (software.manage), on Windows or Linux with the agent (ADR-0028). */
+  canManageSoftware: boolean;
 }
 
 export interface DeviceAgent {
@@ -571,7 +573,11 @@ export type RunStatus = "queued" | "sent" | "running" | "succeeded" | "failed" |
 
 export interface Job {
   id: string;
-  /** Null once the script is deleted; the job keeps its own copy. */
+  /** A library script, or a software action run with one of EasyRMM's own scripts (ADR-0028). */
+  kind: JobKind;
+  /** The software action; null for script jobs. */
+  software: SoftwareAction | null;
+  /** Null once the script is deleted (the job keeps its own copy), and for software actions. */
   scriptId: string | null;
   scriptName: string;
   shell: Shell;
@@ -619,6 +625,29 @@ export interface JobRun {
   stderr?: string;
   job?: Job;
   canCancel: boolean;
+}
+
+export type JobKind = "script" | "software";
+
+export type SoftwareVerb = "install" | "upgrade" | "uninstall";
+
+/** winget and Chocolatey on Windows; "system" is a Linux device's own: apt-get, dnf, yum or zypper. */
+export type SoftwareManager = "winget" | "chocolatey" | "system";
+
+export interface SoftwareAction {
+  action: SoftwareVerb;
+  manager: SoftwareManager;
+  package: string;
+  /** For installs only; absent takes the newest. */
+  version?: string;
+}
+
+export interface SoftwareInput extends SoftwareAction {
+  deviceIds: string[];
+  /** 0 is the server's default (1 hour). */
+  timeoutSeconds: number;
+  /** 0 is the server's default (24 hours). */
+  waitHours: number;
 }
 
 export interface JobInput {

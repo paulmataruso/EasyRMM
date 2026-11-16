@@ -33,3 +33,4 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 | [0025](0025-remote-session-latency.md) | Remote session latency: session view tuning, compression, small socket queues | Accepted; refines 0005, 0014 |
 | [0026](0026-rdp-sessions.md) | RDP sessions: a session kind of its own, the web RDP relay for RDP grants only, sized to the window | Accepted; refines 0005, 0022 |
 | [0027](0027-agent-updates.md) | Coordinated agent updates: builds by hash, a few devices at a time, signed instructions, probation and rollback | Accepted; refines 0008, 0009 |
+| [0028](0028-software-deployment.md) | Software deployment: install, update and remove through winget, Chocolatey and the Linux package manager, as jobs of EasyRMM's own scripts | Accepted; builds on 0017, 0018 |

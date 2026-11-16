@@ -214,6 +214,14 @@ All notable changes to this project are documented here. The format follows
   attempts are retried after 15 minutes and an hour, then marked failed;
   every outcome is audited. Agents installed before this release report no
   build hash and need the install command once more.
+- Software deployment (ADR-0028). Install, update and uninstall software
+  through winget or Chocolatey on Windows and apt-get, dnf, yum or zypper
+  on Linux, on one device from its **Software** tab (with **Update** and
+  **Uninstall** on each Debian, Ubuntu or RPM package) or on many from
+  **Jobs → Install software**. Each request is a job of one of EasyRMM's
+  own scripts with the package as an argument, needs `software.manage`, is
+  audited per device, and the agent reports its software again as soon as
+  the job ends. Jobs can be filtered by kind.
 - The console's libraries are served as a chunk of their own, which
   browsers keep across EasyRMM upgrades.
 - When the server cannot open its stored certificate authority or job key,

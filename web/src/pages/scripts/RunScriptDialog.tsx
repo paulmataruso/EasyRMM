@@ -1,12 +1,13 @@
-import { useId, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useId, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import { Play } from "lucide-react";
 import { api, fieldError } from "../../api/client";
 import { useApiMutation, useList } from "../../api/hooks";
 import type { Device, Job, JobInput, Script } from "../../api/types";
+import { DevicePicker, otherDevices } from "../../components/DevicePicker";
 import { Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Alert, Button, cx, Dot, EmptyState, ErrorState, Field, InlineError, Input, SelectField, Spinner, TextareaField } from "../../components/ui";
+import { Alert, Button, EmptyState, ErrorState, InlineError, SelectField, Spinner, TextareaField } from "../../components/ui";
 import { plural } from "../../lib/format";
 import { TimeoutField } from "./parts";
 import {
@@ -150,7 +151,7 @@ function RunForm({ onClose, script: fixedScript, device, preset }: { onClose: ()
         ))}
       {fixedScript && fixedScript.description && <p className="text-sm text-muted">{fixedScript.description}</p>}
 
-      {fixedScript && !device && <DevicePicker
+      {fixedScript && !device && <ScriptDevicePicker
           script={fixedScript}
           selected={deviceIds}
           onChange={(next) => {
@@ -225,109 +226,29 @@ function scriptSummary(s: Script): string {
 }
 
 /** The devices a script can run on, to choose from. */
-function DevicePicker({ script, selected, onChange, error }: {
+function ScriptDevicePicker({ script, selected, onChange, error }: {
   script: Script;
   selected: Set<string>;
   onChange: (next: Set<string>) => void;
   error: string | null;
 }) {
-  const devices = useList<Device>("/devices");
-  const [query, setQuery] = useState("");
-  const searchId = useId();
-  const listId = useId();
-
-  const { eligible, excluded } = useMemo(() => {
-    const covered = devices.items.filter((d) => scriptCovers(script, d));
-    return {
-      eligible: covered.filter((d) => cannotRunReason(d, script.shell) === null),
-      excluded: covered.filter((d) => cannotRunReason(d, script.shell) !== null).length,
-    };
-  }, [devices.items, script]);
-  const q = query.trim().toLowerCase();
-  const shown = q
-    ? eligible.filter((d) => [d.name, d.hostname, d.organizationName, d.siteName].some((v) => v.toLowerCase().includes(q)))
-    : eligible;
-  const shownSelected = shown.filter((d) => selected.has(d.id)).length;
-  const allShown = shown.length > 0 && shownSelected === shown.length;
-
-  function toggle(id: string, on: boolean) {
-    const next = new Set(selected);
-    if (on) next.add(id);
-    else next.delete(id);
-    onChange(next);
-  }
-
-  if (devices.isPending) return <Spinner label="Loading devices…" className="py-4" />;
-  if (devices.isError) return <ErrorState error={devices.error} onRetry={() => void devices.refetch()} compact />;
-  if (eligible.length === 0) {
-    return (
-      <EmptyState title="No devices can run this script" compact>
-        It runs on {PLATFORM_NAMES[SHELL_PLATFORM[script.shell]]} devices with the EasyRMM agent
-        {script.level === "shared" ? "" : ` in ${script.level === "site" ? "its site" : "its organization"}`}, where your role runs scripts.
-      </EmptyState>
-    );
-  }
-
+  const classify = useCallback((d: Device) => (scriptCovers(script, d) ? cannotRunReason(d, script.shell) === null : null), [script]);
   return (
-    <Field label="Devices" htmlFor={searchId} required error={error}>
-      <div className={cx("rounded-md border bg-surface", error ? "border-danger" : "border-line")}>
-        <div className="flex flex-wrap items-center gap-2 border-b border-line p-2">
-          <Input
-            id={searchId}
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter by name, organization or site"
-            aria-controls={listId}
-            className="min-w-48 flex-1"
-          />
-          <label className="flex items-center gap-2 px-1 text-sm whitespace-nowrap">
-            <input
-              type="checkbox"
-              checked={allShown}
-              ref={(el) => {
-                if (el) el.indeterminate = shownSelected > 0 && !allShown;
-              }}
-              onChange={(e) => {
-                const next = new Set(selected);
-                for (const d of shown) {
-                  if (e.target.checked) next.add(d.id);
-                  else next.delete(d.id);
-                }
-                onChange(next);
-              }}
-              disabled={shown.length === 0}
-            />
-            {q ? `All ${shown.length.toLocaleString()} shown` : "All"}
-          </label>
-        </div>
-        <ul id={listId} aria-label="Devices" className="max-h-64 divide-y divide-line overflow-y-auto">
-          {shown.length === 0 && <li className="px-3 py-3 text-sm text-muted">No devices match “{query.trim()}”.</li>}
-          {shown.map((d) => (
-            <li key={d.id}>
-              <label className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:bg-hover">
-                <input type="checkbox" checked={selected.has(d.id)} onChange={(e) => toggle(d.id, e.target.checked)} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{d.name}</span>
-                  <span className="block truncate text-xs text-muted">
-                    {d.organizationName} / {d.siteName}
-                  </span>
-                </span>
-                <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted">
-                  <Dot tone={d.online ? "ok" : "neutral"} />
-                  {d.online ? "Online" : "Offline"}
-                </span>
-              </label>
-            </li>
-          ))}
-        </ul>
-      </div>
-      {excluded > 0 && (
-        <p className="text-xs text-subtle">
-          {plural(excluded, "other device")} where it could run {excluded === 1 ? "is" : "are"} not listed: no EasyRMM agent, not Linux, or your role does not run
-          scripts there.
-        </p>
-      )}
-    </Field>
+    <DevicePicker
+      classify={classify}
+      selected={selected}
+      onChange={onChange}
+      error={error}
+      empty={{
+        title: "No devices can run this script",
+        body: `It runs on ${PLATFORM_NAMES[SHELL_PLATFORM[script.shell]]} devices with the EasyRMM agent${
+          script.level === "shared" ? "" : ` in ${script.level === "site" ? "its site" : "its organization"}`
+        }, where your role runs scripts.`,
+      }}
+      excluded={(n) => {
+        const o = otherDevices(n);
+        return `${o.devices} where it could run ${o.is} not listed: no EasyRMM agent, not ${PLATFORM_NAMES[SHELL_PLATFORM[script.shell]]}, or your role does not run scripts there.`;
+      }}
+    />
   );
 }

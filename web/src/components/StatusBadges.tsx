@@ -90,6 +90,11 @@ const ACTIONS: Record<string, string> = {
   "script.update": "Changed script",
   "script.delete": "Deleted script",
   "device.script_run": "Ran script",
+  "device.software_action": "Software action",
+  "device.agent_update": "Updated agent",
+  "device.agent_update_request": "Asked for an agent update",
+  "agent_updates.update": "Changed agent update settings",
+  "agent_updates.request_all": "Asked to update every outdated agent",
   "job.cancel": "Stopped script run",
   "alert_policy.create": "Added alert policy",
   "alert_policy.update": "Changed alert policy",
@@ -116,6 +121,7 @@ export const ACTION_GROUPS: [string, string][] = [
   ["enrollment_request", "Device approvals"],
   ["script", "Scripts"],
   ["job", "Jobs"],
+  ["agent_updates", "Agent updates"],
   ["alert_policy", "Alert policies"],
   ["alert", "Alerts"],
   ["user", "Users"],
@@ -130,12 +136,18 @@ export function auditTarget(e: AuditEntry): string {
   if (name && typeof d.device === "string") return `${name} on ${d.device}`;
   if (name) return name;
   if (typeof d.script === "string" && typeof d.device === "string") return `${d.script} on ${d.device}`;
+  if (typeof d.package === "string" && typeof d.device === "string") {
+    const verb = typeof d.action === "string" ? SOFTWARE_VERBS[d.action] : undefined;
+    return `${verb ? `${verb} ` : ""}${d.package} on ${d.device}`;
+  }
   if (typeof d.device === "string") return typeof d.kind === "string" ? `${d.device} (${REMOTE_KIND_NAMES[d.kind as RemoteKind] ?? d.kind})` : d.device;
   if (e.targetType === "session") return "Session";
   if (e.targetType === "audit_forwarding") return e.targetId ? `Collector ${e.targetId}` : "Collector";
   if (e.actorType === "user" && e.targetType === "user" && e.targetId === e.actorId) return "Own account";
   return e.targetType ? e.targetType.replace(/_/g, " ") : "—";
 }
+
+const SOFTWARE_VERBS: Record<string, string> = { install: "Install", upgrade: "Update", uninstall: "Uninstall" };
 
 export const REMOTE_KIND_NAMES: Record<RemoteKind, string> = {
   desktop: "Remote desktop",

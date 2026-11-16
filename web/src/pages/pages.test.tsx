@@ -312,6 +312,32 @@ describe("audit log", () => {
     expect(server.call("GET /audit/verify").query.get("limit")).toBe("1000000");
   });
 
+  it("names software actions and agent updates", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi({
+      ...baseRoutes(sessionView()),
+      "GET /audit": ok({
+        items: [
+          auditEntry(3, "device.software_action", {
+            targetType: "device",
+            targetId: "d1",
+            details: { device: "DB-01", action: "uninstall", manager: "system", package: "jq", jobId: "j1" },
+          }),
+          auditEntry(2, "device.agent_update", { targetType: "device", targetId: "d1", details: { device: "DB-01" } }),
+          auditEntry(1, "agent_updates.update", { targetType: "settings", targetId: "" }),
+        ],
+      }),
+      "GET /organizations": ok({ items: ORGS }),
+    });
+    renderApp("/settings?tab=audit");
+    expect(await screen.findByText("Software action")).toBeInTheDocument();
+    expect(screen.getByText("Uninstall jq on DB-01")).toBeInTheDocument();
+    expect(screen.getByText("Updated agent")).toBeInTheDocument();
+    expect(screen.getByText("Changed agent update settings")).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Area"), "Agent updates");
+    await waitFor(() => expect(server.callsTo("GET /audit").at(-1)?.query.get("action")).toBe("agent_updates"));
+  });
+
   it("says where the chain breaks", async () => {
     const user = userEvent.setup();
     installFakeApi({

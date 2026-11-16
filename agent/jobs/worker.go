@@ -43,6 +43,9 @@ type Worker struct {
 	MaxRetry time.Duration // 5 min
 	// Execute runs one job; tests replace it.
 	Execute func(ctx context.Context, p agentproto.JobPayload, workRoot string) agentproto.ResultRequest
+	// Finished, when set, is called after each run ends: a script may have
+	// changed what the inventory shows (ADR-0028).
+	Finished func()
 
 	key    atomic.Pointer[ed25519.PublicKey]
 	keySet chan struct{}
@@ -325,6 +328,9 @@ func (w *Worker) finish(ctx context.Context, rec record, res agentproto.ResultRe
 	rec.State, rec.Result = stateFinished, &res
 	if err := w.journal().put(rec); err != nil {
 		w.Log.Error("recording a job result failed", "error", err, "run_id", rec.RunID)
+	}
+	if w.Finished != nil {
+		w.Finished()
 	}
 	w.mu.Lock()
 	w.pending[rec.RunID] = res
