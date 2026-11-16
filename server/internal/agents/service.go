@@ -100,13 +100,44 @@ var (
 	ErrMeshUnavailable = errors.New("agents: MeshAgent is not available")
 )
 
-// Cleanup removes nonces that can no longer be replayed and enrollment
-// requests nobody needs any more.
-func (s *Service) Cleanup(ctx context.Context) error {
-	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `DELETE FROM agent_nonces WHERE expires_at < now()`); err != nil {
-			return err
+// NonceInterval is how often Run removes nonces that can no longer be
+// replayed. Every signed request stores one for six minutes (MaxSkew and a
+// minute's grace), so removing them each minute keeps the table at about seven
+// minutes of requests. Removed hourly, an hour of 2000 agents left 63 MB of
+// nonces and one large delete (docs/development/drills.md).
+const NonceInterval = time.Minute
+
+// Run removes expired nonces every NonceInterval until ctx ends.
+func (s *Service) Run(ctx context.Context) {
+	tick := time.NewTicker(NonceInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
 		}
+		if err := s.PruneNonces(ctx); err != nil && ctx.Err() == nil {
+			s.log.Error("agents: removing expired nonces failed", "error", err)
+		}
+	}
+}
+
+// PruneNonces removes nonces that can no longer be replayed.
+func (s *Service) PruneNonces(ctx context.Context) error {
+	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `DELETE FROM agent_nonces WHERE expires_at < now()`)
+		return err
+	})
+}
+
+// Cleanup removes expired nonces and enrollment requests nobody needs any
+// more.
+func (s *Service) Cleanup(ctx context.Context) error {
+	if err := s.PruneNonces(ctx); err != nil {
+		return err
+	}
+	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		return cleanupRequests(ctx, tx)
 	})
 }

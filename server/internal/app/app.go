@@ -431,6 +431,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		log.Info("remote access is disabled (EASYRMM_MESH_ENABLED=false)")
 	}
 	tasks = append(tasks, deps.Agents.Cleanup, deps.Inventory.Purge)
+	wg.Go(func() { deps.Agents.Run(ctx) })
 	wg.Go(func() { deps.Jobs.Run(ctx) })
 	wg.Go(func() { deps.Monitoring.Run(ctx) })
 	wg.Go(func() { deps.AuditFwd.Run(ctx) })

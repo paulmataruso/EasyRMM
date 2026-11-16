@@ -271,12 +271,24 @@ func TestNonceCleanup(t *testing.T) {
 	if f.count(`SELECT count(*) FROM agent_nonces`) != 2 {
 		t.Fatal("expected the authentication nonce and the expired one")
 	}
-	if err := f.svc.Cleanup(f.ctx); err != nil {
+	if err := f.svc.PruneNonces(f.ctx); err != nil {
 		t.Fatal(err)
 	}
 	if f.count(`SELECT count(*) FROM agent_nonces`) != 1 {
 		t.Error("expired nonce kept or live nonce removed")
 	}
+	// The hourly cleanup removes them too.
+	f.exec(`INSERT INTO agent_nonces (device_id, nonce, expires_at) VALUES ($1, 'BBBBBBBBBBBBBBBBBBBBBBBB', now() - interval '1 second')`, dev.ID)
+	if err := f.svc.Cleanup(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f.count(`SELECT count(*) FROM agent_nonces`) != 1 {
+		t.Error("expired nonce kept or live nonce removed by the hourly cleanup")
+	}
+	// Run returns when its context ends.
+	ctx, cancel := context.WithCancel(f.ctx)
+	cancel()
+	f.svc.Run(ctx)
 }
 
 func TestMeshAgentDelivery(t *testing.T) {
