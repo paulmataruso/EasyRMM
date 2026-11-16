@@ -408,6 +408,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() {
 		<-ctx.Done()
 		deps.Jobs.Close()
+		deps.Agents.Close()
 	})
 	wg.Go(func() { maintain(ctx, db, cfg.AuditRetention, log, tasks...) })
 	healthErr := make(chan error, 1)

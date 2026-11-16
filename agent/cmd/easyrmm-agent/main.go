@@ -1,6 +1,8 @@
 // Command easyrmm-agent is the EasyRMM endpoint agent.
 //
 //	easyrmm-agent install --server URL   enroll and run as a service (systemd or Windows)
+//	                                     (with an approval token, the service waits until
+//	                                     the device is approved in the console)
 //	easyrmm-agent enroll --server URL    enroll only; run `easyrmm-agent run` yourself
 //	easyrmm-agent run                    the service's main loop
 //	easyrmm-agent status                 show the enrollment and last heartbeat
@@ -69,6 +71,8 @@ commands:
   version   print the version
 
 The token can also be given in the EASYRMM_TOKEN environment variable.
+With a token that needs approval, the agent waits until the device is
+approved in the EasyRMM console, then finishes enrolling on its own.
 `
 
 // env bundles what the commands share.
@@ -170,7 +174,22 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 	}
 
 	cfg, _, err := e.store.Load()
+	var waiting *state.Pending
+	if errors.Is(err, state.ErrNotEnrolled) {
+		waiting, _, err = e.store.LoadPending()
+		if errors.Is(err, state.ErrNotPending) {
+			err = state.ErrNotEnrolled
+		}
+	}
 	switch {
+	case err == nil && waiting != nil:
+		if waiting.Server != mustServer(*server) {
+			return fmt.Errorf("this machine waits for approval from %s; run \"easyrmm-agent uninstall\" first", waiting.Server)
+		}
+		if waiting.Stopped != "" {
+			return fmt.Errorf("this machine stopped asking to enroll: %s; run \"easyrmm-agent uninstall\", then install again to ask anew", waiting.Stopped)
+		}
+		_, _ = fmt.Fprintf(e.stdout, "Already waiting for approval in the EasyRMM console at %s, as device code %s.\n", waiting.Server, waiting.Code)
 	case err == nil:
 		if cfg.Server != mustServer(*server) {
 			return fmt.Errorf("this machine is enrolled with %s; run \"easyrmm-agent uninstall\" first", cfg.Server)
@@ -184,10 +203,17 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 		if tok == "" {
 			return errors.New("a deployment token is required (--token or EASYRMM_TOKEN); create one in the EasyRMM console")
 		}
-		if cfg, err = e.register(ctx, *server, tok, *caFile, service); err != nil {
+		if cfg, waiting, err = e.register(ctx, *server, tok, *caFile, service); err != nil {
 			return err
 		}
-		_, _ = fmt.Fprintf(e.stdout, "Enrolled with %s as device %s.\n", cfg.Server, cfg.DeviceID)
+		if waiting != nil {
+			_, _ = fmt.Fprintf(e.stdout, "Waiting for approval in the EasyRMM console at %s. Device code: %s\n", waiting.Server, waiting.Code)
+			if !service {
+				_, _ = fmt.Fprintln(e.stdout, `Start the agent with "easyrmm-agent run": it finishes enrolling once the device is approved.`)
+			}
+		} else {
+			_, _ = fmt.Fprintf(e.stdout, "Enrolled with %s as device %s.\n", cfg.Server, cfg.DeviceID)
+		}
 	default:
 		return err
 	}
@@ -222,6 +248,9 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 	} else {
 		_, _ = fmt.Fprintf(e.stdout, "The agent is running as %s.\n", svc.Name)
 	}
+	if waiting != nil {
+		_, _ = fmt.Fprintln(e.stdout, "It finishes enrolling on its own once the device is approved.")
+	}
 	return nil
 }
 
@@ -230,7 +259,9 @@ func mustServer(s string) string {
 	return u.String()
 }
 
-func (e *env) register(ctx context.Context, server, token, caFile string, service bool) (*state.Config, error) {
+// register enrolls with the server, or, with a token that needs approval,
+// records that the device waits for it.
+func (e *env) register(ctx context.Context, server, token, caFile string, service bool) (*state.Config, *state.Pending, error) {
 	cfg := &state.Config{Server: mustServer(server), MeshAgentMode: string(meshagent.ModeChild)}
 	if service {
 		cfg.MeshAgentMode = string(meshagent.ModeService)
@@ -239,35 +270,46 @@ func (e *env) register(ctx context.Context, server, token, caFile string, servic
 		// Keep a copy: the original may be a temporary file.
 		pem, err := os.ReadFile(caFile) //nolint:gosec // a path the administrator chose
 		if err != nil {
-			return nil, fmt.Errorf("reading the CA file: %w", err)
+			return nil, nil, fmt.Errorf("reading the CA file: %w", err)
 		}
 		if err := host.Protect(e.store.Dir); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		cfg.CAFile = filepath.Join(e.store.Dir, "ca.pem")
 		if err := os.WriteFile(cfg.CAFile, pem, 0o600); err != nil { //nolint:gosec // inside the agent's state directory
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	c, err := client.New(client.Options{Server: cfg.Server, CAFile: cfg.CAFile, Version: Version})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	key, err := state.NewKey()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	resp, err := c.Enroll(ctx, token, key.Public().(ed25519.PublicKey), host.Facts(Version))
 	if err != nil {
-		return nil, fmt.Errorf("enrolling: %w", err)
+		return nil, nil, fmt.Errorf("enrolling: %w", err)
+	}
+	if resp.Pending != nil {
+		p := &state.Pending{Server: cfg.Server, CAFile: cfg.CAFile, MeshAgentMode: cfg.MeshAgentMode, Token: token,
+			Code: resp.Pending.Code, Since: time.Now().UTC()}
+		if err := e.store.SavePending(p, key); err != nil {
+			return nil, nil, fmt.Errorf("saving the enrollment: %w", err)
+		}
+		return nil, p, nil
+	}
+	if resp.DeviceID == "" {
+		return nil, nil, errors.New("enrolling: the server answered without a device")
 	}
 	cfg.DeviceID, cfg.EnrolledAt, cfg.JobKey = resp.DeviceID, time.Now().UTC(), resp.JobKey
 	if err := e.store.Save(cfg, key); err != nil {
-		return nil, fmt.Errorf("saving the enrollment: %w", err)
+		return nil, nil, fmt.Errorf("saving the enrollment: %w", err)
 	}
-	return cfg, nil
+	return cfg, nil, nil
 }
 
 func (e *env) mesh(cfg *state.Config) *meshagent.Manager {
@@ -280,6 +322,9 @@ func (e *env) mesh(cfg *state.Config) *meshagent.Manager {
 
 func (e *env) run(ctx context.Context) error {
 	cfg, key, err := e.store.Load()
+	if errors.Is(err, state.ErrNotEnrolled) {
+		cfg, key, err = e.awaitApproval(ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -352,8 +397,7 @@ func (e *env) pinJobKey(cfg *state.Config, w *jobs.Worker) func(string) {
 func (e *env) status(ctx context.Context) error {
 	cfg, _, err := e.store.Load()
 	if errors.Is(err, state.ErrNotEnrolled) {
-		_, _ = fmt.Fprintln(e.stdout, "Not enrolled.")
-		return nil
+		return e.pendingStatus(ctx)
 	}
 	if err != nil {
 		return err
@@ -400,6 +444,7 @@ func (e *env) uninstall(ctx context.Context) error {
 	if err != nil && !errors.Is(err, state.ErrNotEnrolled) {
 		e.log.Warn("the enrollment could not be read; removing anyway", "error", err)
 	}
+	enrolled := cfg != nil
 	if cfg == nil {
 		cfg = &state.Config{}
 	}
@@ -421,7 +466,11 @@ func (e *env) uninstall(ctx context.Context) error {
 		_ = os.Remove(filepath.Dir(e.paths.Binary()))
 		_ = os.Remove(filepath.Dir(filepath.Dir(e.paths.Binary())))
 	}
-	_, _ = fmt.Fprintln(e.stdout, "EasyRMM agent removed. The device stays listed in the EasyRMM console as offline.")
+	if enrolled {
+		_, _ = fmt.Fprintln(e.stdout, "EasyRMM agent removed. The device stays listed in the EasyRMM console as offline.")
+	} else {
+		_, _ = fmt.Fprintln(e.stdout, "EasyRMM agent removed.")
+	}
 	if later {
 		_, _ = fmt.Fprintf(e.stdout, "%s is in use; Windows deletes it at the next restart.\n", e.paths.Binary())
 	}

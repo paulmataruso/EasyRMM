@@ -180,6 +180,10 @@ var (
 		Message: "This device is not enrolled on this server."}
 	errRateLimited = &httpapi.Error{Status: http.StatusTooManyRequests, Code: "rate_limited",
 		Message: "Too many enrollments from this address. Try again shortly."}
+	errRejected = &httpapi.Error{Status: http.StatusForbidden, Code: agentproto.CodeEnrollmentRejected,
+		Message: "This device was rejected in the EasyRMM console. Uninstall the agent, or reinstall it to ask again."}
+	errTooManyWaiting = &httpapi.Error{Status: http.StatusTooManyRequests, Code: "too_many_waiting",
+		Message: "Too many devices are waiting for approval. Approve or reject some in the EasyRMM console, then try again."}
 	errMeshUnavailable = &httpapi.Error{Status: http.StatusServiceUnavailable, Code: "meshagent_unavailable",
 		Message: "Remote access is not available for this device right now."}
 	errRunNotFound = &httpapi.Error{Status: http.StatusNotFound, Code: "run_not_found",
@@ -199,6 +203,8 @@ func mapError(err error) error {
 		agents.ErrReplay:          errReplay,
 		agents.ErrUnknownDevice:   errUnknownDevice,
 		agents.ErrRateLimited:     errRateLimited,
+		agents.ErrRejected:        errRejected,
+		agents.ErrTooManyWaiting:  errTooManyWaiting,
 		agents.ErrMeshUnavailable: errMeshUnavailable,
 		jobs.ErrRunNotFound:       errRunNotFound,
 		jobs.ErrBadResult:         errBadResult,
@@ -251,12 +257,20 @@ func (a *API) enroll(w http.ResponseWriter, r *http.Request) error {
 	}
 	out, err := a.svc.Enroll(r.Context(), httpapi.ClientIP(r), in)
 	if err != nil {
-		if errors.Is(err, agents.ErrRateLimited) {
+		switch {
+		case errors.Is(err, agents.ErrRateLimited):
 			w.Header().Set("Retry-After", "5")
+		case errors.Is(err, agents.ErrTooManyWaiting):
+			w.Header().Set("Retry-After", "300")
 		}
 		return mapError(err)
 	}
-	httpapi.WriteJSON(w, http.StatusCreated, out)
+	// A device waiting for approval is accepted, not yet created.
+	status := http.StatusCreated
+	if out.Pending != nil {
+		status = http.StatusAccepted
+	}
+	httpapi.WriteJSON(w, status, out)
 	return nil
 }
 

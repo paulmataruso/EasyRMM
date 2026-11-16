@@ -126,6 +126,7 @@ export function sessionView(overrides: Partial<SessionView> = {}): SessionView {
     csrfToken: "csrf-1",
     expiresAt: "2030-01-01T00:00:00Z",
     permissions: ["org.view", "org.manage", "org.create", "site.view", "site.manage", "user.view", "user.manage", "audit.view", "settings.manage"],
+    globalPermissions: [],
     isSuperAdmin: true,
     features: { remoteAccess: true },
     ...overrides,

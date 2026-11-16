@@ -425,6 +425,20 @@ func (p *Principal) Permissions() []Permission {
 	return out
 }
 
+// GlobalPermissions returns the permissions the principal holds
+// platform-wide, for the frontend to show what only those may do: deciding
+// on devices that wait for approval and belong to no organization yet.
+func (p *Principal) GlobalPermissions() []Permission {
+	out := make([]Permission, 0, len(p.global))
+	for perm, ok := range p.global {
+		if ok {
+			out = append(out, perm)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
 // CanAssign reports whether the principal may grant (or revoke) the given
 // assignment. It prevents privilege escalation:
 //   - only super administrators grant super administrator;

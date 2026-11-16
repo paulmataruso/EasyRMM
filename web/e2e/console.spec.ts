@@ -274,7 +274,7 @@ test("a deployment token enrolls a device, which then reports in", async () => {
   expect(again.status()).toBe(401);
 
   await page.getByRole("button", { name: "Create another token" }).click();
-  await page.getByLabel("Which tokens").selectOption("all");
+  await page.getByLabel("Which deployment tokens").selectOption("all");
   const row = page.getByRole("row", { name: /Downtown rollout/ });
   await expect(row).toContainText("1 of 1");
   await expect(row).toContainText("Used up");

@@ -31,6 +31,7 @@ export function sectionFor(pathname: string): SectionId | null {
 export type Target =
   | { kind: "all" }
   | { kind: "shared" }
+  | { kind: "approvals" }
   | { kind: "org"; id: string }
   | { kind: "site"; id: string; organizationId: string }
   | { kind: "device"; id: string; organizationId: string; siteId: string };
@@ -67,6 +68,7 @@ export function selectedKey(section: SectionId, pathname: string, search: string
     }
     case "devices": {
       if (pathname === "/devices") return scope();
+      if (pathname === "/devices/approvals") return "approvals";
       const device = one(/^\/devices\/([^/]+)$/, pathname);
       return device && device !== "add" ? deviceKey(device) : null;
     }
@@ -101,6 +103,7 @@ export function targetHref(section: SectionId, target: Target, pathname: string,
     return "/organizations";
   }
   if (section === "devices" && target.kind === "device") return `/devices/${encodeURIComponent(target.id)}`;
+  if (target.kind === "approvals") return "/devices/approvals";
   const list = LIST[section];
   if (!list) return "/";
   const params = new URLSearchParams(pathname === list ? search : "");

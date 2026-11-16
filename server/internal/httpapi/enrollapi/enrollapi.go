@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 )
@@ -62,6 +64,109 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/enrollment-tokens/{id}", a.get)
 	r("POST /api/v1/enrollment-tokens/{id}/revoke", a.revoke)
 	r("GET /api/v1/agent-downloads", a.downloads)
+	// Enrollment with approval (ADR-0024).
+	r("GET /api/v1/approval-tokens", a.listApproval)
+	r("POST /api/v1/approval-tokens", a.createApproval)
+	r("POST /api/v1/approval-tokens/{id}/revoke", a.revokeApproval)
+	r("GET /api/v1/enrollment-requests", a.listRequests)
+	r("GET /api/v1/enrollment-requests/waiting", a.waiting)
+	r("POST /api/v1/enrollment-requests/approve", a.approve)
+	r("POST /api/v1/enrollment-requests/reject", a.reject)
+}
+
+func (a *API) listApproval(w http.ResponseWriter, r *http.Request) error {
+	items, err := a.svc.ListApprovalTokens(r.Context(), httpapi.Caller(r), r.URL.Query().Get("status") == "active")
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, httpapi.List[*agents.ApprovalToken]{Items: items})
+	return nil
+}
+
+// createdApproval is a new approval token with what the console needs to
+// show install commands. The secret is in no other response.
+type createdApproval struct {
+	*agents.NewApprovalToken
+	ServerURL string `json:"serverUrl"`
+}
+
+func (a *API) createApproval(w http.ResponseWriter, r *http.Request) error {
+	var in agents.ApprovalTokenInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	t, err := a.svc.CreateApprovalToken(r.Context(), httpapi.Caller(r), in)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpapi.WriteJSON(w, http.StatusCreated, createdApproval{NewApprovalToken: t, ServerURL: a.server})
+	return nil
+}
+
+func (a *API) revokeApproval(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	t, err := a.svc.RevokeApprovalToken(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, t)
+	return nil
+}
+
+func (a *API) listRequests(w http.ResponseWriter, r *http.Request) error {
+	state := r.URL.Query().Get("state")
+	if state == "" {
+		state = "pending"
+	}
+	list, err := a.svc.ListRequests(r.Context(), httpapi.Caller(r), state)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, list)
+	return nil
+}
+
+// waiting is how many devices wait for approval, for the menu; 0 for
+// callers who cannot approve them.
+func (a *API) waiting(w http.ResponseWriter, r *http.Request) error {
+	n, err := a.svc.Waiting(r.Context(), httpapi.Caller(r))
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]int{"waiting": n})
+	return nil
+}
+
+func (a *API) approve(w http.ResponseWriter, r *http.Request) error {
+	var in agents.ApproveInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	d, err := a.svc.Approve(r.Context(), httpapi.Caller(r), in)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, d)
+	return nil
+}
+
+func (a *API) reject(w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		IDs []uuid.UUID `json:"ids"`
+	}
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	d, err := a.svc.Reject(r.Context(), httpapi.Caller(r), in.IDs)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, d)
+	return nil
 }
 
 func (a *API) list(w http.ResponseWriter, r *http.Request) error {

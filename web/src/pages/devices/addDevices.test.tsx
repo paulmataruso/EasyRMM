@@ -208,7 +208,7 @@ describe("add devices", () => {
     // Usable tokens only, until asked for all.
     expect(screen.queryByText("Old laptops")).not.toBeInTheDocument();
     expect(server.call("GET /enrollment-tokens").query.get("status")).toBe("active");
-    await user.selectOptions(screen.getByLabelText("Which tokens"), "all");
+    await user.selectOptions(screen.getByLabelText("Which deployment tokens"), "all");
     const used = await screen.findByRole("row", { name: /Old laptops/ });
     expect(within(used).getByText("Used up")).toBeInTheDocument();
     expect(within(used).queryByRole("button", { name: /Revoke/ })).not.toBeInTheDocument();

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { Bell, Building2, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Settings, Sun, UserCircle, X } from "lucide-react";
-import { useApi } from "../api/hooks";
+import { useApi, useWaitingDevices } from "../api/hooks";
 import type { AlertSummary } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
+import { plural } from "../lib/format";
 import { applyTheme, getStoredTheme, storeTheme, type Theme } from "../lib/theme";
 import { SectionNav } from "../nav/SectionNav";
 import { SECTION_PERMISSION, sectionFor, type SectionId } from "../nav/sections";
@@ -81,7 +82,7 @@ const SECTION_HOME: Record<SectionId, string> = {
 };
 
 export function AppLayout() {
-  const { session, can, signOut } = useAuth();
+  const { session, can, canGlobal, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -118,13 +119,19 @@ export function AppLayout() {
   }, [focusNext, section, pageSection]);
 
   const alerts = useApi<AlertSummary>(can("alert.view") ? "/alerts/summary" : null, undefined, { refetchInterval: 60_000 });
+  const waiting = useWaitingDevices(canGlobal("enrollment.manage"));
 
   const nav: NavItem[] = [
     { to: "/", label: "Dashboard", icon: <LayoutDashboard className="size-4" aria-hidden />, end: true },
     { to: "/organizations", label: "Organizations", icon: <Building2 className="size-4" aria-hidden /> },
   ];
   if (can("device.view")) {
-    nav.push({ to: "/devices", label: "Devices", icon: <Monitor className="size-4" aria-hidden /> });
+    nav.push({
+      to: "/devices",
+      label: "Devices",
+      icon: <Monitor className="size-4" aria-hidden />,
+      count: waiting > 0 ? { value: waiting, label: `${plural(waiting, "device")} waiting for approval`, critical: false } : undefined,
+    });
   }
   if (can("alert.view")) {
     const s = alerts.data;

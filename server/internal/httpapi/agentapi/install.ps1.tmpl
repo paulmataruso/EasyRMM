@@ -106,7 +106,8 @@ try {
         Remove-Item Env:EASYRMM_TOKEN -ErrorAction SilentlyContinue
     }
     if ($code -ne 0) { Fail "the agent was not installed (exit code $code)" }
-    Write-Host 'easyrmm: done. The device appears in the EasyRMM console within a minute.'
+    # The agent has said whether the device is enrolled or waits for approval.
+    Write-Host 'easyrmm: done.'
 } finally {
 {{- if .KeyPin}}
     [Net.ServicePointManager]::ServerCertificateValidationCallback = $null

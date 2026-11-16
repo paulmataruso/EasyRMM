@@ -453,7 +453,9 @@ export function Segmented<T extends string>({ options, value, onChange, label, c
 // ---------------------------------------------------------------------------------------------
 
 export function TableWrap({ children, className }: { children: ReactNode; className?: string }) {
-  return <div className={cx("overflow-x-auto rounded-lg border border-line bg-surface", className)}>{children}</div>;
+  // relative: absolutely positioned content (screen-reader-only labels) stays inside the scrolling box instead of
+  // widening the page.
+  return <div className={cx("relative overflow-x-auto rounded-lg border border-line bg-surface", className)}>{children}</div>;
 }
 
 export function KeyValueList({ items, className, narrow = false }: { items: [ReactNode, ReactNode][]; className?: string; narrow?: boolean }) {

@@ -174,6 +174,15 @@ All notable changes to this project are documented here. The format follows
   the collector has them; turning forwarding off is the last record sent.
   A test message checks the settings before saving. Guide:
   [Forwarding the audit log](docs/operations/audit-forwarding.md).
+- Agents that wait for approval (ADR-0024). An approval token, created on
+  **Devices → Add devices** with **Wait for approval**, gives one install
+  command for every computer of every customer. Each computer that runs it
+  waits under **Devices → Waiting for approval** with a device code, its
+  system and address, and any device that already has its name; approve one
+  or many into a site (and device group), where each takes its computer's
+  name and enrolls within seconds, or reject them. The menu and the devices
+  tree count the waiting devices; `easyrmm-agent status` shows the code.
+  Deciding needs `enrollment.manage` on the whole server.
 - The console's libraries are served as a chunk of their own, which
   browsers keep across EasyRMM upgrades.
 - When the server cannot open its stored certificate authority or job key,

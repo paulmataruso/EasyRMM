@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router";
 import { Ban, Download, KeyRound, MonitorDown, ShieldCheck } from "lucide-react";
 import { api, fieldError } from "../../api/client";
@@ -6,9 +6,12 @@ import { useApi, useApiMutation, useList, useSites } from "../../api/hooks";
 import type {
   AgentBuild,
   AgentDownloads,
+  ApprovalToken,
+  ApprovalTokenInput,
   DeviceGroup,
   EnrollmentToken,
   EnrollmentTokenInput,
+  NewApprovalToken,
   NewEnrollmentToken,
   ServerAddress,
   Site,
@@ -126,10 +129,22 @@ function useAddresses(fallback: string) {
   return { addresses, current };
 }
 
+/** Where a token's devices go: straight into its site, or into the approvals list (ADR-0024). */
+type Mode = "site" | "approval";
+
+const MODES: { value: Mode; label: string }[] = [
+  { value: "site", label: "Join a chosen site" },
+  { value: "approval", label: "Wait for approval" },
+];
+
+type Created = { kind: "site"; value: NewEnrollmentToken } | { kind: "approval"; value: NewApprovalToken };
+
 export function AddDevicesPage() {
-  const { can } = useAuth();
+  const { can, canGlobal } = useAuth();
   const url = useUrlState();
-  const [created, setCreated] = useState<NewEnrollmentToken | null>(null);
+  const approver = canGlobal("enrollment.manage");
+  const mode: Mode = approver && url.get("mode") === "approval" ? "approval" : "site";
+  const [created, setCreated] = useState<Created | null>(null);
 
   const header = (
     <PageHeader
@@ -139,7 +154,11 @@ export function AddDevicesPage() {
         </Link>
       }
       title="Add devices"
-      subtitle="Install the EasyRMM agent with a deployment token. The token decides which site, and optionally which device group, a new device joins."
+      subtitle={
+        approver
+          ? "Install the EasyRMM agent with a deployment token. A token places new devices in its site, or holds them until you approve each one into a site."
+          : "Install the EasyRMM agent with a deployment token. The token decides which site, and optionally which device group, a new device joins."
+      }
     />
   );
 
@@ -159,10 +178,27 @@ export function AddDevicesPage() {
       {header}
       <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-5">
         <Card title={created ? "Install the agent" : "New deployment token"} className="xl:col-span-3">
-          {created ? (
-            <InstallSteps created={created} onDone={() => setCreated(null)} />
+          {created?.kind === "site" ? (
+            <SiteInstallSteps created={created.value} onDone={() => setCreated(null)} />
+          ) : created?.kind === "approval" ? (
+            <ApprovalInstallSteps created={created.value} onDone={() => setCreated(null)} />
           ) : (
-            <TokenForm initialSiteId={url.get("siteId")} onCreated={setCreated} />
+            <div className="flex flex-col gap-4">
+              {approver && (
+                <Segmented
+                  label="New devices"
+                  options={MODES}
+                  value={mode}
+                  onChange={(m) => url.set({ mode: m === "approval" ? "approval" : null })}
+                  className="self-start"
+                />
+              )}
+              {mode === "approval" ? (
+                <ApprovalTokenForm onCreated={(t) => setCreated({ kind: "approval", value: t })} />
+              ) : (
+                <TokenForm initialSiteId={url.get("siteId")} onCreated={(t) => setCreated({ kind: "site", value: t })} />
+              )}
+            </div>
           )}
         </Card>
         <div className="flex flex-col gap-5 xl:col-span-2">
@@ -170,8 +206,112 @@ export function AddDevicesPage() {
           <CertificateAuthorityCard />
         </div>
       </div>
-      <TokensCard />
+      <TokensCard<EnrollmentToken>
+        title="Deployment tokens"
+        path="/enrollment-tokens"
+        place={{
+          header: "Site",
+          cell: (t) => (
+            <>
+              <span className="block truncate">
+                {t.organizationName} <span className="text-subtle">/</span> {t.siteName}
+              </span>
+              {t.deviceGroupName && <span className="block truncate text-xs text-muted">{t.deviceGroupName}</span>}
+            </>
+          ),
+        }}
+        revokeNote={(t) => (
+          <>
+            No more devices can enroll with <strong>{t.name}</strong>. Devices that already enrolled with it keep working.
+          </>
+        )}
+      />
+      {approver && (
+        <TokensCard<ApprovalToken>
+          title="Approval tokens"
+          path="/approval-tokens"
+          place={{
+            header: "Waiting",
+            cell: (t) =>
+              t.waiting > 0 ? (
+                <Link to="/devices/approvals" className="font-medium text-accent tabular-nums hover:underline">
+                  {plural(t.waiting, "device")}
+                </Link>
+              ) : (
+                <span className="text-muted">None</span>
+              ),
+          }}
+          revokeNote={(t) => (
+            <>
+              No more devices can ask to enroll with <strong>{t.name}</strong>. Devices already waiting can still be approved, and devices that enrolled
+              with it keep working.
+            </>
+          )}
+        />
+      )}
     </>
+  );
+}
+
+function ApprovalTokenForm({ onCreated }: { onCreated: (t: NewApprovalToken) => void }) {
+  const [name, setName] = useState("");
+  const [days, setDays] = useState(7);
+  const [limit, setLimit] = useState("");
+  const create = useApiMutation((input: ApprovalTokenInput) => api.post<NewApprovalToken>("/approval-tokens", input), {
+    invalidate: ["/approval-tokens", "/audit"],
+    onSuccess: onCreated,
+  });
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    create.mutate({ name: name.trim(), expiresInDays: days, maxUses: limit.trim() === "" ? null : Number(limit) });
+  }
+
+  return (
+    <form onSubmit={submit} className="flex flex-col gap-3.5">
+      <p className="text-sm text-muted">
+        One install command for every computer, whichever customer it belongs to. Each device waits under{" "}
+        <Link to="/devices/approvals" className="font-medium text-accent hover:underline">
+          Waiting for approval
+        </Link>{" "}
+        until you approve it into a site, and takes its computer&apos;s name.
+      </p>
+      <TextField
+        label="Token name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        error={fieldError(create.error, "name")}
+        hint="Something you will recognize later, for example “Spring rollout”."
+        required
+        maxLength={200}
+      />
+      <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+        <SelectField label="Expires after" value={String(days)} onChange={(e) => setDays(Number(e.target.value))} error={fieldError(create.error, "expiresInDays")}>
+          {EXPIRY_CHOICES.map((d) => (
+            <option key={d} value={d}>
+              {plural(d, "day")}
+            </option>
+          ))}
+        </SelectField>
+        <TextField
+          label="Device limit"
+          type="number"
+          inputMode="numeric"
+          min={1}
+          max={100000}
+          value={limit}
+          onChange={(e) => setLimit(e.target.value)}
+          error={fieldError(create.error, "maxUses")}
+          hint="Leave empty for no limit."
+        />
+      </div>
+      <InlineError error={create.error} fields={["name", "expiresInDays", "maxUses"]} />
+      <div className="flex justify-end pt-1">
+        <Button type="submit" variant="primary" loading={create.isPending} disabled={!name.trim()}>
+          Create token
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -289,17 +429,69 @@ function TokenForm({ initialSiteId, onCreated }: { initialSiteId: string; onCrea
   );
 }
 
-function InstallSteps({ created, onDone }: { created: NewEnrollmentToken; onDone: () => void }) {
+function SiteInstallSteps({ created, onDone }: { created: NewEnrollmentToken; onDone: () => void }) {
   const t = created.token;
-  const { addresses, current } = useAddresses(created.serverUrl);
+  return (
+    <InstallSteps
+      secret={created.secret}
+      serverUrl={created.serverUrl}
+      onDone={onDone}
+      notice={
+        <>
+          Anyone with it can add devices to {t.siteName} until it {t.maxUses ? "expires or is used up" : "expires"}. Revoke it once the rollout is done.
+        </>
+      }
+      details={[
+        ["Token", t.name],
+        ["Site", `${t.organizationName} / ${t.siteName}`],
+        ["Device group", t.deviceGroupName || <span className="text-muted">None</span>],
+        ["Expires", formatDateTime(t.expiresAt)],
+        ["Device limit", t.maxUses ? t.maxUses.toLocaleString() : "No limit"],
+      ]}
+    />
+  );
+}
+
+function ApprovalInstallSteps({ created, onDone }: { created: NewApprovalToken; onDone: () => void }) {
+  const t = created.token;
+  return (
+    <InstallSteps
+      secret={created.secret}
+      serverUrl={created.serverUrl}
+      onDone={onDone}
+      notice={
+        <>
+          Anyone with it can ask to add devices until it {t.maxUses ? "expires or is used up" : "expires"}. Each one waits under{" "}
+          <Link to="/devices/approvals" className="font-medium underline">
+            Waiting for approval
+          </Link>{" "}
+          until you approve it into a site. Revoke the token once the rollout is done.
+        </>
+      }
+      details={[
+        ["Token", t.name],
+        ["New devices", "Wait for approval"],
+        ["Expires", formatDateTime(t.expiresAt)],
+        ["Device limit", t.maxUses ? t.maxUses.toLocaleString() : "No limit"],
+      ]}
+    />
+  );
+}
+
+function InstallSteps({ secret, serverUrl, notice, details, onDone }: {
+  secret: string;
+  serverUrl: string;
+  notice: ReactNode;
+  details: [ReactNode, ReactNode][];
+  onDone: () => void;
+}) {
+  const { addresses, current } = useAddresses(serverUrl);
   const [chosen, setChosen] = useState<string | null>(null);
   const [platform, setPlatform] = useState<Platform>("windows");
   const address = addresses.find((a) => a.url === chosen) ?? current;
   return (
     <div className="flex flex-col gap-4">
-      <OneTimeNotice title="Copy the command now. The token is not shown again.">
-        Anyone with it can add devices to {t.siteName} until it {t.maxUses ? "expires or is used up" : "expires"}. Revoke it once the rollout is done.
-      </OneTimeNotice>
+      <OneTimeNotice title="Copy the command now. The token is not shown again.">{notice}</OneTimeNotice>
 
       {addresses.length > 1 && (
         <SelectField
@@ -331,17 +523,17 @@ function InstallSteps({ created, onDone }: { created: NewEnrollmentToken; onDone
                 <Mono className="whitespace-nowrap">powershell.exe</Mono>.
               </p>
             )}
-            <CodeBlock code={windowsInstallCommand(address.url, created.secret, address.keyPin)} />
+            <CodeBlock code={windowsInstallCommand(address.url, secret, address.keyPin)} />
           </>
         ) : (
-          <LinuxInstall address={address} secret={created.secret} />
+          <LinuxInstall address={address} secret={secret} />
         )}
       </section>
 
       <details className="group text-sm">
         <summary className="cursor-pointer text-muted select-none hover:text-fg">The token on its own, for scripted installs</summary>
         <div className="mt-2 flex flex-col gap-1.5">
-          <CodeBlock code={created.secret} />
+          <CodeBlock code={secret} />
           <p className="text-xs text-muted">
             Pass it to{" "}
             <Mono>
@@ -358,16 +550,7 @@ function InstallSteps({ created, onDone }: { created: NewEnrollmentToken; onDone
         </div>
       </details>
 
-      <KeyValueList
-        narrow
-        items={[
-          ["Token", t.name],
-          ["Site", `${t.organizationName} / ${t.siteName}`],
-          ["Device group", t.deviceGroupName || <span className="text-muted">None</span>],
-          ["Expires", formatDateTime(t.expiresAt)],
-          ["Device limit", t.maxUses ? t.maxUses.toLocaleString() : "No limit"],
-        ]}
-      />
+      <KeyValueList narrow items={details} />
       <div className="flex justify-end">
         <Button onClick={onDone}>Create another token</Button>
       </div>
@@ -514,26 +697,46 @@ function BuildRow({ build }: { build: AgentBuild }) {
   );
 }
 
-function TokensCard() {
+/** What both kinds of token have in common, for their lists. */
+interface TokenRow {
+  id: string;
+  name: string;
+  createdByName?: string;
+  createdAt: string;
+  expiresAt: string;
+  maxUses: number | null;
+  uses: number;
+  lastUsedAt: string | null;
+  status: EnrollmentToken["status"];
+}
+
+function TokensCard<T extends TokenRow>({ title, path, place, revokeNote }: {
+  title: string;
+  path: string;
+  /** The column that differs: a deployment token's site, an approval token's waiting devices. */
+  place: { header: string; cell: (t: T) => ReactNode };
+  revokeNote: (t: T) => ReactNode;
+}) {
   const toast = useToast();
   const [all, setAll] = useState(false);
-  const tokens = useList<EnrollmentToken>("/enrollment-tokens", all ? undefined : { status: "active" }, { refetchInterval: 30_000, keepPrevious: true });
-  const [revoking, setRevoking] = useState<EnrollmentToken | null>(null);
-  const revoke = useApiMutation((t: EnrollmentToken) => api.post<EnrollmentToken>(`/enrollment-tokens/${t.id}/revoke`), {
-    invalidate: ["/enrollment-tokens", "/audit"],
+  const tokens = useList<T>(path, all ? undefined : { status: "active" }, { refetchInterval: 30_000, keepPrevious: true });
+  const [revoking, setRevoking] = useState<T | null>(null);
+  const revoke = useApiMutation((t: T) => api.post<T>(`${path}/${t.id}/revoke`), {
+    invalidate: [path, "/audit"],
     onSuccess: (_, t) => {
       toast.success(`Token “${t.name}” revoked.`);
       setRevoking(null);
     },
   });
+  const noun = title.toLowerCase();
 
   return (
     <Card
-      title="Deployment tokens"
+      title={title}
       padded={false}
       className="mt-5"
       actions={
-        <Select aria-label="Which tokens" value={all ? "all" : "active"} onChange={(e) => setAll(e.target.value === "all")} className="h-8 py-0 text-xs">
+        <Select aria-label={`Which ${noun}`} value={all ? "all" : "active"} onChange={(e) => setAll(e.target.value === "all")} className="h-8 py-0 text-xs">
           <option value="active">Usable tokens</option>
           <option value="all">All tokens</option>
         </Select>
@@ -544,7 +747,7 @@ function TokensCard() {
       ) : tokens.isError ? (
         <ErrorState error={tokens.error} onRetry={() => void tokens.refetch()} compact />
       ) : tokens.items.length === 0 ? (
-        <EmptyState title={all ? "No deployment tokens yet" : "No usable tokens"} compact>
+        <EmptyState title={all ? `No ${noun} yet` : `No usable ${noun}`} compact>
           {all ? "Tokens you create are listed here, with how many devices used each." : "Expired, revoked and used-up tokens are under All tokens."}
         </EmptyState>
       ) : (
@@ -553,7 +756,7 @@ function TokensCard() {
             <thead>
               <tr>
                 <th>Token</th>
-                <th className="hidden md:table-cell">Site</th>
+                <th className="hidden md:table-cell">{place.header}</th>
                 <th>Devices</th>
                 <th className="hidden sm:table-cell">Expires</th>
                 <th>Status</th>
@@ -572,12 +775,7 @@ function TokensCard() {
                       <span title={formatDateTime(t.createdAt)}>{formatDate(t.createdAt)}</span>
                     </p>
                   </td>
-                  <td className="hidden max-w-64 md:table-cell">
-                    <span className="block truncate">
-                      {t.organizationName} <span className="text-subtle">/</span> {t.siteName}
-                    </span>
-                    {t.deviceGroupName && <span className="block truncate text-xs text-muted">{t.deviceGroupName}</span>}
-                  </td>
+                  <td className="hidden max-w-64 md:table-cell">{place.cell(t)}</td>
                   <td className="whitespace-nowrap tabular-nums" title={t.lastUsedAt ? `Last used ${formatDateTime(t.lastUsedAt)}` : "Not used yet"}>
                     {t.maxUses ? `${t.uses.toLocaleString()} of ${t.maxUses.toLocaleString()}` : t.uses.toLocaleString()}
                   </td>
@@ -607,15 +805,13 @@ function TokensCard() {
           revoke.reset();
         }}
         onConfirm={() => revoking && revoke.mutate(revoking)}
-        title="Revoke deployment token"
+        title={`Revoke ${noun.replace(/s$/, "")}`}
         confirmLabel="Revoke token"
         tone="danger"
         loading={revoke.isPending}
         error={revoke.error}
       >
-        <p>
-          No more devices can enroll with <strong>{revoking?.name}</strong>. Devices that already enrolled with it keep working.
-        </p>
+        <p>{revoking && revokeNote(revoking)}</p>
       </ConfirmDialog>
     </Card>
   );

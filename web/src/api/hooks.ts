@@ -77,6 +77,15 @@ export function useOrganizations() {
   return useList<Organization>("/organizations", undefined, { staleTime: 30_000 });
 }
 
+/**
+ * How many devices wait for approval (ADR-0024), for those who may decide them: the menu, the devices tree and the
+ * approvals page share the one query.
+ */
+export function useWaitingDevices(enabled: boolean): number {
+  const q = useApi<{ waiting: number }>(enabled ? "/enrollment-requests/waiting" : null, undefined, { refetchInterval: 30_000, staleTime: 5_000 });
+  return enabled ? (q.data?.waiting ?? 0) : 0;
+}
+
 export function useSites(organizationId?: string | null) {
   return useList<Site>("/sites", organizationId ? { organizationId } : undefined, { staleTime: 30_000 });
 }

@@ -39,9 +39,10 @@ type Store struct {
 }
 
 const (
-	configFile = "agent.json"
-	keyFile    = "device.key"
-	statusFile = "status.json"
+	pendingFile = "pending.json"
+	configFile  = "agent.json"
+	keyFile     = "device.key"
+	statusFile  = "status.json"
 )
 
 // ErrNotEnrolled means the agent has no enrollment yet.
@@ -90,6 +91,86 @@ func (s Store) loadKey() (ed25519.PrivateKey, error) {
 		return nil, fmt.Errorf("%s is not a device key", path)
 	}
 	return ed25519.NewKeyFromSeed(blk.Bytes), nil
+}
+
+// Pending is an agent installed with an approval token, waiting for someone
+// to approve the device in the console (ADR-0024). It holds what the
+// enrollment needs once approved; the key is the device's own, written
+// beside it.
+type Pending struct {
+	Server        string `json:"server"`
+	CAFile        string `json:"caFile,omitempty"`
+	MeshAgentMode string `json:"meshAgentMode"`
+	// Token is the install command's token: the agent asks with it until
+	// the server decides.
+	Token string `json:"token"`
+	// Code is the device code the console shows.
+	Code  string    `json:"code"`
+	Since time.Time `json:"since"`
+	// Stopped says why the agent stopped asking: the device was rejected,
+	// or the server no longer knows the token or the request.
+	Stopped   string    `json:"stopped,omitempty"`
+	StoppedAt time.Time `json:"stoppedAt,omitzero"`
+}
+
+// ErrNotPending means the agent is not waiting for approval.
+var ErrNotPending = errors.New("the agent is not waiting for approval")
+
+// SavePending writes a pending enrollment and the device's key, the key
+// first, under the same protection as an enrollment.
+func (s Store) SavePending(p *Pending, key ed25519.PrivateKey) error {
+	if err := host.Protect(s.Dir); err != nil {
+		return fmt.Errorf("protecting %s: %w", s.Dir, err)
+	}
+	pemKey := pem.EncodeToMemory(&pem.Block{Type: "EASYRMM DEVICE KEY", Bytes: key.Seed()})
+	if err := writeFile(filepath.Join(s.Dir, keyFile), pemKey, 0o600); err != nil {
+		return err
+	}
+	return s.UpdatePending(p)
+}
+
+// UpdatePending rewrites a pending enrollment.
+func (s Store) UpdatePending(p *Pending) error {
+	b, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFile(filepath.Join(s.Dir, pendingFile), append(b, '\n'), 0o600)
+}
+
+// LoadPending returns the pending enrollment and the device's key.
+func (s Store) LoadPending() (*Pending, ed25519.PrivateKey, error) {
+	b, err := os.ReadFile(filepath.Join(s.Dir, pendingFile))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil, ErrNotPending
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	var p Pending
+	if err := json.Unmarshal(b, &p); err != nil {
+		return nil, nil, fmt.Errorf("reading %s: %w", pendingFile, err)
+	}
+	if p.Server == "" || p.Token == "" {
+		return nil, nil, fmt.Errorf("%s is incomplete", pendingFile)
+	}
+	key, err := s.loadKey()
+	if err != nil {
+		return nil, nil, err
+	}
+	return &p, key, nil
+}
+
+// Approved turns the pending enrollment into the enrollment c, with the key
+// already written. The token goes with the pending file.
+func (s Store) Approved(c *Config) error {
+	if err := s.SaveConfig(c); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(s.Dir, pendingFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // NewKey generates a device key pair. Nothing is written yet.

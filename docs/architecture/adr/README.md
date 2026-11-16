@@ -29,3 +29,4 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 | [0021](0021-console-navigation.md) | Console navigation by section: a sidebar tree per section, quick connect, recent connections | Accepted |
 | [0022](0022-gateway-relay-restrictions.md) | No TCP or UDP tunnels through the remote-access gateway | Accepted; refines 0014 |
 | [0023](0023-audit-forwarding.md) | Forwarding the audit log over syslog (RFC 5424 over TLS, TCP or UDP) | Accepted |
+| [0024](0024-enrollment-approval.md) | Installing agents that wait for approval: one command for every computer | Accepted; refines 0015 |

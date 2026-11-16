@@ -41,13 +41,17 @@ type MeshAgents interface {
 
 // Service enrolls agents and serves their requests.
 type Service struct {
-	db     *database.DB
-	audit  *audit.Logger
-	mesh   MeshAgents
-	log    *slog.Logger
-	now    func() time.Time
-	enroll *auth.KeyedLimiter
-	jobKey string
+	db    *database.DB
+	audit *audit.Logger
+	mesh  MeshAgents
+	log   *slog.Logger
+	now   func() time.Time
+	// enroll limits new devices per address, lookups every enrollment
+	// request per address, polls a waiting device's requests per key.
+	enroll, lookups, polls *auth.KeyedLimiter
+	waits                  *waitHub
+	approvalWait           time.Duration
+	jobKey                 string
 }
 
 // New returns a Service. mesh may be nil.
@@ -58,6 +62,12 @@ func New(db *database.DB, auditLog *audit.Logger, mesh MeshAgents, log *slog.Log
 		// only keeps junk from loading the database. Tokens cannot be
 		// guessed.
 		enroll: auth.NewKeyedLimiter(250*time.Millisecond, 120, 10_000),
+		// Devices waiting for approval ask again every ApprovalWait or so,
+		// possibly thousands behind one address.
+		lookups:      auth.NewKeyedLimiter(20*time.Millisecond, 1000, 10_000),
+		polls:        auth.NewKeyedLimiter(2*time.Second, 5, MaxWaiting),
+		waits:        newWaitHub(),
+		approvalWait: agentproto.ApprovalWait,
 	}
 }
 
@@ -86,11 +96,14 @@ var (
 	ErrMeshUnavailable = errors.New("agents: MeshAgent is not available")
 )
 
-// Cleanup removes nonces that can no longer be replayed.
+// Cleanup removes nonces that can no longer be replayed and enrollment
+// requests nobody needs any more.
 func (s *Service) Cleanup(ctx context.Context) error {
 	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `DELETE FROM agent_nonces WHERE expires_at < now()`)
-		return err
+		if _, err := tx.Exec(ctx, `DELETE FROM agent_nonces WHERE expires_at < now()`); err != nil {
+			return err
+		}
+		return cleanupRequests(ctx, tx)
 	})
 }
 

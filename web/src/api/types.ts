@@ -55,6 +55,8 @@ export interface SessionView {
   csrfToken: string;
   expiresAt: string;
   permissions: Permission[];
+  /** Permissions held platform-wide, not only in some organizations or sites. */
+  globalPermissions: Permission[];
   isSuperAdmin: boolean;
   /** Optional parts of the server that are turned on. */
   features: Features;
@@ -295,6 +297,90 @@ export interface NewEnrollmentToken {
   token: EnrollmentToken;
   secret: string;
   serverUrl: string;
+}
+
+/**
+ * A token for a generic install command: devices that use it wait until someone approves them
+ * into a site (ADR-0024).
+ */
+export interface ApprovalToken {
+  id: string;
+  name: string;
+  expiresAt: string;
+  maxUses: number | null;
+  uses: number;
+  /** Devices that used it and still wait for a decision. */
+  waiting: number;
+  createdByName?: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+  status: EnrollmentTokenStatus;
+}
+
+export interface ApprovalTokenInput {
+  name: string;
+  expiresInDays: number;
+  maxUses: number | null;
+}
+
+/** A created approval token; the secret is in no other response. */
+export interface NewApprovalToken {
+  token: ApprovalToken;
+  secret: string;
+  serverUrl: string;
+}
+
+export type EnrollmentRequestState = "pending" | "rejected";
+
+/** An existing device with the same name as a waiting one: perhaps a reinstall. */
+export interface EnrollmentRequestMatch {
+  deviceId: string;
+  name: string;
+  organizationName: string;
+  siteName: string;
+}
+
+/** A device that ran a generic install command and waits for approval. */
+export interface EnrollmentRequest {
+  id: string;
+  /** The device code the agent printed, for telling machines apart. */
+  code: string;
+  hostname: string;
+  os: string;
+  platform: string;
+  arch: string;
+  agentVersion: string;
+  sourceIp?: string;
+  state: EnrollmentRequestState;
+  tokenId: string;
+  tokenName: string;
+  createdAt: string;
+  lastSeenAt: string;
+  /** The agent asked within the last two minutes. */
+  online: boolean;
+  decidedAt?: string;
+  decidedByName?: string;
+  matches: EnrollmentRequestMatch[];
+}
+
+export interface EnrollmentRequestList {
+  items: EnrollmentRequest[];
+  /** Devices waiting for a decision, whichever list was asked for. */
+  waiting: number;
+}
+
+export interface ApproveInput {
+  ids: string[];
+  siteId: string;
+  deviceGroupId: string | null;
+}
+
+export interface EnrollmentDecision {
+  decided: string[];
+  devices?: string[];
+  /** Requests someone else decided first, or that were gone. */
+  skipped: string[];
 }
 
 export interface AgentBuild {

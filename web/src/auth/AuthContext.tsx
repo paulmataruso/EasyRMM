@@ -21,6 +21,8 @@ interface AuthContextValue {
   isSuperAdmin: boolean;
   /** Whether the user holds the permission in at least one scope. */
   can: (permission: Permission) => boolean;
+  /** Whether the user holds the permission platform-wide. */
+  canGlobal: (permission: Permission) => boolean;
   refresh: () => Promise<void>;
   /** Applies a session view the server just returned (sign-in, MFA). */
   applySession: (view: SessionView | null) => void;
@@ -146,12 +148,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const stage: AuthStage = query.isPending ? "loading" : query.isError && !data ? "error" : stageFor(data);
     const session = data?.session ?? null;
     const permissions = new Set(session?.state === "active" ? session.permissions : []);
+    const global = new Set(session?.state === "active" ? (session.globalPermissions ?? []) : []);
     return {
       stage,
       session,
       sessionEnded,
       isSuperAdmin: session?.state === "active" && session.isSuperAdmin,
       can: (p) => permissions.has(p),
+      canGlobal: (p) => global.has(p),
       refresh,
       applySession,
       signOut,

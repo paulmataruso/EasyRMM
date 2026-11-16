@@ -78,20 +78,24 @@ func mapAuthError(err error) error {
 
 // SessionView describes the current sign-in state to the browser.
 type SessionView struct {
-	State        auth.SessionState `json:"state"`
-	User         *auth.User        `json:"user"`
-	CSRFToken    string            `json:"csrfToken"`
-	ExpiresAt    time.Time         `json:"expiresAt"`
-	Permissions  []rbac.Permission `json:"permissions"`
-	IsSuperAdmin bool              `json:"isSuperAdmin"`
-	Features     Features          `json:"features"`
+	State       auth.SessionState `json:"state"`
+	User        *auth.User        `json:"user"`
+	CSRFToken   string            `json:"csrfToken"`
+	ExpiresAt   time.Time         `json:"expiresAt"`
+	Permissions []rbac.Permission `json:"permissions"`
+	// GlobalPermissions are those held platform-wide, not only in some
+	// organizations or sites.
+	GlobalPermissions []rbac.Permission `json:"globalPermissions"`
+	IsSuperAdmin      bool              `json:"isSuperAdmin"`
+	Features          Features          `json:"features"`
 }
 
 func (a *API) view(id *httpapi.Identity) SessionView {
 	v := SessionView{State: id.Session.State, User: id.User, CSRFToken: id.CSRFToken, ExpiresAt: id.Session.ExpiresAt,
-		Permissions: []rbac.Permission{}, Features: a.features}
+		Permissions: []rbac.Permission{}, GlobalPermissions: []rbac.Permission{}, Features: a.features}
 	if id.Principal != nil {
 		v.Permissions = id.Principal.Permissions()
+		v.GlobalPermissions = id.Principal.GlobalPermissions()
 		v.IsSuperAdmin = id.Principal.IsSuperAdmin()
 	}
 	return v

@@ -106,3 +106,68 @@ func TestStatus(t *testing.T) {
 		t.Error("status saved into a missing directory")
 	}
 }
+
+func TestPendingEnrollment(t *testing.T) {
+	s := Store{Dir: filepath.Join(t.TempDir(), "state")}
+	if _, _, err := s.LoadPending(); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("empty store: %v", err)
+	}
+	key, err := NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := &Pending{Server: "https://rmm.example.com", MeshAgentMode: "service", Token: "ert_x", Code: "ABCD-EFGH", Since: time.Now().UTC()}
+	if err := s.SavePending(p, key); err != nil {
+		t.Fatal(err)
+	}
+	// Waiting is not enrolled.
+	if _, _, err := s.Load(); !errors.Is(err, ErrNotEnrolled) {
+		t.Errorf("pending loads as enrolled: %v", err)
+	}
+	got, gotKey, err := s.LoadPending()
+	if err != nil || got.Token != "ert_x" || got.Code != "ABCD-EFGH" || !gotKey.Equal(key) {
+		t.Fatalf("load pending: %+v %v", got, err)
+	}
+	if runtime.GOOS != "windows" {
+		st, err := os.Stat(filepath.Join(s.Dir, pendingFile))
+		if err != nil || st.Mode().Perm() != 0o600 {
+			t.Errorf("pending file mode %v %v", st.Mode().Perm(), err)
+		}
+	}
+	got.Stopped, got.StoppedAt = "rejected", time.Now()
+	if err := s.UpdatePending(got); err != nil {
+		t.Fatal(err)
+	}
+	if again, _, _ := s.LoadPending(); again.Stopped != "rejected" {
+		t.Errorf("update lost: %+v", again)
+	}
+
+	// Approved: an enrollment with the same key, and the token is gone.
+	if err := s.Approved(&Config{Server: got.Server, DeviceID: "d1", MeshAgentMode: got.MeshAgentMode, EnrolledAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, k, err := s.Load()
+	if err != nil || cfg.DeviceID != "d1" || !k.Equal(key) {
+		t.Fatalf("after approval: %+v %v", cfg, err)
+	}
+	if _, _, err := s.LoadPending(); !errors.Is(err, ErrNotPending) {
+		t.Errorf("pending file kept: %v", err)
+	}
+	if err := s.Approved(cfg); err != nil {
+		t.Errorf("approving twice: %v", err)
+	}
+
+	// Damaged files are reported.
+	if err := os.WriteFile(filepath.Join(s.Dir, pendingFile), []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.LoadPending(); err == nil {
+		t.Error("damaged pending file accepted")
+	}
+	if err := os.WriteFile(filepath.Join(s.Dir, pendingFile), []byte(`{"server":"x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.LoadPending(); err == nil {
+		t.Error("pending file without a token accepted")
+	}
+}

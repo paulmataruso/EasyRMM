@@ -11,6 +11,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -73,8 +74,10 @@ type EnrollRequest struct {
 	Facts     Facts  `json:"facts"`
 }
 
-// EnrollResponse identifies the new device.
+// EnrollResponse identifies the new device, or says that it waits for
+// approval.
 type EnrollResponse struct {
+	// DeviceID is empty while the device waits for approval.
 	DeviceID         string `json:"deviceId"`
 	HeartbeatSeconds int    `json:"heartbeatSeconds"`
 	// MeshAgent says whether the agent should install MeshAgent now.
@@ -82,6 +85,37 @@ type EnrollResponse struct {
 	// JobKey is the server's job-signing public key (EncodeKey), which the
 	// agent pins (ADR-0017).
 	JobKey string `json:"jobKey,omitempty"`
+	// Pending is set, with the server answering 202 Accepted, when the
+	// token was an approval token and nobody has approved the device yet
+	// (ADR-0024). The agent asks again with the same token and key.
+	Pending *EnrollPending `json:"pending,omitempty"`
+}
+
+// EnrollPending describes a device waiting for approval.
+type EnrollPending struct {
+	// Code is the device's code, the same in the console (DeviceCode).
+	Code string `json:"code"`
+	// RetrySeconds is how long to wait before asking again. The server
+	// holds each request open for up to ApprovalWait first.
+	RetrySeconds int `json:"retrySeconds"`
+}
+
+// ApprovalWait is how long the server holds an enrollment that waits for
+// approval open before answering that it still waits.
+const ApprovalWait = 25 * time.Second
+
+// CodeEnrollmentRejected is the error code of an enrollment that was
+// rejected in the console. The agent stops asking.
+const CodeEnrollmentRejected = "enrollment_rejected"
+
+// DeviceCode is the short code that tells a device waiting for approval
+// apart from others with the same name: the first 40 bits of the SHA-256 of
+// its public key in base32, as "ABCD-EFGH". The agent prints it, the
+// console shows it.
+func DeviceCode(publicKey []byte) string {
+	sum := sha256.Sum256(publicKey)
+	s := base32.StdEncoding.EncodeToString(sum[:5])
+	return s[:4] + "-" + s[4:]
 }
 
 // HeartbeatRequest reports that the agent is alive.

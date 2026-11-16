@@ -239,6 +239,13 @@ func TestPermissionsListing(t *testing.T) {
 	if !slices.IsSorted(got) {
 		t.Error("permissions not sorted")
 	}
+	if g := p.GlobalPermissions(); len(g) != 0 {
+		t.Errorf("a site assignment grants platform-wide %v", g)
+	}
+	super := mustPrincipal(t, Assignment{Role: RoleSuperAdmin})
+	if g := super.GlobalPermissions(); !slices.Contains(g, PermEnrollManage) || !slices.IsSorted(g) {
+		t.Errorf("super administrator's platform-wide permissions %v", g)
+	}
 }
 
 func TestCanAnywhereAndInOrg(t *testing.T) {

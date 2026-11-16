@@ -41,6 +41,35 @@ Revoking a token does not affect computers that already enrolled with it.
 You need a role with the `enrollment.manage` permission for the site:
 Super Administrator, Organization Administrator or Site Administrator.
 
+### One command for every computer: approval tokens
+
+To roll out to many customers with one command (through a GPO, Intune or
+another RMM), choose **Wait for approval** instead of a site. The token has
+a name, an expiry and an optional device limit, and the install commands
+are the same as below. A computer that runs one is not added anywhere yet:
+the installer prints a device code and installs the agent, which waits.
+
+```text
+Waiting for approval in the EasyRMM console at https://rmm.example.com. Device code: K3QF-7BXA
+The agent is running as easyrmm-agent.service.
+It finishes enrolling on its own once the device is approved.
+```
+
+The computer appears under **Devices → Waiting for approval** (the menu and
+the devices tree count waiting devices) with its code, system, address and
+token, and any existing device with the same name, which is usually the same
+computer reinstalled. Select one or many and **Approve** them into a site
+and, optionally, a device group: each becomes a device named after its host
+name, and its agent enrolls within a few seconds. **Reject** tells the agent
+to stop asking; it idles until it is uninstalled, and installing it again
+asks anew. Waiting devices whose agent stopped asking for 7 days are
+forgotten, and rejected ones after 30 days.
+
+Approval tokens and waiting devices belong to no organization, so they need
+`enrollment.manage` on the whole server (Super Administrator). Revoking an
+approval token stops new computers from asking; computers already waiting
+can still be approved.
+
 ## 2. Install on Windows
 
 The Add devices page shows the command under **Windows**. Open **Windows
@@ -211,6 +240,16 @@ MeshAgent:  installed
 Inventory:  sent Sun, 15 Nov 2026 10:02:14 UTC
 ```
 
+A computer that waits for approval shows its device code instead:
+
+```console
+$ sudo easyrmm-agent status
+Server:     https://rmm.example.com
+Code:       K3QF-7BXA
+Waiting:    for approval in the EasyRMM console since Sun, 15 Nov 2026 10:02:11 UTC
+Service:    active
+```
+
 `journalctl -u easyrmm-agent` shows the agent's log. A failed heartbeat is
 retried after 5 seconds, then with a doubling delay up to 5 minutes.
 
@@ -228,6 +267,8 @@ tries again after 15 minutes. See [Inventory and health](../operations/inventory
 | `device_unknown` | The server has no record of this device, for example after restoring an older database backup. Uninstall and enroll again |
 | `rate_limited` | Too many enrollments from one address at once; the installer can simply be run again |
 | `meshagent_unavailable` | The server cannot reach MeshCentral right now; the agent retries later |
+| `enrollment_rejected` | The device was rejected under **Waiting for approval**. Uninstall the agent; installing it again asks anew |
+| `too_many_waiting` | 10,000 devices already wait for approval; approve or reject some, and the agent asks again |
 
 ## Uninstalling
 

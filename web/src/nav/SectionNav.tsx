@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ChevronsDownUp,
   FileCode2,
+  Hourglass,
   Library,
   ListChecks,
   MapPin,
@@ -20,7 +21,7 @@ import {
   Settings,
   UsersRound,
 } from "lucide-react";
-import { useList, useOrganizations, usePrefetch, useSites } from "../api/hooks";
+import { useList, useOrganizations, usePrefetch, useSites, useWaitingDevices } from "../api/hooks";
 import type { Device, DeviceAlertCount, Permission, Script } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { cx, Dot, ErrorState, Spinner } from "../components/ui";
@@ -172,7 +173,8 @@ function onlineBadge(online: number, total: number): Badge {
 }
 
 function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settings">; onWidth?: (px: number) => void }) {
-  const { can } = useAuth();
+  const { can, canGlobal } = useAuth();
+  const waiting = useWaitingDevices(section === "devices" && canGlobal("enrollment.manage"));
   const navigate = useNavigate();
   const location = useLocation();
   const prefetch = usePrefetch();
@@ -251,8 +253,9 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
   const total = roots.reduce((n, o) => n + o.total, 0);
   const online = roots.reduce((n, o) => n + o.online, 0);
 
-  function badgeFor(node: TreeNode | "all" | "shared"): Badge | null {
+  function badgeFor(node: TreeNode | "all" | "shared" | "approvals"): Badge | null {
     const key = typeof node === "string" ? node : node.key;
+    if (node === "approvals") return waiting > 0 ? { text: count(waiting), label: `${plural(waiting, "device")} waiting`, tone: "warning" } : null;
     switch (section) {
       case "devices":
         if (typeof node === "object" && node.kind === "device") return null;
@@ -290,7 +293,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
     walk(roots);
     onWidth(treeWidth(specs, textMeasure(getComputedStyle(scrollArea.current).fontFamily), scrollbarWidth()));
     // badgeFor and extras follow from the dependencies listed.
-  }, [onWidth, loading, failed, roots, section, badges, online, total, wantsDevices, devices.isPending]);
+  }, [onWidth, loading, failed, roots, section, badges, online, total, wantsDevices, devices.isPending, waiting, selected]);
 
   // Open the way to whatever the page is showing, so the tree always says where you are. Only when the page changes:
   // closing a branch afterwards is the reader's choice.
@@ -418,8 +421,13 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
             )}`;
 
   const placeholder = section === "organizations" || section === "scripts" ? "Filter by name" : "Filter by name or hostname";
-  const extras: { key: "shared"; label: string; icon: ReactNode; target: Target }[] =
-    section === "scripts" ? [{ key: "shared", label: "Shared library", icon: <Library className="size-3.5 shrink-0" aria-hidden />, target: { kind: "shared" } }] : [];
+  const extras: { key: "shared" | "approvals"; label: string; icon: ReactNode; target: Target }[] = [];
+  if (section === "scripts") extras.push({ key: "shared", label: "Shared library", icon: <Library className="size-3.5 shrink-0" aria-hidden />, target: { kind: "shared" } });
+  // Devices waiting for approval belong to no organization yet, so they sit beside the tree, not in it; the row shows
+  // while any wait, or while its page is open.
+  if (section === "devices" && (waiting > 0 || selected === "approvals")) {
+    extras.push({ key: "approvals", label: "Waiting for approval", icon: <Hourglass className="size-3.5 shrink-0" aria-hidden />, target: { kind: "approvals" } });
+  }
 
   return (
     <>
