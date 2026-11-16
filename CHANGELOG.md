@@ -268,6 +268,13 @@ All notable changes to this project are documented here. The format follows
 - When the server cannot open its stored certificate authority or job key,
   the start-up error now asks whether `EASYRMM_SECRET_KEY` was changed
   without listing the old key in `EASYRMM_SECRET_KEYS_PREVIOUS`.
+- Drills (`scripts/drill/`, `docs/development/drills.md`) that run EasyRMM
+  as an operator does, on a disposable Compose deployment of the checkout:
+  - `backup-restore.sh` backs up a server that has a real agent with the
+    guide's commands, deletes the host and restores onto a new checkout. It
+    then checks that users, the audit chain and the same agent carry on.
+  - `soak.sh` runs a fleet of simulated agents (`tools/agentsim`) against
+    the server while timing the console and jobs on 500 devices.
 
 ### Removed
 - The fleet-wide **Software** page. Installed software is shown on each
@@ -395,6 +402,11 @@ All notable changes to this project are documented here. The format follows
   Compose passes them as empty strings, which the server took as values.
   Blank now means the default for these and `EASYRMM_ACME_DIRECTORY`. A
   test now loads the environment Compose builds from `.env.example`.
+- The backup guide's `pg_dump` and `pg_restore` commands connected over TCP
+  with no password and failed. They now run as the container's `postgres`
+  user over its local socket. The guide also said the server's data
+  directory would hold signing keys; those are in the database, sealed with
+  `EASYRMM_SECRET_KEY`, and the guide now says what losing that key costs.
 - Settings the documentation describes did nothing in a Compose deployment,
   because Compose did not pass them to the server: session timeouts, the
   password reset link's lifetime, the four retention periods and the ACME

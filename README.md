@@ -85,7 +85,9 @@ Endpoints join with the EasyRMM agent: see
 [docs/deployment/agents.md](docs/deployment/agents.md).
 
 Console development is described in
-[docs/development/web-console.md](docs/development/web-console.md).
+[docs/development/web-console.md](docs/development/web-console.md). The
+backup and restore drill and the load test are in
+[docs/development/drills.md](docs/development/drills.md).
 
 [CONTRIBUTING.md](CONTRIBUTING.md) explains the workflow.
 

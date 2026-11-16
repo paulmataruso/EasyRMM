@@ -45,6 +45,11 @@ frontend development and the Impeccable design workflow.
 Integration tests **fail** (they do not skip) when the test database is not
 configured, so CI cannot pass without running them.
 
+Before a release, and after changing `deploy/`, the backup guide or anything
+that affects load, run the drills in
+[`docs/development/drills.md`](docs/development/drills.md). They run the
+Compose deployment itself, which the tests above do not.
+
 ## UI changes
 
 The console shares EasyPatch's design system (ADR-0013); `DESIGN.md` records

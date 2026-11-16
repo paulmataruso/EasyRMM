@@ -5,8 +5,8 @@ A complete backup has four parts. All four are needed to restore.
 | Part | Where | Why |
 |---|---|---|
 | Database | PostgreSQL in the `postgres` container | Everything: tenants, devices, users, audit log |
-| `deploy/.env` | Next to `docker-compose.yml` | **The encryption key** (`EASYRMM_SECRET_KEY`) and database passwords. Without the key, stored second factors and integration credentials cannot be decrypted |
-| `/srv/easyrmm/server` | Data directory | ACME account and certificates; later, agent signing keys and release files |
+| `deploy/.env` | Next to `docker-compose.yml` | **The encryption key** (`EASYRMM_SECRET_KEY`) and database passwords. The database's secrets are sealed with the key: authenticator-app secrets, MeshCentral's service account, the EasyPatch and audit-forwarding credentials, the internal certificate authority agents trust and the job-signing key they pinned. Without it, authenticator apps stop working (recovery codes and security keys still do) and every agent has to be reinstalled |
+| `/srv/easyrmm/server` | Data directory | The ACME account and certificates (`acme` mode); empty in the other modes |
 | `/srv/easyrmm/meshcentral` | MeshCentral's data | **MeshCentral's server identity** (the keys its agents trust), its device records and the downloaded agent binaries. Without it, every remote-access agent has to be reinstalled |
 
 `/srv/easyrmm/meshcentral-config` needs no backup: the server rewrites it on
@@ -24,8 +24,9 @@ ts=$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p /var/backups/easyrmm && chmod 700 /var/backups/easyrmm
 
 # Database: consistent online dump in PostgreSQL's custom format, keeping
-# object ownership (easyrmm_owner) and grants (easyrmm_app).
-docker compose exec -T postgres pg_dump -U postgres -h 127.0.0.1 -p 15432 \
+# object ownership (easyrmm_owner) and grants (easyrmm_app). As the
+# container's postgres user over its local socket, which needs no password.
+docker compose exec -T -u postgres postgres pg_dump -p 15432 \
     --format=custom easyrmm > /var/backups/easyrmm/db-$ts.dump
 
 # Configuration and data directory.
@@ -41,6 +42,18 @@ docker compose start meshcentral
 
 Run it from cron or a systemd timer, and copy the files off the host. Test a
 restore regularly; an untested backup is a hope, not a backup.
+
+This procedure is rehearsed by `scripts/drill/backup-restore.sh` on a
+disposable deployment (see [Drills](../development/drills.md)). The drill
+backs up a server with a real agent, deletes the host, restores onto a new
+checkout with the steps below, and checks:
+* TLS against the saved certificate authority;
+* the same password and authenticator;
+* the audit chain;
+* that the same agent reconnects without reinstalling and runs a job.
+
+Its first run, on 16 November 2026, found that the guide's database
+commands failed and that a fresh deployment did not start; both are fixed.
 
 ## Restore onto a new host
 
@@ -63,7 +76,7 @@ restore regularly; an untested backup is a hope, not a backup.
    restores ownership to `easyrmm_owner` and the grants to `easyrmm_app`:
 
    ```bash
-   docker compose exec -T postgres pg_restore -U postgres -h 127.0.0.1 -p 15432 \
+   docker compose exec -T -u postgres postgres pg_restore -p 15432 \
        --dbname=easyrmm --exit-on-error \
        < /var/backups/easyrmm/db-<timestamp>.dump
    ```
