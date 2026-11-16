@@ -139,14 +139,24 @@ func (c *Client) Enroll(ctx context.Context, token string, pub ed25519.PublicKey
 	return &out, c.call(ctx, http.MethodPost, agentproto.PathEnroll, body, false, &out)
 }
 
-// Heartbeat reports the device's facts.
-func (c *Client) Heartbeat(ctx context.Context, f agentproto.Facts) (*agentproto.HeartbeatResponse, error) {
-	body, err := json.Marshal(agentproto.HeartbeatRequest{Facts: f})
+// Heartbeat reports the device's facts and metrics.
+func (c *Client) Heartbeat(ctx context.Context, req agentproto.HeartbeatRequest) (*agentproto.HeartbeatResponse, error) {
+	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
 	var out agentproto.HeartbeatResponse
 	return &out, c.call(ctx, http.MethodPost, agentproto.PathHeartbeat, body, true, &out)
+}
+
+// Inventory uploads the device's inventory, body being its JSON exactly
+// as hashed (ADR-0018). It returns the hash the server stored.
+func (c *Client) Inventory(ctx context.Context, body []byte) (string, error) {
+	var out agentproto.InventoryResponse
+	if err := c.call(ctx, http.MethodPost, agentproto.PathInventory, body, true, &out); err != nil {
+		return "", err
+	}
+	return out.Hash, nil
 }
 
 // MeshAgent downloads the MeshAgent binary for a platform into w.

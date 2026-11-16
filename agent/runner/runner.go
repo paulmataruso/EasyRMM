@@ -1,9 +1,11 @@
-// Package runner is the agent's main loop: heartbeats, and MeshAgent once
-// the server offers it. Jobs run beside it (package jobs).
+// Package runner is the agent's main loop: heartbeats with the device's
+// metrics, its inventory when the server's copy is out of date, and
+// MeshAgent once the server offers it. Jobs run beside it (package jobs).
 package runner
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"math/rand/v2"
@@ -33,16 +35,29 @@ type Runner struct {
 	Log   *slog.Logger
 	// OnJobKey receives the server's job-signing key from each heartbeat.
 	OnJobKey func(key string)
+	// Metrics measures the device for each heartbeat; nil sends none.
+	Metrics func(ctx context.Context) agentproto.Metrics
+	// Inventory collects the device's inventory (ADR-0018); nil never
+	// uploads one.
+	Inventory func(ctx context.Context) agentproto.Inventory
 
 	// Timing, shortened by tests.
 	MinRetry    time.Duration // first retry after a failure (5 s)
 	MaxRetry    time.Duration // longest retry interval (5 min)
 	InstallWait time.Duration // between MeshAgent install attempts (10 min)
 	AfterSetup  time.Duration // next heartbeat after installing MeshAgent (15 s)
+	// InventoryEvery is how often the inventory is collected again (1 h).
+	InventoryEvery time.Duration
+	// InventoryRetry is the wait after a failed upload (15 min).
+	InventoryRetry time.Duration
 
 	status      state.Status
 	failures    int
 	lastInstall time.Time
+	inv         []byte // the inventory's JSON, as hashed and uploaded
+	invHash     string
+	invAt       time.Time
+	invFailed   time.Time
 }
 
 func (r *Runner) defaults() {
@@ -57,6 +72,12 @@ func (r *Runner) defaults() {
 	}
 	if r.AfterSetup == 0 {
 		r.AfterSetup = 15 * time.Second
+	}
+	if r.InventoryEvery == 0 {
+		r.InventoryEvery = time.Hour
+	}
+	if r.InventoryRetry == 0 {
+		r.InventoryRetry = 15 * time.Minute
 	}
 }
 
@@ -91,7 +112,12 @@ func (r *Runner) beat(ctx context.Context) time.Duration {
 		f.MeshNodeID = id
 		r.status.MeshNodeID = id
 	}
-	resp, err := r.Client.Heartbeat(ctx, f)
+	req := agentproto.HeartbeatRequest{Facts: f}
+	if r.Metrics != nil {
+		m := r.Metrics(ctx)
+		req.Metrics = &m
+	}
+	resp, err := r.Client.Heartbeat(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
 			return 0
@@ -104,6 +130,9 @@ func (r *Runner) beat(ctx context.Context) time.Duration {
 	}
 	r.status.LastHeartbeat = time.Now().UTC()
 	r.status.LastError, r.status.LastErrorAt = "", time.Time{}
+	if r.Inventory != nil {
+		r.syncInventory(ctx, resp.InventoryHash)
+	}
 	next := jitter(time.Duration(resp.HeartbeatSeconds) * time.Second)
 	if next <= 0 {
 		next = jitter(time.Minute)
@@ -128,6 +157,37 @@ func (r *Runner) beat(ctx context.Context) time.Duration {
 	}
 	r.save()
 	return next
+}
+
+// syncInventory collects the inventory when it is due and uploads it when
+// the server's copy differs.
+func (r *Runner) syncInventory(ctx context.Context, serverHash string) {
+	if r.inv == nil || time.Since(r.invAt) >= r.InventoryEvery {
+		inv := r.Inventory(ctx)
+		b, err := json.Marshal(inv)
+		if err != nil {
+			r.Log.Error("encoding the inventory failed", "error", err)
+			return
+		}
+		r.inv, r.invHash, r.invAt = b, inv.Hash(), time.Now()
+	}
+	if serverHash == r.invHash {
+		return
+	}
+	if !r.invFailed.IsZero() && time.Since(r.invFailed) < r.InventoryRetry {
+		return
+	}
+	if _, err := r.Client.Inventory(ctx, r.inv); err != nil {
+		if ctx.Err() == nil {
+			r.Log.Warn("uploading the inventory failed", "error", err)
+			r.invFailed = time.Now()
+			r.status.InventoryError = err.Error()
+		}
+		return
+	}
+	r.invFailed = time.Time{}
+	r.status.InventoryUploaded, r.status.InventoryError = time.Now().UTC(), ""
+	r.Log.Info("uploaded the inventory", "bytes", len(r.inv))
 }
 
 func (r *Runner) failed(err error) time.Duration {

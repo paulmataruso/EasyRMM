@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeUserAgent, formatDateTime, formatNumber, formatRelative, parseDate, plural, timeZones } from "./format";
+import { describeUserAgent, formatDateTime, formatDuration, formatNumber, formatRelative, formatSize, parseDate, plural, timeZones } from "./format";
 
 describe("parseDate", () => {
   it("treats Go's zero time and garbage as missing", () => {
@@ -54,5 +54,36 @@ describe("timeZones", () => {
     expect(zones[0]).toBe("UTC");
     expect(zones.filter((z) => z === "UTC")).toHaveLength(1);
     expect(zones.length).toBeGreaterThan(5);
+  });
+});
+
+describe("formatSize", () => {
+  it("uses binary units with one decimal below ten", () => {
+    expect(formatSize(0)).toBe("0 B");
+    expect(formatSize(1023)).toBe("1023 B");
+    expect(formatSize(1536)).toBe("1.5 KiB");
+    expect(formatSize(8 * 1024 ** 3)).toBe("8.0 GiB");
+    expect(formatSize(128 * 1024 ** 3)).toBe("128 GiB");
+    expect(formatSize(960 * 1000 ** 3)).toBe("894 GiB");
+    expect(formatSize(3 * 1024 ** 5)).toBe("3.0 PiB");
+    expect(formatSize(5 * 1024 ** 6)).toBe("5120 PiB");
+  });
+
+  it("renders a dash for nonsense", () => {
+    expect(formatSize(-1)).toBe("—");
+    expect(formatSize(Number.NaN)).toBe("—");
+    expect(formatSize(null)).toBe("—");
+  });
+});
+
+describe("formatDuration", () => {
+  it("shows the two largest units", () => {
+    expect(formatDuration(45)).toBe("45 s");
+    expect(formatDuration(300)).toBe("5 min");
+    expect(formatDuration(3_600)).toBe("1 h");
+    expect(formatDuration(7_500)).toBe("2 h 5 min");
+    expect(formatDuration(86_400 * 3)).toBe("3 d");
+    expect(formatDuration(86_400 * 3 + 3_600 * 4 + 59)).toBe("3 d 4 h");
+    expect(formatDuration(-5)).toBe("0 s");
   });
 });

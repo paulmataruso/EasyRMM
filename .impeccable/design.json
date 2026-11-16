@@ -14,7 +14,10 @@
       "KeyValueList narrow variant",
       "AssignmentEditor hideLegend",
       "MenuButton (menu button pattern)",
-      "device tree dock"
+      "device tree dock",
+      "code and script output views",
+      "chart series tokens (series-1..3)",
+      "UsageMeter, TimeChart and Segmented control"
     ]
   },
   "extensions": {
@@ -382,6 +385,48 @@
         "cssVar": "--sidebar-active",
         "theme": "light",
         "pairedWith": "sidebar-active"
+      },
+      "series-1": {
+        "role": "chart",
+        "displayName": "Series 1, blue (dark)",
+        "cssVar": "--series-1",
+        "theme": "dark",
+        "pairedWith": "series-1-light"
+      },
+      "series-1-light": {
+        "role": "chart",
+        "displayName": "Series 1, blue (light)",
+        "cssVar": "--series-1",
+        "theme": "light",
+        "pairedWith": "series-1"
+      },
+      "series-2": {
+        "role": "chart",
+        "displayName": "Series 2, orange (dark)",
+        "cssVar": "--series-2",
+        "theme": "dark",
+        "pairedWith": "series-2-light"
+      },
+      "series-2-light": {
+        "role": "chart",
+        "displayName": "Series 2, orange (light)",
+        "cssVar": "--series-2",
+        "theme": "light",
+        "pairedWith": "series-2"
+      },
+      "series-3": {
+        "role": "chart",
+        "displayName": "Series 3, aqua (dark)",
+        "cssVar": "--series-3",
+        "theme": "dark",
+        "pairedWith": "series-3-light"
+      },
+      "series-3-light": {
+        "role": "chart",
+        "displayName": "Series 3, aqua (light)",
+        "cssVar": "--series-3",
+        "theme": "light",
+        "pairedWith": "series-3"
       }
     },
     "themes": {
@@ -596,6 +641,30 @@
       "description": "EasyRMM addition: a script run's status in the badge tones; Running carries an info dot.",
       "html": "<span class=\"ds-badge ds-info\"><span class=\"ds-dot\"></span>Running</span> <span class=\"ds-badge ds-ok\">Succeeded</span> <span class=\"ds-badge ds-danger\">Failed</span> <span class=\"ds-badge ds-warn\">Timed out</span>",
       "css": ".ds-badge{display:inline-flex;align-items:center;gap:4px;border-radius:9999px;padding:2px 8px;font:500 12px ui-sans-serif, system-ui, sans-serif;} .ds-info{background:var(--info-soft);color:var(--info);} .ds-ok{background:var(--ok-soft);color:var(--ok);} .ds-danger{background:var(--danger-soft);color:var(--danger);} .ds-warn{background:var(--warn-soft);color:var(--warn);} .ds-dot{width:8px;height:8px;border-radius:9999px;background:var(--info);}"
+    },
+    {
+      "name": "Usage Meter",
+      "kind": "custom",
+      "refersTo": "UsageMeter (web/src/components/Meter.tsx)",
+      "description": "EasyRMM addition: a labelled usage bar whose fill carries severity (accent, warn from 80%, danger from 90%) with an icon from 80%.",
+      "html": "<div class=\"ds-meter\"><div class=\"ds-meter-row\"><span class=\"ds-meter-label\">Memory</span><span><b>38%</b> <span class=\"ds-meter-detail\">· 12 GiB of 30 GiB</span></span></div><div class=\"ds-meter-track\"><div class=\"ds-meter-fill\" style=\"width:38%\"></div></div></div>",
+      "css": ".ds-meter{font:12px ui-sans-serif, system-ui, sans-serif;width:260px;} .ds-meter-row{display:flex;justify-content:space-between;align-items:baseline;color:var(--fg);font-variant-numeric:tabular-nums;} .ds-meter-label{font-weight:500;color:var(--muted);} .ds-meter-detail{color:var(--muted);} .ds-meter-track{margin-top:6px;height:8px;border-radius:9999px;background:var(--accent-soft);overflow:hidden;} .ds-meter-fill{height:100%;border-radius:9999px;background:var(--accent);}"
+    },
+    {
+      "name": "Time Chart",
+      "kind": "custom",
+      "refersTo": "TimeChart (web/src/components/TimeChart.tsx)",
+      "description": "EasyRMM addition: a percentage line chart over time with a legend, hairline grid, 2px series lines, a crosshair tooltip, keyboard travel and a data table.",
+      "html": "<div class=\"ds-chart\"><div class=\"ds-legend\"><span><i style=\"background:var(--series-1)\"></i>Processor <b>9%</b></span><span><i style=\"background:var(--series-2)\"></i>Memory <b>38%</b></span><span><i style=\"background:var(--series-3)\"></i>Fullest disk <b>71%</b></span></div><svg width=\"260\" height=\"80\"><line x1=\"0\" x2=\"260\" y1=\"10\" y2=\"10\" stroke=\"var(--line)\"/><line x1=\"0\" x2=\"260\" y1=\"75\" y2=\"75\" stroke=\"var(--line)\"/><polyline points=\"0,70 60,66 120,60 180,68 260,64\" fill=\"none\" stroke=\"var(--series-1)\" stroke-width=\"2\"/><polyline points=\"0,50 260,50\" fill=\"none\" stroke=\"var(--series-2)\" stroke-width=\"2\"/><polyline points=\"0,28 260,28\" fill=\"none\" stroke=\"var(--series-3)\" stroke-width=\"2\"/></svg></div>",
+      "css": ".ds-chart{font:12px ui-sans-serif, system-ui, sans-serif;color:var(--muted);} .ds-legend{display:flex;gap:16px;margin-bottom:8px;} .ds-legend i{display:inline-block;width:14px;height:2px;border-radius:9999px;margin-right:6px;vertical-align:middle;} .ds-legend b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums;margin-left:4px;}"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "custom",
+      "refersTo": "Segmented (web/src/components/ui.tsx)",
+      "description": "EasyRMM addition: a radio group of short choices, the chosen one a surface chip.",
+      "html": "<div class=\"ds-seg\"><button>1 hour</button><button aria-checked=\"true\">24 hours</button><button>7 days</button></div>",
+      "css": ".ds-seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;background:var(--raised);padding:2px;} .ds-seg button{border:0;background:none;border-radius:4px;padding:4px 10px;font:500 12px ui-sans-serif, system-ui, sans-serif;color:var(--muted);} .ds-seg button[aria-checked=true]{background:var(--surface);color:var(--fg);box-shadow:0 1px 2px rgb(0 0 0 / .05);}"
     }
   ],
   "narrative": {

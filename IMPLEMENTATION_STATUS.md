@@ -68,7 +68,7 @@ Last updated: 2026-11-15.
 
 | Feature | Status |
 |---|---|
-| Inventory and telemetry | Not started |
+| Inventory and telemetry | Complete for Linux: hardware (system, firmware, processor, memory, disks), operating system, network interfaces, gateways and DNS, and installed packages (dpkg, RPM, apk, pacman), sent when they change; processor, memory, swap, load, uptime, processes and filesystem use with every heartbeat, kept for charts (`EASYRMM_METRICS_RETENTION`). Device page tabs for health with charts, hardware and software; a fleet Software page. Tested by unit tests, PostgreSQL integration tests, an HTTP API test and the real agent in a container (ADR-0018). Windows waits for the Windows agent; inventory history (what changed when) is not kept yet |
 | Monitoring and alerting | Not started |
 | Scripts and jobs | Complete for Linux: script library at shared, organization and site level; jobs on up to 500 devices with arguments, timeout and an offline wait; Ed25519-signed delivery over a long poll; per-device status, exit code and output (head and tail, 256 KiB per stream); cancel; retention; audit. Console pages for the library, jobs and runs, and on the device page. Tested by unit tests, PostgreSQL integration tests, an HTTP API test and the real agent in a container (ADR-0017). PowerShell and Windows wait for the Windows agent; output is not streamed while a script runs; no schedules yet |
 | Software deployment | Not started |

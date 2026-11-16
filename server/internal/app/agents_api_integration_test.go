@@ -208,7 +208,7 @@ func TestAgentEnrollmentAPI(t *testing.T) {
 	ac.SetIdentity(enr.DeviceID, key)
 	f := facts("web-01")
 	f.OS = "Debian GNU/Linux 13.1 (trixie)"
-	hb, err := ac.Heartbeat(ctx, f)
+	hb, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: f})
 	if err != nil || hb.HeartbeatSeconds != 60 || hb.MeshAgent.Available {
 		t.Fatalf("heartbeat = %+v, %v", hb, err)
 	}
@@ -217,7 +217,7 @@ func TestAgentEnrollmentAPI(t *testing.T) {
 		t.Errorf("os after heartbeat = %q", dev.OSDescription)
 	}
 	// A renamed host is renamed in EasyRMM too.
-	if _, err := ac.Heartbeat(ctx, facts("web-01-new")); err != nil {
+	if _, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: facts("web-01-new")}); err != nil {
 		t.Fatal(err)
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/devices/"+enr.DeviceID, nil, &dev)

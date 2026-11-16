@@ -24,6 +24,7 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
+	"github.com/paulmataruso/easyrmm/server/internal/inventory"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 )
 
@@ -40,6 +41,7 @@ type API struct {
 	primary []byte
 	ca      []byte
 	jobs    *jobs.Service
+	inv     *inventory.Service
 	log     *slog.Logger
 }
 
@@ -89,6 +91,12 @@ func (a *API) WithJobs(j *jobs.Service) *API {
 	return a
 }
 
+// WithInventory stores inventory and metrics in inv (ADR-0018).
+func (a *API) WithInventory(inv *inventory.Service) *API {
+	a.inv = inv
+	return a
+}
+
 // Handler returns the handler for everything under agentproto.PathPrefix.
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -100,6 +108,9 @@ func (a *API) Handler() http.Handler {
 		mux.Handle("POST "+agentproto.PathJobsPoll, httpapi.Handle(a.signed(a.poll)))
 		mux.Handle("POST /api/agent/v1/jobs/{run}/start", httpapi.Handle(a.signed(a.start)))
 		mux.Handle("POST /api/agent/v1/jobs/{run}/result", httpapi.Handle(a.signedLimit(agentproto.MaxResultBody, a.result)))
+	}
+	if a.inv != nil {
+		mux.Handle("POST "+agentproto.PathInventory, httpapi.Handle(a.signedLimit(agentproto.MaxInventoryBody, a.inventory)))
 	}
 	mux.Handle("GET /api/agent/v1/install.sh", httpapi.Handle(a.installer))
 	mux.Handle("GET "+agentproto.PathCA, httpapi.Handle(a.authority))
@@ -133,6 +144,8 @@ var (
 		Message: "This device has no such job run."}
 	errBadResult = &httpapi.Error{Status: http.StatusBadRequest, Code: "result_invalid",
 		Message: "The job result is not valid."}
+	errBadInventory = &httpapi.Error{Status: http.StatusBadRequest, Code: "inventory_invalid",
+		Message: "The inventory is not valid JSON."}
 )
 
 func mapError(err error) error {
@@ -147,6 +160,7 @@ func mapError(err error) error {
 		agents.ErrMeshUnavailable: errMeshUnavailable,
 		jobs.ErrRunNotFound:       errRunNotFound,
 		jobs.ErrBadResult:         errBadResult,
+		inventory.ErrBadInventory: errBadInventory,
 	} {
 		if errors.Is(err, from) {
 			return to
@@ -239,7 +253,32 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 	if err != nil {
 		return mapError(err)
 	}
+	if a.inv != nil {
+		// Metrics and the inventory hash are extras: a failure here is
+		// logged, and the heartbeat still counts.
+		if in.Metrics != nil {
+			if err := a.inv.RecordMetrics(r.Context(), d.ID, *in.Metrics); err != nil {
+				a.log.Warn("agent: storing metrics failed", "error", err, "device_id", d.ID)
+			}
+		}
+		if out.InventoryHash, err = a.inv.Hash(r.Context(), d.ID); err != nil {
+			a.log.Warn("agent: reading the inventory hash failed", "error", err, "device_id", d.ID)
+			out.InventoryHash = "unknown" // never equal to an agent's hash, so it uploads
+		}
+	}
 	httpapi.WriteJSON(w, http.StatusOK, out)
+	return nil
+}
+
+func (a *API) inventory(w http.ResponseWriter, r *http.Request, d *agents.Device, body []byte) error {
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		return &httpapi.Error{Status: http.StatusUnsupportedMediaType, Code: "unsupported_media_type", Message: "Send the request body as application/json."}
+	}
+	hash, err := a.inv.Record(r.Context(), d.ID, body)
+	if err != nil {
+		return mapError(err)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, agentproto.InventoryResponse{Hash: hash})
 	return nil
 }
 

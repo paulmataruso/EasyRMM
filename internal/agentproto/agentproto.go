@@ -84,6 +84,9 @@ type EnrollResponse struct {
 // HeartbeatRequest reports that the agent is alive.
 type HeartbeatRequest struct {
 	Facts Facts `json:"facts"`
+	// Metrics are the device's current measurements (ADR-0018); older
+	// agents send none.
+	Metrics *Metrics `json:"metrics,omitempty"`
 }
 
 // HeartbeatResponse carries the server's current instructions.
@@ -92,6 +95,10 @@ type HeartbeatResponse struct {
 	MeshAgent        MeshAgentInfo `json:"meshAgent"`
 	// JobKey is the server's job-signing public key, as in EnrollResponse.
 	JobKey string `json:"jobKey,omitempty"`
+	// InventoryHash is the hash of the inventory the server holds for the
+	// device, empty when it holds none. The agent uploads its inventory
+	// when its own hash differs (ADR-0018).
+	InventoryHash string `json:"inventoryHash"`
 }
 
 // MeshAgentInfo tells the agent about remote access.

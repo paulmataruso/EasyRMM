@@ -23,3 +23,4 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 | [0015](0015-enrollment-and-meshagent-delivery.md) | Deployment tokens, agent enrollment and MeshAgent delivery | Accepted |
 | [0016](0016-ip-address-access.md) | Reaching the server by IP address: IP access, internal certificate authority, routing by port | Accepted |
 | [0017](0017-scripts-and-jobs.md) | Scripts and jobs: a tenant-scoped library, signed jobs over a long poll | Accepted |
+| [0018](0018-inventory-and-telemetry.md) | Inventory and telemetry: hash-synced inventory, metrics with every heartbeat | Accepted |

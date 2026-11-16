@@ -43,6 +43,34 @@ export function formatNumber(value: number | null | undefined): string {
   return value === null || value === undefined ? "—" : value.toLocaleString();
 }
 
+const SIZE_UNITS = ["KiB", "MiB", "GiB", "TiB", "PiB"];
+
+/** A size in bytes with binary units, as operating systems show disks and memory: "7.8 GiB". */
+export function formatSize(bytes: number | null | undefined): string {
+  if (bytes === null || bytes === undefined || !Number.isFinite(bytes) || bytes < 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  let value = bytes;
+  let unit = "B";
+  for (const u of SIZE_UNITS) {
+    if (value < 1024) break;
+    value /= 1024;
+    unit = u;
+  }
+  return `${value.toFixed(value < 10 ? 1 : 0)} ${unit}`;
+}
+
+/** A duration in seconds as its two largest units: "3 d 4 h", "2 h 5 min", "45 s". */
+export function formatDuration(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  const d = Math.floor(s / 86_400);
+  const h = Math.floor((s % 86_400) / 3_600);
+  const m = Math.floor((s % 3_600) / 60);
+  if (d > 0) return h > 0 ? `${d} d ${h} h` : `${d} d`;
+  if (h > 0) return m > 0 ? `${h} h ${m} min` : `${h} h`;
+  if (m > 0) return `${m} min`;
+  return `${s} s`;
+}
+
 export function plural(count: number, one: string, many = `${one}s`): string {
   return `${count.toLocaleString()} ${count === 1 ? one : many}`;
 }

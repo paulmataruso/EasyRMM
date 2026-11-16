@@ -126,6 +126,7 @@ Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).
 |---|---|---|
 | `EASYRMM_AUDIT_RETENTION` | `8760h` (365 days) | How long audit records are kept; at least `720h` (30 days) |
 | `EASYRMM_JOB_RETENTION` | `2160h` (90 days) | How long finished jobs and their script output are kept; at least `24h`. See [Scripts and jobs](../operations/scripts-and-jobs.md) |
+| `EASYRMM_METRICS_RETENTION` | `168h` (7 days) | How long per-minute device measurements are kept for charts; at least `24h`. See [Inventory and health](../operations/inventory.md) |
 
 ## Security posture of the containers
 

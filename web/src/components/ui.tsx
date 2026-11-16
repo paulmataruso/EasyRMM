@@ -400,6 +400,54 @@ export function Tabs({ tabs, active, onChange, className }: { tabs: TabDef[]; ac
   );
 }
 
+/** A few mutually exclusive choices shown side by side (a radio group): "1 hour · 24 hours · 7 days". */
+export function Segmented<T extends string>({ options, value, onChange, label, className }: {
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (value: T) => void;
+  label: string;
+  className?: string;
+}) {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={label}
+      className={cx("inline-flex rounded-md border border-line bg-raised p-0.5", className)}
+      onKeyDown={(e) => {
+        if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(e.key)) return;
+        e.preventDefault();
+        const index = options.findIndex((o) => o.value === value);
+        const forward = e.key === "ArrowRight" || e.key === "ArrowDown";
+        const next = options[(index + (forward ? 1 : options.length - 1)) % options.length];
+        if (!next) return;
+        onChange(next.value);
+        const buttons = e.currentTarget.querySelectorAll<HTMLButtonElement>("[role=radio]");
+        requestAnimationFrame(() => buttons[options.indexOf(next)]?.focus());
+      }}
+    >
+      {options.map((o) => {
+        const checked = o.value === value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            aria-checked={checked}
+            tabIndex={checked ? 0 : -1}
+            onClick={() => onChange(o.value)}
+            className={cx(
+              "rounded px-2.5 py-1 text-xs font-medium whitespace-nowrap transition-colors",
+              checked ? "bg-surface text-fg shadow-xs" : "text-muted hover:text-fg",
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------------------------
 // Tables and data display
 // ---------------------------------------------------------------------------------------------

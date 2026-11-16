@@ -1,6 +1,23 @@
 // Fictional records shaped like the API's JSON, for page tests.
 
-import type { AuditEntry, Device, DeviceGroup, Job, JobRun, Organization, RoleView, RunStatus, Script, SessionItem, Site, User } from "../api/types";
+import type {
+  AuditEntry,
+  Device,
+  DeviceGroup,
+  DeviceMetrics,
+  Inventory,
+  Job,
+  JobRun,
+  MetricSample,
+  MetricsHistory,
+  Organization,
+  RoleView,
+  RunStatus,
+  Script,
+  SessionItem,
+  Site,
+  User,
+} from "../api/types";
 
 const T = "2026-11-01T10:00:00Z";
 
@@ -188,4 +205,74 @@ export function job(id: string, scriptName: string, extra: Partial<Job> = {}): J
     canCancel: true,
     ...extra,
   };
+}
+
+const GiB = 1024 ** 3;
+
+/** A Debian server's inventory, as an agent reports it. */
+export function inventory(extra: Partial<Inventory> = {}): Inventory {
+  return {
+    system: {
+      manufacturer: "Dell Inc.",
+      model: "PowerEdge R650",
+      serial: "7XK2LM3",
+      biosVendor: "Dell Inc.",
+      biosVersion: "1.13.2",
+      biosDate: "2024-03-14",
+      virtualization: "",
+    },
+    cpu: { model: "Intel(R) Xeon(R) Silver 4314 CPU @ 2.40GHz", sockets: 2, cores: 32, threads: 64 },
+    memoryBytes: 128 * GiB,
+    os: { name: "Debian GNU/Linux 13 (trixie)", id: "debian", version: "13", kernel: "6.12.38+deb13-amd64", timezone: "Europe/London" },
+    disks: [
+      { name: "nvme0n1", model: "Samsung PM9A3", serial: "S64GNE0R1234", sizeBytes: 960 * 1000 ** 3, kind: "nvme", removable: false },
+      { name: "sdb", model: "Ultra Fit", serial: "", sizeBytes: 64 * 1000 ** 3, kind: "hdd", removable: true },
+    ],
+    interfaces: [
+      { name: "eno1", mac: "b0:7b:25:01:02:03", addresses: ["192.0.2.20/24", "2001:db8::20/64"], up: true, speedMbps: 10000 },
+      { name: "eno2", mac: "b0:7b:25:01:02:04", addresses: [], up: false, speedMbps: 0 },
+    ],
+    gateways: ["192.0.2.1"],
+    dnsServers: ["192.0.2.53", "2001:db8::53"],
+    packageManager: "dpkg",
+    packageCount: 3,
+    receivedAt: T,
+    ...extra,
+  };
+}
+
+/** The latest measurements of a busy server whose /var is nearly full. */
+export function metrics(extra: Partial<DeviceMetrics> = {}): DeviceMetrics {
+  return {
+    at: T,
+    cpuPercent: 37.5,
+    memoryTotal: 128 * GiB,
+    memoryUsed: 104 * GiB,
+    swapTotal: 8 * GiB,
+    swapUsed: 0,
+    load1: 4.25,
+    load5: 3.5,
+    load15: 2.75,
+    uptimeSeconds: 3 * 86_400 + 4 * 3_600,
+    processes: 412,
+    filesystems: [
+      { mount: "/", device: "/dev/nvme0n1p2", type: "ext4", totalBytes: 100 * GiB, usedBytes: 40 * GiB },
+      { mount: "/var", device: "/dev/nvme0n1p3", type: "xfs", totalBytes: 400 * GiB, usedBytes: 372 * GiB },
+    ],
+    ...extra,
+  };
+}
+
+/** A day of samples every five minutes, ending at the fixtures' time. */
+export function history(points = 3, extra: Partial<MetricsHistory> = {}): MetricsHistory {
+  const end = new Date(T).getTime();
+  const samples: MetricSample[] = Array.from({ length: points }, (_, i) => ({
+    at: new Date(end - (points - 1 - i) * 300_000).toISOString(),
+    cpuPercent: 20 + i * 10,
+    memoryPercent: 80,
+    swapPercent: 0,
+    diskPercent: 93,
+    load1: 1,
+  }));
+  return { range: "24h", bucketSeconds: 300, from: new Date(end - 86_400_000).toISOString(), to: T, samples, ...extra };
 }

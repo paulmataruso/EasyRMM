@@ -29,6 +29,10 @@ colors:
   sidebar: "#080b12"
   sidebar-fg: "#a3aec0"
   sidebar-active: "#172033"
+  # Chart series (EasyRMM addition), validated for colour-vision deficiency in this order
+  series-1: "#3987e5"
+  series-2: "#d95926"
+  series-3: "#199e70"
   # Light theme (:root without .dark)
   canvas-light: "#f4f6f9"
   surface-light: "#ffffff"
@@ -56,6 +60,9 @@ colors:
   sidebar-light: "#0f172a"
   sidebar-fg-light: "#cbd5e1"
   sidebar-active-light: "#1e293b"
+  series-1-light: "#2a78d6"
+  series-2-light: "#eb6834"
+  series-3-light: "#1baf7a"
 typography:
   headline:
     fontFamily: "ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif"
@@ -264,6 +271,9 @@ One restrained blue accent over cool slate neutrals, with four semantic status t
 - **Foreground / Muted / Subtle** (fg, muted, subtle): primary text; secondary text, labels and table heads; hints, placeholders, empty-state icons.
 - **Navy Sidebar** (sidebar, sidebar-fg, sidebar-active): the sidebar is dark in both themes; active and hovered items sit on sidebar-active with white text.
 
+### Chart series (EasyRMM addition)
+- **Series 1 / 2 / 3** (series-1, series-2, series-3): blue, orange and aqua lines in charts, in that order only, each its own step per theme. The three pass a colour-vision-deficiency check against each other on both surfaces (ΔE ≥ 9 for every pair). Light aqua is under 3:1 on white, so every chart keeps a legend and a data table. Series colours mark lines and legend keys, never text, and never status: a value running out wears warn or danger, not a series colour. EasyPatch has no charts, so these tokens have no upstream to mirror.
+
 ### Named Rules
 **The Semantic Token Rule.** Components reference semantic tokens only (`surface`, `line`, `muted`, `danger-soft`), so both themes stay consistent. The only literal colors in shipped components are white text on the navy sidebar and on the danger button (with `#1a0606` danger-button text in dark).
 
@@ -392,6 +402,12 @@ Scripts and their output are the content of the scripts and jobs pages, so they 
 - **Output view:** each stream (standard output, standard error) under a 12px muted heading with its own copy button; the text keeps its spacing and line breaks but wraps long lines, at most 32rem tall. An empty stream is a dashed-border line in muted text, not an empty box; a stream cut in the middle says so under it.
 - **Run status:** Queued (neutral), Delivered and Running (info, Running with a dot), Succeeded (ok), Failed (danger), Timed out, Expired and No result (warn), Canceled (neutral); a running script with a stop requested reads Canceling (warn). A job's state sums its runs (Waiting, Running, Succeeded, Some failed, Failed, Partly canceled, Canceled), and its progress is the non-zero counts as dot, tabular count and muted status word.
 - **Device picker:** in the run dialog, a bordered list (16rem tall) of checkbox rows (name over muted organization / site, online dot at the right) under a filter and an All toggle that goes indeterminate for a partial choice; the selected count sits at the left of the dialog's buttons.
+
+### Usage meters and charts (EasyRMM addition)
+Device health is shown as data, with no decoration.
+- **Usage meter:** a muted label at the left, the percentage in semibold tabular figures at the right with an optional muted detail ("12 GiB of 30 GiB"), and below them an 8px fully rounded bar. The fill carries severity: accent below 80%, warn from 80% and danger from 90%, each on its own `-soft` track. From 80% a triangle icon sits before the percentage, so state never depends on colour. In a table row whose header names it, the label is visually hidden.
+- **Time chart:** one percentage axis (0–100%) with hairline `line` gridlines and subtle 11px tabular tick labels; time ticks fall on round local times and thin out to stay 76px apart. Lines are 2px with round joins in the series colours, broken where the device was silent for more than two intervals; the newest point carries a 4px dot with a 2px surface ring. A legend above the plot pairs a short line key, the series name and its latest value in fg. Hover or focus brings a `line-strong` crosshair snapping to the nearest point and a raised tooltip (line border, `shadow-md`) with each series' value in semibold over its muted name. Arrow keys, Home, End and Page Up/Down move along the chart and a live region reads the values. **Show as a table** opens the values in a scrolling table. While a new period loads the previous chart stays at 60% opacity.
+- **Segmented control:** a radio group of two to four short choices in a raised, line-bordered 6px track with 2px padding; the chosen one is a surface chip with `shadow-xs` and fg text, the others muted. Arrow keys move the choice. Used for a chart's period in its card header.
 
 ### Navigation
 The navy sidebar holds the wordmark (on-dark variant in both themes), primary items (14px, 16px icons, 8px by 12px, 6px radius; active on sidebar-active with white medium text), and at its foot the account link (name over platform role or email) and Sign out above a 10% white divider. Elsewhere the wordmark switches between `wordmark.svg` (dark) and `wordmark-light.svg` (light) next to `logo.svg`.

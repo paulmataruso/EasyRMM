@@ -109,6 +109,17 @@ All notable changes to this project are documented here. The format follows
   **Run script** from a script, a job (**Run again**) or a device, and the
   device's recent runs on its page. Guide:
   [Scripts and jobs](docs/operations/scripts-and-jobs.md).
+- Inventory and telemetry (ADR-0018). The Linux agent reports the
+  computer's hardware, operating system, network and installed packages
+  (dpkg, RPM, apk, pacman), sending them only when they change, and its
+  processor, memory, swap, load and filesystem use with every heartbeat.
+  The device page gains **Overview** (health with usage meters and a
+  performance chart over an hour, a day or a week), **Hardware** and
+  **Software** tabs; the **Software** page searches every device's packages
+  and lists the devices with each version. Measurements are kept for
+  `EASYRMM_METRICS_RETENTION` (7 days). `easyrmm-agent status` shows when
+  the inventory was last sent. Guide:
+  [Inventory and health](docs/operations/inventory.md).
 - The console's libraries are served as a chunk of their own, which
   browsers keep across EasyRMM upgrades.
 - When the server cannot open its stored certificate authority or job key,

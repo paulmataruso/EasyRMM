@@ -78,7 +78,9 @@ type Config struct {
 	SessionMaxAge  time.Duration
 	AuditRetention time.Duration
 	// JobRetention is how long finished jobs and their output are kept.
-	JobRetention     time.Duration
+	JobRetention time.Duration
+	// MetricsRetention is how long devices' metric samples are kept.
+	MetricsRetention time.Duration
 	PasswordResetTTL time.Duration
 	LogLevel         string
 	LogFormat        string // "json" or "text"
@@ -150,6 +152,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		SessionMaxAge:     l.duration("EASYRMM_SESSION_MAX_AGE", 12*time.Hour),
 		AuditRetention:    l.duration("EASYRMM_AUDIT_RETENTION", 365*24*time.Hour),
 		JobRetention:      l.duration("EASYRMM_JOB_RETENTION", 90*24*time.Hour),
+		MetricsRetention:  l.duration("EASYRMM_METRICS_RETENTION", 7*24*time.Hour),
 		PasswordResetTTL:  l.duration("EASYRMM_PASSWORD_RESET_TTL", 30*time.Minute),
 		LogLevel:          l.str("EASYRMM_LOG_LEVEL", "info"),
 		LogFormat:         l.str("EASYRMM_LOG_FORMAT", "json"),
@@ -311,6 +314,9 @@ func (c *Config) validate(l *loader) {
 	}
 	if c.JobRetention < 24*time.Hour {
 		add("EASYRMM_JOB_RETENTION must be at least 24h")
+	}
+	if c.MetricsRetention < 24*time.Hour {
+		add("EASYRMM_METRICS_RETENTION must be at least 24h")
 	}
 	if c.PasswordResetTTL < 5*time.Minute || c.PasswordResetTTL > 24*time.Hour {
 		add("EASYRMM_PASSWORD_RESET_TTL must be between 5m and 24h")

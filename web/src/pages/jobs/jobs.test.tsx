@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { baseRoutes, fail, installFakeApi, ok, sessionView } from "../../test/fakeApi";
+import { baseRoutes, unreportedRoutes, fail, installFakeApi, ok, sessionView } from "../../test/fakeApi";
 import { counts, device, job, jobRun, script } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
 
@@ -164,6 +164,7 @@ describe("scripts on the device page", () => {
     const user = userEvent.setup();
     const server = installFakeApi({
       ...baseRoutes(TECHNICIAN),
+      ...unreportedRoutes(),
       "GET /devices/:id": ok(linux),
       "GET /job-runs": ok({ items: [jobRun("r1", "d1", "PRINT-01", "failed"), jobRun("r2", "d1", "PRINT-01", "running", { scriptName: "Update packages" })] }),
       "GET /scripts": ok({ items: [script("sc1", "Disk usage", { description: "Free space.", timeoutSeconds: 120 }), script("sc2", "Hidden", { canRun: false })] }),
@@ -195,6 +196,7 @@ describe("scripts on the device page", () => {
   it("explains why a device cannot run scripts, and hides scripts from roles without them", async () => {
     installFakeApi({
       ...baseRoutes(TECHNICIAN),
+      ...unreportedRoutes(),
       "GET /devices/:id": ok({ ...linux, platform: "windows" }),
       "GET /job-runs": ok({ items: [] }),
     });
@@ -207,6 +209,7 @@ describe("scripts on the device page", () => {
 
     installFakeApi({
       ...baseRoutes(sessionView({ isSuperAdmin: false, permissions: ["device.view"] })),
+      ...unreportedRoutes(),
       "GET /devices/:id": ok({ ...linux, canRunScripts: false }),
     });
     renderApp("/devices/d1");

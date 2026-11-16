@@ -119,10 +119,17 @@ Enrolled:   Sun, 15 Nov 2026 10:02:11 UTC
 Service:    active
 Heartbeat:  Sun, 15 Nov 2026 10:41:12 UTC
 MeshAgent:  installed
+Inventory:  sent Sun, 15 Nov 2026 10:02:14 UTC
 ```
 
 `journalctl -u easyrmm-agent` shows the agent's log. A failed heartbeat is
 retried after 5 seconds, then with a doubling delay up to 5 minutes.
+
+Each heartbeat carries the computer's processor, memory and disk use. The
+**Inventory** line is when the agent last sent its hardware and software
+list, which it does at start and whenever the list changes (checked every
+hour); `not sent: …` gives the reason when an upload failed, and the agent
+tries again after 15 minutes. See [Inventory and health](../operations/inventory.md).
 
 | Error | Meaning |
 |---|---|

@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -24,6 +25,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
+	"github.com/paulmataruso/easyrmm/server/internal/inventory"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
@@ -48,7 +50,7 @@ func buildAgent(t *testing.T, dir string) string {
 
 // serveAgentAPI serves the agent API over TLS on loopback with the test
 // certificate, as the EasyRMM server's public hostname would.
-func (r *rig) serveAgentAPI(svc *agents.Service, j *jobs.Service) string {
+func (r *rig) serveAgentAPI(svc *agents.Service, j *jobs.Service, inv *inventory.Service) string {
 	r.t.Helper()
 	cert, err := tls.LoadX509KeyPair(r.env.CertFile, r.env.KeyFile)
 	if err != nil {
@@ -65,6 +67,9 @@ func (r *rig) serveAgentAPI(svc *agents.Service, j *jobs.Service) string {
 	}
 	if j != nil {
 		api.WithJobs(j)
+	}
+	if inv != nil {
+		api.WithInventory(inv)
 	}
 	srv := &http.Server{Handler: api.Handler(), ReadHeaderTimeout: 10 * time.Second,
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}}
@@ -105,7 +110,8 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 	js := jobs.New(r.db, r.audit, jobKey, 24*time.Hour, r.log)
 	t.Cleanup(js.Close)
 	svc.SetJobKey(js.PublicKey())
-	server := r.serveAgentAPI(svc, js)
+	invs := inventory.New(r.db, 24*time.Hour, r.log)
+	server := r.serveAgentAPI(svc, js, invs)
 	tok, err := svc.CreateToken(r.ctx, r.sys, hq.ID, agents.TokenInput{Name: "End to end", ExpiresInDays: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -174,6 +180,29 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, "root/var/lib/easyrmm-agent/agent.json")); err != nil || json.Unmarshal(b, &cfg) != nil || cfg.JobKey != js.PublicKey() {
 		t.Errorf("pinned job key %q, server's %q (%v)", cfg.JobKey, js.PublicKey(), err)
+	}
+
+	// The agent reports the container's inventory and metrics (ADR-0018).
+	var report *inventory.Device
+	r.waitFor(time.Minute, "the device's inventory and metrics", func() bool {
+		report, err = invs.Get(r.ctx, tech, dev.ID)
+		return err == nil && report.Inventory != nil && report.Metrics != nil
+	})
+	if inv := report.Inventory; inv.OS.ID != "debian" || inv.OS.Kernel == "" || inv.PackageManager != "dpkg" || inv.PackageCount < 50 ||
+		inv.System.Virtualization != "container" || inv.CPU.Threads == 0 || inv.MemoryBytes == 0 || len(inv.Interfaces) == 0 {
+		t.Errorf("inventory %+v", inv)
+	}
+	if m := report.Metrics; m.MemoryTotal == 0 || m.Processes == 0 || m.UptimeSeconds == 0 || len(m.Filesystems) == 0 || m.Filesystems[0].Mount != "/" {
+		t.Errorf("metrics %+v", m)
+	}
+	if sw, err := invs.Software(r.ctx, tech, dev.ID); err != nil || !slices.ContainsFunc(sw, func(p agentproto.Package) bool { return p.Name == "bash" }) {
+		t.Errorf("software without bash (%d packages): %v", len(sw), err)
+	}
+	if h, err := invs.Hash(r.ctx, dev.ID); err != nil || len(h) != 64 {
+		t.Errorf("stored hash %q %v", h, err)
+	}
+	if st := docker(t, "exec", "-e", "EASYRMM_AGENT_ROOT=/agent/root", name, "/agent/easyrmm-agent", "status"); !strings.Contains(st, "Inventory:  sent") {
+		t.Errorf("status:\n%s", st)
 	}
 
 	// A script runs on the device and reports its output (ADR-0017).

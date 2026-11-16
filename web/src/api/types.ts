@@ -451,3 +451,121 @@ export interface JobInput {
   /** 0 is the server's default (24 hours). */
   waitHours: number;
 }
+
+// --- Inventory and telemetry (ADR-0018) ----------------------------------------------------
+
+export interface SystemInfo {
+  manufacturer: string;
+  model: string;
+  serial: string;
+  biosVendor: string;
+  biosVersion: string;
+  biosDate: string;
+  virtualization: string;
+}
+
+export interface Disk {
+  name: string;
+  model: string;
+  serial: string;
+  sizeBytes: number;
+  kind: "" | "ssd" | "hdd" | "nvme";
+  removable: boolean;
+}
+
+export interface NetworkInterface {
+  name: string;
+  mac: string;
+  addresses: string[];
+  up: boolean;
+  speedMbps: number;
+}
+
+export interface Inventory {
+  system: SystemInfo;
+  cpu: { model: string; sockets: number; cores: number; threads: number };
+  memoryBytes: number;
+  os: { name: string; id: string; version: string; kernel: string; timezone: string };
+  disks: Disk[];
+  interfaces: NetworkInterface[];
+  gateways: string[];
+  dnsServers: string[];
+  packageManager: "" | "dpkg" | "rpm" | "apk" | "pacman";
+  packageCount: number;
+  receivedAt: string;
+}
+
+export interface Filesystem {
+  mount: string;
+  device: string;
+  type: string;
+  totalBytes: number;
+  usedBytes: number;
+}
+
+export interface DeviceMetrics {
+  at: string;
+  cpuPercent: number;
+  memoryTotal: number;
+  memoryUsed: number;
+  swapTotal: number;
+  swapUsed: number;
+  load1: number;
+  load5: number;
+  load15: number;
+  uptimeSeconds: number;
+  processes: number;
+  filesystems: Filesystem[];
+}
+
+export interface DeviceInventory {
+  inventory: Inventory | null;
+  metrics: DeviceMetrics | null;
+}
+
+export interface Package {
+  name: string;
+  version: string;
+  arch: string;
+}
+
+export type MetricsRange = "1h" | "24h" | "7d";
+
+export interface MetricSample {
+  at: string;
+  cpuPercent: number;
+  memoryPercent: number;
+  swapPercent: number;
+  diskPercent: number;
+  load1: number;
+}
+
+export interface MetricsHistory {
+  range: MetricsRange;
+  bucketSeconds: number;
+  from: string;
+  to: string;
+  samples: MetricSample[];
+}
+
+export interface SoftwareSummary {
+  name: string;
+  version: string;
+  devices: number;
+}
+
+export interface SoftwareSearch {
+  items: SoftwareSummary[];
+  truncated: boolean;
+}
+
+export interface SoftwareDevice {
+  deviceId: string;
+  deviceName: string;
+  organizationId: string;
+  organizationName: string;
+  siteId: string;
+  siteName: string;
+  version: string;
+  arch: string;
+}

@@ -7,11 +7,15 @@ import { useAuth } from "../../auth/AuthContext";
 import { MenuButton } from "../../components/Menu";
 import { DeviceStatusBadge, REMOTE_KIND_NAMES } from "../../components/StatusBadges";
 import { useToast } from "../../components/Toast";
-import { Alert, Button, Card, EmptyState, ErrorState, KeyValueList, PageHeader, Spinner } from "../../components/ui";
+import { Alert, Button, Card, EmptyState, ErrorState, KeyValueList, PageHeader, Spinner, Tabs } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
+import { useUrlState } from "../../lib/urlState";
 import { RunStatusBadge } from "../scripts/parts";
 import { RunScriptDialog } from "../scripts/RunScriptDialog";
 import { cannotRunReason, isOpen } from "../scripts/scriptText";
+import { HardwarePanel } from "./DeviceHardware";
+import { HealthCard, PerformanceCard, useDeviceInventory } from "./DeviceHealth";
+import { SoftwarePanel } from "./DeviceSoftware";
 import { DeviceTreeToggle } from "./DeviceTree";
 import { platformName } from "./platform";
 import { openSessionWindow, sessionPath } from "./sessionWindow";
@@ -49,20 +53,31 @@ export function remoteAccessState(d: Pick<Device, "remoteAgent" | "remoteOnline"
 export function DeviceDetailPage() {
   const { id = "" } = useParams();
   const { can, session } = useAuth();
+  const url = useUrlState();
   const device = useApi<Device>(`/devices/${id}`, undefined, { refetchInterval: 30_000 });
+  const hasAgent = device.data?.agent != null;
+  const inventory = useDeviceInventory(id, hasAgent);
   const [running, setRunning] = useState(false);
   const showHistory = can("audit.view");
 
   if (device.isPending) return <Spinner />;
   if (device.isError) return <ErrorState error={device.error} onRetry={() => void device.refetch()} />;
   const d = device.data;
+  const tabs = [
+    { id: "overview", label: "Overview" },
+    { id: "hardware", label: "Hardware", hidden: !hasAgent },
+    { id: "software", label: "Software", hidden: !hasAgent || !can("software.view") },
+  ];
+  const requested = url.get("tab");
+  const tab = tabs.some((t) => t.id === requested && !t.hidden) ? requested : "overview";
+  const showTab = (t: string) => url.set({ tab: t === "overview" ? null : t });
   const kinds = allowedKinds(d);
   const reason = unavailableReason(d);
   const remote = remoteAccessState(d, session?.features.remoteAccess === true);
   // Scripts are offered where the role runs them; the reason shows when the device itself cannot.
   const scriptReason = d.canRunScripts ? cannotRunReason(d) : null;
   const showRuns = can("job.view") && d.agent !== null;
-  const side = showHistory || showRuns;
+  const side = hasAgent || showHistory || showRuns;
 
   return (
     <>
@@ -111,8 +126,36 @@ export function DeviceDetailPage() {
         </Alert>
       )}
 
-      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
-        <Card title="Details" className={side ? "xl:col-span-2" : "xl:col-span-3"}>
+      {hasAgent && <Tabs tabs={tabs} active={tab} onChange={showTab} />}
+
+      {tab === "hardware" && (
+        <div role="tabpanel" aria-labelledby="tab-hardware">
+          {inventory.isPending ? (
+            <Spinner />
+          ) : inventory.isError ? (
+            <ErrorState error={inventory.error} onRetry={() => void inventory.refetch()} />
+          ) : (
+            <HardwarePanel data={inventory.data} />
+          )}
+        </div>
+      )}
+
+      {tab === "software" && (
+        <div role="tabpanel" aria-labelledby="tab-software">
+          {inventory.isPending ? (
+            <Spinner />
+          ) : inventory.isError ? (
+            <ErrorState error={inventory.error} onRetry={() => void inventory.refetch()} />
+          ) : (
+            <SoftwarePanel deviceId={d.id} inventory={inventory.data.inventory} />
+          )}
+        </div>
+      )}
+
+      {tab === "overview" && (
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3" role={hasAgent ? "tabpanel" : undefined} aria-labelledby={hasAgent ? "tab-overview" : undefined}>
+        <div className={side ? "flex min-w-0 flex-col gap-5 xl:col-span-2" : "flex min-w-0 flex-col gap-5 xl:col-span-3"}>
+        <Card title="Details">
           <KeyValueList
             items={[
               ["Status", <DeviceStatusBadge key="s" device={d} />],
@@ -154,13 +197,17 @@ export function DeviceDetailPage() {
             ]}
           />
         </Card>
+        {hasAgent && <PerformanceCard deviceId={d.id} />}
+        </div>
         {side && (
           <div className="flex min-w-0 flex-col gap-5">
+            {hasAgent && <HealthCard query={inventory} online={d.online} onShowAll={() => showTab("hardware")} />}
             {showRuns && <ScriptRuns deviceId={d.id} />}
             {showHistory && <SessionHistory deviceId={d.id} />}
           </div>
         )}
       </div>
+      )}
       {d.canRunScripts && <RunScriptDialog open={running} onClose={() => setRunning(false)} device={d} />}
     </>
   );

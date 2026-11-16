@@ -132,6 +132,9 @@ type Status struct {
 	LastErrorAt   time.Time `json:"lastErrorAt,omitzero"`
 	MeshAgent     string    `json:"meshAgent,omitempty"` // "installed", "not available", ...
 	MeshNodeID    string    `json:"meshNodeId,omitempty"`
+	// InventoryUploaded is when the inventory last reached the server.
+	InventoryUploaded time.Time `json:"inventoryUploaded,omitzero"`
+	InventoryError    string    `json:"inventoryError,omitempty"`
 }
 
 // SaveStatus records the running agent's status.

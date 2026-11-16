@@ -30,8 +30,10 @@ import (
 
 	"github.com/paulmataruso/easyrmm/agent/client"
 	"github.com/paulmataruso/easyrmm/agent/host"
+	"github.com/paulmataruso/easyrmm/agent/inventory"
 	"github.com/paulmataruso/easyrmm/agent/jobs"
 	"github.com/paulmataruso/easyrmm/agent/meshagent"
+	"github.com/paulmataruso/easyrmm/agent/metrics"
 	"github.com/paulmataruso/easyrmm/agent/runner"
 	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
@@ -287,6 +289,11 @@ func (e *env) run(ctx context.Context) error {
 	}
 	if runtime.GOOS == "linux" {
 		r.Mesh = e.mesh(cfg)
+		// Both read the machine itself, as host.Facts does, whatever root
+		// the agent keeps its own files under.
+		mc := &metrics.Collector{}
+		r.Metrics = mc.Collect
+		r.Inventory = inventory.Collector{}.Collect
 	}
 	e.log.Info("EasyRMM agent started", "version", Version, "server", cfg.Server, "device_id", cfg.DeviceID)
 	if runtime.GOOS != "linux" {
@@ -361,6 +368,12 @@ func (e *env) status(ctx context.Context) error {
 	}
 	if st.MeshAgent != "" {
 		_, _ = fmt.Fprintf(w, "MeshAgent:  %s\n", st.MeshAgent)
+	}
+	if !st.InventoryUploaded.IsZero() {
+		_, _ = fmt.Fprintf(w, "Inventory:  sent %s\n", st.InventoryUploaded.Local().Format(time.RFC1123))
+	}
+	if st.InventoryError != "" {
+		_, _ = fmt.Fprintf(w, "Inventory:  not sent: %s\n", st.InventoryError)
 	}
 	return nil
 }

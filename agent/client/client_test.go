@@ -68,6 +68,13 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(f.mesh)
 	case agentproto.PathMeshSettings:
 		_, _ = io.WriteString(w, "MeshID=0x1")
+	case agentproto.PathInventory:
+		if string(body) == "bad" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":{"code":"inventory_invalid","message":"no"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"hash":"`+strconv.Itoa(len(body))+`"}`)
 	default:
 		w.WriteHeader(http.StatusTeapot)
 		_, _ = io.WriteString(w, "not json")
@@ -91,7 +98,7 @@ func TestEnrollAndSignedRequests(t *testing.T) {
 	ctx := context.Background()
 	pub, key, _ := ed25519.GenerateKey(rand.Reader)
 
-	if _, err := c.Heartbeat(ctx, agentproto.Facts{}); err == nil || !strings.Contains(err.Error(), "not enrolled") {
+	if _, err := c.Heartbeat(ctx, agentproto.HeartbeatRequest{}); err == nil || !strings.Contains(err.Error(), "not enrolled") {
 		t.Errorf("heartbeat before enrolling: %v", err)
 	}
 	_, err := c.Enroll(ctx, "ert_bad", pub, agentproto.Facts{Hostname: "h"})
@@ -104,7 +111,7 @@ func TestEnrollAndSignedRequests(t *testing.T) {
 	}
 
 	c.SetIdentity("dev-1", key)
-	hb, err := c.Heartbeat(ctx, agentproto.Facts{Hostname: "h"})
+	hb, err := c.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: agentproto.Facts{Hostname: "h"}})
 	if err != nil || hb.HeartbeatSeconds != 30 {
 		t.Fatalf("heartbeat = %+v, %v", hb, err)
 	}
@@ -122,11 +129,17 @@ func TestEnrollAndSignedRequests(t *testing.T) {
 	if b, err := c.MeshSettings(ctx); err != nil || string(b) != "MeshID=0x1" {
 		t.Errorf("settings = %q, %v", b, err)
 	}
+	if h, err := c.Inventory(ctx, []byte(`{"os":{}}`)); err != nil || h != "9" {
+		t.Errorf("inventory = %q, %v", h, err)
+	}
+	if _, err := c.Inventory(ctx, []byte("bad")); Code(err) != "inventory_invalid" {
+		t.Errorf("refused inventory: %v", err)
+	}
 
 	// A different key's signature is refused by the server.
 	_, other, _ := ed25519.GenerateKey(rand.Reader)
 	c.SetIdentity("dev-1", other)
-	if _, err := c.Heartbeat(ctx, agentproto.Facts{}); Code(err) != "agent_unauthorized" {
+	if _, err := c.Heartbeat(ctx, agentproto.HeartbeatRequest{}); Code(err) != "agent_unauthorized" {
 		t.Errorf("wrong key: %v", err)
 	}
 	// Errors without the JSON envelope keep the status.

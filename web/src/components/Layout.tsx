@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
-import { Building2, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Settings, Sun, UserCircle, X } from "lucide-react";
+import { Building2, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Package, Settings, Sun, UserCircle, X } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { applyTheme, getStoredTheme, storeTheme, type Theme } from "../lib/theme";
 import { DeviceTreeDock, DeviceTreeProvider } from "../pages/devices/DeviceTree";
@@ -78,6 +78,9 @@ export function AppLayout() {
   ];
   if (can("device.view")) {
     nav.push({ to: "/devices", label: "Devices", icon: <Monitor className="size-4" aria-hidden /> });
+  }
+  if (can("software.view")) {
+    nav.push({ to: "/software", label: "Software", icon: <Package className="size-4" aria-hidden /> });
   }
   if (can("script.view")) {
     nav.push({ to: "/scripts", label: "Scripts", icon: <FileCode2 className="size-4" aria-hidden /> });

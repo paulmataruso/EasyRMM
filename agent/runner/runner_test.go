@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -25,6 +26,12 @@ type server struct {
 	status    int
 	code      string
 	available bool
+	// Inventory: the hash the server claims to hold, what was uploaded,
+	// and an error status for uploads.
+	invHash    string
+	uploads    [][]byte
+	invStatus  int
+	heartbeats []agentproto.HeartbeatRequest
 }
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +44,19 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = io.WriteString(w, `{"error":{"code":"`+s.code+`","message":"m"}}`)
 			return
 		}
-		_, _ = io.WriteString(w, `{"heartbeatSeconds":60,"meshAgent":{"available":`+map[bool]string{true: "true", false: "false"}[s.available]+`}}`)
+		var req agentproto.HeartbeatRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		s.heartbeats = append(s.heartbeats, req)
+		_, _ = io.WriteString(w, `{"heartbeatSeconds":60,"inventoryHash":"`+s.invHash+`","meshAgent":{"available":`+map[bool]string{true: "true", false: "false"}[s.available]+`}}`)
+	case agentproto.PathInventory:
+		if s.invStatus != 0 {
+			w.WriteHeader(s.invStatus)
+			_, _ = io.WriteString(w, `{"error":{"code":"inventory_invalid","message":"m"}}`)
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		s.uploads = append(s.uploads, b)
+		_, _ = io.WriteString(w, `{"hash":"h"}`)
 	case agentproto.PathMeshSettings:
 		_, _ = io.WriteString(w, "MeshID=0x1")
 	case agentproto.PathMeshAgent:

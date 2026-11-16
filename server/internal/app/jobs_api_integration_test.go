@@ -76,7 +76,7 @@ func TestJobsAPI(t *testing.T) {
 		t.Fatalf("job key %q: %v", enr.JobKey, err)
 	}
 	ac.SetIdentity(enr.DeviceID, key)
-	if hb, err := ac.Heartbeat(ctx, facts("job-01")); err != nil || hb.JobKey != enr.JobKey {
+	if hb, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: facts("job-01")}); err != nil || hb.JobKey != enr.JobKey {
 		t.Fatalf("heartbeat job key %+v %v", hb, err)
 	}
 	device := enr.DeviceID

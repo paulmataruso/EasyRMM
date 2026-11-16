@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RemoteAccessStatus } from "../../api/types";
-import { baseRoutes, fail, installFakeApi, ok, sessionView, type FakeRequest } from "../../test/fakeApi";
+import { baseRoutes, unreportedRoutes, fail, installFakeApi, ok, sessionView, type FakeRequest } from "../../test/fakeApi";
 import { auditEntry, device, org, site } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
 
@@ -159,6 +159,7 @@ describe("devices", () => {
     // No /remote-access/status route: an administrator's page must not ask for it when the feature is off.
     installFakeApi({
       ...baseRoutes(sessionView({ features: { remoteAccess: false } })),
+      ...unreportedRoutes(),
       ...lists,
       "GET /devices": ok({ items: [enrolled] }),
       "GET /devices/:id": ok(enrolled),
@@ -292,6 +293,7 @@ describe("device detail", () => {
     const agent = { version: "1.4.0", arch: "amd64", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z" };
     installFakeApi({
       ...baseRoutes(TECHNICIAN),
+      ...unreportedRoutes(),
       "GET /devices/:id": ok(device("d4", "SRV-01", { platform: "linux", online: true, remoteOnline: false, agent })),
     });
     const { unmount } = renderApp("/devices/d4");
@@ -303,6 +305,7 @@ describe("device detail", () => {
     // Enrolled, but MeshAgent has not linked yet: no session buttons, and a pointer to what to check.
     installFakeApi({
       ...baseRoutes(TECHNICIAN),
+      ...unreportedRoutes(),
       "GET /devices/:id": ok(device("d5", "SRV-02", { platform: "linux", online: true, remoteAgent: false, remoteOnline: false, canDesktop: false, canTerminal: false, canFiles: false, agent })),
     });
     renderApp("/devices/d5");

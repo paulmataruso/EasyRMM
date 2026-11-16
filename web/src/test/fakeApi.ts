@@ -132,6 +132,15 @@ export function sessionView(overrides: Partial<SessionView> = {}): SessionView {
   };
 }
 
+/** A device whose agent has not reported its inventory or any measurements yet. */
+export function unreportedRoutes(): Record<string, FakeHandler | FakeReply> {
+  return {
+    "GET /devices/:id/inventory": ok({ inventory: null, metrics: null }),
+    "GET /devices/:id/metrics": (r) =>
+      ok({ range: r.query.get("range") ?? "24h", bucketSeconds: 300, from: "2026-10-31T10:00:00Z", to: "2026-11-01T10:00:00Z", samples: [] }),
+  };
+}
+
 /** Routes every signed-in page needs: setup done, the given session, sign-in options. */
 export function baseRoutes(session: SessionView | null): Record<string, FakeHandler | FakeReply> {
   return {
