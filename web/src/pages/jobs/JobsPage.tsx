@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { ListChecks } from "lucide-react";
 import { useList, usePrefetch } from "../../api/hooks";
 import type { Job } from "../../api/types";
+import { DeviceScope, OrganizationSelect, SiteSelect } from "../../components/Filters";
 import { EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
@@ -20,15 +21,27 @@ export function jobsInterval(items: { finished: boolean }[] | undefined): number
 export function JobsPage() {
   const url = useUrlState();
   const status = url.get("status");
+  const organizationId = url.get("organizationId");
+  const siteId = url.get("siteId");
+  const deviceId = url.get("deviceId");
+  const filtered = Boolean(status || organizationId || siteId || deviceId);
   return (
     <>
       <PageHeader title="Jobs" subtitle="Scripts started on devices, newest first. A job runs one script on one or more devices." />
       <Toolbar>
         <StatusSelect value={status} onChange={(v) => url.set({ status: v })} />
+        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null, deviceId: null })} />
+        <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v, deviceId: null })} />
+        {deviceId && <DeviceScope deviceId={deviceId} clearLabel="Show jobs on every device" onClear={() => url.set({ deviceId: null })} />}
       </Toolbar>
       <JobsTable
-        params={{ status: status || undefined }}
-        empty={status ? "No jobs match this filter." : "No jobs yet. Run a script from the script library or from a device."}
+        params={{
+          status: status || undefined,
+          organizationId: organizationId || undefined,
+          siteId: siteId || undefined,
+          deviceId: deviceId || undefined,
+        }}
+        empty={filtered ? "No jobs match these filters." : "No jobs yet. Run a script from the script library or from a device."}
         withCount
       />
     </>

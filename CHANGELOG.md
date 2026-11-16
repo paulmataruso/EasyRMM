@@ -144,11 +144,29 @@ All notable changes to this project are documented here. The format follows
   platform. `make build-agents` and the Docker image build the Windows
   agents, and CI tests the agent on Windows. Guide:
   [Installing the EasyRMM agent](docs/deployment/agents.md).
+- Navigation by section (ADR-0021). On the organizations, devices, alerts,
+  scripts, jobs and settings pages the sidebar shows that section's own
+  tree (organizations › sites › devices, with online, alert or script
+  counts) and a **Back** button to the main menu; a row narrows the page's
+  list and keeps its other filters. Alerts and jobs can be narrowed to a
+  site or a device, scripts to a site. The device tree dock is gone.
+- **Quick connect**: devices in the devices tree open a small panel to
+  start a desktop, terminal or files session, in a window of its own or
+  the current tab (hover, focus, the context menu or Shift+F10).
+- The dashboard's **Recent connections** card lists the last ten devices
+  you started a remote session on, with quick connect; the setup checklist
+  and organizations card are gone.
+- A console tab running an older build reloads on its next navigation
+  after the server is upgraded (`X-EasyRMM-Console`).
 - The console's libraries are served as a chunk of their own, which
   browsers keep across EasyRMM upgrades.
 - When the server cannot open its stored certificate authority or job key,
   the start-up error now asks whether `EASYRMM_SECRET_KEY` was changed
   without listing the old key in `EASYRMM_SECRET_KEYS_PREVIOUS`.
+
+### Removed
+- The fleet-wide **Software** page. Installed software is shown on each
+  device's page; `GET /api/v1/software` remains.
 
 ### Security
 - The remote-access gateway now refuses TCP and UDP tunnels through
@@ -162,6 +180,7 @@ All notable changes to this project are documented here. The format follows
   `localrelay.ashx` is refused.
 
 ### Fixed
+- In the audit log, long user names ran into the next column.
 - Remote sessions opened MeshCentral's session view without the device, so
   nothing could connect. MeshCentral's device page calls into the
   MeshCommander frame it embeds (`/commander.ashx`), which the gateway

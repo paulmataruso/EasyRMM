@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router";
 import { useList } from "../../api/hooks";
 import type { Inventory, Package } from "../../api/types";
 import { SearchInput } from "../../components/Filters";
@@ -59,10 +58,7 @@ export function SoftwarePanel({ deviceId, inventory }: { deviceId: string; inven
     <>
       <p className="mb-3 text-xs text-muted">
         From {MANAGERS[inventory.packageManager] ?? inventory.packageManager}, reported{" "}
-        <span title={formatDateTime(inventory.receivedAt)}>{formatRelative(inventory.receivedAt)}</span>.{" "}
-        <Link to="/software" className="text-accent hover:underline">
-          Search the software on every device
-        </Link>
+        <span title={formatDateTime(inventory.receivedAt)}>{formatRelative(inventory.receivedAt)}</span>.
       </p>
       <Toolbar>
         <SearchInput

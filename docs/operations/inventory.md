@@ -63,18 +63,17 @@ The device page has three tabs once the agent has reported:
   use, and the network.
 * **Software**: the installed packages, filtered as you type.
 
-The **Software** page searches the packages on every device you can see,
-optionally within one organization. Each row is one version of a package
-with the number of devices that have it. Select the count to list those
-devices. A search returns at most 500 package versions; search by name to
-narrow it.
+Installed software is listed per device only; the console has no
+fleet-wide software page. The API's `GET /api/v1/software` still searches
+the packages on every device you can see (at most 500 package versions per
+search), for reports and scripts.
 
 ## Who can see it
 
 | Permission | Allows | Roles |
 |---|---|---|
 | `device.view` | The **Overview** and **Hardware** tabs | Every role, on the devices it covers |
-| `software.view` | The **Software** tab and the **Software** page | Every role, on the devices it covers |
+| `software.view` | The **Software** tab on the device page | Every role, on the devices it covers |
 
 Serial numbers and MAC addresses are shown to everyone who can see the
 device. Reading inventory is not audited.

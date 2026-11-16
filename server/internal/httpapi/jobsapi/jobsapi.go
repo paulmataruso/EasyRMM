@@ -124,8 +124,16 @@ func (a *API) listJobs(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	org, err := httpapi.QueryID(r, "organizationId")
+	if err != nil {
+		return err
+	}
+	site, err := httpapi.QueryID(r, "siteId")
+	if err != nil {
+		return err
+	}
 	items, err := a.svc.ListJobs(r.Context(), httpapi.Caller(r), jobs.JobQuery{
-		DeviceID: device, ScriptID: script, Status: r.URL.Query().Get("status"),
+		OrganizationID: org, SiteID: site, DeviceID: device, ScriptID: script, Status: r.URL.Query().Get("status"),
 	})
 	if err != nil {
 		return err

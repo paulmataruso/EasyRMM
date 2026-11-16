@@ -143,7 +143,12 @@ test("builds the customer tree: organization, site and device group", async () =
 
 test("invites a technician to one organization; the link is shown once", async () => {
   const page = admin;
-  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Settings" }).click();
+  // Inside a section the sidebar shows the section's tree; Back returns to the main menu.
+  const nav = page.getByRole("navigation", { name: "Main" });
+  await expect(nav.getByRole("tree", { name: "Organizations: organizations, sites" })).toBeVisible();
+  await expect(nav.getByRole("treeitem", { name: /^Contoso Dental Group/ })).toBeVisible();
+  await nav.getByRole("button", { name: "Back to the main menu" }).click();
+  await nav.getByRole("link", { name: "Settings" }).click();
   await expect(page).toHaveURL(/\/settings$/);
 
   await page.getByRole("button", { name: "Invite user" }).click();
@@ -208,8 +213,10 @@ test("the technician accepts, enrolls, and sees only their organization", async 
 test("devices and remote access report honestly when MeshCentral is not running", async () => {
   // start-server.sh enables remote access but runs no MeshCentral.
   const page = admin;
-  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Devices" }).click();
-  await expect(page.getByRole("heading", { name: "Devices" })).toBeVisible();
+  const nav = page.getByRole("navigation", { name: "Main" });
+  await nav.getByRole("button", { name: "Back to the main menu" }).click();
+  await nav.getByRole("link", { name: "Devices" }).click();
+  await expect(page.getByRole("heading", { name: "Devices", level: 1 })).toBeVisible();
   await expect(page.getByText("No devices yet")).toBeVisible();
   await expect(page.getByText("Remote access is unavailable")).toBeVisible();
 
@@ -272,7 +279,10 @@ test("a deployment token enrolls a device, which then reports in", async () => {
   await expect(row).toContainText("1 of 1");
   await expect(row).toContainText("Used up");
 
-  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Devices" }).click();
+  // The devices tree lists the new device under its site; "All devices" goes back to the list.
+  const nav = page.getByRole("navigation", { name: "Main" });
+  await expect(nav.getByRole("treeitem", { name: "dt-reception-01, online" })).toBeVisible();
+  await nav.getByRole("button", { name: /^All devices/ }).click();
   const device = page.getByRole("row", { name: /dt-reception-01/ });
   await expect(device).toContainText("Online");
   await expect(device).toContainText("Debian GNU/Linux 13 (trixie)");

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { device, org, site } from "../../test/fixtures";
-import { ancestors, buildTree, filterTree, indexTree, initialExpanded, selectedKey, visibleRows, type TreeNode } from "./tree";
+import { device, org, site } from "../test/fixtures";
+import { ancestors, buildTree, filterTree, indexTree, initialExpanded, visibleRows, type TreeNode } from "./tree";
 
 const names = (nodes: TreeNode[]) => nodes.map((n) => n.name);
 
@@ -88,13 +88,14 @@ describe("device tree", () => {
     ]);
   });
 
-  it("knows which node the page is about", () => {
-    expect(selectedKey("/devices", "")).toBe("all");
-    expect(selectedKey("/devices", "?organizationId=o1&status=online")).toBe("o:o1");
-    expect(selectedKey("/devices", "?organizationId=o1&siteId=s2")).toBe("s:s2");
-    expect(selectedKey("/devices/d1", "")).toBe("d:d1");
-    expect(selectedKey("/devices/add", "")).toBeNull();
-    expect(selectedKey("/devices/d1/remote/terminal", "")).toBeNull();
-    expect(selectedKey("/organizations", "")).toBeNull();
+  it("lists only the chosen devices but counts every one", () => {
+    const roots = buildTree(ORGS, SITES, DEVICES, (d) => d.id === "d2");
+    const northwind = roots.find((o) => o.id === "o1")!;
+    expect(northwind.total).toBe(3);
+    expect(northwind.online).toBe(2);
+    const head = northwind.children.find((s) => s.id === "s1")!;
+    expect(names(head.children)).toEqual(["front-desk"]);
+    expect([head.total, head.online]).toEqual([2, 1]);
+    expect(buildTree(ORGS, SITES, DEVICES, () => false).every((o) => o.children.every((s) => s.children.length === 0))).toBe(true);
   });
 });

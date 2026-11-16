@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router";
-import { AppWindow, ExternalLink, FolderOpen, MonitorPlay, Play, SquareTerminal } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { AppWindow, ExternalLink, Play } from "lucide-react";
+import { useState } from "react";
 import { useApi, useList } from "../../api/hooks";
 import type { AuditEntry, Device, JobRun, RemoteKind } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
@@ -17,27 +17,9 @@ import { HardwarePanel } from "./DeviceHardware";
 import { HealthCard, PerformanceCard, useDeviceInventory } from "./DeviceHealth";
 import { DeviceAlertsCard } from "../alerts/DeviceAlertsCard";
 import { SoftwarePanel } from "./DeviceSoftware";
-import { DeviceTreeToggle } from "./DeviceTree";
 import { platformName } from "./platform";
+import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
 import { openSessionWindow, sessionPath } from "./sessionWindow";
-
-const KIND_ICONS: Record<RemoteKind, ReactNode> = {
-  desktop: <MonitorPlay className="size-4" aria-hidden />,
-  terminal: <SquareTerminal className="size-4" aria-hidden />,
-  files: <FolderOpen className="size-4" aria-hidden />,
-};
-
-/** The session kinds the caller may open on a device, in display order. */
-export function allowedKinds(d: Pick<Device, "canDesktop" | "canTerminal" | "canFiles">): RemoteKind[] {
-  return (["desktop", "terminal", "files"] as const).filter((k) => (k === "desktop" ? d.canDesktop : k === "terminal" ? d.canTerminal : d.canFiles));
-}
-
-/** Why sessions cannot start on a device right now, or null when they can. */
-export function unavailableReason(d: Pick<Device, "remoteAgent" | "remoteOnline" | "online">): string | null {
-  if (!d.remoteAgent) return "Remote access is not set up on this device.";
-  if (!d.remoteOnline) return d.online ? "Remote access is not connected." : "The device is offline.";
-  return null;
-}
 
 /** The remote-access part of a device, in a few words, and what it means when that is not obvious. */
 export function remoteAccessState(
@@ -121,7 +103,6 @@ export function DeviceDetailPage() {
                 Run script
               </Button>
             )}
-            <DeviceTreeToggle />
           </>
         }
       />

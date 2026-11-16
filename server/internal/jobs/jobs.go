@@ -331,8 +331,11 @@ func pick(n int, one, many string) string {
 
 // JobQuery filters the job list.
 type JobQuery struct {
-	DeviceID uuid.UUID
-	ScriptID uuid.UUID
+	// OrganizationID, SiteID and DeviceID list the jobs with a run there.
+	OrganizationID uuid.UUID
+	SiteID         uuid.UUID
+	DeviceID       uuid.UUID
+	ScriptID       uuid.UUID
 	// Status is "", "open" (some run has not ended) or "finished".
 	Status string
 }
@@ -377,8 +380,10 @@ func (s *Service) ListJobs(ctx context.Context, c access.Caller, q JobQuery) ([]
 			WHERE ($1::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.device_id = $1))
 			  AND ($2::uuid IS NULL OR j.script_id = $2)
 			  AND ($3 = '' OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.status IN ('queued', 'sent', 'running')) = ($3 = 'open'))
+			  AND ($5::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.organization_id = $5))
+			  AND ($6::uuid IS NULL OR EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.site_id = $6))
 			ORDER BY j.created_at DESC, j.id LIMIT $4`,
-			nullUUID(q.DeviceID), nullUUID(q.ScriptID), q.Status, MaxList)
+			nullUUID(q.DeviceID), nullUUID(q.ScriptID), q.Status, MaxList, nullUUID(q.OrganizationID), nullUUID(q.SiteID))
 		if err != nil {
 			return err
 		}

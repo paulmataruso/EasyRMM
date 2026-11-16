@@ -90,13 +90,20 @@ export function AuditTab() {
                     <td className="whitespace-nowrap" title={formatRelative(e.occurredAt)}>
                       {formatDateTime(e.occurredAt)}
                     </td>
-                    <td className="max-w-48">
+                    <td>
                       {e.actorId ? (
-                        <button type="button" className="truncate text-left hover:text-accent" title="Show only this user's entries" onClick={() => url.set({ actorId: e.actorId, before: null })}>
+                        <button
+                          type="button"
+                          className="block max-w-48 truncate text-left hover:text-accent"
+                          title={`${e.actorLabel}: show only this user's entries`}
+                          onClick={() => url.set({ actorId: e.actorId, before: null })}
+                        >
                           {e.actorLabel}
                         </button>
                       ) : (
-                        <span className="text-muted">{e.actorLabel || e.actorType}</span>
+                        <span className="block max-w-48 truncate text-muted" title={e.actorLabel || e.actorType}>
+                          {e.actorLabel || e.actorType}
+                        </span>
                       )}
                     </td>
                     <td className="whitespace-nowrap" title={e.action}>

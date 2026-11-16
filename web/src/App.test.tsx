@@ -173,7 +173,7 @@ describe("sign-in", () => {
   it("sends a signed-in user away from the sign-in page", async () => {
     installFakeApi({ ...baseRoutes(sessionView()), "GET /organizations": ok({ items: [] }) });
     renderApp("/login?returnTo=%2Forganizations");
-    expect(await screen.findByRole("heading", { name: "Organizations" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Organizations", level: 1 })).toBeInTheDocument();
     expect(location()).toBe("/organizations");
   });
 

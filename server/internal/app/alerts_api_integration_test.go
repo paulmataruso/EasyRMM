@@ -128,6 +128,18 @@ func TestAlertsAPI(t *testing.T) {
 	if sum.Active != 2 || sum.Critical != 1 || sum.Warning != 1 || sum.Devices != 1 {
 		t.Fatalf("summary %+v", sum)
 	}
+	type deviceCount struct {
+		DeviceID       string `json:"deviceId"`
+		OrganizationID string `json:"organizationId"`
+		SiteID         string `json:"siteId"`
+		Active         int    `json:"active"`
+		Critical       int    `json:"critical"`
+	}
+	var counts struct{ Items []deviceCount }
+	admin.expect(http.StatusOK, "GET", "/api/v1/alerts/devices", nil, &counts)
+	if len(counts.Items) != 1 || counts.Items[0] != (deviceCount{device.ID, acme, hq.ID, 2, 1}) {
+		t.Fatalf("alerts by device %+v", counts.Items)
+	}
 
 	// A read-only user sees alerts but cannot act on them.
 	invite(t, h, admin, "rita@acme.example", []map[string]any{{"role": "read_only", "organizationId": acme}})
@@ -137,6 +149,20 @@ func TestAlertsAPI(t *testing.T) {
 	viewer.expect(http.StatusOK, "GET", "/api/v1/alerts/"+disk.ID, nil, &one)
 	if one.CanManage {
 		t.Fatal("read-only user can manage alerts")
+	}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/alerts/devices", nil, &counts)
+	if len(counts.Items) != 1 || counts.Items[0].Active != 2 {
+		t.Fatalf("alerts by device for a read-only user %+v", counts.Items)
+	}
+	// Someone with no organization in common sees no counts.
+	var other0 idObj
+	admin.expect(http.StatusCreated, "POST", "/api/v1/organizations", map[string]string{"name": "Other"}, &other0)
+	invite(t, h, admin, "olga@other.example", []map[string]any{{"role": "read_only", "organizationId": other0.ID}})
+	other := h.client()
+	other.signIn("olga@other.example", "a long and unusual passphrase", "")
+	other.expect(http.StatusOK, "GET", "/api/v1/alerts/devices", nil, &counts)
+	if len(counts.Items) != 0 {
+		t.Fatalf("alerts by device in another organization %+v", counts.Items)
 	}
 	wantStatus(t, viewer.do("POST", "/api/v1/alerts/"+disk.ID+"/acknowledge", nil), http.StatusForbidden, "forbidden")
 	wantStatus(t, viewer.do("PATCH", "/api/v1/alert-policies/"+p.ID, map[string]any{"minutes": 4}), http.StatusForbidden, "forbidden")

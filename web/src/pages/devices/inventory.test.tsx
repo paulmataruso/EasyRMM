@@ -184,7 +184,6 @@ describe("device software", () => {
     expect(within(table).getAllByRole("row")).toHaveLength(4);
     expect(screen.getByText("3 packages")).toBeInTheDocument();
     expect(screen.getByText(/From dpkg \(Debian, Ubuntu\)/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Search the software on every device" })).toHaveAttribute("href", "/software");
 
     await user.type(screen.getByLabelText("Filter packages"), "SSL");
     expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(2);

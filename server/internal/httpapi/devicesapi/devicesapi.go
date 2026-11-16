@@ -22,7 +22,17 @@ func (a *API) Register(mux *http.ServeMux) {
 		mux.Handle(pattern, httpapi.RequireActive(httpapi.Handle(h)))
 	}
 	r("GET /api/v1/devices", a.list)
+	r("GET /api/v1/devices/recent-connections", a.recent)
 	r("GET /api/v1/devices/{id}", a.get)
+}
+
+func (a *API) recent(w http.ResponseWriter, r *http.Request) error {
+	items, err := a.svc.RecentConnections(r.Context(), httpapi.Caller(r))
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, httpapi.List[devices.RecentConnection]{Items: items})
+	return nil
 }
 
 func (a *API) list(w http.ResponseWriter, r *http.Request) error {

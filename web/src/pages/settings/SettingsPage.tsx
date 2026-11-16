@@ -2,35 +2,42 @@ import { Navigate } from "react-router";
 import { useAuth } from "../../auth/AuthContext";
 import { PageHeader, Tabs } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
+import { settingsParts } from "../../nav/SectionNav";
 import { AuditTab } from "./AuditTab";
 import { RemoteAccessTab } from "./RemoteAccessTab";
 import { UsersTab } from "./UsersTab";
 
+const SUBTITLES: Record<string, string> = {
+  users: "People who can sign in to EasyRMM, and the roles that decide what they can do where.",
+  audit: "Everything people, agents and the platform did, in a tamper-evident log.",
+  remote: "The MeshCentral service behind remote desktop, terminal and files.",
+};
+
+/**
+ * Settings' parts. On wide screens the sidebar lists them (ADR-0021); on narrow ones the sidebar is out of sight, so
+ * the page shows them as tabs.
+ */
 export function SettingsPage() {
   const url = useUrlState();
   const { can } = useAuth();
-  const tabs = [
-    { id: "users", label: "Users", hidden: !can("user.view") },
-    { id: "audit", label: "Audit log", hidden: !can("audit.view") },
-    { id: "remote", label: "Remote access", hidden: !can("settings.manage") },
-  ];
-  const visible = tabs.filter((t) => !t.hidden);
-  const first = visible[0];
+  const parts = settingsParts(can);
+  const first = parts[0];
   if (!first) return <Navigate to="/" replace />;
   const requested = url.get("tab");
-  const tab = visible.some((t) => t.id === requested) ? requested : first.id;
+  const part = parts.find((p) => p.id === requested) ?? first;
 
   return (
     <>
-      <PageHeader title="Settings" subtitle="People who can sign in to EasyRMM, their roles, the audit log of everything they do, and the remote access service." />
+      <PageHeader breadcrumb="Settings" title={part.label} subtitle={SUBTITLES[part.id]} />
       <Tabs
-        active={tab}
+        className="lg:hidden"
+        active={part.id}
         onChange={(t) => url.set({ tab: t === first.id ? null : t, q: null, organizationId: null, action: null, actorId: null, invite: null, after: null })}
-        tabs={tabs}
+        tabs={parts.map((p) => ({ id: p.id, label: p.label }))}
       />
-      {tab === "users" && <UsersTab />}
-      {tab === "audit" && <AuditTab />}
-      {tab === "remote" && <RemoteAccessTab />}
+      {part.id === "users" && <UsersTab />}
+      {part.id === "audit" && <AuditTab />}
+      {part.id === "remote" && <RemoteAccessTab />}
     </>
   );
 }

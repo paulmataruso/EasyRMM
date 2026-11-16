@@ -183,6 +183,103 @@ func (s *Service) Get(ctx context.Context, c access.Caller, id uuid.UUID) (*Devi
 	return d, nil
 }
 
+// RecentConnection is a device the caller opened a remote session on.
+type RecentConnection struct {
+	Device *Device `json:"device"`
+	// Kind is the kind of the latest session: desktop, terminal or files.
+	Kind string    `json:"kind"`
+	At   time.Time `json:"at"`
+}
+
+// MaxRecent bounds the recent connections listed.
+const MaxRecent = 10
+
+// RecentConnections lists the devices the calling user opened remote
+// sessions on in the last 90 days, latest first, from the audit log: at most
+// MaxRecent, and only devices the caller can still see, with what the caller
+// may do on them now. Empty when remote access is off or the caller is not a
+// user.
+func (s *Service) RecentConnections(ctx context.Context, c access.Caller) ([]RecentConnection, error) {
+	out := []RecentConnection{}
+	if !s.remote || c.Principal == nil || c.Principal.UserID == uuid.Nil {
+		return out, nil
+	}
+	type launch struct {
+		at   time.Time
+		kind string
+	}
+	var ids []uuid.UUID
+	launches := map[uuid.UUID]launch{}
+	// The caller's own audit entries: read without the caller's scope, which
+	// may not include the audit log, and limited to the caller by actor.
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		ids, launches = nil, map[uuid.UUID]launch{}
+		rows, err := tx.Query(ctx, `SELECT device_id, max(occurred_at), (array_agg(details->>'kind' ORDER BY occurred_at DESC, id DESC))[1]
+			FROM audit_log
+			WHERE actor_type = 'user' AND actor_id = $1 AND action = 'device.remote_session' AND outcome = 'success'
+			  AND device_id IS NOT NULL AND occurred_at > now() - interval '90 days'
+			GROUP BY device_id
+			ORDER BY 2 DESC, 1
+			LIMIT $2`, c.Principal.UserID, 3*MaxRecent)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				id   uuid.UUID
+				l    launch
+				kind *string
+			)
+			if err := rows.Scan(&id, &l.at, &kind); err != nil {
+				return err
+			}
+			if kind != nil {
+				l.kind = *kind
+			}
+			ids = append(ids, id)
+			launches[id] = l
+		}
+		return rows.Err()
+	})
+	if err != nil || len(ids) == 0 {
+		return out, err
+	}
+	found := map[uuid.UUID]*Device{}
+	err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		found = map[uuid.UUID]*Device{}
+		rows, err := tx.Query(ctx, `SELECT `+columns+from+` WHERE d.id = ANY($1)`, ids)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			d, err := scan(rows)
+			if err != nil {
+				return err
+			}
+			found[d.ID] = d
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		d := found[id]
+		if d == nil || !c.Can(rbac.PermDeviceView, rbac.Site(d.OrganizationID, d.SiteID)) {
+			continue
+		}
+		s.decorate(c, d)
+		l := launches[id]
+		out = append(out, RecentConnection{Device: d, Kind: l.kind, At: l.at})
+		if len(out) == MaxRecent {
+			break
+		}
+	}
+	return out, nil
+}
+
 // Lookup reads one device the caller may view, without the per-caller
 // actions. Other services use it to resolve a device before acting on it.
 func Lookup(ctx context.Context, db *database.DB, c access.Caller, id uuid.UUID) (*Device, error) {

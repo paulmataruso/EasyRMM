@@ -1,8 +1,9 @@
-import type { Device, Organization, Site } from "../../api/types";
+import type { Device, Organization, Site } from "../api/types";
 
 /**
- * The device tree: organizations, their sites, and each site's devices. Built from the three list endpoints so it
- * shows every organization and site the caller can see, including those without devices.
+ * The navigation tree: organizations, their sites, and (in sections that list them) each site's devices. Built from
+ * the three list endpoints so it shows every organization and site the caller can see, including those without
+ * devices.
  */
 export type TreeKind = "org" | "site" | "device";
 
@@ -29,7 +30,11 @@ export const deviceKey = (id: string) => `d:${id}`;
 const collator = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
 const byName = (a: TreeNode, b: TreeNode) => collator.compare(a.name, b.name) || a.id.localeCompare(b.id);
 
-export function buildTree(orgs: Organization[], sites: Site[], devices: Device[]): TreeNode[] {
+/**
+ * `leaf` decides which devices appear under their sites; every device counts toward its site's and organization's
+ * totals either way.
+ */
+export function buildTree(orgs: Organization[], sites: Site[], devices: Device[], leaf: (d: Device) => boolean = () => true): TreeNode[] {
   const orgNodes = new Map<string, TreeNode>();
   const siteNodes = new Map<string, TreeNode>();
 
@@ -56,6 +61,9 @@ export function buildTree(orgs: Organization[], sites: Site[], devices: Device[]
   for (const s of sites) site(s.id, s.organizationId, s.organizationName, s.name);
   for (const d of devices) {
     const parent = site(d.siteId, d.organizationId, d.organizationName, d.siteName);
+    parent.total += 1;
+    if (d.online) parent.online += 1;
+    if (!leaf(d)) continue;
     parent.children.push({
       key: deviceKey(d.id),
       kind: "device",
@@ -74,11 +82,7 @@ export function buildTree(orgs: Organization[], sites: Site[], devices: Device[]
   const roots = [...orgNodes.values()].sort(byName);
   for (const o of roots) {
     o.children.sort(byName);
-    for (const s of o.children) {
-      s.children.sort(byName);
-      s.total = s.children.length;
-      s.online = s.children.reduce((n, d) => n + d.online, 0);
-    }
+    for (const s of o.children) s.children.sort(byName);
     o.total = o.children.reduce((n, s) => n + s.total, 0);
     o.online = o.children.reduce((n, s) => n + s.online, 0);
   }
@@ -180,15 +184,3 @@ export function visibleRows(roots: TreeNode[], isOpen: (key: string) => boolean)
   return rows;
 }
 
-/** The tree node the current page is about: the list's organization or site filter, or the device being viewed. */
-export function selectedKey(pathname: string, search: string): string | null {
-  if (pathname === "/devices") {
-    const params = new URLSearchParams(search);
-    const site = params.get("siteId");
-    const org = params.get("organizationId");
-    return site ? siteKey(site) : org ? orgKey(org) : "all";
-  }
-  const m = /^\/devices\/([^/]+)$/.exec(pathname);
-  if (m?.[1] && m[1] !== "add") return deviceKey(decodeURIComponent(m[1]));
-  return null;
-}

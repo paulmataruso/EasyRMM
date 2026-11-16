@@ -25,6 +25,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	}
 	r("GET /api/v1/alerts", a.listAlerts)
 	r("GET /api/v1/alerts/summary", a.summary)
+	r("GET /api/v1/alerts/devices", a.deviceCounts)
 	r("GET /api/v1/alerts/{id}", a.getAlert)
 	r("POST /api/v1/alerts/{id}/acknowledge", a.acknowledge)
 	r("POST /api/v1/alerts/{id}/resolve", a.resolve)
@@ -78,6 +79,15 @@ func (a *API) summary(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpapi.WriteJSON(w, http.StatusOK, s)
+	return nil
+}
+
+func (a *API) deviceCounts(w http.ResponseWriter, r *http.Request) error {
+	items, err := a.svc.ActiveByDevice(r.Context(), httpapi.Caller(r))
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, httpapi.List[monitoring.DeviceAlerts]{Items: items})
 	return nil
 }
 

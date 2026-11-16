@@ -9,13 +9,23 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 )
+
+type recentConnections struct {
+	Items []struct {
+		Device deviceView `json:"device"`
+		Kind   string     `json:"kind"`
+		At     time.Time  `json:"at"`
+	}
+}
 
 // closedURL is an http:// loopback address nothing listens on.
 func closedURL(t *testing.T) *url.URL {
@@ -130,10 +140,46 @@ func TestRemoteAPI(t *testing.T) {
 		t.Fatalf("status: %+v", st)
 	}
 
+	// Recent connections: the caller's own launches, one per device, latest first.
+	var me struct {
+		User struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/auth/session", nil, &me)
+	log := audit.New(h.db.DB, time.Now)
+	launch := func(actor uuid.UUID, device, kind string, outcome audit.Outcome) {
+		t.Helper()
+		err := log.Record(context.Background(), audit.Event{
+			Actor: audit.Actor{Type: audit.ActorUser, ID: actor, Label: "test"}, Action: "device.remote_session",
+			OrganizationID: uuid.MustParse(acme), SiteID: uuid.MustParse(site.ID), DeviceID: uuid.MustParse(device),
+			TargetType: "device", TargetID: device, Outcome: outcome, Details: map[string]any{"kind": kind},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	adminID := uuid.MustParse(me.User.ID)
+	launch(adminID, offline, "terminal", audit.Success)
+	launch(adminID, online, "files", audit.Success)
+	launch(adminID, online, "desktop", audit.Success)
+	launch(adminID, offline, "desktop", audit.Denied)     // not a connection
+	launch(uuid.New(), offline, "desktop", audit.Success) // somebody else's
+	var recent recentConnections
+	admin.expect(http.StatusOK, "GET", "/api/v1/devices/recent-connections", nil, &recent)
+	if len(recent.Items) != 2 || recent.Items[0].Device.ID != online || recent.Items[0].Kind != "desktop" || !recent.Items[0].Device.CanDesktop ||
+		recent.Items[1].Device.ID != offline || recent.Items[1].Kind != "terminal" || !recent.Items[0].At.After(recent.Items[1].At) {
+		t.Fatalf("recent connections: %+v", recent.Items)
+	}
+
 	// A read-only user sees devices but cannot open sessions or the status.
 	invite(t, h, admin, "rob@acme.example", []map[string]any{{"role": "read_only", "organizationId": acme}})
 	rob := h.client()
 	rob.signIn("rob@acme.example", "a long and unusual passphrase", "")
+	rob.expect(http.StatusOK, "GET", "/api/v1/devices/recent-connections", nil, &recent)
+	if len(recent.Items) != 0 {
+		t.Fatalf("read-only user's recent connections: %+v", recent.Items)
+	}
 	rob.expect(http.StatusOK, "GET", "/api/v1/devices/"+online, nil, &dev)
 	if dev.CanDesktop || dev.CanTerminal || dev.CanFiles {
 		t.Fatalf("read-only device permissions: %+v", dev)
@@ -178,6 +224,11 @@ func TestRemoteAccessDisabled(t *testing.T) {
 		t.Errorf("devices = %+v", list.Items)
 	}
 	wantStatus(t, admin.do("GET", "/api/v1/remote-access/status", nil), http.StatusNotFound, "not_found")
+	var recent recentConnections
+	admin.expect(http.StatusOK, "GET", "/api/v1/devices/recent-connections", nil, &recent)
+	if len(recent.Items) != 0 {
+		t.Errorf("recent connections without remote access: %+v", recent.Items)
+	}
 	wantStatus(t, admin.do("POST", "/api/v1/devices/"+uuid.NewString()+"/remote-sessions", map[string]string{"kind": "desktop"}), http.StatusNotFound, "not_found")
 	var s struct {
 		Features struct {

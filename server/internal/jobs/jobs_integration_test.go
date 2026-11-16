@@ -554,6 +554,24 @@ func TestJobsAreSeenOnlyWhereTheirRunsAre(t *testing.T) {
 			t.Errorf("%s list %+v", name, list)
 		}
 	}
+	// By organization, site or device: the jobs with a run there that the caller can see.
+	for name, tc := range map[string]struct {
+		c    access.Caller
+		q    JobQuery
+		want int
+	}{
+		"super in Globex":       {super, JobQuery{OrganizationID: f.globex}, 1},
+		"super at the branch":   {super, JobQuery{SiteID: f.branch}, 1},
+		"Acme in Globex":        {acmeTech, JobQuery{OrganizationID: f.globex}, 0},
+		"Acme at the branch":    {acmeTech, JobQuery{OrganizationID: f.acme, SiteID: f.branch}, 1},
+		"HQ at the branch":      {hqViewer, JobQuery{SiteID: f.branch}, 0},
+		"Globex on the plant":   {globexTech, JobQuery{DeviceID: plantPC}, 1},
+		"an empty organization": {super, JobQuery{OrganizationID: uuid.New()}, 0},
+	} {
+		if list, err := f.svc.ListJobs(f.ctx, tc.c, tc.q); err != nil || len(list) != tc.want {
+			t.Errorf("%s: %d jobs, %v", name, len(list), err)
+		}
+	}
 	plantRun := f.id(`SELECT id FROM job_runs WHERE device_id = $1`, plantPC)
 	if _, err := f.svc.GetRun(f.ctx, acmeTech, plantRun); !errors.Is(err, apperr.ErrNotFound) {
 		t.Errorf("Acme read Globex's run: %v", err)

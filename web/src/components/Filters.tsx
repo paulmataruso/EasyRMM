@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { Search } from "lucide-react";
-import { useOrganizations } from "../api/hooks";
+import { Search, X } from "lucide-react";
+import { useApi, useOrganizations, useSites } from "../api/hooks";
+import type { Device } from "../api/types";
 import { Field, Input, Select, cx } from "./ui";
 
 /**
@@ -61,6 +62,37 @@ export function SearchInput({ value, onChange, placeholder = "Search…", label 
 export function isTyping(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
+
+/** Narrows a list to one site, of the chosen organization when there is one. */
+export function SiteSelect({ organizationId, value, onChange }: { organizationId: string; value: string; onChange: (v: string) => void }) {
+  const sites = useSites(organizationId || null);
+  const id = useId();
+  return (
+    <Field label="Site" htmlFor={id} className="min-w-40">
+      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} disabled={sites.isPending}>
+        <option value="">All sites</option>
+        {sites.items.map((s) => (
+          <option key={s.id} value={s.id}>
+            {organizationId ? s.name : `${s.organizationName} / ${s.name}`}
+          </option>
+        ))}
+      </Select>
+    </Field>
+  );
+}
+
+/** A list narrowed to one device: its name, and a button that widens the list again. */
+export function DeviceScope({ deviceId, onClear, clearLabel }: { deviceId: string; onClear: () => void; clearLabel: string }) {
+  const device = useApi<Device>(`/devices/${encodeURIComponent(deviceId)}`);
+  return (
+    <span className="mb-1 inline-flex items-center gap-1 self-end rounded-full bg-accent-soft py-1 pr-1 pl-3 text-sm text-accent">
+      {device.data?.name ?? "One device"}
+      <button type="button" className="rounded-full p-0.5 hover:bg-accent/15" aria-label={clearLabel} onClick={onClear}>
+        <X className="size-3.5" aria-hidden />
+      </button>
+    </span>
+  );
 }
 
 export function OrganizationSelect({ value, onChange, label = "Organization", allLabel = "All organizations", className, disabled }: {

@@ -32,6 +32,43 @@ func get(t *testing.T, h http.Handler, method, path string) *httptest.ResponseRe
 	return rec
 }
 
+func TestBuild(t *testing.T) {
+	vite := `<!doctype html><head><script type="module" crossorigin src="/assets/index-CK4Ho17z.js"></script>` +
+		`<link rel="modulepreload" crossorigin href="/assets/vendor-CKjeqnTp.js"></head>`
+	for name, tc := range map[string]struct {
+		files fstest.MapFS
+		want  string
+	}{
+		"vite build":   {fstest.MapFS{"index.html": {Data: []byte(vite)}}, "/assets/index-CK4Ho17z.js"},
+		"no script":    {testFS(), ""},
+		"classic only": {fstest.MapFS{"index.html": {Data: []byte(`<script src="/x.js"></script>`)}}, ""},
+		"no index":     {fstest.MapFS{"assets/a.js": {Data: []byte("1")}}, ""},
+	} {
+		if got := Build(tc.files); got != tc.want {
+			t.Errorf("%s: %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+func TestAnnounce(t *testing.T) {
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	h := Announce("/assets/index-1.js")(ok)
+	for path, want := range map[string]string{
+		"/api/v1/auth/session": "/assets/index-1.js",
+		"/api/v1/devices/x":    "/assets/index-1.js",
+		"/":                    "",
+		"/devices":             "",
+		"/api/agent/v1/poll":   "",
+	} {
+		if got := get(t, h, http.MethodGet, path).Header().Get(BuildHeader); got != want {
+			t.Errorf("%s: %q, want %q", path, got, want)
+		}
+	}
+	if got := get(t, Announce("")(ok), http.MethodGet, "/api/v1/x").Header().Get(BuildHeader); got != "" {
+		t.Errorf("without a build: %q", got)
+	}
+}
+
 func TestClientRoutesFallBackToIndex(t *testing.T) {
 	h := Handler(testFS())
 	for _, p := range []string{"/", "/index.html", "/login", "/organizations/123/sites", "/devices/", "/../../etc/passwd"} {

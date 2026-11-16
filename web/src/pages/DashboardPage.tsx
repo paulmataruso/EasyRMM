@@ -1,21 +1,21 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { Bell, Building2, CheckCircle2, Circle, FolderTree, MapPin, Users } from "lucide-react";
+import { Bell, Building2, FolderTree, MapPin, ScreenShare, Users } from "lucide-react";
 import { useApi, useList, useOrganizations, useSites } from "../api/hooks";
-import type { AlertEntry, AlertSummary, AuditEntry, AuthOptions, List, User } from "../api/types";
+import type { AlertEntry, AlertSummary, AuditEntry, Device, List, RecentConnection, User } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
-import { actionLabel, auditTarget, OutcomeBadge } from "../components/StatusBadges";
-import { buttonClasses, Card, cx, EmptyState, ErrorState, PageHeader, Spinner, StatTile, TableWrap } from "../components/ui";
+import { actionLabel, auditTarget, OutcomeBadge, REMOTE_KIND_NAMES } from "../components/StatusBadges";
+import { Button, Card, cx, Dot, EmptyState, ErrorState, PageHeader, Spinner, StatTile, TableWrap } from "../components/ui";
+import { canQuickConnect, QuickConnectPanel } from "../nav/QuickConnect";
 import { formatDateTime, formatNumber, formatRelative, plural } from "../lib/format";
 import { AlertActions, useAlertAction } from "./alerts/AlertActions";
 import { SeverityBadge, valueText } from "./alerts/alertText";
 
 export function DashboardPage() {
-  const { can, isSuperAdmin } = useAuth();
+  const { can, isSuperAdmin, session } = useAuth();
   const orgs = useOrganizations();
   const sites = useSites();
   const users = useApi<List<User>>(can("user.view") ? "/users" : null, { limit: 200 });
-  const options = useApi<AuthOptions>("/auth/options", undefined, { staleTime: 300_000 });
   const alerts = useApi<AlertSummary>(can("alert.view") ? "/alerts/summary" : null, undefined, { refetchInterval: 60_000 });
   const activeAlerts = alerts.data?.active ?? 0;
 
@@ -24,50 +24,9 @@ export function DashboardPage() {
   const orgsWithSites = new Set(sites.items.map((s) => s.organizationId)).size;
   const sitesWithGroups = sites.items.filter((s) => s.deviceGroupCount > 0).length;
   const userCount = users.data ? `${formatNumber(users.data.items.length)}${users.data.next ? "+" : ""}` : "—";
-
-  const firstManaged = orgs.items.find((o) => o.canManage);
-  const steps: Step[] = [];
-  if (!orgs.isPending && !sites.isPending) {
-    steps.push({
-      done: orgs.items.length > 0,
-      title: "Create an organization",
-      detail: orgs.items.length > 0 ? `${plural(orgs.items.length, "organization")} so far.` : "Each customer you support is an organization.",
-      action: can("org.create") && orgs.items.length === 0 ? <Link to="/organizations?new=1" className={buttonClasses("primary", "sm")}>New organization</Link> : null,
-    });
-    steps.push({
-      done: siteCount > 0,
-      title: "Add a site",
-      detail: siteCount > 0 ? `${plural(siteCount, "site")} across your organizations.` : "Sites are the offices or locations inside an organization; devices belong to a site.",
-      action:
-        siteCount === 0 && firstManaged ? (
-          <Link to={`/organizations/${firstManaged.id}?newSite=1`} className={buttonClasses("primary", "sm")}>
-            Add site
-          </Link>
-        ) : null,
-    });
-    if (can("user.manage") && users.data) {
-      const others = users.data.items.filter((u) => !u.isSelf).length;
-      steps.push({
-        done: others > 0,
-        title: "Invite your team",
-        detail: others > 0 ? `${plural(others, "other user")} can sign in.` : "Give technicians their own accounts and roles scoped to the organizations they support.",
-        action: others === 0 ? <Link to="/settings?tab=users&invite=1" className={buttonClasses("primary", "sm")}>Invite user</Link> : null,
-      });
-    }
-    if (isSuperAdmin && options.data) {
-      steps.push({
-        done: options.data.passwordResetAvailable,
-        title: "Configure email delivery",
-        detail: options.data.passwordResetAvailable
-          ? "Invitations and password resets are emailed."
-          : "Set the EASYRMM_SMTP_* settings on the server so invitations and password resets are emailed. Until then, EasyRMM gives you links to share yourself.",
-        action: null,
-      });
-    }
-  }
-  const setupIncomplete = steps.some((s) => !s.done);
-  const leftColumn = activeAlerts > 0 || setupIncomplete || can("audit.view");
   const tiles = 3 + (can("alert.view") ? 1 : 0) + (can("user.view") ? 1 : 0);
+  const connections = session?.features.remoteAccess === true && can("device.view");
+  const left = activeAlerts > 0 || can("audit.view");
 
   return (
     <>
@@ -117,52 +76,87 @@ export function DashboardPage() {
         )}
       </div>
 
-      <div className="mt-5 grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
-        {leftColumn && (
-          <div className="flex min-w-0 flex-col gap-5 xl:col-span-2">
-            {activeAlerts > 0 && <ActiveAlertsCard total={activeAlerts} />}
-            {setupIncomplete ? (
-              <Card title="Get started" padded={false}>
-                <ol className="divide-y divide-line">
-                  {steps.map((s) => (
-                    <SetupStep key={s.title} step={s} />
-                  ))}
-                </ol>
-              </Card>
-            ) : (
+      {/* Side by side only where the activity table keeps all its columns; stacked, the connections come first. */}
+      {(left || connections) && (
+        <div className="mt-5 grid grid-cols-1 items-start gap-5 2xl:grid-cols-3">
+          {left && (
+            <div className={cx("flex min-w-0 flex-col gap-5", connections ? "2xl:col-span-2" : "2xl:col-span-3")}>
+              {activeAlerts > 0 && <ActiveAlertsCard total={activeAlerts} />}
               <RecentActivity />
-            )}
-          </div>
-        )}
-        <OrganizationsCard className={leftColumn ? undefined : "xl:col-span-3"} />
-      </div>
-
-      {setupIncomplete && <RecentActivity className="mt-5" />}
+            </div>
+          )}
+          {connections && <RecentConnectionsCard className={left ? "max-2xl:order-first" : "2xl:col-span-3"} />}
+        </div>
+      )}
     </>
   );
 }
 
-interface Step {
-  done: boolean;
-  title: string;
-  detail: string;
-  action: ReactNode;
-}
-
-function SetupStep({ step }: { step: Step }) {
+/**
+ * The devices the signed-in user most recently opened remote sessions on, from the audit log, each with quick connect.
+ */
+function RecentConnectionsCard({ className }: { className?: string }) {
+  const recent = useList<RecentConnection>("/devices/recent-connections", undefined, { refetchInterval: 30_000 });
+  const [connect, setConnect] = useState<{ device: Device; anchor: HTMLElement } | null>(null);
   return (
-    <li className="flex items-start gap-3 px-4 py-3">
-      {step.done ? (
-        <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-ok" aria-label="Done" />
+    <Card title="Recent connections" className={className} padded={false}>
+      {recent.isPending ? (
+        <Spinner />
+      ) : recent.isError ? (
+        <ErrorState error={recent.error} onRetry={() => void recent.refetch()} compact />
+      ) : recent.items.length === 0 ? (
+        <EmptyState title="No connections yet" icon={<ScreenShare className="size-8" aria-hidden />} compact>
+          Devices you open a remote session on are listed here, ready to connect again.
+        </EmptyState>
       ) : (
-        <Circle className="mt-0.5 size-4 shrink-0 text-subtle" aria-label="To do" />
+        <ul className="divide-y divide-line">
+          {recent.items.map(({ device: d, kind, at }) => {
+            const ready = canQuickConnect(d);
+            const connecting = connect?.device.id === d.id;
+            return (
+              <li key={d.id} className="flex items-center gap-3 px-4 py-2.5">
+                <Dot tone={d.remoteOnline ? "ok" : "neutral"} />
+                <span className="min-w-0 flex-1">
+                  <Link to={`/devices/${encodeURIComponent(d.id)}`} className="block truncate text-sm font-medium hover:text-accent">
+                    {d.name}
+                  </Link>
+                  <span className="block truncate text-xs text-muted">
+                    {REMOTE_KIND_NAMES[kind] ?? kind}, <span title={formatDateTime(at)}>{formatRelative(at)}</span> · {d.organizationName} / {d.siteName}
+                  </span>
+                </span>
+                <span className="sr-only">{d.remoteOnline ? "online" : "offline"}</span>
+                <Button
+                  size="sm"
+                  icon={<ScreenShare className="size-4" aria-hidden />}
+                  aria-haspopup="dialog"
+                  aria-expanded={connecting}
+                  aria-label={`Connect to ${d.name}`}
+                  disabled={!ready}
+                  title={ready ? undefined : "You can no longer open sessions on this device."}
+                  onClick={(e) => {
+                    const anchor = e.currentTarget;
+                    setConnect(connecting ? null : { device: d, anchor });
+                  }}
+                >
+                  Connect
+                </Button>
+              </li>
+            );
+          })}
+        </ul>
       )}
-      <div className="min-w-0 flex-1">
-        <p className={cx("text-sm font-medium", step.done ? "text-muted" : "text-fg")}>{step.title}</p>
-        <p className="text-xs text-muted">{step.detail}</p>
-      </div>
-      {step.action && <div className="shrink-0">{step.action}</div>}
-    </li>
+      {connect && (
+        <QuickConnectPanel
+          device={connect.device}
+          anchor={connect.anchor}
+          onClose={(returnFocus) => {
+            const anchor = connect.anchor;
+            setConnect(null);
+            if (returnFocus) anchor.focus();
+          }}
+        />
+      )}
+    </Card>
   );
 }
 
@@ -221,45 +215,6 @@ function TileLink({ to, children }: { to: string; children: ReactNode }) {
     <Link to={to} className="text-xs text-accent hover:underline">
       {children}
     </Link>
-  );
-}
-
-function OrganizationsCard({ className }: { className?: string }) {
-  const orgs = useOrganizations();
-  const shown = orgs.items.slice(0, 8);
-  return (
-    <Card
-      title="Organizations"
-      className={className}
-      padded={false}
-      actions={
-        <Link to="/organizations" className="text-xs text-accent hover:underline">
-          View all
-        </Link>
-      }
-    >
-      {orgs.isPending ? (
-        <Spinner />
-      ) : orgs.isError ? (
-        <ErrorState error={orgs.error} onRetry={() => void orgs.refetch()} compact />
-      ) : shown.length === 0 ? (
-        <EmptyState title="No organizations yet" icon={<Building2 className="size-8" aria-hidden />} compact />
-      ) : (
-        <ul className="divide-y divide-line">
-          {shown.map((o) => (
-            <li key={o.id}>
-              <Link to={`/organizations/${o.id}`} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm hover:bg-hover">
-                <span className="truncate font-medium">{o.name}</span>
-                <span className="shrink-0 text-xs text-muted tabular-nums">{plural(o.siteCount, "site")}</span>
-              </Link>
-            </li>
-          ))}
-          {orgs.items.length > shown.length && (
-            <li className="px-4 py-2 text-xs text-muted">and {plural(orgs.items.length - shown.length, "more organization")}</li>
-          )}
-        </ul>
-      )}
-    </Card>
   );
 }
 

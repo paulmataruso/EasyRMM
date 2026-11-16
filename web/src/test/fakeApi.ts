@@ -150,5 +150,13 @@ export function baseRoutes(session: SessionView | null): Record<string, FakeHand
     "POST /auth/logout": noContent,
     "GET /alerts/summary": ok({ active: 0, critical: 0, warning: 0, acknowledged: 0, devices: 0 }),
     "GET /alerts": ok({ items: [] }),
+    // The sidebar's section navigation (nav/SectionNav) and the dashboard's recent connections. Tests that care
+    // replace these.
+    "GET /organizations": ok({ items: [] }),
+    "GET /sites": ok({ items: [] }),
+    "GET /devices": ok({ items: [] }),
+    "GET /alerts/devices": ok({ items: [] }),
+    "GET /scripts": ok({ items: [] }),
+    "GET /devices/recent-connections": ok({ items: [] }),
   };
 }

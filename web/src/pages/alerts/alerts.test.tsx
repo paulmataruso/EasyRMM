@@ -3,7 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AlertEntry } from "../../api/types";
 import { baseRoutes, installFakeApi, noContent, ok, sessionView, type FakeRequest } from "../../test/fakeApi";
-import { alertEntry, alertPolicy, org, site } from "../../test/fixtures";
+import { alertEntry, alertPolicy, device, org, site } from "../../test/fixtures";
 import { renderApp, renderWithProviders } from "../../test/render";
 import { conditionText, formatMinutes, resolutionText, valueText } from "./alertText";
 import { DeviceAlertsCard } from "./DeviceAlertsCard";
@@ -92,7 +92,7 @@ describe("alerts page", () => {
 
   it("keeps its filters in the URL", async () => {
     const user = userEvent.setup();
-    const server = installFakeApi(routes([DISK]));
+    const server = installFakeApi({ ...routes([DISK]), "GET /devices/:id": ok(device("d1", "DB-01")) });
     renderApp("/alerts?deviceId=d1");
     expect(await screen.findByRole("button", { name: "Show alerts on every device" })).toBeInTheDocument();
     expect((await screen.findAllByText("DB-01")).length).toBeGreaterThan(0);
@@ -100,10 +100,14 @@ describe("alerts page", () => {
 
     await user.selectOptions(screen.getByLabelText("Severity"), "critical");
     await waitFor(() => expect(location()).toBe("/alerts?deviceId=d1&severity=critical"));
+    await user.click(screen.getByRole("button", { name: "Show alerts on every device" }));
+    await waitFor(() => expect(location()).toBe("/alerts?severity=critical"));
+    // An organization narrows to its sites; choosing one clears a device or site chosen before.
     await user.selectOptions(screen.getByLabelText("Organization"), "o1");
     await waitFor(() => expect(server.callsTo("GET /alerts").at(-1)?.query.get("organizationId")).toBe("o1"));
-    await user.click(screen.getByRole("button", { name: "Show alerts on every device" }));
-    await waitFor(() => expect(location()).toBe("/alerts?severity=critical&organizationId=o1"));
+    expect(location()).toBe("/alerts?severity=critical&organizationId=o1");
+    await user.selectOptions(screen.getByLabelText("Site"), "s1");
+    await waitFor(() => expect(server.callsTo("GET /alerts").at(-1)?.query.get("siteId")).toBe("s1"));
 
     server.on("GET /alerts", ok({ items: [] }));
     await user.selectOptions(screen.getByLabelText("Show"), "resolved");

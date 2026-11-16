@@ -1,16 +1,15 @@
 import { useId, useRef } from "react";
 import { Link, useNavigate } from "react-router";
 import { Monitor, Plus } from "lucide-react";
-import { useApi, useList, usePrefetch, useSites } from "../../api/hooks";
+import { useApi, useList, usePrefetch } from "../../api/hooks";
 import type { Device, RemoteAccessStatus } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
-import { OrganizationSelect, SearchInput } from "../../components/Filters";
+import { OrganizationSelect, SearchInput, SiteSelect } from "../../components/Filters";
 import { DeviceStatusBadge } from "../../components/StatusBadges";
 import { Alert, buttonClasses, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { useUrlState } from "../../lib/urlState";
-import { DeviceTreeToggle } from "./DeviceTree";
 import { platformName } from "./platform";
 
 /** The server's cap on one list response (devices.MaxList). */
@@ -45,12 +44,7 @@ export function DevicesPage() {
       <PageHeader
         title="Devices"
         subtitle="Computers in the organizations you support. Status refreshes every 30 seconds."
-        actions={
-          <>
-            <DeviceTreeToggle />
-            {canEnroll && addLink}
-          </>
-        }
+        actions={canEnroll ? addLink : undefined}
       />
       <RemoteAccessWarning />
       <Toolbar>
@@ -153,23 +147,6 @@ export function RemoteAccessWarning() {
         View details
       </Link>
     </Alert>
-  );
-}
-
-function SiteSelect({ organizationId, value, onChange }: { organizationId: string; value: string; onChange: (v: string) => void }) {
-  const sites = useSites(organizationId || null);
-  const id = useId();
-  return (
-    <Field label="Site" htmlFor={id} className="min-w-40">
-      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} disabled={sites.isPending}>
-        <option value="">All sites</option>
-        {sites.items.map((s) => (
-          <option key={s.id} value={s.id}>
-            {organizationId ? s.name : `${s.organizationName} / ${s.name}`}
-          </option>
-        ))}
-      </Select>
-    </Field>
   );
 }
 

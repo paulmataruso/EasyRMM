@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 )
 
@@ -27,6 +28,45 @@ func FS(dir string) (fs.FS, error) {
 		return os.DirFS(dir), nil
 	}
 	return fs.Sub(embedded, "dist")
+}
+
+// BuildHeader carries Build on API responses.
+const BuildHeader = "X-EasyRMM-Console"
+
+var entryScript = regexp.MustCompile(`<script\b[^>]*\btype="module"[^>]*\bsrc="([^"]+)"`)
+
+// Build names the console build these files hold: the module script that
+// index.html loads, such as "/assets/index-CK4Ho17z.js". Its name carries a
+// hash of its contents, so every build of the console has a new one. Empty
+// when there is no index.html or no module script in it.
+func Build(files fs.FS) string {
+	index, err := fs.ReadFile(files, "index.html")
+	if err != nil {
+		return ""
+	}
+	m := entryScript.FindSubmatch(index)
+	if m == nil {
+		return ""
+	}
+	return string(m[1])
+}
+
+// Announce adds the console build to every /api/v1/ response. A console that
+// has been open since before the server was upgraded runs the old build; it
+// compares this with the script it was loaded from, and loads the new one at
+// its next page change. Nothing is added when build is empty.
+func Announce(build string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		if build == "" {
+			return next
+		}
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api/v1/") {
+				w.Header().Set(BuildHeader, build)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // Handler serves static assets and falls back to index.html for client-side

@@ -182,8 +182,8 @@ describe("devices", () => {
   });
 
   it("is in the navigation only for people who can view devices", async () => {
-    installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(DEVICES[0]) });
-    const { unmount } = renderApp("/devices/d1");
+    installFakeApi(baseRoutes(TECHNICIAN));
+    const { unmount } = renderApp("/");
     const nav = await screen.findByRole("navigation", { name: "Main" });
     expect(within(nav).getByRole("link", { name: "Devices" })).toHaveAttribute("href", "/devices");
     // A technician without settings.manage, user.view or audit.view has no settings.

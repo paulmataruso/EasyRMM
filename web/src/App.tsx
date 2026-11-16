@@ -28,10 +28,10 @@ import { ScriptsPage } from "./pages/scripts/ScriptsPage";
 import { ScriptDetailPage } from "./pages/scripts/ScriptDetailPage";
 import { ScriptFormPage } from "./pages/scripts/ScriptFormPage";
 import { JobsPage } from "./pages/jobs/JobsPage";
-import { SoftwarePage } from "./pages/software/SoftwarePage";
 import { AlertsPage } from "./pages/alerts/AlertsPage";
 import { JobDetailPage } from "./pages/jobs/JobDetailPage";
 import { RunDetailPage } from "./pages/jobs/RunDetailPage";
+import { useReloadWhenOutdated } from "./lib/consoleBuild";
 
 const stageRoutes: Record<Exclude<AuthStage, "loading" | "error" | "ready">, string> = {
   setup: "/setup",
@@ -84,6 +84,7 @@ function Gate({ stage: required, children }: { stage: AuthStage; children: React
 }
 
 export function App() {
+  useReloadWhenOutdated();
   return (
     <Routes>
       <Route path="/setup" element={<Gate stage="setup"><SetupPage /></Gate>} />
@@ -106,7 +107,6 @@ export function App() {
         <Route path="devices" element={<DevicesPage />} />
         <Route path="devices/add" element={<AddDevicesPage />} />
         <Route path="devices/:id" element={<DeviceDetailPage />} />
-        <Route path="software" element={<SoftwarePage />} />
         <Route path="alerts" element={<AlertsPage />} />
         <Route path="scripts" element={<ScriptsPage />} />
         <Route path="scripts/new" element={<ScriptFormPage />} />

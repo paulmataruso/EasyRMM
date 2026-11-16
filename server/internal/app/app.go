@@ -290,6 +290,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	}
 	app := httpapi.Chain(mux,
 		httpapi.SecurityHeaders(!cfg.DevInsecureCookie, strings.Join(frames, " ")),
+		webui.Announce(webui.Build(files)),
 		d.Sessions.Load,
 		d.Sessions.CSRF,
 	)

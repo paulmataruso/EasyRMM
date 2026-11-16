@@ -588,6 +588,29 @@ func TestAlerts(t *testing.T) {
 	if sum != (Summary{Active: 4, Critical: 2, Warning: 2, Devices: 2}) {
 		t.Fatalf("summary = %+v", sum)
 	}
+	byDevice := func(c access.Caller) map[uuid.UUID]DeviceAlerts {
+		t.Helper()
+		items, err := f.svc.ActiveByDevice(f.ctx, c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[uuid.UUID]DeviceAlerts{}
+		for _, d := range items {
+			out[d.DeviceID] = d
+		}
+		return out
+	}
+	if got := byDevice(hqTech); len(got) != 2 ||
+		got[pc] != (DeviceAlerts{DeviceID: pc, OrganizationID: f.acme, SiteID: f.hq, Active: 2, Critical: 1}) ||
+		got[other].Active != 2 || got[other].Critical != 1 {
+		t.Fatalf("HQ technician's counts = %+v", got)
+	}
+	if got := byDevice(globexTech); len(got) != 1 || got[press] != (DeviceAlerts{DeviceID: press, OrganizationID: f.globex, SiteID: f.plant, Active: 1, Critical: 1}) {
+		t.Fatalf("Globex technician's counts = %+v", got)
+	}
+	if got := byDevice(f.super); len(got) != 3 {
+		t.Fatalf("super administrator's counts = %+v", got)
+	}
 
 	// Acknowledge and resolve.
 	target := list(f.super, AlertQuery{DeviceID: pc, Severity: SeverityCritical})[0]

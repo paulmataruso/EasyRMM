@@ -1,11 +1,12 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
-import { Bell, Building2, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Package, Settings, Sun, UserCircle, X } from "lucide-react";
+import { Bell, Building2, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Settings, Sun, UserCircle, X } from "lucide-react";
 import { useApi } from "../api/hooks";
 import type { AlertSummary } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { applyTheme, getStoredTheme, storeTheme, type Theme } from "../lib/theme";
-import { DeviceTreeDock, DeviceTreeProvider } from "../pages/devices/DeviceTree";
+import { SectionNav } from "../nav/SectionNav";
+import { SECTION_PERMISSION, sectionFor, type SectionId } from "../nav/sections";
 import { cx } from "./ui";
 
 interface NavItem {
@@ -68,13 +69,49 @@ export function Logo({ className, onDark = false, large = false }: { className?:
   );
 }
 
+/** The main menu item that leads to each section. */
+const SECTION_HOME: Record<SectionId, string> = {
+  organizations: "/organizations",
+  devices: "/devices",
+  alerts: "/alerts",
+  scripts: "/scripts",
+  jobs: "/jobs",
+  settings: "/settings",
+};
+
 export function AppLayout() {
   const { session, can, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+  // Back shows the main menu on this page; the next page in a section shows that section's navigation again.
+  const [menuAt, setMenuAt] = useState<string | null>(null);
+  const [focusNext, setFocusNext] = useState<"back" | "menu" | null>(null);
+  const menuList = useRef<HTMLUListElement>(null);
+  const focused = useCallback(() => setFocusNext(null), []);
 
-  useEffect(() => setMobileOpen(false), [location.pathname]);
+  useEffect(() => setMobileOpen(false), [location.pathname, location.search]);
+  const pageSection = sectionFor(location.pathname);
+  const allowed = ((): boolean => {
+    switch (pageSection) {
+      case null:
+        return false;
+      case "organizations":
+        return true;
+      case "settings":
+        return can("user.view") || can("audit.view") || can("settings.manage");
+      default:
+        return can(SECTION_PERMISSION[pageSection]);
+    }
+  })();
+  const section = allowed && menuAt !== location.pathname ? pageSection : null;
+
+  useEffect(() => {
+    if (focusNext !== "menu" || section !== null || !pageSection) return;
+    menuList.current?.querySelector<HTMLElement>(`[data-nav="${SECTION_HOME[pageSection]}"]`)?.focus();
+    setFocusNext(null);
+  }, [focusNext, section, pageSection]);
+
   const alerts = useApi<AlertSummary>(can("alert.view") ? "/alerts/summary" : null, undefined, { refetchInterval: 60_000 });
 
   const nav: NavItem[] = [
@@ -92,9 +129,6 @@ export function AppLayout() {
       icon: <Bell className="size-4" aria-hidden />,
       count: s && s.active > 0 ? { value: s.active, label: `${s.active} active, ${s.critical} critical`, critical: s.critical > 0 } : undefined,
     });
-  }
-  if (can("software.view")) {
-    nav.push({ to: "/software", label: "Software", icon: <Package className="size-4" aria-hidden /> });
   }
   if (can("script.view")) {
     nav.push({ to: "/scripts", label: "Scripts", icon: <FileCode2 className="size-4" aria-hidden /> });
@@ -119,12 +153,29 @@ export function AppLayout() {
           <X className="size-5" aria-hidden />
         </button>
       </div>
-      <ul className="flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
+      {section ? (
+        <SectionNav
+          key={section}
+          section={section}
+          focusBack={focusNext === "back"}
+          onFocused={focused}
+          onBack={() => {
+            setMenuAt(location.pathname);
+            setFocusNext("menu");
+          }}
+        />
+      ) : (
+      <ul ref={menuList} className="nav-enter flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
         {nav.map((item) => (
           <li key={item.to}>
             <NavLink
               to={item.to}
               end={item.end}
+              data-nav={item.to}
+              onClick={() => {
+                setMenuAt(null);
+                setFocusNext(sectionFor(item.to) ? "back" : null);
+              }}
               className={({ isActive }) =>
                 cx(
                   "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
@@ -150,6 +201,7 @@ export function AppLayout() {
           </li>
         ))}
       </ul>
+      )}
       <div className="border-t border-white/10 px-2 py-2">
         <NavLink
           to="/account"
@@ -177,7 +229,6 @@ export function AppLayout() {
   );
 
   return (
-    <DeviceTreeProvider>
       <div className="flex h-full">
         <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-surface focus:px-3 focus:py-2">
           Skip to content
@@ -200,18 +251,13 @@ export function AppLayout() {
             <div className="flex-1" />
             <ThemeToggle />
           </header>
-          {/* The device tree docks to the right of the page on the devices pages. */}
-          <div className="flex min-h-0 flex-1">
-            <main id="main" className="min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
-              <div className="mx-auto max-w-[1440px]">
-                <Outlet />
-              </div>
-            </main>
-            <DeviceTreeDock />
-          </div>
+          <main id="main" className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
+            <div className="mx-auto max-w-[1440px]">
+              <Outlet />
+            </div>
+          </main>
         </div>
       </div>
-    </DeviceTreeProvider>
   );
 }
 

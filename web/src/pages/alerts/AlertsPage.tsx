@@ -1,10 +1,10 @@
 import { useId, useState } from "react";
 import { Link } from "react-router";
-import { BellRing, CheckCircle2, Plus, X } from "lucide-react";
+import { BellRing, CheckCircle2, Plus } from "lucide-react";
 import { useList } from "../../api/hooks";
 import type { AlertEntry, AlertPolicy } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
-import { OrganizationSelect } from "../../components/Filters";
+import { DeviceScope, OrganizationSelect, SiteSelect } from "../../components/Filters";
 import { Badge, Button, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
 import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
@@ -63,18 +63,26 @@ function AlertList() {
   const showId = useId();
   const show: Show = url.get("status") === "resolved" ? "resolved" : url.get("status") === "all" ? "all" : "active";
   const organizationId = url.get("organizationId");
+  const siteId = url.get("siteId");
   const severity = url.get("severity");
   const deviceId = url.get("deviceId");
   const before = url.get("before");
   const list = useList<AlertEntry>(
     "/alerts",
-    { status: show, organizationId: organizationId || undefined, severity: severity || undefined, deviceId: deviceId || undefined, before: before || undefined, limit: 100 },
+    {
+      status: show,
+      organizationId: organizationId || undefined,
+      siteId: siteId || undefined,
+      severity: severity || undefined,
+      deviceId: deviceId || undefined,
+      before: before || undefined,
+      limit: 100,
+    },
     { keepPrevious: true, refetchInterval: 30_000 },
   );
   const actions = useAlertAction();
-  const filtered = Boolean(organizationId || severity || deviceId);
+  const filtered = Boolean(organizationId || siteId || severity || deviceId);
   const anyActions = list.items.some((a) => a.canManage && a.status !== "resolved");
-  const deviceName = list.items[0]?.deviceName;
 
   return (
     <>
@@ -86,7 +94,8 @@ function AlertList() {
             <option value="all">All alerts</option>
           </Select>
         </Field>
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, before: null })} />
+        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null, deviceId: null, before: null })} />
+        <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v, deviceId: null, before: null })} />
         <Field label="Severity" htmlFor={severityId} className="min-w-36">
           <Select id={severityId} value={severity} onChange={(e) => url.set({ severity: e.target.value, before: null })}>
             <option value="">All severities</option>
@@ -94,19 +103,7 @@ function AlertList() {
             <option value="warning">Warning</option>
           </Select>
         </Field>
-        {deviceId && (
-          <span className="mb-1 inline-flex items-center gap-1 rounded-full bg-accent-soft py-1 pr-1 pl-3 text-sm text-accent">
-            {deviceName ?? "One device"}
-            <button
-              type="button"
-              className="rounded-full p-0.5 hover:bg-accent/15"
-              aria-label="Show alerts on every device"
-              onClick={() => url.set({ deviceId: null, before: null })}
-            >
-              <X className="size-3.5" aria-hidden />
-            </button>
-          </span>
-        )}
+        {deviceId && <DeviceScope deviceId={deviceId} clearLabel="Show alerts on every device" onClear={() => url.set({ deviceId: null, before: null })} />}
       </Toolbar>
 
       {list.isPending ? (
@@ -117,7 +114,7 @@ function AlertList() {
         filtered ? (
           <EmptyState
             title="No alerts match these filters"
-            action={<Button onClick={() => url.set({ organizationId: null, severity: null, deviceId: null, before: null })}>Clear filters</Button>}
+            action={<Button onClick={() => url.set({ organizationId: null, siteId: null, severity: null, deviceId: null, before: null })}>Clear filters</Button>}
           />
         ) : show === "active" ? (
           <EmptyState

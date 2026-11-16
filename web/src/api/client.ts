@@ -3,6 +3,9 @@
 // - CSRF: unsafe methods send the session's synchronizer token in X-CSRF-Token.
 //   The token comes from the session view and is held in memory only.
 // - Errors use the server envelope {"error":{"code","message","fields"}} and become ApiError.
+// - Every response names the console build the server serves (lib/consoleBuild).
+
+import { BUILD_HEADER, noteServerBuild } from "../lib/consoleBuild";
 
 export const API_BASE = "/api/v1";
 
@@ -121,7 +124,7 @@ async function send(method: string, path: string, options: RequestOptions): Prom
   const headers: Record<string, string> = { Accept: "application/json" };
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
   if (UNSAFE_METHODS.has(method) && csrfToken) headers["X-CSRF-Token"] = csrfToken;
-  return fetch(apiUrl(path, options.params), {
+  const response = await fetch(apiUrl(path, options.params), {
     method,
     headers,
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
@@ -129,6 +132,8 @@ async function send(method: string, path: string, options: RequestOptions): Prom
     cache: "no-store",
     signal: options.signal,
   });
+  noteServerBuild(response.headers.get(BUILD_HEADER));
+  return response;
 }
 
 async function readError(response: Response): Promise<ApiError> {

@@ -645,6 +645,22 @@ export interface AlertEntry {
   canManage: boolean;
 }
 
+/** Active alerts on one device (GET /alerts/devices), for the alerts tree. */
+export interface DeviceAlertCount {
+  deviceId: string;
+  organizationId: string;
+  siteId: string;
+  active: number;
+  critical: number;
+}
+
+/** A device the caller recently opened a remote session on (GET /devices/recent-connections). */
+export interface RecentConnection {
+  device: Device;
+  kind: RemoteKind;
+  at: string;
+}
+
 export interface AlertSummary {
   active: number;
   critical: number;

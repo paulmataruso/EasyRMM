@@ -97,7 +97,8 @@ describe("organizations", () => {
     });
     renderApp("/organizations?new=1");
     expect(await screen.findByText(/You have not been given access to any organization yet/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /organization/ })).not.toBeInTheDocument();
+    expect(within(screen.getByRole("main")).queryByRole("button", { name: /organization/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "New organization" })).not.toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 

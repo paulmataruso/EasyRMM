@@ -6,7 +6,7 @@ import { useApi } from "../../api/hooks";
 import type { Device, RemoteKind, RemoteLaunch } from "../../api/types";
 import { REMOTE_KIND_NAMES } from "../../components/StatusBadges";
 import { Button, buttonClasses, cx, Dot, Spinner } from "../../components/ui";
-import { allowedKinds } from "./DeviceDetailPage";
+import { allowedKinds } from "./remote";
 import { isRemoteKind } from "./platform";
 import { inSessionWindow } from "./sessionWindow";
 

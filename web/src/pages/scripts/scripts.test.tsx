@@ -59,8 +59,8 @@ describe("scripts", () => {
     expect(within(table).getByText("Shows free space on every mount.")).toBeInTheDocument();
     expect(within(table).getAllByText("Northwind Traders / Head office").length).toBeGreaterThan(0);
     expect(within(table).getByText("1 minute")).toBeInTheDocument();
-    expect(screen.getByText("2 scripts")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "New script" })).toHaveAttribute("href", "/scripts/new");
+    expect(within(screen.getByRole("main")).getByText("2 scripts")).toBeInTheDocument();
+    expect(within(screen.getByRole("main")).getByRole("link", { name: "New script" })).toHaveAttribute("href", "/scripts/new");
 
     await user.selectOptions(screen.getByLabelText("Library"), "Shared library");
     await waitFor(() => expect(within(screen.getByRole("table")).queryByText("Restart print spooler")).not.toBeInTheDocument());
@@ -81,6 +81,7 @@ describe("scripts", () => {
     expect(screen.getByText(/An administrator adds scripts to the library/)).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "New script" })).not.toBeInTheDocument();
     // The sidebar offers scripts and jobs to roles that see them.
+    await userEvent.click(screen.getByRole("button", { name: "Back to the main menu" }));
     const nav = screen.getByRole("navigation", { name: "Main" });
     expect(within(nav).getByRole("link", { name: "Scripts" })).toBeInTheDocument();
     expect(within(nav).getByRole("link", { name: "Jobs" })).toBeInTheDocument();
