@@ -96,9 +96,10 @@ See ADR-0004 and ADR-0005. Summary:
 * MeshCentral runs on loopback with TLS offload; our edge serves it on a
   dedicated hostname (`mesh.<domain>`) to keep it in a separate browser
   origin. The edge forwards agent routes (`agent.ashx`, `meshrelay.ashx`,
-  `meshagents`, `agenttransfer.ashx`, `devicefile.ashx`) unconditionally, and
-  browser routes only for requests that carry a valid EasyRMM remote-session
-  grant cookie. MeshCentral's login page and `/meshsettings` are never
+  `meshagents`, `agenttransfer.ashx`, `devicefile.ashx`) without a grant, as
+  MeshCentral's agent port serves them, and browser routes only for requests
+  that carry a valid EasyRMM remote-session grant cookie. Relays and their
+  tunnel requests are bound to the session's grants (ADR-0022, ADR-0033). MeshCentral's login page and `/meshsettings` are never
   reachable from the internet.
 * One MeshCentral device group per EasyRMM **site**. One MeshCentral user per
   EasyRMM user who has any remote permission, with random credentials the user

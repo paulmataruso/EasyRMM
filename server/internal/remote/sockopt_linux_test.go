@@ -243,6 +243,10 @@ func TestGatewayPacesAgentDesktopRelays(t *testing.T) {
 			upstream <- c // and read nothing more
 		}()
 		g := newTestGateway(t, "http://"+ln.Addr().String(), true)
+		// A browser's tunnel request recorded the tunnel the agent joins.
+		if err := g.admitTunnel(uuid.New(), "t1", "node//abc", tc.p); err != nil {
+			t.Fatal(err)
+		}
 		srv := httptest.NewServer(g)
 
 		agent, err := net.Dial("tcp", srv.Listener.Addr().String())

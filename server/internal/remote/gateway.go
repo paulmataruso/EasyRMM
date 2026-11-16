@@ -23,17 +23,29 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 )
 
-// agentRoutes are the MeshCentral routes MeshAgent uses (the same set
-// MeshCentral serves on its agent-only port). Requests from agents are
-// forwarded without an EasyRMM grant: MeshCentral authenticates agents
-// itself. Browser requests to these routes still need a grant.
-var agentRoutes = map[string]bool{
-	"/agent.ashx":         true,
-	"/meshrelay.ashx":     true,
-	"/devicefile.ashx":    true,
-	"/agenttransfer.ashx": true,
-	"/meshagents":         true,
-	"/agentdownload.ashx": true,
+// agentRoutes are the MeshCentral routes MeshAgent uses: the same set, and
+// the same kinds of request, as MeshCentral serves on its agent-only port
+// (WebSocket or plain GET). Requests from agents are forwarded without an
+// EasyRMM grant: MeshCentral authenticates agents itself. Browser requests
+// to these routes still need a grant.
+//
+// The main port MeshCentral listens on, which the gateway forwards to,
+// serves more on some of these paths: a plain GET of /devicefile.ashx with
+// a user's sign-in cookie downloads a file from a device. Holding agent
+// requests to what the agent port serves keeps that behind the browser
+// checks.
+var agentRoutes = map[string]agentRoute{
+	"/agent.ashx":         {websocket: true},
+	"/meshrelay.ashx":     {websocket: true},
+	"/devicefile.ashx":    {websocket: true},
+	"/agenttransfer.ashx": {websocket: true},
+	"/meshagents":         {},
+	"/agentdownload.ashx": {},
+}
+
+// agentRoute is how agents use a route.
+type agentRoute struct {
+	websocket bool // a WebSocket; otherwise a plain GET
 }
 
 // blockedPrefixes are MeshCentral features that are never reachable through
@@ -56,6 +68,9 @@ var blockedPrefixes = []string{
 	"/oneclickrecovery.ashx", "/auth-", "/firebaserelay.aspx", "/mqtt.ashx", "/webrelay.ashx",
 	"/mstsc.html", "/ssh", "/apf.ashx", "/amtevents.ashx", "/ipkvm.ashx",
 	"/webider.ashx", "/messenger", "/recordings.ashx", "/2fahold.ashx", "/localrelay.ashx",
+	// Uploads: server files, and files pushed to every device the user
+	// can reach at once, with no EasyRMM session on any of them.
+	"/uploadfile",
 }
 
 // blocked reports whether a request is for a MeshCentral feature EasyRMM
@@ -126,6 +141,10 @@ type Gateway struct {
 	mu      sync.Mutex
 	cache   map[[32]byte]cached
 	tunnels map[uuid.UUID]map[*trackedConn]struct{}
+	// admitted are the relay tunnels sessions may open, by tunnel id, and
+	// admittedBy how many each session has waiting (tunnels.go).
+	admitted   map[string]admittedTunnel
+	admittedBy map[uuid.UUID]int
 	// pressure is how long each device's desktop pictures were held
 	// (ADR-0025), and grants the desktop grants the session view's
 	// questions about it were checked against.
@@ -157,6 +176,7 @@ func NewGateway(svc *Service, cfg GatewayConfig, log *slog.Logger) (*Gateway, er
 		svc: svc, cookieName: name, secure: cfg.Secure, ttl: cfg.CacheTTL, log: log,
 		cache: map[[32]byte]cached{}, tunnels: map[uuid.UUID]map[*trackedConn]struct{}{},
 		pressure: map[string]*nodePressure{}, grants: map[grantKey]time.Time{},
+		admitted: map[string]admittedTunnel{}, admittedBy: map[uuid.UUID]int{},
 	}
 	if svc != nil {
 		g.granted = svc.SessionGranted
@@ -242,12 +262,10 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// password: browsers use one-time login tokens, agents their keys.
 	r.Header.Del("X-Meshauth")
 	// Agents use these exact paths.
-	if agentRoutes[reqPath] && !g.fromBrowser(r) {
-		if reqPath == "/meshrelay.ashx" {
-			if err := agentRelayRefused(r.URL.Query()); err != nil {
-				g.refuse(w, r, err)
-				return
-			}
+	if route, ok := agentRoutes[reqPath]; ok && !g.fromBrowser(r) {
+		if err := g.checkAgentRequest(r, route); err != nil {
+			g.refuse(w, r, err)
+			return
 		}
 		// Agents send no cookies; a MeshCentral session cookie here would
 		// sign a user in without passing the browser checks below.
@@ -278,13 +296,22 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// MeshCentral matches routes case-insensitively and ignores a trailing
 	// slash.
 	route := strings.ToLower(strings.TrimSuffix(reqPath, "/"))
-	if route == "/meshrelay.ashx" {
-		if err := g.checkRelay(r, session); err != nil {
+	upgrade := strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+	var relayProto string
+	switch route {
+	case "/meshrelay.ashx":
+		proto, err := g.checkRelay(r, session)
+		if err != nil {
+			g.refuse(w, r, err)
+			return
+		}
+		relayProto = proto
+	case "/devicefile.ashx":
+		if err := g.checkDeviceFile(r, session, upgrade); err != nil {
 			g.refuse(w, r, err)
 			return
 		}
 	}
-	upgrade := strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
 	if route == "/mstscrelay.ashx" && !upgrade {
 		g.refuse(w, r, refused("RDP relay without a WebSocket"))
 		return
@@ -299,9 +326,11 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		switch route {
 		case "/control.ashx":
-			tw.check, tw.what = checkControlMessage, "control channel"
+			tw.check, tw.what = g.controlCheck(r.Context(), session), "control channel"
 		case "/mstscrelay.ashx":
 			tw.check, tw.what = g.rdpCheck(r.Context(), session), "RDP relay"
+		case "/meshrelay.ashx":
+			tw.check, tw.what = relayProtocolCheck(relayProto), "relay"
 		}
 		w = tw
 	}
@@ -314,21 +343,83 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // checkRelay allows a browser's relay connection only for one of EasyRMM's
 // session types, without routing instructions, on a device the browser's
-// EasyRMM session opened a remote session of that type on.
-func (g *Gateway) checkRelay(r *http.Request, session uuid.UUID) error {
-	nodeID, kind, err := browserRelay(r.URL.Query())
+// EasyRMM session opened a remote session of that type on, and records its
+// tunnel for the agent (tunnels.go). It returns the relay protocol.
+func (g *Gateway) checkRelay(r *http.Request, session uuid.UUID) (string, error) {
+	q := r.URL.Query()
+	nodeID, kind, err := browserRelay(q)
+	if err != nil {
+		return "", err
+	}
+	ids := q["id"]
+	if len(ids) != 1 {
+		return "", refused("relay without one tunnel id")
+	}
+	if g.granted == nil {
+		return "", refused("no grant check")
+	}
+	ok, err := g.granted(r.Context(), session, nodeID, kind)
+	if err != nil {
+		return "", fmt.Errorf("checking relay grant: %w", err)
+	}
+	if !ok {
+		return "", refused("%s relay for a device the session opened no %s session on", kind, kind)
+	}
+	proto := q["p"][0]
+	return proto, g.admitTunnel(session, ids[0], nodeID, proto)
+}
+
+// checkAgentRequest holds an agent's request to what MeshCentral's agent
+// port serves on its route, and checks relay connections (tunnels.go).
+func (g *Gateway) checkAgentRequest(r *http.Request, route agentRoute) error {
+	if r.Method != http.MethodGet {
+		return refused("agent request with method %s", r.Method)
+	}
+	if upgrade := strings.EqualFold(r.Header.Get("Upgrade"), "websocket"); upgrade != route.websocket {
+		if route.websocket {
+			return refused("agent request that is not a WebSocket")
+		}
+		return refused("agent WebSocket on a download route")
+	}
+	switch r.URL.Path {
+	case "/meshrelay.ashx":
+		return g.checkAgentRelay(r.URL.Query())
+	case "/devicefile.ashx":
+		// The agent's end of a file download: a tunnel id and relay cookie.
+		return agentRelayRefused(r.URL.Query())
+	}
+	return nil
+}
+
+// checkDeviceFile allows a browser's file download from a device
+// (devicefile.ashx?c=…&m=…&n=<node>&f=<path>, as MeshCentral's files view
+// links them) only from a device the session opened a files session on.
+// The WebSocket on the same path is the agent's end, never a browser's.
+func (g *Gateway) checkDeviceFile(r *http.Request, session uuid.UUID, upgrade bool) error {
+	if r.Method != http.MethodGet || upgrade {
+		return refused("device file request that is not a download")
+	}
+	q := r.URL.Query()
+	if hasBracketKey(q) {
+		return refused("device file request with an array or object in its address")
+	}
+	nodes := q["n"]
+	if len(nodes) != 1 {
+		return refused("device file request without one device")
+	}
+	node, err := normalizeNodeID(nodes[0])
 	if err != nil {
 		return err
 	}
 	if g.granted == nil {
 		return refused("no grant check")
 	}
-	ok, err := g.granted(r.Context(), session, nodeID, kind)
+	ok, err := g.granted(r.Context(), session, node, KindFiles)
 	if err != nil {
-		return fmt.Errorf("checking relay grant: %w", err)
+		return fmt.Errorf("checking device file grant: %w", err)
 	}
 	if !ok {
-		return refused("%s relay for a device the session opened no %s session on", kind, kind)
+		return refused("file download from a device the session opened no files session on")
 	}
 	return nil
 }
@@ -497,6 +588,7 @@ func (g *Gateway) sweep(ctx context.Context) {
 			delete(g.grants, k)
 		}
 	}
+	g.pruneTunnels(now)
 	g.mu.Unlock()
 	if len(ids) == 0 {
 		return
@@ -526,6 +618,7 @@ func (g *Gateway) sweep(ctx context.Context) {
 				delete(g.grants, k)
 			}
 		}
+		g.forgetSessionTunnels(id)
 	}
 	g.mu.Unlock()
 	for _, c := range closing {
@@ -636,11 +729,15 @@ func (t *trackingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if t.check != nil {
 		log, check, what := t.log, t.check, t.what
 		tc.reader = newWSGuard(conn, func(msg []byte) error {
-			if err := check(msg); err != nil {
+			err := check(msg)
+			switch {
+			case err == nil, errors.Is(err, errPassRest):
+			case errors.Is(err, errDropped):
+				log.Warn("remote gateway: dropped a message on a "+what, "reason", err.Error())
+			default:
 				log.Warn("remote gateway: closed a "+what, "reason", err.Error())
-				return err
 			}
-			return nil
+			return err
 		})
 	}
 	return tc, rw, nil

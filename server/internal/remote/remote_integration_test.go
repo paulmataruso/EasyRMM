@@ -962,14 +962,20 @@ func TestAgentEndToEnd(t *testing.T) {
 	refusedDial("relay outside EasyRMM's session types", b, "/meshrelay.ashx?browser=1&p=10&nodeid="+dev.MeshNodeID+"&id=x4", true)
 	refusedDial("desktop relay on a terminal grant", b, "/meshrelay.ashx?browser=1&p=2&nodeid="+dev.MeshNodeID+"&id=x7&auth="+ac.Cookie, true)
 	refusedDial("files relay on a terminal grant", b, "/meshrelay.ashx?browser=1&p=5&nodeid="+dev.MeshNodeID+"&id=x8&auth="+ac.Cookie, true)
+	// MeshCentral's query parser (qs) reads tcpport[] as tcpport.
+	refusedDial("relay with a TCP port spelled as an array", b, "/meshrelay.ashx?browser=1&p=1&nodeid="+dev.MeshNodeID+"&id=x12&tcpport[]=22&auth="+ac.Cookie, true)
 	// Without the browser's headers a request takes the agent path, where a
 	// MeshCentral user cookie would have skipped the checks above.
 	refusedDial("agent-path relay signed in as the user", r.browser(), "/meshrelay.ashx?p=1&nodeid="+dev.MeshNodeID+"&id=x5&tcpport=22&auth="+ac.Cookie, false)
 	// The control channel closes on a request for a tunnel or a cookie that
-	// encodes one; the agent never hears of it.
+	// encodes one, and on a tunnel request the session holds no grant for
+	// or that names no device; the agent never hears of it.
 	for _, cmd := range []map[string]any{
 		{"action": "msg", "type": "tunnel", "nodeid": dev.MeshNodeID, "value": "*/meshrelay.ashx?id=x6&rauth=" + ac.Rcookie, "tcpport": 22},
 		{"action": "getcookie", "nodeid": dev.MeshNodeID, "tcpport": 22, "tcpaddr": "127.0.0.1"},
+		{"action": "msg", "type": "tunnel", "nodeid": dev.MeshNodeID, "usage": 2, "value": "*/meshrelay.ashx?p=2&nodeid=" + dev.MeshNodeID + "&id=x9&rauth=" + ac.Rcookie},
+		{"action": "msg", "type": "tunnel", "nodeid": dev.MeshNodeID, "usage": 1, "value": "*/meshrelay.ashx?p=1&id=x10&rauth=" + ac.Rcookie},
+		{"action": "msg", "type": "tunnel", "nodeid": dev.MeshNodeID, "usage": 1, "value": "*/meshrelay.ashx?p=1&nodeid=" + dev.MeshNodeID + "&id=" + tunnel + "x&tcpport[]=22&rauth=" + ac.Rcookie},
 	} {
 		c2, err := r.dial(b, "/control.ashx")
 		if err != nil {
@@ -993,6 +999,81 @@ func TestAgentEndToEnd(t *testing.T) {
 		rcancel()
 		_ = c2.CloseNow()
 	}
+	// MeshCentral routes any device message to the agent for a user with
+	// remote control rights, and MeshAgent answers process lists, kills
+	// processes and stops services without checking the session types. The
+	// gateway drops them, and the channel stays open. (cpuinfo and
+	// userSessions are answered on any Linux machine; ps needs procps, which
+	// the test image lacks.)
+	c3, err := r.dial(b, "/control.ashx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	readUntil(t, c3, "userinfo", 15*time.Second)
+	send(t, c3, map[string]any{"action": "msg", "type": "ps", "nodeid": dev.MeshNodeID})
+	send(t, c3, map[string]any{"action": "msg", "type": "cpuinfo", "nodeid": dev.MeshNodeID})
+	send(t, c3, map[string]any{"action": "msg", "type": "userSessions", "nodeid": dev.MeshNodeID})
+	send(t, c3, map[string]any{"action": "msg", "type": "getclip", "nodeid": dev.MeshNodeID})
+	time.Sleep(10 * time.Second) // the agent answers a process list in well under a second
+	send(t, c3, map[string]any{"action": "authcookie"})
+	actx, acancel := context.WithTimeout(r.ctx, 15*time.Second)
+	for {
+		typ, data, err := c3.Read(actx)
+		if err != nil {
+			t.Fatalf("control channel after dropped messages: %v", err)
+		}
+		if typ != websocket.MessageText {
+			continue
+		}
+		if m := string(data); strings.Contains(m, `"action":"msg"`) && strings.Contains(m, `"type":"`) {
+			t.Errorf("the agent answered a dropped message: %.200s", data)
+		}
+		if strings.Contains(string(data), `"action":"authcookie"`) {
+			break
+		}
+	}
+	acancel()
+	_ = c3.CloseNow()
+
+	// MeshAgent takes the session type from the browser's first relay
+	// message: a terminal relay whose first message asks for a desktop is
+	// closed before the agent reads it.
+	sw := hex.EncodeToString([]byte(uuid.NewString()[:8]))
+	swRelay, err := r.dial(b, "/meshrelay.ashx?browser=1&p=1&nodeid="+dev.MeshNodeID+"&id="+sw+"&auth="+ac.Cookie)
+	if err != nil {
+		t.Fatal(err)
+	}
+	send(t, ctl, map[string]any{
+		"action": "msg", "type": "tunnel", "nodeid": dev.MeshNodeID, "usage": 1,
+		"value": "*/meshrelay.ashx?p=1&nodeid=" + dev.MeshNodeID + "&id=" + sw + "&rauth=" + ac.Rcookie,
+	})
+	sctx, scancel := context.WithTimeout(r.ctx, 60*time.Second)
+	for {
+		typ, data, err := swRelay.Read(sctx)
+		if err != nil {
+			t.Fatalf("waiting for the agent to join the second relay: %v", err)
+		}
+		if typ == websocket.MessageText && (string(data) == "c" || string(data) == "cr") {
+			break
+		}
+	}
+	_ = swRelay.Write(sctx, websocket.MessageText, []byte("2"))
+	for {
+		typ, data, err := swRelay.Read(sctx)
+		if err != nil {
+			if sctx.Err() != nil {
+				t.Error("terminal relay still open after asking for a desktop")
+			}
+			break
+		}
+		if typ == websocket.MessageBinary {
+			t.Errorf("the agent sent %d bytes on a terminal relay that asked for a desktop", len(data))
+			break
+		}
+	}
+	scancel()
+	_ = swRelay.CloseNow()
+
 	// MeshCentral's web RDP relay (ADR-0026). The agent tunnels RDP to the
 	// device's own port 3389; the test runs on the agent's network, so it
 	// plays the device's RDP server and sees what arrives.
@@ -1066,6 +1147,45 @@ func TestAgentEndToEnd(t *testing.T) {
 	// reaches the device's RDP port through MeshCentral and the agent.
 	if _, head := rdp(45 * time.Second); len(head) != 4 || head[0] != 3 || head[1] != 0 {
 		t.Errorf("RDP relay on an RDP grant: the device's RDP port got %x", head)
+	}
+
+	// A file download from the device (devicefile.ashx, as MeshCentral's
+	// files view links it) needs a files session on the device. MeshCentral's
+	// main port answers a plain GET with the user's MeshCentral cookie, so
+	// without browser headers (the agent path) it is refused too.
+	download := func(c *http.Client, browser bool) (int, string) {
+		t.Helper()
+		u := r.origin() + "/devicefile.ashx?c=" + url.QueryEscape(ac.Cookie) + "&m=x&n=" +
+			strings.TrimPrefix(dev.MeshNodeID, "node//") + "&f=" + url.QueryEscape("/etc/hostname")
+		req, _ := http.NewRequestWithContext(r.ctx, http.MethodGet, u, nil)
+		if browser {
+			req.Header.Set("Sec-Fetch-Mode", "cors")
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
+		}
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return resp.StatusCode, string(body)
+	}
+	hostname := strings.TrimSpace(docker(t, "exec", name, "cat", "/etc/hostname"))
+	if code, body := download(r.browser(), false); code != http.StatusForbidden || strings.Contains(body, hostname) {
+		t.Errorf("download on the agent path with a user's cookie: %d %.100q", code, body)
+	}
+	if code, body := download(b, true); code != http.StatusForbidden || strings.Contains(body, hostname) {
+		t.Errorf("download on a terminal grant: %d %.100q", code, body)
+	}
+	lf, err := r.svc.StartSession(r.ctx, tech, sess, dev.ID, KindFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.open(b, lf)
+	// With a files grant the download works: MeshCentral asks the agent,
+	// which sends the file over its own devicefile.ashx connection.
+	if code, body := download(b, true); code != http.StatusOK || strings.TrimSpace(body) != hostname {
+		t.Errorf("download on a files grant: %d %.100q, want %q", code, body, hostname)
 	}
 
 	// The terminal itself is unaffected.

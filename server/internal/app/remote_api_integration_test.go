@@ -201,7 +201,9 @@ func TestRemoteAPI(t *testing.T) {
 		{"/", []string{"Sec-Fetch-Mode", "navigate"}, http.StatusForbidden, "Remote session required"},
 		{"/api/v1/health", nil, http.StatusForbidden, "Remote session required"},
 		{"/.easyrmm/launch?t=not-a-real-token", nil, http.StatusForbidden, "expired"},
-		{"/agent.ashx", nil, http.StatusBadGateway, "unavailable"},
+		{"/agent.ashx", []string{"Connection", "Upgrade", "Upgrade", "websocket"}, http.StatusBadGateway, "unavailable"},
+		// Agents connect with a WebSocket; a plain GET is not an agent.
+		{"/agent.ashx", nil, http.StatusForbidden, "Not available"},
 		{"/meshsettings?id=x", []string{"Sec-Fetch-Mode", "navigate"}, http.StatusForbidden, "Not available"},
 	} {
 		r := anon.meshGet(c.path, c.hdr...)

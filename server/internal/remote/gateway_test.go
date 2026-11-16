@@ -64,10 +64,19 @@ func TestNewGatewayValidates(t *testing.T) {
 	}
 }
 
+// agentRequest is a request as an agent makes it: a WebSocket, without
+// browser headers.
+func agentRequest(method, target string) *http.Request {
+	r := httptest.NewRequest(method, target, nil)
+	r.Header.Set("Connection", "Upgrade")
+	r.Header.Set("Upgrade", "websocket")
+	return r
+}
+
 func TestGatewayForwardsAgents(t *testing.T) {
 	up := newUpstream(t)
 	g := newTestGateway(t, up.URL, true)
-	r := httptest.NewRequest(http.MethodGet, "https://mesh.example.com/agent.ashx?x=1", nil)
+	r := agentRequest(http.MethodGet, "https://mesh.example.com/agent.ashx?x=1")
 	r.RemoteAddr = "203.0.113.7:5555"
 	r.Header.Set("X-Forwarded-For", "10.9.9.9")
 	r.Header.Set("Forwarded", "for=10.9.9.9")
@@ -87,6 +96,43 @@ func TestGatewayForwardsAgents(t *testing.T) {
 	}
 	if w.Header().Get("Strict-Transport-Security") == "" {
 		t.Error("no HSTS on a secure gateway response")
+	}
+	// Downloads are plain GETs.
+	if w := serve(g, httptest.NewRequest(http.MethodGet, "https://mesh.example.com/meshagents?id=4", nil)); w.Code != http.StatusOK {
+		t.Errorf("agent download: %d", w.Code)
+	}
+	<-up.got
+}
+
+// Agents get what MeshCentral's agent port serves, the way it serves it:
+// the main port's plain GET of /devicefile.ashx downloads a file from a
+// device with a user's sign-in cookie, and is not an agent's request.
+func TestGatewayHoldsAgentsToTheAgentPort(t *testing.T) {
+	up := newUpstream(t)
+	g := newTestGateway(t, up.URL, true)
+	for _, r := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "https://mesh.example.com/devicefile.ashx?c=cookie&n=abc&f=/etc/shadow", nil),
+		httptest.NewRequest(http.MethodGet, "https://mesh.example.com/agent.ashx", nil),
+		agentRequest(http.MethodGet, "https://mesh.example.com/meshagents?id=4"),
+		agentRequest(http.MethodPost, "https://mesh.example.com/agent.ashx"),
+		agentRequest(http.MethodGet, "https://mesh.example.com/devicefile.ashx?id=t1&auth=cookie"),
+		agentRequest(http.MethodGet, "https://mesh.example.com/devicefile.ashx?id=t1&rauth[]=r"),
+	} {
+		if w := serve(g, r); w.Code != http.StatusForbidden {
+			t.Errorf("%s %s (WebSocket %v): %d", r.Method, r.URL, r.Header.Get("Upgrade") != "", w.Code)
+		}
+	}
+	// The agent's end of a file download.
+	if w := serve(g, agentRequest(http.MethodGet, "https://mesh.example.com/devicefile.ashx?id=t1&rauth=r")); w.Code != http.StatusOK {
+		t.Errorf("agent file transfer: %d", w.Code)
+	}
+	if in := <-up.got; in.URL.Path != "/devicefile.ashx" {
+		t.Errorf("forwarded %s", in.URL)
+	}
+	select {
+	case r := <-up.got:
+		t.Fatalf("forwarded %s", r.URL)
+	default:
 	}
 }
 
@@ -207,7 +253,7 @@ func TestGatewayUpstreamDown(t *testing.T) {
 	addr := ln.Addr().String()
 	_ = ln.Close()
 	g := newTestGateway(t, "http://"+addr, true)
-	w := serve(g, httptest.NewRequest(http.MethodGet, "https://mesh.example.com/agent.ashx", nil))
+	w := serve(g, agentRequest(http.MethodGet, "https://mesh.example.com/agent.ashx"))
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "unavailable") {
 		t.Fatalf("upstream down: %d %q", w.Code, w.Body.String())
 	}

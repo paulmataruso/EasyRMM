@@ -48,12 +48,44 @@ func refused(format string, args ...any) error {
 	return fmt.Errorf("%w: "+format, append([]any{errRefused}, args...)...)
 }
 
+// errDropped is a WebSocket message the gateway does not forward, while
+// keeping the connection open.
+var errDropped = errors.New("remote gateway: dropped")
+
+func dropped(format string, args ...any) error {
+	return fmt.Errorf("%w: "+format, append([]any{errDropped}, args...)...)
+}
+
+// errPassRest accepts a WebSocket message and everything after it unread.
+var errPassRest = errors.New("remote gateway: rest of the connection passes")
+
+// queryKey is the name MeshCentral reads a query key as. Its web server
+// (Express 4) parses queries with qs, which reads "tcpport[]=22" and
+// "tcpport[0]=22" as tcpport; the check compares the name before any
+// bracket, without case, so that no spelling slips through.
+func queryKey(k string) string {
+	if i := strings.IndexByte(k, '['); i >= 0 {
+		k = k[:i]
+	}
+	return strings.ToLower(k)
+}
+
 // hasRoutingKey reports whether a query carries routing instructions.
-// MeshCentral reads query keys case-sensitively; the check does not, so
-// that no spelling slips through.
 func hasRoutingKey(q url.Values) bool {
 	for k := range q {
-		if routingKeys[strings.ToLower(k)] {
+		if routingKeys[queryKey(k)] {
+			return true
+		}
+	}
+	return false
+}
+
+// hasBracketKey reports whether a query has a key qs would read as an array
+// or object. MeshCentral's own pages and agents never send one, and where
+// the gateway reads a value it must read the one MeshCentral reads.
+func hasBracketKey(q url.Values) bool {
+	for k := range q {
+		if strings.ContainsAny(k, "[]") {
 			return true
 		}
 	}
@@ -66,6 +98,9 @@ func hasRoutingKey(q url.Values) bool {
 func browserRelay(q url.Values) (nodeID string, kind Kind, err error) {
 	if hasRoutingKey(q) {
 		return "", "", refused("relay with routing instructions")
+	}
+	if hasBracketKey(q) {
+		return "", "", refused("relay with an array or object in its address")
 	}
 	p := q["p"]
 	if len(p) == 1 {
@@ -105,8 +140,11 @@ func agentRelayRefused(q url.Values) error {
 	if hasRoutingKey(q) {
 		return refused("agent relay with routing instructions")
 	}
+	if hasBracketKey(q) {
+		return refused("agent relay with an array or object in its address")
+	}
 	for k := range q {
-		switch strings.ToLower(k) {
+		switch queryKey(k) {
 		case "auth", "user", "pass", "key", "token":
 			return refused("agent relay with user credentials")
 		}
@@ -124,7 +162,7 @@ func checkControlMessage(payload []byte) error {
 		return refused("control message that is not a JSON object")
 	}
 	for k, v := range m {
-		if routingKeys[strings.ToLower(k)] {
+		if routingKeys[queryKey(k)] {
 			return refused("control message with routing instructions")
 		}
 		// A tunnel request names the relay address the agent joins; keep
@@ -149,14 +187,16 @@ func checkControlMessage(payload []byte) error {
 const maxControlMessage = 8 << 20
 
 // wsGuard reads the browser's side of a WebSocket and passes each message on
-// only once check has accepted it whole. Control frames pass straight
-// through; compressed frames are refused, since the gateway asks for no
-// compression.
+// only once check has accepted it whole. A check may also drop a message
+// (errDropped) or let the rest of the connection through (errPassRest).
+// Control frames pass straight through; compressed frames are refused,
+// since the gateway asks for no compression.
 type wsGuard struct {
 	src   *bufio.Reader
 	check func([]byte) error
 
 	out       []byte // checked bytes ready for the reader
+	pass      bool   // the check let the rest of the connection through
 	inMessage bool   // between the first and the final frame of a message
 	held      []byte // the message's frames as received
 	payload   []byte // and its unmasked payload
@@ -170,6 +210,9 @@ func newWSGuard(r io.Reader, check func([]byte) error) *wsGuard {
 
 func (g *wsGuard) Read(p []byte) (int, error) {
 	for len(g.out) == 0 {
+		if g.pass {
+			return g.src.Read(p)
+		}
 		if g.err != nil {
 			return 0, g.err
 		}
@@ -253,10 +296,19 @@ func (g *wsGuard) next() error {
 	if !fin {
 		return nil
 	}
-	if err := g.check(g.payload); err != nil {
+	err := g.check(g.payload)
+	switch {
+	case errors.Is(err, errDropped):
+		// Not forwarded; frames are masked one by one, so leaving a whole
+		// message out keeps the stream intact.
+	case errors.Is(err, errPassRest):
+		g.out = append(g.out, g.held...)
+		g.pass = true
+	case err != nil:
 		return err
+	default:
+		g.out = append(g.out, g.held...)
 	}
-	g.out = append(g.out, g.held...)
 	g.held, g.payload, g.inMessage = nil, nil, false
 	return nil
 }

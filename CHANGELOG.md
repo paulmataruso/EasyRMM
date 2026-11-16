@@ -274,6 +274,26 @@ All notable changes to this project are documented here. The format follows
   device's page; `GET /api/v1/software` remains.
 
 ### Security
+- Remote-access gateway hardening from the Phase 9 security review
+  (ADR-0033), checked against MeshCentral 1.3.1 and a real MeshAgent:
+  - Tunnel requests on MeshCentral's control channel must be for a device
+    and session type the EasyRMM session holds a grant on, and name this
+    server's relay; an agent joins only tunnels a session was granted, for
+    that device and session type, and a relay cannot switch session type
+    after it opens. Before, a grant for one device let its holder have
+    another device's agent join the relay, outside the grant and its audit
+    entry.
+  - Device messages outside EasyRMM's session types (process and service
+    control, opening web pages, message boxes, system details) are dropped;
+    clipboard and session selection need a desktop grant. MeshCentral and
+    MeshAgent allowed them for any remote permission at the site.
+  - Requests without browser headers are held to what MeshCentral's agent
+    port serves. A plain GET of `devicefile.ashx` with a user's MeshCentral
+    cookie downloaded a file from a device with no EasyRMM session; browser
+    downloads now need a files grant on the device, and uploads to devices
+    (`uploadfilebatch.ashx`) are refused.
+  - MeshCentral's query parser reads `tcpport[]=22` as `tcpport`; routing
+    and credential checks now do too, closing a way around ADR-0022.
 - Agent hardening from the Phase 9 security review:
   - Windows: any user may create folders under ProgramData, so one could
     make `C:\ProgramData\EasyRMM\Agent` before the agent was installed,

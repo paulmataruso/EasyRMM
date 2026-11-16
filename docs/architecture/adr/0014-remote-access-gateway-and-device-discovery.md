@@ -24,7 +24,9 @@ MeshCentral 1.3.1 raised questions those records left open:
   `meshrelay.ashx`, `devicefile.ashx`, `agenttransfer.ashx`, `meshagents`,
   `agentdownload.ashx`) are forwarded without a grant only for non-browser
   requests; MeshCentral still authenticates them itself. Browsers need a
-  grant for every path.
+  grant for every path. (ADR-0033: agent requests must also be the kind
+  MeshCentral's agent port serves, WebSocket or GET, and an agent's relay
+  must join a tunnel a session was granted.)
 * **Features EasyRMM does not offer are refused**, grant or not: account
   creation and password pages, invitations and sharing links, server
   backup and restore, plugins, the web RDP/SSH/VNC relays, Intel AMT,

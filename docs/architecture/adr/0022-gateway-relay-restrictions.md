@@ -2,7 +2,10 @@
 
 * Status: Accepted (2026-11-16). Refines ADR-0014. Amended (2026-11-16):
   a relay needs a grant of its own session type; MeshCentral's web RDP
-  relay is admitted for RDP grants (ADR-0026).
+  relay is admitted for RDP grants (ADR-0026). Amended by ADR-0033: tunnel
+  requests and the agent's end of a relay are bound to grants, other device
+  messages are dropped, and query keys are read as MeshCentral's parser
+  reads them (`tcpport[]`).
 
 ## Context
 MeshCentral relays bytes between a browser and an agent. Besides the
