@@ -42,6 +42,10 @@ sudo docker compose up -d
 sudo docker compose logs -f server
 ```
 
+Without git, download `easyrmm-v<version>-deploy.tar.gz` from a release
+instead, unpack it, and run the same commands from its `deploy/` directory;
+its `.env.example` already names that release's image.
+
 `setup.sh` writes `deploy/.env` (mode 600) with freshly generated database
 passwords and the encryption key, and creates the data directories with the
 ownership the containers expect. It never overwrites an existing `.env`.
@@ -177,13 +181,13 @@ Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).
 docker compose ps                    # health of each container
 docker compose logs -f server        # structured JSON logs
 docker compose logs -f meshcentral   # remote-access service
-docker compose pull && docker compose up -d   # upgrade (migrations run automatically)
 docker compose exec server easyrmm-server version
 ```
 
-Upgrades apply database migrations at start-up under an advisory lock, so
-several servers starting at once cannot race. Take a backup first; see
-[backup-restore.md](../operations/backup-restore.md).
+To upgrade, follow [Upgrading](../operations/upgrading.md). Migrations run at
+start-up under an advisory lock, so several servers starting at once cannot
+race. They only run forward, so take a backup first
+([backup-restore.md](../operations/backup-restore.md)).
 
 ### Rotating the encryption key
 

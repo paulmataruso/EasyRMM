@@ -49,8 +49,9 @@ drill checks MeshCentral's identity in every case.
 sudo scripts/drill/soak.sh /tmp/easyrmm-soak 2000 1h
 ```
 
-`tools/agentsim` simulates the fleet. Each simulated device enrolls with its
-own key, then does what the real agent does, over its own TLS connection:
+`tools/agentsim` simulates the fleet. Every simulated device enrolls with its
+own key first. Then, for the run's duration, each does what the real agent
+does, over its own TLS connection:
 * a heartbeat with metrics every minute;
 * its inventory, about 21 KB with 300 packages, uploaded when the server's
   copy differs;

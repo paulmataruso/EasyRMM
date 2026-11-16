@@ -268,6 +268,9 @@ All notable changes to this project are documented here. The format follows
 - When the server cannot open its stored certificate authority or job key,
   the start-up error now asks whether `EASYRMM_SECRET_KEY` was changed
   without listing the old key in `EASYRMM_SECRET_KEYS_PREVIOUS`.
+- An upgrade guide (`docs/operations/upgrading.md`): back up, decide how
+  agents follow, move to the release's files and image, check, and go back
+  by restoring the backup, since migrations only run forward.
 - Drills (`scripts/drill/`, `docs/development/drills.md`) that run EasyRMM
   as an operator does, on a disposable Compose deployment of the checkout:
   - `backup-restore.sh` backs up a server that has a real agent with the
@@ -413,6 +416,12 @@ All notable changes to this project are documented here. The format follows
   directory. Compose passes them now, and `EASYRMM_LISTEN_HTTPS` too, so a
   host with several addresses can serve on one. The same test fails when
   the server reads a setting Compose neither passes nor fixes on purpose.
+- The release's deployment bundle could not start: `docker-compose.yml` sat
+  at its root, so the PostgreSQL and MeshCentral start scripts it mounts
+  from `../docker/` lay outside the bundle and were missing. The bundle now
+  has the repository's layout (`deploy/`, `docker/`, `docs/`) and includes
+  those scripts, the agent guide and the upgrade guide. `bundle.sh` refuses
+  to build a bundle that lacks anything the Compose file mounts.
 - In the audit log, long user names ran into the next column.
 - Remote sessions opened MeshCentral's session view without the device, so
   nothing could connect. MeshCentral's device page calls into the

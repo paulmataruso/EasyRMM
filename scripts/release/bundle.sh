@@ -29,20 +29,34 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 
 # --- Deployment bundle --------------------------------------------------------
+# The repository's layout, so docker-compose.yml's relative mounts resolve
+# and the install commands are the same as from a clone (cd deploy).
 name=easyrmm-$version
 dir=$stage/$name
-mkdir -p "$dir/scripts" "$dir/docs"
-cp "$root/deploy/docker-compose.yml" "$root/LICENSE" "$root/CHANGELOG.md" "$dir/"
-cp "$root/deploy/scripts/setup.sh" "$dir/scripts/"
-cp "$root/docs/deployment/docker.md" "$root/docs/operations/backup-restore.md" "$dir/docs/"
-sed -e "s|^EASYRMM_VERSION=.*|EASYRMM_VERSION=$image_tag|" "$root/deploy/.env.example" > "$dir/.env.example"
-if ! grep -qx "EASYRMM_VERSION=$image_tag" "$dir/.env.example"; then
+mkdir -p "$dir/deploy/scripts" "$dir/docker/postgres/init" "$dir/docker/meshcentral" \
+  "$dir/docs/deployment" "$dir/docs/operations"
+cp "$root/LICENSE" "$root/CHANGELOG.md" "$dir/"
+cp "$root/deploy/docker-compose.yml" "$dir/deploy/"
+cp "$root/deploy/scripts/setup.sh" "$dir/deploy/scripts/"
+cp "$root/docker/postgres/init/"*.sh "$dir/docker/postgres/init/"
+cp "$root/docker/meshcentral/start.sh" "$dir/docker/meshcentral/"
+cp "$root/docs/deployment/docker.md" "$root/docs/deployment/agents.md" "$dir/docs/deployment/"
+cp "$root/docs/operations/backup-restore.md" "$root/docs/operations/upgrading.md" "$dir/docs/operations/"
+sed -e "s|^EASYRMM_VERSION=.*|EASYRMM_VERSION=$image_tag|" "$root/deploy/.env.example" > "$dir/deploy/.env.example"
+if ! grep -qx "EASYRMM_VERSION=$image_tag" "$dir/deploy/.env.example"; then
   echo "bundle: could not pin EASYRMM_VERSION in .env.example" >&2
+  exit 1
+fi
+# Everything the Compose file mounts from beside it must be in the bundle.
+missing=$(sed -n 's|^ *- \(\.\./[^:]*\):.*|\1|p' "$dir/deploy/docker-compose.yml" |
+  while IFS= read -r src; do [ -e "$dir/deploy/$src" ] || echo "$src"; done)
+if [ -n "$missing" ]; then
+  printf "bundle: docker-compose.yml mounts files the bundle lacks:\n%s\n" "$missing" >&2
   exit 1
 fi
 find "$dir" -type d -exec chmod 0755 {} +
 find "$dir" -type f -exec chmod 0644 {} +
-chmod 0755 "$dir/scripts/setup.sh"
+chmod 0755 "$dir/deploy/scripts/setup.sh" "$dir/docker/postgres/init/"*.sh "$dir/docker/meshcentral/start.sh"
 tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --format=gnu \
   -C "$stage" -cf - "$name" | gzip -n -9 > "$out/$name-deploy.tar.gz"
 

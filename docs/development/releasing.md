@@ -49,7 +49,7 @@ and the draft release (if any), then tag again. Never move a published tag.
 
 | File | Contents |
 |---|---|
-| `easyrmm-v1.2.3-deploy.tar.gz` | `docker-compose.yml`, `.env.example` pinned to this release's image, `scripts/setup.sh`, the deployment and backup guides, `LICENSE`, `CHANGELOG.md` |
+| `easyrmm-v1.2.3-deploy.tar.gz` | In the repository's layout: `deploy/` (`docker-compose.yml`, `.env.example` pinned to this release's image, `scripts/setup.sh`), the PostgreSQL and MeshCentral start scripts the Compose file mounts from `docker/`, the deployment, agent, backup and upgrade guides, `LICENSE` and `CHANGELOG.md`. `bundle.sh` refuses to build a bundle that lacks a file the Compose file mounts |
 | `easyrmm-agent-<os>-<arch>[.exe]` | The agents for Windows (amd64, arm64) and Linux (amd64, arm64, arm, 386). The server image carries the same agents and serves them to devices; these are for inspection and offline installs |
 | `SHA256SUMS` | Checksums of the files above |
 
