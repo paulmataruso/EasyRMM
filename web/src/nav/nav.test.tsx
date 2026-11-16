@@ -87,6 +87,24 @@ describe("section navigation", () => {
     expect(location()).toBe("/devices");
   });
 
+  it("widens the sidebar for long names, within a limit, and narrows it again for the main menu", async () => {
+    const user = userEvent.setup();
+    const long = "Northwind Traders International Holdings (EMEA)";
+    installFakeApi({ ...routes(), ...unreportedRoutes(), "GET /organizations": ok({ items: [org("o1", long), ORGS[1]!] }) });
+    renderApp("/devices");
+
+    const tree = await screen.findByRole("tree");
+    const sidebar = screen.getAllByRole("complementary")[0]!;
+    // Every name counts, the longest here an organization's; tests measure 8 pixels a character.
+    expect(sidebar.style.width).toMatch(/^clamp\(15rem, (\d+)px, min\(24rem, 33\.3vw\)\)$/);
+    expect(Number(/(\d+)px/.exec(sidebar.style.width)![1])).toBeGreaterThan(long.length * 8);
+    // Past the limit, names are cut short and shown in full on hover.
+    expect(within(tree).getByRole("treeitem", { name: new RegExp(`^${long.replace(/[()]/g, "\\$&")}`) })).toHaveAttribute("title", long);
+
+    await user.click(screen.getByRole("button", { name: "Back to the main menu" }));
+    expect(sidebar.style.width).toBe("");
+  });
+
   it("moves through the tree with the keyboard", async () => {
     const user = userEvent.setup();
     installFakeApi(routes());

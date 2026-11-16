@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import {
   ArrowLeft,
@@ -30,6 +30,7 @@ import { useCanWriteScripts } from "../pages/scripts/ScriptsPage";
 import { canQuickConnect, QuickConnectPanel } from "./QuickConnect";
 import { selectedKey, targetHref, type SectionId, type Target } from "./sections";
 import { ancestors, buildTree, filterTree, indexTree, initialExpanded, visibleRows, type TreeNode } from "./tree";
+import { scrollbarWidth, textMeasure, treeWidth, type RowSpec } from "./width";
 
 const META: Record<SectionId, { title: string; icon: ReactNode }> = {
   organizations: { title: "Organizations", icon: <Building2 className="size-4" aria-hidden /> },
@@ -50,9 +51,21 @@ const ALL_LABEL: Record<Exclude<SectionId, "settings">, string> = {
 
 /**
  * A section's own navigation, in place of the main menu (ADR-0021): Back returns to the main menu, the rest narrows
- * or moves within the section.
+ * or moves within the section. A tree reports the width its longest name needs through onWidth.
  */
-export function SectionNav({ section, onBack, focusBack, onFocused }: { section: SectionId; onBack: () => void; focusBack: boolean; onFocused: () => void }) {
+export function SectionNav({
+  section,
+  onBack,
+  focusBack,
+  onFocused,
+  onWidth,
+}: {
+  section: SectionId;
+  onBack: () => void;
+  focusBack: boolean;
+  onFocused: () => void;
+  onWidth?: (px: number) => void;
+}) {
   const back = useRef<HTMLButtonElement>(null);
   // Entering a section from the main menu puts focus on Back, where the menu item was.
   useEffect(() => {
@@ -74,7 +87,7 @@ export function SectionNav({ section, onBack, focusBack, onFocused }: { section:
           Back
         </button>
       </div>
-      {section === "settings" ? <SettingsNav /> : <SectionTree section={section} />}
+      {section === "settings" ? <SettingsNav /> : <SectionTree section={section} onWidth={onWidth} />}
     </div>
   );
 }
@@ -131,6 +144,10 @@ function BadgeView({ badge }: { badge: Badge | null }) {
   );
 }
 
+function specBadge(b: Badge | null): RowSpec["badge"] {
+  return b && { text: b.text, pill: b.tone === "critical" || b.tone === "warning" };
+}
+
 /** What a row is called to assistive technology: its name, a device's state, and its count in words. */
 function rowLabel(name: string, badge: Badge | null, online?: boolean): string {
   return [name, online === undefined ? null : online ? "online" : "offline", badge?.label].filter(Boolean).join(", ");
@@ -154,7 +171,7 @@ function onlineBadge(online: number, total: number): Badge {
   };
 }
 
-function SectionTree({ section }: { section: Exclude<SectionId, "settings"> }) {
+function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settings">; onWidth?: (px: number) => void }) {
   const { can } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -177,6 +194,7 @@ function SectionTree({ section }: { section: Exclude<SectionId, "settings"> }) {
   const [focusKey, setFocusKey] = useState<string | null>(null);
   const [connect, setConnect] = useState<{ device: Device; anchor: HTMLElement } | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
+  const scrollArea = useRef<HTMLDivElement>(null);
 
   const selected = selectedKey(section, location.pathname, location.search);
   const byDevice = useMemo(() => new Map(alertCounts.items.map((c) => [c.deviceId, c])), [alertCounts.items]);
@@ -255,6 +273,24 @@ function SectionTree({ section }: { section: Exclude<SectionId, "settings"> }) {
   useEffect(() => {
     if (!loading && expanded === null) setExpanded(initialExpanded(roots));
   }, [loading, expanded, roots]);
+
+  // The sidebar widens for long names: every row of the tree counts, open or not, so the width holds still while
+  // branches open and close or the filter narrows the list. Measured before paint, so it never visibly jumps.
+  useLayoutEffect(() => {
+    if (!onWidth || loading || failed || !scrollArea.current) return;
+    const specs: RowSpec[] = [{ text: ALL_LABEL[section], level: 1, badge: specBadge(badgeFor("all")) }];
+    for (const x of extras) specs.push({ text: x.label, level: 1, badge: specBadge(badgeFor(x.key)) });
+    const walk = (nodes: TreeNode[]) => {
+      for (const node of nodes) {
+        const d = node.device;
+        specs.push({ text: node.name, level: node.level, badge: specBadge(badgeFor(node)), quick: section === "devices" && d !== undefined && canQuickConnect(d) });
+        walk(node.children);
+      }
+    };
+    walk(roots);
+    onWidth(treeWidth(specs, textMeasure(getComputedStyle(scrollArea.current).fontFamily), scrollbarWidth()));
+    // badgeFor and extras follow from the dependencies listed.
+  }, [onWidth, loading, failed, roots, section, badges, online, total, wantsDevices, devices.isPending]);
 
   // Open the way to whatever the page is showing, so the tree always says where you are. Only when the page changes:
   // closing a branch afterwards is the reader's choice.
@@ -433,7 +469,7 @@ function SectionTree({ section }: { section: Exclude<SectionId, "settings"> }) {
           {!loading && devices.items.length >= 5000 && <span className="text-warn"> (the first 5,000 devices)</span>}
         </p>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+      <div ref={scrollArea} className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {loading ? (
           <Spinner />
         ) : failed ? (
@@ -515,7 +551,7 @@ function SectionTree({ section }: { section: Exclude<SectionId, "settings"> }) {
                       aria-keyshortcuts={quick ? "Shift+F10" : undefined}
                       aria-haspopup={quick ? "dialog" : undefined}
                       tabIndex={node.key === tabbable ? 0 : -1}
-                      title={d ? deviceTitle(d) : undefined}
+                      title={d ? deviceTitle(d) : node.name}
                       onClick={() => {
                         setFocusKey(node.key);
                         activate(node);

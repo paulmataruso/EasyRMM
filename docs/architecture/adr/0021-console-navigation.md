@@ -39,6 +39,16 @@ software belongs to a device: technicians look it up on the device page.
   filters and the tree always agree. The tree is a WAI-ARIA tree: arrow
   keys, Home and End move, Right and Left open and close, Enter follows a
   row. Each row's accessible name carries its count in words.
+* **The sidebar fits the tree's names.** While a tree shows, the sidebar is
+  as wide as its longest row needs: every organization, site and device
+  name with its indent, icon, count and quick-connect button, measured with
+  a canvas in the sidebar's font, collapsed branches included, so the width
+  holds still as branches open and close or the filter narrows the list. It
+  is at least the main menu's 15rem and at most 24rem and a third of the
+  window (85% of the screen for the phone drawer); past that, names end in
+  an ellipsis and show in full on hover. The main menu and settings keep
+  15rem. The width changes without animation: animating it would lay the
+  page out again on every frame.
 * **Quick connect.** Devices with remote access offer a quick-connect
   button on their tree row (on hover or focus, always on touch screens),
   also opened with the context menu, Shift+F10 or the context-menu key.

@@ -279,7 +279,9 @@ test("a deployment token enrolls a device, which then reports in", async () => {
   await expect(row).toContainText("1 of 1");
   await expect(row).toContainText("Used up");
 
-  // The devices tree lists the new device under its site; "All devices" goes back to the list.
+  // The devices tree lists the new device under its site once it loads the
+  // list again (it refreshes every 30 seconds); "All devices" goes back to the list.
+  await page.reload();
   const nav = page.getByRole("navigation", { name: "Main" });
   await expect(nav.getByRole("treeitem", { name: "dt-reception-01, online" })).toBeVisible();
   await nav.getByRole("button", { name: /^All devices/ }).click();

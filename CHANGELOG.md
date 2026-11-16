@@ -158,6 +158,9 @@ All notable changes to this project are documented here. The format follows
   and organizations card are gone.
 - A console tab running an older build reloads on its next navigation
   after the server is upgraded (`X-EasyRMM-Console`).
+- The sidebar widens to fit the longest organization, site or device name in
+  a section's tree, up to 24rem (and a third of the window); longer names end
+  in an ellipsis and show in full on hover (ADR-0021).
 - The server's certificate authority also downloads as `easyrmm-ca.crt`
   (DER), which Windows installs from the file's context menu (**Install
   Certificate**); the Add devices page explains where to put it, with a

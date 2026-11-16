@@ -7,6 +7,7 @@ import { useAuth } from "../auth/AuthContext";
 import { applyTheme, getStoredTheme, storeTheme, type Theme } from "../lib/theme";
 import { SectionNav } from "../nav/SectionNav";
 import { SECTION_PERMISSION, sectionFor, type SectionId } from "../nav/sections";
+import { sidebarWidth } from "../nav/width";
 import { cx } from "./ui";
 
 interface NavItem {
@@ -105,6 +106,10 @@ export function AppLayout() {
     }
   })();
   const section = allowed && menuAt !== location.pathname ? pageSection : null;
+  // A section's tree may ask for a wider sidebar (nav/width.ts); the main menu and settings keep the standard width.
+  // Moving between trees keeps the last width until the next tree has measured itself.
+  const [treeWidth, setTreeWidth] = useState<number | null>(null);
+  const wide = section && section !== "settings" ? treeWidth : null;
 
   useEffect(() => {
     if (focusNext !== "menu" || section !== null || !pageSection) return;
@@ -159,6 +164,7 @@ export function AppLayout() {
           section={section}
           focusBack={focusNext === "back"}
           onFocused={focused}
+          onWidth={setTreeWidth}
           onBack={() => {
             setMenuAt(location.pathname);
             setFocusNext("menu");
@@ -233,11 +239,15 @@ export function AppLayout() {
         <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-surface focus:px-3 focus:py-2">
           Skip to content
         </a>
-        <aside className="hidden w-60 shrink-0 lg:block">{sidebar}</aside>
+        <aside className="hidden w-60 shrink-0 lg:block" style={wide === null ? undefined : { width: sidebarWidth(wide) }}>
+          {sidebar}
+        </aside>
         {mobileOpen && (
           <div className="fixed inset-0 z-40 lg:hidden">
             <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} aria-hidden />
-            <aside className="relative h-full w-64 shadow-xl">{sidebar}</aside>
+            <aside className="relative h-full w-64 shadow-xl" style={wide === null ? undefined : { width: sidebarWidth(wide, true) }}>
+              {sidebar}
+            </aside>
           </div>
         )}
         <div className="flex min-w-0 flex-1 flex-col">
