@@ -127,6 +127,26 @@ An IP address changes four things browsers and agents rely on:
 * The internal authority renews the server certificate with the same key,
   so what MeshCentral reads from `EASYRMM_MESH_CERT_URL` keeps its key
   across renewals.
+* **The authority has no name constraints** (Phase 9 security review). A
+  computer that trusts it would accept a certificate for any site signed
+  with its key, not only for EasyRMM. Constraining it to the server's
+  names and addresses was considered and rejected:
+  * Agents trust the authority's certificate itself, stored at install.
+    Go checks name constraints against every name in the server's
+    certificate.
+  * The authority must outlive address changes; that is the point of a
+    ten-year authority. Once the server gained a name or address outside
+    the constraints, every agent would stop connecting.
+  * A constrained certificate cannot be swapped in later without
+    reinstalling every agent.
+
+  The key is sealed under the server's secret key, in the database. Anyone
+  who can open it already controls the server, and through it every
+  managed device. The documentation therefore asks for the authority to be
+  installed only on the computers technicians administer EasyRMM from. It
+  recommends a DNS name with a public certificate wherever browsers reach
+  the console. For agents the trust is narrow already: only the agent
+  uses its copy.
 
 ## Alternatives considered
 * **Wildcard DNS services such as sslip.io.** They depend on outside DNS,

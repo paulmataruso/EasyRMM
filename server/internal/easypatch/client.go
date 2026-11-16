@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/paulmataruso/easyrmm/server/internal/netguard"
 )
 
 const (
@@ -139,9 +141,11 @@ func NewClient(rawURL, token, caPEM, version string) (*Client, error) {
 	if strings.TrimSpace(caPEM) != "" && !roots.AppendCertsFromPEM([]byte(caPEM)) {
 		return nil, errors.New("the CA certificate is not PEM")
 	}
+	// No link-local or cloud metadata addresses (netguard).
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Control: netguard.Control}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		DialContext:           dialer.DialContext,
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots},
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: requestTimeout,

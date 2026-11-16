@@ -153,6 +153,14 @@ func TestDialFailures(t *testing.T) {
 	if _, err := dial(context.Background(), Destination{Transport: "sctp"}); err == nil {
 		t.Error("unknown transport accepted")
 	}
+	// Not to cloud instance metadata, over any transport (netguard).
+	for _, tr := range []string{TCP, UDP, TLS} {
+		md := Destination{Transport: tr, Host: "169.254.169.254", Port: 514}
+		_, err := dial(context.Background(), md)
+		if msg := describe(md, err); !strings.Contains(msg, "does not connect to 169.254.169.254") {
+			t.Errorf("%s to a metadata address: %v (%s)", tr, err, msg)
+		}
+	}
 	for _, c := range []struct {
 		err  error
 		want string

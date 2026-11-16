@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/paulmataruso/easyrmm/server/internal/netguard"
 )
 
 // Transports.
@@ -74,7 +76,8 @@ type conn struct {
 }
 
 func dial(ctx context.Context, d Destination) (*conn, error) {
-	dialer := &net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}
+	// No link-local or cloud metadata addresses (netguard).
+	dialer := &net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second, Control: netguard.Control}
 	switch d.Transport {
 	case UDP:
 		nc, err := dialer.DialContext(ctx, "udp", d.Address())

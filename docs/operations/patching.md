@@ -198,3 +198,8 @@ server has the `on-behalf-of` capability.
 * The EasyPatch Linux agent needs systemd: it runs apt in transient
   systemd units. EasyRMM does not install it where there is none.
 * EasyPatch sites are matched to EasyRMM sites by name only.
+* EasyRMM does not connect to link-local addresses (`169.254.0.0/16`,
+  `fe80::/10`) or cloud instance metadata addresses, even when the
+  EasyPatch name resolves to one. EasyPatch on the same host or a private
+  network is fine. Through an HTTPS proxy (`HTTPS_PROXY`), the check applies
+  to the proxy's address.

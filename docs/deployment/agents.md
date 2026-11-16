@@ -194,7 +194,10 @@ later request. For the server's own authority (IP addresses), download
 devices page before using it.
 
 The same certificate is at `/api/agent/v1/easyrmm-ca.crt` in DER, the form
-Windows and macOS install directly. To stop browser warnings on a Windows
+Windows and macOS install directly. Agents need neither: they keep their
+own copy. Install it for browsers only on the computers technicians use,
+since a computer that trusts it would trust a certificate signed with its
+key for any website (ADR-0016). To stop browser warnings on a Windows
 computer, right-click the file, choose **Install Certificate**, **Local
 Machine**, and **Place all certificates in the following store: Trusted Root
 Certification Authorities** (letting Windows pick the store can leave it

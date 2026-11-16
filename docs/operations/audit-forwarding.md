@@ -105,3 +105,4 @@ and give EasyRMM a client certificate from the same authority.
 | The collector refused the TLS connection (…) | The collector requires a client certificate, or does not accept this one |
 | Timed out reaching host:port | A firewall drops the traffic, or the host is down |
 | The stored client key cannot be opened | `EASYRMM_SECRET_KEY` changed without the old key in `EASYRMM_SECRET_KEYS_PREVIOUS`; paste the key again |
+| EasyRMM does not connect to *address* | The host is, or resolves to, a link-local address (`169.254.0.0/16`, `fe80::/10`) or a cloud provider's instance metadata address. EasyRMM never connects there, so that settings cannot reach instance credentials. Use the collector's regular address; loopback and private addresses work |

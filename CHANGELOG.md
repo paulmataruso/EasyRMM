@@ -274,6 +274,16 @@ All notable changes to this project are documented here. The format follows
   device's page; `GET /api/v1/software` remains.
 
 ### Security
+- The EasyPatch connection and audit forwarding do not connect to
+  link-local or cloud instance metadata addresses, even through a name that
+  resolves to one. A Super Administrator's setting could otherwise make the
+  server fetch its cloud instance's credentials (Phase 9 security review).
+  Loopback and private addresses stay allowed.
+- The server's certificate authority (`internal` TLS) has no name
+  constraints, and the deployment guides now say to install it only on the
+  computers technicians administer EasyRMM from. ADR-0016 explains why it
+  is not constrained: agents trust it, and a constraint would cut them off
+  when the server's addresses change.
 - Agent API limits from the Phase 9 security review:
   - A signed request's header is checked before its body is read. Before,
     up to 4 MiB was read first, with no time limit, from anyone.

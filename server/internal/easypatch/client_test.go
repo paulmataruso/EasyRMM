@@ -222,6 +222,12 @@ func TestClientFailures(t *testing.T) {
 		t.Fatalf("untrusted: %v", err)
 	}
 
+	// Not to cloud instance metadata (netguard).
+	c, _ = NewClient("https://169.254.169.254", f.Token, "", "1")
+	if _, err := c.ServerInfo(ctx); err == nil || !strings.Contains(err.Error(), "does not connect to 169.254.169.254") {
+		t.Fatalf("metadata address: %v", err)
+	}
+
 	// EasyPatch down.
 	c = newTestClient(t, f)
 	f.Set(func() { f.Down = true })

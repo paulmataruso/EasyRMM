@@ -79,6 +79,14 @@ install it: **Devices → Add devices** shows its SHA-256 fingerprint and a
 download. Agents installed from that page pin the server's key and need no
 other step.
 
+Install the authority only on the computers you administer EasyRMM from.
+It has no name constraints (ADR-0016): a computer that trusts it would
+accept a certificate signed with its key for any website. The key is sealed
+in the database under `EASYRMM_SECRET_KEY`, so protect both as you would
+the server. Where browsers can reach the console by a DNS name, prefer a
+public certificate (`acme`) and keep the IP address as a way in when DNS
+fails.
+
 If you click through the warning instead of installing the authority,
 remember that remote sessions run on port 4443, inside a frame where a
 browser cannot ask. Chrome and Edge apply your exception to the whole
