@@ -458,3 +458,6 @@ All notable changes to this project are documented here. The format follows
   which EasyRMM cannot do yet.
 - Docker smoke test: two negated checks (`! grep`, `! test`) could never fail
   the step; they now do.
+- Expired agent request nonces are removed every minute rather than hourly.
+  With 2,000 agents the table held an hour of requests (63 MB), cleared by
+  one large delete; it now holds about seven minutes.

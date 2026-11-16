@@ -79,3 +79,27 @@ go run ./tools/agentsim -server https://rmm.example.com -token ert_… \
 The server allows four enrollments a second from one address after a burst
 of 120, so 2,000 devices take about eight minutes to enroll. `-state` keeps
 their keys, and a later run with the same file enrolls none.
+
+### Results
+
+One hour with 2,000 devices, on 2026-11-16. The host was a 16-core Xeon
+E5-2670 v2 with 30 GB of memory, also running other work, so treat the
+CPU figures as upper bounds.
+
+| Measure | Result |
+|---|---|
+| Requests | 2,000 enrollments, 2,000 inventories, 119,785 heartbeats, 287,866 long polls and 3,000 job deliveries, with no errors |
+| Heartbeat | p50 29 ms, p95 51 ms, p99 136 ms |
+| Inventory upload | p50 127 ms, p99 297 ms |
+| Job delivered to a waiting agent | p50 231 ms, p99 627 ms |
+| Job on 500 devices, until every run reported | median 6.0 s (4.1–7.7 s over six jobs) |
+| The console's list of online devices | median 0.27 s |
+| Server memory, once every device was online | 471 MiB, 487 MiB an hour later |
+| CPU (sampled each minute) | server 0.9 of a core on average, 3.7 cores at most while a job ran; PostgreSQL 0.8 and 2.8 |
+| Database after the hour | 155 MiB: agent nonces 63 MB, installed software 58 MB, metric samples 14 MB |
+
+Agent nonces were the largest table. Each signed request stores one for six
+minutes, and the hourly maintenance removed expired ones, so the table held
+an hour of requests. The agents service now removes them every minute. A
+20-minute run with that change ended with 10 MB of nonces, about seven
+minutes of requests, again with no errors.

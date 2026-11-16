@@ -61,6 +61,12 @@ capability in `/api/v1/server-info`):
    callers, recorded in EasyPatch's audit log and on the job.
 4. Update exclusions by API tokens (they failed with 401).
 
+EasyRMM was run against a server built from that branch (2026-11-16). It
+listed both capabilities. A scheduled install of one update on a Linux
+device was held by EasyPatch until its time, delivered at the device's
+first check-in after it, and installed. EasyPatch recorded the job as
+requested by `token:<name> for <EasyRMM user>`.
+
 **Still wanted, not built:**
 
 1. **Token-bound enrolment** — a single-use enrolment token bound to an
