@@ -30,6 +30,7 @@ import { ScriptDetailPage } from "./pages/scripts/ScriptDetailPage";
 import { ScriptFormPage } from "./pages/scripts/ScriptFormPage";
 import { JobsPage } from "./pages/jobs/JobsPage";
 import { AlertsPage } from "./pages/alerts/AlertsPage";
+import { ReportsPage } from "./pages/reports/ReportsPage";
 import { JobDetailPage } from "./pages/jobs/JobDetailPage";
 import { RunDetailPage } from "./pages/jobs/RunDetailPage";
 import { useReloadWhenOutdated } from "./lib/consoleBuild";
@@ -117,6 +118,7 @@ export function App() {
         <Route path="jobs" element={<JobsPage />} />
         <Route path="jobs/:id" element={<JobDetailPage />} />
         <Route path="jobs/:jobId/runs/:runId" element={<RunDetailPage />} />
+        <Route path="reports" element={<ReportsPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="users/:id" element={<UserDetailPage />} />
         <Route path="account" element={<AccountPage />} />

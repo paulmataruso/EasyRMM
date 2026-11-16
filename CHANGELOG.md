@@ -222,6 +222,13 @@ All notable changes to this project are documented here. The format follows
   own scripts with the package as an argument, needs `software.manage`, is
   audited per device, and the agent reports its software again as soon as
   the job ends. Jobs can be filtered by kind.
+- Reports (ADR-0029). **Reports** in the main menu: device inventory,
+  installed software, device health and alert history, filtered by
+  organization, site, platform, name and more, read in the console or
+  downloaded as CSV (UTF-8, times in UTC, cells that a spreadsheet would
+  run as formulas defused). Each download is audited.
+- The audit log names software actions, agent updates and report
+  downloads, and filters by agent updates and reports.
 - The console's libraries are served as a chunk of their own, which
   browsers keep across EasyRMM upgrades.
 - When the server cannot open its stored certificate authority or job key,

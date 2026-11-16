@@ -95,6 +95,7 @@ const ACTIONS: Record<string, string> = {
   "device.agent_update_request": "Asked for an agent update",
   "agent_updates.update": "Changed agent update settings",
   "agent_updates.request_all": "Asked to update every outdated agent",
+  "report.export": "Downloaded report",
   "job.cancel": "Stopped script run",
   "alert_policy.create": "Added alert policy",
   "alert_policy.update": "Changed alert policy",
@@ -122,6 +123,7 @@ export const ACTION_GROUPS: [string, string][] = [
   ["script", "Scripts"],
   ["job", "Jobs"],
   ["agent_updates", "Agent updates"],
+  ["report", "Reports"],
   ["alert_policy", "Alert policies"],
   ["alert", "Alerts"],
   ["user", "Users"],
@@ -142,10 +144,18 @@ export function auditTarget(e: AuditEntry): string {
   }
   if (typeof d.device === "string") return typeof d.kind === "string" ? `${d.device} (${REMOTE_KIND_NAMES[d.kind as RemoteKind] ?? d.kind})` : d.device;
   if (e.targetType === "session") return "Session";
+  if (e.targetType === "report") return REPORT_TITLES[e.targetId ?? ""] ?? "Report";
   if (e.targetType === "audit_forwarding") return e.targetId ? `Collector ${e.targetId}` : "Collector";
   if (e.actorType === "user" && e.targetType === "user" && e.targetId === e.actorId) return "Own account";
   return e.targetType ? e.targetType.replace(/_/g, " ") : "—";
 }
+
+const REPORT_TITLES: Record<string, string> = {
+  devices: "Device inventory",
+  software: "Installed software",
+  health: "Device health",
+  alerts: "Alert history",
+};
 
 const SOFTWARE_VERBS: Record<string, string> = { install: "Install", upgrade: "Update", uninstall: "Uninstall" };
 

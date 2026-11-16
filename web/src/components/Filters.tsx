@@ -65,11 +65,16 @@ export function isTyping(target: EventTarget | null): boolean {
 }
 
 /** Narrows a list to one site, of the chosen organization when there is one. */
-export function SiteSelect({ organizationId, value, onChange }: { organizationId: string; value: string; onChange: (v: string) => void }) {
+export function SiteSelect({ organizationId, value, onChange, className }: {
+  organizationId: string;
+  value: string;
+  onChange: (v: string) => void;
+  className?: string;
+}) {
   const sites = useSites(organizationId || null);
   const id = useId();
   return (
-    <Field label="Site" htmlFor={id} className="min-w-40">
+    <Field label="Site" htmlFor={id} className={cx("min-w-40", className)}>
       <Select id={id} value={value} onChange={(e) => onChange(e.target.value)} disabled={sites.isPending}>
         <option value="">All sites</option>
         {sites.items.map((s) => (

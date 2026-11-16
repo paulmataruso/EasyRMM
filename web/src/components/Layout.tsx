@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
-import { Bell, Building2, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Settings, Sun, UserCircle, X } from "lucide-react";
+import { Bell, Building2, FileBarChart, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Settings, Sun, UserCircle, X } from "lucide-react";
 import { useApi, useWaitingDevices } from "../api/hooks";
 import type { AlertSummary } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -147,6 +147,9 @@ export function AppLayout() {
   }
   if (can("job.view")) {
     nav.push({ to: "/jobs", label: "Jobs", icon: <ListChecks className="size-4" aria-hidden /> });
+  }
+  if (can("report.view") && (can("device.view") || can("software.view") || can("alert.view"))) {
+    nav.push({ to: "/reports", label: "Reports", icon: <FileBarChart className="size-4" aria-hidden /> });
   }
   if (can("user.view") || can("audit.view") || can("settings.manage")) {
     nav.push({ to: "/settings", label: "Settings", icon: <Settings className="size-4" aria-hidden /> });

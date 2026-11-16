@@ -37,6 +37,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/inventoryapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/reportsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
@@ -46,6 +47,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
 	"github.com/paulmataruso/easyrmm/server/internal/remote"
+	"github.com/paulmataruso/easyrmm/server/internal/reports"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
 	"github.com/paulmataruso/easyrmm/server/internal/users"
@@ -83,7 +85,9 @@ type Deps struct {
 	Inventory *inventory.Service
 	// Monitoring evaluates alert policies and keeps alerts (ADR-0019).
 	Monitoring *monitoring.Service
-	AuditFwd   *auditfwd.Service
+	// Reports reads devices, software and alerts into tables (ADR-0029).
+	Reports  *reports.Service
+	AuditFwd *auditfwd.Service
 	// AgentBuilds are the agent binaries the server hands out.
 	AgentBuilds *agents.Builds
 	// PKI is the internal certificate authority, for addresses no public CA
@@ -161,6 +165,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d.Agents.SetJobKey(d.Jobs.PublicKey())
 	d.Inventory = inventory.New(db, cfg.MetricsRetention, log)
 	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, log)
+	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
 	builds, err := agents.LoadBuilds(cfg.AgentDir)
 	if err != nil {
@@ -289,6 +294,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	jobsapi.New(d.Jobs).Register(mux)
 	inventoryapi.New(d.Inventory).Register(mux)
 	alertsapi.New(d.Monitoring).Register(mux)
+	reportsapi.New(d.Reports).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
 	mux.Handle("GET /api/v1/health", httpapi.Handle(func(w http.ResponseWriter, _ *http.Request) error {

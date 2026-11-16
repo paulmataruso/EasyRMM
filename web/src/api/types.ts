@@ -874,3 +874,29 @@ export interface AlertSummary {
   acknowledged: number;
   devices: number;
 }
+
+// --- Reports (ADR-0029) --------------------------------------------------------------------
+
+export type ReportName = "devices" | "software" | "health" | "alerts";
+
+export interface ReportColumn {
+  key: string;
+  /** Names the unit when there is one: "Memory (GiB)". */
+  label: string;
+  type: "text" | "number" | "percent" | "time" | "bool";
+}
+
+export type ReportValue = string | number | boolean | null;
+
+export interface Report {
+  name: ReportName;
+  title: string;
+  columns: ReportColumn[];
+  /** The first rows only (1,000); the CSV has them all. */
+  rows: ReportValue[][];
+  /** Every row of the report, up to 100,000. */
+  total: number;
+  /** The report has more than 100,000 rows. */
+  truncated: boolean;
+  generatedAt: string;
+}
