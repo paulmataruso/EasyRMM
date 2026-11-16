@@ -183,7 +183,16 @@ export function maintenanceText(p: PatchPolicy): string {
   return `${days} at ${p.maintenanceStart}${length} (${p.timeZone})`;
 }
 
-/** Who asked for a job: a user, or the API token EasyRMM uses where EasyPatch cannot record users. */
+/**
+ * Who asked for a job: an EasyPatch user, or an API token such as EasyRMM's — "token:<name>", or "token:<name> for <person>" when the
+ * EasyPatch server records who the token acted for (its on-behalf-of capability). EasyRMM sends its users' email addresses, so the
+ * person is what follows the last " for " when it looks like one; a token named "Patch for prod" stays a token.
+ */
 export function requester(by: string): string {
-  return by.startsWith("token:") ? `EasyRMM (token ${by.slice(6)})` : by;
+  if (!by.startsWith("token:")) return by;
+  const token = by.slice(6);
+  const cut = token.lastIndexOf(" for ");
+  const person = cut > 0 ? token.slice(cut + 5) : "";
+  if (/^[^\s@]+@[^\s@]+$/.test(person)) return `${person}, through API token ${token.slice(0, cut)}`;
+  return `API token ${token}`;
 }

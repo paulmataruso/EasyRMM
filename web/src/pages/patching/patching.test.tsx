@@ -16,7 +16,7 @@ import type {
 import { baseRoutes, fail, installFakeApi, noContent, ok, sessionView, unreportedRoutes, type FakeHandler, type FakeReply } from "../../test/fakeApi";
 import { device, org } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
-import { activityText, maintenanceText } from "./patchText";
+import { activityText, maintenanceText, requester } from "./patchText";
 
 const T = "2026-11-16T10:00:00Z";
 const main = () => within(screen.getByRole("main"));
@@ -351,7 +351,7 @@ describe("patching page", () => {
     expect(await main().findByText("Running · 40%")).toBeInTheDocument();
     expect(server.call("GET /patching/jobs").query.get("active")).toBe("true");
     expect(main().getByText("1 of 2 updates installed")).toBeInTheDocument();
-    expect(main().getByText("EasyRMM (token easyrmm)")).toBeInTheDocument();
+    expect(main().getByText("API token easyrmm")).toBeInTheDocument();
     expect(main().getByText("tess@example.com")).toBeInTheDocument();
 
     await user.click(main().getByRole("radio", { name: "All recent" }));
@@ -828,6 +828,16 @@ describe("EasyPatch settings", () => {
     await user.click(within(confirm).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(server.callsTo("DELETE /settings/easypatch")).toHaveLength(1));
     expect(await screen.findByText(/EasyPatch removed/)).toBeInTheDocument();
+  });
+});
+
+describe("job requester", () => {
+  it("names the person an API token acted for when EasyPatch records it", () => {
+    expect(requester("tess@example.com")).toBe("tess@example.com");
+    expect(requester("token:easyrmm")).toBe("API token easyrmm");
+    expect(requester("token:EasyRMM for alice@example.com")).toBe("alice@example.com, through API token EasyRMM");
+    expect(requester("token:Patch for prod for bob@example.com")).toBe("bob@example.com, through API token Patch for prod");
+    expect(requester("token:Patch for prod")).toBe("API token Patch for prod");
   });
 });
 
