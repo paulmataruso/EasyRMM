@@ -38,6 +38,8 @@ node_modules/
 *.p12
 *.pfx
 secrets/
+# ...except the Go package that seals secrets: it holds code, not secrets.
+!/server/internal/secrets/
 
 # Runtime data (bind mounts)
 /data/
