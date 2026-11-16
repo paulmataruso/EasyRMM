@@ -141,6 +141,8 @@ export interface Organization {
   createdAt: string;
   updatedAt: string;
   canManage: boolean;
+  /** Names are unique on the server, so only Super Administrators rename. */
+  canRename: boolean;
 }
 
 export interface OrganizationInput {

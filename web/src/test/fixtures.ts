@@ -24,7 +24,7 @@ import type {
 const T = "2026-11-01T10:00:00Z";
 
 export function org(id: string, name: string, extra: Partial<Organization> = {}): Organization {
-  return { id, name, notes: "", siteCount: 0, canManage: true, createdAt: T, updatedAt: T, ...extra };
+  return { id, name, notes: "", siteCount: 0, canManage: true, canRename: true, createdAt: T, updatedAt: T, ...extra };
 }
 
 export function site(id: string, organizationId: string, name: string, extra: Partial<Site> = {}): Site {

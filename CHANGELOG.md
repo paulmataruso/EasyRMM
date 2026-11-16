@@ -274,6 +274,20 @@ All notable changes to this project are documented here. The format follows
   device's page; `GET /api/v1/software` remains.
 
 ### Security
+- Tenancy findings from the Phase 9 security review:
+  - A report export's audit entry is written under each organization its
+    rows came from (and its site, when they share one). Before, it was
+    filed under the organization and site named in the request, so a
+    technician could write an entry, with free text from the search box,
+    into another organization's audit log, or keep their own export out
+    of their organization's.
+  - Renaming an organization needs a Super Administrator. Names are unique
+    on the server, so an Organization Administrator could rename theirs to
+    learn whether another customer's name exists. They still edit its
+    notes; the console shows the name as locked.
+  - Inviting an email address that has an account elsewhere still answers
+    that it exists; `docs/security/rbac.md` explains why, and how to keep
+    `user.manage` with your own staff where that matters.
 - Remote-access gateway hardening from the Phase 9 security review
   (ADR-0033), checked against MeshCentral 1.3.1 and a real MeshAgent:
   - Tunnel requests on MeshCentral's control channel must be for a device

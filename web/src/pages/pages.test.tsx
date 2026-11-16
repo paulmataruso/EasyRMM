@@ -125,6 +125,30 @@ describe("organizations", () => {
     expect(await screen.findByText("Organization “Fabrikam Logistics” deleted.")).toBeInTheDocument();
   });
 
+  it("edits the notes but not the name for an organization's own administrator", async () => {
+    const user = userEvent.setup();
+    const mine = org("o1", "Northwind Traders", { canRename: false, notes: "Old notes." });
+    const server = installFakeApi({
+      ...baseRoutes(sessionView({ isSuperAdmin: false, permissions: ["org.view", "org.manage", "site.view"] })),
+      ...detailRoutes,
+      "GET /organizations/:id": ok(mine),
+      "PUT /organizations/:id": (r) => ok({ ...mine, ...(r.body as object) }),
+      "GET /organizations": ok({ items: [mine] }),
+      "GET /sites": ok({ items: [] }),
+      "GET /audit": ok({ items: [] }),
+    });
+    renderApp("/organizations/o1");
+    await user.click(await screen.findByRole("button", { name: "Edit" }));
+    const form = await dialog("Edit organization");
+    expect(within(form).getByLabelText(/^Name/)).toBeDisabled();
+    expect(within(form).getByText("Only a Super Administrator can rename an organization.")).toBeInTheDocument();
+    await user.clear(within(form).getByLabelText(/^Notes/));
+    await user.type(within(form).getByLabelText(/^Notes/), "New notes.");
+    await user.click(within(form).getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("Organization updated.")).toBeInTheDocument();
+    expect(server.call("PUT /organizations/:id", 0).body).toEqual({ name: "Northwind Traders", notes: "New notes." });
+  });
+
   it("explains why a non-empty organization cannot be deleted", async () => {
     const user = userEvent.setup();
     installFakeApi({

@@ -14,6 +14,7 @@ const org = (id: string, name: string, extra: Partial<Organization> = {}): Organ
   notes: "",
   siteCount: 0,
   canManage: true,
+  canRename: true,
   createdAt: "2026-11-01T10:00:00Z",
   updatedAt: "2026-11-01T10:00:00Z",
   ...extra,

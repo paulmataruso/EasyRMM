@@ -42,6 +42,11 @@ type Organization struct {
 	UpdatedAt time.Time `json:"updatedAt"`
 	// CanManage tells the client whether the caller may edit it.
 	CanManage bool `json:"canManage"`
+	// CanRename tells the client whether the caller may change its name:
+	// names are unique on the server, so only platform-wide administrators
+	// rename, and an organization's own administrators cannot probe for
+	// other customers' names.
+	CanRename bool `json:"canRename"`
 }
 
 // Site is a location or logical subdivision of an organization.
@@ -189,6 +194,7 @@ func (s *Service) ListOrganizations(ctx context.Context, c access.Caller, query 
 				return err
 			}
 			o.CanManage = c.Can(rbac.PermOrgManage, rbac.Org(o.ID))
+			o.CanRename = c.CanGlobal(rbac.PermOrgManage)
 			out = append(out, o)
 		}
 		return rows.Err()
@@ -211,6 +217,7 @@ func (s *Service) GetOrganization(ctx context.Context, c access.Caller, id uuid.
 		return nil, err
 	}
 	o.CanManage = c.Can(rbac.PermOrgManage, rbac.Org(o.ID))
+	o.CanRename = c.CanGlobal(rbac.PermOrgManage)
 	return &o, nil
 }
 
@@ -245,10 +252,14 @@ func (s *Service) CreateOrganization(ctx context.Context, c access.Caller, in Or
 		return nil, mapOrgWriteError(err)
 	}
 	o.CanManage = true
+	o.CanRename = c.CanGlobal(rbac.PermOrgManage)
 	return &o, nil
 }
 
-// UpdateOrganization edits an organization.
+// UpdateOrganization edits an organization. Changing its name needs
+// org.manage platform-wide: names are unique across all organizations, so
+// a rename would tell an organization's administrator which other names
+// exist.
 func (s *Service) UpdateOrganization(ctx context.Context, c access.Caller, id uuid.UUID, in OrganizationInput) (*Organization, error) {
 	if _, err := s.GetOrganization(ctx, c, id); err != nil {
 		return nil, err
@@ -263,6 +274,9 @@ func (s *Service) UpdateOrganization(ctx context.Context, c access.Caller, id uu
 		var oldName string
 		if err := tx.QueryRow(ctx, `SELECT name FROM organizations WHERE id = $1 FOR UPDATE`, id).Scan(&oldName); err != nil {
 			return err
+		}
+		if oldName != in.Name && !c.CanGlobal(rbac.PermOrgManage) {
+			return apperr.Invalid("name", "Only a Super Administrator can rename an organization.")
 		}
 		if _, err := tx.Exec(ctx, `UPDATE organizations SET name = $2, notes = $3 WHERE id = $1`, id, in.Name, in.Notes); err != nil {
 			return err

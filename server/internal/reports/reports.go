@@ -5,8 +5,11 @@
 package reports
 
 import (
+	"bytes"
 	"context"
+	"maps"
 	"math"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,6 +65,16 @@ type Report struct {
 	// Truncated says the report has more than MaxRows rows.
 	Truncated   bool      `json:"truncated"`
 	GeneratedAt time.Time `json:"generatedAt"`
+
+	// from counts the rows by the organization they came from, for the
+	// export's audit entries.
+	from map[uuid.UUID]*orgRows
+}
+
+// orgRows is the part of a report that came from one organization.
+type orgRows struct {
+	rows  int
+	sites map[uuid.UUID]bool
 }
 
 // Query narrows a report. Each report reads the fields it has use for.
@@ -152,7 +165,7 @@ func (s *Service) Run(ctx context.Context, c access.Caller, name string, q Query
 	if err := q.check(); err != nil {
 		return nil, err
 	}
-	rep := &Report{Name: name, Title: def.title, Columns: def.columns, Rows: [][]any{}, GeneratedAt: s.now().UTC()}
+	rep := &Report{Name: name, Title: def.title, Columns: def.columns, Rows: [][]any{}, GeneratedAt: s.now().UTC(), from: map[uuid.UUID]*orgRows{}}
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		return def.run(ctx, tx, q, func(org, site uuid.UUID, row []any) bool {
 			if !c.Can(rbac.PermReportView, rbac.Site(org, site)) || !c.Can(def.perm, rbac.Site(org, site)) {
@@ -163,6 +176,13 @@ func (s *Service) Run(ctx context.Context, c access.Caller, name string, q Query
 				return false
 			}
 			rep.Total++
+			o := rep.from[org]
+			if o == nil {
+				o = &orgRows{sites: map[uuid.UUID]bool{}}
+				rep.from[org] = o
+			}
+			o.rows++
+			o.sites[site] = true
 			if len(rep.Rows) < keep {
 				rep.Rows = append(rep.Rows, row)
 			}
@@ -176,7 +196,12 @@ func (s *Service) Run(ctx context.Context, c access.Caller, name string, q Query
 }
 
 // Export produces a whole report for download and records that it left
-// EasyRMM.
+// EasyRMM: one audit entry for each organization whose rows it holds, under
+// that organization (and its site, when the rows share one), so that the
+// organization's administrators see it. The organization and site the
+// request asked for are only recorded as filters: the entry is never filed
+// under an organization the export took nothing from. An export with no
+// rows is recorded at platform level.
 func (s *Service) Export(ctx context.Context, c access.Caller, name string, q Query) (*Report, error) {
 	rep, err := s.Run(ctx, c, name, q, MaxRows)
 	if err != nil {
@@ -188,6 +213,9 @@ func (s *Service) Export(ctx context.Context, c access.Caller, name string, q Qu
 			details[k] = v
 		}
 	}
+	if q.OrganizationID != uuid.Nil {
+		details["organizationId"] = q.OrganizationID.String()
+	}
 	if q.SiteID != uuid.Nil {
 		details["siteId"] = q.SiteID.String()
 	}
@@ -197,10 +225,40 @@ func (s *Service) Export(ctx context.Context, c access.Caller, name string, q Qu
 	case "health":
 		details["offlineDays"], details["diskPercent"] = q.OfflineDays, q.DiskPercent
 	}
-	if err := s.audit.Record(ctx, audit.Event{
-		Actor: c.Actor, Action: "report.export", OrganizationID: q.OrganizationID, SiteID: q.SiteID,
-		TargetType: "report", TargetID: name, Outcome: audit.Success, Details: details,
-	}); err != nil {
+	event := func(org, site uuid.UUID, d map[string]any) audit.Event {
+		return audit.Event{Actor: c.Actor, Action: "report.export", OrganizationID: org, SiteID: site,
+			TargetType: "report", TargetID: name, Outcome: audit.Success, Details: d}
+	}
+	var events []audit.Event
+	if len(rep.from) == 0 {
+		events = append(events, event(uuid.Nil, uuid.Nil, details))
+	}
+	orgs := slices.SortedFunc(maps.Keys(rep.from), func(a, b uuid.UUID) int { return bytes.Compare(a[:], b[:]) })
+	for _, org := range orgs {
+		o := rep.from[org]
+		d := maps.Clone(details)
+		d["rows"] = o.rows
+		if len(orgs) > 1 {
+			d["totalRows"], d["organizations"] = rep.Total, len(orgs)
+		}
+		var site uuid.UUID
+		if len(o.sites) == 1 {
+			for site = range o.sites {
+			}
+		}
+		events = append(events, event(org, site, d))
+	}
+	// Recorded even if the client has gone: the data was produced.
+	ctx = context.WithoutCancel(ctx)
+	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		for _, e := range events {
+			if err := s.audit.Write(ctx, tx, e); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return rep, nil

@@ -171,6 +171,9 @@ export function OrganizationFormDialog({ open, onClose, onSaved, organization }:
     e.preventDefault();
     save.mutate({ name: form.name.trim(), notes: form.notes.trim() });
   }
+  // Organization names are unique on the server; only Super Administrators
+  // rename, so an organization's own administrators cannot probe for others.
+  const nameLocked = !!organization && !organization.canRename;
 
   return (
     <Dialog open={open} onClose={onClose} title={organization ? "Edit organization" : "New organization"}>
@@ -180,9 +183,11 @@ export function OrganizationFormDialog({ open, onClose, onSaved, organization }:
           value={form.name}
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
           error={fieldError(save.error, "name")}
+          hint={nameLocked ? "Only a Super Administrator can rename an organization." : undefined}
           required
+          disabled={nameLocked}
           maxLength={200}
-          autoFocus
+          autoFocus={!nameLocked}
         />
         <TextareaField
           label="Notes"
@@ -191,6 +196,7 @@ export function OrganizationFormDialog({ open, onClose, onSaved, organization }:
           error={fieldError(save.error, "notes")}
           hint="Contract details, contacts, anything technicians should know."
           maxLength={4000}
+          autoFocus={nameLocked}
         />
         <InlineError error={save.error} fields={["name", "notes"]} />
         <div className="flex justify-end gap-2 pt-1">

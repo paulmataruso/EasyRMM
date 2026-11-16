@@ -48,7 +48,15 @@ needed in a spreadsheet as often as on screen. Every role already holds
   cannot run as a formula in the spreadsheet of whoever opens the report.
 * **Exports are audited** (`report.export`), with the report, its filters
   and the number of rows, before the file is sent: data leaves EasyRMM.
-  Viewing in the console is not audited, like every other read.
+  Viewing in the console is not audited, like every other read. The entry
+  is written once for each organization the rows came from, under that
+  organization (and its site, when the rows share one), so its
+  administrators see it. The organization and site in the request are
+  recorded only as filters, never as where the entry is filed: otherwise
+  a technician could file an entry in another organization's log, or
+  file their own export where their organization's administrators do not
+  look (Phase 9 security review). An export with no rows is recorded at
+  platform level.
 * **API**: `GET /api/v1/reports/{name}` (JSON: columns, rows, total,
   truncated) and `GET /api/v1/reports/{name}/csv`, with the filters as
   query parameters. **Console**: **Reports** in the main menu, a tab per

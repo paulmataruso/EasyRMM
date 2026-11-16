@@ -307,11 +307,33 @@ func TestReports(t *testing.T) {
 			t.Errorf("audit %s lacks %s", details, s)
 		}
 	}
+	// An export across organizations is recorded under each of them, with
+	// its own rows; the site only where all its rows share one.
 	if _, err := f.svc.Export(f.ctx, admin, "alerts", Query{Days: 7}); err != nil {
 		t.Fatal(err)
 	}
-	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'report.export'`); n != "2" {
-		t.Errorf("%s exports audited", n)
+	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'report.export'`); n != "3" {
+		t.Errorf("%s export entries", n)
+	}
+	got := f.str(`SELECT string_agg(o.name || ':' || coalesce(s.name, '-') || ':' || (a.details->>'rows') || '/' || (a.details->>'totalRows'), ',' ORDER BY o.name)
+		FROM audit_log a JOIN organizations o ON o.id = a.organization_id LEFT JOIN sites s ON s.id = a.site_id
+		WHERE a.action = 'report.export' AND a.target_id = 'alerts'`)
+	if got != "Acme:HQ:2/3,Globex:Plant:1/3" {
+		t.Errorf("alert export entries %s", got)
+	}
+
+	// The organization in the request is a filter, not where the entry is
+	// filed: asking for another organization's data takes none of it, and
+	// is recorded at platform level, not in that organization's log.
+	rep, err = f.svc.Export(f.ctx, acmeAdmin, "devices", Query{OrganizationID: f.globex, Search: "a note for Globex"})
+	if err != nil || rep.Total != 0 {
+		t.Fatalf("export of another organization %v %+v", err, rep)
+	}
+	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'report.export' AND organization_id = $1`, f.globex); n != "1" {
+		t.Errorf("%s entries in Globex's log", n)
+	}
+	if d := f.str(`SELECT details::text FROM audit_log WHERE action = 'report.export' AND target_id = 'devices' AND organization_id IS NULL`); !strings.Contains(d, `"organizationId": "`+f.globex.String()+`"`) || !strings.Contains(d, `"rows": 0`) {
+		t.Errorf("empty export entry %s", d)
 	}
 	if _, err := f.svc.Export(f.ctx, admin, "nope", Query{}); err == nil {
 		t.Error("exported an unknown report")

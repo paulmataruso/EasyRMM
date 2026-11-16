@@ -361,8 +361,25 @@ func TestScopedCallers(t *testing.T) {
 	if err := e.svc.DeleteOrganization(ctx, orgAdmin, w.orgA.ID); !errors.Is(err, apperr.ErrForbidden) {
 		t.Fatalf("org admin delete org: %v", err)
 	}
-	if _, err := e.svc.UpdateOrganization(ctx, orgAdmin, w.orgA.ID, tenancy.OrganizationInput{Name: "Acme Ltd"}); err != nil {
-		t.Fatalf("org admin update own org: %v", err)
+	// Names are unique on the server: an organization administrator edits
+	// the notes but cannot rename, so cannot probe for other customers'
+	// names.
+	if l[0].CanRename {
+		t.Fatal("org admin may rename")
+	}
+	var fe *apperr.Error
+	if _, err := e.svc.UpdateOrganization(ctx, orgAdmin, w.orgA.ID, tenancy.OrganizationInput{Name: w.orgB.Name}); !errors.As(err, &fe) || fe.Fields["name"] != "Only a Super Administrator can rename an organization." {
+		t.Fatalf("org admin renaming to a taken name: %v", err)
+	}
+	if _, err := e.svc.UpdateOrganization(ctx, orgAdmin, w.orgA.ID, tenancy.OrganizationInput{Name: "Acme Ltd"}); !errors.As(err, &fe) || fe.Fields["name"] == "" {
+		t.Fatalf("org admin renaming: %v", err)
+	}
+	upd, err := e.svc.UpdateOrganization(ctx, orgAdmin, w.orgA.ID, tenancy.OrganizationInput{Name: w.orgA.Name, Notes: "edited by its admin"})
+	if err != nil || upd.Notes != "edited by its admin" || upd.CanRename {
+		t.Fatalf("org admin update own org: %v %+v", err, upd)
+	}
+	if o, err := e.svc.GetOrganization(ctx, super, w.orgA.ID); err != nil || !o.CanRename {
+		t.Fatalf("super admin may not rename: %v %+v", err, o)
 	}
 	if _, err := e.svc.UpdateOrganization(ctx, orgAdmin, w.orgB.ID, tenancy.OrganizationInput{Name: "x"}); !errors.Is(err, apperr.ErrNotFound) {
 		t.Fatalf("org admin update foreign: %v", err)
