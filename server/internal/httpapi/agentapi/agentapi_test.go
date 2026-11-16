@@ -1,14 +1,25 @@
 package agentapi
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"encoding/pem"
+	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
@@ -200,5 +211,241 @@ func TestNewRejectsUnsafeAddresses(t *testing.T) {
 		if _, err := New(nil, &agents.Builds{}, addrs, nil, nil); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// TestReadBodyDeadline checks that a request body that stalls is given up
+// on, and that the deadline is cleared once the body has arrived, so a
+// long poll waiting afterwards is not cut off.
+func TestReadBodyDeadline(t *testing.T) {
+	old := bodyTimeout
+	bodyTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { bodyTimeout = old })
+
+	type result struct {
+		body    string
+		err     error
+		ctxErr  error
+		elapsed time.Duration
+	}
+	results := make(chan result, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		b, err := readBody(w, r, 1<<20)
+		if err == nil {
+			// Wait past the deadline, as a long poll does.
+			time.Sleep(2 * bodyTimeout)
+		}
+		results <- result{string(b), err, r.Context().Err(), time.Since(start)}
+		if err == nil {
+			_, _ = io.WriteString(w, "answered")
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	// A body that arrives in time; the wait after it is not cut off.
+	resp, err := http.Post(srv.URL, "application/json", strings.NewReader(`{"ok":true}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if r := <-results; r.err != nil || r.body != `{"ok":true}` || r.ctxErr != nil || string(got) != "answered" {
+		t.Fatalf("body in time: %+v, answer %q", r, got)
+	}
+
+	// A body that starts and stalls.
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pw.Close() })
+	go func() { _, _ = pw.Write([]byte(`{"facts":`)) }()
+	go func() {
+		req, _ := http.NewRequest(http.MethodPost, srv.URL, pr)
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	select {
+	case r := <-results:
+		if !errors.Is(r.err, errBodyTimeout) || r.elapsed > 5*time.Second {
+			t.Fatalf("stalled body: %+v", r)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("a stalled body was waited for")
+	}
+}
+
+func TestPollsPerDevice(t *testing.T) {
+	a := newAPI(t, testCA)
+	dev, other := uuid.New(), uuid.New()
+	var wg sync.WaitGroup
+	entered := make(chan bool, 2*maxPolls)
+	for range 2 * maxPolls {
+		wg.Go(func() { entered <- a.enterPoll(dev) })
+	}
+	wg.Wait()
+	close(entered)
+	n := 0
+	for ok := range entered {
+		if ok {
+			n++
+		}
+	}
+	if n != maxPolls || !a.enterPoll(other) {
+		t.Fatalf("%d polls open at once; another device refused", n)
+	}
+	a.leavePoll(dev)
+	if !a.enterPoll(dev) || a.enterPoll(dev) {
+		t.Fatal("a closed poll did not make room for exactly one")
+	}
+	for range maxPolls {
+		a.leavePoll(dev)
+	}
+	a.leavePoll(other)
+	if len(a.polls) != 0 {
+		t.Errorf("devices with no polls are remembered: %v", a.polls)
+	}
+}
+
+// TestRefuseUnread checks that a request refused before its body is read
+// is answered while the body is still arriving, and that the server does
+// not go on waiting for the rest of it: over HTTP/1 it closes the
+// connection even if the client never does, over HTTP/2 only the stream
+// ends and the connection serves on.
+func TestRefuseUnread(t *testing.T) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ok" {
+			_, _ = io.WriteString(w, "ok")
+			return
+		}
+		_ = refuseUnread(w, r, false, nil)
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+
+	t.Run("HTTP/1.1", func(t *testing.T) {
+		srv := httptest.NewServer(handler)
+		t.Cleanup(srv.Close)
+		// A client that sends part of a chunked body, reads the answer and
+		// then neither sends more nor hangs up.
+		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = conn.Close() })
+		_, _ = io.WriteString(conn, "POST /refuse HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n9\r\n{\"facts\":\r\n")
+		_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			t.Fatalf("not answered while the body arrives: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized || !resp.Close {
+			t.Fatalf("answer %d %v", resp.StatusCode, resp.Header)
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if _, err := conn.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+			t.Fatalf("the server kept the connection, waiting for the body: %v", err)
+		}
+	})
+
+	t.Run("HTTP/2", func(t *testing.T) {
+		closed := make(chan struct{}, 4)
+		srv := httptest.NewUnstartedServer(handler)
+		srv.EnableHTTP2 = true
+		srv.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+			if s == http.StateClosed {
+				closed <- struct{}{}
+			}
+		}
+		srv.StartTLS()
+		t.Cleanup(srv.Close)
+		client := srv.Client()
+		pr, pw := io.Pipe()
+		t.Cleanup(func() { _ = pw.Close() })
+		go func() { _, _ = pw.Write([]byte(`{"facts":`)) }()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/refuse", pr)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatalf("not answered while the body arrives: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized || resp.ProtoMajor != 2 {
+			t.Fatalf("answer %d over %s", resp.StatusCode, resp.Proto)
+		}
+		ok, err := client.Get(srv.URL + "/ok")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = ok.Body.Close()
+		select {
+		case <-closed:
+			t.Fatal("the HTTP/2 connection was closed")
+		default:
+		}
+	})
+}
+
+// wrapped stands for the server's middleware around the response writer:
+// net/http's MaxBytesReader cannot mark a wrapped writer's connection for
+// closing, so it is kept after a body that is too large.
+type wrapped struct{ http.ResponseWriter }
+
+func (w wrapped) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// TestRefusalsKeepConnectionsUsable checks that refusing a request does
+// not spoil the keep-alive connection it came on: a request without a
+// body, or whose body was read to its end, leaves the connection to the
+// next request with a live context.
+func TestRefusalsKeepConnectionsUsable(t *testing.T) {
+	var canceled atomic.Int64
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		w := wrapped{rw}
+		switch r.URL.Path {
+		case "/ok":
+			if r.Context().Err() != nil {
+				canceled.Add(1)
+			}
+		case "/refuse":
+			_ = refuseUnread(w, r, false, nil)
+			w.WriteHeader(http.StatusUnauthorized)
+		case "/read":
+			if _, err := readBody(w, r, 64); err != nil {
+				var e *httpapi.Error
+				if errors.As(err, &e) {
+					w.WriteHeader(e.Status)
+				}
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	c := srv.Client()
+	send := func(method, path string, body []byte, want int) {
+		t.Helper()
+		var rd io.Reader
+		if body != nil {
+			rd = bytes.NewReader(body)
+		}
+		req, _ := http.NewRequest(method, srv.URL+path, rd)
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != want {
+			t.Fatalf("%s %s: %d", method, path, resp.StatusCode)
+		}
+	}
+	for range 50 {
+		send(http.MethodGet, "/refuse", nil, http.StatusUnauthorized)
+		send(http.MethodGet, "/ok", nil, http.StatusOK)
+		send(http.MethodPost, "/read", bytes.Repeat([]byte("x"), 65), http.StatusRequestEntityTooLarge)
+		send(http.MethodGet, "/ok", nil, http.StatusOK)
+		send(http.MethodPost, "/refuse", bytes.Repeat([]byte("x"), 133), http.StatusUnauthorized)
+		send(http.MethodGet, "/ok", nil, http.StatusOK)
+	}
+	if n := canceled.Load(); n != 0 {
+		t.Errorf("%d requests arrived on a connection whose context was canceled", n)
 	}
 }

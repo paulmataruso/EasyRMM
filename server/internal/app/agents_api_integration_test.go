@@ -11,10 +11,12 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -389,5 +391,115 @@ func exec(t *testing.T, h *harness, sql string, args ...any) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestAgentRequestLimits covers what one device may send (Phase 9 security
+// review): a request naming no enrolled device is refused before its body
+// is read, and an enrolled device that sends far more than an agent does
+// is refused with 429, without its body being read either. Requests that
+// name the device but are not signed by it do not use up its allowance.
+func TestAgentRequestLimits(t *testing.T) {
+	h := newHarness(t, false)
+	admin, _ := setUp(t, h)
+	acme := orgID(t, admin, "Acme")
+	var hq idObj
+	admin.expect(http.StatusCreated, "POST", "/api/v1/organizations/"+acme+"/sites", map[string]string{"name": "HQ", "timezone": "UTC"}, &hq)
+	var token struct {
+		Secret string `json:"secret"`
+	}
+	admin.expect(http.StatusCreated, "POST", "/api/v1/sites/"+hq.ID+"/enrollment-tokens", map[string]any{"name": "Limits", "expiresInDays": 1}, &token)
+	ctx := context.Background()
+	ac := h.agentClient()
+	key := newKey(t)
+	enr, err := ac.Enroll(ctx, token.Secret, key.Public().(ed25519.PublicKey), facts("lim-01"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac.SetIdentity(enr.DeviceID, key)
+	body, _ := json.Marshal(agentproto.HeartbeatRequest{Facts: facts("lim-01")})
+	sign := func(k ed25519.PrivateKey, device string, b []byte) string {
+		s, err := agentproto.Sign(k, device, "POST", agentproto.PathHeartbeat, b, time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+
+	// A request naming a device that is not enrolled is answered while its
+	// body is still arriving.
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pw.Close() })
+	go func() { _, _ = pw.Write([]byte(`{"facts":`)) }()
+	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(rctx, "POST", h.srv.URL+agentproto.PathHeartbeat, pr)
+	req.Host = "rmm.test"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", sign(key, uuid.NewString(), body))
+	resp, err := h.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("a request from no enrolled device waited for its body: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unknown device: %d", resp.StatusCode)
+	}
+
+	// Badly signed requests naming the device do not spend its allowance.
+	stranger := newKey(t)
+	for range 150 {
+		wantStatus(t, h.raw("POST", agentproto.PathHeartbeat, body, sign(stranger, enr.DeviceID, body)), http.StatusUnauthorized, "agent_unauthorized")
+	}
+	if _, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: facts("lim-01")}); err != nil {
+		t.Fatalf("after badly signed requests: %v", err)
+	}
+
+	// Far more requests than an agent sends.
+	ok := 1
+	for ; ok < 400; ok++ {
+		r := h.raw("POST", agentproto.PathHeartbeat, body, sign(key, enr.DeviceID, body))
+		if r.status == http.StatusTooManyRequests {
+			wantStatus(t, r, http.StatusTooManyRequests, "rate_limited")
+			break
+		}
+		wantStatus(t, r, http.StatusOK, "")
+	}
+	if ok < 100 || ok >= 400 {
+		t.Fatalf("limited after %d requests", ok)
+	}
+	// Once limited, the body is not read: an oversized one is refused for
+	// the rate, not its size.
+	big := bytes.Repeat([]byte("x"), agentproto.MaxBody+1)
+	wantStatus(t, h.raw("POST", agentproto.PathHeartbeat, big, sign(key, enr.DeviceID, big)), http.StatusTooManyRequests, "rate_limited")
+	if _, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: facts("lim-01")}); agentclient.Code(err) != "rate_limited" {
+		t.Fatalf("the agent's own client: %v", err)
+	}
+
+	// Inventory uploads have a smaller allowance of their own.
+	ac2 := h.agentClient()
+	key2 := newKey(t)
+	enr2, err := ac2.Enroll(ctx, token.Secret, key2.Public().(ed25519.PublicKey), facts("lim-02"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac2.SetIdentity(enr2.DeviceID, key2)
+	inv := agentproto.Inventory{OS: agentproto.OSInfo{Name: "Debian GNU/Linux 13 (trixie)"}, PackageManager: "dpkg"}
+	ups := 0
+	for ; ups < 20; ups++ {
+		inv.Packages = []agentproto.Package{{Name: "pkg", Version: strconv.Itoa(ups)}}
+		b, _ := json.Marshal(inv)
+		if _, err := ac2.Inventory(ctx, b); err != nil {
+			if agentclient.Code(err) != "rate_limited" {
+				t.Fatalf("upload %d: %v", ups, err)
+			}
+			break
+		}
+	}
+	if ups != 6 {
+		t.Errorf("%d inventory uploads before the limit", ups)
+	}
+	if _, err := ac2.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: facts("lim-02")}); err != nil {
+		t.Errorf("heartbeats stop with inventory uploads: %v", err)
 	}
 }

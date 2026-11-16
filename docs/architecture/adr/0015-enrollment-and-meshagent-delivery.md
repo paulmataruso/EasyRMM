@@ -31,6 +31,16 @@ jobs to deliver yet, only enrollment, health and the MeshAgent install.
   body's SHA-256. Requests outside ±5 minutes, reused nonces (kept until
   the request's timestamp plus six minutes, past which it is refused anyway)
   and bodies over 1 MiB are refused.
+  Since the Phase 9 security review, the header is checked before the body
+  is read. A request that names no enrolled device, or a device over its
+  limits, is refused unread, and a body must arrive within two minutes.
+  The timestamp is checked again once the body has arrived. Each device
+  may send one signed request a second, after a burst of 120; inventory
+  uploads, after six, one every ten minutes; and keep four job polls open
+  at once. An agent needs a small part of that. Limits are spent only by
+  requests whose signature is verified, so naming another device does not
+  use up its allowance. Requests over them get 429 `rate_limited`, and the
+  agent backs off as after any failure.
 * **Heartbeat** every 60 seconds (`POST /api/agent/v1/heartbeat`) refreshes
   the device's facts and online state. The WebSocket channel of ADR-0009
   arrives with jobs (phase 7).

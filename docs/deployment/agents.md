@@ -276,7 +276,7 @@ tries again after 15 minutes. See [Inventory and health](../operations/inventory
 | `key_in_use` | Another device already enrolled with this key. Uninstall and install again |
 | `clock_skew` | The computer's clock is more than five minutes off. Fix time synchronization |
 | `device_unknown` | The server has no record of this device, for example after restoring an older database backup. Uninstall and enroll again |
-| `rate_limited` | Too many enrollments from one address at once; the installer can simply be run again |
+| `rate_limited` | Too many enrollments from one address at once; the installer can simply be run again. From an enrolled agent: the device sent far more requests than an agent does (more than about one a second, or an inventory more often than every ten minutes after a few); it backs off and tries again. If it persists, something else may be using the device's key |
 | `meshagent_unavailable` | The server cannot reach MeshCentral right now; the agent retries later |
 | `enrollment_rejected` | The device was rejected under **Waiting for approval**. Uninstall the agent; installing it again asks anew |
 | `too_many_waiting` | 10,000 devices already wait for approval; approve or reject some, and the agent asks again |

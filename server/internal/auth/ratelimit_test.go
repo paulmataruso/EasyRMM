@@ -31,6 +31,32 @@ func TestKeyedLimiterBurstAndRefill(t *testing.T) {
 	}
 }
 
+func TestKeyedLimiterReady(t *testing.T) {
+	now := time.Unix(1000, 0)
+	l := NewKeyedLimiter(10*time.Second, 2, 100)
+	l.now = func() time.Time { return now }
+	if !l.Ready("dev") || l.Len() != 0 {
+		t.Fatal("an unseen key is not ready, or Ready tracked it")
+	}
+	for range 2 {
+		if !l.Ready("dev") || !l.Allow("dev") {
+			t.Fatal("inside the burst")
+		}
+	}
+	if l.Ready("dev") {
+		t.Fatal("ready with no tokens left")
+	}
+	now = now.Add(10 * time.Second)
+	// Asked twice: Ready does not spend the refilled token.
+	first, second := l.Ready("dev"), l.Ready("dev")
+	if !first || !second {
+		t.Fatal("Ready spent a token, or none refilled")
+	}
+	if !l.Allow("dev") || l.Ready("dev") {
+		t.Fatal("after the refilled token")
+	}
+}
+
 func TestKeyedLimiterBoundsMemory(t *testing.T) {
 	now := time.Unix(1000, 0)
 	l := NewKeyedLimiter(time.Second, 1, 50)

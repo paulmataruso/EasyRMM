@@ -274,6 +274,18 @@ All notable changes to this project are documented here. The format follows
   device's page; `GET /api/v1/software` remains.
 
 ### Security
+- Agent API limits from the Phase 9 security review:
+  - A signed request's header is checked before its body is read. Before,
+    up to 4 MiB was read first, with no time limit, from anyone.
+  - A body must arrive within two minutes.
+  - Each device may send one signed request a second, after a burst of
+    120. Inventory uploads (each replacing up to 20,000 rows) are limited
+    to one every ten minutes, after six. At most four job polls may be
+    open at once. Requests over these get 429 `rate_limited`.
+  - Limits are spent only by verified requests.
+  - Over HTTP/1, a request refused before its body is read is answered at
+    once and the connection closed. net/http otherwise waits, with no time
+    limit, for up to 256 KiB of the rest of the body first.
 - Tenancy findings from the Phase 9 security review:
   - A report export's audit entry is written under each organization its
     rows came from (and its site, when they share one). Before, it was
