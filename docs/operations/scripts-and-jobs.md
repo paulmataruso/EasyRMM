@@ -39,6 +39,32 @@ Windows line endings in the body are converted to Unix ones (the agent
 writes `cmd` scripts with Windows ones again). Adding, changing
 and deleting scripts is audited with the body's SHA-256.
 
+### Scripts that install updates
+
+Where EasyPatch patches devices ([Patching](patching.md)), updates should
+come from EasyPatch. Updates a script installs skip EasyPatch's policies,
+maintenance windows and exclusions, and EasyPatch sees them only at its next
+scan. Once EasyPatch is set up, people who can see patching get a warning
+naming each line that does one of these:
+
+| Shell | Lines that warn |
+|---|---|
+| PowerShell, cmd | Installing Windows updates: PSWindowsUpdate (`Install-WindowsUpdate`, `Get-WindowsUpdate -Install`, `Get-WUInstall`), the Windows Update Agent API (`CreateUpdateInstaller`), `usoclient StartInstall`/`ScanInstallWait`/`ResumeUpdate`, `wuauclt /updatenow` |
+| PowerShell, cmd | Installing update packages: `wusa` with an `.msu`, `dism /add-package`, `Add-WindowsPackage` |
+| PowerShell, cmd | Writing Windows Update policy (`Policies\Microsoft\Windows\WindowsUpdate`) with `Set-ItemProperty`, `New-Item`, `reg add` and the like |
+| Bash, sh, Python 3 | Upgrading every package: `apt`/`apt-get`/`aptitude` `upgrade`, `dist-upgrade`, `full-upgrade`; `dnf`/`yum`/`microdnf` `upgrade`, `update`, `distro-sync`; `zypper update`, `patch`, `dup`; `pacman -Syu`; `apk upgrade`; `unattended-upgrade` |
+| Bash, sh, Python 3 | Upgrading to a new release (`do-release-upgrade`); turning on automatic updates (`systemctl enable`/`start` of unattended-upgrades, dnf-automatic or yum-cron, `dpkg-reconfigure unattended-upgrades`, `dnf-automatic`, `yum-cron`) |
+
+Python scripts are checked through their string literals, as in
+`subprocess.run(["apt-get", "-y", "upgrade"])`. Comments are skipped. These
+do not warn: updating one named package (`apt-get install --only-upgrade
+nginx`, `dnf update nginx`), checking for updates without installing them,
+and application updates with winget or Chocolatey.
+
+The warning appears while the script is edited, on its page, and when it is
+about to run. It is a check on the text, so a script can install updates in
+ways it does not recognize. Nothing is refused.
+
 ## Running a script
 
 From a script's page, **Run** asks for the devices; from a device's page,

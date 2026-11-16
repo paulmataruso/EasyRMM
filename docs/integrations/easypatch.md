@@ -22,10 +22,15 @@ picture; what was built, and what is still wanted, is below.
 EasyRMM never writes `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate`
 and has no Windows Update or system-wide apt/dnf upgrade of its own (its
 software actions install, update or remove one named package, ADR-0028).
-Planned, **not built**: a warning in the script library for scripts that
-would patch the system themselves (PSWindowsUpdate, `usoclient`,
-`apt upgrade`…), and a check for running EasyPatch jobs before any restart
-EasyRMM starts.
+
+Scripts can still do what EasyRMM does not. Once EasyPatch is set up, the
+script library warns about scripts that patch the system themselves, naming
+each line (see [Scripts and jobs](../operations/scripts-and-jobs.md#scripts-that-install-updates)).
+It warns; it refuses nothing.
+
+EasyRMM has no restart action of its own, so nothing it starts can restart a
+device in the middle of an EasyPatch job. A restart action added later
+should first check the device's running EasyPatch jobs.
 
 ## Topology
 

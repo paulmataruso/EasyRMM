@@ -193,6 +193,30 @@ describe("scripts on the device page", () => {
     expect(server.call("POST /jobs").body).toEqual({ scriptId: "sc1", deviceIds: ["d1"], args: [], timeoutSeconds: 120, waitHours: 24 });
   });
 
+  it("warns before running a script that installs system updates where EasyPatch patches", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi({
+      ...baseRoutes(sessionView({ isSuperAdmin: false, permissions: [...TECHNICIAN.permissions, "patch.view"] })),
+      ...unreportedRoutes(),
+      "GET /devices/:id": ok(linux),
+      "GET /job-runs": ok({ items: [] }),
+      "GET /patching": ok({ configured: true, canOperate: false, canSchedule: false }),
+      "GET /scripts": ok({ items: [script("sc1", "Disk usage"), script("sc3", "Patch everything")] }),
+      "GET /scripts/:id": (r) => ok(r.params.id === "sc3" ? script("sc3", "Patch everything", { body: "apt-get update\napt-get -y upgrade\n" }) : script("sc1", "Disk usage", { body: "df -h\n" })),
+    });
+    renderApp("/devices/d1");
+    await user.click(await screen.findByRole("button", { name: "Run script" }));
+    const dialog = await screen.findByRole("dialog", { name: "Run a script" });
+    const select = await within(dialog).findByLabelText(/^Script/);
+    await user.selectOptions(select, "Disk usage");
+    await waitFor(() => expect(server.callsTo("GET /scripts/:id")).toHaveLength(1));
+    expect(within(dialog).queryByText("This script installs system updates itself")).not.toBeInTheDocument();
+    // The list leaves bodies out; the warning reads the chosen script.
+    await user.selectOptions(select, "Patch everything");
+    expect(await within(dialog).findByText("This script installs system updates itself")).toBeInTheDocument();
+    expect(within(dialog).getByText(/Line 2 upgrades every package/)).toBeInTheDocument();
+  });
+
   it("explains why a device cannot run scripts, and hides scripts from roles without them", async () => {
     installFakeApi({
       ...baseRoutes(TECHNICIAN),

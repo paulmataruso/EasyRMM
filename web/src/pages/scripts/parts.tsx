@@ -1,9 +1,13 @@
 // Pieces shared by the script, job and device pages (ADR-0017).
-import { useId, useState } from "react";
-import type { Job, RunStatus } from "../../api/types";
+import { useId, useMemo, useState } from "react";
+import { Link } from "react-router";
+import { useApi } from "../../api/hooks";
+import type { Job, PatchStatus, RunStatus, Script, Shell } from "../../api/types";
+import { useAuth } from "../../auth/AuthContext";
 import { CopyButton } from "../../components/Copy";
-import { Badge, cx, Dot, Field, Input, Select } from "../../components/ui";
+import { Alert, Badge, cx, Dot, Field, Input, Select } from "../../components/ui";
 import { jobState, RUN_STATUS, STATUS_ORDER } from "./scriptText";
+import { selfPatching } from "./selfPatching";
 
 export function RunStatusBadge({ status, cancelRequested = false }: { status: RunStatus; cancelRequested?: boolean }) {
   const s = RUN_STATUS[status] ?? { label: status, tone: "neutral" as const, title: "" };
@@ -161,5 +165,41 @@ export function OutputView({ title, text, truncated, emptyLabel }: { title: stri
         <p className="mt-1 text-xs text-muted">The output was longer than 256 KiB, so its middle was left out. The first and last 128 KiB are kept.</p>
       )}
     </section>
+  );
+}
+
+/**
+ * Warns that a script installs operating-system updates itself while EasyPatch patches devices
+ * (docs/integrations/easypatch.md). Shown only when EasyPatch is set up and the user can see patching. Pass the body,
+ * or the script's id to read it when a list gave the script without one.
+ */
+export function SelfPatchingWarning({ shell, body, scriptId, className }: { shell: Shell; body?: string; scriptId?: string; className?: string }) {
+  const { can } = useAuth();
+  const status = useApi<PatchStatus>(can("patch.view") ? "/patching" : null, undefined, { staleTime: 60_000 });
+  const configured = status.data?.configured === true;
+  const full = useApi<Script>(configured && body === undefined && scriptId ? `/scripts/${scriptId}` : null);
+  const text = body ?? full.data?.body;
+  const lines = useMemo(() => (configured && text ? selfPatching(shell, text) : []), [configured, shell, text]);
+  if (lines.length === 0) return null;
+  const shown = lines.slice(0, 5);
+  return (
+    <Alert tone="warn" title="This script installs system updates itself" className={className}>
+      <p>
+        Where EasyPatch patches a device, updates a script installs skip EasyPatch&apos;s policies, maintenance windows and exclusions, and
+        EasyPatch sees them only at its next scan. Install updates from{" "}
+        <Link to="/patching" className="font-medium text-accent hover:underline">
+          Patching
+        </Link>{" "}
+        instead.
+      </p>
+      <ul className="mt-1.5 space-y-1">
+        {shown.map((l) => (
+          <li key={l.line}>
+            Line {l.line} {l.what}: <code className="font-mono text-xs break-all">{l.text}</code>
+          </li>
+        ))}
+      </ul>
+      {lines.length > shown.length && <p className="mt-1">And {lines.length - shown.length} more lines like these.</p>}
+    </Alert>
   );
 }

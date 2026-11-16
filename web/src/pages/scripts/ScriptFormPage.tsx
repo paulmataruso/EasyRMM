@@ -22,7 +22,7 @@ import {
   TextareaField,
   TextField,
 } from "../../components/ui";
-import { TimeoutField } from "./parts";
+import { SelfPatchingWarning, TimeoutField } from "./parts";
 import { formatBytes, LIMITS, PLATFORM_NAMES, scriptScope, SHELL_NAMES, SHELL_PLATFORM, SHELLS, utf8Length } from "./scriptText";
 
 const FIELDS = ["name", "description", "shell", "body", "timeoutSeconds", "organizationId", "siteId"];
@@ -314,6 +314,7 @@ function ScriptForm({ script }: { script?: Script }) {
           <p id={`${bodyId}-how`} className="mt-2 text-xs text-muted">
             {HOW_IT_RUNS[shell]}
           </p>
+          <SelfPatchingWarning shell={shell} body={body} className="mt-3" />
         </Card>
 
         <InlineError error={save.error} fields={FIELDS} />

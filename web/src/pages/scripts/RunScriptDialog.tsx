@@ -9,7 +9,7 @@ import { Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Alert, Button, EmptyState, ErrorState, InlineError, SelectField, Spinner, TextareaField } from "../../components/ui";
 import { plural } from "../../lib/format";
-import { TimeoutField } from "./parts";
+import { SelfPatchingWarning, TimeoutField } from "./parts";
 import {
   cannotRunReason,
   formatSeconds,
@@ -150,6 +150,7 @@ function RunForm({ onClose, script: fixedScript, device, preset }: { onClose: ()
           </SelectField>
         ))}
       {fixedScript && fixedScript.description && <p className="text-sm text-muted">{fixedScript.description}</p>}
+      {script && <SelfPatchingWarning key={script.id} shell={script.shell} body={script.body} scriptId={script.id} />}
 
       {fixedScript && !device && <ScriptDevicePicker
           script={fixedScript}

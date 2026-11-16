@@ -10,7 +10,7 @@ import { useToast } from "../../components/Toast";
 import { buttonClasses, Button, Card, ErrorState, KeyValueList, Mono, PageHeader, Spinner } from "../../components/ui";
 import { formatDateTime } from "../../lib/format";
 import { JobsTable } from "../jobs/JobsPage";
-import { CodeView } from "./parts";
+import { CodeView, SelfPatchingWarning } from "./parts";
 import { RunScriptDialog } from "./RunScriptDialog";
 import { formatBytes, formatSeconds, scriptScope, SHELL_NAMES } from "./scriptText";
 
@@ -68,6 +68,7 @@ export function ScriptDetailPage() {
 
       <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
         <Card title="Script" className="min-w-0 xl:col-span-2">
+          <SelfPatchingWarning shell={s.shell} body={s.body ?? ""} className="mb-3" />
           <CodeView code={s.body ?? ""} label={`${s.name} script`} />
         </Card>
         <Card title="Details">

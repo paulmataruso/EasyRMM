@@ -162,6 +162,11 @@ policy setting) may.
 
 Policies, maintenance windows, rings and exclusions are edited in EasyPatch.
 
+Scripts in the library that install updates themselves (Windows Update,
+`apt upgrade`, `dnf upgrade`…) work around all of this. The script library
+warns about them; see
+[Scripts and jobs](scripts-and-jobs.md#scripts-that-install-updates).
+
 ## Who can do what
 
 | Permission | Allows | Built-in roles |

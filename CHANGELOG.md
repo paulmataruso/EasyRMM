@@ -278,6 +278,13 @@ All notable changes to this project are documented here. The format follows
     then checks that users, the audit chain and the same agent carry on.
   - `soak.sh` runs a fleet of simulated agents (`tools/agentsim`) against
     the server while timing the console and jobs on 500 devices.
+- Where EasyPatch is set up, the script library warns about scripts that
+  install updates themselves and so skip EasyPatch's policies and
+  maintenance windows. This covers Windows Update (PSWindowsUpdate,
+  `usoclient`, `wusa`, DISM, Windows Update policy) and upgrading every
+  package (`apt upgrade`, `dnf upgrade`, `zypper patch`, `pacman -Syu`…).
+  It also covers turning on automatic updates. The warning names the lines,
+  while editing, on the script's page and before a run.
 
 ### Removed
 - The fleet-wide **Software** page. Installed software is shown on each

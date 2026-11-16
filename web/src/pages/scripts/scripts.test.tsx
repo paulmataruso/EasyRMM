@@ -257,6 +257,59 @@ describe("scripts", () => {
     expect(server.call("POST /jobs").body).toEqual({ scriptId: "sc2", deviceIds: ["d2", "d1"], args: ["--force", "queue one"], timeoutSeconds: 60, waitHours: 72 });
   });
 
+  it("warns when a script installs system updates itself while EasyPatch patches devices", async () => {
+    const PATCHER = sessionView({ permissions: [...ADMIN.permissions, "patch.view"] });
+    const body = "#!/bin/bash\n# Weekly\napt-get update\nDEBIAN_FRONTEND=noninteractive apt-get -y dist-upgrade\n";
+    installFakeApi({
+      ...baseRoutes(PATCHER),
+      ...lists,
+      "GET /patching": ok({ configured: true, canOperate: true, canSchedule: false }),
+      "GET /scripts/:id": ok({ ...SCRIPTS[0], body }),
+      "GET /jobs": ok({ items: [] }),
+      "GET /devices": ok({ items: [] }),
+    });
+    const { unmount } = renderApp("/scripts/sc1");
+    const warning = await screen.findByText("This script installs system updates itself");
+    const alert = warning.closest("div")?.parentElement as HTMLElement;
+    expect(within(alert).getByText(/Line 4 upgrades every package/)).toBeInTheDocument();
+    expect(within(alert).getByText("DEBIAN_FRONTEND=noninteractive apt-get -y dist-upgrade")).toBeInTheDocument();
+    expect(within(alert).getByRole("link", { name: "Patching" })).toHaveAttribute("href", "/patching");
+    unmount();
+  });
+
+  it("warns live in the editor, and stops once the line is gone", async () => {
+    const user = userEvent.setup();
+    const PATCHER = sessionView({ permissions: [...ADMIN.permissions, "patch.view"] });
+    const server = installFakeApi({ ...baseRoutes(PATCHER), ...lists, "GET /patching": ok({ configured: true, canOperate: true, canSchedule: false }) });
+    renderApp("/scripts/new");
+    const editor = await screen.findByLabelText(/^Body/);
+    await user.click(editor);
+    await user.paste("dnf -y install nginx\ndnf -y upgrade");
+    await waitFor(() => expect(server.calls.some((c) => c.path === "/patching")).toBe(true));
+    // New scripts start as PowerShell, which has no dnf.
+    expect(screen.queryByText("This script installs system updates itself")).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText("Shell"), "Bash");
+    expect(await screen.findByText("This script installs system updates itself")).toBeInTheDocument();
+    expect(screen.getByText(/Line 2 upgrades every package/)).toBeInTheDocument();
+    await user.clear(editor);
+    expect(screen.queryByText("This script installs system updates itself")).not.toBeInTheDocument();
+  });
+
+  it("does not warn when EasyPatch is not set up", async () => {
+    const PATCHER = sessionView({ permissions: [...ADMIN.permissions, "patch.view"] });
+    const server = installFakeApi({
+      ...baseRoutes(PATCHER),
+      "GET /patching": ok({ configured: false, canOperate: false, canSchedule: false }),
+      "GET /scripts/:id": ok({ ...SCRIPTS[0], body: "apt-get -y upgrade\n" }),
+      "GET /jobs": ok({ items: [] }),
+      "GET /devices": ok({ items: [] }),
+    });
+    renderApp("/scripts/sc1");
+    expect(await screen.findByText("This script has not run yet.")).toBeInTheDocument();
+    await waitFor(() => expect(server.calls.some((c) => c.path === "/patching")).toBe(true));
+    expect(screen.queryByText("This script installs system updates itself")).not.toBeInTheDocument();
+  });
+
   it("says when no device can run a script", async () => {
     const user = userEvent.setup();
     installFakeApi({
