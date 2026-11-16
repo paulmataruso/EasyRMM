@@ -386,6 +386,21 @@ All notable changes to this project are documented here. The format follows
   connects by cookie, stays blocked.
 
 ### Fixed
+- A new Docker Compose deployment did not start, found by the backup and
+  restore drill. `setup.sh` created `postgres/` owned by root with mode 700,
+  which the PostgreSQL 18 image mounts above its data directory, so
+  PostgreSQL (uid 70) could not reach its data; it is now owned by 70:70.
+  And the server refused the empty `EASYRMM_MESH_PUBLIC_URL` and
+  `EASYRMM_MESH_CERT_URL` that `.env.example` leaves for their defaults:
+  Compose passes them as empty strings, which the server took as values.
+  Blank now means the default for these and `EASYRMM_ACME_DIRECTORY`. A
+  test now loads the environment Compose builds from `.env.example`.
+- Settings the documentation describes did nothing in a Compose deployment,
+  because Compose did not pass them to the server: session timeouts, the
+  password reset link's lifetime, the four retention periods and the ACME
+  directory. Compose passes them now, and `EASYRMM_LISTEN_HTTPS` too, so a
+  host with several addresses can serve on one. The same test fails when
+  the server reads a setting Compose neither passes nor fixes on purpose.
 - In the audit log, long user names ran into the next column.
 - Remote sessions opened MeshCentral's session view without the device, so
   nothing could connect. MeshCentral's device page calls into the

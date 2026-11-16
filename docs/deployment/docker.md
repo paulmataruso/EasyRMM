@@ -26,7 +26,11 @@ See [network.md](../architecture/network.md) for the full port plan.
   and TCP 4443 for remote sessions by IP address.
 * Outbound HTTPS to `github.com` the first time MeshCentral starts: it
   downloads its agent binaries (about 120 MiB) from GitHub releases.
-* Nothing else listening on 443, 4443, 80, 15432, 14430 or 18081.
+* Nothing else listening on 443, 4443, 80, 15432, 14430 or 18081. On a
+  host with several addresses, `EASYRMM_LISTEN_HTTPS` and
+  `EASYRMM_LISTEN_HTTP` in `.env` can name one, such as `203.0.113.10:443`
+  and `203.0.113.10:80`; remote sessions by IP address then use port 4443
+  of the same address.
 
 ## Install
 

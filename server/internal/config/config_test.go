@@ -195,7 +195,6 @@ func TestRemoteAccessSettings(t *testing.T) {
 		{"EASYRMM_MESH_CONFIG_DIR", "relative/dir", "EASYRMM_MESH_CONFIG_DIR"},
 		{"EASYRMM_MESH_CERT_URL", "http://127.0.0.1:80", "EASYRMM_MESH_CERT_URL"},
 		{"EASYRMM_MESH_PUBLIC_URL", "https://mesh.example.com/sub", "without a path"},
-		{"EASYRMM_MESH_PUBLIC_URL", "", "EASYRMM_MESH_PUBLIC_URL is required"},
 		{"EASYRMM_MESH_PUBLIC_URL", "https://remote.example.net", "must share a parent domain"},
 	} {
 		e := base()
@@ -204,6 +203,18 @@ func TestRemoteAccessSettings(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s=%q: %v, want an error mentioning %q", c.key, c.value, err, c.want)
 		}
+	}
+	// Blank, as Compose passes what .env leaves blank: the defaults.
+	e = base()
+	e["EASYRMM_MESH_PUBLIC_URL"], e["EASYRMM_MESH_CERT_URL"] = " ", ""
+	if c, err := LoadFrom(env(e), noFiles); err != nil || c.MeshPublicURL.String() != "https://mesh.rmm.example.com" || c.Mesh.CertURL != "https://127.0.0.1:443" {
+		t.Errorf("blank remote-access URLs: %v", err)
+	}
+	// Without a public URL there is nothing to derive the remote-access URL from.
+	e = base()
+	delete(e, "EASYRMM_PUBLIC_URL")
+	if _, err := LoadFrom(env(e), noFiles); err == nil || !strings.Contains(err.Error(), "EASYRMM_MESH_PUBLIC_URL is required") {
+		t.Errorf("no public URL: %v", err)
 	}
 	e = base()
 	e["EASYRMM_MESH_CERT_URL"] = "file:///etc/easyrmm/proxy.pem"

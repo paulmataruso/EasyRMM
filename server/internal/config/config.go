@@ -146,7 +146,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		CertFile:          l.str("EASYRMM_TLS_CERT_FILE", ""),
 		KeyFile:           l.str("EASYRMM_TLS_KEY_FILE", ""),
 		ACMEEmail:         l.str("EASYRMM_ACME_EMAIL", ""),
-		ACMEDirectory:     l.str("EASYRMM_ACME_DIRECTORY", "https://acme-v02.api.letsencrypt.org/directory"),
+		ACMEDirectory:     l.orDefault("EASYRMM_ACME_DIRECTORY", "https://acme-v02.api.letsencrypt.org/directory"),
 		DatabaseURL:       l.secret("EASYRMM_DATABASE_URL"),
 		DataDir:           l.str("EASYRMM_DATA_DIR", "/var/lib/easyrmm"),
 		RequireMFA:        l.boolean("EASYRMM_REQUIRE_MFA", true),
@@ -219,7 +219,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 			meshDefault = "https://mesh." + c.PublicURL.Host
 		}
 	}
-	if raw := l.str("EASYRMM_MESH_PUBLIC_URL", meshDefault); raw != "" {
+	if raw := l.orDefault("EASYRMM_MESH_PUBLIC_URL", meshDefault); raw != "" {
 		c.MeshPublicURL = l.parseHTTPS("EASYRMM_MESH_PUBLIC_URL", raw)
 	}
 
@@ -257,7 +257,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		c.SecretKeys = append(c.SecretKeys, k)
 	}
 
-	c.Mesh.CertURL = l.str("EASYRMM_MESH_CERT_URL", defaultCertURL(c))
+	c.Mesh.CertURL = l.orDefault("EASYRMM_MESH_CERT_URL", defaultCertURL(c))
 	c.validate(l)
 	if len(l.errs) > 0 {
 		return nil, errors.Join(l.errs...)
@@ -423,6 +423,16 @@ type loader struct {
 func (l *loader) str(key, def string) string {
 	if v, ok := l.getenv(key); ok {
 		return strings.TrimSpace(v)
+	}
+	return def
+}
+
+// orDefault reads KEY like str, but a blank value also means the default.
+// Docker Compose sets every variable its file lists, as an empty string
+// where .env leaves it blank, as .env.example does for these.
+func (l *loader) orDefault(key, def string) string {
+	if v := l.str(key, ""); v != "" {
+		return v
 	}
 	return def
 }

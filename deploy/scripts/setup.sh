@@ -133,7 +133,7 @@ fi
 if [[ $(id -u) -ne 0 ]]; then
   echo "Not running as root: create these directories yourself:" >&2
   echo "  ${data_root}/server (owner 65532:65532, mode 700)" >&2
-  echo "  ${data_root}/postgres (mode 700)" >&2
+  echo "  ${data_root}/postgres (owner 70:70, mode 700)" >&2
   echo "  ${data_root}/tls (mode 750)" >&2
   echo "  ${data_root}/meshcentral-config (owner 65532:65532, mode 700)" >&2
   echo "  ${data_root}/meshcentral/{data,files,backups} (owner 65532:65532, mode 700)" >&2
@@ -141,7 +141,10 @@ if [[ $(id -u) -ne 0 ]]; then
 fi
 install -d -m 0755 "$data_root"
 install -d -m 0700 -o 65532 -g 65532 "$data_root/server"
-install -d -m 0700 "$data_root/postgres"
+# The PostgreSQL 18 image mounts this directory above its data directory
+# (/var/lib/postgresql) and runs as postgres, uid 70 in the Alpine image:
+# owned by root with mode 700, PostgreSQL could not reach its data.
+install -d -m 0700 -o 70 -g 70 "$data_root/postgres"
 install -d -m 0750 -o root -g 65532 "$data_root/tls"
 install -d -m 0700 -o 65532 -g 65532 "$data_root/meshcentral-config"
 install -d -m 0755 "$data_root/meshcentral"

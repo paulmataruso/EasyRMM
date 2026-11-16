@@ -66,3 +66,20 @@ func TestControlOnADialer(t *testing.T) {
 		t.Fatalf("link-local over UDP: %v", err)
 	}
 }
+
+// Control gets an address after name resolution; anything else is refused,
+// and an address without a port is still checked.
+func TestControlAddresses(t *testing.T) {
+	if err := Control("tcp", "rmm.example.com:443", nil); err == nil || !strings.Contains(err.Error(), "is not an address") {
+		t.Errorf("a host name: %v", err)
+	}
+	if err := Control("udp", "169.254.169.254", nil); err == nil || !strings.Contains(err.Error(), "does not connect to 169.254.169.254") {
+		t.Errorf("an address without a port: %v", err)
+	}
+	if err := Control("tcp", "[::ffff:169.254.169.254]:80", nil); err == nil {
+		t.Error("a link-local address mapped into IPv6 was allowed")
+	}
+	if err := Control("tcp", "192.0.2.10:443", nil); err != nil {
+		t.Errorf("a public address: %v", err)
+	}
+}
