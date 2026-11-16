@@ -2,6 +2,7 @@ package remote
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -9,6 +10,9 @@ import (
 	"io"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // MeshCentral relays bytes between a browser and an agent. Besides the
@@ -29,10 +33,13 @@ import (
 // routingKeys are MeshCentral's routing instructions.
 var routingKeys = map[string]bool{"tcpport": true, "tcpaddr": true, "udpport": true, "udpaddr": true}
 
-// relayProtocols are the relay protocols of the session types EasyRMM offers:
-// terminal (1; 6, 8 and 9 are its PowerShell and logged-in user variants),
-// desktop (2) and files (5).
-var relayProtocols = map[string]bool{"1": true, "2": true, "5": true, "6": true, "8": true, "9": true}
+// relayKinds maps the relay protocols of the session types EasyRMM offers to
+// those types: terminal (1; 6, 8 and 9 are its PowerShell and logged-in user
+// variants), desktop (2) and files (5). A relay is allowed only for the kind
+// of session the console opened, so the audit log's kind is what was used.
+var relayKinds = map[string]Kind{
+	"1": KindTerminal, "2": KindDesktop, "5": KindFiles, "6": KindTerminal, "8": KindTerminal, "9": KindTerminal,
+}
 
 // errRefused is a request the gateway does not forward.
 var errRefused = errors.New("remote gateway: refused")
@@ -53,21 +60,26 @@ func hasRoutingKey(q url.Values) bool {
 	return false
 }
 
-// browserRelay checks a browser's relay connection and returns the device it
-// is for: one of EasyRMM's session protocols, for a named device, with no
-// routing instructions.
-func browserRelay(q url.Values) (nodeID string, err error) {
+// browserRelay checks a browser's relay connection and returns the device
+// and the kind of session it is for: one of EasyRMM's session protocols, for
+// a named device, with no routing instructions.
+func browserRelay(q url.Values) (nodeID string, kind Kind, err error) {
 	if hasRoutingKey(q) {
-		return "", refused("relay with routing instructions")
+		return "", "", refused("relay with routing instructions")
 	}
-	if p := q["p"]; len(p) != 1 || !relayProtocols[p[0]] {
-		return "", refused("relay protocol %q", q.Get("p"))
+	p := q["p"]
+	if len(p) == 1 {
+		kind = relayKinds[p[0]]
+	}
+	if kind == "" {
+		return "", "", refused("relay protocol %q", q.Get("p"))
 	}
 	nodes := q["nodeid"]
 	if len(nodes) != 1 {
-		return "", refused("relay without a device")
+		return "", "", refused("relay without a device")
 	}
-	return normalizeNodeID(nodes[0])
+	nodeID, err = normalizeNodeID(nodes[0])
+	return nodeID, kind, err
 }
 
 // normalizeNodeID turns the forms MeshCentral accepts ("node//id",
@@ -247,4 +259,62 @@ func (g *wsGuard) next() error {
 	g.out = append(g.out, g.held...)
 	g.held, g.payload, g.inMessage = nil, nil, false
 	return nil
+}
+
+// rdpCheck returns the check for the browser's side of MeshCentral's web RDP
+// relay (ADR-0026). Its first message names the device and carries the
+// credentials (["infos", {"ip": "node//…", …}]); MeshCentral then connects
+// to that device's RDP port through its agent. The check admits it only for
+// a device the session holds an RDP grant on, named by its node ID: an
+// "ip" that is not one is an encoded cookie, which can name any address.
+// MeshCentral ignores the port the browser sends for a node ID. Later
+// messages (input, clipboard, pong) pass; a second "infos" does not.
+func (g *Gateway) rdpCheck(ctx context.Context, session uuid.UUID) func([]byte) error {
+	started := false
+	return func(msg []byte) error {
+		var m []json.RawMessage
+		if err := json.Unmarshal(msg, &m); err != nil || len(m) == 0 {
+			return refused("RDP message that is not a JSON array")
+		}
+		var action string
+		if err := json.Unmarshal(m[0], &action); err != nil {
+			return refused("RDP message without an action")
+		}
+		if action != "infos" {
+			if !started {
+				return refused("RDP message before the connection request")
+			}
+			return nil
+		}
+		if started {
+			return refused("second RDP connection request")
+		}
+		var infos struct {
+			IP string `json:"ip"`
+		}
+		if len(m) < 2 || json.Unmarshal(m[1], &infos) != nil {
+			return refused("RDP connection request without details")
+		}
+		if !strings.HasPrefix(infos.IP, "node/") {
+			return refused("RDP connection by cookie")
+		}
+		node, err := normalizeNodeID(infos.IP)
+		if err != nil {
+			return err
+		}
+		if g.granted == nil {
+			return refused("no grant check")
+		}
+		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		ok, err := g.granted(cctx, session, node, KindRDP)
+		if err != nil {
+			return refused("checking the RDP grant failed: %v", err)
+		}
+		if !ok {
+			return refused("RDP relay for a device the session opened no RDP session on")
+		}
+		started = true
+		return nil
+	}
 }

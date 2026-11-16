@@ -216,11 +216,14 @@ func TestForwardsEveryRecordInOrder(t *testing.T) {
 	col.none(t, 100*time.Millisecond)
 }
 
+// Over TCP: a burst of BatchSize datagrams can overflow a UDP receive buffer
+// on a busy machine (CI runners allow about 200 KB), and batching does not
+// depend on the transport.
 func TestForwardsInBatches(t *testing.T) {
 	f := newFixture(t)
-	col := newCollector(t, UDP, nil)
+	col := newCollector(t, TCP, nil)
 	f.record(BatchSize + 10)
-	f.update(Input{Enabled: true, Transport: UDP, Host: "127.0.0.1", Port: col.port, Facility: 16, StartFrom: "beginning"})
+	f.update(Input{Enabled: true, Transport: TCP, Host: "127.0.0.1", Port: col.port, Facility: 16, StartFrom: "beginning"})
 	total := int(f.maxID())
 	if n := f.forward(); n != BatchSize {
 		t.Fatalf("first batch %d", n)

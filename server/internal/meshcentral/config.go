@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 )
@@ -16,6 +17,10 @@ import (
 // created by the container's start script with no usable password; EasyRMM
 // authenticates as it with cookies sealed by the shared key.
 const ServiceAccount = "easyrmm-service"
+
+// ContainerConfigDir is where the MeshCentral container mounts the directory
+// EasyRMM writes its configuration into (deploy/docker-compose.yml).
+const ContainerConfigDir = "/easyrmm/config"
 
 // ServerConfig is what EasyRMM decides about its MeshCentral server.
 type ServerConfig struct {
@@ -42,6 +47,17 @@ type ServerConfig struct {
 	// SessionKey encrypts MeshCentral's own web session cookies; keeping it
 	// fixed lets sessions survive a restart.
 	SessionKey string
+	// ConfigMount is where the configuration directory is mounted inside the
+	// MeshCentral container (default ContainerConfigDir). MeshCentral serves
+	// the session view's script from its web folder (WriteWeb).
+	ConfigMount string
+}
+
+func (c ServerConfig) configMount() string {
+	if c.ConfigMount == "" {
+		return ContainerConfigDir
+	}
+	return c.ConfigMount
 }
 
 // Validate checks the configuration.
@@ -81,6 +97,9 @@ func (c ServerConfig) Validate() error {
 	if len(c.SessionKey) < 32 {
 		errs = append(errs, errors.New("session key must be at least 32 characters"))
 	}
+	if m := c.configMount(); !path.IsAbs(m) || path.Clean(m) != m {
+		errs = append(errs, fmt.Errorf("config mount must be a clean absolute path, got %q", m))
+	}
 	return errors.Join(errs...)
 }
 
@@ -91,7 +110,9 @@ func (c ServerConfig) Validate() error {
 // account sign-up, Intel AMT, the HTTP redirect and MPS ports, WebRTC, guest
 // sharing, login tokens created by users, anonymous agent downloads,
 // self-update, plugins and MeshCentral's own backups (the deployment backs
-// up its data volume).
+// up its data volume). Its pages are compressed and load EasyRMM's session
+// view tuning from the web folder in the configuration directory (WriteWeb,
+// ADR-0025).
 func (c ServerConfig) Render() ([]byte, error) {
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("meshcentral config: %w", err)
@@ -120,6 +141,10 @@ func (c ServerConfig) Render() ([]byte, error) {
 			"plugins":                  map[string]any{"enabled": false},
 			"agentPong":                300,
 			"browserPong":              60,
+			// Gzip pages and scripts: a session view loads about 4.6 MB
+			// uncompressed, 1.1 MB compressed (ADR-0025). WebSockets and
+			// file downloads are not compressed.
+			"compression": true,
 		},
 		"domains": map[string]any{
 			"": map[string]any{
@@ -129,12 +154,18 @@ func (c ServerConfig) Render() ([]byte, error) {
 				// themselves get a signed link from MeshCentral.
 				"lockAgentDownload":  true,
 				"certUrl":            c.CertURL,
+				"webPublicPath":      path.Join(c.configMount(), webDir),
 				"guestDeviceSharing": false,
 				"agentInviteCodes":   false,
 				"novnc":              false,
-				"mstsc":              false,
-				"ssh":                false,
-				"geoLocation":        false,
+				// MeshCentral's web RDP client, for RDP sessions (ADR-0026).
+				// The gateway admits its relay only for a device with an
+				// RDP grant, by node ID; the stand-alone page stays blocked.
+				// Credentials are typed for each session and never stored.
+				"mstsc":                        true,
+				"allowSavingDeviceCredentials": false,
+				"ssh":                          false,
+				"geoLocation":                  false,
 				"passwordRequirements": map[string]any{
 					"loginTokens":       false,
 					"otp2factor":        false,
@@ -167,13 +198,22 @@ func (c ServerConfig) Render() ([]byte, error) {
 // reports whether the file changed; the MeshCentral container's start
 // script restarts MeshCentral when it does.
 func WriteConfig(dir string, content []byte) (bool, error) {
-	path := filepath.Join(dir, "config.json")
-	if old, err := os.ReadFile(path); err == nil && bytes.Equal(old, content) { //nolint:gosec // the configured MeshCentral config directory
-		return false, nil
-	}
-	tmp, err := os.CreateTemp(dir, ".config-*.json")
+	changed, err := writeFile(filepath.Join(dir, "config.json"), content)
 	if err != nil {
 		return false, fmt.Errorf("writing MeshCentral config: %w", err)
+	}
+	return changed, nil
+}
+
+// writeFile replaces a file with content if it differs, atomically and
+// readable only by its owner. It reports whether the file changed.
+func writeFile(name string, content []byte) (bool, error) {
+	if old, err := os.ReadFile(name); err == nil && bytes.Equal(old, content) { //nolint:gosec // a file in the configured MeshCentral config directory
+		return false, nil
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(name), "."+filepath.Base(name)+"-*")
+	if err != nil {
+		return false, err
 	}
 	defer func() { _ = os.Remove(tmp.Name()) }()
 	if err := tmp.Chmod(0o600); err != nil {
@@ -191,8 +231,8 @@ func WriteConfig(dir string, content []byte) (bool, error) {
 	if err := tmp.Close(); err != nil {
 		return false, err
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return false, fmt.Errorf("writing MeshCentral config: %w", err)
+	if err := os.Rename(tmp.Name(), name); err != nil {
+		return false, err
 	}
 	return true, nil
 }

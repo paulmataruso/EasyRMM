@@ -183,6 +183,25 @@ All notable changes to this project are documented here. The format follows
   name and enrolls within seconds, or reject them. The menu and the devices
   tree count the waiting devices; `easyrmm-agent status` shows the code.
   Deciding needs `enrollment.manage` on the whole server.
+- Faster remote desktop (ADR-0025). Sessions connect as soon as they open;
+  the agent looks for screen changes every 20 ms instead of 50 ms; it
+  scales the desktop to the size the session is shown at, and again when
+  the window is resized, so it sends no more pixels than the browser shows;
+  pictures decode off the page's main thread; MeshCentral's pages are
+  served compressed (4.6 MB down to 1.1 MB). On a slow connection, socket
+  queues between the agent, the gateway and MeshCentral are kept to tens of
+  kilobytes, and the agent is asked for pictures less often while the
+  viewer is behind, so the screen shows what is happening now rather than
+  what happened seconds ago: on an emulated 2 Mbit/s link under a
+  full-screen load, a key press shows in 3.5 s (median) where before it did
+  not show within 30 s.
+- RDP sessions (ADR-0026). Windows devices offer **RDP** beside remote
+  desktop, terminal and files, for roles with the remote desktop
+  permission: MeshCentral's web RDP client, tunnelled to the device's own
+  RDP port by its agent, with its own grant and audit record. Credentials
+  are typed for each session and never stored. The session takes the size
+  of the window, and connects again at the new size when the window is
+  resized.
 - The console's libraries are served as a chunk of their own, which
   browsers keep across EasyRMM upgrades.
 - When the server cannot open its stored certificate authority or job key,
@@ -203,6 +222,12 @@ All notable changes to this project are documented here. The format follows
   control channel messages asking for a tunnel close the channel; the
   agent path no longer accepts a MeshCentral user's credentials; and
   `localrelay.ashx` is refused.
+- A relay connection now needs a grant of its own session type: a session
+  opened as a terminal can no longer open the device's desktop or files, so
+  the audit log's record of the session's kind is what was used.
+- MeshCentral's RDP relay is open only to a session holding an RDP grant
+  for the device it names, by node ID; the stand-alone RDP page, which
+  connects by cookie, stays blocked.
 
 ### Fixed
 - In the audit log, long user names ran into the next column.

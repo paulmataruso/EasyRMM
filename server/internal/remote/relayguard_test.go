@@ -16,23 +16,29 @@ import (
 )
 
 func TestBrowserRelay(t *testing.T) {
-	ok := map[string]string{
-		"browser=1&p=2&nodeid=node//abc$@9&id=t1&auth=x": "node//abc$@9",
-		"p=1&nodeid=node/domain/abc&id=t1":               "",
-		"p=5&nodeid=abc&id=t1":                           "node//abc",
-		"p=8&nodeid=node//abc&id=t1":                     "node//abc",
+	ok := map[string]struct {
+		node string
+		kind Kind
+	}{
+		"browser=1&p=2&nodeid=node//abc$@9&id=t1&auth=x": {"node//abc$@9", KindDesktop},
+		"p=1&nodeid=node/domain/abc&id=t1":               {},
+		"p=1&nodeid=node//abc&id=t1":                     {"node//abc", KindTerminal},
+		"p=5&nodeid=abc&id=t1":                           {"node//abc", KindFiles},
+		"p=6&nodeid=node//abc&id=t1":                     {"node//abc", KindTerminal},
+		"p=8&nodeid=node//abc&id=t1":                     {"node//abc", KindTerminal},
+		"p=9&nodeid=node//abc&id=t1":                     {"node//abc", KindTerminal},
 	}
 	for q, want := range ok {
 		v, _ := url.ParseQuery(q)
-		got, err := browserRelay(v)
-		if want == "" {
+		node, kind, err := browserRelay(v)
+		if want.node == "" {
 			if err == nil {
 				t.Errorf("%s: accepted a node id with a domain", q)
 			}
 			continue
 		}
-		if err != nil || got != want {
-			t.Errorf("%s: %q, %v", q, got, err)
+		if err != nil || node != want.node || kind != want.kind {
+			t.Errorf("%s: %q %q, %v", q, node, kind, err)
 		}
 	}
 	for _, q := range []string{
@@ -50,7 +56,7 @@ func TestBrowserRelay(t *testing.T) {
 		"p=2&nodeid=node//a%25b",
 	} {
 		v, _ := url.ParseQuery(q)
-		if _, err := browserRelay(v); !errors.Is(err, errRefused) {
+		if _, _, err := browserRelay(v); !errors.Is(err, errRefused) {
 			t.Errorf("%s: accepted (%v)", q, err)
 		}
 	}
@@ -240,12 +246,12 @@ func TestGatewayRelaysOnlyToGrantedDevices(t *testing.T) {
 	session := uuid.New()
 	g.remember("grant-cookie", session)
 	var asked []string
-	g.granted = func(_ context.Context, s uuid.UUID, nodeID string) (bool, error) {
-		asked = append(asked, nodeID)
+	g.granted = func(_ context.Context, s uuid.UUID, nodeID string, kind Kind) (bool, error) {
+		asked = append(asked, nodeID+" "+string(kind))
 		if nodeID == "node//broken" {
 			return false, errors.New("database down")
 		}
-		return s == session && nodeID == "node//granted", nil
+		return s == session && nodeID == "node//granted" && kind == KindDesktop, nil
 	}
 	relay := func(q string) int {
 		r := httptest.NewRequest(http.MethodGet, "https://mesh.example.com/MeshRelay.ashx/?"+q, nil)
@@ -259,13 +265,16 @@ func TestGatewayRelaysOnlyToGrantedDevices(t *testing.T) {
 	if c := relay("browser=1&p=2&nodeid=node//other&id=t1"); c != http.StatusForbidden {
 		t.Errorf("device without a grant: %d", c)
 	}
+	if c := relay("browser=1&p=5&nodeid=node//granted&id=t1"); c != http.StatusForbidden {
+		t.Errorf("files on a desktop grant: %d", c)
+	}
 	if c := relay("browser=1&p=2&nodeid=node//granted&id=t1&tcpport=3389"); c != http.StatusForbidden {
 		t.Errorf("routing instructions: %d", c)
 	}
 	if c := relay("browser=1&p=2&nodeid=node//broken&id=t1"); c != http.StatusInternalServerError {
 		t.Errorf("failed grant check: %d", c)
 	}
-	if strings.Join(asked, ",") != "node//granted,node//other,node//broken" {
+	if strings.Join(asked, ",") != "node//granted desktop,node//other desktop,node//granted files,node//broken desktop" {
 		t.Errorf("grant checks = %v", asked)
 	}
 	// Without a grant check (no remote service), relays are refused.

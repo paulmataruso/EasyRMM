@@ -57,9 +57,13 @@ func main() {
 	cfg := meshcentral.ServerConfig{
 		Hostname: *host, Listen: *listen, PublicPort: *publicPort, TrustedProxy: "127.0.0.1",
 		FramingOrigins: []string{*origin}, CertURL: *certURL, LoginKey: key, SessionKey: hex.EncodeToString(session),
+		ConfigMount: *mountedAt,
 	}
 	out, err := cfg.Render()
 	if err != nil {
+		fail(err)
+	}
+	if _, err := meshcentral.WriteWeb(*dir); err != nil {
 		fail(err)
 	}
 	if _, err := meshcentral.WriteConfig(*dir, out); err != nil {
@@ -67,6 +71,14 @@ func main() {
 	}
 	// The container may run as another user; the files are test-only.
 	if err := os.Chmod(filepath.Join(*dir, "config.json"), 0o644); err != nil { //nolint:gosec // test-only configuration with a throwaway key, read by the container
+		fail(err)
+	}
+	for _, p := range []string{"web", "web/scripts"} {
+		if err := os.Chmod(filepath.Join(*dir, p), 0o755); err != nil { //nolint:gosec // public scripts, read by the container
+			fail(err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(*dir, "web", "scripts", "custom.js"), 0o644); err != nil { //nolint:gosec // a public script, read by the container
 		fail(err)
 	}
 	if err := os.WriteFile(filepath.Join(*dir, "key.hex"), []byte(meshcentral.KeyHex(key)), 0o600); err != nil {

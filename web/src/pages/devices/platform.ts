@@ -11,7 +11,7 @@ export function platformName(p: Platform): string {
   return PLATFORMS[p] ?? p;
 }
 
-export const REMOTE_KINDS: RemoteKind[] = ["desktop", "terminal", "files"];
+export const REMOTE_KINDS: RemoteKind[] = ["desktop", "rdp", "terminal", "files"];
 
 export function isRemoteKind(value: string | undefined): value is RemoteKind {
   return REMOTE_KINDS.includes(value as RemoteKind);

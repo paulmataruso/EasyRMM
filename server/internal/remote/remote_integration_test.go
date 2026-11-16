@@ -960,6 +960,8 @@ func TestAgentEndToEnd(t *testing.T) {
 	refusedDial("relay with a remote address", b, "/meshrelay.ashx?browser=1&p=1&nodeid="+dev.MeshNodeID+"&id=x2&tcpaddr=192.0.2.1&tcpport=445", true)
 	refusedDial("relay for a device without a grant", b, "/meshrelay.ashx?browser=1&p=1&nodeid=node//easyrmmtestnogrant&id=x3&auth="+ac.Cookie, true)
 	refusedDial("relay outside EasyRMM's session types", b, "/meshrelay.ashx?browser=1&p=10&nodeid="+dev.MeshNodeID+"&id=x4", true)
+	refusedDial("desktop relay on a terminal grant", b, "/meshrelay.ashx?browser=1&p=2&nodeid="+dev.MeshNodeID+"&id=x7&auth="+ac.Cookie, true)
+	refusedDial("files relay on a terminal grant", b, "/meshrelay.ashx?browser=1&p=5&nodeid="+dev.MeshNodeID+"&id=x8&auth="+ac.Cookie, true)
 	// Without the browser's headers a request takes the agent path, where a
 	// MeshCentral user cookie would have skipped the checks above.
 	refusedDial("agent-path relay signed in as the user", r.browser(), "/meshrelay.ashx?p=1&nodeid="+dev.MeshNodeID+"&id=x5&tcpport=22&auth="+ac.Cookie, false)
@@ -991,6 +993,81 @@ func TestAgentEndToEnd(t *testing.T) {
 		rcancel()
 		_ = c2.CloseNow()
 	}
+	// MeshCentral's web RDP relay (ADR-0026). The agent tunnels RDP to the
+	// device's own port 3389; the test runs on the agent's network, so it
+	// plays the device's RDP server and sees what arrives.
+	rdpServer, err := net.Listen("tcp4", "127.0.0.1:3389")
+	if err != nil {
+		t.Fatalf("the RDP check plays an RDP server on 127.0.0.1:3389: %v", err)
+	}
+	defer func() { _ = rdpServer.Close() }()
+	rdpArrived := make(chan []byte, 4)
+	go func() {
+		for {
+			c, err := rdpServer.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer func() { _ = c.Close() }()
+				_ = c.SetReadDeadline(time.Now().Add(30 * time.Second))
+				head := make([]byte, 4)
+				if _, err := io.ReadFull(c, head); err == nil {
+					rdpArrived <- head
+				}
+			}()
+		}
+	}()
+	// rdp opens the relay as MeshCentral's RDP client does and keeps it open
+	// for wait: whether MeshCentral answered, and the first bytes that
+	// reached the device's RDP port.
+	rdp := func(wait time.Duration) (closed bool, head []byte) {
+		t.Helper()
+		ws, err := r.dial(b, "/mstscrelay.ashx")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = ws.CloseNow() }()
+		infos := `["infos",{"ip":"` + dev.MeshNodeID + `","port":3389,"screen":{"width":1024,"height":768},` +
+			`"domain":"","username":"easyrmm","password":"test-only","options":{},"locale":"en-US"}]`
+		wctx, wcancel := context.WithTimeout(r.ctx, wait)
+		defer wcancel()
+		if err := ws.Write(wctx, websocket.MessageText, []byte(infos)); err != nil {
+			t.Fatal(err)
+		}
+		readErr := make(chan error, 1)
+		go func() {
+			for {
+				if _, _, err := ws.Read(wctx); err != nil {
+					readErr <- err
+					return
+				}
+			}
+		}()
+		select {
+		case head = <-rdpArrived:
+		case err := <-readErr:
+			closed = err != nil && wctx.Err() == nil
+		case <-wctx.Done():
+		}
+		return closed, head
+	}
+	// The session holds a terminal grant only: the gateway closes the relay
+	// and nothing reaches the device.
+	if closed, head := rdp(10 * time.Second); !closed || head != nil {
+		t.Errorf("RDP relay on a terminal grant: closed %v, device got %x", closed, head)
+	}
+	lr, err := r.svc.StartSession(r.ctx, tech, sess, dev.ID, KindRDP)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.open(b, lr)
+	// With an RDP grant the RDP client's connection request (a TPKT header)
+	// reaches the device's RDP port through MeshCentral and the agent.
+	if _, head := rdp(45 * time.Second); len(head) != 4 || head[0] != 3 || head[1] != 0 {
+		t.Errorf("RDP relay on an RDP grant: the device's RDP port got %x", head)
+	}
+
 	// The terminal itself is unaffected.
 	if err := relay.Write(ctx, websocket.MessageBinary, []byte("echo still-$((2*21))\r")); err != nil {
 		t.Fatal(err)

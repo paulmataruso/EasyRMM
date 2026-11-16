@@ -139,6 +139,7 @@ export function auditTarget(e: AuditEntry): string {
 
 export const REMOTE_KIND_NAMES: Record<RemoteKind, string> = {
   desktop: "Remote desktop",
+  rdp: "RDP",
   terminal: "Terminal",
   files: "Files",
 };

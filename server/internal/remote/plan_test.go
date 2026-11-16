@@ -210,13 +210,17 @@ func TestAccessFor(t *testing.T) {
 }
 
 func TestKinds(t *testing.T) {
-	for k, want := range map[Kind]string{KindDesktop: "11", KindTerminal: "12", KindFiles: "13"} {
+	for k, want := range map[Kind]string{KindDesktop: "11", KindRDP: "11", KindTerminal: "12", KindFiles: "13"} {
 		if k.viewMode() != want {
 			t.Errorf("%s viewMode = %s", k, k.viewMode())
 		}
 		if _, ok := k.permission(); !ok {
 			t.Errorf("%s has no permission", k)
 		}
+	}
+	// RDP is a remote desktop, with the same permission.
+	if p, _ := KindRDP.permission(); p != rbac.PermRemoteDesktop {
+		t.Errorf("RDP permission = %s", p)
 	}
 	if _, ok := Kind("console").permission(); ok {
 		t.Error("unknown kind has a permission")
@@ -257,6 +261,18 @@ func TestLaunchTarget(t *testing.T) {
 	}
 	if got := u.Query().Get("login"); got != "zr$AZr+FV/Hx@Z==" {
 		t.Errorf("login token = %q", got)
+	}
+	if strings.Contains(target, "rdp=") {
+		t.Errorf("terminal target asks for RDP: %s", target)
+	}
+	// An RDP session opens the desktop view and tells the session view
+	// tuning to connect over RDP.
+	rdp, err := launchTarget(node, KindRDP, "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if args := parseUriArgs("https://mesh.example.com" + rdp); args["viewmode"] != "11" || args["rdp"] != "1" {
+		t.Errorf("RDP target %s reads %v", rdp, args)
 	}
 	for _, bad := range []string{"node//a&viewmode=1", "node//a b", "node/other/abc", "node//", "mesh//abc"} {
 		if _, err := launchTarget(bad, KindTerminal, "x"); err == nil {

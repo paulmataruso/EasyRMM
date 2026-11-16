@@ -141,7 +141,7 @@ func TestGatewayBlocksFeatures(t *testing.T) {
 		{http.MethodGet, "/pluginadmin.ashx"},
 		{http.MethodGet, "/webrelay.ashx"},
 		{http.MethodGet, "/mstsc.html"},
-		{http.MethodGet, "/mstscrelay.ashx"},
+		{http.MethodGet, "/MSTSC.html?ws=cookie"},
 		{http.MethodGet, "/sshterminalrelay.ashx"},
 		{http.MethodGet, "/amtevents.ashx"},
 		{http.MethodGet, "/sharing"},

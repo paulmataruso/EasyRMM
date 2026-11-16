@@ -222,12 +222,21 @@ func MeshServerConfig(cfg *config.Config, sec *remote.Secrets) meshcentral.Serve
 	}
 }
 
-// writeMeshConfig writes MeshCentral's config.json. MeshCentral's start
-// script restarts it when the file changes.
+// writeMeshConfig writes MeshCentral's config.json and the files its pages
+// load from EasyRMM (ADR-0025). MeshCentral's start script restarts it when
+// config.json changes; the web files are written first, so they are there
+// when it does.
 func writeMeshConfig(cfg *config.Config, sec *remote.Secrets, log *slog.Logger) error {
 	content, err := MeshServerConfig(cfg, sec).Render()
 	if err != nil {
 		return err
+	}
+	web, err := meshcentral.WriteWeb(cfg.Mesh.ConfigDir)
+	if err != nil {
+		return err
+	}
+	if web {
+		log.Info("wrote MeshCentral session view tuning", "dir", cfg.Mesh.ConfigDir)
 	}
 	changed, err := meshcentral.WriteConfig(cfg.Mesh.ConfigDir, content)
 	if err != nil {

@@ -15,6 +15,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,8 +38,10 @@ var agentRoutes = map[string]bool{
 
 // blockedPrefixes are MeshCentral features that are never reachable through
 // the edge, even with a grant: account self-service, invitations and
-// sharing, server administration, the external sign-in providers, and the
-// RDP, SSH and Intel AMT connections.
+// sharing, server administration, the external sign-in providers, the
+// stand-alone RDP page (which connects by cookie, to any address the cookie
+// names), and the SSH and Intel AMT connections. The web RDP relay itself
+// is admitted only for RDP grants (ADR-0026).
 //
 // Two static resources stay reachable because MeshCentral's device page
 // cannot work without them: the MeshCommander page (/commander.ashx), which
@@ -51,7 +54,7 @@ var blockedPrefixes = []string{
 	"/resetpassword", "/checkmail", "/tokenlogin", "/changepassword", "/deleteaccount",
 	"/backup.zip", "/restoreserver.ashx", "/uploadmeshcorefile.ashx", "/pluginadmin.ashx",
 	"/oneclickrecovery.ashx", "/auth-", "/firebaserelay.aspx", "/mqtt.ashx", "/webrelay.ashx",
-	"/mstsc.html", "/mstscrelay.ashx", "/ssh", "/apf.ashx", "/amtevents.ashx", "/ipkvm.ashx",
+	"/mstsc.html", "/ssh", "/apf.ashx", "/amtevents.ashx", "/ipkvm.ashx",
 	"/webider.ashx", "/messenger", "/recordings.ashx", "/2fahold.ashx", "/localrelay.ashx",
 }
 
@@ -108,9 +111,13 @@ type GatewayConfig struct {
 type Gateway struct {
 	svc   *Service
 	proxy *httputil.ReverseProxy
-	// granted reports whether an EasyRMM session opened a remote session on
-	// a device (by MeshCentral node ID); relay connections need one.
-	granted    func(ctx context.Context, session uuid.UUID, nodeID string) (bool, error)
+	// relayProxy forwards relay connections, agents' and browsers', over
+	// small connections to MeshCentral (ADR-0025).
+	relayProxy *httputil.ReverseProxy
+	// granted reports whether an EasyRMM session opened a remote session of
+	// a kind on a device (by MeshCentral node ID); relay connections need
+	// one.
+	granted    func(ctx context.Context, session uuid.UUID, nodeID string, kind Kind) (bool, error)
 	cookieName string
 	secure     bool
 	ttl        time.Duration
@@ -119,6 +126,11 @@ type Gateway struct {
 	mu      sync.Mutex
 	cache   map[[32]byte]cached
 	tunnels map[uuid.UUID]map[*trackedConn]struct{}
+	// pressure is how long each device's desktop pictures were held
+	// (ADR-0025), and grants the desktop grants the session view's
+	// questions about it were checked against.
+	pressure map[string]*nodePressure
+	grants   map[grantKey]time.Time
 }
 
 type cached struct {
@@ -144,6 +156,7 @@ func NewGateway(svc *Service, cfg GatewayConfig, log *slog.Logger) (*Gateway, er
 	g := &Gateway{
 		svc: svc, cookieName: name, secure: cfg.Secure, ttl: cfg.CacheTTL, log: log,
 		cache: map[[32]byte]cached{}, tunnels: map[uuid.UUID]map[*trackedConn]struct{}{},
+		pressure: map[string]*nodePressure{}, grants: map[grantKey]time.Time{},
 	}
 	if svc != nil {
 		g.granted = svc.SessionGranted
@@ -178,6 +191,33 @@ func NewGateway(svc *Service, cfg GatewayConfig, log *slog.Logger) (*Gateway, er
 			page(w, http.StatusBadGateway, "Remote access is unavailable", "EasyRMM could not reach its remote-access service. Try again in a minute.")
 		},
 	}
+	relay := *g.proxy
+	dialer := &net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second, Control: smallUpstream}
+	relay.Transport = &http.Transport{
+		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			c, err := dialer.DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			if node, ok := ctx.Value(agentDesktopKey{}).(string); ok {
+				var held *atomic.Int64
+				var release func()
+				if node != "" {
+					p := g.holdPressure(node)
+					held, release = &p.held, func() { g.releasePressure(node, p) }
+				}
+				paced, ok := pace(c, meshUnreadLimit, held, release)
+				if !ok && release != nil {
+					release()
+				}
+				c = paced
+			}
+			return c, nil
+		},
+		DisableKeepAlives:     true,
+		ResponseHeaderTimeout: 2 * time.Minute,
+	}
+	g.relayProxy = &relay
 	return g, nil
 }
 
@@ -190,8 +230,12 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reqPath := r.URL.Path
-	if reqPath == LaunchPath {
+	switch reqPath {
+	case LaunchPath:
 		g.launch(w, r)
+		return
+	case PressurePath:
+		g.servePressure(w, r)
 		return
 	}
 	// No request through the gateway signs in to MeshCentral with a
@@ -208,6 +252,17 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// Agents send no cookies; a MeshCentral session cookie here would
 		// sign a user in without passing the browser checks below.
 		r.Header.Del("Cookie")
+		if reqPath == "/meshrelay.ashx" {
+			if q := r.URL.Query(); q.Get("p") == "2" {
+				w = agentDesktopWriter{ResponseWriter: w, log: httpapi.LoggerFrom(r.Context())}
+				// MeshCentral names the device in the agent's desktop relay;
+				// without a usable name the relay is paced but not counted.
+				node, _ := normalizeNodeID(q.Get("nodeid"))
+				r = r.WithContext(context.WithValue(r.Context(), agentDesktopKey{}, node))
+			}
+			g.relayProxy.ServeHTTP(w, r)
+			return
+		}
 		g.proxy.ServeHTTP(w, r)
 		return
 	}
@@ -229,32 +284,51 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+	upgrade := strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+	if route == "/mstscrelay.ashx" && !upgrade {
+		g.refuse(w, r, refused("RDP relay without a WebSocket"))
+		return
+	}
+	if upgrade {
 		// Uncompressed, so the control channel can be read (and MeshCentral
 		// compresses nothing anyway: desktop frames are JPEG).
 		r.Header.Del("Sec-Websocket-Extensions")
-		w = &trackingWriter{ResponseWriter: w, g: g, session: session, guard: route == "/control.ashx", log: httpapi.LoggerFrom(r.Context())}
+		tw := &trackingWriter{
+			ResponseWriter: w, g: g, session: session, log: httpapi.LoggerFrom(r.Context()),
+			desktop: route == "/meshrelay.ashx" && r.URL.Query().Get("p") == "2",
+		}
+		switch route {
+		case "/control.ashx":
+			tw.check, tw.what = checkControlMessage, "control channel"
+		case "/mstscrelay.ashx":
+			tw.check, tw.what = g.rdpCheck(r.Context(), session), "RDP relay"
+		}
+		w = tw
+	}
+	if route == "/meshrelay.ashx" {
+		g.relayProxy.ServeHTTP(w, r)
+		return
 	}
 	g.proxy.ServeHTTP(w, r)
 }
 
 // checkRelay allows a browser's relay connection only for one of EasyRMM's
 // session types, without routing instructions, on a device the browser's
-// EasyRMM session opened a remote session on.
+// EasyRMM session opened a remote session of that type on.
 func (g *Gateway) checkRelay(r *http.Request, session uuid.UUID) error {
-	nodeID, err := browserRelay(r.URL.Query())
+	nodeID, kind, err := browserRelay(r.URL.Query())
 	if err != nil {
 		return err
 	}
 	if g.granted == nil {
 		return refused("no grant check")
 	}
-	ok, err := g.granted(r.Context(), session, nodeID)
+	ok, err := g.granted(r.Context(), session, nodeID, kind)
 	if err != nil {
 		return fmt.Errorf("checking relay grant: %w", err)
 	}
 	if !ok {
-		return refused("relay for a device the session has no grant on")
+		return refused("%s relay for a device the session opened no %s session on", kind, kind)
 	}
 	return nil
 }
@@ -418,6 +492,11 @@ func (g *Gateway) sweep(ctx context.Context) {
 			delete(g.cache, k)
 		}
 	}
+	for k, until := range g.grants {
+		if now.After(until) {
+			delete(g.grants, k)
+		}
+	}
 	g.mu.Unlock()
 	if len(ids) == 0 {
 		return
@@ -440,6 +519,11 @@ func (g *Gateway) sweep(ctx context.Context) {
 		for k, v := range g.cache {
 			if v.session == id {
 				delete(g.cache, k)
+			}
+		}
+		for k := range g.grants {
+			if k.session == id {
+				delete(g.grants, k)
 			}
 		}
 	}
@@ -523,13 +607,18 @@ func (c *trackedConn) Close() error {
 }
 
 // trackingWriter registers the connection the reverse proxy hijacks for a
-// WebSocket, so it can be closed when the session ends; with guard set it
+// WebSocket, so it can be closed when the session ends; with check set it
 // also checks every message the browser sends on it.
 type trackingWriter struct {
 	http.ResponseWriter
 	g       *Gateway
 	session uuid.UUID
-	guard   bool
+	// check, when set, accepts or refuses each message from the browser;
+	// what names the channel in the log.
+	check func([]byte) error
+	what  string
+	// desktop marks a remote desktop relay, whose unsent bytes are bounded.
+	desktop bool
 	log     *slog.Logger
 }
 
@@ -538,12 +627,17 @@ func (t *trackingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	if t.desktop {
+		if err := boundSendQueue(conn, desktopSendQueue); err != nil {
+			t.log.Warn("remote gateway: could not bound a desktop connection's send queue", "error", err)
+		}
+	}
 	tc := t.g.track(t.session, conn)
-	if t.guard {
-		log := t.log
+	if t.check != nil {
+		log, check, what := t.log, t.check, t.what
 		tc.reader = newWSGuard(conn, func(msg []byte) error {
-			if err := checkControlMessage(msg); err != nil {
-				log.Warn("remote gateway: closed a control channel", "reason", err.Error())
+			if err := check(msg); err != nil {
+				log.Warn("remote gateway: closed a "+what, "reason", err.Error())
 				return err
 			}
 			return nil
@@ -553,6 +647,31 @@ func (t *trackingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 }
 
 func (t *trackingWriter) Unwrap() http.ResponseWriter { return t.ResponseWriter }
+
+// agentDesktopKey marks the request context of an agent's side of a desktop
+// relay, whose connection to MeshCentral is paced; its value is the device's
+// MeshCentral node ID, or "".
+type agentDesktopKey struct{}
+
+// agentDesktopWriter bounds the receive buffer of the connection the
+// reverse proxy hijacks for an agent's side of a desktop relay.
+type agentDesktopWriter struct {
+	http.ResponseWriter
+	log *slog.Logger
+}
+
+func (a agentDesktopWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(a.ResponseWriter).Hijack()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := boundReceive(conn, agentDesktopBuffer); err != nil {
+		a.log.Warn("remote gateway: could not bound an agent desktop connection's buffer", "error", err)
+	}
+	return conn, rw, nil
+}
+
+func (a agentDesktopWriter) Unwrap() http.ResponseWriter { return a.ResponseWriter }
 
 // page writes a minimal self-contained HTML message.
 func page(w http.ResponseWriter, status int, title, msg string) {

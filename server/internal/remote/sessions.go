@@ -32,12 +32,16 @@ const (
 	KindDesktop  Kind = "desktop"
 	KindTerminal Kind = "terminal"
 	KindFiles    Kind = "files"
+	// KindRDP is a desktop over Windows Remote Desktop (ADR-0026):
+	// MeshCentral's web RDP client, tunneled to the device's RDP port by
+	// the agent. It needs the remote desktop permission.
+	KindRDP Kind = "rdp"
 )
 
 // permission is what each kind requires at the device's site.
 func (k Kind) permission() (rbac.Permission, bool) {
 	switch k {
-	case KindDesktop:
+	case KindDesktop, KindRDP:
 		return rbac.PermRemoteDesktop, true
 	case KindTerminal:
 		return rbac.PermTerminal, true
@@ -96,7 +100,7 @@ var (
 func (s *Service) StartSession(ctx context.Context, c access.Caller, sessionID, deviceID uuid.UUID, kind Kind) (*Launch, error) {
 	perm, ok := kind.permission()
 	if !ok {
-		return nil, apperr.Invalid("kind", "Choose desktop, terminal or files.")
+		return nil, apperr.Invalid("kind", "Choose desktop, RDP, terminal or files.")
 	}
 	d, err := devices.Lookup(ctx, s.db, c, deviceID)
 	if err != nil {
@@ -304,7 +308,13 @@ func launchTarget(nodeID string, kind Kind, login string) (string, error) {
 	if !meshNodeID.MatchString(node) {
 		return "", fmt.Errorf("remote: unexpected MeshCentral node ID %q", nodeID)
 	}
-	return "/?gotonode=" + node + "&viewmode=" + kind.viewMode() + "&hide=" + hideFlags + "&login=" + url.QueryEscape(login), nil
+	target := "/?gotonode=" + node + "&viewmode=" + kind.viewMode() + "&hide=" + hideFlags
+	if kind == KindRDP {
+		// Read by EasyRMM's session view tuning, which opens RDP instead of
+		// MeshAgent's desktop (ADR-0026).
+		target += "&rdp=1"
+	}
+	return target + "&login=" + url.QueryEscape(login), nil
 }
 
 // CheckCookie returns the EasyRMM session a gateway cookie belongs to, if
@@ -335,13 +345,14 @@ func (s *Service) CheckCookie(ctx context.Context, cookie string) (uuid.UUID, er
 }
 
 // SessionGranted reports whether an EasyRMM session opened a remote session
-// on a device, given its MeshCentral node ID. The gateway lets a browser's
-// relay connections reach only such devices.
-func (s *Service) SessionGranted(ctx context.Context, session uuid.UUID, nodeID string) (bool, error) {
+// of a kind on a device, given its MeshCentral node ID. The gateway lets a
+// browser's relay connections reach only such devices, for that kind.
+func (s *Service) SessionGranted(ctx context.Context, session uuid.UUID, nodeID string, kind Kind) (bool, error) {
 	var ok bool
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM remote_grants g JOIN devices d ON d.id = g.device_id
-			WHERE g.session_id = $1 AND g.redeemed_at IS NOT NULL AND d.mesh_node_id = $2)`, session, nodeID).Scan(&ok)
+			WHERE g.session_id = $1 AND g.redeemed_at IS NOT NULL AND d.mesh_node_id = $2 AND g.kind = $3)`,
+			session, nodeID, string(kind)).Scan(&ok)
 	})
 	return ok, err
 }

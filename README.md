@@ -16,7 +16,7 @@ It is self-hosted, multi-tenant and built for MSPs.
   one-liner, DEB, RPM or shell one-liner) installs both our agent and
   MeshAgent, enrolls the device and registers it. Nothing else needs to be
   installed by hand.
-* **Remote desktop, terminal and file management** from MeshCentral, built
+* **Remote desktop, RDP, terminal and file management** from MeshCentral, built
   into EasyRMM's own interface. Our own authorization and audit trail sit in
   front of every session.
 * **Our own RMM platform** for everything else:

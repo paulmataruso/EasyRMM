@@ -226,7 +226,8 @@ export interface AuditVerifyResult {
 }
 
 export type Platform = "windows" | "linux" | "macos" | "other";
-export type RemoteKind = "desktop" | "terminal" | "files";
+/** A remote session: MeshAgent's desktop, Windows Remote Desktop (RDP), a terminal, or files. */
+export type RemoteKind = "desktop" | "rdp" | "terminal" | "files";
 
 export interface Device {
   id: string;

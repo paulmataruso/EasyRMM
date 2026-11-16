@@ -35,7 +35,7 @@ func TestRenderConfig(t *testing.T) {
 		"aliasPort": float64(443), "redirPort": float64(0), "mpsPort": float64(0),
 		"tlsOffload": "127.0.0.1", "trustedProxy": "127.0.0.1", "WANonly": true,
 		"webRTC": false, "amtManager": false, "selfUpdate": false, "exactPorts": true,
-		"loginCookieEncryptionKey": KeyHex(cfg.LoginKey),
+		"loginCookieEncryptionKey": KeyHex(cfg.LoginKey), "compression": true,
 	}
 	for k, v := range want {
 		if s[k] != v {
@@ -49,8 +49,23 @@ func TestRenderConfig(t *testing.T) {
 	if d["newAccounts"] != false || d["guestDeviceSharing"] != false || d["certUrl"] != "https://127.0.0.1:443" || d["lockAgentDownload"] != true {
 		t.Errorf("domain = %v", d)
 	}
+	// The web RDP client for RDP sessions, never with stored credentials;
+	// VNC and SSH stay off.
+	if d["mstsc"] != true || d["allowSavingDeviceCredentials"] != false || d["novnc"] != false || d["ssh"] != false {
+		t.Errorf("remote clients: mstsc %v, saved credentials %v, novnc %v, ssh %v", d["mstsc"], d["allowSavingDeviceCredentials"], d["novnc"], d["ssh"])
+	}
 	if pr, _ := d["passwordRequirements"].(map[string]any); pr["loginTokens"] != false {
 		t.Errorf("user-created login tokens are not disabled: %v", d["passwordRequirements"])
+	}
+	// The session view tuning, from the web folder where the container
+	// mounts the configuration directory.
+	if d["webPublicPath"] != "/easyrmm/config/web" {
+		t.Errorf("webPublicPath = %v", d["webPublicPath"])
+	}
+	cfg.ConfigMount = "/srv/mesh-config"
+	out, err = cfg.Render()
+	if err != nil || !strings.Contains(string(out), `"webPublicPath": "/srv/mesh-config/web"`) {
+		t.Errorf("another mount: %v\n%s", err, out)
 	}
 }
 
@@ -70,6 +85,8 @@ func TestConfigValidation(t *testing.T) {
 		"cert URL scheme":   func(c *ServerConfig) { c.CertURL = "ftp://x" },
 		"short login key":   func(c *ServerConfig) { c.LoginKey = c.LoginKey[:32] },
 		"short session key": func(c *ServerConfig) { c.SessionKey = "short" },
+		"relative mount":    func(c *ServerConfig) { c.ConfigMount = "easyrmm/config" },
+		"unclean mount":     func(c *ServerConfig) { c.ConfigMount = "/easyrmm/config/" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := validConfig(t)
@@ -110,5 +127,42 @@ func TestWriteConfig(t *testing.T) {
 	}
 	if _, err := WriteConfig(filepath.Join(dir, "missing"), []byte("x")); err == nil {
 		t.Error("write into a missing directory succeeded")
+	}
+}
+
+func TestWriteWeb(t *testing.T) {
+	dir := t.TempDir()
+	changed, err := WriteWeb(dir)
+	if err != nil || !changed {
+		t.Fatalf("first write: changed=%v err=%v", changed, err)
+	}
+	name := filepath.Join(dir, "web", "scripts", "custom.js")
+	b, err := os.ReadFile(name)
+	if err != nil || string(b) != string(ViewerScript()) {
+		t.Fatalf("custom.js: %v", err)
+	}
+	if st, _ := os.Stat(name); st.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v", st.Mode().Perm())
+	}
+	// What MeshCentral's pages need from it.
+	for _, want := range []string{"ADR-0025", "CreateAgentRemoteDesktop", "createImageBitmap", "connectbutton1"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("custom.js lacks %q", want)
+		}
+	}
+	if changed, err := WriteWeb(dir); err != nil || changed {
+		t.Errorf("again: changed=%v err=%v", changed, err)
+	}
+	if err := os.WriteFile(name, []byte("// edited"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if changed, err := WriteWeb(dir); err != nil || !changed {
+		t.Errorf("after an edit: changed=%v err=%v", changed, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "file"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteWeb(filepath.Join(dir, "file")); err == nil {
+		t.Error("write under a file succeeded")
 	}
 }

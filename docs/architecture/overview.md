@@ -36,7 +36,7 @@ common collisions. See [network.md](network.md) for the complete port table.
 | `easyrmm-server` | Go modular monolith | TLS edge, web UI hosting, REST API, agent gateway, MeshCentral gateway and control client, job scheduler, monitoring engine, notification delivery, EasyPatch connector |
 | `web` | React + TypeScript + Vite, designed with Impeccable | The only user interface. Embedded into the server binary at build time |
 | `easyrmm-agent` | Go, single static binary per OS/arch | Enrolment, identity, inventory, telemetry, job and script execution, software management, MeshAgent and EasyPatch-agent supervision, self-update |
-| MeshAgent | Upstream binary, pinned version | Remote desktop, terminal and file transfer transport |
+| MeshAgent | Upstream binary, pinned version | Remote desktop, terminal, file transfer and RDP tunnel transport |
 | MeshCentral | Upstream container, pinned version | Remote-session relay and MeshAgent management; never exposed directly |
 | PostgreSQL | 18 | EasyRMM database (row-level security) and MeshCentral's database |
 | EasyPatch (optional) | Customer's existing deployment | Patch state, policy and patch jobs |
@@ -107,8 +107,8 @@ See ADR-0004 and ADR-0005. Summary:
 * The server keeps one persistent `control.ashx` connection as a dedicated
   service administrator.
 * Launching a session: the browser asks our API; the server checks
-  `device.remote_desktop` / `device.terminal` / `device.files` for that
-  device, records an audit event, issues a single-use grant, and returns an
+  `device.remote_desktop` (also for RDP, ADR-0026) / `device.terminal` /
+  `device.files` for that device, records an audit event, issues a single-use grant, and returns an
   iframe URL on the mesh hostname. The edge exchanges the grant for a
   host-only cookie and redirects to MeshCentral with a one-minute,
   single-use GCM login token for the technician's MeshCentral user,

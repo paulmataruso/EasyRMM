@@ -97,11 +97,14 @@ deployment, MeshAgent on each device keeps using the MeshCentral name.
 
 ## Remote access (MeshCentral)
 
-The `meshcentral` container provides remote desktop, terminal and files.
+The `meshcentral` container provides remote desktop, RDP, terminal and
+files.
 EasyRMM owns its configuration: the server writes `config.json` into
 `/srv/easyrmm/meshcentral-config` on every start (mode 600, read-only to the
 container), and the container's start script restarts MeshCentral when it
-changes. Do not edit it by hand.
+changes. Beside it the server writes `web/scripts/custom.js`, EasyRMM's
+tuning of MeshCentral's session view (ADR-0025), which MeshCentral serves
+from then on without a restart. Do not edit either by hand.
 
 | Variable | Default | Meaning |
 |---|---|---|

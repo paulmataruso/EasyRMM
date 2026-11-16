@@ -1,6 +1,8 @@
 # ADR-0022: No TCP or UDP tunnels through the remote-access gateway
 
-* Status: Accepted (2026-11-16). Refines ADR-0014.
+* Status: Accepted (2026-11-16). Refines ADR-0014. Amended (2026-11-16):
+  a relay needs a grant of its own session type; MeshCentral's web RDP
+  relay is admitted for RDP grants (ADR-0026).
 
 ## Context
 MeshCentral relays bytes between a browser and an agent. Besides the
@@ -39,9 +41,11 @@ Two further gaps let a request skip the gateway's browser checks:
   (1, and its PowerShell and logged-in-user variants 6, 8, 9), desktop (2)
   or files (5), and exactly one device. Routing instructions are refused in
   any letter case. The device must be one the caller's EasyRMM session
-  redeemed a grant for (`remote_grants` joined to `devices.mesh_node_id`).
-  The gateway checks this before forwarding; MeshCentral then applies its
-  own rights as before.
+  redeemed a grant for (`remote_grants` joined to `devices.mesh_node_id`),
+  of the relay's session type: a terminal grant opens terminal relays only,
+  so the kind the audit log records is the kind used. The gateway checks
+  this before forwarding; MeshCentral then applies its own rights as
+  before.
 * **The control channel is inspected.** The gateway reads the browser's
   side of `control.ashx` frame by frame, holds each message until its last
   frame, and forwards it only if it is a JSON object with no routing field
@@ -63,9 +67,9 @@ Two further gaps let a request skip the gateway's browser checks:
   500.
 
 ## Consequences
-* MeshCentral Router, port mapping and the web RDP, SSH and VNC clients do
-  not work through EasyRMM. RDP, if offered, will be a session type of its
-  own with its own grant (a later ADR), not a general tunnel.
+* MeshCentral Router, port mapping and the web SSH and VNC clients do not
+  work through EasyRMM. RDP is a session type of its own with its own grant
+  (ADR-0026), not a general tunnel.
 * Every control channel message from the browser is buffered and parsed
   once. Those messages are small (the largest is clipboard text); the relay
   channels carrying the session itself are not inspected, so desktop

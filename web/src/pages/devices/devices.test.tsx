@@ -261,6 +261,25 @@ describe("device detail", () => {
     expect(location()).toBe("/devices/d1/remote/terminal");
   });
 
+  it("offers RDP on Windows devices to those who may open a remote desktop", async () => {
+    const user = userEvent.setup();
+    installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(device("d1", "FRONT-DESK")), "POST /devices/:id/remote-sessions": launch });
+    const { unmount } = renderApp("/devices/d1");
+    const rdp = await screen.findByRole("button", { name: "RDP" });
+    expect(screen.getAllByRole("button", { name: /^(Remote desktop|RDP|Terminal|Files)$/ }).map((b) => b.textContent)).toEqual(["Remote desktop", "RDP", "Terminal", "Files"]);
+    await user.click(rdp);
+    expect(within(screen.getByRole("menu", { name: "Open RDP" })).getByRole("menuitem", { name: "In this tab" })).toHaveAttribute("href", "/devices/d1/remote/rdp");
+    unmount();
+
+    for (const d of [device("d2", "LAB-07", { platform: "linux" }), device("d3", "KIOSK", { canDesktop: false })]) {
+      installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(d) });
+      const view = renderApp(`/devices/${d.id}`);
+      expect(await screen.findByRole("heading", { name: d.name })).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "RDP" })).not.toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
   it("says so when the browser blocks the session window", async () => {
     const user = userEvent.setup();
     installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(device("d9", "KIOSK")) });
@@ -362,6 +381,14 @@ describe("remote sessions", () => {
 
     await user.click(screen.getByRole("link", { name: /End/ }));
     expect(location()).toBe("/devices/d1");
+  });
+
+  it("opens an RDP session", async () => {
+    const server = installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(DEVICES[0]), "POST /devices/:id/remote-sessions": launch });
+    renderApp("/devices/d1/remote/rdp");
+    expect(await screen.findByTitle("RDP on FRONT-DESK")).toHaveAttribute("src", expect.stringContaining("rdp-token"));
+    expect(server.calls.filter((c) => c.method === "POST").map((c) => (c.body as { kind: string }).kind)).toEqual(["rdp"]);
+    expect(screen.getByRole("link", { name: "RDP" })).toHaveAttribute("aria-current", "page");
   });
 
   it("ends a session in its own window by closing the window", async () => {

@@ -15,7 +15,7 @@ type Attempt = { key: string; launch?: RemoteLaunch; error?: unknown };
 
 /**
  * A remote session in MeshCentral, embedded full-window. Every visit (and every reconnect or switch between
- * desktop, terminal and files) asks the server for a fresh one-time link, so each session is authorized and
+ * desktop, RDP, terminal and files) asks the server for a fresh one-time link, so each session is authorized and
  * audited on its own. The console's own session check (every five minutes while the page is visible) keeps the
  * EasyRMM session, and with it the remote session, alive.
  */
@@ -139,7 +139,7 @@ export function RemoteSessionPage() {
         )}
         {!kind ? (
           <Problem icon={<MonitorOff className="size-8" aria-hidden />} title="Unknown session type" deviceId={id} popup={popup}>
-            Remote sessions are desktop, terminal or files.
+            Remote sessions are desktop, RDP, terminal or files.
           </Problem>
         ) : !current ? (
           <Centered>
