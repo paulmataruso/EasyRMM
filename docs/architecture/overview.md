@@ -75,7 +75,7 @@ See [database.md](database.md) and ADR-0002.
 ## 4. Identity and access
 
 * Users authenticate with e-mail + password (Argon2id) and a mandatory second
-  factor (TOTP; WebAuthn planned). Sessions are opaque 256-bit tokens in a
+  factor (TOTP, or security keys and passkeys, ADR-0032). Sessions are opaque 256-bit tokens in a
   `__Host-` cookie (`Secure`, `HttpOnly`, `SameSite=Strict`), stored hashed,
   with idle and absolute expiry, rotation on privilege change, and a
   per-session CSRF token. See ADR-0006.

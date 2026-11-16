@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, KeyRound, Smartphone } from "lucide-react";
 import { api, fieldError, request } from "../../api/client";
 import { useApi } from "../../api/hooks";
-import type { AuthOptions, ConfirmTotpResult, SessionView, TotpEnrollment } from "../../api/types";
+import type { AuthOptions, ConfirmTotpResult, SecurityKeyAdded, SessionView, TotpEnrollment } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
+import { createKey, getKey, KeyCancelled, keyAvailability, type KeyAvailability } from "../../auth/webauthn";
 import { CopyButton, DownloadButton, OneTimeNotice } from "../../components/Copy";
 import { AuthShell } from "../../components/Layout";
 import { Alert, Button, buttonClasses, InlineError, Spinner, TextField } from "../../components/ui";
@@ -115,7 +116,7 @@ export function SetupPage() {
         >
           Create administrator
         </Button>
-        <p className="text-center text-xs text-muted">You will set up an authenticator app the first time you sign in.</p>
+        <p className="text-center text-xs text-muted">You will set up two-factor authentication the first time you sign in.</p>
       </form>
     </AuthShell>
   );
@@ -137,8 +138,10 @@ export function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [missing, setMissing] = useState<{ email?: string; password?: string }>({});
+  const [keyBusy, setKeyBusy] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
+  const keys = keyAvailability(options.data?.webauthn);
 
   // A known address (finished setup, ?email= from a reset) fills the form and moves focus to the password.
   useEffect(() => {
@@ -175,6 +178,25 @@ export function LoginPage() {
     }
   }
 
+  // A passkey verified by PIN or biometric is both factors, so it signs in fully (ADR-0032).
+  async function signInWithPasskey() {
+    setKeyBusy(true);
+    setError(null);
+    setMissing({});
+    try {
+      const options = await request<unknown>("POST", "/auth/passkey/begin", { silentAuth: true });
+      const credential = await getKey(options);
+      const view = await request<SessionView>("POST", "/auth/passkey/finish", { body: { credential }, silentAuth: true });
+      setPassword("");
+      applySession(view);
+      navigate(returnTo, { replace: true });
+    } catch (err) {
+      if (!(err instanceof KeyCancelled)) setError(err);
+    } finally {
+      setKeyBusy(false);
+    }
+  }
+
   return (
     <AuthShell title="Sign in" subtitle="EasyRMM technician console">
       <form onSubmit={submit} className="flex flex-col gap-3.5" noValidate>
@@ -206,9 +228,23 @@ export function LoginPage() {
           autoFocus={!!emailParam}
         />
         <InlineError error={error} />
-        <Button type="submit" variant="primary" loading={busy} className="mt-1 w-full">
+        <Button type="submit" variant="primary" loading={busy} disabled={keyBusy} className="mt-1 w-full">
           Sign in
         </Button>
+        {keys.usable && (
+          <Button icon={<KeyRound className="size-4" aria-hidden />} loading={keyBusy} disabled={busy} onClick={signInWithPasskey} className="w-full">
+            Sign in with a passkey
+          </Button>
+        )}
+        {!keys.usable && keys.why === "address" && (
+          <p className="text-center text-xs text-muted">
+            Passkeys work at{" "}
+            <a href={`${keys.origin}/login`} className="text-accent hover:underline">
+              {keys.origin}
+            </a>
+            .
+          </p>
+        )}
         {options.data?.passwordResetAvailable ? (
           <Link to={`/forgot-password${email ? `?email=${encodeURIComponent(email)}` : ""}`} className="text-center text-xs text-accent hover:underline">
             Forgot your password?
@@ -221,16 +257,43 @@ export function LoginPage() {
   );
 }
 
+type SecondFactor = "key" | "totp" | "recovery";
+
+const FACTOR_SUBTITLE: Record<SecondFactor, string> = {
+  key: "Use your security key or passkey.",
+  totp: "Enter the 6-digit code from your authenticator app.",
+  recovery: "Enter one of your unused recovery codes.",
+};
+
+const FACTOR_SWITCH: Record<SecondFactor, string> = {
+  key: "Use a security key",
+  totp: "Use authenticator code",
+  recovery: "Use a recovery code",
+};
+
 export function MfaVerifyPage() {
-  const { applySession, signOut } = useAuth();
+  const { applySession, signOut, session } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
+  const options = useApi<AuthOptions>("/auth/options", undefined, { staleTime: 300_000 });
   const returnTo = safeReturnTo(params.get("returnTo"));
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [useRecovery, setUseRecovery] = useState(false);
+  const [chosen, setChosen] = useState<SecondFactor | null>(null);
   const [short, setShort] = useState(false);
+
+  const hasKeys = (session?.user.securityKeys ?? 0) > 0;
+  const hasTotp = session?.user.totp ?? true;
+  const keys = keyAvailability(options.data?.webauthn);
+  // A key where it works; else the app; a key the browser cannot use here still says why.
+  const method: SecondFactor = chosen ?? (hasKeys && (keys.usable || !hasTotp) ? "key" : hasTotp ? "totp" : "recovery");
+  const others = (["key", "totp", "recovery"] as const).filter((m) => m !== method && (m !== "key" || hasKeys) && (m !== "totp" || hasTotp));
+
+  function finish(view: SessionView) {
+    applySession(view);
+    navigate(returnTo, { replace: true });
+  }
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -241,9 +304,7 @@ export function MfaVerifyPage() {
     setBusy(true);
     setError(null);
     try {
-      const view = await request<SessionView>("POST", "/auth/mfa/verify", { body: { code: code.trim() }, silentAuth: true });
-      applySession(view);
-      navigate(returnTo, { replace: true });
+      finish(await request<SessionView>("POST", "/auth/mfa/verify", { body: { code: code.trim() }, silentAuth: true }));
     } catch (err) {
       setError(err);
       setCode("");
@@ -252,43 +313,69 @@ export function MfaVerifyPage() {
     }
   }
 
+  async function verifyWithKey() {
+    setBusy(true);
+    setError(null);
+    try {
+      const options = await request<unknown>("POST", "/auth/mfa/webauthn/begin", { silentAuth: true });
+      const credential = await getKey(options);
+      finish(await request<SessionView>("POST", "/auth/mfa/webauthn/finish", { body: { credential }, silentAuth: true }));
+    } catch (err) {
+      if (!(err instanceof KeyCancelled)) setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const waiting = hasKeys && options.isPending && chosen === null;
   return (
-    <AuthShell
-      title="Two-factor verification"
-      subtitle={useRecovery ? "Enter one of your unused recovery codes." : "Enter the 6-digit code from your authenticator app."}
-    >
-      <form onSubmit={submit} className="flex flex-col gap-3.5">
-        <TextField
-          key={useRecovery ? "recovery" : "totp"}
-          label={useRecovery ? "Recovery code" : "Verification code"}
-          name="code"
-          value={code}
-          onChange={(e) => setCode(e.target.value)}
-          autoComplete="one-time-code"
-          inputMode={useRecovery ? "text" : "numeric"}
-          maxLength={useRecovery ? 32 : 7}
-          spellCheck={false}
-          error={short ? (useRecovery ? "Enter the whole recovery code." : "Enter the 6-digit code from your authenticator app.") : null}
-          autoFocus
-          required
-        />
-        <InlineError error={error} />
-        <Button type="submit" variant="primary" loading={busy} className="w-full">
-          Verify
-        </Button>
-        <div className="flex items-center justify-between text-xs">
-          <button
-            type="button"
-            className="text-accent hover:underline"
-            onClick={() => {
-              setUseRecovery((v) => !v);
-              setCode("");
-              setError(null);
-              setShort(false);
-            }}
-          >
-            {useRecovery ? "Use authenticator code" : "Use a recovery code"}
-          </button>
+    <AuthShell title="Two-factor verification" subtitle={waiting ? undefined : FACTOR_SUBTITLE[method]}>
+      <div className="flex flex-col gap-3.5">
+        {waiting ? (
+          <Spinner label="Loading sign-in options…" />
+        ) : method === "key" ? (
+          <KeyStep availability={keys} busy={busy} error={error} onUse={verifyWithKey} />
+        ) : (
+          <form onSubmit={submit} className="flex flex-col gap-3.5">
+            <TextField
+              key={method}
+              label={method === "recovery" ? "Recovery code" : "Verification code"}
+              name="code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              autoComplete="one-time-code"
+              inputMode={method === "recovery" ? "text" : "numeric"}
+              maxLength={method === "recovery" ? 32 : 7}
+              spellCheck={false}
+              error={short ? (method === "recovery" ? "Enter the whole recovery code." : "Enter the 6-digit code from your authenticator app.") : null}
+              autoFocus
+              required
+            />
+            <InlineError error={error} />
+            <Button type="submit" variant="primary" loading={busy} className="w-full">
+              Verify
+            </Button>
+          </form>
+        )}
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs">
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {others.map((m) => (
+              <button
+                key={m}
+                type="button"
+                className="text-accent hover:underline"
+                disabled={busy}
+                onClick={() => {
+                  setChosen(m);
+                  setCode("");
+                  setError(null);
+                  setShort(false);
+                }}
+              >
+                {FACTOR_SWITCH[m]}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
             className="text-muted hover:text-fg"
@@ -300,8 +387,37 @@ export function MfaVerifyPage() {
             Sign in as someone else
           </button>
         </div>
-      </form>
+      </div>
     </AuthShell>
+  );
+}
+
+/** The security-key step: one button, or why keys cannot be used on this page. */
+function KeyStep({ availability, busy, error, onUse }: { availability: KeyAvailability; busy: boolean; error: unknown; onUse: () => void }) {
+  if (!availability.usable) {
+    return (
+      <Alert tone="warn">
+        {availability.message}
+        {availability.why === "address" && (
+          <>
+            {" "}
+            <a href={`${availability.origin}/login`} className="font-medium underline">
+              Sign in there
+            </a>
+            , or use another way below.
+          </>
+        )}
+      </Alert>
+    );
+  }
+  return (
+    <>
+      <p className="text-sm text-muted">Your browser will ask you to insert or touch your key, or to confirm with your fingerprint, face or PIN.</p>
+      <InlineError error={error} />
+      <Button variant="primary" icon={<KeyRound className="size-4" aria-hidden />} loading={busy} onClick={onUse} className="w-full" autoFocus>
+        Use security key
+      </Button>
+    </>
   );
 }
 
@@ -408,22 +524,165 @@ export function RecoveryCodesView({ codes, onDone, doneLabel = "Continue" }: { c
   );
 }
 
+/**
+ * Registers a security key or passkey: name it, then let the browser create the credential. The first second
+ * factor brings recovery codes, shown once before `onDone`. Signed-in users confirm their password.
+ */
+export function SecurityKeyEnrollment({
+  needsPassword,
+  existingNames = [],
+  onConfirmed,
+  onDone,
+  onCancel,
+  submitLabel = "Add security key",
+}: {
+  needsPassword: boolean;
+  existingNames?: string[];
+  onConfirmed?: (result: SecurityKeyAdded) => void;
+  onDone: () => void;
+  onCancel?: () => void;
+  submitLabel?: string;
+}) {
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [codes, setCodes] = useState<string[] | null>(null);
+  const trimmed = name.trim();
+  // Checked here first: a refusal after the person touched their key would waste the touch.
+  const nameProblem =
+    [...trimmed].length > 64 ? "Use at most 64 characters." : existingNames.includes(trimmed) ? "You already have a key with this name." : null;
+
+  async function add(e: FormEvent) {
+    e.preventDefault();
+    if (!trimmed || nameProblem || (needsPassword && !password)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const options = await api.post<unknown>("/auth/security-keys/begin", { password });
+      const credential = await createKey(options);
+      const result = await api.post<SecurityKeyAdded>("/auth/security-keys/finish", { name: trimmed, credential });
+      setPassword("");
+      onConfirmed?.(result);
+      if (result.recoveryCodes.length > 0) setCodes(result.recoveryCodes);
+      else onDone();
+    } catch (err) {
+      if (!(err instanceof KeyCancelled)) setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (codes) return <RecoveryCodesView codes={codes} onDone={onDone} />;
+  const submit = (
+    <Button
+      type="submit"
+      variant="primary"
+      icon={<KeyRound className="size-4" aria-hidden />}
+      loading={busy}
+      disabled={!trimmed || !!nameProblem || (needsPassword && !password)}
+      className={onCancel ? undefined : "w-full"}
+    >
+      {submitLabel}
+    </Button>
+  );
+  return (
+    <form onSubmit={add} className="flex flex-col gap-3.5" noValidate>
+      <TextField
+        label="Key name"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        error={nameProblem ?? fieldError(error, "name")}
+        hint="So you can tell your keys apart, e.g. YubiKey 5C or Work laptop."
+        autoComplete="off"
+        maxLength={80}
+        required
+        autoFocus
+      />
+      {needsPassword && (
+        <TextField
+          label="Password"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          error={fieldError(error, "password")}
+          required
+        />
+      )}
+      <p className="text-xs text-muted">Next, your browser asks you to insert or touch the key, or to confirm with your fingerprint, face or PIN.</p>
+      <InlineError error={error} fields={["name", "password"]} />
+      {onCancel ? (
+        <div className="flex justify-end gap-2">
+          <Button onClick={onCancel} disabled={busy}>
+            Cancel
+          </Button>
+          {submit}
+        </div>
+      ) : (
+        submit
+      )}
+    </form>
+  );
+}
+
 export function MfaSetupRequiredPage() {
   const { applySession, signOut, setShowingRecoveryCodes } = useAuth();
   const navigate = useNavigate();
+  const options = useApi<AuthOptions>("/auth/options", undefined, { staleTime: 300_000 });
+  const [chosen, setChosen] = useState<"key" | "app" | null>(null);
+  const keys = keyAvailability(options.data?.webauthn);
+  const method = chosen ?? (keys.usable ? null : "app");
+
+  function confirmed(view: SessionView) {
+    // The session is now fully signed in; keep this page until the codes are acknowledged.
+    setShowingRecoveryCodes(true);
+    applySession(view);
+  }
+  function done() {
+    setShowingRecoveryCodes(false);
+    navigate("/", { replace: true });
+  }
+  const switchTo = (m: "key" | "app", label: string) => (
+    <button type="button" className="mt-3 w-full text-center text-xs text-accent hover:underline" onClick={() => setChosen(m)}>
+      {label}
+    </button>
+  );
+
   return (
-    <AuthShell title="Set up two-factor authentication" subtitle="EasyRMM requires an authenticator app for every account.">
-      <MfaEnrollment
-        onConfirmed={(view) => {
-          // The session is now fully signed in; keep this page until the codes are acknowledged.
-          setShowingRecoveryCodes(true);
-          applySession(view);
-        }}
-        onDone={() => {
-          setShowingRecoveryCodes(false);
-          navigate("/", { replace: true });
-        }}
-      />
+    <AuthShell
+      title="Set up two-factor authentication"
+      subtitle="EasyRMM requires a second factor for every account, so a stolen password is not enough to sign in."
+    >
+      {options.isPending && !chosen ? (
+        <Spinner label="Loading sign-in options…" />
+      ) : method === null ? (
+        <div className="flex flex-col gap-2.5">
+          <ChoiceButton
+            icon={<KeyRound className="size-5" aria-hidden />}
+            title="Security key or passkey"
+            detail="A key such as a YubiKey, or a passkey on this device or in your password manager. It only works at EasyRMM's own address, so it cannot be phished."
+            onClick={() => setChosen("key")}
+          />
+          <ChoiceButton
+            icon={<Smartphone className="size-5" aria-hidden />}
+            title="Authenticator app"
+            detail="6-digit codes from an app such as Microsoft Authenticator, Google Authenticator or 1Password."
+            onClick={() => setChosen("app")}
+          />
+          <p className="text-xs text-muted">You can add the other kind later, under Account.</p>
+        </div>
+      ) : method === "key" ? (
+        <>
+          <SecurityKeyEnrollment needsPassword={false} onConfirmed={(r) => confirmed(r.session)} onDone={done} submitLabel="Add security key" />
+          {switchTo("app", "Use an authenticator app instead")}
+        </>
+      ) : (
+        <>
+          <MfaEnrollment onConfirmed={confirmed} onDone={done} />
+          {keys.usable && switchTo("key", "Use a security key or passkey instead")}
+        </>
+      )}
       <button
         type="button"
         className="mt-4 w-full text-center text-xs text-muted hover:text-fg"
@@ -435,6 +694,22 @@ export function MfaSetupRequiredPage() {
         Sign out
       </button>
     </AuthShell>
+  );
+}
+
+function ChoiceButton({ icon, title, detail, onClick }: { icon: ReactNode; title: string; detail: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-start gap-3 rounded-md border border-line bg-raised p-3.5 text-left transition-colors hover:border-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+    >
+      <span className="mt-0.5 shrink-0 text-accent">{icon}</span>
+      <span>
+        <span className="block text-sm font-medium text-fg">{title}</span>
+        <span className="mt-0.5 block text-xs text-muted">{detail}</span>
+      </span>
+    </button>
   );
 }
 
@@ -577,7 +852,7 @@ export function ResetPasswordPage({ invite = false }: { invite?: boolean }) {
         <Button type="submit" variant="primary" loading={busy} disabled={!!local || password !== confirm} className="w-full" icon={<CheckCircle2 className="size-4" aria-hidden />}>
           {invite ? "Set password" : "Change password"}
         </Button>
-        {invite && <p className="text-center text-xs text-muted">Next, sign in and set up an authenticator app.</p>}
+        {invite && <p className="text-center text-xs text-muted">Next, sign in and set up two-factor authentication.</p>}
       </form>
     </AuthShell>
   );

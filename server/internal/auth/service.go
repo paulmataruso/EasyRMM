@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -98,7 +99,12 @@ type User struct {
 	Email       string    `json:"email"`
 	DisplayName string    `json:"displayName"`
 	Status      string    `json:"status"`
-	MFAEnabled  bool      `json:"mfaEnabled"`
+	// MFAEnabled: the user has a second factor of either kind.
+	MFAEnabled bool `json:"mfaEnabled"`
+	// TOTP: an authenticator app is set up.
+	TOTP bool `json:"totp"`
+	// SecurityKeys counts registered security keys and passkeys (ADR-0032).
+	SecurityKeys int `json:"securityKeys"`
 }
 
 // Session is a sign-in session.
@@ -125,16 +131,21 @@ type Service struct {
 	now      func() time.Time
 	ipLimit  *KeyedLimiter
 	mfaLimit *KeyedLimiter
+	// wa is nil when security keys and passkeys are unavailable (ADR-0032).
+	wa       *webauthn.WebAuthn
+	waStatus WebAuthnStatus
 }
 
 // NewService builds the service.
 func NewService(db *database.DB, auditLog *audit.Logger, hasher *Hasher, sealer *secrets.Sealer, mailer Mailer, cfg Config) *Service {
-	return &Service{
+	s := &Service{
 		db: db, audit: auditLog, hasher: hasher, sealer: sealer, mailer: mailer, cfg: cfg, now: time.Now,
 		// 10 attempts at once, then one every 6 seconds, per client address.
 		ipLimit:  NewKeyedLimiter(6*time.Second, 10, 100_000),
 		mfaLimit: NewKeyedLimiter(6*time.Second, 10, 100_000),
 	}
+	s.configureWebAuthn()
+	return s
 }
 
 // SetClock replaces the time source (tests only).
@@ -195,12 +206,14 @@ func (s *Service) Login(ctx context.Context, email, password string, meta Reques
 			hash, status string
 			pwHash       *string
 			totpEnabled  *time.Time
+			hasKeys      bool
 			failed       int
 			lockedUntil  *time.Time
 		)
-		err := tx.QueryRow(ctx, `SELECT id, password_hash, status, totp_enabled_at, failed_logins, locked_until
+		err := tx.QueryRow(ctx, `SELECT id, password_hash, status, totp_enabled_at,
+				EXISTS (SELECT 1 FROM user_webauthn_credentials c WHERE c.user_id = users.id), failed_logins, locked_until
 			FROM users WHERE email = $1 FOR UPDATE`, email).
-			Scan(&userID, &pwHash, &status, &totpEnabled, &failed, &lockedUntil)
+			Scan(&userID, &pwHash, &status, &totpEnabled, &hasKeys, &failed, &lockedUntil)
 		if errors.Is(err, pgx.ErrNoRows) {
 			s.hasher.DummyVerify(ctx, password)
 			failure = "unknown_account"
@@ -256,7 +269,7 @@ func (s *Service) Login(ctx context.Context, email, password string, meta Reques
 		}
 		state := StateActive
 		switch {
-		case totpEnabled != nil:
+		case totpEnabled != nil || hasKeys:
 			state = StateMFARequired
 		case s.cfg.RequireMFA:
 			state = StateMFAEnrollment
@@ -335,11 +348,12 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Session, *Us
 		err := tx.QueryRow(ctx, `
 			SELECT s.id, s.user_id, s.state, s.created_at, s.last_seen_at, s.expires_at, s.idle_expires_at,
 			       s.revoked_at, s.source_ip, s.user_agent,
-			       u.email, u.display_name, u.status, u.totp_enabled_at
+			       u.email, u.display_name, u.status, u.totp_enabled_at,
+			       (SELECT count(*) FROM user_webauthn_credentials c WHERE c.user_id = u.id)
 			FROM sessions s JOIN users u ON u.id = s.user_id
 			WHERE s.token_hash = $1`, hash).
 			Scan(&sess.ID, &sess.UserID, &state, &sess.CreatedAt, &sess.LastSeenAt, &sess.ExpiresAt, &sess.IdleExpiresAt,
-				&revokedAt, &sess.SourceIP, &sess.UserAgent, &user.Email, &user.DisplayName, &user.Status, &totpEnabled)
+				&revokedAt, &sess.SourceIP, &sess.UserAgent, &user.Email, &user.DisplayName, &user.Status, &totpEnabled, &user.SecurityKeys)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInvalidSession
 		}
@@ -365,7 +379,8 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Session, *Us
 	}
 	sess.State = SessionState(state)
 	user.ID = sess.UserID
-	user.MFAEnabled = totpEnabled != nil
+	user.TOTP = totpEnabled != nil
+	user.MFAEnabled = user.TOTP || user.SecurityKeys > 0
 	return &sess, &user, nil
 }
 
@@ -467,9 +482,10 @@ func (s *Service) VerifyMFA(ctx context.Context, sess *Session, user *User, code
 }
 
 // canEnrollTOTP allows TOTP set-up while enrolling at sign-in, or from an
-// active session for a user who has no TOTP configured yet.
+// active session for a user who has no TOTP configured yet (they may have
+// security keys).
 func canEnrollTOTP(sess *Session, user *User) bool {
-	return sess.State == StateMFAEnrollment || (sess.State == StateActive && !user.MFAEnabled)
+	return sess.State == StateMFAEnrollment || (sess.State == StateActive && !user.TOTP)
 }
 
 func totpAAD(userID uuid.UUID) []byte { return []byte("user-totp:" + userID.String()) }

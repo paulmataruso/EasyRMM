@@ -247,6 +247,15 @@ All notable changes to this project are documented here. The format follows
   EasyRMM creates for that install. Devices that already have an EasyPatch
   agent are left alone. The console shows each install's progress and, when
   it fails, why.
+- Security keys and passkeys (ADR-0032). At the first sign-in, people choose
+  a security key or passkey or an authenticator app; either can be added
+  later under **Account**, with the password entered again. A key answers the
+  second-factor step after the password, and **Sign in with a passkey** signs
+  in with a passkey alone when it verifies the person (PIN or biometric).
+  Keys are named, at most ten per person, and removable; the last second
+  factor stays while MFA is required, and an administrator's second-factor
+  reset removes keys too. They need EasyRMM to have a DNS name: browsers
+  refuse them on an IP address, and the console says so.
 - The audit log names software actions, agent updates, report downloads and
   patching, and filters by agent updates, reports and patching.
 - The console's libraries are served as a chunk of their own, which

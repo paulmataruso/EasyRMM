@@ -357,6 +357,7 @@ describe("account", () => {
   const routes = {
     ...baseRoutes(sessionView()),
     "GET /auth/sessions": ok({ items: [sessionItem("s-me", { current: true }), sessionItem("s-old", { userAgent: "Mozilla/5.0 (Windows NT 10.0) Gecko/20100101 Firefox/133.0" })] }),
+    "GET /auth/security-keys": ok({ items: [] }),
   };
 
   it("changes the password", async () => {

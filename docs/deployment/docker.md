@@ -95,6 +95,15 @@ address; Firefox asks again for each port. In Firefox, open
 See ADR-0016 for the design and its limits. In particular, with a DNS
 deployment, MeshAgent on each device keeps using the MeshCentral name.
 
+Security keys and passkeys need a name. Browsers allow them (WebAuthn) only
+on a domain name, so an IP-only deployment signs in with authenticator apps.
+With a name, they work at `EASYRMM_PUBLIC_URL` only; a console opened at
+one of the server's IP addresses links there. Each key belongs to the name it
+was registered at: if you later change the host of `EASYRMM_PUBLIC_URL`,
+every registered key stops working. People then sign in with their
+authenticator app or a recovery code, or an administrator resets their
+second factor. See `docs/security/sign-in.md`.
+
 ## Remote access (MeshCentral)
 
 The `meshcentral` container provides remote desktop, RDP, terminal and

@@ -34,7 +34,7 @@ export function UserDetailPage() {
           disable: `${name} is disabled and has been signed out.`,
           enable: `${name} can sign in again.`,
           unlock: `${name} is unlocked.`,
-          "reset-mfa": `${name} will set up a new authenticator at next sign-in.`,
+          "reset-mfa": `${name} will set up a new second factor at next sign-in.`,
           delete: `${name} was deleted.`,
         };
         toast.success(messages[kind]);
@@ -158,7 +158,7 @@ export function UserDetailPage() {
                 "Second factor",
                 u.mfaEnabled ? (
                   <span className="inline-flex items-center gap-2">
-                    Authenticator app
+                    Set up
                     {manage && (
                       <button type="button" className="text-xs text-accent hover:underline" onClick={() => setConfirm("reset-mfa")}>
                         Reset
@@ -227,8 +227,8 @@ function confirmCopy(kind: Confirm, u: User): { title: string; confirmLabel: str
         confirmLabel: "Reset second factor",
         children: (
           <p>
-            Removes {u.displayName}'s authenticator and recovery codes and signs them out. They set up a new authenticator at their next sign-in, so
-            only do this after confirming who is asking.
+            Removes {u.displayName}'s authenticator app, security keys, passkeys and recovery codes, and signs them out. They set up a new second factor at
+            their next sign-in, so only do this after confirming who is asking.
           </p>
         ),
       };

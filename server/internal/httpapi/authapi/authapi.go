@@ -3,6 +3,7 @@ package authapi
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -51,6 +52,15 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/v1/auth/sessions/{id}", httpapi.RequireActive(h(a.revokeSession)))
 	mux.Handle("POST /api/v1/auth/password-reset/request", h(a.requestReset))
 	mux.Handle("POST /api/v1/auth/password-reset/complete", h(a.completeReset))
+	// Security keys and passkeys (ADR-0032).
+	mux.Handle("POST /api/v1/auth/passkey/begin", h(a.beginPasskey))
+	mux.Handle("POST /api/v1/auth/passkey/finish", h(a.finishPasskey))
+	mux.Handle("POST /api/v1/auth/mfa/webauthn/begin", httpapi.RequireState(auth.StateMFARequired)(h(a.beginKeyMFA)))
+	mux.Handle("POST /api/v1/auth/mfa/webauthn/finish", httpapi.RequireState(auth.StateMFARequired)(h(a.finishKeyMFA)))
+	mux.Handle("GET /api/v1/auth/security-keys", httpapi.RequireActive(h(a.listKeys)))
+	mux.Handle("POST /api/v1/auth/security-keys/begin", httpapi.RequireState(auth.StateMFAEnrollment, auth.StateActive)(h(a.beginKey)))
+	mux.Handle("POST /api/v1/auth/security-keys/finish", httpapi.RequireState(auth.StateMFAEnrollment, auth.StateActive)(h(a.finishKey)))
+	mux.Handle("POST /api/v1/auth/security-keys/{id}/remove", httpapi.RequireActive(h(a.removeKey)))
 }
 
 func mapAuthError(err error) error {
@@ -69,6 +79,22 @@ func mapAuthError(err error) error {
 		return &httpapi.Error{Status: http.StatusBadRequest, Code: "invalid_reset_token", Message: "This reset link is invalid or has expired. Request a new one."}
 	case errors.Is(err, auth.ErrResetUnavailable):
 		return &httpapi.Error{Status: http.StatusNotFound, Code: "reset_unavailable", Message: "Email is not configured on this server. Ask an administrator for a reset link."}
+	case errors.Is(err, auth.ErrWebAuthnUnavailable):
+		return &httpapi.Error{Status: http.StatusNotFound, Code: "webauthn_unavailable", Message: "Security keys and passkeys are not available on this server."}
+	case errors.Is(err, auth.ErrKeyRejected):
+		return &httpapi.Error{Status: http.StatusUnauthorized, Code: "key_rejected", Message: "That security key or passkey was not accepted. Try again, or use another way to sign in."}
+	case errors.Is(err, auth.ErrKeyName):
+		return httpapi.Validation(map[string]string{"name": fmt.Sprintf("Give the key a name of up to %d characters.", auth.MaxKeyName)})
+	case errors.Is(err, auth.ErrKeyNameTaken):
+		return httpapi.Validation(map[string]string{"name": "You already have a key with this name."})
+	case errors.Is(err, auth.ErrKeyExists):
+		return &httpapi.Error{Status: http.StatusConflict, Code: "key_exists", Message: "This security key or passkey is already registered."}
+	case errors.Is(err, auth.ErrTooManyKeys):
+		return &httpapi.Error{Status: http.StatusConflict, Code: "too_many_keys", Message: fmt.Sprintf("You have %d security keys and passkeys, the most allowed. Remove one first.", auth.MaxSecurityKeys)}
+	case errors.Is(err, auth.ErrLastFactor):
+		return &httpapi.Error{Status: http.StatusConflict, Code: "last_factor", Message: "This is your only second factor. Add an authenticator app or another key before removing it."}
+	case errors.Is(err, auth.ErrKeyNotFound):
+		return httpapi.ErrNotFound
 	}
 	if msg := auth.PasswordAdvice(err); msg != "" {
 		return httpapi.Validation(map[string]string{"password": msg})
@@ -106,6 +132,7 @@ func (a *API) options(w http.ResponseWriter, _ *http.Request) error {
 		"passwordResetAvailable": a.svc.ResetAvailable(),
 		"mfaRequired":            a.svc.Config().RequireMFA,
 		"passwordMinLength":      auth.MinPasswordLength,
+		"webauthn":               a.svc.WebAuthn(),
 	})
 	return nil
 }
@@ -353,6 +380,165 @@ func (a *API) completeReset(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if err := a.svc.CompletePasswordReset(r.Context(), req.Token, req.Password, httpapi.Meta(r)); err != nil {
+		return mapAuthError(err)
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+// credentialRequest carries the browser's answer to a WebAuthn ceremony,
+// passed as it came to go-webauthn's parser.
+type credentialRequest struct {
+	Credential json.RawMessage `json:"credential"`
+}
+
+func (c credentialRequest) body() ([]byte, error) {
+	if len(c.Credential) == 0 || c.Credential[0] != '{' {
+		return nil, httpapi.Validation(map[string]string{"credential": "The browser's answer is missing."}) //nolint:gosec // a field name, not a secret
+	}
+	return c.Credential, nil
+}
+
+func (a *API) beginPasskey(w http.ResponseWriter, r *http.Request) error {
+	assertion, err := a.svc.BeginPasskeyLogin(r.Context(), httpapi.Meta(r))
+	if err != nil {
+		return mapAuthError(err)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, assertion)
+	return nil
+}
+
+func (a *API) finishPasskey(w http.ResponseWriter, r *http.Request) error {
+	var req credentialRequest
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	body, err := req.body()
+	if err != nil {
+		return err
+	}
+	token, sess, err := a.svc.FinishPasskeyLogin(r.Context(), body, httpapi.Meta(r))
+	if err != nil {
+		return mapAuthError(err)
+	}
+	// Signing in replaces any existing session in this browser.
+	if old := httpapi.IdentityFrom(r.Context()); old != nil {
+		_ = a.svc.Logout(r.Context(), old.Session, old.User, httpapi.Meta(r))
+	}
+	return a.respondWithToken(w, r, token, sess.ExpiresAt)
+}
+
+func (a *API) beginKeyMFA(w http.ResponseWriter, r *http.Request) error {
+	id := httpapi.IdentityFrom(r.Context())
+	assertion, err := a.svc.BeginKeyMFA(r.Context(), id.Session)
+	if err != nil {
+		return mapAuthError(err)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, assertion)
+	return nil
+}
+
+func (a *API) finishKeyMFA(w http.ResponseWriter, r *http.Request) error {
+	var req credentialRequest
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	body, err := req.body()
+	if err != nil {
+		return err
+	}
+	id := httpapi.IdentityFrom(r.Context())
+	token, err := a.svc.FinishKeyMFA(r.Context(), id.Session, id.User, body, httpapi.Meta(r))
+	if err != nil {
+		return mapAuthError(err)
+	}
+	return a.respondWithToken(w, r, token, time.Now().Add(a.svc.Config().MaxSessionAge))
+}
+
+func (a *API) listKeys(w http.ResponseWriter, r *http.Request) error {
+	id := httpapi.IdentityFrom(r.Context())
+	keys, err := a.svc.SecurityKeys(r.Context(), id.User.ID)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"items": keys})
+	return nil
+}
+
+func (a *API) beginKey(w http.ResponseWriter, r *http.Request) error {
+	var req passwordConfirm
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	id := httpapi.IdentityFrom(r.Context())
+	creation, err := a.svc.BeginKeyRegistration(r.Context(), id.Session, req.Password)
+	if errors.Is(err, auth.ErrInvalidCredentials) {
+		return httpapi.Validation(map[string]string{"password": "Your password is not correct."})
+	}
+	if err != nil {
+		return mapAuthError(err)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, creation)
+	return nil
+}
+
+type finishKeyRequest struct {
+	Name       string          `json:"name"`
+	Credential json.RawMessage `json:"credential"`
+}
+
+func (a *API) finishKey(w http.ResponseWriter, r *http.Request) error {
+	var req finishKeyRequest
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	body, err := credentialRequest{Credential: req.Credential}.body()
+	if err != nil {
+		return err
+	}
+	id := httpapi.IdentityFrom(r.Context())
+	added, err := a.svc.FinishKeyRegistration(r.Context(), id.Session, id.User, req.Name, body, httpapi.Meta(r))
+	if err != nil {
+		return mapAuthError(err)
+	}
+	token := id.Token
+	if added.Token != "" {
+		token = added.Token
+		a.sessions.SetCookie(w, token, time.Now().Add(a.svc.Config().MaxSessionAge))
+	}
+	sess, user, err := a.svc.Authenticate(r.Context(), token)
+	if err != nil {
+		return err
+	}
+	view := &httpapi.Identity{Session: sess, User: user, CSRFToken: a.sessions.CSRFToken(token)}
+	p, err := a.svc.LoadPrincipal(r.Context(), user.ID)
+	if err != nil {
+		return err
+	}
+	view.Principal = p
+	codes := added.RecoveryCodes
+	if codes == nil {
+		codes = []string{}
+	}
+	httpapi.WriteJSON(w, http.StatusOK, map[string]any{"key": added.Key, "recoveryCodes": codes, "session": a.view(view)})
+	return nil
+}
+
+func (a *API) removeKey(w http.ResponseWriter, r *http.Request) error {
+	keyID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		return httpapi.ErrNotFound
+	}
+	var req passwordConfirm
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	id := httpapi.IdentityFrom(r.Context())
+	err = a.svc.RemoveSecurityKey(r.Context(), id.Session, id.User, keyID, req.Password, httpapi.Meta(r))
+	if errors.Is(err, auth.ErrInvalidCredentials) {
+		return httpapi.Validation(map[string]string{"password": "Your password is not correct."})
+	}
+	if err != nil {
 		return mapAuthError(err)
 	}
 	w.WriteHeader(http.StatusNoContent)

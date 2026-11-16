@@ -46,7 +46,12 @@ export interface AuthUser {
   email: string;
   displayName: string;
   status: string;
+  /** Has a second factor of either kind. */
   mfaEnabled: boolean;
+  /** An authenticator app is set up. */
+  totp: boolean;
+  /** Registered security keys and passkeys. */
+  securityKeys: number;
 }
 
 export interface SessionView {
@@ -71,6 +76,30 @@ export interface AuthOptions {
   passwordResetAvailable: boolean;
   mfaRequired: boolean;
   passwordMinLength: number;
+  webauthn?: WebAuthnStatus;
+}
+
+/** Whether security keys and passkeys can be used (ADR-0032), and at which address. */
+export interface WebAuthnStatus {
+  available: boolean;
+  origin?: string;
+  reason?: string;
+}
+
+export interface SecurityKey {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  /** Copied between the person's devices by their platform or password manager. */
+  synced: boolean;
+}
+
+export interface SecurityKeyAdded {
+  key: SecurityKey;
+  /** Issued when this is the account's first second factor; otherwise empty. */
+  recoveryCodes: string[];
+  session: SessionView;
 }
 
 export interface SetupStatus {

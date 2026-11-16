@@ -218,7 +218,8 @@ func (s *Service) decorate(c access.Caller, u *User, assignments []Assignment) {
 	u.CanManage = !u.IsSelf && manageable(c, u.all)
 }
 
-const userColumns = `u.id, u.email, u.display_name, u.status, u.totp_enabled_at IS NOT NULL, u.password_hash IS NOT NULL,
+const userColumns = `u.id, u.email, u.display_name, u.status,
+	(u.totp_enabled_at IS NOT NULL OR EXISTS (SELECT 1 FROM user_webauthn_credentials k WHERE k.user_id = u.id)), u.password_hash IS NOT NULL,
 	coalesce(u.locked_until > now(), false), u.last_login_at, u.created_at`
 
 func scanUser(row pgx.Row) (User, error) {
@@ -682,8 +683,9 @@ func (s *Service) Unlock(ctx context.Context, c access.Caller, id uuid.UUID) (*U
 	return s.Get(ctx, c, id)
 }
 
-// ResetMFA removes a user's second factor and recovery codes so they can
-// enroll again at their next sign-in, and signs them out everywhere.
+// ResetMFA removes a user's second factors (authenticator app, security keys
+// and passkeys) and recovery codes so they can enroll again at their next
+// sign-in, and signs them out everywhere.
 func (s *Service) ResetMFA(ctx context.Context, c access.Caller, id uuid.UUID) (*User, error) {
 	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		u, err := s.loadForChange(ctx, tx, c, id)
@@ -696,12 +698,16 @@ func (s *Service) ResetMFA(ctx context.Context, c access.Caller, id uuid.UUID) (
 		if _, err := tx.Exec(ctx, `DELETE FROM user_recovery_codes WHERE user_id = $1`, id); err != nil {
 			return err
 		}
+		keys, err := tx.Exec(ctx, `DELETE FROM user_webauthn_credentials WHERE user_id = $1`, id)
+		if err != nil {
+			return err
+		}
 		if err := auth.RevokeAllSessions(ctx, tx, id, uuid.Nil, "mfa_reset"); err != nil {
 			return err
 		}
 		org, site := auditOrg(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.mfa_reset", Outcome: audit.Success,
-			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(), Details: map[string]any{"email": u.Email}})
+			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(), Details: map[string]any{"email": u.Email, "securityKeys": keys.RowsAffected()}})
 	})
 	if err != nil {
 		return nil, err

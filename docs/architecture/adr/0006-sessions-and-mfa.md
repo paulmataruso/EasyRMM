@@ -1,6 +1,8 @@
 # ADR-0006: Opaque cookie sessions with mandatory MFA
 
 * Status: Accepted (2026-11-15)
+* Refined by: ADR-0032 (security keys and passkeys as second factors, and
+  passkey sign-in)
 
 ## Decision
 * Sessions are opaque 256-bit random tokens in a `__Host-easyrmm_session`

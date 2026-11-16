@@ -27,3 +27,5 @@ feature in it is **Complete** in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STA
 4. Run the winget and Chocolatey software scripts on Windows (ADR-0028).
 5. Run the EasyPatch agent install and patching on a Windows machine
    (ADR-0030, ADR-0031).
+6. Try security keys and passkeys (ADR-0032) with a physical key and a
+   platform passkey, on a deployment with a DNS name.

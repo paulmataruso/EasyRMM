@@ -86,6 +86,16 @@ No patch data is stored: the console reads it from EasyPatch (ADR-0030).
 | `easypatch_organizations.auto_install` | Whether EasyRMM installs the EasyPatch agent on the organization's devices that have none, by itself (ADR-0031) |
 | `easypatch_installs` | One row per device: the latest EasyPatch agent install, `waiting`, `sent` (with the attempt id sent to the agent, when, and the EasyPatch enrollment token's id, never the token), `succeeded` or `failed` (with the reason); whether it was automatic, who asked, attempts, and a note while it waits (an agent too old to install it). Read through the device's row-level security; written with platform scope only |
 
+## Security keys and passkeys (migration 00015)
+
+Reached only through the authentication service, at platform scope, like
+`users`, `sessions` and `user_recovery_codes` (ADR-0032).
+
+| Table | Notes |
+|---|---|
+| `user_webauthn_credentials` | One row per registered security key or passkey: its owner, credential id (unique across all users), the name its owner gave it (unique per user), the credential as go-webauthn records it (public key, signature counter, flags, transports, AAGUID), when it was added and last used. Removed with the user, by the owner, or by an administrator's second-factor reset |
+| `webauthn_challenges` | A ceremony in progress: what the server asked the browser for, keyed by its challenge, for five minutes. Registration and the sign-in step belong to a session (and go with it); passkey sign-in has none yet. Each is deleted when answered; expired ones are deleted when the next one starts |
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

@@ -744,7 +744,11 @@ func TestStatusUnlockAndMFAReset(t *testing.T) {
 		t.Fatalf("unlock foreign: %v", err)
 	}
 
-	// MFA reset.
+	// MFA reset. A security key alone counts as a second factor (ADR-0032).
+	e.exec(t, `INSERT INTO user_webauthn_credentials (user_id, credential_id, name, credential) VALUES ($1, '\x0102', 'YubiKey', '{}')`, p.tech)
+	if u, _ := e.svc.Get(ctx, oa, p.tech); !u.MFAEnabled {
+		t.Fatal("a security key should count as MFA")
+	}
 	e.exec(t, `UPDATE users SET totp_secret_sealed = 'sealed', totp_enabled_at = now(), totp_last_step = 5 WHERE id = $1`, p.tech)
 	e.exec(t, `INSERT INTO user_recovery_codes (user_id, code_hash) VALUES ($1, '\x01'), ($1, '\x02')`, p.tech)
 	sess = e.session(t, p.tech)
@@ -759,8 +763,10 @@ func TestStatusUnlockAndMFAReset(t *testing.T) {
 	var secret *string
 	e.scalar(t, `SELECT count(*) FROM user_recovery_codes WHERE user_id = $1`, &codes, p.tech)
 	e.scalar(t, `SELECT totp_secret_sealed FROM users WHERE id = $1`, &secret, p.tech)
-	if codes != 0 || secret != nil {
-		t.Fatalf("mfa material left: codes=%d secret=%v", codes, secret)
+	var keys int
+	e.scalar(t, `SELECT count(*) FROM user_webauthn_credentials WHERE user_id = $1`, &keys, p.tech)
+	if codes != 0 || secret != nil || keys != 0 {
+		t.Fatalf("mfa material left: codes=%d secret=%v keys=%d", codes, secret, keys)
 	}
 	if !e.revoked(t, sess) {
 		t.Fatal("MFA reset did not revoke the session")

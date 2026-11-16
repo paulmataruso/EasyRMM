@@ -122,7 +122,7 @@ export function takeUnmatched(): string[] {
 export function sessionView(overrides: Partial<SessionView> = {}): SessionView {
   return {
     state: "active",
-    user: { id: "u-alex", email: "alex@example.com", displayName: "Alex Rivera", status: "active", mfaEnabled: true },
+    user: { id: "u-alex", email: "alex@example.com", displayName: "Alex Rivera", status: "active", mfaEnabled: true, totp: true, securityKeys: 0 },
     csrfToken: "csrf-1",
     expiresAt: "2030-01-01T00:00:00Z",
     permissions: ["org.view", "org.manage", "org.create", "site.view", "site.manage", "user.view", "user.manage", "audit.view", "settings.manage"],
@@ -147,7 +147,12 @@ export function baseRoutes(session: SessionView | null): Record<string, FakeHand
   return {
     "GET /setup": ok({ required: false, passwordMinLength: 12 }),
     "GET /auth/session": session ? ok(session) : fail(401, "unauthenticated", "Sign in to continue."),
-    "GET /auth/options": ok({ passwordResetAvailable: false, mfaRequired: true, passwordMinLength: 12 }),
+    "GET /auth/options": ok({
+      passwordResetAvailable: false,
+      mfaRequired: true,
+      passwordMinLength: 12,
+      webauthn: { available: false, reason: "Security keys and passkeys need EasyRMM to be reached by a name (EASYRMM_PUBLIC_URL), not an IP address." },
+    }),
     "POST /auth/logout": noContent,
     "GET /alerts/summary": ok({ active: 0, critical: 0, warning: 0, acknowledged: 0, devices: 0 }),
     "GET /alerts": ok({ items: [] }),

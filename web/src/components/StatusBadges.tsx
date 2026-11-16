@@ -23,7 +23,7 @@ export function userState(u: Pick<User, "status" | "locked" | "passwordSet" | "m
   if (u.status === "disabled") return { label: "Disabled", tone: "neutral", title: "This account cannot sign in." };
   if (u.locked) return { label: "Locked", tone: "danger", title: "Locked after repeated failed sign-ins. Unlock it, or it unlocks on its own after the lockout period." };
   if (!u.passwordSet) return { label: "Invited", tone: "info", title: "The invitation has not been accepted yet." };
-  if (!u.mfaEnabled) return { label: "MFA pending", tone: "warn", title: "Sets up an authenticator app at next sign-in." };
+  if (!u.mfaEnabled) return { label: "MFA pending", tone: "warn", title: "Sets up a second factor at next sign-in." };
   return { label: "Active", tone: "ok", title: "Can sign in." };
 }
 
@@ -57,6 +57,8 @@ const ACTIONS: Record<string, string> = {
   "auth.password_reset_request": "Requested password reset",
   "auth.recovery_codes_regenerate": "Replaced recovery codes",
   "auth.session_revoke": "Ended a session",
+  "auth.webauthn_add": "Added a security key",
+  "auth.webauthn_remove": "Removed a security key",
   "setup.complete": "Completed first-run setup",
   "organization.create": "Created organization",
   "organization.update": "Updated organization",
