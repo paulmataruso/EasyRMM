@@ -2,6 +2,7 @@ package easypatch
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/x509"
 	"errors"
 	"log/slog"
@@ -37,6 +38,9 @@ type Service struct {
 	clientFor time.Time // the updated_at of the settings client was built from
 
 	fleet fleetCache
+
+	// signer signs install instructions (ADR-0031); nil sends none.
+	signer ed25519.PrivateKey
 }
 
 // New builds the connector.
@@ -291,6 +295,10 @@ func (s *Service) DeleteConnection(ctx context.Context, actor audit.Actor) error
 			return apperr.NotFound()
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM easypatch_devices`); err != nil {
+			return err
+		}
+		// Installs from that server: their tokens expire within the hour.
+		if _, err := tx.Exec(ctx, `DELETE FROM easypatch_installs`); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM easypatch_organizations`); err != nil {

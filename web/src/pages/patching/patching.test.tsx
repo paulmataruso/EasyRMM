@@ -213,7 +213,7 @@ describe("patching page", () => {
     await user.selectOptions(main().getByLabelText("Status"), "FailedUpdates");
     await waitFor(() => expect(server.callsTo("GET /patching/devices").at(-1)!.query.get("compliance")).toBe("FailedUpdates"));
 
-    await user.click(main().getByLabelText("Select every device that can be patched"));
+    await user.click(main().getByLabelText("Select every device you can act on"));
     await user.click(main().getByRole("button", { name: "Install updates…" }));
     const dialog = await screen.findByRole("dialog", {
       name: "Install updates on 2 devices",
@@ -231,6 +231,75 @@ describe("patching page", () => {
     });
     expect(within(failed).getByText("db-01 has no eligible updates.")).toBeInTheDocument();
     expect(within(failed).getByRole("link", { name: "DB-01" })).toHaveAttribute("href", "/devices/d2?tab=patches");
+  });
+
+  it("installs the EasyPatch agent on devices that have none, and shows how installs went", async () => {
+    const user = userEvent.setup();
+    const agentless = (id: string, name: string, extra: Partial<PatchFleet["devices"][number]> = {}): PatchFleet["devices"][number] => ({
+      deviceId: id,
+      name,
+      organizationId: "o1",
+      organizationName: "Northwind Traders",
+      siteId: "s1",
+      siteName: "Head office",
+      platform: "windows",
+      link: "none",
+      canManage: true,
+      ...extra,
+    });
+    const server = installFakeApi(
+      patchingRoutes({
+        "GET /patching/devices": ok({
+          ...FLEET,
+          devices: [
+            FLEET.devices[0],
+            agentless("d4", "PC-04"),
+            agentless("d5", "PC-05", {
+              install: { state: "failed", automatic: false, requestedBy: "alex@example.com", requestedAt: T, attempts: 1, error: "Exit code 1603" },
+            }),
+            agentless("d6", "PC-06", { install: { state: "waiting", automatic: true, requestedAt: T, attempts: 0, note: "This agent is too old." } }),
+          ],
+        }),
+        "POST /patching/agent-install": ok({
+          succeeded: 1,
+          failed: 1,
+          results: [
+            { deviceId: "d4", deviceName: "PC-04", ok: true },
+            { deviceId: "d5", deviceName: "PC-05", ok: false, message: "This device already has an EasyPatch agent (Active); EasyRMM leaves it alone." },
+          ],
+        }),
+      }),
+    );
+    renderApp("/patching");
+    await screen.findByRole("main");
+    await main().findByText("PC-04");
+    const table = within(main().getByRole("table"));
+    // Shown under the name on narrow screens and in the status column on wider ones.
+    expect(table.getAllByText("EasyPatch agent install failed")).toHaveLength(2);
+    expect(table.getAllByText("Exit code 1603")).toHaveLength(2);
+    expect(table.getAllByText("This agent is too old.")).toHaveLength(2);
+
+    // Devices of both kinds: each action says how many it acts on.
+    await user.click(main().getByLabelText("Select WEB-01"));
+    await user.click(main().getByLabelText("Select PC-04"));
+    await user.click(main().getByLabelText("Select PC-05"));
+    expect(main().getByRole("button", { name: "Scan 1" })).toBeInTheDocument();
+    expect(main().getByRole("button", { name: "Install updates on 1…" })).toBeInTheDocument();
+    await user.click(main().getByRole("button", { name: "Install EasyPatch agent on 2…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Install the EasyPatch agent on 2 devices" });
+    expect(within(dialog).getByText(/need systemd and apt-get or dnf/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Install EasyPatch agent" }));
+    await waitFor(() => expect(server.callsTo("POST /patching/agent-install")).toHaveLength(1));
+    expect(server.call("POST /patching/agent-install").body).toEqual({ deviceIds: ["d4", "d5"] });
+    expect(await screen.findByText("EasyPatch agent install requested on 1 device.")).toBeInTheDocument();
+    const failed = await screen.findByRole("dialog", { name: "1 device did not start" });
+    expect(within(failed).getByText(/already has an EasyPatch agent/)).toBeInTheDocument();
+    await user.click(within(failed).getAllByRole("button", { name: "Close" }).at(-1)!);
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "1 device did not start" })).not.toBeInTheDocument());
+    // Only devices without an agent: the action alone, unnumbered.
+    await user.click(main().getByLabelText("Select PC-06"));
+    expect(main().queryByRole("button", { name: /^Scan/ })).not.toBeInTheDocument();
+    expect(main().getByRole("button", { name: "Install EasyPatch agent…" })).toBeInTheDocument();
   });
 
   it("says when EasyPatch is not set up", async () => {
@@ -643,6 +712,72 @@ describe("device patches", () => {
     expect(main().getByText(/Serial numbers differ/)).toBeInTheDocument();
   });
 
+  it("installs the EasyPatch agent on a device that has none, and follows the install", async () => {
+    const user = userEvent.setup();
+    let install: DevicePatching["install"];
+    const server = installFakeApi(
+      deviceRoutes(
+        { deviceId: "d1", link: "none", canManage: true, canSchedule: false },
+        {
+          "GET /patching/devices/:id": () => ok({ deviceId: "d1", link: "none", canManage: true, canSchedule: false, install }),
+          "POST /patching/agent-install": () => {
+            install = { state: "waiting", automatic: false, requestedBy: "alex@example.com", requestedAt: T, attempts: 0 };
+            return ok({ succeeded: 1, failed: 0, results: [{ deviceId: "d1", deviceName: "WEB-01", ok: true }] });
+          },
+        },
+      ),
+    );
+    renderApp("/devices/d1?tab=patches");
+    await screen.findByRole("main");
+    expect(await main().findByText(/EasyRMM can install it and enroll it/)).toBeInTheDocument();
+    await user.click(main().getByRole("button", { name: "Install EasyPatch agent…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Install the EasyPatch agent on WEB-01" });
+    await user.click(within(dialog).getByRole("button", { name: "Install EasyPatch agent" }));
+    await waitFor(() => expect(server.callsTo("POST /patching/agent-install")).toHaveLength(1));
+    expect(server.call("POST /patching/agent-install").body).toEqual({ deviceIds: ["d1"] });
+    // While it waits there is nothing to start again.
+    expect(await main().findByText("EasyPatch agent install waiting")).toBeInTheDocument();
+    expect(main().getByText(/Requested by alex@example.com/)).toBeInTheDocument();
+    expect(main().queryByRole("button", { name: "Install EasyPatch agent…" })).not.toBeInTheDocument();
+  });
+
+  it("offers to try a failed install again, and explains automatic ones", async () => {
+    installFakeApi(
+      deviceRoutes({
+        deviceId: "d1",
+        link: "none",
+        canManage: true,
+        canSchedule: false,
+        install: { state: "failed", automatic: true, requestedAt: T, attempts: 3, error: "This device does not run systemd, which the EasyPatch agent needs." },
+      }),
+    );
+    renderApp("/devices/d1?tab=patches");
+    await screen.findByRole("main");
+    expect(await main().findByText("EasyPatch agent install failed")).toBeInTheDocument();
+    expect(main().getByText(/does not run systemd/)).toBeInTheDocument();
+    expect(main().getByText(/Started by the organization's automatic installs/)).toBeInTheDocument();
+    expect(main().getByText(/attempt 3/)).toBeInTheDocument();
+    expect(main().getByRole("button", { name: "Try the install again…" })).toBeInTheDocument();
+  });
+
+  it("does not offer the install without the right to patch", async () => {
+    installFakeApi(
+      deviceRoutes({
+        deviceId: "d1",
+        link: "none",
+        canManage: false,
+        canSchedule: false,
+        install: { state: "succeeded", automatic: false, requestedAt: T, attempts: 1 },
+      }),
+    );
+    renderApp("/devices/d1?tab=patches");
+    await screen.findByRole("main");
+    expect(await main().findByText("EasyPatch agent installed")).toBeInTheDocument();
+    expect(main().getByText(/Requested by a removed user/)).toBeInTheDocument();
+    expect(main().getByText(/Install the EasyPatch agent and enroll it with your EasyPatch server/)).toBeInTheDocument();
+    expect(main().queryByRole("button", { name: /Install EasyPatch agent/ })).not.toBeInTheDocument();
+  });
+
   it("has no Patches tab until EasyPatch is set up", async () => {
     installFakeApi({
       ...deviceRoutes(LINKED),
@@ -704,6 +839,7 @@ const ORGS: EasyPatchOrganizations = {
       easyPatchId: "ep-o1",
       easyPatchName: "Northwind Patch",
       linkedAt: T,
+      autoInstall: false,
       devices: { linked: 2, unlinked: 1, pending: 0 },
     },
   ],
@@ -779,6 +915,7 @@ describe("EasyPatch settings", () => {
         ],
       }),
       "PUT /settings/easypatch/organizations/:id": noContent,
+      "PATCH /settings/easypatch/organizations/:id": noContent,
       "DELETE /settings/easypatch/organizations/:id": noContent,
       "POST /settings/easypatch/check": ok(SET),
       "GET /audit": ok({ items: [] }),
@@ -789,6 +926,14 @@ describe("EasyPatch settings", () => {
     expect(main().getByText("Read only: views")).toBeInTheDocument();
     expect(await main().findByText("Host names differ.")).toBeInTheDocument();
     expect(main().getByText(/2 devices patched/)).toBeInTheDocument();
+
+    // Automatic installs of the EasyPatch agent, for linked organizations only.
+    await user.click(main().getByLabelText("Install the EasyPatch agent automatically in Northwind Traders"));
+    await waitFor(() => expect(server.callsTo("PATCH /settings/easypatch/organizations/:id")).toHaveLength(1));
+    expect(server.call("PATCH /settings/easypatch/organizations/:id").params.id).toBe("o1");
+    expect(server.call("PATCH /settings/easypatch/organizations/:id").body).toEqual({ autoInstall: true });
+    expect(await screen.findByText(/EasyRMM installs the EasyPatch agent on devices in Northwind Traders that have none/)).toBeInTheDocument();
+    expect(main().queryByLabelText("Install the EasyPatch agent automatically in Contoso")).not.toBeInTheDocument();
 
     // Contoso can only take the EasyPatch organization nobody has.
     const contoso = main().getByLabelText("Contoso");

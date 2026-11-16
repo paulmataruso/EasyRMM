@@ -63,6 +63,58 @@ export function useScan() {
   return { scan, dialog: outcome.dialog };
 }
 
+/**
+ * Has devices' EasyRMM agents install and enroll the EasyPatch agent (ADR-0031), each at its next check-in. EasyRMM
+ * leaves devices that already have one alone.
+ */
+export function AgentInstallDialog({ open, onClose, devices, onDone }: { open: boolean; onClose: () => void; devices: PatchTarget[]; onDone?: () => void }) {
+  const outcome = useOutcome();
+  const install = useApiMutation((ids: string[]) => api.post<PatchActionResult>("/patching/agent-install", { deviceIds: ids }), {
+    invalidate: PATCH_KEYS,
+    onSuccess: (r) => {
+      outcome.report("EasyPatch agent install requested", r);
+      onClose();
+      onDone?.();
+    },
+  });
+  useEffect(() => {
+    if (open) install.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset when the dialog opens, not when the mutation changes
+  }, [open]);
+  const where = devices.length === 1 ? devices[0]!.name : plural(devices.length, "device");
+  return (
+    <>
+      <Dialog
+        open={open}
+        onClose={onClose}
+        title={`Install the EasyPatch agent on ${where}`}
+        description={`At its next check-in, within a minute, ${devices.length === 1 ? "the" : "each"} device's EasyRMM agent downloads the EasyPatch agent from your EasyPatch server, checks it, installs it and enrolls it in the EasyPatch organization linked to the device's organization.`}
+        footer={
+          <>
+            <Button onClick={onClose} disabled={install.isPending}>
+              Cancel
+            </Button>
+            <Button variant="primary" loading={install.isPending} onClick={() => install.mutate(devices.map((d) => d.id))}>
+              Install EasyPatch agent
+            </Button>
+          </>
+        }
+      >
+        <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
+          <li>A device that already has an EasyPatch agent is left alone, whichever server it is enrolled with.</li>
+          <li>The device joins the EasyPatch site with the same name as its EasyRMM site, or no site when there is none.</li>
+          <li>
+            Linux devices need systemd and apt-get or dnf. If your EasyPatch server's certificate comes from a private authority, Linux devices need that
+            authority in their certificate store; EasyRMM does not change it.
+          </li>
+        </ul>
+        <InlineError error={install.error} fields={["deviceIds"]} />
+      </Dialog>
+      {outcome.dialog}
+    </>
+  );
+}
+
 /** A datetime-local value for a time, in the browser's zone. */
 function localInput(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");

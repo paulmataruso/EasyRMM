@@ -238,6 +238,15 @@ All notable changes to this project are documented here. The format follows
   each device has a **Patches** tab with its updates, history, jobs and
   effective policy. Installs at a later time are offered when the EasyPatch
   server supports them.
+- Installing the EasyPatch agent from EasyRMM (ADR-0031). Devices with no
+  EasyPatch agent can be given one from **Patching** or the device's
+  **Patches** tab, or automatically for a whole organization (Settings →
+  EasyPatch → **Install automatically**). The EasyRMM agent downloads the
+  package from the EasyPatch server, checks its size and SHA-256, installs
+  it (msiexec, apt-get or dnf) and enrolls it with a single-use token
+  EasyRMM creates for that install. Devices that already have an EasyPatch
+  agent are left alone. The console shows each install's progress and, when
+  it fails, why.
 - The audit log names software actions, agent updates, report downloads and
   patching, and filters by agent updates, reports and patching.
 - The console's libraries are served as a chunk of their own, which

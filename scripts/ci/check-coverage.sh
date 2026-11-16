@@ -74,6 +74,7 @@ floors=(
   "agent/cmd/easyrmm-agent                 75"
   "agent/jobs                              80"
   "agent/update                            80"
+  "agent/easypatch                         85"
   "agent/inventory                         90"
   "agent/metrics                           90"
 )

@@ -108,9 +108,11 @@ const ACTIONS: Record<string, string> = {
   "easypatch.connection_delete": "Removed EasyPatch server",
   "easypatch.organization_link": "Linked organization to EasyPatch",
   "easypatch.organization_unlink": "Unlinked organization from EasyPatch",
+  "easypatch.organization_update": "Changed automatic EasyPatch agent installs",
   "patch.scan": "Scanned for updates",
   "patch.install": "Installed updates",
   "patch.cancel": "Cancelled patch job",
+  "patch.agent_install": "Requested EasyPatch agent install",
 };
 
 export function actionLabel(action: string): string {

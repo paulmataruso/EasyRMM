@@ -172,6 +172,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
 	d.EasyPatch = easypatch.New(db, auditLog, sealer, Version, log)
+	d.EasyPatch.SetSigner(jobKey)
 	builds, err := agents.LoadBuilds(cfg.AgentDir)
 	if err != nil {
 		return nil, err
@@ -331,7 +332,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	if err != nil {
 		return nil, err
 	}
-	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory)
+	agentAPI.WithJobs(d.Jobs).WithInventory(d.Inventory).WithEasyPatch(d.EasyPatch)
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))

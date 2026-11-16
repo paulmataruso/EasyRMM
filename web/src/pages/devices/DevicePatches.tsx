@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Download, Radar } from "lucide-react";
+import { Download, PackagePlus, Radar } from "lucide-react";
 import { useApi, useList } from "../../api/hooks";
 import type { Device, DevicePatching, PatchHistoryEntry, PatchJob, PatchPage, PatchUpdate } from "../../api/types";
 import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, KeyValueList, Segmented, Spinner, TableWrap } from "../../components/ui";
 import { formatDate, formatDateTime, formatRelative, formatSize, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
-import { InstallDialog, PatchJobDialog, useScan } from "../patching/PatchDialogs";
+import { AgentInstallDialog, InstallDialog, PatchJobDialog, useScan } from "../patching/PatchDialogs";
 import {
   categoryLabel,
   ComplianceBadge,
   INSTALLABLE,
+  installText,
   isActiveJob,
   jobOutcome,
   jobTypeLabel,
@@ -33,14 +34,32 @@ export function PatchesPanel({ device }: { device: Device }) {
 }
 
 function NotLinked({ patching: d, device }: { patching: DevicePatching; device: Device }) {
+  const [installing, setInstalling] = useState(false);
   const title = d.link === "pending" ? "Checking this device's EasyPatch agent" : d.link === "none" ? "No EasyPatch agent" : "Not patched from EasyRMM";
+  // EasyRMM's agent can install the EasyPatch agent on Windows and Linux (ADR-0031).
+  const canInstall = d.link === "none" && d.canManage && device.agent !== null && (device.platform === "windows" || device.platform === "linux");
+  const running = d.install?.state === "waiting" || d.install?.state === "sent";
+  const install = d.install && d.link !== "linked" ? installText(d.install) : null;
   return (
     <Card>
-      <EmptyState title={title} icon={<LinkBadge link={d.link} />}>
+      <EmptyState
+        title={title}
+        icon={<LinkBadge link={d.link} />}
+        action={
+          canInstall &&
+          !running && (
+            <Button variant="primary" icon={<PackagePlus className="size-4" aria-hidden />} onClick={() => setInstalling(true)}>
+              {d.install?.state === "failed" ? "Try the install again…" : "Install EasyPatch agent…"}
+            </Button>
+          )
+        }
+      >
         {d.link === "none" &&
-          (device.agent
-            ? "The EasyRMM agent has not reported an EasyPatch agent on this device. Install the EasyPatch agent and enroll it with your EasyPatch server; the EasyRMM agent reports it with its next inventory, within an hour."
-            : "EasyRMM finds the EasyPatch agent through its own agent, which this device does not have.")}
+          (!device.agent
+            ? "EasyRMM finds the EasyPatch agent through its own agent, which this device does not have."
+            : canInstall
+              ? "The EasyRMM agent has not reported an EasyPatch agent on this device. EasyRMM can install it and enroll it with your EasyPatch server."
+              : "The EasyRMM agent has not reported an EasyPatch agent on this device. Install the EasyPatch agent and enroll it with your EasyPatch server; the EasyRMM agent reports it with its next inventory, within an hour.")}
         {d.link === "pending" && "EasyRMM is making sure the EasyPatch endpoint the device reports is this device. This takes up to a minute."}
         {d.link === "unlinked" && (
           <>
@@ -48,7 +67,19 @@ function NotLinked({ patching: d, device }: { patching: DevicePatching; device: 
             <span className="mt-2 block">EasyRMM checks again every 15 minutes, and as soon as the device reports something new.</span>
           </>
         )}
+        {install && d.install && (
+          <div className="mt-4 rounded-md border border-line px-3 py-2.5 text-left" role="status">
+            <p className={cx("font-medium", install.tone === "danger" ? "text-danger" : install.tone === "ok" ? "text-ok" : "text-fg")}>{install.label}</p>
+            {install.detail && <p className="mt-0.5 break-words">{install.detail}</p>}
+            <p className="mt-1 text-xs text-subtle">
+              {d.install.automatic ? "Started by the organization's automatic installs" : `Requested by ${d.install.requestedBy || "a removed user"}`}{" "}
+              {formatRelative(d.install.requestedAt)}
+              {d.install.attempts > 1 && ` · attempt ${d.install.attempts.toLocaleString()}`}
+            </p>
+          </div>
+        )}
       </EmptyState>
+      <AgentInstallDialog open={installing} onClose={() => setInstalling(false)} devices={[{ id: device.id, name: device.name }]} />
     </Card>
   );
 }

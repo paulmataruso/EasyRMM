@@ -34,6 +34,8 @@ type server struct {
 	heartbeats []agentproto.HeartbeatRequest
 	// update is the heartbeat answer's update instruction, JSON.
 	update string
+	// easyPatch is its EasyPatch install instruction, JSON.
+	easyPatch string
 }
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +54,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		update := ""
 		if s.update != "" {
 			update = `,"update":` + s.update
+		}
+		if s.easyPatch != "" {
+			update += `,"easyPatchInstall":` + s.easyPatch
 		}
 		_, _ = io.WriteString(w, `{"heartbeatSeconds":60,"inventoryHash":"`+s.invHash+`","meshAgent":{"available":`+map[bool]string{true: "true", false: "false"}[s.available]+`}`+update+`}`)
 	case agentproto.PathInventory:

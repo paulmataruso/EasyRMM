@@ -79,6 +79,13 @@ other than liveness changed (`last_seen_at`, `agent_last_seen_at`,
 
 No patch data is stored: the console reads it from EasyPatch (ADR-0030).
 
+## EasyPatch agent installs (migration 00014)
+
+| Table | Notes |
+|---|---|
+| `easypatch_organizations.auto_install` | Whether EasyRMM installs the EasyPatch agent on the organization's devices that have none, by itself (ADR-0031) |
+| `easypatch_installs` | One row per device: the latest EasyPatch agent install, `waiting`, `sent` (with the attempt id sent to the agent, when, and the EasyPatch enrollment token's id, never the token), `succeeded` or `failed` (with the reason); whether it was automatic, who asked, attempts, and a note while it waits (an agent too old to install it). Read through the device's row-level security; written with platform scope only |
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

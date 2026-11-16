@@ -130,6 +130,9 @@ type HeartbeatRequest struct {
 	Metrics *Metrics `json:"metrics,omitempty"`
 	// Update reports a failed update attempt (ADR-0027).
 	Update *UpdateReport `json:"update,omitempty"`
+	// EasyPatch says the agent can install the EasyPatch agent, and how its
+	// last install went (ADR-0031). Older agents send none.
+	EasyPatch *EasyPatchInstallStatus `json:"easyPatch,omitempty"`
 }
 
 // HeartbeatResponse carries the server's current instructions.
@@ -145,6 +148,9 @@ type HeartbeatResponse struct {
 	// Update tells the agent to replace itself with another build
 	// (ADR-0027).
 	Update *SignedUpdate `json:"update,omitempty"`
+	// EasyPatchInstall tells the agent to install the EasyPatch agent
+	// (ADR-0031).
+	EasyPatchInstall *SignedEasyPatchInstall `json:"easyPatchInstall,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.

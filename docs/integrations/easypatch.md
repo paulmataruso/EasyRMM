@@ -1,8 +1,9 @@
 # EasyPatch integration
 
-Status: **connector implemented** (Phase 8, ADR-0030): settings, organization
-and device links, patch views and actions. **Installing the EasyPatch agent
-from EasyRMM is not implemented yet** (ADR-0031). Operating it:
+Status: **implemented** (Phase 8). The connector (ADR-0030): settings,
+organization and device links, patch views and actions. Installing the
+EasyPatch agent from EasyRMM (ADR-0031): on chosen devices or automatically
+per organization. Operating both:
 [docs/operations/patching.md](../operations/patching.md).
 
 This document first listed the EasyPatch changes the integration would need,
@@ -15,7 +16,8 @@ picture; what was built, and what is still wanted, is below.
 |---|---|
 | Organizations, sites, users, RBAC, general hardware/software inventory | EasyRMM |
 | Patch catalogue, per-device update state, patch policy, maintenance windows, rings, patch jobs, patch-related restarts | EasyPatch |
-| Installing and supervising the EasyPatch agent on endpoints | EasyRMM agent (download from the customer's EasyPatch server) |
+| Installing and enrolling the EasyPatch agent on endpoints that have none | EasyRMM agent, with a package from the customer's EasyPatch server and a single-use enrollment token (ADR-0031) |
+| Updating the EasyPatch agent | EasyPatch |
 
 EasyRMM never writes `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate`
 and has no Windows Update or system-wide apt/dnf upgrade of its own (its
@@ -57,8 +59,9 @@ capability in `/api/v1/server-info`):
 **Still wanted, not built:**
 
 1. **Token-bound enrolment** — a single-use enrolment token bound to an
-   EasyRMM device, so an agent EasyRMM installs is linked at once (ADR-0031
-   can mint ordinary single-use tokens meanwhile).
+   EasyRMM device, so an agent EasyRMM installs is linked at once. ADR-0031
+   mints ordinary single-use tokens, and the device links itself through
+   the usual checks after its next inventory.
 2. **Delta sync and webhooks** — EasyRMM reads EasyPatch when someone looks
    and polls running jobs; webhooks would let it alert on compliance
    changes.

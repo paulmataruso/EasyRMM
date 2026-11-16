@@ -137,20 +137,23 @@ type deviceRow struct {
 	endpointID                 *uuid.UUID
 	checkedAt                  *time.Time
 	easyPatchOrg               *uuid.UUID
+	install                    *AgentInstall
 }
 
 func (d *deviceRow) resource() rbac.Resource { return rbac.Site(d.organizationID, d.siteID) }
 
 const deviceSelect = `SELECT d.id, d.organization_id, d.site_id, d.device_group_id, d.name, o.name, s.name, d.platform,
-		coalesce(e.state, 'none'), coalesce(e.reason, ''), e.endpoint_id, e.checked_at, l.easypatch_id
+		coalesce(e.state, 'none'), coalesce(e.reason, ''), e.endpoint_id, e.checked_at, l.easypatch_id, ` + installColumns + `
 	FROM devices d JOIN organizations o ON o.id = d.organization_id JOIN sites s ON s.id = d.site_id
 	LEFT JOIN easypatch_devices e ON e.device_id = d.id
-	LEFT JOIN easypatch_organizations l ON l.organization_id = d.organization_id`
+	LEFT JOIN easypatch_organizations l ON l.organization_id = d.organization_id` + installJoin
 
 func scanDevice(row pgx.Row) (deviceRow, error) {
 	var d deviceRow
-	err := row.Scan(&d.id, &d.organizationID, &d.siteID, &d.groupID, &d.name, &d.organizationName, &d.siteName, &d.platform,
-		&d.state, &d.reason, &d.endpointID, &d.checkedAt, &d.easyPatchOrg)
+	var x installScan
+	err := row.Scan(append([]any{&d.id, &d.organizationID, &d.siteID, &d.groupID, &d.name, &d.organizationName, &d.siteName, &d.platform,
+		&d.state, &d.reason, &d.endpointID, &d.checkedAt, &d.easyPatchOrg}, x.dest()...)...)
+	d.install = x.view()
 	return d, err
 }
 
@@ -214,6 +217,9 @@ type FleetDevice struct {
 	CanManage        bool       `json:"canManage"`
 	Endpoint         *Endpoint  `json:"endpoint,omitempty"`
 	CheckedAt        *time.Time `json:"checkedAt,omitempty"`
+	// Install is the device's EasyPatch agent install (ADR-0031), when one
+	// was asked for.
+	Install *AgentInstall `json:"install,omitempty"`
 }
 
 // Fleet is the patching list.
@@ -289,7 +295,7 @@ func (s *Service) Fleet(ctx context.Context, c access.Caller, q FleetQuery) (Fle
 	for _, d := range rows {
 		f := FleetDevice{DeviceID: d.id, Name: d.name, OrganizationID: d.organizationID, OrganizationName: d.organizationName,
 			SiteID: d.siteID, SiteName: d.siteName, Platform: d.platform, Link: d.state, Reason: d.reason, CheckedAt: d.checkedAt,
-			CanManage: c.Can(rbac.PermPatchManage, d.resource())}
+			CanManage: c.Can(rbac.PermPatchManage, d.resource()), Install: d.install}
 		if d.state == LinkLinked && d.easyPatchOrg != nil && d.endpointID != nil {
 			if e, ok := fetched[*d.easyPatchOrg][*d.endpointID]; ok {
 				f.Endpoint = &e
@@ -337,6 +343,9 @@ type DevicePatching struct {
 	CanSchedule bool            `json:"canSchedule"`
 	Endpoint    *EndpointDetail `json:"endpoint,omitempty"`
 	Policy      *Policy         `json:"policy,omitempty"`
+	// Install is the device's EasyPatch agent install (ADR-0031), when one
+	// was asked for.
+	Install *AgentInstall `json:"install,omitempty"`
 	// Error says why EasyPatch could not be read; the link still shows.
 	Error string `json:"error,omitempty"`
 }
@@ -355,7 +364,8 @@ func (s *Service) Device(ctx context.Context, c access.Caller, id uuid.UUID) (De
 		return DevicePatching{}, errNotConfigured
 	}
 	out := DevicePatching{DeviceID: d.id, Link: d.state, Reason: d.reason, CheckedAt: d.checkedAt,
-		CanManage: r.canOperate && c.Can(rbac.PermPatchManage, d.resource()), CanSchedule: r.can(CapabilityScheduledInstalls)}
+		CanManage: r.canOperate && c.Can(rbac.PermPatchManage, d.resource()), CanSchedule: r.can(CapabilityScheduledInstalls),
+		Install: d.install}
 	if d.state != LinkLinked {
 		return out, nil
 	}

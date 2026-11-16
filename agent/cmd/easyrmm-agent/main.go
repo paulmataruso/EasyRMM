@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/paulmataruso/easyrmm/agent/client"
+	"github.com/paulmataruso/easyrmm/agent/easypatch"
 	"github.com/paulmataruso/easyrmm/agent/host"
 	"github.com/paulmataruso/easyrmm/agent/inventory"
 	"github.com/paulmataruso/easyrmm/agent/jobs"
@@ -378,8 +379,13 @@ func (e *env) run(ctx context.Context) error {
 			return fmt.Errorf("the pinned job key in the configuration is damaged: %w", err)
 		}
 	}
+	// The EasyPatch agent's install (ADR-0031) trusts the same key.
+	ep := &easypatch.Installer{DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Dir: e.store.Dir, Log: e.log,
+		Present: inventory.Collector{}.EasyPatch, Finished: r.RefreshInventory}
+	r.EasyPatch = ep
 	if up != nil {
-		up.Jobs = w
+		// An update waits for scripts and for the EasyPatch install.
+		up.Jobs = busyJobs{w, ep}
 	}
 	r.OnJobKey = e.pinJobKey(cfg, w)
 	ctx, cancel := context.WithCancel(ctx)
@@ -410,15 +416,29 @@ func (e *env) updater(cfg *state.Config, c *client.Client) *update.Updater {
 	return &update.Updater{
 		Client: c, DeviceID: cfg.DeviceID, Version: Version, SHA256: sum, Exe: exe, Dir: e.store.Dir, Log: e.log,
 		// The key pinned for jobs signs updates too.
-		Key: func() ed25519.PublicKey {
-			k, err := agentproto.DecodeKey(cfg.JobKey)
-			if err != nil {
-				return nil
-			}
-			return k
-		},
+		Key: pinnedKey(cfg),
 	}
 }
+
+// pinnedKey returns the pinned job-signing key, nil while none is pinned.
+func pinnedKey(cfg *state.Config) func() ed25519.PublicKey {
+	return func() ed25519.PublicKey {
+		k, err := agentproto.DecodeKey(cfg.JobKey)
+		if err != nil {
+			return nil
+		}
+		return k
+	}
+}
+
+// busyJobs holds an update back while scripts run or the EasyPatch agent
+// installs.
+type busyJobs struct {
+	*jobs.Worker
+	ep *easypatch.Installer
+}
+
+func (b busyJobs) Busy() bool { return b.Worker.Busy() || b.ep.Busy() }
 
 // pinJobKey pins the server's job-signing key the first time it is seen
 // (ADR-0017) and refuses to follow a change.

@@ -1,7 +1,7 @@
 // Package runner is the agent's main loop: heartbeats with the device's
 // metrics, its inventory when the server's copy is out of date, MeshAgent
-// once the server offers it, and updates of the agent itself. Jobs run
-// beside it (package jobs).
+// once the server offers it, updates of the agent itself and the EasyPatch
+// agent's install. Jobs run beside it (package jobs).
 package runner
 
 import (
@@ -42,6 +42,15 @@ type Updater interface {
 	Apply(ctx context.Context, u *agentproto.SignedUpdate) bool
 }
 
+// EasyPatch installs the EasyPatch agent when the server says so (package
+// easypatch, ADR-0031).
+type EasyPatch interface {
+	// Status is reported with each heartbeat.
+	Status() *agentproto.EasyPatchInstallStatus
+	// Start acts on a heartbeat answer's install instruction, nil for none.
+	Start(ctx context.Context, s *agentproto.SignedEasyPatchInstall)
+}
+
 // ErrRestart ends Run when the agent must restart into another build of
 // itself.
 var ErrRestart = errors.New("runner: the agent must restart into another build")
@@ -63,6 +72,8 @@ type Runner struct {
 	Inventory func(ctx context.Context) agentproto.Inventory
 	// Update updates the agent (ADR-0027); nil never does.
 	Update Updater
+	// EasyPatch installs the EasyPatch agent (ADR-0031); nil never does.
+	EasyPatch EasyPatch
 
 	// Timing, shortened by tests.
 	MinRetry    time.Duration // first retry after a failure (5 s)
@@ -153,6 +164,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, bool) {
 	if r.Update != nil {
 		req.Update = r.Update.Report()
 	}
+	if r.EasyPatch != nil {
+		req.EasyPatch = r.EasyPatch.Status()
+	}
 	resp, err := r.Client.Heartbeat(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -196,6 +210,9 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, bool) {
 				next = r.AfterSetup // report the node id soon
 			}
 		}
+	}
+	if r.EasyPatch != nil {
+		r.EasyPatch.Start(ctx, resp.EasyPatchInstall)
 	}
 	if r.Update != nil && r.Update.Apply(ctx, resp.Update) {
 		r.save()

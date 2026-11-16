@@ -638,3 +638,79 @@ func (c *Client) BulkInstall(ctx context.Context, ids []uuid.UUID, scheduledAt *
 		bulkRequest{EndpointIDs: ids, ScheduledAt: scheduledAt}, onBehalfOf, &r)
 	return r, err
 }
+
+// AgentPackage is an EasyPatch agent package the server hosts.
+type AgentPackage struct {
+	FileName string `json:"fileName"`
+	Version  string `json:"version"`
+	// Architecture is x64 or arm64.
+	Architecture string `json:"architecture"`
+	SizeBytes    int64  `json:"sizeBytes"`
+	// SHA256 is in hex; EasyPatch writes it in capitals.
+	SHA256 string `json:"sha256"`
+	// DownloadURL is relative to EasyPatch's address.
+	DownloadURL string `json:"downloadUrl"`
+	// IsLatest marks the newest package of its format and architecture.
+	IsLatest bool `json:"isLatest"`
+	// Format is msi, deb, rpm or pkg.
+	Format string `json:"format"`
+}
+
+// AgentPackages lists the agent packages EasyPatch hosts.
+func (c *Client) AgentPackages(ctx context.Context) ([]AgentPackage, error) {
+	var list []AgentPackage
+	err := c.do(ctx, http.MethodGet, "/api/v1/agent-packages", nil, nil, "", &list)
+	return list, err
+}
+
+// Site is an EasyPatch site.
+type Site struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// Sites lists an EasyPatch organization's sites.
+func (c *Client) Sites(ctx context.Context, organizationID uuid.UUID) ([]Site, error) {
+	var list []Site
+	err := c.do(ctx, http.MethodGet, "/api/v1/organizations/"+organizationID.String()+"/sites", nil, nil, "", &list)
+	return list, err
+}
+
+// EnrollmentToken is a newly created EasyPatch enrollment token.
+type EnrollmentToken struct {
+	ID uuid.UUID
+	// Secret is shown by EasyPatch once.
+	Secret string
+}
+
+// CreateEnrollmentToken creates a single-use enrollment token for an
+// organization (and site), valid for an hour.
+func (c *Client) CreateEnrollmentToken(ctx context.Context, organizationID uuid.UUID, siteID *uuid.UUID, description, onBehalfOf string) (EnrollmentToken, error) {
+	body := struct {
+		OrganizationID uuid.UUID  `json:"organizationId"`
+		SiteID         *uuid.UUID `json:"siteId,omitempty"`
+		Description    string     `json:"description"`
+		ExpiresInHours int        `json:"expiresInHours"`
+		MaxUses        int        `json:"maxUses"`
+		Count          int        `json:"count"`
+	}{organizationID, siteID, description, 1, 1, 1}
+	var out []struct {
+		Token struct {
+			ID uuid.UUID `json:"id"`
+		} `json:"token"`
+		PlaintextToken string `json:"plaintextToken"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/api/v1/enrollment-tokens", nil, body, onBehalfOf, &out); err != nil {
+		return EnrollmentToken{}, err
+	}
+	if len(out) != 1 || out[0].Token.ID == uuid.Nil || out[0].PlaintextToken == "" {
+		return EnrollmentToken{}, &Error{Status: http.StatusBadGateway, Code: "bad_response", Detail: "EasyPatch did not return one enrollment token."}
+	}
+	return EnrollmentToken{ID: out[0].Token.ID, Secret: out[0].PlaintextToken}, nil
+}
+
+// RevokeEnrollmentToken revokes an enrollment token; revoking twice is
+// harmless.
+func (c *Client) RevokeEnrollmentToken(ctx context.Context, id uuid.UUID, onBehalfOf string) error {
+	return c.do(ctx, http.MethodPost, "/api/v1/enrollment-tokens/"+id.String()+"/revoke", nil, nil, onBehalfOf, nil)
+}

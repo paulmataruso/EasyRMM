@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { Download, ListChecks, Radar, ShieldCheck } from "lucide-react";
+import { Download, ListChecks, PackagePlus, Radar, ShieldCheck } from "lucide-react";
 import { useApi, useList } from "../../api/hooks";
 import type { DeviceGroup, PatchFleet, PatchFleetDevice, PatchJobView, PatchStatus } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
@@ -8,12 +8,13 @@ import { OrganizationSelect, SearchInput, SiteSelect } from "../../components/Fi
 import { Alert, Button, Card, cx, EmptyState, ErrorState, Field, PageHeader, Segmented, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
-import { InstallDialog, PatchJobDialog, useScan } from "./PatchDialogs";
+import { AgentInstallDialog, InstallDialog, PatchJobDialog, useScan } from "./PatchDialogs";
 import {
   activityText,
   COMPLIANCE,
   COMPLIANCE_ORDER,
   ComplianceBadge,
+  InstallLine,
   isActiveJob,
   jobOutcome,
   jobTypeLabel,
@@ -24,7 +25,8 @@ import {
 
 /**
  * Patching across organizations, through EasyPatch (ADR-0030): which devices miss updates, scans and installs on
- * many devices at once, and the jobs that carry them out.
+ * many devices at once, the jobs that carry them out, and installing the EasyPatch agent where it is missing
+ * (ADR-0031).
  */
 export function PatchingPage() {
   const url = useUrlState();
@@ -184,8 +186,13 @@ function Fleet({ status }: { status: PatchStatus }) {
 function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: PatchStatus }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [installing, setInstalling] = useState(false);
+  const [agentInstalling, setAgentInstalling] = useState(false);
   const { scan, dialog } = useScan();
-  const selectable = useMemo(() => devices.filter((d) => d.canManage && d.link === "linked" && status.canOperate), [devices, status.canOperate]);
+  // Linked devices can be scanned and patched; devices without an EasyPatch agent can be given one.
+  const selectable = useMemo(
+    () => devices.filter((d) => d.canManage && status.canOperate && (d.link === "linked" || d.link === "none")),
+    [devices, status.canOperate],
+  );
 
   // Devices that leave the list, or can no longer be acted on, leave the selection.
   useEffect(() => {
@@ -197,6 +204,10 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
   }, [selectable]);
 
   const chosen = selectable.filter((d) => selected.has(d.deviceId));
+  const toPatch = chosen.filter((d) => d.link === "linked");
+  const agentless = chosen.filter((d) => d.link === "none");
+  // With both kinds chosen, each action says how many devices it acts on.
+  const mixed = toPatch.length > 0 && agentless.length > 0;
   const all = selectable.length > 0 && chosen.length === selectable.length;
   const toggle = (id: string, on: boolean) =>
     setSelected((prev) => {
@@ -235,23 +246,37 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
         }
         actions={
           chosen.length > 0 && (
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                icon={<Radar className="size-3.5" aria-hidden />}
-                loading={scan.isPending}
-                onClick={() =>
-                  scan.mutate(
-                    chosen.map((d) => d.deviceId),
-                    { onSuccess: () => setSelected(new Set()) },
-                  )
-                }
-              >
-                Scan
-              </Button>
-              <Button size="sm" variant="primary" icon={<Download className="size-3.5" aria-hidden />} onClick={() => setInstalling(true)}>
-                Install updates…
-              </Button>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {toPatch.length > 0 && (
+                <>
+                  <Button
+                    size="sm"
+                    icon={<Radar className="size-3.5" aria-hidden />}
+                    loading={scan.isPending}
+                    onClick={() =>
+                      scan.mutate(
+                        toPatch.map((d) => d.deviceId),
+                        { onSuccess: () => setSelected(new Set()) },
+                      )
+                    }
+                  >
+                    {mixed ? `Scan ${toPatch.length.toLocaleString()}` : "Scan"}
+                  </Button>
+                  <Button size="sm" variant="primary" icon={<Download className="size-3.5" aria-hidden />} onClick={() => setInstalling(true)}>
+                    {mixed ? `Install updates on ${toPatch.length.toLocaleString()}…` : "Install updates…"}
+                  </Button>
+                </>
+              )}
+              {agentless.length > 0 && (
+                <Button
+                  size="sm"
+                  variant={toPatch.length > 0 ? "secondary" : "primary"}
+                  icon={<PackagePlus className="size-3.5" aria-hidden />}
+                  onClick={() => setAgentInstalling(true)}
+                >
+                  {mixed ? `Install EasyPatch agent on ${agentless.length.toLocaleString()}…` : "Install EasyPatch agent…"}
+                </Button>
+              )}
             </div>
           )
         }
@@ -265,7 +290,7 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
                   <th className="w-10">
                     <input
                       type="checkbox"
-                      aria-label="Select every device that can be patched"
+                      aria-label="Select every device you can act on"
                       checked={all}
                       ref={(el) => {
                         if (el) el.indeterminate = chosen.length > 0 && !all;
@@ -308,11 +333,13 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
                       </p>
                       <div className="mt-1.5 sm:hidden">
                         {e ? <ComplianceBadge status={e.complianceStatus} /> : <LinkBadge link={d.link} reason={d.reason} />}
+                        <InstallLine install={d.install} link={d.link} />
                       </div>
                     </td>
                     <td className="hidden align-top sm:table-cell">
                       {e ? <ComplianceBadge status={e.complianceStatus} /> : <LinkBadge link={d.link} reason={d.reason} />}
                       {!e && d.reason && <p className="mt-1 max-w-sm text-xs text-muted">{d.reason}</p>}
+                      <InstallLine install={d.install} link={d.link} />
                       {activityText(e?.currentActivity) && <p className="mt-1 text-xs text-muted">{activityText(e?.currentActivity)}</p>}
                     </td>
                     <td className="hidden align-top md:table-cell">
@@ -362,13 +389,20 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
       <InstallDialog
         open={installing}
         onClose={() => setInstalling(false)}
-        devices={chosen.map((d) => ({ id: d.deviceId, name: d.name }))}
+        devices={toPatch.map((d) => ({ id: d.deviceId, name: d.name }))}
         canSchedule={status.canSchedule}
+        onDone={() => setSelected(new Set())}
+      />
+      <AgentInstallDialog
+        open={agentInstalling}
+        onClose={() => setAgentInstalling(false)}
+        devices={agentless.map((d) => ({ id: d.deviceId, name: d.name }))}
         onDone={() => setSelected(new Set())}
       />
       {dialog}
       <p className="mt-2 text-xs text-muted">
-        From EasyPatch, refreshed every minute. Scans and installs start when each device next checks in with EasyPatch.
+        From EasyPatch, refreshed every minute. Scans and installs start when each device next checks in with EasyPatch; the EasyPatch agent installs at its
+        next check-in with EasyRMM.
       </p>
     </>
   );

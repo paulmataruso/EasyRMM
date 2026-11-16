@@ -46,10 +46,27 @@ type Server struct {
 	// Down makes every call answer 503.
 	Down bool
 
+	// Packages is what agent-packages lists; New fills in those of an
+	// EasyPatch 1.9.0 server.
+	Packages []map[string]any
+
 	orgs      []map[string]any
+	sites     []map[string]any
 	endpoints map[uuid.UUID]*Endpoint
 	jobs      []*Job
+	tokens    []*Token
 	requests  []Request
+}
+
+// Token is an enrollment token EasyPatch created.
+type Token struct {
+	ID, Org     uuid.UUID
+	Site        *uuid.UUID
+	Description string
+	Secret      string
+	MaxUses     int
+	ExpiresIn   int
+	Revoked     bool
 }
 
 // Endpoint is an EasyPatch endpoint.
@@ -87,6 +104,15 @@ type Request struct {
 func New(t testing.TB) *Server {
 	t.Helper()
 	s := &Server{Token: "ept_" + strings.Repeat("A", 43), Version: "1.9.0", endpoints: map[uuid.UUID]*Endpoint{}}
+	for _, p := range []struct {
+		version, arch, format string
+		latest                bool
+	}{
+		{"1.9.0", "x64", "msi", true}, {"1.8.2", "x64", "msi", false}, {"1.9.0", "x64", "deb", true}, {"1.9.0", "x64", "rpm", true},
+		{"1.9.0", "arm64", "deb", true}, {"1.9.0", "arm64", "rpm", true}, {"1.9.0", "arm64", "pkg", true},
+	} {
+		s.Packages = append(s.Packages, Package(fmt.Sprintf("EasyPatchAgent-%s-%s.%s", p.version, p.arch, p.format), p.version, p.arch, p.format, p.latest))
+	}
 	s.srv = httptest.NewUnstartedServer(http.HandlerFunc(s.serve))
 	// Tests of an untrusted certificate make the server log handshake errors.
 	s.srv.Config.ErrorLog = log.New(io.Discard, "", 0)
@@ -104,6 +130,35 @@ func (s *Server) Set(fn func()) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	fn()
+}
+
+// Package describes an agent package as agent-packages lists it, with a
+// SHA-256 made from its name, in capitals as EasyPatch writes it.
+func Package(file, version, arch, format string, latest bool) map[string]any {
+	return map[string]any{"fileName": file, "version": version, "architecture": arch, "sizeBytes": 4096 + len(file),
+		"sha256": strings.ToUpper(fmt.Sprintf("%064x", len(file)*7919)), "modifiedAt": "2026-11-02T10:00:00+00:00",
+		"downloadUrl": "/downloads/agent/" + file, "isLatest": latest, "releaseKeyId": nil, "signatureProblem": nil, "format": format}
+}
+
+// Site adds a site to an organization.
+func (s *Server) Site(org uuid.UUID, name string) uuid.UUID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := uuid.New()
+	s.sites = append(s.sites, map[string]any{"id": id, "organizationId": org, "organizationName": "", "name": name, "description": nil,
+		"address": nil, "timeZone": "UTC", "isArchived": false})
+	return id
+}
+
+// Tokens lists the enrollment tokens created, oldest first.
+func (s *Server) Tokens() []Token {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Token, 0, len(s.tokens))
+	for _, t := range s.tokens {
+		out = append(out, *t)
+	}
+	return out
 }
 
 // Org adds an organization.
@@ -297,8 +352,29 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		reply(w, 200, []any{})
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v1/enrollment-tokens":
+		s.createToken(w, body)
+	case parts[0] == "enrollment-tokens" && len(parts) == 3 && parts[2] == "revoke" && r.Method == http.MethodPost:
+		id, _ := uuid.Parse(parts[1])
+		i := slices.IndexFunc(s.tokens, func(t *Token) bool { return t.ID == id })
+		if i < 0 {
+			problem(w, 404, "not_found", "Enrollment token not found.")
+			return
+		}
+		s.tokens[i].Revoked = true
+		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agent-packages":
+		reply(w, 200, s.Packages)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/organizations":
 		reply(w, 200, s.orgs)
+	case r.Method == http.MethodGet && parts[0] == "organizations" && len(parts) == 3 && parts[2] == "sites":
+		list := []map[string]any{}
+		for _, x := range s.sites {
+			if x["organizationId"].(uuid.UUID).String() == parts[1] {
+				list = append(list, x)
+			}
+		}
+		reply(w, 200, list)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/endpoints":
 		org, _ := uuid.Parse(q.Get("organizationId"))
 		var list []map[string]any
@@ -348,6 +424,50 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		problem(w, 404, "not_found", "No such route: "+r.URL.Path)
 	}
+}
+
+// createToken answers POST /api/v1/enrollment-tokens as EasyPatch does,
+// with each token's plaintext once.
+func (s *Server) createToken(w http.ResponseWriter, body map[string]any) {
+	if s.ReadOnly {
+		problem(w, 403, "", "")
+		return
+	}
+	org, err := uuid.Parse(fmt.Sprint(body["organizationId"]))
+	hours, _ := body["expiresInHours"].(float64)
+	uses, _ := body["maxUses"].(float64)
+	count, _ := body["count"].(float64)
+	desc, _ := body["description"].(string)
+	if err != nil || slices.IndexFunc(s.orgs, func(o map[string]any) bool { return o["id"] == org }) < 0 {
+		problem(w, 404, "not_found", "Organization not found.")
+		return
+	}
+	if hours < 1 || hours > 720 || uses < 1 || uses > 1000 || count < 1 || count > 100 || len(desc) > 500 {
+		problem(w, 400, "validation_failed", "One or more fields are invalid.")
+		return
+	}
+	var site *uuid.UUID
+	if v, ok := body["siteId"].(string); ok {
+		id, err := uuid.Parse(v)
+		if err != nil || slices.IndexFunc(s.sites, func(x map[string]any) bool { return x["id"] == id && x["organizationId"] == org }) < 0 {
+			problem(w, 400, "validation_failed", "The site does not belong to the organization.")
+			return
+		}
+		site = &id
+	}
+	out := []map[string]any{}
+	for range int(count) {
+		t := &Token{ID: uuid.New(), Org: org, Site: site, Description: desc, MaxUses: int(uses), ExpiresIn: int(hours),
+			Secret: "ept_" + strings.ReplaceAll(uuid.NewString(), "-", "")}
+		s.tokens = append(s.tokens, t)
+		out = append(out, map[string]any{
+			"token": map[string]any{"id": t.ID, "organizationId": org, "organizationName": "", "siteId": site, "siteName": nil,
+				"tokenPrefix": t.Secret[:8], "description": desc, "maxUses": t.MaxUses, "useCount": 0, "createdAt": time.Now().UTC(),
+				"expiresAt": time.Now().Add(time.Duration(hours) * time.Hour).UTC(), "lastUsedAt": nil, "revokedAt": nil, "state": "Active"},
+			"plaintextToken": t.Secret, "msiExecCommand": "msiexec /i …", "linuxEnrollCommand": "printf …", "macEnrollCommand": nil,
+		})
+	}
+	reply(w, 200, out)
 }
 
 func (s *Server) sorted() []*Endpoint {

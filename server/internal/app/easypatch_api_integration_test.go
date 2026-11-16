@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
@@ -273,5 +274,121 @@ func TestEasyPatchAPI(t *testing.T) {
 	admin.expect(http.StatusOK, "GET", "/api/v1/audit?action=easypatch", nil, &audit)
 	if len(audit.Items) != 4 {
 		t.Fatalf("easypatch audit: %+v", audit.Items)
+	}
+}
+
+// TestEasyPatchAgentInstallAPI installs the EasyPatch agent through the
+// console API and an agent's heartbeats (ADR-0031).
+func TestEasyPatchAgentInstallAPI(t *testing.T) {
+	h := newHarness(t, false)
+	admin, _ := setUp(t, h)
+	ctx := context.Background()
+	acme := orgID(t, admin, "Acme")
+	var hq idObj
+	admin.expect(http.StatusCreated, "POST", "/api/v1/organizations/"+acme+"/sites", map[string]string{"name": "HQ", "timezone": "UTC"}, &hq)
+	var token struct {
+		Secret string `json:"secret"`
+	}
+	admin.expect(http.StatusCreated, "POST", "/api/v1/sites/"+hq.ID+"/enrollment-tokens", map[string]any{"name": "Patch", "expiresInDays": 1}, &token)
+	ac := h.agentClient()
+	key := newKey(t)
+	enr, err := ac.Enroll(ctx, token.Secret, key.Public().(ed25519.PublicKey), facts("lin-01"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ac.SetIdentity(enr.DeviceID, key)
+	jobKey, err := agentproto.DecodeKey(enr.JobKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	device := enr.DeviceID
+	body, _ := json.Marshal(agentproto.Inventory{})
+	if _, err := ac.Inventory(ctx, body); err != nil {
+		t.Fatal(err)
+	}
+
+	ep := eptest.New(t)
+	epOrg := ep.Org("Acme Patch")
+	ep.Site(epOrg, "HQ")
+	admin.expect(http.StatusOK, "PUT", "/api/v1/settings/easypatch", map[string]string{"url": ep.URL(), "token": ep.Token, "caCert": ep.CAPEM}, nil)
+	admin.expect(http.StatusNoContent, "PUT", "/api/v1/settings/easypatch/organizations/"+acme, map[string]string{"easyPatchId": epOrg.String()}, nil)
+
+	// Automatic installs, per organization.
+	wantStatus(t, admin.do("PATCH", "/api/v1/settings/easypatch/organizations/"+acme, map[string]any{}), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, admin.do("PATCH", "/api/v1/settings/easypatch/organizations/"+acme, "x"), http.StatusBadRequest, "bad_request")
+	wantStatus(t, admin.do("PATCH", "/api/v1/settings/easypatch/organizations/nope", map[string]any{"autoInstall": true}), http.StatusNotFound, "not_found")
+	admin.expect(http.StatusNoContent, "PATCH", "/api/v1/settings/easypatch/organizations/"+acme, map[string]any{"autoInstall": true}, nil)
+	var orgs struct {
+		Links []struct {
+			AutoInstall bool `json:"autoInstall"`
+		} `json:"links"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch/organizations", nil, &orgs)
+	if len(orgs.Links) != 1 || !orgs.Links[0].AutoInstall {
+		t.Fatalf("organizations: %+v", orgs)
+	}
+	admin.expect(http.StatusNoContent, "PATCH", "/api/v1/settings/easypatch/organizations/"+acme, map[string]any{"autoInstall": false}, nil)
+
+	// Someone asks for the install.
+	wantStatus(t, admin.do("POST", "/api/v1/patching/agent-install", "x"), http.StatusBadRequest, "bad_request")
+	wantStatus(t, admin.do("POST", "/api/v1/patching/agent-install", map[string]any{"deviceIds": []string{}}), http.StatusUnprocessableEntity, "validation_failed")
+	var res struct {
+		Succeeded int `json:"succeeded"`
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/agent-install", map[string]any{"deviceIds": []string{device}}, &res)
+	if res.Succeeded != 1 {
+		t.Fatalf("request: %+v", res)
+	}
+
+	// An old agent's heartbeat gets no instruction; one that can install
+	// gets a signed one, verified with the job key it pinned.
+	hb, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: facts("lin-01")})
+	if err != nil || hb.EasyPatchInstall != nil {
+		t.Fatalf("old agent: %+v %v", hb, err)
+	}
+	hb, err = ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: facts("lin-01"), EasyPatch: &agentproto.EasyPatchInstallStatus{}})
+	if err != nil || hb.EasyPatchInstall == nil {
+		t.Fatalf("heartbeat: %+v %v", hb, err)
+	}
+	p, err := agentproto.VerifyEasyPatchInstall(jobKey, *hb.EasyPatchInstall, device, time.Now())
+	if err != nil || p.ServerURL != "https://patch.example.com" || len(p.Packages) != 2 || len(ep.Tokens()) != 1 || p.Token != ep.Tokens()[0].Secret {
+		t.Fatalf("instruction: %+v %v", p, err)
+	}
+	var dev struct {
+		Install struct {
+			State       string `json:"state"`
+			RequestedBy string `json:"requestedBy"`
+			Attempts    int    `json:"attempts"`
+		} `json:"install"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/devices/"+device, nil, &dev)
+	if dev.Install.State != "sent" || dev.Install.Attempts != 1 {
+		t.Fatalf("device: %+v", dev)
+	}
+	// The agent reports success.
+	if _, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: facts("lin-01"),
+		EasyPatch: &agentproto.EasyPatchInstallStatus{Last: &agentproto.EasyPatchInstallReport{ID: p.ID, OK: true}}}); err != nil {
+		t.Fatal(err)
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/devices/"+device, nil, &dev)
+	if dev.Install.State != "succeeded" {
+		t.Fatalf("device after: %+v", dev)
+	}
+
+	// A read-only user cannot ask, nor change automatic installs.
+	invite(t, h, admin, "rory@acme.example", []map[string]any{{"role": "read_only", "organizationId": acme}})
+	viewer := h.client()
+	viewer.signIn("rory@acme.example", "a long and unusual passphrase", "")
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/agent-install", map[string]any{"deviceIds": []string{device}}), http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("PATCH", "/api/v1/settings/easypatch/organizations/"+acme, map[string]any{"autoInstall": true}), http.StatusForbidden, "forbidden")
+
+	var audit struct {
+		Items []struct {
+			Action string `json:"action"`
+		} `json:"items"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/audit?action=patch.agent_install", nil, &audit)
+	if len(audit.Items) != 1 {
+		t.Fatalf("audit: %+v", audit.Items)
 	}
 }

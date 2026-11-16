@@ -12,7 +12,7 @@ feature in it is **Complete** in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STA
 | 5. MeshCentral integration | Container and config, control client, user/group sync, edge gateway, session launch, embedded desktop/terminal/files | Implemented and tested locally (including a real agent end to end); waiting for its first CI run on GitHub |
 | 6. Unified endpoint installation | Go agent, enrollment, MeshAgent install and correlation, MSI/EXE/PowerShell, DEB/RPM/script, updates, uninstall | In progress: Linux and Windows agents, deployment tokens and approval, MeshAgent install and correlation, install scripts, uninstall and coordinated agent updates (ADR-0027) done; the Windows agent verified on Windows Server 2025. MSI and DEB/RPM packages to do |
 | 7. Core RMM | Inventory, telemetry, monitoring, alerts, scripts, jobs, software deployment | Done: inventory, telemetry, alerts, scripts, jobs, software deployment (ADR-0028) and reports (ADR-0029); see `IMPLEMENTATION_STATUS.md`. The winget and Chocolatey scripts have not been run on Windows |
-| 8. EasyPatch | EasyPatch changes (integration credentials, external ids…), connector, native patch UI | In progress: connector and patch UI done (ADR-0030); installing the EasyPatch agent from EasyRMM (ADR-0031) to do |
+| 8. EasyPatch | EasyPatch changes (integration credentials, external ids…), connector, native patch UI | Done: connector and patch UI (ADR-0030), installing the EasyPatch agent from EasyRMM (ADR-0031); verified on Linux against EasyPatch 1.9.0. Windows endpoints and the Windows installer path not yet run on Windows |
 | 9. Production hardening | Security review, performance and soak tests, backup/restore drills, release pipeline, documentation completion | Not started |
 
 ## Next steps
@@ -25,4 +25,5 @@ feature in it is **Complete** in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STA
 3. Phase 6, remainder: an MSI for the Windows agent (needs Windows CI
    runners) and DEB/RPM packages.
 4. Run the winget and Chocolatey software scripts on Windows (ADR-0028).
-5. Phase 8: install the EasyPatch agent from EasyRMM (ADR-0031).
+5. Run the EasyPatch agent install and patching on a Windows machine
+   (ADR-0030, ADR-0031).

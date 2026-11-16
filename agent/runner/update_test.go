@@ -70,3 +70,42 @@ func TestBeatUpdates(t *testing.T) {
 		t.Error("no restart after undoing the update")
 	}
 }
+
+// easyPatch records what the loop tells the EasyPatch installer.
+type easyPatch struct {
+	status  *agentproto.EasyPatchInstallStatus
+	started []*agentproto.SignedEasyPatchInstall
+}
+
+func (e *easyPatch) Status() *agentproto.EasyPatchInstallStatus { return e.status }
+func (e *easyPatch) Start(_ context.Context, s *agentproto.SignedEasyPatchInstall) {
+	e.started = append(e.started, s)
+}
+
+func TestBeatEasyPatch(t *testing.T) {
+	s := &server{}
+	r := newRunner(t, s, nil)
+	ep := &easyPatch{status: &agentproto.EasyPatchInstallStatus{Busy: "b1", Last: &agentproto.EasyPatchInstallReport{ID: "a0", OK: true}}}
+	r.EasyPatch = ep
+	ctx := context.Background()
+	// The status goes with every heartbeat; an answer without an
+	// instruction still reaches Start, as nil.
+	r.beat(ctx)
+	if got := s.heartbeats[0].EasyPatch; got == nil || got.Busy != "b1" || got.Last == nil || got.Last.ID != "a0" || !got.Last.OK {
+		t.Errorf("reported %+v", got)
+	}
+	if len(ep.started) != 1 || ep.started[0] != nil {
+		t.Errorf("started %v", ep.started)
+	}
+	s.easyPatch = `{"payload":"cA==","signature":"cw=="}`
+	r.beat(ctx)
+	if got := ep.started[1]; got == nil || got.Payload != "cA==" || got.Signature != "cw==" {
+		t.Errorf("started %+v", got)
+	}
+	// Without an installer the heartbeat says nothing about EasyPatch.
+	r.EasyPatch = nil
+	r.beat(ctx)
+	if got := s.heartbeats[2].EasyPatch; got != nil {
+		t.Errorf("reported %+v without an installer", got)
+	}
+}

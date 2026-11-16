@@ -36,6 +36,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	settings("POST /api/v1/settings/easypatch/check", a.checkConnection)
 	settings("GET /api/v1/settings/easypatch/organizations", a.organizations)
 	settings("PUT /api/v1/settings/easypatch/organizations/{id}", a.linkOrganization)
+	settings("PATCH /api/v1/settings/easypatch/organizations/{id}", a.updateOrganization)
 	settings("DELETE /api/v1/settings/easypatch/organizations/{id}", a.unlinkOrganization)
 	settings("GET /api/v1/settings/easypatch/devices", a.deviceLinks)
 
@@ -54,6 +55,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/patching/jobs/{id}/cancel", a.cancelJob)
 	r("POST /api/v1/patching/scan", a.scan)
 	r("POST /api/v1/patching/install", a.install)
+	r("POST /api/v1/patching/agent-install", a.installAgent)
 }
 
 func ok(w http.ResponseWriter, v any, err error) error {
@@ -112,6 +114,27 @@ func (a *API) linkOrganization(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if err := a.svc.LinkOrganization(r.Context(), httpapi.Actor(r), id, ep); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (a *API) updateOrganization(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	var in struct {
+		AutoInstall *bool `json:"autoInstall"`
+	}
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	if in.AutoInstall == nil {
+		return apperr.Invalid("autoInstall", "must be true or false")
+	}
+	if err := a.svc.SetAutoInstall(r.Context(), httpapi.Actor(r), id, *in.AutoInstall); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -265,6 +288,15 @@ func (a *API) install(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	res, err := a.svc.Install(r.Context(), httpapi.Caller(r), in)
+	return ok(w, res, err)
+}
+
+func (a *API) installAgent(w http.ResponseWriter, r *http.Request) error {
+	var in easypatch.ActionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.InstallAgent(r.Context(), httpapi.Caller(r), in)
 	return ok(w, res, err)
 }
 

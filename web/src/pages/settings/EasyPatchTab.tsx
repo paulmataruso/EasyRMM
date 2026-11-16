@@ -272,6 +272,18 @@ function OrganizationLinks() {
       setUnlinking(null);
     },
   });
+  const auto = useApiMutation(
+    ({ id, on }: { id: string; on: boolean; name: string }) => api.patch(`/settings/easypatch/organizations/${id}`, { autoInstall: on }),
+    {
+      invalidate: ["/settings/easypatch", "/patching", "/audit"],
+      onSuccess: (_, v) =>
+        toast.success(
+          v.on
+            ? `EasyRMM installs the EasyPatch agent on devices in ${v.name} that have none, within a few minutes.`
+            : `EasyRMM no longer installs the EasyPatch agent in ${v.name} by itself.`,
+        ),
+    },
+  );
 
   if (links.isPending || orgs.isPending) return <Spinner />;
   if (links.isError) return <ErrorState error={links.error} onRetry={() => void links.refetch()} />;
@@ -283,7 +295,8 @@ function OrganizationLinks() {
     <Card title="Organizations" padded={false}>
       <p className="border-b border-line px-4 py-3 text-sm text-muted">
         Link each EasyRMM organization to the EasyPatch organization its devices are enrolled in. A device is patched from EasyRMM once EasyRMM confirms its
-        EasyPatch agent belongs to the linked organization.
+        EasyPatch agent belongs to the linked organization. With <span className="font-medium text-fg">Install automatically</span>, EasyRMM's agent installs
+        and enrolls the EasyPatch agent on the organization's Windows and Linux devices that have none, new ones included.
       </p>
       {links.data.error && (
         <Alert tone="danger" className="m-4" title="EasyPatch's organizations could not be read">
@@ -291,6 +304,7 @@ function OrganizationLinks() {
         </Alert>
       )}
       <InlineError error={link.error} />
+      <InlineError error={auto.error} />
       {orgs.items.length === 0 ? (
         <EmptyState title="No organizations" compact />
       ) : (
@@ -301,6 +315,7 @@ function OrganizationLinks() {
                 <th>EasyRMM organization</th>
                 <th>EasyPatch organization</th>
                 <th className="hidden md:table-cell">Devices</th>
+                <th>EasyPatch agent</th>
               </tr>
             </thead>
             <tbody>
@@ -315,6 +330,9 @@ function OrganizationLinks() {
                     choices={links.data.easyPatch.filter((e) => e.id === l?.easyPatchId || !taken.has(e.id))}
                     busy={(link.isPending && link.variables?.id === o.id) || (unlink.isPending && unlinking?.id === o.id)}
                     devices={l?.devices}
+                    autoInstall={l?.autoInstall}
+                    autoBusy={auto.isPending && auto.variables?.id === o.id}
+                    onAutoInstall={(on) => auto.mutate({ id: o.id, on, name: o.name })}
                     onLink={(easyPatchId) => link.mutate({ id: o.id, easyPatchId, name: o.name })}
                     onUnlink={() => l && setUnlinking({ id: o.id, name: o.name, ep: l.easyPatchName })}
                   />
@@ -347,6 +365,9 @@ function OrgRow({
   choices,
   busy,
   devices,
+  autoInstall,
+  autoBusy,
+  onAutoInstall,
   onLink,
   onUnlink,
 }: {
@@ -356,10 +377,15 @@ function OrgRow({
   choices: { id: string; name: string; isActive: boolean }[];
   busy: boolean;
   devices?: { linked: number; unlinked: number; pending: number };
+  /** Undefined while the organization is not linked. */
+  autoInstall?: boolean;
+  autoBusy: boolean;
+  onAutoInstall: (on: boolean) => void;
   onLink: (easyPatchId: string) => void;
   onUnlink: () => void;
 }) {
   const id = useId();
+  const autoId = useId();
   const missing = linked !== "" && !choices.some((c) => c.id === linked);
   return (
     <tr>
@@ -390,6 +416,24 @@ function OrgRow({
           </>
         ) : (
           "—"
+        )}
+      </td>
+      <td>
+        {autoInstall === undefined ? (
+          <span className="text-subtle">—</span>
+        ) : (
+          <label htmlFor={autoId} className="flex items-center gap-2 text-sm whitespace-nowrap">
+            <input
+              id={autoId}
+              type="checkbox"
+              checked={autoInstall}
+              disabled={autoBusy}
+              onChange={(e) => onAutoInstall(e.target.checked)}
+              className="size-4 accent-accent"
+              aria-label={`Install the EasyPatch agent automatically in ${name}`}
+            />
+            Install automatically
+          </label>
         )}
       </td>
     </tr>

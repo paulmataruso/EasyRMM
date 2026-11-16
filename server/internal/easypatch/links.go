@@ -42,13 +42,16 @@ const (
 
 // OrganizationLink is an EasyRMM organization patched with an EasyPatch one.
 type OrganizationLink struct {
-	OrganizationID   uuid.UUID    `json:"organizationId"`
-	OrganizationName string       `json:"organizationName"`
-	EasyPatchID      uuid.UUID    `json:"easyPatchId"`
-	EasyPatchName    string       `json:"easyPatchName"`
-	LinkedAt         time.Time    `json:"linkedAt"`
-	LinkedBy         string       `json:"linkedBy,omitempty"`
-	Devices          DeviceCounts `json:"devices"`
+	OrganizationID   uuid.UUID `json:"organizationId"`
+	OrganizationName string    `json:"organizationName"`
+	EasyPatchID      uuid.UUID `json:"easyPatchId"`
+	EasyPatchName    string    `json:"easyPatchName"`
+	LinkedAt         time.Time `json:"linkedAt"`
+	LinkedBy         string    `json:"linkedBy,omitempty"`
+	// AutoInstall installs the EasyPatch agent on the organization's devices
+	// that have none (ADR-0031).
+	AutoInstall bool         `json:"autoInstall"`
+	Devices     DeviceCounts `json:"devices"`
 }
 
 // DeviceCounts counts devices by link state.
@@ -87,14 +90,14 @@ func (s *Service) Organizations(ctx context.Context) (Organizations, error) {
 		out.EasyPatch = list
 	}
 	err = s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT l.organization_id, o.name, l.easypatch_id, l.easypatch_name, l.linked_at, u.email,
+		rows, err := tx.Query(ctx, `SELECT l.organization_id, o.name, l.easypatch_id, l.easypatch_name, l.linked_at, u.email, l.auto_install,
 				count(*) FILTER (WHERE e.state = 'linked'), count(*) FILTER (WHERE e.state = 'unlinked'),
 				count(*) FILTER (WHERE e.state = 'pending')
 			FROM easypatch_organizations l JOIN organizations o ON o.id = l.organization_id
 			LEFT JOIN users u ON u.id = l.linked_by
 			LEFT JOIN devices d ON d.organization_id = l.organization_id
 			LEFT JOIN easypatch_devices e ON e.device_id = d.id
-			GROUP BY l.organization_id, o.name, l.easypatch_id, l.easypatch_name, l.linked_at, u.email
+			GROUP BY l.organization_id, o.name, l.easypatch_id, l.easypatch_name, l.linked_at, u.email, l.auto_install
 			ORDER BY o.name`)
 		if err != nil {
 			return err
@@ -102,7 +105,7 @@ func (s *Service) Organizations(ctx context.Context) (Organizations, error) {
 		for rows.Next() {
 			var l OrganizationLink
 			var by *string
-			if err := rows.Scan(&l.OrganizationID, &l.OrganizationName, &l.EasyPatchID, &l.EasyPatchName, &l.LinkedAt, &by,
+			if err := rows.Scan(&l.OrganizationID, &l.OrganizationName, &l.EasyPatchID, &l.EasyPatchName, &l.LinkedAt, &by, &l.AutoInstall,
 				&l.Devices.Linked, &l.Devices.Unlinked, &l.Devices.Pending); err != nil {
 				return err
 			}
@@ -470,8 +473,8 @@ func (s *Service) forget(ctx context.Context, deviceID uuid.UUID) error {
 	})
 }
 
-// Run checks device links every minute, and the server every ten minutes,
-// until ctx ends.
+// Run checks device links and agent installs every minute, and the server
+// every ten minutes, until ctx ends.
 func (s *Service) Run(ctx context.Context) {
 	links := time.NewTicker(time.Minute)
 	defer links.Stop()
@@ -484,6 +487,9 @@ func (s *Service) Run(ctx context.Context) {
 		case <-links.C:
 			if _, err := s.SyncLinks(ctx); err != nil && ctx.Err() == nil {
 				s.log.Warn("easypatch: device links", "err", err)
+			}
+			if _, err := s.SweepInstalls(ctx); err != nil && ctx.Err() == nil {
+				s.log.Warn("easypatch: agent installs", "err", err)
 			}
 		case <-server.C:
 			if _, err := s.CheckConnection(ctx); err != nil && !errors.Is(err, apperr.ErrNotFound) && ctx.Err() == nil {

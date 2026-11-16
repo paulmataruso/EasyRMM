@@ -10,6 +10,7 @@ package agentapi
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding/json"
 	"encoding/pem"
@@ -20,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -51,8 +53,19 @@ type API struct {
 	caDER   []byte
 	jobs    *jobs.Service
 	inv     *inventory.Service
+	ep      EasyPatchInstalls
 	log     *slog.Logger
 }
+
+// EasyPatchInstalls settles EasyPatch agent installs with each heartbeat
+// (ADR-0031).
+type EasyPatchInstalls interface {
+	AgentHeartbeat(ctx context.Context, deviceID uuid.UUID, st *agentproto.EasyPatchInstallStatus) *agentproto.SignedEasyPatchInstall
+}
+
+// easyPatchWait bounds the EasyPatch side of a heartbeat, which may call
+// EasyPatch to prepare an install.
+const easyPatchWait = 45 * time.Second
 
 // installers are an origin's install scripts.
 type installers struct{ sh, ps1 []byte }
@@ -134,6 +147,12 @@ func (a *API) WithJobs(j *jobs.Service) *API {
 // WithInventory stores inventory and metrics in inv (ADR-0018).
 func (a *API) WithInventory(inv *inventory.Service) *API {
 	a.inv = inv
+	return a
+}
+
+// WithEasyPatch has heartbeats carry EasyPatch agent installs (ADR-0031).
+func (a *API) WithEasyPatch(ep EasyPatchInstalls) *API {
+	a.ep = ep
 	return a
 }
 
@@ -321,6 +340,13 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 			a.log.Warn("agent: reading the inventory hash failed", "error", err, "device_id", d.ID)
 			out.InventoryHash = "unknown" // never equal to an agent's hash, so it uploads
 		}
+	}
+	if a.ep != nil {
+		// Settled to the end even if the agent hangs up, so an attempt is
+		// never left half recorded.
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), easyPatchWait)
+		out.EasyPatchInstall = a.ep.AgentHeartbeat(ctx, d.ID, in.EasyPatch)
+		cancel()
 	}
 	httpapi.WriteJSON(w, http.StatusOK, out)
 	return nil

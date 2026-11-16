@@ -945,6 +945,8 @@ export interface EasyPatchOrganizationLink {
   easyPatchName: string;
   linkedAt: string;
   linkedBy?: string;
+  /** EasyRMM installs the EasyPatch agent on the organization's devices that have none (ADR-0031). */
+  autoInstall: boolean;
   devices: { linked: number; unlinked: number; pending: number };
 }
 
@@ -975,6 +977,23 @@ export interface PatchStatus {
 }
 
 export type ComplianceStatus = "Compliant" | "MissingUpdates" | "FailedUpdates" | "RebootRequired" | "ScanStale" | "NeverScanned";
+
+/** Where EasyRMM's agent is with installing the EasyPatch agent (ADR-0031). */
+export type AgentInstallState = "waiting" | "sent" | "succeeded" | "failed";
+
+export interface AgentInstall {
+  state: AgentInstallState;
+  /** Started by the organization's automatic installs rather than by someone. */
+  automatic: boolean;
+  requestedBy?: string;
+  requestedAt: string;
+  attempts: number;
+  sentAt?: string;
+  finishedAt?: string;
+  error?: string;
+  /** Why a waiting install has not been sent, such as an agent too old to install. */
+  note?: string;
+}
 
 /** An EasyPatch endpoint as its lists summarise it. */
 export interface PatchEndpoint {
@@ -1015,6 +1034,8 @@ export interface PatchFleetDevice {
   canManage: boolean;
   endpoint?: PatchEndpoint;
   checkedAt?: string;
+  /** The EasyPatch agent's install, when one was asked for. */
+  install?: AgentInstall;
 }
 
 export interface PatchFleet {
@@ -1061,11 +1082,14 @@ export interface DevicePatching {
   canSchedule: boolean;
   endpoint?: PatchEndpointDetail;
   policy?: PatchPolicy;
+  /** The EasyPatch agent's install, when one was asked for. */
+  install?: AgentInstall;
   /** Why EasyPatch could not be read just now. */
   error?: string;
 }
 
-export type PatchUpdateState = "Missing" | "Failed" | "PendingVerification" | "PendingReboot" | "Installed" | "Superseded" | "NotApplicable" | "Excluded" | "Reoffered";
+export type PatchUpdateState =
+  "Missing" | "Failed" | "PendingVerification" | "PendingReboot" | "Installed" | "Superseded" | "NotApplicable" | "Excluded" | "Reoffered";
 
 export interface PatchUpdate {
   updateGuid: string;

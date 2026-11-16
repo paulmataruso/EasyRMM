@@ -1,4 +1,4 @@
-import type { ComplianceStatus, PatchJob, PatchLink, PatchPolicy, PatchUpdateState } from "../../api/types";
+import type { AgentInstall, ComplianceStatus, PatchJob, PatchLink, PatchPolicy, PatchUpdateState } from "../../api/types";
 import { Badge, Dot, type Tone } from "../../components/ui";
 import { plural } from "../../lib/format";
 
@@ -64,6 +64,34 @@ export function LinkBadge({ link, reason }: { link: PatchLink; reason?: string }
     <Badge tone={tone} title={reason}>
       {LINK_LABELS[link]}
     </Badge>
+  );
+}
+
+/** Where the EasyPatch agent's install is (ADR-0031), in a few words, with the detail that goes under them. */
+export function installText(i: AgentInstall): { tone: Tone; label: string; detail?: string } {
+  switch (i.state) {
+    case "waiting":
+      return { tone: "neutral", label: "EasyPatch agent install waiting", detail: i.note || "Starts at the device's next check-in, within a minute." };
+    case "sent":
+      return { tone: "info", label: "Installing the EasyPatch agent", detail: "The EasyRMM agent downloads, installs and enrolls it." };
+    case "succeeded":
+      return { tone: "ok", label: "EasyPatch agent installed", detail: "EasyRMM links the device once its agent reports it, within a few minutes." };
+    case "failed":
+      return { tone: "danger", label: "EasyPatch agent install failed", detail: i.error };
+  }
+}
+
+/** The install's state under a device's link badge; nothing once the device is linked. */
+export function InstallLine({ install, link }: { install?: AgentInstall; link: PatchLink }) {
+  if (!install || link === "linked") return null;
+  const t = installText(install);
+  return (
+    <p className="mt-1 max-w-sm text-xs">
+      <span className={t.tone === "danger" ? "font-medium text-danger" : t.tone === "info" ? "font-medium text-info" : "font-medium text-muted"}>
+        {t.label}
+      </span>
+      {t.detail && <span className="block text-muted">{t.detail}</span>}
+    </p>
   );
 }
 

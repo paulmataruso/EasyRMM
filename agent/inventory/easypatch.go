@@ -14,6 +14,10 @@ import (
 // state file.
 const easyPatchTimeout = 30 * time.Second
 
+// EasyPatch reports the device's EasyPatch agent as the inventory does, nil
+// when it is not installed.
+func (c Collector) EasyPatch(ctx context.Context) *agentproto.EasyPatchAgent { return c.easyPatch(ctx) }
+
 // easyPatchStatus runs the EasyPatch agent at bin with `status --json` and
 // reads its answer (ADR-0030). The agent prints its status even when it
 // exits with an error, so the output is read whatever the exit code.
