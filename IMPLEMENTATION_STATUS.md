@@ -40,6 +40,7 @@ Last updated: 2026-11-16.
 | Docker Compose deployment (host networking) | Tested | Compose smoke test defined in CI; run locally, not yet on GitHub |
 | Web console foundation (EasyPatch design system, ADR-0013) | Complete | Sign-in flows, shell, dashboard, organizations, settings, account; dark and light themes; Vitest unit tests and Playwright end-to-end tests |
 | CI pipeline | Implemented | Go, frontend (typecheck, unit, build, design detector, Playwright) and Docker workflows plus security scanning. Not yet run on GitHub: pushing workflow files needs a token with the `workflow` scope |
+| Release pipeline | Implemented | `release.yml` on version tags: tag and changelog checks, every CI check again, image built, version-checked, scanned (Trivy) and pushed for amd64/arm64 with SBOM, provenance and attestation, then a GitHub release with the deployment bundle, agents, `SHA256SUMS` and attestations (`docs/development/releasing.md`). `scripts/release/bundle.sh` and `notes.sh` run locally (bundle reproducible across two builds, version checks refuse malformed tags). The workflow has not run on GitHub, and actionlint was not run on it |
 | Licence clearance for EasyPatch-derived styles and logo | Not started | Owner action before a public release (ADR-0013) |
 
 ## Remote access (MeshCentral)
