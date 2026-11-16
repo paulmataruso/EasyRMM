@@ -103,3 +103,20 @@ minutes, and the hourly maintenance removed expired ones, so the table held
 an hour of requests. The agents service now removes them every minute. A
 20-minute run with that change ended with 10 MB of nonces, about seven
 minutes of requests, again with no errors.
+
+The same fleet was then run with the server's `GOMAXPROCS` set through a
+Compose override, five steady minutes for each value, to see whether fewer
+threads would save CPU:
+
+| `GOMAXPROCS` | Server CPU | Heartbeat p50 / p95 / p99 |
+|---|---|---|
+| 16, the default on this host | 0.83 of a core | 20 / 43 / 150 ms |
+| 4 | 0.69 | 12 / 41 / 146 ms |
+| 2 | 0.51 | 17 / 108 / 1,215 ms |
+
+Four saves a little at no cost in latency. With two, requests queue and the
+p99 grows eightfold. PostgreSQL moved between 0.64 and 0.79 of a core across
+the three runs with nothing of its own changed, so differences of that size
+are noise. The server keeps Go's default. Since Go 1.25 the default follows
+the container's CPU limit, so limiting the server container's CPUs in
+Compose (`cpus:`) lowers it too.
