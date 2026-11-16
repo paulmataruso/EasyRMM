@@ -438,7 +438,13 @@ func TestHTTPEndToEnd(t *testing.T) {
 	}
 	// Within her own organization she can manage.
 	olivia.expect(http.StatusCreated, "POST", "/api/v1/organizations/"+orgA+"/sites", map[string]string{"name": "Branch"}, &siteA2)
-	olivia.expect(http.StatusOK, "PUT", "/api/v1/organizations/"+orgA, map[string]string{"name": "Acme Corporation"}, nil)
+	olivia.expect(http.StatusOK, "PUT", "/api/v1/organizations/"+orgA, map[string]string{"name": "Acme Corp", "notes": "Edited by its administrator."}, nil)
+	// Names are unique on the server, so only a Super Administrator renames:
+	// a rename to a taken name would tell her another customer's name.
+	if r := olivia.do("PUT", "/api/v1/organizations/"+orgA, map[string]string{"name": "Globex"}); r.status != http.StatusUnprocessableEntity ||
+		!strings.Contains(string(r.body), "Only a Super Administrator can rename") {
+		t.Fatalf("org admin renaming to a taken name: %d %s", r.status, r.body)
+	}
 	// Platform-level actions are not hers.
 	if r := olivia.do("POST", "/api/v1/organizations", map[string]string{"name": "Mine"}); r.status != http.StatusForbidden {
 		t.Fatalf("org admin creating org: %d %s", r.status, r.body)
