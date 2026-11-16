@@ -1,6 +1,8 @@
 // Fictional records shaped like the API's JSON, for page tests.
 
 import type {
+  AlertEntry,
+  AlertPolicy,
   AuditEntry,
   Device,
   DeviceGroup,
@@ -275,4 +277,51 @@ export function history(points = 3, extra: Partial<MetricsHistory> = {}): Metric
     load1: 1,
   }));
   return { range: "24h", bucketSeconds: 300, from: new Date(end - 86_400_000).toISOString(), to: T, samples, ...extra };
+}
+
+export function alertPolicy(id: string, name: string, extra: Partial<AlertPolicy> = {}): AlertPolicy {
+  return {
+    id,
+    level: "shared",
+    organizationId: null,
+    siteId: null,
+    name,
+    description: "",
+    kind: "cpu",
+    threshold: 95,
+    minutes: 15,
+    severity: "warning",
+    enabled: true,
+    activeAlerts: 0,
+    createdAt: T,
+    updatedAt: T,
+    canEdit: true,
+    ...extra,
+  };
+}
+
+export function alertEntry(id: string, name: string, extra: Partial<AlertEntry> = {}): AlertEntry {
+  return {
+    id,
+    policyId: "p1",
+    deviceId: "d1",
+    deviceName: "DB-01",
+    organizationId: "o1",
+    organizationName: "Northwind Traders",
+    siteId: "s1",
+    siteName: "Head office",
+    name,
+    kind: "disk",
+    threshold: 90,
+    minutes: 5,
+    severity: "critical",
+    status: "open",
+    value: 93,
+    lastValue: 94.4,
+    openedAt: T,
+    acknowledgedAt: null,
+    resolvedAt: null,
+    canManage: true,
+    ...extra,
+  };
 }

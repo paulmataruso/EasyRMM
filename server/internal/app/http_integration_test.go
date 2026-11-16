@@ -38,6 +38,7 @@ type harness struct {
 	mail    *captureMailer
 	db      *testdb.Instance
 	cfg     *config.Config
+	deps    *app.Deps
 }
 
 type sentMail struct{ to, subject, body string }
@@ -90,6 +91,7 @@ func newHarnessWith(t *testing.T, withMail bool, adjust func(*config.Config)) *h
 	if err != nil {
 		t.Fatal(err)
 	}
+	h.deps = deps
 	handler, err := app.Handler(cfg, deps, log)
 	if err != nil {
 		t.Fatal(err)

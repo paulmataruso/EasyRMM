@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
-import { Building2, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Package, Settings, Sun, UserCircle, X } from "lucide-react";
+import { Bell, Building2, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Package, Settings, Sun, UserCircle, X } from "lucide-react";
+import { useApi } from "../api/hooks";
+import type { AlertSummary } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { applyTheme, getStoredTheme, storeTheme, type Theme } from "../lib/theme";
 import { DeviceTreeDock, DeviceTreeProvider } from "../pages/devices/DeviceTree";
@@ -11,6 +13,8 @@ interface NavItem {
   label: string;
   icon: ReactNode;
   end?: boolean;
+  /** A count beside the label, such as active alerts; critical makes it red. */
+  count?: { value: number; label: string; critical: boolean };
 }
 
 export function useTheme(): [Theme, () => void] {
@@ -71,6 +75,7 @@ export function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => setMobileOpen(false), [location.pathname]);
+  const alerts = useApi<AlertSummary>(can("alert.view") ? "/alerts/summary" : null, undefined, { refetchInterval: 60_000 });
 
   const nav: NavItem[] = [
     { to: "/", label: "Dashboard", icon: <LayoutDashboard className="size-4" aria-hidden />, end: true },
@@ -78,6 +83,15 @@ export function AppLayout() {
   ];
   if (can("device.view")) {
     nav.push({ to: "/devices", label: "Devices", icon: <Monitor className="size-4" aria-hidden /> });
+  }
+  if (can("alert.view")) {
+    const s = alerts.data;
+    nav.push({
+      to: "/alerts",
+      label: "Alerts",
+      icon: <Bell className="size-4" aria-hidden />,
+      count: s && s.active > 0 ? { value: s.active, label: `${s.active} active, ${s.critical} critical`, critical: s.critical > 0 } : undefined,
+    });
   }
   if (can("software.view")) {
     nav.push({ to: "/software", label: "Software", icon: <Package className="size-4" aria-hidden /> });
@@ -120,6 +134,18 @@ export function AppLayout() {
             >
               {item.icon}
               <span className="flex-1">{item.label}</span>
+              {item.count && (
+                <span
+                  className={cx(
+                    "min-w-5 rounded-full px-1.5 text-center text-xs leading-5 font-semibold tabular-nums",
+                    item.count.critical ? "bg-danger text-white" : "bg-white/15 text-white",
+                  )}
+                  title={item.count.label}
+                >
+                  {item.count.value > 99 ? "99+" : item.count.value}
+                  <span className="sr-only"> ({item.count.label})</span>
+                </span>
+              )}
             </NavLink>
           </li>
         ))}

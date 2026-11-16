@@ -29,6 +29,7 @@ import { ScriptDetailPage } from "./pages/scripts/ScriptDetailPage";
 import { ScriptFormPage } from "./pages/scripts/ScriptFormPage";
 import { JobsPage } from "./pages/jobs/JobsPage";
 import { SoftwarePage } from "./pages/software/SoftwarePage";
+import { AlertsPage } from "./pages/alerts/AlertsPage";
 import { JobDetailPage } from "./pages/jobs/JobDetailPage";
 import { RunDetailPage } from "./pages/jobs/RunDetailPage";
 
@@ -106,6 +107,7 @@ export function App() {
         <Route path="devices/add" element={<AddDevicesPage />} />
         <Route path="devices/:id" element={<DeviceDetailPage />} />
         <Route path="software" element={<SoftwarePage />} />
+        <Route path="alerts" element={<AlertsPage />} />
         <Route path="scripts" element={<ScriptsPage />} />
         <Route path="scripts/new" element={<ScriptFormPage />} />
         <Route path="scripts/:id" element={<ScriptDetailPage />} />

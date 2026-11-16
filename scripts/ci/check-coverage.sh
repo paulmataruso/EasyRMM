@@ -40,6 +40,13 @@ floors=(
   "server/internal/httpapi/devicesapi      85"
   "server/internal/httpapi/enrollapi       85"
   "server/internal/devices                 88"
+  # Scripts and jobs, inventory, monitoring and alerts, and their APIs.
+  "server/internal/jobs                    85"
+  "server/internal/inventory               85"
+  "server/internal/monitoring              85"
+  "server/internal/httpapi/jobsapi         90"
+  "server/internal/httpapi/inventoryapi    90"
+  "server/internal/httpapi/alertsapi       90"
   # Remote access: the MeshCentral client, and the service and gateway that
   # decide who reaches MeshCentral.
   "server/internal/meshcentral             85"
@@ -53,6 +60,9 @@ floors=(
   "agent/meshagent                         80"
   "agent/state                             75"
   "agent/cmd/easyrmm-agent                 75"
+  "agent/jobs                              80"
+  "agent/inventory                         90"
+  "agent/metrics                           90"
 )
 
 if [[ ! -f "$profile" ]]; then

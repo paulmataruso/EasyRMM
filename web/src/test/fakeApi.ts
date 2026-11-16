@@ -141,12 +141,14 @@ export function unreportedRoutes(): Record<string, FakeHandler | FakeReply> {
   };
 }
 
-/** Routes every signed-in page needs: setup done, the given session, sign-in options. */
+/** Routes every signed-in page needs: setup done, the given session, sign-in options, and no alerts (the nav and device pages ask). */
 export function baseRoutes(session: SessionView | null): Record<string, FakeHandler | FakeReply> {
   return {
     "GET /setup": ok({ required: false, passwordMinLength: 12 }),
     "GET /auth/session": session ? ok(session) : fail(401, "unauthenticated", "Sign in to continue."),
     "GET /auth/options": ok({ passwordResetAvailable: false, mfaRequired: true, passwordMinLength: 12 }),
     "POST /auth/logout": noContent,
+    "GET /alerts/summary": ok({ active: 0, critical: 0, warning: 0, acknowledged: 0, devices: 0 }),
+    "GET /alerts": ok({ items: [] }),
   };
 }

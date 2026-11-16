@@ -86,6 +86,11 @@ const ACTIONS: Record<string, string> = {
   "script.delete": "Deleted script",
   "device.script_run": "Ran script",
   "job.cancel": "Stopped script run",
+  "alert_policy.create": "Added alert policy",
+  "alert_policy.update": "Changed alert policy",
+  "alert_policy.delete": "Deleted alert policy",
+  "alert.acknowledge": "Acknowledged alert",
+  "alert.resolve": "Resolved alert",
 };
 
 export function actionLabel(action: string): string {
@@ -102,6 +107,8 @@ export const ACTION_GROUPS: [string, string][] = [
   ["enrollment_token", "Deployment tokens"],
   ["script", "Scripts"],
   ["job", "Jobs"],
+  ["alert_policy", "Alert policies"],
+  ["alert", "Alerts"],
   ["user", "Users"],
   ["setup", "Setup"],
 ];
@@ -110,6 +117,7 @@ export const ACTION_GROUPS: [string, string][] = [
 export function auditTarget(e: AuditEntry): string {
   const d = e.details ?? {};
   const name = typeof d.name === "string" ? d.name : typeof d.email === "string" ? d.email : null;
+  if (name && typeof d.device === "string") return `${name} on ${d.device}`;
   if (name) return name;
   if (typeof d.script === "string" && typeof d.device === "string") return `${d.script} on ${d.device}`;
   if (typeof d.device === "string") return typeof d.kind === "string" ? `${d.device} (${REMOTE_KIND_NAMES[d.kind as RemoteKind] ?? d.kind})` : d.device;

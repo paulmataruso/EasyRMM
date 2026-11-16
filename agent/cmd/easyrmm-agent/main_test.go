@@ -137,8 +137,15 @@ func TestEnrollRunStatusUninstall(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- h.e.dispatch(ctx, []string{"run"}, io.Discard) }()
+	// Wait for the agent to record the heartbeat and the MeshAgent answer,
+	// not just for the server to see the heartbeat: on a busy machine the
+	// agent could otherwise stop before saving its status.
 	deadline := time.Now().Add(10 * time.Second)
-	for beats.Load() == 0 && time.Now().Before(deadline) {
+	for time.Now().Before(deadline) {
+		st, err := h.e.store.LoadStatus()
+		if beats.Load() > 0 && err == nil && !st.LastHeartbeat.IsZero() && st.MeshAgent != "" {
+			break
+		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	cancel()

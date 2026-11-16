@@ -120,6 +120,17 @@ All notable changes to this project are documented here. The format follows
   `EASYRMM_METRICS_RETENTION` (7 days). `easyrmm-agent status` shows when
   the inventory was last sent. Guide:
   [Inventory and health](docs/operations/inventory.md).
+- Monitoring and alerts (ADR-0019). Alert policies at the shared,
+  organization or site level watch for devices that stop checking in and
+  for processor, memory or disk use held above a percentage; new
+  installations start with four shared policies. The server checks them
+  every minute, opens alerts, follows their latest value and resolves them
+  when the condition clears. The **Alerts** page lists active and resolved
+  alerts and the policies; people with `alert.manage` acknowledge or
+  resolve them there, on the device page or from the dashboard's **Needs
+  attention** card; the menu shows the active count. Resolved alerts are
+  kept for `EASYRMM_ALERT_RETENTION` (90 days). Guide:
+  [Alerts](docs/operations/alerts.md).
 - The console's libraries are served as a chunk of their own, which
   browsers keep across EasyRMM upgrades.
 - When the server cannot open its stored certificate authority or job key,

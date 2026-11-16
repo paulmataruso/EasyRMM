@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
-import { Building2, CheckCircle2, Circle, FolderTree, MapPin, Users } from "lucide-react";
+import { Bell, Building2, CheckCircle2, Circle, FolderTree, MapPin, Users } from "lucide-react";
 import { useApi, useList, useOrganizations, useSites } from "../api/hooks";
-import type { AuditEntry, AuthOptions, List, User } from "../api/types";
+import type { AlertEntry, AlertSummary, AuditEntry, AuthOptions, List, User } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { actionLabel, auditTarget, OutcomeBadge } from "../components/StatusBadges";
 import { buttonClasses, Card, cx, EmptyState, ErrorState, PageHeader, Spinner, StatTile, TableWrap } from "../components/ui";
 import { formatDateTime, formatNumber, formatRelative, plural } from "../lib/format";
+import { AlertActions, useAlertAction } from "./alerts/AlertActions";
+import { SeverityBadge, valueText } from "./alerts/alertText";
 
 export function DashboardPage() {
   const { can, isSuperAdmin } = useAuth();
@@ -14,6 +16,8 @@ export function DashboardPage() {
   const sites = useSites();
   const users = useApi<List<User>>(can("user.view") ? "/users" : null, { limit: 200 });
   const options = useApi<AuthOptions>("/auth/options", undefined, { staleTime: 300_000 });
+  const alerts = useApi<AlertSummary>(can("alert.view") ? "/alerts/summary" : null, undefined, { refetchInterval: 60_000 });
+  const activeAlerts = alerts.data?.active ?? 0;
 
   const siteCount = sites.items.length;
   const groupCount = sites.items.reduce((n, s) => n + s.deviceGroupCount, 0);
@@ -62,12 +66,29 @@ export function DashboardPage() {
     }
   }
   const setupIncomplete = steps.some((s) => !s.done);
+  const leftColumn = activeAlerts > 0 || setupIncomplete || can("audit.view");
+  const tiles = 3 + (can("alert.view") ? 1 : 0) + (can("user.view") ? 1 : 0);
 
   return (
     <>
       <PageHeader title="Dashboard" subtitle={isSuperAdmin ? "Every organization on this server." : "The organizations and sites you have access to."} />
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className={cx("grid grid-cols-2 gap-3", TILE_COLUMNS[tiles])}>
+        {can("alert.view") && (
+          <StatTile
+            label="Active alerts"
+            value={alerts.data ? formatNumber(activeAlerts) : "—"}
+            icon={<Bell className="size-4" aria-hidden />}
+            hint={
+              alerts.data
+                ? activeAlerts > 0
+                  ? `${alerts.data.critical > 0 ? `${formatNumber(alerts.data.critical)} critical` : plural(alerts.data.warning, "warning")} on ${plural(alerts.data.devices, "device")}`
+                  : "Nothing needs attention"
+                : undefined
+            }
+            to={<TileLink to="/alerts">View alerts</TileLink>}
+          />
+        )}
         <StatTile
           label="Organizations"
           value={orgs.isPending ? "—" : formatNumber(orgs.items.length)}
@@ -97,18 +118,23 @@ export function DashboardPage() {
       </div>
 
       <div className="mt-5 grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
-        {setupIncomplete ? (
-          <Card title="Get started" className="xl:col-span-2" padded={false}>
-            <ol className="divide-y divide-line">
-              {steps.map((s) => (
-                <SetupStep key={s.title} step={s} />
-              ))}
-            </ol>
-          </Card>
-        ) : (
-          <RecentActivity className="xl:col-span-2" />
+        {leftColumn && (
+          <div className="flex min-w-0 flex-col gap-5 xl:col-span-2">
+            {activeAlerts > 0 && <ActiveAlertsCard total={activeAlerts} />}
+            {setupIncomplete ? (
+              <Card title="Get started" padded={false}>
+                <ol className="divide-y divide-line">
+                  {steps.map((s) => (
+                    <SetupStep key={s.title} step={s} />
+                  ))}
+                </ol>
+              </Card>
+            ) : (
+              <RecentActivity />
+            )}
+          </div>
         )}
-        <OrganizationsCard className={!setupIncomplete && !can("audit.view") ? "xl:col-span-3" : undefined} />
+        <OrganizationsCard className={leftColumn ? undefined : "xl:col-span-3"} />
       </div>
 
       {setupIncomplete && <RecentActivity className="mt-5" />}
@@ -137,6 +163,56 @@ function SetupStep({ step }: { step: Step }) {
       </div>
       {step.action && <div className="shrink-0">{step.action}</div>}
     </li>
+  );
+}
+
+/** Literal classes, so Tailwind sees them: 3 to 5 tiles. */
+const TILE_COLUMNS: Record<number, string> = { 3: "md:grid-cols-3", 4: "md:grid-cols-4", 5: "md:grid-cols-3 xl:grid-cols-5" };
+
+const SHOWN_ALERTS = 6;
+
+/** The most pressing active alerts: critical first, then the newest. */
+function ActiveAlertsCard({ total }: { total: number }) {
+  const list = useList<AlertEntry>("/alerts", { status: "active", limit: 50 }, { refetchInterval: 60_000 });
+  const actions = useAlertAction();
+  const shown = [...list.items].sort((a, b) => Number(b.severity === "critical") - Number(a.severity === "critical")).slice(0, SHOWN_ALERTS);
+  return (
+    <Card
+      title="Needs attention"
+      padded={false}
+      actions={
+        <Link to="/alerts" className="text-xs text-accent hover:underline">
+          {total > shown.length ? `All ${formatNumber(total)} alerts` : "Alerts"}
+        </Link>
+      }
+    >
+      {list.isPending ? (
+        <Spinner />
+      ) : list.isError ? (
+        <ErrorState error={list.error} onRetry={() => void list.refetch()} compact />
+      ) : (
+        <ul className="divide-y divide-line">
+          {shown.map((a) => (
+            <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-sm">
+              <SeverityBadge severity={a.severity} />
+              <span className="min-w-0 flex-1">
+                <span className="font-medium">{a.name}</span>
+                <span className="text-muted"> on </span>
+                <Link to={`/devices/${a.deviceId}`} className="font-medium break-words hover:text-accent">
+                  {a.deviceName}
+                </Link>
+                <span className="block text-xs text-muted">
+                  <span className="tabular-nums">{valueText(a)}</span> ·{" "}
+                  <span title={formatDateTime(a.openedAt)}>opened {formatRelative(a.openedAt)}</span>
+                  {a.status === "acknowledged" && " · acknowledged"}
+                </span>
+              </span>
+              <AlertActions alert={a} actions={actions} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
 

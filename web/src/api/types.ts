@@ -569,3 +569,82 @@ export interface SoftwareDevice {
   version: string;
   arch: string;
 }
+
+// Monitoring and alerts (ADR-0019) ----------------------------------------------------------------
+
+/** What a policy watches: no check-in, or processor, memory or the fullest disk at a percentage. */
+export type AlertKind = "offline" | "cpu" | "memory" | "disk";
+export type AlertSeverity = "warning" | "critical";
+export type AlertStatus = "open" | "acknowledged" | "resolved";
+export type AlertResolution = "cleared" | "manual" | "not_covered" | "policy_off" | "policy_changed" | "policy_deleted";
+
+export interface AlertPolicy {
+  id: string;
+  /** Which devices it covers: every device, one organization's, or one site's. */
+  level: ScriptLevel;
+  organizationId: string | null;
+  organizationName?: string;
+  siteId: string | null;
+  siteName?: string;
+  name: string;
+  description: string;
+  kind: AlertKind;
+  /** Percent for processor, memory and disk; null for offline. */
+  threshold: number | null;
+  minutes: number;
+  severity: AlertSeverity;
+  enabled: boolean;
+  /** Unresolved alerts it has raised on devices the caller can see. */
+  activeAlerts: number;
+  createdAt: string;
+  updatedAt: string;
+  canEdit: boolean;
+}
+
+export interface AlertPolicyInput {
+  organizationId?: string | null;
+  siteId?: string | null;
+  name: string;
+  description: string;
+  kind: AlertKind;
+  threshold: number | null;
+  minutes: number;
+  severity: AlertSeverity;
+  enabled: boolean;
+}
+
+/** One policy's condition on one device. */
+export interface AlertEntry {
+  id: string;
+  policyId: string | null;
+  deviceId: string;
+  deviceName: string;
+  organizationId: string;
+  organizationName: string;
+  siteId: string;
+  siteName: string;
+  name: string;
+  kind: AlertKind;
+  threshold: number | null;
+  minutes: number;
+  severity: AlertSeverity;
+  status: AlertStatus;
+  /** The value that raised it and the latest: percent, or minutes without a check-in. */
+  value: number;
+  lastValue: number;
+  openedAt: string;
+  acknowledgedAt: string | null;
+  acknowledgedBy?: string;
+  resolvedAt: string | null;
+  resolvedBy?: string;
+  resolution?: AlertResolution;
+  canManage: boolean;
+}
+
+export interface AlertSummary {
+  active: number;
+  critical: number;
+  warning: number;
+  acknowledged: number;
+  devices: number;
+}

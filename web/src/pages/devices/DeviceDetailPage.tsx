@@ -15,6 +15,7 @@ import { RunScriptDialog } from "../scripts/RunScriptDialog";
 import { cannotRunReason, isOpen } from "../scripts/scriptText";
 import { HardwarePanel } from "./DeviceHardware";
 import { HealthCard, PerformanceCard, useDeviceInventory } from "./DeviceHealth";
+import { DeviceAlertsCard } from "../alerts/DeviceAlertsCard";
 import { SoftwarePanel } from "./DeviceSoftware";
 import { DeviceTreeToggle } from "./DeviceTree";
 import { platformName } from "./platform";
@@ -77,7 +78,8 @@ export function DeviceDetailPage() {
   // Scripts are offered where the role runs them; the reason shows when the device itself cannot.
   const scriptReason = d.canRunScripts ? cannotRunReason(d) : null;
   const showRuns = can("job.view") && d.agent !== null;
-  const side = hasAgent || showHistory || showRuns;
+  const showAlerts = can("alert.view");
+  const side = hasAgent || showHistory || showRuns || showAlerts;
 
   return (
     <>
@@ -201,6 +203,7 @@ export function DeviceDetailPage() {
         </div>
         {side && (
           <div className="flex min-w-0 flex-col gap-5">
+            {showAlerts && <DeviceAlertsCard deviceId={d.id} />}
             {hasAgent && <HealthCard query={inventory} online={d.online} onShowAll={() => showTab("hardware")} />}
             {showRuns && <ScriptRuns deviceId={d.id} />}
             {showHistory && <SessionHistory deviceId={d.id} />}

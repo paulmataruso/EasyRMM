@@ -26,6 +26,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/alertsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/authapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/devicesapi"
@@ -39,6 +40,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
+	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
 	"github.com/paulmataruso/easyrmm/server/internal/remote"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
@@ -76,6 +78,8 @@ type Deps struct {
 	Jobs *jobs.Service
 	// Inventory stores devices' inventory and metrics (ADR-0018).
 	Inventory *inventory.Service
+	// Monitoring evaluates alert policies and keeps alerts (ADR-0019).
+	Monitoring *monitoring.Service
 	// AgentBuilds are the agent binaries the server hands out.
 	AgentBuilds *agents.Builds
 	// PKI is the internal certificate authority, for addresses no public CA
@@ -152,6 +156,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d.Jobs = jobs.New(db, auditLog, jobKey, cfg.JobRetention, log)
 	d.Agents.SetJobKey(d.Jobs.PublicKey())
 	d.Inventory = inventory.New(db, cfg.MetricsRetention, log)
+	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, log)
 	builds, err := agents.LoadBuilds(cfg.AgentDir)
 	if err != nil {
 		return nil, err
@@ -264,6 +269,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	auditapi.New(d.Audit).Register(mux)
 	jobsapi.New(d.Jobs).Register(mux)
 	inventoryapi.New(d.Inventory).Register(mux)
+	alertsapi.New(d.Monitoring).Register(mux)
 	mux.Handle("GET /api/v1/health", httpapi.Handle(func(w http.ResponseWriter, _ *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": Version})
 		return nil
@@ -390,6 +396,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	tasks = append(tasks, deps.Agents.Cleanup, deps.Inventory.Purge)
 	wg.Go(func() { deps.Jobs.Run(ctx) })
+	wg.Go(func() { deps.Monitoring.Run(ctx) })
 	// Waiting job polls end with the server, not 25 seconds later.
 	wg.Go(func() {
 		<-ctx.Done()

@@ -345,7 +345,9 @@ func TestJobFromCreationToResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job.Total != 1 || job.Counts[StatusQueued] != 1 || job.Body != "echo $1" || job.TimeoutSeconds != 90 || job.CreatedBy != "tech@example.com" || !job.CanCancel {
+	// The waiting poll may already have taken the run when CreateJob reads
+	// the job back, so it is queued or sent.
+	if job.Total != 1 || job.Counts[StatusQueued]+job.Counts[StatusSent] != 1 || job.Body != "echo $1" || job.TimeoutSeconds != 90 || job.CreatedBy != "tech@example.com" || !job.CanCancel {
 		t.Errorf("job %+v", job)
 	}
 	if d := time.Until(job.ExpiresAt); d < 23*time.Hour || d > 25*time.Hour {
