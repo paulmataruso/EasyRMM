@@ -24,7 +24,7 @@ type Collector struct {
 	// system.
 	Interfaces func() ([]agentproto.Interface, error)
 	// Run runs a command and returns its standard output; nil runs it for
-	// real. Only `rpm` is run.
+	// real. Only `rpm` and the EasyPatch agent's `status --json` are run.
 	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
 	// LookPath finds a command; nil searches the system's fixed directories.
 	LookPath func(name string) (string, error)

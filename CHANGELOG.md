@@ -227,8 +227,19 @@ All notable changes to this project are documented here. The format follows
   organization, site, platform, name and more, read in the console or
   downloaded as CSV (UTF-8, times in UTC, cells that a spreadsheet would
   run as formulas defused). Each download is audited.
-- The audit log names software actions, agent updates and report
-  downloads, and filters by agent updates and reports.
+- EasyPatch connector (ADR-0030). **Settings → EasyPatch** connects EasyRMM
+  to an EasyPatch server with one of its API tokens and links EasyRMM
+  organizations to EasyPatch organizations. The agent reports the local
+  EasyPatch agent with its inventory, and the server links the device to
+  its EasyPatch endpoint once EasyPatch confirms the server, organization,
+  key fingerprint, host name and serial, saying why when it does not.
+  **Patching** in the main menu lists devices with their update compliance,
+  scans and installs on many devices at once, and follows EasyPatch's jobs;
+  each device has a **Patches** tab with its updates, history, jobs and
+  effective policy. Installs at a later time are offered when the EasyPatch
+  server supports them.
+- The audit log names software actions, agent updates, report downloads and
+  patching, and filters by agent updates, reports and patching.
 - The console's libraries are served as a chunk of their own, which
   browsers keep across EasyRMM upgrades.
 - When the server cannot open its stored certificate authority or job key,

@@ -53,6 +53,10 @@ floors=(
   # Reports: their CSV exports take tenants' data out of EasyRMM.
   "server/internal/reports                 90"
   "server/internal/httpapi/reportsapi      90"
+  # EasyPatch: it holds a token that installs software on every linked
+  # endpoint, and decides which EasyRMM user may act on which endpoint.
+  "server/internal/easypatch               90"
+  "server/internal/httpapi/easypatchapi    95"
   # Agent updates: they replace the program every endpoint runs.
   "server/internal/httpapi/agentupdatesapi 90"
   # Remote access: the MeshCentral client, and the service and gateway that

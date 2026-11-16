@@ -69,6 +69,16 @@ MeshCentral's session key) are stored sealed with `EASYRMM_SECRET_KEY` in
 other than liveness changed (`last_seen_at`, `agent_last_seen_at`,
 `remote_online`), so heartbeats do not rewrite it every minute.
 
+## EasyPatch connector (migration 00013)
+
+| Table | Notes |
+|---|---|
+| `easypatch_connection` | At most one row: the EasyPatch server's https URL, its API token sealed with `EASYRMM_SECRET_KEY` (associated data `easypatch_connection.token_sealed`), an optional CA certificate, and what the last check found (version, public URL, capabilities, whether the token can act, last error). Platform scope, and the owner role for migrations |
+| `easypatch_organizations` | Which EasyPatch organization patches an EasyRMM organization: one each way (`easypatch_id` is unique). Read through the organization's row-level security; written with platform scope only |
+| `easypatch_devices` | A device's link to its EasyPatch endpoint: `pending`, `linked` (with the endpoint and when) or `unlinked` (with the reason), the key fingerprint it was checked with, and when. A linked endpoint belongs to one device (partial unique index). Read through the device's row-level security; written with platform scope only |
+
+No patch data is stored: the console reads it from EasyPatch (ADR-0030).
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

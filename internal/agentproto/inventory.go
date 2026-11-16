@@ -37,6 +37,26 @@ type Inventory struct {
 	// was found.
 	PackageManager string    `json:"packageManager"`
 	Packages       []Package `json:"packages"`
+	// EasyPatch is what the device's EasyPatch agent says about itself
+	// (ADR-0030); nil when it is not installed.
+	EasyPatch *EasyPatchAgent `json:"easyPatch,omitempty"`
+}
+
+// EasyPatchAgent is the EasyPatch agent's own account of its enrollment, from
+// its `status --json`. Only what changes with enrollment is kept, so an
+// unchanged agent leaves the inventory unchanged.
+type EasyPatchAgent struct {
+	Version string `json:"version"`
+	// Status is the enrollment: Active, PendingApproval, NotEnrolled,
+	// Revoked… as EasyPatch names it.
+	Status string `json:"status"`
+	// ServerURL is the EasyPatch server it is enrolled with, without a
+	// trailing slash.
+	ServerURL      string `json:"serverUrl"`
+	EndpointID     string `json:"endpointId"`
+	KeyFingerprint string `json:"keyFingerprint"`
+	// Error says why the agent could not report, when it could not.
+	Error string `json:"error,omitempty"`
 }
 
 // SystemInfo is the machine as its firmware describes it.

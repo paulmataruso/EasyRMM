@@ -25,6 +25,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
+	"github.com/paulmataruso/easyrmm/server/internal/easypatch"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentupdatesapi"
@@ -33,6 +34,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/auditfwdapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/authapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/devicesapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/easypatchapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/enrollapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/inventoryapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
@@ -88,6 +90,8 @@ type Deps struct {
 	// Reports reads devices, software and alerts into tables (ADR-0029).
 	Reports  *reports.Service
 	AuditFwd *auditfwd.Service
+	// EasyPatch connects patching to an EasyPatch server (ADR-0030).
+	EasyPatch *easypatch.Service
 	// AgentBuilds are the agent binaries the server hands out.
 	AgentBuilds *agents.Builds
 	// PKI is the internal certificate authority, for addresses no public CA
@@ -167,6 +171,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, log)
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
+	d.EasyPatch = easypatch.New(db, auditLog, sealer, Version, log)
 	builds, err := agents.LoadBuilds(cfg.AgentDir)
 	if err != nil {
 		return nil, err
@@ -296,6 +301,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	alertsapi.New(d.Monitoring).Register(mux)
 	reportsapi.New(d.Reports).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)
+	easypatchapi.New(d.EasyPatch).Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
 	mux.Handle("GET /api/v1/health", httpapi.Handle(func(w http.ResponseWriter, _ *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": Version})
@@ -426,6 +432,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.Jobs.Run(ctx) })
 	wg.Go(func() { deps.Monitoring.Run(ctx) })
 	wg.Go(func() { deps.AuditFwd.Run(ctx) })
+	wg.Go(func() { deps.EasyPatch.Run(ctx) })
 	// Waiting job polls end with the server, not 25 seconds later.
 	wg.Go(func() {
 		<-ctx.Done()

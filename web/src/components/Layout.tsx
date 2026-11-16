@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
-import { Bell, Building2, FileBarChart, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Settings, Sun, UserCircle, X } from "lucide-react";
+import { Bell, Building2, FileBarChart, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Settings, ShieldCheck, Sun, UserCircle, X } from "lucide-react";
 import { useApi, useWaitingDevices } from "../api/hooks";
 import type { AlertSummary } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
@@ -141,6 +141,9 @@ export function AppLayout() {
       icon: <Bell className="size-4" aria-hidden />,
       count: s && s.active > 0 ? { value: s.active, label: `${s.active} active, ${s.critical} critical`, critical: s.critical > 0 } : undefined,
     });
+  }
+  if (can("patch.view") && can("device.view")) {
+    nav.push({ to: "/patching", label: "Patching", icon: <ShieldCheck className="size-4" aria-hidden /> });
   }
   if (can("script.view")) {
     nav.push({ to: "/scripts", label: "Scripts", icon: <FileCode2 className="size-4" aria-hidden /> });

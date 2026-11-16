@@ -104,6 +104,13 @@ const ACTIONS: Record<string, string> = {
   "alert.resolve": "Resolved alert",
   "audit_forwarding.update": "Changed audit forwarding",
   "audit_forwarding.test": "Tested audit forwarding",
+  "easypatch.connection_update": "Changed EasyPatch server",
+  "easypatch.connection_delete": "Removed EasyPatch server",
+  "easypatch.organization_link": "Linked organization to EasyPatch",
+  "easypatch.organization_unlink": "Unlinked organization from EasyPatch",
+  "patch.scan": "Scanned for updates",
+  "patch.install": "Installed updates",
+  "patch.cancel": "Cancelled patch job",
 };
 
 export function actionLabel(action: string): string {
@@ -128,6 +135,8 @@ export const ACTION_GROUPS: [string, string][] = [
   ["alert", "Alerts"],
   ["user", "Users"],
   ["audit_forwarding", "Audit forwarding"],
+  ["patch", "Patching"],
+  ["easypatch", "EasyPatch settings"],
   ["setup", "Setup"],
 ];
 
@@ -146,6 +155,10 @@ export function auditTarget(e: AuditEntry): string {
   if (e.targetType === "session") return "Session";
   if (e.targetType === "report") return REPORT_TITLES[e.targetId ?? ""] ?? "Report";
   if (e.targetType === "audit_forwarding") return e.targetId ? `Collector ${e.targetId}` : "Collector";
+  if (e.action.startsWith("easypatch.organization_") && typeof d.organization === "string") {
+    return typeof d.easyPatchName === "string" ? `${d.organization} → ${d.easyPatchName}` : d.organization;
+  }
+  if (e.targetType === "easypatch") return typeof d.url === "string" ? d.url : "EasyPatch server";
   if (e.actorType === "user" && e.targetType === "user" && e.targetId === e.actorId) return "Own account";
   return e.targetType ? e.targetType.replace(/_/g, " ") : "—";
 }

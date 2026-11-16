@@ -45,6 +45,7 @@ func (c Collector) Collect(ctx context.Context) agentproto.Inventory {
 		}
 	}
 	inv.PackageManager, inv.Packages = "windows", installedPrograms(ctx)
+	inv.EasyPatch = c.easyPatch(ctx)
 	return inv
 }
 

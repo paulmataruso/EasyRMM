@@ -39,6 +39,7 @@ func (c Collector) Collect(ctx context.Context) agentproto.Inventory {
 		inv.Interfaces = []agentproto.Interface{}
 	}
 	inv.PackageManager, inv.Packages = c.packages(ctx)
+	inv.EasyPatch = c.easyPatch(ctx)
 	return inv
 }
 

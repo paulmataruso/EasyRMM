@@ -35,3 +35,4 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 | [0027](0027-agent-updates.md) | Coordinated agent updates: builds by hash, a few devices at a time, signed instructions, probation and rollback | Accepted; refines 0008, 0009 |
 | [0028](0028-software-deployment.md) | Software deployment: install, update and remove through winget, Chocolatey and the Linux package manager, as jobs of EasyRMM's own scripts | Accepted; builds on 0017, 0018 |
 | [0029](0029-reports.md) | Reports: device inventory, installed software, device health and alert history, in the console and as audited CSV downloads | Accepted; builds on 0018, 0019 |
+| [0030](0030-easypatch-connector.md) | EasyPatch connector: one server through an API token, organizations linked by hand, devices linked by what their EasyPatch agent reports, patch views and actions behind EasyRMM roles | Accepted; refines 0010 |

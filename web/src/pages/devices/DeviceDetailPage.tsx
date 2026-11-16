@@ -2,7 +2,7 @@ import { Link, useParams } from "react-router";
 import { AppWindow, ExternalLink, Play } from "lucide-react";
 import { useState } from "react";
 import { useApi, useList } from "../../api/hooks";
-import type { AuditEntry, Device, JobRun, RemoteKind } from "../../api/types";
+import type { AuditEntry, Device, JobRun, PatchStatus, RemoteKind } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { MenuButton } from "../../components/Menu";
 import { DeviceStatusBadge, REMOTE_KIND_NAMES } from "../../components/StatusBadges";
@@ -17,6 +17,7 @@ import { HardwarePanel } from "./DeviceHardware";
 import { HealthCard, PerformanceCard, useDeviceInventory } from "./DeviceHealth";
 import { DeviceAlertsCard } from "../alerts/DeviceAlertsCard";
 import { SoftwarePanel } from "./DeviceSoftware";
+import { PatchesPanel } from "./DevicePatches";
 import { platformName } from "./platform";
 import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
 import { AgentLine } from "./agentUpdate";
@@ -47,6 +48,8 @@ export function DeviceDetailPage() {
   const device = useApi<Device>(`/devices/${id}`, undefined, { refetchInterval: 30_000 });
   const hasAgent = device.data?.agent != null;
   const inventory = useDeviceInventory(id, hasAgent);
+  // The Patches tab shows once EasyPatch is set up (ADR-0030).
+  const patching = useApi<PatchStatus>(can("patch.view") ? "/patching" : null, undefined, { staleTime: 60_000 });
   const [running, setRunning] = useState(false);
   const showHistory = can("audit.view");
 
@@ -57,6 +60,7 @@ export function DeviceDetailPage() {
     { id: "overview", label: "Overview" },
     { id: "hardware", label: "Hardware", hidden: !hasAgent },
     { id: "software", label: "Software", hidden: !hasAgent || !can("software.view") },
+    { id: "patches", label: "Patches", hidden: !hasAgent || patching.data?.configured !== true },
   ];
   const requested = url.get("tab");
   const tab = tabs.some((t) => t.id === requested && !t.hidden) ? requested : "overview";
@@ -139,6 +143,12 @@ export function DeviceDetailPage() {
           ) : (
             <SoftwarePanel device={d} inventory={inventory.data.inventory} />
           )}
+        </div>
+      )}
+
+      {tab === "patches" && (
+        <div role="tabpanel" aria-labelledby="tab-patches">
+          <PatchesPanel device={d} />
         </div>
       )}
 

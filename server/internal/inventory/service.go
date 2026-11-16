@@ -229,6 +229,12 @@ func cleanInventory(in agentproto.Inventory) agentproto.Inventory {
 			})
 		}
 	}
+	if e := in.EasyPatch; e != nil {
+		out.EasyPatch = &agentproto.EasyPatchAgent{
+			Version: text(e.Version, 64), Status: text(e.Status, 64), ServerURL: text(e.ServerURL, maxLong),
+			EndpointID: text(e.EndpointID, 64), KeyFingerprint: text(e.KeyFingerprint, 128), Error: text(e.Error, maxLong),
+		}
+	}
 	return out
 }
 

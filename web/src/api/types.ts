@@ -900,3 +900,290 @@ export interface Report {
   truncated: boolean;
   generatedAt: string;
 }
+
+// ---------------------------------------------------------------------------------------------
+// EasyPatch (ADR-0030)
+// ---------------------------------------------------------------------------------------------
+
+/** The EasyPatch server EasyRMM patches through. The API token is never sent back. */
+export interface EasyPatchConnection {
+  configured: boolean;
+  url: string;
+  caCert: string;
+  serverVersion: string;
+  publicUrl: string;
+  /** Optional features the server lists: "scheduled-installs", "on-behalf-of". */
+  capabilities: string[];
+  /** The token is an Admin token; a ReadOnly one only reads. */
+  canOperate: boolean;
+  checkedAt?: string;
+  lastError?: string;
+  lastErrorAt?: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface EasyPatchConnectionInput {
+  url: string;
+  /** Empty keeps the stored token, on the same server. */
+  token: string;
+  caCert: string;
+}
+
+export interface EasyPatchOrganization {
+  id: string;
+  name: string;
+  isActive: boolean;
+  siteCount: number;
+  endpointCount: number;
+}
+
+export interface EasyPatchOrganizationLink {
+  organizationId: string;
+  organizationName: string;
+  easyPatchId: string;
+  easyPatchName: string;
+  linkedAt: string;
+  linkedBy?: string;
+  devices: { linked: number; unlinked: number; pending: number };
+}
+
+export interface EasyPatchOrganizations {
+  easyPatch: EasyPatchOrganization[];
+  links: EasyPatchOrganizationLink[];
+  /** Why EasyPatch's organizations could not be read. */
+  error?: string;
+}
+
+/** Whether EasyRMM patches a device: linked to its EasyPatch endpoint, refused (with a reason), being checked, or no EasyPatch agent. */
+export type PatchLink = "linked" | "unlinked" | "pending" | "none";
+
+export interface EasyPatchDeviceLink {
+  deviceId: string;
+  deviceName: string;
+  organizationName: string;
+  state: PatchLink;
+  reason?: string;
+  endpointId?: string;
+  checkedAt?: string;
+}
+
+export interface PatchStatus {
+  configured: boolean;
+  canOperate: boolean;
+  canSchedule: boolean;
+}
+
+export type ComplianceStatus = "Compliant" | "MissingUpdates" | "FailedUpdates" | "RebootRequired" | "ScanStale" | "NeverScanned";
+
+/** An EasyPatch endpoint as its lists summarise it. */
+export interface PatchEndpoint {
+  id: string;
+  hostname: string;
+  organizationId: string;
+  organizationName: string;
+  siteName: string;
+  status: string;
+  operatingSystem: string;
+  platform: string;
+  agentVersion: string;
+  agentOutdated: boolean;
+  isOnline: boolean;
+  lastCheckInAt: string | null;
+  lastScanAt: string | null;
+  complianceStatus: ComplianceStatus;
+  missingRequiredCount: number;
+  missingTotalCount: number;
+  missingDeferredCount: number;
+  failedCount: number;
+  rebootPending: boolean;
+  knownExploitedMissingCount: number;
+  currentActivity: string;
+}
+
+export interface PatchFleetDevice {
+  deviceId: string;
+  name: string;
+  organizationId: string;
+  organizationName: string;
+  siteId: string;
+  siteName: string;
+  platform: Platform;
+  link: PatchLink;
+  reason?: string;
+  /** The caller may scan and install here (patch.manage). */
+  canManage: boolean;
+  endpoint?: PatchEndpoint;
+  checkedAt?: string;
+}
+
+export interface PatchFleet {
+  devices: PatchFleetDevice[];
+  truncated: boolean;
+  /** EasyPatch organizations that could not be read, with why. */
+  errors: string[];
+}
+
+export interface PatchEndpointDetail {
+  summary: PatchEndpoint;
+  serialNumber: string;
+  lastScanAttemptAt: string | null;
+  lastScanError: string;
+  rebootReasons: string[] | null;
+  rebootPendingSince: string | null;
+  installedCount: number;
+  pendingRebootUpdateCount: number;
+  complianceEvaluatedAt: string | null;
+}
+
+/** When EasyPatch installs updates on its own, from the endpoint's effective policy. */
+export interface PatchPolicy {
+  autoInstallEnabled: boolean;
+  /** 0 is Sunday. */
+  maintenanceDays: number[] | null;
+  /** "HH:mm" in timeZone. */
+  maintenanceStart: string | null;
+  maintenanceDurationMinutes: number | null;
+  timeZone: string;
+  scanIntervalMinutes: number;
+  allowedCategories: string[] | null;
+  includeOptional: boolean;
+  installDelayDays: number;
+  securityInstallDelayDays: number;
+}
+
+export interface DevicePatching {
+  deviceId: string;
+  link: PatchLink;
+  reason?: string;
+  checkedAt?: string;
+  canManage: boolean;
+  canSchedule: boolean;
+  endpoint?: PatchEndpointDetail;
+  policy?: PatchPolicy;
+  /** Why EasyPatch could not be read just now. */
+  error?: string;
+}
+
+export type PatchUpdateState = "Missing" | "Failed" | "PendingVerification" | "PendingReboot" | "Installed" | "Superseded" | "NotApplicable" | "Excluded" | "Reoffered";
+
+export interface PatchUpdate {
+  updateGuid: string;
+  title: string;
+  kbNumber: string;
+  category: string;
+  msrcSeverity: string;
+  releaseDate: string | null;
+  sizeBytes: number | null;
+  rebootLikely: boolean;
+  supportUrl: string;
+  state: PatchUpdateState;
+  isRequired: boolean;
+  isExcluded: boolean;
+  firstDetectedAt: string;
+  stateChangedAt: string;
+  installedAt: string | null;
+  failedAttempts: number;
+  errorCode: string;
+  errorMessage: string;
+  activeJob: { jobId: string; jobStatus: string; itemStatus: string; downloadPercent: number | null; installPercent: number | null; jobType: string } | null;
+  package: { name: string; version: string; installedVersion: string; repository: string; advisories: string[] | null } | null;
+  deferredUntil: string | null;
+  cveIds: string[] | null;
+  knownExploited: boolean;
+  holdReason: string;
+}
+
+export interface PatchHistoryEntry {
+  id: number;
+  updateGuid: string | null;
+  title: string;
+  kbNumber: string;
+  operation: string;
+  resultCode: number;
+  result: string;
+  hResult: string;
+  errorDescription: string;
+  date: string;
+}
+
+export interface PatchPage<T> {
+  items: T[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+}
+
+export interface PatchJob {
+  id: string;
+  endpointId: string;
+  hostname: string;
+  type: string;
+  status: string;
+  trigger: string;
+  requestedBy: string;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  expiresAt: string;
+  progressPercent: number | null;
+  phase: string;
+  progressMessage: string;
+  errorCode: string;
+  errorMessage: string;
+  rebootRequired: boolean;
+  timedOut: boolean;
+  cancelRequested: boolean;
+  itemCount: number;
+  succeededCount: number;
+  failedCount: number;
+}
+
+/** A job with the EasyRMM device it runs on, from the patching job list. */
+export interface PatchJobView extends PatchJob {
+  deviceId: string;
+  deviceName: string;
+  canManage: boolean;
+}
+
+export interface PatchJobItem {
+  updateGuid: string;
+  title: string;
+  kbNumber: string;
+  category: string;
+  status: string;
+  skipReason: string;
+  resultCode: number | null;
+  errorCode: string;
+  errorMessage: string;
+  rebootRequired: boolean;
+  downloadPercent: number | null;
+  installPercent: number | null;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+export interface PatchJobDetail {
+  summary: PatchJob;
+  installMode: string;
+  notBefore: string | null;
+  deliveredAt: string | null;
+  lastProgressAt: string | null;
+  items: PatchJobItem[];
+  events: { id: number; type: string; severity: string; message: string; createdAt: string }[];
+  deviceId: string;
+  deviceName: string;
+  canManage: boolean;
+}
+
+export interface PatchActionInput {
+  deviceIds: string[];
+  updateIds?: string[];
+  scheduledAt?: string;
+}
+
+export interface PatchActionResult {
+  succeeded: number;
+  failed: number;
+  results: { deviceId: string; deviceName: string; ok: boolean; jobId?: string; message?: string }[];
+}
