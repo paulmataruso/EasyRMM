@@ -56,7 +56,7 @@ func main() {
 	}
 	cfg := meshcentral.ServerConfig{
 		Hostname: *host, Listen: *listen, PublicPort: *publicPort, TrustedProxy: "127.0.0.1",
-		FramingOrigin: *origin, CertURL: *certURL, LoginKey: key, SessionKey: hex.EncodeToString(session),
+		FramingOrigins: []string{*origin}, CertURL: *certURL, LoginKey: key, SessionKey: hex.EncodeToString(session),
 	}
 	out, err := cfg.Render()
 	if err != nil {

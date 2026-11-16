@@ -31,12 +31,26 @@ const (
 	// TLSOffload serves plain HTTP on loopback behind an upstream proxy that
 	// terminates TLS.
 	TLSOffload TLSMode = "offload"
+	// TLSInternal uses certificates from the server's own certificate
+	// authority, for servers reached by IP address or without public DNS
+	// (ADR-0016).
+	TLSInternal TLSMode = "internal"
 )
 
 // Config is the complete server configuration.
 type Config struct {
-	PublicURL     *url.URL // https://rmm.example.com
-	MeshPublicURL *url.URL // https://mesh.rmm.example.com
+	PublicURL     *url.URL // https://rmm.example.com, or https://203.0.113.10
+	MeshPublicURL *url.URL // https://mesh.rmm.example.com, or https://203.0.113.10:4443
+
+	// IPAccess also serves the console and remote sessions on the server's
+	// IP addresses, for when DNS is unavailable (ADR-0016).
+	IPAccess bool
+	// IPAddresses are the addresses IP access answers on. Load detects the
+	// server's primary addresses when none are configured.
+	IPAddresses []netip.Addr
+	// IPMeshPort is the port remote sessions use on an IP address.
+	IPMeshPort   int
+	ipConfigured bool
 
 	TLSMode       TLSMode
 	ListenHTTPS   string // ":443"
@@ -104,14 +118,21 @@ type SMTPConfig struct {
 // Getenv abstracts environment lookup for tests.
 type Getenv func(string) (string, bool)
 
-// Load reads configuration from the process environment.
-func Load() (*Config, error) { return LoadFrom(os.LookupEnv, os.ReadFile) }
+// Load reads configuration from the process environment. With IP access on
+// and no EASYRMM_IP_ADDRESSES, it uses the server's primary addresses.
+func Load() (*Config, error) {
+	c, err := LoadFrom(os.LookupEnv, os.ReadFile)
+	if err != nil {
+		return nil, err
+	}
+	c.DetectAddresses(PrimaryAddresses)
+	return c, nil
+}
 
 // LoadFrom reads configuration through the given lookups.
 func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, error) {
 	l := &loader{getenv: getenv, readFile: readFile}
 	c := &Config{
-		TLSMode:           TLSMode(l.str("EASYRMM_TLS_MODE", string(TLSAcme))),
 		ListenHTTPS:       l.str("EASYRMM_LISTEN_HTTPS", ":443"),
 		ListenHTTP:        l.str("EASYRMM_LISTEN_HTTP", ":80"),
 		ListenOffload:     l.str("EASYRMM_LISTEN_OFFLOAD", "127.0.0.1:18080"),
@@ -158,9 +179,36 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 	c.DatabaseMaxConns = int32(l.integer("EASYRMM_DATABASE_MAX_CONNS", 20)) //nolint:gosec // validated below
 
 	c.PublicURL = l.httpsURL("EASYRMM_PUBLIC_URL", true)
+	publicIP := c.PublicURL != nil && isIP(c.PublicURL.Hostname())
+	// A server known by its IP address cannot get a certificate from ACME.
+	defaultMode := TLSAcme
+	if publicIP {
+		defaultMode = TLSInternal
+	}
+	c.TLSMode = TLSMode(l.str("EASYRMM_TLS_MODE", ""))
+	if c.TLSMode == "" {
+		c.TLSMode = defaultMode
+	}
+	c.IPAccess = l.boolean("EASYRMM_IP_ACCESS", true)
+	c.IPMeshPort = l.integer("EASYRMM_IP_MESH_PORT", 4443)
+	for _, raw := range splitList(l.str("EASYRMM_IP_ADDRESSES", "")) {
+		a, err := netip.ParseAddr(raw)
+		if err != nil {
+			l.errs = append(l.errs, fmt.Errorf("EASYRMM_IP_ADDRESSES: %q is not an IP address", raw))
+			continue
+		}
+		c.IPAddresses = append(c.IPAddresses, a.Unmap())
+		c.ipConfigured = true
+	}
 	meshDefault := ""
 	if c.PublicURL != nil {
-		meshDefault = "https://mesh." + c.PublicURL.Host
+		if publicIP {
+			// Same address, its own port: browsers keep the two apart as
+			// different origins of the same site.
+			meshDefault = "https://" + net.JoinHostPort(c.PublicURL.Hostname(), strconv.Itoa(c.IPMeshPort))
+		} else {
+			meshDefault = "https://mesh." + c.PublicURL.Host
+		}
 	}
 	if raw := l.str("EASYRMM_MESH_PUBLIC_URL", meshDefault); raw != "" {
 		c.MeshPublicURL = l.parseHTTPS("EASYRMM_MESH_PUBLIC_URL", raw)
@@ -219,6 +267,8 @@ func (c *Config) validate(l *loader) {
 		if c.CertFile == "" || c.KeyFile == "" {
 			add("EASYRMM_TLS_CERT_FILE and EASYRMM_TLS_KEY_FILE are required when EASYRMM_TLS_MODE=manual")
 		}
+	case TLSInternal:
+		// Nothing to supply: the server creates its certificate authority.
 	case TLSOffload:
 		if len(c.TrustedProxies) == 0 {
 			add("EASYRMM_TRUSTED_PROXIES is required when EASYRMM_TLS_MODE=offload (the address of your reverse proxy, e.g. 127.0.0.1/32)")
@@ -226,7 +276,10 @@ func (c *Config) validate(l *loader) {
 		// Plain HTTP must never be reachable from the network.
 		requireLoopback(add, "EASYRMM_LISTEN_OFFLOAD", c.ListenOffload)
 	default:
-		add("EASYRMM_TLS_MODE must be acme, manual or offload, got %q", c.TLSMode)
+		add("EASYRMM_TLS_MODE must be acme, manual, internal or offload, got %q", c.TLSMode)
+	}
+	if c.TLSMode == TLSAcme && c.PublicURL != nil && isIP(c.PublicURL.Hostname()) {
+		add("EASYRMM_PUBLIC_URL is an IP address, which cannot get a certificate from ACME: use EASYRMM_TLS_MODE=internal (the default for IP addresses) or manual")
 	}
 	if c.ListenHealth != "" {
 		requireLoopback(add, "EASYRMM_LISTEN_HEALTH", c.ListenHealth)
@@ -240,9 +293,10 @@ func (c *Config) validate(l *loader) {
 	if c.DatabaseMaxConns < 2 || c.DatabaseMaxConns > 500 {
 		add("EASYRMM_DATABASE_MAX_CONNS must be between 2 and 500")
 	}
-	if c.PublicURL != nil && c.MeshPublicURL != nil && strings.EqualFold(c.PublicURL.Hostname(), c.MeshPublicURL.Hostname()) {
-		add("EASYRMM_MESH_PUBLIC_URL must use a different hostname from EASYRMM_PUBLIC_URL (see ADR-0004)")
+	if c.PublicURL != nil && c.MeshPublicURL != nil && Authority(c.PublicURL) == Authority(c.MeshPublicURL) {
+		add("EASYRMM_MESH_PUBLIC_URL must differ from EASYRMM_PUBLIC_URL: use another hostname (mesh.rmm.example.com) or, on an IP address, another port (see ADR-0004 and ADR-0016)")
 	}
+	c.validateIPAccess(add)
 	if c.SessionIdle < 5*time.Minute || c.SessionIdle > 24*time.Hour {
 		add("EASYRMM_SESSION_IDLE_TIMEOUT must be between 5m and 24h")
 	}
@@ -287,17 +341,25 @@ func (c *Config) validate(l *loader) {
 	c.validateMesh(add)
 }
 
-// defaultCertURL is the loopback address of the listener that serves the
-// MeshCentral hostname: our own HTTPS listener, or in offload mode the
-// reverse proxy, assumed on 443.
+// defaultCertURL is a local address of the listener that serves the
+// MeshCentral origin: our own HTTPS listener (or the one for MeshCentral's
+// port), or in offload mode the reverse proxy, assumed on 443.
 func defaultCertURL(c *Config) string {
-	port := "443"
+	host, port := "127.0.0.1", "443"
 	if c.TLSMode != TLSOffload {
-		if _, p, err := net.SplitHostPort(c.ListenHTTPS); err == nil && p != "" {
-			port = p
+		if h, p, err := net.SplitHostPort(c.ListenHTTPS); err == nil {
+			if p != "" {
+				port = p
+			}
+			if ip := net.ParseIP(h); ip != nil && !ip.IsUnspecified() {
+				host = h
+			}
+		}
+		if c.PublicURL != nil && c.MeshPublicURL != nil && PortOf(c.MeshPublicURL) != PortOf(c.PublicURL) {
+			port = PortOf(c.MeshPublicURL)
 		}
 	}
-	return "https://127.0.0.1:" + port
+	return "https://" + net.JoinHostPort(host, port)
 }
 
 func (c *Config) validateMesh(add func(string, ...any)) {

@@ -19,7 +19,8 @@ const ServiceAccount = "easyrmm-service"
 
 // ServerConfig is what EasyRMM decides about its MeshCentral server.
 type ServerConfig struct {
-	// Hostname is the public MeshCentral hostname (mesh.rmm.example.com).
+	// Hostname is the public MeshCentral hostname (mesh.rmm.example.com) or
+	// IP address, which agents connect to.
 	Hostname string
 	// Listen is the loopback address MeshCentral serves plain HTTP on, behind
 	// the EasyRMM edge, e.g. 127.0.0.1:14430.
@@ -29,9 +30,10 @@ type ServerConfig struct {
 	// TrustedProxy is the address the edge connects to MeshCentral from; only
 	// its X-Forwarded-For headers are believed.
 	TrustedProxy string
-	// FramingOrigin is the EasyRMM application origin, the only page allowed
-	// to embed MeshCentral.
-	FramingOrigin string
+	// FramingOrigins are the EasyRMM console origins (the public URL and,
+	// with IP access, the server's IP addresses), the only pages allowed to
+	// embed MeshCentral.
+	FramingOrigins []string
 	// CertURL is where MeshCentral reads the TLS certificate agents see, so it
 	// can tell agents which certificate to expect.
 	CertURL string
@@ -62,8 +64,13 @@ func (c ServerConfig) Validate() error {
 	if net.ParseIP(c.TrustedProxy) == nil {
 		errs = append(errs, fmt.Errorf("trusted proxy must be an IP address, got %q", c.TrustedProxy))
 	}
-	if u, err := url.Parse(c.FramingOrigin); err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" {
-		errs = append(errs, fmt.Errorf("framing origin must be an https origin, got %q", c.FramingOrigin))
+	if len(c.FramingOrigins) == 0 {
+		errs = append(errs, errors.New("at least one framing origin is required"))
+	}
+	for _, o := range c.FramingOrigins {
+		if u, err := url.Parse(o); err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" {
+			errs = append(errs, fmt.Errorf("framing origin must be an https origin, got %q", o))
+		}
 	}
 	if u, err := url.Parse(c.CertURL); err != nil || (u.Scheme != "https" && u.Scheme != "file") {
 		errs = append(errs, fmt.Errorf("certificate URL must be https:// or file://, got %q", c.CertURL))
@@ -105,7 +112,7 @@ func (c ServerConfig) Render() ([]byte, error) {
 			"WANonly":                  true,
 			"webRTC":                   false,
 			"amtManager":               false,
-			"allowedFramingOrigins":    []string{c.FramingOrigin},
+			"allowedFramingOrigins":    c.FramingOrigins,
 			"loginCookieEncryptionKey": KeyHex(c.LoginKey),
 			"sessionKey":               c.SessionKey,
 			"selfUpdate":               false,

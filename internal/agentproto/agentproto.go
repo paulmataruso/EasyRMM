@@ -25,7 +25,10 @@ const (
 	PathHeartbeat    = "/api/agent/v1/heartbeat"
 	PathMeshAgent    = "/api/agent/v1/meshagent/binary"
 	PathMeshSettings = "/api/agent/v1/meshagent/settings"
-	PathPrefix       = "/api/agent/"
+	// PathCA serves the server's own certificate authority, for servers
+	// reached by IP address (ADR-0016).
+	PathCA     = "/api/agent/v1/ca.pem"
+	PathPrefix = "/api/agent/"
 )
 
 // Scheme is the Authorization scheme of signed requests.

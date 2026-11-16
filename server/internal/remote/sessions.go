@@ -76,6 +76,10 @@ type Launch struct {
 	ExpiresAt time.Time `json:"expiresAt"`
 	Kind      Kind      `json:"kind"`
 	DeviceID  uuid.UUID `json:"deviceId"`
+	// InternalCA is set when the session's origin uses the server's own
+	// certificate authority (ADR-0016), which the browser must trust for
+	// that origin before the session can load.
+	InternalCA bool `json:"internalCa,omitempty"`
 }
 
 var (

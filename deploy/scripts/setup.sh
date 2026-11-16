@@ -8,6 +8,10 @@
 #   ./scripts/setup.sh --hostname rmm.example.com --tls-mode offload --trusted-proxies 127.0.0.1/32
 #   ./scripts/setup.sh --hostname rmm.example.com --tls-mode manual \
 #       --cert-file /etc/easyrmm/tls/fullchain.pem --key-file /etc/easyrmm/tls/privkey.pem
+#   ./scripts/setup.sh --hostname 203.0.113.10        (no DNS: the server's own CA)
+#
+# Options for IP access (ADR-0016): --ip-addresses 203.0.113.10,... lists the
+# addresses to answer on (default: detected); --no-ip-access turns it off.
 #
 # An existing .env is never overwritten (its secrets protect existing data).
 set -euo pipefail
@@ -16,15 +20,17 @@ cd "$(dirname "$0")/.."
 
 hostname=""
 mesh_hostname=""
-tls_mode="acme"
+tls_mode=""
 acme_email=""
 trusted_proxies=""
 cert_file=""
 key_file=""
 data_root="/srv/easyrmm"
+ip_access="true"
+ip_addresses=""
 
 usage() {
-  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -38,6 +44,8 @@ while [[ $# -gt 0 ]]; do
     --cert-file) cert_file="${2:-}"; shift 2 ;;
     --key-file) key_file="${2:-}"; shift 2 ;;
     --data-root) data_root="${2:-}"; shift 2 ;;
+    --ip-addresses) ip_addresses="${2:-}"; shift 2 ;;
+    --no-ip-access) ip_access="false"; shift ;;
     -h|--help) usage 0 ;;
     *) echo "unknown option: $1" >&2; usage 2 ;;
   esac
@@ -46,10 +54,30 @@ done
 die() { echo "error: $*" >&2; exit 1; }
 
 valid_host='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$'
+valid_ipv4='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+valid_ipv6='^[0-9a-f]*:[0-9a-f:.]*$'
 hostname="${hostname,,}"
 mesh_hostname="${mesh_hostname,,}"
 [[ -n "$hostname" ]] || die "--hostname is required"
-[[ "$hostname" =~ $valid_host ]] || die "--hostname must be a DNS name such as rmm.example.com"
+url_host="$hostname"
+is_ip=false
+if [[ "$hostname" =~ $valid_ipv4 ]]; then
+  is_ip=true
+elif [[ "$hostname" =~ $valid_ipv6 ]]; then
+  is_ip=true
+  url_host="[$hostname]"
+elif ! [[ "$hostname" =~ $valid_host ]]; then
+  die "--hostname must be a DNS name such as rmm.example.com, or an IP address"
+fi
+if [[ -z "$tls_mode" ]]; then
+  tls_mode="acme"
+  [[ "$is_ip" == true ]] && tls_mode="internal"
+fi
+if [[ "$is_ip" == true ]]; then
+  [[ -z "$mesh_hostname" ]] || die "--mesh-hostname does not apply to an IP address: remote sessions use port 4443 of the same address"
+  [[ "$tls_mode" != "acme" ]] || die "an IP address cannot get a certificate from ACME: use --tls-mode internal (the default) or manual"
+fi
+[[ -z "$ip_addresses" || "$ip_addresses" =~ ^[0-9A-Fa-f:.,]+$ ]] || die "--ip-addresses must be a comma-separated list of IP addresses"
 if [[ -n "$mesh_hostname" ]]; then
   [[ "$mesh_hostname" =~ $valid_host ]] || die "--mesh-hostname must be a DNS name"
   [[ "$mesh_hostname" != "$hostname" ]] || die "--mesh-hostname must differ from --hostname"
@@ -58,7 +86,8 @@ case "$tls_mode" in
   acme) [[ -n "$acme_email" ]] || die "--acme-email is required for --tls-mode acme" ;;
   manual) [[ -n "$cert_file" && -n "$key_file" ]] || die "--cert-file and --key-file are required for --tls-mode manual" ;;
   offload) [[ -n "$trusted_proxies" ]] || die "--trusted-proxies is required for --tls-mode offload" ;;
-  *) die "--tls-mode must be acme, manual or offload" ;;
+  internal) ;;
+  *) die "--tls-mode must be acme, manual, internal or offload" ;;
 esac
 [[ "$data_root" =~ ^/[A-Za-z0-9_./-]*$ ]] || die "--data-root must be an absolute path (letters, digits, _ . / - only)"
 [[ -z "$acme_email" || "$acme_email" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] || die "--acme-email is not a valid address"
@@ -80,7 +109,7 @@ else
   listen_http=":80"
   [[ "$tls_mode" == "offload" ]] && listen_http=""
   # Values are restricted above to characters that need no escaping in sed.
-  sed -e "s|^EASYRMM_PUBLIC_URL=.*|EASYRMM_PUBLIC_URL=https://${hostname}|" \
+  sed -e "s|^EASYRMM_PUBLIC_URL=.*|EASYRMM_PUBLIC_URL=https://${url_host}|" \
       -e "s|^EASYRMM_MESH_PUBLIC_URL=.*|EASYRMM_MESH_PUBLIC_URL=${mesh_hostname:+https://${mesh_hostname}}|" \
       -e "s|^EASYRMM_TLS_MODE=.*|EASYRMM_TLS_MODE=${tls_mode}|" \
       -e "s|^EASYRMM_ACME_EMAIL=.*|EASYRMM_ACME_EMAIL=${acme_email}|" \
@@ -88,6 +117,8 @@ else
       -e "s|^EASYRMM_TLS_CERT_FILE=.*|EASYRMM_TLS_CERT_FILE=${cert_file}|" \
       -e "s|^EASYRMM_TLS_KEY_FILE=.*|EASYRMM_TLS_KEY_FILE=${key_file}|" \
       -e "s|^EASYRMM_TRUSTED_PROXIES=.*|EASYRMM_TRUSTED_PROXIES=${trusted_proxies}|" \
+      -e "s|^EASYRMM_IP_ACCESS=.*|EASYRMM_IP_ACCESS=${ip_access}|" \
+      -e "s|^EASYRMM_IP_ADDRESSES=.*|EASYRMM_IP_ADDRESSES=${ip_addresses}|" \
       -e "s|^EASYRMM_DATA_ROOT=.*|EASYRMM_DATA_ROOT=${data_root}|" \
       -e "s|^EASYRMM_TLS_DIR=.*|EASYRMM_TLS_DIR=${data_root}/tls|" \
       -e "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${pg_pw}|" \

@@ -33,24 +33,50 @@ var installScript = template.Must(template.New("install.sh").Parse(installTempla
 type API struct {
 	svc     *agents.Service
 	builds  *agents.Builds
-	install []byte
+	scripts map[string][]byte // install script per console origin
+	primary []byte
+	ca      []byte
 	log     *slog.Logger
 }
 
-// New builds the API. server is the public URL agents use.
-func New(svc *agents.Service, builds *agents.Builds, server string, log *slog.Logger) (*API, error) {
-	server = strings.TrimSuffix(server, "/")
-	if strings.ContainsAny(server, "'\\\n\r\"$`") {
-		return nil, errors.New("agentapi: the public URL cannot be put in the installer")
+// Address is a console origin agents can enroll through (ADR-0016).
+type Address struct {
+	// URL is the origin, https://rmm.example.com or https://203.0.113.10.
+	URL string
+	// Pin is the curl public-key pin of the origin's certificate when it
+	// comes from the server's own certificate authority.
+	Pin string
+}
+
+// New builds the API. addresses are the console origins, the public URL
+// first; ca is the internal certificate authority's PEM certificate, or nil.
+func New(svc *agents.Service, builds *agents.Builds, addresses []Address, ca []byte, log *slog.Logger) (*API, error) {
+	if len(addresses) == 0 {
+		return nil, errors.New("agentapi: no server address")
 	}
-	var buf bytes.Buffer
-	if err := installScript.Execute(&buf, struct {
-		Server string
-		HTTPS  bool
-	}{server, strings.HasPrefix(server, "https://")}); err != nil {
-		return nil, err
+	a := &API{svc: svc, builds: builds, scripts: map[string][]byte{}, ca: ca, log: log}
+	for i, addr := range addresses {
+		server := strings.TrimSuffix(addr.URL, "/")
+		if strings.ContainsAny(server+addr.Pin, "'\\\n\r\"$`") {
+			return nil, errors.New("agentapi: the server address cannot be put in the installer")
+		}
+		if addr.Pin != "" && ca == nil {
+			return nil, errors.New("agentapi: a pinned address needs the certificate authority")
+		}
+		var buf bytes.Buffer
+		if err := installScript.Execute(&buf, struct {
+			Server string
+			HTTPS  bool
+			Pin    string
+		}{server, strings.HasPrefix(server, "https://"), addr.Pin}); err != nil {
+			return nil, err
+		}
+		a.scripts[server] = buf.Bytes()
+		if i == 0 {
+			a.primary = buf.Bytes()
+		}
 	}
-	return &API{svc: svc, builds: builds, install: buf.Bytes(), log: log}, nil
+	return a, nil
 }
 
 // Handler returns the handler for everything under agentproto.PathPrefix.
@@ -61,6 +87,7 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("GET "+agentproto.PathMeshAgent, httpapi.Handle(a.signed(a.meshAgent)))
 	mux.Handle("GET "+agentproto.PathMeshSettings, httpapi.Handle(a.signed(a.meshSettings)))
 	mux.Handle("GET /api/agent/v1/install.sh", httpapi.Handle(a.installer))
+	mux.Handle("GET "+agentproto.PathCA, httpapi.Handle(a.authority))
 	mux.Handle("GET /api/agent/v1/download/{file}", httpapi.Handle(a.download))
 	mux.Handle("/", httpapi.Handle(func(http.ResponseWriter, *http.Request) error { return httpapi.ErrNotFound }))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -218,9 +245,29 @@ func (a *API) meshSettings(w http.ResponseWriter, r *http.Request, d *agents.Dev
 	return nil
 }
 
-func (a *API) installer(w http.ResponseWriter, _ *http.Request) error {
+// installer serves the install script for the address the request came
+// to, so a machine installed by IP address keeps using the IP address.
+func (a *API) installer(w http.ResponseWriter, r *http.Request) error {
+	script := a.primary
+	if o, ok := httpapi.OriginOf(r); ok {
+		if s, ok := a.scripts[o.Console]; ok {
+			script = s
+		}
+	}
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
-	_, _ = w.Write(a.install)
+	_, _ = w.Write(script)
+	return nil
+}
+
+// authority serves the internal certificate authority's certificate, which
+// agents installed through a pinned address trust.
+func (a *API) authority(w http.ResponseWriter, _ *http.Request) error {
+	if a.ca == nil {
+		return httpapi.ErrNotFound
+	}
+	w.Header().Set("Content-Type", "application/x-pem-file")
+	w.Header().Set("Content-Disposition", `attachment; filename="easyrmm-ca.pem"`)
+	_, _ = w.Write(a.ca)
 	return nil
 }
 

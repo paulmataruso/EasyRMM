@@ -68,7 +68,8 @@ services:
     environment:
       EASYRMM_PUBLIC_URL: ${EASYRMM_PUBLIC_URL:?missing in .env}
       EASYRMM_MESH_PUBLIC_URL: ${EASYRMM_MESH_PUBLIC_URL:-}
-      EASYRMM_TLS_MODE: ${EASYRMM_TLS_MODE:-acme}
+      # Empty: acme for a DNS name, internal for an IP address (ADR-0016).
+      EASYRMM_TLS_MODE: ${EASYRMM_TLS_MODE:-}
       EASYRMM_ACME_EMAIL: ${EASYRMM_ACME_EMAIL:-}
       EASYRMM_LISTEN_HTTP: ${EASYRMM_LISTEN_HTTP-:80}
       EASYRMM_TLS_CERT_FILE: ${EASYRMM_TLS_CERT_FILE:-}
@@ -89,6 +90,9 @@ services:
       EASYRMM_LOG_LEVEL: ${EASYRMM_LOG_LEVEL:-info}
       EASYRMM_MESH_ENABLED: ${EASYRMM_MESH_ENABLED:-true}
       EASYRMM_MESH_CERT_URL: ${EASYRMM_MESH_CERT_URL:-}
+      EASYRMM_IP_ACCESS: ${EASYRMM_IP_ACCESS:-true}
+      EASYRMM_IP_ADDRESSES: ${EASYRMM_IP_ADDRESSES:-}
+      EASYRMM_IP_MESH_PORT: ${EASYRMM_IP_MESH_PORT:-4443}
     volumes:
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/server:/var/lib/easyrmm
       - ${EASYRMM_TLS_DIR:-/srv/easyrmm/tls}:/etc/easyrmm/tls:ro

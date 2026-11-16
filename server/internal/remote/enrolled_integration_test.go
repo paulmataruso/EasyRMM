@@ -55,7 +55,7 @@ func (r *rig) serveAgentAPI(svc *agents.Service) string {
 		r.t.Fatal(err)
 	}
 	server := "https://" + r.env.Hostname + ":" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-	api, err := agentapi.New(svc, &agents.Builds{}, server, r.log)
+	api, err := agentapi.New(svc, &agents.Builds{}, []agentapi.Address{{URL: server}}, nil, r.log)
 	if err != nil {
 		r.t.Fatal(err)
 	}

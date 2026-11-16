@@ -35,6 +35,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
+	"github.com/paulmataruso/easyrmm/server/internal/pki"
 	"github.com/paulmataruso/easyrmm/server/internal/remote"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
@@ -69,6 +70,9 @@ type Deps struct {
 	Agents   *agents.Service
 	// AgentBuilds are the agent binaries the server hands out.
 	AgentBuilds *agents.Builds
+	// PKI is the internal certificate authority, for addresses no public CA
+	// can certify (ADR-0016); nil when no address uses it.
+	PKI *pki.Authority
 
 	// Remote access; nil when it is disabled.
 	Mesh        *meshcentral.Client
@@ -93,7 +97,11 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	ac.PublicURL = cfg.PublicURL.String()
 	ac.Issuer = "EasyRMM (" + cfg.PublicURL.Hostname() + ")"
 	authSvc := auth.NewService(db, auditLog, hasher, sealer, mail, ac)
-	sessions, err := httpapi.NewSessions(authSvc, cfg.SecretKeys[0].Raw, cfg.PublicURL.String(), !cfg.DevInsecureCookie)
+	var consoles []string
+	for _, o := range cfg.Origins() {
+		consoles = append(consoles, originString(o.Console))
+	}
+	sessions, err := httpapi.NewSessions(authSvc, cfg.SecretKeys[0].Raw, consoles, !cfg.DevInsecureCookie)
 	if err != nil {
 		return nil, err
 	}
@@ -105,6 +113,16 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d := &Deps{
 		DB: db, Audit: auditLog, Auth: authSvc, Sessions: sessions,
 		Tenancy: tenancy.New(db, auditLog), Users: usersSvc, Setup: setup,
+	}
+	if cfg.NeedsInternalCA() {
+		ca, err := pki.Load(ctx, db, sealer)
+		if err != nil {
+			return nil, err
+		}
+		if err := ca.SetAddresses(internalAddresses(cfg)); err != nil {
+			return nil, err
+		}
+		d.PKI = ca
 	}
 	var mesh agents.MeshAgents
 	if cfg.Mesh.Enabled {
@@ -164,15 +182,19 @@ func MeshServerConfig(cfg *config.Config, sec *remote.Secrets) meshcentral.Serve
 	if p := cfg.MeshPublicURL.Port(); p != "" {
 		port, _ = strconv.Atoi(p)
 	}
+	var framing []string
+	for _, o := range cfg.Origins() {
+		framing = append(framing, originString(o.Console))
+	}
 	return meshcentral.ServerConfig{
-		Hostname:      cfg.MeshPublicURL.Hostname(),
-		Listen:        cfg.Mesh.InternalURL.Host,
-		PublicPort:    port,
-		TrustedProxy:  cfg.Mesh.InternalURL.Hostname(),
-		FramingOrigin: cfg.PublicURL.Scheme + "://" + cfg.PublicURL.Host,
-		CertURL:       cfg.Mesh.CertURL,
-		LoginKey:      sec.LoginKey,
-		SessionKey:    sec.SessionKey,
+		Hostname:       cfg.MeshPublicURL.Hostname(),
+		Listen:         cfg.Mesh.InternalURL.Host,
+		PublicPort:     port,
+		TrustedProxy:   cfg.Mesh.InternalURL.Hostname(),
+		FramingOrigins: framing,
+		CertURL:        cfg.Mesh.CertURL,
+		LoginKey:       sec.LoginKey,
+		SessionKey:     sec.SessionKey,
 	}
 }
 
@@ -193,13 +215,33 @@ func writeMeshConfig(cfg *config.Config, sec *remote.Secrets, log *slog.Logger) 
 	return nil
 }
 
-// Handler builds the complete HTTP handler for the application origin.
+// Handler builds the complete HTTP handler for every origin: the console
+// and agent API on the public URL and, with IP access, on each IP address;
+// the MeshCentral gateway on the matching MeshCentral origins.
 func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error) {
+	all := origins(cfg, d.PKI, d.Gateway != nil)
+	var addresses []enrollapi.Address
+	var agentAddresses []agentapi.Address
+	var frames []string
+	for _, o := range all {
+		addresses = append(addresses, enrollapi.Address{URL: o.Console, Pin: o.Pin})
+		agentAddresses = append(agentAddresses, agentapi.Address{URL: o.Console, Pin: o.Pin})
+		if o.Mesh != "" {
+			frames = append(frames, o.Mesh)
+		}
+	}
+	var caPEM []byte
+	var caInfo *enrollapi.Authority
+	if d.PKI != nil {
+		caPEM = d.PKI.CAPEM()
+		caInfo = &enrollapi.Authority{Fingerprint: d.PKI.Fingerprint(), URL: agentproto.PathCA}
+	}
+
 	mux := http.NewServeMux()
 	authapi.New(d.Auth, d.Sessions, authapi.Features{RemoteAccess: d.Remote != nil}).Register(mux)
 	tenancyapi.New(d.Tenancy).Register(mux)
 	devicesapi.New(d.Devices).Register(mux)
-	enrollapi.New(d.Agents, d.AgentBuilds, cfg.PublicURL.String()).Register(mux)
+	enrollapi.New(d.Agents, d.AgentBuilds, cfg.PublicURL.String(), addresses, caInfo).Register(mux)
 	if d.Remote != nil {
 		remoteapi.New(d.Remote).Register(mux)
 	}
@@ -223,40 +265,34 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	if cfg.TLSMode != config.TLSOffload {
 		trusted = nil // nobody sits in front of us
 	}
-	frameOrigin := ""
-	if cfg.MeshPublicURL != nil {
-		frameOrigin = cfg.MeshPublicURL.String()
-	}
 	app := httpapi.Chain(mux,
-		httpapi.SecurityHeaders(!cfg.DevInsecureCookie, frameOrigin),
+		httpapi.SecurityHeaders(!cfg.DevInsecureCookie, strings.Join(frames, " ")),
 		d.Sessions.Load,
 		d.Sessions.CSRF,
 	)
-	agentAPI, err := agentapi.New(d.Agents, d.AgentBuilds, cfg.PublicURL.String(), log)
+	agentAPI, err := agentapi.New(d.Agents, d.AgentBuilds, agentAddresses, caPEM, log)
 	if err != nil {
 		return nil, err
 	}
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
-	publicHost := strings.ToLower(cfg.PublicURL.Hostname())
-	meshHost := ""
-	if d.Gateway != nil {
-		meshHost = strings.ToLower(cfg.MeshPublicURL.Hostname())
-	}
+	rt := newRouter(all)
 	hosts := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch strings.ToLower(strings.TrimSuffix(hostOnly(r.Host), ".")) {
-		case publicHost:
-			if strings.HasPrefix(r.URL.Path, agentproto.PathPrefix) {
-				agentHandler.ServeHTTP(w, r)
-				return
-			}
-			app.ServeHTTP(w, r)
-		case meshHost:
+		m, ok := rt.match(r.Host)
+		if !ok {
+			httpapi.WriteError(w, r, &httpapi.Error{Status: http.StatusMisdirectedRequest, Code: "unknown_host", Message: "This server does not serve that address."})
+			return
+		}
+		r = httpapi.WithOrigin(r, m.origin)
+		switch {
+		case m.mesh:
 			// Remote access: agents, and browsers holding a session grant.
 			d.Gateway.ServeHTTP(w, r)
+		case strings.HasPrefix(r.URL.Path, agentproto.PathPrefix):
+			agentHandler.ServeHTTP(w, r)
 		default:
-			httpapi.WriteError(w, r, &httpapi.Error{Status: http.StatusMisdirectedRequest, Code: "unknown_host", Message: "This server does not serve that hostname."})
+			app.ServeHTTP(w, r)
 		}
 	})
 	return httpapi.Chain(hosts,
@@ -269,6 +305,14 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 // Run starts the server and blocks until ctx is canceled.
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	log.Info("starting EasyRMM server", "version", Version, "tls_mode", cfg.TLSMode, "public_url", cfg.PublicURL.String())
+	if cfg.IPAccess {
+		if len(cfg.IPAddresses) == 0 && cfg.TLSMode != config.TLSOffload {
+			log.Warn("IP access is on but no IP address was found; set EASYRMM_IP_ADDRESSES")
+		}
+		for _, o := range cfg.Origins()[1:] {
+			log.Info("IP access", "console", originString(o.Console))
+		}
+	}
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return fmt.Errorf("creating data directory: %w", err)
 	}
@@ -332,7 +376,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if cfg.ListenHealth != "" {
 		wg.Go(func() { healthErr <- serveHealth(ctx, cfg.ListenHealth, db, log) })
 	}
-	e := &edge{cfg: cfg, handler: h, log: log}
+	e := &edge{cfg: cfg, handler: h, log: log, pki: deps.PKI}
 	runErr := e.run(ctx)
 	cancel()
 	wg.Wait()

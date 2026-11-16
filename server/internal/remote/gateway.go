@@ -160,6 +160,7 @@ func NewGateway(svc *Service, cfg GatewayConfig, log *slog.Logger) (*Gateway, er
 			ResponseHeaderTimeout: 2 * time.Minute,
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			dropOwnSetCookies(resp.Header)
 			if g.secure && resp.Header.Get("Strict-Transport-Security") == "" {
 				resp.Header.Set("Strict-Transport-Security", "max-age=63072000")
 			}
@@ -285,18 +286,43 @@ func (g *Gateway) authorize(r *http.Request) (uuid.UUID, bool) {
 	return session, true
 }
 
-// stripOwnCookie keeps the gateway cookie away from MeshCentral.
+// ownCookie reports whether a cookie is EasyRMM's: the gateway grant, or
+// the console's session. Browsers do not keep cookies apart by port, so on
+// an IP address (console on 443, MeshCentral on 4443) the console's cookies
+// reach the gateway too (ADR-0016).
+func ownCookie(name string) bool {
+	name = strings.ToLower(name)
+	return strings.HasPrefix(name, "__host-easyrmm") || strings.HasPrefix(name, "__secure-easyrmm") || strings.HasPrefix(name, "easyrmm")
+}
+
+// stripOwnCookie keeps EasyRMM's cookies away from MeshCentral.
 func (g *Gateway) stripOwnCookie(r *http.Request) {
 	cookies := r.Cookies()
 	r.Header.Del("Cookie")
 	var kept []string
 	for _, c := range cookies {
-		if c.Name != g.cookieName {
+		if !ownCookie(c.Name) {
 			kept = append(kept, c.Name+"="+c.Value)
 		}
 	}
 	if len(kept) > 0 {
 		r.Header.Set("Cookie", strings.Join(kept, "; "))
+	}
+}
+
+// dropOwnSetCookies stops MeshCentral from setting a cookie with one of
+// EasyRMM's names, which on a shared IP address would reach the console.
+func dropOwnSetCookies(h http.Header) {
+	all := h.Values("Set-Cookie")
+	if len(all) == 0 {
+		return
+	}
+	h.Del("Set-Cookie")
+	for _, v := range all {
+		name, _, _ := strings.Cut(v, "=")
+		if !ownCookie(strings.TrimSpace(name)) {
+			h.Add("Set-Cookie", v)
+		}
 	}
 }
 

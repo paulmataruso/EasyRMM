@@ -3,6 +3,7 @@ package remoteapi
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
@@ -45,9 +46,36 @@ func (a *API) startSession(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	writeLaunch(w, r, l)
+	return nil
+}
+
+// writeLaunch answers with the launch link. A console reached by IP address
+// launches on that address's MeshCentral origin, so the session works
+// without DNS too (ADR-0016), and says when that origin's certificate comes
+// from the server's own authority.
+func writeLaunch(w http.ResponseWriter, r *http.Request, l *remote.Launch) {
+	if o, ok := httpapi.OriginOf(r); ok && o.Mesh != "" {
+		l.URL = onOrigin(l.URL, o.Mesh)
+		l.InternalCA = o.Pin != ""
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusCreated, l)
-	return nil
+}
+
+// onOrigin moves a launch link to another MeshCentral origin; the path and
+// one-time token stay.
+func onOrigin(link, origin string) string {
+	u, err := url.Parse(link)
+	if err != nil {
+		return link
+	}
+	o, err := url.Parse(origin)
+	if err != nil || o.Host == "" {
+		return link
+	}
+	u.Scheme, u.Host = o.Scheme, o.Host
+	return u.String()
 }
 
 func (a *API) status(w http.ResponseWriter, r *http.Request) error {

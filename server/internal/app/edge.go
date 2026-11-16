@@ -18,25 +18,31 @@ import (
 	"golang.org/x/crypto/acme/autocert"
 
 	"github.com/paulmataruso/easyrmm/server/internal/config"
+	"github.com/paulmataruso/easyrmm/server/internal/pki"
 )
 
-// edge owns the public listeners: HTTPS on 443 (with certificates from ACME
-// or files), the optional HTTP listener on 80 (ACME challenges and redirects
-// to HTTPS), or, in offload mode, plain HTTP on loopback behind a proxy.
+// edge owns the public listeners: HTTPS on 443 (with certificates from
+// ACME, files or the internal certificate authority), HTTPS on MeshCentral's
+// own port when it has one (4443 for IP access), the optional HTTP listener
+// on 80 (ACME challenges and redirects to HTTPS), or, in offload mode, plain
+// HTTP on loopback behind a proxy.
 type edge struct {
 	cfg     *config.Config
 	handler http.Handler
 	log     *slog.Logger
+	pki     *pki.Authority
 	servers []*http.Server
 }
 
 // knownHost reports whether host (without port) is one we serve.
 func knownHost(cfg *config.Config, host string) bool {
-	host = strings.ToLower(strings.TrimSuffix(host, "."))
-	if cfg.PublicURL != nil && host == strings.ToLower(cfg.PublicURL.Hostname()) {
-		return true
+	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
+	for _, o := range cfg.Origins() {
+		if strings.EqualFold(host, o.Console.Hostname()) || (o.Mesh != nil && strings.EqualFold(host, o.Mesh.Hostname())) {
+			return true
+		}
 	}
-	return cfg.MeshPublicURL != nil && host == strings.ToLower(cfg.MeshPublicURL.Hostname())
+	return false
 }
 
 func hostOnly(hostport string) string {
@@ -55,10 +61,11 @@ func redirectHandler(cfg *config.Config) http.Handler {
 			http.Error(w, "unknown host", http.StatusMisdirectedRequest)
 			return
 		}
-		target := "https://" + strings.ToLower(host)
-		if _, port, err := net.SplitHostPort(cfg.ListenHTTPS); err == nil && port != "443" && port != "" {
-			target += ":" + port
+		port := ""
+		if _, p, err := net.SplitHostPort(cfg.ListenHTTPS); err == nil && p != "443" {
+			port = p
 		}
+		target := "https://" + hostWithPort(strings.ToLower(strings.Trim(host, "[]")), port)
 		target += r.URL.RequestURI()
 		w.Header().Set("Connection", "close")
 		http.Redirect(w, r, target, http.StatusPermanentRedirect) //nolint:gosec // host checked against our own hostnames above
@@ -88,13 +95,20 @@ func baseTLS() *tls.Config {
 // fails, then shuts every listener down gracefully.
 func (e *edge) run(ctx context.Context) error {
 	var plain http.Handler // what the port-80 listener serves, if enabled
+	var primary getCertificate
+	var acmeALPN bool
 	switch e.cfg.TLSMode {
 	case config.TLSOffload:
 		e.servers = append(e.servers, e.newServer(e.cfg.ListenOffload, e.handler, nil))
 	case config.TLSAcme:
-		hosts := []string{e.cfg.PublicURL.Hostname()}
-		if e.cfg.MeshPublicURL != nil {
-			hosts = append(hosts, e.cfg.MeshPublicURL.Hostname())
+		var hosts []string
+		for _, o := range e.cfg.Origins() {
+			if !o.Internal {
+				hosts = append(hosts, o.Console.Hostname())
+				if o.Mesh != nil {
+					hosts = append(hosts, o.Mesh.Hostname())
+				}
+			}
 		}
 		m := &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
@@ -103,22 +117,34 @@ func (e *edge) run(ctx context.Context) error {
 			Email:      e.cfg.ACMEEmail,
 			Client:     &acme.Client{DirectoryURL: e.cfg.ACMEDirectory},
 		}
-		t := baseTLS()
-		t.GetCertificate = m.GetCertificate
-		t.NextProtos = append(t.NextProtos, acme.ALPNProto) // TLS-ALPN-01 challenges
-		e.servers = append(e.servers, e.newServer(e.cfg.ListenHTTPS, e.handler, t))
+		primary, acmeALPN = m.GetCertificate, true
 		plain = m.HTTPHandler(redirectHandler(e.cfg)) // HTTP-01 challenges
 	case config.TLSManual:
 		r, err := newCertReloader(e.cfg.CertFile, e.cfg.KeyFile, e.log)
 		if err != nil {
 			return err
 		}
-		t := baseTLS()
-		t.GetCertificate = r.get
-		e.servers = append(e.servers, e.newServer(e.cfg.ListenHTTPS, e.handler, t))
+		primary = r.get
+		plain = redirectHandler(e.cfg)
+	case config.TLSInternal:
+		if e.pki == nil {
+			return errors.New("internal TLS mode without a certificate authority")
+		}
+		primary = e.pki.GetCertificate
 		plain = redirectHandler(e.cfg)
 	default:
 		return fmt.Errorf("unsupported TLS mode %q", e.cfg.TLSMode)
+	}
+	if primary != nil {
+		get := e.certificates(primary)
+		for _, addr := range append([]string{e.cfg.ListenHTTPS}, e.cfg.MeshListeners()...) {
+			t := baseTLS()
+			t.GetCertificate = get
+			if acmeALPN {
+				t.NextProtos = append(t.NextProtos, acme.ALPNProto) // TLS-ALPN-01 challenges
+			}
+			e.servers = append(e.servers, e.newServer(addr, e.handler, t))
+		}
 	}
 	if plain != nil && e.cfg.ListenHTTP != "" {
 		e.servers = append(e.servers, e.newServer(e.cfg.ListenHTTP, plain, nil))
@@ -153,6 +179,66 @@ func (e *edge) run(ctx context.Context) error {
 		e.shutdown()
 		return err
 	}
+}
+
+type getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+
+// certificates picks the certificate for a connection. A server name means
+// a DNS origin: the configured source (ACME or files). Without one the
+// client connected to an IP address (browsers send no server name for
+// those): IP access is served by the internal certificate authority, except
+// for MeshCentral reading, from this same host, the certificate its agents
+// see (EASYRMM_MESH_CERT_URL), which gets the MeshCentral origin's. When the
+// operator's own certificate is for the IP address (manual mode), it serves
+// every connection.
+func (e *edge) certificates(primary getCertificate) getCertificate {
+	if e.cfg.TLSMode == config.TLSInternal {
+		return primary
+	}
+	meshName := ""
+	if e.cfg.MeshPublicURL != nil && net.ParseIP(e.cfg.MeshPublicURL.Hostname()) == nil {
+		meshName = e.cfg.MeshPublicURL.Hostname()
+	}
+	return func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
+		if hello.ServerName != "" && net.ParseIP(hello.ServerName) == nil {
+			return primary(hello)
+		}
+		if meshName != "" && fromThisHost(hello.Conn) {
+			// ACME would refuse a connection without a server name.
+			h := *hello
+			h.ServerName = meshName
+			return primary(&h)
+		}
+		if e.pki != nil {
+			return e.pki.GetCertificate(hello)
+		}
+		return primary(hello)
+	}
+}
+
+// fromThisHost reports whether a connection comes from the server's own
+// host: from loopback, or from one of the host's addresses to itself.
+func fromThisHost(c net.Conn) bool {
+	if c == nil {
+		return false
+	}
+	remote, ok1 := c.RemoteAddr().(*net.TCPAddr)
+	local, ok2 := c.LocalAddr().(*net.TCPAddr)
+	if !ok1 || !ok2 {
+		return false
+	}
+	return remote.IP.IsLoopback() || remote.IP.Equal(local.IP)
+}
+
+// hostWithPort joins a host (IPv6 addresses bracketed) and an optional port.
+func hostWithPort(host, port string) string {
+	if port != "" {
+		return net.JoinHostPort(host, port)
+	}
+	if strings.Contains(host, ":") {
+		return "[" + host + "]"
+	}
+	return host
 }
 
 func (e *edge) shutdown() {

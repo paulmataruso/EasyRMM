@@ -12,14 +12,38 @@ import (
 
 // API serves the enrollment routes.
 type API struct {
-	svc    *agents.Service
-	builds *agents.Builds
-	server string
+	svc       *agents.Service
+	builds    *agents.Builds
+	server    string
+	addresses []Address
+	ca        *Authority
 }
 
-// New builds the API. server is the public URL agents enroll with.
-func New(svc *agents.Service, builds *agents.Builds, server string) *API {
-	return &API{svc: svc, builds: builds, server: strings.TrimSuffix(server, "/")}
+// Address is a server address agents can be installed through (ADR-0016).
+type Address struct {
+	// URL is the console origin: the public URL, or an IP address.
+	URL string `json:"url"`
+	// Pin is the public-key pin of the address's certificate when it comes
+	// from the server's own certificate authority, for curl --pinnedpubkey.
+	Pin string `json:"pin,omitempty"`
+}
+
+// Authority describes the server's own certificate authority.
+type Authority struct {
+	// Fingerprint is the SHA-256 fingerprint browsers show (AB:CD:...).
+	Fingerprint string `json:"fingerprint"`
+	// URL is the path its certificate downloads from.
+	URL string `json:"url"`
+}
+
+// New builds the API. server is the public URL agents enroll with;
+// addresses are every address the server answers on, the public URL first;
+// ca is nil when no address uses the internal certificate authority.
+func New(svc *agents.Service, builds *agents.Builds, server string, addresses []Address, ca *Authority) *API {
+	if addresses == nil {
+		addresses = []Address{{URL: strings.TrimSuffix(server, "/")}}
+	}
+	return &API{svc: svc, builds: builds, server: strings.TrimSuffix(server, "/"), addresses: addresses, ca: ca}
 }
 
 // Register mounts the routes. Every route requires a fully signed-in session.
@@ -107,9 +131,20 @@ func (a *API) revoke(w http.ResponseWriter, r *http.Request) error {
 type downloads struct {
 	ServerURL string         `json:"serverUrl"`
 	Items     []agents.Build `json:"items"`
+	Addresses []Address      `json:"addresses"`
+	// Current is the address this request came to.
+	Current              string     `json:"current"`
+	CertificateAuthority *Authority `json:"certificateAuthority"`
 }
 
-func (a *API) downloads(w http.ResponseWriter, _ *http.Request) error {
-	httpapi.WriteJSON(w, http.StatusOK, downloads{ServerURL: a.server, Items: a.builds.List()})
+func (a *API) downloads(w http.ResponseWriter, r *http.Request) error {
+	current := a.server
+	if o, ok := httpapi.OriginOf(r); ok {
+		current = o.Console
+	}
+	httpapi.WriteJSON(w, http.StatusOK, downloads{
+		ServerURL: a.server, Items: a.builds.List(), Addresses: a.addresses,
+		Current: current, CertificateAuthority: a.ca,
+	})
 	return nil
 }

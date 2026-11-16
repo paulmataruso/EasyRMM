@@ -16,7 +16,10 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-const testOrigin = "https://rmm.example.com"
+const (
+	testOrigin   = "https://rmm.example.com"
+	testIPOrigin = "https://203.0.113.10"
+)
 
 type fakeResolver struct {
 	sessions     map[string]*auth.Session
@@ -64,7 +67,7 @@ func newFixture(t *testing.T, secure bool) *fixture {
 		users:       map[uuid.UUID]*auth.User{userID: {ID: userID, Email: "tech@example.com", Status: "active"}},
 		assignments: map[uuid.UUID][]rbac.Assignment{userID: {{Role: rbac.RoleTechnician, OrganizationID: orgID}}},
 	}
-	s, err := NewSessions(res, []byte("0123456789abcdef0123456789abcdef"), testOrigin, secure)
+	s, err := NewSessions(res, []byte("0123456789abcdef0123456789abcdef"), []string{testOrigin, testIPOrigin + "/"}, secure)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +137,7 @@ func TestCSRFTokenDerivation(t *testing.T) {
 		t.Fatalf("csrf tokens a=%q b=%q", a, b)
 	}
 	// A different master key gives unrelated tokens.
-	other, err := NewSessions(f.res, []byte("another key of thirty-two bytes!"), testOrigin, true)
+	other, err := NewSessions(f.res, []byte("another key of thirty-two bytes!"), []string{testOrigin}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,6 +236,9 @@ func TestCSRF(t *testing.T) {
 		{"same-site is not same-origin", http.MethodPost, map[string]string{"Sec-Fetch-Site": "same-site"}, nil, false},
 		{"fetch metadata outranks origin", http.MethodPost, map[string]string{"Sec-Fetch-Site": "cross-site", "Origin": testOrigin}, nil, false},
 		{"anonymous matching origin", http.MethodPost, map[string]string{"Origin": testOrigin}, nil, true},
+		{"anonymous IP address origin", http.MethodPost, map[string]string{"Origin": testIPOrigin}, nil, true},
+		{"IP address with another port", http.MethodPost, map[string]string{"Origin": testIPOrigin + ":4443"}, nil, false},
+		{"empty origin", http.MethodPost, map[string]string{"Origin": ""}, nil, false},
 		{"anonymous foreign origin", http.MethodPost, map[string]string{"Origin": "https://evil.example"}, nil, false},
 		{"origin null", http.MethodPost, map[string]string{"Origin": "null"}, nil, false},
 		{"session without token", http.MethodPost, map[string]string{"Sec-Fetch-Site": "same-origin"}, id, false},

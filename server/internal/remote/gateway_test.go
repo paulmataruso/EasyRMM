@@ -226,6 +226,29 @@ func TestStripOwnCookie(t *testing.T) {
 	if _, ok := r.Header["Cookie"]; ok {
 		t.Errorf("Cookie header kept: %q", r.Header.Get("Cookie"))
 	}
+	// On an IP address the console's session cookie reaches the gateway too.
+	r.Header.Set("Cookie", "__Host-easyrmm_session=console; xid=abc; easyrmm_session=dev; __Secure-EasyRMM_x=1")
+	g.stripOwnCookie(r)
+	if got := r.Header.Get("Cookie"); got != "xid=abc" {
+		t.Errorf("Cookie = %q", got)
+	}
+}
+
+func TestMeshCentralCannotSetOwnCookies(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Add("Set-Cookie", "xid=abc; path=/; httponly")
+		w.Header().Add("Set-Cookie", "__Host-easyrmm_session=forged; path=/; secure")
+		w.Header().Add("Set-Cookie", " easyrmm_remote=forged; path=/")
+		w.Header().Add("Set-Cookie", "xid.sig=def; path=/")
+	}))
+	defer upstream.Close()
+	g := newTestGateway(t, upstream.URL, true)
+	// An agent route: forwarded without a grant.
+	w := httptest.NewRecorder()
+	g.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/meshagents", nil))
+	if got := w.Result().Header.Values("Set-Cookie"); len(got) != 2 || got[0] != "xid=abc; path=/; httponly" || got[1] != "xid.sig=def; path=/" {
+		t.Errorf("Set-Cookie = %q", got)
+	}
 }
 
 func TestPageEscapes(t *testing.T) {

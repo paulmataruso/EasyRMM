@@ -23,7 +23,8 @@ assumes the public side is HTTPS, as `EASYRMM_PUBLIC_URL` says.
 
 ## NGINX configuration
 
-Both host names go to the same upstream; EasyRMM routes by `Host`.
+Both host names go to the same upstream; EasyRMM routes by `Host`, host
+and port.
 
 ```nginx
 upstream easyrmm {
@@ -54,7 +55,9 @@ server {
     location / {
         proxy_pass http://easyrmm;
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+        # $http_host keeps the port, which tells the console and MeshCentral
+        # apart on an IP address (ADR-0016).
+        proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         # Agent and remote-session WebSockets.
         proxy_set_header Upgrade $http_upgrade;
@@ -75,8 +78,9 @@ server {
 
 Notes:
 
-* Keep `proxy_set_header Host $host`: EasyRMM rejects requests for host names
-  it does not serve (HTTP 421).
+* Keep `proxy_set_header Host $http_host`: EasyRMM rejects requests for
+  addresses it does not serve (HTTP 421), and on an IP address only the port
+  separates the console from MeshCentral.
 * Do not add caching for `/api/`; responses are marked `no-store`.
 * EasyRMM sets its own security headers (CSP, HSTS, frame and referrer
   policy). Do not add conflicting ones in NGINX.
@@ -90,3 +94,30 @@ Notes:
   to an address where it presents that certificate. After a renewal,
   MeshCentral reloads the certificate the first time an agent reports a
   mismatch, and the agents reconnect.
+
+## IP access behind NGINX
+
+In offload mode NGINX owns the ports and the certificates, so EasyRMM does
+not detect addresses or serve its own certificate authority (ADR-0016).
+To reach the server by IP address as well, list the addresses and give
+NGINX a certificate that names them (from your own CA):
+
+```bash
+EASYRMM_IP_ADDRESSES=203.0.113.10
+```
+
+```nginx
+server {
+    listen 443 ssl;           # the console: https://203.0.113.10
+    listen 4443 ssl;          # remote sessions: https://203.0.113.10:4443
+    server_name 203.0.113.10;
+    ssl_certificate     /etc/nginx/tls/ip-fullchain.pem;
+    ssl_certificate_key /etc/nginx/tls/ip-privkey.pem;
+    # ...the same location block as above, with Host $http_host.
+}
+```
+
+The install command the console shows for such an address has no key pin
+(the pin belongs to EasyRMM's own authority), so the machines you install
+must trust NGINX's certificate. The built-in edge in `internal` mode avoids
+that step.

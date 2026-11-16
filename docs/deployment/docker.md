@@ -15,15 +15,18 @@ See [network.md](../architecture/network.md) for the full port plan.
 ## Requirements
 
 * Linux x86-64 or arm64 with Docker Engine 24+ and the Compose plugin.
-* Two DNS names pointing at the host: the main name (for example
-  `rmm.example.com`) and the remote-access name (default
+* Two DNS names pointing at the host (recommended): the main name (for
+  example `rmm.example.com`) and the remote-access name (default
   `mesh.rmm.example.com`). A wildcard record works. The separate name keeps
   MeshCentral in its own browser origin (ADR-0004). Both names must share a
   parent domain; see [network.md](../architecture/network.md#host-names).
-* Inbound TCP 443, plus TCP 80 if you use Let's Encrypt HTTP-01 validation.
+  Without DNS, use the server's IP address instead (see
+  [Without DNS](#without-dns)).
+* Inbound TCP 443, plus TCP 80 if you use Let's Encrypt HTTP-01 validation,
+  and TCP 4443 for remote sessions by IP address.
 * Outbound HTTPS to `github.com` the first time MeshCentral starts: it
   downloads its agent binaries (about 120 MiB) from GitHub releases.
-* Nothing else listening on 443, 80, 15432, 14430 or 18081.
+* Nothing else listening on 443, 4443, 80, 15432, 14430 or 18081.
 
 ## Install
 
@@ -51,10 +54,46 @@ someone with access to the server can claim it.
 |---|---|---|
 | `acme` (default) | Obtained and renewed from Let's Encrypt (or `EASYRMM_ACME_DIRECTORY`). Cached in `/srv/easyrmm/server/acme`. | 443, and 80 for HTTP-01 + redirects |
 | `manual` | Your files, mounted from `EASYRMM_TLS_DIR` at `/etc/easyrmm/tls`. Renewed files are picked up within 30 seconds, without a restart. | 443, and 80 for redirects |
+| `internal` | Issued by the server's own certificate authority, created on first start and stored encrypted in the database. Default for an IP address. | 443, 4443, and 80 for redirects |
 | `offload` | Terminated by your reverse proxy. See [nginx.md](nginx.md). | `127.0.0.1:18080` only |
 
 Both host names must be covered by the certificate (`manual`) or be
-reachable for validation (`acme`).
+reachable for validation (`acme`). With IP access on (the default), the
+server's IP addresses are served beside them with a certificate from its own
+authority, on 443 and 4443.
+
+## Without DNS
+
+DNS is recommended, but you can reach the server by IP address: when DNS is
+not working, use `https://<server address>` instead of the name (IP access,
+on by default), or run the whole deployment without DNS:
+
+```bash
+sudo ./scripts/setup.sh --hostname 203.0.113.10
+```
+
+That sets `EASYRMM_PUBLIC_URL=https://203.0.113.10`; remote sessions use
+`https://203.0.113.10:4443`, and TLS comes from the server's own certificate
+authority (`internal` mode). Browsers warn about that authority until you
+install it: **Devices → Add devices** shows its SHA-256 fingerprint and a
+download. Agents installed from that page pin the server's key and need no
+other step.
+
+If you click through the warning instead of installing the authority,
+remember that remote sessions run on port 4443, inside a frame where a
+browser cannot ask. Chrome and Edge apply your exception to the whole
+address; Firefox asks again for each port. In Firefox, open
+`https://203.0.113.10:4443` once and accept the warning there. A session's
+**Not loading?** button explains the same steps.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `EASYRMM_IP_ACCESS` | `true` | Also answer on the server's IP addresses. `false` serves only `EASYRMM_PUBLIC_URL` and does not open 4443 |
+| `EASYRMM_IP_ADDRESSES` | detected | Comma-separated addresses to answer on. Detected: the addresses of the default routes. Behind NAT, list the public address |
+| `EASYRMM_IP_MESH_PORT` | `4443` | The remote-session port on an IP address |
+
+See ADR-0016 for the design and its limits. In particular, with a DNS
+deployment, MeshAgent on each device keeps using the MeshCentral name.
 
 ## Remote access (MeshCentral)
 

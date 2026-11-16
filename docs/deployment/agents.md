@@ -42,7 +42,23 @@ On each computer:
 curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo sh -s -- --token ert_…
 ```
 
-Without curl, replace `curl -fsSL` with `wget -qO-`. The script:
+Without curl, replace `curl -fsSL` with `wget -qO-`.
+
+**By IP address.** When computers cannot look up the server's name, choose
+the server's IP address under **Server address** after creating the token.
+That address uses the server's own certificate authority, which the computer
+does not trust yet, so the command pins the server's public key instead:
+
+```sh
+curl -fsSL --insecure --pinnedpubkey 'sha256//…' https://203.0.113.10/api/agent/v1/install.sh | sudo sh -s -- --token ert_…
+```
+
+`--insecure` skips only the certificate authority check; curl refuses any
+other key. The script then needs curl (wget cannot pin), downloads the
+server's certificate authority over the pinned connection, and enrolls the
+agent with it, so the agent trusts that authority from then on (ADR-0016).
+
+The script:
 
 1. checks that it runs as root on Linux with systemd;
 2. maps the machine's architecture to an agent build;
@@ -76,7 +92,9 @@ sudo EASYRMM_TOKEN=ert_… easyrmm-agent install --server https://rmm.example.co
 
 If the server's certificate comes from a private certificate authority, add
 `--ca-file /path/to/ca.pem`; the agent keeps a copy and trusts it for every
-later request.
+later request. For the server's own authority (IP addresses), download
+`/api/agent/v1/ca.pem` and compare its fingerprint with the one on the Add
+devices page before using it.
 
 ## What is installed
 

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,18 +48,19 @@ func IdentityFrom(ctx context.Context) *Identity {
 
 // Sessions manages the session cookie, identity resolution and CSRF.
 type Sessions struct {
-	resolver     SessionResolver
-	csrfKey      []byte
-	cookieName   string
-	secure       bool
-	publicOrigin string
+	resolver   SessionResolver
+	csrfKey    []byte
+	cookieName string
+	secure     bool
+	origins    map[string]bool
 }
 
 // NewSessions builds the session middleware. masterKey is the primary secret
 // key; the CSRF key is derived from it with HKDF so the two never coincide.
 // When secure is false (local development over plain HTTP only) the cookie
-// drops the __Host- prefix and the Secure attribute.
-func NewSessions(resolver SessionResolver, masterKey []byte, publicOrigin string, secure bool) (*Sessions, error) {
+// drops the __Host- prefix and the Secure attribute. origins are the console
+// origins state-changing requests may come from.
+func NewSessions(resolver SessionResolver, masterKey []byte, origins []string, secure bool) (*Sessions, error) {
 	key, err := hkdf.Key(sha256.New, masterKey, nil, "easyrmm csrf v1", 32)
 	if err != nil {
 		return nil, err
@@ -67,7 +69,13 @@ func NewSessions(resolver SessionResolver, masterKey []byte, publicOrigin string
 	if !secure {
 		name = "easyrmm_session"
 	}
-	return &Sessions{resolver: resolver, csrfKey: key, cookieName: name, secure: secure, publicOrigin: publicOrigin}, nil
+	allowed := make(map[string]bool, len(origins))
+	for _, o := range origins {
+		if o = strings.TrimSuffix(o, "/"); o != "" {
+			allowed[o] = true
+		}
+	}
+	return &Sessions{resolver: resolver, csrfKey: key, cookieName: name, secure: secure, origins: allowed}, nil
 }
 
 // CookieName returns the session cookie name.
@@ -160,8 +168,7 @@ func (s *Sessions) sameOrigin(r *http.Request) bool {
 	if site := r.Header.Get("Sec-Fetch-Site"); site != "" {
 		return site == "same-origin"
 	}
-	origin := r.Header.Get("Origin")
-	return origin != "" && origin == s.publicOrigin
+	return s.origins[r.Header.Get("Origin")]
 }
 
 // RequireState rejects requests whose session is not in one of the states.

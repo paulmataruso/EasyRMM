@@ -31,7 +31,7 @@ func testConfig(t *testing.T) *config.Config {
 	t.Helper()
 	pub, _ := url.Parse("https://rmm.test")
 	mesh, _ := url.Parse("https://mesh.rmm.test")
-	return &config.Config{PublicURL: pub, MeshPublicURL: mesh, ListenHTTPS: ":443", DataDir: t.TempDir()}
+	return &config.Config{PublicURL: pub, MeshPublicURL: mesh, ListenHTTPS: ":443", DataDir: t.TempDir(), Mesh: config.MeshConfig{Enabled: true}, IPMeshPort: 4443}
 }
 
 func discard() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }

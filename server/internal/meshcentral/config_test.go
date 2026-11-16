@@ -11,7 +11,7 @@ import (
 func validConfig(t *testing.T) ServerConfig {
 	return ServerConfig{
 		Hostname: "mesh.rmm.example.com", Listen: "127.0.0.1:14430", PublicPort: 443,
-		TrustedProxy: "127.0.0.1", FramingOrigin: "https://rmm.example.com",
+		TrustedProxy: "127.0.0.1", FramingOrigins: []string{"https://rmm.example.com", "https://203.0.113.10"},
 		CertURL: "https://127.0.0.1:443", LoginKey: testKey(t), SessionKey: strings.Repeat("s", 64),
 	}
 }
@@ -42,7 +42,7 @@ func TestRenderConfig(t *testing.T) {
 			t.Errorf("settings.%s = %v, want %v", k, s[k], v)
 		}
 	}
-	if o, _ := s["allowedFramingOrigins"].([]any); len(o) != 1 || o[0] != "https://rmm.example.com" {
+	if o, _ := s["allowedFramingOrigins"].([]any); len(o) != 2 || o[0] != "https://rmm.example.com" || o[1] != "https://203.0.113.10" {
 		t.Errorf("framing origins = %v", s["allowedFramingOrigins"])
 	}
 	d := doc.Domains[""]
@@ -56,14 +56,17 @@ func TestRenderConfig(t *testing.T) {
 
 func TestConfigValidation(t *testing.T) {
 	for name, mutate := range map[string]func(*ServerConfig){
-		"no hostname":       func(c *ServerConfig) { c.Hostname = "" },
-		"public listen":     func(c *ServerConfig) { c.Listen = "0.0.0.0:14430" },
-		"bad listen":        func(c *ServerConfig) { c.Listen = "localhost" },
-		"bad port":          func(c *ServerConfig) { c.Listen = "127.0.0.1:99999" },
-		"public port":       func(c *ServerConfig) { c.PublicPort = 0 },
-		"proxy not an IP":   func(c *ServerConfig) { c.TrustedProxy = "edge" },
-		"http origin":       func(c *ServerConfig) { c.FramingOrigin = "http://rmm.example.com" },
-		"origin with path":  func(c *ServerConfig) { c.FramingOrigin = "https://rmm.example.com/app" },
+		"no hostname":     func(c *ServerConfig) { c.Hostname = "" },
+		"public listen":   func(c *ServerConfig) { c.Listen = "0.0.0.0:14430" },
+		"bad listen":      func(c *ServerConfig) { c.Listen = "localhost" },
+		"bad port":        func(c *ServerConfig) { c.Listen = "127.0.0.1:99999" },
+		"public port":     func(c *ServerConfig) { c.PublicPort = 0 },
+		"proxy not an IP": func(c *ServerConfig) { c.TrustedProxy = "edge" },
+		"http origin":     func(c *ServerConfig) { c.FramingOrigins = []string{"http://rmm.example.com"} },
+		"origin with path": func(c *ServerConfig) {
+			c.FramingOrigins = []string{"https://rmm.example.com", "https://rmm.example.com/app"}
+		},
+		"no origins":        func(c *ServerConfig) { c.FramingOrigins = nil },
 		"cert URL scheme":   func(c *ServerConfig) { c.CertURL = "ftp://x" },
 		"short login key":   func(c *ServerConfig) { c.LoginKey = c.LoginKey[:32] },
 		"short session key": func(c *ServerConfig) { c.SessionKey = "short" },
