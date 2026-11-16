@@ -449,10 +449,38 @@ function CertificateAuthorityCard() {
           <span className="text-xs font-medium text-muted">SHA-256 fingerprint</span>
           <span className="font-mono text-xs break-all text-fg">{ca.fingerprint}</span>
         </div>
-        <a href={ca.url} download="easyrmm-ca.pem" className="inline-flex items-center gap-1.5 self-start rounded-sm text-sm font-medium text-accent hover:underline">
-          <ShieldCheck className="size-4" aria-hidden />
-          Download easyrmm-ca.pem
-        </a>
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <a href={ca.certUrl} download="easyrmm-ca.crt" className="inline-flex items-center gap-1.5 rounded-sm text-sm font-medium text-accent hover:underline">
+            <ShieldCheck className="size-4" aria-hidden />
+            Download easyrmm-ca.crt
+          </a>
+          <a href={ca.url} download="easyrmm-ca.pem" className="inline-flex items-center gap-1.5 rounded-sm text-sm text-muted hover:text-fg hover:underline">
+            <Download className="size-4" aria-hidden />
+            easyrmm-ca.pem
+          </a>
+        </div>
+        <p className="text-xs text-muted">
+          The <Mono>.crt</Mono> file is for Windows and macOS; the <Mono>.pem</Mono> file holds the same certificate for Linux, Firefox and the agent&apos;s{" "}
+          <Mono>--ca-file</Mono>.
+        </p>
+        <div className="flex flex-col gap-2 border-t border-line pt-3">
+          <h3 className="text-sm font-medium text-fg">Install it on Windows</h3>
+          <ol className="flex list-decimal flex-col gap-1 pl-5 text-sm text-muted marker:text-subtle">
+            <li>
+              Right-click <Mono>easyrmm-ca.crt</Mono> and choose <span className="text-fg">Install Certificate</span>.
+            </li>
+            <li>
+              Choose <span className="text-fg">Local Machine</span> (for every user of the computer) and confirm the administrator prompt.
+            </li>
+            <li>
+              Choose <span className="text-fg">Place all certificates in the following store</span>, then <span className="text-fg">Browse</span> and{" "}
+              <span className="text-fg">Trusted Root Certification Authorities</span>. Letting Windows choose the store can put it where browsers do not trust it.
+            </li>
+            <li>Finish, then restart the browser. Edge and Chrome use the Windows store.</li>
+          </ol>
+          <p className="text-sm text-muted">Or, in PowerShell run as administrator, from the folder you downloaded it to:</p>
+          <CodeBlock code={`Import-Certificate -FilePath .\\easyrmm-ca.crt -CertStoreLocation Cert:\\LocalMachine\\Root`} />
+        </div>
       </div>
     </Card>
   );

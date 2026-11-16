@@ -158,6 +158,11 @@ All notable changes to this project are documented here. The format follows
   and organizations card are gone.
 - A console tab running an older build reloads on its next navigation
   after the server is upgraded (`X-EasyRMM-Console`).
+- The server's certificate authority also downloads as `easyrmm-ca.crt`
+  (DER), which Windows installs from the file's context menu (**Install
+  Certificate**); the Add devices page explains where to put it, with a
+  PowerShell alternative. The PEM file stays for Linux, Firefox and the
+  agent's `--ca-file`.
 - Audit forwarding (ADR-0023). Super administrators can send every audit
   record to a syslog server or SIEM from **Settings → Audit forwarding**:
   RFC 5424 messages whose text is the record in JSON with its hash-chain

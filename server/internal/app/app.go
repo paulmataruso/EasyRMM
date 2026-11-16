@@ -258,7 +258,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	var caInfo *enrollapi.Authority
 	if d.PKI != nil {
 		caPEM = d.PKI.CAPEM()
-		caInfo = &enrollapi.Authority{Fingerprint: d.PKI.Fingerprint(), URL: agentproto.PathCA}
+		caInfo = &enrollapi.Authority{Fingerprint: d.PKI.Fingerprint(), URL: agentproto.PathCA, CertURL: agentproto.PathCACert}
 	}
 
 	mux := http.NewServeMux()

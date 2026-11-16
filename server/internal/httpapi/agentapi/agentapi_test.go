@@ -1,6 +1,7 @@
 package agentapi
 
 import (
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -41,7 +42,7 @@ func serve(a *API, path string, o *httpapi.Origin) *httptest.ResponseRecorder {
 }
 
 func TestInstallScriptPerAddress(t *testing.T) {
-	a := newAPI(t, []byte("-----BEGIN CERTIFICATE-----\n"))
+	a := newAPI(t, testCA)
 	dns := serve(a, "/api/agent/v1/install.sh", &httpapi.Origin{Console: "https://rmm.example.com"}).Body.String()
 	ip := serve(a, "/api/agent/v1/install.sh", &httpapi.Origin{Console: "https://203.0.113.10", Pin: testPin}).Body.String()
 	unknown := serve(a, "/api/agent/v1/install.sh", nil).Body.String()
@@ -92,7 +93,7 @@ func TestInstallScriptPerAddress(t *testing.T) {
 }
 
 func TestWindowsInstallScriptPerAddress(t *testing.T) {
-	a := newAPI(t, []byte("-----BEGIN CERTIFICATE-----\n"))
+	a := newAPI(t, testCA)
 	get := func(o *httpapi.Origin) string {
 		w := serve(a, "/api/agent/v1/install.ps1", o)
 		if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "text/plain; charset=us-ascii" {
@@ -154,17 +155,34 @@ func TestWindowsInstallScriptPerAddress(t *testing.T) {
 	}
 }
 
+// testCA stands in for the authority's certificate: the API only re-encodes it.
+var testCA = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("DER bytes")})
+
 func TestCertificateAuthorityRoute(t *testing.T) {
-	w := serve(newAPI(t, []byte("PEM")), "/api/agent/v1/ca.pem", nil)
-	if w.Code != http.StatusOK || w.Body.String() != "PEM" || w.Header().Get("Content-Type") != "application/x-pem-file" {
+	a := newAPI(t, testCA)
+	w := serve(a, "/api/agent/v1/ca.pem", nil)
+	if w.Code != http.StatusOK || w.Body.String() != string(testCA) || w.Header().Get("Content-Type") != "application/x-pem-file" {
 		t.Errorf("CA: %d %q %q", w.Code, w.Body.String(), w.Header().Get("Content-Type"))
 	}
+	// The same certificate in DER, as a .crt file Windows installs.
+	w = serve(a, "/api/agent/v1/easyrmm-ca.crt", nil)
+	if w.Code != http.StatusOK || w.Body.String() != "DER bytes" || w.Header().Get("Content-Type") != "application/x-x509-ca-cert" ||
+		w.Header().Get("Content-Disposition") != `attachment; filename="easyrmm-ca.crt"` {
+		t.Errorf("CA certificate: %d %q %v", w.Code, w.Body.String(), w.Header())
+	}
+
 	a, err := New(nil, &agents.Builds{}, []Address{{URL: "https://rmm.example.com"}}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w := serve(a, "/api/agent/v1/ca.pem", nil); w.Code != http.StatusNotFound {
-		t.Errorf("CA without one: %d", w.Code)
+	for _, path := range []string{"/api/agent/v1/ca.pem", "/api/agent/v1/easyrmm-ca.crt"} {
+		if w := serve(a, path, nil); w.Code != http.StatusNotFound {
+			t.Errorf("%s without an authority: %d", path, w.Code)
+		}
+	}
+	// Anything but a PEM certificate is a configuration error.
+	if _, err := New(nil, &agents.Builds{}, []Address{{URL: "https://rmm.example.com"}}, []byte("not PEM"), nil); err == nil {
+		t.Error("a certificate authority that is not PEM accepted")
 	}
 }
 

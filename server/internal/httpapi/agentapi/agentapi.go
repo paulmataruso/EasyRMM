@@ -12,6 +12,7 @@ import (
 	"bytes"
 	_ "embed"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"io"
 	"log/slog"
@@ -47,6 +48,7 @@ type API struct {
 	scripts map[string]installers // per console origin
 	primary installers
 	ca      []byte
+	caDER   []byte
 	jobs    *jobs.Service
 	inv     *inventory.Service
 	log     *slog.Logger
@@ -73,6 +75,13 @@ func New(svc *agents.Service, builds *agents.Builds, addresses []Address, ca []b
 		return nil, errors.New("agentapi: no server address")
 	}
 	a := &API{svc: svc, builds: builds, scripts: map[string]installers{}, ca: ca, log: log}
+	if ca != nil {
+		b, _ := pem.Decode(ca)
+		if b == nil || b.Type != "CERTIFICATE" {
+			return nil, errors.New("agentapi: the certificate authority is not a PEM certificate")
+		}
+		a.caDER = b.Bytes
+	}
 	for i, addr := range addresses {
 		server := strings.TrimSuffix(addr.URL, "/")
 		if !safeInScript(server + addr.Pin + addr.KeyPin) {
@@ -146,6 +155,7 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("GET /api/agent/v1/install.sh", httpapi.Handle(a.installer))
 	mux.Handle("GET /api/agent/v1/install.ps1", httpapi.Handle(a.installer))
 	mux.Handle("GET "+agentproto.PathCA, httpapi.Handle(a.authority))
+	mux.Handle("GET "+agentproto.PathCACert, httpapi.Handle(a.authorityCert))
 	mux.Handle("GET /api/agent/v1/download/{file}", httpapi.Handle(a.download))
 	mux.Handle("/", httpapi.Handle(func(http.ResponseWriter, *http.Request) error { return httpapi.ErrNotFound }))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -417,6 +427,18 @@ func (a *API) authority(w http.ResponseWriter, _ *http.Request) error {
 	w.Header().Set("Content-Type", "application/x-pem-file")
 	w.Header().Set("Content-Disposition", `attachment; filename="easyrmm-ca.pem"`)
 	_, _ = w.Write(a.ca)
+	return nil
+}
+
+// authorityCert serves the same certificate in DER, as the .crt file Windows
+// installs from its context menu (Install Certificate) and macOS from Finder.
+func (a *API) authorityCert(w http.ResponseWriter, _ *http.Request) error {
+	if a.caDER == nil {
+		return httpapi.ErrNotFound
+	}
+	w.Header().Set("Content-Type", "application/x-x509-ca-cert")
+	w.Header().Set("Content-Disposition", `attachment; filename="easyrmm-ca.crt"`)
+	_, _ = w.Write(a.caDER)
 	return nil
 }
 

@@ -317,7 +317,10 @@ export interface ServerAddress {
 /** The server's own certificate authority, used for IP addresses. */
 export interface CertificateAuthority {
   fingerprint: string;
+  /** The certificate in PEM, for Linux, Firefox and the agent's --ca-file. */
   url: string;
+  /** The same certificate in DER, a .crt file Windows and macOS install with a double click. */
+  certUrl: string;
 }
 
 export interface AgentDownloads {

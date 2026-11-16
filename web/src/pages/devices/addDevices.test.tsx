@@ -139,7 +139,7 @@ describe("add devices", () => {
           addresses: [{ url: "https://rmm.example.com" }, { url: "https://203.0.113.10", pin: PIN, keyPin: KEY_PIN }],
           // This console was opened at the IP address.
           current: "https://203.0.113.10",
-          certificateAuthority: { fingerprint: FINGERPRINT, url: "/api/agent/v1/ca.pem" },
+          certificateAuthority: { fingerprint: FINGERPRINT, url: "/api/agent/v1/ca.pem", certUrl: "/api/agent/v1/easyrmm-ca.crt" },
         }),
         "POST /sites/:id/enrollment-tokens": () => ({
           status: 201,
@@ -150,7 +150,11 @@ describe("add devices", () => {
     renderApp("/devices/add");
     // The certificate authority, to check and install.
     expect(await screen.findByText(FINGERPRINT)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Download easyrmm-ca.pem" })).toHaveAttribute("href", "/api/agent/v1/ca.pem");
+    // A .crt Windows installs from its context menu, and the PEM beside it.
+    expect(screen.getByRole("link", { name: "Download easyrmm-ca.crt" })).toHaveAttribute("href", "/api/agent/v1/easyrmm-ca.crt");
+    expect(screen.getByRole("link", { name: "easyrmm-ca.pem" })).toHaveAttribute("href", "/api/agent/v1/ca.pem");
+    expect(screen.getByText("Trusted Root Certification Authorities")).toBeInTheDocument();
+    expect(screen.getByText(/Import-Certificate -FilePath \.\\easyrmm-ca\.crt -CertStoreLocation Cert:\\LocalMachine\\Root/)).toBeInTheDocument();
 
     await user.selectOptions(screen.getByLabelText(/^Site/), "s1");
     await user.type(screen.getByLabelText(/Token name/), "Lab");
@@ -172,7 +176,7 @@ describe("add devices", () => {
 
     await user.selectOptions(address, "https://rmm.example.com");
     expect(screen.getByText(`curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo sh -s -- --token ${SECRET}`)).toBeInTheDocument();
-    expect(screen.queryByText(/--ca-file/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/--ca-file easyrmm-ca.pem/)).not.toBeInTheDocument();
   });
 
   it("lists agent downloads with their checksums", async () => {

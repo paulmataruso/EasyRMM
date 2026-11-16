@@ -153,6 +153,17 @@ later request. For the server's own authority (IP addresses), download
 `/api/agent/v1/ca.pem` and compare its fingerprint with the one on the Add
 devices page before using it.
 
+The same certificate is at `/api/agent/v1/easyrmm-ca.crt` in DER, the form
+Windows and macOS install directly. To stop browser warnings on a Windows
+computer, right-click the file, choose **Install Certificate**, **Local
+Machine**, and **Place all certificates in the following store: Trusted Root
+Certification Authorities** (letting Windows pick the store can leave it
+where browsers do not trust it). In an administrator PowerShell:
+
+```powershell
+Import-Certificate -FilePath .\easyrmm-ca.crt -CertStoreLocation Cert:\LocalMachine\Root
+```
+
 ## What is installed
 
 On Windows:

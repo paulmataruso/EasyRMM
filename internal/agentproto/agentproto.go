@@ -28,7 +28,10 @@ const (
 	PathMeshSettings = "/api/agent/v1/meshagent/settings"
 	// PathCA serves the server's own certificate authority, for servers
 	// reached by IP address (ADR-0016).
-	PathCA     = "/api/agent/v1/ca.pem"
+	PathCA = "/api/agent/v1/ca.pem"
+	// PathCACert serves the same certificate in DER as a .crt file, which
+	// Windows and macOS install with a double click.
+	PathCACert = "/api/agent/v1/easyrmm-ca.crt"
 	PathPrefix = "/api/agent/"
 )
 

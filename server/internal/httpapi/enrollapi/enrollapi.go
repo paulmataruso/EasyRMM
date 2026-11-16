@@ -35,8 +35,11 @@ type Address struct {
 type Authority struct {
 	// Fingerprint is the SHA-256 fingerprint browsers show (AB:CD:...).
 	Fingerprint string `json:"fingerprint"`
-	// URL is the path its certificate downloads from.
+	// URL is the path its certificate downloads from, in PEM.
 	URL string `json:"url"`
+	// CertURL is the same certificate in DER, a .crt file Windows and macOS
+	// install with a double click.
+	CertURL string `json:"certUrl"`
 }
 
 // New builds the API. server is the public URL agents enroll with;
