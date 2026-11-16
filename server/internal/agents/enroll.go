@@ -99,6 +99,7 @@ func (s *Service) Enroll(ctx context.Context, ip netip.Addr, req agentproto.Enro
 		DeviceID:         id.String(),
 		HeartbeatSeconds: int(HeartbeatInterval.Seconds()),
 		MeshAgent:        agentproto.MeshAgentInfo{Available: available},
+		JobKey:           s.jobKey,
 	}, nil
 }
 

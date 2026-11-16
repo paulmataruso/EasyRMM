@@ -1,6 +1,6 @@
-// Package agentapi serves the EasyRMM agent (ADR-0015): enrollment with a
-// deployment token, signed heartbeats, MeshAgent delivery, and the agent
-// downloads and Linux installer.
+// Package agentapi serves the EasyRMM agent (ADR-0015, ADR-0017):
+// enrollment with a deployment token, signed heartbeats, MeshAgent
+// delivery, jobs, and the agent downloads and Linux installer.
 //
 // These routes are reached without a browser session and without CSRF
 // checks; enrollment is authorized by the token, everything else by the
@@ -19,9 +19,12 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/google/uuid"
+
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
+	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 )
 
 //go:embed install.sh.tmpl
@@ -36,6 +39,7 @@ type API struct {
 	scripts map[string][]byte // install script per console origin
 	primary []byte
 	ca      []byte
+	jobs    *jobs.Service
 	log     *slog.Logger
 }
 
@@ -79,6 +83,12 @@ func New(svc *agents.Service, builds *agents.Builds, addresses []Address, ca []b
 	return a, nil
 }
 
+// WithJobs serves job delivery from j.
+func (a *API) WithJobs(j *jobs.Service) *API {
+	a.jobs = j
+	return a
+}
+
 // Handler returns the handler for everything under agentproto.PathPrefix.
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -86,6 +96,11 @@ func (a *API) Handler() http.Handler {
 	mux.Handle("POST "+agentproto.PathHeartbeat, httpapi.Handle(a.signed(a.heartbeat)))
 	mux.Handle("GET "+agentproto.PathMeshAgent, httpapi.Handle(a.signed(a.meshAgent)))
 	mux.Handle("GET "+agentproto.PathMeshSettings, httpapi.Handle(a.signed(a.meshSettings)))
+	if a.jobs != nil {
+		mux.Handle("POST "+agentproto.PathJobsPoll, httpapi.Handle(a.signed(a.poll)))
+		mux.Handle("POST /api/agent/v1/jobs/{run}/start", httpapi.Handle(a.signed(a.start)))
+		mux.Handle("POST /api/agent/v1/jobs/{run}/result", httpapi.Handle(a.signedLimit(agentproto.MaxResultBody, a.result)))
+	}
 	mux.Handle("GET /api/agent/v1/install.sh", httpapi.Handle(a.installer))
 	mux.Handle("GET "+agentproto.PathCA, httpapi.Handle(a.authority))
 	mux.Handle("GET /api/agent/v1/download/{file}", httpapi.Handle(a.download))
@@ -114,6 +129,10 @@ var (
 		Message: "Too many enrollments from this address. Try again shortly."}
 	errMeshUnavailable = &httpapi.Error{Status: http.StatusServiceUnavailable, Code: "meshagent_unavailable",
 		Message: "Remote access is not available for this device right now."}
+	errRunNotFound = &httpapi.Error{Status: http.StatusNotFound, Code: "run_not_found",
+		Message: "This device has no such job run."}
+	errBadResult = &httpapi.Error{Status: http.StatusBadRequest, Code: "result_invalid",
+		Message: "The job result is not valid."}
 )
 
 func mapError(err error) error {
@@ -126,6 +145,8 @@ func mapError(err error) error {
 		agents.ErrUnknownDevice:   errUnknownDevice,
 		agents.ErrRateLimited:     errRateLimited,
 		agents.ErrMeshUnavailable: errMeshUnavailable,
+		jobs.ErrRunNotFound:       errRunNotFound,
+		jobs.ErrBadResult:         errBadResult,
 	} {
 		if errors.Is(err, from) {
 			return to
@@ -134,9 +155,9 @@ func mapError(err error) error {
 	return err
 }
 
-// readBody reads a request body of at most agentproto.MaxBody bytes.
-func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
-	b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, agentproto.MaxBody))
+// readBody reads a request body of at most limit bytes.
+func readBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
+	b, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	var tooBig *http.MaxBytesError
 	if errors.As(err, &tooBig) {
 		return nil, &httpapi.Error{Status: http.StatusRequestEntityTooLarge, Code: "body_too_large", Message: "The request body is too large."}
@@ -164,7 +185,7 @@ func decode(r *http.Request, body []byte, dst any) error {
 }
 
 func (a *API) enroll(w http.ResponseWriter, r *http.Request) error {
-	body, err := readBody(w, r)
+	body, err := readBody(w, r, agentproto.MaxBody)
 	if err != nil {
 		return err
 	}
@@ -187,8 +208,13 @@ type signedHandler func(w http.ResponseWriter, r *http.Request, d *agents.Device
 
 // signed authenticates the request before calling h.
 func (a *API) signed(h signedHandler) httpapi.HandlerFunc {
+	return a.signedLimit(agentproto.MaxBody, h)
+}
+
+// signedLimit is signed with a body limit of its own.
+func (a *API) signedLimit(limit int64, h signedHandler) httpapi.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
-		body, err := readBody(w, r)
+		body, err := readBody(w, r, limit)
 		if err != nil {
 			return err
 		}
@@ -214,6 +240,51 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 		return mapError(err)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, out)
+	return nil
+}
+
+func (a *API) poll(w http.ResponseWriter, r *http.Request, d *agents.Device, body []byte) error {
+	var in agentproto.PollRequest
+	if err := decode(r, body, &in); err != nil {
+		return err
+	}
+	out, err := a.jobs.Poll(r.Context(), d.ID)
+	if err != nil && r.Context().Err() != nil {
+		return nil //nolint:nilerr // the agent went away; there is no one to answer
+	}
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, out)
+	return nil
+}
+
+func (a *API) start(w http.ResponseWriter, r *http.Request, d *agents.Device, _ []byte) error {
+	run, err := uuid.Parse(r.PathValue("run"))
+	if err != nil {
+		return errRunNotFound
+	}
+	out, err := a.jobs.Start(r.Context(), d.ID, run)
+	if err != nil {
+		return mapError(err)
+	}
+	httpapi.WriteJSON(w, http.StatusOK, out)
+	return nil
+}
+
+func (a *API) result(w http.ResponseWriter, r *http.Request, d *agents.Device, body []byte) error {
+	run, err := uuid.Parse(r.PathValue("run"))
+	if err != nil {
+		return errRunNotFound
+	}
+	var in agentproto.ResultRequest
+	if err := decode(r, body, &in); err != nil {
+		return err
+	}
+	if err := a.jobs.Result(r.Context(), d.ID, run, in); err != nil {
+		return mapError(err)
+	}
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 

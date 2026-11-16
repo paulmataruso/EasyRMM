@@ -14,7 +14,7 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 | [0006](0006-sessions-and-mfa.md) | Opaque cookie sessions with mandatory MFA | Accepted |
 | [0007](0007-hash-chained-audit-log.md) | Append-only, hash-chained audit log | Accepted |
 | [0008](0008-unified-endpoint-installer.md) | Unified endpoint installer bundling MeshAgent | Accepted; MeshAgent sourcing superseded by 0015 |
-| [0009](0009-agent-protocol.md) | Agent protocol: device keys, WebSocket with HTTPS polling fallback | Accepted |
+| [0009](0009-agent-protocol.md) | Agent protocol: device keys, WebSocket with HTTPS polling fallback | Accepted; refined by 0017 |
 | [0010](0010-easypatch-integration.md) | EasyPatch integration through a service API | Accepted |
 | [0011](0011-licensing.md) | AGPL-3.0 for EasyRMM | Accepted |
 | [0012](0012-frontend-stack-and-impeccable.md) | React/TypeScript frontend designed with Impeccable | Accepted; styling superseded by 0013 |
@@ -22,3 +22,4 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 | [0014](0014-remote-access-gateway-and-device-discovery.md) | Remote-access gateway rules and device discovery | Accepted |
 | [0015](0015-enrollment-and-meshagent-delivery.md) | Deployment tokens, agent enrollment and MeshAgent delivery | Accepted |
 | [0016](0016-ip-address-access.md) | Reaching the server by IP address: IP access, internal certificate authority, routing by port | Accepted |
+| [0017](0017-scripts-and-jobs.md) | Scripts and jobs: a tenant-scoped library, signed jobs over a long poll | Accepted |

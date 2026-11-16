@@ -336,6 +336,31 @@ func (p *Principal) Can(perm Permission, r Resource) bool {
 	return false
 }
 
+// CanAnywhere reports whether the permission holds anywhere: platform-wide,
+// in an organization or at a site. Shared, platform-level objects (the
+// shared script library) are read with it.
+func (p *Principal) CanAnywhere(perm Permission) bool {
+	return p != nil && (p.global[perm] || len(p.orgs[perm]) > 0 || len(p.sites[perm]) > 0)
+}
+
+// CanInOrg reports whether the permission holds in the organization or at
+// any of its sites. Organization-level objects that sites use (an
+// organization's scripts) are read with it.
+func (p *Principal) CanInOrg(perm Permission, orgID uuid.UUID) bool {
+	if p == nil || orgID == uuid.Nil {
+		return p != nil && p.global[perm]
+	}
+	if p.global[perm] || p.orgs[perm][orgID] {
+		return true
+	}
+	for siteID := range p.sites[perm] {
+		if p.siteOrg[siteID] == orgID {
+			return true
+		}
+	}
+	return false
+}
+
 // Scope returns where the permission holds, for building filtered queries.
 func (p *Principal) Scope(perm Permission) Scope {
 	if p == nil {

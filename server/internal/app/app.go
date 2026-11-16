@@ -30,9 +30,11 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/authapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/devicesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/enrollapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
+	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
@@ -68,6 +70,8 @@ type Deps struct {
 	Setup    *usersapi.Setup
 	Devices  *devices.Service
 	Agents   *agents.Service
+	// Jobs is the script library and job delivery (ADR-0017).
+	Jobs *jobs.Service
 	// AgentBuilds are the agent binaries the server hands out.
 	AgentBuilds *agents.Builds
 	// PKI is the internal certificate authority, for addresses no public CA
@@ -137,6 +141,12 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	}
 	d.Devices = devices.New(db, cfg.Mesh.Enabled)
 	d.Agents = agents.New(db, auditLog, mesh, log)
+	jobKey, err := jobs.LoadKey(ctx, db, sealer)
+	if err != nil {
+		return nil, err
+	}
+	d.Jobs = jobs.New(db, auditLog, jobKey, cfg.JobRetention, log)
+	d.Agents.SetJobKey(d.Jobs.PublicKey())
 	builds, err := agents.LoadBuilds(cfg.AgentDir)
 	if err != nil {
 		return nil, err
@@ -247,6 +257,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	}
 	usersapi.New(d.Users, d.Setup).Register(mux)
 	auditapi.New(d.Audit).Register(mux)
+	jobsapi.New(d.Jobs).Register(mux)
 	mux.Handle("GET /api/v1/health", httpapi.Handle(func(w http.ResponseWriter, _ *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": Version})
 		return nil
@@ -274,6 +285,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	if err != nil {
 		return nil, err
 	}
+	agentAPI.WithJobs(d.Jobs)
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
@@ -371,6 +383,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		log.Info("remote access is disabled (EASYRMM_MESH_ENABLED=false)")
 	}
 	tasks = append(tasks, deps.Agents.Cleanup)
+	wg.Go(func() { deps.Jobs.Run(ctx) })
+	// Waiting job polls end with the server, not 25 seconds later.
+	wg.Go(func() {
+		<-ctx.Done()
+		deps.Jobs.Close()
+	})
 	wg.Go(func() { maintain(ctx, db, cfg.AuditRetention, log, tasks...) })
 	healthErr := make(chan error, 1)
 	if cfg.ListenHealth != "" {

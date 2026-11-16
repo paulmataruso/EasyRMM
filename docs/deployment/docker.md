@@ -120,6 +120,13 @@ Devices join with the EasyRMM agent, which installs MeshAgent from this
 server: see [Installing the EasyRMM agent](agents.md). The image includes the
 Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).
 
+## Retention
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `EASYRMM_AUDIT_RETENTION` | `8760h` (365 days) | How long audit records are kept; at least `720h` (30 days) |
+| `EASYRMM_JOB_RETENTION` | `2160h` (90 days) | How long finished jobs and their script output are kept; at least `24h`. See [Scripts and jobs](../operations/scripts-and-jobs.md) |
+
 ## Security posture of the containers
 
 * The server runs as UID 65532 on a distroless image with a read-only root

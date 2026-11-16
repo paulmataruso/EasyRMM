@@ -95,6 +95,25 @@ All notable changes to this project are documented here. The format follows
   filters by name or hostname, moves with the keyboard, narrows the list to
   an organization or site, and opens a device. It stays open across pages
   on wide screens and opens over the page on narrow ones.
+- Scripts and jobs (ADR-0017). A script library at three levels (shared,
+  organization, site) for Bash, sh and Python 3, with permissions per level
+  and audited changes. Jobs run a script on up to 500 Linux devices with
+  arguments, a timeout and a wait for offline devices; the agent picks them
+  up over a signed long poll, verifies each job against the server's
+  Ed25519 job key pinned at enrollment, runs it as its own process group in
+  a temporary directory with a minimal environment, and reports the exit
+  code and the head and tail of its output. Jobs and runs can be stopped;
+  undelivered runs expire, silent ones are marked as having no result, and
+  finished jobs are removed after `EASYRMM_JOB_RETENTION` (90 days). Console
+  pages: **Scripts** (library, editor), **Jobs** (progress, devices, output),
+  **Run script** from a script, a job (**Run again**) or a device, and the
+  device's recent runs on its page. Guide:
+  [Scripts and jobs](docs/operations/scripts-and-jobs.md).
+- The console's libraries are served as a chunk of their own, which
+  browsers keep across EasyRMM upgrades.
+- When the server cannot open its stored certificate authority or job key,
+  the start-up error now asks whether `EASYRMM_SECRET_KEY` was changed
+  without listing the old key in `EASYRMM_SECRET_KEYS_PREVIOUS`.
 
 ### Fixed
 - Remote sessions opened MeshCentral's session view without the device, so

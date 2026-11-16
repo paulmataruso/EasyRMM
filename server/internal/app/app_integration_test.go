@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -108,10 +109,18 @@ func TestServeHealth(t *testing.T) {
 	}
 }
 
+// secretKeys holds one random secret key per test database. Values sealed
+// by one Run (the job-signing key, for example) must open in the next Run
+// against the same database, as they do in a deployment whose
+// EASYRMM_SECRET_KEY does not change.
+var secretKeys sync.Map
+
 func runConfig(t *testing.T, inst *testdb.Instance) *config.Config {
 	t.Helper()
-	raw := make([]byte, 32)
-	_, _ = rand.Read(raw)
+	fresh := make([]byte, 32)
+	_, _ = rand.Read(fresh)
+	stored, _ := secretKeys.LoadOrStore(inst.Name, fresh)
+	raw := stored.([]byte)
 	sep := "?"
 	if strings.Contains(inst.SuperDSN, "?") {
 		sep = "&"
@@ -126,7 +135,7 @@ func runConfig(t *testing.T, inst *testdb.Instance) *config.Config {
 		SecretKeys:           []secrets.Key{{ID: "k1", Raw: raw}},
 		DataDir:              filepath.Join(t.TempDir(), "data"),
 		RequireMFA:           true, SessionIdle: time.Hour, SessionMaxAge: 2 * time.Hour,
-		PasswordResetTTL: 30 * time.Minute, AuditRetention: 365 * 24 * time.Hour, ArgonMaxParallel: 2,
+		PasswordResetTTL: 30 * time.Minute, AuditRetention: 365 * 24 * time.Hour, JobRetention: 90 * 24 * time.Hour, ArgonMaxParallel: 2,
 	}
 }
 

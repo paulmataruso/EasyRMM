@@ -70,7 +70,7 @@ Last updated: 2026-11-15.
 |---|---|
 | Inventory and telemetry | Not started |
 | Monitoring and alerting | Not started |
-| Scripts and jobs | Not started |
+| Scripts and jobs | Complete for Linux: script library at shared, organization and site level; jobs on up to 500 devices with arguments, timeout and an offline wait; Ed25519-signed delivery over a long poll; per-device status, exit code and output (head and tail, 256 KiB per stream); cancel; retention; audit. Console pages for the library, jobs and runs, and on the device page. Tested by unit tests, PostgreSQL integration tests, an HTTP API test and the real agent in a container (ADR-0017). PowerShell and Windows wait for the Windows agent; output is not streamed while a script runs; no schedules yet |
 | Software deployment | Not started |
 | Reporting | Not started |
 

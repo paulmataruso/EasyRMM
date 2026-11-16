@@ -1,14 +1,17 @@
 import { Link, useParams } from "react-router";
-import { AppWindow, ExternalLink, FolderOpen, MonitorPlay, SquareTerminal } from "lucide-react";
-import type { ReactNode } from "react";
+import { AppWindow, ExternalLink, FolderOpen, MonitorPlay, Play, SquareTerminal } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { useApi, useList } from "../../api/hooks";
-import type { AuditEntry, Device, RemoteKind } from "../../api/types";
+import type { AuditEntry, Device, JobRun, RemoteKind } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { MenuButton } from "../../components/Menu";
 import { DeviceStatusBadge, REMOTE_KIND_NAMES } from "../../components/StatusBadges";
 import { useToast } from "../../components/Toast";
 import { Alert, Button, Card, EmptyState, ErrorState, KeyValueList, PageHeader, Spinner } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
+import { RunStatusBadge } from "../scripts/parts";
+import { RunScriptDialog } from "../scripts/RunScriptDialog";
+import { cannotRunReason, isOpen } from "../scripts/scriptText";
 import { DeviceTreeToggle } from "./DeviceTree";
 import { platformName } from "./platform";
 import { openSessionWindow, sessionPath } from "./sessionWindow";
@@ -47,6 +50,7 @@ export function DeviceDetailPage() {
   const { id = "" } = useParams();
   const { can, session } = useAuth();
   const device = useApi<Device>(`/devices/${id}`, undefined, { refetchInterval: 30_000 });
+  const [running, setRunning] = useState(false);
   const showHistory = can("audit.view");
 
   if (device.isPending) return <Spinner />;
@@ -55,6 +59,10 @@ export function DeviceDetailPage() {
   const kinds = allowedKinds(d);
   const reason = unavailableReason(d);
   const remote = remoteAccessState(d, session?.features.remoteAccess === true);
+  // Scripts are offered where the role runs them; the reason shows when the device itself cannot.
+  const scriptReason = d.canRunScripts ? cannotRunReason(d) : null;
+  const showRuns = can("job.view") && d.agent !== null;
+  const side = showHistory || showRuns;
 
   return (
     <>
@@ -85,6 +93,11 @@ export function DeviceDetailPage() {
                 <SessionButton key={k} device={d} kind={k} primary={i === 0} />
               ),
             )}
+            {d.canRunScripts && (
+              <Button icon={<Play className="size-4" aria-hidden />} onClick={() => setRunning(true)} disabled={scriptReason !== null} title={scriptReason ?? undefined}>
+                Run script
+              </Button>
+            )}
             <DeviceTreeToggle />
           </>
         }
@@ -99,7 +112,7 @@ export function DeviceDetailPage() {
       )}
 
       <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
-        <Card title="Details" className={showHistory ? "xl:col-span-2" : "xl:col-span-3"}>
+        <Card title="Details" className={side ? "xl:col-span-2" : "xl:col-span-3"}>
           <KeyValueList
             items={[
               ["Status", <DeviceStatusBadge key="s" device={d} />],
@@ -141,9 +154,59 @@ export function DeviceDetailPage() {
             ]}
           />
         </Card>
-        {showHistory && <SessionHistory deviceId={d.id} />}
+        {side && (
+          <div className="flex min-w-0 flex-col gap-5">
+            {showRuns && <ScriptRuns deviceId={d.id} />}
+            {showHistory && <SessionHistory deviceId={d.id} />}
+          </div>
+        )}
       </div>
+      {d.canRunScripts && <RunScriptDialog open={running} onClose={() => setRunning(false)} device={d} />}
     </>
+  );
+}
+
+/** The device's newest script runs; refreshes quickly while one is still going. */
+function ScriptRuns({ deviceId }: { deviceId: string }) {
+  const runs = useList<JobRun>("/job-runs", { deviceId }, { refetchInterval: (data) => (data?.items.some((r) => isOpen(r.status)) ? 4_000 : 60_000) });
+  const recent = runs.items.slice(0, 8);
+  return (
+    <Card
+      title="Scripts"
+      padded={false}
+      actions={
+        <Link to="/jobs" className="text-xs text-accent hover:underline">
+          All jobs
+        </Link>
+      }
+    >
+      {runs.isPending ? (
+        <Spinner />
+      ) : runs.isError ? (
+        <ErrorState error={runs.error} onRetry={() => void runs.refetch()} compact />
+      ) : recent.length === 0 ? (
+        <EmptyState title="No scripts have run here" compact>
+          Scripts run on this device are listed here with their results.
+        </EmptyState>
+      ) : (
+        <ul className="divide-y divide-line">
+          {recent.map((r) => (
+            <li key={r.id}>
+              <Link to={`/jobs/${r.jobId}/runs/${r.id}`} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm hover:bg-hover">
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{r.scriptName}</span>
+                  <span className="text-xs text-muted" title={formatDateTime(r.createdAt)}>
+                    {formatRelative(r.createdAt)}
+                    {r.exitCode !== null && r.exitCode !== 0 && <> · exit code {r.exitCode}</>}
+                  </span>
+                </span>
+                <RunStatusBadge status={r.status} cancelRequested={r.cancelRequested} />
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
 

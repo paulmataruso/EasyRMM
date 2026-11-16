@@ -1,5 +1,5 @@
 // Package runner is the agent's main loop: heartbeats, and MeshAgent once
-// the server offers it.
+// the server offers it. Jobs run beside it (package jobs).
 package runner
 
 import (
@@ -31,6 +31,8 @@ type Runner struct {
 	Mesh  MeshAgent
 	Facts func() agentproto.Facts
 	Log   *slog.Logger
+	// OnJobKey receives the server's job-signing key from each heartbeat.
+	OnJobKey func(key string)
 
 	// Timing, shortened by tests.
 	MinRetry    time.Duration // first retry after a failure (5 s)
@@ -97,6 +99,9 @@ func (r *Runner) beat(ctx context.Context) time.Duration {
 		return r.failed(err)
 	}
 	r.failures = 0
+	if r.OnJobKey != nil && resp.JobKey != "" {
+		r.OnJobKey(resp.JobKey)
+	}
 	r.status.LastHeartbeat = time.Now().UTC()
 	r.status.LastError, r.status.LastErrorAt = "", time.Time{}
 	next := jitter(time.Duration(resp.HeartbeatSeconds) * time.Second)

@@ -59,6 +59,7 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 	return &agentproto.HeartbeatResponse{
 		HeartbeatSeconds: int(HeartbeatInterval.Seconds()),
 		MeshAgent:        agentproto.MeshAgentInfo{Available: available},
+		JobKey:           s.jobKey,
 	}, nil
 }
 

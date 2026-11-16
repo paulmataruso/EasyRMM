@@ -3,7 +3,10 @@
 package remote
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,6 +24,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
+	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
@@ -44,7 +48,7 @@ func buildAgent(t *testing.T, dir string) string {
 
 // serveAgentAPI serves the agent API over TLS on loopback with the test
 // certificate, as the EasyRMM server's public hostname would.
-func (r *rig) serveAgentAPI(svc *agents.Service) string {
+func (r *rig) serveAgentAPI(svc *agents.Service, j *jobs.Service) string {
 	r.t.Helper()
 	cert, err := tls.LoadX509KeyPair(r.env.CertFile, r.env.KeyFile)
 	if err != nil {
@@ -58,6 +62,9 @@ func (r *rig) serveAgentAPI(svc *agents.Service) string {
 	api, err := agentapi.New(svc, &agents.Builds{}, []agentapi.Address{{URL: server}}, nil, r.log)
 	if err != nil {
 		r.t.Fatal(err)
+	}
+	if j != nil {
+		api.WithJobs(j)
 	}
 	srv := &http.Server{Handler: api.Handler(), ReadHeaderTimeout: 10 * time.Second,
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}}
@@ -94,7 +101,11 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := agents.New(r.db, r.audit, NewMeshAgents(r.svc, files), r.log)
-	server := r.serveAgentAPI(svc)
+	_, jobKey, _ := ed25519.GenerateKey(rand.Reader)
+	js := jobs.New(r.db, r.audit, jobKey, 24*time.Hour, r.log)
+	t.Cleanup(js.Close)
+	svc.SetJobKey(js.PublicKey())
+	server := r.serveAgentAPI(svc, js)
 	tok, err := svc.CreateToken(r.ctx, r.sys, hq.ID, agents.TokenInput{Name: "End to end", ExpiresInDays: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -155,6 +166,62 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 	st := docker(t, "exec", "-e", "EASYRMM_AGENT_ROOT=/agent/root", name, "/agent/easyrmm-agent", "status")
 	if !strings.Contains(st, "Device:     "+dev.ID.String()) || !strings.Contains(st, "MeshAgent:  installed") {
 		t.Errorf("status:\n%s", st)
+	}
+
+	// The agent pinned the server's job key at enrollment.
+	var cfg struct {
+		JobKey string `json:"jobKey"`
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "root/var/lib/easyrmm-agent/agent.json")); err != nil || json.Unmarshal(b, &cfg) != nil || cfg.JobKey != js.PublicKey() {
+		t.Errorf("pinned job key %q, server's %q (%v)", cfg.JobKey, js.PublicKey(), err)
+	}
+
+	// A script runs on the device and reports its output (ADR-0017).
+	sc, err := js.CreateScript(r.ctx, r.sys, jobs.ScriptInput{OrganizationID: &acme.ID, Name: "Who am I", Shell: "bash",
+		Body: "echo \"args: $1|$2\"\necho \"uid $(id -u) in $PWD\"\necho warning >&2\nexit 4\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := js.CreateJob(r.ctx, tech, jobs.JobInput{ScriptID: sc.ID, DeviceIDs: []uuid.UUID{dev.ID}, Args: []string{"one", "two words"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var run *jobs.Run
+	r.waitFor(time.Minute, "the script to finish on the device", func() bool {
+		run, err = js.GetRun(r.ctx, tech, job.Runs[0].ID)
+		return err == nil && run.FinishedAt != nil
+	})
+	if run.Status != jobs.StatusFailed || run.ExitCode == nil || *run.ExitCode != 4 || *run.Stderr != "warning\n" ||
+		!strings.HasPrefix(*run.Stdout, "args: one|two words\nuid 65534 in /agent/root/var/lib/easyrmm-agent/jobs/work/run-") || run.StartedAt == nil {
+		t.Errorf("run %+v\nstdout %q stderr %q", run, *run.Stdout, *run.Stderr)
+	}
+
+	// A long script stops when canceled.
+	slow, err := js.CreateScript(r.ctx, r.sys, jobs.ScriptInput{Name: "Slow", Shell: "sh", Body: "echo started; sleep 600"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err = js.CreateJob(r.ctx, tech, jobs.JobInput{ScriptID: slow.ID, DeviceIDs: []uuid.UUID{dev.ID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.waitFor(time.Minute, "the slow script to start", func() bool {
+		run, err = js.GetRun(r.ctx, tech, job.Runs[0].ID)
+		return err == nil && run.Status == jobs.StatusRunning
+	})
+	if _, err := js.CancelJob(r.ctx, tech, job.ID); err != nil {
+		t.Fatal(err)
+	}
+	r.waitFor(time.Minute, "the canceled script to stop", func() bool {
+		run, err = js.GetRun(r.ctx, tech, job.Runs[0].ID)
+		return err == nil && run.FinishedAt != nil
+	})
+	if run.Status != jobs.StatusCanceled || *run.Stdout != "started\n" {
+		t.Errorf("canceled run %+v, stdout %q", run, *run.Stdout)
+	}
+	ps := docker(t, "exec", name, "sh", "-c", `for p in /proc/[0-9]*; do tr '\0' ' ' < $p/cmdline 2>/dev/null; echo; done | grep -c '^sleep 600' || true`)
+	if strings.TrimSpace(ps) != "0" {
+		t.Errorf("the canceled script is still running (%s processes)", strings.TrimSpace(ps))
 	}
 
 	// A remote session can start on the enrolled device.

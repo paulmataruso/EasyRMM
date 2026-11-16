@@ -1,6 +1,6 @@
 // Fictional records shaped like the API's JSON, for page tests.
 
-import type { AuditEntry, Device, DeviceGroup, Organization, RoleView, SessionItem, Site, User } from "../api/types";
+import type { AuditEntry, Device, DeviceGroup, Job, JobRun, Organization, RoleView, RunStatus, Script, SessionItem, Site, User } from "../api/types";
 
 const T = "2026-11-01T10:00:00Z";
 
@@ -51,6 +51,7 @@ export function device(id: string, name: string, extra: Partial<Device> = {}): D
     canDesktop: true,
     canTerminal: true,
     canFiles: true,
+    canRunScripts: false,
     ...extra,
   };
 }
@@ -113,3 +114,78 @@ export const ROLES: RoleView[] = [
   { role: "technician", name: "Technician", description: "Supports devices.", rank: 40, scopes: ["organization", "site"], permissions: [] },
   { role: "read_only", name: "Read-Only", description: "Views only.", rank: 10, scopes: ["organization", "site"], permissions: [] },
 ];
+
+export function script(id: string, name: string, extra: Partial<Script> = {}): Script {
+  return {
+    id,
+    level: "shared",
+    organizationId: null,
+    siteId: null,
+    name,
+    description: "",
+    shell: "bash",
+    sha256: "a".repeat(64),
+    size: 120,
+    timeoutSeconds: 300,
+    createdAt: T,
+    updatedAt: T,
+    canEdit: true,
+    canRun: true,
+    ...extra,
+  };
+}
+
+const NO_COUNTS: Record<RunStatus, number> = { queued: 0, sent: 0, running: 0, succeeded: 0, failed: 0, timed_out: 0, canceled: 0, expired: 0, lost: 0 };
+
+export function counts(c: Partial<Record<RunStatus, number>>): Record<RunStatus, number> {
+  return { ...NO_COUNTS, ...c };
+}
+
+export function jobRun(id: string, deviceId: string, deviceName: string, status: RunStatus, extra: Partial<JobRun> = {}): JobRun {
+  const finished = !["queued", "sent", "running"].includes(status);
+  return {
+    id,
+    jobId: "j1",
+    deviceId,
+    deviceName,
+    organizationId: "o1",
+    organizationName: "Northwind Traders",
+    siteId: "s1",
+    siteName: "Head office",
+    scriptName: "Disk usage",
+    status,
+    createdAt: T,
+    expiresAt: "2026-11-02T10:00:00Z",
+    sentAt: status === "queued" ? null : "2026-11-01T10:00:01Z",
+    deliveries: status === "queued" ? 0 : 1,
+    startedAt: ["queued", "sent", "expired"].includes(status) ? null : "2026-11-01T10:00:02Z",
+    finishedAt: finished ? "2026-11-01T10:01:07Z" : null,
+    exitCode: status === "succeeded" ? 0 : status === "failed" ? 2 : null,
+    error: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+    cancelRequested: false,
+    canCancel: !finished,
+    ...extra,
+  };
+}
+
+export function job(id: string, scriptName: string, extra: Partial<Job> = {}): Job {
+  return {
+    id,
+    scriptId: "sc1",
+    scriptName,
+    shell: "bash",
+    sha256: "a".repeat(64),
+    args: [],
+    timeoutSeconds: 300,
+    expiresAt: "2026-11-02T10:00:00Z",
+    createdBy: "alex@example.com",
+    createdAt: T,
+    counts: counts({ succeeded: 1 }),
+    total: 1,
+    finished: true,
+    canCancel: true,
+    ...extra,
+  };
+}

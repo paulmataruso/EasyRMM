@@ -18,6 +18,13 @@ export default defineConfig({
     // Keep every asset as a file so the strict CSP (no inline scripts or styles) holds.
     assetsInlineLimit: 0,
     target: "es2022",
+    rolldownOptions: {
+      output: {
+        // Libraries change far less often than the console, so they get a chunk of their own that browsers keep
+        // across EasyRMM upgrades.
+        codeSplitting: { groups: [{ name: "vendor", test: /node_modules/ }] },
+      },
+    },
   },
   server: {
     port: 5173,

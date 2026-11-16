@@ -102,9 +102,10 @@ devices page before using it.
 |---|---|
 | `/usr/local/bin/easyrmm-agent` | The agent |
 | `/etc/systemd/system/easyrmm-agent.service` | Its service |
-| `/var/lib/easyrmm-agent/agent.json` | Server URL and device ID |
+| `/var/lib/easyrmm-agent/agent.json` | Server URL, device ID and the server's job-signing public key, pinned at enrollment |
 | `/var/lib/easyrmm-agent/device.key` | The device's Ed25519 private key (mode 600). It never leaves the computer; the agent refuses to start if the file is readable by others |
 | `/var/lib/easyrmm-agent/status.json` | Last heartbeat, last error, MeshAgent state (read by `easyrmm-agent status`) |
+| `/var/lib/easyrmm-agent/jobs/` | Scripts being run (`work/`, removed after each run) and results not yet reported (`journal/`). See [Scripts and jobs](../operations/scripts-and-jobs.md) |
 | `/usr/local/lib/easyrmm-agent/meshagent/` | MeshAgent, its settings and database |
 | `/etc/systemd/system/easyrmm-meshagent.service` | MeshAgent's service |
 

@@ -47,6 +47,7 @@ type Service struct {
 	log    *slog.Logger
 	now    func() time.Time
 	enroll *auth.KeyedLimiter
+	jobKey string
 }
 
 // New returns a Service. mesh may be nil.
@@ -59,6 +60,10 @@ func New(db *database.DB, auditLog *audit.Logger, mesh MeshAgents, log *slog.Log
 		enroll: auth.NewKeyedLimiter(250*time.Millisecond, 120, 10_000),
 	}
 }
+
+// SetJobKey sets the job-signing public key (agentproto.EncodeKey) that
+// enrollment and heartbeat answers carry for agents to pin (ADR-0017).
+func (s *Service) SetJobKey(key string) { s.jobKey = key }
 
 // Errors the agent API maps to responses.
 var (

@@ -4,6 +4,8 @@
 package access
 
 import (
+	"github.com/google/uuid"
+
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
@@ -41,6 +43,17 @@ func (c Caller) Can(perm rbac.Permission, r rbac.Resource) bool {
 // CanGlobal reports whether the caller holds perm platform-wide.
 func (c Caller) CanGlobal(perm rbac.Permission) bool {
 	return c.system || c.Principal.CanGlobal(perm)
+}
+
+// CanAnywhere reports whether the caller holds perm in any scope.
+func (c Caller) CanAnywhere(perm rbac.Permission) bool {
+	return c.system || c.Principal.CanAnywhere(perm)
+}
+
+// CanInOrg reports whether the caller holds perm in the organization or at
+// any of its sites.
+func (c Caller) CanInOrg(perm rbac.Permission, orgID uuid.UUID) bool {
+	return c.system || c.Principal.CanInOrg(perm, orgID)
 }
 
 // Require returns apperr.ErrForbidden unless the caller holds perm.

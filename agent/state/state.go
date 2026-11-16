@@ -23,6 +23,10 @@ type Config struct {
 	EnrolledAt time.Time `json:"enrolledAt"`
 	// MeshAgentMode is how MeshAgent runs: "systemd" or "child".
 	MeshAgentMode string `json:"meshAgentMode"`
+	// JobKey is the server's job-signing public key, pinned the first time
+	// the server sends it (ADR-0017). Jobs signed by any other key are
+	// refused.
+	JobKey string `json:"jobKey,omitempty"`
 }
 
 // Store reads and writes the agent's files under one directory.
@@ -108,6 +112,18 @@ func (s Store) Save(c *Config, key ed25519.PrivateKey) error {
 	}
 	return writeFile(filepath.Join(s.Dir, configFile), append(b, '\n'), 0o600)
 }
+
+// SaveConfig rewrites the configuration of an enrolled agent.
+func (s Store) SaveConfig(c *Config) error {
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeFile(filepath.Join(s.Dir, configFile), append(b, '\n'), 0o600)
+}
+
+// JobsDir holds the job journal and the runs' working directories.
+func (s Store) JobsDir() string { return filepath.Join(s.Dir, "jobs") }
 
 // Status is what the running agent last observed, for `easyrmm-agent status`.
 type Status struct {

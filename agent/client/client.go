@@ -223,14 +223,47 @@ func (c *Client) do(ctx context.Context, method, target string, body []byte, sig
 	return nil, e
 }
 
+// Poll waits for jobs (ADR-0017). The server holds the request for up to
+// agentproto.PollWait.
+func (c *Client) Poll(ctx context.Context) (*agentproto.PollResponse, error) {
+	var out agentproto.PollResponse
+	// Eight jobs with 64 KiB scripts and their arguments, base64-encoded.
+	return &out, c.callLimit(ctx, http.MethodPost, agentproto.PathJobsPoll, []byte("{}"), true, &out, 8<<20)
+}
+
+// Start asks whether a delivered run may start now.
+func (c *Client) Start(ctx context.Context, runID string) (*agentproto.StartResponse, error) {
+	var out agentproto.StartResponse
+	return &out, c.call(ctx, http.MethodPost, agentproto.PathJobStart(runID), []byte("{}"), true, &out)
+}
+
+// Result reports how a run ended.
+func (c *Client) Result(ctx context.Context, runID string, r agentproto.ResultRequest) error {
+	body, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(ctx, http.MethodPost, agentproto.PathJobResult(runID), body, true)
+	if err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	return resp.Body.Close()
+}
+
 // call sends a request and decodes its JSON answer into dst.
 func (c *Client) call(ctx context.Context, method, target string, body []byte, sign bool, dst any) error {
+	return c.callLimit(ctx, method, target, body, sign, dst, 1<<20)
+}
+
+// callLimit is call with a limit on the answer's size.
+func (c *Client) callLimit(ctx context.Context, method, target string, body []byte, sign bool, dst any, limit int64) error {
 	resp, err := c.do(ctx, method, target, body, sign)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(dst); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, limit)).Decode(dst); err != nil {
 		return fmt.Errorf("reading the server's answer: %w", err)
 	}
 	return nil

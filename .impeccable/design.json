@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-15T20:02:44.244543+00:00",
+  "generatedAt": "2026-11-16T02:43:29.846149+00:00",
   "title": "Design System: EasyRMM",
   "upstream": {
     "system": "EasyPatch",
@@ -580,6 +580,22 @@
       "description": "EasyRMM addition: teaches j/k and / shortcuts in place.",
       "html": "<span class=\"ds-kbd-line\">Press <kbd class=\"ds-kbd\">j</kbd> and <kbd class=\"ds-kbd\">k</kbd> to move between rows, <kbd class=\"ds-kbd\">/</kbd> to search.</span>",
       "css": ".ds-kbd-line{font-family: ui-sans-serif, system-ui, sans-serif;font-size:12px;color:var(--muted);} .ds-kbd{font-family: ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;background:var(--raised);padding:0 4px;font-size:11px;color:var(--muted);}"
+    },
+    {
+      "name": "Code View",
+      "kind": "custom",
+      "refersTo": "CodeView (web/src/pages/scripts/parts.tsx)",
+      "description": "EasyRMM addition: a script with a line-number gutter, unwrapped, scrolling sideways, with a copy button.",
+      "html": "<div class=\"ds-code\"><pre><span class=\"ds-ln\">1</span>set -eu\n<span class=\"ds-ln\">2</span>df -h /</pre></div>",
+      "css": ".ds-code{border:1px solid var(--line);border-radius:6px;background:var(--raised);} .ds-code pre{margin:0;padding:10px 12px;font-family: ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace;font-size:12px;line-height:1.625;color:var(--fg);white-space:pre;overflow:auto;} .ds-ln{display:inline-block;width:2ch;margin-right:12px;text-align:right;color:var(--subtle);user-select:none;}"
+    },
+    {
+      "name": "Run Status Badge",
+      "kind": "custom",
+      "refersTo": "RunStatusBadge (web/src/pages/scripts/parts.tsx)",
+      "description": "EasyRMM addition: a script run's status in the badge tones; Running carries an info dot.",
+      "html": "<span class=\"ds-badge ds-info\"><span class=\"ds-dot\"></span>Running</span> <span class=\"ds-badge ds-ok\">Succeeded</span> <span class=\"ds-badge ds-danger\">Failed</span> <span class=\"ds-badge ds-warn\">Timed out</span>",
+      "css": ".ds-badge{display:inline-flex;align-items:center;gap:4px;border-radius:9999px;padding:2px 8px;font:500 12px ui-sans-serif, system-ui, sans-serif;} .ds-info{background:var(--info-soft);color:var(--info);} .ds-ok{background:var(--ok-soft);color:var(--ok);} .ds-danger{background:var(--danger-soft);color:var(--danger);} .ds-warn{background:var(--warn-soft);color:var(--warn);} .ds-dot{width:8px;height:8px;border-radius:9999px;background:var(--info);}"
     }
   ],
   "narrative": {

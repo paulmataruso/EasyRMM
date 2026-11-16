@@ -103,7 +103,7 @@ func Load(ctx context.Context, db *database.DB, sealer *secrets.Sealer) (*Author
 		}
 		plain, err := sealer.Open(s.Sealed, []byte(aad))
 		if err != nil {
-			return fmt.Errorf("pki: unsealing the stored authority: %w", err)
+			return fmt.Errorf("pki: opening the stored authority (was EASYRMM_SECRET_KEY changed without listing the old key in EASYRMM_SECRET_KEYS_PREVIOUS?): %w", err)
 		}
 		if err := json.Unmarshal(plain, &m); err != nil {
 			return fmt.Errorf("pki: reading the stored authority: %w", err)

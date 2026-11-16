@@ -60,6 +60,10 @@ type Device struct {
 	CanDesktop  bool `json:"canDesktop"`
 	CanTerminal bool `json:"canTerminal"`
 	CanFiles    bool `json:"canFiles"`
+	// CanRunScripts: the caller holds script.run here and the device has
+	// the EasyRMM agent (ADR-0017). Whether a script's shell suits the
+	// device is checked per script.
+	CanRunScripts bool `json:"canRunScripts"`
 
 	// MeshNodeID is MeshCentral's node identifier, empty without MeshAgent.
 	MeshNodeID string `json:"-"`
@@ -130,6 +134,7 @@ func (s *Service) decorate(c access.Caller, d *Device) {
 	d.CanDesktop = ok && c.Can(rbac.PermRemoteDesktop, r)
 	d.CanTerminal = ok && c.Can(rbac.PermTerminal, r)
 	d.CanFiles = ok && c.Can(rbac.PermFiles, r)
+	d.CanRunScripts = d.Agent != nil && c.Can(rbac.PermScriptRun, r)
 }
 
 // List returns the devices the caller can see, by name.

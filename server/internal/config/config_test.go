@@ -75,6 +75,7 @@ func TestRejectsUnsafeOrInvalidValues(t *testing.T) {
 		"idle too short":           {"EASYRMM_SESSION_IDLE_TIMEOUT": "1m"},
 		"max age below idle":       {"EASYRMM_SESSION_IDLE_TIMEOUT": "3h", "EASYRMM_SESSION_MAX_AGE": "2h"},
 		"short audit retention":    {"EASYRMM_AUDIT_RETENTION": "24h"},
+		"short job retention":      {"EASYRMM_JOB_RETENTION": "1h"},
 		"bad bool":                 {"EASYRMM_REQUIRE_MFA": "maybe"},
 		"bad duration":             {"EASYRMM_SESSION_MAX_AGE": "forever"},
 		"bad int":                  {"EASYRMM_DATABASE_MAX_CONNS": "lots"},

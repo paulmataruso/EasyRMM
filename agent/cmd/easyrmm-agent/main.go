@@ -24,11 +24,13 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/paulmataruso/easyrmm/agent/client"
 	"github.com/paulmataruso/easyrmm/agent/host"
+	"github.com/paulmataruso/easyrmm/agent/jobs"
 	"github.com/paulmataruso/easyrmm/agent/meshagent"
 	"github.com/paulmataruso/easyrmm/agent/runner"
 	"github.com/paulmataruso/easyrmm/agent/state"
@@ -225,7 +227,7 @@ func (e *env) register(ctx context.Context, server, token, caFile string, servic
 	if err != nil {
 		return nil, fmt.Errorf("enrolling: %w", err)
 	}
-	cfg.DeviceID, cfg.EnrolledAt = resp.DeviceID, time.Now().UTC()
+	cfg.DeviceID, cfg.EnrolledAt, cfg.JobKey = resp.DeviceID, time.Now().UTC(), resp.JobKey
 	if err := e.store.Save(cfg, key); err != nil {
 		return nil, fmt.Errorf("saving the enrollment: %w", err)
 	}
@@ -287,7 +289,46 @@ func (e *env) run(ctx context.Context) error {
 		r.Mesh = e.mesh(cfg)
 	}
 	e.log.Info("EasyRMM agent started", "version", Version, "server", cfg.Server, "device_id", cfg.DeviceID)
-	return r.Run(ctx)
+	if runtime.GOOS != "linux" {
+		return r.Run(ctx)
+	}
+	w := &jobs.Worker{Client: c, DeviceID: cfg.DeviceID, Dir: e.store.JobsDir(), Log: e.log}
+	if cfg.JobKey != "" {
+		if err := w.SetKey(cfg.JobKey); err != nil {
+			return fmt.Errorf("the pinned job key in the configuration is damaged: %w", err)
+		}
+	}
+	r.OnJobKey = e.pinJobKey(cfg, w)
+	var g sync.WaitGroup
+	g.Go(func() { _ = w.Run(ctx) })
+	err = r.Run(ctx)
+	g.Wait()
+	return err
+}
+
+// pinJobKey pins the server's job-signing key the first time it is seen
+// (ADR-0017) and refuses to follow a change.
+func (e *env) pinJobKey(cfg *state.Config, w *jobs.Worker) func(string) {
+	var warned time.Time
+	return func(key string) {
+		switch {
+		case key == cfg.JobKey:
+		case cfg.JobKey == "":
+			if err := w.SetKey(key); err != nil {
+				e.log.Error("the server sent a job key that is not valid", "error", err)
+				return
+			}
+			cfg.JobKey = key
+			if err := e.store.SaveConfig(cfg); err != nil {
+				e.log.Error("saving the job key failed", "error", err)
+				return
+			}
+			e.log.Info("pinned the server's job key")
+		case time.Since(warned) > time.Hour:
+			warned = time.Now()
+			e.log.Error("the server's job key differs from the pinned one; jobs signed with it are refused. Reinstall the agent if the server's key was replaced.")
+		}
+	}
 }
 
 func (e *env) status(ctx context.Context) error {

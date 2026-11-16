@@ -1,6 +1,7 @@
 // Package agentproto is the wire protocol between the EasyRMM agent and the
-// server (ADR-0009, ADR-0015): enrollment messages, heartbeats and the
-// Ed25519 request signatures that authenticate an enrolled device.
+// server (ADR-0009, ADR-0015, ADR-0017): enrollment messages, heartbeats,
+// the Ed25519 request signatures that authenticate an enrolled device, and
+// signed jobs.
 //
 // It is shared by the server and the agent so both sides build the signed
 // string the same way.
@@ -75,6 +76,9 @@ type EnrollResponse struct {
 	HeartbeatSeconds int    `json:"heartbeatSeconds"`
 	// MeshAgent says whether the agent should install MeshAgent now.
 	MeshAgent MeshAgentInfo `json:"meshAgent"`
+	// JobKey is the server's job-signing public key (EncodeKey), which the
+	// agent pins (ADR-0017).
+	JobKey string `json:"jobKey,omitempty"`
 }
 
 // HeartbeatRequest reports that the agent is alive.
@@ -86,6 +90,8 @@ type HeartbeatRequest struct {
 type HeartbeatResponse struct {
 	HeartbeatSeconds int           `json:"heartbeatSeconds"`
 	MeshAgent        MeshAgentInfo `json:"meshAgent"`
+	// JobKey is the server's job-signing public key, as in EnrollResponse.
+	JobKey string `json:"jobKey,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.

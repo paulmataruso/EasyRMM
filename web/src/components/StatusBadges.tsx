@@ -81,6 +81,11 @@ const ACTIONS: Record<string, string> = {
   "device.remote_link": "Connected remote access",
   "enrollment_token.create": "Created deployment token",
   "enrollment_token.revoke": "Revoked deployment token",
+  "script.create": "Added script",
+  "script.update": "Changed script",
+  "script.delete": "Deleted script",
+  "device.script_run": "Ran script",
+  "job.cancel": "Stopped script run",
 };
 
 export function actionLabel(action: string): string {
@@ -95,6 +100,8 @@ export const ACTION_GROUPS: [string, string][] = [
   ["device_group", "Device groups"],
   ["device", "Devices"],
   ["enrollment_token", "Deployment tokens"],
+  ["script", "Scripts"],
+  ["job", "Jobs"],
   ["user", "Users"],
   ["setup", "Setup"],
 ];
@@ -104,6 +111,7 @@ export function auditTarget(e: AuditEntry): string {
   const d = e.details ?? {};
   const name = typeof d.name === "string" ? d.name : typeof d.email === "string" ? d.email : null;
   if (name) return name;
+  if (typeof d.script === "string" && typeof d.device === "string") return `${d.script} on ${d.device}`;
   if (typeof d.device === "string") return typeof d.kind === "string" ? `${d.device} (${REMOTE_KIND_NAMES[d.kind as RemoteKind] ?? d.kind})` : d.device;
   if (e.targetType === "session") return "Session";
   if (e.actorType === "user" && e.targetType === "user" && e.targetId === e.actorId) return "Own account";

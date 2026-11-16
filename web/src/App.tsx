@@ -24,6 +24,12 @@ import { AddDevicesPage } from "./pages/devices/AddDevicesPage";
 import { DevicesPage } from "./pages/devices/DevicesPage";
 import { DeviceDetailPage } from "./pages/devices/DeviceDetailPage";
 import { RemoteSessionPage } from "./pages/devices/RemoteSessionPage";
+import { ScriptsPage } from "./pages/scripts/ScriptsPage";
+import { ScriptDetailPage } from "./pages/scripts/ScriptDetailPage";
+import { ScriptFormPage } from "./pages/scripts/ScriptFormPage";
+import { JobsPage } from "./pages/jobs/JobsPage";
+import { JobDetailPage } from "./pages/jobs/JobDetailPage";
+import { RunDetailPage } from "./pages/jobs/RunDetailPage";
 
 const stageRoutes: Record<Exclude<AuthStage, "loading" | "error" | "ready">, string> = {
   setup: "/setup",
@@ -98,6 +104,13 @@ export function App() {
         <Route path="devices" element={<DevicesPage />} />
         <Route path="devices/add" element={<AddDevicesPage />} />
         <Route path="devices/:id" element={<DeviceDetailPage />} />
+        <Route path="scripts" element={<ScriptsPage />} />
+        <Route path="scripts/new" element={<ScriptFormPage />} />
+        <Route path="scripts/:id" element={<ScriptDetailPage />} />
+        <Route path="scripts/:id/edit" element={<ScriptFormPage />} />
+        <Route path="jobs" element={<JobsPage />} />
+        <Route path="jobs/:id" element={<JobDetailPage />} />
+        <Route path="jobs/:jobId/runs/:runId" element={<RunDetailPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="users/:id" element={<UserDetailPage />} />
         <Route path="account" element={<AccountPage />} />

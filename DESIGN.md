@@ -234,7 +234,7 @@ EasyRMM uses EasyPatch's design system, adopted as-is. This is the owner's bindi
 
 The system is calm, dense and flat operator UI. Bordered surfaces on a dark canvas, one blue accent, four status tones with soft fills, a navy sidebar, the system UI font at a 14px base. Nothing decorative; every tile, badge and row is server data.
 
-EasyRMM adds only five things on top of the shared system, all in service of keyboard travel and toolbar alignment: `kbd` styling, a uniform `.input` min-height so toolbar inputs and selects line up with buttons, a `focus-within` row tint for j/k travel, a `narrow` variant of KeyValueList, and `hideLegend` on AssignmentEditor. Everything else is EasyPatch's.
+EasyRMM's additions on top of the shared system are each marked "(EasyRMM addition)" below. The first five serve keyboard travel and toolbar alignment: `kbd` styling, a uniform `.input` min-height so toolbar inputs and selects line up with buttons, a `focus-within` row tint for j/k travel, a `narrow` variant of KeyValueList, and `hideLegend` on AssignmentEditor. Everything else is EasyPatch's.
 
 **Key Characteristics:**
 - EasyPatch's tokens, components and both themes, unchanged; EasyPatch `frontend/src/index.css` is upstream.
@@ -385,6 +385,13 @@ Centered, quiet: a subtle 32px icon, a medium fg title and muted body, optional 
 
 ### Device tree dock (EasyRMM addition)
 A **Tree** toggle (pressed state in accent-soft with a 40% accent border) in the devices pages' header opens a 20rem dock at the right of the page: surface, line border on its left, no shadow, entering over 180ms (12px slide, none under reduced motion). It holds a header (title, Collapse all, close), a filter with a live count, an **All devices** row, and the WAI-ARIA tree of organizations, sites and devices: 28px rows indented 16px a level, chevrons, building, pin and status-dot icons, online/total counts in muted tabular figures, the row for the page's organization, site or device in accent-soft and medium weight. From `lg` it sits beside the page and is remembered in the browser; below `lg` it opens over the page as a drawer with a scrim and closes after a choice.
+
+### Code and script output (EasyRMM addition)
+Scripts and their output are the content of the scripts and jobs pages, so they are shown as code, never restyled as prose.
+- **Code view:** a script on raised with a line border and 6px radius, 12px mono at relaxed leading, line numbers in a subtle right-aligned gutter that selection skips, lines never wrapped (the block scrolls sideways, at most 36rem tall), and the copy button at top right.
+- **Output view:** each stream (standard output, standard error) under a 12px muted heading with its own copy button; the text keeps its spacing and line breaks but wraps long lines, at most 32rem tall. An empty stream is a dashed-border line in muted text, not an empty box; a stream cut in the middle says so under it.
+- **Run status:** Queued (neutral), Delivered and Running (info, Running with a dot), Succeeded (ok), Failed (danger), Timed out, Expired and No result (warn), Canceled (neutral); a running script with a stop requested reads Canceling (warn). A job's state sums its runs (Waiting, Running, Succeeded, Some failed, Failed, Partly canceled, Canceled), and its progress is the non-zero counts as dot, tabular count and muted status word.
+- **Device picker:** in the run dialog, a bordered list (16rem tall) of checkbox rows (name over muted organization / site, online dot at the right) under a filter and an All toggle that goes indeterminate for a partial choice; the selected count sits at the left of the dialog's buttons.
 
 ### Navigation
 The navy sidebar holds the wordmark (on-dark variant in both themes), primary items (14px, 16px icons, 8px by 12px, 6px radius; active on sidebar-active with white medium text), and at its foot the account link (name over platform role or email) and Sign out above a 10% white divider. Elsewhere the wordmark switches between `wordmark.svg` (dark) and `wordmark-light.svg` (light) next to `logo.svg`.

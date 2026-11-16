@@ -250,6 +250,8 @@ export interface Device {
   canDesktop: boolean;
   canTerminal: boolean;
   canFiles: boolean;
+  /** The caller may run scripts here and the device has the EasyRMM agent. */
+  canRunScripts: boolean;
 }
 
 export interface DeviceAgent {
@@ -344,4 +346,108 @@ export interface RemoteAccessStatus {
   lastErrorAt?: string;
   devices: number;
   devicesOnline: number;
+}
+
+// Scripts and jobs (ADR-0017) --------------------------------------------------------------------
+
+export type Shell = "bash" | "sh" | "python3";
+/** Where a script can run: everywhere, in one organization, or in one site. */
+export type ScriptLevel = "shared" | "organization" | "site";
+
+export interface Script {
+  id: string;
+  level: ScriptLevel;
+  organizationId: string | null;
+  organizationName?: string;
+  siteId: string | null;
+  siteName?: string;
+  name: string;
+  description: string;
+  shell: Shell;
+  /** Only in the response for one script. */
+  body?: string;
+  sha256: string;
+  /** Body size in bytes. */
+  size: number;
+  timeoutSeconds: number;
+  createdAt: string;
+  updatedAt: string;
+  canEdit: boolean;
+  canRun: boolean;
+}
+
+export interface ScriptInput {
+  organizationId: string | null;
+  siteId: string | null;
+  name: string;
+  description: string;
+  shell: Shell;
+  body: string;
+  timeoutSeconds: number;
+}
+
+export type ScriptPatch = Partial<Pick<ScriptInput, "name" | "description" | "shell" | "body" | "timeoutSeconds">>;
+
+export type RunStatus = "queued" | "sent" | "running" | "succeeded" | "failed" | "timed_out" | "canceled" | "expired" | "lost";
+
+export interface Job {
+  id: string;
+  /** Null once the script is deleted; the job keeps its own copy. */
+  scriptId: string | null;
+  scriptName: string;
+  shell: Shell;
+  sha256: string;
+  args: string[];
+  timeoutSeconds: number;
+  /** When devices that have not picked the job up stop being waited for. */
+  expiresAt: string;
+  createdBy: string;
+  createdAt: string;
+  /** A count for every status, over the runs the caller can see. */
+  counts: Record<RunStatus, number>;
+  total: number;
+  finished: boolean;
+  /** Only in the response for one job. */
+  body?: string;
+  runs?: JobRun[];
+  canCancel: boolean;
+}
+
+export interface JobRun {
+  id: string;
+  jobId: string;
+  deviceId: string;
+  deviceName: string;
+  organizationId: string;
+  organizationName: string;
+  siteId: string;
+  siteName: string;
+  scriptName: string;
+  status: RunStatus;
+  createdAt: string;
+  expiresAt: string;
+  sentAt: string | null;
+  deliveries: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  exitCode: number | null;
+  error: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
+  cancelRequested: boolean;
+  /** Output and the job are only in the response for one run. */
+  stdout?: string;
+  stderr?: string;
+  job?: Job;
+  canCancel: boolean;
+}
+
+export interface JobInput {
+  scriptId: string;
+  deviceIds: string[];
+  args: string[];
+  /** 0 keeps the script's timeout. */
+  timeoutSeconds: number;
+  /** 0 is the server's default (24 hours). */
+  waitHours: number;
 }
