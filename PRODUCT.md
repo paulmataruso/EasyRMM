@@ -49,9 +49,9 @@ trail hold.
   in the console in its own browser origin; everything else (tenancy,
   inventory, monitoring, scripting, jobs, alerts, audit, enrollment) is
   EasyRMM's own.
-- One unified endpoint install (MSI, EXE, PowerShell one-liner, DEB/RPM,
-  script) installs and manages both the MeshCentral agent and the EasyRMM
-  agent.
+- One endpoint install (a PowerShell one-liner on Windows, a shell one-liner
+  on Linux; MSI, DEB and RPM packages later) installs and manages both the
+  MeshCentral agent and the EasyRMM agent.
 - Patch management integrates with EasyPatch, the owner's separate patching
   product, through a service API.
 
@@ -61,21 +61,28 @@ trail hold.
   public port (443, optionally 80). Optional NGINX in front.
 - Hierarchy: organization → site → device group → device. Permissions are
   granted per organization or per site.
-- Sign-in always uses a second factor (TOTP) by default; first-run setup is
-  claimed with a one-time token from the server's data directory.
+- Sign-in uses a second factor by default (an authenticator app, or a
+  security key or passkey); first-run setup is claimed with a one-time token
+  from the server's data directory.
 - Remote sessions open MeshCentral inside the console (iframe on the
   dedicated mesh host name).
 
 ## Capabilities and Constraints
 
-Implemented (server): sign-in with mandatory TOTP enrollment, recovery codes,
-session management, password reset (e-mail or administrator link), first-run
-setup, organizations/sites/device groups, user invitations and role
-management with escalation protection, tamper-evident audit log.
+Implemented, with the console (IMPLEMENTATION_STATUS.md has the detail):
+- sign-in with a second factor, recovery codes, sessions, password reset,
+  first-run setup;
+- organizations, sites and device groups, users and roles with escalation
+  protection, a tamper-evident audit log with forwarding to syslog;
+- MeshCentral remote access (desktop, terminal, files; RDP built but not yet
+  run against Windows);
+- the agent with install commands, approval and coordinated updates;
+- inventory, alerts, scripts and jobs, software deployment, reports;
+- EasyPatch patching.
 
-Planned by phase (see ROADMAP.md): MeshCentral remote access, unified
-agent and installers, inventory, monitoring and alerts, scripts and jobs,
-software deployment, reporting, EasyPatch integration.
+Linux endpoints are verified end to end; Windows endpoints for install,
+enrollment and remote access. Not built yet: MSI, DEB and RPM packages,
+e-mail and webhook alert notifications, a macOS agent.
 
 Constraints:
 - No mock data, no placeholder buttons: the UI shows only what the server

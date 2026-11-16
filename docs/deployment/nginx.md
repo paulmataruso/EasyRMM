@@ -59,7 +59,7 @@ server {
         # apart on an IP address (ADR-0016).
         proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        # Agent and remote-session WebSockets.
+        # MeshAgent and remote-session WebSockets.
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
         proxy_read_timeout 1h;
