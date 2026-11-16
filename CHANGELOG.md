@@ -274,6 +274,26 @@ All notable changes to this project are documented here. The format follows
   device's page; `GET /api/v1/software` remains.
 
 ### Security
+- Agent hardening from the Phase 9 security review:
+  - Windows: any user may create folders under ProgramData, so one could
+    make `C:\ProgramData\EasyRMM\Agent` before the agent was installed,
+    stay its owner whatever access list the agent set, and later replace
+    the agent's settings and key to run code as SYSTEM. Folders there that
+    are not owned by the system, Administrators or TrustedInstaller, or are
+    links, are now moved aside and made anew, and new folders get their
+    access list as they are created.
+  - Chocolatey and winget actions run `choco.exe` or a `winget.exe` found
+    on the system's PATH only if no one but administrators can change it
+    or its folders; a standard user could create `C:\ProgramData\chocolatey`
+    on a machine without Chocolatey and have the agent run their program.
+  - A cmd script's arguments may not contain `%`: cmd expands variables
+    inside quotes, and `%CMDCMDLINE:~-1%` ends the quotes, so an argument
+    could run a command of its own. Refused when the job is created and by
+    the agent.
+  - The Linux install command passes the deployment token in the
+    environment (`export EASYRMM_TOKEN=…; … | sudo --preserve-env=EASYRMM_TOKEN sh`)
+    instead of `--token`, which put it on `sh`'s command line, readable by
+    every user of the computer and kept in sudo's log.
 - Sign-in hardening from the Phase 9 security review (migration 00016):
   - An authenticator app whose set-up was started but never confirmed no
     longer works as a second factor. Before, a session could start set-up

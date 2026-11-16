@@ -77,14 +77,14 @@ export function formatBytes(n: number): string {
 }
 
 /**
- * The command that installs the agent on a Linux computer. An address with a
- * pin uses the server's own certificate authority, which the computer does not
- * trust yet: curl checks the server's public key instead (--insecure skips only
- * the certificate authority check).
+ * The command that installs the agent on a Linux computer. The token travels in the environment: `export` is part of
+ * the shell, so no process's command line (which every user on the computer can read) or sudo's log ever holds it.
+ * An address with a pin uses the server's own certificate authority, which the computer does not trust yet: curl
+ * checks the server's public key instead (--insecure skips only the certificate authority check).
  */
 export function linuxInstallCommand(serverUrl: string, secret: string, pin?: string): string {
   const tls = pin ? `--insecure --pinnedpubkey '${pin}' ` : "";
-  return `curl -fsSL ${tls}${serverUrl}${AGENT_PATH}/install.sh | sudo sh -s -- --token ${secret}`;
+  return `export EASYRMM_TOKEN='${secret}'; curl -fsSL ${tls}${serverUrl}${AGENT_PATH}/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh; unset EASYRMM_TOKEN`;
 }
 
 /** How an address is listed: its host, marked when it is an IP address beside the public name. */

@@ -67,7 +67,7 @@ func TestSoftwareJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if wj.ScriptName != "Update Mozilla.Firefox (winget)" || wj.Shell != agentproto.ShellPowerShell || wj.Body != wingetScript || wj.TimeoutSeconds != 600 {
+	if wj.ScriptName != "Update Mozilla.Firefox (winget)" || wj.Shell != agentproto.ShellPowerShell || wj.Body != adminOnlyScript+wingetScript || wj.TimeoutSeconds != 600 {
 		t.Errorf("winget job %+v", wj)
 	}
 

@@ -48,6 +48,9 @@ var (
 	wingetScript string
 	//go:embed software/chocolatey.ps1
 	chocolateyScript string
+	// adminOnlyScript defines Test-AdminOnly for the Windows scripts.
+	//go:embed software/adminonly.ps1
+	adminOnlyScript string
 )
 
 // manager is what EasyRMM knows of a package manager.
@@ -62,9 +65,9 @@ type manager struct {
 }
 
 var managers = map[string]manager{
-	ManagerWinget: {"winget", "windows", agentproto.ShellPowerShell, wingetScript,
+	ManagerWinget: {"winget", "windows", agentproto.ShellPowerShell, adminOnlyScript + wingetScript,
 		regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$`)},
-	ManagerChocolatey: {"Chocolatey", "windows", agentproto.ShellPowerShell, chocolateyScript,
+	ManagerChocolatey: {"Chocolatey", "windows", agentproto.ShellPowerShell, adminOnlyScript + chocolateyScript,
 		regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$`)},
 	ManagerSystem: {"the system's package manager", "linux", agentproto.ShellSh, linuxScript,
 		regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+:-]{0,127}$`)},

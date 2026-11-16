@@ -168,6 +168,13 @@ func (s *Service) CreateJob(ctx context.Context, c access.Caller, in JobInput) (
 		if err != nil {
 			return nil, err
 		}
+		if sc.Shell == agentproto.ShellCmd {
+			for i, a := range args {
+				if strings.ContainsAny(a, CmdArgForbidden) {
+					return nil, apperr.Invalid("args", fmt.Sprintf("Argument %d contains %%, a double quote or a line break, which cmd would read as part of the command. Use a PowerShell script to pass it.", i+1))
+				}
+			}
+		}
 		timeout := sc.TimeoutSeconds
 		if in.TimeoutSeconds != 0 {
 			timeout = in.TimeoutSeconds
@@ -184,6 +191,12 @@ func (s *Service) CreateJob(ctx context.Context, c access.Caller, in JobInput) (
 		})
 	})
 }
+
+// CmdArgForbidden are the characters a cmd script's argument cannot hold.
+// Quoting protects the rest, but cmd expands %variables% inside quotes, so
+// an argument like %CMDCMDLINE:~-1% would end the quotes and run whatever
+// follows; the agent refuses them too.
+const CmdArgForbidden = "%\"\r\n"
 
 // checkDevices validates a job's device ids and returns them sorted,
 // without duplicates.

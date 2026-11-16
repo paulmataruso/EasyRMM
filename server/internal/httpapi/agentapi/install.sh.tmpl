@@ -1,18 +1,24 @@
 #!/bin/sh
 # EasyRMM agent installer for Linux with systemd, served by this EasyRMM
-# server. Run it with a deployment token from the console:
+# server. Run it with a deployment token from the console, passed in the
+# environment so that it never appears on a command line, which every user
+# of the computer can read (and sudo logs):
 #
 {{- if .Pin}}
+#   export EASYRMM_TOKEN='ert_...'
 #   curl -fsSL --insecure --pinnedpubkey '{{.Pin}}' \
-#     {{.Server}}/api/agent/v1/install.sh | sudo sh -s -- --token ert_...
+#     {{.Server}}/api/agent/v1/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh
 #
 # This address uses the server's own certificate authority, which no
 # machine trusts yet. Every download is checked against the server's public
 # key instead (the pin above; --insecure only skips the CA check), and the
 # agent is given the server's certificate authority to trust from then on.
 {{- else}}
-#   curl -fsSL {{.Server}}/api/agent/v1/install.sh | sudo sh -s -- --token ert_...
+#   export EASYRMM_TOKEN='ert_...'
+#   curl -fsSL {{.Server}}/api/agent/v1/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh
 {{- end}}
+#
+# --token ert_... still works, but puts the token on sh's command line.
 #
 # It downloads the agent for this machine's architecture from the server,
 # checks it against the server's checksums, installs it as
@@ -41,7 +47,7 @@ while [ $# -gt 0 ]; do
 	esac
 done
 
-[ -n "$TOKEN" ] || fail "pass --token with a deployment token from the EasyRMM console"
+[ -n "$TOKEN" ] || fail "set EASYRMM_TOKEN to a deployment token from the EasyRMM console (with sudo, keep it: sudo --preserve-env=EASYRMM_TOKEN)"
 [ "$(id -u)" = 0 ] || fail "run the installer as root (sudo)"
 [ "$(uname -s)" = Linux ] || fail "this installer is for Linux"
 command -v systemctl >/dev/null 2>&1 || fail "the agent runs as a systemd service; systemctl was not found"

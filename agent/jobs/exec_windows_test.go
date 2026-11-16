@@ -4,6 +4,8 @@ package jobs
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -51,6 +53,16 @@ func TestCmd(t *testing.T) {
 	res = Execute(context.Background(), winPayload(agentproto.ShellCmd, "echo x", `a"b`), root)
 	if res.Status != agentproto.RunFailed || !strings.Contains(res.Error, "double quotes") {
 		t.Errorf("a quote in an argument: %+v", res)
+	}
+	// %CMDCMDLINE:~-1% expands to a double quote even inside quotes, which
+	// would end the argument and run what follows.
+	marker := filepath.Join(root, "escaped")
+	res = Execute(context.Background(), winPayload(agentproto.ShellCmd, "echo x", `%CMDCMDLINE:~-1% & echo>`+marker+` & rem `), root)
+	if res.Status != agentproto.RunFailed || !strings.Contains(res.Error, "%") {
+		t.Errorf("a %% in an argument: %+v", res)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("an argument ran a command of its own")
 	}
 	res = Execute(context.Background(), winPayload(agentproto.ShellBash, "echo x"), root)
 	if res.Status != agentproto.RunFailed || !strings.Contains(res.Error, "do not run on Windows") {

@@ -20,8 +20,16 @@ $candidates = foreach ($dir in Get-ChildItem -Path (Join-Path $env:ProgramFiles 
 }
 $winget = $candidates | Sort-Object Version -Descending | Select-Object -First 1 -ExpandProperty Path
 if (-not $winget) {
+    # Elsewhere on the system's PATH, only if no one but administrators can
+    # change it: WindowsApps is Windows' own, other folders may not be.
     $cmd = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if ($cmd) { $winget = $cmd.Source }
+    if ($cmd) {
+        if (-not (Test-AdminOnly $cmd.Source (Split-Path -Parent $cmd.Source))) {
+            Write-Output "$($cmd.Source) can be changed by accounts other than administrators, so EasyRMM will not run it as LocalSystem."
+            exit 2
+        }
+        $winget = $cmd.Source
+    }
 }
 if (-not $winget) {
     Write-Output 'winget is not installed on this computer. It comes with App Installer on Windows 10 (1809 and later), Windows 11 and Windows Server 2025.'

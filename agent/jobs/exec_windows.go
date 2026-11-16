@@ -86,8 +86,10 @@ func command(prog, shell, script string, args []string) (*exec.Cmd, error) {
 	if shell == agentproto.ShellCmd {
 		line := `"` + script + `"`
 		for _, a := range args {
-			if strings.ContainsAny(a, "\"\r\n") {
-				return nil, errors.New("A cmd script's arguments cannot contain double quotes or line breaks.") //nolint:staticcheck // ST1005: shown to people as the run's error
+			// cmd expands %variables% even inside quotes: %CMDCMDLINE:~-1%
+			// is a double quote, which would end the argument's quotes.
+			if strings.ContainsAny(a, "%\"\r\n") {
+				return nil, errors.New("A cmd script's arguments cannot contain %, double quotes or line breaks.") //nolint:staticcheck // ST1005: shown to people as the run's error
 			}
 			line += ` "` + a + `"`
 		}

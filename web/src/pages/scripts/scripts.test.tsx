@@ -119,7 +119,7 @@ describe("scripts", () => {
     expect(screen.getByText("Runs on Windows devices.")).toBeInTheDocument();
     expect(screen.getByText(/Windows PowerShell 5\.1 as Local System/)).toBeInTheDocument();
     await user.selectOptions(shellSelect, "Command Prompt (cmd)");
-    expect(screen.getByText(/cannot contain double quotes/)).toBeInTheDocument();
+    expect(screen.getByText(/cannot contain %, double quotes or line breaks/)).toBeInTheDocument();
     await user.selectOptions(shellSelect, "POSIX sh");
     expect(screen.getByText("Runs on Linux devices.")).toBeInTheDocument();
     await user.clear(screen.getByLabelText("Timeout"));

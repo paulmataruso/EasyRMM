@@ -69,6 +69,8 @@ jobs:
           go-version-file: go.mod
       - name: go test
         run: go test -count=1 -v ./agent/... ./internal/agentproto/...
+      - name: Windows software scripts
+        run: go test -count=1 -v -run 'OnWindows' ./server/internal/jobs/
       - name: Build the Windows agents
         run: |
           go build -trimpath -o easyrmm-agent-windows-amd64.exe ./agent/cmd/easyrmm-agent

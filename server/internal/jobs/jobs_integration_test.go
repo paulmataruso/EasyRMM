@@ -497,9 +497,13 @@ func TestJobsRefuseDevicesTheScriptOrCallerCannotReach(t *testing.T) {
 		t.Fatal(err)
 	}
 	fieldErr(t, try(super, JobInput{ScriptID: ps.ID, DeviceIDs: []uuid.UUID{winPC, hqPC}}), "deviceIds", "PowerShell scripts run on Windows; HQ-PC is not a Windows device")
-	if _, err := f.svc.CreateScript(f.ctx, super, ScriptInput{Name: "Batch", Shell: "cmd", Body: "ipconfig /all", TimeoutSeconds: 60}); err != nil {
-		t.Errorf("a cmd script: %v", err)
+	batch, err := f.svc.CreateScript(f.ctx, super, ScriptInput{Name: "Batch", Shell: "cmd", Body: "ipconfig /all", TimeoutSeconds: 60})
+	if err != nil {
+		t.Fatalf("a cmd script: %v", err)
 	}
+	// cmd expands %variables% inside quotes: %CMDCMDLINE:~-1% is a quote.
+	fieldErr(t, try(super, JobInput{ScriptID: batch.ID, DeviceIDs: []uuid.UUID{winPC}, Args: []string{"fine", `%CMDCMDLINE:~-1% & whoami & rem `}}), "args", "Argument 2 contains %")
+	fieldErr(t, try(super, JobInput{ScriptID: batch.ID, DeviceIDs: []uuid.UUID{winPC}, Args: []string{`say "hi"`}}), "args", "Argument 1")
 	_, err = f.svc.CreateScript(f.ctx, super, ScriptInput{Name: "Zsh", Shell: "zsh", Body: "echo", TimeoutSeconds: 60})
 	fieldErr(t, err, "shell", "PowerShell, cmd")
 	fieldErr(t, try(hqTech, JobInput{ScriptID: shared.ID, DeviceIDs: []uuid.UUID{hqPC, plantPC}}), "deviceIds", "1 device does not exist")

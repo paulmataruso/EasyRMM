@@ -113,10 +113,21 @@ open. The agent is not code-signed yet; if endpoint protection holds
 Choose **Linux** on the Add devices page. On each computer:
 
 ```sh
-curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo sh -s -- --token ert_…
+export EASYRMM_TOKEN='ert_…'; curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh; unset EASYRMM_TOKEN
 ```
 
 Without curl, replace `curl -fsSL` with `wget -qO-`.
+
+The token travels in the environment. `export` is part of the shell, so the
+token never appears on a command line, which every user of the computer can
+read in the process list and which sudo writes to its log.
+`--preserve-env=EASYRMM_TOKEN` keeps it through sudo; a sudo rule that
+allows only certain commands may refuse that ("not allowed to preserve the
+environment"), and then run the command from a root shell instead (`sudo
+-i`, without `sudo` before `sh`). The script still accepts `--token ert_…`
+after `sh -s --`, which puts the token on a command line. Like any command,
+this one stays in your shell's history: prefer tokens limited in uses and
+time, and remove a token once its computers are installed.
 
 **By IP address.** When computers cannot look up the server's name, choose
 the server's IP address under **Server address** after creating the token.
@@ -124,7 +135,7 @@ That address uses the server's own certificate authority, which the computer
 does not trust yet, so the command pins the server's public key instead:
 
 ```sh
-curl -fsSL --insecure --pinnedpubkey 'sha256//…' https://203.0.113.10/api/agent/v1/install.sh | sudo sh -s -- --token ert_…
+export EASYRMM_TOKEN='ert_…'; curl -fsSL --insecure --pinnedpubkey 'sha256//…' https://203.0.113.10/api/agent/v1/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh; unset EASYRMM_TOKEN
 ```
 
 `--insecure` skips only the certificate authority check; curl refuses any

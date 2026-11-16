@@ -85,8 +85,9 @@ On **Windows** the script runs:
 * `cmd` scripts as a batch file, `cmd.exe /D /E:ON /V:OFF /S /C
   "script.cmd" "<argument>" …`, saved with Windows line ends in the console
   code page. Arguments arrive as `%1`, `%2` (`%~1` without the quotes) and
-  cannot contain double quotes or line breaks; `exit /b <n>` sets the exit
-  code;
+  cannot contain `%`, double quotes or line breaks: cmd expands `%variables%`
+  even inside quotes, so such an argument could end its quotes and run a
+  command of its own. `exit /b <n>` sets the exit code;
 * in a new, empty folder under `%ProgramData%\EasyRMM\Agent\jobs\work\`,
   which is also `TEMP` and is removed afterwards;
 * with the service's environment (Windows' system environment) without
@@ -163,5 +164,5 @@ run for `EASYRMM_AUDIT_RETENTION`.
 | *Failed* with "The job's signature does not verify" | The device pinned another server's job key, for example after the server's database was replaced. Uninstall the agent and enroll it again |
 | *Failed* with "… is not installed on this device." | Install the interpreter (`python3`, `bash`) or pick another shell |
 | A PowerShell script ends with code 1 and its error in standard error | The script threw an error that nothing caught. Check standard error; `$ErrorActionPreference = 'Stop'` at the top makes every error stop the script |
-| *Failed* with "A cmd script's arguments cannot contain double quotes" | cmd cannot receive such an argument safely. Use a PowerShell script |
+| "contains %, a double quote or a line break" when starting a job, or *Failed* with "A cmd script's arguments cannot contain %, double quotes or line breaks" | cmd cannot receive such an argument safely. Use a PowerShell script |
 | *No result* | The device went offline or the agent stopped during the run. The script may or may not have finished; check the device |

@@ -97,7 +97,11 @@ describe("add devices", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/easyrmm-agent\.exe install --server https:\/\/rmm\.example\.com/)).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "Linux" }));
-    expect(screen.getByText(`curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo sh -s -- --token ${SECRET}`)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        `export EASYRMM_TOKEN='${SECRET}'; curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh; unset EASYRMM_TOKEN`,
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/install\.ps1/)).not.toBeInTheDocument();
     expect(screen.getByText("Northwind Traders / Warehouse")).toBeInTheDocument();
     expect(screen.getByText("25")).toBeInTheDocument();
@@ -170,12 +174,20 @@ describe("add devices", () => {
     expect(ps).toMatch(new RegExp(`-Token '${SECRET}'$`));
     expect(screen.getByText(/PowerShell 7 cannot run this check/)).toBeInTheDocument();
     await user.click(screen.getByRole("radio", { name: "Linux" }));
-    expect(screen.getByText(`curl -fsSL --insecure --pinnedpubkey '${PIN}' https://203.0.113.10/api/agent/v1/install.sh | sudo sh -s -- --token ${SECRET}`)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        `export EASYRMM_TOKEN='${SECRET}'; curl -fsSL --insecure --pinnedpubkey '${PIN}' https://203.0.113.10/api/agent/v1/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh; unset EASYRMM_TOKEN`,
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText(/checks the server's public key instead/)).toBeInTheDocument();
     expect(screen.getByText(/--ca-file easyrmm-ca.pem/)).toBeInTheDocument();
 
     await user.selectOptions(address, "https://rmm.example.com");
-    expect(screen.getByText(`curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo sh -s -- --token ${SECRET}`)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        `export EASYRMM_TOKEN='${SECRET}'; curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh; unset EASYRMM_TOKEN`,
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/--ca-file easyrmm-ca.pem/)).not.toBeInTheDocument();
   });
 
@@ -264,9 +276,11 @@ describe("deployment helpers", () => {
         "& ([scriptblock]::Create($i)) -Token 'ert_x'",
       ].join("; "),
     );
-    expect(linuxInstallCommand("https://rmm.example.com", "ert_x")).toBe("curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo sh -s -- --token ert_x");
+    expect(linuxInstallCommand("https://rmm.example.com", "ert_x")).toBe(
+      "export EASYRMM_TOKEN='ert_x'; curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh; unset EASYRMM_TOKEN",
+    );
     expect(linuxInstallCommand("https://[2001:db8::10]", "ert_x", "sha256//p=")).toBe(
-      "curl -fsSL --insecure --pinnedpubkey 'sha256//p=' https://[2001:db8::10]/api/agent/v1/install.sh | sudo sh -s -- --token ert_x",
+      "export EASYRMM_TOKEN='ert_x'; curl -fsSL --insecure --pinnedpubkey 'sha256//p=' https://[2001:db8::10]/api/agent/v1/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh; unset EASYRMM_TOKEN",
     );
     expect([addressLabel({ url: "https://rmm.example.com" }, true), addressLabel({ url: "https://[2001:db8::10]:8443" }, false)]).toEqual([
       "rmm.example.com",

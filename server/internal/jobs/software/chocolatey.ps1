@@ -8,11 +8,21 @@ $action = $args[0]
 $id = $args[1]
 $version = if ($args.Count -gt 2) { $args[2] } else { '' }
 
-$root = if ($env:ChocolateyInstall) { $env:ChocolateyInstall } else { Join-Path $env:ProgramData 'chocolatey' }
+# Where Chocolatey's installer put it, for the whole computer.
+$root = [Environment]::GetEnvironmentVariable('ChocolateyInstall', 'Machine')
+if (-not $root) { $root = Join-Path $env:ProgramData 'chocolatey' }
 $choco = Join-Path $root 'bin\choco.exe'
-if (-not (Test-Path -LiteralPath $choco)) {
+if (-not (Test-Path -LiteralPath $choco -PathType Leaf)) {
     Write-Output 'Chocolatey is not installed on this computer.'
     exit 2
+}
+# Any user may create a chocolatey folder under ProgramData; run choco only
+# if no one but administrators could have put it there or changed it.
+foreach ($exe in @($choco, (Join-Path $root 'choco.exe'))) {
+    if ((Test-Path -LiteralPath $exe) -and -not (Test-AdminOnly $exe $root)) {
+        Write-Output "Chocolatey in $root can be changed by accounts other than administrators, so EasyRMM will not run it as LocalSystem. Reinstall Chocolatey, or let only SYSTEM and Administrators change that folder."
+        exit 2
+    }
 }
 
 switch ($action) {

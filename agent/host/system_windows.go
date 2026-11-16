@@ -3,14 +3,18 @@
 package host
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -92,12 +96,138 @@ func SystemServices(Paths) Services { return WindowsServices{} }
 // Program Files let every user read.
 const protectedDACL = "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
 
+// trustedInstaller is the NT SERVICE\TrustedInstaller account, which owns
+// many of Windows' own folders.
+const trustedInstaller = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
+
 // Protect creates dir if needed and makes it reachable by SYSTEM and
 // Administrators only.
+//
+// Any user may create folders under ProgramData. There, every folder from
+// ProgramData down to dir must also be a plain folder (not a link) owned by
+// the system, the Administrators group, TrustedInstaller or the account the
+// agent runs as. A folder someone else made beforehand is moved aside and
+// made anew rather than used: whatever access list we set, its owner could
+// change it again, or could hold it open to add files later, and then
+// replace the agent's settings and key. Folders are created with their
+// access list, so there is no moment when other users can reach them.
 func Protect(dir string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	return protect(dir, cmp.Or(os.Getenv("ProgramData"), `C:\ProgramData`))
+}
+
+func protect(dir, shared string) error {
+	dir, shared = filepath.Clean(dir), filepath.Clean(shared)
+	rel, err := filepath.Rel(shared, dir)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		// Not below ProgramData: Program Files, where only administrators
+		// create folders.
+		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil { //nolint:gosec // only the last folder is the agent's own
+			return err
+		}
+		if _, err := os.Lstat(dir); errors.Is(err, fs.ErrNotExist) {
+			return mkdirProtected(dir)
+		}
+		return setProtected(dir)
+	}
+	p := shared
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		p = filepath.Join(p, part)
+		if err := trustedFolder(p); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// trustedFolder makes p a protected folder that only administrators made,
+// creating it, or replacing one that someone else made.
+func trustedFolder(p string) error {
+	fi, err := os.Lstat(p) //nolint:gosec // below ProgramData, from the system's environment
+	if errors.Is(err, fs.ErrNotExist) {
+		return mkdirProtected(p)
+	}
+	if err != nil {
 		return err
 	}
+	if plainFolder(fi) {
+		ok, err := trustedOwner(p)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return setProtected(p)
+		}
+	}
+	aside := fmt.Sprintf("%s.untrusted-%d", p, time.Now().UnixNano())
+	if err := os.Rename(p, aside); err != nil { //nolint:gosec // below ProgramData, from the system's environment
+		return fmt.Errorf("%s was not made by an administrator, so the agent will not use it, and moving it aside failed: %w; delete it and try again", p, err)
+	}
+	return mkdirProtected(p)
+}
+
+// plainFolder reports whether fi is a folder and not a link, junction or
+// other reparse point.
+func plainFolder(fi fs.FileInfo) bool {
+	if fi.Mode().Type() != fs.ModeDir {
+		return false
+	}
+	d, ok := fi.Sys().(*syscall.Win32FileAttributeData)
+	return ok && d.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0
+}
+
+// trustedOwner reports whether p's owner is the system, the Administrators
+// group (which owns what an elevated administrator creates),
+// TrustedInstaller, or the account the agent runs as.
+func trustedOwner(p string) (bool, error) {
+	sd, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return false, err
+	}
+	owner, _, err := sd.Owner()
+	if err != nil || owner == nil {
+		return false, err
+	}
+	var trusted []*windows.SID
+	for _, t := range []windows.WELL_KNOWN_SID_TYPE{windows.WinLocalSystemSid, windows.WinBuiltinAdministratorsSid} {
+		if sid, err := windows.CreateWellKnownSid(t); err == nil {
+			trusted = append(trusted, sid)
+		}
+	}
+	if sid, err := windows.StringToSid(trustedInstaller); err == nil {
+		trusted = append(trusted, sid)
+	}
+	if u, err := windows.GetCurrentProcessToken().GetTokenUser(); err == nil {
+		trusted = append(trusted, u.User.Sid)
+	}
+	for _, sid := range trusted {
+		if owner.Equals(sid) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// mkdirProtected creates a folder with the protected access list from the
+// start.
+func mkdirProtected(p string) error {
+	sd, err := windows.SecurityDescriptorFromString(protectedDACL)
+	if err != nil {
+		return err
+	}
+	name, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return err
+	}
+	sa := windows.SecurityAttributes{SecurityDescriptor: sd}
+	sa.Length = uint32(unsafe.Sizeof(sa)) //nolint:gosec // a small struct's size
+	if err := windows.CreateDirectory(name, &sa); err != nil {
+		return &fs.PathError{Op: "mkdir", Path: p, Err: err}
+	}
+	return nil
+}
+
+// setProtected replaces an existing folder's access list.
+func setProtected(p string) error {
 	sd, err := windows.SecurityDescriptorFromString(protectedDACL)
 	if err != nil {
 		return err
@@ -106,7 +236,7 @@ func Protect(dir string) error {
 	if err != nil {
 		return err
 	}
-	return windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+	return windows.SetNamedSecurityInfo(p, windows.SE_FILE_OBJECT,
 		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil)
 }
 
