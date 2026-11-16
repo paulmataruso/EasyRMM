@@ -303,9 +303,27 @@ export interface AgentBuild {
   sha256: string;
 }
 
+/** An address the server answers on: its public URL, or one of its IP addresses (ADR-0016). */
+export interface ServerAddress {
+  url: string;
+  /** curl public-key pin when the address uses the server's own certificate authority. */
+  pin?: string;
+}
+
+/** The server's own certificate authority, used for IP addresses. */
+export interface CertificateAuthority {
+  fingerprint: string;
+  url: string;
+}
+
 export interface AgentDownloads {
   serverUrl: string;
   items: AgentBuild[];
+  /** Every address, the public URL first. */
+  addresses: ServerAddress[];
+  /** The address this console was opened at. */
+  current: string;
+  certificateAuthority: CertificateAuthority | null;
 }
 
 export interface RemoteLaunch {
@@ -314,6 +332,8 @@ export interface RemoteLaunch {
   expiresAt: string;
   kind: RemoteKind;
   deviceId: string;
+  /** The session's origin uses the server's own certificate authority (an IP address), which the browser must trust. */
+  internalCa?: boolean;
 }
 
 export interface RemoteAccessStatus {

@@ -68,6 +68,25 @@ All notable changes to this project are documented here. The format follows
   agent's online state, version and enrollment even when MeshCentral is
   turned off. The session reports which optional features the server has.
 - Guide: [Installing the EasyRMM agent](docs/deployment/agents.md).
+- Reaching the server by IP address (ADR-0016). Besides its DNS name, the
+  server answers on its IP addresses (`EASYRMM_IP_ACCESS`, on by default;
+  `EASYRMM_IP_ADDRESSES`, detected by default): the console on
+  `https://<address>` and remote sessions on `https://<address>:4443`.
+  `EASYRMM_PUBLIC_URL` may be an IP address for a deployment without DNS
+  (`setup.sh --hostname 203.0.113.10`).
+- `internal` TLS mode: the server's own certificate authority, stored
+  encrypted in the database, issues the certificate for IP addresses and
+  renews it with the same key. The console shows its fingerprint and offers
+  it for download. Install commands for an IP address pin the server's key
+  (`curl --pinnedpubkey`), and the agent trusts the authority afterwards.
+- Requests are routed by host and port, so the console and MeshCentral can
+  share an address. The remote-access gateway keeps the console's cookies
+  away from MeshCentral and stops MeshCentral from setting cookies under
+  EasyRMM's names.
+- A remote session on an address with the server's own certificate has a
+  **Not loading?** help in its header: a browser cannot accept a certificate
+  inside the session frame, so it explains how to accept it for the session's
+  address or install the certificate authority.
 
 ### Fixed
 - Remote sessions opened MeshCentral's session view without the device, so
@@ -79,6 +98,11 @@ All notable changes to this project are documented here. The format follows
   discards any argument containing `%`.
 - A request the browser abandoned (a closed tab, a navigation) was logged as
   a server error with status 500. It is now recorded as 499, at info level.
+- In `acme` mode MeshCentral could not read the certificate its agents pin:
+  it connects without a server name, which ACME refuses. Such connections
+  from the server's own host now get the MeshCentral name's certificate.
+- The install script no longer leaves its downloads in a temporary
+  directory: it ran the agent with `exec`, which skipped its cleanup.
 - A device that disconnected from MeshCentral stayed online until the next
   five-minute sync: MeshCentral sends `nodeconnect` events without the
   `etype` the synchronizer filtered on.

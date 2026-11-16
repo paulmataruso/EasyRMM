@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { Link, NavLink, useParams } from "react-router";
-import { ArrowLeft, Maximize, Minimize, MonitorOff, RotateCw, ShieldOff, Unplug } from "lucide-react";
+import { ArrowLeft, Maximize, Minimize, MonitorOff, RotateCw, ShieldOff, ShieldQuestionMark, Unplug } from "lucide-react";
 import { api, ApiError, errorMessage } from "../../api/client";
 import { useApi } from "../../api/hooks";
 import type { Device, RemoteKind, RemoteLaunch } from "../../api/types";
@@ -25,6 +25,7 @@ export function RemoteSessionPage() {
   const [nonce, setNonce] = useState(0);
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [certificateHelp, setCertificateHelp] = useState(false);
   const started = useRef<string | null>(null);
   const frame = useRef<HTMLDivElement>(null);
   const fullscreen = useFullscreen(frame);
@@ -43,6 +44,9 @@ export function RemoteSessionPage() {
 
   const reconnect = useCallback(() => setNonce((n) => n + 1), []);
   const current = attempt?.key === key ? attempt : null;
+  // A session on an address with the server's own certificate (ADR-0016) loads only once the browser trusts that
+  // certificate for the session's origin, and a browser cannot ask inside a frame: it shows its error page instead.
+  const untrustedOrigin = current?.launch?.internalCa ? new URL(current.launch.url).origin : null;
   const d = device.data;
   const label = kind ? REMOTE_KIND_NAMES[kind] : "Remote session";
 
@@ -80,6 +84,19 @@ export function RemoteSessionPage() {
         </div>
         {d && kind && <KindSwitcher device={d} active={kind} />}
         <div className="hidden flex-1 sm:block" />
+        {untrustedOrigin && (
+          <Button
+            size="sm"
+            variant="ghost"
+            icon={<ShieldQuestionMark className="size-3.5" aria-hidden />}
+            onClick={() => setCertificateHelp((open) => !open)}
+            aria-expanded={certificateHelp}
+            aria-controls="certificate-help"
+            title="Help if the session does not load"
+          >
+            <span className="hidden md:inline">Not loading?</span>
+          </Button>
+        )}
         <Button size="sm" variant="ghost" icon={<RotateCw className="size-3.5" aria-hidden />} onClick={reconnect} disabled={!kind} title="Start this session again">
           <span className="hidden md:inline">Reconnect</span>
         </Button>
@@ -99,6 +116,16 @@ export function RemoteSessionPage() {
       </header>
 
       <div ref={frame} className="relative min-h-0 flex-1 bg-canvas">
+        {untrustedOrigin && certificateHelp && (
+          <CertificateHelp
+            origin={untrustedOrigin}
+            onClose={() => setCertificateHelp(false)}
+            onReconnect={() => {
+              setCertificateHelp(false);
+              reconnect();
+            }}
+          />
+        )}
         {!kind ? (
           <Problem icon={<MonitorOff className="size-8" aria-hidden />} title="Unknown session type" deviceId={id}>
             Remote sessions are desktop, terminal or files.
@@ -183,6 +210,46 @@ function LaunchError({ error, kind, deviceId, onRetry }: { error: unknown; kind:
     <Problem icon={<Unplug className="size-8" aria-hidden />} title={titles[code] ?? "The session could not start"} deviceId={deviceId} onRetry={retry ? onRetry : undefined}>
       {errorMessage(error)}
     </Problem>
+  );
+}
+
+function CertificateHelp({ origin, onClose, onReconnect }: { origin: string; onClose: () => void; onReconnect: () => void }) {
+  return (
+    <div className="absolute inset-x-0 top-0 z-10 flex justify-center p-3">
+      <section id="certificate-help" aria-labelledby="certificate-help-title" className="w-full max-w-lg rounded-lg border border-line bg-surface p-4 text-sm shadow-lg">
+        <h2 id="certificate-help-title" className="font-medium text-fg">
+          Your browser may not trust this address yet
+        </h2>
+        <p className="mt-1 text-muted">
+          This server uses its own certificate on IP addresses. The session runs on <span className="font-mono text-[0.9em] text-fg">{origin}</span>, and your
+          browser cannot ask you to accept a certificate inside the session frame.
+        </p>
+        <ol className="mt-3 list-decimal space-y-1 pl-5 text-muted">
+          <li>
+            <a href={origin} target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">
+              Open {new URL(origin).host} in a new tab
+            </a>{" "}
+            and accept the certificate warning there.
+          </li>
+          <li>Close that tab and reconnect.</li>
+        </ol>
+        <p className="mt-3 text-muted">
+          To stop the warnings on this computer,{" "}
+          <Link to="/devices/add" className="text-accent hover:underline">
+            install the server&rsquo;s certificate authority
+          </Link>
+          .
+        </p>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button size="sm" variant="secondary" onClick={onClose}>
+            Close
+          </Button>
+          <Button size="sm" variant="primary" icon={<RotateCw className="size-3.5" aria-hidden />} onClick={onReconnect}>
+            Reconnect
+          </Button>
+        </div>
+      </section>
+    </div>
   );
 }
 

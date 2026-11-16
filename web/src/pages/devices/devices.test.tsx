@@ -303,6 +303,48 @@ describe("remote sessions", () => {
     expect(location()).toBe("/devices/d1");
   });
 
+  it("helps when the browser does not yet trust the server's own certificate for the session", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi({
+      ...baseRoutes(TECHNICIAN),
+      "GET /devices/:id": ok(DEVICES[0]),
+      "POST /devices/:id/remote-sessions": (r) => {
+        const kind = (r.body as { kind: string }).kind;
+        return { status: 201, body: { grantId: `g-${kind}`, url: `https://203.0.113.10:4443/.easyrmm/launch?t=${kind}-token`, expiresAt: "2030-01-01T00:00:00Z", kind, deviceId: r.params.id, internalCa: true } };
+      },
+    });
+    renderApp("/devices/d1/remote/terminal");
+    expect(await screen.findByTitle("Terminal on FRONT-DESK")).toHaveAttribute("src", expect.stringContaining("203.0.113.10:4443"));
+    expect(screen.queryByRole("region", { name: /may not trust/ })).not.toBeInTheDocument();
+
+    const toggle = screen.getByRole("button", { name: /Not loading\?|Help if the session does not load/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    const help = screen.getByRole("region", { name: "Your browser may not trust this address yet" });
+    expect(within(help).getByText("https://203.0.113.10:4443")).toBeInTheDocument();
+    const open = within(help).getByRole("link", { name: "Open 203.0.113.10:4443 in a new tab" });
+    expect(open).toHaveAttribute("href", "https://203.0.113.10:4443");
+    expect(open).toHaveAttribute("target", "_blank");
+    expect(open).toHaveAttribute("rel", "noopener noreferrer");
+    expect(within(help).getByRole("link", { name: /certificate authority/ })).toHaveAttribute("href", "/devices/add");
+
+    // Reconnecting closes the help and asks for a fresh link.
+    await user.click(within(help).getByRole("button", { name: "Reconnect" }));
+    await waitFor(() => expect(server.callsTo("POST /devices/:id/remote-sessions")).toHaveLength(2));
+    expect(screen.queryByRole("region", { name: /may not trust/ })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: /Not loading\?|Help if the session does not load/ }));
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("region", { name: /may not trust/ })).not.toBeInTheDocument();
+  });
+
+  it("offers no certificate help for a session on a trusted name", async () => {
+    installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(DEVICES[0]), "POST /devices/:id/remote-sessions": launch });
+    renderApp("/devices/d1/remote/terminal");
+    await screen.findByTitle("Terminal on FRONT-DESK");
+    expect(screen.queryByRole("button", { name: /Not loading\?|Help if the session does not load/ })).not.toBeInTheDocument();
+  });
+
   it("explains a session that could not start and tries again", async () => {
     const user = userEvent.setup();
     let attempts = 0;

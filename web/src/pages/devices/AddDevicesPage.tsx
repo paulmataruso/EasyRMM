@@ -1,9 +1,18 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router";
-import { Ban, Download, KeyRound, MonitorDown } from "lucide-react";
+import { Ban, Download, KeyRound, MonitorDown, ShieldCheck } from "lucide-react";
 import { api, fieldError } from "../../api/client";
 import { useApi, useApiMutation, useList, useSites } from "../../api/hooks";
-import type { AgentBuild, AgentDownloads, DeviceGroup, EnrollmentToken, EnrollmentTokenInput, NewEnrollmentToken, Site } from "../../api/types";
+import type {
+  AgentBuild,
+  AgentDownloads,
+  DeviceGroup,
+  EnrollmentToken,
+  EnrollmentTokenInput,
+  NewEnrollmentToken,
+  ServerAddress,
+  Site,
+} from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { CodeBlock, OneTimeNotice } from "../../components/Copy";
 import { ConfirmDialog } from "../../components/Dialog";
@@ -58,9 +67,31 @@ export function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** The command that installs the agent on a Linux computer. */
-export function linuxInstallCommand(serverUrl: string, secret: string): string {
-  return `curl -fsSL ${serverUrl}${AGENT_PATH}/install.sh | sudo sh -s -- --token ${secret}`;
+/**
+ * The command that installs the agent on a Linux computer. An address with a
+ * pin uses the server's own certificate authority, which the computer does not
+ * trust yet: curl checks the server's public key instead (--insecure skips only
+ * the certificate authority check).
+ */
+export function linuxInstallCommand(serverUrl: string, secret: string, pin?: string): string {
+  const tls = pin ? `--insecure --pinnedpubkey '${pin}' ` : "";
+  return `curl -fsSL ${tls}${serverUrl}${AGENT_PATH}/install.sh | sudo sh -s -- --token ${secret}`;
+}
+
+/** How an address is listed: its host, marked when it is an IP address beside the public name. */
+export function addressLabel(address: ServerAddress, primary: boolean): string {
+  const host = new URL(address.url).host;
+  return primary ? host : `${host} (IP address)`;
+}
+
+/** The server's addresses, and the one to offer first: the one this console was opened at. */
+function useAddresses(fallback: string) {
+  const downloads = useApi<AgentDownloads>("/agent-downloads", undefined, { staleTime: 60_000 });
+  const listed = downloads.data?.addresses ?? [];
+  const primary: ServerAddress = listed[0] ?? { url: fallback };
+  const addresses = listed.length > 0 ? listed : [primary];
+  const current = addresses.find((a) => a.url === downloads.data?.current) ?? primary;
+  return { addresses, current };
 }
 
 export function AddDevicesPage() {
@@ -102,7 +133,10 @@ export function AddDevicesPage() {
             <TokenForm initialSiteId={url.get("siteId")} onCreated={setCreated} />
           )}
         </Card>
-        <DownloadsCard className="xl:col-span-2" />
+        <div className="flex flex-col gap-5 xl:col-span-2">
+          <DownloadsCard />
+          <CertificateAuthorityCard />
+        </div>
       </div>
       <TokensCard />
     </>
@@ -225,19 +259,45 @@ function TokenForm({ initialSiteId, onCreated }: { initialSiteId: string; onCrea
 
 function InstallSteps({ created, onDone }: { created: NewEnrollmentToken; onDone: () => void }) {
   const t = created.token;
+  const { addresses, current } = useAddresses(created.serverUrl);
+  const [chosen, setChosen] = useState<string | null>(null);
+  const address = addresses.find((a) => a.url === chosen) ?? current;
   return (
     <div className="flex flex-col gap-4">
       <OneTimeNotice title="Copy the command now. The token is not shown again.">
         Anyone with it can add devices to {t.siteName} until it {t.maxUses ? "expires or is used up" : "expires"}. Revoke it once the rollout is done.
       </OneTimeNotice>
 
+      {addresses.length > 1 && (
+        <SelectField
+          label="Server address"
+          value={address.url}
+          onChange={(e) => setChosen(e.target.value)}
+          hint="The address computers reach the server at. Use an IP address when they cannot look up the server's name."
+        >
+          {addresses.map((a, i) => (
+            <option key={a.url} value={a.url}>
+              {addressLabel(a, i === 0)}
+            </option>
+          ))}
+        </SelectField>
+      )}
+
       <section className="flex flex-col gap-1.5">
         <h3 className="text-sm font-semibold text-fg">Linux</h3>
-        <p className="text-sm text-muted">
-          Run on each computer as a user who can use sudo. The computer needs systemd and curl; with wget instead, replace <Mono>curl -fsSL</Mono> with{" "}
-          <Mono>wget -qO-</Mono>.
-        </p>
-        <CodeBlock code={linuxInstallCommand(created.serverUrl, created.secret)} />
+        {address.pin ? (
+          <p className="text-sm text-muted">
+            Run on each computer as a user who can use sudo. The computer needs systemd and curl. This address uses the server&apos;s own certificate authority, so the
+            command checks the server&apos;s public key instead (<Mono>--pinnedpubkey</Mono>); <Mono>--insecure</Mono> only skips the public certificate check. The
+            agent trusts the server&apos;s certificate authority from then on.
+          </p>
+        ) : (
+          <p className="text-sm text-muted">
+            Run on each computer as a user who can use sudo. The computer needs systemd and curl; with wget instead, replace <Mono>curl -fsSL</Mono> with{" "}
+            <Mono>wget -qO-</Mono>.
+          </p>
+        )}
+        <CodeBlock code={linuxInstallCommand(address.url, created.secret, address.pin)} />
       </section>
 
       <section className="flex flex-col gap-1.5">
@@ -250,8 +310,17 @@ function InstallSteps({ created, onDone }: { created: NewEnrollmentToken; onDone
         <div className="mt-2 flex flex-col gap-1.5">
           <CodeBlock code={created.secret} />
           <p className="text-xs text-muted">
-            Pass it to <Mono>easyrmm-agent install --server {created.serverUrl} --token …</Mono>, or in the <Mono>EASYRMM_TOKEN</Mono> environment variable to keep it
-            out of the process list.
+            Pass it to{" "}
+            <Mono>
+              easyrmm-agent install --server {address.url} --token …{address.pin ? " --ca-file easyrmm-ca.pem" : ""}
+            </Mono>
+            , or in the <Mono>EASYRMM_TOKEN</Mono> environment variable to keep it out of the process list.
+            {address.pin && (
+              <>
+                {" "}
+                <Mono>easyrmm-ca.pem</Mono> is the server&apos;s certificate authority, under Server certificate authority on this page.
+              </>
+            )}
           </p>
         </div>
       </details>
@@ -273,11 +342,11 @@ function InstallSteps({ created, onDone }: { created: NewEnrollmentToken; onDone
   );
 }
 
-function DownloadsCard({ className }: { className?: string }) {
+function DownloadsCard() {
   const downloads = useApi<AgentDownloads>("/agent-downloads", undefined, { staleTime: 60_000 });
   const items = [...(downloads.data?.items ?? [])].sort(byArch);
   return (
-    <Card title="Agent downloads" padded={false} className={className}>
+    <Card title="Agent downloads" padded={false}>
       {downloads.isPending ? (
         <Spinner />
       ) : downloads.isError ? (
@@ -303,6 +372,35 @@ function DownloadsCard({ className }: { className?: string }) {
           </p>
         </>
       )}
+    </Card>
+  );
+}
+
+/**
+ * The server's own certificate authority, shown when an address uses it (an IP
+ * address, or a server without public DNS). Installing it in a browser or the
+ * operating system ends the certificate warnings on those addresses.
+ */
+function CertificateAuthorityCard() {
+  const downloads = useApi<AgentDownloads>("/agent-downloads", undefined, { staleTime: 60_000 });
+  const ca = downloads.data?.certificateAuthority;
+  if (!ca) return null;
+  return (
+    <Card title="Server certificate authority">
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-muted">
+          No public certificate authority certifies an IP address, so EasyRMM runs its own for those addresses. Browsers warn about it until you trust it: install
+          it in your browser or operating system after checking that its fingerprint matches the one here.
+        </p>
+        <div className="flex flex-col gap-1">
+          <span className="text-xs font-medium text-muted">SHA-256 fingerprint</span>
+          <span className="font-mono text-xs break-all text-fg">{ca.fingerprint}</span>
+        </div>
+        <a href={ca.url} download="easyrmm-ca.pem" className="inline-flex items-center gap-1.5 self-start rounded-sm text-sm font-medium text-accent hover:underline">
+          <ShieldCheck className="size-4" aria-hidden />
+          Download easyrmm-ca.pem
+        </a>
+      </div>
     </Card>
   );
 }

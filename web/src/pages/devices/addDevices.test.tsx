@@ -5,7 +5,7 @@ import type { EnrollmentToken, EnrollmentTokenInput } from "../../api/types";
 import { baseRoutes, fail, installFakeApi, ok, sessionView, type FakeRequest } from "../../test/fakeApi";
 import { group, site } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
-import { archName, byArch, formatBytes, linuxInstallCommand } from "./AddDevicesPage";
+import { addressLabel, archName, byArch, formatBytes, linuxInstallCommand } from "./AddDevicesPage";
 
 const ADMIN = sessionView({ permissions: [...sessionView().permissions, "enrollment.manage", "device.view"] });
 const SECRET = "ert_AAAAbbbbCCCCddddEEEEffffGGGGhhhhIIIIjjjjKKK";
@@ -114,6 +114,47 @@ describe("add devices", () => {
     expect(server.call("POST /sites/:id/enrollment-tokens").body).toEqual({ name: "Lab", deviceGroupId: null, expiresInDays: 7, maxUses: null });
   });
 
+  it("offers the server's IP address, with a pinned command and its certificate authority", async () => {
+    const user = userEvent.setup();
+    const PIN = "sha256//47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+    const FINGERPRINT = "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89";
+    installFakeApi(
+      routes({
+        "GET /agent-downloads": ok({
+          serverUrl: "https://rmm.example.com",
+          items: [],
+          addresses: [{ url: "https://rmm.example.com" }, { url: "https://203.0.113.10", pin: PIN }],
+          // This console was opened at the IP address.
+          current: "https://203.0.113.10",
+          certificateAuthority: { fingerprint: FINGERPRINT, url: "/api/agent/v1/ca.pem" },
+        }),
+        "POST /sites/:id/enrollment-tokens": () => ({
+          status: 201,
+          body: { token: token("t3", "Lab", { siteId: "s1", siteName: "Head office" }), secret: SECRET, serverUrl: "https://rmm.example.com" },
+        }),
+      }),
+    );
+    renderApp("/devices/add");
+    // The certificate authority, to check and install.
+    expect(await screen.findByText(FINGERPRINT)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Download easyrmm-ca.pem" })).toHaveAttribute("href", "/api/agent/v1/ca.pem");
+
+    await user.selectOptions(screen.getByLabelText(/^Site/), "s1");
+    await user.type(screen.getByLabelText(/Token name/), "Lab");
+    await user.click(screen.getByRole("button", { name: "Create token" }));
+    const address = await screen.findByLabelText(/Server address/);
+    expect(within(address).getAllByRole("option").map((o) => o.textContent)).toEqual(["rmm.example.com", "203.0.113.10 (IP address)"]);
+    // The address the console was opened at comes first.
+    expect(address).toHaveValue("https://203.0.113.10");
+    expect(screen.getByText(`curl -fsSL --insecure --pinnedpubkey '${PIN}' https://203.0.113.10/api/agent/v1/install.sh | sudo sh -s -- --token ${SECRET}`)).toBeInTheDocument();
+    expect(screen.getByText(/checks the server's public key instead/)).toBeInTheDocument();
+    expect(screen.getByText(/--ca-file easyrmm-ca.pem/)).toBeInTheDocument();
+
+    await user.selectOptions(address, "https://rmm.example.com");
+    expect(screen.getByText(`curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo sh -s -- --token ${SECRET}`)).toBeInTheDocument();
+    expect(screen.queryByText(/--ca-file/)).not.toBeInTheDocument();
+  });
+
   it("lists agent downloads with their checksums", async () => {
     installFakeApi(routes());
     renderApp("/devices/add");
@@ -129,6 +170,8 @@ describe("add devices", () => {
     renderApp("/devices/add");
     expect(await screen.findByText("No agents on this server")).toBeInTheDocument();
     expect(screen.getByText("make build-agents")).toBeInTheDocument();
+    // One address and no certificate authority: nothing to choose or install.
+    expect(screen.queryByText("Server certificate authority")).not.toBeInTheDocument();
   });
 
   it("lists tokens and revokes one", async () => {
@@ -186,5 +229,12 @@ describe("deployment helpers", () => {
       "easyrmm-agent-windows-amd64",
     ]);
     expect(linuxInstallCommand("https://rmm.example.com", "ert_x")).toBe("curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo sh -s -- --token ert_x");
+    expect(linuxInstallCommand("https://[2001:db8::10]", "ert_x", "sha256//p=")).toBe(
+      "curl -fsSL --insecure --pinnedpubkey 'sha256//p=' https://[2001:db8::10]/api/agent/v1/install.sh | sudo sh -s -- --token ert_x",
+    );
+    expect([addressLabel({ url: "https://rmm.example.com" }, true), addressLabel({ url: "https://[2001:db8::10]:8443" }, false)]).toEqual([
+      "rmm.example.com",
+      "[2001:db8::10]:8443 (IP address)",
+    ]);
   });
 });
