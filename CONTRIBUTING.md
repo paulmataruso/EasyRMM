@@ -40,7 +40,7 @@ frontend development and the Impeccable design workflow.
 | Go integration (real PostgreSQL) | `*_integration_test.go`, build tag `integration` | `make test-integration` |
 | Frontend unit (Vitest, coverage floors) | `web/src/**/*.test.{ts,tsx}` | `make web-test` |
 | End-to-end (Playwright, real server and PostgreSQL) | `web/e2e/` | `make e2e` (after `make test-db`) |
-| Security regression | `tests/security/` and `*_integration_test.go` | part of the above |
+| Security regression (tenant isolation, permissions, agent API, gateway) | `*_integration_test.go` beside the code | part of the above |
 
 Integration tests **fail** (they do not skip) when the test database is not
 configured, so CI cannot pass without running them.
