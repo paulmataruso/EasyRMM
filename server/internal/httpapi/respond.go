@@ -4,6 +4,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,6 +80,10 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 	_ = enc.Encode(v)
 }
 
+// StatusClientClosedRequest is recorded for a request whose client went away
+// before it completed: nginx's 499, so access logs read the same.
+const StatusClientClosedRequest = 499
+
 // WriteError writes err as a JSON error. Unknown errors become a generic 500
 // whose details are logged, never returned to the client.
 func WriteError(w http.ResponseWriter, r *http.Request, err error) {
@@ -105,6 +110,13 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			WriteJSON(w, status, ErrorBody{Error: ErrorDetail{Code: ae.Code, Message: ae.Message, Fields: ae.Fields}})
 			return
 		}
+	}
+	// The client went away (a closed tab, a navigation) and the work stopped
+	// with it: nothing failed on the server.
+	if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
+		LoggerFrom(r.Context()).Info("request canceled by the client", "method", r.Method, "path", r.URL.Path)
+		WriteJSON(w, StatusClientClosedRequest, nil)
+		return
 	}
 	LoggerFrom(r.Context()).Error("request failed", "error", err, "method", r.Method, "path", r.URL.Path)
 	WriteJSON(w, http.StatusInternalServerError, ErrorBody{Error: ErrorDetail{

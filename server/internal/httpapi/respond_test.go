@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -114,6 +115,26 @@ func TestWriteErrorUnknownIsGeneric(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "password authentication failed") {
 		t.Fatalf("error was not logged: %s", logs.String())
+	}
+}
+
+func TestWriteErrorClientGone(t *testing.T) {
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), loggerKey{}, log))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/sites", nil).WithContext(ctx)
+	cancel()
+	rec := httptest.NewRecorder()
+	WriteError(rec, req, fmt.Errorf("auth: loading roles: %w", context.Canceled))
+	if rec.Code != StatusClientClosedRequest || strings.Contains(logs.String(), "level=ERROR") || !strings.Contains(logs.String(), "canceled by the client") {
+		t.Errorf("canceled request: %d, logged %q", rec.Code, logs.String())
+	}
+	// A cancellation the client did not cause is still a server failure.
+	logs.Reset()
+	rec = httptest.NewRecorder()
+	WriteError(rec, httptest.NewRequest(http.MethodGet, "/api/v1/sites", nil).WithContext(context.WithValue(context.Background(), loggerKey{}, log)), context.Canceled)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("server-side cancellation: %d, logged %q", rec.Code, logs.String())
 	}
 }
 

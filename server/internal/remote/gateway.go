@@ -36,13 +36,21 @@ var agentRoutes = map[string]bool{
 
 // blockedPrefixes are MeshCentral features that are never reachable through
 // the edge, even with a grant: account self-service, invitations and
-// sharing, server administration and the external sign-in providers.
+// sharing, server administration, the external sign-in providers, and the
+// RDP, SSH and Intel AMT connections.
+//
+// Two static resources stay reachable because MeshCentral's device page
+// cannot work without them: the MeshCommander page (/commander.ashx), which
+// the device page embeds in a frame and calls into whenever it opens a
+// device, and the RDP client scripts (/mstsc/*.js) it loads. Neither connects
+// anywhere by itself; the relays they would use are blocked here, and
+// EasyRMM's MeshCentral rights deny Intel AMT.
 var blockedPrefixes = []string{
 	"/meshsettings", "/invite", "/agentinvite", "/sharing", "/createaccount", "/resetaccount",
 	"/resetpassword", "/checkmail", "/tokenlogin", "/changepassword", "/deleteaccount",
 	"/backup.zip", "/restoreserver.ashx", "/uploadmeshcorefile.ashx", "/pluginadmin.ashx",
 	"/oneclickrecovery.ashx", "/auth-", "/firebaserelay.aspx", "/mqtt.ashx", "/webrelay.ashx",
-	"/mstsc", "/ssh", "/apf.ashx", "/amtevents.ashx", "/ipkvm.ashx", "/commander.ashx",
+	"/mstsc.html", "/mstscrelay.ashx", "/ssh", "/apf.ashx", "/amtevents.ashx", "/ipkvm.ashx",
 	"/webider.ashx", "/messenger", "/recordings.ashx", "/2fahold.ashx",
 }
 

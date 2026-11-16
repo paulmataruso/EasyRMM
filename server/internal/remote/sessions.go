@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -279,14 +280,27 @@ func (s *Service) Redeem(ctx context.Context, token string) (*Redemption, error)
 	if err != nil {
 		return nil, err
 	}
-	q := url.Values{
-		"login":    {login},
-		"gotonode": {strings.TrimPrefix(nodeID, "node//")},
-		"viewmode": {Kind(kind).viewMode()},
-		"hide":     {hideFlags},
+	if out.Target, err = launchTarget(nodeID, Kind(kind), login); err != nil {
+		return nil, err
 	}
-	out.Target = "/?" + q.Encode()
 	return out, nil
+}
+
+// meshNodeID matches a MeshCentral node ID after its "node//" prefix:
+// base64 with '@' and '$' in place of '+' and '/'.
+var meshNodeID = regexp.MustCompile(`^[A-Za-z0-9@$]{1,128}$`)
+
+// launchTarget is the MeshCentral page that signs the browser in and opens
+// the device in the session's view. MeshCentral's page reads its URL
+// arguments without decoding them and discards any value containing '%', so
+// the node ID goes in as is: its characters are all allowed in a query
+// (RFC 3986). The login token is only read by the server, which decodes it.
+func launchTarget(nodeID string, kind Kind, login string) (string, error) {
+	node := strings.TrimPrefix(nodeID, "node//")
+	if !meshNodeID.MatchString(node) {
+		return "", fmt.Errorf("remote: unexpected MeshCentral node ID %q", nodeID)
+	}
+	return "/?gotonode=" + node + "&viewmode=" + kind.viewMode() + "&hide=" + hideFlags + "&login=" + url.QueryEscape(login), nil
 }
 
 // CheckCookie returns the EasyRMM session a gateway cookie belongs to, if

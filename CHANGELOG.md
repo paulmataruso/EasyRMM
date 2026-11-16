@@ -70,6 +70,15 @@ All notable changes to this project are documented here. The format follows
 - Guide: [Installing the EasyRMM agent](docs/deployment/agents.md).
 
 ### Fixed
+- Remote sessions opened MeshCentral's session view without the device, so
+  nothing could connect. MeshCentral's device page calls into the
+  MeshCommander frame it embeds (`/commander.ashx`), which the gateway
+  blocked; that static page and the RDP client scripts (`/mstsc/*.js`) now
+  pass, while the AMT, RDP and SSH relays stay blocked. The launch link also
+  percent-encoded the device's ID (`@` as `%40`), and MeshCentral's page
+  discards any argument containing `%`.
+- A request the browser abandoned (a closed tab, a navigation) was logged as
+  a server error with status 500. It is now recorded as 499, at info level.
 - A device that disconnected from MeshCentral stayed online until the next
   five-minute sync: MeshCentral sends `nodeconnect` events without the
   `etype` the synchronizer filtered on.

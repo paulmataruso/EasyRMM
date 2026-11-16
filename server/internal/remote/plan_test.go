@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -219,5 +220,47 @@ func TestKinds(t *testing.T) {
 	}
 	if _, ok := Kind("console").permission(); ok {
 		t.Error("unknown kind has a permission")
+	}
+}
+
+// parseUriArgs is MeshCentral's own URL argument parser (common-0.0.1.js)
+// without decoding, as the device page calls it: values containing '%' and
+// a few other characters are dropped.
+func parseUriArgs(href string) map[string]string {
+	out := map[string]string{}
+	parts := strings.FieldsFunc(href, func(r rune) bool { return r == '?' || r == '&' || r == '|' })
+	for _, arg := range parts[1:] {
+		i := strings.Index(arg, "=")
+		name, value := arg[:max(i, 0)], arg[i+1:]
+		if !strings.ContainsAny(value, `<>&"'+()#%`) {
+			out[name] = value
+		}
+	}
+	return out
+}
+
+func TestLaunchTarget(t *testing.T) {
+	const node = "node//mLf6wfOfjWERUUuoXkwlnye01opMRuHWNNk@l01w9JXU7ZpX7TBHSOXyqw3zpwJ$"
+	target, err := launchTarget(node, KindTerminal, "zr$AZr+FV/Hx@Z==")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What MeshCentral's page sees: the node to open and the view.
+	args := parseUriArgs("https://mesh.example.com" + target)
+	if args["gotonode"] != strings.TrimPrefix(node, "node//") || args["viewmode"] != "12" || args["hide"] != hideFlags {
+		t.Errorf("MeshCentral reads %v from %s", args, target)
+	}
+	// What MeshCentral's server sees: the login token, decoded.
+	u, err := url.Parse(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := u.Query().Get("login"); got != "zr$AZr+FV/Hx@Z==" {
+		t.Errorf("login token = %q", got)
+	}
+	for _, bad := range []string{"node//a&viewmode=1", "node//a b", "node/other/abc", "node//", "mesh//abc"} {
+		if _, err := launchTarget(bad, KindTerminal, "x"); err == nil {
+			t.Errorf("%q accepted", bad)
+		}
 	}
 }

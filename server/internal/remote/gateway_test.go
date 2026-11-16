@@ -140,7 +140,10 @@ func TestGatewayBlocksFeatures(t *testing.T) {
 		{http.MethodGet, "/backup.zip"},
 		{http.MethodGet, "/pluginadmin.ashx"},
 		{http.MethodGet, "/webrelay.ashx"},
-		{http.MethodGet, "/mstsc"},
+		{http.MethodGet, "/mstsc.html"},
+		{http.MethodGet, "/mstscrelay.ashx"},
+		{http.MethodGet, "/sshterminalrelay.ashx"},
+		{http.MethodGet, "/amtevents.ashx"},
 		{http.MethodGet, "/sharing"},
 	} {
 		r := httptest.NewRequest(c.method, "https://mesh.example.com"+c.path, nil)
@@ -153,6 +156,14 @@ func TestGatewayBlocksFeatures(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "https://mesh.example.com/meshagents?id=6&auth=x", nil)
 	if w := serve(g, r); w.Code != http.StatusOK {
 		t.Errorf("agent update download: %d", w.Code)
+	}
+	// The device page cannot open a device without the MeshCommander frame,
+	// and it loads the RDP client scripts; both are static and are not
+	// blocked (they still need a grant, like every page).
+	for _, p := range []string{"/commander.ashx", "/mstsc/mstsc.js", "/mstsc/client.js"} {
+		if blocked(http.MethodGet, p) {
+			t.Errorf("%s is blocked", p)
+		}
 	}
 }
 

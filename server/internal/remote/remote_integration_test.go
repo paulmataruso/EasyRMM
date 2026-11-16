@@ -489,7 +489,9 @@ func (r *rig) open(c *http.Client, l *Launch) string {
 		r.t.Fatalf("launch: %d %s", resp.StatusCode, body)
 	}
 	loc := resp.Header.Get("Location")
-	if !strings.HasPrefix(loc, "/?") || !strings.Contains(loc, "&login=") || !strings.Contains(loc, "hide=63") {
+	// MeshCentral's page must be able to read the device and view from it.
+	if args := parseUriArgs(loc); !strings.HasPrefix(loc, "/?") || !strings.Contains(loc, "&login=") ||
+		args["gotonode"] == "" || args["viewmode"] == "" || args["hide"] != "63" {
 		r.t.Fatalf("launch redirect = %q", loc)
 	}
 	var grant *http.Cookie
@@ -665,6 +667,11 @@ func TestRemoteSessionLaunch(t *testing.T) {
 	}
 	if resp, _ := r.get(b, "/meshsettings?id=x"); resp.StatusCode != http.StatusForbidden {
 		t.Errorf("blocked feature with a grant: %d", resp.StatusCode)
+	}
+	// MeshCentral's device page embeds MeshCommander and calls into it to
+	// open a device; without it the page shows no device at all.
+	if resp, body := r.get(b, "/commander.ashx"); resp.StatusCode != http.StatusOK || !strings.Contains(body, "getCurrentMeshNode") {
+		t.Errorf("MeshCommander frame with a grant: %d", resp.StatusCode)
 	}
 
 	// The browser's MeshCentral control channel is the technician's.
