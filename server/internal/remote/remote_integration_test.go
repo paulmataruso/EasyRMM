@@ -935,6 +935,76 @@ func TestAgentEndToEnd(t *testing.T) {
 		}
 	}
 
+	// Only EasyRMM's session types reach the agent: no TCP or UDP tunnels
+	// to the device or its network, however they are asked for (ADR-0022).
+	refusedDial := func(what string, c *http.Client, path string, origin bool) {
+		t.Helper()
+		opts := &websocket.DialOptions{HTTPClient: c}
+		if origin {
+			opts.HTTPHeader = http.Header{"Origin": {r.origin()}}
+		}
+		dctx, dcancel := context.WithTimeout(r.ctx, 15*time.Second)
+		defer dcancel()
+		ws, resp, err := websocket.Dial(dctx, "wss://"+r.env.Hostname+":"+strconv.Itoa(r.env.PublicPort)+path, opts)
+		if resp != nil && resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+		if err == nil {
+			_ = ws.CloseNow()
+			t.Errorf("%s: connected", what)
+		} else if resp == nil || resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s: %v", what, err)
+		}
+	}
+	refusedDial("relay with a TCP port", b, "/meshrelay.ashx?browser=1&p=1&nodeid="+dev.MeshNodeID+"&id=x1&tcpport=22&auth="+ac.Cookie, true)
+	refusedDial("relay with a remote address", b, "/meshrelay.ashx?browser=1&p=1&nodeid="+dev.MeshNodeID+"&id=x2&tcpaddr=192.0.2.1&tcpport=445", true)
+	refusedDial("relay for a device without a grant", b, "/meshrelay.ashx?browser=1&p=1&nodeid=node//easyrmmtestnogrant&id=x3&auth="+ac.Cookie, true)
+	refusedDial("relay outside EasyRMM's session types", b, "/meshrelay.ashx?browser=1&p=10&nodeid="+dev.MeshNodeID+"&id=x4", true)
+	// Without the browser's headers a request takes the agent path, where a
+	// MeshCentral user cookie would have skipped the checks above.
+	refusedDial("agent-path relay signed in as the user", r.browser(), "/meshrelay.ashx?p=1&nodeid="+dev.MeshNodeID+"&id=x5&tcpport=22&auth="+ac.Cookie, false)
+	// The control channel closes on a request for a tunnel or a cookie that
+	// encodes one; the agent never hears of it.
+	for _, cmd := range []map[string]any{
+		{"action": "msg", "type": "tunnel", "nodeid": dev.MeshNodeID, "value": "*/meshrelay.ashx?id=x6&rauth=" + ac.Rcookie, "tcpport": 22},
+		{"action": "getcookie", "nodeid": dev.MeshNodeID, "tcpport": 22, "tcpaddr": "127.0.0.1"},
+	} {
+		c2, err := r.dial(b, "/control.ashx")
+		if err != nil {
+			t.Fatal(err)
+		}
+		readUntil(t, c2, "userinfo", 15*time.Second)
+		send(t, c2, cmd)
+		rctx, rcancel := context.WithTimeout(r.ctx, 10*time.Second)
+		for {
+			typ, data, err := c2.Read(rctx)
+			if err != nil {
+				if rctx.Err() != nil {
+					t.Errorf("control channel still open after %v", cmd)
+				}
+				break
+			}
+			if typ == websocket.MessageText && strings.Contains(string(data), `"getcookie"`) {
+				t.Errorf("MeshCentral answered a tunnel cookie request: %s", data)
+			}
+		}
+		rcancel()
+		_ = c2.CloseNow()
+	}
+	// The terminal itself is unaffected.
+	if err := relay.Write(ctx, websocket.MessageBinary, []byte("echo still-$((2*21))\r")); err != nil {
+		t.Fatal(err)
+	}
+	for !strings.Contains(out.String(), "still-42") {
+		typ, data, err := relay.Read(ctx)
+		if err != nil {
+			t.Fatalf("terminal after the refusals %q: %v", out.String(), err)
+		}
+		if typ == websocket.MessageBinary {
+			out.Write(data)
+		}
+	}
+
 	// Signing out of EasyRMM closes the terminal.
 	r.revoke(sess)
 	g.sweep(r.ctx)

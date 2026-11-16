@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -51,7 +52,7 @@ var blockedPrefixes = []string{
 	"/backup.zip", "/restoreserver.ashx", "/uploadmeshcorefile.ashx", "/pluginadmin.ashx",
 	"/oneclickrecovery.ashx", "/auth-", "/firebaserelay.aspx", "/mqtt.ashx", "/webrelay.ashx",
 	"/mstsc.html", "/mstscrelay.ashx", "/ssh", "/apf.ashx", "/amtevents.ashx", "/ipkvm.ashx",
-	"/webider.ashx", "/messenger", "/recordings.ashx", "/2fahold.ashx",
+	"/webider.ashx", "/messenger", "/recordings.ashx", "/2fahold.ashx", "/localrelay.ashx",
 }
 
 // blocked reports whether a request is for a MeshCentral feature EasyRMM
@@ -105,8 +106,11 @@ type GatewayConfig struct {
 // EasyRMM session. Open WebSocket connections are closed when their session
 // ends.
 type Gateway struct {
-	svc        *Service
-	proxy      *httputil.ReverseProxy
+	svc   *Service
+	proxy *httputil.ReverseProxy
+	// granted reports whether an EasyRMM session opened a remote session on
+	// a device (by MeshCentral node ID); relay connections need one.
+	granted    func(ctx context.Context, session uuid.UUID, nodeID string) (bool, error)
 	cookieName string
 	secure     bool
 	ttl        time.Duration
@@ -140,6 +144,9 @@ func NewGateway(svc *Service, cfg GatewayConfig, log *slog.Logger) (*Gateway, er
 	g := &Gateway{
 		svc: svc, cookieName: name, secure: cfg.Secure, ttl: cfg.CacheTTL, log: log,
 		cache: map[[32]byte]cached{}, tunnels: map[uuid.UUID]map[*trackedConn]struct{}{},
+	}
+	if svc != nil {
+		g.granted = svc.SessionGranted
 	}
 	target := cfg.Upstream
 	g.proxy = &httputil.ReverseProxy{
@@ -187,8 +194,20 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.launch(w, r)
 		return
 	}
+	// No request through the gateway signs in to MeshCentral with a
+	// password: browsers use one-time login tokens, agents their keys.
+	r.Header.Del("X-Meshauth")
 	// Agents use these exact paths.
 	if agentRoutes[reqPath] && !g.fromBrowser(r) {
+		if reqPath == "/meshrelay.ashx" {
+			if err := agentRelayRefused(r.URL.Query()); err != nil {
+				g.refuse(w, r, err)
+				return
+			}
+		}
+		// Agents send no cookies; a MeshCentral session cookie here would
+		// sign a user in without passing the browser checks below.
+		r.Header.Del("Cookie")
 		g.proxy.ServeHTTP(w, r)
 		return
 	}
@@ -201,10 +220,55 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		page(w, http.StatusForbidden, "Remote session required", "Open remote sessions from a device in the EasyRMM console.")
 		return
 	}
+	// MeshCentral matches routes case-insensitively and ignores a trailing
+	// slash.
+	route := strings.ToLower(strings.TrimSuffix(reqPath, "/"))
+	if route == "/meshrelay.ashx" {
+		if err := g.checkRelay(r, session); err != nil {
+			g.refuse(w, r, err)
+			return
+		}
+	}
 	if strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
-		w = &trackingWriter{ResponseWriter: w, g: g, session: session}
+		// Uncompressed, so the control channel can be read (and MeshCentral
+		// compresses nothing anyway: desktop frames are JPEG).
+		r.Header.Del("Sec-Websocket-Extensions")
+		w = &trackingWriter{ResponseWriter: w, g: g, session: session, guard: route == "/control.ashx", log: httpapi.LoggerFrom(r.Context())}
 	}
 	g.proxy.ServeHTTP(w, r)
+}
+
+// checkRelay allows a browser's relay connection only for one of EasyRMM's
+// session types, without routing instructions, on a device the browser's
+// EasyRMM session opened a remote session on.
+func (g *Gateway) checkRelay(r *http.Request, session uuid.UUID) error {
+	nodeID, err := browserRelay(r.URL.Query())
+	if err != nil {
+		return err
+	}
+	if g.granted == nil {
+		return refused("no grant check")
+	}
+	ok, err := g.granted(r.Context(), session, nodeID)
+	if err != nil {
+		return fmt.Errorf("checking relay grant: %w", err)
+	}
+	if !ok {
+		return refused("relay for a device the session has no grant on")
+	}
+	return nil
+}
+
+// refuse answers a request the gateway does not forward, and logs why.
+func (g *Gateway) refuse(w http.ResponseWriter, r *http.Request, err error) {
+	log := httpapi.LoggerFrom(r.Context())
+	if !errors.Is(err, errRefused) {
+		log.Error("remote gateway: checking a request failed", "error", err, "path", r.URL.Path)
+		page(w, http.StatusInternalServerError, "Something went wrong", "The request could not be checked. The error has been logged.")
+		return
+	}
+	log.Warn("remote gateway: refused a request", "reason", err.Error(), "path", r.URL.Path)
+	page(w, http.StatusForbidden, "Not available", "This part of the remote-access service is not available through EasyRMM.")
 }
 
 // fromBrowser reports whether a request comes from a web browser rather
@@ -441,6 +505,16 @@ type trackedConn struct {
 	g       *Gateway
 	session uuid.UUID
 	once    sync.Once
+	// reader, when set, is what reads the browser's side: the control
+	// channel's message check.
+	reader io.Reader
+}
+
+func (c *trackedConn) Read(p []byte) (int, error) {
+	if c.reader != nil {
+		return c.reader.Read(p)
+	}
+	return c.Conn.Read(p)
 }
 
 func (c *trackedConn) Close() error {
@@ -449,11 +523,14 @@ func (c *trackedConn) Close() error {
 }
 
 // trackingWriter registers the connection the reverse proxy hijacks for a
-// WebSocket, so it can be closed when the session ends.
+// WebSocket, so it can be closed when the session ends; with guard set it
+// also checks every message the browser sends on it.
 type trackingWriter struct {
 	http.ResponseWriter
 	g       *Gateway
 	session uuid.UUID
+	guard   bool
+	log     *slog.Logger
 }
 
 func (t *trackingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
@@ -461,7 +538,18 @@ func (t *trackingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return t.g.track(t.session, conn), rw, nil
+	tc := t.g.track(t.session, conn)
+	if t.guard {
+		log := t.log
+		tc.reader = newWSGuard(conn, func(msg []byte) error {
+			if err := checkControlMessage(msg); err != nil {
+				log.Warn("remote gateway: closed a control channel", "reason", err.Error())
+				return err
+			}
+			return nil
+		})
+	}
+	return tc, rw, nil
 }
 
 func (t *trackingWriter) Unwrap() http.ResponseWriter { return t.ResponseWriter }

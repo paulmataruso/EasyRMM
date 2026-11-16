@@ -334,6 +334,18 @@ func (s *Service) CheckCookie(ctx context.Context, cookie string) (uuid.UUID, er
 	return sessionID, err
 }
 
+// SessionGranted reports whether an EasyRMM session opened a remote session
+// on a device, given its MeshCentral node ID. The gateway lets a browser's
+// relay connections reach only such devices.
+func (s *Service) SessionGranted(ctx context.Context, session uuid.UUID, nodeID string) (bool, error) {
+	var ok bool
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM remote_grants g JOIN devices d ON d.id = g.device_id
+			WHERE g.session_id = $1 AND g.redeemed_at IS NOT NULL AND d.mesh_node_id = $2)`, session, nodeID).Scan(&ok)
+	})
+	return ok, err
+}
+
 // SessionsValid reports which of the given EasyRMM sessions are still valid.
 func (s *Service) SessionsValid(ctx context.Context, ids []uuid.UUID) (map[uuid.UUID]bool, error) {
 	out := make(map[uuid.UUID]bool, len(ids))

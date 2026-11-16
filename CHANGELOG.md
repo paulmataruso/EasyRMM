@@ -150,6 +150,17 @@ All notable changes to this project are documented here. The format follows
   the start-up error now asks whether `EASYRMM_SECRET_KEY` was changed
   without listing the old key in `EASYRMM_SECRET_KEYS_PREVIOUS`.
 
+### Security
+- The remote-access gateway now refuses TCP and UDP tunnels through
+  agents (ADR-0022). MeshCentral lets anyone with remote-control rights on
+  a device ask its agent to connect to any port on the device or its
+  network and relay it; with an EasyRMM grant for a terminal, that reached
+  every server on the customer's network. Relay connections must be one of
+  EasyRMM's session types for a device the caller holds a grant for;
+  control channel messages asking for a tunnel close the channel; the
+  agent path no longer accepts a MeshCentral user's credentials; and
+  `localrelay.ashx` is refused.
+
 ### Fixed
 - Remote sessions opened MeshCentral's session view without the device, so
   nothing could connect. MeshCentral's device page calls into the
