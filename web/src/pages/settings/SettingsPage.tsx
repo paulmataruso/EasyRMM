@@ -3,6 +3,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { PageHeader, Tabs } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
 import { settingsParts } from "../../nav/SectionNav";
+import { AuditForwardingTab } from "./AuditForwardingTab";
 import { AuditTab } from "./AuditTab";
 import { RemoteAccessTab } from "./RemoteAccessTab";
 import { UsersTab } from "./UsersTab";
@@ -11,6 +12,7 @@ const SUBTITLES: Record<string, string> = {
   users: "People who can sign in to EasyRMM, and the roles that decide what they can do where.",
   audit: "Everything people, agents and the platform did, in a tamper-evident log.",
   remote: "The MeshCentral service behind remote desktop, terminal and files.",
+  forwarding: "A copy of every audit record, sent as it is written to your syslog server or SIEM.",
 };
 
 /**
@@ -38,6 +40,7 @@ export function SettingsPage() {
       {part.id === "users" && <UsersTab />}
       {part.id === "audit" && <AuditTab />}
       {part.id === "remote" && <RemoteAccessTab />}
+      {part.id === "forwarding" && <AuditForwardingTab />}
     </>
   );
 }

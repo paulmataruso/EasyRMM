@@ -24,6 +24,7 @@ Last updated: 2026-11-16.
 | Database schema, migrations, split owner/app roles | Tested | `server/migrations`; infrastructure |
 | Tenant isolation through PostgreSQL row-level security | Complete | Go integration tests across tenants; browser end-to-end test shows a technician cannot see another organization |
 | Audit log (append-only, hash-chained, tamper detection) | Complete | API with organization/area/user filters and keyset paging; console Audit log tab; chain verification for super administrators |
+| Audit forwarding to syslog | Complete | Every record, in order and resumable, as RFC 5424 with the record and its chain hashes in JSON, over TLS (optional client certificate), TCP or UDP; **Settings → Audit forwarding** with a test message and delivery status; retention waits for unforwarded records; turning it off is the last record sent (ADR-0023). Tested by unit tests, PostgreSQL integration tests against loopback collectors (TCP, TLS with and without client certificates, UDP), an HTTP API test and vitest, and by hand against rsyslog 8.2504 over all three transports. No RELP |
 | Sessions (idle/absolute expiry, rotation, revocation) | Complete | Account page lists sessions and signs them out |
 | Password login, lockout, rate limiting | Complete | Sign-in page; locked users shown and unlockable on the user page |
 | TOTP MFA, replay protection, recovery codes | Complete | Enrollment at first sign-in (QR and key), verification, recovery codes, new codes from the Account page, administrator reset |

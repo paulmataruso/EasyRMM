@@ -47,6 +47,9 @@ floors=(
   "server/internal/httpapi/jobsapi         90"
   "server/internal/httpapi/inventoryapi    90"
   "server/internal/httpapi/alertsapi       90"
+  # Audit forwarding: every tenant's records leave the server through it.
+  "server/internal/auditfwd                88"
+  "server/internal/httpapi/auditfwdapi     90"
   # Remote access: the MeshCentral client, and the service and gateway that
   # decide who reaches MeshCentral.
   "server/internal/meshcentral             85"

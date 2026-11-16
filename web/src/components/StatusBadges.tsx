@@ -91,6 +91,8 @@ const ACTIONS: Record<string, string> = {
   "alert_policy.delete": "Deleted alert policy",
   "alert.acknowledge": "Acknowledged alert",
   "alert.resolve": "Resolved alert",
+  "audit_forwarding.update": "Changed audit forwarding",
+  "audit_forwarding.test": "Tested audit forwarding",
 };
 
 export function actionLabel(action: string): string {
@@ -110,6 +112,7 @@ export const ACTION_GROUPS: [string, string][] = [
   ["alert_policy", "Alert policies"],
   ["alert", "Alerts"],
   ["user", "Users"],
+  ["audit_forwarding", "Audit forwarding"],
   ["setup", "Setup"],
 ];
 
@@ -122,6 +125,7 @@ export function auditTarget(e: AuditEntry): string {
   if (typeof d.script === "string" && typeof d.device === "string") return `${d.script} on ${d.device}`;
   if (typeof d.device === "string") return typeof d.kind === "string" ? `${d.device} (${REMOTE_KIND_NAMES[d.kind as RemoteKind] ?? d.kind})` : d.device;
   if (e.targetType === "session") return "Session";
+  if (e.targetType === "audit_forwarding") return e.targetId ? `Collector ${e.targetId}` : "Collector";
   if (e.actorType === "user" && e.targetType === "user" && e.targetId === e.actorId) return "Own account";
   return e.targetType ? e.targetType.replace(/_/g, " ") : "—";
 }

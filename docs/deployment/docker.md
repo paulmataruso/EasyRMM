@@ -124,7 +124,7 @@ Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `EASYRMM_AUDIT_RETENTION` | `8760h` (365 days) | How long audit records are kept; at least `720h` (30 days) |
+| `EASYRMM_AUDIT_RETENTION` | `8760h` (365 days) | How long audit records are kept; at least `720h` (30 days). While [audit forwarding](../operations/audit-forwarding.md) is on, records the collector has not received are kept longer |
 | `EASYRMM_JOB_RETENTION` | `2160h` (90 days) | How long finished jobs and their script output are kept; at least `24h`. See [Scripts and jobs](../operations/scripts-and-jobs.md) |
 | `EASYRMM_METRICS_RETENTION` | `168h` (7 days) | How long per-minute device measurements are kept for charts; at least `24h`. See [Inventory and health](../operations/inventory.md) |
 | `EASYRMM_ALERT_RETENTION` | `2160h` (90 days) | How long resolved alerts are kept; at least `24h`. See [Alerts](../operations/alerts.md) |

@@ -340,6 +340,56 @@ export interface RemoteLaunch {
   internalCa?: boolean;
 }
 
+// Audit forwarding (ADR-0023) ---------------------------------------------------------------------
+
+export type SyslogTransport = "tls" | "tcp" | "udp";
+
+export interface AuditForwarding {
+  configured: boolean;
+  enabled: boolean;
+  transport: SyslogTransport;
+  host: string;
+  port: number;
+  facility: number;
+  caCert: string;
+  clientCert: string;
+  clientKeySet: boolean;
+  /** Sent as each message's HOSTNAME. */
+  hostname: string;
+  updatedAt?: string;
+  updatedBy?: string;
+  status: {
+    lastId: number;
+    lastSentAt?: string;
+    lastError?: string;
+    lastErrorAt?: string;
+    backlog: number;
+    backlogMore: boolean;
+    oldestPendingAt?: string;
+    stored: number;
+    storedMore: boolean;
+    /** Turned off, and still delivering the records up to the change that turned it off. */
+    stopping: boolean;
+  };
+}
+
+export interface AuditForwardingInput {
+  enabled: boolean;
+  transport: SyslogTransport;
+  host: string;
+  port: number;
+  facility: number;
+  caCert: string;
+  clientCert: string;
+  clientKey: string;
+  startFrom: "" | "now" | "beginning";
+}
+
+export interface AuditForwardingTest {
+  ok: boolean;
+  message: string;
+}
+
 export interface RemoteAccessStatus {
   address: string;
   connected: boolean;

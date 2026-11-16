@@ -158,6 +158,14 @@ All notable changes to this project are documented here. The format follows
   and organizations card are gone.
 - A console tab running an older build reloads on its next navigation
   after the server is upgraded (`X-EasyRMM-Console`).
+- Audit forwarding (ADR-0023). Super administrators can send every audit
+  record to a syslog server or SIEM from **Settings → Audit forwarding**:
+  RFC 5424 messages whose text is the record in JSON with its hash-chain
+  links, over TLS (with an optional client certificate), TCP or UDP. Records
+  go in order, resume after an outage, and are kept past retention until
+  the collector has them; turning forwarding off is the last record sent.
+  A test message checks the settings before saving. Guide:
+  [Forwarding the audit log](docs/operations/audit-forwarding.md).
 - The console's libraries are served as a chunk of their own, which
   browsers keep across EasyRMM upgrades.
 - When the server cannot open its stored certificate authority or job key,
