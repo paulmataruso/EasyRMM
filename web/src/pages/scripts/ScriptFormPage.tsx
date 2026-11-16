@@ -349,8 +349,8 @@ const HOW_IT_RUNS: Record<Shell, ReactNode> = {
   ),
   cmd: (
     <>
-      The agent runs the script as a batch file with cmd.exe as Local System, {TEMP_FOLDER}. Arguments arrive as <code className="font-mono">%1</code>,{" "}
-      <code className="font-mono">%2</code> and so on, and cannot contain %, double quotes or line breaks; <code className="font-mono">exit /b</code> sets the
+      The agent runs the script as a batch file with cmd.exe as Local System, {TEMP_FOLDER}. Arguments arrive in quotes as <code className="font-mono">%1</code>,{" "}
+      <code className="font-mono">%2</code> and so on (<code className="font-mono">%~1</code> without them), and cannot contain %, double quotes or line breaks; <code className="font-mono">exit /b</code> sets the
       exit code.
     </>
   ),
