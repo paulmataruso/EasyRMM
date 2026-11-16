@@ -12,7 +12,9 @@
       "uniform .input min-height (2.125rem) for toolbars",
       "table row focus-within tint for j/k travel",
       "KeyValueList narrow variant",
-      "AssignmentEditor hideLegend"
+      "AssignmentEditor hideLegend",
+      "MenuButton (menu button pattern)",
+      "device tree dock"
     ]
   },
   "extensions": {
@@ -438,12 +440,12 @@
       {
         "name": "toast",
         "value": "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
-        "purpose": "Toasts."
+        "purpose": "Toasts and menus."
       },
       {
         "name": "drawer",
         "value": "0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)",
-        "purpose": "Mobile sidebar drawer."
+        "purpose": "Mobile sidebar drawer; the device tree over the page below lg."
       },
       {
         "name": "modal",
@@ -468,13 +470,18 @@
         "purpose": "Toast entrance."
       },
       {
+        "name": "dock-in",
+        "value": "180ms cubic-bezier(0.16, 1, 0.3, 1), opacity 0 to 1 and translateX(12px) to 0",
+        "purpose": "Device tree dock entrance."
+      },
+      {
         "name": "color-transition",
         "value": "Tailwind transition-colors (150ms)",
         "purpose": "Buttons, inputs, tabs, nav items."
       },
       {
         "name": "reduced-motion",
-        "value": "toast animation none; all transitions 0ms",
+        "value": "toast and dock animations none; all transitions 0ms",
         "purpose": "prefers-reduced-motion: reduce."
       }
     ],

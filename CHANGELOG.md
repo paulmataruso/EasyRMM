@@ -87,6 +87,14 @@ All notable changes to this project are documented here. The format follows
   **Not loading?** help in its header: a browser cannot accept a certificate
   inside the session frame, so it explains how to accept it for the session's
   address or install the certificate authority.
+- Remote desktop, terminal and files open **In this tab** or **In a new
+  window**. Each device gets one session window, which a second request
+  brings forward; in its own window a session ends by closing it.
+- Device tree: a **Tree** button on the devices pages docks a panel at the
+  right listing every organization, site and device with online counts. It
+  filters by name or hostname, moves with the keyboard, narrows the list to
+  an organization or site, and opens a device. It stays open across pages
+  on wide screens and opens over the page on narrow ones.
 
 ### Fixed
 - Remote sessions opened MeshCentral's session view without the device, so

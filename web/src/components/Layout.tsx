@@ -3,6 +3,7 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { Building2, LayoutDashboard, LogOut, Menu, Monitor, Moon, Settings, Sun, UserCircle, X } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 import { applyTheme, getStoredTheme, storeTheme, type Theme } from "../lib/theme";
+import { DeviceTreeDock, DeviceTreeProvider } from "../pages/devices/DeviceTree";
 import { cx } from "./ui";
 
 interface NavItem {
@@ -141,35 +142,41 @@ export function AppLayout() {
   );
 
   return (
-    <div className="flex h-full">
-      <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-surface focus:px-3 focus:py-2">
-        Skip to content
-      </a>
-      <aside className="hidden w-60 shrink-0 lg:block">{sidebar}</aside>
-      {mobileOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} aria-hidden />
-          <aside className="relative h-full w-64 shadow-xl">{sidebar}</aside>
+    <DeviceTreeProvider>
+      <div className="flex h-full">
+        <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-surface focus:px-3 focus:py-2">
+          Skip to content
+        </a>
+        <aside className="hidden w-60 shrink-0 lg:block">{sidebar}</aside>
+        {mobileOpen && (
+          <div className="fixed inset-0 z-40 lg:hidden">
+            <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} aria-hidden />
+            <aside className="relative h-full w-64 shadow-xl">{sidebar}</aside>
+          </div>
+        )}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line bg-surface px-4">
+            <button type="button" className="rounded-md p-1.5 text-muted hover:bg-hover lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open menu">
+              <Menu className="size-5" aria-hidden />
+            </button>
+            <div className="lg:hidden">
+              <Logo />
+            </div>
+            <div className="flex-1" />
+            <ThemeToggle />
+          </header>
+          {/* The device tree docks to the right of the page on the devices pages. */}
+          <div className="flex min-h-0 flex-1">
+            <main id="main" className="min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
+              <div className="mx-auto max-w-[1440px]">
+                <Outlet />
+              </div>
+            </main>
+            <DeviceTreeDock />
+          </div>
         </div>
-      )}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line bg-surface px-4">
-          <button type="button" className="rounded-md p-1.5 text-muted hover:bg-hover lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open menu">
-            <Menu className="size-5" aria-hidden />
-          </button>
-          <div className="lg:hidden">
-            <Logo />
-          </div>
-          <div className="flex-1" />
-          <ThemeToggle />
-        </header>
-        <main id="main" className="min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-[1440px]">
-            <Outlet />
-          </div>
-        </main>
       </div>
-    </div>
+    </DeviceTreeProvider>
   );
 }
 

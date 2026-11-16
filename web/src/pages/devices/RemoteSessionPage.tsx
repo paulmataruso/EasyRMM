@@ -8,6 +8,7 @@ import { REMOTE_KIND_NAMES } from "../../components/StatusBadges";
 import { Button, buttonClasses, cx, Dot, Spinner } from "../../components/ui";
 import { allowedKinds } from "./DeviceDetailPage";
 import { isRemoteKind } from "./platform";
+import { inSessionWindow } from "./sessionWindow";
 
 /** What the frame area shows for one launch attempt. */
 type Attempt = { key: string; launch?: RemoteLaunch; error?: unknown };
@@ -26,6 +27,8 @@ export function RemoteSessionPage() {
   const [attempt, setAttempt] = useState<Attempt | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [certificateHelp, setCertificateHelp] = useState(false);
+  // In a window of its own the session has no console around it: ending it closes the window.
+  const [popup] = useState(inSessionWindow);
   const started = useRef<string | null>(null);
   const frame = useRef<HTMLDivElement>(null);
   const fullscreen = useFullscreen(frame);
@@ -62,14 +65,16 @@ export function RemoteSessionPage() {
     <div className="flex h-full flex-col bg-canvas">
       {/* One row from sm up; on phones the session-type switcher takes a second row so the name stays readable. */}
       <header className="flex shrink-0 flex-wrap items-center gap-x-2 gap-y-1.5 border-b border-line bg-surface px-2 py-1.5 sm:h-12 sm:flex-nowrap sm:px-3 sm:py-0">
-        <Link
-          to={`/devices/${id}`}
-          aria-label="Device details"
-          title="Device details"
-          className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg"
-        >
-          <ArrowLeft className="size-4" aria-hidden />
-        </Link>
+        {!popup && (
+          <Link
+            to={`/devices/${id}`}
+            aria-label="Device details"
+            title="Device details"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg"
+          >
+            <ArrowLeft className="size-4" aria-hidden />
+          </Link>
+        )}
         <div className="min-w-0 flex-1 sm:max-w-xs sm:flex-initial">
           <h1 className="flex items-center gap-1.5 truncate text-sm font-medium">
             {d && <Dot tone={d.remoteOnline ? "ok" : "neutral"} />}
@@ -110,9 +115,15 @@ export function RemoteSessionPage() {
         >
           <span className="hidden md:inline">{fullscreen.active ? "Exit full screen" : "Full screen"}</span>
         </Button>
-        <Link to={`/devices/${id}`} className={buttonClasses("secondary", "sm")}>
-          End<span className="hidden sm:inline"> session</span>
-        </Link>
+        {popup ? (
+          <Button size="sm" onClick={() => window.close()} title="End the session and close this window">
+            End<span className="hidden sm:inline"> session</span>
+          </Button>
+        ) : (
+          <Link to={`/devices/${id}`} className={buttonClasses("secondary", "sm")}>
+            End<span className="hidden sm:inline"> session</span>
+          </Link>
+        )}
       </header>
 
       <div ref={frame} className="relative min-h-0 flex-1 bg-canvas">
@@ -127,7 +138,7 @@ export function RemoteSessionPage() {
           />
         )}
         {!kind ? (
-          <Problem icon={<MonitorOff className="size-8" aria-hidden />} title="Unknown session type" deviceId={id}>
+          <Problem icon={<MonitorOff className="size-8" aria-hidden />} title="Unknown session type" deviceId={id} popup={popup}>
             Remote sessions are desktop, terminal or files.
           </Problem>
         ) : !current ? (
@@ -135,7 +146,7 @@ export function RemoteSessionPage() {
             <Spinner label={d ? `Connecting to ${d.name}…` : "Connecting…"} />
           </Centered>
         ) : current.error !== undefined ? (
-          <LaunchError error={current.error} kind={kind} deviceId={id} onRetry={reconnect} />
+          <LaunchError error={current.error} kind={kind} deviceId={id} popup={popup} onRetry={reconnect} />
         ) : current.launch ? (
           <>
             {!loaded && (
@@ -183,19 +194,19 @@ function KindSwitcher({ device, active }: { device: Device; active: RemoteKind }
   );
 }
 
-function LaunchError({ error, kind, deviceId, onRetry }: { error: unknown; kind: RemoteKind; deviceId: string; onRetry: () => void }) {
+function LaunchError({ error, kind, deviceId, popup, onRetry }: { error: unknown; kind: RemoteKind; deviceId: string; popup: boolean; onRetry: () => void }) {
   const code = error instanceof ApiError ? error.code : "";
   const status = error instanceof ApiError ? error.status : 0;
   if (status === 403) {
     return (
-      <Problem icon={<ShieldOff className="size-8" aria-hidden />} title="Not available to your role" deviceId={deviceId}>
+      <Problem icon={<ShieldOff className="size-8" aria-hidden />} title="Not available to your role" deviceId={deviceId} popup={popup}>
         Your role does not allow {REMOTE_KIND_NAMES[kind].toLowerCase()} sessions on this device.
       </Problem>
     );
   }
   if (status === 404) {
     return (
-      <Problem icon={<MonitorOff className="size-8" aria-hidden />} title="Device not found" deviceId={deviceId}>
+      <Problem icon={<MonitorOff className="size-8" aria-hidden />} title="Device not found" deviceId={deviceId} popup={popup}>
         It may have been removed, or you may no longer have access to its site.
       </Problem>
     );
@@ -207,7 +218,7 @@ function LaunchError({ error, kind, deviceId, onRetry }: { error: unknown; kind:
   };
   const retry = code !== "remote_agent_missing";
   return (
-    <Problem icon={<Unplug className="size-8" aria-hidden />} title={titles[code] ?? "The session could not start"} deviceId={deviceId} onRetry={retry ? onRetry : undefined}>
+    <Problem icon={<Unplug className="size-8" aria-hidden />} title={titles[code] ?? "The session could not start"} deviceId={deviceId} popup={popup} onRetry={retry ? onRetry : undefined}>
       {errorMessage(error)}
     </Problem>
   );
@@ -253,7 +264,14 @@ function CertificateHelp({ origin, onClose, onReconnect }: { origin: string; onC
   );
 }
 
-function Problem({ icon, title, children, deviceId, onRetry }: { icon: ReactNode; title: string; children: ReactNode; deviceId: string; onRetry?: () => void }) {
+function Problem({ icon, title, children, deviceId, popup, onRetry }: {
+  icon: ReactNode;
+  title: string;
+  children: ReactNode;
+  deviceId: string;
+  popup: boolean;
+  onRetry?: () => void;
+}) {
   return (
     <Centered>
       <div role="alert" className="flex max-w-md flex-col items-center gap-2 px-4 text-center">
@@ -266,9 +284,13 @@ function Problem({ icon, title, children, deviceId, onRetry }: { icon: ReactNode
               Try again
             </Button>
           )}
-          <Link to={`/devices/${deviceId}`} className={buttonClasses("secondary")}>
-            Back to the device
-          </Link>
+          {popup ? (
+            <Button onClick={() => window.close()}>Close window</Button>
+          ) : (
+            <Link to={`/devices/${deviceId}`} className={buttonClasses("secondary")}>
+              Back to the device
+            </Link>
+          )}
         </div>
       </div>
     </Centered>

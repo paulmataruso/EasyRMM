@@ -1,13 +1,17 @@
 import { Link, useParams } from "react-router";
-import { FolderOpen, MonitorPlay, SquareTerminal } from "lucide-react";
+import { AppWindow, ExternalLink, FolderOpen, MonitorPlay, SquareTerminal } from "lucide-react";
 import type { ReactNode } from "react";
 import { useApi, useList } from "../../api/hooks";
 import type { AuditEntry, Device, RemoteKind } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
+import { MenuButton } from "../../components/Menu";
 import { DeviceStatusBadge, REMOTE_KIND_NAMES } from "../../components/StatusBadges";
-import { Alert, Button, buttonClasses, Card, EmptyState, ErrorState, KeyValueList, PageHeader, Spinner } from "../../components/ui";
+import { useToast } from "../../components/Toast";
+import { Alert, Button, Card, EmptyState, ErrorState, KeyValueList, PageHeader, Spinner } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
+import { DeviceTreeToggle } from "./DeviceTree";
 import { platformName } from "./platform";
+import { openSessionWindow, sessionPath } from "./sessionWindow";
 
 const KIND_ICONS: Record<RemoteKind, ReactNode> = {
   desktop: <MonitorPlay className="size-4" aria-hidden />,
@@ -70,18 +74,20 @@ export function DeviceDetailPage() {
         }
         title={d.name}
         subtitle={d.osDescription || platformName(d.platform)}
-        actions={kinds.map((k, i) =>
-          reason ? (
-            <Button key={k} icon={KIND_ICONS[k]} disabled title={reason}>
-              {REMOTE_KIND_NAMES[k]}
-            </Button>
-          ) : (
-            <Link key={k} to={`/devices/${d.id}/remote/${k}`} className={buttonClasses(i === 0 ? "primary" : "secondary")}>
-              {KIND_ICONS[k]}
-              {REMOTE_KIND_NAMES[k]}
-            </Link>
-          ),
-        )}
+        actions={
+          <>
+            {kinds.map((k, i) =>
+              reason ? (
+                <Button key={k} icon={KIND_ICONS[k]} disabled title={reason}>
+                  {REMOTE_KIND_NAMES[k]}
+                </Button>
+              ) : (
+                <SessionButton key={k} device={d} kind={k} primary={i === 0} />
+              ),
+            )}
+            <DeviceTreeToggle />
+          </>
+        }
       />
 
       {kinds.length > 0 && reason && (
@@ -138,6 +144,34 @@ export function DeviceDetailPage() {
         {showHistory && <SessionHistory deviceId={d.id} />}
       </div>
     </>
+  );
+}
+
+/** Starts a remote session in this tab (full-window) or in a browser window of its own. */
+function SessionButton({ device, kind, primary }: { device: Device; kind: RemoteKind; primary: boolean }) {
+  const toast = useToast();
+  const name = REMOTE_KIND_NAMES[kind];
+  return (
+    <MenuButton
+      variant={primary ? "primary" : "secondary"}
+      icon={KIND_ICONS[kind]}
+      label={`Open ${name}`}
+      items={[
+        { id: "tab", label: "In this tab", icon: <AppWindow className="size-4" aria-hidden />, to: sessionPath(device.id, kind) },
+        {
+          id: "window",
+          label: "In a new window",
+          icon: <ExternalLink className="size-4" aria-hidden />,
+          onSelect: () => {
+            if (!openSessionWindow(device.id, kind)) {
+              toast.error("Your browser blocked the new window. Allow pop-ups for this site, or open the session in this tab.");
+            }
+          },
+        },
+      ]}
+    >
+      {name}
+    </MenuButton>
   );
 }
 

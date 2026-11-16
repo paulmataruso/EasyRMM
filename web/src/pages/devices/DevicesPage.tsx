@@ -10,6 +10,7 @@ import { Alert, buttonClasses, EmptyState, ErrorState, Field, PageHeader, Select
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { useUrlState } from "../../lib/urlState";
+import { DeviceTreeToggle } from "./DeviceTree";
 import { platformName } from "./platform";
 
 /** The server's cap on one list response (devices.MaxList). */
@@ -41,7 +42,16 @@ export function DevicesPage() {
 
   return (
     <>
-      <PageHeader title="Devices" subtitle="Computers in the organizations you support. Status refreshes every 30 seconds." actions={canEnroll && addLink} />
+      <PageHeader
+        title="Devices"
+        subtitle="Computers in the organizations you support. Status refreshes every 30 seconds."
+        actions={
+          <>
+            <DeviceTreeToggle />
+            {canEnroll && addLink}
+          </>
+        }
+      />
       <RemoteAccessWarning />
       <Toolbar>
         <SearchInput value={search} onChange={(v) => url.set({ q: v })} placeholder="Name or hostname" className="max-w-xs" />

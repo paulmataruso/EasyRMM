@@ -316,12 +316,12 @@ Flat, layered by border and tone rather than shadow. Surfaces at rest carry a ha
 ### Shadow Vocabulary
 - **Hairline** (`shadow-xs`: 0 1px 2px 0 rgb(0 0 0 / 0.05)): cards, stat tiles, inputs, primary/secondary/danger buttons.
 - **Panel** (`shadow-sm`): the auth panel.
-- **Toast** (`shadow-lg`): toasts.
-- **Drawer** (`shadow-xl`): the mobile sidebar drawer.
+- **Toast** (`shadow-lg`): toasts and menus.
+- **Drawer** (`shadow-xl`): the mobile sidebar drawer, and the device tree over the page below `lg`.
 - **Modal** (`shadow-2xl`): dialogs, over a `rgb(2 6 23 / 0.6)` backdrop.
 
 ### Named Rules
-**The Float-Only Lift Rule.** Only overlays (toast, drawer, dialog) get more than a hairline shadow.
+**The Float-Only Lift Rule.** Only overlays (toast, menu, drawer, dialog) get more than a hairline shadow. The device tree docked beside the page is part of the layout and stays flat; over the page on narrow screens it is a drawer.
 
 ## Shapes
 
@@ -379,6 +379,12 @@ Alerts are 6px-radius bordered blocks in a tone's soft fill with a 40% tone bord
 
 ### Empty, loading and error states
 Centered, quiet: a subtle 32px icon, a medium fg title and muted body, optional action. Error states distinguish "Not found" and "Not available to your role" from load failures, which offer Retry.
+
+### Menus (EasyRMM addition)
+`MenuButton` follows the WAI-ARIA menu button pattern: a button with a trailing chevron that turns over while open, and below it a surface panel (line border, 8px radius, 4px padding, `shadow-lg`, at least 12rem) of menu items with 16px icons. It aligns to the button's right edge and flips to its left when that would leave the viewport. The first item takes focus on open; arrow keys, Home and End move, Escape closes and returns focus, Tab and a click outside close. The device page uses it so each remote session opens **In this tab** or **In a new window**.
+
+### Device tree dock (EasyRMM addition)
+A **Tree** toggle (pressed state in accent-soft with a 40% accent border) in the devices pages' header opens a 20rem dock at the right of the page: surface, line border on its left, no shadow, entering over 180ms (12px slide, none under reduced motion). It holds a header (title, Collapse all, close), a filter with a live count, an **All devices** row, and the WAI-ARIA tree of organizations, sites and devices: 28px rows indented 16px a level, chevrons, building, pin and status-dot icons, online/total counts in muted tabular figures, the row for the page's organization, site or device in accent-soft and medium weight. From `lg` it sits beside the page and is remembered in the browser; below `lg` it opens over the page as a drawer with a scrim and closes after a choice.
 
 ### Navigation
 The navy sidebar holds the wordmark (on-dark variant in both themes), primary items (14px, 16px icons, 8px by 12px, 6px radius; active on sidebar-active with white medium text), and at its foot the account link (name over platform role or email) and Sign out above a 10% white divider. Elsewhere the wordmark switches between `wordmark.svg` (dark) and `wordmark-light.svg` (light) next to `logo.svg`.

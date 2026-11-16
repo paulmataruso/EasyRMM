@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RemoteAccessStatus } from "../../api/types";
@@ -45,6 +45,12 @@ function deviceList(r: FakeRequest) {
     ),
   });
 }
+
+/** Answers a session launch the way the server does. */
+const launch = (r: FakeRequest) => {
+  const kind = (r.body as { kind: string }).kind;
+  return { status: 201, body: { grantId: `g-${kind}`, url: `https://mesh.rmm.example.com/.easyrmm/launch?t=${kind}-token`, expiresAt: "2030-01-01T00:00:00Z", kind, deviceId: r.params.id } };
+};
 
 describe("devices", () => {
   it("lists devices and filters them on the server, keeping filters in the URL", async () => {
@@ -203,9 +209,8 @@ describe("device detail", () => {
     });
     renderApp("/devices/d1");
     expect(await screen.findByRole("heading", { name: "FRONT-DESK" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Remote desktop" })).toHaveAttribute("href", "/devices/d1/remote/desktop");
-    expect(screen.getByRole("link", { name: "Terminal" })).toHaveAttribute("href", "/devices/d1/remote/terminal");
-    expect(screen.queryByRole("link", { name: "Files" })).not.toBeInTheDocument();
+    for (const name of ["Remote desktop", "Terminal"]) expect(screen.getByRole("button", { name })).toHaveAttribute("aria-haspopup", "menu");
+    expect(screen.queryByRole("button", { name: "Files" })).not.toBeInTheDocument();
     expect(screen.getByText("Reception")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Northwind Traders / Head office" })).toHaveAttribute("href", "/sites/s1");
 
@@ -213,6 +218,60 @@ describe("device detail", () => {
     expect(screen.getByText(/· denied/)).toBeInTheDocument();
     const q = server.call("GET /audit").query;
     expect([q.get("deviceId"), q.get("action")]).toEqual(["d1", "device.remote_session"]);
+  });
+
+  it("opens a session in this tab or in a window of its own", async () => {
+    const user = userEvent.setup();
+    installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(DEVICES[0]), "POST /devices/:id/remote-sessions": launch });
+    const popup = { closed: false, focus: vi.fn(), location: { pathname: "/devices/d1/remote/terminal", assign: vi.fn() } };
+    const open = vi.fn<typeof window.open>(() => popup as unknown as Window);
+    vi.stubGlobal("open", open);
+    renderApp("/devices/d1");
+
+    const terminal = await screen.findByRole("button", { name: "Terminal" });
+    await user.click(terminal);
+    const menu = screen.getByRole("menu", { name: "Open Terminal" });
+    expect(terminal).toHaveAttribute("aria-expanded", "true");
+    expect(within(menu).getByRole("menuitem", { name: "In this tab" })).toHaveFocus();
+    expect(within(menu).getByRole("menuitem", { name: "In this tab" })).toHaveAttribute("href", "/devices/d1/remote/terminal");
+    await user.keyboard("{ArrowDown}");
+    expect(within(menu).getByRole("menuitem", { name: "In a new window" })).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(terminal).toHaveFocus();
+
+    // A window of its own, named after the device; asking again brings it forward rather than opening another.
+    await user.click(terminal);
+    await user.click(screen.getByRole("menuitem", { name: "In a new window" }));
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(open.mock.calls[0]?.slice(0, 2)).toEqual(["/devices/d1/remote/terminal", "easyrmm-session-d1"]);
+    expect(open.mock.calls[0]?.[2]).toMatch(/^popup=yes,width=\d+,height=\d+/);
+    expect(location()).toBe("/devices/d1");
+    await user.click(screen.getByRole("button", { name: "Remote desktop" }));
+    await user.click(screen.getByRole("menuitem", { name: "In a new window" }));
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(popup.location.assign).toHaveBeenCalledWith("/devices/d1/remote/desktop");
+    expect(popup.focus).toHaveBeenCalled();
+
+    // In this tab.
+    await user.click(terminal);
+    await user.click(screen.getByRole("menuitem", { name: "In this tab" }));
+    expect(location()).toBe("/devices/d1/remote/terminal");
+  });
+
+  it("says so when the browser blocks the session window", async () => {
+    const user = userEvent.setup();
+    installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(device("d9", "KIOSK")) });
+    vi.stubGlobal("open", vi.fn(() => null));
+    renderApp("/devices/d9");
+    await user.click(await screen.findByRole("button", { name: "Files" }));
+    await user.click(screen.getByRole("menuitem", { name: "In a new window" }));
+    expect(await screen.findByText(/Your browser blocked the new window/)).toBeInTheDocument();
+    // A click outside closes an open menu.
+    await user.click(screen.getByRole("button", { name: "Files" }));
+    expect(screen.getByRole("menu")).toBeInTheDocument();
+    await user.click(screen.getByRole("heading", { name: "KIOSK" }));
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   });
 
   it("explains why sessions cannot start on an offline device", async () => {
@@ -273,11 +332,6 @@ describe("device detail", () => {
 });
 
 describe("remote sessions", () => {
-  const launch = (r: FakeRequest) => {
-    const kind = (r.body as { kind: string }).kind;
-    return { status: 201, body: { grantId: `g-${kind}`, url: `https://mesh.rmm.example.com/.easyrmm/launch?t=${kind}-token`, expiresAt: "2030-01-01T00:00:00Z", kind, deviceId: r.params.id } };
-  };
-
   it("embeds the session, switches between kinds and reconnects with a fresh link each time", async () => {
     const user = userEvent.setup();
     const server = installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(DEVICES[0]), "POST /devices/:id/remote-sessions": launch });
@@ -301,6 +355,43 @@ describe("remote sessions", () => {
 
     await user.click(screen.getByRole("link", { name: /End/ }));
     expect(location()).toBe("/devices/d1");
+  });
+
+  it("ends a session in its own window by closing the window", async () => {
+    const user = userEvent.setup();
+    installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(DEVICES[0]), "POST /devices/:id/remote-sessions": launch });
+    const close = vi.fn();
+    vi.stubGlobal("close", close);
+    window.name = "easyrmm-session-d1";
+    try {
+      renderApp("/devices/d1/remote/terminal");
+      await screen.findByTitle("Terminal on FRONT-DESK");
+      // No way back into the console from here: the console is in the window that opened this one.
+      expect(screen.queryByRole("link", { name: "Device details" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /End/ })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: /End/ }));
+      expect(close).toHaveBeenCalled();
+      expect(location()).toBe("/devices/d1/remote/terminal");
+    } finally {
+      window.name = "";
+    }
+  });
+
+  it("offers to close a session window whose session could not start", async () => {
+    const user = userEvent.setup();
+    installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /devices/:id": ok(DEVICES[0]), "POST /devices/:id/remote-sessions": fail(409, "device_offline", "The device is offline.") });
+    const close = vi.fn();
+    vi.stubGlobal("close", close);
+    window.name = "easyrmm-session-d1";
+    try {
+      renderApp("/devices/d1/remote/desktop");
+      expect(await screen.findByText("The device is offline")).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: "Back to the device" })).not.toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Close window" }));
+      expect(close).toHaveBeenCalled();
+    } finally {
+      window.name = "";
+    }
   });
 
   it("helps when the browser does not yet trust the server's own certificate for the session", async () => {

@@ -32,10 +32,13 @@ export function useApi<T>(path: string | null, params?: QueryParams, options: Ap
   });
 }
 
+/** Shared by every list without data yet, so `items` keeps one identity across renders (safe as a memo dependency). */
+const NO_ITEMS: never[] = [];
+
 /** A list endpoint: `items` is always an array. */
 export function useList<T>(path: string | null, params?: QueryParams, options: ApiQueryOptions<List<T>> = {}) {
   const query = useApi<List<T>>(path, params, options);
-  return { ...query, items: query.data?.items ?? [], next: query.data?.next ?? null };
+  return { ...query, items: query.data?.items ?? (NO_ITEMS as T[]), next: query.data?.next ?? null };
 }
 
 /** Warms the cache for a path (hover and j/k focus on list rows), so the detail view opens instantly. */

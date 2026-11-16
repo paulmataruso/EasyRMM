@@ -201,8 +201,25 @@
   animation: toast-in 160ms ease-out;
 }
 
+/* The device tree dock settles in from the right edge it is attached to. */
+@keyframes dock-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.dock-enter {
+  animation: dock-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .toast-enter {
+  .toast-enter,
+  .dock-enter {
     animation: none;
   }
 
