@@ -195,7 +195,7 @@ export function SelfPatchingWarning({ shell, body, scriptId, className }: { shel
       <ul className="mt-1.5 space-y-1">
         {shown.map((l) => (
           <li key={l.line}>
-            Line {l.line} {l.what}: <code className="font-mono text-xs break-all">{l.text}</code>
+            Line {l.line} {l.what}: <code className="font-mono text-xs break-words">{l.text}</code>
           </li>
         ))}
       </ul>
