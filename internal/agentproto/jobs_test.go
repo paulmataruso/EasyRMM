@@ -106,8 +106,11 @@ func TestJobKeysAndShells(t *testing.T) {
 			t.Errorf("shell %s", s)
 		}
 	}
-	if ValidShell("powershell") || ShellPlatforms("powershell") != nil {
-		t.Error("PowerShell is not supported yet")
+	if ShellPlatforms(ShellPowerShell)[0] != "windows" || ShellPlatforms(ShellCmd)[0] != "windows" || ShellPlatforms(ShellBash)[0] != "linux" {
+		t.Error("shell platforms")
+	}
+	if ValidShell("zsh") || ShellPlatforms("pwsh") != nil {
+		t.Error("an unknown shell is accepted")
 	}
 	if PathJobStart("r1") != "/api/agent/v1/jobs/r1/start" || PathJobResult("r1") != "/api/agent/v1/jobs/r1/result" {
 		t.Error("job paths")

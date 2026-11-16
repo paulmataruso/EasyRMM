@@ -40,14 +40,20 @@ export function unavailableReason(d: Pick<Device, "remoteAgent" | "remoteOnline"
 }
 
 /** The remote-access part of a device, in a few words, and what it means when that is not obvious. */
-export function remoteAccessState(d: Pick<Device, "remoteAgent" | "remoteOnline" | "agent">, enabled: boolean): { label: string; hint?: string } {
+export function remoteAccessState(
+  d: Pick<Device, "remoteAgent" | "remoteOnline" | "agent" | "platform">,
+  enabled: boolean,
+): { label: string; hint?: string } {
   if (!enabled) return { label: "Turned off on this server" };
   if (d.remoteAgent) return { label: d.remoteOnline ? "Connected" : "Not connected" };
-  if (d.agent)
+  if (d.agent) {
+    const status =
+      d.platform === "windows" ? "“& \"$env:ProgramFiles\\EasyRMM\\Agent\\easyrmm-agent.exe\" status” in PowerShell as administrator" : "“sudo easyrmm-agent status”";
     return {
       label: "Not set up yet",
-      hint: "The EasyRMM agent installs MeshAgent shortly after enrolling. If this lasts, run “easyrmm-agent status” on the device.",
+      hint: `The EasyRMM agent installs MeshAgent shortly after enrolling. If this lasts, run ${status} on the device.`,
     };
+  }
   return { label: "Not installed" };
 }
 
@@ -204,7 +210,7 @@ export function DeviceDetailPage() {
         {side && (
           <div className="flex min-w-0 flex-col gap-5">
             {showAlerts && <DeviceAlertsCard deviceId={d.id} />}
-            {hasAgent && <HealthCard query={inventory} online={d.online} onShowAll={() => showTab("hardware")} />}
+            {hasAgent && <HealthCard query={inventory} online={d.online} windows={d.platform === "windows"} onShowAll={() => showTab("hardware")} />}
             {showRuns && <ScriptRuns deviceId={d.id} />}
             {showHistory && <SessionHistory deviceId={d.id} />}
           </div>

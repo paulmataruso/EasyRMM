@@ -26,6 +26,9 @@ type Address struct {
 	// Pin is the public-key pin of the address's certificate when it comes
 	// from the server's own certificate authority, for curl --pinnedpubkey.
 	Pin string `json:"pin,omitempty"`
+	// KeyPin is the same key's pin for the Windows PowerShell command: the
+	// hex SHA-256 of the public key.
+	KeyPin string `json:"keyPin,omitempty"`
 }
 
 // Authority describes the server's own certificate authority.

@@ -1,9 +1,5 @@
-// Package inventory collects a Linux device's inventory (ADR-0018):
-// firmware, processor, memory, operating system, disks, network and
-// installed packages, from /sys, /proc, /etc and the package database.
-//
-// Every list is sorted so an unchanged machine produces the same document,
-// and every source is optional: what cannot be read is left empty.
+//go:build !windows
+
 package inventory
 
 import (
@@ -20,21 +16,8 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
-// Collector reads the inventory. The zero value reads the real machine.
-type Collector struct {
-	// Root prefixes every path; "" or "/" on a real machine.
-	Root string
-	// Interfaces lists the network interfaces; nil reads them from the
-	// system.
-	Interfaces func() ([]agentproto.Interface, error)
-	// Run runs a command and returns its standard output; nil runs it for
-	// real. Only `rpm` is run.
-	Run func(ctx context.Context, name string, args ...string) ([]byte, error)
-	// LookPath finds a command; nil searches the system's fixed directories.
-	LookPath func(name string) (string, error)
-}
-
-// Collect reads the whole inventory.
+// Collect reads the whole inventory from /sys, /proc, /etc and the package
+// database.
 func (c Collector) Collect(ctx context.Context) agentproto.Inventory {
 	inv := agentproto.Inventory{
 		System:   c.system(),
@@ -69,13 +52,6 @@ func (c Collector) read(p string) string {
 	return strings.TrimSpace(string(b))
 }
 
-// placeholders are what firmware vendors leave in fields they never filled.
-var placeholders = map[string]bool{
-	"to be filled by o.e.m.": true, "default string": true, "system serial number": true, "system product name": true,
-	"system manufacturer": true, "not specified": true, "not applicable": true, "none": true, "n/a": true, "0": true,
-	"0123456789": true, "123456789": true, "oem": true, "o.e.m.": true, "chassis serial number": true, "invalid": true,
-}
-
 func (c Collector) dmi(name string) string {
 	v := c.read("/sys/class/dmi/id/" + name)
 	if placeholders[strings.ToLower(v)] {
@@ -103,18 +79,8 @@ func (c Collector) virtualization(s agentproto.SystemInfo) string {
 			return "container"
 		}
 	}
-	id := strings.ToLower(s.Manufacturer + " " + s.Model + " " + s.BIOSVendor)
-	for _, h := range []struct{ match, name string }{
-		{"vmware", "vmware"}, {"virtualbox", "virtualbox"}, {"innotek", "virtualbox"}, {"qemu", "kvm"}, {"kvm", "kvm"},
-		{"amazon ec2", "kvm"}, {"google compute engine", "kvm"}, {"xen", "xen"}, {"parallels", "parallels"},
-		{"bochs", "kvm"}, {"openstack", "kvm"}, {"proxmox", "kvm"},
-	} {
-		if strings.Contains(id, h.match) {
-			return h.name
-		}
-	}
-	if strings.Contains(id, "microsoft corporation") && strings.Contains(id, "virtual") {
-		return "hyper-v"
+	if h := hypervisor(s); h != "" {
+		return h
 	}
 	if bytes.Contains(c.cpuinfo(), []byte(" hypervisor")) {
 		return "vm"

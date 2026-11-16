@@ -1,6 +1,7 @@
 // Package agentapi serves the EasyRMM agent (ADR-0015, ADR-0017):
 // enrollment with a deployment token, signed heartbeats, MeshAgent
-// delivery, jobs, and the agent downloads and Linux installer.
+// delivery, jobs, and the agent downloads and installers: install.ps1 for
+// Windows, install.sh for Linux.
 //
 // These routes are reached without a browser session and without CSRF
 // checks; enrollment is authorized by the token, everything else by the
@@ -31,19 +32,28 @@ import (
 //go:embed install.sh.tmpl
 var installTemplate string
 
-var installScript = template.Must(template.New("install.sh").Parse(installTemplate))
+//go:embed install.ps1.tmpl
+var installPSTemplate string
+
+var (
+	installScript   = template.Must(template.New("install.sh").Parse(installTemplate))
+	installPSScript = template.Must(template.New("install.ps1").Parse(installPSTemplate))
+)
 
 // API serves the agent routes.
 type API struct {
 	svc     *agents.Service
 	builds  *agents.Builds
-	scripts map[string][]byte // install script per console origin
-	primary []byte
+	scripts map[string]installers // per console origin
+	primary installers
 	ca      []byte
 	jobs    *jobs.Service
 	inv     *inventory.Service
 	log     *slog.Logger
 }
+
+// installers are an origin's install scripts.
+type installers struct{ sh, ps1 []byte }
 
 // Address is a console origin agents can enroll through (ADR-0016).
 type Address struct {
@@ -52,6 +62,8 @@ type Address struct {
 	// Pin is the curl public-key pin of the origin's certificate when it
 	// comes from the server's own certificate authority.
 	Pin string
+	// KeyPin is the same key's pin for PowerShell (pki.Authority.KeyPin).
+	KeyPin string
 }
 
 // New builds the API. addresses are the console origins, the public URL
@@ -60,29 +72,48 @@ func New(svc *agents.Service, builds *agents.Builds, addresses []Address, ca []b
 	if len(addresses) == 0 {
 		return nil, errors.New("agentapi: no server address")
 	}
-	a := &API{svc: svc, builds: builds, scripts: map[string][]byte{}, ca: ca, log: log}
+	a := &API{svc: svc, builds: builds, scripts: map[string]installers{}, ca: ca, log: log}
 	for i, addr := range addresses {
 		server := strings.TrimSuffix(addr.URL, "/")
-		if strings.ContainsAny(server+addr.Pin, "'\\\n\r\"$`") {
+		if !safeInScript(server + addr.Pin + addr.KeyPin) {
 			return nil, errors.New("agentapi: the server address cannot be put in the installer")
 		}
-		if addr.Pin != "" && ca == nil {
+		if (addr.Pin != "" || addr.KeyPin != "") && ca == nil {
 			return nil, errors.New("agentapi: a pinned address needs the certificate authority")
 		}
-		var buf bytes.Buffer
-		if err := installScript.Execute(&buf, struct {
-			Server string
-			HTTPS  bool
-			Pin    string
-		}{server, strings.HasPrefix(server, "https://"), addr.Pin}); err != nil {
+		data := struct {
+			Server      string
+			HTTPS       bool
+			Pin, KeyPin string
+		}{server, strings.HasPrefix(server, "https://"), addr.Pin, addr.KeyPin}
+		var sh, ps1 bytes.Buffer
+		if err := installScript.Execute(&sh, data); err != nil {
 			return nil, err
 		}
-		a.scripts[server] = buf.Bytes()
+		if err := installPSScript.Execute(&ps1, data); err != nil {
+			return nil, err
+		}
+		// Windows PowerShell reads a script without a byte order mark in the
+		// ANSI code page, and the console one-liner downloads it as text.
+		ps1Bytes := bytes.ReplaceAll(ps1.Bytes(), []byte("\n"), []byte("\r\n"))
+		a.scripts[server] = installers{sh: sh.Bytes(), ps1: ps1Bytes}
 		if i == 0 {
-			a.primary = buf.Bytes()
+			a.primary = a.scripts[server]
 		}
 	}
 	return a, nil
+}
+
+// safeInScript reports whether s can go in single quotes in both
+// installers: printable ASCII without quotes, backslashes, dollars or
+// backticks.
+func safeInScript(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r > 0x7e || strings.ContainsRune("'\\\"$`", r) {
+			return false
+		}
+	}
+	return true
 }
 
 // WithJobs serves job delivery from j.
@@ -113,6 +144,7 @@ func (a *API) Handler() http.Handler {
 		mux.Handle("POST "+agentproto.PathInventory, httpapi.Handle(a.signedLimit(agentproto.MaxInventoryBody, a.inventory)))
 	}
 	mux.Handle("GET /api/agent/v1/install.sh", httpapi.Handle(a.installer))
+	mux.Handle("GET /api/agent/v1/install.ps1", httpapi.Handle(a.installer))
 	mux.Handle("GET "+agentproto.PathCA, httpapi.Handle(a.authority))
 	mux.Handle("GET /api/agent/v1/download/{file}", httpapi.Handle(a.download))
 	mux.Handle("/", httpapi.Handle(func(http.ResponseWriter, *http.Request) error { return httpapi.ErrNotFound }))
@@ -357,15 +389,22 @@ func (a *API) meshSettings(w http.ResponseWriter, r *http.Request, d *agents.Dev
 
 // installer serves the install script for the address the request came
 // to, so a machine installed by IP address keeps using the IP address.
+// installer serves the install script for the address the request came
+// to: install.sh, or install.ps1 for Windows.
 func (a *API) installer(w http.ResponseWriter, r *http.Request) error {
-	script := a.primary
+	scripts := a.primary
 	if o, ok := httpapi.OriginOf(r); ok {
 		if s, ok := a.scripts[o.Console]; ok {
-			script = s
+			scripts = s
 		}
 	}
+	if strings.HasSuffix(r.URL.Path, ".ps1") {
+		w.Header().Set("Content-Type", "text/plain; charset=us-ascii")
+		_, _ = w.Write(scripts.ps1)
+		return nil
+	}
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
-	_, _ = w.Write(script)
+	_, _ = w.Write(scripts.sh)
 	return nil
 }
 

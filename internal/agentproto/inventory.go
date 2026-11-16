@@ -32,8 +32,9 @@ type Inventory struct {
 	Interfaces []Interface `json:"interfaces"`
 	Gateways   []string    `json:"gateways"`
 	DNS        []string    `json:"dnsServers"`
-	// PackageManager is where Packages came from: dpkg, rpm, apk, pacman, or
-	// empty when none was found.
+	// PackageManager is where Packages came from: dpkg, rpm, apk, pacman,
+	// windows (the programs Windows lists as installed), or empty when none
+	// was found.
 	PackageManager string    `json:"packageManager"`
 	Packages       []Package `json:"packages"`
 }
@@ -88,11 +89,13 @@ type Interface struct {
 	SpeedMbps int      `json:"speedMbps"` // 0 when unknown
 }
 
-// Package is one installed package.
+// Package is one installed package, or on Windows one installed program.
 type Package struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
 	Arch    string `json:"arch"`
+	// Publisher is the program's publisher on Windows.
+	Publisher string `json:"publisher,omitempty"`
 }
 
 // Hash identifies an inventory's content: the hex SHA-256 of its JSON.

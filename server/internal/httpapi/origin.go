@@ -16,6 +16,9 @@ type Origin struct {
 	// Pin is the public-key pin of the certificate served on this origin
 	// when it comes from the server's own certificate authority.
 	Pin string
+	// KeyPin is the same key's pin for PowerShell, the hex SHA-256 of the
+	// public key (pki.Authority.KeyPin).
+	KeyPin string
 }
 
 type originKey struct{}

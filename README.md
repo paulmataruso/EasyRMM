@@ -57,7 +57,7 @@ them is in [`docs/architecture/research-report.md`](docs/architecture/research-r
 |---|---|
 | `server/` | Go server (modular monolith), migrations |
 | `web/` | Technician console: React + TypeScript, sharing EasyPatch's design system |
-| `agent/` | EasyRMM endpoint agent (Go; Linux today) |
+| `agent/` | EasyRMM endpoint agent (Go; Windows and Linux) |
 | `internal/agentproto/` | Wire protocol shared by the server and the agent |
 | `installers/` | MSI, packages and install scripts |
 | `meshcentral/` | MeshCentral configuration and integration assets |
@@ -78,7 +78,7 @@ export EASYRMM_TEST_DATABASE_URL='postgres://postgres:easyrmm-test-only@127.0.0.
 make check                   # format, vet, lint, unit + integration tests, coverage floors
 make web-test                # console typecheck and unit tests
 make e2e                     # build everything, browser tests against a real server
-make build-agents            # Linux agents in bin/agents; serve them with EASYRMM_AGENT_DIR=bin/agents
+make build-agents            # Windows and Linux agents in bin/agents; serve them with EASYRMM_AGENT_DIR=bin/agents
 ```
 
 Endpoints join with the EasyRMM agent: see

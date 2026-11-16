@@ -66,7 +66,7 @@ export function ScriptsPage() {
         >
           {!filtered &&
             (canWrite
-              ? "Add a Bash, sh or Python 3 script, then run it on Linux devices that have the EasyRMM agent."
+              ? "Add a PowerShell or cmd script for Windows devices, or a Bash, sh or Python 3 script for Linux devices, then run it on devices that have the EasyRMM agent."
               : "An administrator adds scripts to the library; you can run them on the devices you support once they do.")}
         </EmptyState>
       ) : (

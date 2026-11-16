@@ -36,9 +36,16 @@ export function HardwarePanel({ data }: { data: DeviceInventory }) {
             items={[
               ["Name", or(inv.os.name)],
               ["Version", or(inv.os.version)],
-              ["Kernel", inv.os.kernel ? <Mono key="k">{inv.os.kernel}</Mono> : none],
+              [inv.os.id === "windows" ? "Build" : "Kernel", inv.os.kernel ? <Mono key="k">{inv.os.kernel}</Mono> : none],
               ["Time zone", or(inv.os.timezone)],
-              ["Software", inv.packageManager ? `${plural(inv.packageCount, "package")} (${inv.packageManager})` : none],
+              [
+                "Software",
+                inv.packageManager === "windows"
+                  ? plural(inv.packageCount, "installed program")
+                  : inv.packageManager
+                    ? `${plural(inv.packageCount, "package")} (${inv.packageManager})`
+                    : none,
+              ],
             ]}
           />
         </Card>

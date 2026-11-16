@@ -1,12 +1,12 @@
+//go:build !windows
+
 package inventory
 
 import (
-	"cmp"
 	"encoding/hex"
 	"net"
 	"net/netip"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -47,34 +47,6 @@ func (c Collector) systemInterfaces() ([]agentproto.Interface, error) {
 func (c Collector) physical(name string) bool {
 	_, err := os.Stat(c.path("/sys/class/net/" + name + "/device"))
 	return err == nil
-}
-
-// sortInterfaces puts hardware interfaces first, so a host's own network
-// card leads its container bridges, then sorts by name, and caps the list.
-func sortInterfaces(list []agentproto.Interface, physical func(name string) bool) []agentproto.Interface {
-	for i := range list {
-		slices.Sort(list[i].Addresses)
-		if len(list[i].Addresses) > agentproto.MaxAddresses {
-			list[i].Addresses = list[i].Addresses[:agentproto.MaxAddresses]
-		}
-	}
-	hw := make(map[string]bool, len(list))
-	for _, i := range list {
-		hw[i.Name] = physical(i.Name)
-	}
-	slices.SortFunc(list, func(a, b agentproto.Interface) int {
-		if hw[a.Name] != hw[b.Name] {
-			if hw[a.Name] {
-				return -1
-			}
-			return 1
-		}
-		return cmp.Compare(a.Name, b.Name)
-	})
-	if len(list) > agentproto.MaxListed {
-		list = list[:agentproto.MaxListed]
-	}
-	return list
 }
 
 // gateways reads the default routes from /proc/net/route and
@@ -131,11 +103,4 @@ func nameservers(s string) []string {
 		}
 	}
 	return out
-}
-
-func appendNew(list []string, v string) []string {
-	if slices.Contains(list, v) {
-		return list
-	}
-	return append(list, v)
 }

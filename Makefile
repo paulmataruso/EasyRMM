@@ -27,13 +27,15 @@ fmt-check: ## Fail if Go code is not formatted
 		if [ -n "$$out" ]; then echo "Unformatted files:"; echo "$$out"; exit 1; fi
 
 .PHONY: vet
-vet: ## go vet (including integration-tagged files)
+vet: ## go vet (including integration-tagged files, and the agent built for Windows)
 	$(GO) vet ./...
 	$(GO) vet -tags integration ./...
+	GOOS=windows $(GO) vet ./agent/... ./internal/...
 
 .PHONY: lint
-lint: ## golangci-lint
+lint: ## golangci-lint, also over the agent built for Windows
 	golangci-lint run ./...
+	GOOS=windows golangci-lint run ./agent/... ./internal/...
 
 .PHONY: test-unit
 test-unit: ## Go unit tests with the race detector
@@ -77,8 +79,13 @@ test-integration: ## Go unit + integration tests against PostgreSQL and MeshCent
 check: fmt-check vet lint test-integration ## Everything CI runs for Go code
 
 .PHONY: build-agents
-build-agents: ## Build the Linux agents into bin/agents (serve them with EASYRMM_AGENT_DIR=bin/agents)
+build-agents: ## Build the Windows and Linux agents into bin/agents (serve them with EASYRMM_AGENT_DIR=bin/agents)
 	@mkdir -p bin/agents
+	@for arch in amd64 arm64; do \
+		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch $(GO) build -trimpath \
+			-ldflags "-s -w -X main.Version=$$(git describe --tags --always --dirty 2>/dev/null || echo dev)" \
+			-o bin/agents/easyrmm-agent-windows-$$arch.exe ./agent/cmd/easyrmm-agent || exit 1; \
+	done
 	@for arch in amd64 arm64 arm 386; do \
 		CGO_ENABLED=0 GOOS=linux GOARCH=$$arch GOARM=7 $(GO) build -trimpath \
 			-ldflags "-s -w -X main.Version=$$(git describe --tags --always --dirty 2>/dev/null || echo dev)" \

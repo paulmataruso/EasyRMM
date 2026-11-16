@@ -9,7 +9,18 @@ import { useToast } from "../../components/Toast";
 import { Alert, Button, cx, Dot, EmptyState, ErrorState, Field, InlineError, Input, SelectField, Spinner, TextareaField } from "../../components/ui";
 import { plural } from "../../lib/format";
 import { TimeoutField } from "./parts";
-import { cannotRunReason, formatSeconds, LIMITS, parseArgs, scriptCovers, SHELL_NAMES, utf8Length, WAIT_OPTIONS } from "./scriptText";
+import {
+  cannotRunReason,
+  formatSeconds,
+  LIMITS,
+  parseArgs,
+  PLATFORM_NAMES,
+  scriptCovers,
+  SHELL_NAMES,
+  SHELL_PLATFORM,
+  utf8Length,
+  WAIT_OPTIONS,
+} from "./scriptText";
 
 const FIELDS = ["scriptId", "deviceIds", "args", "timeoutSeconds", "waitHours"];
 
@@ -228,8 +239,8 @@ function DevicePicker({ script, selected, onChange, error }: {
   const { eligible, excluded } = useMemo(() => {
     const covered = devices.items.filter((d) => scriptCovers(script, d));
     return {
-      eligible: covered.filter((d) => cannotRunReason(d) === null),
-      excluded: covered.filter((d) => cannotRunReason(d) !== null).length,
+      eligible: covered.filter((d) => cannotRunReason(d, script.shell) === null),
+      excluded: covered.filter((d) => cannotRunReason(d, script.shell) !== null).length,
     };
   }, [devices.items, script]);
   const q = query.trim().toLowerCase();
@@ -251,8 +262,8 @@ function DevicePicker({ script, selected, onChange, error }: {
   if (eligible.length === 0) {
     return (
       <EmptyState title="No devices can run this script" compact>
-        It runs on Linux devices with the EasyRMM agent{script.level === "shared" ? "" : ` in ${script.level === "site" ? "its site" : "its organization"}`}, where
-        your role runs scripts.
+        It runs on {PLATFORM_NAMES[SHELL_PLATFORM[script.shell]]} devices with the EasyRMM agent
+        {script.level === "shared" ? "" : ` in ${script.level === "site" ? "its site" : "its organization"}`}, where your role runs scripts.
       </EmptyState>
     );
   }

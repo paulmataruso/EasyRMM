@@ -190,6 +190,14 @@ func TestRecordCleansAndReplaces(t *testing.T) {
 	if sw, _ := f.svc.Software(f.ctx, super, pc); len(sw) != 1 || sw[0].Name != "curl" {
 		t.Errorf("replaced software %+v", sw)
 	}
+	// Windows programs carry their publisher.
+	f.record(pc, agentproto.Inventory{PackageManager: "windows", Packages: []agentproto.Package{{Name: "7-Zip 24.08 (x64)", Version: "24.08", Arch: "x64", Publisher: "Igor Pavlov"}}})
+	if sw, _ := f.svc.Software(f.ctx, super, pc); len(sw) != 1 || sw[0].Publisher != "Igor Pavlov" || sw[0].Arch != "x64" {
+		t.Errorf("Windows software = %+v", sw)
+	}
+	if got, _ := f.svc.Get(f.ctx, super, pc); got == nil || got.Inventory == nil || got.Inventory.PackageManager != "windows" || got.Inventory.PackageCount != 1 {
+		t.Errorf("Windows inventory = %+v", got)
+	}
 	f.record(pc, agentproto.Inventory{PackageManager: "dpkg"})
 	if n := f.str(`SELECT count(*)::text FROM device_software WHERE device_id = $1`, pc); n != "0" {
 		t.Errorf("packages left %s", n)

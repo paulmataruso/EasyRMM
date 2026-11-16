@@ -31,6 +31,8 @@ function routes(extra: Record<string, unknown> = {}) {
   } as Parameters<typeof installFakeApi>[0];
 }
 
+const WINDOWS_PC = device("d1", "FRONT-DESK", { platform: "windows", osDescription: "Windows 11 Pro 24H2", agent: AGENT });
+
 describe("device health", () => {
   it("shows the latest measurements, fullest filesystem first, and flags what is running out", async () => {
     installFakeApi(routes());
@@ -46,6 +48,16 @@ describe("device health", () => {
     expect(within(card).getByText("4.25 · 3.50 · 2.75")).toBeInTheDocument();
     expect(within(card).getByText("3 d 4 h")).toBeInTheDocument();
     expect(within(card).getByText("412")).toBeInTheDocument();
+  });
+
+  it("shows a Windows device's page file and no load average", async () => {
+    installFakeApi(routes({ "GET /devices/:id": ok(WINDOWS_PC) }));
+    renderApp("/devices/d1");
+    const card = (await screen.findByRole("heading", { name: "Health" })).closest("section") as HTMLElement;
+    const meters = await within(card).findAllByRole("meter");
+    expect(meters.map((m) => m.getAttribute("aria-label"))).toContain("Page file");
+    expect(within(card).queryByText("Load average")).not.toBeInTheDocument();
+    expect(within(card).getByText("Up for")).toBeInTheDocument();
   });
 
   it("charts use over the chosen period with a legend and a data table", async () => {
@@ -190,6 +202,29 @@ describe("device software", () => {
     renderApp("/devices/d1?tab=software");
     expect(await screen.findByText(`Showing the first ${SHOWN_PACKAGES} of ${SHOWN_PACKAGES + 50}. Filter by name to find the rest.`)).toBeInTheDocument();
     expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(SHOWN_PACKAGES + 1);
+  });
+
+  it("lists a Windows device's programs with their publishers", async () => {
+    const user = userEvent.setup();
+    const programs: Package[] = [
+      { name: "7-Zip 24.08 (x64)", version: "24.08", arch: "x64", publisher: "Igor Pavlov" },
+      { name: "Microsoft Edge", version: "131.0.2903.70", arch: "x86", publisher: "Microsoft Corporation" },
+    ];
+    installFakeApi(
+      routes({
+        "GET /devices/:id": ok({ ...WINDOWS_PC }),
+        "GET /devices/:id/inventory": ok({ inventory: inventory({ packageManager: "windows", packageCount: 2 }), metrics: metrics() }),
+        "GET /devices/:id/software": ok({ items: programs }),
+      }),
+    );
+    renderApp("/devices/d1?tab=software");
+    const table = await screen.findByRole("table");
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual(["Program", "Version", "Publisher", "Architecture"]);
+    expect(screen.getByText("2 programs")).toBeInTheDocument();
+    expect(screen.getByText(/From Windows' installed programs/)).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Filter programs"), "pavlov");
+    expect(within(screen.getByRole("table")).getAllByRole("row")).toHaveLength(2);
+    expect(screen.getByText("1 of 2 programs")).toBeInTheDocument();
   });
 
   it("is a tab only for people who can see software", async () => {

@@ -22,7 +22,7 @@ func origins(cfg *config.Config, ca *pki.Authority, remoteOn bool) []httpapi.Ori
 			h.Mesh = originString(o.Mesh)
 		}
 		if o.Internal && ca != nil {
-			h.Pin = ca.Pin()
+			h.Pin, h.KeyPin = ca.Pin(), ca.KeyPin()
 		}
 		out = append(out, h)
 	}

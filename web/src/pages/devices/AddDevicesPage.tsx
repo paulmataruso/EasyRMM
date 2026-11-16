@@ -29,6 +29,7 @@ import {
   Mono,
   PageHeader,
   Select,
+  Segmented,
   SelectField,
   Spinner,
   TableWrap,
@@ -52,9 +53,14 @@ const ARCH_NAMES: Record<string, string> = {
 /** Most computers first. */
 const ARCH_ORDER = ["amd64", "arm64", "arm", "386"];
 
+/** Windows first, then Linux. */
+const OS_ORDER = ["windows", "linux"];
+
 export function byArch(a: AgentBuild, b: AgentBuild): number {
-  const rank = (x: AgentBuild) => (ARCH_ORDER.includes(x.arch) ? ARCH_ORDER.indexOf(x.arch) : ARCH_ORDER.length);
-  return a.os.localeCompare(b.os) || rank(a) - rank(b) || a.file.localeCompare(b.file);
+  const rank = (order: string[], v: string) => (order.includes(v) ? order.indexOf(v) : order.length);
+  return (
+    rank(OS_ORDER, a.os) - rank(OS_ORDER, b.os) || a.os.localeCompare(b.os) || rank(ARCH_ORDER, a.arch) - rank(ARCH_ORDER, b.arch) || a.file.localeCompare(b.file)
+  );
 }
 
 export function archName(arch: string): string {
@@ -83,6 +89,32 @@ export function addressLabel(address: ServerAddress, primary: boolean): string {
   const host = new URL(address.url).host;
   return primary ? host : `${host} (IP address)`;
 }
+
+const TLS12 = "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072";
+
+/**
+ * The command that installs the agent on a Windows computer, for Windows PowerShell run as administrator. It turns on
+ * TLS 1.2, which older Windows PowerShell leaves off, downloads install.ps1 and runs it with the token. An address with a
+ * key pin uses the server's own certificate authority: the download trusts the server's public key, by its SHA-256, and
+ * nothing else, and install.ps1 does the same for its own downloads (agentapi/install.ps1.tmpl).
+ */
+export function windowsInstallCommand(serverUrl: string, secret: string, keyPin?: string): string {
+  const url = `${serverUrl}${AGENT_PATH}/install.ps1`;
+  if (!keyPin) return `${TLS12}; & ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('${url}'))) -Token '${secret}'`;
+  return [
+    TLS12,
+    `[Net.ServicePointManager]::ServerCertificateValidationCallback = { param($s, $c) ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($c.GetPublicKey())) -replace '-') -eq '${keyPin}' }`,
+    `try { $i = (New-Object Net.WebClient).DownloadString('${url}') } finally { [Net.ServicePointManager]::ServerCertificateValidationCallback = $null }`,
+    `& ([scriptblock]::Create($i)) -Token '${secret}'`,
+  ].join("; ");
+}
+
+type Platform = "windows" | "linux";
+
+const PLATFORMS: { value: Platform; label: string }[] = [
+  { value: "windows", label: "Windows" },
+  { value: "linux", label: "Linux" },
+];
 
 /** The server's addresses, and the one to offer first: the one this console was opened at. */
 function useAddresses(fallback: string) {
@@ -261,6 +293,7 @@ function InstallSteps({ created, onDone }: { created: NewEnrollmentToken; onDone
   const t = created.token;
   const { addresses, current } = useAddresses(created.serverUrl);
   const [chosen, setChosen] = useState<string | null>(null);
+  const [platform, setPlatform] = useState<Platform>("windows");
   const address = addresses.find((a) => a.url === chosen) ?? current;
   return (
     <div className="flex flex-col gap-4">
@@ -283,26 +316,26 @@ function InstallSteps({ created, onDone }: { created: NewEnrollmentToken; onDone
         </SelectField>
       )}
 
-      <section className="flex flex-col gap-1.5">
-        <h3 className="text-sm font-semibold text-fg">Linux</h3>
-        {address.pin ? (
-          <p className="text-sm text-muted">
-            Run on each computer as a user who can use sudo. The computer needs systemd and curl. This address uses the server&apos;s own certificate authority, so the
-            command checks the server&apos;s public key instead (<Mono>--pinnedpubkey</Mono>); <Mono>--insecure</Mono> only skips the public certificate check. The
-            agent trusts the server&apos;s certificate authority from then on.
-          </p>
+      <section className="flex flex-col gap-2" aria-label="Install command">
+        <Segmented label="Operating system" options={PLATFORMS} value={platform} onChange={setPlatform} className="self-start" />
+        {platform === "windows" ? (
+          <>
+            <p className="text-sm text-muted">
+              Run on each computer in <strong className="font-medium text-fg">Windows PowerShell</strong> started as administrator. Windows 10, Windows Server
+              2016 or later. It installs the EasyRMM Agent service, which then installs MeshAgent for remote access.
+            </p>
+            {address.keyPin && (
+              <p className="text-sm text-muted">
+                This address uses the server&apos;s own certificate authority, so the command checks the server&apos;s public key itself and trusts nothing else;
+                the agent trusts the server&apos;s certificate authority from then on. PowerShell 7 cannot run this check: use Windows PowerShell,{" "}
+                <Mono className="whitespace-nowrap">powershell.exe</Mono>.
+              </p>
+            )}
+            <CodeBlock code={windowsInstallCommand(address.url, created.secret, address.keyPin)} />
+          </>
         ) : (
-          <p className="text-sm text-muted">
-            Run on each computer as a user who can use sudo. The computer needs systemd and curl; with wget instead, replace <Mono>curl -fsSL</Mono> with{" "}
-            <Mono>wget -qO-</Mono>.
-          </p>
+          <LinuxInstall address={address} secret={created.secret} />
         )}
-        <CodeBlock code={linuxInstallCommand(address.url, created.secret, address.pin)} />
-      </section>
-
-      <section className="flex flex-col gap-1.5">
-        <h3 className="text-sm font-semibold text-fg">Windows and macOS</h3>
-        <p className="text-sm text-muted">The EasyRMM agent is not available for Windows or macOS yet.</p>
       </section>
 
       <details className="group text-sm">
@@ -312,7 +345,7 @@ function InstallSteps({ created, onDone }: { created: NewEnrollmentToken; onDone
           <p className="text-xs text-muted">
             Pass it to{" "}
             <Mono>
-              easyrmm-agent install --server {address.url} --token …{address.pin ? " --ca-file easyrmm-ca.pem" : ""}
+              {platform === "windows" ? "easyrmm-agent.exe" : "easyrmm-agent"} install --server {address.url} --token …{address.pin ? " --ca-file easyrmm-ca.pem" : ""}
             </Mono>
             , or in the <Mono>EASYRMM_TOKEN</Mono> environment variable to keep it out of the process list.
             {address.pin && (
@@ -342,6 +375,26 @@ function InstallSteps({ created, onDone }: { created: NewEnrollmentToken; onDone
   );
 }
 
+function LinuxInstall({ address, secret }: { address: ServerAddress; secret: string }) {
+  return (
+    <>
+      {address.pin ? (
+        <p className="text-sm text-muted">
+          Run on each computer as a user who can use sudo. The computer needs systemd and curl. This address uses the server&apos;s own certificate authority, so the
+          command checks the server&apos;s public key instead (<Mono>--pinnedpubkey</Mono>); <Mono>--insecure</Mono> only skips the public certificate check. The
+          agent trusts the server&apos;s certificate authority from then on.
+        </p>
+      ) : (
+        <p className="text-sm text-muted">
+          Run on each computer as a user who can use sudo. The computer needs systemd and curl; with wget instead, replace <Mono>curl -fsSL</Mono> with{" "}
+          <Mono>wget -qO-</Mono>.
+        </p>
+      )}
+      <CodeBlock code={linuxInstallCommand(address.url, secret, address.pin)} />
+    </>
+  );
+}
+
 function DownloadsCard() {
   const downloads = useApi<AgentDownloads>("/agent-downloads", undefined, { staleTime: 60_000 });
   const items = [...(downloads.data?.items ?? [])].sort(byArch);
@@ -368,7 +421,7 @@ function DownloadsCard() {
             <a href={`${AGENT_PATH}/download/SHA256SUMS`} className="text-accent hover:underline">
               SHA256SUMS
             </a>
-            . No Windows or macOS agent yet.
+            . No macOS agent yet.
           </p>
         </>
       )}

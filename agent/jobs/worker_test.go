@@ -1,3 +1,7 @@
+//go:build unix
+
+// The scripts here are sh scripts.
+
 package jobs
 
 import (

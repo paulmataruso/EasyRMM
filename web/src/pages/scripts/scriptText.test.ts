@@ -31,7 +31,11 @@ describe("script text", () => {
     expect(cannotRunReason(device("d", "x", { platform: "linux", agent, canRunScripts: true }))).toBeNull();
     expect(cannotRunReason(device("d", "x", { platform: "linux", agent: null, canRunScripts: false }))).toMatch(/no EasyRMM agent/);
     expect(cannotRunReason(device("d", "x", { platform: "linux", agent, canRunScripts: false }))).toMatch(/role/);
-    expect(cannotRunReason(device("d", "x", { platform: "windows", agent, canRunScripts: true }))).toMatch(/Linux/);
+    expect(cannotRunReason(device("d", "x", { platform: "windows", agent, canRunScripts: true }))).toBeNull();
+    expect(cannotRunReason(device("d", "x", { platform: "macos", agent, canRunScripts: true }))).toBe("Scripts run on Windows and Linux devices.");
+    expect(cannotRunReason(device("d", "x", { platform: "windows", agent, canRunScripts: true }), "powershell")).toBeNull();
+    expect(cannotRunReason(device("d", "x", { platform: "windows", agent, canRunScripts: true }), "bash")).toBe("Bash scripts run on Linux devices.");
+    expect(cannotRunReason(device("d", "x", { platform: "linux", agent, canRunScripts: true }), "cmd")).toBe("Command Prompt (cmd) scripts run on Windows devices.");
   });
 
   it("formats durations, sizes and elapsed times", () => {

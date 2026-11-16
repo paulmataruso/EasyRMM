@@ -4,14 +4,21 @@ The EasyRMM agent puts a computer under management. It enrolls with a
 deployment token, reports in every minute, and installs MeshAgent, the
 remote-access agent, from your own server (ADR-0015).
 
-Today the agent runs on **Linux with systemd**, on x86-64, ARM 64-bit,
-ARMv7 and 32-bit x86. There is no Windows or macOS agent yet, and no DEB or
-RPM package: Linux computers install with the script below.
+The agent runs on:
+
+* **Windows** 10 and 11, and Windows Server 2016 and later, on x64 and
+  ARM64, as a Windows service (ADR-0020);
+* **Linux with systemd**, on x86-64, ARM 64-bit, ARMv7 and 32-bit x86.
+
+There is no macOS agent, no MSI package and no DEB or RPM package yet:
+computers install with the PowerShell or shell command below.
 
 ## Requirements
 
-* Root (the installer is run through `sudo`).
-* systemd, `sha256sum`, and `curl` or `wget`.
+* **Windows:** an administrator, and Windows PowerShell 5.1 (built into
+  Windows 10 and Server 2016 and later).
+* **Linux:** root (the installer is run through `sudo`); systemd,
+  `sha256sum`, and `curl` or `wget`.
 * Outbound HTTPS (443) to the EasyRMM server name, for example
   `rmm.example.com`, and to the MeshCentral name, `mesh.rmm.example.com`.
   Nothing connects to the computer.
@@ -34,9 +41,47 @@ Revoking a token does not affect computers that already enrolled with it.
 You need a role with the `enrollment.manage` permission for the site:
 Super Administrator, Organization Administrator or Site Administrator.
 
-## 2. Install
+## 2. Install on Windows
 
-On each computer:
+The Add devices page shows the command under **Windows**. Open **Windows
+PowerShell** as administrator (right-click Start, **Terminal (Admin)** or
+**Windows PowerShell (Admin)**) and paste it:
+
+```powershell
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; & ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://rmm.example.com/api/agent/v1/install.ps1'))) -Token 'ert_…'
+```
+
+The first part turns on TLS 1.2, which Windows PowerShell leaves off on some
+systems; the rest downloads `install.ps1` from your server and runs it with
+the token. The same command works from an RMM or deployment tool that runs
+PowerShell as SYSTEM.
+
+**By IP address.** The command for an address that uses the server's own
+certificate authority checks the server's public key itself: it accepts only
+a certificate whose key has the SHA-256 shown in the command, downloads the
+script, and then turns the check off again. The script does the same for its
+own downloads and gives the agent the server's certificate authority to
+trust from then on (ADR-0016, ADR-0020). Run it in **Windows PowerShell**
+(`powershell.exe`): PowerShell 7 cannot run this check.
+
+`install.ps1`:
+
+1. checks that it runs as an administrator on Windows 10, Windows Server
+   2016 or later, on x64 or ARM64;
+2. downloads `easyrmm-agent-windows-<arch>.exe` and `SHA256SUMS` from the
+   server and refuses a program whose SHA-256 does not match;
+3. runs `easyrmm-agent.exe install`, which copies itself to
+   `%ProgramFiles%\EasyRMM\Agent`, enrolls the computer and starts the
+   **EasyRMM Agent** service;
+4. removes its downloads.
+
+Any failure stops it with a message starting `easyrmm:`; the window stays
+open. The agent is not code-signed yet; if endpoint protection holds
+`easyrmm-agent.exe`, allow it by its SHA-256 from the Add devices page.
+
+## 3. Install on Linux
+
+Choose **Linux** on the Add devices page. On each computer:
 
 ```sh
 curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo sh -s -- --token ert_…
@@ -68,8 +113,9 @@ The script:
 5. runs `easyrmm-agent install`, which enrolls the computer and starts the
    `easyrmm-agent` service.
 
-The token reaches the agent in the `EASYRMM_TOKEN` environment variable. It is
-used once and not stored.
+On both systems the token reaches the agent in the `EASYRMM_TOKEN`
+environment variable, not on its command line. It is used once and not
+stored.
 
 Within a minute the computer is listed under **Devices** as online. On its
 next heartbeat the agent downloads MeshAgent and its settings from the EasyRMM
@@ -82,6 +128,17 @@ The binaries are listed with their SHA-256 under **Agent downloads** on the
 Add devices page, and served at
 `https://rmm.example.com/api/agent/v1/download/<file>` with
 `/api/agent/v1/download/SHA256SUMS` alongside.
+
+On Windows, in PowerShell as administrator:
+
+```powershell
+(Get-FileHash .\easyrmm-agent-windows-amd64.exe -Algorithm SHA256).Hash   # compare with SHA256SUMS
+$env:EASYRMM_TOKEN = 'ert_…'
+.\easyrmm-agent-windows-amd64.exe install --server https://rmm.example.com
+Remove-Item Env:EASYRMM_TOKEN
+```
+
+On Linux:
 
 ```sh
 curl -fsSLO https://rmm.example.com/api/agent/v1/download/easyrmm-agent-linux-amd64
@@ -98,6 +155,17 @@ devices page before using it.
 
 ## What is installed
 
+On Windows:
+
+| Path | What |
+|---|---|
+| `%ProgramFiles%\EasyRMM\Agent\easyrmm-agent.exe` | The agent, run by the **EasyRMM Agent** service (`EasyRMMAgent`) as LocalSystem, started automatically and restarted by Windows if it stops |
+| `%ProgramData%\EasyRMM\Agent\` | Its state: `agent.json`, `device.key`, `status.json` and `jobs\`, as on Linux. The folder is readable only by SYSTEM and Administrators |
+| `%ProgramData%\EasyRMM\Agent\logs\agent.log` | The agent's log (10 MiB, then `agent.log.1`) |
+| `%ProgramFiles%\EasyRMM\MeshAgent\` | MeshAgent, run by the **EasyRMM MeshAgent** service (`EasyRMMMeshAgent`), separate from any other MeshCentral's agent on the computer |
+
+On Linux:
+
 | Path | What |
 |---|---|
 | `/usr/local/bin/easyrmm-agent` | The agent |
@@ -110,6 +178,16 @@ devices page before using it.
 | `/etc/systemd/system/easyrmm-meshagent.service` | MeshAgent's service |
 
 ## Checking a computer
+
+On Windows, in PowerShell as administrator:
+
+```powershell
+& "$env:ProgramFiles\EasyRMM\Agent\easyrmm-agent.exe" status
+Get-Service EasyRMMAgent, EasyRMMMeshAgent
+Get-Content "$env:ProgramData\EasyRMM\Agent\logs\agent.log" -Tail 50
+```
+
+On Linux:
 
 ```console
 $ sudo easyrmm-agent status
@@ -142,6 +220,17 @@ tries again after 15 minutes. See [Inventory and health](../operations/inventory
 
 ## Uninstalling
 
+On Windows, in PowerShell as administrator:
+
+```powershell
+& "$env:ProgramFiles\EasyRMM\Agent\easyrmm-agent.exe" uninstall
+```
+
+The running program cannot delete itself; Windows removes
+`easyrmm-agent.exe` at the next restart, and the command says so.
+
+On Linux:
+
 ```sh
 sudo easyrmm-agent uninstall
 ```
@@ -154,8 +243,8 @@ the computer again, install it with a new token.
 
 The server hands out the agent builds in its agent directory,
 `EASYRMM_AGENT_DIR` (default `/usr/share/easyrmm/agents`). The Docker image
-includes the four Linux builds there. A server built from source serves the
-ones `make build-agents` writes to `bin/agents`:
+includes the two Windows and four Linux builds there. A server built from
+source serves the ones `make build-agents` writes to `bin/agents`:
 
 ```sh
 make build-agents

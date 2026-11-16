@@ -26,7 +26,7 @@ export function SoftwarePage() {
 
   return (
     <>
-      <PageHeader title="Software" subtitle="Packages installed on your Linux devices, from each agent’s latest inventory. Agents report changes within the hour." />
+      <PageHeader title="Software" subtitle="Programs and packages installed on your devices, from each agent’s latest inventory. Agents report changes within the hour." />
       <Toolbar>
         <SearchInput value={search} onChange={(v) => url.set({ q: v })} label="Package" placeholder="Name contains…" className="max-w-xs" />
         <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v })} />
@@ -42,7 +42,7 @@ export function SoftwarePage() {
             ? search
               ? `No device here has a package whose name contains “${search}”.`
               : "No device in this organization has reported its software yet."
-            : "Linux devices with the EasyRMM agent report their installed packages shortly after they enroll."}
+            : "Devices with the EasyRMM agent report their installed programs and packages shortly after they enroll."}
         </EmptyState>
       ) : (
         <>

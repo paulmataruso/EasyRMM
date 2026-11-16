@@ -40,26 +40,29 @@ func PathJobResult(runID string) string { return "/api/agent/v1/jobs/" + runID +
 
 // Shells the agent can run scripts with.
 const (
+	// ShellPowerShell is Windows PowerShell 5.1, built into Windows.
+	ShellPowerShell = "powershell"
+	// ShellCmd is the Windows command prompt: the script runs as a .cmd
+	// batch file.
+	ShellCmd     = "cmd"
 	ShellSh      = "sh"
 	ShellBash    = "bash"
 	ShellPython3 = "python3"
 )
 
 // Shells lists every shell, in the order the console offers them.
-var Shells = []string{ShellBash, ShellSh, ShellPython3}
+var Shells = []string{ShellPowerShell, ShellCmd, ShellBash, ShellSh, ShellPython3}
 
 // ValidShell reports whether s is a known shell.
 func ValidShell(s string) bool {
-	switch s {
-	case ShellSh, ShellBash, ShellPython3:
-		return true
-	}
-	return false
+	return ShellPlatforms(s) != nil
 }
 
 // ShellPlatforms says which device platforms a shell runs on.
 func ShellPlatforms(shell string) []string {
 	switch shell {
+	case ShellPowerShell, ShellCmd:
+		return []string{"windows"}
 	case ShellSh, ShellBash, ShellPython3:
 		return []string{"linux"}
 	}

@@ -1,6 +1,6 @@
 // Command easyrmm-agent is the EasyRMM endpoint agent.
 //
-//	easyrmm-agent install --server URL   enroll and run as a systemd service (Linux)
+//	easyrmm-agent install --server URL   enroll and run as a service (systemd or Windows)
 //	easyrmm-agent enroll --server URL    enroll only; run `easyrmm-agent run` yourself
 //	easyrmm-agent run                    the service's main loop
 //	easyrmm-agent status                 show the enrollment and last heartbeat
@@ -43,6 +43,9 @@ import (
 var Version = "dev"
 
 func main() {
+	if started, code := asService(); started {
+		os.Exit(code)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	err := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
 	stop()
@@ -56,7 +59,8 @@ const usage = `usage: easyrmm-agent <command> [options]
 
 commands:
   install --server URL [--token TOKEN] [--ca-file FILE]
-            enroll this machine and run the agent as a systemd service
+            enroll this machine and run the agent as a service: a systemd
+            unit on Linux, the EasyRMMAgent service on Windows
   enroll --server URL [--token TOKEN] [--ca-file FILE]
             enroll only; start the agent with "easyrmm-agent run"
   run       run the agent in the foreground (what the service does)
@@ -73,26 +77,35 @@ type env struct {
 	store  state.Store
 	stdout io.Writer
 	log    *slog.Logger
-	sd     host.Systemd
+	sd     host.Services
 	// Checks of the machine, replaced by tests.
-	isRoot     func() bool
-	hasSystemd func() bool
+	isRoot      func() bool
+	hasServices func() bool
 }
 
 func newEnv(stdout, stderr io.Writer) *env {
-	p := host.Paths{Root: "/"}
-	if r := os.Getenv("EASYRMM_AGENT_ROOT"); r != "" {
-		p.Root = r
-	}
+	p := host.Paths{Root: os.Getenv("EASYRMM_AGENT_ROOT")}
 	return &env{
-		paths:      p,
-		store:      state.Store{Dir: p.State()},
-		stdout:     stdout,
-		log:        slog.New(slog.NewTextHandler(stderr, nil)),
-		sd:         host.Systemd{Dir: p.Units(), Run: host.Exec},
-		isRoot:     func() bool { return os.Geteuid() == 0 },
-		hasSystemd: host.Available,
+		paths:       p,
+		store:       state.Store{Dir: p.State()},
+		stdout:      stdout,
+		log:         slog.New(slog.NewTextHandler(stderr, nil)),
+		sd:          host.SystemServices(p),
+		isRoot:      host.IsAdmin,
+		hasServices: host.ServicesAvailable,
 	}
+}
+
+// supported reports whether this system runs the whole agent: health,
+// inventory, scripts and MeshAgent.
+func supported() bool { return runtime.GOOS == "linux" || runtime.GOOS == "windows" }
+
+// needAdmin explains how to run a command that changes the machine.
+func (e *env) needAdmin(what string) error {
+	if e.paths.Windows() {
+		return fmt.Errorf("run the %s in PowerShell or a command prompt started as administrator", what)
+	}
+	return fmt.Errorf("run the %s as root", what)
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
@@ -139,13 +152,13 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 		return err
 	}
 	if service {
-		if runtime.GOOS != "linux" {
-			return fmt.Errorf("installing as a service is not supported on %s yet", runtime.GOOS)
+		if !supported() {
+			return fmt.Errorf("installing as a service is not supported on %s", runtime.GOOS)
 		}
 		if !e.isRoot() {
-			return errors.New("run the installation as root")
+			return e.needAdmin("installation")
 		}
-		if !e.hasSystemd() {
+		if !e.hasServices() {
 			return errors.New("systemd is not running on this machine; use \"easyrmm-agent enroll\" and start \"easyrmm-agent run\" with your service manager")
 		}
 	}
@@ -181,13 +194,34 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 	if !service {
 		return nil
 	}
-	if err := e.installBinary(); err != nil {
+	self, err := os.Executable()
+	if err != nil {
 		return err
 	}
-	if err := e.sd.Install(ctx, host.AgentUnit, host.AgentUnitContent(e.paths.Binary())); err != nil {
+	if self, err = filepath.EvalSymlinks(self); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintf(e.stdout, "The agent is running as %s.\n", host.AgentUnit)
+	_, statErr := os.Stat(e.paths.Binary())
+	changed, err := host.InstallExecutable(self, e.paths.Binary())
+	if err != nil {
+		return fmt.Errorf("installing %s: %w", e.paths.Binary(), err)
+	}
+	svc := e.paths.AgentService()
+	if err := e.sd.Install(ctx, svc); err != nil {
+		return err
+	}
+	// A new build over an installed one: the running service still runs the
+	// old one.
+	if changed && statErr == nil {
+		if err := e.sd.Restart(ctx, svc.Name); err != nil {
+			return err
+		}
+	}
+	if e.paths.Windows() {
+		_, _ = fmt.Fprintf(e.stdout, "The agent is running as the %s service.\n", svc.Name)
+	} else {
+		_, _ = fmt.Fprintf(e.stdout, "The agent is running as %s.\n", svc.Name)
+	}
 	return nil
 }
 
@@ -199,7 +233,7 @@ func mustServer(s string) string {
 func (e *env) register(ctx context.Context, server, token, caFile string, service bool) (*state.Config, error) {
 	cfg := &state.Config{Server: mustServer(server), MeshAgentMode: string(meshagent.ModeChild)}
 	if service {
-		cfg.MeshAgentMode = string(meshagent.ModeSystemd)
+		cfg.MeshAgentMode = string(meshagent.ModeService)
 	}
 	if caFile != "" {
 		// Keep a copy: the original may be a temporary file.
@@ -207,7 +241,7 @@ func (e *env) register(ctx context.Context, server, token, caFile string, servic
 		if err != nil {
 			return nil, fmt.Errorf("reading the CA file: %w", err)
 		}
-		if err := os.MkdirAll(e.store.Dir, 0o700); err != nil {
+		if err := host.Protect(e.store.Dir); err != nil {
 			return nil, err
 		}
 		cfg.CAFile = filepath.Join(e.store.Dir, "ca.pem")
@@ -236,39 +270,12 @@ func (e *env) register(ctx context.Context, server, token, caFile string, servic
 	return cfg, nil
 }
 
-// installBinary copies this executable to its installed location.
-func (e *env) installBinary() error {
-	self, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	if self, err = filepath.EvalSymlinks(self); err != nil {
-		return err
-	}
-	dst := e.paths.Binary()
-	if self == dst {
-		return nil
-	}
-	b, err := os.ReadFile(self)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil { //nolint:gosec // a bin directory
-		return err
-	}
-	tmp := dst + ".new"
-	if err := os.WriteFile(tmp, b, 0o755); err != nil { //nolint:gosec // an executable
-		return err
-	}
-	return os.Rename(tmp, dst)
-}
-
 func (e *env) mesh(cfg *state.Config) *meshagent.Manager {
 	mode := meshagent.Mode(cfg.MeshAgentMode)
-	if mode != meshagent.ModeSystemd {
+	if mode != meshagent.ModeService && mode != meshagent.ModeSystemd {
 		mode = meshagent.ModeChild
 	}
-	return &meshagent.Manager{Dir: e.paths.MeshAgent(), Mode: mode, Systemd: e.sd, Log: e.log}
+	return meshagent.NewManager(e.paths.MeshAgent(), mode, e.sd, e.log)
 }
 
 func (e *env) run(ctx context.Context) error {
@@ -287,8 +294,12 @@ func (e *env) run(ctx context.Context) error {
 		Facts:  func() agentproto.Facts { return host.Facts(Version) },
 		Log:    e.log,
 	}
-	if runtime.GOOS == "linux" {
-		r.Mesh = e.mesh(cfg)
+	if supported() {
+		// Windows MeshAgent runs only as a service; an agent that was only
+		// enrolled goes without it.
+		if m := e.mesh(cfg); !m.Windows || m.Mode != meshagent.ModeChild {
+			r.Mesh = m
+		}
 		// Both read the machine itself, as host.Facts does, whatever root
 		// the agent keeps its own files under.
 		mc := &metrics.Collector{}
@@ -296,7 +307,7 @@ func (e *env) run(ctx context.Context) error {
 		r.Inventory = inventory.Collector{}.Collect
 	}
 	e.log.Info("EasyRMM agent started", "version", Version, "server", cfg.Server, "device_id", cfg.DeviceID)
-	if runtime.GOOS != "linux" {
+	if !supported() {
 		return r.Run(ctx)
 	}
 	w := &jobs.Worker{Client: c, DeviceID: cfg.DeviceID, Dir: e.store.JobsDir(), Log: e.log}
@@ -349,8 +360,11 @@ func (e *env) status(ctx context.Context) error {
 	}
 	w := e.stdout
 	_, _ = fmt.Fprintf(w, "Server:     %s\nDevice:     %s\nEnrolled:   %s\n", cfg.Server, cfg.DeviceID, cfg.EnrolledAt.Local().Format(time.RFC1123))
-	if runtime.GOOS == "linux" && e.hasSystemd() {
-		_, _ = fmt.Fprintf(w, "Service:    %s\n", e.sd.State(ctx, host.AgentUnit))
+	if supported() && e.hasServices() {
+		_, _ = fmt.Fprintf(w, "Service:    %s\n", e.sd.State(ctx, e.paths.AgentService().Name))
+	}
+	if e.paths.Windows() {
+		_, _ = fmt.Fprintf(w, "Log:        %s\n", filepath.Join(e.paths.Logs(), logName))
 	}
 	st, err := e.store.LoadStatus()
 	if errors.Is(err, fs.ErrNotExist) {
@@ -379,8 +393,8 @@ func (e *env) status(ctx context.Context) error {
 }
 
 func (e *env) uninstall(ctx context.Context) error {
-	if runtime.GOOS == "linux" && !e.isRoot() && e.paths.Root == "/" {
-		return errors.New("run the uninstallation as root")
+	if supported() && !e.isRoot() && (e.paths.Root == "" || e.paths.Root == "/") {
+		return e.needAdmin("uninstallation")
 	}
 	cfg, _, err := e.store.Load()
 	if err != nil && !errors.Is(err, state.ErrNotEnrolled) {
@@ -389,7 +403,7 @@ func (e *env) uninstall(ctx context.Context) error {
 	if cfg == nil {
 		cfg = &state.Config{}
 	}
-	if err := e.sd.Remove(ctx, host.AgentUnit); err != nil {
+	if err := e.sd.Remove(ctx, e.paths.AgentService().Name); err != nil {
 		return err
 	}
 	if err := e.mesh(cfg).Remove(ctx); err != nil {
@@ -398,9 +412,18 @@ func (e *env) uninstall(ctx context.Context) error {
 	if err := e.store.Remove(); err != nil {
 		return err
 	}
-	if err := os.Remove(e.paths.Binary()); err != nil && !errors.Is(err, os.ErrNotExist) {
+	later, err := host.RemoveExecutable(e.paths.Binary())
+	if err != nil {
 		return err
 	}
+	if e.paths.Windows() {
+		// Empty program folders go too; Remove leaves a folder with files.
+		_ = os.Remove(filepath.Dir(e.paths.Binary()))
+		_ = os.Remove(filepath.Dir(filepath.Dir(e.paths.Binary())))
+	}
 	_, _ = fmt.Fprintln(e.stdout, "EasyRMM agent removed. The device stays listed in the EasyRMM console as offline.")
+	if later {
+		_, _ = fmt.Fprintf(e.stdout, "%s is in use; Windows deletes it at the next restart.\n", e.paths.Binary())
+	}
 	return nil
 }

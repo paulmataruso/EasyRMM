@@ -103,7 +103,7 @@ least a day).
 
 | What you see | What to check |
 |---|---|
-| No processor, memory or disk alerts on a device | The device needs the EasyRMM agent (Linux for now); MeshAgent alone sends no measurements. Check its **Health** card |
+| No processor, memory or disk alerts on a device | The device needs the EasyRMM agent (Windows or Linux); MeshAgent alone sends no measurements. Check its **Health** card |
 | An alert reopens right after **Resolve** | The condition still holds. Acknowledge it instead, fix the cause, or change the policy |
 | An offline alert on a device that is up | Neither agent is connected. Check `sudo easyrmm-agent status` on the device and the **Last seen** time on its page |
 | Nothing at all is alerting | Check the **Policies** tab: the policies may be turned off. The server logs `monitoring: evaluating alert policies failed` if checks fail |

@@ -1,13 +1,13 @@
+//go:build !windows
+
 package inventory
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -33,20 +33,6 @@ func (c Collector) packages(ctx context.Context) (string, []agentproto.Package) 
 }
 
 // finish sorts, removes duplicates and caps a package list.
-func finish(list []agentproto.Package) []agentproto.Package {
-	slices.SortFunc(list, func(a, b agentproto.Package) int {
-		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Version, b.Version), cmp.Compare(a.Arch, b.Arch))
-	})
-	list = slices.Compact(list)
-	if len(list) > agentproto.MaxPackages {
-		list = list[:agentproto.MaxPackages]
-	}
-	if list == nil {
-		list = []agentproto.Package{}
-	}
-	return list
-}
-
 // stanzas splits a file of "Key: value" blocks separated by blank lines,
 // calling fn with each block's fields. Continuation lines (starting with a
 // space) are skipped.

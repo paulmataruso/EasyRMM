@@ -1,3 +1,7 @@
+//go:build !windows
+
+// MeshAgent stand-ins here are shell scripts.
+
 package meshagent
 
 import (
@@ -34,12 +38,11 @@ func download(content string) func(io.Writer) error {
 
 func newManager(t *testing.T, mode Mode, run host.Runner) *Manager {
 	t.Helper()
-	return &Manager{
-		Dir: filepath.Join(t.TempDir(), "meshagent"), Mode: mode,
-		Systemd:      host.Systemd{Dir: filepath.Join(t.TempDir(), "units"), Run: run},
-		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
-		RestartDelay: 50 * time.Millisecond,
-	}
+	m := NewManager(filepath.Join(t.TempDir(), "meshagent"), mode,
+		host.Systemd{Dir: filepath.Join(t.TempDir(), "units"), Run: run}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	m.Windows = false
+	m.RestartDelay = 50 * time.Millisecond
+	return m
 }
 
 func TestChildMode(t *testing.T) {
@@ -127,11 +130,15 @@ func TestSystemdMode(t *testing.T) {
 		return nil, nil
 	}
 	m := newManager(t, ModeSystemd, run)
+	if m.Mode != ModeService {
+		t.Errorf("an enrollment's systemd mode is %q", m.Mode)
+	}
+	units := m.Services.(host.Systemd).Dir
 	ctx := context.Background()
 	if err := m.Install(ctx, download(fakeAgent), []byte("MeshID=0x1\n")); err != nil {
 		t.Fatal(err)
 	}
-	unit, err := os.ReadFile(filepath.Join(m.Systemd.Dir, Unit))
+	unit, err := os.ReadFile(filepath.Join(units, Unit))
 	if err != nil || !strings.Contains(string(unit), "ExecStart="+filepath.Join(m.Dir, "meshagent")+"\n") ||
 		!strings.Contains(string(unit), "WorkingDirectory="+m.Dir+"\n") {
 		t.Errorf("unit = %q, %v", unit, err)
@@ -145,7 +152,62 @@ func TestSystemdMode(t *testing.T) {
 	if _, err := os.Stat(m.Dir); !errors.Is(err, os.ErrNotExist) {
 		t.Error("MeshAgent directory kept")
 	}
-	if _, err := os.Stat(filepath.Join(m.Systemd.Dir, Unit)); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(filepath.Join(units, Unit)); !errors.Is(err, os.ErrNotExist) {
 		t.Error("unit kept")
+	}
+}
+
+// fakeServices records what a Windows service manager is asked to do.
+type fakeServices struct {
+	installed []host.Service
+	removed   []string
+	fail      error
+}
+
+func (f *fakeServices) Install(_ context.Context, s host.Service) error {
+	f.installed = append(f.installed, s)
+	return f.fail
+}
+func (f *fakeServices) Restart(context.Context, string) error { return f.fail }
+func (f *fakeServices) Remove(_ context.Context, name string) error {
+	f.removed = append(f.removed, name)
+	return f.fail
+}
+func (f *fakeServices) State(context.Context, string) string { return "running" }
+
+func TestWindowsService(t *testing.T) {
+	svcs := &fakeServices{}
+	m := newManager(t, ModeService, nil)
+	m.Services, m.Windows = svcs, true
+	ctx := context.Background()
+	if err := m.Install(ctx, download("MZ"), []byte("MeshID=0x1\r\nmeshServiceName=Mesh Agent\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(m.Dir, "meshagent.exe")); err != nil {
+		t.Errorf("binary: %v", err)
+	}
+	if st, err := os.Stat(m.Dir); err != nil || st.Mode().Perm() != 0o700 {
+		t.Errorf("directory not protected: %v %v", st.Mode(), err)
+	}
+	msh, _ := os.ReadFile(filepath.Join(m.Dir, "meshagent.msh"))
+	if string(msh) != "MeshID=0x1\r\nmeshServiceName=EasyRMMMeshAgent\r\n" {
+		t.Errorf("settings = %q", msh)
+	}
+	if len(svcs.installed) != 1 || svcs.installed[0].Name != WindowsService || svcs.installed[0].Binary != filepath.Join(m.Dir, "meshagent.exe") ||
+		svcs.installed[0].DisplayName != "EasyRMM MeshAgent" {
+		t.Errorf("installed = %+v", svcs.installed)
+	}
+	if err := m.Remove(ctx); err != nil || len(svcs.removed) != 1 || svcs.removed[0] != WindowsService {
+		t.Errorf("remove: %v %v", err, svcs.removed)
+	}
+	svcs.fail = errors.New("access denied")
+	if err := m.Remove(ctx); err == nil {
+		t.Error("failed removal hidden")
+	}
+
+	child := newManager(t, ModeChild, nil)
+	child.Windows = true
+	if err := child.Install(ctx, download("MZ"), []byte("x")); err == nil || !strings.Contains(err.Error(), "Windows service only") {
+		t.Errorf("child mode on Windows: %v", err)
 	}
 }

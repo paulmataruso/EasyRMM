@@ -13,13 +13,16 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 )
 
-const testPin = "sha256//47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+const (
+	testPin    = "sha256//47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+	testKeyPin = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+)
 
 func newAPI(t *testing.T, ca []byte) *API {
 	t.Helper()
 	a, err := New(nil, &agents.Builds{}, []Address{
 		{URL: "https://rmm.example.com/"},
-		{URL: "https://203.0.113.10", Pin: testPin},
+		{URL: "https://203.0.113.10", Pin: testPin, KeyPin: testKeyPin},
 	}, ca, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +91,69 @@ func TestInstallScriptPerAddress(t *testing.T) {
 	}
 }
 
+func TestWindowsInstallScriptPerAddress(t *testing.T) {
+	a := newAPI(t, []byte("-----BEGIN CERTIFICATE-----\n"))
+	get := func(o *httpapi.Origin) string {
+		w := serve(a, "/api/agent/v1/install.ps1", o)
+		if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "text/plain; charset=us-ascii" {
+			t.Errorf("install.ps1: %d %q", w.Code, w.Header().Get("Content-Type"))
+		}
+		return w.Body.String()
+	}
+	dns := get(&httpapi.Origin{Console: "https://rmm.example.com"})
+	ip := get(&httpapi.Origin{Console: "https://203.0.113.10"})
+	if get(nil) != dns {
+		t.Error("a request without an origin should get the public URL's script")
+	}
+	for name, script := range map[string]string{"dns": dns, "ip": ip} {
+		for i, r := range script {
+			if r > 0x7e || (r < 0x20 && r != '\r' && r != '\n') {
+				t.Fatalf("%s: byte %d is %q; Windows PowerShell reads the script as ANSI", name, i, r)
+			}
+		}
+		if strings.Count(script, "\n") != strings.Count(script, "\r\n") {
+			t.Errorf("%s: not CRLF throughout", name)
+		}
+		if !strings.Contains(script, "$Server = '"+map[string]string{"dns": "https://rmm.example.com", "ip": "https://203.0.113.10"}[name]+"'") ||
+			!strings.Contains(script, `$env:EASYRMM_TOKEN = $Token`) || !strings.Contains(script, "Get-FileHash -Algorithm SHA256") {
+			t.Errorf("%s script:\n%s", name, script)
+		}
+	}
+	if strings.Contains(dns, "ServerCertificateValidationCallback") || strings.Contains(dns, "--ca-file") {
+		t.Errorf("an unpinned script pins:\n%s", dns)
+	}
+	for _, want := range []string{
+		"-eq '" + testKeyPin + "'",
+		`$web.DownloadFile("$Server/api/agent/v1/ca.pem", $ca)`,
+		`& $exe install --server $Server --ca-file $ca`,
+		"[Net.ServicePointManager]::ServerCertificateValidationCallback = $null",
+		"PowerShell 7 cannot",
+	} {
+		if !strings.Contains(ip, want) {
+			t.Errorf("pinned script lacks %q", want)
+		}
+	}
+	// PowerShell parses both, where it is installed (GitHub's Linux runners
+	// have it).
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Log("pwsh not found; parse check skipped")
+		return
+	}
+	for name, script := range map[string]string{"dns": dns, "ip": ip} {
+		f := filepath.Join(t.TempDir(), name+".ps1")
+		if err := os.WriteFile(f, []byte(script), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		check := `$e = $null; [void][Management.Automation.Language.Parser]::ParseFile($env:EASYRMM_PS1, [ref]$null, [ref]$e); if ($e) { $e | ForEach-Object { $_.ToString() }; exit 1 }; 'parsed'`
+		cmd := exec.CommandContext(t.Context(), pwsh, "-NoProfile", "-NonInteractive", "-Command", check) //nolint:gosec // test-controlled arguments
+		cmd.Env = append(os.Environ(), "EASYRMM_PS1="+f)
+		if out, err := cmd.CombinedOutput(); err != nil || !strings.Contains(string(out), "parsed") {
+			t.Errorf("%s: PowerShell parse errors: %v\n%s", name, err, out)
+		}
+	}
+}
+
 func TestCertificateAuthorityRoute(t *testing.T) {
 	w := serve(newAPI(t, []byte("PEM")), "/api/agent/v1/ca.pem", nil)
 	if w.Code != http.StatusOK || w.Body.String() != "PEM" || w.Header().Get("Content-Type") != "application/x-pem-file" {
@@ -107,7 +173,11 @@ func TestNewRejectsUnsafeAddresses(t *testing.T) {
 		"none":             nil,
 		"quote":            {{URL: "https://rmm.example.com'; rm -rf /"}},
 		"dollar in pin":    {{URL: "https://203.0.113.10", Pin: "$(id)"}},
+		"backtick":         {{URL: "https://203.0.113.10", KeyPin: "`whoami`"}},
+		"non-ASCII":        {{URL: "https://rmm.exämple.com"}},
+		"line break":       {{URL: "https://rmm.example.com\nWrite-Host"}},
 		"pin without a CA": {{URL: "https://203.0.113.10", Pin: testPin}},
+		"key pin, no CA":   {{URL: "https://203.0.113.10", KeyPin: testKeyPin}},
 	} {
 		if _, err := New(nil, &agents.Builds{}, addrs, nil, nil); err == nil {
 			t.Errorf("%s: accepted", name)

@@ -4,25 +4,35 @@ Every device with the EasyRMM agent reports what it is (its **inventory**)
 and how it is doing (its **metrics**). The design is in
 [ADR-0018](../architecture/adr/0018-inventory-and-telemetry.md).
 
-Inventory and metrics come from **Linux** devices for now. Windows devices
-report them once the Windows agent ships. Devices that only have MeshAgent
-show neither.
+Windows and Linux devices with the EasyRMM agent report both. Devices that
+only have MeshAgent show neither.
 
 ## What is collected
 
 | Inventory, sent when it changes | Metrics, sent every minute |
 |---|---|
 | Manufacturer, model, serial number, firmware (BIOS) version and date | Processor use since the last heartbeat |
-| Physical machine, virtual machine or container | Memory and swap in use |
-| Processor model, sockets, cores and threads; memory size | Load averages (1, 5 and 15 minutes) |
-| Operating system, version, kernel and time zone | Time since start, number of processes |
+| Physical machine, virtual machine or container | Memory and swap (page files on Windows) in use |
+| Processor model, sockets, cores and threads; memory size | Load averages (1, 5 and 15 minutes; Linux only) |
+| Operating system, version, kernel or Windows build, and time zone | Time since start, number of processes |
 | Physical disks: model, type (SSD, NVMe, hard disk), size, serial number | Size and space used of each local filesystem |
 | Network interfaces with MAC and IP addresses and link speed, default gateways, DNS servers | |
-| Installed packages from dpkg, RPM, apk or pacman (up to 20,000) | |
+| Installed programs on Windows, with their publisher; installed packages from dpkg, RPM, apk or pacman on Linux (up to 20,000) | |
 
-The agent reads all of this from the files the kernel and the package
-manager keep (`/proc`, `/sys`, `/etc/os-release`, the package database).
-On RPM systems it runs `rpm -qa`. It runs nothing else and changes nothing.
+On **Windows** the agent asks Windows: the firmware's SMBIOS table for the
+manufacturer, model and serial number, the processor and memory APIs, the
+physical disks (`\\.\PhysicalDrive0` and on), the network adapters, and
+the registry for the Windows edition, version, build and time zone. Windows
+11 is named as such, although its registry says Windows 10. Installed
+programs are the ones **Apps & features** lists, from the machine's and
+each user's Uninstall registry keys, without system components and updates.
+Measurements cover the fixed drives (`C:\`, `D:\`…).
+
+On **Linux** it reads the files the kernel and the package manager keep
+(`/proc`, `/sys`, `/etc/os-release`, the package database). On RPM
+systems it runs `rpm -qa`.
+
+On both, it runs nothing else and changes nothing.
 
 Inventory is collected when the agent starts and every hour. The agent
 sends it only when it differs from what the server already holds, which the

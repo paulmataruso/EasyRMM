@@ -197,14 +197,14 @@ describe("scripts on the device page", () => {
     installFakeApi({
       ...baseRoutes(TECHNICIAN),
       ...unreportedRoutes(),
-      "GET /devices/:id": ok({ ...linux, platform: "windows" }),
+      "GET /devices/:id": ok({ ...linux, platform: "macos" }),
       "GET /job-runs": ok({ items: [] }),
     });
     const { unmount } = renderApp("/devices/d1");
     expect(await screen.findByText("No scripts have run here")).toBeInTheDocument();
     const run = screen.getByRole("button", { name: "Run script" });
     expect(run).toBeDisabled();
-    expect(run).toHaveAttribute("title", "Scripts run on Linux devices for now.");
+    expect(run).toHaveAttribute("title", "Scripts run on Windows and Linux devices.");
     unmount();
 
     installFakeApi({

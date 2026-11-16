@@ -48,6 +48,11 @@ COPY agent/ agent/
 ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     set -e; mkdir -p /out/agents; \
+    for arch in amd64 arm64; do \
+      CGO_ENABLED=0 GOOS=windows GOARCH=$arch go build -trimpath -buildvcs=false \
+        -ldflags "-s -w -X main.Version=${VERSION}" \
+        -o /out/agents/easyrmm-agent-windows-$arch.exe ./agent/cmd/easyrmm-agent; \
+    done; \
     for arch in amd64 arm64 arm 386; do \
       CGO_ENABLED=0 GOOS=linux GOARCH=$arch GOARM=7 go build -trimpath -buildvcs=false \
         -ldflags "-s -w -X main.Version=${VERSION}" \

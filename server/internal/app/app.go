@@ -244,8 +244,8 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	var agentAddresses []agentapi.Address
 	var frames []string
 	for _, o := range all {
-		addresses = append(addresses, enrollapi.Address{URL: o.Console, Pin: o.Pin})
-		agentAddresses = append(agentAddresses, agentapi.Address{URL: o.Console, Pin: o.Pin})
+		addresses = append(addresses, enrollapi.Address{URL: o.Console, Pin: o.Pin, KeyPin: o.KeyPin})
+		agentAddresses = append(agentAddresses, agentapi.Address{URL: o.Console, Pin: o.Pin, KeyPin: o.KeyPin})
 		if o.Mesh != "" {
 			frames = append(frames, o.Mesh)
 		}

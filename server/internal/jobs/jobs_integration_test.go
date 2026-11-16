@@ -281,6 +281,17 @@ func TestScriptLevelsAndPermissions(t *testing.T) {
 	if got := strings.Join(names(orgAdmin, ScriptQuery{DeviceID: branchPC}), ","); got != "Acme inventory,Acme inventory,Disk usage" {
 		t.Errorf("scripts for a branch device %s", got)
 	}
+	// A Windows device gets the PowerShell and cmd scripts, not the Linux ones.
+	if _, err := f.svc.CreateScript(f.ctx, super, ScriptInput{Name: "Event log", Shell: "powershell", Body: "Get-WinEvent -MaxEvents 5", TimeoutSeconds: 60}); err != nil {
+		t.Fatal(err)
+	}
+	branchWin := f.device(f.branch, "BRANCH-WIN", "windows")
+	if got := strings.Join(names(orgAdmin, ScriptQuery{DeviceID: branchWin}), ","); got != "Event log" {
+		t.Errorf("scripts for a Windows device %s", got)
+	}
+	if got := strings.Join(names(orgAdmin, ScriptQuery{DeviceID: branchPC}), ","); strings.Contains(got, "Event log") {
+		t.Errorf("a Linux device is offered a PowerShell script: %s", got)
+	}
 
 	// Changing and deleting. An edit moves updatedAt; deleting its author
 	// (created_by and updated_by become NULL) does not.
@@ -315,7 +326,7 @@ func TestScriptLevelsAndPermissions(t *testing.T) {
 	if _, err := f.svc.GetScript(f.ctx, super, site.ID); !errors.Is(err, apperr.ErrNotFound) {
 		t.Errorf("deleted script still there: %v", err)
 	}
-	if f.str(`SELECT count(*)::text FROM audit_log WHERE action IN ('script.create', 'script.update', 'script.delete')`) != "6" {
+	if f.str(`SELECT count(*)::text FROM audit_log WHERE action IN ('script.create', 'script.update', 'script.delete')`) != "7" {
 		t.Errorf("script audit events missing")
 	}
 }
@@ -481,6 +492,16 @@ func TestJobsRefuseDevicesTheScriptOrCallerCannotReach(t *testing.T) {
 	fieldErr(t, try(super, JobInput{ScriptID: globexScript.ID, DeviceIDs: []uuid.UUID{hqPC}}), "deviceIds", "in its organization")
 	fieldErr(t, try(super, JobInput{ScriptID: shared.ID, DeviceIDs: []uuid.UUID{discovered}}), "deviceIds", "HQ-MESH has no EasyRMM agent")
 	fieldErr(t, try(super, JobInput{ScriptID: shared.ID, DeviceIDs: []uuid.UUID{winPC, hqPC}}), "deviceIds", "HQ-WIN is not a Linux device")
+	ps, err := f.svc.CreateScript(f.ctx, super, ScriptInput{Name: "Windows report", Shell: "powershell", Body: "Get-ComputerInfo | Out-String", TimeoutSeconds: 60})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fieldErr(t, try(super, JobInput{ScriptID: ps.ID, DeviceIDs: []uuid.UUID{winPC, hqPC}}), "deviceIds", "PowerShell scripts run on Windows; HQ-PC is not a Windows device")
+	if _, err := f.svc.CreateScript(f.ctx, super, ScriptInput{Name: "Batch", Shell: "cmd", Body: "ipconfig /all", TimeoutSeconds: 60}); err != nil {
+		t.Errorf("a cmd script: %v", err)
+	}
+	_, err = f.svc.CreateScript(f.ctx, super, ScriptInput{Name: "Zsh", Shell: "zsh", Body: "echo", TimeoutSeconds: 60})
+	fieldErr(t, err, "shell", "PowerShell, cmd")
 	fieldErr(t, try(hqTech, JobInput{ScriptID: shared.ID, DeviceIDs: []uuid.UUID{hqPC, plantPC}}), "deviceIds", "1 device does not exist")
 	fieldErr(t, try(branchViewer, JobInput{ScriptID: shared.ID, DeviceIDs: []uuid.UUID{hqPC, branchPC}}), "deviceIds", "cannot run scripts on BRANCH-PC")
 	fieldErr(t, try(hqTech, JobInput{ScriptID: globexScript.ID, DeviceIDs: []uuid.UUID{hqPC}}), "scriptId", "does not exist")
@@ -501,6 +522,9 @@ func TestJobsRefuseDevicesTheScriptOrCallerCannotReach(t *testing.T) {
 	}
 	if _, err := f.svc.CreateJob(f.ctx, hqTech, JobInput{ScriptID: hqScript.ID, DeviceIDs: []uuid.UUID{hqPC}, TimeoutSeconds: 5, WaitHours: 2}); err != nil {
 		t.Errorf("an allowed job: %v", err)
+	}
+	if job, err := f.svc.CreateJob(f.ctx, super, JobInput{ScriptID: ps.ID, DeviceIDs: []uuid.UUID{winPC}}); err != nil || job.Shell != "powershell" {
+		t.Errorf("a PowerShell job for a Windows device: %v", err)
 	}
 }
 

@@ -5,8 +5,14 @@ EasyRMM agent. Running a script on one or more devices is a **job**; each
 device's part of it is a **run**, with its own status, exit code and output.
 The design is in [ADR-0017](../architecture/adr/0017-scripts-and-jobs.md).
 
-Scripts run on **Linux** devices for now, with Bash, POSIX `sh` or Python 3.
-PowerShell and Windows devices come with the Windows agent.
+| Shell | Runs on |
+|---|---|
+| PowerShell (Windows PowerShell 5.1) | Windows |
+| Command Prompt (`cmd`, a batch file) | Windows |
+| Bash, POSIX `sh`, Python 3 | Linux |
+
+A script runs only on devices of its shell's platform: the device picker
+lists those, and a device's **Run script** lists only scripts for it.
 
 ## The library
 
@@ -25,7 +31,8 @@ organizations and sites their roles cover. Technicians and above
 
 A script has a name (unique within its level), an optional description, a
 shell, a body of up to 64 KiB and a default timeout (1 second to 4 hours).
-Windows line endings in the body are converted to Unix ones. Adding, changing
+Windows line endings in the body are converted to Unix ones (the agent
+writes `cmd` scripts with Windows ones again). Adding, changing
 and deleting scripts is audited with the body's SHA-256.
 
 ## Running a script
@@ -63,7 +70,30 @@ against the job key it pinned when it enrolled, and checks that the job is
 for this device and has not expired. A job that fails these checks is
 reported as failed and never runs.
 
-The script then runs:
+On **Windows** the script runs:
+
+* as **LocalSystem**, the EasyRMM Agent service's account;
+* PowerShell scripts with `powershell.exe -NoLogo -NoProfile
+  -NonInteractive -ExecutionPolicy Bypass -File script.ps1 <arguments>`,
+  saved as UTF-8 with a byte order mark so non-English text survives.
+  Arguments arrive in `$args` or a `param()` block; `exit <n>` sets the exit
+  code, and an uncaught error ends the script with code 1;
+* `cmd` scripts as a batch file, `cmd.exe /D /E:ON /V:OFF /S /C
+  "script.cmd" "<argument>" …`, saved with Windows line ends in the console
+  code page. Arguments arrive as `%1`, `%2` (`%~1` without the quotes) and
+  cannot contain double quotes or line breaks; `exit /b <n>` sets the exit
+  code;
+* in a new, empty folder under `%ProgramData%\EasyRMM\Agent\jobs\work\`,
+  which is also `TEMP` and is removed afterwards;
+* with the service's environment (Windows' system environment) without
+  the agent's own `EASYRMM_*` settings, plus `EASYRMM_JOB_ID` and
+  `EASYRMM_RUN_ID`;
+* without a window, inside a job object: at the timeout, or when the job is
+  canceled, Windows ends the script and every process it started at once.
+
+Output in the console code page is converted to UTF-8.
+
+On **Linux** the script runs:
 
 * as the agent's user, **root** on a standard install;
 * with the chosen interpreter (`bash`, `sh` or `python3`), the first found
@@ -125,7 +155,9 @@ run for `EASYRMM_AUDIT_RETENTION`.
 
 | What you see | What to check |
 |---|---|
-| Runs stay *Queued* | The device is offline, or its agent is older than this feature. `sudo easyrmm-agent status` on the device, and `journalctl -u easyrmm-agent` |
+| Runs stay *Queued* | The device is offline, or its agent is older than this feature. On the device: `sudo easyrmm-agent status` and `journalctl -u easyrmm-agent` (Linux), or `& "$env:ProgramFiles\EasyRMM\Agent\easyrmm-agent.exe" status` and `%ProgramData%\EasyRMM\Agent\logs\agent.log` (Windows) |
 | *Failed* with "The job's signature does not verify" | The device pinned another server's job key, for example after the server's database was replaced. Uninstall the agent and enroll it again |
 | *Failed* with "… is not installed on this device." | Install the interpreter (`python3`, `bash`) or pick another shell |
+| A PowerShell script ends with code 1 and its error in standard error | The script threw an error that nothing caught. Check standard error; `$ErrorActionPreference = 'Stop'` at the top makes every error stop the script |
+| *Failed* with "A cmd script's arguments cannot contain double quotes" | cmd cannot receive such an argument safely. Use a PowerShell script |
 | *No result* | The device went offline or the agent stopped during the run. The script may or may not have finished; check the device |

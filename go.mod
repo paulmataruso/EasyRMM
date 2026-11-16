@@ -11,6 +11,7 @@ require (
 	github.com/pressly/goose/v3 v3.30.1
 	golang.org/x/crypto v0.59.0
 	golang.org/x/net v0.62.0
+	golang.org/x/sys v0.50.0
 	golang.org/x/time v0.16.0
 )
 
@@ -22,6 +23,5 @@ require (
 	github.com/sethvargo/go-retry v0.5.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
-	golang.org/x/sys v0.50.0 // indirect
 	golang.org/x/text v0.44.0 // indirect
 )

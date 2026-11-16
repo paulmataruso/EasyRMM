@@ -5,7 +5,9 @@ import type { EnrollmentToken, EnrollmentTokenInput } from "../../api/types";
 import { baseRoutes, fail, installFakeApi, ok, sessionView, type FakeRequest } from "../../test/fakeApi";
 import { group, site } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
-import { addressLabel, archName, byArch, formatBytes, linuxInstallCommand } from "./AddDevicesPage";
+import { addressLabel, archName, byArch, formatBytes, linuxInstallCommand, windowsInstallCommand } from "./AddDevicesPage";
+
+const TLS12 = "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072";
 
 const ADMIN = sessionView({ permissions: [...sessionView().permissions, "enrollment.manage", "device.view"] });
 const SECRET = "ert_AAAAbbbbCCCCddddEEEEffffGGGGhhhhIIIIjjjjKKK";
@@ -85,8 +87,18 @@ describe("add devices", () => {
     const create = server.call("POST /sites/:id/enrollment-tokens");
     expect(create.params.id).toBe("s2");
     expect(create.body).toEqual({ name: "Warehouse scanners", deviceGroupId: "g1", expiresInDays: 30, maxUses: 25 });
+    // Windows first: the PowerShell command.
+    expect(screen.getByRole("radio", { name: "Windows" })).toBeChecked();
+    expect(screen.getByText("Windows PowerShell")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        `${TLS12}; & ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://rmm.example.com/api/agent/v1/install.ps1'))) -Token '${SECRET}'`,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/easyrmm-agent\.exe install --server https:\/\/rmm\.example\.com/)).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Linux" }));
     expect(screen.getByText(`curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo sh -s -- --token ${SECRET}`)).toBeInTheDocument();
-    expect(screen.getByText(/not available for Windows or macOS yet/)).toBeInTheDocument();
+    expect(screen.queryByText(/install\.ps1/)).not.toBeInTheDocument();
     expect(screen.getByText("Northwind Traders / Warehouse")).toBeInTheDocument();
     expect(screen.getByText("25")).toBeInTheDocument();
     // The token list was refreshed.
@@ -117,13 +129,14 @@ describe("add devices", () => {
   it("offers the server's IP address, with a pinned command and its certificate authority", async () => {
     const user = userEvent.setup();
     const PIN = "sha256//47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+    const KEY_PIN = "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855";
     const FINGERPRINT = "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89";
     installFakeApi(
       routes({
         "GET /agent-downloads": ok({
           serverUrl: "https://rmm.example.com",
           items: [],
-          addresses: [{ url: "https://rmm.example.com" }, { url: "https://203.0.113.10", pin: PIN }],
+          addresses: [{ url: "https://rmm.example.com" }, { url: "https://203.0.113.10", pin: PIN, keyPin: KEY_PIN }],
           // This console was opened at the IP address.
           current: "https://203.0.113.10",
           certificateAuthority: { fingerprint: FINGERPRINT, url: "/api/agent/v1/ca.pem" },
@@ -146,6 +159,13 @@ describe("add devices", () => {
     expect(within(address).getAllByRole("option").map((o) => o.textContent)).toEqual(["rmm.example.com", "203.0.113.10 (IP address)"]);
     // The address the console was opened at comes first.
     expect(address).toHaveValue("https://203.0.113.10");
+    // Windows: the download trusts the server's key, then the callback is removed.
+    const ps = screen.getByText(/ServerCertificateValidationCallback/).textContent ?? "";
+    expect(ps).toContain(`-eq '${KEY_PIN}' }`);
+    expect(ps).toContain("DownloadString('https://203.0.113.10/api/agent/v1/install.ps1') } finally { [Net.ServicePointManager]::ServerCertificateValidationCallback = $null }");
+    expect(ps).toMatch(new RegExp(`-Token '${SECRET}'$`));
+    expect(screen.getByText(/PowerShell 7 cannot run this check/)).toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Linux" }));
     expect(screen.getByText(`curl -fsSL --insecure --pinnedpubkey '${PIN}' https://203.0.113.10/api/agent/v1/install.sh | sudo sh -s -- --token ${SECRET}`)).toBeInTheDocument();
     expect(screen.getByText(/checks the server's public key instead/)).toBeInTheDocument();
     expect(screen.getByText(/--ca-file easyrmm-ca.pem/)).toBeInTheDocument();
@@ -220,14 +240,26 @@ describe("deployment helpers", () => {
     expect([formatBytes(512), formatBytes(2048), formatBytes(7_065_760)]).toEqual(["512 B", "2.0 KB", "6.7 MB"]);
     expect([archName("amd64"), archName("arm"), archName("riscv64")]).toEqual(["x86-64", "ARMv7 32-bit", "riscv64"]);
     const b = (arch: string, os = "linux") => ({ os, arch, file: `easyrmm-agent-${os}-${arch}`, size: 1, sha256: "" });
-    expect([b("386"), b("riscv64"), b("arm"), b("amd64", "windows"), b("amd64"), b("arm64")].sort(byArch).map((x) => x.file)).toEqual([
+    expect([b("386"), b("riscv64"), b("arm"), b("arm64", "windows"), b("amd64", "windows"), b("amd64"), b("arm64")].sort(byArch).map((x) => x.file)).toEqual([
+      "easyrmm-agent-windows-amd64",
+      "easyrmm-agent-windows-arm64",
       "easyrmm-agent-linux-amd64",
       "easyrmm-agent-linux-arm64",
       "easyrmm-agent-linux-arm",
       "easyrmm-agent-linux-386",
       "easyrmm-agent-linux-riscv64",
-      "easyrmm-agent-windows-amd64",
     ]);
+    expect(windowsInstallCommand("https://rmm.example.com", "ert_x")).toBe(
+      `${TLS12}; & ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('https://rmm.example.com/api/agent/v1/install.ps1'))) -Token 'ert_x'`,
+    );
+    expect(windowsInstallCommand("https://203.0.113.10", "ert_x", "ABC123")).toBe(
+      [
+        TLS12,
+        "[Net.ServicePointManager]::ServerCertificateValidationCallback = { param($s, $c) ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($c.GetPublicKey())) -replace '-') -eq 'ABC123' }",
+        "try { $i = (New-Object Net.WebClient).DownloadString('https://203.0.113.10/api/agent/v1/install.ps1') } finally { [Net.ServicePointManager]::ServerCertificateValidationCallback = $null }",
+        "& ([scriptblock]::Create($i)) -Token 'ert_x'",
+      ].join("; "),
+    );
     expect(linuxInstallCommand("https://rmm.example.com", "ert_x")).toBe("curl -fsSL https://rmm.example.com/api/agent/v1/install.sh | sudo sh -s -- --token ert_x");
     expect(linuxInstallCommand("https://[2001:db8::10]", "ert_x", "sha256//p=")).toBe(
       "curl -fsSL --insecure --pinnedpubkey 'sha256//p=' https://[2001:db8::10]/api/agent/v1/install.sh | sudo sh -s -- --token ert_x",

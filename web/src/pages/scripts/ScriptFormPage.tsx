@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent } from "react";
+import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { api, fieldError } from "../../api/client";
 import { useApi, useApiMutation, useOrganizations, useSites } from "../../api/hooks";
@@ -23,7 +23,7 @@ import {
   TextField,
 } from "../../components/ui";
 import { TimeoutField } from "./parts";
-import { formatBytes, LIMITS, scriptScope, SHELL_NAMES, SHELLS, utf8Length } from "./scriptText";
+import { formatBytes, LIMITS, PLATFORM_NAMES, scriptScope, SHELL_NAMES, SHELL_PLATFORM, SHELLS, utf8Length } from "./scriptText";
 
 const FIELDS = ["name", "description", "shell", "body", "timeoutSeconds", "organizationId", "siteId"];
 
@@ -84,7 +84,7 @@ function ScriptForm({ script }: { script?: Script }) {
   const [siteId, setSiteId] = useState("");
   const [name, setName] = useState(script?.name ?? "");
   const [description, setDescription] = useState(script?.description ?? "");
-  const [shell, setShell] = useState<Shell>(script?.shell ?? "bash");
+  const [shell, setShell] = useState<Shell>(script?.shell ?? "powershell");
   const [body, setBody] = useState(script?.body ?? "");
   const [timeoutSeconds, setTimeoutSeconds] = useState(script?.timeoutSeconds ?? LIMITS.defaultTimeout);
   const sites = useSites(level === "site" && organizationId ? organizationId : null);
@@ -265,7 +265,7 @@ function ScriptForm({ script }: { script?: Script }) {
                 )}
               </>
             )}
-            <SelectField label="Shell" value={shell} onChange={(e) => setShell(e.target.value as Shell)} error={err("shell")} hint="Scripts run on Linux devices for now.">
+            <SelectField label="Shell" value={shell} onChange={(e) => setShell(e.target.value as Shell)} error={err("shell")} hint={`Runs on ${PLATFORM_NAMES[SHELL_PLATFORM[shell]]} devices.`}>
               {SHELLS.map((s) => (
                 <option key={s} value={s}>
                   {SHELL_NAMES[s]}
@@ -312,8 +312,7 @@ function ScriptForm({ script }: { script?: Script }) {
             />
           </Field>
           <p id={`${bodyId}-how`} className="mt-2 text-xs text-muted">
-            The agent runs the script with {SHELL_NAMES[shell]} as its own user (root on a standard install), in a new temporary folder that is removed
-            afterwards. A <code className="font-mono">#!</code> line is ignored. Arguments arrive as {shell === "python3" ? "sys.argv[1:]" : "$1, $2 and so on"}.
+            {HOW_IT_RUNS[shell]}
           </p>
         </Card>
 
@@ -337,7 +336,39 @@ const LEVEL_HINTS: Record<ScriptLevel, string> = {
   site: "Runs on devices in one site only.",
 };
 
+const TEMP_FOLDER = "in a new temporary folder that is removed afterwards";
+
+const HOW_IT_RUNS: Record<Shell, ReactNode> = {
+  powershell: (
+    <>
+      The agent runs the script with Windows PowerShell 5.1 as Local System, {TEMP_FOLDER}, without a profile and with the execution policy bypassed. Arguments
+      arrive in <code className="font-mono">$args</code> or a <code className="font-mono">param()</code> block; <code className="font-mono">exit</code> sets the
+      exit code.
+    </>
+  ),
+  cmd: (
+    <>
+      The agent runs the script as a batch file with cmd.exe as Local System, {TEMP_FOLDER}. Arguments arrive as <code className="font-mono">%1</code>,{" "}
+      <code className="font-mono">%2</code> and so on, and cannot contain double quotes; <code className="font-mono">exit /b</code> sets the exit code.
+    </>
+  ),
+  bash: <LinuxHow shell="bash" />,
+  sh: <LinuxHow shell="sh" />,
+  python3: <LinuxHow shell="python3" />,
+};
+
+function LinuxHow({ shell }: { shell: Shell }) {
+  return (
+    <>
+      The agent runs the script with {SHELL_NAMES[shell]} as its own user (root on a standard install), {TEMP_FOLDER}. A{" "}
+      <code className="font-mono">#!</code> line is ignored. Arguments arrive as {shell === "python3" ? "sys.argv[1:]" : "$1, $2 and so on"}.
+    </>
+  );
+}
+
 const PLACEHOLDERS: Record<Shell, string> = {
+  powershell: "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType = 3' |\n  Select-Object DeviceID, @{ n = 'FreeGB'; e = { [math]::Round($_.FreeSpace / 1GB, 1) } }",
+  cmd: "@echo off\nsysteminfo | findstr /B /C:\"OS Name\" /C:\"OS Version\"",
   bash: 'set -euo pipefail\necho "Disk usage on $(hostname):"\ndf -h /',
   sh: "set -eu\nuptime",
   python3: "import platform\nprint(platform.platform())",

@@ -76,9 +76,9 @@ func (s *Service) Record(ctx context.Context, deviceID uuid.UUID, body []byte) (
 	if err != nil {
 		return "", err
 	}
-	names, versions, arches := make([]string, len(pkgs)), make([]string, len(pkgs)), make([]string, len(pkgs))
+	names, versions, arches, publishers := make([]string, len(pkgs)), make([]string, len(pkgs)), make([]string, len(pkgs)), make([]string, len(pkgs))
 	for i, p := range pkgs {
-		names[i], versions[i], arches[i] = p.Name, p.Version, p.Arch
+		names[i], versions[i], arches[i], publishers[i] = p.Name, p.Version, p.Arch, p.Publisher
 	}
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO device_inventory (device_id, hash, data, package_manager, package_count, received_at)
@@ -93,8 +93,9 @@ func (s *Service) Record(ctx context.Context, deviceID uuid.UUID, body []byte) (
 		if len(pkgs) == 0 {
 			return nil
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO device_software (device_id, name, version, arch)
-			SELECT $1, n, v, a FROM unnest($2::text[], $3::text[], $4::text[]) AS p (n, v, a)`, deviceID, names, versions, arches)
+		_, err := tx.Exec(ctx, `INSERT INTO device_software (device_id, name, version, arch, publisher)
+			SELECT $1, n, v, a, pub FROM unnest($2::text[], $3::text[], $4::text[], $5::text[]) AS p (n, v, a, pub)`,
+			deviceID, names, versions, arches, publishers)
 		return err
 	})
 	if err != nil {
@@ -215,7 +216,7 @@ func cleanInventory(in agentproto.Inventory) agentproto.Inventory {
 	out.Gateways = addresses(in.Gateways)
 	out.DNS = addresses(in.DNS)
 	switch in.PackageManager {
-	case "dpkg", "rpm", "apk", "pacman":
+	case "windows", "dpkg", "rpm", "apk", "pacman":
 		out.PackageManager = in.PackageManager
 	}
 	for _, p := range in.Packages {
@@ -223,7 +224,9 @@ func cleanInventory(in agentproto.Inventory) agentproto.Inventory {
 			break
 		}
 		if name := text(p.Name, maxText); name != "" {
-			out.Packages = append(out.Packages, agentproto.Package{Name: name, Version: text(p.Version, maxText), Arch: text(p.Arch, 40)})
+			out.Packages = append(out.Packages, agentproto.Package{
+				Name: name, Version: text(p.Version, maxText), Arch: text(p.Arch, 40), Publisher: text(p.Publisher, maxText),
+			})
 		}
 	}
 	return out

@@ -235,16 +235,24 @@ test("a deployment token enrolls a device, which then reports in", async () => {
   await page.goto("/devices");
   await page.getByRole("link", { name: "Add devices" }).first().click();
   await expect(page.getByRole("heading", { name: "Add devices" })).toBeVisible();
-  // The agents this server hands out (make build-agents), with the checksums the installer verifies.
+  // The agents this server hands out (make build-agents), with the checksums the installers verify.
+  await expect(page.getByText("Windows x86-64")).toBeVisible();
   await expect(page.getByText("Linux x86-64")).toBeVisible();
-  const sums = await page.request.get("/api/agent/v1/download/SHA256SUMS");
-  expect(await sums.text()).toMatch(/^[0-9a-f]{64} {2}easyrmm-agent-linux-amd64$/m);
+  const sums = await (await page.request.get("/api/agent/v1/download/SHA256SUMS")).text();
+  expect(sums).toMatch(/^[0-9a-f]{64} {2}easyrmm-agent-linux-amd64$/m);
+  expect(sums).toMatch(/^[0-9a-f]{64} {2}easyrmm-agent-windows-amd64\.exe$/m);
+  const ps1 = await page.request.get("/api/agent/v1/install.ps1");
+  expect(await ps1.text()).toContain("$Server = 'https://rmm.localhost'");
 
   await page.getByLabel(/^Site/).selectOption({ label: "Downtown clinic" });
   await page.getByLabel(/^Device group/).selectOption({ label: "Reception" });
   await page.getByLabel(/^Token name/).fill("Downtown rollout");
   await page.getByLabel("Device limit").fill("1");
   await page.getByRole("button", { name: "Create token" }).click();
+  // Windows first: the PowerShell command.
+  const windows = await page.locator("pre", { hasText: "install.ps1" }).innerText();
+  expect(windows).toContain("DownloadString('https://rmm.localhost/api/agent/v1/install.ps1'))) -Token 'ert_");
+  await page.getByRole("radio", { name: "Linux" }).click();
   const command = await page.locator("pre", { hasText: "install.sh" }).innerText();
   expect(command).toContain("curl -fsSL https://rmm.localhost/api/agent/v1/install.sh | sudo sh -s -- --token ert_");
   const token = /--token (ert_[A-Za-z0-9_-]+)/.exec(command)?.[1] ?? "";

@@ -12,7 +12,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"time"
+
+	"github.com/paulmataruso/easyrmm/agent/host"
 )
 
 // Config is the agent's enrollment, stored as JSON. It holds no secret.
@@ -21,7 +24,8 @@ type Config struct {
 	CAFile     string    `json:"caFile,omitempty"`
 	DeviceID   string    `json:"deviceId"`
 	EnrolledAt time.Time `json:"enrolledAt"`
-	// MeshAgentMode is how MeshAgent runs: "systemd" or "child".
+	// MeshAgentMode is how MeshAgent runs: "service" (a systemd unit or a
+	// Windows service; "systemd" in older enrollments) or "child".
 	MeshAgentMode string `json:"meshAgentMode"`
 	// JobKey is the server's job-signing public key, pinned the first time
 	// the server sends it (ADR-0017). Jobs signed by any other key are
@@ -72,7 +76,9 @@ func (s Store) loadKey() (ed25519.PrivateKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading the device key: %w", err)
 	}
-	if st.Mode().Perm()&0o077 != 0 {
+	// On Windows the directory's access list protects the key (host.Protect);
+	// file modes say nothing there.
+	if runtime.GOOS != "windows" && st.Mode().Perm()&0o077 != 0 {
 		return nil, fmt.Errorf("%s must be readable by its owner only (mode %v)", path, st.Mode().Perm())
 	}
 	b, err := os.ReadFile(path) //nolint:gosec // inside the agent's state directory
@@ -92,15 +98,13 @@ func NewKey() (ed25519.PrivateKey, error) {
 	return priv, err
 }
 
-// Save writes the enrollment and key. The key file is readable by its
-// owner only and written before the configuration, so a configuration
-// never points at a missing key.
+// Save writes the enrollment and key. The directory is reachable by root
+// (on Windows SYSTEM and Administrators) only, and the key is written
+// before the configuration, so a configuration never points at a missing
+// key.
 func (s Store) Save(c *Config, key ed25519.PrivateKey) error {
-	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(s.Dir, 0o700); err != nil { //nolint:gosec // a directory, owner only
-		return err
+	if err := host.Protect(s.Dir); err != nil {
+		return fmt.Errorf("protecting %s: %w", s.Dir, err)
 	}
 	pemKey := pem.EncodeToMemory(&pem.Block{Type: "EASYRMM DEVICE KEY", Bytes: key.Seed()})
 	if err := writeFile(filepath.Join(s.Dir, keyFile), pemKey, 0o600); err != nil {

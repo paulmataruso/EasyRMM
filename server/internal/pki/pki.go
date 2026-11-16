@@ -17,6 +17,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -310,6 +311,36 @@ func (a *Authority) Pin() string {
 		panic(err) // an ECDSA P-256 key always marshals
 	}
 	return SPKIPin(spki)
+}
+
+// KeyPin is the server key's pin for the Windows installer: the hex SHA-256
+// of the public key itself, the bytes .NET's X509Certificate.GetPublicKey
+// returns. PowerShell computes it where it cannot compute curl's pin.
+func (a *Authority) KeyPin() string {
+	spki, err := x509.MarshalPKIXPublicKey(&a.serverKey.PublicKey)
+	if err != nil {
+		panic(err) // an ECDSA P-256 key always marshals
+	}
+	pin, err := SPKIKeyPin(spki)
+	if err != nil {
+		panic(err) // a SubjectPublicKeyInfo just marshaled parses
+	}
+	return pin
+}
+
+// SPKIKeyPin is the KeyPin of a DER SubjectPublicKeyInfo: the hex SHA-256
+// (upper case, as .NET formats it) of its public key bit string.
+func SPKIKeyPin(spki []byte) (string, error) {
+	var info struct {
+		Algorithm pkix.AlgorithmIdentifier
+		PublicKey asn1.BitString
+	}
+	rest, err := asn1.Unmarshal(spki, &info)
+	if err != nil || len(rest) > 0 {
+		return "", errors.New("pki: not a SubjectPublicKeyInfo")
+	}
+	sum := sha256.Sum256(info.PublicKey.Bytes)
+	return strings.ToUpper(hex.EncodeToString(sum[:])), nil
 }
 
 // SPKIPin formats the pin of a DER SubjectPublicKeyInfo.

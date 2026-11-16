@@ -119,7 +119,7 @@ func (s *Service) Software(ctx context.Context, c access.Caller, deviceID uuid.U
 	}
 	out := []agentproto.Package{}
 	err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT name, version, arch FROM device_software WHERE device_id = $1
+		rows, err := tx.Query(ctx, `SELECT name, version, arch, publisher FROM device_software WHERE device_id = $1
 			ORDER BY lower(name), name, version, arch`, deviceID)
 		if err != nil {
 			return err
@@ -127,7 +127,7 @@ func (s *Service) Software(ctx context.Context, c access.Caller, deviceID uuid.U
 		defer rows.Close()
 		for rows.Next() {
 			var p agentproto.Package
-			if err := rows.Scan(&p.Name, &p.Version, &p.Arch); err != nil {
+			if err := rows.Scan(&p.Name, &p.Version, &p.Arch, &p.Publisher); err != nil {
 				return err
 			}
 			out = append(out, p)

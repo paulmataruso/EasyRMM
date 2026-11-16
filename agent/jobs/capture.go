@@ -61,7 +61,8 @@ func (c *capture) Write(p []byte) (int, error) {
 }
 
 // Text returns the kept output as UTF-8 without NUL, with a marker where
-// bytes were dropped, and whether any were.
+// bytes were dropped, and whether any were. Output in Windows' console code
+// page is converted.
 func (c *capture) Text() (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -73,7 +74,7 @@ func (c *capture) Text() (string, bool) {
 	}
 	omitted := c.total - int64(len(c.head)) - int64(len(tail))
 	if omitted <= 0 {
-		return clean(string(c.head) + string(tail)), false
+		return clean(decodeOutput(append(append([]byte{}, c.head...), tail...))), false
 	}
 	head := c.head
 	// Do not split a character at either cut.
@@ -87,7 +88,7 @@ func (c *capture) Text() (string, bool) {
 		tail = tail[1:]
 	}
 	marker := fmt.Sprintf("\n\n[… %d bytes omitted …]\n\n", omitted)
-	return clean(string(head) + marker + string(tail)), true
+	return clean(decodeOutput(head) + marker + decodeOutput(tail)), true
 }
 
 // clean makes output storable: valid UTF-8, no NUL, at most

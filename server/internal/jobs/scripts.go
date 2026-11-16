@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -166,7 +167,9 @@ func (s *Service) ListScripts(ctx context.Context, c access.Caller, q ScriptQuer
 			if !canAt(c, rbac.PermScriptView, org, site, true) {
 				continue
 			}
-			if dev != nil && !covers(org, site, dev.OrganizationID, dev.SiteID) {
+			// For a device, the scripts that run on it: in its organization or
+			// site, in a shell for its platform.
+			if dev != nil && (!covers(org, site, dev.OrganizationID, dev.SiteID) || !slices.Contains(agentproto.ShellPlatforms(sc.Shell), dev.Platform)) {
 				continue
 			}
 			s.decorateScript(c, sc)
@@ -259,7 +262,7 @@ func validateScript(f apperr.Fields, name, description, shell, body string, time
 	f.Check(name != "", "name", "Enter a name.")
 	f.Check(utf8.RuneCountInString(name) <= MaxName, "name", "Use at most 200 characters.")
 	f.Check(utf8.RuneCountInString(description) <= MaxDescription, "description", "Use at most 2,000 characters.")
-	f.Check(agentproto.ValidShell(shell), "shell", "Choose bash, sh or python3.")
+	f.Check(agentproto.ValidShell(shell), "shell", "Choose PowerShell, cmd, bash, sh or python3.")
 	switch {
 	case strings.TrimSpace(body) == "":
 		f.Add("body", "Enter the script.")

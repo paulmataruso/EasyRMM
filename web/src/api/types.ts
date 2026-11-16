@@ -310,6 +310,8 @@ export interface ServerAddress {
   url: string;
   /** curl public-key pin when the address uses the server's own certificate authority. */
   pin?: string;
+  /** The same key's pin for the Windows PowerShell command: the hex SHA-256 of the public key. */
+  keyPin?: string;
 }
 
 /** The server's own certificate authority, used for IP addresses. */
@@ -350,7 +352,7 @@ export interface RemoteAccessStatus {
 
 // Scripts and jobs (ADR-0017) --------------------------------------------------------------------
 
-export type Shell = "bash" | "sh" | "python3";
+export type Shell = "powershell" | "cmd" | "bash" | "sh" | "python3";
 /** Where a script can run: everywhere, in one organization, or in one site. */
 export type ScriptLevel = "shared" | "organization" | "site";
 
@@ -490,7 +492,7 @@ export interface Inventory {
   interfaces: NetworkInterface[];
   gateways: string[];
   dnsServers: string[];
-  packageManager: "" | "dpkg" | "rpm" | "apk" | "pacman";
+  packageManager: "" | "windows" | "dpkg" | "rpm" | "apk" | "pacman";
   packageCount: number;
   receivedAt: string;
 }
@@ -527,6 +529,8 @@ export interface Package {
   name: string;
   version: string;
   arch: string;
+  /** Windows programs only. */
+  publisher?: string;
 }
 
 export type MetricsRange = "1h" | "24h" | "7d";

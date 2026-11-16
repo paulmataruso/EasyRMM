@@ -1,8 +1,10 @@
 package pki
 
 import (
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/pem"
 	"net"
 	"net/http"
@@ -72,6 +74,34 @@ func TestServerCertificateChainsToAuthority(t *testing.T) {
 	}
 }
 
+// TestKeyPin checks the PowerShell pin: the hex SHA-256 of the public key
+// point, the bytes .NET's X509Certificate.GetPublicKey returns.
+func TestKeyPin(t *testing.T) {
+	a := newAuthority(t, time.Now())
+	pub, err := a.serverKey.PublicKey.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(pub)
+	if want := strings.ToUpper(hex.EncodeToString(sum[:])); a.KeyPin() != want || len(pub) != 65 {
+		t.Errorf("KeyPin = %s, want %s", a.KeyPin(), want)
+	}
+	for _, bad := range [][]byte{nil, []byte("not DER"), append(append([]byte{}, mustSPKI(t, a)...), 0)} {
+		if _, err := SPKIKeyPin(bad); err == nil {
+			t.Errorf("SPKIKeyPin(%x) accepted", bad)
+		}
+	}
+}
+
+func mustSPKI(t *testing.T, a *Authority) []byte {
+	t.Helper()
+	b, err := x509.MarshalPKIXPublicKey(&a.serverKey.PublicKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 func TestSetAddressesReissuesWithTheSameKey(t *testing.T) {
 	a := newAuthority(t, time.Now())
 	pin := a.Pin()
@@ -98,6 +128,9 @@ func TestSetAddressesReissuesWithTheSameKey(t *testing.T) {
 	}
 	if SPKIPin(second.Leaf.RawSubjectPublicKeyInfo) != pin || SPKIPin(first.Leaf.RawSubjectPublicKeyInfo) != pin {
 		t.Error("the server key changed, so the pin did")
+	}
+	if kp, err := SPKIKeyPin(second.Leaf.RawSubjectPublicKeyInfo); err != nil || kp != a.KeyPin() {
+		t.Errorf("key pin of the reissued certificate = %s, %v; want %s", kp, err, a.KeyPin())
 	}
 }
 

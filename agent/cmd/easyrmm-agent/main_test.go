@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -54,7 +55,7 @@ func newHarness(t *testing.T) *harness {
 	t.Helper()
 	root := t.TempDir()
 	h := &harness{out: &bytes.Buffer{}}
-	p := host.Paths{Root: root}
+	p := host.Paths{Root: root, OS: "linux"}
 	h.e = &env{
 		paths: p, store: state.Store{Dir: p.State()}, stdout: h.out,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -62,7 +63,7 @@ func newHarness(t *testing.T) *harness {
 			h.calls = append(h.calls, name+" "+strings.Join(args, " "))
 			return []byte("active\n"), nil
 		}},
-		isRoot: func() bool { return true }, hasSystemd: func() bool { return true },
+		isRoot: func() bool { return true }, hasServices: func() bool { return true },
 	}
 	return h
 }
@@ -90,6 +91,7 @@ func TestCommands(t *testing.T) {
 }
 
 func TestEnrollRunStatusUninstall(t *testing.T) {
+	linuxOnly(t)
 	var beats atomic.Int32
 	srv := fakeServer(t, &beats)
 	h := newHarness(t)
@@ -174,6 +176,7 @@ func TestEnrollRunStatusUninstall(t *testing.T) {
 }
 
 func TestInstallAsService(t *testing.T) {
+	linuxOnly(t)
 	var beats atomic.Int32
 	srv := fakeServer(t, &beats)
 	h := newHarness(t)
@@ -182,11 +185,11 @@ func TestInstallAsService(t *testing.T) {
 	if err := h.run("install", "--server", srv.URL, "--token", "ert_good"); err == nil || !strings.Contains(err.Error(), "as root") {
 		t.Errorf("install without root: %v", err)
 	}
-	h.e.isRoot, h.e.hasSystemd = func() bool { return true }, func() bool { return false }
+	h.e.isRoot, h.e.hasServices = func() bool { return true }, func() bool { return false }
 	if err := h.run("install", "--server", srv.URL, "--token", "ert_good"); err == nil || !strings.Contains(err.Error(), "systemd is not running") {
 		t.Errorf("install without systemd: %v", err)
 	}
-	h.e.hasSystemd = func() bool { return true }
+	h.e.hasServices = func() bool { return true }
 
 	// A private CA is copied into the agent's state.
 	ca := filepath.Join(t.TempDir(), "ca.pem")
@@ -200,7 +203,7 @@ func TestInstallAsService(t *testing.T) {
 		t.Fatalf("install: %v", err)
 	}
 	cfg, _, _ := h.e.store.Load()
-	if cfg.MeshAgentMode != "systemd" {
+	if cfg.MeshAgentMode != "service" {
 		t.Errorf("mode = %s", cfg.MeshAgentMode)
 	}
 	unit, err := os.ReadFile(filepath.Join(h.e.paths.Units(), host.AgentUnit))
@@ -216,9 +219,117 @@ func TestInstallAsService(t *testing.T) {
 	if !strings.Contains(h.out.String(), "running as easyrmm-agent.service") {
 		t.Errorf("output = %q", h.out)
 	}
-	// Installing again keeps the enrollment and refreshes the service.
+	// Installing again keeps the enrollment and refreshes the service; the
+	// same build needs no restart.
+	h.calls = nil
 	if err := h.run("install", "--server", srv.URL); err != nil || !strings.Contains(h.out.String(), "Already enrolled") {
 		t.Errorf("reinstall: %q, %v", h.out, err)
+	}
+	if strings.Contains(strings.Join(h.calls, ";"), "restart") {
+		t.Errorf("same build restarted: %v", h.calls)
+	}
+	// A new build replaces the installed one and restarts the service.
+	if err := os.WriteFile(h.e.paths.Binary(), []byte("older build"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h.calls = nil
+	if err := h.run("install", "--server", srv.URL); err != nil || !strings.Contains(strings.Join(h.calls, ";"), "systemctl restart easyrmm-agent.service") {
+		t.Errorf("upgrade: %v, calls %v", err, h.calls)
+	}
+}
+
+// linuxOnly skips a test of the Linux layout (systemd, MeshAgent as a
+// child process) on Windows; TestWindowsLayout covers Windows.
+func linuxOnly(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("tests the Linux layout")
+	}
+}
+
+// services records what a Windows service manager is asked to do.
+type services struct {
+	installed []host.Service
+	removed   []string
+}
+
+func (s *services) Install(_ context.Context, svc host.Service) error {
+	s.installed = append(s.installed, svc)
+	return nil
+}
+func (s *services) Restart(context.Context, string) error { return nil }
+func (s *services) Remove(_ context.Context, name string) error {
+	s.removed = append(s.removed, name)
+	return nil
+}
+func (s *services) State(context.Context, string) string { return "running" }
+
+// TestWindowsLayout installs, inspects and removes an agent laid out as on
+// Windows, with a stand-in for the service manager.
+func TestWindowsLayout(t *testing.T) {
+	var beats atomic.Int32
+	srv := fakeServer(t, &beats)
+	h := newHarness(t)
+	svcs := &services{}
+	h.e.paths.OS, h.e.sd = "windows", svcs
+	h.e.store = state.Store{Dir: h.e.paths.State()}
+
+	h.e.isRoot = func() bool { return false }
+	if err := h.run("install", "--server", srv.URL, "--token", "ert_good"); err == nil || !strings.Contains(err.Error(), "started as administrator") {
+		t.Errorf("install without elevation: %v", err)
+	}
+	h.e.isRoot = func() bool { return true }
+	if err := h.run("install", "--server", srv.URL, "--token", "ert_good"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(h.e.paths.Binary(), filepath.Join("Program Files", "EasyRMM", "Agent", "easyrmm-agent.exe")) {
+		t.Errorf("binary = %s", h.e.paths.Binary())
+	}
+	if _, err := os.Stat(h.e.paths.Binary()); err != nil {
+		t.Errorf("binary not installed: %v", err)
+	}
+	if len(svcs.installed) != 1 || svcs.installed[0].Name != host.AgentWindowsService || !strings.Contains(h.out.String(), "running as the EasyRMMAgent service") {
+		t.Errorf("installed %+v, output %q", svcs.installed, h.out)
+	}
+	if err := h.run("status"); err != nil || !strings.Contains(h.out.String(), "Service:    running") ||
+		!strings.Contains(h.out.String(), "Log:        "+filepath.Join(h.e.paths.State(), "logs", "agent.log")) {
+		t.Errorf("status: %q, %v", h.out, err)
+	}
+	if err := h.run("uninstall"); err != nil || !strings.Contains(h.out.String(), "removed") {
+		t.Fatalf("uninstall: %q, %v", h.out, err)
+	}
+	if len(svcs.removed) == 0 || svcs.removed[0] != host.AgentWindowsService {
+		t.Errorf("removed services = %v", svcs.removed)
+	}
+	if _, err := os.Stat(filepath.Dir(filepath.Dir(h.e.paths.Binary()))); !os.IsNotExist(err) {
+		t.Errorf("program folder kept: %v", err)
+	}
+}
+
+func TestLogFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "logs", logName)
+	l, err := openLog(path, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 3 {
+		if _, err := l.Write([]byte(strings.Repeat("x", 30) + "\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Write([]byte("closed")); err == nil {
+		t.Error("write after close")
+	}
+	cur, _ := os.ReadFile(path)
+	old, _ := os.ReadFile(path + ".1")
+	if len(cur) != 31 || len(old) != 62 {
+		t.Errorf("current %d bytes, previous %d", len(cur), len(old))
+	}
+	if l.Close() != nil {
+		t.Error("closing twice")
 	}
 }
 

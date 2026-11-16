@@ -131,6 +131,19 @@ All notable changes to this project are documented here. The format follows
   attention** card; the menu shows the active count. Resolved alerts are
   kept for `EASYRMM_ALERT_RETENTION` (90 days). Guide:
   [Alerts](docs/operations/alerts.md).
+- The Windows agent (ADR-0020). `easyrmm-agent.exe` for x64 and ARM64
+  runs as the **EasyRMM Agent** service with MeshAgent as **EasyRMM
+  MeshAgent**. **Devices → Add devices** now shows a PowerShell command
+  first: it downloads `install.ps1` from the server, which checks the
+  agent's SHA-256, enrolls the computer and starts the service. By IP
+  address the command trusts only the server's own key. Windows devices
+  report their hardware, Windows edition and build, network, installed
+  programs (with publisher) and health; the device page shows the page
+  file and no load average for them. Scripts gain **PowerShell** and
+  **cmd**, the default for new scripts; each shell runs only on its
+  platform. `make build-agents` and the Docker image build the Windows
+  agents, and CI tests the agent on Windows. Guide:
+  [Installing the EasyRMM agent](docs/deployment/agents.md).
 - The console's libraries are served as a chunk of their own, which
   browsers keep across EasyRMM upgrades.
 - When the server cannot open its stored certificate authority or job key,

@@ -5,6 +5,7 @@ import type { RemoteAccessStatus } from "../../api/types";
 import { baseRoutes, unreportedRoutes, fail, installFakeApi, ok, sessionView, type FakeRequest } from "../../test/fakeApi";
 import { auditEntry, device, org, site } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
+import { remoteAccessState } from "./DeviceDetailPage";
 
 const location = () => screen.getByTestId("location").textContent;
 
@@ -310,9 +311,12 @@ describe("device detail", () => {
     });
     renderApp("/devices/d5");
     expect(await screen.findByText("Not set up yet")).toBeInTheDocument();
-    expect(screen.getByText(/easyrmm-agent status/)).toBeInTheDocument();
+    expect(screen.getByText(/“sudo easyrmm-agent status”/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Terminal" })).not.toBeInTheDocument();
     expect(screen.getByText("Online")).toBeInTheDocument();
+    // On Windows the agent is not on the PATH: the hint names where it is.
+    const windows = { remoteAgent: false, remoteOnline: false, agent, platform: "windows" as const };
+    expect(remoteAccessState(windows, true).hint).toContain(String.raw`“& "$env:ProgramFiles\EasyRMM\Agent\easyrmm-agent.exe" status” in PowerShell as administrator`);
   });
 
   it("shows read-only people the device without session buttons", async () => {

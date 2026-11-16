@@ -49,7 +49,7 @@ func TestOriginsAndRouting(t *testing.T) {
 	if all[0] != (httpapi.Origin{Console: "https://rmm.test", Mesh: "https://mesh.rmm.test"}) {
 		t.Errorf("primary = %+v", all[0])
 	}
-	if all[1] != (httpapi.Origin{Console: "https://203.0.113.10", Mesh: "https://203.0.113.10:4443", Pin: ca.Pin()}) {
+	if all[1] != (httpapi.Origin{Console: "https://203.0.113.10", Mesh: "https://203.0.113.10:4443", Pin: ca.Pin(), KeyPin: ca.KeyPin()}) {
 		t.Errorf("IPv4 = %+v", all[1])
 	}
 	if all[2].Console != "https://[2001:db8::10]" || all[2].Mesh != "https://[2001:db8::10]:4443" {

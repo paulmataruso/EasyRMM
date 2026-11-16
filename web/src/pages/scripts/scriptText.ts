@@ -16,13 +16,26 @@ export const LIMITS = {
   devices: 500,
 };
 
-export const SHELLS: Shell[] = ["bash", "sh", "python3"];
+export const SHELLS: Shell[] = ["powershell", "cmd", "bash", "sh", "python3"];
 
 export const SHELL_NAMES: Record<Shell, string> = {
+  powershell: "PowerShell",
+  cmd: "Command Prompt (cmd)",
   bash: "Bash",
   sh: "POSIX sh",
   python3: "Python 3",
 };
+
+/** The platform each shell runs on (agentproto.ShellPlatforms). */
+export const SHELL_PLATFORM: Record<Shell, "windows" | "linux"> = {
+  powershell: "windows",
+  cmd: "windows",
+  bash: "linux",
+  sh: "linux",
+  python3: "linux",
+};
+
+export const PLATFORM_NAMES: Record<string, string> = { windows: "Windows", linux: "Linux" };
 
 export const LEVEL_NAMES: Record<ScriptLevel, string> = {
   shared: "Shared",
@@ -44,11 +57,12 @@ export function scriptCovers(s: Pick<Script, "level" | "organizationId" | "siteI
   return s.siteId === d.siteId;
 }
 
-/** Why a device cannot run scripts, or null when it can. */
-export function cannotRunReason(d: Pick<Device, "canRunScripts" | "agent" | "platform">): string | null {
+/** Why a device cannot run scripts (in the given shell), or null when it can. */
+export function cannotRunReason(d: Pick<Device, "canRunScripts" | "agent" | "platform">, shell?: Shell): string | null {
   if (!d.agent) return "The device has no EasyRMM agent.";
   if (!d.canRunScripts) return "Your role does not run scripts here.";
-  if (d.platform !== "linux") return "Scripts run on Linux devices for now.";
+  if (d.platform !== "windows" && d.platform !== "linux") return "Scripts run on Windows and Linux devices.";
+  if (shell && SHELL_PLATFORM[shell] !== d.platform) return `${SHELL_NAMES[shell]} scripts run on ${PLATFORM_NAMES[SHELL_PLATFORM[shell]]} devices.`;
   return null;
 }
 

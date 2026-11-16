@@ -4,10 +4,30 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 )
+
+// checkModes checks that only the owner can read the state, and that a key
+// others can read is refused.
+func checkModes(t *testing.T, s Store) {
+	t.Helper()
+	for name, want := range map[string]os.FileMode{"": 0o700, keyFile: 0o600, configFile: 0o600} {
+		st, err := os.Stat(filepath.Join(s.Dir, name))
+		if err != nil || st.Mode().Perm() != want {
+			t.Errorf("%s mode = %v, %v", name, st.Mode().Perm(), err)
+		}
+	}
+	if err := os.Chmod(filepath.Join(s.Dir, keyFile), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Load(); err == nil || !strings.Contains(err.Error(), "owner only") {
+		t.Errorf("readable key: %v", err)
+	}
+	_ = os.Chmod(filepath.Join(s.Dir, keyFile), 0o600)
+}
 
 func TestSaveAndLoad(t *testing.T) {
 	s := Store{Dir: filepath.Join(t.TempDir(), "state")}
@@ -26,21 +46,11 @@ func TestSaveAndLoad(t *testing.T) {
 	if err != nil || *got != *cfg || !k.Equal(key) {
 		t.Fatalf("loaded %+v, %v", got, err)
 	}
-	for name, want := range map[string]os.FileMode{"": 0o700, keyFile: 0o600, configFile: 0o600} {
-		st, err := os.Stat(filepath.Join(s.Dir, name))
-		if err != nil || st.Mode().Perm() != want {
-			t.Errorf("%s mode = %v, %v", name, st.Mode().Perm(), err)
-		}
+	// Windows protects the folder with its access list instead
+	// (host.TestProtectWindows); file modes there say nothing.
+	if runtime.GOOS != "windows" {
+		checkModes(t, s)
 	}
-
-	// A key others can read is refused.
-	if err := os.Chmod(filepath.Join(s.Dir, keyFile), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := s.Load(); err == nil || !strings.Contains(err.Error(), "owner only") {
-		t.Errorf("readable key: %v", err)
-	}
-	_ = os.Chmod(filepath.Join(s.Dir, keyFile), 0o600)
 
 	// Damaged files are reported.
 	write := func(name, content string) {

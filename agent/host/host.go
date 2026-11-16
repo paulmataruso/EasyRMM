@@ -1,12 +1,12 @@
 // Package host describes the machine the agent runs on and manages its
-// services.
+// files and services: systemd units on Linux, Windows services on Windows.
 package host
 
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,32 +17,74 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
-// Paths are where the agent keeps its files. Root prefixes all of them,
-// "/" on a real installation.
+// Paths are where the agent keeps its files. Root prefixes all of them; ""
+// or "/" is a real installation. OS is runtime.GOOS unless a test sets it.
 type Paths struct {
 	Root string
+	OS   string
+}
+
+// Windows reports whether the paths follow the Windows layout.
+func (p Paths) Windows() bool { return cmp.Or(p.OS, runtime.GOOS) == "windows" }
+
+// real reports whether the paths are the machine's own, not a test root.
+func (p Paths) real() bool { return p.Root == "" || p.Root == "/" }
+
+func (p Paths) unix(rel string) string { return filepath.Join(cmp.Or(p.Root, "/"), rel) }
+
+// programData is C:\ProgramData on a real Windows installation.
+func (p Paths) programData() string {
+	if p.real() {
+		return cmp.Or(os.Getenv("ProgramData"), `C:\ProgramData`)
+	}
+	return filepath.Join(p.Root, "ProgramData")
+}
+
+// programFiles is C:\Program Files on a real Windows installation.
+func (p Paths) programFiles() string {
+	if p.real() {
+		return cmp.Or(os.Getenv("ProgramFiles"), `C:\Program Files`)
+	}
+	return filepath.Join(p.Root, "Program Files")
 }
 
 // State is the directory with the enrollment and key.
-func (p Paths) State() string { return filepath.Join(p.Root, "var/lib/easyrmm-agent") }
+func (p Paths) State() string {
+	if p.Windows() {
+		return filepath.Join(p.programData(), "EasyRMM", "Agent")
+	}
+	return p.unix("var/lib/easyrmm-agent")
+}
 
 // MeshAgent is the directory MeshAgent is installed in.
 func (p Paths) MeshAgent() string {
-	return filepath.Join(p.Root, "usr/local/lib/easyrmm-agent/meshagent")
+	if p.Windows() {
+		return filepath.Join(p.programFiles(), "EasyRMM", "MeshAgent")
+	}
+	return p.unix("usr/local/lib/easyrmm-agent/meshagent")
 }
 
 // Binary is where the agent's own executable is installed.
-func (p Paths) Binary() string { return filepath.Join(p.Root, "usr/local/bin/easyrmm-agent") }
+func (p Paths) Binary() string {
+	if p.Windows() {
+		return filepath.Join(p.programFiles(), "EasyRMM", "Agent", "easyrmm-agent.exe")
+	}
+	return p.unix("usr/local/bin/easyrmm-agent")
+}
 
 // Units is the systemd unit directory.
-func (p Paths) Units() string { return filepath.Join(p.Root, "etc/systemd/system") }
+func (p Paths) Units() string { return p.unix("etc/systemd/system") }
+
+// Logs is where the agent writes its log on Windows; on Linux the journal
+// keeps it.
+func (p Paths) Logs() string { return filepath.Join(p.State(), "logs") }
 
 // Facts describes this machine.
 func Facts(version string) agentproto.Facts {
 	name, _ := os.Hostname()
 	return agentproto.Facts{
 		Hostname:     name,
-		OS:           osDescription(),
+		OS:           cmp.Or(systemDescription(), runtime.GOOS),
 		Platform:     platform(),
 		Arch:         runtime.GOARCH,
 		AgentVersion: version,
@@ -59,18 +101,16 @@ func platform() string {
 	return "other"
 }
 
-func osDescription() string {
-	if runtime.GOOS == "linux" {
-		for _, f := range []string{"/etc/os-release", "/usr/lib/os-release"} {
-			if b, err := os.ReadFile(f); err == nil { //nolint:gosec // fixed os-release paths
-				if name := prettyName(b); name != "" {
-					return name
-				}
+// linuxDescription is the distribution's PRETTY_NAME.
+func linuxDescription(root string) string {
+	for _, f := range []string{"etc/os-release", "usr/lib/os-release"} {
+		if b, err := os.ReadFile(filepath.Join(root, f)); err == nil { //nolint:gosec // fixed os-release paths
+			if name := prettyName(b); name != "" {
+				return name
 			}
 		}
-		return "Linux"
 	}
-	return runtime.GOOS
+	return "Linux"
 }
 
 // prettyName reads PRETTY_NAME (or NAME) from os-release content.
@@ -104,77 +144,4 @@ func Exec(ctx context.Context, name string, args ...string) ([]byte, error) {
 		return out, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, bytes.TrimSpace(out))
 	}
 	return out, nil
-}
-
-// Systemd installs and removes systemd units.
-type Systemd struct {
-	Dir string // unit directory
-	Run Runner
-}
-
-// Available reports whether systemd manages this machine.
-func Available() bool {
-	st, err := os.Stat("/run/systemd/system")
-	return err == nil && st.IsDir()
-}
-
-// Install writes a unit, then enables and starts it.
-func (s Systemd) Install(ctx context.Context, name, content string) error {
-	if err := os.MkdirAll(s.Dir, 0o755); err != nil { //nolint:gosec // the system unit directory
-		return err
-	}
-	if err := os.WriteFile(filepath.Join(s.Dir, name), []byte(content), 0o644); err != nil { //nolint:gosec // units are world-readable
-		return err
-	}
-	if _, err := s.Run(ctx, "systemctl", "daemon-reload"); err != nil {
-		return err
-	}
-	_, err := s.Run(ctx, "systemctl", "enable", "--now", name)
-	return err
-}
-
-// Remove stops, disables and deletes a unit. A missing unit is not an
-// error.
-func (s Systemd) Remove(ctx context.Context, name string) error {
-	path := filepath.Join(s.Dir, name)
-	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	_, _ = s.Run(ctx, "systemctl", "disable", "--now", name)
-	if err := os.Remove(path); err != nil {
-		return err
-	}
-	_, err := s.Run(ctx, "systemctl", "daemon-reload")
-	return err
-}
-
-// State returns `systemctl is-active` for a unit.
-func (s Systemd) State(ctx context.Context, name string) string {
-	out, _ := s.Run(ctx, "systemctl", "is-active", name)
-	if st := strings.TrimSpace(string(out)); st != "" {
-		return strings.SplitN(st, "\n", 2)[0]
-	}
-	return "unknown"
-}
-
-// AgentUnit is the systemd unit of the EasyRMM agent.
-const AgentUnit = "easyrmm-agent.service"
-
-// AgentUnitContent runs the agent from binary.
-func AgentUnitContent(binary string) string {
-	return `[Unit]
-Description=EasyRMM agent
-Documentation=https://github.com/paulmataruso/easyrmm
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=` + binary + ` run
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-`
 }

@@ -274,9 +274,36 @@ func (s *Service) targets(ctx context.Context, tx pgx.Tx, c access.Caller, sc *S
 	case len(noAgent) > 0:
 		return nil, apperr.Invalid("deviceIds", names(noAgent)+" "+pick(len(noAgent), "has", "have")+" no EasyRMM agent to run scripts.")
 	case len(wrongOS) > 0:
-		return nil, apperr.Invalid("deviceIds", sc.Shell+" scripts run on Linux; "+names(wrongOS)+" "+pick(len(wrongOS), "is", "are")+" not a Linux device.")
+		os := platformName(platforms)
+		return nil, apperr.Invalid("deviceIds", shellName(sc.Shell)+" scripts run on "+os+"; "+names(wrongOS)+" "+pick(len(wrongOS), "is", "are")+" not "+article(os)+" "+os+" device.")
 	}
 	return found, nil
+}
+
+// shellName is how people write a shell's name.
+func shellName(shell string) string {
+	switch shell {
+	case agentproto.ShellPowerShell:
+		return "PowerShell"
+	case agentproto.ShellCmd:
+		return "cmd"
+	}
+	return shell
+}
+
+// platformName names the platform a shell runs on.
+func platformName(platforms []string) string {
+	if len(platforms) > 0 && platforms[0] == "windows" {
+		return "Windows"
+	}
+	return "Linux"
+}
+
+func article(word string) string {
+	if word != "" && strings.ContainsRune("AEIOU", rune(word[0])) {
+		return "an"
+	}
+	return "a"
 }
 
 // names lists up to three names, then how many more.

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { useApi } from "../../api/hooks";
 import type { DeviceInventory, DeviceMetrics, Filesystem, MetricSample, MetricsHistory, MetricsRange } from "../../api/types";
@@ -19,7 +19,13 @@ export function byFullness(list: Filesystem[]): Filesystem[] {
 const SHOWN_FILESYSTEMS = 4;
 
 /** The device's latest measurements: processor, memory, swap and its fullest filesystems. */
-export function HealthCard({ query, online, onShowAll }: { query: UseQueryResult<DeviceInventory>; online: boolean; onShowAll: () => void }) {
+export function HealthCard({ query, online, windows = false, onShowAll }: {
+  query: UseQueryResult<DeviceInventory>;
+  online: boolean;
+  /** Windows has no load average, and calls swap its page file. */
+  windows?: boolean;
+  onShowAll: () => void;
+}) {
   const m = query.data?.metrics ?? null;
   return (
     <Card
@@ -37,7 +43,7 @@ export function HealthCard({ query, online, onShowAll }: { query: UseQueryResult
       ) : query.isError ? (
         <ErrorState error={query.error} onRetry={() => void query.refetch()} compact />
       ) : m ? (
-        <Measurements m={m} onShowAll={onShowAll} />
+        <Measurements m={m} windows={windows} onShowAll={onShowAll} />
       ) : (
         <EmptyState title="No measurements yet" compact>
           The agent sends processor, memory and disk use with every check-in.
@@ -47,7 +53,7 @@ export function HealthCard({ query, online, onShowAll }: { query: UseQueryResult
   );
 }
 
-function Measurements({ m, onShowAll }: { m: DeviceMetrics; onShowAll: () => void }) {
+function Measurements({ m, windows, onShowAll }: { m: DeviceMetrics; windows: boolean; onShowAll: () => void }) {
   const fs = byFullness(m.filesystems);
   const shown = fs.slice(0, SHOWN_FILESYSTEMS);
   return (
@@ -55,7 +61,13 @@ function Measurements({ m, onShowAll }: { m: DeviceMetrics; onShowAll: () => voi
       <div className="flex flex-col gap-3.5">
         <UsageMeter label="Processor" percent={m.cpuPercent} />
         <UsageMeter label="Memory" percent={percentOf(m.memoryUsed, m.memoryTotal)} detail={`${formatSize(m.memoryUsed)} of ${formatSize(m.memoryTotal)}`} />
-        {m.swapTotal > 0 && <UsageMeter label="Swap" percent={percentOf(m.swapUsed, m.swapTotal)} detail={`${formatSize(m.swapUsed)} of ${formatSize(m.swapTotal)}`} />}
+        {m.swapTotal > 0 && (
+          <UsageMeter
+            label={windows ? "Page file" : "Swap"}
+            percent={percentOf(m.swapUsed, m.swapTotal)}
+            detail={`${formatSize(m.swapUsed)} of ${formatSize(m.swapTotal)}`}
+          />
+        )}
         {shown.map((f) => (
           <UsageMeter
             key={f.mount}
@@ -74,13 +86,19 @@ function Measurements({ m, onShowAll }: { m: DeviceMetrics; onShowAll: () => voi
         narrow
         className="mt-4 border-t border-line pt-4"
         items={[
-          ["Load average", <span key="l" className="tabular-nums">{[m.load1, m.load5, m.load15].map((v) => v.toFixed(2)).join(" · ")}</span>],
+          ...loadAverage(m, windows),
           ["Up for", formatDuration(m.uptimeSeconds)],
           ["Processes", m.processes.toLocaleString()],
         ]}
       />
     </>
   );
+}
+
+/** The load average row; Windows has none. */
+function loadAverage(m: DeviceMetrics, windows: boolean): [ReactNode, ReactNode][] {
+  if (windows) return [];
+  return [["Load average", <span className="tabular-nums">{[m.load1, m.load5, m.load15].map((v) => v.toFixed(2)).join(" · ")}</span>]];
 }
 
 const RANGES: { value: MetricsRange; label: string; long: string }[] = [

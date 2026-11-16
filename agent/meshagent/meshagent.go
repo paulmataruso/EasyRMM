@@ -2,11 +2,13 @@
 // EasyRMM remote access (ADR-0015). The binary and its settings come from
 // the EasyRMM server.
 //
-// MeshAgent runs either as its own systemd unit or, where systemd is not
-// available, as a child process the EasyRMM agent supervises.
+// MeshAgent runs as a service of its own (a systemd unit, or a Windows
+// service) or, where Linux has no systemd, as a child process the EasyRMM
+// agent supervises.
 package meshagent
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"errors"
@@ -16,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -24,23 +27,33 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
-// Unit is MeshAgent's systemd unit.
-const Unit = "easyrmm-meshagent.service"
+// MeshAgent's service.
+const (
+	Unit           = "easyrmm-meshagent.service"
+	WindowsService = "EasyRMMMeshAgent"
+)
 
 // Mode is how MeshAgent is run.
 type Mode string
 
 // Modes.
 const (
+	// ModeService runs MeshAgent as a service of its own.
+	ModeService Mode = "service"
+	// ModeSystemd is ModeService as enrollments before Windows support
+	// recorded it.
 	ModeSystemd Mode = "systemd"
 	ModeChild   Mode = "child"
 )
 
 // Manager installs and runs MeshAgent in one directory.
 type Manager struct {
-	Dir     string
-	Mode    Mode
-	Systemd host.Systemd
+	Dir  string
+	Mode Mode
+	// Services runs MeshAgent in ModeService.
+	Services host.Services
+	// Windows selects the Windows names and settings; tests set it.
+	Windows bool
 	Log     *slog.Logger
 	// RestartDelay is the pause before restarting a child MeshAgent that
 	// exited (5 s).
@@ -50,8 +63,42 @@ type Manager struct {
 	child *exec.Cmd
 }
 
-func (m *Manager) binary() string   { return filepath.Join(m.Dir, "meshagent") }
+// NewManager returns a manager for this machine's MeshAgent.
+func NewManager(dir string, mode Mode, services host.Services, log *slog.Logger) *Manager {
+	if mode == ModeSystemd {
+		mode = ModeService
+	}
+	return &Manager{Dir: dir, Mode: mode, Services: services, Windows: runtime.GOOS == "windows", Log: log}
+}
+
+// MeshAgent reads its settings and database from files named after its
+// executable: meshagent.msh and meshagent.db beside meshagent(.exe).
+func (m *Manager) binary() string {
+	if m.Windows {
+		return filepath.Join(m.Dir, "meshagent.exe")
+	}
+	return filepath.Join(m.Dir, "meshagent")
+}
+
 func (m *Manager) settings() string { return filepath.Join(m.Dir, "meshagent.msh") }
+
+func (m *Manager) service() host.Service {
+	s := host.Service{
+		Name:         Unit,
+		Description:  "MeshAgent for EasyRMM remote access",
+		Binary:       m.binary(),
+		Dir:          m.Dir,
+		Quiet:        true,
+		RestartDelay: 5 * time.Second,
+	}
+	if m.Windows {
+		s.Name, s.DisplayName = WindowsService, "EasyRMM MeshAgent"
+		s.Description = "MeshCentral's agent, for EasyRMM remote desktop, terminal and files."
+	}
+	return s
+}
+
+func (m *Manager) asService() bool { return m.Mode == ModeService || m.Mode == ModeSystemd }
 
 // Installed reports whether MeshAgent's files are in place.
 func (m *Manager) Installed() bool {
@@ -66,7 +113,14 @@ func (m *Manager) Installed() bool {
 // Install writes MeshAgent and its settings and starts it. download writes
 // the binary.
 func (m *Manager) Install(ctx context.Context, download func(io.Writer) error, settings []byte) error {
-	if err := os.MkdirAll(m.Dir, 0o755); err != nil { //nolint:gosec // MeshAgent's directory, like MeshCentral's own installer
+	if m.Windows {
+		// MeshAgent keeps its identity in meshagent.db beside it; Program
+		// Files lets every user read.
+		if err := host.Protect(m.Dir); err != nil {
+			return err
+		}
+		settings = WithServiceName(settings, WindowsService)
+	} else if err := os.MkdirAll(m.Dir, 0o755); err != nil { //nolint:gosec // MeshAgent's directory, like MeshCentral's own installer
 		return err
 	}
 	tmp, err := os.CreateTemp(m.Dir, ".meshagent-*")
@@ -99,8 +153,13 @@ func (m *Manager) Start(ctx context.Context) error {
 	if !m.Installed() {
 		return errors.New("MeshAgent is not installed")
 	}
-	if m.Mode == ModeSystemd {
-		return m.Systemd.Install(ctx, Unit, unitContent(m.Dir, m.binary()))
+	if m.asService() {
+		return m.Services.Install(ctx, m.service())
+	}
+	if m.Windows {
+		// Started outside the service manager, Windows MeshAgent shows its
+		// installation window instead of connecting.
+		return errors.New("MeshAgent runs as a Windows service only; install the agent with \"easyrmm-agent install\"")
 	}
 	return m.startChild(ctx)
 }
@@ -179,27 +238,36 @@ func (m *Manager) NodeID(ctx context.Context) (string, error) {
 
 // Remove stops MeshAgent and deletes it.
 func (m *Manager) Remove(ctx context.Context) error {
-	if err := m.Systemd.Remove(ctx, Unit); err != nil {
-		return err
+	if m.Services != nil {
+		if err := m.Services.Remove(ctx, m.service().Name); err != nil {
+			return err
+		}
+	}
+	if m.Windows {
+		removeRegistry(WindowsService)
 	}
 	return os.RemoveAll(m.Dir)
 }
 
-func unitContent(dir, binary string) string {
-	return `[Unit]
-Description=MeshAgent for EasyRMM remote access
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=` + dir + `
-ExecStart=` + binary + `
-StandardOutput=null
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-`
+// WithServiceName sets meshServiceName in MeshAgent's settings. Windows
+// MeshAgent restarts itself after an update through the service of that
+// name, "Mesh Agent" unless the settings say otherwise.
+func WithServiceName(settings []byte, name string) []byte {
+	eol := "\n"
+	if bytes.Contains(settings, []byte("\r\n")) {
+		eol = "\r\n"
+	}
+	var out bytes.Buffer
+	for line := range strings.Lines(string(settings)) {
+		k, _, _ := strings.Cut(line, "=")
+		if strings.EqualFold(strings.TrimSpace(k), "meshServiceName") {
+			continue
+		}
+		out.WriteString(line)
+	}
+	if out.Len() > 0 && !bytes.HasSuffix(out.Bytes(), []byte("\n")) {
+		out.WriteString(eol)
+	}
+	out.WriteString("meshServiceName=" + name + eol)
+	return out.Bytes()
 }

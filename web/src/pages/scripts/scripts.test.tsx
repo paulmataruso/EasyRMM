@@ -111,7 +111,16 @@ describe("scripts", () => {
     const siteSelect = screen.getByLabelText(/^Site/);
     await waitFor(() => expect(within(siteSelect).getAllByRole("option").map((o) => o.textContent)).toEqual(["Choose…", "Head office"]));
     await user.selectOptions(siteSelect, "Head office");
-    await user.selectOptions(screen.getByLabelText("Shell"), "POSIX sh");
+    // New scripts start as PowerShell, for Windows; each shell says where it runs and how.
+    const shellSelect = screen.getByLabelText("Shell");
+    expect(shellSelect).toHaveValue("powershell");
+    expect(within(shellSelect).getAllByRole("option").map((o) => o.textContent)).toEqual(["PowerShell", "Command Prompt (cmd)", "Bash", "POSIX sh", "Python 3"]);
+    expect(screen.getByText("Runs on Windows devices.")).toBeInTheDocument();
+    expect(screen.getByText(/Windows PowerShell 5\.1 as Local System/)).toBeInTheDocument();
+    await user.selectOptions(shellSelect, "Command Prompt (cmd)");
+    expect(screen.getByText(/cannot contain double quotes/)).toBeInTheDocument();
+    await user.selectOptions(shellSelect, "POSIX sh");
+    expect(screen.getByText("Runs on Linux devices.")).toBeInTheDocument();
     await user.clear(screen.getByLabelText("Timeout"));
     await user.type(screen.getByLabelText("Timeout"), "2");
     await user.selectOptions(screen.getByLabelText("Timeout unit"), "hours");
