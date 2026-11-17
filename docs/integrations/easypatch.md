@@ -28,9 +28,11 @@ script library warns about scripts that patch the system themselves, naming
 each line (see [Scripts and jobs](../operations/scripts-and-jobs.md#scripts-that-install-updates)).
 It warns; it refuses nothing.
 
-EasyRMM has no restart action of its own, so nothing it starts can restart a
-device in the middle of an EasyPatch job. A restart action added later
-should first check the device's running EasyPatch jobs.
+EasyRMM restarts devices only through EasyPatch: a restart job with one
+fixed preset (only if a restart is pending, after EasyPatch's countdown,
+servers confirmed by name). EasyPatch runs one job at a time on an endpoint,
+so the restart never lands in the middle of an install. EasyRMM has no other
+restart action.
 
 ## Topology
 

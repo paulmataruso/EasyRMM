@@ -12,6 +12,7 @@ import type {
   PatchPolicy,
   PatchStatus,
   PatchUpdate,
+  RestartPlan,
 } from "../../api/types";
 import { baseRoutes, fail, installFakeApi, noContent, ok, sessionView, unreportedRoutes, type FakeHandler, type FakeReply } from "../../test/fakeApi";
 import { device, org } from "../../test/fixtures";
@@ -452,6 +453,114 @@ describe("patching page", () => {
     expect(server.call("POST /patching/jobs/:id/cancel").params.id).toBe("j1");
   });
 
+  it("restarts the chosen devices whose restart is pending, leaving out servers not ticked", async () => {
+    const user = userEvent.setup();
+    const pending = (d: PatchFleet["devices"][number]) => ({ ...d, endpoint: { ...d.endpoint!, rebootPending: true } });
+    const plan: RestartPlan = {
+      serversKnown: true,
+      devices: [
+        { deviceId: "d1", deviceName: "WEB-01", restart: true, server: false, online: true },
+        { deviceId: "d2", deviceName: "DB-01", restart: true, server: true, online: false },
+      ],
+    };
+    const server = installFakeApi(
+      patchingRoutes({
+        "GET /patching/devices": ok({ ...FLEET, devices: [pending(FLEET.devices[0]!), pending(FLEET.devices[1]!), FLEET.devices[2]] }),
+        "POST /patching/restart/plan": ok(plan),
+        "POST /patching/restart": ok({ succeeded: 1, failed: 0, results: [{ deviceId: "d1", deviceName: "WEB-01", ok: true, jobId: "j7" }] }),
+      }),
+    );
+    renderApp("/patching");
+    await screen.findByRole("main");
+    await main().findByText("WEB-01");
+    await user.click(main().getByLabelText("Select WEB-01"));
+    await user.click(main().getByLabelText("Select DB-01"));
+    await user.click(main().getByRole("button", { name: "Restart…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Restart 2 devices" });
+    expect(await within(dialog).findByText("Servers restart only when you tick them")).toBeInTheDocument();
+    expect(server.call("POST /patching/restart/plan").body).toEqual({ deviceIds: ["d1", "d2"] });
+    expect(within(dialog).getByText("Also restarts")).toBeInTheDocument();
+    expect(within(dialog).getByText("Offline")).toBeInTheDocument();
+    // More options are for one device at a time, in EasyPatch.
+    expect(within(dialog).queryByRole("link", { name: /More restart options/ })).not.toBeInTheDocument();
+
+    const at = within(dialog).getByLabelText("Restart at");
+    await user.clear(at);
+    await user.type(at, "2030-01-05T23:00");
+    await user.click(within(dialog).getByRole("button", { name: "Schedule restart of 1 device" }));
+    await waitFor(() => expect(server.callsTo("POST /patching/restart")).toHaveLength(1));
+    expect(server.call("POST /patching/restart").body).toEqual({
+      deviceIds: ["d1"],
+      scheduledAt: new Date("2030-01-05T23:00").toISOString(),
+    });
+    expect(await screen.findByText("Restart scheduled on 1 device.")).toBeInTheDocument();
+  });
+
+  it("offers a restart only for devices whose restart is pending, and says why a device will not restart", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi(
+      patchingRoutes({
+        "GET /patching/devices": ok({ ...FLEET, devices: [{ ...FLEET.devices[0]!, endpoint: { ...FLEET.devices[0]!.endpoint!, rebootPending: true } }, FLEET.devices[1]] }),
+        "POST /patching/restart/plan": ok({
+          serversKnown: true,
+          devices: [{ deviceId: "d1", deviceName: "WEB-01", restart: false, reason: "Its EasyPatch agent cannot restart the computer; update the agent first.", server: false, online: true }],
+        }),
+      }),
+    );
+    renderApp("/patching");
+    await screen.findByRole("main");
+    await main().findByText("WEB-01");
+    await user.click(main().getByLabelText("Select DB-01"));
+    expect(main().queryByRole("button", { name: /Restart/ })).not.toBeInTheDocument();
+    await user.click(main().getByLabelText("Select WEB-01"));
+    await user.click(main().getByRole("button", { name: "Restart 1…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Restart WEB-01" });
+    expect(await within(dialog).findByText("Nothing to restart")).toBeInTheDocument();
+    expect(within(dialog).getByText(/cannot restart the computer/)).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText("Restart at")).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Restart" })).toBeDisabled();
+    expect(within(dialog).getByRole("link", { name: "More restart options in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d1");
+    expect(server.callsTo("POST /patching/restart")).toHaveLength(0);
+  });
+
+  it("retries a job that failed, then follows the new one", async () => {
+    const user = userEvent.setup();
+    const failedJob = job("j1", { status: "Failed", progressPercent: null, completedAt: T, failedCount: 1, errorMessage: "dpkg was interrupted" });
+    const detail = (summary: PatchJobView): PatchJobDetail => ({
+      summary,
+      installMode: "AllEligible",
+      notBefore: null,
+      deliveredAt: T,
+      lastProgressAt: T,
+      items: [],
+      events: [],
+      deviceId: "d1",
+      deviceName: "WEB-01",
+      canManage: true,
+    });
+    const server = installFakeApi(
+      patchingRoutes({
+        "GET /patching/jobs": ok({ items: [failedJob] }),
+        "GET /patching/jobs/:id": (req) => ok(detail(req.params.id === "j3" ? job("j3", { status: "Queued", progressPercent: null }) : failedJob)),
+        "POST /patching/jobs/:id/retry": ok(job("j3", { status: "Queued", progressPercent: null })),
+      }),
+    );
+    renderApp("/patching?tab=jobs&active=false&job=j1");
+    const dialog = await screen.findByRole("dialog", { name: "Install updates on WEB-01" });
+    expect(await within(dialog).findByText("dpkg was interrupted")).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "Open in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?job=j1");
+    expect(within(dialog).queryByRole("button", { name: "Cancel job" })).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(server.callsTo("POST /patching/jobs/:id/retry")).toHaveLength(1));
+    expect(server.call("POST /patching/jobs/:id/retry").params.id).toBe("j1");
+    expect(await screen.findByText("Retry queued.")).toBeInTheDocument();
+    // The new job opens in its place; while it runs, it is cancelled rather than retried.
+    await waitFor(() => expect(server.callsTo("GET /patching/jobs/:id").at(-1)!.params.id).toBe("j3"));
+    expect(await within(dialog).findByRole("button", { name: "Cancel job" })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "Open in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?job=j3");
+  });
+
   it("is in the main menu for those who may see patching", async () => {
     installFakeApi(patchingRoutes());
     renderApp("/patching");
@@ -606,6 +715,13 @@ describe("device patches", () => {
     expect(main().getByText(/1 fix vulnerabilities exploited in the wild/)).toBeInTheDocument();
     // An update already being installed cannot be chosen again.
     expect(main().queryByLabelText("Select curl 8.14.1-2")).not.toBeInTheDocument();
+    // What EasyRMM only shows is changed in EasyPatch, on the matching page.
+    expect(main().getByRole("link", { name: "Change in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d1&tab=policy");
+    expect(main().getByRole("link", { name: "Exclude in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d1&tab=updates");
+    expect(main().getByRole("link", { name: "Open in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d1&tab=updates");
+    expect(main().getByRole("link", { name: "openssl 3.5.7-1~deb13u3" })).toHaveAttribute("href", "/go/to-easypatch?update=u1");
+    // No restart is pending, so none is offered.
+    expect(main().queryByRole("button", { name: "Restart…" })).not.toBeInTheDocument();
 
     await user.click(main().getByLabelText("Select openssl 3.5.7-1~deb13u3"));
     await user.click(main().getByLabelText("Select tzdata 2026c-0+deb13u1"));
@@ -627,6 +743,77 @@ describe("device patches", () => {
     expect(await screen.findByText("Install scheduled on 1 device.")).toBeInTheDocument();
     // The jobs list opens to follow it.
     expect(await main().findByText("No patch jobs yet")).toBeInTheDocument();
+  });
+
+  it("restarts a server whose restart is pending once it is ticked", async () => {
+    const user = userEvent.setup();
+    const pending: DevicePatching = {
+      ...LINKED,
+      endpoint: { ...LINKED.endpoint!, summary: { ...LINKED.endpoint!.summary, rebootPending: true }, rebootPendingSince: T, rebootReasons: ["Windows Update"] },
+    };
+    const server = installFakeApi(
+      deviceRoutes(pending, {
+        "POST /patching/restart/plan": ok({
+          serversKnown: false,
+          devices: [{ deviceId: "d1", deviceName: "WEB-01", restart: true, server: true, online: true }],
+        }),
+        "POST /patching/restart": ok({ succeeded: 1, failed: 0, results: [{ deviceId: "d1", deviceName: "WEB-01", ok: true, jobId: "j8" }] }),
+        "GET /patching/devices/:id/jobs": ok({ items: [], page: 1, pageSize: 50, totalCount: 0 }),
+      }),
+    );
+    renderApp("/devices/d1?tab=patches");
+    await screen.findByRole("main");
+    await main().findByText("openssl 3.5.7-1~deb13u3");
+    expect(main().getByText("Windows Update")).toBeInTheDocument();
+    await user.click(main().getByRole("button", { name: "Restart…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Restart WEB-01" });
+    // An EasyPatch server before 1.10.0 cannot tell servers apart, so every device waits for a tick.
+    expect(await within(dialog).findByText("Tick each device to restart")).toBeInTheDocument();
+    expect(within(dialog).getByText(/older than 1\.10\.0/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Restart" })).toBeDisabled();
+    expect(within(dialog).getByRole("link", { name: "More restart options in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d1");
+    await user.click(within(dialog).getByRole("checkbox", { name: "Restart WEB-01" }));
+    await user.click(within(dialog).getByRole("button", { name: "Restart 1 device" }));
+    await waitFor(() => expect(server.callsTo("POST /patching/restart")).toHaveLength(1));
+    expect(server.call("POST /patching/restart").body).toEqual({ deviceIds: ["d1"], confirmServers: ["d1"] });
+    expect(await screen.findByText("Restart requested on 1 device.")).toBeInTheDocument();
+    expect(await main().findByText("No patch jobs yet")).toBeInTheDocument();
+  });
+
+  it("shows why a restart was refused", async () => {
+    const user = userEvent.setup();
+    const pending: DevicePatching = { ...LINKED, endpoint: { ...LINKED.endpoint!, summary: { ...LINKED.endpoint!.summary, rebootPending: true } } };
+    installFakeApi(
+      deviceRoutes(pending, {
+        "POST /patching/restart/plan": ok({ serversKnown: true, devices: [{ deviceId: "d1", deviceName: "WEB-01", restart: true, server: false, online: true }] }),
+        "POST /patching/restart": fail(422, "validation_failed", "Some fields need attention.", {
+          confirmServers: "These are servers; confirm restarting them: WEB-01.",
+        }),
+      }),
+    );
+    renderApp("/devices/d1?tab=patches");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("button", { name: "Restart…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Restart WEB-01" });
+    expect(await within(dialog).findByText("Restarts")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Restart 1 device" }));
+    expect(await within(dialog).findByText(/confirm restarting them: WEB-01/)).toBeInTheDocument();
+  });
+
+  it("shows why the server refused an install time", async () => {
+    const user = userEvent.setup();
+    installFakeApi(
+      deviceRoutes(LINKED, {
+        "POST /patching/install": fail(422, "validation_failed", "Some fields need attention.", { scheduledAt: "Choose a time within 31 days." }),
+      }),
+    );
+    renderApp("/devices/d1?tab=patches");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("button", { name: "Install updates…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Install updates on WEB-01" });
+    await user.click(within(dialog).getByRole("radio", { name: /^At/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Schedule install" }));
+    expect(await within(dialog).findByText("Choose a time within 31 days.")).toBeInTheDocument();
   });
 
   it("shows installed updates, history and jobs", async () => {

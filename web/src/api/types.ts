@@ -1247,6 +1247,31 @@ export interface PatchActionResult {
   results: { deviceId: string; deviceName: string; ok: boolean; jobId?: string; message?: string }[];
 }
 
+/** What EasyRMM's restart (only if a restart is pending) would do to one device. */
+export interface RestartCheck {
+  deviceId: string;
+  deviceName: string;
+  /** It would restart; otherwise `reason` says why not. */
+  restart: boolean;
+  reason?: string;
+  /** A server, or any device when EasyPatch cannot tell (`serversKnown`): it restarts only when confirmed by name. */
+  server: boolean;
+  online: boolean;
+}
+
+export interface RestartPlan {
+  devices: RestartCheck[];
+  /** False with EasyPatch before 1.10.0, which cannot say which devices are servers. */
+  serversKnown: boolean;
+}
+
+export interface RestartInput {
+  deviceIds: string[];
+  scheduledAt?: string;
+  /** The servers the person ticked; any server not listed stops the whole request. */
+  confirmServers?: string[];
+}
+
 /** An identity provider for single sign-on (ADR-0034). The client secret is never returned. */
 export interface SsoProvider {
   id: string;

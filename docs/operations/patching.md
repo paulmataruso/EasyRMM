@@ -148,7 +148,10 @@ every device with an EasyPatch agent:
 Choose devices to **Scan** them or **Install updates** (every update the
 device's EasyPatch policy allows). The **Jobs** tab lists EasyPatch's jobs
 for the devices you can see, refreshing every few seconds while any is
-running; open one for its updates, events and progress, or to cancel it.
+running. Open one for its updates, events and progress. A running job can
+be cancelled. A job that failed, was cancelled or expired, or left some
+updates uninstalled, can be run again with **Retry**; the new job opens in
+its place. EasyPatch refuses a retry while the same job is already queued.
 
 A device's **Patches** tab shows its status, the EasyPatch policy that
 applies (when automatic installs run, scan interval, categories, delays),
@@ -157,10 +160,51 @@ jobs. Choose updates to install only those.
 
 Scans and installs start when the device next checks in with EasyPatch
 (every minute by default). Updates that need a restart finish at the next
-restart: EasyRMM does not restart devices, EasyPatch's restart schedule (a
-policy setting) may.
+restart.
 
-Policies, maintenance windows, rings and exclusions are edited in EasyPatch.
+### Restarts
+
+**Restart…** appears on a device's Patches tab, and for chosen devices on
+the Patching page, when EasyPatch reports that a restart is pending. EasyRMM
+has one way to restart a device, chosen to be safe:
+
+* The device restarts only if a restart is still pending when the job
+  runs.
+* Signed-in users see EasyPatch's five-minute countdown first.
+* It happens now, or at a time up to 31 days ahead. A device that is
+  offline then restarts if it comes back within two hours; otherwise
+  EasyPatch drops the restart.
+* **Servers restart only when you tick them**, by name, one by one or all
+  at once. EasyPatch before 1.10.0 cannot say which devices are servers, so
+  every device then needs a tick.
+* EasyPatch runs one job at a time on a device, so a restart never starts
+  in the middle of an install.
+
+The dialog lists the devices that will not restart and why: no restart is
+pending, the EasyPatch agent is too old to restart the computer, or the
+device is not linked. Prompts, deadlines, messages to users and restart
+schedules are set in EasyPatch.
+
+### Changing things in EasyPatch
+
+Policies, maintenance windows, rings, exclusions and holds are edited in
+EasyPatch. Where EasyRMM shows them, it links to the page that edits them,
+in the same tab, so the browser's Back button returns:
+
+| In EasyRMM | Link | Opens in EasyPatch |
+|---|---|---|
+| A device's **In EasyPatch** row | Open in EasyPatch | The device's endpoint page, on the tab matching the view (updates, installed, history, jobs) |
+| A device's policy card | Change in EasyPatch | The endpoint's policy tab |
+| A device's updates to install | Exclude in EasyPatch | The endpoint's updates tab, where updates are excluded |
+| An update's title | (the title) | The update's page: vulnerabilities, other devices missing it, hold |
+| A job | Open in EasyPatch | The job's page |
+| A restart of one device | More restart options in EasyPatch | The endpoint's page |
+
+These links go through `/go/to-easypatch` on EasyRMM, which finds the
+device's EasyPatch endpoint from EasyRMM's own links and redirects. A
+device that is not linked opens EasyPatch's endpoint list searched by its
+name; one you may not see opens the list. EasyPatch asks you to sign in
+with its own account and checks its own permissions.
 
 Scripts in the library that install updates themselves (Windows Update,
 `apt upgrade`, `dnf upgrade`…) work around all of this. The script library
@@ -172,7 +216,7 @@ warns about them; see
 | Permission | Allows | Built-in roles |
 |---|---|---|
 | `patch.view` (with `device.view`) | Patching, a device's Patches tab | Every role |
-| `patch.manage` | Scan, install, cancel, install the EasyPatch agent | Technician and above |
+| `patch.manage` | Scan, install, restart, cancel, retry, install the EasyPatch agent | Technician and above |
 | `settings.manage` | Settings → EasyPatch, including automatic installs of the EasyPatch agent | Super administrator |
 
 Both are checked at the device's site before EasyPatch is called; a job is
@@ -184,7 +228,9 @@ nobody can act, whatever their role.
 | Action | Recorded |
 |---|---|
 | `patch.scan`, `patch.install` | One record per device that started, with the EasyPatch job id; installs record which updates and any scheduled time |
+| `patch.restart` | One record per device that was asked to restart, with the EasyPatch job id, the condition, any scheduled time and the servers you confirmed |
 | `patch.cancel` | The job and its device |
+| `patch.retry` | The job retried, the new job and the device |
 | `easypatch.connection_update`, `easypatch.connection_delete` | The server, its version, whether the token changed and can act, and whether links were forgotten |
 | `easypatch.organization_link`, `easypatch.organization_unlink` | Both organizations |
 | `patch.agent_install` | One record per device an EasyPatch agent install was requested for. Automatic installs are covered by the record of turning them on |

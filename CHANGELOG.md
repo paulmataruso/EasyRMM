@@ -8,6 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Patching: **Restart…** for devices whose restart is pending, on a
+  device's Patches tab and for chosen devices on the Patching page. One safe
+  preset: only if a restart is still pending, after EasyPatch's countdown,
+  now or at a time up to 31 days ahead; servers restart only when ticked by
+  name. The dialog says which devices will not restart and why. Audited as
+  `patch.restart`.
+- Patching: **Retry** on a job that failed, was cancelled or expired, or
+  left updates uninstalled. The new job opens in its place. Audited as
+  `patch.retry`.
+- Links from EasyRMM to the EasyPatch page that edits what EasyRMM only
+  shows: a device's endpoint page (on the matching tab), its policy, its
+  updates (to exclude them), an update, a job. They open in the same tab
+  through `/go/to-easypatch`, which finds the endpoint from EasyRMM's own
+  links and never says more than the person may see.
 - EasyPatch lives in this repository, under `easypatch/`, with its whole
   history, its own licence (`LICENSING.md`), build, `easypatch-v*` tags and
   release workflow. One CI run checks both and runs only what a change
@@ -434,6 +448,10 @@ All notable changes to this project are documented here. The format follows
   connects by cookie, stays blocked.
 
 ### Fixed
+- Patching dialogs hid the server's reason when it refused a field the
+  dialog has no place for (an install time, for example), leaving the button
+  doing nothing visible. They now show it. **Settings → Agent updates** hid
+  a refused mode the same way.
 - Remote sessions: a write that the gateway's pacing held while the browser
   fell behind could still reach the connection after it began closing. It now
   fails as a write on a closed connection does. Found by a flaky test in CI.

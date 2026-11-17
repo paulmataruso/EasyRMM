@@ -7,6 +7,7 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -230,6 +231,71 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Fatalf("cancel: %+v", job)
 	}
 
+	// Retry: a finished job runs again, as a new one.
+	var retried struct {
+		ID         string `json:"id"`
+		Status     string `json:"status"`
+		DeviceName string `json:"deviceName"`
+	}
+	wantStatus(t, admin.do("POST", "/api/v1/patching/jobs/nope/retry", nil), http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("POST", "/api/v1/patching/jobs/"+jobs.Items[1].ID+"/retry", nil), http.StatusConflict, "invalid_state")
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/jobs/"+jobs.Items[0].ID+"/retry", nil, &retried)
+	if retried.ID == jobs.Items[0].ID || retried.Status != "Queued" || retried.DeviceName != "web-01" {
+		t.Fatalf("retry: %+v", retried)
+	}
+
+	// Restart: EasyPatch 1.9.0 cannot tell servers apart, so the device
+	// must be confirmed by name.
+	ep.Set(func() { endpoint.RebootPending = true })
+	var plan struct {
+		ServersKnown bool `json:"serversKnown"`
+		Devices      []struct {
+			DeviceName string `json:"deviceName"`
+			Restart    bool   `json:"restart"`
+			Server     bool   `json:"server"`
+		} `json:"devices"`
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/restart/plan", map[string]any{"deviceIds": []string{device}}, &plan)
+	if plan.ServersKnown || len(plan.Devices) != 1 || !plan.Devices[0].Restart || !plan.Devices[0].Server || plan.Devices[0].DeviceName != "web-01" {
+		t.Fatalf("restart plan: %+v", plan)
+	}
+	r = admin.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}})
+	wantStatus(t, r, http.StatusUnprocessableEntity, "validation_failed")
+	if !strings.Contains(string(r.body), "confirm restarting them: web-01.") {
+		t.Fatalf("unconfirmed restart: %s", r.body)
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "confirmServers": []string{device}}, &res)
+	if res.Succeeded != 1 || res.Results[0].JobID == "" {
+		t.Fatalf("restart: %+v", res)
+	}
+	wantStatus(t, admin.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "scheduledAt": "2026-01-01T00:00:00Z"}),
+		http.StatusUnprocessableEntity, "validation_failed")
+
+	// Links to EasyPatch's console.
+	link := *admin
+	noFollow := *admin.http
+	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	link.http = &noFollow
+	for path, want := range map[string]string{
+		"/go/to-easypatch?device=" + device + "&tab=updates": "https://patch.example.com/endpoints/" + endpoint.ID.String() + "?from=easyrmm&tab=updates",
+		"/go/to-easypatch?organization=" + acme:              "https://patch.example.com/organizations/" + epOrg.String() + "?from=easyrmm",
+		"/go/to-easypatch?job=" + jobs.Items[0].ID:           "https://patch.example.com/jobs/" + jobs.Items[0].ID + "?from=easyrmm",
+		"/go/to-easypatch":                                   "https://patch.example.com/?from=easyrmm",
+	} {
+		r := link.do("GET", path, nil)
+		if r.status != http.StatusFound || r.header.Get("Location") != want || r.header.Get("Cache-Control") != "no-store" {
+			t.Errorf("%s: %d %q, want %q", path, r.status, r.header.Get("Location"), want)
+		}
+	}
+	wantStatus(t, link.do("GET", "/go/to-easypatch?device=x", nil), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, link.do("GET", "/go/to-easypatch?device="+device+"&organization="+acme, nil), http.StatusUnprocessableEntity, "validation_failed")
+	stranger := h.client()
+	stranger.http.CheckRedirect = noFollow.CheckRedirect
+	r = stranger.do("GET", "/go/to-easypatch?device="+device+"&tab=jobs", nil)
+	if r.status != http.StatusFound || r.header.Get("Location") != "/login?returnTo="+url.QueryEscape("/go/to-easypatch?device="+device+"&tab=jobs") {
+		t.Fatalf("signed out: %d %q", r.status, r.header.Get("Location"))
+	}
+
 	// A read-only user sees patching but cannot act, nor reach Settings.
 	invite(t, h, admin, "rory@acme.example", []map[string]any{{"role": "read_only", "organizationId": acme}})
 	viewer := h.client()
@@ -240,6 +306,10 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	wantStatus(t, viewer.do("POST", "/api/v1/patching/scan", map[string]any{"deviceIds": []string{device}}), http.StatusForbidden, "forbidden")
 	wantStatus(t, viewer.do("POST", "/api/v1/patching/jobs/"+jobs.Items[1].ID+"/cancel", nil), http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/jobs/"+jobs.Items[0].ID+"/retry", nil), http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/restart/plan", map[string]any{"deviceIds": []string{device}}), http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "confirmServers": []string{device}}),
+		http.StatusForbidden, "forbidden")
 	for _, m := range []string{"GET", "PUT", "DELETE"} {
 		wantStatus(t, viewer.do(m, "/api/v1/settings/easypatch", map[string]string{}), http.StatusForbidden, "forbidden")
 	}
@@ -256,7 +326,7 @@ func TestEasyPatchAPI(t *testing.T) {
 	for _, a := range audit.Items {
 		got = append(got, a.Action)
 	}
-	if strings.Join(got, ",") != "patch.cancel,patch.install,patch.scan" {
+	if strings.Join(got, ",") != "patch.restart,patch.retry,patch.cancel,patch.install,patch.scan" {
 		t.Fatalf("patch audit: %v", got)
 	}
 

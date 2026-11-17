@@ -1,6 +1,6 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { Download, ListChecks, PackagePlus, Radar, ShieldCheck } from "lucide-react";
+import { Download, ListChecks, PackagePlus, Power, Radar, ShieldCheck } from "lucide-react";
 import { useApi, useList } from "../../api/hooks";
 import type { DeviceGroup, PatchFleet, PatchFleetDevice, PatchJobView, PatchStatus } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
@@ -8,7 +8,7 @@ import { OrganizationSelect, SearchInput, SiteSelect } from "../../components/Fi
 import { Alert, Button, Card, cx, EmptyState, ErrorState, Field, PageHeader, Segmented, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
-import { AgentInstallDialog, InstallDialog, PatchJobDialog, useScan } from "./PatchDialogs";
+import { AgentInstallDialog, InstallDialog, PatchJobDialog, RestartDialog, useScan } from "./PatchDialogs";
 import {
   activityText,
   COMPLIANCE,
@@ -86,7 +86,7 @@ export function PatchingPage() {
           <div role="tabpanel" aria-labelledby={`tab-${tab}`}>
             {tab === "devices" ? <Fleet status={status.data} /> : <Jobs onJob={(id) => url.set({ job: id })} />}
           </div>
-          <PatchJobDialog jobId={jobId} onClose={() => url.set({ job: null })} />
+          <PatchJobDialog jobId={jobId} onClose={() => url.set({ job: null })} onJob={(id) => url.set({ job: id })} />
         </>
       )}
     </>
@@ -192,6 +192,7 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [installing, setInstalling] = useState(false);
   const [agentInstalling, setAgentInstalling] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const { scan, dialog } = useScan();
   // Linked devices can be scanned and patched; devices without an EasyPatch agent can be given one.
   const selectable = useMemo(
@@ -210,6 +211,7 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
 
   const chosen = selectable.filter((d) => selected.has(d.deviceId));
   const toPatch = chosen.filter((d) => d.link === "linked");
+  const toRestart = toPatch.filter((d) => d.endpoint?.rebootPending);
   const agentless = chosen.filter((d) => d.link === "none");
   // With both kinds chosen, each action says how many devices it acts on.
   const mixed = toPatch.length > 0 && agentless.length > 0;
@@ -267,6 +269,11 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
                   >
                     {mixed ? `Scan ${toPatch.length.toLocaleString()}` : "Scan"}
                   </Button>
+                  {toRestart.length > 0 && (
+                    <Button size="sm" icon={<Power className="size-3.5" aria-hidden />} onClick={() => setRestarting(true)}>
+                      {toRestart.length < chosen.length ? `Restart ${toRestart.length.toLocaleString()}…` : "Restart…"}
+                    </Button>
+                  )}
                   <Button size="sm" variant="primary" icon={<Download className="size-3.5" aria-hidden />} onClick={() => setInstalling(true)}>
                     {mixed ? `Install updates on ${toPatch.length.toLocaleString()}…` : "Install updates…"}
                   </Button>
@@ -396,6 +403,12 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
         onClose={() => setInstalling(false)}
         devices={toPatch.map((d) => ({ id: d.deviceId, name: d.name }))}
         canSchedule={status.canSchedule}
+        onDone={() => setSelected(new Set())}
+      />
+      <RestartDialog
+        open={restarting}
+        onClose={() => setRestarting(false)}
+        devices={toRestart.map((d) => ({ id: d.deviceId, name: d.name }))}
         onDone={() => setSelected(new Set())}
       />
       <AgentInstallDialog

@@ -153,6 +153,9 @@ type agent struct {
 	endpoint    uuid.UUID
 	fingerprint string
 	sequence    int64
+	// What its check-ins report.
+	rebootPending bool
+	capabilities  []string
 }
 
 func (c *contract) enroll(token, hostname string) *agent {
@@ -232,6 +235,8 @@ func (a *agent) post(route string, body, out any) {
 type deliveredJob struct {
 	JobID uuid.UUID `json:"jobId"`
 	Type  string    `json:"type"`
+	// Restart is a restart job's settings.
+	Restart map[string]any `json:"restart"`
 }
 
 type checkIn struct {
@@ -243,10 +248,15 @@ func (a *agent) checkIn(active ...uuid.UUID) checkIn {
 	a.c.t.Helper()
 	var r checkIn
 	if active == nil {
-		active = []uuid.UUID{} // agents send a list, never null
+		active = []uuid.UUID{} // agents send lists, never null
+	}
+	reasons := []string{}
+	if a.rebootPending {
+		reasons = []string{"/var/run/reboot-required"}
 	}
 	a.post("/api/v1/agents/check-in", map[string]any{"agentVersion": "1.10.0", "activeJobIds": active, "currentActivity": "Idle",
-		"agentArchitecture": "x64", "agentPackageFormat": "deb"}, &r)
+		"agentArchitecture": "x64", "agentPackageFormat": "deb", "rebootPending": a.rebootPending, "rebootReasons": reasons,
+		"capabilities": append([]string{}, a.capabilities...)}, &r)
 	return r
 }
 
@@ -432,6 +442,7 @@ func TestContract(t *testing.T) {
 	})
 
 	var install Job
+	var restarted uuid.UUID // a restart job the agent completed
 	run("install, follow and cancel a job", func(t *testing.T) {
 		var err error
 		install, err = ep.Install(ctx, a.endpoint, []uuid.UUID{openssl}, nil, "contract-install@example.test")
@@ -529,6 +540,95 @@ func TestContract(t *testing.T) {
 		}
 	})
 
+	run("retry a finished job", func(t *testing.T) {
+		retry, err := ep.RetryJob(ctx, install.ID, "contract-retry@example.test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if retry.ID == install.ID || retry.Type != "InstallUpdates" || retry.Status != "Queued" || retry.EndpointID != a.endpoint {
+			t.Errorf("retry %+v", retry)
+		}
+		var detail struct {
+			RetryOfJobID uuid.UUID `json:"retryOfJobId"`
+		}
+		c.must(http.MethodGet, "/api/v1/jobs/"+retry.ID.String(), c.token, nil, http.StatusOK, &detail)
+		if detail.RetryOfJobID != install.ID {
+			t.Errorf("a retry of %v, want %v", detail.RetryOfJobID, install.ID)
+		}
+		// Only a finished job runs again, and not with a read-only token.
+		var e *Error
+		if _, err := ep.RetryJob(ctx, retry.ID, ""); !errors.As(err, &e) || e.Status != http.StatusConflict || e.Code != "invalid_state" {
+			t.Errorf("retry of a queued job: %#v", err)
+		}
+		if _, err := ro.RetryJob(ctx, install.ID, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("read-only retry: %v", err)
+		}
+		if _, err := ep.CancelJob(ctx, retry.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	run("restart only where a restart is pending", func(t *testing.T) {
+		a.capabilities = []string{"restart"}
+		a.checkIn()
+		if p, err := ep.RestartPending(ctx, org.ID); err != nil || p.Total != 0 || len(p.Endpoints) != 0 {
+			t.Fatalf("nothing pending: %+v, %v", p, err)
+		}
+		a.rebootPending = true
+		a.checkIn()
+		p, err := ep.RestartPending(ctx, org.ID)
+		if err != nil || p.Total != 1 || len(p.Endpoints) != 1 {
+			t.Fatalf("pending: %+v, %v", p, err)
+		}
+		if e := p.Endpoints[0]; e.ID != a.endpoint || e.Platform != "Linux" || e.IsServer || !e.CanRestart || e.RebootPendingSince == nil {
+			t.Errorf("pending endpoint %+v", e)
+		}
+		if _, err := ro.BulkRestart(ctx, []uuid.UUID{a.endpoint}, nil, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("read-only restart: %v", err)
+		}
+
+		// At a time: held until then.
+		at := time.Now().Add(5 * time.Hour).UTC().Truncate(time.Second)
+		later, err := ep.BulkRestart(ctx, []uuid.UUID{a.endpoint}, &at, "contract-restart@example.test")
+		if err != nil || later.Succeeded != 1 || len(later.Results) != 1 || later.Results[0].JobID == nil {
+			t.Fatalf("restart later %+v, %v", later, err)
+		}
+		job, err := ep.Job(ctx, *later.Results[0].JobID)
+		if err != nil || job.Summary.Type != "Restart" || job.NotBefore == nil || !job.NotBefore.Equal(at) {
+			t.Errorf("restart later %+v (not before %v), %v", job.Summary, job.NotBefore, err)
+		}
+		if _, err := ep.CancelJob(ctx, job.Summary.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+
+		// Now: the agent receives EasyRMM's preset at its next check-in.
+		now, err := ep.BulkRestart(ctx, []uuid.UUID{a.endpoint}, nil, "")
+		if err != nil || now.Succeeded != 1 || now.Results[0].JobID == nil {
+			t.Fatalf("restart now %+v, %v", now, err)
+		}
+		id := *now.Results[0].JobID
+		restarted = id
+		in := a.checkIn()
+		i := slices.IndexFunc(in.Jobs, func(j deliveredJob) bool { return j.JobID == id })
+		if i < 0 {
+			t.Fatalf("the restart was not delivered: %+v", in)
+		}
+		if r := in.Jobs[i].Restart; in.Jobs[i].Type != "Restart" || r["mode"] != "Countdown" || r["condition"] != "OnlyIfPending" ||
+			r["countdownMinutes"] != 5.0 {
+			t.Errorf("delivered restart %+v", in.Jobs[i])
+		}
+		a.post("/api/v1/agents/jobs/"+id.String()+"/ack", map[string]any{}, nil)
+		a.report(id, "Completed")
+		a.rebootPending = false
+		a.checkIn()
+		if job, err := ep.Job(ctx, id); err != nil || job.Summary.Status != "Completed" {
+			t.Errorf("restart after the agent's report %+v, %v", job.Summary, err)
+		}
+		if p, err := ep.RestartPending(ctx, org.ID); err != nil || p.Total != 0 {
+			t.Errorf("after the restart: %+v, %v", p, err)
+		}
+	})
+
 	run("bulk actions", func(t *testing.T) {
 		unknown := uuid.New()
 		scan, err := ep.BulkScan(ctx, []uuid.UUID{a.endpoint, unknown}, "")
@@ -598,7 +698,8 @@ func TestContract(t *testing.T) {
 			Items []entry `json:"items"`
 		}
 		c.must(http.MethodGet, "/api/v1/audit-logs?pageSize=100", c.token, nil, http.StatusOK, &page)
-		for _, who := range []string{"contract-enroll@example.test", "contract-install@example.test", "contract-cancel@example.test"} {
+		for _, who := range []string{"contract-enroll@example.test", "contract-install@example.test", "contract-cancel@example.test",
+			"contract-retry@example.test", "contract-restart@example.test"} {
 			if !slices.ContainsFunc(page.Items, func(e entry) bool {
 				var details struct {
 					OnBehalfOf string `json:"onBehalfOf"`
@@ -616,7 +717,9 @@ func TestContract(t *testing.T) {
 	})
 
 	run("eptest answers as EasyPatch does", func(t *testing.T) {
-		checkFake(t, c, org.ID, site.ID, a.endpoint, install.ID)
+		a.rebootPending = true // so the restart-pending list is not empty
+		a.checkIn()
+		checkFake(t, c, org.ID, site.ID, a.endpoint, install.ID, restarted)
 	})
 }
 
@@ -624,12 +727,19 @@ func TestContract(t *testing.T) {
 // that every field eptest answers with is in EasyPatch's answer, with a
 // value of the same JSON type. EasyPatch may send more: the connector reads
 // only what eptest sends.
-func checkFake(t *testing.T, c *contract, org, site, endpoint, job uuid.UUID) {
+// finished is a finished job of the endpoint with no identical job queued,
+// which EasyPatch would refuse to retry (duplicate_job).
+func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uuid.UUID) {
 	fake := eptest.New(t)
-	fake.Set(func() { fake.Capabilities = []string{CapabilityScheduledInstalls, CapabilityOnBehalfOf} })
 	fOrg := fake.Org("Contract")
 	fSite := fake.Site(fOrg, "Head office")
-	fEndpoint := fake.AddEndpoint(fOrg, "contract", "SN-contract", "fingerprint").ID
+	fe := fake.AddEndpoint(fOrg, "contract", "SN-contract", "fingerprint")
+	fEndpoint := fe.ID
+	fake.Set(func() {
+		fake.Version = "1.10.0"
+		fake.Capabilities = []string{CapabilityScheduledInstalls, CapabilityOnBehalfOf}
+		fe.RebootPending = true
+	})
 	fakeHTTP := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: fakeTLS(t, fake.CAPEM)}}
 	at := time.Now().Add(4 * time.Hour).UTC().Truncate(time.Second)
 	install := map[string]any{"mode": "Selected", "updateGuids": []uuid.UUID{}, "force": false, "scheduledAt": at}
@@ -657,6 +767,7 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job uuid.UUID) {
 	if err := json.Unmarshal(data, &fJob); err != nil {
 		t.Fatalf("fake install: %v: %s", err, data)
 	}
+	fake.SetJobStatus(fJob.ID, "Failed") // finished, like the real one, so both can be retried
 
 	type question struct {
 		name, method   string
@@ -692,6 +803,12 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job uuid.UUID) {
 		{name: "bulk scan", method: "POST", fake: "/api/v1/endpoints/bulk/scan", real: "/api/v1/endpoints/bulk/scan",
 			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint, uuid.New()}, "force": false},
 			rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint, uuid.New()}, "force": false}},
+		q("restart pending", "GET", "/api/v1/organizations/"+fOrg.String()+"/restart-pending",
+			"/api/v1/organizations/"+org.String()+"/restart-pending"),
+		q("retry", "POST", "/api/v1/jobs/"+fJob.ID.String()+"/retry", "/api/v1/jobs/"+finished.String()+"/retry"),
+		{name: "bulk restart", method: "POST", fake: "/api/v1/endpoints/bulk/restart", real: "/api/v1/endpoints/bulk/restart",
+			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint}, "restart": newRestartPreset(&at)},
+			rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint}, "restart": newRestartPreset(&at)}},
 		{name: "enrollment token", method: "POST", fake: "/api/v1/enrollment-tokens", real: "/api/v1/enrollment-tokens",
 			fBody: map[string]any{"organizationId": fOrg, "siteId": fSite, "description": "shape", "expiresInHours": 1, "maxUses": 1, "count": 1},
 			rBody: map[string]any{"organizationId": org, "siteId": site, "description": "shape", "expiresInHours": 1, "maxUses": 1, "count": 1}},

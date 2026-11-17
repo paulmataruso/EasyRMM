@@ -5,10 +5,12 @@ package easypatchapi
 
 import (
 	"net/http"
+	"net/url"
 
 	"github.com/google/uuid"
 
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
+	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
@@ -53,9 +55,15 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/patching/jobs", a.jobs)
 	r("GET /api/v1/patching/jobs/{id}", a.job)
 	r("POST /api/v1/patching/jobs/{id}/cancel", a.cancelJob)
+	r("POST /api/v1/patching/jobs/{id}/retry", a.retryJob)
 	r("POST /api/v1/patching/scan", a.scan)
 	r("POST /api/v1/patching/install", a.install)
+	r("POST /api/v1/patching/restart/plan", a.planRestart)
+	r("POST /api/v1/patching/restart", a.restart)
 	r("POST /api/v1/patching/agent-install", a.installAgent)
+
+	// A browser link, not an API call: it answers with a redirect.
+	mux.Handle("GET /go/to-easypatch", httpapi.Handle(a.goToEasyPatch))
 }
 
 func ok(w http.ResponseWriter, v any, err error) error {
@@ -271,6 +279,74 @@ func (a *API) cancelJob(w http.ResponseWriter, r *http.Request) error {
 	}
 	j, err := a.svc.CancelJob(r.Context(), httpapi.Caller(r), id)
 	return ok(w, j, err)
+}
+
+func (a *API) retryJob(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	j, err := a.svc.RetryJob(r.Context(), httpapi.Caller(r), id)
+	return ok(w, j, err)
+}
+
+func (a *API) planRestart(w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		DeviceIDs []uuid.UUID `json:"deviceIds"`
+	}
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	p, err := a.svc.PlanRestart(r.Context(), httpapi.Caller(r), in.DeviceIDs)
+	return ok(w, p, err)
+}
+
+func (a *API) restart(w http.ResponseWriter, r *http.Request) error {
+	var in easypatch.RestartInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.Restart(r.Context(), httpapi.Caller(r), in)
+	return ok(w, res, err)
+}
+
+// goToEasyPatch redirects to the page of EasyPatch's console for an object
+// of EasyRMM's (easypatch.GoTarget): ?device=<id>[&tab=…], ?organization=,
+// ?job= (an EasyPatch job) or ?update= (an EasyPatch update), or none for
+// its home page. Someone not signed in signs in first and comes back.
+func (a *API) goToEasyPatch(w http.ResponseWriter, r *http.Request) error {
+	w.Header().Set("Cache-Control", "no-store")
+	if id := httpapi.IdentityFrom(r.Context()); id == nil || id.Session.State != auth.StateActive {
+		http.Redirect(w, r, "/login?returnTo="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+		return nil
+	}
+	var t easypatch.GoTarget
+	var err error
+	named := 0
+	for _, p := range []struct {
+		name string
+		to   *uuid.UUID
+	}{{"device", &t.DeviceID}, {"organization", &t.OrganizationID}, {"job", &t.JobID}, {"update", &t.UpdateID}} {
+		if *p.to, err = httpapi.QueryID(r, p.name); err != nil {
+			return err
+		}
+		if *p.to != uuid.Nil {
+			named++
+		}
+	}
+	if named > 1 {
+		return apperr.Invalid("device", "Name one of device, organization, job or update.")
+	}
+	t.Tab = r.URL.Query().Get("tab")
+	dest, err := a.svc.EasyPatchURL(r.Context(), httpapi.Caller(r), t)
+	if err != nil {
+		return err
+	}
+	if dest == "" { // EasyPatch is not set up
+		dest = "/patching"
+	}
+	http.Redirect(w, r, dest, http.StatusFound)
+	return nil
 }
 
 func (a *API) scan(w http.ResponseWriter, r *http.Request) error {

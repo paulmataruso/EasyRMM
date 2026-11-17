@@ -3,7 +3,7 @@
 * Status: **Draft 2**, 2026-11-17. Draft 1 was critiqued against the code by an
   independent review and by its author. Section 13 lists every finding and
   what changed.
-* Progress: P0 and P1 are built (see section 10); P2 is next.
+* Progress: P0, P1 and P2 are built (see section 10); P3 is next.
 * Scope: EasyRMM owns EasyPatch. Both live in this repository; EasyPatch is
   under `easypatch/`.
 
@@ -543,8 +543,13 @@ result", and EasyRMM's checks are skipped for EasyPatch-only changes.
 * the connector suite passes against EasyPatch built from the same commit.
 
 **P2 Finish simple patching**
-* The restart preset and retry in EasyRMM.
-* Contextual links through `/go/to-easypatch`.
+* Done: the restart preset and retry in EasyRMM; contextual links through
+  `/go/to-easypatch`, with the console handing the link back to the server
+  after a sign-in.
+* Checked: each action against EasyPatch built from the same commit (the
+  contract test, with an agent reporting a pending restart and acknowledging
+  the preset); the link mapping by unit and HTTP tests; refusals for viewers
+  and read-only tokens; one audit record per device.
 
 *Done when:*
 * integration tests cover each action against the real EasyPatch;

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { keyFor } from "./api/hooks";
@@ -41,6 +41,7 @@ import { ReportsPage } from "./pages/reports/ReportsPage";
 import { JobDetailPage } from "./pages/jobs/JobDetailPage";
 import { RunDetailPage } from "./pages/jobs/RunDetailPage";
 import { useReloadWhenOutdated } from "./lib/consoleBuild";
+import { leaveFor } from "./lib/leave";
 
 const stageRoutes: Record<Exclude<AuthStage, "loading" | "error" | "ready">, string> = {
   setup: "/setup",
@@ -55,6 +56,18 @@ function FullPageSpinner() {
       <Spinner label="Loading EasyRMM…" />
     </div>
   );
+}
+
+/**
+ * A link the server answers, not the console: /go/to-easypatch redirects to EasyPatch. The console only sees it after
+ * a sign-in that the link interrupted (returnTo), and hands it back to the server with a full page load.
+ */
+function ServerLink() {
+  const location = useLocation();
+  useEffect(() => {
+    leaveFor(`${location.pathname}${location.search}`);
+  }, [location.pathname, location.search]);
+  return <FullPageSpinner />;
 }
 
 function SessionError() {
@@ -115,6 +128,8 @@ export function App() {
       {/* Reset and invitation links work whatever the browser's sign-in state. */}
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/welcome" element={<ResetPasswordPage invite />} />
+
+      <Route path="/go/to-easypatch" element={<Gate stage="ready"><ServerLink /></Gate>} />
 
       {/* Remote sessions take the whole window. */}
       <Route path="/devices/:id/remote/:kind" element={<Gate stage="ready"><RemoteSessionPage /></Gate>} />

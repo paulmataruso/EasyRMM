@@ -697,6 +697,68 @@ func (c *Client) BulkInstall(ctx context.Context, ids []uuid.UUID, scheduledAt *
 	return r, err
 }
 
+// PendingRestart is an endpoint whose operating system reports a pending
+// restart, as EasyPatch lists them for "Restart all that need it".
+type PendingRestart struct {
+	ID       uuid.UUID `json:"id"`
+	Hostname string    `json:"hostname"`
+	Platform string    `json:"platform"`
+	// IsServer marks Windows Server and domain controllers.
+	IsServer bool `json:"isServer"`
+	IsOnline bool `json:"isOnline"`
+	// CanRestart says the endpoint's agent runs restart jobs.
+	CanRestart         bool       `json:"canRestart"`
+	RebootPendingSince *time.Time `json:"rebootPendingSince"`
+}
+
+// PendingRestarts is an organization's endpoints that need a restart:
+// Endpoints holds at most 1,000 of Total.
+type PendingRestarts struct {
+	Total     int              `json:"total"`
+	Endpoints []PendingRestart `json:"endpoints"`
+}
+
+// RestartPending lists an organization's endpoints whose operating system
+// reports a pending restart. EasyPatch before 1.10.0 answers 404.
+func (c *Client) RestartPending(ctx context.Context, organizationID uuid.UUID) (PendingRestarts, error) {
+	var p PendingRestarts
+	err := c.do(ctx, http.MethodGet, "/api/v1/organizations/"+organizationID.String()+"/restart-pending", nil, nil, "", &p)
+	return p, err
+}
+
+// restartPreset is the only restart EasyRMM asks for: only if a restart is
+// pending when the job runs, after EasyPatch's default countdown (five
+// minutes, which users can shorten but not postpone), now or at a time.
+// Prompts, deadlines and messages stay in EasyPatch's console.
+type restartPreset struct {
+	Mode        string     `json:"mode"`
+	Condition   string     `json:"condition"`
+	ScheduledAt *time.Time `json:"scheduledAt,omitempty"`
+	Force       bool       `json:"force"`
+}
+
+func newRestartPreset(scheduledAt *time.Time) restartPreset {
+	return restartPreset{Mode: "Countdown", Condition: "OnlyIfPending", ScheduledAt: scheduledAt}
+}
+
+// BulkRestart restarts endpoints with EasyRMM's preset (restartPreset).
+func (c *Client) BulkRestart(ctx context.Context, ids []uuid.UUID, scheduledAt *time.Time, onBehalfOf string) (BulkResult, error) {
+	var r BulkResult
+	body := struct {
+		EndpointIDs []uuid.UUID   `json:"endpointIds"`
+		Restart     restartPreset `json:"restart"`
+	}{ids, newRestartPreset(scheduledAt)}
+	err := c.do(ctx, http.MethodPost, "/api/v1/endpoints/bulk/restart", nil, body, onBehalfOf, &r)
+	return r, err
+}
+
+// RetryJob runs a finished job again as a new job, which it returns.
+func (c *Client) RetryJob(ctx context.Context, id uuid.UUID, onBehalfOf string) (Job, error) {
+	var j Job
+	err := c.do(ctx, http.MethodPost, "/api/v1/jobs/"+id.String()+"/retry", nil, nil, onBehalfOf, &j)
+	return j, err
+}
+
 // AgentPackage is an EasyPatch agent package the server hosts.
 type AgentPackage struct {
 	FileName string `json:"fileName"`
