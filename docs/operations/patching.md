@@ -206,6 +206,30 @@ device that is not linked opens EasyPatch's endpoint list searched by its
 name; one you may not see opens the list. EasyPatch asks you to sign in
 with its own account and checks its own permissions.
 
+### Switching to EasyPatch
+
+**EasyRMM | EasyPatch** under the logo (at the top of the menu on a phone)
+switches to EasyPatch's console, in the same tab, on the page of what you
+were looking at:
+
+| In EasyRMM | Opens in EasyPatch |
+|---|---|
+| A device (its Patches tab: to install, installed, history, jobs) | Its endpoint page, on the matching tab; its overview from the device's other tabs |
+| An organization, or one of its sites | The organization |
+| A patch job open on the Patching page | The job |
+| Patching, the device list | The endpoint list, or the job list from the Jobs tab |
+| Anything else | EasyPatch's home |
+
+It is shown once EasyPatch is set up, to super administrators and to
+people with a role over a whole organization linked to EasyPatch. A role
+over one site is not enough: EasyPatch has no sites to restrict to. When a
+call to EasyPatch failed since its last good check (every ten minutes:
+EasyPatch did not answer, or refused EasyRMM's token), a dot on
+**EasyPatch** says so; the link still works, in case it has recovered.
+
+Switching does not sign you in to EasyPatch yet: EasyPatch asks for its own
+account until it can sign people in through EasyRMM.
+
 Scripts in the library that install updates themselves (Windows Update,
 `apt upgrade`, `dnf upgrade`…) work around all of this. The script library
 warns about them; see
@@ -217,6 +241,7 @@ warns about them; see
 |---|---|---|
 | `patch.view` (with `device.view`) | Patching, a device's Patches tab | Every role |
 | `patch.manage` | Scan, install, restart, cancel, retry, install the EasyPatch agent | Technician and above |
+| `patch.configure` | Change EasyPatch's standing rules: makes someone an Admin in EasyPatch rather than ReadOnly once EasyPatch signs people in through EasyRMM. Only organization-wide roles hold it | Organization administrator and above |
 | `settings.manage` | Settings → EasyPatch, including automatic installs of the EasyPatch agent | Super administrator |
 
 Both are checked at the device's site before EasyPatch is called; a job is

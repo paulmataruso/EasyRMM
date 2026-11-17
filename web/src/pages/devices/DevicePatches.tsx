@@ -11,7 +11,7 @@ import {
   ComplianceBadge,
   EasyPatchLink,
   easyPatchHref,
-  type EasyPatchTarget,
+  PATCH_VIEW_TAB,
   INSTALLABLE,
   installText,
   isActiveJob,
@@ -25,14 +25,6 @@ import {
 } from "../patching/patchText";
 
 type View = "available" | "installed" | "history" | "jobs";
-
-/** The tab of EasyPatch's endpoint page that shows what a view shows. */
-const EASYPATCH_TAB: Record<View, NonNullable<EasyPatchTarget["tab"]>> = {
-  available: "updates",
-  installed: "installed",
-  history: "history",
-  jobs: "jobs",
-};
 
 /** A device's updates through EasyPatch (ADR-0030): what is missing and installed, history, jobs, and the actions. */
 export function PatchesPanel({ device }: { device: Device }) {
@@ -263,7 +255,7 @@ function Summary({ patching: d, view }: { patching: DevicePatching; view: View }
     "In EasyPatch",
     <span key="o">
       {s.organizationName} / {s.siteName}
-      <EasyPatchLink to={{ device: d.deviceId, tab: EASYPATCH_TAB[view] }} className="mt-0.5 flex w-fit text-xs">
+      <EasyPatchLink to={{ device: d.deviceId, tab: PATCH_VIEW_TAB[view] }} className="mt-0.5 flex w-fit text-xs">
         Open in EasyPatch
       </EasyPatchLink>
     </span>,

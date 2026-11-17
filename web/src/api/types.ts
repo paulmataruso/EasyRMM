@@ -21,6 +21,7 @@ export type Permission =
   | "software.manage"
   | "patch.view"
   | "patch.manage"
+  | "patch.configure"
   | "monitoring.view"
   | "monitoring.manage"
   | "alert.view"
@@ -1248,6 +1249,14 @@ export interface PatchActionResult {
 }
 
 /** What EasyRMM's restart (only if a restart is pending) would do to one device. */
+/** Whether to show the EasyRMM | EasyPatch switch, and whether EasyPatch was answering. */
+export interface ProductSwitch {
+  show: boolean;
+  /** False when a call to EasyPatch failed since its last good check. */
+  answering: boolean;
+  failingSince?: string;
+}
+
 export interface RestartCheck {
   deviceId: string;
   deviceName: string;

@@ -8,7 +8,8 @@ enforce that higher roles are strict supersets of lower ones.
 * **Platform** — Super Administrator only.
 * **Organization** — every site in one organization.
 * **Site** — one site. Site-scoped roles can read the parent organization's
-  record but never manage the organization or its users.
+  record but never manage the organization, its users or its EasyPatch
+  rules (`patch.configure`).
 
 ## Permissions
 
@@ -18,7 +19,7 @@ enforce that higher roles are strict supersets of lower ones.
 | `device.edit`, `device.remote_desktop`, `device.terminal`, `device.files` | | ✓ | ✓ | ✓ | ✓ |
 | `script.run`, `job.manage`, `software.manage`, `patch.manage`, `alert.manage` | | ✓ | ✓ | ✓ | ✓ |
 | `site.manage`, `device.retire`, `script.manage`, `monitoring.manage`, `enrollment.manage`, `user.view`, `audit.view` | | | ✓ | ✓ | ✓ |
-| `org.manage`, `user.manage` | | | | ✓ | ✓ |
+| `org.manage`, `user.manage`, `patch.configure` | | | | ✓ | ✓ |
 | `org.create`, `settings.manage` | | | | | ✓ |
 
 ## Granting roles

@@ -24,6 +24,8 @@ func TestEasyPatchPage(t *testing.T) {
 		{"under a path", "https://example.com/easypatch", goPage{organization: org},
 			"https://example.com/easypatch/organizations/" + org.String() + "?from=easyrmm"},
 		{"organizations", "https://patch.example.com", goPage{orgs: true}, "https://patch.example.com/organizations?from=easyrmm"},
+		{"endpoints", "https://patch.example.com", goPage{devices: true}, "https://patch.example.com/endpoints?from=easyrmm"},
+		{"jobs", "https://patch.example.com", goPage{jobs: true}, "https://patch.example.com/jobs?from=easyrmm"},
 		{"home", "https://patch.example.com", goPage{}, "https://patch.example.com/?from=easyrmm"},
 	} {
 		if got := easyPatchPage(c.base, c.page); got != c.want {

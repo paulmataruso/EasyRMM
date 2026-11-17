@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **EasyRMM | EasyPatch** under the logo switches to EasyPatch's console in
+  the same tab, on the page of what you were looking at: a device's endpoint
+  (on the tab matching its Patches view), an organization (also from a
+  site), a job, or EasyPatch's lists. Shown to super administrators and to
+  people with a role over a whole organization linked to EasyPatch. A dot
+  warns when EasyPatch was not answering.
+- `patch.configure`, held by organization administrators and above, never
+  from a role over one site: who will be an Admin in EasyPatch rather than
+  ReadOnly.
 - Patching: **Restart…** for devices whose restart is pending, on a
   device's Patches tab and for chosen devices on the Patching page. One safe
   preset: only if a restart is still pending, after EasyPatch's countdown,
@@ -448,6 +457,12 @@ All notable changes to this project are documented here. The format follows
   connects by cookie, stays blocked.
 
 ### Fixed
+- Settings → EasyPatch showed EasyPatch as failing after it refused a
+  single request (a duplicate scan, an endpoint deleted in EasyPatch). Only
+  no answer, a server error or a refused token count now.
+- **Open EasyPatch** on the Patching page and in Settings opened a new tab;
+  it now opens in the same tab, like the product switch, on EasyPatch's
+  endpoint or job list.
 - Patching dialogs hid the server's reason when it refused a field the
   dialog has no place for (an install time, for example), leaving the button
   doing nothing visible. They now show it. **Settings → Agent updates** hid

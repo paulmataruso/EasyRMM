@@ -201,6 +201,13 @@ func (s *Server) AddEndpoint(org uuid.UUID, hostname, serial, fingerprint string
 	return e
 }
 
+// RemoveEndpoint deletes an endpoint, as deleting it in EasyPatch does.
+func (s *Server) RemoveEndpoint(id uuid.UUID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.endpoints, id)
+}
+
 // Jobs lists the jobs, oldest first.
 func (s *Server) Jobs() []Job {
 	s.mu.Lock()

@@ -6,6 +6,7 @@ package easypatchapi
 import (
 	"net/http"
 	"net/url"
+	"slices"
 
 	"github.com/google/uuid"
 
@@ -61,6 +62,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/patching/restart/plan", a.planRestart)
 	r("POST /api/v1/patching/restart", a.restart)
 	r("POST /api/v1/patching/agent-install", a.installAgent)
+	// The product switch: for anyone signed in, it says whether to show it.
+	r("GET /api/v1/patching/switch", a.productSwitch)
 
 	// A browser link, not an API call: it answers with a redirect.
 	mux.Handle("GET /go/to-easypatch", httpapi.Handle(a.goToEasyPatch))
@@ -326,7 +329,7 @@ func (a *API) goToEasyPatch(w http.ResponseWriter, r *http.Request) error {
 	for _, p := range []struct {
 		name string
 		to   *uuid.UUID
-	}{{"device", &t.DeviceID}, {"organization", &t.OrganizationID}, {"job", &t.JobID}, {"update", &t.UpdateID}} {
+	}{{"device", &t.DeviceID}, {"organization", &t.OrganizationID}, {"site", &t.SiteID}, {"job", &t.JobID}, {"update", &t.UpdateID}} {
 		if *p.to, err = httpapi.QueryID(r, p.name); err != nil {
 			return err
 		}
@@ -334,8 +337,14 @@ func (a *API) goToEasyPatch(w http.ResponseWriter, r *http.Request) error {
 			named++
 		}
 	}
+	if t.List = r.URL.Query().Get("list"); t.List != "" {
+		if !slices.Contains(easypatch.GoLists, t.List) {
+			return apperr.Invalid("list", "Choose endpoints or jobs.")
+		}
+		named++
+	}
 	if named > 1 {
-		return apperr.Invalid("device", "Name one of device, organization, job or update.")
+		return apperr.Invalid("device", "Name one of device, organization, site, job, update or list.")
 	}
 	t.Tab = r.URL.Query().Get("tab")
 	dest, err := a.svc.EasyPatchURL(r.Context(), httpapi.Caller(r), t)
@@ -347,6 +356,11 @@ func (a *API) goToEasyPatch(w http.ResponseWriter, r *http.Request) error {
 	}
 	http.Redirect(w, r, dest, http.StatusFound)
 	return nil
+}
+
+func (a *API) productSwitch(w http.ResponseWriter, r *http.Request) error {
+	sw, err := a.svc.Switch(r.Context(), httpapi.Caller(r))
+	return ok(w, sw, err)
 }
 
 func (a *API) scan(w http.ResponseWriter, r *http.Request) error {

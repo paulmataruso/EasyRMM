@@ -324,16 +324,16 @@ describe("patching page", () => {
     expect(main().getByRole("link", { name: "Set up EasyPatch" })).toHaveAttribute("href", "/settings?tab=easypatch");
   });
 
-  it("opens EasyPatch's own console in a new tab", async () => {
-    installFakeApi(patchingRoutes({ "GET /patching": ok({ ...READY, consoleUrl: "https://patch.example.com" }) }));
+  it("opens EasyPatch's own list of what the tab shows, in the same tab", async () => {
+    installFakeApi(patchingRoutes({ "GET /patching": ok({ ...READY, consoleUrl: "https://patch.example.com" }), "GET /patching/jobs": ok({ items: [] }) }));
     renderApp("/patching");
     await screen.findByRole("main");
     // Role queries over the whole fleet table are slow; the link's text is enough to find it.
     const link = (await main().findByText("Open EasyPatch")).closest("a")!;
-    expect(link).toHaveTextContent("Open EasyPatch (opens in a new tab)");
-    expect(link).toHaveAttribute("href", "https://patch.example.com");
-    expect(link).toHaveAttribute("target", "_blank");
-    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+    expect(link).toHaveAttribute("href", "/go/to-easypatch?list=endpoints");
+    expect(link).not.toHaveAttribute("target");
+    await userEvent.setup().click(main().getByRole("tab", { name: "Jobs" }));
+    expect(main().getByText("Open EasyPatch").closest("a")).toHaveAttribute("href", "/go/to-easypatch?list=jobs");
   });
 
   it("is read-only for a viewer, and when EasyPatch's token cannot act", async () => {
@@ -816,6 +816,23 @@ describe("device patches", () => {
     expect(await within(dialog).findByText("Choose a time within 31 days.")).toBeInTheDocument();
   });
 
+  it("keeps the device when switching to EasyPatch, on the matching tab", async () => {
+    const user = userEvent.setup();
+    installFakeApi(
+      deviceRoutes(LINKED, {
+        "GET /patching/switch": ok({ show: true, answering: true }),
+        "GET /patching/devices/:id/jobs": ok({ items: [], page: 1, pageSize: 50, totalCount: 0 }),
+      }),
+    );
+    renderApp("/devices/d1?tab=patches");
+    const products = within(await screen.findByRole("navigation", { name: "Products" }));
+    const link = await products.findByRole("link", { name: "Open WEB-01 in EasyPatch" });
+    expect(link).toHaveAttribute("href", "/go/to-easypatch?device=d1&tab=updates");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("radio", { name: "Jobs" }));
+    expect(products.getByRole("link", { name: "Open WEB-01 in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d1&tab=jobs");
+  });
+
   it("shows installed updates, history and jobs", async () => {
     const user = userEvent.setup();
     installFakeApi(
@@ -1084,7 +1101,7 @@ describe("EasyPatch settings", () => {
     });
     expect(await screen.findByText("Connected to EasyPatch 1.9.0")).toBeInTheDocument();
     expect(await main().findByText("Connected")).toBeInTheDocument();
-    expect(main().getByText("Open EasyPatch").closest("a")).toHaveAttribute("href", "https://patch.example.com");
+    expect(main().getByText("Open EasyPatch").closest("a")).toHaveAttribute("href", "/go/to-easypatch");
     expect(main().getByText(/Not supported by this EasyPatch/)).toBeInTheDocument();
     // The stored token is kept unless a new one is pasted.
     expect(main().getByLabelText(/^API token/)).toHaveAttribute("placeholder", "Stored");

@@ -43,7 +43,7 @@ export function PatchingPage() {
       <PageHeader
         title="Patching"
         subtitle="Operating system and application updates on the devices EasyPatch patches, read from EasyPatch as you look."
-        actions={status.data?.consoleUrl && <OpenEasyPatch href={status.data.consoleUrl} />}
+        actions={status.data?.consoleUrl && <OpenEasyPatch to={{ list: tab === "jobs" ? "jobs" : "endpoints" }} />}
       />
       {status.isPending ? (
         <Spinner />

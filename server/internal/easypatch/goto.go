@@ -26,12 +26,19 @@ import (
 type GoTarget struct {
 	DeviceID       uuid.UUID
 	OrganizationID uuid.UUID
+	// SiteID opens the site's organization: EasyPatch's sites have no page.
+	SiteID uuid.UUID
 	// JobID and UpdateID are EasyPatch's own ids, passed through.
 	JobID    uuid.UUID
 	UpdateID uuid.UUID
 	// Tab is a device's tab: updates, installed, history, jobs or policy.
 	Tab string
+	// List is one of EasyPatch's lists: "endpoints" or "jobs".
+	List string
 }
+
+// GoLists are the lists a link may open.
+var GoLists = []string{"endpoints", "jobs"}
 
 // goPage is a resolved target: where in EasyPatch's console to go.
 type goPage struct {
@@ -40,6 +47,7 @@ type goPage struct {
 	devices      bool      // a device the person may not see
 	organization uuid.UUID // a linked organization
 	orgs         bool      // an organization that is not linked or not visible
+	jobs         bool      // the job list
 	job, update  uuid.UUID
 	tab          string
 }
@@ -74,6 +82,8 @@ func easyPatchPage(base string, p goPage) string {
 		u.Path += "/jobs/" + p.job.String()
 	case p.update != uuid.Nil:
 		u.Path += "/updates/" + p.update.String()
+	case p.jobs:
+		u.Path += "/jobs"
 	default:
 		u.Path += "/"
 	}
@@ -111,25 +121,45 @@ func (s *Service) EasyPatchURL(ctx context.Context, c access.Caller, t GoTarget)
 		default:
 			p.search = d.name
 		}
-	case t.OrganizationID != uuid.Nil:
+	case t.OrganizationID != uuid.Nil, t.SiteID != uuid.Nil:
 		p.orgs = true
-		if c.CanInOrg(rbac.PermPatchView, t.OrganizationID) {
-			var ep uuid.UUID
-			err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-				return tx.QueryRow(ctx, `SELECT easypatch_id FROM easypatch_organizations WHERE organization_id = $1`, t.OrganizationID).Scan(&ep)
-			})
-			switch {
-			case errors.Is(err, pgx.ErrNoRows):
-			case err != nil:
-				return "", err
-			default:
-				p.organization, p.orgs = ep, false
-			}
+		ep, err := s.linkedOrganization(ctx, c, t.OrganizationID, t.SiteID)
+		if err != nil {
+			return "", err
+		}
+		if ep != uuid.Nil {
+			p.organization, p.orgs = ep, false
 		}
 	case t.JobID != uuid.Nil:
 		p.job = t.JobID
 	case t.UpdateID != uuid.Nil:
 		p.update = t.UpdateID
+	case t.List == "endpoints":
+		p.devices = true
+	case t.List == "jobs":
+		p.jobs = true
 	}
 	return easyPatchPage(base, p), nil
+}
+
+// linkedOrganization is the EasyPatch organization linked to an
+// organization, or to a site's organization, when the caller may see
+// patching in it; uuid.Nil otherwise.
+func (s *Service) linkedOrganization(ctx context.Context, c access.Caller, orgID, siteID uuid.UUID) (uuid.UUID, error) {
+	var ep uuid.UUID
+	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		if siteID != uuid.Nil {
+			if err := tx.QueryRow(ctx, `SELECT organization_id FROM sites WHERE id = $1`, siteID).Scan(&orgID); err != nil {
+				return err
+			}
+		}
+		if !c.CanInOrg(rbac.PermPatchView, orgID) {
+			return pgx.ErrNoRows
+		}
+		return tx.QueryRow(ctx, `SELECT easypatch_id FROM easypatch_organizations WHERE organization_id = $1`, orgID).Scan(&ep)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, nil
+	}
+	return ep, err
 }

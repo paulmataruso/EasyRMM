@@ -185,7 +185,7 @@ function ServerStatus({ conn: c }: { conn: EasyPatchConnection }) {
     items.push(["Version", c.serverVersion || "—"]);
     if (c.publicUrl && c.publicUrl.replace(/\/+$/, "") !== c.url) items.push(["Public address", <Mono key="p">{c.publicUrl}</Mono>]);
     const consoleUrl = [c.publicUrl, c.url].find((u) => u?.startsWith("https://"));
-    if (consoleUrl) items.push(["Console", <OpenEasyPatch key="c" href={consoleUrl} />]);
+    if (consoleUrl) items.push(["Console", <OpenEasyPatch key="c" />]);
     items.push(["Token", c.canOperate ? "Operator: views, scans and installs" : "Read only: views"]);
     items.push([
       "Install later",

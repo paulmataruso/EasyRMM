@@ -3,7 +3,7 @@
 * Status: **Draft 2**, 2026-11-17. Draft 1 was critiqued against the code by an
   independent review and by its author. Section 13 lists every finding and
   what changed.
-* Progress: P0, P1 and P2 are built (see section 10); P3 is next.
+* Progress: P0 to P3 are built (see section 10); P4 is next.
 * Scope: EasyRMM owns EasyPatch. Both live in this repository; EasyPatch is
   under `easypatch/`.
 
@@ -163,7 +163,9 @@ EasyPatch links to the page where it is edited, labelled with the action:
   top of each console's sidebar: **EasyRMM | EasyPatch**. On phones it sits
   at the top of the navigation drawer.
 * **What it is.** A `<nav aria-label="Products">` with two links. The current
-  product carries `aria-current="page"` and is styled as selected. The other
+  product carries `aria-current="true"` (the current one of a set: the page
+  itself is a device or an organization, not the product) and is styled as
+  selected. The other
   is an ordinary link, so Ctrl-click and middle click open a new tab.
 * **Why this and not a menu.** It is one click, always visible, and it says
   where you are, with no popover to open.
@@ -564,6 +566,16 @@ result", and EasyRMM's checks are skipped for EasyPatch-only changes.
 
 *Done when:* the mappings and permission checks are unit-tested, and the
 switch keeps the device in a browser.
+
+*Done:* the switch, `easyPatchAccess`, `patch.configure`, same-tab
+**Open EasyPatch**. Sites and EasyPatch's lists are link targets too
+(`site=`, `list=endpoints|jobs`). Only failures that make EasyPatch unusable
+(no answer, 5xx, a refused token) count as "not answering". Checked: unit
+tests of the page mapping (Go and console) and of the access rule;
+integration and HTTP tests of who sees the switch and of its warning; in
+Chromium, the switch on a device's History view led to
+`/go/to-easypatch?device=…&tab=history` (the server's redirect from there is
+covered by the HTTP tests, not followed to a real EasyPatch in a browser).
 
 **P4 Sign in once, with access from EasyRMM**
 * EasyRMM:

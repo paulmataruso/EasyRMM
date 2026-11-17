@@ -280,6 +280,8 @@ func TestEasyPatchAPI(t *testing.T) {
 		"/go/to-easypatch?device=" + device + "&tab=updates": "https://patch.example.com/endpoints/" + endpoint.ID.String() + "?from=easyrmm&tab=updates",
 		"/go/to-easypatch?organization=" + acme:              "https://patch.example.com/organizations/" + epOrg.String() + "?from=easyrmm",
 		"/go/to-easypatch?job=" + jobs.Items[0].ID:           "https://patch.example.com/jobs/" + jobs.Items[0].ID + "?from=easyrmm",
+		"/go/to-easypatch?site=" + hq.ID:                     "https://patch.example.com/organizations/" + epOrg.String() + "?from=easyrmm",
+		"/go/to-easypatch?list=jobs":                         "https://patch.example.com/jobs?from=easyrmm",
 		"/go/to-easypatch":                                   "https://patch.example.com/?from=easyrmm",
 	} {
 		r := link.do("GET", path, nil)
@@ -289,6 +291,19 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	wantStatus(t, link.do("GET", "/go/to-easypatch?device=x", nil), http.StatusUnprocessableEntity, "validation_failed")
 	wantStatus(t, link.do("GET", "/go/to-easypatch?device="+device+"&organization="+acme, nil), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, link.do("GET", "/go/to-easypatch?list=updates", nil), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, link.do("GET", "/go/to-easypatch?list=jobs&site="+hq.ID, nil), http.StatusUnprocessableEntity, "validation_failed")
+
+	// The product switch: shown to anyone with organization-wide access to a linked organization.
+	var sw struct {
+		Show      bool `json:"show"`
+		Answering bool `json:"answering"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/switch", nil, &sw)
+	if !sw.Show || !sw.Answering {
+		t.Fatalf("switch for the administrator: %+v", sw)
+	}
+	wantStatus(t, h.client().do("GET", "/api/v1/patching/switch", nil), http.StatusUnauthorized, "")
 	stranger := h.client()
 	stranger.http.CheckRedirect = noFollow.CheckRedirect
 	r = stranger.do("GET", "/go/to-easypatch?device="+device+"&tab=jobs", nil)
@@ -314,6 +329,10 @@ func TestEasyPatchAPI(t *testing.T) {
 		wantStatus(t, viewer.do(m, "/api/v1/settings/easypatch", map[string]string{}), http.StatusForbidden, "forbidden")
 	}
 	wantStatus(t, viewer.do("GET", "/api/v1/settings/easypatch/organizations", nil), http.StatusForbidden, "forbidden")
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/switch", nil, &sw)
+	if !sw.Show {
+		t.Fatalf("switch for a read-only user of the organization: %+v", sw)
+	}
 	wantStatus(t, h.client().do("GET", "/api/v1/patching", nil), http.StatusUnauthorized, "")
 
 	var audit struct {
@@ -334,6 +353,10 @@ func TestEasyPatchAPI(t *testing.T) {
 	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil, nil)
 	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil), http.StatusNotFound, "not_found")
 	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/nope", nil), http.StatusNotFound, "not_found")
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/switch", nil, &sw)
+	if sw.Show {
+		t.Fatalf("switch once the organization is unlinked: %+v", sw)
+	}
 	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/settings/easypatch", nil, nil)
 	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch", nil), http.StatusNotFound, "not_found")
 	wantStatus(t, admin.do("POST", "/api/v1/settings/easypatch/check", nil), http.StatusNotFound, "not_found")

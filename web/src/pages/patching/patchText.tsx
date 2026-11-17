@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import type { AgentInstall, ComplianceStatus, PatchJob, PatchLink, PatchPolicy, PatchUpdateState } from "../../api/types";
-import { ArrowUpRight, ExternalLink } from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { Badge, buttonClasses, cx, Dot, type Tone } from "../../components/ui";
 import { plural } from "../../lib/format";
 
@@ -242,9 +242,21 @@ export interface EasyPatchTarget {
   /** A device's page in EasyPatch: updates, installed, history, jobs or policy. */
   tab?: "updates" | "installed" | "history" | "jobs" | "policy";
   organization?: string;
+  /** A site opens its organization: EasyPatch's sites have no page. */
+  site?: string;
   job?: string;
   update?: string;
+  /** One of EasyPatch's lists. */
+  list?: "endpoints" | "jobs";
 }
+
+/** The tab of EasyPatch's endpoint page that shows what each view of a device's Patches tab shows. */
+export const PATCH_VIEW_TAB: Record<string, NonNullable<EasyPatchTarget["tab"]>> = {
+  available: "updates",
+  installed: "installed",
+  history: "history",
+  jobs: "jobs",
+};
 
 /**
  * The address of a link into EasyPatch's console. It goes through EasyRMM's own server, which finds the EasyPatch
@@ -256,8 +268,10 @@ export function easyPatchHref(t: EasyPatchTarget): string {
     q.set("device", t.device);
     if (t.tab) q.set("tab", t.tab);
   } else if (t.organization) q.set("organization", t.organization);
+  else if (t.site) q.set("site", t.site);
   else if (t.job) q.set("job", t.job);
   else if (t.update) q.set("update", t.update);
+  else if (t.list) q.set("list", t.list);
   const query = q.toString();
   return query ? `/go/to-easypatch?${query}` : "/go/to-easypatch";
 }
@@ -275,13 +289,12 @@ export function EasyPatchLink({ to, children, className }: { to: EasyPatchTarget
   );
 }
 
-/** EasyPatch's own console, in a new tab: for what EasyRMM does not show, such as its policies and settings. */
-export function OpenEasyPatch({ href }: { href: string }) {
+/** EasyPatch's own console, for what EasyRMM does not show. Like the product switch, it opens in the same tab. */
+export function OpenEasyPatch({ to = {} }: { to?: EasyPatchTarget }) {
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className={buttonClasses("secondary", "sm")}>
-      <ExternalLink className="size-3.5" aria-hidden />
+    <a href={easyPatchHref(to)} className={buttonClasses("secondary", "sm")}>
       Open EasyPatch
-      <span className="sr-only"> (opens in a new tab)</span>
+      <ArrowUpRight className="size-3.5" aria-hidden />
     </a>
   );
 }

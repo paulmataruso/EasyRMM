@@ -167,5 +167,7 @@ export function baseRoutes(session: SessionView | null): Record<string, FakeHand
     "GET /alerts/devices": ok({ items: [] }),
     "GET /scripts": ok({ items: [] }),
     "GET /devices/recent-connections": ok({ items: [] }),
+    // The EasyRMM | EasyPatch switch: hidden unless a test sets EasyPatch up.
+    "GET /patching/switch": ok({ show: false, answering: true }),
   };
 }
