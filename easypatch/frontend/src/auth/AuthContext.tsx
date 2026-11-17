@@ -106,7 +106,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       role,
       isSuperAdmin: role === 'SuperAdmin',
       canOperate: role === 'SuperAdmin' || role === 'Admin',
-      isUnrestricted: role === 'SuperAdmin' || (user !== null && user.organizationIds.length === 0),
+      isUnrestricted: role === 'SuperAdmin' || (user?.allOrganizations ?? false),
       refresh,
       setUser,
       error: me.error,

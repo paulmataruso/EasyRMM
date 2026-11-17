@@ -8,7 +8,7 @@ import { CodeBlock, OneTimeNotice } from '../../components/Copy';
 import { ConfirmDialog, Dialog } from '../../components/Dialog';
 import { useToast } from '../../components/Toast';
 import { Alert, Badge, Button, Checkbox, EmptyState, ErrorState, InlineError, SelectField, Spinner, TableWrap, TextField } from '../../components/ui';
-import { formatDateTime, formatRelative, humanize } from '../../lib/format';
+import { describeOrganizationAccess, formatDateTime, formatRelative, humanize } from '../../lib/format';
 import { PASSWORD_HINT, passwordProblem } from '../auth/AuthPages';
 
 const ROLE_HELP: Record<UserRole, string> = {
@@ -97,11 +97,7 @@ export function UsersTab() {
                     )}
                   </td>
                   <td className="max-w-64 text-sm">
-                    {u.role === 'SuperAdmin' || u.organizationIds.length === 0 ? (
-                      <span className="text-muted">All organizations</span>
-                    ) : (
-                      <span title={u.organizationIds.map(orgName).join(', ')}>{u.organizationIds.map(orgName).join(', ')}</span>
-                    )}
+                    <OrganizationAccessCell user={u} names={u.organizationIds.map(orgName)} />
                   </td>
                   <td className="whitespace-nowrap text-muted" title={formatDateTime(u.lastLoginAt)}>
                     {formatRelative(u.lastLoginAt)}
@@ -288,8 +284,11 @@ function EditUserDialog({ user, isSelf, onClose }: { user: UserDto | null; isSel
   const save = useApiMutation(
     async (u: UserDto) => {
       await api.put(`/users/${u.id}`, { email: email.trim() !== u.email ? email.trim() : null, role: role !== u.role ? role : null, isActive: active !== u.isActive ? active : null });
+      // An empty list asks for every organization. A user whose organizations were all deleted has an empty list too but
+      // reaches none, so "every organization" is a change for them.
       const newIds = role === 'SuperAdmin' ? [] : orgIds;
-      if (JSON.stringify([...newIds].sort()) !== JSON.stringify([...u.organizationIds].sort())) {
+      const listChanged = JSON.stringify([...newIds].sort()) !== JSON.stringify([...u.organizationIds].sort());
+      if (listChanged || (newIds.length === 0) !== u.allOrganizations) {
         await api.put(`/users/${u.id}/organizations`, { organizationIds: newIds });
       }
     },
@@ -322,6 +321,12 @@ function EditUserDialog({ user, isSelf, onClose }: { user: UserDto | null; isSel
             ))}
           </SelectField>
           {isSelf && <p className="-mt-2 text-xs text-muted">You cannot change your own role or disable your own account.</p>}
+          {role !== 'SuperAdmin' && !user.allOrganizations && user.organizationIds.length === 0 && (
+            <Alert tone="warn" title="No organizations">
+              The organizations this user was restricted to were deleted, so they reach none. Check organizations to restrict them
+              again, or save with none checked to give them every organization.
+            </Alert>
+          )}
           {role !== 'SuperAdmin' && <OrgAccessPicker value={orgIds} onChange={setOrgIds} />}
           <Checkbox label="Account enabled" hint="Disabled users cannot sign in; their sessions end." checked={active} onChange={(e) => setActive(e.target.checked)} disabled={isSelf} />
           {!active && user.isActive && <Alert tone="warn">Disabling the account signs the user out everywhere.</Alert>}
@@ -368,4 +373,11 @@ function LinkedSignIns({ userId }: { userId: string }) {
       ))}
     </fieldset>
   );
+}
+
+function OrganizationAccessCell({ user, names }: { user: UserDto; names: string[] }) {
+  const access = describeOrganizationAccess(user, names);
+  if (access.none) return <Badge tone="warn">{access.text}</Badge>;
+  if (user.role === 'SuperAdmin' || user.allOrganizations) return <span className="text-muted">{access.text}</span>;
+  return <span title={access.text}>{access.text}</span>;
 }

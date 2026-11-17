@@ -7,7 +7,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { Dialog } from '../../components/Dialog';
 import { useToast } from '../../components/Toast';
 import { Alert, Badge, Button, Card, ErrorState, InlineError, KeyValueList, PageHeader, Spinner, TableWrap, TextField } from '../../components/ui';
-import { describeUserAgent, formatDateTime, formatRelative, humanize } from '../../lib/format';
+import { describeOrganizationAccess, describeUserAgent, formatDateTime, formatRelative, humanize } from '../../lib/format';
 import { MfaEnrollment, PasswordChangeForm, RecoveryCodesView } from '../auth/AuthPages';
 import { SecurityKeysCard } from '../auth/SecurityKeys';
 
@@ -28,7 +28,7 @@ export function AccountPage() {
               ['Email (sign-in)', user.email],
               ['Username', user.username],
               ['Role', humanize(user.role)],
-              ['Organization access', user.role === 'SuperAdmin' || orgNames.length === 0 ? 'All organizations' : orgNames.join(', ')],
+              ['Organization access', describeOrganizationAccess(user, orgNames).text],
               ['Last sign-in', user.lastLoginAt ? `${formatDateTime(user.lastLoginAt)} (${formatRelative(user.lastLoginAt)})` : '—'],
             ]}
           />

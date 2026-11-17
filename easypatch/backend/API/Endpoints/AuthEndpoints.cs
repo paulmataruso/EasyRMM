@@ -128,7 +128,7 @@ public static class AuthEndpoints
         return new CurrentUserDto(user.Id, user.Username, user.Email, user.Role, user.MfaEnabled || kinds.Count > 0, mfaCompleted, mfaSetupRequired,
             user.MustChangePassword, user.OrganizationAccess.Select(a => a.OrganizationId).ToList(), user.LastLoginAt,
             TotpEnabled: user.MfaEnabled, SecurityKeyCount: kinds.Count, PasskeyCount: passkeys, PasskeyPrompt: prompt,
-            HasPassword: AuthService.HasUsablePassword(user));
+            HasPassword: AuthService.HasUsablePassword(user), AllOrganizations: user.AllOrganizations);
     }
 }
 
@@ -220,5 +220,6 @@ public static class UserEndpoints
 
     private static readonly System.Linq.Expressions.Expression<Func<User, UserDto>> ToDto = u => new UserDto(
         u.Id, u.Username, u.Email, u.Role, u.IsActive, u.MfaEnabled || u.WebAuthnCredentials.Any(), u.CreatedAt, u.LastLoginAt, u.LockoutUntil,
-        u.OrganizationAccess.Select(a => a.OrganizationId).ToList(), u.MfaEnabled, u.WebAuthnCredentials.Count(), u.ExternalLogins.Count());
+        u.OrganizationAccess.Select(a => a.OrganizationId).ToList(), u.MfaEnabled, u.WebAuthnCredentials.Count(), u.ExternalLogins.Count(),
+        u.AllOrganizations);
 }

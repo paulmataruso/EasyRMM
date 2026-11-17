@@ -3702,6 +3702,10 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<bool>("AllOrganizations")
+                        .HasColumnType("boolean")
+                        .HasColumnName("all_organizations");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");

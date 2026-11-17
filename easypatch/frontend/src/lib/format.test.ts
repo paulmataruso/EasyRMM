@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   dayBoundary,
+  describeOrganizationAccess,
   describeAgentPackage,
   describeKeyProtection,
   describeSkipReason,
@@ -220,5 +221,18 @@ describe('jobItemPercent', () => {
 
   it('keeps the value between 0 and 100', () => {
     expect(jobItemPercent({ status: 'Downloading', downloadPercent: 140 })).toBe(100);
+  });
+});
+
+describe('describeOrganizationAccess', () => {
+  it('says every organization for super administrators and unrestricted users', () => {
+    expect(describeOrganizationAccess({ role: 'SuperAdmin', allOrganizations: false }, [])).toEqual({ text: 'All organizations', none: false });
+    expect(describeOrganizationAccess({ role: 'Admin', allOrganizations: true }, [])).toEqual({ text: 'All organizations', none: false });
+  });
+  it('lists the organizations of a restricted user', () => {
+    expect(describeOrganizationAccess({ role: 'ReadOnly', allOrganizations: false }, ['Contoso', 'Fabrikam']).text).toBe('Contoso, Fabrikam');
+  });
+  it('says none, never all, when a restricted user has no organizations left', () => {
+    expect(describeOrganizationAccess({ role: 'Admin', allOrganizations: false }, [])).toEqual({ text: 'No organizations', none: true });
   });
 });

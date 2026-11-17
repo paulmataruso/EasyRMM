@@ -318,3 +318,16 @@ export function describeAgentPackage(format: string | null | undefined): string 
   if (!format) return 'package';
   return format.toLowerCase() === 'pkg' ? formatPackageFormat(format) : `${formatPackageFormat(format)} package`;
 }
+
+/**
+ * A user's organization access in words. Super administrators and users with every organization show "All organizations"; a
+ * restricted user whose organizations were all deleted has none, which is said plainly rather than shown as an empty list.
+ */
+export function describeOrganizationAccess(
+  user: { role: string; allOrganizations: boolean },
+  names: string[],
+): { text: string; none: boolean } {
+  if (user.role === 'SuperAdmin' || user.allOrganizations) return { text: 'All organizations', none: false };
+  if (names.length === 0) return { text: 'No organizations', none: true };
+  return { text: names.join(', '), none: false };
+}

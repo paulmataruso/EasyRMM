@@ -19,6 +19,14 @@ the web console and the agents share one version number.
 
 ### Fixed
 
+- **Security:** a user restricted to some organizations reached *every* organization once all of
+  theirs were deleted, because an empty access list meant "all". An Admin restricted to one
+  organization could do this alone, by deleting their own organization while it had no
+  endpoints. Access to every organization is now an explicit flag on the user, as it is on API
+  tokens; with no organizations left, a restricted user sees none. The upgrade sets the flag for
+  every user whose list is empty today, so nobody's access changes. **Check Settings → Users
+  after upgrading:** a user who already lost their organizations this way shows *All
+  organizations*; restrict them again. Users with none left show *No organizations*.
 - Excluding an update on an endpoint with an API token failed with `401`.
 
 ## [1.10.0] - 2026-11-17

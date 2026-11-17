@@ -147,7 +147,9 @@ changes Windows Update policy values only for settings an administrator configur
   | ReadOnly | View only |
 
   A SuperAdmin can restrict an Admin or ReadOnly user to specific organizations
-  (`user_organization_access`; no rows means all organizations). Every admin query goes
+  (`user_organization_access`). Access to every organization is an explicit flag on the user
+  (`all_organizations`), as it is on API tokens: a restricted user whose organizations are all
+  deleted reaches none of them, never all of them. Every admin query goes
   through one tenant-scope service, and anything outside the user's organizations answers
   `404`. Only unrestricted users can create organizations.
 

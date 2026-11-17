@@ -499,10 +499,14 @@ public sealed class AuthService(
             throw AppException.BadRequest("One or more organizations do not exist.", "validation_failed");
         }
 
+        // An empty list asks for every organization. That is decided here, once: deleting organizations later empties the list
+        // without ever widening the user's access.
+        user.AllOrganizations = valid.Count == 0;
         user.OrganizationAccess.Clear();
         user.OrganizationAccess.AddRange(valid.Select(id => new UserOrganizationAccess { UserId = userId, OrganizationId = id }));
         await RevokeSessionsAsync(user.Id, null, ct);
-        audit.Record("user.organizations_set", "User", user.Id.ToString(), details: new { organizationIds = valid });
+        audit.Record("user.organizations_set", "User", user.Id.ToString(),
+            details: new { allOrganizations = user.AllOrganizations, organizationIds = valid });
         await db.SaveChangesAsync(ct);
     }
 

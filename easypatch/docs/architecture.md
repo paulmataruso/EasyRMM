@@ -114,7 +114,7 @@ erDiagram
 | `oidc_providers` | Single sign-on providers: name, issuer, client ID, client secret (Data Protection), scopes, enabled, email trust, provider MFA, account creation (role, allowed domains) |
 | `external_logins` | Links from users to provider accounts: issuer and subject (unique), provider, email at linking, created and last used |
 | `oidc_login_states` | Pending single sign-on attempts: hash of `state`, nonce, PKCE verifier, browser-binding hash, return path; single use, 10-minute expiry |
-| `user_organization_access` | When a non-SuperAdmin user has rows here, they can only see those organizations. No rows means all organizations. Managed under Settings → Users. |
+| `user_organization_access` | The organizations a non-SuperAdmin user can see when `users.all_organizations` is false. With no rows they see none: deleting organizations never widens access. Managed under Settings → Users. |
 | `password_reset_tokens` | Hashed, single-use, expiring tokens issued by an administrator |
 | `api_tokens` | API tokens for scripts and integrations: SHA-256 of the secret, display prefix, `role` (ReadOnly or Admin), `all_organizations` or `organization_ids`, expiry, last use time and address, `revoked_at`. Managed under Settings → API tokens. |
 | `organizations`, `sites` | `is_active` and `archived_at`. Archiving is preferred to deleting; hard delete is only allowed when no endpoints exist. |

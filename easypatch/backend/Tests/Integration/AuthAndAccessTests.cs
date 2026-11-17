@@ -268,4 +268,59 @@ public sealed class TenantIsolationTests(PostgresFixture postgres) : Integration
         var audit = await tech.GetAsync<PagedResult<AuditLogDto>>("/api/v1/audit-logs");
         Assert.All(audit.Items, a => Assert.Equal(contoso.Id, a.OrganizationId));
     }
+
+    [Fact]
+    public async Task Deleting_a_restricted_users_organization_never_widens_their_access()
+    {
+        var root = await SuperAdminAsync();
+        var (contoso, _) = await CreateOrgAsync(root, "Contoso");
+        var (fabrikam, fabrikamSite) = await CreateOrgAsync(root, "Fabrikam");
+        var fabrikamAgent = await EnrollAgentAsync(root, fabrikam.Id, fabrikamSite.Id, "FABRIKAM-PC1");
+        var tech = await CreateAndLoginAsync("contoso-tech", UserRole.Admin, contoso.Id);
+
+        // An Admin may delete their own organization while it has no endpoints. Their access list is then empty, which used to
+        // mean "every organization".
+        await tech.ExpectAsync(HttpMethod.Delete, $"/api/v1/organizations/{contoso.Id}", null, HttpStatusCode.NoContent);
+
+        Assert.Empty(await tech.GetAsync<List<OrganizationSummaryDto>>("/api/v1/organizations"));
+        Assert.Empty((await tech.GetAsync<PagedResult<EndpointSummaryDto>>("/api/v1/endpoints")).Items);
+        await tech.ExpectAsync(HttpMethod.Get, $"/api/v1/organizations/{fabrikam.Id}", null, HttpStatusCode.NotFound);
+        await tech.ExpectAsync(HttpMethod.Get, $"/api/v1/endpoints/{fabrikamAgent.EndpointId}", null, HttpStatusCode.NotFound);
+        await tech.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{fabrikamAgent.EndpointId}/scan", null, HttpStatusCode.NotFound);
+        await tech.ExpectAsync(HttpMethod.Post, "/api/v1/organizations", new OrganizationRequest("Mine", null, null, null, null, null),
+            HttpStatusCode.Forbidden);
+
+        var me = await tech.GetAsync<CurrentUserDto>("/api/v1/auth/me");
+        Assert.False(me.AllOrganizations);
+        Assert.Empty(me.OrganizationIds);
+        var listed = (await root.GetAsync<List<UserDto>>("/api/v1/users")).Single(u => u.Username == "contoso-tech");
+        Assert.False(listed.AllOrganizations);
+    }
+
+    [Fact]
+    public async Task An_empty_organization_list_still_grants_every_organization_when_it_is_set()
+    {
+        var root = await SuperAdminAsync();
+        var (contoso, _) = await CreateOrgAsync(root, "Contoso");
+        var (fabrikam, _) = await CreateOrgAsync(root, "Fabrikam");
+        var ops = await CreateAndLoginAsync("ops", UserRole.Admin);
+        var id = (await ops.GetAsync<CurrentUserDto>("/api/v1/auth/me")).Id;
+        Assert.True((await ops.GetAsync<CurrentUserDto>("/api/v1/auth/me")).AllOrganizations);
+        Assert.Equal(2, (await ops.GetAsync<List<OrganizationSummaryDto>>("/api/v1/organizations")).Count);
+
+        var restricted = await root.SendAsync<UserDto>(HttpMethod.Put, $"/api/v1/users/{id}/organizations",
+            new OrganizationAccessRequest([contoso.Id]), HttpStatusCode.OK);
+        Assert.False(restricted.AllOrganizations);
+        Assert.Equal([contoso.Id], restricted.OrganizationIds);
+
+        var everything = await root.SendAsync<UserDto>(HttpMethod.Put, $"/api/v1/users/{id}/organizations",
+            new OrganizationAccessRequest([]), HttpStatusCode.OK);
+        Assert.True(everything.AllOrganizations);
+        Assert.Empty(everything.OrganizationIds);
+
+        // Changing access ends the user's sessions; signed in again they reach both organizations.
+        var again = await LoginAsync("ops", DefaultPassword, ops.MfaSecret);
+        Assert.Equal(new[] { contoso.Id, fabrikam.Id }.Order(), (await again.GetAsync<List<OrganizationSummaryDto>>("/api/v1/organizations"))
+            .Select(o => o.Id).Order());
+    }
 }

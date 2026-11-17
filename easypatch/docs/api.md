@@ -130,7 +130,9 @@ the response contains a one-time set-password link), `GET /{id}`, `PUT /{id}` (`
 `POST /{id}/mfa/reset` (removes the authenticator app, passkeys, security keys and recovery
 codes), `POST /{id}/sessions/revoke`, `GET /{id}/external-logins` (linked single sign-on
 accounts), `DELETE /{id}/external-logins/{linkId}`, `PUT /{id}/organizations`
-(`{organizationIds[]}`; an empty list means all organizations). An email address that another
+(`{organizationIds[]}`; an empty list means all organizations). Users carry `allOrganizations`:
+when it is false they reach only `organizationIds`, and an empty list then means none (their
+organizations were deleted). An email address that another
 user has (ignoring case) answers `409 email_in_use`, a taken username `409 username_in_use`,
 and an address that is not a plain `name@domain` `400 validation_failed`.
 

@@ -306,6 +306,8 @@ export interface CurrentUserDto {
   mfaSetupRequired: boolean;
   mustChangePassword: boolean;
   organizationIds: Guid[];
+  /** Every organization. When false, only `organizationIds`, which can be empty: then none. */
+  allOrganizations: boolean;
   lastLoginAt: Instant | null;
   /** An authenticator app (TOTP) is set up. */
   totpEnabled: boolean;
@@ -401,6 +403,8 @@ export interface UserDto {
   lastLoginAt: Instant | null;
   lockoutUntil: Instant | null;
   organizationIds: Guid[];
+  /** Every organization. When false, only `organizationIds`, which can be empty: then none. */
+  allOrganizations: boolean;
   totpEnabled: boolean;
   securityKeyCount: number;
   /** Accounts at single sign-on providers linked to this user. */

@@ -135,9 +135,9 @@ public sealed class HttpTenantContext : ITenantContext
         }
 
         var orgs = user.FindAll(EasyPatchClaims.Organization).Select(c => Guid.Parse(c.Value)).ToHashSet();
-        IsUnrestricted = scheme == ApiTokenAuthenticationHandler.SchemeName
-            ? user.FindFirstValue(EasyPatchClaims.AllOrganizations) == "true" // a scoped token whose organizations were deleted sees nothing
-            : user.GetRole() == UserRole.SuperAdmin || orgs.Count == 0;
+        // Users and tokens restricted to organizations that were all deleted see nothing: only the explicit flag means "all".
+        IsUnrestricted = user.FindFirstValue(EasyPatchClaims.AllOrganizations) == "true"
+                         || (scheme == SessionAuthenticationHandler.SchemeName && user.GetRole() == UserRole.SuperAdmin);
         AllowedOrganizationIds = orgs;
     }
 

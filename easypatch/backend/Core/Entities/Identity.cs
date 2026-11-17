@@ -31,6 +31,13 @@ public sealed class User
     /// <summary>When the user last answered "Not now" to the offer to set up a passkey.</summary>
     public DateTimeOffset? PasskeyPromptDismissedAt { get; set; }
 
+    /// <summary>
+    /// Whether the user reaches every organization. When false they reach only those in <see cref="OrganizationAccess"/>, which
+    /// can be none, for example after their organizations were deleted. An empty list never widens access. Super administrators
+    /// reach every organization whatever this says.
+    /// </summary>
+    public bool AllOrganizations { get; set; } = true;
+
     public List<UserOrganizationAccess> OrganizationAccess { get; set; } = [];
     public List<WebAuthnCredential> WebAuthnCredentials { get; set; } = [];
     public List<ExternalLogin> ExternalLogins { get; set; } = [];

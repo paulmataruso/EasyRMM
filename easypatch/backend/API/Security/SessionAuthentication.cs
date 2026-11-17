@@ -81,6 +81,11 @@ public sealed class SessionAuthenticationHandler(
             new(EasyPatchClaims.MustChangePassword, user.MustChangePassword ? "true" : "false"),
         };
         claims.AddRange(user.OrganizationAccess.Select(a => new Claim(EasyPatchClaims.Organization, a.OrganizationId.ToString())));
+        if (user.AllOrganizations)
+        {
+            claims.Add(new Claim(EasyPatchClaims.AllOrganizations, "true"));
+        }
+
         var identity = new ClaimsIdentity(claims, SchemeName, EasyPatchClaims.Username, EasyPatchClaims.Role);
         return AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName));
     }
