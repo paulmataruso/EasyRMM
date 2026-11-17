@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/paulmataruso/easyrmm/server/internal/netguard"
+	"github.com/paulmataruso/easyrmm/server/internal/proxyproto"
 )
 
 const (
@@ -124,9 +125,62 @@ func hostPort(u *url.URL) string {
 	return net.JoinHostPort(u.Hostname(), port)
 }
 
+// LocalRoute is an EasyPatch co-hosted behind EasyRMM's edge (ADR-0035).
+// EasyRMM reaches it at its loopback listener rather than through its
+// public address, which a server behind NAT often cannot reach from
+// inside. TLS is unchanged: the certificate must still match Hostname.
+type LocalRoute struct {
+	Hostname string
+	// Upstream is EasyPatch's TLS listener on loopback.
+	Upstream string
+	// ProxyProtocol sends a PROXY protocol v2 header first, as the edge
+	// does, naming EasyRMM's own loopback address as the client.
+	ProxyProtocol bool
+}
+
+// ClientOption adjusts NewClient.
+type ClientOption func(*clientOptions)
+
+type clientOptions struct{ local LocalRoute }
+
+// WithLocalRoute connects to https://<route.Hostname> on port 443 through
+// route.Upstream.
+func WithLocalRoute(route LocalRoute) ClientOption {
+	return func(o *clientOptions) { o.local = route }
+}
+
+// dial connects as d does, except that the co-hosted EasyPatch's public
+// address goes to its loopback listener.
+func (r LocalRoute) dial(d *net.Dialer) func(ctx context.Context, network, addr string) (net.Conn, error) {
+	if r.Hostname == "" {
+		return d.DialContext
+	}
+	target := net.JoinHostPort(r.Hostname, "443")
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		if !strings.EqualFold(addr, target) {
+			return d.DialContext(ctx, network, addr)
+		}
+		c, err := d.DialContext(ctx, "tcp", r.Upstream)
+		if err != nil {
+			return nil, err
+		}
+		if r.ProxyProtocol {
+			if _, err := c.Write(proxyproto.Header(c.LocalAddr(), c.RemoteAddr())); err != nil {
+				_ = c.Close()
+				return nil, err
+			}
+		}
+		return c, nil
+	}
+}
+
 // NewClient builds a client for the server at rawURL. caPEM, when set, is
 // trusted besides the system's certificate authorities.
-func NewClient(rawURL, token, caPEM, version string) (*Client, error) {
+func NewClient(rawURL, token, caPEM, version string, opts ...ClientOption) (*Client, error) {
+	var o clientOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	base, err := ParseURL(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("url %w", err)
@@ -145,7 +199,7 @@ func NewClient(rawURL, token, caPEM, version string) (*Client, error) {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Control: netguard.Control}
 	transport := &http.Transport{
 		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           dialer.DialContext,
+		DialContext:           o.local.dial(dialer),
 		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots},
 		TLSHandshakeTimeout:   10 * time.Second,
 		ResponseHeaderTimeout: requestTimeout,

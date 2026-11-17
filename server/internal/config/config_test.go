@@ -247,3 +247,77 @@ func TestSameSite(t *testing.T) {
 		}
 	}
 }
+
+func TestEasyPatchCoHosting(t *testing.T) {
+	load := func(overrides map[string]string) (*Config, error) {
+		m := base()
+		for k, v := range overrides {
+			m[k] = v
+		}
+		return LoadFrom(env(m), noFiles)
+	}
+
+	c, err := load(nil)
+	if err != nil || c.EasyPatch.Enabled() || c.EasyPatch != (EasyPatchHost{}) {
+		t.Fatalf("off by default: %+v %v", c.EasyPatch, err)
+	}
+	// Settings for the upstreams mean nothing without a hostname.
+	c, err = load(map[string]string{"EASYRMM_EASYPATCH_TLS_UPSTREAM": "0.0.0.0:1"})
+	if err != nil || c.EasyPatch.Enabled() {
+		t.Fatalf("upstream without a hostname: %+v %v", c.EasyPatch, err)
+	}
+
+	c, err = load(map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": " Patch.Example.COM. "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := EasyPatchHost{Hostname: "patch.example.com", TLSUpstream: "127.0.0.1:19443", HTTPUpstream: "127.0.0.1:19080", ProxyProtocol: true}
+	if c.EasyPatch != want || !c.EasyPatch.Enabled() {
+		t.Fatalf("defaults: %+v", c.EasyPatch)
+	}
+
+	c, err = load(map[string]string{
+		"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com", "EASYRMM_EASYPATCH_TLS_UPSTREAM": "[::1]:8443",
+		"EASYRMM_EASYPATCH_HTTP_UPSTREAM": "", "EASYRMM_EASYPATCH_PROXY_PROTOCOL": "false",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.EasyPatch.TLSUpstream != "[::1]:8443" || c.EasyPatch.HTTPUpstream != "" || c.EasyPatch.ProxyProtocol {
+		t.Fatalf("overrides: %+v", c.EasyPatch)
+	}
+
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"IP address":           {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "192.0.2.20"}, "must be a DNS name"},
+		"single label":         {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "patch"}, "must be a DNS name"},
+		"URL, not a name":      {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "https://patch.example.com"}, "must be a DNS name"},
+		"bad label":            {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "-patch.example.com"}, "must be a DNS name"},
+		"empty label":          {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "patch..example.com"}, "must be a DNS name"},
+		"long label":           {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": strings.Repeat("a", 64) + ".example.com"}, "must be a DNS name"},
+		"too long":             {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": strings.Repeat("a.", 127) + "com"}, "must be a DNS name"},
+		"the console's name":   {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "rmm.example.com"}, "must differ from EasyRMM's own names"},
+		"remote access's name": {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "mesh.rmm.example.com"}, "must differ from EasyRMM's own names"},
+		"behind a proxy": {map[string]string{
+			"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com", "EASYRMM_TLS_MODE": "offload", "EASYRMM_TRUSTED_PROXIES": "127.0.0.1",
+		}, "needs EasyRMM to own ports 80 and 443"},
+		"TLS upstream on the network": {map[string]string{
+			"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com", "EASYRMM_EASYPATCH_TLS_UPSTREAM": "192.0.2.20:443",
+		}, "EASYRMM_EASYPATCH_TLS_UPSTREAM must be a loopback address and port"},
+		"HTTP upstream on the network": {map[string]string{
+			"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com", "EASYRMM_EASYPATCH_HTTP_UPSTREAM": "patch.example.com:80",
+		}, "EASYRMM_EASYPATCH_HTTP_UPSTREAM must be a loopback address and port"},
+		"upstream without a port": {map[string]string{
+			"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com", "EASYRMM_EASYPATCH_TLS_UPSTREAM": "127.0.0.1",
+		}, "EASYRMM_EASYPATCH_TLS_UPSTREAM"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := load(tc.env)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %v, want one containing %q", err, tc.want)
+			}
+		})
+	}
+}

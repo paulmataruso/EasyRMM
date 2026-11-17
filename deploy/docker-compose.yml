@@ -102,6 +102,12 @@ services:
       EASYRMM_IP_ACCESS: ${EASYRMM_IP_ACCESS:-true}
       EASYRMM_IP_ADDRESSES: ${EASYRMM_IP_ADDRESSES:-}
       EASYRMM_IP_MESH_PORT: ${EASYRMM_IP_MESH_PORT:-4443}
+      # EasyPatch on this same server, behind this edge (ADR-0035,
+      # docs/deployment/easypatch-cohost.md). Empty: not co-hosted.
+      EASYRMM_EASYPATCH_HOSTNAME: ${EASYRMM_EASYPATCH_HOSTNAME:-}
+      EASYRMM_EASYPATCH_TLS_UPSTREAM: ${EASYRMM_EASYPATCH_TLS_UPSTREAM:-}
+      EASYRMM_EASYPATCH_HTTP_UPSTREAM: ${EASYRMM_EASYPATCH_HTTP_UPSTREAM-127.0.0.1:19080}
+      EASYRMM_EASYPATCH_PROXY_PROTOCOL: ${EASYRMM_EASYPATCH_PROXY_PROTOCOL:-true}
     volumes:
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/server:/var/lib/easyrmm
       - ${EASYRMM_TLS_DIR:-/srv/easyrmm/tls}:/etc/easyrmm/tls:ro

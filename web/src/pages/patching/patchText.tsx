@@ -1,5 +1,6 @@
 import type { AgentInstall, ComplianceStatus, PatchJob, PatchLink, PatchPolicy, PatchUpdateState } from "../../api/types";
-import { Badge, Dot, type Tone } from "../../components/ui";
+import { ExternalLink } from "lucide-react";
+import { Badge, buttonClasses, Dot, type Tone } from "../../components/ui";
 import { plural } from "../../lib/format";
 
 export const COMPLIANCE: Record<ComplianceStatus, { label: string; tone: Tone; hint: string }> = {
@@ -223,4 +224,15 @@ export function requester(by: string): string {
   const person = cut > 0 ? token.slice(cut + 5) : "";
   if (/^[^\s@]+@[^\s@]+$/.test(person)) return `${person}, through API token ${token.slice(0, cut)}`;
   return `API token ${token}`;
+}
+
+/** EasyPatch's own console, in a new tab: for what EasyRMM does not show, such as its policies and settings. */
+export function OpenEasyPatch({ href }: { href: string }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={buttonClasses("secondary", "sm")}>
+      <ExternalLink className="size-3.5" aria-hidden />
+      Open EasyPatch
+      <span className="sr-only"> (opens in a new tab)</span>
+    </a>
+  );
 }

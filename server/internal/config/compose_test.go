@@ -27,6 +27,7 @@ func TestComposeEnvironment(t *testing.T) {
 		setup map[string]string // what setup.sh writes for this host
 		mesh  string
 		cert  string
+		ep    EasyPatchHost
 	}{
 		{
 			name: "DNS name",
@@ -45,6 +46,16 @@ func TestComposeEnvironment(t *testing.T) {
 			},
 			mesh: "https://192.0.2.10:4443",
 			cert: "https://127.0.0.1:4443",
+		},
+		{
+			name: "EasyPatch on the same server",
+			setup: map[string]string{
+				"EASYRMM_PUBLIC_URL": "https://rmm.example.com", "EASYRMM_TLS_MODE": "acme",
+				"EASYRMM_ACME_EMAIL": "ops@example.com", "EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com",
+			},
+			mesh: "https://mesh.rmm.example.com",
+			cert: "https://127.0.0.1:443",
+			ep:   EasyPatchHost{Hostname: "patch.example.com", TLSUpstream: "127.0.0.1:19443", HTTPUpstream: "127.0.0.1:19080", ProxyProtocol: true},
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -88,6 +99,9 @@ func TestComposeEnvironment(t *testing.T) {
 			}
 			if cfg.Mesh.CertURL != c.cert {
 				t.Errorf("certificate URL %q, want %s", cfg.Mesh.CertURL, c.cert)
+			}
+			if cfg.EasyPatch != c.ep {
+				t.Errorf("co-hosted EasyPatch %+v, want %+v", cfg.EasyPatch, c.ep)
 			}
 		})
 	}
@@ -218,4 +232,50 @@ func interpolate(raw string, vars map[string]string) (string, error) {
 		return v
 	})
 	return out, err
+}
+
+// TestEasyPatchOverrideMatchesDefaults keeps the files shipped for EasyPatch
+// (ADR-0035) in step with this server's defaults: the override publishes
+// Caddy where EASYRMM_EASYPATCH_*_UPSTREAM point, on loopback only, and runs
+// the Caddyfile that reads PROXY headers.
+func TestEasyPatchOverrideMatchesDefaults(t *testing.T) {
+	c, err := LoadFrom(env(map[string]string{
+		"EASYRMM_PUBLIC_URL": "https://rmm.example.com", "EASYRMM_ACME_EMAIL": "ops@example.com",
+		"EASYRMM_DATABASE_URL": "postgres://a@127.0.0.1/x", "EASYRMM_DATABASE_MIGRATION_URL": "postgres://o@127.0.0.1/x",
+		"EASYRMM_SECRET_KEY": testKey, "EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com",
+	}), noFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	override, err := os.ReadFile("../../../deploy/easypatch/docker-compose.easyrmm.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	caddyfile, err := os.ReadFile("../../../deploy/easypatch/Caddyfile.easyrmm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"ports: !override",
+		`"` + c.EasyPatch.HTTPUpstream + `:80"`,
+		`"` + c.EasyPatch.TLSUpstream + `:443"`,
+		"/etc/caddy/Caddyfile.easyrmm",
+		"./Caddyfile.easyrmm:/etc/caddy/Caddyfile.easyrmm:ro",
+		"EASYPATCH_EDGE_SUBNET: ${EASYPATCH_EDGE_SUBNET:-172.30.0.0/24}",
+	} {
+		if !strings.Contains(string(override), want) {
+			t.Errorf("docker-compose.easyrmm.yml lacks %q", want)
+		}
+	}
+	if regexp.MustCompile(`(?m)^\s*- "(0\.0\.0\.0:)?(80|443):`).Match(override) {
+		t.Error("docker-compose.easyrmm.yml publishes Caddy beyond loopback")
+	}
+	for _, want := range []string{
+		"servers :443 {", "proxy_protocol {", "allow {$EASYPATCH_EDGE_SUBNET:172.30.0.0/24}", "tls\n",
+		"import /etc/caddy/easypatch.caddy", "{$EASYPATCH_DOMAIN} {",
+	} {
+		if !strings.Contains(string(caddyfile), want) {
+			t.Errorf("Caddyfile.easyrmm lacks %q", want)
+		}
+	}
 }

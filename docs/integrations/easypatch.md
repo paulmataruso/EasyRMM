@@ -34,9 +34,12 @@ should first check the device's running EasyPatch jobs.
 
 ## Topology
 
-EasyPatch keeps its own deployment and hostname (e.g. `patch.example.com`),
-on a separate host or a separate IP, because its Caddy binds host ports 80 and
-443. EasyRMM reaches it over HTTPS only.
+EasyPatch keeps its own deployment and hostname (e.g. `patch.example.com`).
+It can run on another host, or on the same server as EasyRMM: EasyRMM's edge
+then keeps ports 80 and 443 and passes EasyPatch's name through, still
+encrypted, to EasyPatch's Caddy on loopback (ADR-0035,
+[easypatch-cohost.md](../deployment/easypatch-cohost.md)). Either way
+EasyRMM reaches it over HTTPS only; on the same server, over loopback.
 
 ## EasyPatch changes
 

@@ -41,7 +41,14 @@ type Service struct {
 
 	// signer signs install instructions (ADR-0031); nil sends none.
 	signer ed25519.PrivateKey
+	// local reaches an EasyPatch co-hosted behind the edge over loopback
+	// (ADR-0035); zero when there is none.
+	local LocalRoute
 }
+
+// SetLocalRoute makes the connector reach the EasyPatch co-hosted on this
+// server through its loopback listener (ADR-0035). Call it before use.
+func (s *Service) SetLocalRoute(r LocalRoute) { s.local = r }
 
 // New builds the connector.
 func New(db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer, version string, log *slog.Logger) *Service {
@@ -150,7 +157,7 @@ func (s *Service) conn(ctx context.Context) (*connRow, *Client, error) {
 	if err != nil {
 		return nil, nil, apperr.Unavailable("easypatch_token", "The EasyPatch API token cannot be opened with this server's secret key. Enter it again in Settings → EasyPatch.")
 	}
-	c, err := NewClient(r.url, string(token), r.caCert, s.version)
+	c, err := NewClient(r.url, string(token), r.caCert, s.version, WithLocalRoute(s.local))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -225,7 +232,7 @@ func (s *Service) UpdateConnection(ctx context.Context, actor audit.Actor, in Co
 	if err := f.Err(); err != nil {
 		return Connection{}, err
 	}
-	c, err := NewClient(u.String(), token, in.CACert, s.version)
+	c, err := NewClient(u.String(), token, in.CACert, s.version, WithLocalRoute(s.local))
 	if err != nil {
 		return Connection{}, apperr.Invalid("url", err.Error())
 	}

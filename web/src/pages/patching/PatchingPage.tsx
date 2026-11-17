@@ -19,6 +19,7 @@ import {
   jobOutcome,
   jobTypeLabel,
   LinkBadge,
+  OpenEasyPatch,
   PatchJobBadge,
   requester,
 } from "./patchText";
@@ -39,7 +40,11 @@ export function PatchingPage() {
 
   return (
     <>
-      <PageHeader title="Patching" subtitle="Operating system and application updates on the devices EasyPatch patches, read from EasyPatch as you look." />
+      <PageHeader
+        title="Patching"
+        subtitle="Operating system and application updates on the devices EasyPatch patches, read from EasyPatch as you look."
+        actions={status.data?.consoleUrl && <OpenEasyPatch href={status.data.consoleUrl} />}
+      />
       {status.isPending ? (
         <Spinner />
       ) : status.isError ? (

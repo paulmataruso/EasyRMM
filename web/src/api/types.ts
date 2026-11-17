@@ -1007,6 +1007,8 @@ export interface PatchStatus {
   configured: boolean;
   canOperate: boolean;
   canSchedule: boolean;
+  /** EasyPatch's own console, to open in a new tab. */
+  consoleUrl?: string;
 }
 
 export type ComplianceStatus = "Compliant" | "MissingUpdates" | "FailedUpdates" | "RebootRequired" | "ScanStale" | "NeverScanned";

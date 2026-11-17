@@ -178,6 +178,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
 	d.EasyPatch = easypatch.New(db, auditLog, sealer, Version, log)
+	if ep := cfg.EasyPatch; ep.Enabled() {
+		d.EasyPatch.SetLocalRoute(easypatch.LocalRoute{Hostname: ep.Hostname, Upstream: ep.TLSUpstream, ProxyProtocol: ep.ProxyProtocol})
+	}
 	d.SSO = sso.New(db, auditLog, sealer, d.Auth, cfg.PublicURL)
 	d.EasyPatch.SetSigner(jobKey)
 	builds, err := agents.LoadBuilds(cfg.AgentDir)

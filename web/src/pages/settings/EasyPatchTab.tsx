@@ -25,7 +25,7 @@ import {
   type Tone,
 } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
-import { LinkBadge } from "../patching/patchText";
+import { LinkBadge, OpenEasyPatch } from "../patching/patchText";
 
 const KEYS = ["/settings/easypatch", "/patching", "/audit"];
 
@@ -184,6 +184,8 @@ function ServerStatus({ conn: c }: { conn: EasyPatchConnection }) {
   if (c.configured) {
     items.push(["Version", c.serverVersion || "—"]);
     if (c.publicUrl && c.publicUrl.replace(/\/+$/, "") !== c.url) items.push(["Public address", <Mono key="p">{c.publicUrl}</Mono>]);
+    const consoleUrl = [c.publicUrl, c.url].find((u) => u?.startsWith("https://"));
+    if (consoleUrl) items.push(["Console", <OpenEasyPatch key="c" href={consoleUrl} />]);
     items.push(["Token", c.canOperate ? "Operator: views, scans and installs" : "Read only: views"]);
     items.push([
       "Install later",

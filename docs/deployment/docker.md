@@ -24,6 +24,9 @@ See [network.md](../architecture/network.md) for the full port plan.
   [Without DNS](#without-dns)).
 * Inbound TCP 443, plus TCP 80 if you use Let's Encrypt HTTP-01 validation,
   and TCP 4443 for remote sessions by IP address.
+* EasyPatch can share the server: EasyRMM keeps 80 and 443 and passes
+  EasyPatch's name through to it. See
+  [easypatch-cohost.md](easypatch-cohost.md).
 * Outbound HTTPS to `github.com` the first time MeshCentral starts: it
   downloads its agent binaries (about 120 MiB) from GitHub releases.
 * Nothing else listening on 443, 4443, 80, 15432, 14430 or 18081. On a

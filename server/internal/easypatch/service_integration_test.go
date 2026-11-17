@@ -594,7 +594,7 @@ func TestFleetAndViews(t *testing.T) {
 	ctx := f.ctx
 
 	st, err := f.svc.Status(ctx, f.viewer)
-	if err != nil || !st.Configured || !st.CanOperate || st.CanSchedule {
+	if err != nil || !st.Configured || !st.CanOperate || st.CanSchedule || st.ConsoleURL != "https://patch.example.com" {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 	_, err = f.svc.Status(ctx, f.none)
@@ -966,7 +966,7 @@ func TestActions(t *testing.T) {
 	wantErr(t, err, apperr.KindConflict, "easypatch_not_configured")
 	_, err = f.svc.Updates(ctx, f.admin, f.web, "")
 	wantErr(t, err, apperr.KindConflict, "")
-	if st, err := f.svc.Status(ctx, f.tech); err != nil || st.Configured {
+	if st, err := f.svc.Status(ctx, f.tech); err != nil || st.Configured || st.ConsoleURL != "" {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 }

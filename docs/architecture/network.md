@@ -11,6 +11,7 @@ All containers use `network_mode: host`. Defaults below are configurable.
 | 14430/tcp | `127.0.0.1` | MeshCentral | No | MeshCentral HTTP with TLS offloaded to the edge |
 | 18080/tcp | `127.0.0.1` | easyrmm-server | No | Only in `offload` mode, behind an upstream NGINX |
 | 18081/tcp | `127.0.0.1` | easyrmm-server | No | Liveness (`/healthz`) and readiness (`/readyz`) probes used by the container health check |
+| 19443/tcp, 19080/tcp | `127.0.0.1` | EasyPatch's Caddy | No | Only when EasyPatch shares the server: EasyRMM's edge passes EasyPatch's name through to them (ADR-0035, [easypatch-cohost.md](../deployment/easypatch-cohost.md)) |
 
 Endpoints only make **outbound** connections to 443. No inbound endpoint
 connectivity is ever required.
@@ -24,8 +25,9 @@ MeshCentral features that would open more ports are disabled: HTTP redirect
 |---|---|
 | `rmm.example.com` | Web UI, API, EasyRMM agent API (`/api/agent/`) and installers |
 | `mesh.rmm.example.com` (configurable) | MeshCentral agents and embedded remote sessions (separate browser origin, ADR-0004) |
+| `patch.example.com` (optional) | EasyPatch on the same server (`EASYRMM_EASYPATCH_HOSTNAME`): passed through by SNI, still encrypted, to EasyPatch's own Caddy (ADR-0035) |
 
-Both resolve to the same address. A wildcard record works too.
+All resolve to the same address. A wildcard record works too.
 
 The two names must share a registrable domain (`rmm.example.com` and
 `mesh.rmm.example.com`, not `rmm.example.com` and `remote.example.net`).
@@ -36,7 +38,8 @@ certificate browsers trust.
 
 The edge routes by `Host`, host and port: the console name goes to the
 application, the MeshCentral name to the remote-access gateway, anything else
-gets HTTP 421.
+gets HTTP 421. A co-hosted EasyPatch's name is taken out earlier, by the TLS
+server name, before the edge does any TLS of its own.
 MeshCentral itself listens on loopback only and never sees a request the
 gateway has not checked.
 

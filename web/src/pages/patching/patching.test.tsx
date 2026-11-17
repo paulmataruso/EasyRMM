@@ -168,6 +168,8 @@ describe("patching page", () => {
     await screen.findByRole("main");
     expect(await screen.findByRole("heading", { name: "Patching", level: 1 })).toBeInTheDocument();
     expect(await main().findByText("WEB-01")).toBeInTheDocument();
+    // Without EasyPatch's address, there is nothing to open.
+    expect(main().queryByText("Open EasyPatch")).not.toBeInTheDocument();
     const table = within(main().getByRole("table"));
     // The status shows under the name on narrow screens and in its own column on wider ones.
     expect(table.getAllByText("Updates missing")).toHaveLength(2);
@@ -319,6 +321,18 @@ describe("patching page", () => {
     await screen.findByRole("main");
     expect(await main().findByText("EasyPatch is not set up")).toBeInTheDocument();
     expect(main().getByRole("link", { name: "Set up EasyPatch" })).toHaveAttribute("href", "/settings?tab=easypatch");
+  });
+
+  it("opens EasyPatch's own console in a new tab", async () => {
+    installFakeApi(patchingRoutes({ "GET /patching": ok({ ...READY, consoleUrl: "https://patch.example.com" }) }));
+    renderApp("/patching");
+    await screen.findByRole("main");
+    // Role queries over the whole fleet table are slow; the link's text is enough to find it.
+    const link = (await main().findByText("Open EasyPatch")).closest("a")!;
+    expect(link).toHaveTextContent("Open EasyPatch (opens in a new tab)");
+    expect(link).toHaveAttribute("href", "https://patch.example.com");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
   });
 
   it("is read-only for a viewer, and when EasyPatch's token cannot act", async () => {
@@ -883,6 +897,7 @@ describe("EasyPatch settings", () => {
     });
     expect(await screen.findByText("Connected to EasyPatch 1.9.0")).toBeInTheDocument();
     expect(await main().findByText("Connected")).toBeInTheDocument();
+    expect(main().getByText("Open EasyPatch").closest("a")).toHaveAttribute("href", "https://patch.example.com");
     expect(main().getByText(/Not supported by this EasyPatch/)).toBeInTheDocument();
     // The stored token is kept unless a new one is pasted.
     expect(main().getByLabelText(/^API token/)).toHaveAttribute("placeholder", "Stored");

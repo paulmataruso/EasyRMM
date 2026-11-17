@@ -93,6 +93,26 @@ type Config struct {
 	SMTP              SMTPConfig
 	Mesh              MeshConfig
 	DevInsecureCookie bool // only for local development over plain HTTP
+	// EasyPatch is an EasyPatch server co-hosted behind EasyRMM's edge
+	// (ADR-0035); zero when there is none.
+	EasyPatch EasyPatchHost
+}
+
+// EasyPatchHost is an EasyPatch running on this server behind EasyRMM's
+// edge (ADR-0035). EasyRMM keeps ports 80 and 443; connections for
+// EasyPatch's hostname pass through, still encrypted, to its own TLS
+// listener on loopback, so EasyPatch keeps its certificates and headers.
+type EasyPatchHost struct {
+	// Hostname is EasyPatch's public name; "" when it is not co-hosted.
+	Hostname string
+	// TLSUpstream is EasyPatch's HTTPS listener (its Caddy), on loopback.
+	TLSUpstream string
+	// HTTPUpstream is its plain-HTTP listener, for its ACME HTTP-01
+	// challenges; "" sends them nowhere (TLS-ALPN-01 still works).
+	HTTPUpstream string
+	// ProxyProtocol sends a PROXY protocol v2 header with each connection,
+	// so EasyPatch sees the client's address instead of EasyRMM's.
+	ProxyProtocol bool
 }
 
 // MeshConfig configures the MeshCentral remote-access integration.
@@ -258,6 +278,15 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 	}
 
 	c.Mesh.CertURL = l.orDefault("EASYRMM_MESH_CERT_URL", defaultCertURL(c))
+	c.EasyPatch = EasyPatchHost{
+		Hostname:      strings.ToLower(strings.TrimSuffix(l.str("EASYRMM_EASYPATCH_HOSTNAME", ""), ".")),
+		TLSUpstream:   l.orDefault("EASYRMM_EASYPATCH_TLS_UPSTREAM", "127.0.0.1:19443"),
+		HTTPUpstream:  l.str("EASYRMM_EASYPATCH_HTTP_UPSTREAM", "127.0.0.1:19080"),
+		ProxyProtocol: l.boolean("EASYRMM_EASYPATCH_PROXY_PROTOCOL", true),
+	}
+	if !c.EasyPatch.Enabled() {
+		c.EasyPatch = EasyPatchHost{}
+	}
 	c.validate(l)
 	if len(l.errs) > 0 {
 		return nil, errors.Join(l.errs...)
@@ -357,6 +386,60 @@ func (c *Config) validate(l *loader) {
 		add("EASYRMM_DEV_INSECURE_COOKIES is only allowed with EASYRMM_TLS_MODE=offload")
 	}
 	c.validateMesh(add)
+	c.validateEasyPatch(add)
+}
+
+// Enabled reports whether EasyPatch is co-hosted.
+func (e EasyPatchHost) Enabled() bool { return e.Hostname != "" }
+
+func (c *Config) validateEasyPatch(add func(string, ...any)) {
+	e := c.EasyPatch
+	if !e.Enabled() {
+		return
+	}
+	if isIP(e.Hostname) || !validHostname(e.Hostname) {
+		add("EASYRMM_EASYPATCH_HOSTNAME must be a DNS name such as patch.example.com, got %q", e.Hostname)
+	}
+	if c.TLSMode == TLSOffload {
+		add("EASYRMM_EASYPATCH_HOSTNAME needs EasyRMM to own ports 80 and 443 (EASYRMM_TLS_MODE acme, manual or internal); with a reverse proxy in front, route EasyPatch's name in the proxy instead")
+	}
+	for _, o := range c.Origins() {
+		if strings.EqualFold(e.Hostname, o.Console.Hostname()) || (o.Mesh != nil && strings.EqualFold(e.Hostname, o.Mesh.Hostname())) {
+			add("EASYRMM_EASYPATCH_HOSTNAME must differ from EasyRMM's own names, got %q", e.Hostname)
+			break
+		}
+	}
+	// EasyPatch's ports are published on loopback only: anything else
+	// would let the network reach it around the edge.
+	upstream := func(key, addr string) {
+		host, _, err := net.SplitHostPort(addr)
+		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
+			add("%s must be a loopback address and port such as 127.0.0.1:19443, got %q", key, addr)
+		}
+	}
+	upstream("EASYRMM_EASYPATCH_TLS_UPSTREAM", e.TLSUpstream)
+	if e.HTTPUpstream != "" {
+		upstream("EASYRMM_EASYPATCH_HTTP_UPSTREAM", e.HTTPUpstream)
+	}
+}
+
+// validHostname accepts DNS names: dot-separated labels of letters, digits
+// and hyphens, at least two labels.
+func validHostname(h string) bool {
+	if len(h) > 253 || !strings.Contains(h, ".") {
+		return false
+	}
+	for _, label := range strings.Split(h, ".") {
+		if label == "" || len(label) > 63 || strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return false
+		}
+		for _, r := range label {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // defaultCertURL is a local address of the listener that serves the

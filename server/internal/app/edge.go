@@ -32,6 +32,9 @@ type edge struct {
 	log     *slog.Logger
 	pki     *pki.Authority
 	servers []*http.Server
+	// router passes a co-hosted EasyPatch's connections through on the
+	// main HTTPS listener (ADR-0035); nil when there is none.
+	router *sniRouter
 }
 
 // knownHost reports whether host (without port) is one we serve.
@@ -147,7 +150,7 @@ func (e *edge) run(ctx context.Context) error {
 		}
 	}
 	if plain != nil && e.cfg.ListenHTTP != "" {
-		e.servers = append(e.servers, e.newServer(e.cfg.ListenHTTP, plain, nil))
+		e.servers = append(e.servers, e.newServer(e.cfg.ListenHTTP, easyPatchHTTP(e.cfg.EasyPatch, plain), nil))
 	}
 
 	errc := make(chan error, len(e.servers))
@@ -159,6 +162,12 @@ func (e *edge) run(ctx context.Context) error {
 		}
 		tlsOn := s.TLSConfig != nil
 		e.log.Info("listening", "addr", ln.Addr().String(), "tls", tlsOn)
+		if tlsOn && s.Addr == e.cfg.ListenHTTPS && e.cfg.EasyPatch.Enabled() {
+			e.router = newSNIRouter(ln, e.cfg.EasyPatch, e.log)
+			ln = e.router
+			e.log.Info("passing EasyPatch through", "hostname", e.cfg.EasyPatch.Hostname, "upstream", e.cfg.EasyPatch.TLSUpstream,
+				"proxyProtocol", e.cfg.EasyPatch.ProxyProtocol)
+		}
 		go func() {
 			var err error
 			if tlsOn {
@@ -247,6 +256,10 @@ func (e *edge) shutdown() {
 	var wg sync.WaitGroup
 	for _, s := range e.servers {
 		wg.Go(func() { _ = s.Shutdown(ctx) })
+	}
+	if e.router != nil {
+		_ = e.router.Close()
+		wg.Go(e.router.closePassing)
 	}
 	wg.Wait()
 }

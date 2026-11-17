@@ -1,0 +1,31 @@
+# EasyPatch behind EasyRMM on the same server (EasyRMM: docs/deployment/easypatch-cohost.md).
+#
+# EasyRMM owns ports 80 and 443. It passes connections for EASYPATCH_DOMAIN through to this Caddy still
+# encrypted, each starting with a PROXY protocol v2 header that names the real client, and forwards this
+# name's ACME HTTP-01 challenges from port 80. Caddy keeps obtaining and renewing its own certificates.
+# The same as Caddyfile, apart from the listener wrappers on port 443.
+{
+	email {$ACME_EMAIL}
+	admin off
+	servers {
+		protocols h1 h2
+	}
+	servers :443 {
+		protocols h1 h2
+		listener_wrappers {
+			# Only EasyRMM may say who the client is. Its connections arrive from this network's gateway
+			# (Docker's port publishing); connections without a header are served as before.
+			proxy_protocol {
+				timeout 5s
+				allow {$EASYPATCH_EDGE_SUBNET:172.30.0.0/24}
+			}
+			tls
+		}
+	}
+}
+
+import /etc/caddy/easypatch.caddy
+
+{$EASYPATCH_DOMAIN} {
+	import easypatch
+}

@@ -110,6 +110,20 @@ type Status struct {
 	Configured  bool `json:"configured"`
 	CanOperate  bool `json:"canOperate"`
 	CanSchedule bool `json:"canSchedule"`
+	// ConsoleURL is EasyPatch's own console, for people to open: its public
+	// address, else the address EasyRMM uses. "" when not configured.
+	ConsoleURL string `json:"consoleUrl,omitempty"`
+}
+
+// consoleURL is the address people open EasyPatch's console at. Only an
+// https:// address is offered: EasyPatch reports its public address itself.
+func consoleURL(conn Connection) string {
+	for _, raw := range []string{conn.PublicURL, conn.URL} {
+		if u, err := ParseURL(raw); err == nil {
+			return u.String()
+		}
+	}
+	return ""
 }
 
 // Status says whether patching is available, to anyone who may see it
@@ -122,8 +136,12 @@ func (s *Service) Status(ctx context.Context, c access.Caller) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	return Status{Configured: conn.Configured, CanOperate: conn.CanOperate,
-		CanSchedule: slices.Contains(conn.Capabilities, CapabilityScheduledInstalls)}, nil
+	st := Status{Configured: conn.Configured, CanOperate: conn.CanOperate,
+		CanSchedule: slices.Contains(conn.Capabilities, CapabilityScheduledInstalls)}
+	if conn.Configured {
+		st.ConsoleURL = consoleURL(conn)
+	}
+	return st, nil
 }
 
 // ---------------------------------------------------------------- devices

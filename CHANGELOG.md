@@ -8,6 +8,16 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- EasyPatch on the same server (ADR-0035): with `EASYRMM_EASYPATCH_HOSTNAME`
+  set, EasyRMM's edge keeps ports 80 and 443 and passes EasyPatch's name
+  through, still encrypted, to EasyPatch's own Caddy on loopback, with a
+  PROXY protocol header so EasyPatch still sees each client's address.
+  EasyPatch keeps its own certificates (HTTP-01 and TLS-ALPN-01 both work
+  through EasyRMM), headers and URL; EasyRMM's connector reaches it over
+  loopback. `deploy/easypatch/` has the Compose override and Caddyfile for
+  EasyPatch 1.9.0; the guide is `docs/deployment/easypatch-cohost.md`.
+  **Open EasyPatch** on the Patching page and in Settings → EasyPatch opens
+  its own console.
 - Single sign-on with OpenID Connect (ADR-0034): providers (Entra ID,
   Google, Okta, Keycloak, Authentik…) set up under **Settings → Single
   sign-on**; "Sign in with …" on the sign-in page; the code flow with PKCE,
