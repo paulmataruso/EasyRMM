@@ -106,3 +106,7 @@ EasyRMM is licensed under the [GNU Affero General Public License v3.0 or
 later](LICENSE). MeshCentral and MeshAgent are Apache-2.0 projects by their
 respective authors. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 EasyRMM is not affiliated with the MeshCentral project.
+
+EasyPatch, under [`easypatch/`](easypatch/), is a separate product with its
+own licence (FSL-1.1-ALv2). [LICENSING.md](LICENSING.md) explains how the two
+licences apply in this repository.
