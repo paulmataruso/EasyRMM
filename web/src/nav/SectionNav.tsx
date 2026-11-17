@@ -11,6 +11,7 @@ import {
   Hourglass,
   Library,
   ListChecks,
+  LogIn,
   MapPin,
   Monitor,
   MonitorSmartphone,
@@ -666,6 +667,7 @@ export function settingsParts(can: (p: Permission) => boolean): { id: string; la
     { id: "agent-updates", label: "Agent updates", icon: <ArrowUpCircle className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "forwarding", label: "Audit forwarding", icon: <Send className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "easypatch", label: "EasyPatch", icon: <ShieldCheck className="size-4" aria-hidden />, show: can("settings.manage") },
+    { id: "sso", label: "Single sign-on", icon: <LogIn className="size-4" aria-hidden />, show: can("settings.manage") },
   ]
     .filter((p) => p.show)
     .map(({ id, label, icon }) => ({ id, label, icon }));

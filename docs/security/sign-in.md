@@ -2,7 +2,8 @@
 
 Source of truth: `server/internal/auth/` (`service.go` for passwords,
 sessions, authenticator apps and recovery codes; `webauthn.go` for security
-keys and passkeys). Design: ADR-0006 and ADR-0032.
+keys and passkeys). Design: ADR-0006 and ADR-0032. Signing in through an
+identity provider (OpenID Connect) is in [single-sign-on.md](single-sign-on.md).
 
 ## Second factors
 

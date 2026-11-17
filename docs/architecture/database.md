@@ -94,6 +94,8 @@ Reached only through the authentication service, at platform scope, like
 | Table | Notes |
 |---|---|
 | `user_webauthn_credentials` | One row per registered security key or passkey: its owner, credential id (unique across all users), the name its owner gave it (unique per user), the credential as go-webauthn records it (public key, signature counter, flags, transports, AAGUID), when it was added and last used. Removed with the user, by the owner, or by an administrator's second-factor reset |
+| `identity_providers` | Single sign-on providers (ADR-0034): name (unique), issuer, client id, the client secret sealed under the secret key (additional data: the provider's id), allowed email domains, whether its addresses count as verified and whether it is trusted for MFA, enabled. Super administrators only |
+| `user_identities` | A provider's account (provider and ID token `sub`) linked to a user, with the email it had when linked and when it was last used. One per user per provider; removed with the user, the provider, or by the user (unlink) |
 | `webauthn_challenges` | A ceremony in progress: what the server asked the browser for, keyed by its challenge, for five minutes. Registration and the sign-in step belong to a session (and go with it); passkey sign-in has none yet. Each is deleted when answered; expired ones are deleted when the next one starts |
 
 ## Sign-in hardening (migration 00016)

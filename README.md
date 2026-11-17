@@ -78,6 +78,7 @@ Tests sit beside the code they test (`*_test.go`, `*_integration_test.go`,
 ```bash
 make test-db                 # disposable PostgreSQL 18 on 127.0.0.1:55432
 make test-mesh               # disposable MeshCentral for the remote-access tests
+make test-oidc               # disposable Dex (OpenID Connect provider) for the single sign-on tests
 export EASYRMM_TEST_DATABASE_URL='postgres://postgres:easyrmm-test-only@127.0.0.1:55432/postgres?sslmode=disable'
 make check                   # format, vet, lint, unit + integration tests, coverage floors
 make web-test                # console typecheck and unit tests

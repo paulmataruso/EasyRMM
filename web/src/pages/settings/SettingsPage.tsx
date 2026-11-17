@@ -8,6 +8,7 @@ import { AuditForwardingTab } from "./AuditForwardingTab";
 import { AuditTab } from "./AuditTab";
 import { EasyPatchTab } from "./EasyPatchTab";
 import { RemoteAccessTab } from "./RemoteAccessTab";
+import { SingleSignOnTab } from "./SingleSignOnTab";
 import { UsersTab } from "./UsersTab";
 
 const SUBTITLES: Record<string, string> = {
@@ -17,6 +18,7 @@ const SUBTITLES: Record<string, string> = {
   "agent-updates": "Keep every EasyRMM agent on the build this server ships, a few devices at a time.",
   forwarding: "A copy of every audit record, sent as it is written to your syslog server or SIEM.",
   easypatch: "The EasyPatch server that patches your devices, and which of its organizations each EasyRMM organization is.",
+  sso: "Identity providers people can sign in through with OpenID Connect, instead of their EasyRMM password.",
 };
 
 /**
@@ -47,6 +49,7 @@ export function SettingsPage() {
       {part.id === "agent-updates" && <AgentUpdatesTab />}
       {part.id === "forwarding" && <AuditForwardingTab />}
       {part.id === "easypatch" && <EasyPatchTab />}
+      {part.id === "sso" && <SingleSignOnTab />}
     </>
   );
 }

@@ -1,7 +1,8 @@
 # Go integration tests against a real PostgreSQL (same version and roles as
 # production) and a real MeshCentral (the release production runs, with a
-# real MeshAgent connecting through the EasyRMM gateway), with per-package
-# coverage floors. Both run with Docker host networking, as in production.
+# real MeshAgent connecting through the EasyRMM gateway) and a real OpenID
+# Connect provider (Dex), with per-package coverage floors. All run with
+# Docker host networking, as in production.
 name: Integration tests
 
 on:
@@ -13,7 +14,7 @@ permissions:
 
 jobs:
   postgres:
-    name: PostgreSQL and MeshCentral integration
+    name: PostgreSQL, MeshCentral and Dex integration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -26,6 +27,8 @@ jobs:
         run: make test-db
       - name: Start MeshCentral
         run: make test-mesh
+      - name: Start Dex (OpenID Connect provider)
+        run: make test-oidc
       - name: Pull the test agent image
         run: docker pull "$(make -s print-test-agent-image)"
       - name: Unit + integration tests with coverage gates
@@ -55,3 +58,6 @@ jobs:
       - name: MeshCentral logs on failure
         if: failure()
         run: docker logs easyrmm-testmesh 2>&1 | tail -200
+      - name: Dex logs on failure
+        if: failure()
+        run: docker logs easyrmm-testoidc 2>&1 | tail -200

@@ -81,6 +81,10 @@ func NewSessions(resolver SessionResolver, masterKey []byte, origins []string, s
 // CookieName returns the session cookie name.
 func (s *Sessions) CookieName() string { return s.cookieName }
 
+// Secure reports whether cookies carry the Secure attribute and the __Host-
+// prefix (always, except in the plain-HTTP development mode).
+func (s *Sessions) Secure() bool { return s.secure }
+
 // CSRFToken derives the synchronizer token for a session token. It changes
 // whenever the session token is rotated (sign-in steps, MFA).
 func (s *Sessions) CSRFToken(sessionToken string) string {

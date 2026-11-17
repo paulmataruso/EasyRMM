@@ -12,6 +12,9 @@ MESHCENTRAL_IMAGE ?= ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11
 TEST_AGENT_IMAGE ?= debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 TEST_MESH_DIR ?= $(or $(TMPDIR),/tmp)/easyrmm-testmesh
 TEST_MESH_URL ?= http://127.0.0.1:24430
+# The OpenID Connect provider single sign-on is tested against.
+DEX_IMAGE ?= ghcr.io/dexidp/dex:v2.46.1@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab
+TEST_OIDC_DIR ?= $(or $(TMPDIR),/tmp)/easyrmm-testoidc
 
 .PHONY: help
 help: ## Show this help
@@ -62,16 +65,25 @@ test-mesh: ## Start a disposable MeshCentral for integration tests (host network
 test-mesh-stop: ## Stop the test MeshCentral
 	MESHCENTRAL_IMAGE=$(MESHCENTRAL_IMAGE) ./scripts/test-meshcentral.sh stop
 
+.PHONY: test-oidc
+test-oidc: ## Start a disposable Dex (OpenID Connect provider) for single sign-on tests (host networking)
+	DEX_IMAGE=$(DEX_IMAGE) EASYRMM_TEST_OIDC_DIR=$(TEST_OIDC_DIR) ./scripts/test-oidc.sh
+
+.PHONY: test-oidc-stop
+test-oidc-stop: ## Stop the test Dex
+	DEX_IMAGE=$(DEX_IMAGE) ./scripts/test-oidc.sh stop
+
 .PHONY: print-test-agent-image
 print-test-agent-image:
 	@echo $(TEST_AGENT_IMAGE)
 
 .PHONY: test-integration
-test-integration: ## Go unit + integration tests against PostgreSQL and MeshCentral, with coverage gates
+test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral and Dex, with coverage gates
 	EASYRMM_TEST_DATABASE_URL="$${EASYRMM_TEST_DATABASE_URL:-$(TEST_DB_URL)}" \
 	EASYRMM_TEST_MESH_DIR="$${EASYRMM_TEST_MESH_DIR:-$(TEST_MESH_DIR)/config}" \
 	EASYRMM_TEST_MESH_URL="$${EASYRMM_TEST_MESH_URL:-$(TEST_MESH_URL)}" \
 	EASYRMM_TEST_AGENT_IMAGE="$${EASYRMM_TEST_AGENT_IMAGE:-$(TEST_AGENT_IMAGE)}" \
+	EASYRMM_TEST_OIDC_DIR="$${EASYRMM_TEST_OIDC_DIR:-$(TEST_OIDC_DIR)}" \
 		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
 

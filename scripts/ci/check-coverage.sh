@@ -57,6 +57,10 @@ floors=(
   # endpoint, and decides which EasyRMM user may act on which endpoint.
   "server/internal/easypatch               90"
   "server/internal/httpapi/easypatchapi    95"
+  # Single sign-on: a way in that skips the password, and sometimes the
+  # second factor.
+  "server/internal/sso                     85"
+  "server/internal/httpapi/ssoapi          90"
   # Outbound connections a Super Administrator configures: no cloud
   # metadata or link-local addresses.
   "server/internal/netguard                95"

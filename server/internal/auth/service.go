@@ -351,6 +351,100 @@ func (s *Service) Login(ctx context.Context, email, password string, meta Reques
 	return token, sess, nil
 }
 
+// ErrAccountUnavailable: the account is disabled or locked, so another
+// system's word that this is its owner is not enough to sign in.
+var ErrAccountUnavailable = errors.New("account is disabled or locked")
+
+// ExternalSignIn is a sign-in another system vouched for: a single sign-on
+// through an identity provider (ADR-0034).
+type ExternalSignIn struct {
+	UserID uuid.UUID
+	Email  string
+	// Method names it in the audit log ("oidc"); Details add to the event.
+	Method  string
+	Details map[string]any
+	// SecondFactorDone: the provider is trusted to have asked for a second
+	// factor, so EasyRMM does not ask for its own.
+	SecondFactorDone bool
+}
+
+// SignInExternal starts a session for a user another system authenticated.
+// It is rate-limited with password sign-in, refused for disabled or locked
+// accounts, and needs EasyRMM's second factor (or its set-up) next, as
+// after a password, unless SecondFactorDone.
+func (s *Service) SignInExternal(ctx context.Context, in ExternalSignIn, meta RequestMeta) (string, *Session, error) {
+	details := func(extra map[string]any) map[string]any {
+		d := map[string]any{"method": in.Method}
+		for k, v := range in.Details {
+			d[k] = v
+		}
+		for k, v := range extra {
+			d[k] = v
+		}
+		return d
+	}
+	actor := userActor(in.UserID, in.Email, meta)
+	if meta.IP.IsValid() && !s.ipLimit.Allow("login:"+LimitKey(meta.IP)) {
+		_ = s.audit.Record(ctx, audit.Event{Actor: actor, Action: "auth.login", Outcome: audit.Denied, Details: details(map[string]any{"reason": "rate_limited"})})
+		return "", nil, ErrRateLimited
+	}
+	var token string
+	var sess *Session
+	failure := ""
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		var status string
+		var totpEnabled, lockedUntil *time.Time
+		var hasKeys bool
+		err := tx.QueryRow(ctx, `SELECT status, totp_enabled_at, locked_until,
+				EXISTS (SELECT 1 FROM user_webauthn_credentials c WHERE c.user_id = users.id)
+			FROM users WHERE id = $1 FOR UPDATE`, in.UserID).Scan(&status, &totpEnabled, &lockedUntil, &hasKeys)
+		if errors.Is(err, pgx.ErrNoRows) {
+			failure = "unknown_account"
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		switch {
+		case status != "active":
+			failure = "disabled"
+			return nil
+		case lockedUntil != nil && s.now().Before(*lockedUntil):
+			failure = "locked"
+			return nil
+		}
+		state := StateActive
+		switch {
+		case in.SecondFactorDone:
+		case totpEnabled != nil || hasKeys:
+			state = StateMFARequired
+		case s.cfg.RequireMFA:
+			state = StateMFAEnrollment
+		}
+		token, sess, err = s.createSession(ctx, tx, in.UserID, state, meta)
+		if err != nil {
+			return err
+		}
+		if state == StateActive {
+			if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1`, in.UserID); err != nil {
+				return err
+			}
+		}
+		return s.audit.Write(ctx, tx, audit.Event{
+			Actor: actor, Action: "auth.login", Outcome: audit.Success,
+			TargetType: "session", TargetID: sess.ID.String(), Details: details(map[string]any{"state": string(state)}),
+		})
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("auth: external sign-in: %w", err)
+	}
+	if failure != "" {
+		_ = s.audit.Record(ctx, audit.Event{Actor: actor, Action: "auth.login", Outcome: audit.Failure, Details: details(map[string]any{"reason": failure})})
+		return "", nil, ErrAccountUnavailable
+	}
+	return token, sess, nil
+}
+
 func (s *Service) createSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID, state SessionState, meta RequestMeta) (string, *Session, error) {
 	token, hash, err := NewToken()
 	if err != nil {

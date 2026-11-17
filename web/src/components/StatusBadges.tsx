@@ -59,6 +59,11 @@ const ACTIONS: Record<string, string> = {
   "auth.session_revoke": "Ended a session",
   "auth.webauthn_add": "Added a security key",
   "auth.webauthn_remove": "Removed a security key",
+  "auth.sso_link": "Linked a single sign-on account",
+  "auth.sso_unlink": "Unlinked a single sign-on account",
+  "sso.provider_create": "Added identity provider",
+  "sso.provider_update": "Changed identity provider",
+  "sso.provider_delete": "Removed identity provider",
   "setup.complete": "Completed first-run setup",
   "organization.create": "Created organization",
   "organization.update": "Updated organization",
@@ -141,6 +146,7 @@ export const ACTION_GROUPS: [string, string][] = [
   ["audit_forwarding", "Audit forwarding"],
   ["patch", "Patching"],
   ["easypatch", "EasyPatch settings"],
+  ["sso", "Single sign-on settings"],
   ["setup", "Setup"],
 ];
 

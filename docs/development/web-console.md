@@ -39,7 +39,7 @@ No MeshCentral runs in this setup, so the Devices pages show remote access
 as unavailable and the device list stays empty. Embedded remote sessions need
 HTTPS on two host names under one parent domain (ADR-0014); they are covered
 by the Go integration tests against a real MeshCentral and agent
-(`make test-mesh`, `make test-integration`), not by the console's dev setup.
+(`make test-mesh`, `make test-oidc`, `make test-integration`), not by the console's dev setup.
 
 ## Layout
 

@@ -40,6 +40,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/reportsapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/ssoapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
@@ -51,6 +52,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/remote"
 	"github.com/paulmataruso/easyrmm/server/internal/reports"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
+	"github.com/paulmataruso/easyrmm/server/internal/sso"
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
 	"github.com/paulmataruso/easyrmm/server/internal/users"
 	"github.com/paulmataruso/easyrmm/server/internal/webui"
@@ -92,6 +94,8 @@ type Deps struct {
 	AuditFwd *auditfwd.Service
 	// EasyPatch connects patching to an EasyPatch server (ADR-0030).
 	EasyPatch *easypatch.Service
+	// SSO is single sign-on with OpenID Connect (ADR-0034).
+	SSO *sso.Service
 	// AgentBuilds are the agent binaries the server hands out.
 	AgentBuilds *agents.Builds
 	// PKI is the internal certificate authority, for addresses no public CA
@@ -174,6 +178,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
 	d.EasyPatch = easypatch.New(db, auditLog, sealer, Version, log)
+	d.SSO = sso.New(db, auditLog, sealer, d.Auth, cfg.PublicURL)
 	d.EasyPatch.SetSigner(jobKey)
 	builds, err := agents.LoadBuilds(cfg.AgentDir)
 	if err != nil {
@@ -305,6 +310,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	reportsapi.New(d.Reports).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)
 	easypatchapi.New(d.EasyPatch).Register(mux)
+	ssoapi.New(d.SSO, d.Sessions, cfg.PublicURL).Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
 	mux.Handle("GET /api/v1/health", httpapi.Handle(func(w http.ResponseWriter, _ *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": Version})

@@ -1244,3 +1244,52 @@ export interface PatchActionResult {
   failed: number;
   results: { deviceId: string; deviceName: string; ok: boolean; jobId?: string; message?: string }[];
 }
+
+/** An identity provider for single sign-on (ADR-0034). The client secret is never returned. */
+export interface SsoProvider {
+  id: string;
+  name: string;
+  issuer: string;
+  clientId: string;
+  allowedDomains: string[];
+  trustEmail: boolean;
+  trustMfa: boolean;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Creates or changes a provider; an empty clientSecret keeps the stored one. */
+export interface SsoProviderInput {
+  name: string;
+  issuer: string;
+  clientId: string;
+  clientSecret: string;
+  allowedDomains: string[];
+  trustEmail: boolean;
+  trustMfa: boolean;
+  enabled: boolean;
+}
+
+export interface SsoSettings {
+  /** What administrators register with every provider. */
+  redirectUri: string;
+  providers: SsoProvider[];
+}
+
+/** An enabled provider on the sign-in page. */
+export interface SsoButton {
+  id: string;
+  name: string;
+  /** Begins the sign-in, at the public URL. */
+  startUrl: string;
+}
+
+/** A provider account linked to the signed-in user. */
+export interface LinkedIdentity {
+  providerId: string;
+  providerName: string;
+  email: string;
+  createdAt: string;
+  lastUsedAt?: string | null;
+}

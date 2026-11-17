@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router";
-import { CheckCircle2, KeyRound, Smartphone } from "lucide-react";
+import { CheckCircle2, KeyRound, LogIn, Smartphone } from "lucide-react";
 import { api, fieldError, request } from "../../api/client";
 import { useApi } from "../../api/hooks";
-import type { AuthOptions, ConfirmTotpResult, SecurityKeyAdded, SessionView, TotpEnrollment } from "../../api/types";
+import type { AuthOptions, ConfirmTotpResult, SecurityKeyAdded, SessionView, SsoButton, TotpEnrollment } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { createKey, getKey, KeyCancelled, keyAvailability, type KeyAvailability } from "../../auth/webauthn";
 import { CopyButton, DownloadButton, OneTimeNotice } from "../../components/Copy";
@@ -147,12 +147,32 @@ export function SetupPage() {
 // Sign-in and second factor
 // ---------------------------------------------------------------------------------------------
 
+/** Why a single sign-on came back to the sign-in page (ADR-0034), as the server names it. */
+export const SSO_ERRORS: Record<string, string> = {
+  expired: "The single sign-on did not finish in this browser, or took more than 10 minutes. Try again.",
+  provider: "The identity provider did not complete the sign-in. Try again; if it keeps failing, ask an administrator to check the provider's settings.",
+  unavailable: "That single sign-on is not available right now. Sign in with your password, or ask an administrator.",
+  no_account: "There is no EasyRMM account for the email address your identity provider gave. Ask an administrator to invite you.",
+  domain: "Your identity provider's email address is not in a domain allowed to sign in this way. Ask an administrator.",
+  unverified: "Your identity provider did not confirm your email address, so EasyRMM cannot match it to an account. Ask an administrator.",
+  linked_other:
+    "Your EasyRMM account is linked to a different account at this identity provider. Sign in with that one, or unlink it under Account first.",
+  account: "This EasyRMM account is disabled or temporarily locked. Ask an administrator.",
+  rate_limited: "Too many sign-in attempts from your network. Wait a few minutes and try again.",
+};
+
+export function ssoErrorMessage(code: string): string {
+  return SSO_ERRORS[code] ?? "Single sign-on failed. Try again, or sign in with your password.";
+}
+
 export function LoginPage() {
   const { applySession, sessionEnded, setupEmail } = useAuth();
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const options = useApi<AuthOptions>("/auth/options", undefined, { staleTime: 300_000 });
+  const sso = useApi<{ providers: SsoButton[] }>("/auth/sso", undefined, { staleTime: 300_000 });
   const returnTo = safeReturnTo(params.get("returnTo"));
+  const ssoError = params.get("sso_error");
   const emailParam = params.get("email") || setupEmail;
   const [email, setEmail] = useState(emailParam ?? "");
   const [password, setPassword] = useState("");
@@ -223,7 +243,8 @@ export function LoginPage() {
       <form onSubmit={submit} className="flex flex-col gap-3.5" noValidate>
         {setupEmail && <Alert tone="ok">Setup is complete. Sign in with the account you just created.</Alert>}
         {params.get("reset") === "done" && <Alert tone="ok">Your password is set. Sign in with it now.</Alert>}
-        {sessionEnded && !error && <Alert tone="info">Your session ended. Sign in again to continue.</Alert>}
+        {sessionEnded && !error && !ssoError && <Alert tone="info">Your session ended. Sign in again to continue.</Alert>}
+        {ssoError && !error && <Alert tone="danger">{ssoErrorMessage(ssoError)}</Alert>}
         <TextField
           ref={emailRef}
           label="Email"
@@ -257,6 +278,16 @@ export function LoginPage() {
             Sign in with a passkey
           </Button>
         )}
+        {(sso.data?.providers ?? []).map((p) => (
+          <a
+            key={p.id}
+            href={returnTo !== "/" ? `${p.startUrl}?returnTo=${encodeURIComponent(returnTo)}` : p.startUrl}
+            className={`${buttonClasses("secondary")} w-full`}
+          >
+            <LogIn className="size-4" aria-hidden />
+            Sign in with {p.name}
+          </a>
+        ))}
         {!keys.usable && keys.why === "address" && (
           <p className="text-center text-xs text-muted">
             Passkeys work at{" "}

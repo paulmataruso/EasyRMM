@@ -154,6 +154,9 @@ export function baseRoutes(session: SessionView | null): Record<string, FakeHand
       webauthn: { available: false, reason: "Security keys and passkeys need EasyRMM to be reached by a name (EASYRMM_PUBLIC_URL), not an IP address." },
     }),
     "POST /auth/logout": noContent,
+    // Single sign-on: none set up. The sign-in and account pages ask.
+    "GET /auth/sso": ok({ providers: [] }),
+    "GET /auth/identities": ok({ items: [] }),
     "GET /alerts/summary": ok({ active: 0, critical: 0, warning: 0, acknowledged: 0, devices: 0 }),
     "GET /alerts": ok({ items: [] }),
     // The sidebar's section navigation (nav/SectionNav) and the dashboard's recent connections. Tests that care

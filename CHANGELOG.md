@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Single sign-on with OpenID Connect (ADR-0034): providers (Entra ID,
+  Google, Okta, Keycloak, Authentik…) set up under **Settings → Single
+  sign-on**; "Sign in with …" on the sign-in page; the code flow with PKCE,
+  state and nonce in a sealed cookie; accounts linked at the first sign-in
+  by a verified email in an allowed domain, then by the provider's subject;
+  EasyRMM's second factor still asked for unless the provider is declared to
+  enforce MFA; linked accounts listed and unlinked under **Account**.
+  Tested against a real provider (Dex) in CI.
 - An offer of a passkey after sign-in, for people without one: add it
   there (password again, named after the device), "Not now" (asked again
   in 30 days) or "Don't ask again". Only where passkeys work: a DNS name,
