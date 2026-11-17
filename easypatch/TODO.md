@@ -22,6 +22,13 @@ release contains.
   only a broken or hostile agent hits it, and only for its own endpoint. Found by EasyRMM's contract tests
   (`server/internal/easypatch/contract_test.go`). Reject null lists in the agent request DTOs
   (`shared/EasyPatch.Contracts/Agent/AgentDtos.cs`) for every agent endpoint, with tests.
+- [ ] **Reverse proxy: run Caddy as a non-root user.** `deployment/caddy/Dockerfile` runs as root, as Caddy's
+  image does, to bind ports 80 and 443; `docker-compose.yml` already drops every other capability, mounts it
+  read-only and sets `no-new-privileges`. A non-root user cannot bind them with `no-new-privileges` set (it rules
+  out a file capability), so the move needs either high container ports published as 80 and 443, or the
+  sysctl `net.ipv4.ip_unprivileged_port_start`, and a one-time ownership change of existing installations'
+  `caddy_data` and `caddy_config` volumes on upgrade. Trivy's DS-0002 finding is excepted in the repository's
+  `.trivyignore.yaml` until then; remove that entry with the fix.
 
 ## Test on a real instance
 

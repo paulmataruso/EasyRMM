@@ -104,10 +104,10 @@ public sealed class NotificationRendererTests
         var m = AlertEngine.BuildMessage(NotificationKind.AlertsOpened, [Alert("<script>alert(1)</script> | [x](y)")], Orgs, "https://x.test");
         Assert.DoesNotContain("<script>", NotificationRenderer.Html(m), StringComparison.Ordinal);
         Assert.Contains("Contoso &amp; Co", NotificationRenderer.Html(m), StringComparison.Ordinal);
-        var slack = JsonDocument.Parse(NotificationRenderer.Slack(m)).RootElement.GetProperty("text").GetString()!;
+        var slack = JsonElement.Parse(NotificationRenderer.Slack(m)).GetProperty("text").GetString()!;
         Assert.DoesNotContain("<script>", slack, StringComparison.Ordinal);
 
-        var teams = JsonDocument.Parse(NotificationRenderer.Teams(m)).RootElement;
+        var teams = JsonElement.Parse(NotificationRenderer.Teams(m));
         Assert.Equal("message", teams.GetProperty("type").GetString());
         var card = teams.GetProperty("attachments")[0].GetProperty("content");
         Assert.Equal("AdaptiveCard", card.GetProperty("type").GetString());
@@ -120,7 +120,7 @@ public sealed class NotificationRendererTests
         var m = AlertEngine.BuildMessage(NotificationKind.AlertsOpened, [Alert("PC-01 offline")], Orgs, "https://x.test");
         var delivery = Guid.NewGuid();
         var body = NotificationRenderer.Generic(m, delivery, Now);
-        var doc = JsonDocument.Parse(body).RootElement;
+        var doc = JsonElement.Parse(body);
         Assert.Equal("alerts.opened", doc.GetProperty("event").GetString());
         Assert.Equal(delivery.ToString(), doc.GetProperty("deliveryId").GetString());
         Assert.Equal("Contoso & Co", doc.GetProperty("alerts")[0].GetProperty("organization").GetString());

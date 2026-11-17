@@ -1,8 +1,10 @@
 # Findings of gitleaks' generic-api-key rule that are not secrets, by
 # fingerprint (commit:file:rule:line). Each was checked by hand.
 
-# rsyslog's streamDriver.authMode="x509/certvalid", a documented setting.
+# rsyslog's TLS authentication mode, x509/certvalid, a documented setting;
+# and the first version of this file, whose comment quoted it.
 af47ea86caf246c8b9433ed9146cf7c16d14586f:docs/operations/audit-forwarding.md:generic-api-key:95
+5215863652191a0f6c7fe0395807c55cc4b14e30:.gitleaksignore:generic-api-key:4
 
 # Test certificate key pins: the SHA-256 of an empty string.
 ce67feb1650acbb4e827f6f71e38426f0a73a48a:server/internal/httpapi/agentapi/agentapi_test.go:generic-api-key:18

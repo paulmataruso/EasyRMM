@@ -14,19 +14,33 @@ permissions:
   contents: read
 
 jobs:
+  # Every commit reachable from the checked-out commit, every time: it takes
+  # seconds. (gitleaks-action scans only a pull request's own range, which it
+  # cannot work out when the range brings in another repository's history,
+  # as EasyPatch's import did, nor beyond its 250th commit.) Findings that are
+  # not secrets are listed in .gitleaksignore.
   secrets:
     name: Secret scanning (gitleaks)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: "false"
-          GITLEAKS_ENABLE_COMMENTS: "false"
+      - name: Scan the history
+        shell: bash
+        # The image runs as root and the checkout belongs to the runner's
+        # user, so git needs safe.directory. When git fails, gitleaks still
+        # says "no leaks found" and exits 0: a scan of no commits fails here.
+        run: |
+          docker run --rm --network none -v "$PWD:/repo:ro" -w /repo \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/repo \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git --no-banner --redact --verbose --log-opts=HEAD /repo 2>&1 | tee "$RUNNER_TEMP/gitleaks.log"
+          if ! grep -qE '[1-9][0-9]* commits scanned' "$RUNNER_TEMP/gitleaks.log" || grep -q 'stderr is not empty' "$RUNNER_TEMP/gitleaks.log"; then
+            echo "::error::gitleaks could not read the history"
+            exit 1
+          fi
 
   govulncheck:
     name: Go vulnerabilities (govulncheck)
@@ -73,6 +87,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          # Exceptions scoped to files, each with its reason.
+          TRIVY_IGNOREFILE: .trivyignore.yaml
         with:
           scan-type: fs
           scanners: vuln,misconfig

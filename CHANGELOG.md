@@ -434,6 +434,15 @@ All notable changes to this project are documented here. The format follows
   connects by cookie, stays blocked.
 
 ### Fixed
+- Remote sessions: a write that the gateway's pacing held while the browser
+  fell behind could still reach the connection after it began closing. It now
+  fails as a write on a closed connection does. Found by a flaky test in CI.
+- Continuous integration: secret scanning covers the whole history on every
+  run (gitleaks-action scanned only a pull request's range, which it could not
+  work out once EasyPatch's history came in, and never past 250 commits), and
+  fails when it cannot read the history instead of reporting no leaks.
+  Trivy's findings that do not apply are excepted per file, with the reason,
+  in `.trivyignore.yaml`.
 - A new Docker Compose deployment did not start, found by the backup and
   restore drill. `setup.sh` created `postgres/` owned by root with mode 700,
   which the PostgreSQL 18 image mounts above its data directory, so
