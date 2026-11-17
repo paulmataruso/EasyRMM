@@ -15,7 +15,9 @@ function Test-AdminOnly([string]$Path, [string]$Top) {
         $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
         while ($item) {
             if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
-            $acl = Get-Acl -LiteralPath $item.FullName -ErrorAction Stop
+            # .NET, not Get-Acl: its module fails to load when PSModulePath
+            # names PowerShell 7's modules, and every check would then fail.
+            $acl = $item.GetAccessControl()
             if ($trusted -notcontains $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value) { return $false }
             foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
                 if ($rule.AccessControlType -ne 'Allow') { continue }

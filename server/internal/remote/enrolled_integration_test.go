@@ -141,6 +141,9 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 			t.Logf("agent output:\n%s", docker(t, "logs", "--tail", "80", name))
 		}
 		_, _ = exec.Command("docker", "rm", "-f", name).CombinedOutput()
+		// The agent's folders belong to its user and are private to it, so
+		// only that user can remove them when the tests run unprivileged.
+		_, _ = exec.Command("docker", "run", "--rm", "--user", "65534:65534", "-v", dir+":/agent", image, "rm", "-rf", "/agent/root").CombinedOutput()
 	})
 
 	// The agent enrolls, installs MeshAgent and links it: one device, with
@@ -178,7 +181,9 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 	var cfg struct {
 		JobKey string `json:"jobKey"`
 	}
-	if b, err := os.ReadFile(filepath.Join(dir, "root/var/lib/easyrmm-agent/agent.json")); err != nil || json.Unmarshal(b, &cfg) != nil || cfg.JobKey != js.PublicKey() {
+	// Read as the agent's user: its settings are private to it (mode 0600).
+	b := docker(t, "exec", name, "cat", "/agent/root/var/lib/easyrmm-agent/agent.json")
+	if err := json.Unmarshal([]byte(b), &cfg); err != nil || cfg.JobKey != js.PublicKey() {
 		t.Errorf("pinned job key %q, server's %q (%v)", cfg.JobKey, js.PublicKey(), err)
 	}
 

@@ -461,3 +461,12 @@ All notable changes to this project are documented here. The format follows
 - Expired agent request nonces are removed every minute rather than hourly.
   With 2,000 agents the table held an hour of requests (63 MB), cleared by
   one large delete; it now holds about seven minutes.
+- The Windows software scripts read file permissions through .NET rather
+  than `Get-Acl`. When `PSModulePath` names PowerShell 7's modules, as it
+  does in a process started from PowerShell 7, `Get-Acl` fails to load, so
+  the check refused even Windows' own programs and Chocolatey and winget
+  never ran.
+- CI: the end-to-end agent test reads the agent's private settings, and
+  removes its files, as the agent's user; the Docker smoke test no longer
+  globs a folder only root can list; the browser test expects the install
+  command that keeps the token off the command line.

@@ -1,0 +1,13 @@
+# Findings of gitleaks' generic-api-key rule that are not secrets, by
+# fingerprint (commit:file:rule:line). Each was checked by hand.
+
+# rsyslog's streamDriver.authMode="x509/certvalid", a documented setting.
+af47ea86caf246c8b9433ed9146cf7c16d14586f:docs/operations/audit-forwarding.md:generic-api-key:95
+
+# Test certificate key pins: the SHA-256 of an empty string.
+ce67feb1650acbb4e827f6f71e38426f0a73a48a:server/internal/httpapi/agentapi/agentapi_test.go:generic-api-key:18
+ce67feb1650acbb4e827f6f71e38426f0a73a48a:web/src/pages/devices/addDevices.test.tsx:generic-api-key:132
+
+# A public-key fingerprint in a sample of the EasyPatch agent's status output.
+0650a62126255d0199fbdb35f910c7e40ead2648:agent/inventory/easypatch_test.go:generic-api-key:26
+0650a62126255d0199fbdb35f910c7e40ead2648:agent/inventory/easypatch_test.go:generic-api-key:60

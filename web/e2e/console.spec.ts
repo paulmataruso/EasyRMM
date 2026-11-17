@@ -261,8 +261,9 @@ test("a deployment token enrolls a device, which then reports in", async () => {
   expect(windows).toContain("DownloadString('https://rmm.localhost/api/agent/v1/install.ps1'))) -Token 'ert_");
   await page.getByRole("radio", { name: "Linux" }).click();
   const command = await page.locator("pre", { hasText: "install.sh" }).innerText();
-  expect(command).toContain("curl -fsSL https://rmm.localhost/api/agent/v1/install.sh | sudo sh -s -- --token ert_");
-  const token = /--token (ert_[A-Za-z0-9_-]+)/.exec(command)?.[1] ?? "";
+  // The token travels in the environment, not on a command line other users can read.
+  expect(command).toContain("curl -fsSL https://rmm.localhost/api/agent/v1/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh; unset EASYRMM_TOKEN");
+  const token = /EASYRMM_TOKEN='(ert_[A-Za-z0-9_-]+)'/.exec(command)?.[1] ?? "";
   expect(token).toHaveLength(47);
 
   // A device enrolls the way the agent does: its own key, its facts, the token.

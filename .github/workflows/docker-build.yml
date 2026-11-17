@@ -76,8 +76,9 @@ jobs:
             -subj '/CN=rmm.ci.example.com' \
             -addext 'subjectAltName=DNS:rmm.ci.example.com,DNS:mesh.rmm.ci.example.com' \
             -keyout /srv/easyrmm-ci/tls/privkey.pem -out /srv/easyrmm-ci/tls/fullchain.pem
-          sudo chown root:65532 /srv/easyrmm-ci/tls/*.pem
-          sudo chmod 640 /srv/easyrmm-ci/tls/*.pem
+          # Named, not globbed: this shell cannot list the root-only folder.
+          sudo chown root:65532 /srv/easyrmm-ci/tls/privkey.pem /srv/easyrmm-ci/tls/fullchain.pem
+          sudo chmod 640 /srv/easyrmm-ci/tls/privkey.pem /srv/easyrmm-ci/tls/fullchain.pem
           sudo sed -i -e 's|^EASYRMM_IMAGE=.*|EASYRMM_IMAGE=easyrmm-server|' \
                       -e 's|^EASYRMM_VERSION=.*|EASYRMM_VERSION=ci|' .env
       - name: Start the stack
