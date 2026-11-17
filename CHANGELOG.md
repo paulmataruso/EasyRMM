@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- EasyPatch lives in this repository, under `easypatch/`, with its whole
+  history, its own licence (`LICENSING.md`), build, `easypatch-v*` tags and
+  release workflow. One CI run checks both and runs only what a change
+  touches (`docs/development/monorepo.md`).
+- Contract tests: `make test-contract` runs EasyRMM's EasyPatch connector
+  against a real EasyPatch built from the same commit, and checks the fake
+  EasyPatch the fast tests use against it.
 - EasyPatch on the same server (ADR-0035): with `EASYRMM_EASYPATCH_HOSTNAME`
   set, EasyRMM's edge keeps ports 80 and 443 and passes EasyPatch's name
   through, still encrypted, to EasyPatch's own Caddy on loopback, with a

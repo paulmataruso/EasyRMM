@@ -30,9 +30,10 @@ fmt-check: ## Fail if Go code is not formatted
 		if [ -n "$$out" ]; then echo "Unformatted files:"; echo "$$out"; exit 1; fi
 
 .PHONY: vet
-vet: ## go vet (including integration-tagged files, and the agent built for Windows)
+vet: ## go vet (including integration- and contract-tagged files, and the agent built for Windows)
 	$(GO) vet ./...
 	$(GO) vet -tags integration ./...
+	$(GO) vet -tags contract ./server/internal/easypatch/
 	GOOS=windows $(GO) vet ./agent/... ./internal/...
 
 .PHONY: lint
@@ -86,6 +87,10 @@ test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral
 	EASYRMM_TEST_OIDC_DIR="$${EASYRMM_TEST_OIDC_DIR:-$(TEST_OIDC_DIR)}" \
 		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
+
+.PHONY: test-contract
+test-contract: ## The EasyPatch connector against a real EasyPatch built from easypatch/ (needs Docker)
+	GO=$(GO) ./scripts/contract/easypatch.sh
 
 .PHONY: check
 check: fmt-check vet lint test-integration ## Everything CI runs for Go code

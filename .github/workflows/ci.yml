@@ -31,6 +31,9 @@ jobs:
   #                     docs and Markdown (what server.yml's own filter took);
   #   easypatch_agent   the agent, shared/, its build scripts, the build
   #                     props, global.json and easypatch-agent.yml (likewise).
+  #   contract          what the EasyPatch contract tests depend on: EasyPatch's
+  #                     server and its build, EasyRMM's connector, Go modules
+  #                     and the contract script.
   # EasyRMM's EasyPatch connector (server/internal/easypatch/) counts for
   # EasyRMM and the EasyPatch server; this file counts for everything. The
   # merge queue, manual runs, and anything this cannot work out run all.
@@ -41,6 +44,7 @@ jobs:
       easyrmm: ${{ steps.diff.outputs.easyrmm }}
       easypatch_server: ${{ steps.diff.outputs.easypatch_server }}
       easypatch_agent: ${{ steps.diff.outputs.easypatch_agent }}
+      contract: ${{ steps.diff.outputs.contract }}
     steps:
       - if: github.event_name == 'pull_request' || github.event_name == 'push'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -55,7 +59,13 @@ jobs:
         run: |
           classify() {
             case $1 in
-              .github/workflows/ci.yml) easyrmm=true easypatch_server=true easypatch_agent=true; return ;;
+              easypatch/backend/* | easypatch/shared/* | easypatch/deployment/server/* | easypatch/Directory.*.props | \
+                easypatch/global.json | easypatch/docker-compose.yml | server/internal/easypatch/* | go.mod | go.sum | \
+                scripts/contract/*)
+                contract=true ;;
+            esac
+            case $1 in
+              .github/workflows/ci.yml) easyrmm=true easypatch_server=true easypatch_agent=true contract=true; return ;;
               server/internal/easypatch/*) easyrmm=true easypatch_server=true; return ;;
               easypatch/* | .github/workflows/easypatch-*.yml) ;;
               *) easyrmm=true; return ;;
@@ -80,19 +90,20 @@ jobs:
           case $base in *[!0]*) ;; *) base= ;; esac
           if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null &&
             files=$(git diff --name-only --no-renames "$base" HEAD) && [ -n "$files" ]; then
-            easyrmm=false easypatch_server=false easypatch_agent=false
+            easyrmm=false easypatch_server=false easypatch_agent=false contract=false
             while IFS= read -r file; do
               echo "$file"
               classify "$file"
             done <<< "$files"
           else
             echo "No list of changed files for this event; everything runs."
-            easyrmm=true easypatch_server=true easypatch_agent=true
+            easyrmm=true easypatch_server=true easypatch_agent=true contract=true
           fi
           {
             echo "easyrmm=$easyrmm"
             echo "easypatch_server=$easypatch_server"
             echo "easypatch_agent=$easypatch_agent"
+            echo "contract=$contract"
           } | tee -a "$GITHUB_OUTPUT"
 
   backend:
@@ -151,10 +162,28 @@ jobs:
       security-events: write
       pull-requests: read
 
+  # EasyRMM's connector against a real EasyPatch server built from the same
+  # commit (scripts/contract/easypatch.sh).
+  contract:
+    name: EasyPatch contract
+    needs: changes
+    if: needs.changes.outputs.contract == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Connector against EasyPatch built from this commit
+        run: make test-contract
+
   result:
     name: CI result
     if: always()
-    needs: [changes, backend, integration, frontend, docker, easypatch-server, easypatch-agent, security]
+    needs: [changes, backend, integration, frontend, docker, easypatch-server, easypatch-agent, contract, security]
     runs-on: ubuntu-latest
     steps:
       - name: Require every job to succeed or to have been skipped

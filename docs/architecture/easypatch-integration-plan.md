@@ -3,6 +3,7 @@
 * Status: **Draft 2**, 2026-11-17. Draft 1 was critiqued against the code by an
   independent review and by its author. Section 13 lists every finding and
   what changed.
+* Progress: P0 and P1 are built (see section 10); P2 is next.
 * Scope: EasyRMM owns EasyPatch. Both live in this repository; EasyPatch is
   under `easypatch/`.
 
@@ -448,17 +449,25 @@ upgrade with `git fetch --tags && git checkout vX`.
 
 ## 8. The contract between the two
 
-**A contract job**
-* It runs when `easypatch/backend/**`, `easypatch/shared/**` or
-  `server/internal/easypatch/**` changes.
+**A contract job** (built in P1: `make test-contract`, CI job "EasyPatch
+contract")
+* It runs when EasyPatch's server or its build, EasyRMM's connector,
+  `go.mod` or the contract script changes.
 * It builds EasyPatch's server image from the same commit, and runs it with
-  PostgreSQL on the host network.
-* It creates a super administrator and an API token with EasyPatch's CLI:
-  `create-admin`, then `create-api-token`.
-* It runs the connector's integration tests against that server.
+  PostgreSQL on the host network, over TLS.
+* It creates an operator and a read-only API token with EasyPatch's CLI
+  (`create-api-token`). No user account is needed.
+* It runs a dedicated contract test (`contract_test.go`, build tag
+  `contract`), not the connector's integration tests: those drive `eptest`
+  directly and cannot point at a real server. The test enrolls a simulated
+  Debian agent that signs its requests as EasyPatch's agents do, then drives
+  every call of the connector, including an install canceled while the
+  agent works on it.
 
-**`eptest` stays** for fast unit tests. The contract job keeps its recorded
-shapes honest.
+**`eptest` stays** for fast unit tests. The contract test asks `eptest` and
+the real server the same questions and fails when `eptest` sends a field
+EasyPatch does not, or with another JSON type. Its first run found one: sites
+carried an `isArchived` field that EasyPatch never sent.
 
 **Versions**
 * EasyRMM supports the EasyPatch release from the same commit and the previous
@@ -512,7 +521,7 @@ so.
 Each phase lands in its own commits, with its tests and documentation, and
 with `IMPLEMENTATION_STATUS.md` updated.
 
-**P0 Repository**
+**P0 Repository** (done; nothing has run on GitHub yet)
 * `LICENSING.md`.
 * CI through `ci.yml`, with one required result.
 * CodeQL for C# and JavaScript.
@@ -524,12 +533,9 @@ with `IMPLEMENTATION_STATUS.md` updated.
 result", and EasyRMM's checks are skipped for EasyPatch-only changes.
 
 **P1 Contract and EasyPatch hardening**
-* Already in `easypatch/`, uncommitted: the integration changes and
-  `create-api-token`.
-* Next:
-  * EasyPatch's explicit "all organizations" flag for users;
-  * the contract job;
-  * the 1.11.0 changelog.
+* Done: the integration changes and `create-api-token`; EasyPatch's explicit
+  "all organizations" flag for users; the contract job.
+* Next: the 1.11.0 changelog, when EasyPatch is released.
 
 *Done when:*
 * EasyPatch's server tests pass, with a test that deleting an organization

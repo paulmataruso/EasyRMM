@@ -11,10 +11,17 @@ release contains.
   for example on the integer parts in SQL or on a stored sort key. Agent update decisions and the
   *outdated agent* filter already compare `System.Version` and are correct.
 - [ ] **SSO: organization access for accounts created on first sign-in.** An account that single sign-on
-  creates has no organization restriction, because an empty list means *all organizations*. For MSPs, add a
+  creates reaches every organization (new users get *all organizations*). For MSPs, add a
   per-provider setting for the organizations such accounts get (all, or chosen ones), applied when the
   account is created. Show it in *Settings → Single sign-on* and add tests. Update
   `docs/single-sign-on.md` and `docs/security.md`.
+
+- [ ] **Agent API: a `null` list answers 500.** A signed agent request that sends `null` for a list, for
+  example `"activeJobIds": null` on check-in, fails with `500 internal_error` (an `ArgumentNullException` in
+  `JobService.LeaseForCheckInAsync`) instead of `400 validation_failed`. EasyPatch's agents always send lists, so
+  only a broken or hostile agent hits it, and only for its own endpoint. Found by EasyRMM's contract tests
+  (`server/internal/easypatch/contract_test.go`). Reject null lists in the agent request DTOs
+  (`shared/EasyPatch.Contracts/Agent/AgentDtos.cs`) for every agent endpoint, with tests.
 
 ## Test on a real instance
 

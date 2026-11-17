@@ -146,7 +146,8 @@ func (s *Server) Site(org uuid.UUID, name string) uuid.UUID {
 	defer s.mu.Unlock()
 	id := uuid.New()
 	s.sites = append(s.sites, map[string]any{"id": id, "organizationId": org, "organizationName": "", "name": name, "description": nil,
-		"address": nil, "timeZone": "UTC", "isArchived": false})
+		"address": nil, "timeZone": "UTC", "isActive": true, "endpointCount": 0, "rebootPendingCount": 0,
+		"createdAt": "2026-11-02T10:00:00+00:00", "archivedAt": nil, "tags": nil})
 	return id
 }
 
