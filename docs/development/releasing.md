@@ -5,16 +5,21 @@ does the rest; nothing is published from a laptop.
 
 ## Versions
 
-Semantic versioning, tags `v1.2.3`. A pre-release adds a suffix,
-`v1.2.3-rc.1`.
+Semantic versioning, tags `easyrmm-v1.2.3`. A pre-release adds a suffix,
+`easyrmm-v1.2.3-rc.1`. The `easyrmm-` prefix keeps EasyRMM's tags apart from
+EasyPatch's (`easypatch-v1.10.0`), which this repository also holds and
+which `.github/workflows/easypatch-release.yml` releases.
 
 | Tag | Image tags | GitHub release |
 |---|---|---|
-| `v1.2.3` | `1.2.3`, `1.2`, `latest` | Release |
-| `v1.2.3-rc.1` | `1.2.3-rc.1` only | Pre-release |
+| `easyrmm-v1.2.3` | `1.2.3`, `1.2`, `latest` | Release, marked Latest |
+| `easyrmm-v1.2.3-rc.1` | `1.2.3-rc.1` only | Pre-release |
 
-The server, the console and the agents carry the tag as their version
-(`easyrmm-server version`, `easyrmm-agent version`).
+EasyPatch's releases are never marked Latest, so the repository's latest
+release is always EasyRMM's.
+
+The server, the console and the agents carry the tag without its prefix as
+their version, `v1.2.3` (`easyrmm-server version`, `easyrmm-agent version`).
 
 ## Cutting a release
 
@@ -24,8 +29,8 @@ The server, the console and the agents carry the tag as their version
 2. Commit, then tag and push:
 
    ```bash
-   git tag -s v1.2.3 -m "EasyRMM 1.2.3"
-   git push origin v1.2.3
+   git tag -s easyrmm-v1.2.3 -m "EasyRMM 1.2.3"
+   git push origin easyrmm-v1.2.3
    ```
 
 3. Watch the **Release** workflow. It:
@@ -54,7 +59,7 @@ and the draft release (if any), then tag again. Never move a published tag.
 | `SHA256SUMS` | Checksums of the files above |
 
 The files are reproducible. Given the same commit and Go version,
-`scripts/release/bundle.sh v1.2.3 out/` builds the same bytes: archive entries
+`scripts/release/bundle.sh easyrmm-v1.2.3 out/` builds the same bytes: archive entries
 are sorted, owned by root and dated at the commit. Compare your build's
 `SHA256SUMS` with the release's to check that a release matches its source.
 

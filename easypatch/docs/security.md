@@ -426,10 +426,11 @@ An agent built without it reports that it cannot update itself and must be upgra
 installing a newer package.
 
 * **Official releases** (the packages attached to GitHub Releases) are built and signed by the
-  `release` GitHub Actions workflow when a version tag is pushed. The private key is stored as an
-  encrypted secret of the `release` environment, which only workflow runs for `v*` tags can
-  use. The job writes it to the runner's temporary directory, signs, verifies the signatures
-  against the committed public key [`keys/easypatch-release-key.pub.pem`](../keys/easypatch-release-key.pub.pem)
+  `EasyPatch release` GitHub Actions workflow (`.github/workflows/easypatch-release.yml` in the
+  repository root) when a version tag (`easypatch-vX.Y.Z`) is pushed. The private key is stored as
+  an encrypted secret of the `easypatch-release` environment, which only workflow runs for
+  `easypatch-v*` tags can use. The job writes it to the runner's temporary directory, signs,
+  verifies the signatures against the committed public key [`keys/easypatch-release-key.pub.pem`](../keys/easypatch-release-key.pub.pem)
   and deletes the file. Agents from official releases accept only packages signed with this key.
 * **Your own builds.** The build scripts read the key from `~/.easypatch/easypatch-release-key.pem`
   (mode 600) or `EASYPATCH_RELEASE_KEY`, and the public key from

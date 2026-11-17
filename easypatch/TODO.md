@@ -68,15 +68,16 @@ The macOS agent (since 1.9.0) is **experimental, in development and not for prod
     lockfile pins them, and the native bindings must be the musl ones.
 - **Release:**
   1. Bump the version in `Directory.Build.props`, the image defaults in `docker-compose.yml`, `.env.example`,
-     `scripts/build-*.sh` and `build-agent.ps1`, the issue template, the README, and the download and build
-     commands in `docs/installation.md`, `docs/linux-agent.md` and `docs/macos-agent.md`.
-  2. Add a `## [x.y.z] - date` section to the CHANGELOG. `release.yml` checks that the tag,
-     `Directory.Build.props` and the CHANGELOG agree.
-  3. Push `main`, then the tag `vX.Y.Z`. `release.yml` builds and tests everything, publishes the images to
-     GHCR, and creates the GitHub Release with the `.msi`, `.deb`, `.rpm` and `.pkg` packages, their `.sig`
-     files and `SHA256SUMS`.
-- **Release signing key:** the private key is the `EASYPATCH_RELEASE_KEY` secret of the GitHub `release`
-  environment. Signed local builds read it from `~/.easypatch/easypatch-release-key.pem`. Copy it between
-  machines only over a secure channel, and never commit it.
+     `scripts/build-*.sh` and `build-agent.ps1`, the issue template (`.github/ISSUE_TEMPLATE/easypatch-bug_report.yml`
+     in the repository root), the README, and the download and build commands in `docs/installation.md`,
+     `docs/linux-agent.md` and `docs/macos-agent.md`.
+  2. Add a `## [x.y.z] - date` section to the CHANGELOG. `easypatch-release.yml` (in the repository root's
+     `.github/workflows/`) checks that the tag, `Directory.Build.props` and the CHANGELOG agree.
+  3. Push `main`, then the tag `easypatch-vX.Y.Z`. `easypatch-release.yml` builds and tests everything,
+     publishes the images to GHCR, and creates the GitHub Release with the `.msi`, `.deb`, `.rpm` and `.pkg`
+     packages, their `.sig` files and `SHA256SUMS`.
+- **Release signing key:** the private key is the `EASYPATCH_RELEASE_KEY` secret of the GitHub
+  `easypatch-release` environment. Signed local builds read it from `~/.easypatch/easypatch-release-key.pem`.
+  Copy it between machines only over a secure channel, and never commit it.
 - **Constraints:** the security and design rules are in `docs/security.md` and `docs/architecture.md`.
   Documentation must match what is implemented.

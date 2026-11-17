@@ -1,6 +1,7 @@
-name: Bug report
-description: Something in EasyPatch does not work as documented.
-labels: [bug]
+name: EasyPatch bug report
+description: Something in EasyPatch (the patch management product in easypatch/) does not work as documented.
+title: "[EasyPatch] "
+labels: [bug, easypatch]
 body:
   - type: markdown
     attributes:

@@ -5,16 +5,21 @@
 #   easyrmm-agent-<os>-<arch>[.exe]   the agents (the server image carries the same ones)
 #   SHA256SUMS
 #
-#   scripts/release/bundle.sh v1.2.3 [out-dir]
+#   scripts/release/bundle.sh easyrmm-v1.2.3 [out-dir]
+#
+# Takes the release tag (easyrmm-v1.2.3) or the version alone (v1.2.3); the
+# files carry the version (easyrmm-v1.2.3-deploy.tar.gz, agents reporting
+# v1.2.3) either way.
 #
 # The output depends only on the commit and the Go toolchain: archive entries
 # are sorted, owned by root and dated at the commit, and gzip stores no name
 # or time.
 set -eu
 
-version=${1:?usage: bundle.sh vX.Y.Z [out-dir]}
+tag=${1:?usage: bundle.sh easyrmm-vX.Y.Z [out-dir]}
+version=${tag#easyrmm-}
 if ! printf '%s' "$version" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'; then
-  echo "bundle: \"$version\" is not a version tag like v1.2.3 or v1.2.3-rc.1" >&2
+  echo "bundle: \"$tag\" is not a release tag like easyrmm-v1.2.3 or easyrmm-v1.2.3-rc.1" >&2
   exit 1
 fi
 root=$(cd "$(dirname "$0")/../.." && pwd)

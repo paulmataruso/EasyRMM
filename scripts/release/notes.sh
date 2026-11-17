@@ -1,13 +1,15 @@
 #!/bin/sh
 # Prints the CHANGELOG.md section for a release, without its heading.
 #
-#   scripts/release/notes.sh v1.2.3
+#   scripts/release/notes.sh easyrmm-v1.2.3
 #
+# Takes the release tag (easyrmm-v1.2.3) or the version alone (v1.2.3).
 # Fails when the changelog has no "## [1.2.3]" section, or it is empty, so a
 # release cannot go out without notes.
 set -eu
 
-version=${1:?usage: notes.sh vX.Y.Z}
+version=${1:?usage: notes.sh easyrmm-vX.Y.Z}
+version=${version#easyrmm-}
 version=${version#v}
 root=$(cd "$(dirname "$0")/../.." && pwd)
 

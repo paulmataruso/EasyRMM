@@ -270,9 +270,10 @@ All notable changes to this project are documented here. The format follows
   EasyRMM creates for that install. Devices that already have an EasyPatch
   agent are left alone. The console shows each install's progress and, when
   it fails, why.
-- Release pipeline: pushing a version tag re-runs every check, then publishes
-  the scanned multi-arch server image with an SBOM and provenance, and a
-  GitHub release with the deployment bundle (pinned to that image), the
+- Release pipeline: pushing a version tag (`easyrmm-v1.2.3`; EasyPatch's,
+  in the same repository, are `easypatch-v…`) re-runs every check, then
+  publishes the scanned multi-arch server image with an SBOM and provenance,
+  and a GitHub release with the deployment bundle (pinned to that image), the
   agents, checksums and attestations, and the changelog's notes. The release
   files are reproducible (`scripts/release/bundle.sh`).
 - Security keys and passkeys (ADR-0032). At the first sign-in, people choose

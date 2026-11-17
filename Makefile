@@ -93,7 +93,7 @@ check: fmt-check vet lint test-integration ## Everything CI runs for Go code
 .PHONY: build-agents
 build-agents: ## Build the Windows and Linux agents into bin/agents (serve them with EASYRMM_AGENT_DIR=bin/agents)
 	@mkdir -p bin/agents
-	@v=$$(git describe --tags --always --dirty 2>/dev/null || echo dev); \
+	@v=$$(git describe --tags --match 'easyrmm-v*' --always --dirty 2>/dev/null || echo dev); v=$${v#easyrmm-}; \
 	for arch in amd64 arm64; do \
 		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch $(GO) build -trimpath -ldflags "-s -w -X main.Version=$$v" \
 			-o bin/agents/easyrmm-agent-windows-$$arch.exe ./agent/cmd/easyrmm-agent || exit 1; \

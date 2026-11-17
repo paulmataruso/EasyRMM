@@ -1,6 +1,7 @@
-name: Feature request
-description: Suggest a change or a new feature.
-labels: [enhancement]
+name: EasyPatch feature request
+description: Suggest a change or a new feature for EasyPatch (the patch management product in easypatch/).
+title: "[EasyPatch] "
+labels: [enhancement, easypatch]
 body:
   - type: textarea
     id: problem
