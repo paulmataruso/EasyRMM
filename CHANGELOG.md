@@ -466,6 +466,15 @@ All notable changes to this project are documented here. The format follows
   does in a process started from PowerShell 7, `Get-Acl` fails to load, so
   the check refused even Windows' own programs and Chocolatey and winget
   never ran.
+- The internal certificate authority stores the server certificate and
+  serves it again after a restart. A new one on every start made MeshAgent
+  see a certificate MeshCentral had not read, and after two restarts within
+  two minutes MeshCentral held every agent's connection until it was
+  restarted: devices checked in but remote access stayed "not connected".
+  The Docker guide shows how to recognise and clear that state.
+- A worker test waited a fixed 100 ms for a refused job result; it now
+  answers polls until the result is sent again, as it failed on slow
+  runners.
 - CI: the end-to-end agent test reads the agent's private settings, and
   removes its files, as the agent's user; the Docker smoke test no longer
   globs a folder only root can list; the browser test expects the install

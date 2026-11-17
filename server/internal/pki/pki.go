@@ -5,7 +5,8 @@
 // The authority's certificate is stable for ten years, so browsers that
 // trust it keep trusting the server. The server's key is stable too, so the
 // public-key pin in an install command stays valid when the certificate is
-// renewed or its addresses change.
+// renewed or its addresses change. The server certificate itself is stored
+// and survives restarts: MeshAgent pins the exact certificate it sees.
 package pki
 
 import (
@@ -40,6 +41,8 @@ import (
 const (
 	setting = "tls.internal_ca" //nolint:gosec // a settings key, not a credential
 	aad     = "easyrmm:" + setting
+	// certSetting holds the server certificate (public, so not sealed).
+	certSetting = "tls.internal_cert"
 
 	caLifetime   = 10 * 365 * 24 * time.Hour
 	leafLifetime = 365 * 24 * time.Hour
@@ -50,6 +53,11 @@ const (
 // stored is the sealed settings value.
 type stored struct {
 	Sealed string `json:"sealed"`
+}
+
+// storedCert is the server certificate's settings value.
+type storedCert struct {
+	Cert []byte `json:"cert"` // DER
 }
 
 // material is what is sealed: the authority and the server key.
@@ -65,6 +73,8 @@ type Authority struct {
 	caKey     *ecdsa.PrivateKey
 	serverKey *ecdsa.PrivateKey
 	now       func() time.Time
+	// db stores the server certificate; nil for an authority kept in memory.
+	db *database.DB
 
 	mu    sync.Mutex
 	leaf  *tls.Certificate
@@ -122,7 +132,12 @@ func Load(ctx context.Context, db *database.DB, sealer *secrets.Sealer) (*Author
 	if err != nil {
 		return nil, err
 	}
-	return fromMaterial(m, time.Now)
+	a, err := fromMaterial(m, time.Now)
+	if err != nil {
+		return nil, err
+	}
+	a.db = db
+	return a, nil
 }
 
 // New creates an authority kept only in memory, for tests and tools;
@@ -220,8 +235,13 @@ func serial() *big.Int {
 }
 
 // SetAddresses sets the names and IP addresses the server certificate
-// covers. The certificate is reissued (with the same key) when they change.
-func (a *Authority) SetAddresses(names []string, ips []net.IP) error {
+// covers. It serves the certificate an earlier start stored while that one
+// covers the same addresses and is not due for renewal; otherwise it issues
+// one (with the same key) and stores it. A restart must not change the
+// certificate: MeshAgent pins the exact certificate it sees, and MeshCentral
+// re-reads it at most every two minutes, holding the connection of every
+// agent that saw another until then.
+func (a *Authority) SetAddresses(ctx context.Context, names []string, ips []net.IP) error {
 	names = normalizeNames(names)
 	ips = normalizeIPs(ips)
 	a.mu.Lock()
@@ -230,7 +250,88 @@ func (a *Authority) SetAddresses(names []string, ips []net.IP) error {
 		return nil
 	}
 	a.names, a.ips = names, ips
-	return a.issueLocked()
+	if a.db == nil {
+		return a.issueLocked()
+	}
+	return a.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		// FOR UPDATE: servers starting together agree on one certificate.
+		c, err := loadCert(ctx, tx, true)
+		if err != nil {
+			return err
+		}
+		if c != nil && a.reusableLocked(c) {
+			a.useLocked(c)
+			return nil
+		}
+		if err := a.issueLocked(); err != nil {
+			return err
+		}
+		if c != nil {
+			return storeCert(ctx, tx, a.leaf.Leaf.Raw)
+		}
+		tag, err := tx.Exec(ctx, `INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING`,
+			certSetting, storedCert{Cert: a.leaf.Leaf.Raw})
+		if err != nil || tag.RowsAffected() == 1 {
+			return err
+		}
+		// Another server stored one first: serve it if it fits.
+		if c, err = loadCert(ctx, tx, true); err != nil {
+			return err
+		}
+		if c != nil && a.reusableLocked(c) {
+			a.useLocked(c)
+			return nil
+		}
+		return storeCert(ctx, tx, a.leaf.Leaf.Raw)
+	})
+}
+
+// loadCert reads the stored server certificate; nil when there is none or
+// it cannot be read, as a certificate that cannot be read is replaced.
+func loadCert(ctx context.Context, tx pgx.Tx, lock bool) (*x509.Certificate, error) {
+	q := `SELECT value FROM settings WHERE key = $1`
+	if lock {
+		q += ` FOR UPDATE`
+	}
+	var v storedCert
+	err := tx.QueryRow(ctx, q, certSetting).Scan(&v)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		var syntax *json.SyntaxError
+		if errors.As(err, &syntax) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	c, err := x509.ParseCertificate(v.Cert)
+	if err != nil {
+		return nil, nil //nolint:nilerr // replaced, as above
+	}
+	return c, nil
+}
+
+func storeCert(ctx context.Context, tx pgx.Tx, der []byte) error {
+	_, err := tx.Exec(ctx, `INSERT INTO settings (key, value) VALUES ($1, $2)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`, certSetting, storedCert{Cert: der})
+	return err
+}
+
+// reusableLocked reports whether c is this authority's certificate for this
+// key and the current addresses, and is not due for renewal.
+func (a *Authority) reusableLocked(c *x509.Certificate) bool {
+	pub, ok := c.PublicKey.(*ecdsa.PublicKey)
+	now := a.now()
+	return ok && pub.Equal(&a.serverKey.PublicKey) &&
+		c.CheckSignatureFrom(a.ca) == nil &&
+		now.After(c.NotBefore) && now.Before(c.NotAfter.Add(-renewBefore)) &&
+		slices.Equal(normalizeNames(c.DNSNames), a.names) &&
+		slices.EqualFunc(normalizeIPs(c.IPAddresses), a.ips, net.IP.Equal)
+}
+
+func (a *Authority) useLocked(c *x509.Certificate) {
+	a.leaf = &tls.Certificate{Certificate: [][]byte{c.Raw, a.ca.Raw}, PrivateKey: a.serverKey, Leaf: c}
 }
 
 func (a *Authority) issueLocked() error {
@@ -263,7 +364,7 @@ func (a *Authority) issueLocked() error {
 	if err != nil {
 		return err
 	}
-	a.leaf = &tls.Certificate{Certificate: [][]byte{der, a.ca.Raw}, PrivateKey: a.serverKey, Leaf: leaf}
+	a.useLocked(leaf)
 	return nil
 }
 
@@ -271,13 +372,25 @@ func (a *Authority) issueLocked() error {
 // to expiry.
 func (a *Authority) Certificate() (*tls.Certificate, error) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	renewed := false
 	if a.leaf == nil || a.now().After(a.leaf.Leaf.NotAfter.Add(-renewBefore)) {
 		if err := a.issueLocked(); err != nil {
+			a.mu.Unlock()
 			return nil, err
 		}
+		renewed = true
 	}
-	return a.leaf, nil
+	leaf := a.leaf
+	a.mu.Unlock()
+	if renewed && a.db != nil {
+		// Stored outside the lock, so that other connections are not held.
+		// Should it fail, the next start finds the stored certificate due
+		// for renewal and issues another.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = a.db.InTx(ctx, database.System, func(tx pgx.Tx) error { return storeCert(ctx, tx, leaf.Leaf.Raw) })
+		cancel()
+	}
+	return leaf, nil
 }
 
 // GetCertificate serves the server certificate for every connection.

@@ -305,10 +305,27 @@ func TestWorkerReportsAgainAndRecoversAfterARestart(t *testing.T) {
 	h.srv.failNext = 1
 	h.srv.mu.Unlock()
 	h.srv.polls <- &agentproto.PollResponse{Jobs: []agentproto.SignedJob{h.job(run1, "echo kept")}}
-	time.Sleep(100 * time.Millisecond)
-	h.srv.polls <- &agentproto.PollResponse{}
-	if run, res := h.srv.result(t); run != run1 || res.Stdout != "echo kept" {
-		t.Errorf("%s %+v", run, res)
+	// Answer polls until the result comes again: a poll answered before the
+	// run is over finds nothing to send.
+	deadline := time.After(10 * time.Second)
+	var run string
+	for run == "" {
+		select {
+		case run = <-h.srv.gotResult:
+		case <-deadline:
+			t.Fatal("the refused result was not sent again")
+		case <-time.After(20 * time.Millisecond):
+			select {
+			case h.srv.polls <- &agentproto.PollResponse{}:
+			default:
+			}
+		}
+	}
+	h.srv.mu.Lock()
+	res, refused := h.srv.results[run], h.srv.failNext == 0
+	h.srv.mu.Unlock()
+	if run != run1 || res.Stdout != "echo kept" || !refused {
+		t.Errorf("%s %+v, refused first: %v", run, res, refused)
 	}
 	h.stop()
 

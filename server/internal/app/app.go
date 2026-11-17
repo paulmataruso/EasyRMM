@@ -144,7 +144,8 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 		if err != nil {
 			return nil, err
 		}
-		if err := ca.SetAddresses(internalAddresses(cfg)); err != nil {
+		names, ips := internalAddresses(cfg)
+		if err := ca.SetAddresses(ctx, names, ips); err != nil {
 			return nil, err
 		}
 		d.PKI = ca

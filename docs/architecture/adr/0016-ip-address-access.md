@@ -59,6 +59,14 @@ An IP address changes four things browsers and agents rely on:
   * The server certificate (the leaf) lasts one year and is renewed 30 days
     before it expires. It always uses the same server key, so the pin in an
     install command stays valid.
+  * The leaf is stored in `settings` (`tls.internal_cert`, not sealed: it
+    is public) and served again after a restart while it names the same
+    addresses and is not due for renewal; servers starting together serve
+    the first one stored. A restart must not change it: MeshAgent pins the
+    exact certificate, and MeshCentral re-reads it at most every two
+    minutes (ADR-0014). Until 2026-11-17 every start issued a new leaf, and
+    two restarts within two minutes left every MeshAgent held by
+    MeshCentral until MeshCentral restarted.
   * The leaf names every origin served by the internal authority: its IP
     addresses, and its DNS names in `internal` mode.
   * Which certificate a connection gets:

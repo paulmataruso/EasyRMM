@@ -3,12 +3,15 @@
 package pki
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"net"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -95,5 +98,127 @@ func TestAuthorityPersists(t *testing.T) {
 	// A server with the wrong key refuses rather than replacing the authority.
 	if _, err := Load(ctx, inst.DB, sealer); err == nil {
 		t.Fatal("unsealed with a retired key")
+	}
+}
+
+// TestServerCertificatePersists checks that a restart serves the same server
+// certificate: MeshAgent pins the exact certificate, and a new one on every
+// restart left agents held by MeshCentral, unable to connect.
+func TestServerCertificatePersists(t *testing.T) {
+	inst := testdb.New(t)
+	ctx := context.Background()
+	sealer, err := secrets.NewSealer(key(t, "k1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ips := []net.IP{net.ParseIP("203.0.113.20")}
+	start := func(names []string, ips []net.IP) []byte {
+		t.Helper()
+		a, err := Load(ctx, inst.DB, sealer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := a.SetAddresses(ctx, names, ips); err != nil {
+			t.Fatal(err)
+		}
+		c, err := a.Certificate()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c.Certificate[0]
+	}
+	stored := func() []byte {
+		t.Helper()
+		var v storedCert
+		if err := inst.DB.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT value FROM settings WHERE key = $1`, certSetting).Scan(&v)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return v.Cert
+	}
+
+	// Servers starting together serve one certificate, the stored one.
+	var wg sync.WaitGroup
+	got := make([][]byte, 4)
+	for i := range got {
+		wg.Go(func() { got[i] = start([]string{"rmm.example.com"}, ips) })
+	}
+	wg.Wait()
+	first := stored()
+	for i := range got {
+		if !bytes.Equal(got[i], first) {
+			t.Fatalf("server %d serves a certificate other than the stored one", i)
+		}
+	}
+
+	// A restart serves it again.
+	if !bytes.Equal(start([]string{"RMM.example.com."}, ips), first) {
+		t.Fatal("a restart changed the certificate")
+	}
+
+	// New addresses: a new certificate, stored, and served after a restart.
+	moved := start([]string{"rmm.example.com"}, []net.IP{net.ParseIP("203.0.113.21")})
+	if bytes.Equal(moved, first) || !bytes.Equal(stored(), moved) {
+		t.Fatal("new addresses did not issue and store a new certificate")
+	}
+	if !bytes.Equal(start([]string{"rmm.example.com"}, []net.IP{net.ParseIP("203.0.113.21")}), moved) {
+		t.Fatal("a restart changed the new certificate")
+	}
+
+	// A stored certificate due for renewal is replaced at start.
+	a, err := Load(ctx, inst.DB, sealer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.now = func() time.Time { return time.Now().Add(leafLifetime - renewBefore + time.Hour) }
+	if err := a.SetAddresses(ctx, []string{"rmm.example.com"}, []net.IP{net.ParseIP("203.0.113.21")}); err != nil {
+		t.Fatal(err)
+	}
+	c, err := a.Certificate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(c.Certificate[0], moved) || !bytes.Equal(stored(), c.Certificate[0]) {
+		t.Fatal("a certificate due for renewal was served")
+	}
+
+	// Renewal while running stores the renewed certificate.
+	renewing := c.Certificate[0]
+	a.now = func() time.Time { return time.Now().Add(2 * leafLifetime) }
+	if c, err = a.Certificate(); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(c.Certificate[0], renewing) || !bytes.Equal(stored(), c.Certificate[0]) {
+		t.Fatal("a renewal was not stored")
+	}
+
+	// Something unreadable stored is replaced, not fatal.
+	if err := inst.DB.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `UPDATE settings SET value = '{"cert":"bm90IGEgY2VydGlmaWNhdGU="}' WHERE key = $1`, certSetting)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if after := start([]string{"rmm.example.com"}, ips); !bytes.Equal(stored(), after) {
+		t.Fatal("an unreadable stored certificate was not replaced")
+	}
+
+	// Another authority's certificate (its key or CA replaced) is not served.
+	other, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := other.SetAddresses(ctx, []string{"rmm.example.com"}, ips); err != nil {
+		t.Fatal(err)
+	}
+	oc, _ := other.Certificate()
+	if err := inst.DB.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		return storeCert(ctx, tx, oc.Certificate[0])
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(start([]string{"rmm.example.com"}, ips), oc.Certificate[0]) {
+		t.Fatal("served another authority's certificate")
 	}
 }

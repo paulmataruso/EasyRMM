@@ -121,7 +121,8 @@ func TestCertificateChoice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ca.SetAddresses(internalAddresses(cfg)); err != nil {
+	names, ips := internalAddresses(cfg)
+	if err := ca.SetAddresses(context.Background(), names, ips); err != nil {
 		t.Fatal(err)
 	}
 	internal, _ := ca.Certificate()
@@ -189,7 +190,8 @@ func TestEdgeInternalTLS(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ca.SetAddresses(internalAddresses(cfg)); err != nil {
+	names, ips := internalAddresses(cfg)
+	if err := ca.SetAddresses(context.Background(), names, ips); err != nil {
 		t.Fatal(err)
 	}
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("host=" + r.Host)) })

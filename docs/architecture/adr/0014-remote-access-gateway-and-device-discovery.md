@@ -63,7 +63,10 @@ MeshCentral 1.3.1 raised questions those records left open:
 * **Certificates.** MeshCentral reads the certificate its agents pin from
   the edge (`certUrl`). When the edge renews it, MeshCentral reloads it the
   first time an agent reports a mismatch (at most every two minutes) and
-  the agents reconnect.
+  the agents reconnect. A second change within those two minutes is not
+  read: MeshCentral holds those agents' connections until it restarts. The
+  certificate therefore changes only on renewal or a change of addresses,
+  never on a restart (ADR-0016).
 
 ## Consequences
 * Deployments need two hostnames under one parent domain, both with

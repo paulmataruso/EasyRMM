@@ -144,6 +144,31 @@ access**. MeshCentral's own web interface, account pages, invitations and
 sharing links are not reachable; sessions start only from a device's page in
 the console.
 
+### When devices check in but remote access is not connected
+
+A device's page then says "The device is checking in, but its MeshAgent is
+not connected to MeshCentral". When every device says it, MeshCentral is
+usually holding the agents' connections because the certificate they see is
+not the one it last read from `EASYRMM_MESH_CERT_URL`. Its log shows
+`Agent bad web cert hash … holding connection`:
+
+```sh
+docker compose logs meshcentral | grep "bad web cert"
+```
+
+MeshCentral reads the certificate again when an agent reports a different
+one, at most every two minutes, so a second change within two minutes
+leaves the agents held. Restart MeshCentral, which reads the certificate as
+it starts; the agents reconnect within a minute or two:
+
+```sh
+docker compose restart meshcentral
+```
+
+The certificate changes on renewal, on a change of the server's addresses,
+and with the files you supply in `manual` mode. Earlier builds also issued a
+new one on every restart in `internal` mode; it is now stored.
+
 Devices join with the EasyRMM agent, which installs MeshAgent from this
 server: see [Installing the EasyRMM agent](agents.md). The image includes the
 Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).

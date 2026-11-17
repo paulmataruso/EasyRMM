@@ -1,6 +1,7 @@
 package pki
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -31,7 +32,7 @@ func newAuthority(t *testing.T, now time.Time) *Authority {
 
 func TestServerCertificateChainsToAuthority(t *testing.T) {
 	a := newAuthority(t, time.Now())
-	if err := a.SetAddresses([]string{"RMM.example.com.", "rmm.example.com", "203.0.113.9", ""}, []net.IP{net.ParseIP("203.0.113.10"), net.ParseIP("::ffff:203.0.113.10"), net.ParseIP("2001:db8::10"), nil}); err != nil {
+	if err := a.SetAddresses(context.Background(), []string{"RMM.example.com.", "rmm.example.com", "203.0.113.9", ""}, []net.IP{net.ParseIP("203.0.113.10"), net.ParseIP("::ffff:203.0.113.10"), net.ParseIP("2001:db8::10"), nil}); err != nil {
 		t.Fatal(err)
 	}
 	c, err := a.Certificate()
@@ -108,18 +109,18 @@ func TestSetAddressesReissuesWithTheSameKey(t *testing.T) {
 	if !regexp.MustCompile(`^sha256//[A-Za-z0-9+/]{43}=$`).MatchString(pin) {
 		t.Fatalf("pin = %q", pin)
 	}
-	if err := a.SetAddresses(nil, []net.IP{net.ParseIP("203.0.113.10")}); err != nil {
+	if err := a.SetAddresses(context.Background(), nil, []net.IP{net.ParseIP("203.0.113.10")}); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := a.Certificate()
 	// The same addresses keep the certificate.
-	if err := a.SetAddresses(nil, []net.IP{net.ParseIP("203.0.113.10")}); err != nil {
+	if err := a.SetAddresses(context.Background(), nil, []net.IP{net.ParseIP("203.0.113.10")}); err != nil {
 		t.Fatal(err)
 	}
 	if again, _ := a.Certificate(); again != first {
 		t.Error("certificate reissued for unchanged addresses")
 	}
-	if err := a.SetAddresses(nil, []net.IP{net.ParseIP("203.0.113.11")}); err != nil {
+	if err := a.SetAddresses(context.Background(), nil, []net.IP{net.ParseIP("203.0.113.11")}); err != nil {
 		t.Fatal(err)
 	}
 	second, _ := a.Certificate()
@@ -155,7 +156,7 @@ func TestCertificateRenewsBeforeExpiry(t *testing.T) {
 	}
 	// The server certificate never outlives the authority.
 	a.now = func() time.Time { return now.Add(caLifetime - 24*time.Hour) }
-	if err := a.SetAddresses([]string{"x.test"}, nil); err != nil {
+	if err := a.SetAddresses(context.Background(), []string{"x.test"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	last, _ := a.Certificate()
@@ -190,7 +191,7 @@ func TestPinMatchesCurl(t *testing.T) {
 		t.Skip("curl is not installed")
 	}
 	a := newAuthority(t, time.Now())
-	if err := a.SetAddresses(nil, []net.IP{net.ParseIP("127.0.0.1")}); err != nil {
+	if err := a.SetAddresses(context.Background(), nil, []net.IP{net.ParseIP("127.0.0.1")}); err != nil {
 		t.Fatal(err)
 	}
 	// Not httptest's StartTLS: it adds its own certificate, which Go serves
