@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
 import { leaveFor } from "../../lib/leave";
-import { baseRoutes, installFakeApi, sessionView } from "../../test/fakeApi";
+import { baseRoutes, fail, installFakeApi, ok, sessionView } from "../../test/fakeApi";
 import { renderApp } from "../../test/render";
 import { canRetry, easyPatchHref } from "./patchText";
 
@@ -25,6 +25,53 @@ describe("links into EasyPatch", () => {
     renderApp("/go/to-easypatch?device=d1&tab=jobs");
     await waitFor(() => expect(leaveFor).toHaveBeenCalledWith("/go/to-easypatch?device=d1&tab=jobs"));
     expect(screen.getByText("Loading EasyRMM…")).toBeInTheDocument();
+  });
+});
+
+describe("links from EasyPatch", () => {
+  it("open the page the server resolves the EasyPatch id to", async () => {
+    const server = installFakeApi({
+      ...baseRoutes(sessionView()),
+      "GET /patching/from-easypatch/:kind/:id": ok({ path: "/devices/d1?tab=patches" }),
+      // The device page itself is not under test.
+      "GET /devices/:id": fail(404, "not_found", "Not found."),
+    });
+    renderApp("/go/from-easypatch/endpoints/0b6f3c1e-1111-4222-8333-444455556666");
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/devices/d1?tab=patches"));
+    expect(server.call("GET /patching/from-easypatch/:kind/:id").params).toEqual({ kind: "endpoints", id: "0b6f3c1e-1111-4222-8333-444455556666" });
+  });
+
+  it("open Patching with the server's notice when nothing matches", async () => {
+    installFakeApi({
+      ...baseRoutes(sessionView()),
+      "GET /patching/from-easypatch/:kind/:id": ok({
+        path: "/patching",
+        notice: "That EasyPatch endpoint is not linked to an EasyRMM device you can see.",
+      }),
+      "GET /patching": ok({ configured: false, canOperate: false }),
+    });
+    renderApp("/go/from-easypatch/endpoints/0b6f3c1e-1111-4222-8333-444455556666");
+    expect(await screen.findByText("Opened from EasyPatch")).toBeInTheDocument();
+    expect(screen.getByText("That EasyPatch endpoint is not linked to an EasyRMM device you can see.")).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent(/^\/patching$/);
+  });
+
+  it("say what went wrong when the server refuses", async () => {
+    installFakeApi({
+      ...baseRoutes(sessionView()),
+      "GET /patching/from-easypatch/:kind/:id": fail(404, "not_found", "The requested item does not exist or you do not have access to it."),
+    });
+    renderApp("/go/from-easypatch/updates/x");
+    expect(await screen.findByRole("heading", { name: "Link from EasyPatch" })).toBeInTheDocument();
+    expect(await screen.findByText(/does not exist or you do not have access/)).toBeInTheDocument();
+  });
+
+  it("wait for a sign-in first, keeping the link", async () => {
+    installFakeApi(baseRoutes(null));
+    renderApp("/go/from-easypatch/jobs/j1");
+    await waitFor(() =>
+      expect(screen.getByTestId("location")).toHaveTextContent(`/login?returnTo=${encodeURIComponent("/go/from-easypatch/jobs/j1")}`),
+    );
   });
 });
 

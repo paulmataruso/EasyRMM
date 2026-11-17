@@ -36,6 +36,7 @@ import { ScriptDetailPage } from "./pages/scripts/ScriptDetailPage";
 import { ScriptFormPage } from "./pages/scripts/ScriptFormPage";
 import { JobsPage } from "./pages/jobs/JobsPage";
 import { AlertsPage } from "./pages/alerts/AlertsPage";
+import { FromEasyPatchPage } from "./pages/patching/FromEasyPatch";
 import { PatchingPage } from "./pages/patching/PatchingPage";
 import { ReportsPage } from "./pages/reports/ReportsPage";
 import { JobDetailPage } from "./pages/jobs/JobDetailPage";
@@ -59,8 +60,9 @@ function FullPageSpinner() {
 }
 
 /**
- * A link the server answers, not the console: /go/to-easypatch redirects to EasyPatch. The console only sees it after
- * a sign-in that the link interrupted (returnTo), and hands it back to the server with a full page load.
+ * A link the server answers, not the console: /go/to-easypatch redirects to EasyPatch, and /oauth2/authorize signs
+ * someone in to EasyPatch (ADR-0036). The console only sees one after a sign-in that it interrupted (returnTo), and
+ * hands it back to the server with a full page load, which carries the session cookie.
  */
 function ServerLink() {
   const location = useLocation();
@@ -130,6 +132,7 @@ export function App() {
       <Route path="/welcome" element={<ResetPasswordPage invite />} />
 
       <Route path="/go/to-easypatch" element={<Gate stage="ready"><ServerLink /></Gate>} />
+      <Route path="/oauth2/*" element={<Gate stage="ready"><ServerLink /></Gate>} />
 
       {/* Remote sessions take the whole window. */}
       <Route path="/devices/:id/remote/:kind" element={<Gate stage="ready"><RemoteSessionPage /></Gate>} />
@@ -152,6 +155,7 @@ export function App() {
         <Route path="jobs/:id" element={<JobDetailPage />} />
         <Route path="jobs/:jobId/runs/:runId" element={<RunDetailPage />} />
         <Route path="patching" element={<PatchingPage />} />
+        <Route path="go/from-easypatch/:kind/:id" element={<FromEasyPatchPage />} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="users/:id" element={<UserDetailPage />} />

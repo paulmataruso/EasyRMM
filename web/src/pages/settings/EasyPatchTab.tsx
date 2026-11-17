@@ -26,6 +26,7 @@ import {
 } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { LinkBadge, OpenEasyPatch } from "../patching/patchText";
+import { EasyPatchSignIn } from "./EasyPatchSignIn";
 
 const KEYS = ["/settings/easypatch", "/patching", "/audit"];
 
@@ -41,6 +42,7 @@ export function EasyPatchTab() {
         <ServerForm conn={c} className="xl:col-span-2" />
         <ServerStatus conn={c} />
       </div>
+      {c.configured && <EasyPatchSignIn />}
       {c.configured && <OrganizationLinks />}
       {c.configured && <DeviceProblems />}
     </div>

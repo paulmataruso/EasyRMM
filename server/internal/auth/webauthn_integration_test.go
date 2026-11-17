@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -178,6 +179,9 @@ func TestSecurityKeyAsTheOnlySecondFactor(t *testing.T) {
 	if s.State != auth.StateActive || !u.MFAEnabled || u.TOTP || u.SecurityKeys != 1 {
 		t.Fatalf("after set-up: %+v %+v", s, u)
 	}
+	if !slices.Equal(s.AMR, []string{"pwd", "hwk"}) {
+		t.Fatalf("after set-up: amr %v", s.AMR)
+	}
 	if a := e.audits(t, "auth.webauthn_add", "success"); len(a) != 1 || a[0]["key"] != "YubiKey 5" || a[0]["firstFactor"] != true {
 		t.Fatalf("audit: %+v", a)
 	}
@@ -192,8 +196,8 @@ func TestSecurityKeyAsTheOnlySecondFactor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s, _ := e.session(t, active); s.State != auth.StateActive {
-		t.Fatalf("state %s", s.State)
+	if s, _ := e.session(t, active); s.State != auth.StateActive || !slices.Equal(s.AMR, []string{"pwd", "hwk"}) {
+		t.Fatalf("state %s, amr %v", s.State, s.AMR)
 	}
 	if a := e.audits(t, "auth.mfa_verify", "success"); len(a) != 1 || a[0]["method"] != "webauthn" || a[0]["key"] != "YubiKey 5" {
 		t.Fatalf("audit: %+v", a)
@@ -383,6 +387,10 @@ func TestPasskeySignIn(t *testing.T) {
 	s, u := e.session(t, tok)
 	if s.State != auth.StateActive || u.ID != id {
 		t.Fatalf("session: %+v %+v", s, u)
+	}
+	// A passkey needs user verification: two factors in one step.
+	if !slices.Equal(s.AMR, []string{"hwk", "mfa"}) || !auth.MultiFactor(s.AMR) || s.AuthenticatedAt == nil {
+		t.Fatalf("passkey: amr %v at %v", s.AMR, s.AuthenticatedAt)
 	}
 	if a := e.audits(t, "auth.login", "success"); a[len(a)-1]["method"] != "passkey" || a[len(a)-1]["key"] != "YubiKey 5" {
 		t.Fatalf("audit: %+v", a[len(a)-1])

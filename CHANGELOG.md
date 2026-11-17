@@ -8,6 +8,20 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- EasyRMM can be EasyPatch's sign-in provider (ADR-0036): an OpenID
+  provider with one client, EasyPatch, set up by a super administrator under
+  Settings → EasyPatch → Sign-in, its secret shown once. Code flow with PKCE;
+  single-use codes valid 60 seconds; ES256 ID tokens carrying the person's
+  EasyPatch role and organizations from their EasyRMM roles, and
+  `email_verified: false`. A second factor in the session is required.
+  Audited as `idp.authorize` and `idp.client_*`. EasyPatch's side is not
+  released yet.
+- Sessions record how they signed in (`amr`: password, single sign-on,
+  authenticator code, security key, recovery code, passkey).
+- Links from EasyPatch into EasyRMM, `/go/from-easypatch/endpoints|
+  organizations|jobs/:id`, open the device's Patches tab, the organization or
+  the job; anything EasyRMM does not link, or the person may not see, opens
+  Patching with a note.
 - **EasyRMM | EasyPatch** under the logo switches to EasyPatch's console in
   the same tab, on the page of what you were looking at: a device's endpoint
   (on the tab matching its Patches view), an organization (also from a

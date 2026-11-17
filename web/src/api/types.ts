@@ -1248,7 +1248,6 @@ export interface PatchActionResult {
   results: { deviceId: string; deviceName: string; ok: boolean; jobId?: string; message?: string }[];
 }
 
-/** What EasyRMM's restart (only if a restart is pending) would do to one device. */
 /** Whether to show the EasyRMM | EasyPatch switch, and whether EasyPatch was answering. */
 export interface ProductSwitch {
   show: boolean;
@@ -1257,6 +1256,40 @@ export interface ProductSwitch {
   failingSince?: string;
 }
 
+/** Where a link from EasyPatch opens the console; `notice` says why it is not the page the link named. */
+export interface EasyPatchLanding {
+  path: string;
+  notice?: string;
+}
+
+/** EasyPatch's registration with EasyRMM's sign-in provider (ADR-0036), without its secret. */
+export interface EasyPatchSignInClient {
+  clientId: string;
+  redirectUri: string;
+  createdAt: string;
+  createdBy?: string;
+  rotatedAt?: string;
+  rotatedBy?: string;
+}
+
+/** Settings → EasyPatch → Sign-in. */
+export interface EasyPatchSignIn {
+  /** EasyPatch is set up and can sign people in through EasyRMM; otherwise `reason` says why not. */
+  available: boolean;
+  reason?: string;
+  issuer: string;
+  /** Where EasyPatch receives sign-ins, from its current address. */
+  redirectUri?: string;
+  client: EasyPatchSignInClient | null;
+}
+
+/** A new or rotated client, with its secret: shown once. */
+export interface EasyPatchSignInSecret extends EasyPatchSignInClient {
+  issuer: string;
+  clientSecret: string;
+}
+
+/** What EasyRMM's restart (only if a restart is pending) would do to one device. */
 export interface RestartCheck {
   deviceId: string;
   deviceName: string;

@@ -64,6 +64,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/patching/agent-install", a.installAgent)
 	// The product switch: for anyone signed in, it says whether to show it.
 	r("GET /api/v1/patching/switch", a.productSwitch)
+	// Where a link from EasyPatch opens the console.
+	r("GET /api/v1/patching/from-easypatch/{kind}/{id}", a.fromEasyPatch)
 
 	// A browser link, not an API call: it answers with a redirect.
 	mux.Handle("GET /go/to-easypatch", httpapi.Handle(a.goToEasyPatch))
@@ -396,4 +398,17 @@ func parseID(s, field string) (uuid.UUID, error) {
 		return uuid.Nil, apperr.Invalid(field, "must be an id")
 	}
 	return id, nil
+}
+
+func (a *API) fromEasyPatch(w http.ResponseWriter, r *http.Request) error {
+	kind := r.PathValue("kind")
+	if !slices.Contains(easypatch.FromKinds, kind) {
+		return apperr.NotFound()
+	}
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	l, err := a.svc.FromEasyPatch(r.Context(), httpapi.Caller(r), kind, id)
+	return ok(w, l, err)
 }

@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 )
@@ -335,6 +337,47 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	wantStatus(t, h.client().do("GET", "/api/v1/patching", nil), http.StatusUnauthorized, "")
 
+	// Links from EasyPatch: its ids, resolved against EasyRMM's link tables and the caller's permissions.
+	type landing struct {
+		Path   string `json:"path"`
+		Notice string `json:"notice"`
+	}
+	from := func(c *client, kind, id string) landing {
+		t.Helper()
+		var l landing
+		c.expect(http.StatusOK, "GET", "/api/v1/patching/from-easypatch/"+kind+"/"+id, nil, &l)
+		return l
+	}
+	for _, c := range []struct {
+		kind, id string
+		want     landing
+	}{
+		{"endpoints", endpoint.ID.String(), landing{Path: "/devices/" + device + "?tab=patches"}},
+		{"organizations", epOrg.String(), landing{Path: "/organizations/" + acme}},
+		{"jobs", jobs.Items[0].ID, landing{Path: "/patching?tab=jobs&job=" + jobs.Items[0].ID}},
+		{"endpoints", uuid.NewString(), landing{Path: "/patching", Notice: "That EasyPatch endpoint is not linked to an EasyRMM device you can see."}},
+		{"organizations", uuid.NewString(), landing{Path: "/patching", Notice: "That EasyPatch organization is not linked to an EasyRMM organization you can see."}},
+	} {
+		if got := from(viewer, c.kind, c.id); got != c.want {
+			t.Errorf("from EasyPatch %s/%s: %+v, want %+v", c.kind, c.id, got, c.want)
+		}
+	}
+	wantStatus(t, viewer.do("GET", "/api/v1/patching/from-easypatch/updates/"+uuid.NewString(), nil), http.StatusNotFound, "not_found")
+	wantStatus(t, viewer.do("GET", "/api/v1/patching/from-easypatch/endpoints/nope", nil), http.StatusNotFound, "not_found")
+	wantStatus(t, h.client().do("GET", "/api/v1/patching/from-easypatch/endpoints/"+endpoint.ID.String(), nil), http.StatusUnauthorized, "")
+	// Someone patching another organization learns nothing about Acme's.
+	var globex idObj
+	admin.expect(http.StatusCreated, "POST", "/api/v1/organizations", map[string]any{"name": "Globex"}, &globex)
+	invite(t, h, admin, "gil@globex.example", []map[string]any{{"role": "technician", "organizationId": globex.ID}})
+	gil := h.client()
+	gil.signIn("gil@globex.example", "a long and unusual passphrase", "")
+	if l := from(gil, "endpoints", endpoint.ID.String()); l.Path != "/patching" || l.Notice == "" {
+		t.Errorf("another organization's endpoint: %+v", l)
+	}
+	if l := from(gil, "organizations", epOrg.String()); l.Path != "/patching" || l.Notice == "" {
+		t.Errorf("another organization: %+v", l)
+	}
+
 	var audit struct {
 		Items []struct {
 			Action string `json:"action"`
@@ -363,6 +406,9 @@ func TestEasyPatchAPI(t *testing.T) {
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching", nil, &status)
 	if status.Configured {
 		t.Fatalf("status after removal: %+v", status)
+	}
+	if l := from(admin, "endpoints", endpoint.ID.String()); l.Path != "/patching" || !strings.Contains(l.Notice, "not set up") {
+		t.Fatalf("from EasyPatch once it is removed: %+v", l)
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/audit?action=easypatch", nil, &audit)
 	if len(audit.Items) != 4 {

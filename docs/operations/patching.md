@@ -227,8 +227,55 @@ call to EasyPatch failed since its last good check (every ten minutes:
 EasyPatch did not answer, or refused EasyRMM's token), a dot on
 **EasyPatch** says so; the link still works, in case it has recovered.
 
-Switching does not sign you in to EasyPatch yet: EasyPatch asks for its own
-account until it can sign people in through EasyRMM.
+EasyPatch's own switch, and its links into EasyRMM, open EasyRMM on the
+matching page: an endpoint opens its device's Patches tab, an organization
+the organization, a job the Patching job dialog. An endpoint or
+organization EasyRMM does not link, or that you may not see, opens
+Patching with a note saying so.
+
+### Signing in to EasyPatch through EasyRMM
+
+EasyRMM can be EasyPatch's sign-in provider: someone signed in to EasyRMM
+opens EasyPatch without another password, and their EasyPatch role follows
+their EasyRMM roles
+([ADR-0036](../architecture/adr/0036-easyrmm-signs-in-to-easypatch.md)).
+
+| EasyRMM | EasyPatch |
+|---|---|
+| Super administrator | SuperAdmin |
+| `patch.configure` over a linked organization (organization administrator) | Admin of those organizations |
+| Otherwise `patch.view` over a linked organization (technician, read-only) | ReadOnly in those organizations |
+| A role over one site only, or over no linked organization | Cannot sign in this way |
+
+EasyPatch gives one role per person, so someone who is Admin in one
+organization and may only look in another is Admin in the first and not
+listed in the second. They still see both in EasyRMM.
+
+It needs a second factor in the EasyRMM session, even when
+`EASYRMM_REQUIRE_MFA` is off: an authenticator code, a security key or
+recovery code after the password, a passkey, or single sign-on from a
+provider marked as enforcing MFA. People signed in before this version
+sign in once more first.
+
+To set it up, as a super administrator:
+
+1. Connect EasyPatch (above). Settings → EasyPatch → **Sign-in** says
+   whether this EasyPatch can sign people in through EasyRMM: it must list
+   the `easyrmm-sign-in` capability.
+2. Choose **Set up sign-in**. EasyRMM shows the issuer, a client ID and a
+   client secret. The secret is shown once.
+3. In EasyPatch, add a single sign-on provider of the kind EasyRMM and enter
+   the three.
+
+EasyPatch's server must reach EasyRMM's public address over HTTPS.
+**Replace secret…** stops the old secret at once; **Turn off** stops
+EasyRMM signing anyone in to EasyPatch. If EasyPatch's public address
+changes, turn sign-in off and set it up again: EasyRMM sends people back
+only to the address it was set up with.
+
+EasyPatch's side, the EasyRMM kind of provider, is not released yet: until
+an EasyPatch lists `easyrmm-sign-in`, the Sign-in card says EasyPatch needs
+an update, and EasyPatch asks for its own account when you switch.
 
 Scripts in the library that install updates themselves (Windows Update,
 `apt upgrade`, `dnf upgrade`…) work around all of this. The script library
@@ -241,7 +288,7 @@ warns about them; see
 |---|---|---|
 | `patch.view` (with `device.view`) | Patching, a device's Patches tab | Every role |
 | `patch.manage` | Scan, install, restart, cancel, retry, install the EasyPatch agent | Technician and above |
-| `patch.configure` | Change EasyPatch's standing rules: makes someone an Admin in EasyPatch rather than ReadOnly once EasyPatch signs people in through EasyRMM. Only organization-wide roles hold it | Organization administrator and above |
+| `patch.configure` | Change EasyPatch's standing rules: makes someone an Admin in EasyPatch rather than ReadOnly when they sign in to EasyPatch through EasyRMM. Only organization-wide roles hold it | Organization administrator and above |
 | `settings.manage` | Settings → EasyPatch, including automatic installs of the EasyPatch agent | Super administrator |
 
 Both are checked at the device's site before EasyPatch is called; a job is
@@ -260,6 +307,8 @@ nobody can act, whatever their role.
 | `easypatch.organization_link`, `easypatch.organization_unlink` | Both organizations |
 | `patch.agent_install` | One record per device an EasyPatch agent install was requested for. Automatic installs are covered by the record of turning them on |
 | `easypatch.organization_update` | **Install automatically** turned on or off, and for which organization |
+| `idp.authorize` | A sign-in to EasyPatch through EasyRMM: the role and how many organizations it gave, or why it was refused (no second factor, no access, not signed in) |
+| `idp.client_create`, `idp.client_rotate`, `idp.client_delete` | Sign-in through EasyRMM set up, its secret replaced, or turned off |
 
 EasyPatch records each enrollment token EasyRMM creates against the API
 token, and against the EasyRMM user who asked for the install when the

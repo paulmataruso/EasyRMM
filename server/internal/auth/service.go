@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -132,6 +133,34 @@ type Session struct {
 	IdleExpiresAt time.Time    `json:"idleExpiresAt"`
 	SourceIP      *netip.Addr  `json:"sourceIp,omitempty"`
 	UserAgent     string       `json:"userAgent"`
+	// AMR says how the session signed in (OpenID Connect amr values, RFC
+	// 8176): pwd, fed, otp, hwk, rc, mfa. AuthenticatedAt is when it became
+	// active. Both are for EasyRMM's OpenID provider (ADR-0036).
+	AMR             []string   `json:"-"`
+	AuthenticatedAt *time.Time `json:"-"`
+}
+
+// Sign-in methods recorded on sessions, as amr values (RFC 8176). "rc" (a
+// recovery code) is EasyRMM's own.
+const (
+	MethodPassword    = "pwd"
+	MethodFederated   = "fed"
+	MethodTOTP        = "otp"
+	MethodKey         = "hwk"
+	MethodRecovery    = "rc"
+	MethodMultiFactor = "mfa"
+)
+
+// MultiFactor reports whether sign-in methods include a second factor: a
+// code or a key after a password or single sign-on, a passkey (which needs
+// user verification), or a provider trusted to have asked for one.
+func MultiFactor(amr []string) bool {
+	if slices.Contains(amr, MethodMultiFactor) {
+		return true
+	}
+	first := slices.Contains(amr, MethodPassword) || slices.Contains(amr, MethodFederated)
+	second := slices.Contains(amr, MethodTOTP) || slices.Contains(amr, MethodKey) || slices.Contains(amr, MethodRecovery)
+	return first && second
 }
 
 // Service is the authentication service.
@@ -323,7 +352,7 @@ func (s *Service) Login(ctx context.Context, email, password string, meta Reques
 		case s.cfg.RequireMFA:
 			state = StateMFAEnrollment
 		}
-		token, sess, err = s.createSession(ctx, tx, userID, state, meta)
+		token, sess, err = s.createSession(ctx, tx, userID, state, meta, MethodPassword)
 		if err != nil {
 			return err
 		}
@@ -421,7 +450,11 @@ func (s *Service) SignInExternal(ctx context.Context, in ExternalSignIn, meta Re
 		case s.cfg.RequireMFA:
 			state = StateMFAEnrollment
 		}
-		token, sess, err = s.createSession(ctx, tx, in.UserID, state, meta)
+		amr := []string{MethodFederated}
+		if in.SecondFactorDone {
+			amr = append(amr, MethodMultiFactor)
+		}
+		token, sess, err = s.createSession(ctx, tx, in.UserID, state, meta, amr...)
 		if err != nil {
 			return err
 		}
@@ -445,7 +478,7 @@ func (s *Service) SignInExternal(ctx context.Context, in ExternalSignIn, meta Re
 	return token, sess, nil
 }
 
-func (s *Service) createSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID, state SessionState, meta RequestMeta) (string, *Session, error) {
+func (s *Service) createSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID, state SessionState, meta RequestMeta, amr ...string) (string, *Session, error) {
 	token, hash, err := NewToken()
 	if err != nil {
 		return "", nil, err
@@ -454,7 +487,10 @@ func (s *Service) createSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 	sess := &Session{
 		UserID: userID, State: state, CreatedAt: now, LastSeenAt: now,
 		ExpiresAt: now.Add(s.cfg.MaxSessionAge), IdleExpiresAt: minTime(now.Add(s.cfg.IdleTimeout), now.Add(s.cfg.MaxSessionAge)),
-		UserAgent: truncateString(meta.UserAgent, 512),
+		UserAgent: truncateString(meta.UserAgent, 512), AMR: append([]string{}, amr...),
+	}
+	if state == StateActive {
+		sess.AuthenticatedAt = &now
 	}
 	if state != StateActive {
 		// Half-finished sign-ins expire quickly.
@@ -465,9 +501,10 @@ func (s *Service) createSession(ctx context.Context, tx pgx.Tx, userID uuid.UUID
 		ip := meta.IP.Unmap()
 		sess.SourceIP = &ip
 	}
-	err = tx.QueryRow(ctx, `INSERT INTO sessions (token_hash, user_id, state, created_at, last_seen_at, idle_expires_at, expires_at, source_ip, user_agent)
-		VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8) RETURNING id`,
-		hash, userID, string(state), now, sess.IdleExpiresAt, sess.ExpiresAt, sess.SourceIP, sess.UserAgent).Scan(&sess.ID)
+	err = tx.QueryRow(ctx, `INSERT INTO sessions (token_hash, user_id, state, created_at, last_seen_at, idle_expires_at, expires_at, source_ip, user_agent,
+			amr, authenticated_at)
+		VALUES ($1, $2, $3, $4, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
+		hash, userID, string(state), now, sess.IdleExpiresAt, sess.ExpiresAt, sess.SourceIP, sess.UserAgent, sess.AMR, sess.AuthenticatedAt).Scan(&sess.ID)
 	if err != nil {
 		return "", nil, fmt.Errorf("auth: creating session: %w", err)
 	}
@@ -490,14 +527,14 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Session, *Us
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT s.id, s.user_id, s.state, s.created_at, s.last_seen_at, s.expires_at, s.idle_expires_at,
-			       s.revoked_at, s.source_ip, s.user_agent,
+			       s.revoked_at, s.source_ip, s.user_agent, s.amr, s.authenticated_at,
 			       u.email, u.display_name, u.status, u.totp_enabled_at,
 			       (SELECT count(*) FROM user_webauthn_credentials c WHERE c.user_id = u.id),
 			       u.passkey_prompt_after, u.passkey_prompt_declined_at
 			FROM sessions s JOIN users u ON u.id = s.user_id
 			WHERE s.token_hash = $1`, hash).
 			Scan(&sess.ID, &sess.UserID, &state, &sess.CreatedAt, &sess.LastSeenAt, &sess.ExpiresAt, &sess.IdleExpiresAt,
-				&revokedAt, &sess.SourceIP, &sess.UserAgent, &user.Email, &user.DisplayName, &user.Status, &totpEnabled, &user.SecurityKeys,
+				&revokedAt, &sess.SourceIP, &sess.UserAgent, &sess.AMR, &sess.AuthenticatedAt, &user.Email, &user.DisplayName, &user.Status, &totpEnabled, &user.SecurityKeys,
 				&promptAfter, &promptDeclined)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInvalidSession
@@ -532,8 +569,9 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Session, *Us
 }
 
 // rotate replaces a session's token (after a privilege change, to defeat
-// session fixation) and optionally changes its state.
-func (s *Service) rotate(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID, state SessionState) (string, error) {
+// session fixation) and optionally changes its state. method, when not
+// empty, is the sign-in method just completed, added to the session's amr.
+func (s *Service) rotate(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID, state SessionState, method string) (string, error) {
 	token, hash, err := NewToken()
 	if err != nil {
 		return "", err
@@ -541,8 +579,11 @@ func (s *Service) rotate(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID, st
 	now := s.now()
 	idle := minTime(now.Add(s.cfg.IdleTimeout), now.Add(s.cfg.MaxSessionAge))
 	_, err = tx.Exec(ctx, `UPDATE sessions SET token_hash = $2, state = $3, mfa_failures = 0,
-		last_seen_at = $4, idle_expires_at = $5, expires_at = $6 WHERE id = $1`,
-		sessionID, hash, string(state), now, idle, now.Add(s.cfg.MaxSessionAge))
+		last_seen_at = $4, idle_expires_at = $5, expires_at = $6,
+		amr = CASE WHEN $7 = '' OR $7 = ANY (amr) THEN amr ELSE array_append(amr, $7) END,
+		authenticated_at = CASE WHEN $3 = 'active' AND (state <> 'active' OR authenticated_at IS NULL) THEN $4 ELSE authenticated_at END
+		WHERE id = $1`,
+		sessionID, hash, string(state), now, idle, now.Add(s.cfg.MaxSessionAge), method)
 	if err != nil {
 		return "", fmt.Errorf("auth: rotating session: %w", err)
 	}
@@ -612,7 +653,11 @@ func (s *Service) VerifyMFA(ctx context.Context, sess *Session, user *User, code
 			return s.codeFailed(ctx, tx, sess, user, method, meta)
 		}
 		var err error
-		token, err = s.rotate(ctx, tx, sess.ID, StateActive)
+		used := MethodTOTP
+		if method == "recovery_code" {
+			used = MethodRecovery
+		}
+		token, err = s.rotate(ctx, tx, sess.ID, StateActive, used)
 		if err != nil {
 			return err
 		}
@@ -767,7 +812,7 @@ func (s *Service) ConfirmTOTPEnrollment(ctx context.Context, sess *Session, user
 			return err
 		}
 		if sess.State == StateMFAEnrollment {
-			if newToken, err = s.rotate(ctx, tx, sess.ID, StateActive); err != nil {
+			if newToken, err = s.rotate(ctx, tx, sess.ID, StateActive, MethodTOTP); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1`, sess.UserID); err != nil {

@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from "react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import { Download, ListChecks, PackagePlus, Power, Radar, ShieldCheck } from "lucide-react";
 import { useApi, useList } from "../../api/hooks";
 import type { DeviceGroup, PatchFleet, PatchFleetDevice, PatchJobView, PatchStatus } from "../../api/types";
@@ -37,6 +37,8 @@ export function PatchingPage() {
   });
   const tab = url.get("tab") === "jobs" ? "jobs" : "devices";
   const jobId = url.get("job") || null;
+  // Why a link from EasyPatch opened here instead of the page it named (FromEasyPatchPage).
+  const notice = (useLocation().state as { notice?: string } | null)?.notice;
 
   return (
     <>
@@ -45,6 +47,11 @@ export function PatchingPage() {
         subtitle="Operating system and application updates on the devices EasyPatch patches, read from EasyPatch as you look."
         actions={status.data?.consoleUrl && <OpenEasyPatch to={{ list: tab === "jobs" ? "jobs" : "endpoints" }} />}
       />
+      {notice && (
+        <Alert tone="info" className="mb-4" title="Opened from EasyPatch">
+          {notice}
+        </Alert>
+      )}
       {status.isPending ? (
         <Spinner />
       ) : status.isError ? (

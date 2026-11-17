@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -211,6 +212,10 @@ func TestSingleSignOnThroughDex(t *testing.T) {
 		if res.Session.State != auth.StateActive {
 			t.Fatalf("state = %s", res.Session.State)
 		}
+		// The administrator vouched for the provider's second factor.
+		if !slices.Equal(res.Session.AMR, []string{"fed", "mfa"}) || res.Session.AuthenticatedAt == nil {
+			t.Fatalf("amr %v at %v", res.Session.AMR, res.Session.AuthenticatedAt)
+		}
 		if n := e.count(`SELECT count(*) FROM users WHERE id = $1 AND last_login_at IS NOT NULL`, alex); n != 1 {
 			t.Fatal("last_login_at not set")
 		}
@@ -228,7 +233,7 @@ func TestSingleSignOnThroughDex(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Session.UserID != sam || res.Session.State != auth.StateMFARequired {
+		if res.Session.UserID != sam || res.Session.State != auth.StateMFARequired || !slices.Equal(res.Session.AMR, []string{"fed"}) {
 			t.Fatalf("session = %+v", res.Session)
 		}
 	})

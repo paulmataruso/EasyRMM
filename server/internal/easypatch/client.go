@@ -48,6 +48,9 @@ const (
 	// CapabilityOnBehalfOf: API token requests may name the user they are
 	// for.
 	CapabilityOnBehalfOf = "on-behalf-of"
+	// CapabilityEasyRMMSignIn: EasyPatch has the "EasyRMM" kind of sign-in
+	// provider, for EasyRMM's OpenID provider (ADR-0036).
+	CapabilityEasyRMMSignIn = "easyrmm-sign-in"
 )
 
 // Error is a failed call: EasyPatch's answer, or Status 0 when it could not

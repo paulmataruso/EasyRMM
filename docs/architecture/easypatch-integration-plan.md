@@ -3,7 +3,8 @@
 * Status: **Draft 2**, 2026-11-17. Draft 1 was critiqued against the code by an
   independent review and by its author. Section 13 lists every finding and
   what changed.
-* Progress: P0 to P3 are built (see section 10); P4 is next.
+* Progress: P0 to P3 are built (see section 10). In P4, EasyRMM's side is
+  built (ADR-0036); EasyPatch's side is next.
 * Scope: EasyRMM owns EasyPatch. Both live in this repository; EasyPatch is
   under `easypatch/`.
 
@@ -597,6 +598,19 @@ covered by the HTTP tests, not followed to a real EasyPatch in a browser).
 * an end-to-end test over TLS, with the two consoles on **different
   registrable domains**, switches from EasyRMM to EasyPatch with no sign-in
   page, and back.
+
+*Done in EasyRMM (P4a):* the provider (`server/internal/idp`,
+[ADR-0036](adr/0036-easyrmm-signs-in-to-easypatch.md)), `amr` on sessions,
+the console's `/oauth2/*` hand-back, Settings → EasyPatch → Sign-in, and
+`/go/from-easypatch` (a console route that asks the server, so EasyRMM's
+cookie comes along on a cross-site link: no bounce). Checked: the HTTP test
+drives the real server with go-oidc and x/oauth2 through discovery, the
+bounce, the code exchange and ID token verification, and covers single use,
+PKCE, expiry, sign-out, access removed before redemption, a session without
+recorded methods, a foreign redirect URI, both client authentication
+methods and rotation; two of its checks were shown to fail when the code
+they cover was broken. Not yet: EasyPatch's side, so no browser has signed in
+to EasyPatch this way.
 
 **P5 Later**
 * Back-channel logout.
