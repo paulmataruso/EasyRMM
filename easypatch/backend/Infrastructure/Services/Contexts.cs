@@ -27,6 +27,12 @@ public interface IActorContext
     string? Username { get; }
     string? IpAddress { get; }
     string? CorrelationId { get; }
+
+    /// <summary>
+    /// For an API token, the person an integration says it acts for (<c>X-EasyPatch-On-Behalf-Of</c>). Informational: the token's role
+    /// and organizations decide what the request may do.
+    /// </summary>
+    string? OnBehalfOf => null;
 }
 
 public static class ActorContextExtensions

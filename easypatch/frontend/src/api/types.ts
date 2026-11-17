@@ -1600,6 +1600,8 @@ export interface ServerInfoDto {
   version: string;
   publicUrl: string;
   serverTime: Instant;
+  /** Optional features integrations check for: `scheduled-installs`, `on-behalf-of`. */
+  capabilities: string[];
 }
 
 // ---------------------------------------------------------------------------------------------

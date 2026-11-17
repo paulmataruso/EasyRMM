@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Core.Entities;
 using Microsoft.EntityFrameworkCore;
@@ -132,5 +133,66 @@ public sealed class ApiTokenTests(PostgresFixture postgres) : IntegrationTest(po
         root.Browser.SkipCsrf = true;
         root.Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", admin.Secret);
         await root.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Forbidden, "csrf_failed");
+    }
+
+    [Fact]
+    public async Task An_integration_names_the_person_it_acts_for()
+    {
+        var info = await root.GetAsync<ServerInfoDto>("/api/v1/server-info");
+        Assert.Equal(["scheduled-installs", "on-behalf-of"], info.Capabilities);
+
+        var (org, site) = await CreateOrgAsync(root);
+        var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-1");
+        var secret = (await CreateAsync("EasyRMM", UserRole.Admin)).Secret;
+        var rmm = TokenClient(secret);
+        rmm.Http.DefaultRequestHeaders.Add("X-EasyPatch-On-Behalf-Of", "  alice@example.com ");
+
+        // The job says who asked for it, and so does the audit record; the token alone decides what is allowed.
+        await rmm.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        var scan = await WithDbAsync(db => db.Jobs.AsNoTracking().SingleAsync(j => j.EndpointId == agent.EndpointId));
+        Assert.Equal(("token:EasyRMM for alice@example.com", (Guid?)null), (scan.RequestedBy, scan.RequestedByUserId));
+        var created = await WithDbAsync(db => db.AuditLogs.AsNoTracking().SingleAsync(a => a.Action == "job.create"));
+        Assert.Equal("token:EasyRMM", created.Username);
+        using (var details = JsonDocument.Parse(created.Details!))
+        {
+            Assert.Equal("alice@example.com", details.RootElement.GetProperty("onBehalfOf").GetString());
+            Assert.Equal("UpdateScan", details.RootElement.GetProperty("type").GetString());
+        }
+
+        // Excluding an update works with a token (it used to fail with 401) and records no user.
+        var update = Guid.NewGuid();
+        await rmm.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/exclusions", new ExclusionRequest(update, "Breaks the payroll app"),
+            HttpStatusCode.NoContent);
+        var exclusion = await WithDbAsync(db => db.UpdateExclusions.AsNoTracking().SingleAsync());
+        Assert.Equal((update, (Guid?)null), (exclusion.UpdateGuid, exclusion.CreatedByUserId));
+        var excluded = await WithDbAsync(db => db.AuditLogs.AsNoTracking().SingleAsync(a => a.Action == "endpoint.update_excluded"));
+        using (var details = JsonDocument.Parse(excluded.Details!))
+        {
+            Assert.Equal("alice@example.com", details.RootElement.GetProperty("onBehalfOf").GetString());
+            Assert.Equal("Breaks the payroll app", details.RootElement.GetProperty("reason").GetString());
+        }
+
+        await rmm.ExpectAsync(HttpMethod.Delete, $"/api/v1/endpoints/{agent.EndpointId}/exclusions/{update}", null, HttpStatusCode.NoContent);
+        var included = await WithDbAsync(db => db.AuditLogs.AsNoTracking().SingleAsync(a => a.Action == "endpoint.update_included"));
+        Assert.Contains("alice@example.com", included.Details!, StringComparison.Ordinal);
+
+        // A value that is not one line of printable text, or is too long, is ignored, and so is the header on a session.
+        var tab = TokenClient(secret);
+        Assert.True(tab.Http.DefaultRequestHeaders.TryAddWithoutValidation("X-EasyPatch-On-Behalf-Of", "alice\tbob"));
+        await tab.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/inventory-refresh", null, HttpStatusCode.Accepted);
+        var refresh = await WithDbAsync(db => db.Jobs.AsNoTracking().SingleAsync(j => j.Type == Contracts.JobType.InventoryRefresh));
+        Assert.Equal("token:EasyRMM", refresh.RequestedBy);
+
+        var longName = TokenClient(secret);
+        longName.Http.DefaultRequestHeaders.Add("X-EasyPatch-On-Behalf-Of", new string('a', 255));
+        await longName.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/exclusions", new ExclusionRequest(Guid.NewGuid(), null),
+            HttpStatusCode.NoContent);
+        root.Http.DefaultRequestHeaders.Add("X-EasyPatch-On-Behalf-Of", "mallory@example.com");
+        await root.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/exclusions", new ExclusionRequest(Guid.NewGuid(), null),
+            HttpStatusCode.NoContent);
+        var exclusions = await WithDbAsync(db => db.AuditLogs.AsNoTracking().Where(a => a.Action == "endpoint.update_excluded").OrderBy(a => a.Id)
+            .Select(a => new { a.Username, a.Details }).ToListAsync());
+        Assert.Equal(["token:EasyRMM", "token:EasyRMM", "root"], exclusions.Select(e => e.Username));
+        Assert.All(exclusions.Skip(1), e => Assert.DoesNotContain("onBehalfOf", e.Details!, StringComparison.Ordinal));
     }
 }

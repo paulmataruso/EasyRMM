@@ -145,6 +145,14 @@ console manage them; a token cannot create, list or revoke tokens.
 | POST | `/` | `{name, role, organizationIds[], expiresInDays}` → `201 {token, secret}`. `role` is `ReadOnly` or `Admin`; an empty `organizationIds` means every organization; `expiresInDays` is 1 to 365; `name` (up to 50 characters) must be unique among tokens that are not revoked (`409 name_taken`). The `secret` (`ept_…`) is shown once; the server keeps only its SHA-256 hash. |
 | POST | `/{id}/revoke` | Revokes the token immediately. Revoking twice is harmless. |
 
+A token request may name the person it acts for in `X-EasyPatch-On-Behalf-Of` (one line of
+printable text, up to 254 characters; anything else is ignored), for example the signed-in user of
+an RMM that calls EasyPatch. It is informational: the token's role and organizations decide what
+the request may do. EasyPatch adds it to the request's audit records as `onBehalfOf`, and to the
+`requestedBy` of jobs it creates (`token:<name> for <person>`) when that fits in 128 characters.
+Session requests ignore the header. Servers that support it list `on-behalf-of` in
+[`/server-info`](#dashboard-reports-audit-settings).
+
 A token acts with its role in its organizations, like a user with the same role and
 organization access: a ReadOnly token gets the Viewer routes, an Admin token also gets the
 Operator routes. SuperAdmin routes answer `403`, and the `/auth` routes (your account, MFA,
@@ -238,7 +246,7 @@ Invalid values return `400 validation_failed`.
 | GET | `/endpoints/{id}/jobs` | Job history (`?page=&pageSize=`) |
 | GET | `/endpoints/{id}/effective-policy` | Resolved policy and where each value came from (`sources`; for values from a tag policy, `sourceTags` names the tag), including the restart schedule, the Windows Update settings per group and the exact registry values the agent will set |
 | GET | `/endpoints/{id}/install-preview` | `?mode=all|selected&updateGuids=<comma-separated>`. What would be installed, what would be skipped and why, total size, reboot implications and warnings. |
-| POST | `/endpoints/{id}/install-updates` | `{mode: "AllEligible"|"Selected", updateGuids?, force}` → `202` with the job. `409 duplicate_job` (with `existingJobId`) unless `force`; `409 nothing_to_install` when none of the selected updates can be installed. |
+| POST | `/endpoints/{id}/install-updates` | `{mode: "AllEligible"|"Selected", updateGuids?, force, scheduledAt?}` → `202` with the job. `scheduledAt` (up to 31 days ahead, otherwise `400 validation_failed`) holds the job until then; it then has the usual time to run before it expires. `409 duplicate_job` (with `existingJobId`) unless `force`; `409 nothing_to_install` when none of the selected updates can be installed. |
 | POST | `/endpoints/{id}/scan` | Queue an `UpdateScan` job (`202`) |
 | POST | `/endpoints/{id}/inventory-refresh` | Queue an `InventoryRefresh` job (`202`) |
 | POST | `/endpoints/{id}/exclusions` | `{updateGuid, reason?}`. Exclude an update on this endpoint. |
@@ -248,7 +256,7 @@ Invalid values return `400 validation_failed`.
 | POST | `/endpoints/{id}/notify` | `{preset, restartAt?}` → `202` with the job. `restartAt` is required for `RestartScheduled`. `409 agent_upgrade_required` for agents without message support, `409 not_supported_on_linux` for Linux and `409 not_supported_on_macos` for macOS endpoints. |
 | POST | `/endpoints/{id}/agent-update` | `{version?}` (send `{}` for the newest) → `202` with an `AgentUpdate` job for the newest signed package for the agent's architecture and package format, or the given version. `409` with `agent_upgrade_required` (agent older than 1.2.0 or built without a release key), `no_agent_package`, `agent_up_to_date` (also for older versions: agents are never downgraded), `package_not_signed`, `release_key_not_trusted` or `duplicate_job`. |
 | POST | `/endpoints/{id}/uninstall-agent` | → `202` with an `UninstallAgent` job. The agent removes its own package, which unenrolls it; the job completes when the unenrollment arrives and the endpoint becomes `Decommissioned`. `409 agent_upgrade_required` for agents older than 1.6.0 (or not installed from their package), `409 duplicate_job`, `409 endpoint_not_active`. |
-| POST | `/endpoints/bulk/scan`, `/endpoints/bulk/install-updates` | `{endpointIds[], force}`. Returns a per-endpoint outcome. |
+| POST | `/endpoints/bulk/scan`, `/endpoints/bulk/install-updates` | `{endpointIds[], force}`, and `scheduledAt?` for installs as above. Returns a per-endpoint outcome. |
 | POST | `/endpoints/bulk/restart` | `{endpointIds[], restart: {…as above}}`. Per-endpoint outcome. To restart every endpoint of an organization or site that needs it, see `/organizations/{id}/restart-pending`. |
 | POST | `/endpoints/bulk/notify` | `{endpointIds[], message: {preset, restartAt?}}`. Per-endpoint outcome. |
 | POST | `/endpoints/bulk/agent-update` | `{endpointIds[], version?}`. Per-endpoint outcome with the codes above. |
@@ -330,7 +338,7 @@ unless they are selected, and then adds a warning.
 | GET | `/reports/installations` (`from, to, organizationId, siteId, endpointId, category, result, page, pageSize`) and `/reports/installations.csv` | Viewer |
 | GET | `/audit-logs` (`userId, organizationId, action` (prefix), `from, to, page, pageSize`) | Operator. Users restricted to some organizations only see entries for those organizations. |
 | GET/PUT | `/settings` | GET Viewer, PUT SuperAdmin. Includes the rollout guard: `rolloutGuardEnabled` (default `true`), `rolloutGuardMinFailedEndpoints` (1-1000, default 3), `rolloutGuardFailurePercent` (1-100, default 20) and `rolloutGuardWindowDays` (1-90, default 7). |
-| GET | `/server-info` (version, public URL, server time) | Viewer |
+| GET | `/server-info` (version, public URL, server time, `capabilities`: optional features integrations check for — `scheduled-installs`, `on-behalf-of`) | Viewer |
 | GET | `/vulnerability-feeds` (state of the `kev`, `msrc` and `debian` downloads: last attempt and success, sanitized error, version, entries) | Viewer |
 | GET/POST, PUT/DELETE | `/lifecycle`, `/lifecycle/{id}` (OS lifecycle table) | GET Viewer, writes SuperAdmin |
 

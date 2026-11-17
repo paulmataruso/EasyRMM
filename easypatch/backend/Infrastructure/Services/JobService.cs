@@ -106,10 +106,7 @@ public sealed class JobService(
                 "agent_upgrade_required");
         }
 
-        if (request.NotBefore is { } notBefore && (notBefore < now.AddMinutes(-5) || notBefore > now.AddDays(31)))
-        {
-            throw AppException.BadRequest("The scheduled time must be between now and 31 days from now.", "validation_failed");
-        }
+        EnsureValidNotBefore(request.NotBefore, now);
 
         var settings = await settingsService.GetAsync(ct);
         string? payloadJson = null;
@@ -322,7 +319,7 @@ public sealed class JobService(
                 JobTrigger.System when request.Type == JobType.AgentUpdate => "Automatic agent updates",
                 JobTrigger.Scheduled => "Maintenance window",
                 JobTrigger.System => "System",
-                _ => actor.Username ?? "unknown",
+                _ => Requester(actor),
             },
             // An uninstall goes before anything still queued (it cancels the rest). Then scans and inventory, then update removals,
             // then installs, then downloads ahead of a window, then restarts (patch, then restart), then agent updates. Messages
@@ -345,7 +342,8 @@ public sealed class JobService(
             {
                 JobType.Restart => Later(now, request.NotBefore).AddHours(2),
                 JobType.NotifyUser => Later(now, request.NotBefore).AddHours(1),
-                _ => now.AddHours(settings.JobDefaultExpiryHours),
+                // A job scheduled for later has the usual time to run from then.
+                _ => Later(now, request.NotBefore).AddHours(settings.JobDefaultExpiryHours),
             },
             Payload = payloadJson,
             DedupeKey = request.Force ? null : dedupeKey,
@@ -385,6 +383,27 @@ public sealed class JobService(
     }
 
     private static DateTimeOffset Later(DateTimeOffset now, DateTimeOffset? other) => other is { } o && o > now ? o : now;
+
+    /// <summary>A job may be scheduled up to 31 days ahead (a few minutes in the past allows for clock skew).</summary>
+    public static void EnsureValidNotBefore(DateTimeOffset? notBefore, DateTimeOffset now)
+    {
+        if (notBefore is { } at && (at < now.AddMinutes(-5) || at > now.AddDays(31)))
+        {
+            throw AppException.BadRequest("The scheduled time must be between now and 31 days from now.", "validation_failed");
+        }
+    }
+
+    /// <summary>
+    /// Who asked for a manual job: the user or API token, and for a token the person it acted for when that fits in the column (the
+    /// audit record always has it).
+    /// </summary>
+    private static string Requester(IActorContext actor)
+    {
+        var name = actor.Username ?? "unknown";
+        return actor.OnBehalfOf is { } person && name.Length + person.Length + 5 <= MaxRequestedByLength ? $"{name} for {person}" : name;
+    }
+
+    private const int MaxRequestedByLength = 128;
 
     private static AppException DuplicateJob(Guid existingId) =>
         AppException.Conflict("An identical job is already queued or running for this endpoint.", "duplicate_job",

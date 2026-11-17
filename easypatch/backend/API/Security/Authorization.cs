@@ -157,4 +157,28 @@ public sealed class HttpActorContext(IHttpContextAccessor accessor) : IActorCont
     public string? IpAddress => Context?.Connection.RemoteIpAddress?.ToString();
 
     public string? CorrelationId => Context?.TraceIdentifier;
+
+    public string? OnBehalfOf => Context is { } context && context.User.IsApiToken()
+        ? OnBehalfOfHeader.Parse(context.Request.Headers[OnBehalfOfHeader.Name])
+        : null;
+}
+
+/// <summary>
+/// <c>X-EasyPatch-On-Behalf-Of</c>: the person an integration's API token request is for, such as the signed-in user of the system that
+/// calls EasyPatch. Only API token requests use it; a value that is not one line of printable text up to 254 characters is ignored.
+/// </summary>
+public static class OnBehalfOfHeader
+{
+    public const string Name = "X-EasyPatch-On-Behalf-Of";
+    public const int MaxLength = 254;
+
+    public static string? Parse(Microsoft.Extensions.Primitives.StringValues values)
+    {
+        if (values.Count != 1 || values[0]?.Trim() is not { Length: > 0 and <= MaxLength } value || value.Any(char.IsControl))
+        {
+            return null;
+        }
+
+        return value;
+    }
 }

@@ -351,7 +351,7 @@ public static class SettingsEndpoints
 
         app.MapGet("/api/v1/server-info", (Microsoft.Extensions.Options.IOptions<EasyPatchOptions> options, TimeProvider clock) =>
             TypedResults.Ok(new ServerInfoDto(typeof(SettingsEndpoints).Assembly.GetName().Version?.ToString(3) ?? "0.0.0", options.Value.PublicUrl,
-                clock.GetUtcNow()))).WithTags("Settings").RequireAuthorization(Policies.Viewer);
+                clock.GetUtcNow(), ServerCapabilities.All))).WithTags("Settings").RequireAuthorization(Policies.Viewer);
 
         // Feed status only: the worker downloads the feeds (the API has no outbound internet access).
         app.MapGet("/api/v1/vulnerability-feeds", async (EasyPatchDbContext db, CancellationToken ct) =>

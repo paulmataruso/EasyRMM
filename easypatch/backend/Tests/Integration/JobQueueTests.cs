@@ -166,6 +166,43 @@ public sealed class JobQueueTests(PostgresFixture postgres) : IntegrationTest(po
     }
 
     [Fact]
+    public async Task An_install_scheduled_for_later_waits_until_then()
+    {
+        var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-TONIGHT");
+        var other = await EnrollAgentAsync(root, org.Id, site.Id, "PC-WEEKEND");
+        await ReportScanAsync(agent, [SecurityUpdate("KB5046617")]);
+        await ReportScanAsync(other, [SecurityUpdate("KB5046617")]);
+        var now = Clock.GetUtcNow();
+        var tonight = new DateTimeOffset(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, TimeSpan.Zero).AddHours(10);
+
+        // Up to 31 days ahead, one endpoint or many.
+        await root.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/install-updates",
+            new InstallUpdatesRequest(InstallMode.AllEligible, null, false, now.AddDays(32)), HttpStatusCode.BadRequest, "validation_failed");
+        await root.ExpectAsync(HttpMethod.Post, "/api/v1/endpoints/bulk/install-updates",
+            new BulkInstallRequest([agent.EndpointId, other.EndpointId], false, now.AddDays(32)), HttpStatusCode.BadRequest, "validation_failed");
+        Assert.Equal(0, await WithDbAsync(db => db.Jobs.CountAsync()));
+
+        var job = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/install-updates",
+            new InstallUpdatesRequest(InstallMode.AllEligible, null, false, tonight), HttpStatusCode.Accepted);
+        var bulk = await root.SendAsync<BulkResultDto>(HttpMethod.Post, "/api/v1/endpoints/bulk/install-updates",
+            new BulkInstallRequest([other.EndpointId], false, tonight.AddDays(2)), HttpStatusCode.OK);
+        var weekend = Assert.Single(bulk.Results).JobId!.Value;
+
+        var detail = await JobAsync(job.Id);
+        Assert.Equal(tonight, detail.NotBefore);
+        var stored = await WithDbAsync(db => db.Jobs.AsNoTracking().Where(j => j.Id == job.Id || j.Id == weekend).OrderBy(j => j.NotBefore)
+            .Select(j => new { j.NotBefore, j.ExpiresAt }).ToListAsync());
+        // Each has the usual time to run, counted from its start.
+        Assert.Equal([(tonight, tonight.AddHours(168)), (tonight.AddDays(2), tonight.AddDays(2).AddHours(168))],
+            stored.Select(j => (j.NotBefore!.Value, j.ExpiresAt)));
+
+        Assert.Empty((await agent.CheckInAsync()).Jobs);
+        Clock.Advance(tonight - now);
+        Assert.Equal(job.Id, Assert.Single((await agent.CheckInAsync()).Jobs).JobId);
+        Assert.Empty((await other.CheckInAsync()).Jobs);
+    }
+
+    [Fact]
     public async Task Jobs_wait_for_offline_endpoints_and_are_delivered_when_they_return()
     {
         var agent = await EnrollAgentAsync(root, org.Id, site.Id, "LAPTOP-1");

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using EasyPatch.Core.Entities;
 using EasyPatch.Infrastructure.Data;
 
@@ -21,11 +22,25 @@ public sealed class AuditService(EasyPatchDbContext db, IActorContext actor, Tim
             TargetId = targetId,
             OrganizationId = organizationId,
             EndpointId = endpointId,
-            Details = details is null ? null : JsonSerializer.Serialize(details, Json),
+            Details = Serialize(details, actor.OnBehalfOf),
             IpAddress = actor.IpAddress,
             CorrelationId = actor.CorrelationId,
             CreatedAt = clock.GetUtcNow(),
         });
+    }
+
+    /// <summary>The details as JSON, with <c>onBehalfOf</c> added when an API token named the person it acted for.</summary>
+    private static string? Serialize(object? details, string? onBehalfOf)
+    {
+        if (onBehalfOf is null)
+        {
+            return details is null ? null : JsonSerializer.Serialize(details, Json);
+        }
+
+        var node = details is null ? null : JsonSerializer.SerializeToNode(details, Json);
+        var record = node as JsonObject ?? (node is null ? new JsonObject() : new JsonObject { ["details"] = node });
+        record["onBehalfOf"] = onBehalfOf;
+        return record.ToJsonString(Json);
     }
 }
 

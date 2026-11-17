@@ -259,7 +259,8 @@ public static class EndpointEndpoints
             CancellationToken ct) =>
         {
             await EnsureEndpointAccessAsync(db, tenant, id, ct);
-            var job = await jobs.CreateAsync(new CreateJobRequest(id, JobType.InstallUpdates, request.Mode, request.UpdateGuids, request.Force), ct);
+            var job = await jobs.CreateAsync(
+                new CreateJobRequest(id, JobType.InstallUpdates, request.Mode, request.UpdateGuids, request.Force, NotBefore: request.ScheduledAt), ct);
             return TypedResults.Accepted($"/api/v1/jobs/{job.Id}", await JobEndpoints.LoadSummaryAsync(db, job.Id, ct));
         }).RequireAuthorization(Policies.Operator);
 
@@ -297,7 +298,7 @@ public static class EndpointEndpoints
                 db.UpdateExclusions.Add(new UpdateExclusion
                 {
                     Id = Guid.CreateVersion7(), EndpointId = id, UpdateGuid = request.UpdateGuid, Reason = Validator.Clean(request.Reason),
-                    CreatedAt = clock.GetUtcNow(), CreatedByUserId = user.GetUserId(),
+                    CreatedAt = clock.GetUtcNow(), CreatedByUserId = user.FindUserId(),
                 });
                 audit.Record("endpoint.update_excluded", "Endpoint", id.ToString(), endpoint.OrganizationId, id, new { request.UpdateGuid, request.Reason });
                 await db.SaveChangesAsync(ct);
@@ -325,9 +326,14 @@ public static class EndpointEndpoints
         g.MapPost("/bulk/scan", (BulkEndpointsRequest request, EasyPatchDbContext db, ITenantContext tenant, JobService jobs, CancellationToken ct) =>
             BulkAsync(request, db, tenant, jobs, id => new CreateJobRequest(id, JobType.UpdateScan, Force: false), ct)).RequireAuthorization(Policies.Operator);
 
-        g.MapPost("/bulk/install-updates", (BulkEndpointsRequest request, EasyPatchDbContext db, ITenantContext tenant, JobService jobs, CancellationToken ct) =>
-            BulkAsync(request, db, tenant, jobs, id => new CreateJobRequest(id, JobType.InstallUpdates, InstallMode.AllEligible, Force: request.Force), ct))
-            .RequireAuthorization(Policies.Operator);
+        g.MapPost("/bulk/install-updates", (BulkInstallRequest request, EasyPatchDbContext db, ITenantContext tenant, JobService jobs, TimeProvider clock,
+            CancellationToken ct) =>
+        {
+            // Checked once here, so a bad time is one error rather than one per endpoint.
+            JobService.EnsureValidNotBefore(request.ScheduledAt, clock.GetUtcNow());
+            return BulkAsync(new BulkEndpointsRequest(request.EndpointIds, request.Force), db, tenant, jobs,
+                id => new CreateJobRequest(id, JobType.InstallUpdates, InstallMode.AllEligible, Force: request.Force, NotBefore: request.ScheduledAt), ct);
+        }).RequireAuthorization(Policies.Operator);
 
         // Restarts are always an explicit administrator action (or an administrator-configured schedule).
         g.MapPost("/{id:guid}/restart", async (Guid id, RestartRequest request, EasyPatchDbContext db, ITenantContext tenant, JobService jobs,

@@ -3,6 +3,21 @@
 All notable changes to EasyPatch are listed here. Versions follow `MAJOR.MINOR.BUILD`; the server,
 the web console and the agents share one version number.
 
+## [Unreleased]
+
+### Added
+
+- `/api/v1/server-info` lists the server's `capabilities`, so integrations can check for the
+  features below before relying on them.
+- Install requests, for one endpoint or in bulk, take an optional `scheduledAt` up to 31 days
+  ahead (`scheduled-installs`); the jobs wait until then.
+- API token requests may name the person they act for in `X-EasyPatch-On-Behalf-Of`
+  (`on-behalf-of`); EasyPatch records it in the audit log and in the job's `requestedBy`.
+
+### Fixed
+
+- Excluding an update on an endpoint with an API token failed with `401`.
+
 ## [1.10.0] - 2026-11-17
 
 > **Users now sign in with their email address, not their username.** Before upgrading, make

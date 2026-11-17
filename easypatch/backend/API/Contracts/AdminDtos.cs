@@ -519,7 +519,8 @@ public sealed record UpdateHistoryDto(long Id, Guid? UpdateGuid, string Title, s
 public sealed record EndpointEventDto(long Id, Guid EndpointId, string? Hostname, string Type, EventSeverity Severity, string Message, Guid? JobId,
     DateTimeOffset CreatedAt);
 
-public sealed record InstallUpdatesRequest(InstallMode Mode, IReadOnlyList<Guid>? UpdateGuids, bool Force);
+/// <param name="ScheduledAt">When to start, up to 31 days ahead; now when null.</param>
+public sealed record InstallUpdatesRequest(InstallMode Mode, IReadOnlyList<Guid>? UpdateGuids, bool Force, DateTimeOffset? ScheduledAt = null);
 
 public sealed record ExclusionRequest(Guid UpdateGuid, string? Reason);
 
@@ -527,6 +528,9 @@ public sealed record ExclusionRequest(Guid UpdateGuid, string? Reason);
 public sealed record UninstallUpdateRequest(bool Block = true, string? Reason = null);
 
 public sealed record BulkEndpointsRequest(IReadOnlyList<Guid> EndpointIds, bool Force);
+
+/// <param name="ScheduledAt">When to start, up to 31 days ahead; now when null.</param>
+public sealed record BulkInstallRequest(IReadOnlyList<Guid> EndpointIds, bool Force, DateTimeOffset? ScheduledAt = null);
 
 /// <summary>Restart an endpoint now or at <c>ScheduledAt</c>. If it is offline, the restart is abandoned after <c>ExpiresAfterMinutes</c>.</summary>
 public sealed record RestartRequest(
@@ -874,7 +878,23 @@ public sealed record OsLifecycleDto(Guid Id, string Product, string EditionGroup
 public sealed record OsLifecycleRequest(string Product, string EditionGroup, int BuildNumber, string VersionLabel, DateOnly EndOfServicing, DateOnly? EsuEndDate,
     string? Notes);
 
-public sealed record ServerInfoDto(string Version, string PublicUrl, DateTimeOffset ServerTime);
+/// <param name="Capabilities">Optional features of this server that integrations may rely on (see <see cref="ServerCapabilities"/>).</param>
+public sealed record ServerInfoDto(string Version, string PublicUrl, DateTimeOffset ServerTime, IReadOnlyList<string> Capabilities);
+
+/// <summary>Features an integration checks for in <c>/api/v1/server-info</c> before using them. A server without one ignores it.</summary>
+public static class ServerCapabilities
+{
+    /// <summary>Install requests, for one endpoint or in bulk, accept <c>scheduledAt</c>: the jobs wait until then.</summary>
+    public const string ScheduledInstalls = "scheduled-installs";
+
+    /// <summary>
+    /// API token requests may name the person they act for in <c>X-EasyPatch-On-Behalf-Of</c>; it is recorded in the audit log and
+    /// on the jobs they create.
+    /// </summary>
+    public const string OnBehalfOf = "on-behalf-of";
+
+    public static readonly IReadOnlyList<string> All = [ScheduledInstalls, OnBehalfOf];
+}
 
 /// <summary>Monthly report schedule of an organization. <c>NextReportDate</c> is a date in the organization's time zone.</summary>
 public sealed record ReportScheduleDto(
