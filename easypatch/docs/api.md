@@ -137,7 +137,9 @@ and an address that is not a plain `name@domain` `400 validation_failed`.
 ### API tokens (`/api/v1/api-tokens`, SuperAdmin)
 
 Bearer credentials for scripts and integrations. Only super administrators signed in to the
-console manage them; a token cannot create, list or revoke tokens.
+console manage them; a token cannot create, list or revoke tokens. On the server itself,
+`docker compose run --rm api create-api-token …` creates one without the console
+([installation.md](installation.md#operational-commands)).
 
 | Method | Route | Notes |
 |---|---|---|

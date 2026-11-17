@@ -13,6 +13,9 @@ the web console and the agents share one version number.
   ahead (`scheduled-installs`); the jobs wait until then.
 - API token requests may name the person they act for in `X-EasyPatch-On-Behalf-Of`
   (`on-behalf-of`); EasyPatch records it in the audit log and in the job's `requestedBy`.
+- `create-api-token`, an administration command that creates an API token on the server
+  itself, for setting up an integration without the console:
+  `docker compose run --rm api create-api-token --name EasyRMM --role operator --expires-days 365`.
 
 ### Fixed
 

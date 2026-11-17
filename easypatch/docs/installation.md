@@ -306,6 +306,7 @@ The API image includes administration commands. Run them with
 | `reset-password --email <email> [--password-stdin]` | Reset a password and revoke the user's sessions. A generated password must be changed at next sign-in |
 | `reset-mfa --email <email>` | Remove a user's MFA (authenticator app, passkeys and security keys) and revoke their sessions. They enroll again at next sign-in |
 | `unlock --email <email>` | Clear a login lockout |
+| `create-api-token --name <name> --role <operator\|read-only> --expires-days <1-365> [--organizations <id,id,…>]` | Create an [API token](api.md#api-tokens-apiv1api-tokens-superadmin) for an integration (for example EasyRMM) and print it once. Without `--organizations` it reaches every organization. It is the same as creating one under **Settings → API tokens**, and is recorded in the audit log as created by `cli` |
 | `help` | List the commands |
 
 These are for recovery when no SuperAdmin can sign in. Day-to-day, a SuperAdmin uses

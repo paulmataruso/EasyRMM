@@ -18,7 +18,7 @@ public static class AdminCli
 {
     public static readonly IReadOnlySet<string> Commands = new HashSet<string>(StringComparer.Ordinal)
     {
-        "migrate", "create-admin", "reset-password", "reset-mfa", "unlock", "help",
+        "migrate", "create-admin", "reset-password", "reset-mfa", "unlock", "create-api-token", "help",
     };
 
     public static async Task<int> RunAsync(string[] args)
@@ -114,6 +114,18 @@ public static class AdminCli
                     return 0;
                 }
 
+                case "create-api-token":
+                {
+                    var request = ParseApiTokenOptions(options);
+                    var tokens = sp.GetRequiredService<ApiTokenService>();
+                    var (token, secret) = await tokens.CreateAsync(request.Name, request.Role, request.OrganizationIds, request.ExpiresInDays);
+                    var reach = token.AllOrganizations ? "all organizations" : $"{token.OrganizationIds.Count} organization(s)";
+                    var role = token.Role == UserRole.Admin ? "Operator" : "Read only";
+                    Console.WriteLine($"Created API token '{token.Name}' ({role}, {reach}, expires {token.ExpiresAt:yyyy-MM-dd}).");
+                    Console.WriteLine($"Token (shown once, only its hash is stored): {secret}");
+                    return 0;
+                }
+
                 case "unlock":
                 {
                     var db = sp.GetRequiredService<EasyPatchDbContext>();
@@ -156,6 +168,10 @@ public static class AdminCli
           reset-mfa --email <email>                       Remove MFA (authenticator app, security keys and passkeys) so the
                                                           user enrolls again at next sign-in.
           unlock --email <email>                          Clear a login lockout.
+          create-api-token --name <name> --role <operator|read-only> --expires-days <1-365> [--organizations <id,id,...>]
+                                                          Create an API token for an integration such as EasyRMM and print it
+                                                          once. Without --organizations it reaches every organization. The
+                                                          audit log records it as created by "cli".
         """);
 
     private static Dictionary<string, string?> ParseOptions(string[] args)
@@ -204,6 +220,40 @@ public static class AdminCli
         {
             Console.WriteLine($"Temporary password (shown once, must be changed at first sign-in): {password}");
         }
+    }
+
+    /// <summary>What <c>create-api-token</c> asks for, checked like <c>POST /api/v1/api-tokens</c> checks it.</summary>
+    internal sealed record ApiTokenOptions(string Name, UserRole Role, IReadOnlyCollection<Guid> OrganizationIds, int ExpiresInDays);
+
+    internal static ApiTokenOptions ParseApiTokenOptions(Dictionary<string, string?> options)
+    {
+        var name = Require(options, "name").Trim();
+        if (name.Length > ApiTokenService.MaxNameLength || name.Any(char.IsControl))
+        {
+            throw new ArgumentException($"--name must be at most {ApiTokenService.MaxNameLength} characters, without control characters.");
+        }
+
+        var role = Require(options, "role").ToLowerInvariant() switch
+        {
+            "operator" or "admin" => UserRole.Admin,
+            "read-only" or "readonly" => UserRole.ReadOnly,
+            _ => throw new ArgumentException("--role must be operator or read-only. A token is never a super administrator."),
+        };
+        if (!int.TryParse(Require(options, "expires-days"), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var days)
+            || days < 1 || days > ApiTokenService.MaxLifetimeDays)
+        {
+            throw new ArgumentException($"--expires-days must be a whole number from 1 to {ApiTokenService.MaxLifetimeDays}.");
+        }
+
+        var organizations = new List<Guid>();
+        foreach (var part in (Optional(options, "organizations") ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            organizations.Add(Guid.TryParse(part, out var id) ? id : throw new ArgumentException($"--organizations: '{part}' is not an organization id."));
+        }
+
+        return organizations.Count > 500
+            ? throw new ArgumentException("--organizations: at most 500 organizations.")
+            : new ApiTokenOptions(name, role, organizations.Distinct().ToList(), days);
     }
 
     private static string? Optional(Dictionary<string, string?> options, string key) =>
