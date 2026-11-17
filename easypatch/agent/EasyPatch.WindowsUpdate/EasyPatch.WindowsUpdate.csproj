@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>EasyPatch.WindowsUpdate</RootNamespace>
+    <Description>Windows Update Agent (WUA) COM integration.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\EasyPatch.Agent.Core\EasyPatch.Agent.Core.csproj" />
+  </ItemGroup>
+</Project>

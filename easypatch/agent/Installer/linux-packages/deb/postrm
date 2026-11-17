@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    remove)
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+    purge)
+        # The agent identity (private key, state) and settings. The endpoint stays in the console until it is removed there.
+        rm -rf /var/lib/easypatch /etc/easypatch
+        ;;
+esac
+
+exit 0

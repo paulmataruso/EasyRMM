@@ -1,0 +1,37 @@
+<Solution>
+  <Folder Name="/agent/">
+    <Project Path="agent/EasyPatch.Agent.Core/EasyPatch.Agent.Core.csproj" />
+    <Project Path="agent/EasyPatch.Agent.Tests/EasyPatch.Agent.Tests.csproj" />
+    <Project Path="agent/EasyPatch.Agent.Linux/EasyPatch.Agent.Linux.csproj" />
+    <Project Path="agent/EasyPatch.Agent.MacOS/EasyPatch.Agent.MacOS.csproj" />
+    <Project Path="agent/EasyPatch.Agent/EasyPatch.Agent.csproj" />
+    <Project Path="agent/EasyPatch.Communication/EasyPatch.Communication.csproj" />
+    <Project Path="agent/EasyPatch.Inventory/EasyPatch.Inventory.csproj" />
+    <Project Path="agent/EasyPatch.Linux/EasyPatch.Linux.csproj" />
+    <Project Path="agent/EasyPatch.MacOS/EasyPatch.MacOS.csproj" />
+    <Project Path="agent/EasyPatch.Unix/EasyPatch.Unix.csproj" />
+    <Project Path="agent/EasyPatch.WindowsUpdate/EasyPatch.WindowsUpdate.csproj" />
+  </Folder>
+  <Folder Name="/backend/" />
+  <Folder Name="/backend/API/">
+    <Project Path="backend/API/EasyPatch.Api.csproj" />
+  </Folder>
+  <Folder Name="/backend/Core/">
+    <Project Path="backend/Core/EasyPatch.Core.csproj" />
+  </Folder>
+  <Folder Name="/backend/Infrastructure/">
+    <Project Path="backend/Infrastructure/EasyPatch.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/backend/Tests/">
+    <Project Path="backend/Tests/EasyPatch.Tests.csproj" />
+  </Folder>
+  <Folder Name="/backend/Worker/">
+    <Project Path="backend/Worker/EasyPatch.Worker.csproj" />
+  </Folder>
+  <Folder Name="/shared/">
+    <Project Path="shared/EasyPatch.Contracts/EasyPatch.Contracts.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/EasyPatch.ReleaseSigner/EasyPatch.ReleaseSigner.csproj" />
+  </Folder>
+</Solution>

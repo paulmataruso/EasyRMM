@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    install -d -m 0700 -o root -g root /etc/easypatch /var/lib/easypatch
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload >/dev/null 2>&1 || true
+        systemctl enable easypatch-agent.service >/dev/null 2>&1 || true
+        if [ -n "$2" ]; then
+            # Upgrade: restart only if it is running (an unenrolled agent stays stopped).
+            systemctl try-restart easypatch-agent.service || true
+        else
+            systemctl start easypatch-agent.service || true
+        fi
+    fi
+fi
+
+exit 0

@@ -1,0 +1,95 @@
+name: server
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'agent/**'
+      - 'docs/**'
+      - '**/*.md'
+  pull_request:
+    paths-ignore:
+      - 'agent/**'
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  NODE_IMAGE: node:24.22.2-alpine3.24
+
+jobs:
+  backend:
+    name: Backend build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: global.json
+      - name: Build
+        run: |
+          dotnet build backend/API/EasyPatch.Api.csproj -c Release
+          dotnet build backend/Worker/EasyPatch.Worker.csproj -c Release
+          dotnet build backend/Tests/EasyPatch.Tests.csproj -c Release
+      - name: Test (unit and integration; PostgreSQL via Testcontainers)
+        run: dotnet test backend/Tests/EasyPatch.Tests.csproj -c Release --no-build
+      - name: Vulnerable package check
+        run: |
+          dotnet list backend/API/EasyPatch.Api.csproj package --vulnerable --include-transitive | tee vulnerable.txt
+          dotnet list backend/Worker/EasyPatch.Worker.csproj package --vulnerable --include-transitive | tee -a vulnerable.txt
+          if grep -q "has the following vulnerable packages" vulnerable.txt; then exit 1; fi
+
+  frontend:
+    name: Web console typecheck, tests and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install, typecheck, test, build
+        run: |
+          docker run --rm -v "$PWD/frontend:/src" -w /src "$NODE_IMAGE" \
+            sh -c 'npm ci --no-audit --no-fund && npm run typecheck && npm test && npm run build'
+      - name: npm audit (production dependencies)
+        run: docker run --rm -v "$PWD/frontend:/src" -w /src "$NODE_IMAGE" npm audit --omit=dev --audit-level=high
+
+  images:
+    name: Container images
+    needs: [backend, frontend]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build images
+        env:
+          EASYPATCH_DOMAIN: ci.invalid
+          ACME_EMAIL: ci@ci.invalid
+        run: |
+          mkdir -p secrets && printf 'ci-placeholder' > secrets/db_password
+          docker compose config --quiet
+          docker compose build
+          rm -f secrets/db_password
+      - name: Check images contain no secrets or source-control metadata
+        run: |
+          for image in $(docker compose config --images | grep easypatch-); do
+            if docker run --rm --entrypoint sh "$image" -c 'find / -xdev \( -name ".env" -o -name "db_password" -o -name "*.pfx" -o -name ".git" \) -not -path "/proc/*" 2>/dev/null' | grep .; then
+              echo "unexpected file in $image" >&2
+              exit 1
+            fi
+          done

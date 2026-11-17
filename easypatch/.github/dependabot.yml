@@ -1,0 +1,67 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # EasyPatch targets .NET 10 (LTS). Packages that ship with the .NET runtime move together and stay
+  # on 10.x; moving to a new .NET major version is a deliberate change, not a Dependabot update.
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "Microsoft.Extensions.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.AspNetCore.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Microsoft.EntityFrameworkCore*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "Npgsql.EntityFrameworkCore.PostgreSQL"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "System.*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "dotnet-ef"
+        update-types: ["version-update:semver-major"]
+    groups:
+      dotnet-runtime:
+        patterns:
+          - "Microsoft.Extensions.*"
+          - "Microsoft.AspNetCore.*"
+          - "Microsoft.EntityFrameworkCore*"
+          - "Npgsql.EntityFrameworkCore.PostgreSQL"
+          - "System.*"
+          - "dotnet-ef"
+      # MimeKit is pinned next to MailKit and must move with it.
+      mail:
+        patterns:
+          - "MailKit"
+          - "MimeKit"
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor:
+        update-types: ["minor", "patch"]
+
+  # The .NET images stay on 10.x (LTS) and Node on 24 (LTS), like the packages above.
+  - package-ecosystem: docker
+    directories:
+      - /deployment/server
+      - /deployment/caddy
+      - /agent/Installer/linux-packages
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: "dotnet/*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]

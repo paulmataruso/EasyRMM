@@ -1,0 +1,35 @@
+# Build output
+bin/
+obj/
+artifacts/
+*.user
+*.suo
+.vs/
+.idea/
+TestResults/
+*.trx
+coverage*/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+
+# Local configuration and secrets — never commit
+.env
+secrets/
+!secrets/.gitkeep
+data/
+backups/
+# Machine-local hand-over files (release signing key, assistant notes) — never commit
+local/
+*.pfx
+*.pem
+# The release PUBLIC key is committed so release builds embed it; private keys stay ignored.
+!keys/easypatch-release-key.pub.pem
+*.key
+appsettings.Local.json
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,191 @@
+@import 'tailwindcss';
+
+/* Class-based dark mode: <html class="dark"> (default), toggled by the theme switch. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Semantic tokens. Components use these (bg-surface, text-muted, border-line …) so both themes stay consistent. */
+:root {
+  --canvas: #f4f6f9;
+  --surface: #ffffff;
+  --raised: #f8fafc;
+  --hover: #eef2f7;
+  --line: #dde3ea;
+  --line-strong: #c5ced9;
+  --fg: #0f172a;
+  --muted: #5b6678;
+  --subtle: #8a94a6;
+  --accent: #2563eb;
+  --accent-hover: #1d4ed8;
+  --accent-fg: #ffffff;
+  --accent-soft: #e7efff;
+  --ok: #15803d;
+  --ok-soft: #e3f6ea;
+  --warn: #b45309;
+  --warn-soft: #fdf1df;
+  --danger: #c62828;
+  --danger-soft: #fde8e8;
+  --info: #0e7490;
+  --info-soft: #e0f4f8;
+  --neutral-soft: #edf0f4;
+  --focus: #2563eb;
+  --sidebar: #0f172a;
+  --sidebar-fg: #cbd5e1;
+  --sidebar-active: #1e293b;
+  color-scheme: light;
+}
+
+.dark {
+  --canvas: #0b0f17;
+  --surface: #121824;
+  --raised: #171e2c;
+  --hover: #1c2433;
+  --line: #243044;
+  --line-strong: #33415a;
+  --fg: #e6ebf2;
+  --muted: #9aa6b8;
+  --subtle: #6b778b;
+  --accent: #4f8cff;
+  --accent-hover: #6a9dff;
+  --accent-fg: #06101f;
+  --accent-soft: #15233d;
+  --ok: #4ade80;
+  --ok-soft: #12291d;
+  --warn: #fbbf24;
+  --warn-soft: #2d2410;
+  --danger: #f87171;
+  --danger-soft: #2f1517;
+  --info: #22d3ee;
+  --info-soft: #0f2a31;
+  --neutral-soft: #1e2635;
+  --focus: #6a9dff;
+  --sidebar: #080b12;
+  --sidebar-fg: #a3aec0;
+  --sidebar-active: #172033;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-hover: var(--hover);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-neutral-soft: var(--neutral-soft);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-fg: var(--sidebar-fg);
+  --color-sidebar-active: var(--sidebar-active);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    background: var(--canvas);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--accent-soft);
+  }
+
+  code,
+  kbd,
+  pre {
+    font-family: var(--font-mono);
+  }
+
+  dialog::backdrop {
+    background: rgb(2 6 23 / 0.6);
+  }
+
+  input[type='checkbox'] {
+    accent-color: var(--accent);
+  }
+}
+
+@layer components {
+  .input {
+    @apply w-full rounded-md border border-line bg-surface px-3 py-1.5 text-sm text-fg placeholder:text-subtle shadow-xs transition-colors;
+    @apply focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .input[aria-invalid='true'] {
+    @apply border-danger focus:ring-danger/30;
+  }
+
+  .table-base {
+    @apply w-full border-collapse text-sm;
+  }
+
+  .table-base th {
+    @apply border-b border-line bg-raised px-3 py-2 text-left text-xs font-semibold tracking-wide text-muted uppercase whitespace-nowrap;
+  }
+
+  .table-base td {
+    @apply border-b border-line px-3 py-2 align-middle;
+  }
+
+  .table-base tbody tr:hover {
+    @apply bg-hover;
+  }
+
+  .table-base tbody tr:last-child td {
+    @apply border-b-0;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.toast-enter {
+  animation: toast-in 160ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toast-enter {
+    animation: none;
+  }
+
+  * {
+    transition-duration: 0ms !important;
+  }
+}

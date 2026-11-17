@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EasyPatch.Agent.MacOS</RootNamespace>
+    <AssemblyName>easypatch-agent</AssemblyName>
+    <Description>The experimental EasyPatch macOS agent (in development; not for production use).</Description>
+    <RuntimeIdentifiers>osx-x64;osx-arm64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- No trimming: System.Text.Json reflection over the contract types -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <!-- LibraryImport (source-generated P/Invoke) for geteuid/umask/chown -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Release public key(s) for agent self-update (PEM). Only the public key is ever built in. -->
+    <EmbeddedResource Include="$(EasyPatchReleasePublicKey)" LogicalName="EasyPatch.ReleaseKeys.pem" Condition="'$(EasyPatchReleasePublicKey)' != ''" />
+  </ItemGroup>
+  <Target Name="CheckReleasePublicKey" BeforeTargets="BeforeBuild" Condition="'$(EasyPatchReleasePublicKey)' != ''">
+    <Error Condition="!Exists('$(EasyPatchReleasePublicKey)')" Text="EasyPatchReleasePublicKey '$(EasyPatchReleasePublicKey)' does not exist." />
+  </Target>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\EasyPatch.Agent.Core\EasyPatch.Agent.Core.csproj" />
+    <ProjectReference Include="..\EasyPatch.Communication\EasyPatch.Communication.csproj" />
+    <ProjectReference Include="..\EasyPatch.MacOS\EasyPatch.MacOS.csproj" />
+    <ProjectReference Include="..\EasyPatch.Unix\EasyPatch.Unix.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Using Include="EasyPatch.Unix" />
+    <Using Include="EasyPatch.Unix.Processes" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EasyPatch.Tests</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- The .NET 10 SDK runs xunit.v3 projects through VSTest only when this is false (see agent tests). -->
+    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
+    <NoWarn>$(NoWarn);CA1707;CA2000;CA1001;CA1063;CA1816;CA2213;CA1849;CA1835;xUnit1051</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\API\EasyPatch.Api.csproj" />
+    <ProjectReference Include="..\Worker\EasyPatch.Worker.csproj" Aliases="WorkerHost" />
+    <ProjectReference Include="..\..\agent\EasyPatch.Agent.Core\EasyPatch.Agent.Core.csproj" />
+    <ProjectReference Include="..\..\agent\EasyPatch.Communication\EasyPatch.Communication.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Windows Update / inventory doubles shared with the agent tests, used to drive the real AgentRuntime. -->
+    <Compile Include="..\..\agent\EasyPatch.Agent.Tests\Infrastructure\Fakes.cs" Link="AgentFakes\Fakes.cs" />
+  </ItemGroup>
+</Project>

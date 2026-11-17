@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EasyPatch.Infrastructure</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Konscious.Security.Cryptography.Argon2" />
+    <PackageReference Include="QRCoder" />
+    <PackageReference Include="MailKit" />
+    <PackageReference Include="MimeKit" />
+    <PackageReference Include="BouncyCastle.Cryptography" />
+    <PackageReference Include="PDFsharp-MigraDoc" />
+    <PackageReference Include="PDFsharp" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" />
+    <PackageReference Include="Fido2" />
+    <PackageReference Include="Fido2.Models" />
+    <PackageReference Include="NSec.Cryptography" />
+    <PackageReference Include="libsodium" />
+    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Core\EasyPatch.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Liberation Sans (SIL OFL 1.1, see Reports/Fonts/LICENSE-LiberationSans.txt) for the PDF reports. -->
+    <EmbeddedResource Include="Reports/Fonts/*.ttf" LogicalName="EasyPatch.Fonts.%(Filename)%(Extension)" />
+    <None Include="Reports/Fonts/LICENSE-LiberationSans.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <RootNamespace>EasyPatch.Agent</RootNamespace>
+    <AssemblyName>EasyPatch.Agent</AssemblyName>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <!-- Windows Forms needs a Windows runtime pack, so plain builds (also on Linux) target win-x64; publish passes -r -->
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Bundle is decompressed in memory at start-up (no temp-file extraction) -->
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- WUA is accessed through late-bound COM (IDispatch); trimming would break it -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>EasyPatch.ico</ApplicationIcon>
+    <!-- The tray ("EasyPatch.Agent.exe tray") is part of the agent executable, started by the service in each user session -->
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- LibraryImport (source-generated P/Invoke) -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="EasyPatch.ico" LogicalName="EasyPatch.ico" />
+    <!-- Release public key(s) for agent self-update (PEM, one or more "PUBLIC KEY" blocks). Only the public key is ever
+         built in; the private key stays on the build machine. Without it the agent cannot update itself. -->
+    <EmbeddedResource Include="$(EasyPatchReleasePublicKey)" LogicalName="EasyPatch.ReleaseKeys.pem" Condition="'$(EasyPatchReleasePublicKey)' != ''" />
+  </ItemGroup>
+  <Target Name="CheckReleasePublicKey" BeforeTargets="BeforeBuild" Condition="'$(EasyPatchReleasePublicKey)' != ''">
+    <Error Condition="!Exists('$(EasyPatchReleasePublicKey)')" Text="EasyPatchReleasePublicKey '$(EasyPatchReleasePublicKey)' does not exist." />
+  </Target>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Logging.EventLog" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\EasyPatch.Agent.Core\EasyPatch.Agent.Core.csproj" />
+    <ProjectReference Include="..\EasyPatch.Communication\EasyPatch.Communication.csproj" />
+    <ProjectReference Include="..\EasyPatch.WindowsUpdate\EasyPatch.WindowsUpdate.csproj" />
+    <ProjectReference Include="..\EasyPatch.Inventory\EasyPatch.Inventory.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,21 @@
+# EasyPatch agent. Runs as root because it installs package updates; it never runs commands sent by the server
+# (package transactions use fixed apt/dnf command lines in the transient unit easypatch-packages).
+[Unit]
+Description=EasyPatch patch management agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/opt/easypatch/easypatch-agent run
+Restart=always
+RestartSec=10
+# Lets an in-flight operation observe cancellation and the job state persist.
+TimeoutStopSec=90
+# Only the agent process is signalled first; an apt or dnf query it started is stopped after it.
+KillMode=mixed
+UMask=0077
+Environment=DOTNET_NOLOGO=1 DOTNET_CLI_TELEMETRY_OPTOUT=1
+
+[Install]
+WantedBy=multi-user.target
