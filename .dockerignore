@@ -1,5 +1,8 @@
 # Keep the build context small and free of secrets.
 .git
+# EasyPatch builds from its own folder, with its own .dockerignore. Its folder
+# also holds its .env, database password and release signing key.
+easypatch
 .github
 .claude
 .impeccable
