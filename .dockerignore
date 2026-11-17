@@ -12,6 +12,7 @@ agent/
 secrets/
 data/
 backups/
+local/
 .env
 *.pfx
 *.pem

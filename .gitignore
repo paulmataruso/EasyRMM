@@ -21,6 +21,8 @@ secrets/
 !secrets/.gitkeep
 data/
 backups/
+# Machine-local hand-over files (release signing key, assistant notes) — never commit
+local/
 *.pfx
 *.pem
 # The release PUBLIC key is committed so release builds embed it; private keys stay ignored.
