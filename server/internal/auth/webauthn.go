@@ -305,6 +305,26 @@ func (s *Service) BeginKeyRegistration(ctx context.Context, sess *Session, passw
 	return creation, nil
 }
 
+// PasskeyPromptDelay is how long "Not now" puts off the offer of a passkey.
+const PasskeyPromptDelay = 30 * 24 * time.Hour
+
+// AnswerPasskeyPrompt records the answer to the offer of a passkey after
+// sign-in: later puts it off for PasskeyPromptDelay; otherwise it is not
+// offered again. Keys can always be added from the Account page.
+func (s *Service) AnswerPasskeyPrompt(ctx context.Context, sess *Session, never bool) error {
+	if sess.State != StateActive {
+		return ErrWrongState
+	}
+	q, at := `UPDATE users SET passkey_prompt_after = $2 WHERE id = $1`, s.now().Add(PasskeyPromptDelay)
+	if never {
+		q, at = `UPDATE users SET passkey_prompt_declined_at = $2 WHERE id = $1`, s.now()
+	}
+	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, q, sess.UserID, at)
+		return err
+	})
+}
+
 // FinishKeyRegistration checks the browser's new credential and stores it.
 // A user's first second factor brings recovery codes, and finishes sign-in
 // when it was set up at sign-in.

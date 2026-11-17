@@ -5,6 +5,7 @@ import { baseRoutes, fail, installFakeApi, noContent, ok, sessionView } from "..
 import { renderApp } from "../../test/render";
 import { fakeAssertion, fakeAttestation, keysUsableHere, stubWebAuthn } from "../../test/webauthn";
 import type { SessionView } from "../../api/types";
+import { passkeyName } from "./AuthPages";
 
 const location = () => screen.getByTestId("location").textContent;
 const ASSERTION_OPTIONS = { publicKey: { challenge: "AQIDBAUGBwgJCgsMDQ4PEA", rpId: "localhost", userVerification: "required" } };
@@ -377,5 +378,114 @@ describe("security keys on the account page", () => {
     renderApp("/account");
     expect(await screen.findByText(/You have 10, the most allowed/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Add security key" })).toBeDisabled();
+  });
+});
+
+describe("the offer of a passkey after sign-in", () => {
+  const offered = (over: Partial<SessionView["user"]> = {}) => sessionView({ user: { ...sessionView().user, passkeyPrompt: true, ...over } });
+
+  it("comes after the code, adds a passkey, and keeps the requested page", { timeout: 20_000 }, async () => {
+    const user = userEvent.setup();
+    const creds = stubWebAuthn();
+    let session: SessionView = halfSignedIn({ totp: true, securityKeys: 0 });
+    const server = installFakeApi({
+      ...baseRoutes(null),
+      "GET /auth/options": ok(keysUsableHere()),
+      "GET /auth/session": () => ok(session),
+      "POST /auth/mfa/verify": () => {
+        session = offered();
+        return ok(session);
+      },
+      "POST /auth/security-keys/begin": ok(CREATION_OPTIONS),
+      "POST /auth/security-keys/finish": () => {
+        session = offered({ securityKeys: 1, passkeyPrompt: false });
+        return ok({ key: { id: "k1", name: passkeyName(), createdAt: "2026-11-17T00:00:00Z", synced: true }, recoveryCodes: [], session });
+      },
+    });
+    renderApp("/login/mfa?returnTo=%2Forganizations");
+    await user.type(await screen.findByLabelText(/^Verification code/), "123456");
+    await user.click(screen.getByRole("button", { name: "Verify" }));
+
+    expect(await screen.findByRole("heading", { name: "Add a passkey" })).toBeInTheDocument();
+    expect(location()).toBe("/login/passkey?returnTo=%2Forganizations");
+    // Named after this device, and the password is asked again, as on the Account page.
+    expect(screen.getByLabelText(/^Key name/)).toHaveValue(passkeyName());
+    expect(screen.getByLabelText(/^Password/)).toHaveFocus();
+    await user.type(screen.getByLabelText(/^Password/), "my password");
+    creds.create.mockResolvedValueOnce(fakeAttestation());
+    await user.click(screen.getByRole("button", { name: "Add passkey" }));
+    await waitFor(() => expect(location()).toBe("/organizations"));
+    expect(server.call("POST /auth/security-keys/begin").body).toEqual({ password: "my password" });
+    expect(server.callsTo("POST /auth/passkey-prompt")).toHaveLength(0);
+  });
+
+  it.each([
+    ["Not now", "later"],
+    ["Don't ask again", "never"],
+  ])("%s records the answer and continues", async (label, answer) => {
+    const user = userEvent.setup();
+    stubWebAuthn();
+    let session: SessionView | null = null;
+    const server = installFakeApi({
+      ...baseRoutes(null),
+      "GET /auth/options": ok({ ...keysUsableHere(), mfaRequired: false }),
+      "GET /auth/session": () => (session ? ok(session) : fail(401, "unauthenticated", "Sign in.")),
+      "POST /auth/login": () => {
+        session = offered({ totp: false, mfaEnabled: false });
+        return ok(session);
+      },
+      "POST /auth/passkey-prompt": noContent,
+    });
+    renderApp("/organizations");
+    await user.type(await screen.findByLabelText(/^Email/), "alex@example.com");
+    await user.type(screen.getByLabelText(/^Password/), "correct horse battery");
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await user.click(await screen.findByRole("button", { name: label }));
+    await waitFor(() => expect(location()).toBe("/organizations"));
+    expect(server.call("POST /auth/passkey-prompt").body).toEqual({ answer });
+  });
+
+  it("is skipped where keys cannot work, and when the server does not offer it", async () => {
+    const user = userEvent.setup();
+    stubWebAuthn();
+    for (const [webauthn, prompt] of [
+      [{ available: false, reason: "Security keys and passkeys need EasyRMM to be reached by a name." }, true],
+      [{ available: true, origin: "https://rmm.example.com" }, true],
+      [{ available: true, origin: window.location.origin }, false],
+    ] as const) {
+      let session: SessionView | null = null;
+      installFakeApi({
+        ...baseRoutes(null),
+        "GET /auth/options": ok({ ...keysUsableHere(), webauthn }),
+        "GET /auth/session": () => (session ? ok(session) : fail(401, "unauthenticated", "Sign in.")),
+        "POST /auth/login": () => {
+          session = offered({ passkeyPrompt: prompt });
+          return ok(session);
+        },
+      });
+      const { unmount } = renderApp("/organizations");
+      await user.type(await screen.findByLabelText(/^Email/), "alex@example.com");
+      await user.type(screen.getByLabelText(/^Password/), "correct horse battery");
+      await user.click(screen.getByRole("button", { name: "Sign in" }));
+      await waitFor(() => expect(location()).toBe("/organizations"));
+      unmount();
+    }
+  });
+
+  it("is not shown to someone who already has a key", async () => {
+    stubWebAuthn();
+    installFakeApi({ ...baseRoutes(sessionView({ user: { ...sessionView().user, securityKeys: 1 } })), "GET /auth/options": ok(keysUsableHere()) });
+    renderApp("/login/passkey?returnTo=%2Forganizations");
+    await waitFor(() => expect(location()).toBe("/organizations"));
+  });
+
+  it("names the passkey after the device", () => {
+    expect(passkeyName("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0")).toBe("Passkey on Windows");
+    expect(passkeyName("Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15")).toBe("Passkey on iPhone");
+    expect(passkeyName("Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36")).toBe("Passkey on Android");
+    expect(passkeyName("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7) AppleWebKit/605.1.15")).toBe("Passkey on Mac");
+    expect(passkeyName("Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36")).toBe("Passkey on Chromebook");
+    expect(passkeyName("Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0")).toBe("Passkey on Linux");
+    expect(passkeyName("curl/8.0")).toBe("Passkey");
   });
 });

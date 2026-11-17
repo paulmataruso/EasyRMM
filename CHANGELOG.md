@@ -7,6 +7,11 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+
+- An offer of a passkey after sign-in, for people without one: add it
+  there (password again, named after the device), "Not now" (asked again
+  in 30 days) or "Don't ask again". Only where passkeys work: a DNS name,
+  a browser with WebAuthn, the public address.
 - Phase 1 research report and Phase 2 architecture with ADRs 0001–0012.
 - Server security core: AES-256-GCM secret sealing with key rotation,
   Argon2id password hashing with parameter upgrades, NIST-style password

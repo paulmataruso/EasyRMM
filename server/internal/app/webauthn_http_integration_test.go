@@ -181,3 +181,42 @@ func TestHTTPSecurityKeysNeedAName(t *testing.T) {
 		t.Fatalf("passkey on an IP: %d %s", r.status, r.body)
 	}
 }
+
+// TestHTTPPasskeyPrompt checks that the session says whether to offer a
+// passkey after sign-in, and that the answer is recorded only once signed in.
+func TestHTTPPasskeyPrompt(t *testing.T) {
+	h := newHarness(t, false)
+	c := h.client()
+	setup, _ := os.ReadFile(filepath.Join(h.dataDir, "setup-token"))
+	const pw = "correct horse battery staple"
+	c.expect(http.StatusNoContent, "POST", "/api/v1/setup", map[string]string{"token": strings.TrimSpace(string(setup)),
+		"email": "admin@msp.example", "displayName": "Ada", "password": pw}, nil)
+	c.signIn("admin@msp.example", pw, "")
+
+	var s struct {
+		User struct {
+			PasskeyPrompt bool `json:"passkeyPrompt"`
+		} `json:"user"`
+	}
+	c.expect(http.StatusOK, "GET", "/api/v1/auth/session", nil, &s)
+	if !s.User.PasskeyPrompt {
+		t.Fatal("not offered after signing in with an authenticator app")
+	}
+	if r := c.do("POST", "/api/v1/auth/passkey-prompt", map[string]string{"answer": "maybe"}); r.status != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown answer: %d", r.status)
+	}
+	c.expect(http.StatusNoContent, "POST", "/api/v1/auth/passkey-prompt", map[string]string{"answer": "later"}, nil)
+	c.expect(http.StatusOK, "GET", "/api/v1/auth/session", nil, &s)
+	if s.User.PasskeyPrompt {
+		t.Fatal("offered right after Not now")
+	}
+
+	// Mid sign-in there is nothing to answer.
+	b := h.client()
+	var half sessionView
+	b.expect(http.StatusOK, "POST", "/api/v1/auth/login", map[string]string{"email": "admin@msp.example", "password": pw}, &half)
+	b.csrf = half.CSRFToken
+	if r := b.do("POST", "/api/v1/auth/passkey-prompt", map[string]string{"answer": "never"}); r.status != http.StatusUnauthorized && r.status != http.StatusForbidden {
+		t.Fatalf("answered mid sign-in: %d", r.status)
+	}
+}

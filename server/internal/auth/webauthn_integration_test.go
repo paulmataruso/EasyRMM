@@ -713,3 +713,86 @@ func TestRegistrationRaces(t *testing.T) {
 		t.Fatalf("eleventh key: %v", err)
 	}
 }
+
+// TestPasskeyPrompt checks when a passkey is offered after sign-in: to users
+// without one, on servers where passkeys work, until they put it off for 30
+// days or decline it.
+func TestPasskeyPrompt(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t, nil)
+	e.createUser(t, "pia@example.com")
+	secret, token, _ := e.enroll(t, "pia@example.com")
+	signIn := func() string {
+		t.Helper()
+		e.now = e.now.Add(time.Minute) // a fresh code
+		tok, _, err := e.svc.Login(ctx, "pia@example.com", goodPassword, meta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, u := e.session(t, tok)
+		active, err := e.svc.VerifyMFA(ctx, s, u, codeFor(t, secret, e.now), meta)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return active
+	}
+	offered := func(tok string) bool {
+		t.Helper()
+		_, u := e.session(t, tok)
+		return u.PasskeyPrompt
+	}
+	if !offered(token) {
+		t.Fatal("not offered to a user without a passkey")
+	}
+
+	// Mid sign-in, there is nothing to answer.
+	mid, _, err := e.svc.Login(ctx, "pia@example.com", goodPassword, meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := e.session(t, mid); !errors.Is(e.svc.AnswerPasskeyPrompt(ctx, s, false), auth.ErrWrongState) {
+		t.Fatal("answered mid sign-in")
+	}
+
+	// Not now: put off for 30 days.
+	s, _ := e.session(t, token)
+	if err := e.svc.AnswerPasskeyPrompt(ctx, s, false); err != nil {
+		t.Fatal(err)
+	}
+	if offered(token) {
+		t.Fatal("offered right after Not now")
+	}
+	e.now = e.now.Add(auth.PasskeyPromptDelay - time.Hour)
+	if offered(signIn()) {
+		t.Fatal("offered before 30 days")
+	}
+	e.now = e.now.Add(2 * time.Hour)
+	token = signIn()
+	if !offered(token) {
+		t.Fatal("not offered again after 30 days")
+	}
+
+	// Don't ask again.
+	s, _ = e.session(t, token)
+	if err := e.svc.AnswerPasskeyPrompt(ctx, s, true); err != nil {
+		t.Fatal(err)
+	}
+	e.now = e.now.Add(10 * auth.PasskeyPromptDelay)
+	if offered(signIn()) {
+		t.Fatal("offered after Don't ask again")
+	}
+
+	// Not to a user who has a key.
+	_, _, keyToken := e.keyUser(t, "kim@example.com")
+	if offered(keyToken) {
+		t.Fatal("offered to a user with a key")
+	}
+
+	// Not where passkeys cannot work: a server reached only by IP address.
+	ip := newEnv(t, func(c *auth.Config) { c.PublicURL = "https://203.0.113.5" })
+	ip.createUser(t, "ivy@example.com")
+	_, ipToken, _ := ip.enroll(t, "ivy@example.com")
+	if _, u := ip.session(t, ipToken); u.PasskeyPrompt {
+		t.Fatal("offered where passkeys cannot work")
+	}
+}

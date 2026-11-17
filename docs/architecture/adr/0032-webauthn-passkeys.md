@@ -51,6 +51,18 @@ WebAuthn has two constraints that shape this design:
     authenticator app. The password was just entered there. The first
     factor, either kind, issues the ten recovery codes, as before.
   * Each key gets a name (1–64 characters). At most 10 keys per user.
+  * Offered after sign-in (added 2026-11-17): a user without a key who
+    finishes signing in with a password and a code sees a page offering a
+    passkey before the page they asked for. The session's user carries
+    `passkeyPrompt` (keys work on this server, the user has none, and has
+    neither put the offer off nor declined it); the console shows the page
+    only where keys work in this browser at this address. "Not now" sets
+    `users.passkey_prompt_after` 30 days ahead, "Don't ask again" sets
+    `users.passkey_prompt_declined_at`, through
+    `POST /api/v1/auth/passkey-prompt`. Adding the key asks for the
+    password again, as on Account: the offer does not relax that rule. It
+    is not shown after the mandatory set-up of a first factor, which has
+    just asked enough of the person.
   * The browser is asked for a discoverable credential where possible
     (`residentKey: preferred`) and to verify the user if it can. A key that
     is not discoverable, or did not verify the user, still works as a

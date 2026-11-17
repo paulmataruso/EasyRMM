@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Link, useLocation, useNavigate, useSearchParams } from "react-router";
+import { Link, Navigate, useLocation, useNavigate, useSearchParams } from "react-router";
 import { CheckCircle2, KeyRound, Smartphone } from "lucide-react";
 import { api, fieldError, request } from "../../api/client";
 import { useApi } from "../../api/hooks";
@@ -16,6 +16,27 @@ export const PASSWORD_HINT = "At least 12 characters. Must not contain your name
 export function safeReturnTo(value: string | null): string {
   if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\") || value.startsWith("/login")) return "/";
   return value;
+}
+
+/** Where a completed sign-in goes: first the offer of a passkey, when the server offers one and keys work here. */
+export function afterSignIn(view: SessionView, returnTo: string, keys: KeyAvailability): string {
+  if (view.state !== "active" || !view.user.passkeyPrompt || !keys.usable) return returnTo;
+  return returnTo !== "/" ? `/login/passkey?returnTo=${encodeURIComponent(returnTo)}` : "/login/passkey";
+}
+
+/** A name for a passkey made on this device, such as "Passkey on Windows"; the person can change it. */
+export function passkeyName(userAgent = navigator.userAgent): string {
+  const platforms: [RegExp, string][] = [
+    [/iPhone/, "iPhone"],
+    [/iPad/, "iPad"],
+    [/Android/, "Android"],
+    [/Windows/, "Windows"],
+    [/CrOS/, "Chromebook"],
+    [/Mac OS X|Macintosh/, "Mac"],
+    [/Linux/, "Linux"],
+  ];
+  const found = platforms.find(([re]) => re.test(userAgent));
+  return found ? `Passkey on ${found[1]}` : "Passkey";
 }
 
 /** Client-side mirror of the server password policy, for immediate feedback only (the server enforces it). */
@@ -170,7 +191,7 @@ export function LoginPage() {
       const query = returnTo !== "/" ? `?returnTo=${encodeURIComponent(returnTo)}` : "";
       if (view.state === "mfa_required") navigate(`/login/mfa${query}`, { replace: true });
       else if (view.state === "mfa_enrollment") navigate("/login/mfa-setup", { replace: true });
-      else navigate(returnTo, { replace: true });
+      else navigate(afterSignIn(view, returnTo, keys), { replace: true });
     } catch (err) {
       setError(err);
     } finally {
@@ -292,7 +313,7 @@ export function MfaVerifyPage() {
 
   function finish(view: SessionView) {
     applySession(view);
-    navigate(returnTo, { replace: true });
+    navigate(afterSignIn(view, returnTo, keys), { replace: true });
   }
 
   async function submit(e: FormEvent) {
@@ -589,6 +610,7 @@ export function RecoveryCodesView({ codes, onDone, doneLabel = "Continue" }: { c
 export function SecurityKeyEnrollment({
   needsPassword,
   existingNames = [],
+  defaultName = "",
   onConfirmed,
   onDone,
   onCancel,
@@ -596,12 +618,13 @@ export function SecurityKeyEnrollment({
 }: {
   needsPassword: boolean;
   existingNames?: string[];
+  defaultName?: string;
   onConfirmed?: (result: SecurityKeyAdded) => void;
   onDone: () => void;
   onCancel?: () => void;
   submitLabel?: string;
 }) {
-  const [name, setName] = useState("");
+  const [name, setName] = useState(defaultName);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -655,7 +678,7 @@ export function SecurityKeyEnrollment({
         autoComplete="off"
         maxLength={80}
         required
-        autoFocus
+        autoFocus={!defaultName}
       />
       {needsPassword && (
         <TextField
@@ -666,6 +689,8 @@ export function SecurityKeyEnrollment({
           onChange={(e) => setPassword(e.target.value)}
           error={fieldError(error, "password")}
           required
+          // A suggested name leaves only the password to type.
+          autoFocus={!!defaultName}
         />
       )}
       <p className="text-xs text-muted">Next, your browser asks you to insert or touch the key, or to confirm with your fingerprint, face or PIN.</p>
@@ -681,6 +706,66 @@ export function SecurityKeyEnrollment({
         submit
       )}
     </form>
+  );
+}
+
+/**
+ * Offered once a sign-in with a password and a code is complete, to people without a passkey (ADR-0032). Adding one
+ * asks for the password again, as everywhere else; "Not now" asks again in 30 days, and "Don't ask again" stops.
+ */
+export function PasskeyPromptPage() {
+  const { session, applySession } = useAuth();
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const returnTo = safeReturnTo(params.get("returnTo"));
+  // Decided once: adding a key changes the count, and a first key still has recovery codes to show.
+  const [offered] = useState(() => (session?.user.securityKeys ?? 0) === 0);
+  const [answering, setAnswering] = useState<"later" | "never" | null>(null);
+  const leave = () => navigate(returnTo, { replace: true });
+
+  async function answer(choice: "later" | "never") {
+    setAnswering(choice);
+    try {
+      await api.post("/auth/passkey-prompt", { answer: choice });
+    } catch {
+      // Unrecorded, the offer comes again at the next sign-in; not a reason to hold the person here.
+    }
+    leave();
+  }
+
+  if (!offered) return <Navigate to={returnTo} replace />;
+  return (
+    <AuthShell title="Add a passkey" subtitle="Sign in next time with your fingerprint, face, PIN or security key.">
+      <p className="mb-4 text-sm text-muted">
+        A passkey replaces your password and code. It works only at EasyRMM&apos;s own address, so a fake sign-in page cannot use it.
+      </p>
+      <SecurityKeyEnrollment
+        needsPassword
+        defaultName={passkeyName()}
+        onConfirmed={(r) => applySession(r.session)}
+        onDone={leave}
+        submitLabel="Add passkey"
+      />
+      <div className="mt-4 flex items-center justify-center gap-5 text-xs">
+        <button
+          type="button"
+          className="text-accent hover:underline disabled:opacity-50"
+          disabled={answering !== null}
+          onClick={() => void answer("later")}
+        >
+          Not now
+        </button>
+        <button
+          type="button"
+          className="text-muted hover:text-fg disabled:opacity-50"
+          disabled={answering !== null}
+          onClick={() => void answer("never")}
+        >
+          Don&apos;t ask again
+        </button>
+      </div>
+      <p className="mt-3 text-center text-xs text-muted">You can add one at any time under Account.</p>
+    </AuthShell>
   );
 }
 

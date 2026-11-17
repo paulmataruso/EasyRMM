@@ -100,6 +100,7 @@ Reached only through the authentication service, at platform scope, like
 
 | Column | Notes |
 |---|---|
+| `users.passkey_prompt_after`, `users.passkey_prompt_declined_at` | When the offer of a passkey after sign-in may come again ("Not now", 30 days), and when the user declined it for good (ADR-0032) |
 | `users.mfa_failed_attempts` | Wrong authenticator or recovery codes in a row, across sign-ins. Ten lock the account like wrong passwords do; a correct second factor, a password reset or an unlock clears it |
 | `sessions.reauth_failures` | Wrong passwords entered to confirm a change from this session; the fifth ends it |
 

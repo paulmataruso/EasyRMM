@@ -52,6 +52,8 @@ export interface AuthUser {
   totp: boolean;
   /** Registered security keys and passkeys. */
   securityKeys: number;
+  /** Offer a passkey after sign-in: the server supports them, the user has none and has not put the offer off. */
+  passkeyPrompt?: boolean;
 }
 
 export interface SessionView {

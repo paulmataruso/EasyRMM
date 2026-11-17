@@ -44,6 +44,16 @@ or password manager copies between the person's devices. Adding a key asks
 for the password again, so a stolen session alone cannot add a key that
 would outlive it. Removing one asks for the password too.
 
+**The offer after sign-in.** People without a key who sign in with a
+password and a code are offered a passkey before they continue to the page
+they wanted. It is the same form as on the Account page, named after their
+device ("Passkey on Windows") and asking for the password again.
+
+* **Not now** offers it again at a sign-in 30 days later.
+* **Don't ask again** stops the offer for good; Account still adds keys.
+* It is not shown where keys cannot work: an IP-only deployment, a browser
+  without WebAuthn, or an address other than the public one.
+
 Limits:
 
 * At most ten keys per person; names are up to 64 characters and unique

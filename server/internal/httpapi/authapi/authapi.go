@@ -61,6 +61,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/auth/security-keys/begin", httpapi.RequireState(auth.StateMFAEnrollment, auth.StateActive)(h(a.beginKey)))
 	mux.Handle("POST /api/v1/auth/security-keys/finish", httpapi.RequireState(auth.StateMFAEnrollment, auth.StateActive)(h(a.finishKey)))
 	mux.Handle("POST /api/v1/auth/security-keys/{id}/remove", httpapi.RequireActive(h(a.removeKey)))
+	mux.Handle("POST /api/v1/auth/passkey-prompt", httpapi.RequireActive(h(a.answerPasskeyPrompt)))
 }
 
 func mapAuthError(err error) error {
@@ -486,6 +487,27 @@ func (a *API) beginKey(w http.ResponseWriter, r *http.Request) error {
 		return mapAuthError(err)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, creation)
+	return nil
+}
+
+type passkeyPromptAnswer struct {
+	// Answer is "later" (ask again in 30 days) or "never".
+	Answer string `json:"answer"`
+}
+
+func (a *API) answerPasskeyPrompt(w http.ResponseWriter, r *http.Request) error {
+	var req passkeyPromptAnswer
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	if req.Answer != "later" && req.Answer != "never" {
+		return httpapi.Validation(map[string]string{"answer": `Answer "later" or "never".`})
+	}
+	id := httpapi.IdentityFrom(r.Context())
+	if err := a.svc.AnswerPasskeyPrompt(r.Context(), id.Session, req.Answer == "never"); err != nil {
+		return mapAuthError(err)
+	}
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 

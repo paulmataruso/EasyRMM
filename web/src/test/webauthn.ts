@@ -8,7 +8,11 @@ const buf = (...b: number[]) => new Uint8Array(b).buffer;
 export function stubWebAuthn() {
   const credentials = { create: vi.fn(), get: vi.fn() };
   vi.stubGlobal("PublicKeyCredential", function PublicKeyCredential() {});
-  vi.stubGlobal("navigator", Object.assign(Object.create(navigator), { credentials }));
+  // Own properties: the prototype's getters (userAgent and the rest) refuse an object that is not jsdom's navigator.
+  vi.stubGlobal(
+    "navigator",
+    Object.create(navigator, { credentials: { value: credentials }, userAgent: { value: navigator.userAgent } }),
+  );
   return credentials;
 }
 

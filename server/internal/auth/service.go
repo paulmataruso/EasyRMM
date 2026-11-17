@@ -116,6 +116,9 @@ type User struct {
 	TOTP bool `json:"totp"`
 	// SecurityKeys counts registered security keys and passkeys (ADR-0032).
 	SecurityKeys int `json:"securityKeys"`
+	// PasskeyPrompt: offer a passkey after sign-in. Passkeys work on this
+	// server, the user has none, and has not put the offer off or declined it.
+	PasskeyPrompt bool `json:"passkeyPrompt"`
 }
 
 // Session is a sign-in session.
@@ -387,7 +390,7 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Session, *Us
 	var sess Session
 	var user User
 	var state string
-	var totpEnabled *time.Time
+	var totpEnabled, promptAfter, promptDeclined *time.Time
 	var revokedAt *time.Time
 	now := s.now()
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
@@ -395,11 +398,13 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Session, *Us
 			SELECT s.id, s.user_id, s.state, s.created_at, s.last_seen_at, s.expires_at, s.idle_expires_at,
 			       s.revoked_at, s.source_ip, s.user_agent,
 			       u.email, u.display_name, u.status, u.totp_enabled_at,
-			       (SELECT count(*) FROM user_webauthn_credentials c WHERE c.user_id = u.id)
+			       (SELECT count(*) FROM user_webauthn_credentials c WHERE c.user_id = u.id),
+			       u.passkey_prompt_after, u.passkey_prompt_declined_at
 			FROM sessions s JOIN users u ON u.id = s.user_id
 			WHERE s.token_hash = $1`, hash).
 			Scan(&sess.ID, &sess.UserID, &state, &sess.CreatedAt, &sess.LastSeenAt, &sess.ExpiresAt, &sess.IdleExpiresAt,
-				&revokedAt, &sess.SourceIP, &sess.UserAgent, &user.Email, &user.DisplayName, &user.Status, &totpEnabled, &user.SecurityKeys)
+				&revokedAt, &sess.SourceIP, &sess.UserAgent, &user.Email, &user.DisplayName, &user.Status, &totpEnabled, &user.SecurityKeys,
+				&promptAfter, &promptDeclined)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInvalidSession
 		}
@@ -427,6 +432,8 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Session, *Us
 	user.ID = sess.UserID
 	user.TOTP = totpEnabled != nil
 	user.MFAEnabled = user.TOTP || user.SecurityKeys > 0
+	user.PasskeyPrompt = s.wa != nil && user.SecurityKeys == 0 && promptDeclined == nil &&
+		(promptAfter == nil || !now.Before(*promptAfter))
 	return &sess, &user, nil
 }
 

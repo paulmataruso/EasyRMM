@@ -1,13 +1,19 @@
 import type { ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useSearchParams } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import { keyFor } from "./api/hooks";
+import type { AuthOptions } from "./api/types";
 import { useAuth, type AuthStage } from "./auth/AuthContext";
+import { keyAvailability } from "./auth/webauthn";
 import { AppLayout, AuthShell } from "./components/Layout";
 import { Button, ErrorState, Spinner } from "./components/ui";
 import {
+  afterSignIn,
   ForgotPasswordPage,
   LoginPage,
   MfaSetupRequiredPage,
   MfaVerifyPage,
+  PasskeyPromptPage,
   ResetPasswordPage,
   safeReturnTo,
   SetupPage,
@@ -65,16 +71,26 @@ function SessionError() {
 
 /** Renders children only in the given stage; otherwise routes to where the session needs to go. */
 function Gate({ stage: required, children }: { stage: AuthStage; children: ReactNode }) {
-  const { stage, showingRecoveryCodes } = useAuth();
+  const { stage, showingRecoveryCodes, session } = useAuth();
   const location = useLocation();
   const [params] = useSearchParams();
+  const queryClient = useQueryClient();
 
   if (stage === "loading") return <FullPageSpinner />;
   if (stage === "error") return <SessionError />;
   if (stage === required) return <>{children}</>;
   if (required === "mfa-setup" && stage === "ready" && showingRecoveryCodes) return <>{children}</>;
 
-  if (stage === "ready") return <Navigate to={safeReturnTo(params.get("returnTo"))} replace />;
+  if (stage === "ready") {
+    const returnTo = safeReturnTo(params.get("returnTo"));
+    // A sign-in that just finished here may offer a passkey first. Decided here rather than only by the page:
+    // the session renders before the page's own navigation, and this redirect would otherwise win.
+    if (session && (required === "anonymous" || required === "mfa")) {
+      const options = queryClient.getQueryData<AuthOptions>(keyFor("/auth/options"));
+      return <Navigate to={afterSignIn(session, returnTo, keyAvailability(options?.webauthn))} replace />;
+    }
+    return <Navigate to={returnTo} replace />;
+  }
 
   const target = stageRoutes[stage];
   if (stage === "anonymous" || stage === "mfa") {
@@ -94,6 +110,7 @@ export function App() {
       <Route path="/login" element={<Gate stage="anonymous"><LoginPage /></Gate>} />
       <Route path="/login/mfa" element={<Gate stage="mfa"><MfaVerifyPage /></Gate>} />
       <Route path="/login/mfa-setup" element={<Gate stage="mfa-setup"><MfaSetupRequiredPage /></Gate>} />
+      <Route path="/login/passkey" element={<Gate stage="ready"><PasskeyPromptPage /></Gate>} />
       <Route path="/forgot-password" element={<Gate stage="anonymous"><ForgotPasswordPage /></Gate>} />
       {/* Reset and invitation links work whatever the browser's sign-in state. */}
       <Route path="/reset-password" element={<ResetPasswordPage />} />
