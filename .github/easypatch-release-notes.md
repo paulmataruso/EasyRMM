@@ -28,6 +28,6 @@ The MSIs are not Authenticode-signed, so Windows SmartScreen may warn when one i
 
 ## License
 
-EasyPatch is licensed under the [Functional Source License 1.1, ALv2 Future License](https://github.com/paulmataruso/EasyRMM/blob/easypatch-v@VERSION@/easypatch/LICENSE.md):
+EasyPatch, part of EasyRMM, is licensed under the [Functional Source License 1.1, ALv2 Future License](https://github.com/paulmataruso/EasyRMM/blob/easypatch-v@VERSION@/LICENSE.md):
 free to use, including by MSPs for their clients' computers, but not to sell or offer as a competing product or service.
 Each release becomes available under the Apache License 2.0 two years after it is published.

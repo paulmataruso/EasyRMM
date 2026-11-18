@@ -43,8 +43,9 @@ trail hold.
 
 ## Positioning
 
-- Self-hosted: the MSP owns its data and deployment. The platform is open
-  source (AGPL-3.0-or-later); EasyPatch is source-available (FSL-1.1-ALv2).
+- Self-hosted: the MSP owns its data and deployment. The whole product,
+  EasyPatch included, is source-available (FSL-1.1-ALv2): free for MSPs to
+  run for their own and their clients' computers.
 - Remote access is powered by the real MeshCentral server and agent, embedded
   in the console in its own browser origin; everything else (tenancy,
   inventory, monitoring, scripting, jobs, alerts, audit, enrollment) is

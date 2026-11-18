@@ -78,6 +78,17 @@ jobs:
           name: licence-inventory
           path: go-licenses.csv
           retention-days: 30
+      # The consoles' production npm packages ship in their bundles: permissive
+      # licences only (ADR-0037).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Install the consoles' dependencies
+        run: |
+          (cd web && npm ci --no-audit --no-fund --ignore-scripts)
+          (cd easypatch/frontend && npm ci --no-audit --no-fund --ignore-scripts)
+      - name: Check npm package licences against the allow-list
+        run: node scripts/ci/check-npm-licences.mjs web easypatch/frontend
 
   trivy:
     name: Filesystem scan (Trivy)

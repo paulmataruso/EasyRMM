@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://github.com/paulmataruso/EasyRMM/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/paulmataruso/EasyRMM/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="LICENSE.md"><img alt="License: FSL-1.1-ALv2" src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue"></a>
+  <a href="../LICENSE.md"><img alt="License: FSL-1.1-ALv2" src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue"></a>
   <img alt="Platforms: Windows and Linux agents" src="https://img.shields.io/badge/agents-Windows%20%7C%20Linux-informational">
 </p>
 
@@ -66,7 +66,8 @@ exploited vulnerabilities, and tracks compliance across every customer.
   consoles. See EasyRMM's [patching guide](../docs/operations/patching.md).
 * People can sign in to EasyPatch through EasyRMM: EasyPatch's [single sign-on
   guide](docs/single-sign-on.md#easyrmm) explains the setup and the accounts EasyRMM manages.
-* EasyPatch keeps its own license ([License](#license)), builds and releases. Its releases are
+* EasyPatch has the same license as the rest of EasyRMM ([License](#license)). It keeps its own
+  builds and releases for now. Its releases are
   tagged `easypatch-v*` in the EasyRMM repository. Releases up to 1.10.0, and their downloads,
   are in EasyPatch's [former repository](https://github.com/paulmataruso/EasyPatch/releases).
 
@@ -361,8 +362,9 @@ contributor terms, and the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-EasyPatch is source-available under the **Functional Source License, Version 1.1, ALv2 Future
-License** ([FSL-1.1-ALv2](LICENSE.md)). Copyright 2026 DHI Technical Services LLC.
+EasyPatch is part of EasyRMM, which is source-available under the **Functional Source License,
+Version 1.1, ALv2 Future License** ([FSL-1.1-ALv2](../LICENSE.md)). Copyright 2026 DHI Technical
+Services LLC.
 
 * You may use, copy, modify and redistribute EasyPatch for any purpose **except a Competing
   Use**: making it available to others in a commercial product or service that substitutes for
@@ -375,8 +377,6 @@ License** ([FSL-1.1-ALv2](LICENSE.md)). Copyright 2026 DHI Technical Services LL
 * For a commercial license, contact DHI Technical Services LLC at
   [paulmataruso@dhitechnical.com](mailto:paulmataruso@dhitechnical.com).
 
-This license covers `easypatch/` only. The rest of the EasyRMM repository is EasyRMM's code,
-under the GNU Affero General Public License v3.0 or later; see
-[LICENSING.md](../LICENSING.md).
+The same license covers the whole EasyRMM repository; see [LICENSING.md](../LICENSING.md).
 
 Third-party components keep their own licenses.

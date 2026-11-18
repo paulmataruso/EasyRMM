@@ -65,9 +65,9 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 FROM ${RUNTIME_IMAGE}
 ARG VERSION=dev
 LABEL org.opencontainers.image.title="EasyRMM server" \
-      org.opencontainers.image.description="Open-source RMM for Windows and Linux" \
+      org.opencontainers.image.description="Self-hosted RMM and patch management for Windows and Linux" \
       org.opencontainers.image.source="https://github.com/paulmataruso/easyrmm" \
-      org.opencontainers.image.licenses="AGPL-3.0-or-later" \
+      org.opencontainers.image.licenses="FSL-1.1-ALv2" \
       org.opencontainers.image.version="${VERSION}"
 COPY --from=server /out/easyrmm-server /usr/local/bin/easyrmm-server
 COPY --from=agents /out/agents/ /usr/share/easyrmm/agents/

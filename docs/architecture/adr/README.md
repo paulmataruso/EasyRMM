@@ -16,7 +16,7 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 | [0008](0008-unified-endpoint-installer.md) | Unified endpoint installer bundling MeshAgent | Accepted; MeshAgent sourcing superseded by 0015 |
 | [0009](0009-agent-protocol.md) | Agent protocol: device keys, WebSocket with HTTPS polling fallback | Accepted; refined by 0017 |
 | [0010](0010-easypatch-integration.md) | EasyPatch integration through a service API | Accepted |
-| [0011](0011-licensing.md) | AGPL-3.0 for EasyRMM | Accepted |
+| [0011](0011-licensing.md) | AGPL-3.0 for EasyRMM | Superseded by 0037 |
 | [0012](0012-frontend-stack-and-impeccable.md) | React/TypeScript frontend designed with Impeccable | Accepted; styling superseded by 0013 |
 | [0013](0013-easypatch-design-system.md) | The console shares EasyPatch's design system | Accepted |
 | [0014](0014-remote-access-gateway-and-device-discovery.md) | Remote-access gateway rules and device discovery | Accepted |
@@ -42,3 +42,4 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 | [0034](0034-oidc-single-sign-on.md) | Single sign-on with OpenID Connect: providers set up by super administrators, code flow with PKCE bound to a sealed cookie, identities linked to invited accounts by provider and subject (first time by a verified email in an allowed domain), EasyRMM's second factor unless the provider is declared to enforce MFA | Accepted; refines 0006, 0032 |
 | [0035](0035-cohosting-easypatch.md) | EasyPatch on the same server: EasyRMM's edge keeps 80 and 443, passes EasyPatch's name through by SNI, still encrypted, to its Caddy on loopback with a PROXY protocol v2 header naming the client, forwards its HTTP-01 challenges, and its connector reaches it over loopback | Accepted; refines 0003, 0010, 0030 |
 | [0036](0036-easyrmm-signs-in-to-easypatch.md) | EasyRMM is EasyPatch's OpenID provider: one client set up by a super administrator, code flow with PKCE, single-use hashed codes, ES256 ID tokens carrying `amr` and the `easypatch` access claim with `email_verified: false`, a second factor required, one bounce through the console for the SameSite=Strict cookie | Accepted; refines 0006, 0030, 0034 |
+| [0037](0037-one-licence.md) | One licence: FSL-1.1-ALv2 for the whole repository, DHI Technical Services LLC as licensor, contributions licensed to it, permissive dependencies only | Accepted; supersedes 0011 |

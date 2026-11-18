@@ -40,7 +40,7 @@ name=easyrmm-$version
 dir=$stage/$name
 mkdir -p "$dir/deploy/scripts" "$dir/deploy/easypatch" "$dir/docker/postgres/init" "$dir/docker/meshcentral" \
   "$dir/docs/deployment" "$dir/docs/operations"
-cp "$root/LICENSE" "$root/CHANGELOG.md" "$dir/"
+cp "$root/LICENSE.md" "$root/LICENSING.md" "$root/CHANGELOG.md" "$dir/"
 cp "$root/deploy/docker-compose.yml" "$dir/deploy/"
 cp "$root/deploy/scripts/setup.sh" "$dir/deploy/scripts/"
 # For EasyPatch on the same server (docs/deployment/easypatch-cohost.md).

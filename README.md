@@ -15,8 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/paulmataruso/EasyRMM/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/paulmataruso/EasyRMM/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="LICENSE"><img alt="EasyRMM licence: AGPL-3.0-or-later" src="https://img.shields.io/badge/EasyRMM-AGPL--3.0--or--later-blue"></a>
-  <a href="easypatch/LICENSE.md"><img alt="EasyPatch licence: FSL-1.1-ALv2" src="https://img.shields.io/badge/EasyPatch-FSL--1.1--ALv2-blue"></a>
+  <a href="LICENSE.md"><img alt="Licence: FSL-1.1-ALv2" src="https://img.shields.io/badge/licence-FSL--1.1--ALv2-blue"></a>
   <img alt="Endpoints: Windows and Linux" src="https://img.shields.io/badge/endpoints-Windows%20%7C%20Linux-informational">
 </p>
 
@@ -249,16 +248,16 @@ Report vulnerabilities privately, for either part. See [SECURITY.md](SECURITY.md
 
 ## Licensing
 
-One project, two licences, by directory:
+EasyRMM, EasyPatch included, is source-available under the [Functional
+Source License, Version 1.1, ALv2 Future License](LICENSE.md)
+(FSL-1.1-ALv2). Copyright 2026 DHI Technical Services LLC.
 
-| Path | Licence |
-|---|---|
-| Everything except `easypatch/` (EasyRMM) | [GNU Affero General Public License v3.0 or later](LICENSE) |
-| `easypatch/` (EasyPatch) | [Functional Source License, Version 1.1, ALv2 Future License](easypatch/LICENSE.md) (FSL-1.1-ALv2), licensor DHI Technical Services LLC |
-
-EasyRMM's code is open source. EasyPatch's code is source-available under
-FSL-1.1-ALv2. [LICENSING.md](LICENSING.md) explains how the two apply, and
-what a contribution to each is made under.
+MSPs and IT departments may run it free of charge for their own computers and
+their clients', including as part of paid managed services. Selling it, or
+offering it for others to run their own remote management or patching, is
+not permitted. Each version becomes available under the Apache License 2.0
+two years after its release. [LICENSING.md](LICENSING.md) has the details,
+the licence's history, and what a contribution is made under.
 
 MeshCentral and MeshAgent are Apache-2.0 projects by their respective
 authors. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). EasyRMM is not

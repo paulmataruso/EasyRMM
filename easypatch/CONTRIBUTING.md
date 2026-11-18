@@ -2,30 +2,15 @@
 
 Thank you for your interest in EasyPatch. Bug reports, ideas and pull requests are welcome.
 
-EasyPatch is EasyRMM's patch management and part of the EasyRMM project. It lives in
-`easypatch/` of the [EasyRMM repository](https://github.com/paulmataruso/EasyRMM), where its
-issues and pull requests go. This file covers changes under `easypatch/`. Changes anywhere else
-follow EasyRMM's [CONTRIBUTING.md](../CONTRIBUTING.md), under EasyRMM's license; a pull request
-that touches both is covered by both, each for its part ([LICENSING.md](../LICENSING.md)).
+EasyPatch is EasyRMM's patch management and part of EasyRMM. It lives in `easypatch/` of the
+[EasyRMM repository](https://github.com/paulmataruso/EasyRMM), where its issues and pull
+requests go.
 
 ## License and contributor terms
 
-EasyPatch is licensed under the [Functional Source License, Version 1.1, ALv2 Future
-License](LICENSE.md) (FSL-1.1-ALv2). The copyright holder is DHI Technical Services LLC.
-
-**By submitting a contribution (code, documentation or other material) you agree that:**
-
-1. you have the right to submit it, and it is your original work or you have identified the
-   parts that are not, with their license;
-2. you grant DHI Technical Services LLC a perpetual, worldwide, non-exclusive, royalty-free,
-   irrevocable license to use, copy, modify, distribute, sublicense and sell your contribution,
-   under the FSL, the Apache License 2.0 or any other license, including commercial licenses;
-3. you grant everyone who receives EasyPatch a license to your contribution under the same terms
-   as the rest of the version that includes it.
-
-You keep the copyright in your contribution. These terms let DHI Technical Services LLC keep
-EasyPatch under a single license and offer commercial licenses. If you cannot agree to them,
-please open an issue describing the change instead of a pull request.
+EasyRMM's [CONTRIBUTING.md](../CONTRIBUTING.md) applies to `easypatch/` too: the licence
+(FSL-1.1-ALv2, [LICENSE.md](../LICENSE.md), DHI Technical Services LLC) and the contributor
+terms. This file adds the rules for EasyPatch's code.
 
 ## Reporting bugs and asking for features
 

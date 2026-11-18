@@ -100,11 +100,9 @@ EasyPatch recorded the job as requested by
    duplicate-job check (`duplicate_job`) covers repeated clicks meanwhile.
 4. **Co-hosting option** — bind-address/port overrides and forwarded-header
    trust settings in the production compose file.
-5. **Licence permission** — EasyPatch is FSL-1.1-ALv2. EasyRMM does not
-   redistribute EasyPatch binaries; the integration code in EasyRMM is
-   AGPL and talks to EasyPatch only over its API. If the owner wants EasyRMM
-   operators to be explicitly covered, publish an additional permission next
-   to EasyPatch's licence, in `easypatch/`.
+5. **Licence permission** — resolved 2026-11-18: EasyRMM and EasyPatch are
+   under one licence, FSL-1.1-ALv2, with one licensor
+   ([ADR-0037](../architecture/adr/0037-one-licence.md)).
 
 ## Device correlation (never hostname-only)
 

@@ -20,8 +20,8 @@ feature in it is **Complete** in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STA
 1. Push the branch and let CI run on GitHub (needs a token with the
    `workflow` scope), then enable branch protection with "CI result" as the
    required check.
-2. Licence the EasyPatch-derived stylesheet and logo construction to
-   EasyRMM (ADR-0013).
+2. ~~Licence the EasyPatch-derived stylesheet and logo construction to
+   EasyRMM (ADR-0013).~~ Resolved by one licence (ADR-0037).
 3. Phase 6, remainder: an MSI for the Windows agent (needs Windows CI
    runners) and DEB/RPM packages.
 4. Run the winget and Chocolatey software scripts on Windows (ADR-0028).

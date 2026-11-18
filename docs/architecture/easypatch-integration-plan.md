@@ -408,6 +408,8 @@ error states.
 * The root holds EasyRMM; `easypatch/` holds EasyPatch.
 * `LICENSING.md` states the two licences: AGPL-3.0 for the root, and
   FSL-1.1-ALv2 for `easypatch/`, licensor DHI Technical Services LLC.
+  *Superseded 2026-11-18:* one licence, FSL-1.1-ALv2, for everything
+  ([ADR-0037](adr/0037-one-licence.md)).
 
 **CI: one entry point and one required check**
 * `ci.yml` calls EasyPatch's server, agent and console workflows as reusable
@@ -660,6 +662,8 @@ EasyPatch". The co-hosting guide has the step for EasyPatch reaching EasyRMM.
      Code is copied between the two consoles (for example the product
      switch), and today EasyRMM contributions are granted only under the
      AGPL.
+   * *Resolved 2026-11-18* by one licence and one licensor, with the
+     relicensing grant for all contributions (ADR-0037).
 2. **The release environment.** Create `easypatch-release` here, with the
    `EASYPATCH_RELEASE_KEY` secret and an `easypatch-v*` tag rule.
 3. **GHCR.** Give this repository's Actions write access to the

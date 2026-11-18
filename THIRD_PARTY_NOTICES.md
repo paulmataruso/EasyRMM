@@ -1,6 +1,6 @@
 # Third-party notices
 
-EasyRMM is licensed under AGPL-3.0-or-later (see `LICENSE`). It includes or
+EasyRMM is licensed under FSL-1.1-ALv2 (see `LICENSE.md`). It includes or
 runs alongside the following third-party software, each under its own licence.
 This file is shipped with every server image and endpoint package. A complete,
 machine-generated inventory of library dependencies is produced by CI
