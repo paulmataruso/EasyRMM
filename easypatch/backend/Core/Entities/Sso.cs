@@ -36,6 +36,18 @@ public sealed class OidcProvider
     /// <summary>Lower-case email domains for which accounts may be created.</summary>
     public List<string> AllowedDomains { get; set; } = [];
 
+    /// <summary>
+    /// This provider is EasyRMM, which owns EasyPatch (at most one provider is). Its accounts are managed by EasyRMM: matched by issuer
+    /// and subject only, never by email; their role and organizations come from the ID token's <c>easypatch</c> claim at every sign-in;
+    /// they sign in only through EasyRMM. Its second factor counts only when the token's <c>amr</c> contains <c>mfa</c>, and its sessions
+    /// last at most <see cref="EasyRmmSessionLifetime"/>. <see cref="TrustEmailClaim"/>, <see cref="ProviderEnforcesMfa"/> and
+    /// <see cref="AutoProvision"/> are off.
+    /// </summary>
+    public bool IsEasyRmm { get; set; }
+
+    /// <summary>The longest session a sign-in through EasyRMM gives: a role taken away in EasyRMM lasts at most this long here.</summary>
+    public static readonly TimeSpan EasyRmmSessionLifetime = TimeSpan.FromHours(1);
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 }
@@ -76,6 +88,11 @@ public sealed class OidcLoginState
     public required string CodeVerifier { get; set; }
 
     public required string ReturnTo { get; set; }
+
+    /// <summary>The signed-in user who started this sign-in to link their account to EasyRMM (My account → Link EasyRMM); null for a
+    /// sign-in.</summary>
+    public Guid? LinkUserId { get; set; }
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
 }

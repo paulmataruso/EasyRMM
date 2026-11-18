@@ -81,7 +81,11 @@ export function UsersTab() {
                       {u.username}
                       {u.id === me?.id && <Badge tone="accent">you</Badge>}
                       {!u.isActive && <Badge tone="danger">disabled</Badge>}
-                      {u.externalLoginCount > 0 && <Badge tone="info" title="Linked to a single sign-on provider">SSO</Badge>}
+                      {u.managedByEasyRmm ? (
+                        <Badge tone="accent" title="Signs in through EasyRMM, which sets the role and organizations">EasyRMM</Badge>
+                      ) : (
+                        u.externalLoginCount > 0 && <Badge tone="info" title="Linked to a single sign-on provider">SSO</Badge>
+                      )}
                       {u.lockoutUntil && new Date(u.lockoutUntil) > new Date() && <Badge tone="warn" title={`Until ${formatDateTime(u.lockoutUntil)}`}>locked out</Badge>}
                     </div>
                     <div className="text-xs text-muted">{u.email}</div>
@@ -284,6 +288,7 @@ function EditUserDialog({ user, isSelf, onClose }: { user: UserDto | null; isSel
   const save = useApiMutation(
     async (u: UserDto) => {
       await api.put(`/users/${u.id}`, { email: email.trim() !== u.email ? email.trim() : null, role: role !== u.role ? role : null, isActive: active !== u.isActive ? active : null });
+      if (u.managedByEasyRmm) return; // EasyRMM sets its organizations
       // An empty list asks for every organization. A user whose organizations were all deleted has an empty list too but
       // reaches none, so "every organization" is a change for them.
       const newIds = role === 'SuperAdmin' ? [] : orgIds;
@@ -313,7 +318,14 @@ function EditUserDialog({ user, isSelf, onClose }: { user: UserDto | null; isSel
         >
           <TextField label="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required maxLength={256}
             hint="The user signs in with this address. A change takes effect at their next sign-in." />
-          <SelectField label="Role" value={role} onChange={(e) => setRole(e.target.value as UserRole)} hint={ROLE_HELP[role]} disabled={isSelf}>
+          {user.managedByEasyRmm && (
+            <Alert tone="info" title="Managed by EasyRMM">
+              EasyRMM sets this user's role and organizations each time they sign in, from their roles in EasyRMM. Unlink EasyRMM below to manage
+              them here instead.
+            </Alert>
+          )}
+          <SelectField label="Role" value={role} onChange={(e) => setRole(e.target.value as UserRole)} hint={ROLE_HELP[role]}
+            disabled={isSelf || user.managedByEasyRmm}>
             {USER_ROLES.map((r) => (
               <option key={r} value={r}>
                 {humanize(r)}
@@ -321,16 +333,16 @@ function EditUserDialog({ user, isSelf, onClose }: { user: UserDto | null; isSel
             ))}
           </SelectField>
           {isSelf && <p className="-mt-2 text-xs text-muted">You cannot change your own role or disable your own account.</p>}
-          {role !== 'SuperAdmin' && !user.allOrganizations && user.organizationIds.length === 0 && (
+          {role !== 'SuperAdmin' && !user.managedByEasyRmm && !user.allOrganizations && user.organizationIds.length === 0 && (
             <Alert tone="warn" title="No organizations">
               The organizations this user was restricted to were deleted, so they reach none. Check organizations to restrict them
               again, or save with none checked to give them every organization.
             </Alert>
           )}
-          {role !== 'SuperAdmin' && <OrgAccessPicker value={orgIds} onChange={setOrgIds} />}
+          {role !== 'SuperAdmin' && !user.managedByEasyRmm && <OrgAccessPicker value={orgIds} onChange={setOrgIds} />}
           <Checkbox label="Account enabled" hint="Disabled users cannot sign in; their sessions end." checked={active} onChange={(e) => setActive(e.target.checked)} disabled={isSelf} />
           {!active && user.isActive && <Alert tone="warn">Disabling the account signs the user out everywhere.</Alert>}
-          {user.externalLoginCount > 0 && <LinkedSignIns userId={user.id} />}
+          {user.externalLoginCount > 0 && <LinkedSignIns userId={user.id} managed={user.managedByEasyRmm} />}
           <InlineError error={save.error} />
           <div className="flex justify-end gap-2 pt-1">
             <Button onClick={onClose}>Cancel</Button>
@@ -345,7 +357,7 @@ function EditUserDialog({ user, isSelf, onClose }: { user: UserDto | null; isSel
 }
 
 /** The user's accounts at single sign-on providers. Removing a link stops that account from signing in as this user. */
-function LinkedSignIns({ userId }: { userId: string }) {
+function LinkedSignIns({ userId, managed }: { userId: string; managed: boolean }) {
   const toast = useToast();
   const links = useApi<ExternalLoginDto[]>(`/users/${userId}/external-logins`);
   const unlink = useApiMutation((l: ExternalLoginDto) => api.del<void>(`/users/${userId}/external-logins/${l.id}`), {
@@ -355,6 +367,12 @@ function LinkedSignIns({ userId }: { userId: string }) {
   return (
     <fieldset className="flex flex-col gap-1">
       <legend className="mb-1 text-xs font-medium text-muted">Single sign-on</legend>
+      {managed && (
+        <p className="mb-1 text-xs text-muted">
+          Unlinking EasyRMM makes this an ordinary EasyPatch account: you set its role and organizations here, and it signs in with a password
+          (send a reset link if it has none) or another provider.
+        </p>
+      )}
       {links.isPending && <Spinner />}
       <InlineError error={links.error ?? unlink.error} />
       {links.data?.map((l) => (

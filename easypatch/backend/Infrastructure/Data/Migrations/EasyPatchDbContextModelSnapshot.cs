@@ -2128,6 +2128,10 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("expires_at");
 
+                    b.Property<Guid?>("LinkUserId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("link_user_id");
+
                     b.Property<string>("Nonce")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -2153,6 +2157,8 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("LinkUserId");
 
                     b.HasIndex("ProviderId");
 
@@ -2208,6 +2214,10 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("enabled");
 
+                    b.Property<bool>("IsEasyRmm")
+                        .HasColumnType("boolean")
+                        .HasColumnName("is_easy_rmm");
+
                     b.Property<string>("Issuer")
                         .IsRequired()
                         .HasMaxLength(512)
@@ -2233,6 +2243,10 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                         .HasColumnName("updated_at");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("IsEasyRmm")
+                        .IsUnique()
+                        .HasFilter("is_easy_rmm");
 
                     b.ToTable("oidc_providers", (string)null);
                 });
@@ -4310,6 +4324,11 @@ namespace EasyPatch.Infrastructure.Data.Migrations
 
             modelBuilder.Entity("EasyPatch.Core.Entities.OidcLoginState", b =>
                 {
+                    b.HasOne("EasyPatch.Core.Entities.User", null)
+                        .WithMany()
+                        .HasForeignKey("LinkUserId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
                     b.HasOne("EasyPatch.Core.Entities.OidcProvider", null)
                         .WithMany()
                         .HasForeignKey("ProviderId")

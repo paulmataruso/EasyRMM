@@ -102,11 +102,33 @@ public sealed class OidcService(
     public async Task<OidcStart> StartAsync(Guid providerId, string? returnTo, CancellationToken ct)
     {
         var provider = await db.OidcProviders.AsNoTracking().FirstOrDefaultAsync(p => p.Id == providerId && p.Enabled, ct);
-        if (provider is null)
+        return provider is null ? new OidcStart(LoginError("unavailable"), null) : await StartAsync(provider, SafeReturnTo(returnTo), null, ct);
+    }
+
+    /// <summary>
+    /// My account → Link EasyRMM: the signed-in owner of an account signs in at EasyRMM to link it. From then on the account is managed by
+    /// EasyRMM (<see cref="OidcProvider.IsEasyRmm"/>). Confirmed like other changes to how one signs in: the current password, or a sign-in
+    /// within the last 10 minutes.
+    /// </summary>
+    public async Task<OidcStart> StartLinkAsync(Guid userId, Guid sessionId, string? password, CancellationToken ct)
+    {
+        var user = await db.Users.FirstAsync(u => u.Id == userId, ct);
+        auth.RequireReauthentication(user, await db.UserSessions.AsNoTracking().FirstAsync(s => s.Id == sessionId, ct), password);
+        var provider = await db.OidcProviders.AsNoTracking().FirstOrDefaultAsync(p => p.IsEasyRmm && p.Enabled, ct)
+                       ?? throw AppException.Conflict("Sign-in through EasyRMM is not set up on this server.", "easyrmm_not_configured");
+        if (await db.ExternalLogins.AnyAsync(l => l.UserId == userId && l.ProviderId == provider.Id, ct))
         {
-            return new OidcStart(LoginError("unavailable"), null);
+            throw AppException.Conflict("This account is already linked to EasyRMM.", "already_linked");
         }
 
+        var start = await StartAsync(provider, "/account?linked=easyrmm", userId, ct);
+        return start.Binding is not null
+            ? start
+            : throw new AppException(503, "easyrmm_unavailable", "EasyRMM could not be reached. Try again in a moment.");
+    }
+
+    private async Task<OidcStart> StartAsync(OidcProvider provider, string returnTo, Guid? linkUserId, CancellationToken ct)
+    {
         OpenIdConnectConfiguration config;
         try
         {
@@ -133,7 +155,8 @@ public sealed class OidcService(
             BindingHash = SecureTokens.Hash(binding),
             Nonce = nonce,
             CodeVerifier = verifier,
-            ReturnTo = SafeReturnTo(returnTo),
+            ReturnTo = returnTo,
+            LinkUserId = linkUserId,
             CreatedAt = now,
             ExpiresAt = now + StateLifetime,
         });
@@ -163,6 +186,7 @@ public sealed class OidcService(
     {
         OidcProvider? provider = null;
         Guid? userId = null;
+        Guid? linkUserId = null;
         try
         {
             if (string.IsNullOrEmpty(state) || state.Length > 256)
@@ -178,6 +202,7 @@ public sealed class OidcService(
                 throw new SsoFailure("expired", "state_unknown");
             }
 
+            linkUserId = pending.LinkUserId;
             if (pending.ExpiresAt <= clock.GetUtcNow())
             {
                 throw new SsoFailure("expired", "state_expired");
@@ -191,6 +216,11 @@ public sealed class OidcService(
 
             provider = await db.OidcProviders.AsNoTracking().FirstOrDefaultAsync(p => p.Id == pending.ProviderId && p.Enabled, ct)
                        ?? throw new SsoFailure("unavailable", "provider_disabled");
+            if (linkUserId is not null && !provider.IsEasyRmm)
+            {
+                throw new SsoFailure("failed", "link_provider_changed");
+            }
+
             if (!string.IsNullOrEmpty(error))
             {
                 throw new SsoFailure("denied", "provider_error"); // error_description is the provider's text: not logged
@@ -204,14 +234,32 @@ public sealed class OidcService(
             var config = await GetConfigurationAsync(provider, ct);
             var idToken = await RedeemCodeAsync(provider, config, code, pending.CodeVerifier, ct);
             var token = await ValidateIdTokenAsync(provider, config, idToken, pending.Nonce, ct);
-            var (user, link) = await FindOrLinkUserAsync(provider, token, ct);
-            userId = user.Id;
+            User user;
+            ExternalLogin link;
+            bool mfaByProvider;
+            if (provider.IsEasyRmm)
+            {
+                var grant = ReadEasyRmmGrant(token);
+                (user, link) = await EasyRmmUserAsync(provider, token, grant, linkUserId, ct);
+                mfaByProvider = grant.MultiFactor;
+            }
+            else
+            {
+                (user, link) = await FindOrLinkUserAsync(provider, token, ct);
+                mfaByProvider = provider.ProviderEnforcesMfa;
+            }
 
+            userId = user.Id;
             var now = clock.GetUtcNow();
             var hasMfa = await auth.HasSecondFactorAsync(user, ct);
-            var mfaCompleted = provider.ProviderEnforcesMfa || !hasMfa;
+            var mfaCompleted = mfaByProvider || !hasMfa;
             var (session, sessionToken) = await auth.NewSessionAsync(user, mfaCompleted, ip, userAgent, ct);
-            session.MfaByProvider = provider.ProviderEnforcesMfa;
+            session.MfaByProvider = mfaByProvider;
+            if (provider.IsEasyRmm && session.ExpiresAt > now + OidcProvider.EasyRmmSessionLifetime)
+            {
+                session.ExpiresAt = now + OidcProvider.EasyRmmSessionLifetime;
+            }
+
             link.LastUsedAt = now;
             if (mfaCompleted)
             {
@@ -220,8 +268,14 @@ public sealed class OidcService(
 
             // Like a password sign-in, "auth.login" is recorded once no further step (EasyPatch MFA) remains.
             audit.Record(mfaCompleted ? "auth.login" : "auth.sso_verified", "User", user.Id.ToString(),
-                details: new { method = "sso", provider = provider.DisplayName, mfaByProvider = provider.ProviderEnforcesMfa });
+                details: new { method = "sso", provider = provider.DisplayName, mfaByProvider, easyRmm = provider.IsEasyRmm });
             await db.SaveChangesAsync(ct);
+            if (linkUserId is { } owner)
+            {
+                // The account now signs in only through EasyRMM: sessions from its password or another provider end.
+                await auth.RevokeSessionsAsync(owner, session.Id, ct);
+            }
+
             return new OidcCompletion(pending.ReturnTo, session, sessionToken);
         }
         catch (Exception ex) when (ex is SsoFailure || IsProviderFailure(ex, ct))
@@ -232,7 +286,8 @@ public sealed class OidcService(
             audit.Record("auth.sso_failed", userId is null ? "OidcProvider" : "User", (userId?.ToString() ?? provider?.Id.ToString()),
                 details: new { provider = provider?.DisplayName, reason = failure.Reason });
             await db.SaveChangesAsync(CancellationToken.None);
-            return new OidcCompletion(LoginError(failure.Code), null, null);
+            // A failed link goes back to the account page; the person is still signed in there.
+            return new OidcCompletion(linkUserId is null ? LoginError(failure.Code) : $"/account?easyrmm_link_error={failure.Code}", null, null);
         }
     }
 
@@ -368,14 +423,11 @@ public sealed class OidcService(
         if (link is not null)
         {
             CheckCanSignIn(link.User!, now);
+            await CheckNotManagedAsync(link.UserId, ct);
             return (link.User!, link);
         }
 
-        var email = token.TryGetPayloadValue<string>("email", out var claim) && claim is not null ? AuthService.NormalizeEmail(claim) : null;
-        if (email is null || !AuthService.IsValidEmail(email))
-        {
-            throw new SsoFailure("no_account", "no_email");
-        }
+        var email = Email(token) ?? throw new SsoFailure("no_account", "no_email");
 
         if (!provider.TrustEmailClaim && !EmailVerified(token))
         {
@@ -408,6 +460,7 @@ public sealed class OidcService(
         else
         {
             CheckCanSignIn(user, now);
+            await CheckNotManagedAsync(user.Id, ct);
             // A user already linked to another account at this provider is not re-linked by email address.
             if (await db.ExternalLogins.AnyAsync(l => l.UserId == user.Id && l.ProviderId == provider.Id, ct))
             {
@@ -415,7 +468,12 @@ public sealed class OidcService(
             }
         }
 
-        link = new ExternalLogin
+        return (user, Link(provider, token, user, email, method, now));
+    }
+
+    private ExternalLogin Link(OidcProvider provider, JsonWebToken token, User user, string? email, string method, DateTimeOffset now)
+    {
+        var link = new ExternalLogin
         {
             Id = Guid.CreateVersion7(now),
             UserId = user.Id,
@@ -428,7 +486,188 @@ public sealed class OidcService(
         };
         db.ExternalLogins.Add(link);
         audit.Record("auth.sso_linked", "User", user.Id.ToString(), details: new { provider = provider.DisplayName, method, role = user.Role });
-        return (user, link);
+        return link;
+    }
+
+    private static string? Email(JsonWebToken token) =>
+        token.TryGetPayloadValue<string>("email", out var claim) && claim is not null && AuthService.NormalizeEmail(claim) is var email &&
+        AuthService.IsValidEmail(email)
+            ? email
+            : null;
+
+    /// <summary>Accounts managed by EasyRMM sign in only through EasyRMM.</summary>
+    private async Task CheckNotManagedAsync(Guid userId, CancellationToken ct)
+    {
+        if (await auth.IsManagedByEasyRmmAsync(userId, ct))
+        {
+            throw new SsoFailure("easyrmm_only", "managed_by_easyrmm");
+        }
+    }
+
+    // -------------------------------------------------------------------------------------------
+    // EasyRMM
+    // -------------------------------------------------------------------------------------------
+
+    /// <summary>The most organizations an <c>easypatch</c> claim may name.</summary>
+    private const int MaxGrantOrganizations = 10_000;
+
+    /// <summary>What an EasyRMM ID token grants: its <c>easypatch</c> claim (a role, and EasyPatch's ids of the organizations it holds in),
+    /// and whether its <c>amr</c> says the person used a second factor.</summary>
+    private sealed record EasyRmmGrant(UserRole Role, IReadOnlyList<Guid> Organizations, bool MultiFactor);
+
+    /// <summary>Reads the claims from the token's payload, whose signature, issuer, audience, lifetime and nonce were checked.</summary>
+    private static EasyRmmGrant ReadEasyRmmGrant(JsonWebToken token)
+    {
+        using var payload = JsonDocument.Parse(Base64UrlEncoder.DecodeBytes(token.EncodedPayload));
+        var root = payload.RootElement;
+        if (!root.TryGetProperty("easypatch", out var claim) || claim.ValueKind != JsonValueKind.Object ||
+            !claim.TryGetProperty("role", out var role) || role.ValueKind != JsonValueKind.String)
+        {
+            throw new SsoFailure("failed", "easypatch_claim_missing");
+        }
+
+        var granted = role.GetString() switch
+        {
+            "SuperAdmin" => UserRole.SuperAdmin,
+            "Admin" => UserRole.Admin,
+            "ReadOnly" => UserRole.ReadOnly,
+            _ => throw new SsoFailure("failed", "easypatch_claim_role"),
+        };
+        var organizations = new List<Guid>();
+        if (claim.TryGetProperty("organizations", out var list) && list.ValueKind != JsonValueKind.Null)
+        {
+            if (list.ValueKind != JsonValueKind.Array || list.GetArrayLength() > MaxGrantOrganizations)
+            {
+                throw new SsoFailure("failed", "easypatch_claim_organizations");
+            }
+
+            foreach (var item in list.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String || !Guid.TryParse(item.GetString(), out var id))
+                {
+                    throw new SsoFailure("failed", "easypatch_claim_organizations");
+                }
+
+                organizations.Add(id);
+            }
+        }
+
+        var multiFactor = root.TryGetProperty("amr", out var amr) && amr.ValueKind == JsonValueKind.Array &&
+                          amr.EnumerateArray().Any(m => m.ValueKind == JsonValueKind.String && m.GetString() == "mfa");
+        return new EasyRmmGrant(granted, organizations.Distinct().ToList(), multiFactor);
+    }
+
+    /// <summary>
+    /// The account an EasyRMM sign-in is for, with the grant applied: the one linked to the token's issuer and subject; when the owner of an
+    /// account is linking it, that account; otherwise a new account. Never one found by email address: an EasyPatch account with the
+    /// token's address must be linked by its owner.
+    /// </summary>
+    private async Task<(User User, ExternalLogin Link)> EasyRmmUserAsync(OidcProvider provider, JsonWebToken token, EasyRmmGrant grant,
+        Guid? owner, CancellationToken ct)
+    {
+        var now = clock.GetUtcNow();
+        var link = await db.ExternalLogins.Include(l => l.User).ThenInclude(u => u!.OrganizationAccess)
+            .FirstOrDefaultAsync(l => l.Issuer == token.Issuer && l.Subject == token.Subject, ct);
+        if (link is not null && link.ProviderId != provider.Id)
+        {
+            throw new SsoFailure("no_account", "linked_at_other_provider");
+        }
+
+        if (owner is { } ownerId && link is not null && link.UserId != ownerId)
+        {
+            throw new SsoFailure("easyrmm_linked_elsewhere", "linked_to_other_account");
+        }
+
+        if (link is not null)
+        {
+            // Signed in before, or the owner's link already went through (Link EasyRMM pressed twice).
+            CheckCanSignIn(link.User!, now);
+            await ApplyEasyRmmGrantAsync(link.User!, grant, isNew: false, ct);
+            return (link.User!, link);
+        }
+
+        var email = Email(token);
+        if (owner is { } linking)
+        {
+            var account = await db.Users.Include(u => u.OrganizationAccess).FirstOrDefaultAsync(u => u.Id == linking, ct)
+                          ?? throw new SsoFailure("expired", "link_user_gone");
+            CheckCanSignIn(account, now);
+            if (await db.ExternalLogins.AnyAsync(l => l.UserId == linking && l.ProviderId == provider.Id, ct))
+            {
+                throw new SsoFailure("easyrmm_linked_elsewhere", "already_linked");
+            }
+
+            await ApplyEasyRmmGrantAsync(account, grant, isNew: false, ct);
+            return (account, Link(provider, token, account, email, "owner", now));
+        }
+
+        if (email is null)
+        {
+            throw new SsoFailure("no_account", "no_email");
+        }
+
+        if (await db.Users.AnyAsync(u => u.Email == email, ct))
+        {
+            throw new SsoFailure("email_in_use", "email_in_use");
+        }
+
+        var user = new User
+        {
+            Id = Guid.CreateVersion7(now),
+            Username = await UniqueUsernameAsync(email, ct),
+            Email = email,
+            Role = grant.Role,
+            PasswordHash = "!", // never usable: the account signs in through EasyRMM
+            CreatedAt = now,
+            PasswordChangedAt = now,
+        };
+        await ApplyEasyRmmGrantAsync(user, grant, isNew: true, ct);
+        db.Users.Add(user);
+        audit.Record("user.create", "User", user.Id.ToString(), details: new { user.Username, user.Email, role = user.Role, by = "easyrmm" });
+        return (user, Link(provider, token, user, email, "created", now));
+    }
+
+    /// <summary>
+    /// Sets the account's role and organizations from the grant, writing (and recording) only a change. A SuperAdmin reaches every
+    /// organization; any other role reaches the granted organizations that exist here, and none existing refuses the sign-in. The last
+    /// active SuperAdmin is never demoted this way.
+    /// </summary>
+    private async Task ApplyEasyRmmGrantAsync(User user, EasyRmmGrant grant, bool isNew, CancellationToken ct)
+    {
+        var all = grant.Role == UserRole.SuperAdmin;
+        var organizations = new HashSet<Guid>();
+        if (!all)
+        {
+            organizations = (await db.Organizations.Where(o => grant.Organizations.Contains(o.Id)).Select(o => o.Id).ToListAsync(ct)).ToHashSet();
+            if (organizations.Count == 0)
+            {
+                throw new SsoFailure("easyrmm_no_access", "no_known_organizations");
+            }
+        }
+
+        var current = user.OrganizationAccess.Select(a => a.OrganizationId).ToHashSet();
+        if (!isNew && user.Role == grant.Role && user.AllOrganizations == all && current.SetEquals(organizations))
+        {
+            return;
+        }
+
+        if (!isNew && user.Role == UserRole.SuperAdmin && !all && user.IsActive &&
+            !await db.Users.AnyAsync(u => u.Role == UserRole.SuperAdmin && u.IsActive && u.Id != user.Id, ct))
+        {
+            throw new SsoFailure("failed", "last_super_admin");
+        }
+
+        var before = new { role = user.Role, allOrganizations = user.AllOrganizations, organizations = current.Count };
+        user.Role = grant.Role;
+        user.AllOrganizations = all;
+        user.OrganizationAccess.RemoveAll(a => !organizations.Contains(a.OrganizationId));
+        user.OrganizationAccess.AddRange(organizations.Where(id => !current.Contains(id))
+            .Select(id => new UserOrganizationAccess { UserId = user.Id, OrganizationId = id }));
+        if (!isNew)
+        {
+            audit.Record("user.access_from_easyrmm", "User", user.Id.ToString(),
+                details: new { before, role = user.Role, allOrganizations = all, organizationIds = organizations.Order().ToList() });
+        }
     }
 
     private static void CheckCanSignIn(User user, DateTimeOffset now)

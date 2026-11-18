@@ -1,21 +1,42 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { KeyRound, LogOut, MonitorSmartphone, ShieldCheck, ShieldOff } from 'lucide-react';
+import { KeyRound, Link2, LogOut, MonitorSmartphone, ShieldCheck, ShieldOff } from 'lucide-react';
+import { useSearchParams } from 'react-router';
 import { api } from '../../api/client';
 import { useApi, useApiMutation, useOrganizations } from '../../api/hooks';
-import type { RecoveryCodesResponse, ServerSettings, SessionDto } from '../../api/types';
+import type { LinkEasyRmmResponse, RecoveryCodesResponse, ServerSettings, SessionDto, SsoProviderSummaryDto } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { Dialog } from '../../components/Dialog';
 import { useToast } from '../../components/Toast';
 import { Alert, Badge, Button, Card, ErrorState, InlineError, KeyValueList, PageHeader, Spinner, TableWrap, TextField } from '../../components/ui';
 import { describeOrganizationAccess, describeUserAgent, formatDateTime, formatRelative, humanize } from '../../lib/format';
+import { easyRmmBase } from '../../lib/easyrmm';
 import { MfaEnrollment, PasswordChangeForm, RecoveryCodesView } from '../auth/AuthPages';
 import { SecurityKeysCard } from '../auth/SecurityKeys';
+
+/** Why linking to EasyRMM failed (`?easyrmm_link_error=`, set by the sign-in callback). */
+const LINK_ERRORS: Record<string, string> = {
+  easyrmm_linked_elsewhere: 'That EasyRMM account is already linked to another EasyPatch account. Sign in at EasyRMM as yourself and try again.',
+  easyrmm_no_access:
+    'EasyRMM gives you no access to this EasyPatch server, so your account was not linked. Ask an EasyRMM administrator for a role on an organization that is linked to EasyPatch.',
+  expired: 'Linking took too long, or the link was already used. Try again.',
+  denied: 'Linking was cancelled at EasyRMM.',
+  failed: 'Linking to EasyRMM failed. Try again.',
+};
 
 export function AccountPage() {
   const { user, refresh } = useAuth();
   const toast = useToast();
   const orgs = useOrganizations();
+  const [params, setParams] = useSearchParams();
+  const linked = params.get('linked') === 'easyrmm';
+  const linkError = params.get('easyrmm_link_error');
+  useEffect(() => {
+    if (!linked) return;
+    toast.success('Your account is linked to EasyRMM. You sign in through EasyRMM from now on.');
+    setParams({}, { replace: true });
+  }, [linked, toast, setParams]);
   if (!user) return <Spinner />;
+  const easyRmm = easyRmmBase(user.easyRmmUrl);
   const orgNames = user.organizationIds.map((id) => orgs.page.items.find((o) => o.id === id)?.name ?? id);
 
   return (
@@ -32,7 +53,11 @@ export function AccountPage() {
               ['Last sign-in', user.lastLoginAt ? `${formatDateTime(user.lastLoginAt)} (${formatRelative(user.lastLoginAt)})` : '—'],
             ]}
           />
-          <p className="mt-4 text-xs text-muted">A super administrator can change your role or organization access.</p>
+          <p className="mt-4 text-xs text-muted">
+            {user.managedByEasyRmm
+              ? 'EasyRMM sets your role and organization access from your roles there, each time you sign in.'
+              : 'A super administrator can change your role or organization access.'}
+          </p>
         </Card>
         <Card title="Change email">
           <div className="max-w-md">
@@ -48,7 +73,14 @@ export function AccountPage() {
         </Card>
         <MfaCard />
         <SecurityKeysCard />
-        {user.hasPassword ? (
+        {user.managedByEasyRmm ? (
+          <Card title="Sign-in">
+            <p className="text-sm text-muted">
+              You sign in through EasyRMM{easyRmm ? ` at ${new URL(easyRmm).host}` : ''}. While EasyRMM manages your account, your EasyPatch
+              password and passkeys do not sign you in. Your sessions here last at most an hour and are renewed through EasyRMM.
+            </p>
+          </Card>
+        ) : user.hasPassword ? (
           <Card title="Change password">
             <p className="mb-3 text-sm text-muted">Changing your password signs out your other sessions.</p>
             <div className="max-w-md">
@@ -69,9 +101,91 @@ export function AccountPage() {
             </p>
           </Card>
         )}
+        {!user.managedByEasyRmm && (
+          <LinkEasyRmmCard hasPassword={user.hasPassword} error={linkError} onDismissError={() => setParams({}, { replace: true })} />
+        )}
         <SessionsCard />
       </div>
     </>
+  );
+}
+
+/** My account → Link EasyRMM, shown when this server has an EasyRMM provider (integration plan 6.4). */
+function LinkEasyRmmCard({ hasPassword, error, onDismissError }: { hasPassword: boolean; error: string | null; onDismissError: () => void }) {
+  const providers = useApi<SsoProviderSummaryDto[]>('/auth/sso/providers', undefined, { staleTime: 60_000 });
+  const [open, setOpen] = useState(false);
+  if (!error && !providers.data?.some((p) => p.isEasyRmm)) return null;
+  return (
+    <Card title="EasyRMM">
+      {error && (
+        <div className="mb-3 flex flex-col items-start gap-2">
+          <Alert tone="danger">{LINK_ERRORS[error] ?? LINK_ERRORS.failed}</Alert>
+          <Button size="sm" variant="ghost" onClick={onDismissError}>
+            Dismiss
+          </Button>
+        </div>
+      )}
+      <p className="mb-3 text-sm text-muted">
+        Sign in to EasyPatch through EasyRMM, and move between the two consoles without signing in again.
+      </p>
+      <Button icon={<Link2 className="size-4" aria-hidden />} onClick={() => setOpen(true)}>
+        Link EasyRMM
+      </Button>
+      <LinkEasyRmmDialog open={open} hasPassword={hasPassword} onClose={() => setOpen(false)} />
+    </Card>
+  );
+}
+
+function LinkEasyRmmDialog({ open, hasPassword, onClose }: { open: boolean; hasPassword: boolean; onClose: () => void }) {
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  useEffect(() => {
+    if (open) {
+      setPassword('');
+      setError(null);
+      setBusy(false);
+    }
+  }, [open]);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const start = await api.post<LinkEasyRmmResponse>('/auth/sso/link', { password: password || null });
+      // A full page navigation to EasyRMM, which sends the browser back to My account.
+      window.location.assign(start.redirect);
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onClose={onClose} title="Link your account to EasyRMM?" size="sm">
+      <form onSubmit={submit} className="flex flex-col gap-3.5">
+        <p className="text-sm">You sign in at EasyRMM to show the account there is yours. From then on:</p>
+        <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
+          <li>you sign in to EasyPatch only through EasyRMM; your password and passkeys no longer sign you in;</li>
+          <li>EasyRMM sets your role and organizations from your roles there, which may differ from what you have here now;</li>
+          <li>your other EasyPatch sessions end.</li>
+        </ul>
+        <p className="text-xs text-muted">A super administrator can undo this by unlinking EasyRMM from your account.</p>
+        {hasPassword ? (
+          <TextField label="Your password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required autoFocus />
+        ) : (
+          <p className="text-xs text-muted">Your account has no password: a sign-in within the last 10 minutes confirms this.</p>
+        )}
+        <InlineError error={error} />
+        <div className="flex justify-end gap-2">
+          <Button onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="primary" loading={busy} disabled={hasPassword && !password}>
+            Continue to EasyRMM
+          </Button>
+        </div>
+      </form>
+    </Dialog>
   );
 }
 

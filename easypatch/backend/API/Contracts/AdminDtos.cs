@@ -25,6 +25,9 @@ public sealed record MfaCodeRequest(string Code);
 /// <param name="PasskeyCount">Security keys and passkeys that can sign in without a password (discoverable credentials).</param>
 /// <param name="PasskeyPrompt">Offer to set up a passkey now: passkeys work on this server, the user has none and has not answered
 /// "Not now" in the last 30 days.</param>
+/// <param name="ManagedByEasyRmm">Linked to EasyRMM: its role and organizations come from EasyRMM, and it signs in only through EasyRMM.</param>
+/// <param name="EasyRmmUrl">For an account managed by EasyRMM, EasyRMM's address (its provider's issuer): the console's EasyRMM | EasyPatch
+/// switch links there.</param>
 public sealed record CurrentUserDto(
     Guid Id,
     string Username,
@@ -41,7 +44,9 @@ public sealed record CurrentUserDto(
     int PasskeyCount = 0,
     bool PasskeyPrompt = false,
     bool HasPassword = true,
-    bool AllOrganizations = true);
+    bool AllOrganizations = true,
+    bool ManagedByEasyRmm = false,
+    string? EasyRmmUrl = null);
 
 /// <summary>Whether passkeys and security keys can be used with this server (they need HTTPS and a DNS name).</summary>
 /// <param name="Reason"><c>ip_address</c>, <c>not_https</c> or <c>invalid_public_url</c> when unavailable.</param>
@@ -90,6 +95,7 @@ public sealed record SessionDto(Guid Id, DateTimeOffset CreatedAt, DateTimeOffse
 // ---------------------------------------------------------------------------------------------
 
 /// <param name="MfaEnabled">An authenticator app or at least one security key or passkey.</param>
+/// <param name="ManagedByEasyRmm">Linked to EasyRMM: its role and organizations come from EasyRMM, and it signs in only through EasyRMM.</param>
 public sealed record UserDto(
     Guid Id,
     string Username,
@@ -104,7 +110,8 @@ public sealed record UserDto(
     bool TotpEnabled,
     int SecurityKeyCount,
     int ExternalLoginCount,
-    bool AllOrganizations);
+    bool AllOrganizations,
+    bool ManagedByEasyRmm = false);
 
 public sealed record CreateUserRequest(string Username, string Email, UserRole Role, string? Password, IReadOnlyList<Guid>? OrganizationIds);
 
@@ -895,7 +902,11 @@ public static class ServerCapabilities
     /// </summary>
     public const string OnBehalfOf = "on-behalf-of";
 
-    public static readonly IReadOnlyList<string> All = [ScheduledInstalls, OnBehalfOf];
+    /// <summary>A single sign-on provider can be EasyRMM (<see cref="SsoProviderRequest.IsEasyRmm"/>), which then manages its accounts'
+    /// roles and organizations from the <c>easypatch</c> claim.</summary>
+    public const string EasyRmmSignIn = "easyrmm-sign-in";
+
+    public static readonly IReadOnlyList<string> All = [ScheduledInstalls, OnBehalfOf, EasyRmmSignIn];
 }
 
 /// <summary>Monthly report schedule of an organization. <c>NextReportDate</c> is a date in the organization's time zone.</summary>

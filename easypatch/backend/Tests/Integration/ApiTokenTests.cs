@@ -139,7 +139,7 @@ public sealed class ApiTokenTests(PostgresFixture postgres) : IntegrationTest(po
     public async Task An_integration_names_the_person_it_acts_for()
     {
         var info = await root.GetAsync<ServerInfoDto>("/api/v1/server-info");
-        Assert.Equal(["scheduled-installs", "on-behalf-of"], info.Capabilities);
+        Assert.Equal(["scheduled-installs", "on-behalf-of", "easyrmm-sign-in"], info.Capabilities);
 
         var (org, site) = await CreateOrgAsync(root);
         var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-1");

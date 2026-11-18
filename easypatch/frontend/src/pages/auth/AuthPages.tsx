@@ -10,6 +10,7 @@ import { Alert, Button, buttonClasses, cx, InlineError, Spinner, TextField } fro
 import { CopyButton } from '../../components/Copy';
 import { RecoveryCodesView } from '../../components/RecoveryCodes';
 import { getAssertion, type WebAuthnJson } from '../../lib/webauthn';
+import { shouldStartByItself, signedOut, startingByItself, withoutFrom } from '../../lib/easyrmm';
 import { SecurityKeyEnrollment, useWebAuthnReady } from './SecurityKeys';
 
 export { RecoveryCodesView };
@@ -21,7 +22,17 @@ const SSO_ERRORS: Record<string, string> = {
   denied: 'The sign-in was cancelled at the identity provider.',
   unavailable: 'This identity provider is not available right now. Sign in with your email address and password, or try again later.',
   failed: 'Single sign-on failed. Try again, or sign in with your email address and password.',
+  easyrmm_no_access:
+    'EasyRMM gives you no access to this EasyPatch server. Ask an EasyRMM administrator for a role on an organization that is linked to EasyPatch.',
+  email_in_use:
+    'An EasyPatch account already uses your email address. Sign in to it here, then link it to EasyRMM under My account.',
+  easyrmm_only: 'Your account signs in through EasyRMM. Choose "Sign in with EasyRMM".',
 };
+
+/** The start of single sign-on with a provider: a full page navigation, as the server sends the browser on to the provider. */
+function ssoStartUrl(providerId: string, returnTo: string): string {
+  return `${API_BASE}/auth/sso/${providerId}/start${returnTo !== '/' ? `?returnTo=${encodeURIComponent(returnTo)}` : ''}`;
+}
 
 export const PASSWORD_HINT = 'At least 12 characters. Must not contain your username. Passphrases are encouraged.';
 
@@ -45,6 +56,15 @@ export function LoginPage() {
   const sso = useApi<SsoProviderSummaryDto[]>('/auth/sso/providers', undefined, { staleTime: 60_000 });
   const providers = sso.data ?? [];
   const ssoError = params.get('sso_error');
+  // Arriving from EasyRMM, or the session of an account EasyRMM manages ended: start EasyRMM's sign-in instead of asking.
+  const [byItself] = useState(() => shouldStartByItself(returnTo, ssoError));
+  const easyRmm = providers.find((p) => p.isEasyRmm);
+  const target = withoutFrom(returnTo);
+  useEffect(() => {
+    if (!byItself || !easyRmm) return;
+    startingByItself();
+    window.location.replace(ssoStartUrl(easyRmm.id, target));
+  }, [byItself, easyRmm, target]);
 
   async function finish(result: LoginResponse) {
     setUser(result.user);
@@ -84,6 +104,14 @@ export function LoginPage() {
     } finally {
       setPasskeyBusy(false);
     }
+  }
+
+  if (byItself && (sso.isPending || easyRmm)) {
+    return (
+      <AuthShell title="Signing in through EasyRMM">
+        <Spinner label="Opening EasyRMM…" />
+      </AuthShell>
+    );
   }
 
   return (
@@ -127,9 +155,7 @@ export function LoginPage() {
           </Button>
         )}
         {providers.map((p) => (
-          // A full page navigation: the server sends the browser on to the provider.
-          <a key={p.id} className={cx(buttonClasses('secondary'), 'w-full')}
-            href={`${API_BASE}/auth/sso/${p.id}/start${returnTo !== '/' ? `?returnTo=${encodeURIComponent(returnTo)}` : ''}`}>
+          <a key={p.id} className={cx(buttonClasses('secondary'), 'w-full')} href={ssoStartUrl(p.id, target)}>
             <LogIn className="size-4" aria-hidden />
             Sign in with {p.displayName}
           </a>
@@ -199,6 +225,7 @@ export function MfaVerifyPage() {
     } catch {
       /* ignore */
     }
+    signedOut();
     setUser(null);
     navigate('/login', { replace: true });
   }

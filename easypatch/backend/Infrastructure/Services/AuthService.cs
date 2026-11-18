@@ -85,6 +85,13 @@ public sealed class AuthService(
         }
 
         user.FailedLoginCount = 0;
+        if (await IsManagedByEasyRmmAsync(user.Id, ct))
+        {
+            audit.Record("auth.login_failed", "User", user.Id.ToString(), details: new { reason = "easyrmm_only" });
+            await db.SaveChangesAsync(ct);
+            throw EasyRmmOnly();
+        }
+
         var settings = await settingsService.GetAsync(ct);
         var hasMfa = await HasSecondFactorAsync(user, ct);
         var (session, token) = NewSession(user, mfaCompleted: !hasMfa, ip, userAgent, settings, now);
@@ -101,6 +108,14 @@ public sealed class AuthService(
     /// <summary>An authenticator app or at least one security key or passkey.</summary>
     public async Task<bool> HasSecondFactorAsync(User user, CancellationToken ct = default) =>
         user.MfaEnabled || await db.WebAuthnCredentials.AnyAsync(c => c.UserId == user.Id, ct);
+
+    /// <summary>Linked to an EasyRMM provider: the account's role and organizations come from EasyRMM, and it signs in only through EasyRMM
+    /// (<see cref="OidcProvider.IsEasyRmm"/>). Removing the link (Users → the user → linked sign-ins) makes it an ordinary account again.</summary>
+    public Task<bool> IsManagedByEasyRmmAsync(Guid userId, CancellationToken ct = default) =>
+        db.ExternalLogins.AnyAsync(l => l.UserId == userId && l.Provider!.IsEasyRmm, ct);
+
+    internal static AppException EasyRmmOnly() =>
+        AppException.Unauthorized("easyrmm_only", "This account signs in through EasyRMM. Choose \"Sign in with EasyRMM\".");
 
     public async Task<SessionValidation?> ValidateSessionAsync(string? token, CancellationToken ct = default)
     {
@@ -437,6 +452,11 @@ public sealed class AuthService(
     public async Task<User> UpdateUserAsync(Guid userId, string? email, UserRole? role, bool? isActive, CancellationToken ct = default)
     {
         var user = await db.Users.FirstOrDefaultAsync(u => u.Id == userId, ct) ?? throw AppException.NotFound("User");
+        if (role is { } changed && changed != user.Role && await IsManagedByEasyRmmAsync(userId, ct))
+        {
+            throw ManagedByEasyRmm("role");
+        }
+
         var demoting = (role is { } r && r != UserRole.SuperAdmin) || isActive == false;
         if (user.Role == UserRole.SuperAdmin && demoting &&
             await db.Users.CountAsync(u => u.Role == UserRole.SuperAdmin && u.IsActive && u.Id != userId, ct) == 0)
@@ -493,6 +513,11 @@ public sealed class AuthService(
     public async Task SetOrganizationAccessAsync(Guid userId, IReadOnlyCollection<Guid> organizationIds, CancellationToken ct = default)
     {
         var user = await db.Users.Include(u => u.OrganizationAccess).FirstOrDefaultAsync(u => u.Id == userId, ct) ?? throw AppException.NotFound("User");
+        if (await IsManagedByEasyRmmAsync(userId, ct))
+        {
+            throw ManagedByEasyRmm("organizations");
+        }
+
         var valid = await db.Organizations.Where(o => organizationIds.Contains(o.Id)).Select(o => o.Id).ToListAsync(ct);
         if (valid.Count != organizationIds.Distinct().Count())
         {
@@ -653,6 +678,10 @@ public sealed class AuthService(
         user.MfaPendingSecretProtected = null;
         user.MfaLastUsedStep = null;
     }
+
+    private static AppException ManagedByEasyRmm(string what) =>
+        AppException.Conflict($"This account's {what} come{(what == "role" ? "s" : "")} from EasyRMM, which manages it. Change the person's roles in " +
+                              "EasyRMM; they apply at the next sign-in.", "managed_by_easyrmm");
 
     private static AppException InvalidCredentials() =>
         AppException.Unauthorized("invalid_credentials", "Email or password is incorrect, or the account is temporarily locked.");

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { NavLink, Outlet, useLocation, useNavigate } from 'react-router';
+import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
 import {
   Bell,
   Building2,
@@ -25,6 +25,7 @@ import { useApi } from '../api/hooks';
 import type { AlertSummaryDto, DashboardSummaryDto } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { applyTheme, getStoredTheme, storeTheme, type Theme } from '../lib/theme';
+import { easyRmmBase, easyRmmTarget, signedOut } from '../lib/easyrmm';
 import { humanize } from '../lib/format';
 import { PasskeyPrompt } from '../pages/auth/SecurityKeys';
 import { cx } from './ui';
@@ -133,6 +134,7 @@ export function AppLayout() {
     } catch {
       // The session is discarded locally either way.
     }
+    signedOut();
     setUser(null);
     client.clear();
     navigate('/login', { replace: true });
@@ -146,6 +148,7 @@ export function AppLayout() {
           <X className="size-5" aria-hidden />
         </button>
       </div>
+      <ProductSwitch easyRmmUrl={user?.easyRmmUrl ?? null} pathname={location.pathname} />
       <ul className="flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
         {nav.map((item) => (
           <li key={item.to}>
@@ -233,6 +236,31 @@ export function AppLayout() {
         <PasskeyPrompt />
       </div>
     </div>
+  );
+}
+
+const segment = 'flex-1 rounded px-2 py-1 text-center text-sm transition-colors';
+
+/**
+ * EasyRMM | EasyPatch, under the logo, for accounts EasyRMM manages (EasyRMM's integration plan, 6.1). EasyRMM opens on its
+ * page for what this page shows, in the same tab; Back returns. The same control, in the same order, sits under EasyRMM's logo.
+ */
+function ProductSwitch({ easyRmmUrl, pathname }: { easyRmmUrl: string | null; pathname: string }) {
+  const base = easyRmmBase(easyRmmUrl);
+  if (!base) return null;
+  const target = easyRmmTarget(base, pathname);
+  return (
+    <nav aria-label="Products" className="px-3 pb-3">
+      <div className="flex gap-0.5 rounded-md bg-white/5 p-0.5 ring-1 ring-white/10">
+        <a href={target.href} aria-label={target.label} title={target.label}
+          className={cx(segment, 'text-sidebar-fg/75 hover:bg-sidebar-active/60 hover:text-white')}>
+          EasyRMM
+        </a>
+        <Link to="/" aria-current="true" className={cx(segment, 'bg-sidebar-active font-medium text-white')}>
+          EasyPatch
+        </Link>
+      </div>
+    </nav>
   );
 }
 

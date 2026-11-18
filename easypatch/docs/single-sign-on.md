@@ -7,6 +7,9 @@ available. Single sign-on is for the console only; agents never use it.
 
 Super administrators configure providers under **Settings → Single sign-on**.
 
+One provider can be [EasyRMM](#easyrmm), which owns EasyPatch: it signs people in and decides their
+role and organizations.
+
 ## How it works
 
 * **Flow.** The authorization code flow with PKCE (`S256`), a `state` and a `nonce`. When the user
@@ -76,7 +79,9 @@ in with a password.
 A refused sign-in returns to the sign-in page with a general message. The audit log (`auth.sso_failed`)
 records the provider and the reason, for example `email_not_verified`, `no_matching_user`,
 `domain_not_allowed`, `linked_to_other_account`, `inactive`, `state_expired`,
-`other_browser`, `nonce_mismatch`, `issuer_mismatch` or `invalid_token:<check>`. Tokens,
+`other_browser`, `nonce_mismatch`, `issuer_mismatch`, `invalid_token:<check>`,
+`managed_by_easyrmm`, or for EasyRMM `email_in_use`, `no_known_organizations`,
+`last_super_admin` and `easypatch_claim_<part>`. Tokens,
 authorization codes, client secrets and claims are never logged or audited.
 
 ## Settings
@@ -92,6 +97,7 @@ authorization codes, client secrets and claims are never logged or audited.
 | The provider enforces MFA | See [MFA](#mfa) |
 | Trust the provider's email claim | Link by email address without `email_verified: true`. See the provider notes below |
 | Create accounts on first sign-in | With **Role of new accounts** and **Allowed email domains** |
+| This provider is EasyRMM | See [EasyRMM](#easyrmm). The three options above do not apply to it |
 
 **Redirect URI.** Register `https://<EASYPATCH_DOMAIN>/api/v1/auth/sso/callback` at every
 provider (the settings page shows the exact value, which comes from `EASYPATCH_PUBLIC_URL` or
@@ -102,6 +108,66 @@ address, so use a DNS name.
 email address at linking, issuer and subject, last use). **Unlink** removes a link: that
 provider account can no longer sign in as the user (it may link again on its next sign-in if
 the email rules allow it). Removing a provider removes all its links; the users stay.
+
+## EasyRMM
+
+EasyRMM can be EasyPatch's sign-in provider (EasyRMM's
+[ADR-0036](../../docs/architecture/adr/0036-easyrmm-signs-in-to-easypatch.md)). People then
+sign in to EasyPatch through EasyRMM, and move between the two consoles with the
+**EasyRMM | EasyPatch** switch under each logo without signing in again.
+
+**Setting it up.**
+
+1. In EasyRMM, open **Settings → EasyPatch → Sign-in** and set it up. EasyRMM offers this once it
+   is connected to an EasyPatch server that lists the `easyrmm-sign-in` capability in
+   `/api/v1/server-info`. It shows the issuer, a client ID and a client secret (once).
+2. In EasyPatch, open **Settings → Single sign-on**, add a provider, tick **This provider is
+   EasyRMM**, and enter the issuer, client ID and secret.
+3. EasyPatch's `api` container must reach EasyRMM's public address over HTTPS and trust its
+   certificate. On a server that runs both, see EasyRMM's
+   [co-hosting guide](../../docs/deployment/easypatch-cohost.md).
+
+Only one provider can be EasyRMM. Whether a provider is EasyRMM cannot change while people are
+linked to it.
+
+**Accounts managed by EasyRMM.**
+
+* **Matched by issuer and subject only, never by email address.** A person signing in for the
+  first time gets a new account. If an EasyPatch account already has their address, the sign-in
+  is refused (`email_in_use`): the owner of that account links it instead (below).
+* **Role and organizations come from EasyRMM** at every sign-in, from the ID token's
+  `easypatch` claim, which EasyRMM builds from the person's EasyRMM roles: EasyRMM super
+  administrators are SuperAdmins; organization administrators are Admins of their organizations
+  linked to EasyPatch; technicians and viewers are Read only there; people without a role on a
+  whole linked organization cannot sign in. Organizations EasyPatch does not have are
+  ignored; with none left, the sign-in is refused. A change is written, and audited as
+  `user.access_from_easyrmm`, only when something changed. A sign-in that would demote the last
+  active SuperAdmin is refused.
+* **They sign in only through EasyRMM.** Their password, passkeys and other providers are
+  refused (`easyrmm_only`). A super administrator cannot change their role or organizations in
+  EasyPatch (`managed_by_easyrmm`), but can still disable them.
+* **The second factor** counts when the ID token's `amr` contains `mfa`. EasyRMM signs in only
+  people who used one, and always says so; otherwise EasyPatch would ask for its own.
+* **Sessions last at most one hour**, so access taken away in EasyRMM ends in EasyPatch within the
+  hour. The console renews them by itself: when a session of a managed account ends, the sign-in
+  page sends the browser through EasyRMM again instead of asking. Signing out of EasyPatch stops
+  this until the next sign-in.
+* **Arriving from EasyRMM.** EasyRMM's links into EasyPatch carry `from=easyrmm`. Someone who is
+  not signed in goes straight on to EasyRMM's sign-in. Both happen at most once per browser tab
+  until a sign-in succeeds, so a refusal shows the sign-in page instead of looping.
+
+**Linking an existing account.** Its owner, signed in to EasyPatch, chooses **My account → Link
+EasyRMM**, confirms with their password (or a sign-in within the last 10 minutes) and signs in
+at EasyRMM. The account keeps its username and email address and becomes managed by EasyRMM:
+its role and organizations follow EasyRMM, and its other sessions end. An EasyRMM account linked
+to one EasyPatch account cannot be linked to another.
+
+**Undoing it.** **Settings → Users → Edit → Unlink** on the EasyRMM link makes the account an
+ordinary EasyPatch account again. Removing the provider unlinks everyone. Accounts EasyRMM
+created have no password; send them a reset link if they should keep signing in.
+
+**When EasyRMM is down,** accounts it manages cannot sign in until it is back; other accounts
+are not affected.
 
 ## Provider notes
 
@@ -143,9 +209,10 @@ the email rules allow it). Removing a provider removes all its links; the users 
 ## Not supported
 
 * Requiring single sign-on (turning password sign-in off). Password sign-in always stays
-  available.
+  available, except for accounts managed by EasyRMM.
 * Signing out at the provider (RP-initiated, front- or back-channel logout): signing out of
   EasyPatch ends only the EasyPatch session.
-* Roles or organization access from provider groups or claims.
+* Roles or organization access from provider groups or claims, except EasyRMM's `easypatch`
+  claim.
 * Client authentication with `private_key_jwt`, encrypted ID tokens, and multi-tenant Entra ID
   issuers.

@@ -166,6 +166,7 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
             e.Property(x => x.Issuer).HasMaxLength(512);
             e.Property(x => x.ClientId).HasMaxLength(256);
             e.Property(x => x.Scopes).HasMaxLength(512);
+            e.HasIndex(x => x.IsEasyRmm).IsUnique().HasFilter("is_easy_rmm"); // at most one provider is EasyRMM
         });
         b.Entity<ExternalLogin>(e =>
         {
@@ -190,6 +191,7 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
             e.HasIndex(x => x.StateHash).IsUnique();
             e.HasIndex(x => x.ExpiresAt);
             e.HasOne<OidcProvider>().WithMany().HasForeignKey(x => x.ProviderId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany().HasForeignKey(x => x.LinkUserId).OnDelete(DeleteBehavior.Cascade);
         });
         b.Entity<PasswordResetToken>(e =>
         {

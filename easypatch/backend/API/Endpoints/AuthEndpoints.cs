@@ -123,12 +123,17 @@ public static class AuthEndpoints
     {
         var kinds = await db.WebAuthnCredentials.AsNoTracking().Where(c => c.UserId == user.Id).Select(c => c.IsPasskey).ToListAsync(ct);
         var passkeys = kinds.Count(k => k);
-        // Offer a passkey only once the user is fully signed in, not while they still have to finish MFA or change their password.
-        var prompt = mfaCompleted && !mfaSetupRequired && !user.MustChangePassword && webauthn.ShouldPromptForPasskey(user, passkeys);
+        var easyRmm = await db.ExternalLogins.AsNoTracking().Where(l => l.UserId == user.Id && l.Provider!.IsEasyRmm)
+            .Select(l => l.Provider!.Issuer).FirstOrDefaultAsync(ct);
+        // Offer a passkey only once the user is fully signed in, not while they still have to finish MFA or change their password, and
+        // never to an account managed by EasyRMM: a passkey does not sign it in.
+        var prompt = mfaCompleted && !mfaSetupRequired && !user.MustChangePassword && easyRmm is null &&
+                     webauthn.ShouldPromptForPasskey(user, passkeys);
         return new CurrentUserDto(user.Id, user.Username, user.Email, user.Role, user.MfaEnabled || kinds.Count > 0, mfaCompleted, mfaSetupRequired,
             user.MustChangePassword, user.OrganizationAccess.Select(a => a.OrganizationId).ToList(), user.LastLoginAt,
             TotpEnabled: user.MfaEnabled, SecurityKeyCount: kinds.Count, PasskeyCount: passkeys, PasskeyPrompt: prompt,
-            HasPassword: AuthService.HasUsablePassword(user), AllOrganizations: user.AllOrganizations);
+            HasPassword: AuthService.HasUsablePassword(user), AllOrganizations: user.AllOrganizations,
+            ManagedByEasyRmm: easyRmm is not null, EasyRmmUrl: easyRmm);
     }
 }
 
@@ -221,5 +226,5 @@ public static class UserEndpoints
     private static readonly System.Linq.Expressions.Expression<Func<User, UserDto>> ToDto = u => new UserDto(
         u.Id, u.Username, u.Email, u.Role, u.IsActive, u.MfaEnabled || u.WebAuthnCredentials.Any(), u.CreatedAt, u.LastLoginAt, u.LockoutUntil,
         u.OrganizationAccess.Select(a => a.OrganizationId).ToList(), u.MfaEnabled, u.WebAuthnCredentials.Count(), u.ExternalLogins.Count(),
-        u.AllOrganizations);
+        u.AllOrganizations, u.ExternalLogins.Any(l => l.Provider!.IsEasyRmm));
 }

@@ -13,6 +13,14 @@ the web console and the agents share one version number.
   ahead (`scheduled-installs`); the jobs wait until then.
 - API token requests may name the person they act for in `X-EasyPatch-On-Behalf-Of`
   (`on-behalf-of`); EasyPatch records it in the audit log and in the job's `requestedBy`.
+- **Sign in through EasyRMM** ([single sign-on](docs/single-sign-on.md#easyrmm)): a provider can
+  be marked **This provider is EasyRMM** (`easyrmm-sign-in`). Its accounts are matched by issuer
+  and subject only, never by email; take their role and organizations from EasyRMM at every
+  sign-in; sign in only through EasyRMM; and have sessions of at most an hour, which the
+  console renews through EasyRMM. Owners link existing accounts under **My account → Link
+  EasyRMM**. These accounts see an **EasyRMM | EasyPatch** switch under the logo, which opens
+  EasyRMM's page for the endpoint, organization or job on screen. EasyRMM's links carry
+  `from=easyrmm`, which starts EasyRMM's sign-in for someone not signed in.
 - `create-api-token`, an administration command that creates an API token on the server
   itself, for setting up an integration without the console:
   `docker compose run --rm api create-api-token --name EasyRMM --role operator --expires-days 365`.

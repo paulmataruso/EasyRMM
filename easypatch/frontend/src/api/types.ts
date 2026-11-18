@@ -319,6 +319,10 @@ export interface CurrentUserDto {
   passkeyPrompt: boolean;
   /** False for an account created by single sign-on that has no password. */
   hasPassword: boolean;
+  /** Linked to EasyRMM: its role and organizations come from EasyRMM, and it signs in only through EasyRMM. */
+  managedByEasyRmm: boolean;
+  /** EasyRMM's address, for an account it manages: the EasyRMM | EasyPatch switch links there. */
+  easyRmmUrl: string | null;
 }
 
 /** Whether passkeys and security keys work with this server (HTTPS and a DNS name are required). */
@@ -409,6 +413,8 @@ export interface UserDto {
   securityKeyCount: number;
   /** Accounts at single sign-on providers linked to this user. */
   externalLoginCount: number;
+  /** Linked to EasyRMM: its role and organizations come from EasyRMM, and it signs in only through EasyRMM. */
+  managedByEasyRmm: boolean;
 }
 
 export interface CreateUserRequest {
@@ -1875,6 +1881,13 @@ export interface SendReportRequest {
 export interface SsoProviderSummaryDto {
   id: Guid;
   displayName: string;
+  /** The provider is EasyRMM (listed first). */
+  isEasyRmm: boolean;
+}
+
+/** My account → Link EasyRMM: the console goes to `redirect` with a full page load. */
+export interface LinkEasyRmmResponse {
+  redirect: string;
 }
 
 export interface SsoProviderDto {
@@ -1894,6 +1907,8 @@ export interface SsoProviderDto {
   linkedUsers: number;
   createdAt: Instant;
   updatedAt: Instant;
+  /** This provider is EasyRMM: it manages its accounts' role and organizations. */
+  isEasyRmm: boolean;
 }
 
 export interface SsoSettingsDto {
@@ -1915,6 +1930,7 @@ export interface SsoProviderRequest {
   autoProvision: boolean;
   defaultRole: UserRole;
   allowedDomains: string[];
+  isEasyRmm: boolean;
 }
 
 export interface SsoProbeDto {

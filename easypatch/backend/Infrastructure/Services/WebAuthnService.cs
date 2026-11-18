@@ -323,6 +323,13 @@ public sealed class WebAuthnService(
 
         credential.IsPasskey = true; // it answered a request without an allow list, so it is discoverable
         user.FailedLoginCount = 0;
+        if (await auth.IsManagedByEasyRmmAsync(user.Id, ct))
+        {
+            audit.Record("auth.login_failed", "User", user.Id.ToString(), details: new { method = "passkey", reason = "easyrmm_only" });
+            await db.SaveChangesAsync(ct);
+            throw AuthService.EasyRmmOnly();
+        }
+
         user.LastLoginAt = now;
         var (session, token) = await auth.NewSessionAsync(user, mfaCompleted: true, ip, userAgent, ct);
         audit.Record("auth.login", "User", user.Id.ToString(), details: new { method = "passkey", credential = credential.Id });

@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text.RegularExpressions;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Api.Security;
@@ -24,9 +25,10 @@ public static partial class SsoEndpoints
     {
         var auth = app.MapGroup("/api/v1/auth/sso").WithTags("Authentication");
 
+        // EasyRMM first: the console finds it there, and people coming from EasyRMM sign in with it.
         auth.MapGet("/providers", async (EasyPatchDbContext db, CancellationToken ct) =>
-            TypedResults.Ok(await db.OidcProviders.AsNoTracking().Where(p => p.Enabled).OrderBy(p => p.DisplayName)
-                .Select(p => new SsoProviderSummaryDto(p.Id, p.DisplayName)).ToListAsync(ct)))
+            TypedResults.Ok(await db.OidcProviders.AsNoTracking().Where(p => p.Enabled).OrderByDescending(p => p.IsEasyRmm).ThenBy(p => p.DisplayName)
+                .Select(p => new SsoProviderSummaryDto(p.Id, p.DisplayName, p.IsEasyRmm)).ToListAsync(ct)))
             .AllowAnonymous();
 
         auth.MapGet("/{id:guid}/start", async (Guid id, string? returnTo, OidcService sso, HttpContext http, TimeProvider clock, CancellationToken ct) =>
@@ -59,6 +61,17 @@ public static partial class SsoEndpoints
             return Results.Redirect(result.Redirect);
         }).AllowAnonymous().RequireRateLimiting(RateLimits.Login);
 
+        // My account → Link EasyRMM: the owner of an account links it to EasyRMM, which manages it from then on. The console goes to
+        // the returned address with a full page load; the callback signs the account in through EasyRMM and returns to My account.
+        auth.MapPost("/link", async (LinkEasyRmmRequest request, ClaimsPrincipal user, OidcService sso, HttpContext http, TimeProvider clock,
+            CancellationToken ct) =>
+        {
+            var start = await sso.StartLinkAsync(user.GetUserId(), user.GetSessionId(), request.Password, ct);
+            http.Response.Cookies.Append(BindingCookie, start.Binding!, Cookie(clock.GetUtcNow() + OidcService.StateLifetime));
+            NoStore(http);
+            return TypedResults.Ok(new LinkEasyRmmResponse(start.Redirect));
+        }).RequireAuthorization(Policies.SessionMfaPassed).RequireRateLimiting(RateLimits.Login);
+
         // ---- Administration (super administrators) ----
 
         var admin = app.MapGroup("/api/v1/sso/providers").WithTags("Single sign-on").RequireAuthorization(Policies.SuperAdmin);
@@ -72,6 +85,7 @@ public static partial class SsoEndpoints
             var now = clock.GetUtcNow();
             var provider = new OidcProvider { Id = Guid.CreateVersion7(now), DisplayName = "", Issuer = "", ClientId = "", CreatedAt = now };
             Apply(provider, request, secrets, now);
+            await CheckEasyRmmAsync(db, provider, wasEasyRmm: false, ct);
             db.OidcProviders.Add(provider);
             audit.Record("sso.provider_create", "OidcProvider", provider.Id.ToString(), details: AuditDetails(provider, request));
             await db.SaveChangesAsync(ct);
@@ -83,7 +97,9 @@ public static partial class SsoEndpoints
         {
             var provider = await db.OidcProviders.FirstOrDefaultAsync(p => p.Id == id, ct) ?? throw AppException.NotFound("Provider");
             var issuer = provider.Issuer;
+            var wasEasyRmm = provider.IsEasyRmm;
             Apply(provider, request, secrets, clock.GetUtcNow());
+            await CheckEasyRmmAsync(db, provider, wasEasyRmm, ct);
             sso.Forget(issuer);
             audit.Record("sso.provider_update", "OidcProvider", provider.Id.ToString(), details: AuditDetails(provider, request));
             await db.SaveChangesAsync(ct);
@@ -113,8 +129,24 @@ public static partial class SsoEndpoints
         await db.OidcProviders.AsNoTracking().Where(p => id == null || p.Id == id).OrderBy(p => p.DisplayName)
             .Select(p => new SsoProviderDto(p.Id, p.DisplayName, p.Issuer, p.ClientId, p.ClientSecretProtected != null, p.Scopes, p.Enabled,
                 p.TrustEmailClaim, p.ProviderEnforcesMfa, p.AutoProvision, p.DefaultRole, p.AllowedDomains,
-                db.ExternalLogins.Count(l => l.ProviderId == p.Id), p.CreatedAt, p.UpdatedAt))
+                db.ExternalLogins.Count(l => l.ProviderId == p.Id), p.CreatedAt, p.UpdatedAt, p.IsEasyRmm))
             .ToListAsync(ct);
+
+    /// <summary>At most one provider is EasyRMM, and a provider with linked users stays what it is: turning EasyRMM on would hand their
+    /// roles to EasyRMM, and turning it off would leave accounts EasyRMM created without a way to sign in.</summary>
+    private static async Task CheckEasyRmmAsync(EasyPatchDbContext db, OidcProvider provider, bool wasEasyRmm, CancellationToken ct)
+    {
+        if (provider.IsEasyRmm && await db.OidcProviders.AnyAsync(p => p.IsEasyRmm && p.Id != provider.Id, ct))
+        {
+            throw AppException.Conflict("Another provider is already EasyRMM. Only one can be.", "easyrmm_provider_exists");
+        }
+
+        if (provider.IsEasyRmm != wasEasyRmm && await db.ExternalLogins.AnyAsync(l => l.ProviderId == provider.Id, ct))
+        {
+            throw AppException.Conflict("People are linked to this provider, so whether it is EasyRMM cannot change. Remove the provider and " +
+                                        "add it again.", "provider_in_use");
+        }
+    }
 
     private static void Apply(OidcProvider provider, SsoProviderRequest request, NotificationSecrets secrets, DateTimeOffset now)
     {
@@ -135,7 +167,13 @@ public static partial class SsoEndpoints
         v.Check(domains.Count <= 50, "allowedDomains", "At most 50 domains.");
         v.Check(domains.All(d => d.Length <= 253 && d.Contains('.', StringComparison.Ordinal) && Uri.CheckHostName(d) == UriHostNameType.Dns),
             "allowedDomains", "Enter domain names such as example.com.");
-        v.Check(!request.AutoProvision || domains.Count > 0, "allowedDomains", "List the email domains for which accounts may be created.");
+        v.Check(!request.AutoProvision || domains.Count > 0 || request.IsEasyRmm, "allowedDomains",
+            "List the email domains for which accounts may be created.");
+        // EasyRMM decides who signs in and with which role, and says in amr whether a second factor was used.
+        v.Check(!request.IsEasyRmm || !request.AutoProvision, "autoProvision", "EasyRMM creates the accounts of the people it signs in. Turn this off.");
+        v.Check(!request.IsEasyRmm || !request.TrustEmailClaim, "trustEmailClaim", "Accounts are never linked to EasyRMM by email address. Turn this off.");
+        v.Check(!request.IsEasyRmm || !request.ProviderEnforcesMfa, "providerEnforcesMfa",
+            "EasyRMM says in each sign-in whether a second factor was used. Turn this off.");
         v.ThrowIfInvalid();
 
         provider.DisplayName = request.DisplayName.Trim();
@@ -152,7 +190,8 @@ public static partial class SsoEndpoints
         provider.ProviderEnforcesMfa = request.ProviderEnforcesMfa;
         provider.AutoProvision = request.AutoProvision;
         provider.DefaultRole = request.DefaultRole;
-        provider.AllowedDomains = domains;
+        provider.AllowedDomains = request.IsEasyRmm ? [] : domains;
+        provider.IsEasyRmm = request.IsEasyRmm;
         provider.UpdatedAt = now;
     }
 
@@ -179,6 +218,7 @@ public static partial class SsoEndpoints
         p.AutoProvision,
         p.DefaultRole,
         p.AllowedDomains,
+        p.IsEasyRmm,
     };
 
     private static CookieOptions Cookie(DateTimeOffset? expires) => new()

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, request, setAuthErrorListener } from '../api/client';
 import { ME_KEY } from '../api/hooks';
 import type { CurrentUserDto, UserRole } from '../api/types';
+import { signedIn } from '../lib/easyrmm';
 
 /** Where the signed-in user is in the login pipeline. */
 export type AuthStage = 'loading' | 'anonymous' | 'mfa' | 'mfa-setup' | 'password-change' | 'ready' | 'error';
@@ -80,6 +81,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await client.invalidateQueries({ queryKey: ME_KEY });
     await client.refetchQueries({ queryKey: ME_KEY });
   }, [client]);
+
+  // Remembers whether this account signs in through EasyRMM, so the sign-in page can renew its session by itself.
+  const current = me.data?.user;
+  useEffect(() => {
+    if (current) signedIn(current.managedByEasyRmm);
+  }, [current]);
 
   const setUser = useCallback(
     (user: CurrentUserDto | null) => {

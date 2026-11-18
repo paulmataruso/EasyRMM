@@ -21,6 +21,7 @@ const EMPTY: SsoProviderRequest = {
   autoProvision: false,
   defaultRole: 'ReadOnly',
   allowedDomains: [],
+  isEasyRmm: false,
 };
 
 /** Single sign-on providers (OpenID Connect). Super administrators only. */
@@ -76,7 +77,10 @@ export function SsoTab() {
               {providers.map((p) => (
                 <tr key={p.id}>
                   <td>
-                    <div className="font-medium">{p.displayName}</div>
+                    <div className="flex items-center gap-1.5 font-medium">
+                      {p.displayName}
+                      {p.isEasyRmm && <Badge tone="accent" title="Manages its accounts' role and organizations">EasyRMM</Badge>}
+                    </div>
                     <div className="max-w-96 truncate text-xs text-muted" title={p.issuer}>
                       {p.issuer}
                     </div>
@@ -110,7 +114,8 @@ export function SsoTab() {
           </table>
         </TableWrap>
       )}
-      <ProviderDialog provider={editing} onClose={() => setEditing(null)} />
+      <ProviderDialog provider={editing} otherIsEasyRmm={providers.some((p) => p.isEasyRmm && (editing === 'new' || p.id !== editing?.id))}
+        onClose={() => setEditing(null)} />
       <ConfirmDialog
         open={deleting !== null}
         onClose={() => setDeleting(null)}
@@ -122,12 +127,18 @@ export function SsoTab() {
         confirmLabel="Remove"
       >
         Its sign-in button disappears and the links of {deleting?.linkedUsers ?? 0} user(s) to it are removed. Their EasyPatch accounts stay.
+        {deleting?.isEasyRmm &&
+          ' They are no longer managed by EasyRMM. Accounts EasyRMM created have no password: send each a reset link to let them sign in.'}
       </ConfirmDialog>
     </div>
   );
 }
 
-function ProviderDialog({ provider, onClose }: { provider: SsoProviderDto | 'new' | null; onClose: () => void }) {
+function ProviderDialog({ provider, otherIsEasyRmm, onClose }: {
+  provider: SsoProviderDto | 'new' | null;
+  otherIsEasyRmm: boolean;
+  onClose: () => void;
+}) {
   const toast = useToast();
   const existing = provider !== 'new' ? provider : null;
   const [form, setForm] = useState<SsoProviderRequest>(EMPTY);
@@ -152,6 +163,7 @@ function ProviderDialog({ provider, onClose }: { provider: SsoProviderDto | 'new
             autoProvision: p.autoProvision,
             defaultRole: p.defaultRole,
             allowedDomains: p.allowedDomains,
+            isEasyRmm: p.isEasyRmm,
           }
         : EMPTY,
     );
@@ -174,13 +186,19 @@ function ProviderDialog({ provider, onClose }: { provider: SsoProviderDto | 'new
 
   function submit(e: FormEvent) {
     e.preventDefault();
+    const rmm = form.isEasyRmm;
     save.mutate({
       ...form,
       // null keeps the stored secret; only send one when the administrator chose to change it.
       clientSecret: changeSecret ? (form.clientSecret ?? '') : null,
-      allowedDomains: domains.split(/[\s,;]+/).filter(Boolean),
+      // EasyRMM decides who signs in, with which role, and says in each sign-in whether a second factor was used.
+      providerEnforcesMfa: rmm ? false : form.providerEnforcesMfa,
+      trustEmailClaim: rmm ? false : form.trustEmailClaim,
+      autoProvision: rmm ? false : form.autoProvision,
+      allowedDomains: rmm ? [] : domains.split(/[\s,;]+/).filter(Boolean),
     });
   }
+  const kindLocked = (existing?.linkedUsers ?? 0) > 0;
 
   return (
     <Dialog open={provider !== null} onClose={onClose} title={existing ? `Edit ${existing.displayName}` : 'Add a single sign-on provider'} size="lg">
@@ -223,24 +241,41 @@ function ProviderDialog({ provider, onClose }: { provider: SsoProviderDto | 'new
           hint="Separated by spaces; must include openid. EasyPatch reads the email address from the ID token." />
         <Checkbox label="Enabled" hint="Shows the sign-in button." checked={form.enabled} onChange={(e) => setForm({ ...form, enabled: e.target.checked })} />
         <Checkbox
-          label="The provider enforces MFA"
-          hint="Users who sign in through it skip EasyPatch's second factor. Tick this only if the provider requires MFA for every user of this application."
-          checked={form.providerEnforcesMfa}
-          onChange={(e) => setForm({ ...form, providerEnforcesMfa: e.target.checked })}
+          label="This provider is EasyRMM"
+          hint={
+            kindLocked
+              ? 'People are linked to this provider, so this cannot change. Remove the provider and add it again to change it.'
+              : otherIsEasyRmm && !form.isEasyRmm
+                ? 'Another provider is EasyRMM. Only one can be.'
+                : "EasyRMM decides who signs in, and their role and organizations, at every sign-in; their accounts sign in only through EasyRMM. EasyRMM's Settings → EasyPatch → Sign-in gives the issuer, client ID and secret."
+          }
+          checked={form.isEasyRmm}
+          disabled={kindLocked || (otherIsEasyRmm && !form.isEasyRmm)}
+          onChange={(e) => setForm({ ...form, isEasyRmm: e.target.checked })}
         />
-        <Checkbox
-          label="Trust the provider's email claim"
-          hint="Link an account by its email address even when the ID token does not say email_verified (Microsoft Entra ID does not send it). Only for a provider whose users cannot choose their own address, such as a single-tenant Entra ID application."
-          checked={form.trustEmailClaim}
-          onChange={(e) => setForm({ ...form, trustEmailClaim: e.target.checked })}
-        />
-        <Checkbox
-          label="Create accounts on first sign-in"
-          hint="For addresses in the allowed domains that have no EasyPatch account yet. Otherwise only existing users can sign in."
-          checked={form.autoProvision}
-          onChange={(e) => setForm({ ...form, autoProvision: e.target.checked })}
-        />
-        {form.autoProvision && (
+        {!form.isEasyRmm && (
+          <>
+            <Checkbox
+              label="The provider enforces MFA"
+              hint="Users who sign in through it skip EasyPatch's second factor. Tick this only if the provider requires MFA for every user of this application."
+              checked={form.providerEnforcesMfa}
+              onChange={(e) => setForm({ ...form, providerEnforcesMfa: e.target.checked })}
+            />
+            <Checkbox
+              label="Trust the provider's email claim"
+              hint="Link an account by its email address even when the ID token does not say email_verified (Microsoft Entra ID does not send it). Only for a provider whose users cannot choose their own address, such as a single-tenant Entra ID application."
+              checked={form.trustEmailClaim}
+              onChange={(e) => setForm({ ...form, trustEmailClaim: e.target.checked })}
+            />
+            <Checkbox
+              label="Create accounts on first sign-in"
+              hint="For addresses in the allowed domains that have no EasyPatch account yet. Otherwise only existing users can sign in."
+              checked={form.autoProvision}
+              onChange={(e) => setForm({ ...form, autoProvision: e.target.checked })}
+            />
+          </>
+        )}
+        {form.autoProvision && !form.isEasyRmm && (
           <div className="grid grid-cols-1 gap-x-6 gap-y-3 md:grid-cols-2">
             <SelectField label="Role of new accounts" value={form.defaultRole} onChange={(e) => setForm({ ...form, defaultRole: e.target.value as UserRole })}
               hint="Never super administrator. New accounts can access every organization until you restrict them under Users.">
