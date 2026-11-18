@@ -185,6 +185,38 @@ Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).
 | `EASYRMM_METRICS_RETENTION` | `168h` (7 days) | How long per-minute device measurements are kept for charts; at least `24h`. See [Inventory and health](../operations/inventory.md) |
 | `EASYRMM_ALERT_RETENTION` | `2160h` (90 days) | How long resolved alerts are kept; at least `24h`. See [Alerts](../operations/alerts.md) |
 
+## Patching engine inside the deployment (testing)
+
+EasyPatch is becoming part of EasyRMM
+([one-product plan](../architecture/one-product-plan.md)). Its engine can
+already run inside this deployment, for testing until the plan's switch-over;
+the supported way to patch is still an EasyPatch server connected in
+Settings ([patching guide](../operations/patching.md)).
+
+```bash
+./scripts/setup.sh --hostname rmm.example.com --acme-email you@example.com --patching bundled
+docker compose up -d
+```
+
+`--patching bundled` sets `EASYRMM_PATCHING=bundled` and
+`COMPOSE_PROFILES=patching` in `.env`; `--patching connector` goes back.
+On an existing install, rerun `setup.sh` the same way: it adds the engine's
+database passwords to `.env` without changing anything else there. Compose
+then also runs:
+
+| Service | What it does |
+|---|---|
+| `easypatch-db-init` | Creates the `easypatch` database and its roles in EasyRMM's PostgreSQL, or brings them up to date; runs before every start, also on an existing install |
+| `easypatch-migrate` | Applies the engine's migrations as `easypatch_owner`, then exits |
+| `easypatch-api` | The engine, on `127.0.0.1:18180` only, as `easypatch_app` |
+| `easypatch-worker` | Background work, health on `127.0.0.1:18181` only. Needs outbound HTTPS to Microsoft's update and security feeds, CISA's catalogue of exploited vulnerabilities, the Debian security tracker and GitHub (winget) |
+
+The engine's data-protection keys, agent packages and winget copy are under
+`${EASYRMM_DATA_ROOT}/easypatch/` (owner 1654, the image's user). Back up
+the keys with the database: they decrypt the engine's stored mail and
+webhook credentials. Until releases carry the engine's image, Compose builds
+it from this repository.
+
 ## Security posture of the containers
 
 * The server runs as UID 65532 on a distroless image with a read-only root
@@ -195,6 +227,10 @@ Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).
 * PostgreSQL listens on loopback only and uses SCRAM-SHA-256. The server
   connects with two roles: `easyrmm_owner` (migrations only) and
   `easyrmm_app` (runtime, data access only, subject to row-level security).
+* The patching engine, when bundled, runs as UID 1654 with a read-only root
+  filesystem, every capability dropped and `no-new-privileges`, on loopback
+  only. Its runtime role, `easypatch_app`, reads and writes rows in its own
+  database and can neither change the schema nor connect to EasyRMM's.
 * MeshCentral runs as UID 65532 with a read-only root filesystem, every
   capability dropped and `no-new-privileges`. It listens on
   `127.0.0.1:14430` only, with TLS offloaded to the server's edge, and trusts

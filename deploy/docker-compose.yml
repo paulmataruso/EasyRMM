@@ -17,6 +17,32 @@ x-logging: &logging
     max-size: "20m"
     max-file: "5"
 
+# The patching engine's settings, shared by its services below. Its secrets
+# are not marked required (:?) here: Compose checks required variables even
+# for services whose profile is off, which would stop an install whose .env
+# predates them. easypatch-db-init refuses to run without them instead, and
+# nothing else of the engine starts until it has.
+x-easypatch-env: &easypatch-env
+  ASPNETCORE_ENVIRONMENT: Production
+  TZ: UTC
+  Database__Host: 127.0.0.1
+  Database__Port: "15432"
+  Database__Name: easypatch
+  Database__User: easypatch_app
+  Database__Password: ${EASYPATCH_DB_APP_PASSWORD:-}
+  # Two services of 20 each, beside EasyRMM's 20, under max_connections 200.
+  Database__MaxPoolSize: "20"
+  # Agents reach the engine on EasyRMM's own address (the edge forwards
+  # their paths), so install scripts and package links name it.
+  EasyPatch__PublicUrl: ${EASYRMM_PUBLIC_URL:?missing in .env}
+
+x-easypatch-hardening: &easypatch-hardening
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
 services:
   postgres:
     image: postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
@@ -160,4 +186,124 @@ services:
       retries: 3
       # The first start downloads the agent binaries (about 120 MiB).
       start_period: 5m
+    logging: *logging
+
+  # --- Patching engine (EasyPatch) --------------------------------------------
+  # EasyRMM's patching engine inside this deployment (one-product plan, phase
+  # B: docs/architecture/one-product-plan.md). These services start only with
+  # the "patching" profile, which `scripts/setup.sh --patching bundled` sets
+  # in .env (COMPOSE_PROFILES=patching). Until the plan's switch-over they
+  # are for testing: the default is still an EasyPatch server connected in
+  # Settings (ADR-0030).
+  #
+  # Everything listens on loopback only: the API on 127.0.0.1:18180, the
+  # worker's health endpoint on 127.0.0.1:18181. ASPNETCORE_URLS sets the
+  # address; ASPNETCORE_HTTP_PORTS, which the image sets, would bind every
+  # interface, so it is emptied.
+
+  # Creates the engine's database and roles, or brings them up to date: also
+  # on an existing install, where PostgreSQL's init scripts never run again.
+  easypatch-db-init:
+    image: postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
+    profiles: [patching]
+    network_mode: host
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    user: "70:70"
+    entrypoint: ["/bin/sh", "/easyrmm/easypatch-db-init.sh"]
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?run scripts/setup.sh to create deploy/.env}
+      EASYPATCH_DB_OWNER_PASSWORD: ${EASYPATCH_DB_OWNER_PASSWORD:-}
+      EASYPATCH_DB_APP_PASSWORD: ${EASYPATCH_DB_APP_PASSWORD:-}
+    volumes:
+      - ../docker/postgres/easypatch-db-init.sh:/easyrmm/easypatch-db-init.sh:ro
+    <<: *easypatch-hardening
+    logging: *logging
+
+  # Applies the engine's database migrations, as the owner role, then exits.
+  easypatch-migrate:
+    image: ${EASYPATCH_IMAGE:-ghcr.io/paulmataruso/easypatch-server}:${EASYPATCH_VERSION:-dev}
+    build:
+      context: ../easypatch
+      dockerfile: deployment/server/Dockerfile
+    profiles: [patching]
+    network_mode: host
+    restart: "no"
+    depends_on:
+      easypatch-db-init:
+        condition: service_completed_successfully
+    command: ["migrate"]
+    environment:
+      <<: *easypatch-env
+      Database__User: easypatch_owner
+      Database__Password: ${EASYPATCH_DB_OWNER_PASSWORD:-}
+      Database__MaxPoolSize: "2"
+    <<: *easypatch-hardening
+    logging: *logging
+
+  easypatch-api:
+    image: ${EASYPATCH_IMAGE:-ghcr.io/paulmataruso/easypatch-server}:${EASYPATCH_VERSION:-dev}
+    profiles: [patching]
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      easypatch-migrate:
+        condition: service_completed_successfully
+    environment:
+      <<: *easypatch-env
+      ASPNETCORE_URLS: http://127.0.0.1:18180
+      ASPNETCORE_HTTP_PORTS: ""
+    volumes:
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/keys:/app/keys
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/agent-packages:/app/agent-packages:ro
+      # The server's copy of winget for agents that cannot reach GitHub,
+      # downloaded by the worker.
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/winget:/app/winget:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:18180/health/ready"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    <<: *easypatch-hardening
+    stop_grace_period: 30s
+    logging: *logging
+
+  # Background work: update catalogues, schedules, reports, notifications.
+  # Outbound HTTPS: Microsoft's update and security feeds, CISA's catalogue of
+  # exploited vulnerabilities, the Debian security tracker, GitHub (winget),
+  # and whatever mail server and webhooks are configured.
+  easypatch-worker:
+    image: ${EASYPATCH_IMAGE:-ghcr.io/paulmataruso/easypatch-server}:${EASYPATCH_VERSION:-dev}
+    profiles: [patching]
+    network_mode: host
+    restart: unless-stopped
+    # After the API: the API creates the data-protection key on its first
+    # start, and the worker, which only reads the keys, would otherwise find
+    # none.
+    depends_on:
+      easypatch-api:
+        condition: service_healthy
+    entrypoint: ["dotnet", "/app/worker/EasyPatch.Worker.dll"]
+    working_dir: /app/worker
+    environment:
+      <<: *easypatch-env
+      ASPNETCORE_URLS: http://127.0.0.1:18181
+      ASPNETCORE_HTTP_PORTS: ""
+    volumes:
+      # Read-only: the worker decrypts notification secrets with the keys the
+      # API creates.
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/keys:/app/keys:ro
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/agent-packages:/app/agent-packages:ro
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/winget:/app/winget
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:18181/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    <<: *easypatch-hardening
+    stop_grace_period: 30s
     logging: *logging

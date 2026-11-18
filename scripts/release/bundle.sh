@@ -46,6 +46,7 @@ cp "$root/deploy/scripts/setup.sh" "$dir/deploy/scripts/"
 # For EasyPatch on the same server (docs/deployment/easypatch-cohost.md).
 cp "$root/deploy/easypatch/Caddyfile.easyrmm" "$root/deploy/easypatch/docker-compose.easyrmm.yml" "$dir/deploy/easypatch/"
 cp "$root/docker/postgres/init/"*.sh "$dir/docker/postgres/init/"
+cp "$root/docker/postgres/easypatch-db-init.sh" "$dir/docker/postgres/"
 cp "$root/docker/meshcentral/start.sh" "$dir/docker/meshcentral/"
 cp "$root/docs/deployment/docker.md" "$root/docs/deployment/agents.md" "$root/docs/deployment/easypatch-cohost.md" "$dir/docs/deployment/"
 cp "$root/docs/operations/backup-restore.md" "$root/docs/operations/upgrading.md" "$dir/docs/operations/"
@@ -63,7 +64,8 @@ if [ -n "$missing" ]; then
 fi
 find "$dir" -type d -exec chmod 0755 {} +
 find "$dir" -type f -exec chmod 0644 {} +
-chmod 0755 "$dir/deploy/scripts/setup.sh" "$dir/docker/postgres/init/"*.sh "$dir/docker/meshcentral/start.sh"
+chmod 0755 "$dir/deploy/scripts/setup.sh" "$dir/docker/postgres/init/"*.sh "$dir/docker/postgres/easypatch-db-init.sh" \
+  "$dir/docker/meshcentral/start.sh"
 tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --format=gnu \
   -C "$stage" -cf - "$name" | gzip -n -9 > "$out/$name-deploy.tar.gz"
 

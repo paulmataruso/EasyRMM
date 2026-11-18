@@ -148,8 +148,10 @@ server image, on host networking:
 
 `setup.sh` generates the passwords and the gateway key (B2), and creates the
 key, winget and package directories owned by the image's user (UID 1654).
-`setup.sh --upgrade` adds what an older `.env` lacks without touching what it
-has. The worker needs outbound HTTPS to Microsoft's update and security
+Rerun on an existing install, it adds what an older `.env` lacks without
+touching what it has. *Done (B1): `--patching bundled`, tested on a fresh
+database and on a second start; the worker starts after the API, which
+creates the data-protection key.* The worker needs outbound HTTPS to Microsoft's update and security
 feeds, CISA KEV and the Debian security tracker; the installation guide
 lists them.
 

@@ -3,6 +3,7 @@ package config
 import (
 	"bufio"
 	"fmt"
+	"net"
 	"os"
 	"regexp"
 	"strings"
@@ -276,6 +277,100 @@ func TestEasyPatchOverrideMatchesDefaults(t *testing.T) {
 	} {
 		if !strings.Contains(string(caddyfile), want) {
 			t.Errorf("Caddyfile.easyrmm lacks %q", want)
+		}
+	}
+}
+
+// TestComposeListeners keeps every service of deploy/docker-compose.yml on
+// host networking, every listener but the server's public edge on loopback,
+// and no two listeners on one port (the one-product plan's port table):
+// with host networking a collision is a service that fails to start, or a
+// health check that reaches the wrong program.
+func TestComposeListeners(t *testing.T) {
+	b, err := os.ReadFile(composeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compose := string(b)
+
+	// Every service runs on the host's network, and none maps ports.
+	_, section, ok := strings.Cut(compose, "\nservices:\n")
+	if !ok {
+		t.Fatalf("no services in %s", composeFile)
+	}
+	if end := regexp.MustCompile(`(?m)^[a-z]`).FindStringIndex(section); end != nil {
+		section = section[:end[0]]
+	}
+	services := regexp.MustCompile(`(?m)^  ([a-z][a-z0-9-]*):$`).FindAllStringSubmatch(section, -1)
+	if len(services) < 7 {
+		t.Fatalf("found %d services in %s", len(services), composeFile)
+	}
+	blocks := regexp.MustCompile(`(?m)^  [a-z][a-z0-9-]*:$`).Split(section, -1)[1:]
+	for i, s := range services {
+		if !strings.Contains(blocks[i], "\n    network_mode: host\n") {
+			t.Errorf("service %s does not use host networking", s[1])
+		}
+		if strings.Contains(blocks[i], "\n    ports:") {
+			t.Errorf("service %s maps ports", s[1])
+		}
+	}
+
+	// Compose checks required variables (${X:?}) even for services whose
+	// profile is off: one in the patching engine's services would stop every
+	// install whose .env predates it.
+	if m := regexp.MustCompile(`\$\{EASYPATCH_[A-Z_]+:?\?`).FindString(compose); m != "" {
+		t.Errorf("%s marks %s… required: an install without the patching profile could not start", composeFile, m)
+	}
+
+	c, err := LoadFrom(env(map[string]string{
+		"EASYRMM_PUBLIC_URL": "https://rmm.example.com", "EASYRMM_ACME_EMAIL": "ops@example.com",
+		"EASYRMM_DATABASE_URL": "postgres://a@127.0.0.1/x", "EASYRMM_DATABASE_MIGRATION_URL": "postgres://o@127.0.0.1/x",
+		"EASYRMM_SECRET_KEY": testKey, "EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com",
+	}), noFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url := func(service string) string {
+		raw := composeEnvironment(t, service)["ASPNETCORE_URLS"]
+		if empty, ok := composeEnvironment(t, service)["ASPNETCORE_HTTP_PORTS"]; !ok || empty != `""` && empty != "" {
+			t.Errorf("%s does not empty ASPNETCORE_HTTP_PORTS, which binds every interface", service)
+		}
+		return strings.TrimPrefix(raw, "http://")
+	}
+	mesh := regexp.MustCompile(`http://(127\.0\.0\.1:\d+)/health\.ashx`).FindStringSubmatch(compose)
+	pg := regexp.MustCompile(`listen_addresses=(\S+)\n\s+- -c\n\s+- port=(\d+)`).FindStringSubmatch(compose)
+	if mesh == nil || pg == nil {
+		t.Fatalf("cannot find MeshCentral's or PostgreSQL's listener in %s", composeFile)
+	}
+	loopback := map[string]string{
+		"EasyRMM health":            c.ListenHealth,
+		"EasyRMM offload":           c.ListenOffload,
+		"MeshCentral":               mesh[1],
+		"PostgreSQL":                net.JoinHostPort(pg[1], pg[2]),
+		"co-hosted EasyPatch, TLS":  c.EasyPatch.TLSUpstream,
+		"co-hosted EasyPatch, HTTP": c.EasyPatch.HTTPUpstream,
+		"patching engine API":       url("easypatch-api"),
+		"patching engine worker":    url("easypatch-worker"),
+	}
+	byPort := map[string]string{}
+	for name, addr := range loopback {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			t.Errorf("%s: %q: %v", name, addr, err)
+			continue
+		}
+		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+			t.Errorf("%s listens on %s, beyond loopback", name, addr)
+		}
+		if other, taken := byPort[port]; taken {
+			t.Errorf("%s and %s both listen on port %s", name, other, port)
+		}
+		byPort[port] = name
+	}
+	for _, public := range []string{c.ListenHTTPS, c.ListenHTTP} {
+		_, port, _ := net.SplitHostPort(public)
+		if other, taken := byPort[port]; taken {
+			t.Errorf("the public edge and %s both use port %s", other, port)
 		}
 	}
 }

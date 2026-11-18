@@ -8,6 +8,14 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **The patching engine inside EasyRMM's deployment, for testing** (one-product
+  plan, phase B1): `scripts/setup.sh --patching bundled` runs EasyPatch's API
+  and worker from `deploy/docker-compose.yml`, on host networking and loopback
+  only (127.0.0.1:18180 and :18181), with their own database and roles in
+  EasyRMM's PostgreSQL. `easypatch-db-init` creates them, also on an existing
+  install; setup.sh adds the new secrets to an older `.env` without changing
+  what it has. A compose test keeps every service on host networking, every
+  listener but the edge on loopback, and no two on one port.
 - `npm run screenshots` in `web/` makes the README's screenshots from the
   console's production build, its API answered from fictional demo data
   (`web/screenshots/`). It fails when a page asks for something the data does
