@@ -1,0 +1,115 @@
+# Threat model
+
+EasyRMM can run code as SYSTEM or root on every computer it manages, and
+open their screens, terminals and files. Whoever controls it controls those
+computers. This page lists what EasyRMM protects, from whom, and where each
+boundary is enforced. The decisions behind each control are in the
+[architecture decision records](../architecture/adr/README.md).
+
+## What is protected
+
+* **Control of managed computers**: scripts and software actions as
+  SYSTEM or root, remote desktop, terminal, files and RDP.
+* **Customers' data**: inventory, software lists, metrics, alerts, reports,
+  and which computers belong to whom.
+* **The audit log**: the record of who did what.
+* **Secrets held by the server**: the job-signing key, MeshCentral's
+  service account, the EasyPatch API token, the audit-forwarding client
+  key and the internal certificate authority. All are sealed in the
+  database under `EASYRMM_SECRET_KEY`.
+* **Accounts**: technicians' passwords, authenticators and security keys.
+
+## Who is guarded against
+
+| Actor | Can | Must not be able to |
+|---|---|---|
+| Anyone on the internet | Reach the sign-in page, the agent API, and MeshCentral's agent routes | Sign in without a password and second factor, enroll without a deployment token or approval, or reach MeshCentral as a user |
+| A technician, by role | Act on the sites and session types their roles grant | Act on another site or organization, or do more on a device than their grant allows |
+| An organization's administrator | Manage their organization's sites and users | Grant roles above their own, see other organizations, or learn their names |
+| A managed computer's agent, even if compromised | Report its own facts and inventory, take its own jobs | Act as another device, see other devices' work, change what runs elsewhere, or exhaust the server |
+| A standard user on a managed computer | Use the computer | Change what the agent runs as SYSTEM or root, or read its key or deployment token |
+| A network attacker between agent and server | Delay or drop traffic | Read or change it, or impersonate either side |
+
+Trusted: the operator with access to the server host, its environment and
+its database, and Super Administrators, who hold every permission
+everywhere. MeshCentral and EasyPatch are trusted to enforce their own
+rights, and EasyRMM narrows what reaches them.
+
+## Boundaries and their controls
+
+**Browser to server** ([ADR-0006](../architecture/adr/0006-sessions-and-mfa.md), [ADR-0032](../architecture/adr/0032-webauthn-passkeys.md), [Signing in](sign-in.md))
+* Opaque session cookies. A second factor is required for every account
+  (`EASYRMM_REQUIRE_MFA`, on unless the operator turns it off).
+* CSRF tokens bound to the session, plus Origin and Fetch Metadata checks.
+* Rate limits and lockouts on passwords and second factors.
+* Re-entering the password for sensitive changes.
+
+**Between tenants** ([ADR-0002](../architecture/adr/0002-postgresql-rls-tenant-isolation.md), [Roles and permissions](rbac.md))
+* Every tenant table has forced row-level security under the caller's
+  scope.
+* Above it, every action checks the permission against the organization
+  and site stored in the row.
+* Granting is limited by rank and scope.
+
+**Agent to server** ([ADR-0015](../architecture/adr/0015-enrollment-and-meshagent-delivery.md), [ADR-0024](../architecture/adr/0024-enrollment-approval.md))
+* Enrollment needs a deployment token, or approval in the console.
+* After enrollment, each request is signed with the device's own Ed25519
+  key: method, target, time, nonce and body. Nonces are used once.
+* The header is checked before the body is read, and each device has
+  rate limits.
+
+**Server to agent** ([ADR-0017](../architecture/adr/0017-scripts-and-jobs.md), [ADR-0027](../architecture/adr/0027-agent-updates.md), [ADR-0031](../architecture/adr/0031-easypatch-agent-install.md))
+* Jobs, agent updates and EasyPatch installs are instructions signed with
+  the server's job key. The agent pins that key at enrollment.
+* Each instruction is bound to one device and expires.
+* Updates are checked by hash and size before they run, and rolled back
+  if the new build fails.
+* TLS is verified against public authorities, a given authority, or the
+  server's own authority. The install command fetches that authority over
+  a connection pinned to the server's key.
+
+**On the managed computer** ([ADR-0020](../architecture/adr/0020-windows-agent.md), [ADR-0028](../architecture/adr/0028-software-deployment.md))
+* The agent's state (key, configuration, job journal) can be changed only
+  by SYSTEM or administrators on Windows, and by root on Linux. A folder
+  someone else owns is replaced.
+* Package managers' programs are run only if only administrators can
+  change them.
+* cmd arguments that could break out of their quotes are refused.
+
+**Browser to MeshCentral** ([ADR-0004](../architecture/adr/0004-meshcentral-dedicated-origin.md), [ADR-0005](../architecture/adr/0005-meshcentral-identity-and-sessions.md), [ADR-0014](../architecture/adr/0014-remote-access-gateway-and-device-discovery.md), [ADR-0022](../architecture/adr/0022-gateway-relay-restrictions.md), [ADR-0033](../architecture/adr/0033-relays-bound-to-grants.md))
+* MeshCentral is reachable only through EasyRMM's gateway, on an origin
+  of its own.
+* Each technician has a MeshCentral account with the fewest rights the
+  role needs.
+* Each session is a grant for one device and one session type, and is
+  audited.
+* The gateway passes only what the grant covers:
+  * relays of that type to that device;
+  * tunnel requests bound to the grant;
+  * device messages that belong to the session type.
+* No TCP or UDP routing.
+* The agent path carries no user credentials.
+
+**Server to integrations** ([ADR-0023](../architecture/adr/0023-audit-forwarding.md), [ADR-0030](../architecture/adr/0030-easypatch-connector.md))
+* Only Super Administrators configure EasyPatch and audit forwarding.
+* Their secrets are sealed and never shown again.
+* TLS is verified, and EasyPatch's redirects are not followed.
+* Link-local and cloud metadata addresses are refused.
+
+**The record** ([ADR-0007](../architecture/adr/0007-hash-chained-audit-log.md))
+* The application's database role can only append to the audit log, and
+  edits are rejected even for the owner.
+* Records are hash-chained so that changes can be detected. Retention
+  deletes only records past the configured period (at least 30 days).
+* The log can be forwarded off the server as it is written.
+
+## Known limits
+
+* Super Administrators and the server's operator are fully trusted: they
+  can run anything on every managed computer.
+* A computer that trusts the internal certificate authority would trust
+  a certificate signed with its key for any site
+  ([ADR-0016](../architecture/adr/0016-ip-address-access.md)).
+* Remote sessions depend on MeshCentral and MeshAgent enforcing their own
+  rights, which EasyRMM narrows but does not replace.
+* What the [security review](security-review.md) did not cover.

@@ -1,0 +1,116 @@
+# EasyRMM agent installer for Windows, served by this EasyRMM server.
+# Run it in Windows PowerShell started as administrator, with a deployment
+# token from the console (Devices > Add devices gives the whole command):
+#
+{{- if .KeyPin}}
+#   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+#   [Net.ServicePointManager]::ServerCertificateValidationCallback = { param($s, $c) ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($c.GetPublicKey())) -replace '-') -eq '{{.KeyPin}}' }
+#   try { $i = (New-Object Net.WebClient).DownloadString('{{.Server}}/api/agent/v1/install.ps1') } finally { [Net.ServicePointManager]::ServerCertificateValidationCallback = $null }
+#   & ([scriptblock]::Create($i)) -Token 'ert_...'
+#
+# This address uses the server's own certificate authority, which no
+# machine trusts yet. Every download is checked against the server's public
+# key instead (its SHA-256 above), and the agent is given the server's
+# certificate authority to trust from then on.
+{{- else}}
+#   [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+#   & ([scriptblock]::Create((New-Object Net.WebClient).DownloadString('{{.Server}}/api/agent/v1/install.ps1'))) -Token 'ert_...'
+{{- end}}
+#
+# It downloads the agent for this machine's processor from the server,
+# checks it against the server's checksums, and installs it as the
+# EasyRMMAgent service in %ProgramFiles%\EasyRMM\Agent. The agent then
+# installs MeshAgent for remote access.
+param(
+    # A deployment token from the EasyRMM console; EASYRMM_TOKEN otherwise.
+    [string]$Token = $env:EASYRMM_TOKEN
+)
+
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$Server = '{{.Server}}'
+
+# Errors are thrown, not exits: run in an open PowerShell window, an exit
+# would close it.
+function Fail([string]$Message) { throw "easyrmm: $Message" }
+
+if (-not $Token) { Fail 'pass -Token with a deployment token from the EasyRMM console' }
+$identity = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not $identity.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Fail 'run the installer in PowerShell started as administrator'
+}
+if ([Environment]::OSVersion.Version -lt [Version]'10.0') {
+    Fail 'the agent needs Windows 10, Windows Server 2016 or later'
+}
+{{- if .KeyPin}}
+if ($PSVersionTable.PSEdition -eq 'Core') {
+    Fail 'run the installer in Windows PowerShell (powershell.exe), which can check the server key; PowerShell 7 cannot'
+}
+{{- end}}
+
+$machine = $env:PROCESSOR_ARCHITEW6432
+if (-not $machine) { $machine = $env:PROCESSOR_ARCHITECTURE }
+switch ($machine) {
+    'AMD64' { $arch = 'amd64' }
+    'ARM64' { $arch = 'arm64' }
+    default { Fail "unsupported processor: $machine" }
+}
+$file = "easyrmm-agent-windows-$arch.exe"
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+$tmp = Join-Path ([IO.Path]::GetTempPath()) ('easyrmm-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $tmp | Out-Null
+try {
+{{- if .KeyPin}}
+    # Trust this server's key, nothing else, for the downloads.
+    [Net.ServicePointManager]::ServerCertificateValidationCallback = {
+        param($s, $c)
+        ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($c.GetPublicKey())) -replace '-') -eq '{{.KeyPin}}'
+    }
+{{- end}}
+    $web = New-Object Net.WebClient
+    $exe = Join-Path $tmp $file
+    Write-Host "easyrmm: downloading $file from $Server"
+    try {
+        $web.DownloadFile("$Server/api/agent/v1/download/$file", $exe)
+        $sums = $web.DownloadString("$Server/api/agent/v1/download/SHA256SUMS")
+{{- if .KeyPin}}
+        $ca = Join-Path $tmp 'ca.pem'
+        $web.DownloadFile("$Server/api/agent/v1/ca.pem", $ca)
+{{- end}}
+    } catch {
+        Fail "download failed: $($_.Exception.Message)"
+    }
+    $want = $null
+    foreach ($line in ($sums -split "`n")) {
+        $parts = $line.Trim() -split '\s+'
+        if ($parts.Count -eq 2 -and $parts[1] -eq $file) { $want = $parts[0] }
+    }
+    if (-not $want) { Fail "the server has no $file; build the Windows agent on the server" }
+    $got = (Get-FileHash -Algorithm SHA256 -Path $exe).Hash
+    if ($got -ne $want) { Fail "checksum mismatch for $file" }
+
+    # The token goes through the environment, not the command line, so other
+    # users cannot read it from the process list.
+    $env:EASYRMM_TOKEN = $Token
+    $ErrorActionPreference = 'Continue'
+    try {
+{{- if .KeyPin}}
+        & $exe install --server $Server --ca-file $ca
+{{- else}}
+        & $exe install --server $Server
+{{- end}}
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = 'Stop'
+        Remove-Item Env:EASYRMM_TOKEN -ErrorAction SilentlyContinue
+    }
+    if ($code -ne 0) { Fail "the agent was not installed (exit code $code)" }
+    # The agent has said whether the device is enrolled or waits for approval.
+    Write-Host 'easyrmm: done.'
+} finally {
+{{- if .KeyPin}}
+    [Net.ServicePointManager]::ServerCertificateValidationCallback = $null
+{{- end}}
+    Remove-Item -Recurse -Force -Path $tmp -ErrorAction SilentlyContinue
+}

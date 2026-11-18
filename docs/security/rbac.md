@@ -30,3 +30,33 @@ A user may grant or revoke an assignment only if:
   is at or below their own best role in that scope.
 
 Only Super Administrators grant Super Administrator.
+
+## What one organization learns about others
+
+Organizations are separated by row-level security under every query, and
+by a permission check against each row's organization and site above it.
+Two platform-wide facts still cross the boundary, and are kept to a
+minimum:
+
+* **Organization names are unique on the server**, so that they are never
+  ambiguous in a Super Administrator's lists. Renaming an organization
+  therefore needs `org.manage` platform-wide (a Super Administrator).
+  Otherwise an Organization Administrator could try names until one was
+  "already taken" and learn another customer's name. Organization
+  Administrators still edit their organization's notes, sites and users.
+* **Accounts are platform-wide**, so that one person can hold roles in
+  several organizations. Inviting an email address that already has an
+  account answers "An account with this email address already exists",
+  which tells an Organization Administrator that the address is in use on
+  this server, though not where. No answer could hide this, because the
+  outcome differs either way: an account is created, or it is not. Closing
+  it would take invitations that an existing account accepts first. If
+  customers' administrators must not learn whether an address has an
+  account, keep `user.manage` with your own staff: give customers Site
+  Administrator or lower, and invite their users yourself.
+
+Exports name the organizations whose data they contain. The `report.export`
+audit entry is written once for each organization the export's rows come
+from, under that organization (and its site, when all the rows share one).
+Its administrators see the entry, and an export can be recorded only where
+its data came from. An export with no rows is recorded at platform level.

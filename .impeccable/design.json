@@ -1,0 +1,733 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-16T02:43:29.846149+00:00",
+  "title": "Design System: EasyRMM",
+  "upstream": {
+    "system": "EasyPatch",
+    "tokensSource": "EasyPatch frontend/src/index.css",
+    "mirror": "web/src/index.css",
+    "decision": "docs/architecture/adr/0013-easypatch-design-system.md",
+    "easyrmmAdditions": [
+      "kbd styling",
+      "uniform .input min-height (2.125rem) for toolbars",
+      "table row focus-within tint for j/k travel",
+      "KeyValueList narrow variant",
+      "AssignmentEditor hideLegend",
+      "MenuButton (menu button pattern)",
+      "device tree dock",
+      "code and script output views",
+      "chart series tokens (series-1..3)",
+      "UsageMeter, TimeChart and Segmented control"
+    ]
+  },
+  "extensions": {
+    "colorMeta": {
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Canvas (dark)",
+        "cssVar": "--canvas",
+        "theme": "dark",
+        "pairedWith": "canvas-light"
+      },
+      "canvas-light": {
+        "role": "neutral",
+        "displayName": "Canvas (light)",
+        "cssVar": "--canvas",
+        "theme": "light",
+        "pairedWith": "canvas"
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Surface (dark)",
+        "cssVar": "--surface",
+        "theme": "dark",
+        "pairedWith": "surface-light"
+      },
+      "surface-light": {
+        "role": "neutral",
+        "displayName": "Surface (light)",
+        "cssVar": "--surface",
+        "theme": "light",
+        "pairedWith": "surface"
+      },
+      "raised": {
+        "role": "neutral",
+        "displayName": "Raised (dark)",
+        "cssVar": "--raised",
+        "theme": "dark",
+        "pairedWith": "raised-light"
+      },
+      "raised-light": {
+        "role": "neutral",
+        "displayName": "Raised (light)",
+        "cssVar": "--raised",
+        "theme": "light",
+        "pairedWith": "raised"
+      },
+      "hover": {
+        "role": "neutral",
+        "displayName": "Hover Tint (dark)",
+        "cssVar": "--hover",
+        "theme": "dark",
+        "pairedWith": "hover-light"
+      },
+      "hover-light": {
+        "role": "neutral",
+        "displayName": "Hover Tint (light)",
+        "cssVar": "--hover",
+        "theme": "light",
+        "pairedWith": "hover"
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Line (dark)",
+        "cssVar": "--line",
+        "theme": "dark",
+        "pairedWith": "line-light"
+      },
+      "line-light": {
+        "role": "neutral",
+        "displayName": "Line (light)",
+        "cssVar": "--line",
+        "theme": "light",
+        "pairedWith": "line"
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Line Strong (dark)",
+        "cssVar": "--line-strong",
+        "theme": "dark",
+        "pairedWith": "line-strong-light"
+      },
+      "line-strong-light": {
+        "role": "neutral",
+        "displayName": "Line Strong (light)",
+        "cssVar": "--line-strong",
+        "theme": "light",
+        "pairedWith": "line-strong"
+      },
+      "fg": {
+        "role": "neutral",
+        "displayName": "Foreground (dark)",
+        "cssVar": "--fg",
+        "theme": "dark",
+        "pairedWith": "fg-light"
+      },
+      "fg-light": {
+        "role": "neutral",
+        "displayName": "Foreground (light)",
+        "cssVar": "--fg",
+        "theme": "light",
+        "pairedWith": "fg"
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted (dark)",
+        "cssVar": "--muted",
+        "theme": "dark",
+        "pairedWith": "muted-light"
+      },
+      "muted-light": {
+        "role": "neutral",
+        "displayName": "Muted (light)",
+        "cssVar": "--muted",
+        "theme": "light",
+        "pairedWith": "muted"
+      },
+      "subtle": {
+        "role": "neutral",
+        "displayName": "Subtle (dark)",
+        "cssVar": "--subtle",
+        "theme": "dark",
+        "pairedWith": "subtle-light"
+      },
+      "subtle-light": {
+        "role": "neutral",
+        "displayName": "Subtle (light)",
+        "cssVar": "--subtle",
+        "theme": "light",
+        "pairedWith": "subtle"
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Console Blue (dark)",
+        "cssVar": "--accent",
+        "theme": "dark",
+        "pairedWith": "accent-light"
+      },
+      "accent-light": {
+        "role": "primary",
+        "displayName": "Console Blue (light)",
+        "cssVar": "--accent",
+        "theme": "light",
+        "pairedWith": "accent"
+      },
+      "accent-hover": {
+        "role": "primary",
+        "displayName": "Console Blue Hover (dark)",
+        "cssVar": "--accent-hover",
+        "theme": "dark",
+        "pairedWith": "accent-hover-light"
+      },
+      "accent-hover-light": {
+        "role": "primary",
+        "displayName": "Console Blue Hover (light)",
+        "cssVar": "--accent-hover",
+        "theme": "light",
+        "pairedWith": "accent-hover"
+      },
+      "accent-fg": {
+        "role": "primary",
+        "displayName": "On Accent (dark)",
+        "cssVar": "--accent-fg",
+        "theme": "dark",
+        "pairedWith": "accent-fg-light"
+      },
+      "accent-fg-light": {
+        "role": "primary",
+        "displayName": "On Accent (light)",
+        "cssVar": "--accent-fg",
+        "theme": "light",
+        "pairedWith": "accent-fg"
+      },
+      "accent-soft": {
+        "role": "primary",
+        "displayName": "Accent Soft (dark)",
+        "cssVar": "--accent-soft",
+        "theme": "dark",
+        "pairedWith": "accent-soft-light"
+      },
+      "accent-soft-light": {
+        "role": "primary",
+        "displayName": "Accent Soft (light)",
+        "cssVar": "--accent-soft",
+        "theme": "light",
+        "pairedWith": "accent-soft"
+      },
+      "ok": {
+        "role": "status",
+        "displayName": "OK Green (dark)",
+        "cssVar": "--ok",
+        "theme": "dark",
+        "pairedWith": "ok-light"
+      },
+      "ok-light": {
+        "role": "status",
+        "displayName": "OK Green (light)",
+        "cssVar": "--ok",
+        "theme": "light",
+        "pairedWith": "ok"
+      },
+      "ok-soft": {
+        "role": "status",
+        "displayName": "OK Soft (dark)",
+        "cssVar": "--ok-soft",
+        "theme": "dark",
+        "pairedWith": "ok-soft-light"
+      },
+      "ok-soft-light": {
+        "role": "status",
+        "displayName": "OK Soft (light)",
+        "cssVar": "--ok-soft",
+        "theme": "light",
+        "pairedWith": "ok-soft"
+      },
+      "warn": {
+        "role": "status",
+        "displayName": "Warn Amber (dark)",
+        "cssVar": "--warn",
+        "theme": "dark",
+        "pairedWith": "warn-light"
+      },
+      "warn-light": {
+        "role": "status",
+        "displayName": "Warn Amber (light)",
+        "cssVar": "--warn",
+        "theme": "light",
+        "pairedWith": "warn"
+      },
+      "warn-soft": {
+        "role": "status",
+        "displayName": "Warn Soft (dark)",
+        "cssVar": "--warn-soft",
+        "theme": "dark",
+        "pairedWith": "warn-soft-light"
+      },
+      "warn-soft-light": {
+        "role": "status",
+        "displayName": "Warn Soft (light)",
+        "cssVar": "--warn-soft",
+        "theme": "light",
+        "pairedWith": "warn-soft"
+      },
+      "danger": {
+        "role": "status",
+        "displayName": "Danger Red (dark)",
+        "cssVar": "--danger",
+        "theme": "dark",
+        "pairedWith": "danger-light"
+      },
+      "danger-light": {
+        "role": "status",
+        "displayName": "Danger Red (light)",
+        "cssVar": "--danger",
+        "theme": "light",
+        "pairedWith": "danger"
+      },
+      "danger-soft": {
+        "role": "status",
+        "displayName": "Danger Soft (dark)",
+        "cssVar": "--danger-soft",
+        "theme": "dark",
+        "pairedWith": "danger-soft-light"
+      },
+      "danger-soft-light": {
+        "role": "status",
+        "displayName": "Danger Soft (light)",
+        "cssVar": "--danger-soft",
+        "theme": "light",
+        "pairedWith": "danger-soft"
+      },
+      "info": {
+        "role": "status",
+        "displayName": "Info Cyan (dark)",
+        "cssVar": "--info",
+        "theme": "dark",
+        "pairedWith": "info-light"
+      },
+      "info-light": {
+        "role": "status",
+        "displayName": "Info Cyan (light)",
+        "cssVar": "--info",
+        "theme": "light",
+        "pairedWith": "info"
+      },
+      "info-soft": {
+        "role": "status",
+        "displayName": "Info Soft (dark)",
+        "cssVar": "--info-soft",
+        "theme": "dark",
+        "pairedWith": "info-soft-light"
+      },
+      "info-soft-light": {
+        "role": "status",
+        "displayName": "Info Soft (light)",
+        "cssVar": "--info-soft",
+        "theme": "light",
+        "pairedWith": "info-soft"
+      },
+      "neutral-soft": {
+        "role": "status",
+        "displayName": "Neutral Soft (dark)",
+        "cssVar": "--neutral-soft",
+        "theme": "dark",
+        "pairedWith": "neutral-soft-light"
+      },
+      "neutral-soft-light": {
+        "role": "status",
+        "displayName": "Neutral Soft (light)",
+        "cssVar": "--neutral-soft",
+        "theme": "light",
+        "pairedWith": "neutral-soft"
+      },
+      "focus": {
+        "role": "primary",
+        "displayName": "Focus Ring (dark)",
+        "cssVar": "--focus",
+        "theme": "dark",
+        "pairedWith": "focus-light"
+      },
+      "focus-light": {
+        "role": "primary",
+        "displayName": "Focus Ring (light)",
+        "cssVar": "--focus",
+        "theme": "light",
+        "pairedWith": "focus"
+      },
+      "sidebar": {
+        "role": "neutral",
+        "displayName": "Navy Sidebar (dark)",
+        "cssVar": "--sidebar",
+        "theme": "dark",
+        "pairedWith": "sidebar-light"
+      },
+      "sidebar-light": {
+        "role": "neutral",
+        "displayName": "Navy Sidebar (light)",
+        "cssVar": "--sidebar",
+        "theme": "light",
+        "pairedWith": "sidebar"
+      },
+      "sidebar-fg": {
+        "role": "neutral",
+        "displayName": "Sidebar Text (dark)",
+        "cssVar": "--sidebar-fg",
+        "theme": "dark",
+        "pairedWith": "sidebar-fg-light"
+      },
+      "sidebar-fg-light": {
+        "role": "neutral",
+        "displayName": "Sidebar Text (light)",
+        "cssVar": "--sidebar-fg",
+        "theme": "light",
+        "pairedWith": "sidebar-fg"
+      },
+      "sidebar-active": {
+        "role": "neutral",
+        "displayName": "Sidebar Active (dark)",
+        "cssVar": "--sidebar-active",
+        "theme": "dark",
+        "pairedWith": "sidebar-active-light"
+      },
+      "sidebar-active-light": {
+        "role": "neutral",
+        "displayName": "Sidebar Active (light)",
+        "cssVar": "--sidebar-active",
+        "theme": "light",
+        "pairedWith": "sidebar-active"
+      },
+      "series-1": {
+        "role": "chart",
+        "displayName": "Series 1, blue (dark)",
+        "cssVar": "--series-1",
+        "theme": "dark",
+        "pairedWith": "series-1-light"
+      },
+      "series-1-light": {
+        "role": "chart",
+        "displayName": "Series 1, blue (light)",
+        "cssVar": "--series-1",
+        "theme": "light",
+        "pairedWith": "series-1"
+      },
+      "series-2": {
+        "role": "chart",
+        "displayName": "Series 2, orange (dark)",
+        "cssVar": "--series-2",
+        "theme": "dark",
+        "pairedWith": "series-2-light"
+      },
+      "series-2-light": {
+        "role": "chart",
+        "displayName": "Series 2, orange (light)",
+        "cssVar": "--series-2",
+        "theme": "light",
+        "pairedWith": "series-2"
+      },
+      "series-3": {
+        "role": "chart",
+        "displayName": "Series 3, aqua (dark)",
+        "cssVar": "--series-3",
+        "theme": "dark",
+        "pairedWith": "series-3-light"
+      },
+      "series-3-light": {
+        "role": "chart",
+        "displayName": "Series 3, aqua (light)",
+        "cssVar": "--series-3",
+        "theme": "light",
+        "pairedWith": "series-3"
+      }
+    },
+    "themes": {
+      "default": "dark",
+      "mechanism": "class 'dark' on <html>; light is :root without it; choice stored in localStorage 'easyrmm.theme'"
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Page title",
+        "purpose": "PageHeader h1."
+      },
+      "stat": {
+        "displayName": "Stat value",
+        "purpose": "Stat tile number, tabular."
+      },
+      "title-auth": {
+        "displayName": "Auth title",
+        "purpose": "Sign-in, setup and MFA panels."
+      },
+      "title-dialog": {
+        "displayName": "Dialog title",
+        "purpose": "Dialog header."
+      },
+      "title-card": {
+        "displayName": "Card title",
+        "purpose": "Card header rows."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Base 14px text, tables, forms."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Form labels, key-value terms, stat labels, badges."
+      },
+      "table-head": {
+        "displayName": "Table head",
+        "purpose": "Uppercase column heads."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "IDs, codes, secrets; kbd at 11px."
+      }
+    },
+    "shadows": [
+      {
+        "name": "hairline",
+        "value": "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        "purpose": "Cards, stat tiles, inputs, filled and secondary buttons."
+      },
+      {
+        "name": "panel",
+        "value": "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)",
+        "purpose": "Auth panel."
+      },
+      {
+        "name": "toast",
+        "value": "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+        "purpose": "Toasts and menus."
+      },
+      {
+        "name": "drawer",
+        "value": "0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)",
+        "purpose": "Mobile sidebar drawer; the device tree over the page below lg."
+      },
+      {
+        "name": "modal",
+        "value": "0 25px 50px -12px rgb(0 0 0 / 0.25)",
+        "purpose": "Dialogs, over a rgb(2 6 23 / 0.6) backdrop."
+      },
+      {
+        "name": "focus-ring",
+        "value": "outline: 2px solid var(--focus); outline-offset: 2px",
+        "purpose": "Global :focus-visible."
+      },
+      {
+        "name": "input-focus",
+        "value": "0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent)",
+        "purpose": "Input focus ring with accent border."
+      }
+    ],
+    "motion": [
+      {
+        "name": "toast-in",
+        "value": "160ms ease-out, opacity 0 to 1 and translateY(8px) to 0",
+        "purpose": "Toast entrance."
+      },
+      {
+        "name": "dock-in",
+        "value": "180ms cubic-bezier(0.16, 1, 0.3, 1), opacity 0 to 1 and translateX(12px) to 0",
+        "purpose": "Device tree dock entrance."
+      },
+      {
+        "name": "color-transition",
+        "value": "Tailwind transition-colors (150ms)",
+        "purpose": "Buttons, inputs, tabs, nav items."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "toast and dock animations none; all transitions 0ms",
+        "purpose": "prefers-reduced-motion: reduce."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px",
+        "purpose": "Page padding 24px; first secondary columns shown; key-value two columns."
+      },
+      {
+        "name": "md",
+        "value": "768px",
+        "purpose": "Stat tiles 4 across; more table columns."
+      },
+      {
+        "name": "lg",
+        "value": "1024px",
+        "purpose": "Sidebar docked; page padding 32px; remaining table columns."
+      },
+      {
+        "name": "xl",
+        "value": "1280px",
+        "purpose": "Card grids split into 2 or 3 columns."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Main action of a page, form or dialog.",
+      "html": "<button class=\"ds-btn ds-btn-primary\">Add organization</button>",
+      "css": ".ds-btn{font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; display:inline-flex; align-items:center; justify-content:center; gap:6px; height:34px; padding:0 14px; border-radius:6px; font-size:14px; font-weight:500; white-space:nowrap; cursor:pointer; transition:background-color .15s, color .15s;} .ds-btn-primary{background:var(--accent);color:var(--accent-fg);border:1px solid transparent;box-shadow:0 1px 2px 0 rgb(0 0 0 / .05);} .ds-btn-primary:hover{background:var(--accent-hover);} .ds-btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px;}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Default button for everything that is not the main action.",
+      "html": "<button class=\"ds-btn ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn{font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; display:inline-flex; align-items:center; justify-content:center; gap:6px; height:34px; padding:0 14px; border-radius:6px; font-size:14px; font-weight:500; white-space:nowrap; cursor:pointer; transition:background-color .15s, color .15s;} .ds-btn-secondary{background:var(--surface);color:var(--fg);border:1px solid var(--line);box-shadow:0 1px 2px 0 rgb(0 0 0 / .05);} .ds-btn-secondary:hover{background:var(--hover);} .ds-btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px;}"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Confirms a destructive action, behind a typed-name confirmation.",
+      "html": "<button class=\"ds-btn ds-btn-danger\">Delete organization</button>",
+      "css": ".ds-btn{font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; display:inline-flex; align-items:center; justify-content:center; gap:6px; height:34px; padding:0 14px; border-radius:6px; font-size:14px; font-weight:500; white-space:nowrap; cursor:pointer; transition:background-color .15s, color .15s;} .ds-btn-danger{background:var(--danger);color:#fff;border:1px solid transparent;box-shadow:0 1px 2px 0 rgb(0 0 0 / .05);} .dark .ds-btn-danger{color:#1a0606;} .ds-btn-danger:hover{opacity:.9;} .ds-btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px;}"
+    },
+    {
+      "name": "Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Shared text input and select; 34px minimum so toolbar fields align with buttons.",
+      "html": "<label class=\"ds-field\"><span class=\"ds-label\">Search</span><input class=\"ds-input\" type=\"search\" placeholder=\"Search…\"><span class=\"ds-hint\">3 of 12 organizations</span></label>",
+      "css": ".ds-field{font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; display:flex;flex-direction:column;gap:4px;} .ds-label{font-size:12px;font-weight:500;color:var(--muted);} .ds-hint{font-size:12px;color:var(--subtle);} .ds-input{width:100%;min-height:2.125rem;border-radius:6px;border:1px solid var(--line);background:var(--surface);color:var(--fg);padding:6px 12px;font-size:14px;box-shadow:0 1px 2px 0 rgb(0 0 0 / .05);transition:border-color .15s;} .ds-input::placeholder{color:var(--subtle);} .ds-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);}"
+    },
+    {
+      "name": "Badge",
+      "kind": "chip",
+      "refersTo": "badge",
+      "description": "Pill status label in six tones with soft fills.",
+      "html": "<span class=\"ds-badge ds-ok\">Active</span> <span class=\"ds-badge ds-warn\">MFA pending</span> <span class=\"ds-badge ds-danger\">Locked</span> <span class=\"ds-badge ds-info\">Invited</span> <span class=\"ds-badge ds-neutral\">Disabled</span>",
+      "css": ".ds-badge{font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; display:inline-flex;align-items:center;gap:4px;border-radius:9999px;padding:2px 8px;font-size:12px;font-weight:500;white-space:nowrap;} .ds-ok{background:var(--ok-soft);color:var(--ok);} .ds-warn{background:var(--warn-soft);color:var(--warn);} .ds-danger{background:var(--danger-soft);color:var(--danger);} .ds-info{background:var(--info-soft);color:var(--info);} .ds-neutral{background:var(--neutral-soft);color:var(--muted);}"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Bordered surface with an optional header row of title and actions.",
+      "html": "<section class=\"ds-card\"><header class=\"ds-card-head\"><h2>Organizations</h2><a href=\"#\">View all</a></header><div class=\"ds-card-body\">Card content</div></section>",
+      "css": ".ds-card{font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg);box-shadow:0 1px 2px 0 rgb(0 0 0 / .05);} .ds-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;border-bottom:1px solid var(--line);padding:10px 16px;} .ds-card-head h2{margin:0;font-size:14px;font-weight:600;} .ds-card-head a{font-size:12px;color:var(--accent);text-decoration:none;} .ds-card-head a:hover{text-decoration:underline;} .ds-card-body{padding:16px;font-size:14px;}"
+    },
+    {
+      "name": "Data Table",
+      "kind": "custom",
+      "refersTo": "table-head-cell",
+      "description": "Uppercase muted head on raised; rows tint on hover and on focus-within for j/k travel.",
+      "html": "<table class=\"ds-table\"><thead><tr><th>Name</th><th>Sites</th></tr></thead><tbody><tr><td><a href=\"#\">Organization name</a></td><td>2</td></tr><tr><td><a href=\"#\">Organization name</a></td><td>1</td></tr></tbody></table>",
+      "css": ".ds-table{font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; width:100%;border-collapse:collapse;font-size:14px;color:var(--fg);background:var(--surface);} .ds-table th{border-bottom:1px solid var(--line);background:var(--raised);padding:8px 12px;text-align:left;font-size:12px;font-weight:600;letter-spacing:.025em;text-transform:uppercase;color:var(--muted);white-space:nowrap;} .ds-table td{border-bottom:1px solid var(--line);padding:8px 12px;font-variant-numeric:tabular-nums;} .ds-table tbody tr:last-child td{border-bottom:0;} .ds-table tbody tr:hover,.ds-table tbody tr:focus-within{background:var(--hover);} .ds-table a{color:inherit;text-decoration:none;} .ds-table a:focus-visible{outline:2px solid var(--focus);outline-offset:2px;}"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item",
+      "description": "Navy sidebar, dark in both themes; active item on sidebar-active with white text.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-nav-item ds-active\" href=\"#\">Dashboard</a><a class=\"ds-nav-item\" href=\"#\">Organizations</a><a class=\"ds-nav-item\" href=\"#\">Settings</a></nav>",
+      "css": ".ds-nav{font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; display:flex;flex-direction:column;gap:2px;width:240px;padding:8px;background:var(--sidebar);color:var(--sidebar-fg);} .ds-nav-item{display:flex;align-items:center;gap:10px;border-radius:6px;padding:8px 12px;font-size:14px;color:inherit;text-decoration:none;transition:background-color .15s;} .ds-nav-item:hover{background:color-mix(in srgb, var(--sidebar-active) 60%, transparent);color:#fff;} .ds-active{background:var(--sidebar-active);color:#fff;font-weight:500;} .ds-nav-item:focus-visible{outline:2px solid var(--focus);outline-offset:2px;}"
+    },
+    {
+      "name": "Keyboard Key",
+      "kind": "custom",
+      "refersTo": "kbd",
+      "description": "EasyRMM addition: teaches j/k and / shortcuts in place.",
+      "html": "<span class=\"ds-kbd-line\">Press <kbd class=\"ds-kbd\">j</kbd> and <kbd class=\"ds-kbd\">k</kbd> to move between rows, <kbd class=\"ds-kbd\">/</kbd> to search.</span>",
+      "css": ".ds-kbd-line{font-family: ui-sans-serif, system-ui, sans-serif;font-size:12px;color:var(--muted);} .ds-kbd{font-family: ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;background:var(--raised);padding:0 4px;font-size:11px;color:var(--muted);}"
+    },
+    {
+      "name": "Code View",
+      "kind": "custom",
+      "refersTo": "CodeView (web/src/pages/scripts/parts.tsx)",
+      "description": "EasyRMM addition: a script with a line-number gutter, unwrapped, scrolling sideways, with a copy button.",
+      "html": "<div class=\"ds-code\"><pre><span class=\"ds-ln\">1</span>set -eu\n<span class=\"ds-ln\">2</span>df -h /</pre></div>",
+      "css": ".ds-code{border:1px solid var(--line);border-radius:6px;background:var(--raised);} .ds-code pre{margin:0;padding:10px 12px;font-family: ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace;font-size:12px;line-height:1.625;color:var(--fg);white-space:pre;overflow:auto;} .ds-ln{display:inline-block;width:2ch;margin-right:12px;text-align:right;color:var(--subtle);user-select:none;}"
+    },
+    {
+      "name": "Run Status Badge",
+      "kind": "custom",
+      "refersTo": "RunStatusBadge (web/src/pages/scripts/parts.tsx)",
+      "description": "EasyRMM addition: a script run's status in the badge tones; Running carries an info dot.",
+      "html": "<span class=\"ds-badge ds-info\"><span class=\"ds-dot\"></span>Running</span> <span class=\"ds-badge ds-ok\">Succeeded</span> <span class=\"ds-badge ds-danger\">Failed</span> <span class=\"ds-badge ds-warn\">Timed out</span>",
+      "css": ".ds-badge{display:inline-flex;align-items:center;gap:4px;border-radius:9999px;padding:2px 8px;font:500 12px ui-sans-serif, system-ui, sans-serif;} .ds-info{background:var(--info-soft);color:var(--info);} .ds-ok{background:var(--ok-soft);color:var(--ok);} .ds-danger{background:var(--danger-soft);color:var(--danger);} .ds-warn{background:var(--warn-soft);color:var(--warn);} .ds-dot{width:8px;height:8px;border-radius:9999px;background:var(--info);}"
+    },
+    {
+      "name": "Usage Meter",
+      "kind": "custom",
+      "refersTo": "UsageMeter (web/src/components/Meter.tsx)",
+      "description": "EasyRMM addition: a labelled usage bar whose fill carries severity (accent, warn from 80%, danger from 90%) with an icon from 80%.",
+      "html": "<div class=\"ds-meter\"><div class=\"ds-meter-row\"><span class=\"ds-meter-label\">Memory</span><span><b>38%</b> <span class=\"ds-meter-detail\">· 12 GiB of 30 GiB</span></span></div><div class=\"ds-meter-track\"><div class=\"ds-meter-fill\" style=\"width:38%\"></div></div></div>",
+      "css": ".ds-meter{font:12px ui-sans-serif, system-ui, sans-serif;width:260px;} .ds-meter-row{display:flex;justify-content:space-between;align-items:baseline;color:var(--fg);font-variant-numeric:tabular-nums;} .ds-meter-label{font-weight:500;color:var(--muted);} .ds-meter-detail{color:var(--muted);} .ds-meter-track{margin-top:6px;height:8px;border-radius:9999px;background:var(--accent-soft);overflow:hidden;} .ds-meter-fill{height:100%;border-radius:9999px;background:var(--accent);}"
+    },
+    {
+      "name": "Time Chart",
+      "kind": "custom",
+      "refersTo": "TimeChart (web/src/components/TimeChart.tsx)",
+      "description": "EasyRMM addition: a percentage line chart over time with a legend, hairline grid, 2px series lines, a crosshair tooltip, keyboard travel and a data table.",
+      "html": "<div class=\"ds-chart\"><div class=\"ds-legend\"><span><i style=\"background:var(--series-1)\"></i>Processor <b>9%</b></span><span><i style=\"background:var(--series-2)\"></i>Memory <b>38%</b></span><span><i style=\"background:var(--series-3)\"></i>Fullest disk <b>71%</b></span></div><svg width=\"260\" height=\"80\"><line x1=\"0\" x2=\"260\" y1=\"10\" y2=\"10\" stroke=\"var(--line)\"/><line x1=\"0\" x2=\"260\" y1=\"75\" y2=\"75\" stroke=\"var(--line)\"/><polyline points=\"0,70 60,66 120,60 180,68 260,64\" fill=\"none\" stroke=\"var(--series-1)\" stroke-width=\"2\"/><polyline points=\"0,50 260,50\" fill=\"none\" stroke=\"var(--series-2)\" stroke-width=\"2\"/><polyline points=\"0,28 260,28\" fill=\"none\" stroke=\"var(--series-3)\" stroke-width=\"2\"/></svg></div>",
+      "css": ".ds-chart{font:12px ui-sans-serif, system-ui, sans-serif;color:var(--muted);} .ds-legend{display:flex;gap:16px;margin-bottom:8px;} .ds-legend i{display:inline-block;width:14px;height:2px;border-radius:9999px;margin-right:6px;vertical-align:middle;} .ds-legend b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums;margin-left:4px;}"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "custom",
+      "refersTo": "Segmented (web/src/components/ui.tsx)",
+      "description": "EasyRMM addition: a radio group of short choices, the chosen one a surface chip.",
+      "html": "<div class=\"ds-seg\"><button>1 hour</button><button aria-checked=\"true\">24 hours</button><button>7 days</button></div>",
+      "css": ".ds-seg{display:inline-flex;border:1px solid var(--line);border-radius:6px;background:var(--raised);padding:2px;} .ds-seg button{border:0;background:none;border-radius:4px;padding:4px 10px;font:500 12px ui-sans-serif, system-ui, sans-serif;color:var(--muted);} .ds-seg button[aria-checked=true]{background:var(--surface);color:var(--fg);box-shadow:0 1px 2px rgb(0 0 0 / .05);}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Sister Console",
+    "overview": "EasyRMM uses EasyPatch's design system, adopted as-is. This is the owner's binding instruction, recorded in ADR 0013 (`docs/architecture/adr/0013-easypatch-design-system.md`): a technician moving between the EasyPatch and EasyRMM consoles should not notice a change of product family. The upstream source of truth for every token is EasyPatch's `frontend/src/index.css`; `web/src/index.css` mirrors it value for value (verified by diff), and the primitives in `web/src/components/` follow EasyPatch's component vocabulary (same classes, variants, tones and states). Change a shared token in EasyPatch first, then mirror it here. Never fork a value locally.\n\nThe system is calm, dense and flat operator UI. Bordered surfaces on a dark canvas, one blue accent, four status tones with soft fills, a navy sidebar, the system UI font at a 14px base. Nothing decorative; every tile, badge and row is server data.\n\nEasyRMM adds only five things on top of the shared system, all in service of keyboard travel and toolbar alignment: `kbd` styling, a uniform `.input` min-height so toolbar inputs and selects line up with buttons, a `focus-within` row tint for j/k travel, a `narrow` variant of KeyValueList, and `hideLegend` on AssignmentEditor. Everything else is EasyPatch's.",
+    "keyCharacteristics": [
+      "EasyPatch's tokens, components and both themes, unchanged; EasyPatch `frontend/src/index.css` is upstream.",
+      "Dark theme by default, class-based (`<html class=\"dark\">`), with a light theme toggle in the header.",
+      "Flat bordered surfaces; shadows are hairline (`shadow-xs`) at rest and only lift for overlays.",
+      "System UI stack, 14px base, tabular figures for counts.",
+      "Keyboard-first operation: j/k row travel with prefetch, \"/\" to search, live filter readouts."
+    ],
+    "rules": [
+      {
+        "name": "The Semantic Token Rule",
+        "body": "Components reference semantic tokens only (`surface`, `line`, `muted`, `danger-soft`), so both themes stay consistent. The only literal colors in shipped components are white text on the navy sidebar and on the danger button (with `#1a0606` danger-button text in dark).",
+        "section": "colors"
+      },
+      {
+        "name": "The Upstream Rule",
+        "body": "A token value changes in EasyPatch's `frontend/src/index.css` first and is mirrored here; EasyRMM does not diverge.",
+        "section": "colors"
+      },
+      {
+        "name": "The Tabular Count Rule",
+        "body": "Counts that sit in columns or tiles use tabular figures so they align.",
+        "section": "typography"
+      },
+      {
+        "name": "The Own-Height Rule",
+        "body": "Cards in a grid align to the top (`items-start`) and never stretch to match a neighbour.",
+        "section": "layout"
+      },
+      {
+        "name": "The Column Shedding Rule",
+        "body": "On narrow screens a table hides secondary columns by breakpoint; it never turns into a stack of cards.",
+        "section": "layout"
+      },
+      {
+        "name": "The Float-Only Lift Rule",
+        "body": "Only overlays (toast, drawer, dialog) get more than a hairline shadow.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** take every token from EasyPatch's `frontend/src/index.css`; mirror changes there first.",
+      "**Do** use semantic token classes (`bg-surface`, `text-muted`, `border-line`, tone `-soft` fills) so both themes hold.",
+      "**Do** keep dark as the default theme and toggle with the `dark` class on `<html>`.",
+      "**Do** keep cards in grids top-aligned with their own height (`items-start`).",
+      "**Do** hide secondary table columns below `sm`/`md`/`lg` rather than reflowing tables.",
+      "**Do** keep toolbar inputs, selects and medium buttons at the shared 34px height.",
+      "**Do** give list tables j/k row travel with prefetch, \"/\" search, and a live match readout when filtering.",
+      "**Do** show one-time secrets in a non-dismissible dialog with the one-time notice and a copy control.",
+      "**Do** require typing the object's name before a destructive delete.",
+      "**Do** use the product's nouns: organization, site, device group, device, technician.",
+      "**Do** show real API data only, with empty, loading, error, forbidden and read-only states."
+    ],
+    "donts": [
+      "**Don't** fork a token value or add a local palette color in EasyRMM.",
+      "**Don't** load web fonts; the system UI stack is the face.",
+      "**Don't** put more than a hairline shadow on anything that is not an overlay.",
+      "**Don't** disable the sign-in button for empty fields; name the missing field instead.",
+      "**Don't** show placeholders, sample rows or fake data, and don't show a feature before it exists."
+    ]
+  }
+}

@@ -10,10 +10,13 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -62,7 +65,14 @@ type Config struct {
 	LockoutThreshold int
 	LockoutBase      time.Duration
 	LockoutMax       time.Duration
-	MaxMFAFailures   int
+	// MaxMFAFailures wrong second-factor attempts end a half-signed-in
+	// session; as many wrong passwords end a signed-in session that was
+	// asked to confirm a change.
+	MaxMFAFailures int
+	// MFALockoutThreshold wrong authenticator or recovery codes in a row,
+	// across sign-ins, lock the account on the same schedule as wrong
+	// passwords do from LockoutThreshold.
+	MFALockoutThreshold int
 }
 
 // DefaultConfig is the secure default policy.
@@ -77,6 +87,8 @@ func DefaultConfig() Config {
 		LockoutBase:      time.Minute,
 		LockoutMax:       30 * time.Minute,
 		MaxMFAFailures:   5,
+
+		MFALockoutThreshold: 10,
 	}
 }
 
@@ -98,7 +110,15 @@ type User struct {
 	Email       string    `json:"email"`
 	DisplayName string    `json:"displayName"`
 	Status      string    `json:"status"`
-	MFAEnabled  bool      `json:"mfaEnabled"`
+	// MFAEnabled: the user has a second factor of either kind.
+	MFAEnabled bool `json:"mfaEnabled"`
+	// TOTP: an authenticator app is set up.
+	TOTP bool `json:"totp"`
+	// SecurityKeys counts registered security keys and passkeys (ADR-0032).
+	SecurityKeys int `json:"securityKeys"`
+	// PasskeyPrompt: offer a passkey after sign-in. Passkeys work on this
+	// server, the user has none, and has not put the offer off or declined it.
+	PasskeyPrompt bool `json:"passkeyPrompt"`
 }
 
 // Session is a sign-in session.
@@ -125,20 +145,64 @@ type Service struct {
 	now      func() time.Time
 	ipLimit  *KeyedLimiter
 	mfaLimit *KeyedLimiter
+	// resetLimit caps reset e-mail per account, whoever asks for it.
+	resetLimit *KeyedLimiter
+	log        *slog.Logger
+	// background tracks reset e-mail still being sent.
+	background sync.WaitGroup
+	// wa is nil when security keys and passkeys are unavailable (ADR-0032).
+	wa       *webauthn.WebAuthn
+	waStatus WebAuthnStatus
 }
 
 // NewService builds the service.
 func NewService(db *database.DB, auditLog *audit.Logger, hasher *Hasher, sealer *secrets.Sealer, mailer Mailer, cfg Config) *Service {
-	return &Service{
+	s := &Service{
 		db: db, audit: auditLog, hasher: hasher, sealer: sealer, mailer: mailer, cfg: cfg, now: time.Now,
 		// 10 attempts at once, then one every 6 seconds, per client address.
 		ipLimit:  NewKeyedLimiter(6*time.Second, 10, 100_000),
 		mfaLimit: NewKeyedLimiter(6*time.Second, 10, 100_000),
+		// Three at once, then one every 20 minutes.
+		resetLimit: NewKeyedLimiter(20*time.Minute, 3, 100_000),
+		log:        slog.Default(),
 	}
+	s.configureWebAuthn()
+	return s
 }
 
 // SetClock replaces the time source (tests only).
 func (s *Service) SetClock(now func() time.Time) { s.now = now }
+
+// SetLogger sets where failures of background work (reset e-mail) go.
+func (s *Service) SetLogger(l *slog.Logger) { s.log = l }
+
+// Wait returns once background work, such as reset e-mail being sent, has
+// finished.
+func (s *Service) Wait() { s.background.Wait() }
+
+// LimitKey is what per-address rate limits count against: the address for
+// IPv4, and the /64 network for IPv6, since one host is usually given a
+// whole /64 and could otherwise pick a new address for every attempt.
+func LimitKey(ip netip.Addr) string {
+	ip = ip.Unmap().WithZone("")
+	if ip.Is6() {
+		if p, err := ip.Prefix(64); err == nil {
+			return p.String()
+		}
+	}
+	return ip.String()
+}
+
+// lockout is how long an account locks after its failures-th consecutive
+// failure, threshold being the first that locks: LockoutBase, doubling with
+// each further failure, at most LockoutMax.
+func (s *Service) lockout(failures, threshold int) time.Duration {
+	d := s.cfg.LockoutBase << min(failures-threshold, 16)
+	if d > s.cfg.LockoutMax || d <= 0 {
+		d = s.cfg.LockoutMax
+	}
+	return d
+}
 
 // Config returns the active policy.
 func (s *Service) Config() Config { return s.cfg }
@@ -178,7 +242,7 @@ func anonymousActor(label string, meta RequestMeta) audit.Actor {
 // session is fully active only when no second factor is required.
 func (s *Service) Login(ctx context.Context, email, password string, meta RequestMeta) (string, *Session, error) {
 	email = normaliseEmail(email)
-	if meta.IP.IsValid() && !s.ipLimit.Allow("login:"+meta.IP.String()) {
+	if meta.IP.IsValid() && !s.ipLimit.Allow("login:"+LimitKey(meta.IP)) {
 		_ = s.audit.Record(ctx, audit.Event{Actor: anonymousActor(email, meta), Action: "auth.login", Outcome: audit.Denied, Details: map[string]any{"reason": "rate_limited"}})
 		return "", nil, ErrRateLimited
 	}
@@ -195,12 +259,14 @@ func (s *Service) Login(ctx context.Context, email, password string, meta Reques
 			hash, status string
 			pwHash       *string
 			totpEnabled  *time.Time
+			hasKeys      bool
 			failed       int
 			lockedUntil  *time.Time
 		)
-		err := tx.QueryRow(ctx, `SELECT id, password_hash, status, totp_enabled_at, failed_logins, locked_until
+		err := tx.QueryRow(ctx, `SELECT id, password_hash, status, totp_enabled_at,
+				EXISTS (SELECT 1 FROM user_webauthn_credentials c WHERE c.user_id = users.id), failed_logins, locked_until
 			FROM users WHERE email = $1 FOR UPDATE`, email).
-			Scan(&userID, &pwHash, &status, &totpEnabled, &failed, &lockedUntil)
+			Scan(&userID, &pwHash, &status, &totpEnabled, &hasKeys, &failed, &lockedUntil)
 		if errors.Is(err, pgx.ErrNoRows) {
 			s.hasher.DummyVerify(ctx, password)
 			failure = "unknown_account"
@@ -230,11 +296,7 @@ func (s *Service) Login(ctx context.Context, email, password string, meta Reques
 			failed++
 			var lock *time.Time
 			if failed >= s.cfg.LockoutThreshold {
-				d := s.cfg.LockoutBase << min(failed-s.cfg.LockoutThreshold, 16)
-				if d > s.cfg.LockoutMax || d <= 0 {
-					d = s.cfg.LockoutMax
-				}
-				until := now.Add(d)
+				until := now.Add(s.lockout(failed, s.cfg.LockoutThreshold))
 				lock = &until
 			}
 			_, err := tx.Exec(ctx, `UPDATE users SET failed_logins = $2, locked_until = $3 WHERE id = $1`, userID, failed, lock)
@@ -256,7 +318,7 @@ func (s *Service) Login(ctx context.Context, email, password string, meta Reques
 		}
 		state := StateActive
 		switch {
-		case totpEnabled != nil:
+		case totpEnabled != nil || hasKeys:
 			state = StateMFARequired
 		case s.cfg.RequireMFA:
 			state = StateMFAEnrollment
@@ -285,6 +347,100 @@ func (s *Service) Login(ctx context.Context, email, password string, meta Reques
 		}
 		_ = s.audit.Record(ctx, audit.Event{Actor: actor, Action: "auth.login", Outcome: audit.Failure, Details: map[string]any{"reason": failure}})
 		return "", nil, ErrInvalidCredentials
+	}
+	return token, sess, nil
+}
+
+// ErrAccountUnavailable: the account is disabled or locked, so another
+// system's word that this is its owner is not enough to sign in.
+var ErrAccountUnavailable = errors.New("account is disabled or locked")
+
+// ExternalSignIn is a sign-in another system vouched for: a single sign-on
+// through an identity provider (ADR-0034).
+type ExternalSignIn struct {
+	UserID uuid.UUID
+	Email  string
+	// Method names it in the audit log ("oidc"); Details add to the event.
+	Method  string
+	Details map[string]any
+	// SecondFactorDone: the provider is trusted to have asked for a second
+	// factor, so EasyRMM does not ask for its own.
+	SecondFactorDone bool
+}
+
+// SignInExternal starts a session for a user another system authenticated.
+// It is rate-limited with password sign-in, refused for disabled or locked
+// accounts, and needs EasyRMM's second factor (or its set-up) next, as
+// after a password, unless SecondFactorDone.
+func (s *Service) SignInExternal(ctx context.Context, in ExternalSignIn, meta RequestMeta) (string, *Session, error) {
+	details := func(extra map[string]any) map[string]any {
+		d := map[string]any{"method": in.Method}
+		for k, v := range in.Details {
+			d[k] = v
+		}
+		for k, v := range extra {
+			d[k] = v
+		}
+		return d
+	}
+	actor := userActor(in.UserID, in.Email, meta)
+	if meta.IP.IsValid() && !s.ipLimit.Allow("login:"+LimitKey(meta.IP)) {
+		_ = s.audit.Record(ctx, audit.Event{Actor: actor, Action: "auth.login", Outcome: audit.Denied, Details: details(map[string]any{"reason": "rate_limited"})})
+		return "", nil, ErrRateLimited
+	}
+	var token string
+	var sess *Session
+	failure := ""
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		var status string
+		var totpEnabled, lockedUntil *time.Time
+		var hasKeys bool
+		err := tx.QueryRow(ctx, `SELECT status, totp_enabled_at, locked_until,
+				EXISTS (SELECT 1 FROM user_webauthn_credentials c WHERE c.user_id = users.id)
+			FROM users WHERE id = $1 FOR UPDATE`, in.UserID).Scan(&status, &totpEnabled, &lockedUntil, &hasKeys)
+		if errors.Is(err, pgx.ErrNoRows) {
+			failure = "unknown_account"
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		switch {
+		case status != "active":
+			failure = "disabled"
+			return nil
+		case lockedUntil != nil && s.now().Before(*lockedUntil):
+			failure = "locked"
+			return nil
+		}
+		state := StateActive
+		switch {
+		case in.SecondFactorDone:
+		case totpEnabled != nil || hasKeys:
+			state = StateMFARequired
+		case s.cfg.RequireMFA:
+			state = StateMFAEnrollment
+		}
+		token, sess, err = s.createSession(ctx, tx, in.UserID, state, meta)
+		if err != nil {
+			return err
+		}
+		if state == StateActive {
+			if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1`, in.UserID); err != nil {
+				return err
+			}
+		}
+		return s.audit.Write(ctx, tx, audit.Event{
+			Actor: actor, Action: "auth.login", Outcome: audit.Success,
+			TargetType: "session", TargetID: sess.ID.String(), Details: details(map[string]any{"state": string(state)}),
+		})
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("auth: external sign-in: %w", err)
+	}
+	if failure != "" {
+		_ = s.audit.Record(ctx, audit.Event{Actor: actor, Action: "auth.login", Outcome: audit.Failure, Details: details(map[string]any{"reason": failure})})
+		return "", nil, ErrAccountUnavailable
 	}
 	return token, sess, nil
 }
@@ -328,18 +484,21 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Session, *Us
 	var sess Session
 	var user User
 	var state string
-	var totpEnabled *time.Time
+	var totpEnabled, promptAfter, promptDeclined *time.Time
 	var revokedAt *time.Time
 	now := s.now()
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT s.id, s.user_id, s.state, s.created_at, s.last_seen_at, s.expires_at, s.idle_expires_at,
 			       s.revoked_at, s.source_ip, s.user_agent,
-			       u.email, u.display_name, u.status, u.totp_enabled_at
+			       u.email, u.display_name, u.status, u.totp_enabled_at,
+			       (SELECT count(*) FROM user_webauthn_credentials c WHERE c.user_id = u.id),
+			       u.passkey_prompt_after, u.passkey_prompt_declined_at
 			FROM sessions s JOIN users u ON u.id = s.user_id
 			WHERE s.token_hash = $1`, hash).
 			Scan(&sess.ID, &sess.UserID, &state, &sess.CreatedAt, &sess.LastSeenAt, &sess.ExpiresAt, &sess.IdleExpiresAt,
-				&revokedAt, &sess.SourceIP, &sess.UserAgent, &user.Email, &user.DisplayName, &user.Status, &totpEnabled)
+				&revokedAt, &sess.SourceIP, &sess.UserAgent, &user.Email, &user.DisplayName, &user.Status, &totpEnabled, &user.SecurityKeys,
+				&promptAfter, &promptDeclined)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrInvalidSession
 		}
@@ -365,7 +524,10 @@ func (s *Service) Authenticate(ctx context.Context, token string) (*Session, *Us
 	}
 	sess.State = SessionState(state)
 	user.ID = sess.UserID
-	user.MFAEnabled = totpEnabled != nil
+	user.TOTP = totpEnabled != nil
+	user.MFAEnabled = user.TOTP || user.SecurityKeys > 0
+	user.PasskeyPrompt = s.wa != nil && user.SecurityKeys == 0 && promptDeclined == nil &&
+		(promptAfter == nil || !now.Before(*promptAfter))
 	return &sess, &user, nil
 }
 
@@ -399,15 +561,26 @@ func (s *Service) VerifyMFA(ctx context.Context, sess *Session, user *User, code
 	var token string
 	var verifyErr error
 	method := "totp"
+	if LooksLikeRecoveryCode(code) {
+		method = "recovery_code"
+	}
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		var sealed *string
 		var lastStep *int64
-		if err := tx.QueryRow(ctx, `SELECT totp_secret_sealed, totp_last_step FROM users WHERE id = $1 FOR UPDATE`, sess.UserID).Scan(&sealed, &lastStep); err != nil {
+		var enabled, lockedUntil *time.Time
+		if err := tx.QueryRow(ctx, `SELECT totp_secret_sealed, totp_enabled_at, totp_last_step, locked_until FROM users WHERE id = $1 FOR UPDATE`, sess.UserID).
+			Scan(&sealed, &enabled, &lastStep, &lockedUntil); err != nil {
 			return err
 		}
+		if lockedUntil != nil && s.now().Before(*lockedUntil) {
+			// Locked after too many wrong codes (or passwords): no code is
+			// tried until the lock ends.
+			verifyErr = ErrRateLimited
+			return s.audit.Write(ctx, tx, audit.Event{Actor: userActor(sess.UserID, user.Email, meta), Action: "auth.mfa_verify", Outcome: audit.Denied,
+				TargetType: "session", TargetID: sess.ID.String(), Details: map[string]any{"method": method, "reason": "locked"}})
+		}
 		ok := false
-		if LooksLikeRecoveryCode(code) {
-			method = "recovery_code"
+		if method == "recovery_code" {
 			tag, err := tx.Exec(ctx, `UPDATE user_recovery_codes SET used_at = now()
 				WHERE id = (SELECT id FROM user_recovery_codes WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL LIMIT 1)`,
 				sess.UserID, HashRecoveryCode(code))
@@ -415,7 +588,9 @@ func (s *Service) VerifyMFA(ctx context.Context, sess *Session, user *User, code
 				return err
 			}
 			ok = tag.RowsAffected() == 1
-		} else if sealed != nil {
+		} else if sealed != nil && enabled != nil {
+			// Only a confirmed authenticator signs in. A secret whose set-up
+			// was started but never finished is not a second factor.
 			secret, err := s.sealer.Open(*sealed, totpAAD(sess.UserID))
 			if err != nil {
 				return fmt.Errorf("auth: opening totp secret: %w", err)
@@ -433,25 +608,15 @@ func (s *Service) VerifyMFA(ctx context.Context, sess *Session, user *User, code
 			}
 		}
 		if !ok {
-			var failures int
-			if err := tx.QueryRow(ctx, `UPDATE sessions SET mfa_failures = mfa_failures + 1 WHERE id = $1 RETURNING mfa_failures`, sess.ID).Scan(&failures); err != nil {
-				return err
-			}
-			if failures >= s.cfg.MaxMFAFailures {
-				if _, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at = now(), revoked_reason = 'mfa_failures' WHERE id = $1`, sess.ID); err != nil {
-					return err
-				}
-			}
 			verifyErr = ErrInvalidCode
-			return s.audit.Write(ctx, tx, audit.Event{Actor: userActor(sess.UserID, user.Email, meta), Action: "auth.mfa_verify", Outcome: audit.Failure,
-				TargetType: "session", TargetID: sess.ID.String(), Details: map[string]any{"method": method, "failures": failures}})
+			return s.codeFailed(ctx, tx, sess, user, method, meta)
 		}
 		var err error
 		token, err = s.rotate(ctx, tx, sess.ID, StateActive)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1`, sess.UserID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now(), mfa_failed_attempts = 0 WHERE id = $1`, sess.UserID); err != nil {
 			return err
 		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: userActor(sess.UserID, user.Email, meta), Action: "auth.mfa_verify", Outcome: audit.Success,
@@ -466,10 +631,56 @@ func (s *Service) VerifyMFA(ctx context.Context, sess *Session, user *User, code
 	return token, nil
 }
 
+// sessionMFAFailed counts a failed second-factor attempt against a
+// half-signed-in session, and ends the session after MaxMFAFailures.
+func (s *Service) sessionMFAFailed(ctx context.Context, tx pgx.Tx, sessionID uuid.UUID) (int, error) {
+	var failures int
+	if err := tx.QueryRow(ctx, `UPDATE sessions SET mfa_failures = mfa_failures + 1 WHERE id = $1 RETURNING mfa_failures`, sessionID).Scan(&failures); err != nil {
+		return 0, err
+	}
+	if failures >= s.cfg.MaxMFAFailures {
+		if _, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at = now(), revoked_reason = 'mfa_failures' WHERE id = $1 AND revoked_at IS NULL`, sessionID); err != nil {
+			return 0, err
+		}
+	}
+	return failures, nil
+}
+
+// codeFailed records a wrong authenticator or recovery code. It counts
+// against the session (see sessionMFAFailed) and against the account:
+// signing in again starts a new session but not a new account count, and
+// after MFALockoutThreshold wrong codes in a row the account locks and the
+// session ends. Without this, someone who knows the password could guess
+// codes for as long as they liked, five per sign-in.
+func (s *Service) codeFailed(ctx context.Context, tx pgx.Tx, sess *Session, user *User, method string, meta RequestMeta) error {
+	failures, err := s.sessionMFAFailed(ctx, tx, sess.ID)
+	if err != nil {
+		return err
+	}
+	var inARow int
+	if err := tx.QueryRow(ctx, `UPDATE users SET mfa_failed_attempts = mfa_failed_attempts + 1 WHERE id = $1 RETURNING mfa_failed_attempts`, sess.UserID).Scan(&inARow); err != nil {
+		return err
+	}
+	details := map[string]any{"method": method, "failures": failures, "inARow": inARow}
+	if t := s.cfg.MFALockoutThreshold; t > 0 && inARow >= t {
+		until := s.now().Add(s.lockout(inARow, t))
+		if _, err := tx.Exec(ctx, `UPDATE users SET locked_until = $2 WHERE id = $1`, sess.UserID, until); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at = now(), revoked_reason = 'mfa_failures' WHERE id = $1 AND revoked_at IS NULL`, sess.ID); err != nil {
+			return err
+		}
+		details["lockedUntil"] = until
+	}
+	return s.audit.Write(ctx, tx, audit.Event{Actor: userActor(sess.UserID, user.Email, meta), Action: "auth.mfa_verify", Outcome: audit.Failure,
+		TargetType: "session", TargetID: sess.ID.String(), Details: details})
+}
+
 // canEnrollTOTP allows TOTP set-up while enrolling at sign-in, or from an
-// active session for a user who has no TOTP configured yet.
+// active session for a user who has no TOTP configured yet (they may have
+// security keys).
 func canEnrollTOTP(sess *Session, user *User) bool {
-	return sess.State == StateMFAEnrollment || (sess.State == StateActive && !user.MFAEnabled)
+	return sess.State == StateMFAEnrollment || (sess.State == StateActive && !user.TOTP)
 }
 
 func totpAAD(userID uuid.UUID) []byte { return []byte("user-totp:" + userID.String()) }
@@ -482,10 +693,17 @@ type TOTPEnrollment struct {
 
 // BeginTOTPEnrollment generates a new pending TOTP secret. It is allowed
 // while enrolling at sign-in, or from an active session for a user who has
-// no TOTP configured yet.
-func (s *Service) BeginTOTPEnrollment(ctx context.Context, sess *Session, user *User) (*TOTPEnrollment, error) {
+// no TOTP configured yet; a signed-in user confirms their password first,
+// as for adding a security key, so a stolen session cannot add a second
+// factor that outlives it. The secret signs in only once confirmed.
+func (s *Service) BeginTOTPEnrollment(ctx context.Context, sess *Session, user *User, password string, meta RequestMeta) (*TOTPEnrollment, error) {
 	if !canEnrollTOTP(sess, user) {
 		return nil, ErrWrongState
+	}
+	if sess.State == StateActive {
+		if err := s.reauthenticate(ctx, sess, password, "auth.mfa_enroll", meta); err != nil {
+			return nil, err
+		}
 	}
 	secret, err := NewTOTPSecret()
 	if err != nil {
@@ -586,7 +804,7 @@ func (s *Service) RegenerateRecoveryCodes(ctx context.Context, sess *Session, us
 	if sess.State != StateActive || !user.MFAEnabled {
 		return nil, ErrWrongState
 	}
-	if err := s.confirmPassword(ctx, sess.UserID, password); err != nil {
+	if err := s.reauthenticate(ctx, sess, password, "auth.recovery_codes_regenerate", meta); err != nil {
 		return nil, err
 	}
 	codes, err := NewRecoveryCodes()
@@ -622,6 +840,40 @@ func (s *Service) confirmPassword(ctx context.Context, userID uuid.UUID, passwor
 		return ErrInvalidCredentials
 	}
 	return nil
+}
+
+// reauthenticate checks a signed-in user's password before a sensitive
+// change. Wrong passwords are audited under action and count against the
+// session, which ends after MaxMFAFailures of them, so a stolen session
+// cannot be used to guess the password.
+func (s *Service) reauthenticate(ctx context.Context, sess *Session, password, action string, meta RequestMeta) error {
+	if !s.mfaLimit.Allow("confirm:" + sess.UserID.String()) {
+		return ErrRateLimited
+	}
+	err := s.confirmPassword(ctx, sess.UserID, password)
+	if !errors.Is(err, ErrInvalidCredentials) {
+		return err
+	}
+	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		var failures int
+		var email string
+		if err := tx.QueryRow(ctx, `UPDATE sessions s SET reauth_failures = s.reauth_failures + 1 FROM users u
+			WHERE s.id = $1 AND u.id = s.user_id RETURNING s.reauth_failures, u.email`, sess.ID).Scan(&failures, &email); err != nil {
+			return err
+		}
+		ended := failures >= s.cfg.MaxMFAFailures
+		if ended {
+			if _, err := tx.Exec(ctx, `UPDATE sessions SET revoked_at = now(), revoked_reason = 'reauth_failures' WHERE id = $1 AND revoked_at IS NULL`, sess.ID); err != nil {
+				return err
+			}
+		}
+		return s.audit.Write(ctx, tx, audit.Event{Actor: userActor(sess.UserID, email, meta), Action: action, Outcome: audit.Failure,
+			TargetType: "user", TargetID: sess.UserID.String(), Details: map[string]any{"reason": "wrong_password", "failures": failures, "signedOut": ended}})
+	})
+	if err != nil {
+		return err
+	}
+	return ErrInvalidCredentials
 }
 
 // Logout revokes the current session.
@@ -683,39 +935,68 @@ func RevokeAllSessions(ctx context.Context, tx pgx.Tx, userID, except uuid.UUID,
 	return err
 }
 
-// ChangePassword changes the signed-in user's password and signs out their
-// other sessions.
-func (s *Service) ChangePassword(ctx context.Context, sess *Session, user *User, current, next string, meta RequestMeta) error {
+// ChangePassword changes the signed-in user's password, signs out their
+// other sessions and gives this one a new token, so that whoever may have
+// copied the old token is signed out too. It returns the new token.
+func (s *Service) ChangePassword(ctx context.Context, sess *Session, user *User, current, next string, meta RequestMeta) (string, error) {
 	if sess.State != StateActive {
-		return ErrWrongState
+		return "", ErrWrongState
 	}
 	if err := ValidatePassword(next, user.Email, user.DisplayName, strings.Split(user.Email, "@")[0]); err != nil {
-		return err
+		return "", err
 	}
-	if err := s.confirmPassword(ctx, sess.UserID, current); err != nil {
-		_ = s.audit.Record(ctx, audit.Event{Actor: userActor(sess.UserID, user.Email, meta), Action: "auth.password_change", Outcome: audit.Failure})
-		return err
+	if err := s.reauthenticate(ctx, sess, current, "auth.password_change", meta); err != nil {
+		return "", err
 	}
 	hash, err := s.hasher.Hash(ctx, next)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+	token, tokenHash, err := NewToken()
+	if err != nil {
+		return "", err
+	}
+	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2, password_changed_at = now() WHERE id = $1`, sess.UserID, hash); err != nil {
 			return err
 		}
 		if err := RevokeAllSessions(ctx, tx, sess.UserID, sess.ID, "password_change"); err != nil {
 			return err
 		}
+		// The session keeps its lifetime; only its token changes.
+		tag, err := tx.Exec(ctx, `UPDATE sessions SET token_hash = $2 WHERE id = $1 AND revoked_at IS NULL`, sess.ID, tokenHash)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return ErrInvalidSession
+		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: userActor(sess.UserID, user.Email, meta), Action: "auth.password_change",
 			Outcome: audit.Success, TargetType: "user", TargetID: sess.UserID.String()})
 	})
+	if err != nil {
+		return "", err
+	}
+	return token, nil
 }
+
+// InviteTTL is how long an invitation link stays valid.
+const InviteTTL = 72 * time.Hour
 
 // IssueResetToken creates a password reset token for a user inside tx and
 // returns the link to deliver. Used by self-service reset and by
 // administrators helping a user who cannot sign in.
 func (s *Service) IssueResetToken(ctx context.Context, tx pgx.Tx, userID uuid.UUID, meta RequestMeta) (string, error) {
+	return s.issueToken(ctx, tx, userID, s.cfg.PasswordResetTTL, "/reset-password", meta)
+}
+
+// IssueInviteToken creates the link a newly invited user opens to choose
+// their password. It is a password reset token with a longer lifetime.
+func (s *Service) IssueInviteToken(ctx context.Context, tx pgx.Tx, userID uuid.UUID, meta RequestMeta) (string, error) {
+	return s.issueToken(ctx, tx, userID, InviteTTL, "/welcome", meta)
+}
+
+func (s *Service) issueToken(ctx context.Context, tx pgx.Tx, userID uuid.UUID, ttl time.Duration, path string, meta RequestMeta) (string, error) {
 	token, hash, err := NewToken()
 	if err != nil {
 		return "", err
@@ -730,57 +1011,101 @@ func (s *Service) IssueResetToken(ctx context.Context, tx pgx.Tx, userID uuid.UU
 		ip = &a
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO password_reset_tokens (token_hash, user_id, expires_at, source_ip) VALUES ($1, $2, $3, $4)`,
-		hash, userID, s.now().Add(s.cfg.PasswordResetTTL), ip); err != nil {
+		hash, userID, s.now().Add(ttl), ip); err != nil {
 		return "", err
 	}
 	// The token travels in the URL fragment so it never reaches server or
 	// proxy access logs.
-	return strings.TrimRight(s.cfg.PublicURL, "/") + "/reset-password#token=" + token, nil
+	return strings.TrimRight(s.cfg.PublicURL, "/") + path + "#token=" + token, nil
 }
 
+// Mailer returns the configured mailer, or nil.
+func (s *Service) Mailer() Mailer { return s.mailer }
+
 // RequestPasswordReset e-mails a reset link if the address belongs to an
-// active account. It always appears to succeed.
+// active account. It always appears to succeed, and it answers before
+// looking the address up: the lookup and the e-mail happen in the
+// background, so how long the answer takes says nothing about whether the
+// account exists. Each account gets at most a few links an hour, however
+// many addresses ask.
 func (s *Service) RequestPasswordReset(ctx context.Context, email string, meta RequestMeta) error {
 	if s.mailer == nil {
 		return ErrResetUnavailable
 	}
-	email = normaliseEmail(email)
-	if meta.IP.IsValid() && !s.ipLimit.Allow("reset:"+meta.IP.String()) {
+	if meta.IP.IsValid() && !s.ipLimit.Allow("reset:"+LimitKey(meta.IP)) {
 		return ErrRateLimited
 	}
+	email = normaliseEmail(email)
+	if email == "" || len(email) > 254 {
+		return nil
+	}
+	s.background.Add(1)
+	go func() {
+		defer s.background.Done()
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+		defer cancel()
+		if err := s.sendResetLink(ctx, email, meta); err != nil {
+			s.log.Error("password reset e-mail failed", "error", err)
+		}
+	}()
+	return nil
+}
+
+// sendResetLink issues and e-mails the link. An invited user who has not
+// chosen a password yet gets a new invitation link instead, valid as long
+// as invitations are, so a reset requested by someone else does not cut
+// their invitation short.
+func (s *Service) sendResetLink(ctx context.Context, email string, meta RequestMeta) error {
 	var link string
-	var userID uuid.UUID
+	var invited bool
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1 AND status = 'active'`, email).Scan(&userID)
+		var userID uuid.UUID
+		var hasPassword bool
+		err := tx.QueryRow(ctx, `SELECT id, password_hash IS NOT NULL FROM users WHERE email = $1 AND status = 'active' FOR UPDATE`, email).
+			Scan(&userID, &hasPassword)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		link, err = s.IssueResetToken(ctx, tx, userID, meta)
+		event := audit.Event{Actor: userActor(userID, email, meta), Action: "auth.password_reset_request", TargetType: "user", TargetID: userID.String()}
+		if !s.resetLimit.Allow(userID.String()) {
+			event.Outcome, event.Details = audit.Denied, map[string]any{"reason": "rate_limited"}
+			return s.audit.Write(ctx, tx, event)
+		}
+		invited = !hasPassword
+		if invited {
+			link, err = s.IssueInviteToken(ctx, tx, userID, meta)
+		} else {
+			link, err = s.IssueResetToken(ctx, tx, userID, meta)
+		}
 		if err != nil {
 			return err
 		}
-		return s.audit.Write(ctx, tx, audit.Event{Actor: userActor(userID, email, meta), Action: "auth.password_reset_request", Outcome: audit.Success,
-			TargetType: "user", TargetID: userID.String()})
+		event.Outcome, event.Details = audit.Success, map[string]any{"invitation": invited}
+		return s.audit.Write(ctx, tx, event)
 	})
 	if err != nil || link == "" {
 		return err
 	}
+	if invited {
+		body := "Someone asked to reset the password of your EasyRMM account, which is not set up yet.\n\n" +
+			"Open this link within " + InviteTTL.String() + " to choose your password and finish setting it up:\n\n" + link + "\n\n" +
+			"Earlier invitation links no longer work. If you were not expecting this, you can ignore this message.\n"
+		return s.mailer.Send(ctx, email, "Finish setting up your EasyRMM account", body)
+	}
 	body := "A password reset was requested for your EasyRMM account.\n\n" +
 		"Open this link within " + s.cfg.PasswordResetTTL.String() + " to choose a new password:\n\n" + link + "\n\n" +
 		"If you did not request this, you can ignore this message. Your password has not changed.\n"
-	// Send outside the transaction; a mail failure should not reveal anything
-	// to the requester.
-	return s.mailer.Send(context.WithoutCancel(ctx), email, "Reset your EasyRMM password", body)
+	return s.mailer.Send(ctx, email, "Reset your EasyRMM password", body)
 }
 
 // CompletePasswordReset sets a new password using a reset token. All of the
 // user's sessions are revoked and any lockout is cleared. MFA is still
 // required at the next sign-in.
 func (s *Service) CompletePasswordReset(ctx context.Context, token, next string, meta RequestMeta) error {
-	if meta.IP.IsValid() && !s.ipLimit.Allow("reset:"+meta.IP.String()) {
+	if meta.IP.IsValid() && !s.ipLimit.Allow("reset:"+LimitKey(meta.IP)) {
 		return ErrRateLimited
 	}
 	if token == "" || len(token) > 128 {
@@ -814,7 +1139,7 @@ func (s *Service) CompletePasswordReset(ctx context.Context, token, next string,
 		if tag.RowsAffected() != 1 {
 			return ErrInvalidResetToken // used concurrently
 		}
-		if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2, password_changed_at = now(), failed_logins = 0, locked_until = NULL WHERE id = $1`, userID, hash); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2, password_changed_at = now(), failed_logins = 0, mfa_failed_attempts = 0, locked_until = NULL WHERE id = $1`, userID, hash); err != nil {
 			return err
 		}
 		if err := RevokeAllSessions(ctx, tx, userID, uuid.Nil, "password_reset"); err != nil {

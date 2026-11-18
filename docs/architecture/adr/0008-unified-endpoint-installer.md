@@ -1,6 +1,7 @@
 # ADR-0008: Unified endpoint installer bundling MeshAgent
 
-* Status: Accepted (2026-11-15)
+* Status: Accepted (2026-11-15). MeshAgent sourcing superseded by
+  [ADR-0015](0015-enrollment-and-meshagent-delivery.md)
 
 ## Context
 Customers must perform exactly one installation. MeshAgent needs a

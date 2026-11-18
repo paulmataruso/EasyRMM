@@ -1,0 +1,271 @@
+// Package jobs is the script library and the jobs that run scripts on
+// devices (ADR-0017): validation and permissions, delivery to agents
+// through a signed long poll, results, cancellation and retention.
+package jobs
+
+import (
+	"context"
+	"crypto/ed25519"
+	"errors"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/audit"
+	"github.com/paulmataruso/easyrmm/server/internal/database"
+)
+
+// Limits of scripts and jobs.
+const (
+	MaxBody        = 64 << 10
+	MaxName        = 200
+	MaxDescription = 2000
+	MaxArgs        = 32
+	MaxArgBytes    = 1024
+	MinTimeout     = 1
+	MaxTimeout     = 4 * 3600
+	DefaultTimeout = 300
+	// MaxDevices bounds the devices of one job.
+	MaxDevices = 500
+	// Waits for an offline device, in hours.
+	MinWaitHours     = 1
+	MaxWaitHours     = 7 * 24
+	DefaultWaitHours = 24
+	// MaxList bounds one list response.
+	MaxList = 200
+)
+
+// Delivery timing.
+const (
+	// RedeliverAfter is how long a delivered run may stay unstarted before
+	// it is delivered again.
+	RedeliverAfter = 2 * time.Minute
+	// DeadlineGrace is added to a run's timeout before it counts as lost.
+	DeadlineGrace = 5 * time.Minute
+	// CancelResend is how often a cancellation is repeated to the agent.
+	CancelResend = time.Minute
+	// SweepInterval is how often runs are expired and marked lost.
+	SweepInterval = 30 * time.Second
+)
+
+// Run statuses.
+const (
+	StatusQueued    = "queued"
+	StatusSent      = "sent"
+	StatusRunning   = "running"
+	StatusSucceeded = agentproto.RunSucceeded
+	StatusFailed    = agentproto.RunFailed
+	StatusTimedOut  = agentproto.RunTimedOut
+	StatusCanceled  = agentproto.RunCanceled
+	StatusExpired   = "expired"
+	StatusLost      = "lost"
+)
+
+// Statuses lists every run status.
+var Statuses = []string{StatusQueued, StatusSent, StatusRunning, StatusSucceeded, StatusFailed, StatusTimedOut, StatusCanceled, StatusExpired, StatusLost}
+
+// Errors the agent API maps to responses.
+var (
+	// ErrRunNotFound is a run that does not exist or is not the device's.
+	ErrRunNotFound = errors.New("jobs: no such run for this device")
+	// ErrBadResult is a result the server cannot accept.
+	ErrBadResult = errors.New("jobs: result not valid")
+)
+
+// Service manages scripts and jobs.
+type Service struct {
+	db        *database.DB
+	audit     *audit.Logger
+	key       ed25519.PrivateKey
+	retention time.Duration
+	log       *slog.Logger
+	now       func() time.Time
+	hub       *hub
+	// pollWait is how long a poll without work is held; tests shorten it.
+	pollWait time.Duration
+}
+
+// New returns a Service. key signs jobs; retention is how long finished jobs
+// are kept.
+func New(db *database.DB, auditLog *audit.Logger, key ed25519.PrivateKey, retention time.Duration, log *slog.Logger) *Service {
+	return &Service{db: db, audit: auditLog, key: key, retention: retention, log: log, now: time.Now, hub: newHub(), pollWait: agentproto.PollWait}
+}
+
+// PublicKey is the job-signing public key in the form agents pin.
+func (s *Service) PublicKey() string {
+	return agentproto.EncodeKey(s.key.Public().(ed25519.PublicKey))
+}
+
+// Close releases every waiting poll, so the server can shut down without
+// waiting for them.
+func (s *Service) Close() { s.hub.close() }
+
+// Run expires and marks lost runs, and removes jobs past retention, until
+// ctx ends.
+func (s *Service) Run(ctx context.Context) {
+	tick := time.NewTicker(SweepInterval)
+	defer tick.Stop()
+	var lastPurge time.Time
+	for {
+		if _, err := s.Sweep(ctx); err != nil && ctx.Err() == nil {
+			s.log.Error("jobs: sweeping runs failed", "error", err)
+		}
+		if time.Since(lastPurge) >= time.Hour {
+			if n, err := s.Purge(ctx); err != nil && ctx.Err() == nil {
+				s.log.Error("jobs: retention failed", "error", err)
+			} else if err == nil {
+				lastPurge = time.Now()
+				if n > 0 {
+					s.log.Info("jobs: removed jobs past retention", "count", n, "retention", s.retention.String())
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
+// Swept counts what a sweep changed.
+type Swept struct {
+	Expired int64
+	Lost    int64
+}
+
+// Sweep expires runs no device picked up in time and marks lost the runs
+// that started but never reported.
+func (s *Service) Sweep(ctx context.Context) (Swept, error) {
+	var out Swept
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `UPDATE job_runs SET status = 'expired', finished_at = now(),
+				error = 'The device did not pick up the job before it expired.'
+			WHERE status IN ('queued', 'sent') AND expires_at <= now()`)
+		if err != nil {
+			return err
+		}
+		out.Expired = tag.RowsAffected()
+		tag, err = tx.Exec(ctx, `UPDATE job_runs SET status = 'lost', finished_at = now(),
+				error = 'The device did not report a result before the deadline.'
+			WHERE status = 'running' AND deadline_at <= now()`)
+		out.Lost = tag.RowsAffected()
+		return err
+	})
+	return out, err
+}
+
+// Purge removes jobs older than the retention whose runs have all finished.
+func (s *Service) Purge(ctx context.Context) (int64, error) {
+	var n int64
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM jobs j WHERE j.created_at < now() - make_interval(secs => $1)
+			AND NOT EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.status IN ('queued', 'sent', 'running'))`,
+			s.retention.Seconds())
+		n = tag.RowsAffected()
+		return err
+	})
+	return n, err
+}
+
+// hub wakes the polls of devices that have new work on this instance.
+type hub struct {
+	mu      sync.Mutex
+	waiters map[uuid.UUID]map[chan struct{}]struct{}
+	done    chan struct{}
+	closed  bool
+}
+
+func newHub() *hub {
+	return &hub{waiters: map[uuid.UUID]map[chan struct{}]struct{}{}, done: make(chan struct{})}
+}
+
+// subscribe returns a channel that receives when the device has work.
+func (h *hub) subscribe(device uuid.UUID) chan struct{} {
+	ch := make(chan struct{}, 1)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.waiters[device] == nil {
+		h.waiters[device] = map[chan struct{}]struct{}{}
+	}
+	h.waiters[device][ch] = struct{}{}
+	return ch
+}
+
+func (h *hub) unsubscribe(device uuid.UUID, ch chan struct{}) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.waiters[device], ch)
+	if len(h.waiters[device]) == 0 {
+		delete(h.waiters, device)
+	}
+}
+
+// notify wakes the devices' polls.
+func (h *hub) notify(devices ...uuid.UUID) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, d := range devices {
+		for ch := range h.waiters[d] {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
+func (h *hub) close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.closed {
+		h.closed = true
+		close(h.done)
+	}
+}
+
+// cleanText removes NUL and other control characters except tab and line
+// breaks, repairs UTF-8 and trims, for names and descriptions.
+func cleanText(s string, keepNewlines bool) string {
+	s = strings.ToValidUTF8(s, "�")
+	s = strings.Map(func(r rune) rune {
+		if r == '\t' || (keepNewlines && r == '\n') {
+			return r
+		}
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+	return strings.TrimSpace(s)
+}
+
+// cleanOutput makes a stream storable: valid UTF-8 without NUL, at most
+// agentproto.MaxStreamBytes. It reports whether it had to cut it.
+func cleanOutput(s string) (string, bool) {
+	s = strings.ToValidUTF8(s, "�")
+	s = strings.ReplaceAll(s, "\x00", "")
+	if len(s) <= agentproto.MaxStreamBytes {
+		return s, false
+	}
+	cut := agentproto.MaxStreamBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut], true
+}
+
+// truncateRunes cuts s to at most n runes.
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n])
+}

@@ -36,7 +36,7 @@ common collisions. See [network.md](network.md) for the complete port table.
 | `easyrmm-server` | Go modular monolith | TLS edge, web UI hosting, REST API, agent gateway, MeshCentral gateway and control client, job scheduler, monitoring engine, notification delivery, EasyPatch connector |
 | `web` | React + TypeScript + Vite, designed with Impeccable | The only user interface. Embedded into the server binary at build time |
 | `easyrmm-agent` | Go, single static binary per OS/arch | Enrolment, identity, inventory, telemetry, job and script execution, software management, MeshAgent and EasyPatch-agent supervision, self-update |
-| MeshAgent | Upstream binary, pinned version | Remote desktop, terminal and file transfer transport |
+| MeshAgent | Upstream binary, pinned version | Remote desktop, terminal, file transfer and RDP tunnel transport |
 | MeshCentral | Upstream container, pinned version | Remote-session relay and MeshAgent management; never exposed directly |
 | PostgreSQL | 18 | EasyRMM database (row-level security) and MeshCentral's database |
 | EasyPatch (optional) | Customer's existing deployment | Patch state, policy and patch jobs |
@@ -74,8 +74,9 @@ See [database.md](database.md) and ADR-0002.
 
 ## 4. Identity and access
 
-* Users authenticate with e-mail + password (Argon2id) and a mandatory second
-  factor (TOTP; WebAuthn planned). Sessions are opaque 256-bit tokens in a
+* Users authenticate with e-mail + password (Argon2id) and a second factor
+  (TOTP, or security keys and passkeys, ADR-0032), required unless the
+  operator sets `EASYRMM_REQUIRE_MFA=false`. Sessions are opaque 256-bit tokens in a
   `__Host-` cookie (`Secure`, `HttpOnly`, `SameSite=Strict`), stored hashed,
   with idle and absolute expiry, rotation on privilege change, and a
   per-session CSRF token. See ADR-0006.
@@ -96,9 +97,10 @@ See ADR-0004 and ADR-0005. Summary:
 * MeshCentral runs on loopback with TLS offload; our edge serves it on a
   dedicated hostname (`mesh.<domain>`) to keep it in a separate browser
   origin. The edge forwards agent routes (`agent.ashx`, `meshrelay.ashx`,
-  `meshagents`, `agenttransfer.ashx`, `devicefile.ashx`) unconditionally, and
-  browser routes only for requests that carry a valid EasyRMM remote-session
-  grant cookie. MeshCentral's login page and `/meshsettings` are never
+  `meshagents`, `agenttransfer.ashx`, `devicefile.ashx`) without a grant, as
+  MeshCentral's agent port serves them, and browser routes only for requests
+  that carry a valid EasyRMM remote-session grant cookie. Relays and their
+  tunnel requests are bound to the session's grants (ADR-0022, ADR-0033). MeshCentral's login page and `/meshsettings` are never
   reachable from the internet.
 * One MeshCentral device group per EasyRMM **site**. One MeshCentral user per
   EasyRMM user who has any remote permission, with random credentials the user
@@ -107,8 +109,8 @@ See ADR-0004 and ADR-0005. Summary:
 * The server keeps one persistent `control.ashx` connection as a dedicated
   service administrator.
 * Launching a session: the browser asks our API; the server checks
-  `device.remote_desktop` / `device.terminal` / `device.files` for that
-  device, records an audit event, issues a single-use grant, and returns an
+  `device.remote_desktop` (also for RDP, ADR-0026) / `device.terminal` /
+  `device.files` for that device, records an audit event, issues a single-use grant, and returns an
   iframe URL on the mesh hostname. The edge exchanges the grant for a
   host-only cookie and redirects to MeshCentral with a one-minute,
   single-use GCM login token for the technician's MeshCentral user,
@@ -119,48 +121,67 @@ See ADR-0004 and ADR-0005. Summary:
 
 ## 6. Endpoint: one installation
 
-See ADR-0008. The customer installs **one package**; it contains:
+See ADR-0008, ADR-0015 (which replaced bundling MeshAgent) and ADR-0020
+(Windows). The customer runs **one command**: a PowerShell line on Windows
+or a shell line on Linux, copied from **Devices → Add devices**
+([docs/deployment/agents.md](../deployment/agents.md)). MSI, DEB and RPM
+packages are not built yet.
 
-* `easyrmm-agent` (our service), and
-* the pinned upstream MeshAgent binary for that OS/architecture
-  (hash-verified at build time; Apache-2.0 notices included).
+1. The install script downloads `easyrmm-agent` for the machine's
+   architecture and checks it against the server's `SHA256SUMS`. When the
+   server uses its own certificate authority (`internal` TLS, IP access),
+   the command pins the server's key and the script hands the authority,
+   fetched over that pinned connection, to the agent. With a public
+   certificate, ordinary TLS checks apply.
+2. `easyrmm-agent install` generates an Ed25519 device key, presents the
+   deployment token, and receives a device id. It installs itself as a
+   service (`EasyRMMAgent` on Windows, a systemd unit on Linux).
+3. The agent downloads MeshAgent and its site's settings (`.msh`) from the
+   EasyRMM server with signed requests. The server fetches them from the
+   running MeshCentral, so MeshAgent always matches it. MeshAgent runs as a
+   service of its own (`EasyRMMMeshAgent`, `easyrmm-meshagent.service`), or
+   as a supervised child process where Linux has no systemd.
+4. The agent reports MeshAgent's node id (`meshagent -nodeid`) in its
+   heartbeat. The server links the node to the device, only within the
+   device's own site.
+5. The device appears in the console, online, with its inventory.
 
-Installation flow (identical across MSI, EXE, PowerShell, deb, rpm and
-shell script):
+`easyrmm-agent uninstall` removes both agents, their services and state;
+the device stays listed as offline.
 
-1. Install files and the `easyrmm-agent` service.
-2. `easyrmm-agent enroll --server <url> --token-file -` generates an Ed25519
-   device key, presents the deployment token, and receives a device id,
-   credentials and the MeshAgent `.msh` for its site.
-3. The agent installs MeshAgent (`-fullinstall --copy-msh=1`), writes
-   `MeshAgent.tag = easyrmm:<device-id>`, and waits for the NodeId.
-4. It reports the NodeId; the server confirms it against the tag that
-   MeshCentral reports, and links the two identities.
-5. Health checks run; the device appears in the dashboard.
-
-Uninstalling the package removes both agents, their services, credentials and
-files, and notifies the server (best effort; the server also revokes on
-request). Updates of both components are coordinated by the server and
-signed (agent releases with an offline Ed25519 release key).
+The server rolls its agent build out a few devices at a time, with
+instructions signed by its job key that name the build's SHA-256, and an
+agent goes back to its previous build when the new one does not reach the
+server (ADR-0027). MeshCentral updates MeshAgent itself.
 
 ## 7. Agent communication
 
-See ADR-0009. Outbound only. Primary channel: a WebSocket to
-`/api/agent/v1/connect` authenticated by a signature with the device key.
-Fallback: signed HTTPS polling with exponential backoff and jitter. Jobs are
-durable server-side and delivered when the device next connects; every job
-payload is signed by the server so a TLS-intercepting middlebox cannot inject
-commands. A compromised endpoint holds only its own device key: it can report
-data about itself and receive its own jobs, nothing else.
+See ADR-0009, ADR-0015 and ADR-0017. Outbound only, over HTTPS. Every request
+after enrollment is signed with the device key over the method, path,
+timestamp, nonce and body hash, with a ±5-minute window and single-use
+nonces. The agent:
+* sends a heartbeat with its facts and metrics every minute;
+* uploads its inventory when the server's copy differs;
+* holds a job long poll open (25 seconds at a time);
+* backs off with jitter after any failure.
+
+ADR-0009's WebSocket channel is not built; long polling delivers jobs within
+a second or so. Jobs are durable server-side and delivered when the device
+next polls. Every job is signed with the server's job key, which the agent
+pinned at enrollment, so a TLS-intercepting middlebox cannot inject
+commands. A compromised endpoint holds only its own device key: it can
+report data about itself and receive its own jobs, nothing else.
 
 ## 8. EasyPatch
 
 See ADR-0010 and [docs/integrations/easypatch.md](../integrations/easypatch.md).
 EasyPatch remains its own product and its own source of truth for patch state.
-EasyRMM talks to it server-to-server with an integration credential, renders
-patch state natively, and installs the EasyPatch agent by downloading it from
-the customer's EasyPatch server during enrolment, so it is not redistributed
-inside our open-source installer.
+EasyRMM talks to it server-to-server with an EasyPatch API token (ADR-0030)
+and renders patch state natively behind EasyRMM's roles. On request, or for
+every device in an organization set to install automatically, the EasyRMM
+agent downloads the EasyPatch agent from the customer's EasyPatch server,
+checks it and enrolls it (ADR-0031). EasyPatch is never redistributed with
+EasyRMM.
 
 ## 9. Deployment
 

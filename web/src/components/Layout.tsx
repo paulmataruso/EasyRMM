@@ -1,0 +1,306 @@
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { Bell, Building2, FileBarChart, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Settings, ShieldCheck, Sun, UserCircle, X } from "lucide-react";
+import { useApi, useWaitingDevices } from "../api/hooks";
+import type { AlertSummary } from "../api/types";
+import { useAuth } from "../auth/AuthContext";
+import { plural } from "../lib/format";
+import { applyTheme, getStoredTheme, storeTheme, type Theme } from "../lib/theme";
+import { SectionNav } from "../nav/SectionNav";
+import { SECTION_PERMISSION, sectionFor, type SectionId } from "../nav/sections";
+import { sidebarWidth } from "../nav/width";
+import { cx } from "./ui";
+
+interface NavItem {
+  to: string;
+  label: string;
+  icon: ReactNode;
+  end?: boolean;
+  /** A count beside the label, such as active alerts; critical makes it red. */
+  count?: { value: number; label: string; critical: boolean };
+}
+
+export function useTheme(): [Theme, () => void] {
+  const [theme, setTheme] = useState<Theme>(() => getStoredTheme());
+  useEffect(() => applyTheme(theme), [theme]);
+  return [
+    theme,
+    () =>
+      setTheme((t) => {
+        const next = t === "dark" ? "light" : "dark";
+        storeTheme(next);
+        return next;
+      }),
+  ];
+}
+
+export function ThemeToggle({ className }: { className?: string }) {
+  const [theme, toggle] = useTheme();
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+      title={theme === "dark" ? "Light theme" : "Dark theme"}
+      className={cx("inline-flex size-8 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg", className)}
+    >
+      {theme === "dark" ? <Sun className="size-4" aria-hidden /> : <Moon className="size-4" aria-hidden />}
+    </button>
+  );
+}
+
+/**
+ * Logo mark plus wordmark. The wordmark's colors are made for dark backgrounds; `onDark` is for surfaces that are
+ * dark in both themes (the sidebar), otherwise the light-background variant is shown in the light theme.
+ */
+export function Logo({ className, onDark = false, large = false }: { className?: string; onDark?: boolean; large?: boolean }) {
+  const mark = large ? "size-12" : "size-8";
+  const word = cx("w-auto", large ? "h-10" : "h-7");
+  return (
+    <span className={cx("inline-flex items-center gap-2", className)}>
+      <img src="/logo.svg" alt="" className={cx("shrink-0", mark)} />
+      {onDark ? (
+        <img src="/wordmark.svg" alt="EasyRMM" className={word} />
+      ) : (
+        <>
+          <img src="/wordmark.svg" alt="EasyRMM" className={cx("hidden dark:block", word)} />
+          <img src="/wordmark-light.svg" alt="EasyRMM" className={cx("dark:hidden", word)} />
+        </>
+      )}
+    </span>
+  );
+}
+
+/** The main menu item that leads to each section. */
+const SECTION_HOME: Record<SectionId, string> = {
+  organizations: "/organizations",
+  devices: "/devices",
+  alerts: "/alerts",
+  scripts: "/scripts",
+  jobs: "/jobs",
+  settings: "/settings",
+};
+
+export function AppLayout() {
+  const { session, can, canGlobal, signOut } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  // Back shows the main menu on this page; the next page in a section shows that section's navigation again.
+  const [menuAt, setMenuAt] = useState<string | null>(null);
+  const [focusNext, setFocusNext] = useState<"back" | "menu" | null>(null);
+  const menuList = useRef<HTMLUListElement>(null);
+  const focused = useCallback(() => setFocusNext(null), []);
+
+  useEffect(() => setMobileOpen(false), [location.pathname, location.search]);
+  const pageSection = sectionFor(location.pathname);
+  const allowed = ((): boolean => {
+    switch (pageSection) {
+      case null:
+        return false;
+      case "organizations":
+        return true;
+      case "settings":
+        return can("user.view") || can("audit.view") || can("settings.manage");
+      default:
+        return can(SECTION_PERMISSION[pageSection]);
+    }
+  })();
+  const section = allowed && menuAt !== location.pathname ? pageSection : null;
+  // A section's tree may ask for a wider sidebar (nav/width.ts); the main menu and settings keep the standard width.
+  // Moving between trees keeps the last width until the next tree has measured itself.
+  const [treeWidth, setTreeWidth] = useState<number | null>(null);
+  const wide = section && section !== "settings" ? treeWidth : null;
+
+  useEffect(() => {
+    if (focusNext !== "menu" || section !== null || !pageSection) return;
+    menuList.current?.querySelector<HTMLElement>(`[data-nav="${SECTION_HOME[pageSection]}"]`)?.focus();
+    setFocusNext(null);
+  }, [focusNext, section, pageSection]);
+
+  const alerts = useApi<AlertSummary>(can("alert.view") ? "/alerts/summary" : null, undefined, { refetchInterval: 60_000 });
+  const waiting = useWaitingDevices(canGlobal("enrollment.manage"));
+
+  const nav: NavItem[] = [
+    { to: "/", label: "Dashboard", icon: <LayoutDashboard className="size-4" aria-hidden />, end: true },
+    { to: "/organizations", label: "Organizations", icon: <Building2 className="size-4" aria-hidden /> },
+  ];
+  if (can("device.view")) {
+    nav.push({
+      to: "/devices",
+      label: "Devices",
+      icon: <Monitor className="size-4" aria-hidden />,
+      count: waiting > 0 ? { value: waiting, label: `${plural(waiting, "device")} waiting for approval`, critical: false } : undefined,
+    });
+  }
+  if (can("alert.view")) {
+    const s = alerts.data;
+    nav.push({
+      to: "/alerts",
+      label: "Alerts",
+      icon: <Bell className="size-4" aria-hidden />,
+      count: s && s.active > 0 ? { value: s.active, label: `${s.active} active, ${s.critical} critical`, critical: s.critical > 0 } : undefined,
+    });
+  }
+  if (can("patch.view") && can("device.view")) {
+    nav.push({ to: "/patching", label: "Patching", icon: <ShieldCheck className="size-4" aria-hidden /> });
+  }
+  if (can("script.view")) {
+    nav.push({ to: "/scripts", label: "Scripts", icon: <FileCode2 className="size-4" aria-hidden /> });
+  }
+  if (can("job.view")) {
+    nav.push({ to: "/jobs", label: "Jobs", icon: <ListChecks className="size-4" aria-hidden /> });
+  }
+  if (can("report.view") && (can("device.view") || can("software.view") || can("alert.view"))) {
+    nav.push({ to: "/reports", label: "Reports", icon: <FileBarChart className="size-4" aria-hidden /> });
+  }
+  if (can("user.view") || can("audit.view") || can("settings.manage")) {
+    nav.push({ to: "/settings", label: "Settings", icon: <Settings className="size-4" aria-hidden /> });
+  }
+
+  async function logout() {
+    await signOut();
+    navigate("/login", { replace: true });
+  }
+
+  const sidebar = (
+    <nav aria-label="Main" className="flex h-full flex-col bg-sidebar text-sidebar-fg">
+      <div className="flex h-14 items-center justify-between px-4 text-white">
+        <Logo onDark />
+        <button type="button" className="rounded p-1 lg:hidden" onClick={() => setMobileOpen(false)} aria-label="Close menu">
+          <X className="size-5" aria-hidden />
+        </button>
+      </div>
+      {section ? (
+        <SectionNav
+          key={section}
+          section={section}
+          focusBack={focusNext === "back"}
+          onFocused={focused}
+          onWidth={setTreeWidth}
+          onBack={() => {
+            setMenuAt(location.pathname);
+            setFocusNext("menu");
+          }}
+        />
+      ) : (
+      <ul ref={menuList} className="nav-enter flex-1 space-y-0.5 overflow-y-auto px-2 py-2">
+        {nav.map((item) => (
+          <li key={item.to}>
+            <NavLink
+              to={item.to}
+              end={item.end}
+              data-nav={item.to}
+              onClick={() => {
+                setMenuAt(null);
+                setFocusNext(sectionFor(item.to) ? "back" : null);
+              }}
+              className={({ isActive }) =>
+                cx(
+                  "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
+                  isActive ? "bg-sidebar-active font-medium text-white" : "hover:bg-sidebar-active/60 hover:text-white",
+                )
+              }
+            >
+              {item.icon}
+              <span className="flex-1">{item.label}</span>
+              {item.count && (
+                <span
+                  className={cx(
+                    "min-w-5 rounded-full px-1.5 text-center text-xs leading-5 font-semibold tabular-nums",
+                    item.count.critical ? "bg-danger text-white" : "bg-white/15 text-white",
+                  )}
+                  title={item.count.label}
+                >
+                  {item.count.value > 99 ? "99+" : item.count.value}
+                  <span className="sr-only"> ({item.count.label})</span>
+                </span>
+              )}
+            </NavLink>
+          </li>
+        ))}
+      </ul>
+      )}
+      <div className="border-t border-white/10 px-2 py-2">
+        <NavLink
+          to="/account"
+          className={({ isActive }) =>
+            cx("flex items-center gap-2.5 rounded-md px-3 py-2 text-sm", isActive ? "bg-sidebar-active text-white" : "hover:bg-sidebar-active/60 hover:text-white")
+          }
+        >
+          <UserCircle className="size-4" aria-hidden />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate">{session?.user.displayName}</span>
+            {/* EasyPatch shows the role here. EasyRMM roles are per organization, so only the platform-wide one is named. */}
+            <span className="block truncate text-xs text-sidebar-fg/70">{session?.isSuperAdmin ? "Super administrator" : session?.user.email}</span>
+          </span>
+        </NavLink>
+        <button
+          type="button"
+          onClick={logout}
+          className="mt-0.5 flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-sm hover:bg-sidebar-active/60 hover:text-white"
+        >
+          <LogOut className="size-4" aria-hidden />
+          Sign out
+        </button>
+      </div>
+    </nav>
+  );
+
+  return (
+      <div className="flex h-full">
+        <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded focus:bg-surface focus:px-3 focus:py-2">
+          Skip to content
+        </a>
+        <aside className="hidden w-60 shrink-0 lg:block" style={wide === null ? undefined : { width: sidebarWidth(wide) }}>
+          {sidebar}
+        </aside>
+        {mobileOpen && (
+          <div className="fixed inset-0 z-40 lg:hidden">
+            <div className="absolute inset-0 bg-black/50" onClick={() => setMobileOpen(false)} aria-hidden />
+            <aside className="relative h-full w-64 shadow-xl" style={wide === null ? undefined : { width: sidebarWidth(wide, true) }}>
+              {sidebar}
+            </aside>
+          </div>
+        )}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="flex h-14 shrink-0 items-center gap-2 border-b border-line bg-surface px-4">
+            <button type="button" className="rounded-md p-1.5 text-muted hover:bg-hover lg:hidden" onClick={() => setMobileOpen(true)} aria-label="Open menu">
+              <Menu className="size-5" aria-hidden />
+            </button>
+            <div className="lg:hidden">
+              <Logo />
+            </div>
+            <div className="flex-1" />
+            <ThemeToggle />
+          </header>
+          <main id="main" className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
+            <div className="mx-auto max-w-[1440px]">
+              <Outlet />
+            </div>
+          </main>
+        </div>
+      </div>
+  );
+}
+
+/** Centered layout for setup, sign-in, MFA and password pages. */
+export function AuthShell({ children, title, subtitle, wide = false }: { children: ReactNode; title: string; subtitle?: ReactNode; wide?: boolean }) {
+  return (
+    <div className="flex min-h-full flex-col items-center justify-center px-4 py-10">
+      <div className="absolute top-3 right-3">
+        <ThemeToggle />
+      </div>
+      <div className={cx("w-full", wide ? "max-w-md" : "max-w-sm")}>
+        <div className="mb-6 flex justify-center">
+          <Logo large />
+        </div>
+        <main className="rounded-xl border border-line bg-surface p-6 shadow-sm">
+          <h1 className="text-lg font-semibold">{title}</h1>
+          {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
+          <div className="mt-5">{children}</div>
+        </main>
+      </div>
+    </div>
+  );
+}

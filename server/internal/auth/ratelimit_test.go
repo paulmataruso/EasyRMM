@@ -2,6 +2,7 @@ package auth
 
 import (
 	"fmt"
+	"net/netip"
 	"testing"
 	"time"
 )
@@ -30,6 +31,32 @@ func TestKeyedLimiterBurstAndRefill(t *testing.T) {
 	}
 }
 
+func TestKeyedLimiterReady(t *testing.T) {
+	now := time.Unix(1000, 0)
+	l := NewKeyedLimiter(10*time.Second, 2, 100)
+	l.now = func() time.Time { return now }
+	if !l.Ready("dev") || l.Len() != 0 {
+		t.Fatal("an unseen key is not ready, or Ready tracked it")
+	}
+	for range 2 {
+		if !l.Ready("dev") || !l.Allow("dev") {
+			t.Fatal("inside the burst")
+		}
+	}
+	if l.Ready("dev") {
+		t.Fatal("ready with no tokens left")
+	}
+	now = now.Add(10 * time.Second)
+	// Asked twice: Ready does not spend the refilled token.
+	first, second := l.Ready("dev"), l.Ready("dev")
+	if !first || !second {
+		t.Fatal("Ready spent a token, or none refilled")
+	}
+	if !l.Allow("dev") || l.Ready("dev") {
+		t.Fatal("after the refilled token")
+	}
+}
+
 func TestKeyedLimiterBoundsMemory(t *testing.T) {
 	now := time.Unix(1000, 0)
 	l := NewKeyedLimiter(time.Second, 1, 50)
@@ -40,5 +67,20 @@ func TestKeyedLimiterBoundsMemory(t *testing.T) {
 	}
 	if l.Len() > 50 {
 		t.Fatalf("limiter tracks %d keys, cap is 50", l.Len())
+	}
+}
+
+func TestLimitKey(t *testing.T) {
+	for in, want := range map[string]string{
+		"198.51.100.7":         "198.51.100.7",
+		"::ffff:198.51.100.7":  "198.51.100.7",
+		"2001:db8:1:2:3:4:5:6": "2001:db8:1:2::/64",
+		"2001:db8:1:2:ffff::1": "2001:db8:1:2::/64",
+		"fe80::1%eth0":         "fe80::/64",
+		"2001:db8:1:3::1":      "2001:db8:1:3::/64",
+	} {
+		if got := LimitKey(netip.MustParseAddr(in)); got != want {
+			t.Errorf("LimitKey(%s) = %s, want %s", in, got, want)
+		}
 	}
 }

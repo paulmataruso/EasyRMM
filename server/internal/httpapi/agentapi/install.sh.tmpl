@@ -1,0 +1,98 @@
+#!/bin/sh
+# EasyRMM agent installer for Linux with systemd, served by this EasyRMM
+# server. Run it with a deployment token from the console, passed in the
+# environment so that it never appears on a command line, which every user
+# of the computer can read (and sudo logs):
+#
+{{- if .Pin}}
+#   export EASYRMM_TOKEN='ert_...'
+#   curl -fsSL --insecure --pinnedpubkey '{{.Pin}}' \
+#     {{.Server}}/api/agent/v1/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh
+#
+# This address uses the server's own certificate authority, which no
+# machine trusts yet. Every download is checked against the server's public
+# key instead (the pin above; --insecure only skips the CA check), and the
+# agent is given the server's certificate authority to trust from then on.
+{{- else}}
+#   export EASYRMM_TOKEN='ert_...'
+#   curl -fsSL {{.Server}}/api/agent/v1/install.sh | sudo --preserve-env=EASYRMM_TOKEN sh
+{{- end}}
+#
+# --token ert_... still works, but puts the token on sh's command line.
+#
+# It downloads the agent for this machine's architecture from the server,
+# checks it against the server's checksums, installs it as
+# /usr/local/bin/easyrmm-agent and enrolls it as a systemd service.
+set -eu
+
+fail() { echo "easyrmm: $*" >&2; exit 1; }
+
+SERVER='{{.Server}}'
+{{- if .Pin}}
+PIN='{{.Pin}}'
+{{- end}}
+TOKEN="${EASYRMM_TOKEN:-}"
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--token)
+		[ $# -ge 2 ] || fail "--token needs a value"
+		TOKEN="$2"
+		shift 2
+		;;
+	--token=*)
+		TOKEN="${1#--token=}"
+		shift
+		;;
+	*) fail "unknown option: $1" ;;
+	esac
+done
+
+[ -n "$TOKEN" ] || fail "set EASYRMM_TOKEN to a deployment token from the EasyRMM console (with sudo, keep it: sudo --preserve-env=EASYRMM_TOKEN)"
+[ "$(id -u)" = 0 ] || fail "run the installer as root (sudo)"
+[ "$(uname -s)" = Linux ] || fail "this installer is for Linux"
+command -v systemctl >/dev/null 2>&1 || fail "the agent runs as a systemd service; systemctl was not found"
+command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required"
+{{- if .Pin}}
+command -v curl >/dev/null 2>&1 || fail "curl is required to check the server's public key"
+{{- end}}
+
+case "$(uname -m)" in
+x86_64 | amd64) ARCH=amd64 ;;
+aarch64 | arm64) ARCH=arm64 ;;
+armv7* | armv8l | armhf) ARCH=arm ;;
+i386 | i486 | i586 | i686) ARCH=386 ;;
+*) fail "unsupported architecture: $(uname -m)" ;;
+esac
+FILE="easyrmm-agent-linux-$ARCH"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT INT TERM
+fetch() {
+{{- if .Pin}}
+	curl -fsSL --proto '=https' --insecure --pinnedpubkey "$PIN" -o "$2" "$1"
+{{- else}}
+	if command -v curl >/dev/null 2>&1; then
+		curl -fsSL {{if .HTTPS}}--proto '=https' {{end}}-o "$2" "$1"
+	elif command -v wget >/dev/null 2>&1; then
+		wget -q {{if .HTTPS}}--https-only {{end}}-O "$2" "$1"
+	else
+		fail "curl or wget is required"
+	fi
+{{- end}}
+}
+echo "easyrmm: downloading $FILE from $SERVER"
+fetch "$SERVER/api/agent/v1/download/$FILE" "$TMP/easyrmm-agent" || fail "download failed"
+fetch "$SERVER/api/agent/v1/download/SHA256SUMS" "$TMP/SHA256SUMS" || fail "download of checksums failed"
+WANT="$(awk -v f="$FILE" '$2 == f { print $1 }' "$TMP/SHA256SUMS")"
+GOT="$(sha256sum "$TMP/easyrmm-agent" | awk '{ print $1 }')"
+[ -n "$WANT" ] && [ "$WANT" = "$GOT" ] || fail "checksum mismatch for $FILE"
+
+{{- if .Pin}}
+fetch "$SERVER/api/agent/v1/ca.pem" "$TMP/ca.pem" || fail "download of the server's certificate authority failed"
+{{- end}}
+
+install -m 0755 "$TMP/easyrmm-agent" /usr/local/bin/easyrmm-agent
+# The token goes through the environment, not the command line, so other
+# users cannot read it from the process list. (No exec: the trap above
+# removes the downloads when the agent finishes.)
+EASYRMM_TOKEN="$TOKEN" /usr/local/bin/easyrmm-agent install --server "$SERVER"{{if .Pin}} --ca-file "$TMP/ca.pem"{{end}}

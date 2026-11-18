@@ -45,6 +45,7 @@ var (
 	ErrPasswordTooShort = fmt.Errorf("password must be at least %d characters", MinPasswordLength)
 	ErrPasswordTooLong  = fmt.Errorf("password must be at most %d characters", MaxPasswordLength)
 	ErrPasswordCommon   = errors.New("password is too common or too simple")
+	ErrPasswordPersonal = errors.New("password must not contain your name or email address")
 	errMalformedHash    = errors.New("auth: malformed password hash")
 )
 
@@ -100,7 +101,7 @@ func ValidatePassword(password string, context ...string) error {
 	for _, c := range context {
 		c = strings.ToLower(strings.TrimSpace(c))
 		if len(c) >= 4 && strings.Contains(lower, c) {
-			return errors.New("password must not contain your name or email address")
+			return ErrPasswordPersonal
 		}
 	}
 	return nil
@@ -217,4 +218,20 @@ var commonPasswords = map[string]struct{}{
 	"passw0rd1234": {}, "p@ssw0rd1234": {}, "1q2w3e4r5t6y": {}, "abcdefghijkl": {},
 	"easyrmm12345": {}, "easyrmmadmin": {}, "aaaaaaaaaaaa": {}, "111111111111": {},
 	"correcthorsebatterystaple": {}, "qwertyuiopasdf": {}, "zaq12wsxcde3": {},
+}
+
+// PasswordAdvice returns a user-facing explanation when err is a password
+// policy violation, or "".
+func PasswordAdvice(err error) string {
+	switch {
+	case errors.Is(err, ErrPasswordTooShort):
+		return fmt.Sprintf("Use at least %d characters. A short phrase of unrelated words works well.", MinPasswordLength)
+	case errors.Is(err, ErrPasswordTooLong):
+		return fmt.Sprintf("Use at most %d characters.", MaxPasswordLength)
+	case errors.Is(err, ErrPasswordCommon):
+		return "This password is too common or too simple. Choose something less predictable."
+	case errors.Is(err, ErrPasswordPersonal):
+		return "Do not include your name or email address in your password."
+	}
+	return ""
 }

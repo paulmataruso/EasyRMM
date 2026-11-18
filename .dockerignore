@@ -1,0 +1,23 @@
+# Keep the build context small and free of secrets.
+.git
+.github
+.claude
+.impeccable
+**/node_modules
+web/dist
+web/coverage
+# End-to-end run data includes a live setup token and server data.
+web/e2e/.run
+web/e2e/.results
+web/e2e/.report
+server/internal/webui/dist/*
+!server/internal/webui/dist/.gitkeep
+coverage*
+*.out
+.env
+.env.*
+deploy/.env
+docs
+tests
+**/*.md
+!web/**/*.md

@@ -239,4 +239,36 @@ func TestPermissionsListing(t *testing.T) {
 	if !slices.IsSorted(got) {
 		t.Error("permissions not sorted")
 	}
+	if g := p.GlobalPermissions(); len(g) != 0 {
+		t.Errorf("a site assignment grants platform-wide %v", g)
+	}
+	super := mustPrincipal(t, Assignment{Role: RoleSuperAdmin})
+	if g := super.GlobalPermissions(); !slices.Contains(g, PermEnrollManage) || !slices.IsSorted(g) {
+		t.Errorf("super administrator's platform-wide permissions %v", g)
+	}
+}
+
+func TestCanAnywhereAndInOrg(t *testing.T) {
+	site := mustPrincipal(t, Assignment{Role: RoleTechnician, OrganizationID: orgA, SiteID: siteA1})
+	if !site.CanAnywhere(PermScriptView) || !site.CanInOrg(PermScriptView, orgA) {
+		t.Error("a site technician cannot read their organization's scripts")
+	}
+	if site.CanInOrg(PermScriptView, orgB) || site.CanInOrg(PermScriptView, uuid.Nil) {
+		t.Error("a site technician reads another organization's or the platform's objects")
+	}
+	if site.CanAnywhere(PermScriptManage) || site.CanInOrg(PermScriptManage, orgA) {
+		t.Error("a technician manages scripts")
+	}
+	org := mustPrincipal(t, Assignment{Role: RoleSiteAdmin, OrganizationID: orgB})
+	if !org.CanInOrg(PermScriptManage, orgB) || org.CanInOrg(PermScriptManage, orgA) {
+		t.Error("organization grant not limited to its organization")
+	}
+	super := mustPrincipal(t, Assignment{Role: RoleSuperAdmin})
+	if !super.CanAnywhere(PermScriptManage) || !super.CanInOrg(PermScriptManage, orgA) || !super.CanInOrg(PermScriptManage, uuid.Nil) {
+		t.Error("super administrator refused")
+	}
+	var none *Principal
+	if none.CanAnywhere(PermScriptView) || none.CanInOrg(PermScriptView, orgA) || none.CanInOrg(PermScriptView, uuid.Nil) {
+		t.Error("nil principal granted something")
+	}
 }

@@ -1,0 +1,484 @@
+package easypatch
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/apperr"
+	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
+)
+
+func TestParseURL(t *testing.T) {
+	good := map[string]string{
+		"https://Patch.Example.com/":      "https://patch.example.com",
+		" https://patch.example.com:8443": "https://patch.example.com:8443",
+		"https://patch.example.com/ep//":  "https://patch.example.com/ep",
+		"https://[2001:db8::1]:443":       "https://[2001:db8::1]:443",
+	}
+	for in, want := range good {
+		u, err := ParseURL(in)
+		if err != nil || u.String() != want {
+			t.Errorf("ParseURL(%q) = %v, %v; want %s", in, u, err, want)
+		}
+	}
+	bad := map[string]string{
+		"":                                    "must be an address",
+		"patch.example.com":                   "must be an address",
+		"http://patch.example.com":            "must start with https://",
+		"https://user:pw@patch.example.com":   "user name or password",
+		"https://patch.example.com/?x=1":      "query or a fragment",
+		"https://patch.example.com/#top":      "query or a fragment",
+		"https://patch.example.com:99999":     "invalid port",
+		"https://:443":                        "must be an address",
+		"ftp://patch.example.com":             "must start with https://",
+		"https://patch.example.com:0":         "invalid port",
+		"https://patch.example.com:notaport/": "must be an address",
+	}
+	for in, want := range bad {
+		if _, err := ParseURL(in); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("ParseURL(%q) = %v; want an error with %q", in, err, want)
+		}
+	}
+}
+
+func TestSameServer(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"https://patch.example.com/", "https://PATCH.example.com", true},
+		{"https://patch.example.com:443", "https://patch.example.com", true},
+		{"https://patch.example.com:8443", "https://patch.example.com", false},
+		{"https://patch.example.com/a", "https://patch.example.com/b", false},
+		{"https://patch.example.com", "http://patch.example.com", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		if got := SameServer(c.a, c.b); got != c.want {
+			t.Errorf("SameServer(%q, %q) = %v", c.a, c.b, got)
+		}
+	}
+}
+
+func newTestClient(t *testing.T, f *eptest.Server) *Client {
+	t.Helper()
+	c, err := NewClient(f.URL(), f.Token, f.CAPEM, "1.2.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestClient(t *testing.T) {
+	ctx := context.Background()
+	f := eptest.New(t)
+	org := f.Org("Acme Patch")
+	e := f.AddEndpoint(org, "web-01", "SN1", "1FBB-E2EA-533D-A960")
+	c := newTestClient(t, f)
+
+	info, err := c.ServerInfo(ctx)
+	if err != nil || info.Version != "1.9.0" || info.PublicURL != "https://patch.example.com" || info.Capabilities != nil {
+		t.Fatalf("ServerInfo = %+v, %v", info, err)
+	}
+	if can, err := c.CanOperate(ctx); !can || err != nil {
+		t.Fatalf("CanOperate = %v, %v", can, err)
+	}
+	f.Set(func() { f.ReadOnly = true })
+	if can, err := c.CanOperate(ctx); can || err != nil {
+		t.Fatalf("read-only CanOperate = %v, %v", can, err)
+	}
+	f.Set(func() { f.ReadOnly = false })
+
+	orgs, err := c.Organizations(ctx)
+	if err != nil || len(orgs) != 1 || orgs[0].ID != org || orgs[0].Name != "Acme Patch" || !orgs[0].IsActive {
+		t.Fatalf("Organizations = %+v, %v", orgs, err)
+	}
+	p, err := c.Endpoints(ctx, org, 1)
+	if err != nil || p.TotalCount != 1 || p.Items[0].ID != e.ID || p.Items[0].ComplianceStatus != "MissingUpdates" ||
+		p.Items[0].LastScanAt == nil || p.Items[0].MissingTotalCount != 2 {
+		t.Fatalf("Endpoints = %+v, %v", p, err)
+	}
+	d, err := c.Endpoint(ctx, e.ID)
+	if err != nil || d.SerialNumber != "SN1" || len(d.Credentials) != 1 || d.Credentials[0].KeyFingerprint != "1FBB-E2EA-533D-A960" ||
+		d.Summary.Hostname != "web-01" {
+		t.Fatalf("Endpoint = %+v, %v", d, err)
+	}
+	if _, err := c.Endpoint(ctx, uuid.New()); !IsStatus(err, http.StatusNotFound) {
+		t.Fatalf("missing endpoint: %v", err)
+	}
+	ups, err := c.Updates(ctx, e.ID, "Failed")
+	if err != nil || len(ups) != 1 || ups[0].State != "Failed" || ups[0].ErrorMessage != "dpkg was interrupted" ||
+		ups[0].Package == nil || ups[0].Package.Name != "tzdata" || ups[0].SizeBytes == nil {
+		t.Fatalf("Updates = %+v, %v", ups, err)
+	}
+	if got := f.RequestsTo("GET", "/api/v1/endpoints/"+e.ID.String()+"/updates"); len(got) != 1 {
+		t.Fatalf("updates requests = %+v", got)
+	}
+	inst, err := c.InstalledUpdates(ctx, e.ID)
+	if err != nil || len(inst) != 1 || inst[0].InstalledAt == nil {
+		t.Fatalf("InstalledUpdates = %+v, %v", inst, err)
+	}
+	h, err := c.History(ctx, e.ID, 1)
+	if err != nil || h.TotalCount != 1 || h.Items[0].Result != "Succeeded" {
+		t.Fatalf("History = %+v, %v", h, err)
+	}
+	pol, err := c.EffectivePolicy(ctx, e.ID)
+	if err != nil || !pol.AutoInstallEnabled || pol.MaintenanceStart != "02:00" || pol.TimeZone != "Europe/Paris" ||
+		pol.MaintenanceDurationMinutes == nil || *pol.MaintenanceDurationMinutes != 180 {
+		t.Fatalf("EffectivePolicy = %+v, %v", pol, err)
+	}
+
+	// Install: every eligible update, or chosen ones, for a user.
+	j, err := c.Install(ctx, e.ID, nil, nil, "tess@example.com")
+	if err != nil || j.Type != "InstallUpdates" || j.Status != "Queued" {
+		t.Fatalf("Install = %+v, %v", j, err)
+	}
+	guid := uuid.New()
+	at := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	if _, err := c.Install(ctx, e.ID, []uuid.UUID{guid}, &at, ""); err != nil {
+		t.Fatal(err)
+	}
+	reqs := f.RequestsTo("POST", "/api/v1/endpoints/"+e.ID.String()+"/install-updates")
+	if len(reqs) != 2 || reqs[0].OnBehalfOf != "tess@example.com" || reqs[0].Body["mode"] != "AllEligible" ||
+		reqs[0].Body["updateGuids"] != nil || reqs[0].Body["scheduledAt"] != nil || reqs[0].Body["force"] != false {
+		t.Fatalf("first install = %+v", reqs)
+	}
+	if reqs[1].OnBehalfOf != "" || reqs[1].Body["mode"] != "Selected" || reqs[1].Body["scheduledAt"] != at.Format(time.RFC3339) ||
+		reqs[1].Body["updateGuids"].([]any)[0] != guid.String() {
+		t.Fatalf("second install = %+v", reqs[1])
+	}
+	f.Set(func() { e.Missing = 0 })
+	_, err = c.Install(ctx, e.ID, nil, nil, "")
+	var epErr *Error
+	if !errors.As(err, &epErr) || epErr.Status != 409 || epErr.Code != "nothing_to_install" || epErr.Detail != "web-01 has no eligible updates." {
+		t.Fatalf("nothing to install: %#v", err)
+	}
+	if err.Error() != "EasyPatch answered 409: web-01 has no eligible updates." {
+		t.Fatalf("message = %q", err.Error())
+	}
+	f.Set(func() { e.Missing = 2 })
+
+	br, err := c.BulkScan(ctx, []uuid.UUID{e.ID, uuid.New()}, "tess@example.com")
+	if err != nil || br.Succeeded != 1 || br.Failed != 1 || !br.Results[0].Success || br.Results[0].JobID == nil ||
+		br.Results[1].ErrorCode != "not_found" {
+		t.Fatalf("BulkScan = %+v, %v", br, err)
+	}
+	br, err = c.BulkInstall(ctx, []uuid.UUID{e.ID}, &at, "tess@example.com")
+	if err != nil || br.Succeeded != 1 {
+		t.Fatalf("BulkInstall = %+v, %v", br, err)
+	}
+	if r := f.RequestsTo("POST", "/api/v1/endpoints/bulk/install-updates"); r[0].Body["scheduledAt"] != at.Format(time.RFC3339) {
+		t.Fatalf("bulk install body = %+v", r[0].Body)
+	}
+
+	jobs, err := c.Jobs(ctx, org, true, 1)
+	if err != nil || jobs.TotalCount != 4 {
+		t.Fatalf("Jobs = %+v, %v", jobs, err)
+	}
+	ej, err := c.EndpointJobs(ctx, e.ID, 1)
+	if err != nil || ej.TotalCount != 4 {
+		t.Fatalf("EndpointJobs = %+v, %v", ej, err)
+	}
+	jd, err := c.Job(ctx, jobs.Items[0].ID)
+	if err != nil || len(jd.Items) != 1 || len(jd.Events) != 1 || jd.NotBefore == nil {
+		t.Fatalf("Job = %+v, %v", jd, err)
+	}
+	jd, err = c.CancelJob(ctx, jobs.Items[0].ID, "tess@example.com")
+	if err != nil || jd.Summary.Status != eptest.StatusCanceled || !jd.Summary.CancelRequested || jd.Summary.CompletedAt == nil {
+		t.Fatalf("CancelJob = %+v, %v", jd, err)
+	}
+}
+
+func TestClientFailures(t *testing.T) {
+	ctx := context.Background()
+	f := eptest.New(t)
+
+	// A wrong token.
+	c, err := NewClient(f.URL(), "ept_wrong-token-0123456789", f.CAPEM, "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = c.ServerInfo(ctx)
+	if !IsStatus(err, http.StatusUnauthorized) || !strings.Contains(err.Error(), "expired or been revoked") {
+		t.Fatalf("wrong token: %v", err)
+	}
+	if _, err := c.CanOperate(ctx); !IsStatus(err, http.StatusUnauthorized) {
+		t.Fatalf("CanOperate with a wrong token: %v", err)
+	}
+
+	// A certificate EasyRMM does not trust.
+	c, _ = NewClient(f.URL(), f.Token, "", "1")
+	_, err = c.ServerInfo(ctx)
+	var e *Error
+	if !errors.As(err, &e) || e.Status != 0 || !strings.Contains(err.Error(), "certificate is not trusted") {
+		t.Fatalf("untrusted: %v", err)
+	}
+
+	// Not to cloud instance metadata (netguard).
+	c, _ = NewClient("https://169.254.169.254", f.Token, "", "1")
+	if _, err := c.ServerInfo(ctx); err == nil || !strings.Contains(err.Error(), "does not connect to 169.254.169.254") {
+		t.Fatalf("metadata address: %v", err)
+	}
+
+	// EasyPatch down.
+	c = newTestClient(t, f)
+	f.Set(func() { f.Down = true })
+	if _, err := c.Organizations(ctx); !IsStatus(err, 503) || !strings.Contains(err.Error(), "database is not available") {
+		t.Fatalf("down: %v", err)
+	}
+	f.Set(func() { f.Down = false })
+
+	// Constructor checks.
+	if _, err := NewClient("http://x", "t", "", "1"); err == nil {
+		t.Fatal("http accepted")
+	}
+	if _, err := NewClient("https://x", "", "", "1"); err == nil {
+		t.Fatal("no token accepted")
+	}
+	if _, err := NewClient("https://x", "t", "not pem", "1"); err == nil {
+		t.Fatal("bad CA accepted")
+	}
+
+	// Redirects are not followed (the token stays with the server) and odd
+	// answers are refused.
+	odd := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/server-info":
+			http.Redirect(w, r, "https://elsewhere.example.com/", http.StatusFound)
+		case "/api/v1/organizations":
+			_, _ = w.Write([]byte(`{"not":"a list"}`))
+		case "/api/v1/endpoints/" + uuid.Nil.String():
+			w.WriteHeader(http.StatusForbidden)
+		default:
+			w.WriteHeader(http.StatusTeapot)
+			_, _ = w.Write([]byte(`{"title":"` + strings.Repeat("é", 400) + `"}`))
+		}
+	}))
+	defer odd.Close()
+	c, err = NewClient(odd.URL, "ept_x", "", "1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.http.Transport = odd.Client().Transport
+	if _, err := c.ServerInfo(ctx); !IsStatus(err, http.StatusFound) {
+		t.Fatalf("redirect: %v", err)
+	}
+	if _, err := c.Organizations(ctx); err == nil || !strings.Contains(err.Error(), "not what EasyRMM expects") {
+		t.Fatalf("odd answer: %v", err)
+	}
+	if _, err := c.Endpoint(ctx, uuid.Nil); !IsStatus(err, 403) || !strings.Contains(err.Error(), "may not do this") {
+		t.Fatalf("forbidden: %v", err)
+	}
+	_, err = c.Job(ctx, uuid.New())
+	if !errors.As(err, &e) || len(e.Detail) > 500 || !strings.HasPrefix(e.Detail, "éé") || strings.ContainsRune(e.Detail, '�') {
+		t.Fatalf("long problem: %q", e.Detail)
+	}
+}
+
+func TestEPError(t *testing.T) {
+	cases := []struct {
+		err  error
+		kind apperr.Kind
+		code string
+	}{
+		{&Error{Detail: "Cannot reach EasyPatch"}, apperr.KindUnavailable, "easypatch_unavailable"},
+		{&Error{Status: 502, Detail: "bad gateway"}, apperr.KindUnavailable, "easypatch_unavailable"},
+		{&Error{Status: 401, Detail: "expired"}, apperr.KindUnavailable, "easypatch_token"},
+		{&Error{Status: 404, Detail: "gone"}, apperr.KindNotFound, "not_found"},
+		{&Error{Status: 409, Code: "duplicate_job", Detail: "already queued"}, apperr.KindConflict, "duplicate_job"},
+		{&Error{Status: 400, Detail: "bad"}, apperr.KindConflict, "easypatch_refused"},
+	}
+	for _, c := range cases {
+		var ae *apperr.Error
+		if !errors.As(epError(c.err), &ae) || ae.Kind != c.kind || ae.Code != c.code {
+			t.Errorf("epError(%v) = %#v", c.err, ae)
+		}
+	}
+	plain := errors.New("plain")
+	if !errors.Is(epError(plain), plain) {
+		t.Error("a plain error changed")
+	}
+}
+
+func TestHelpers(t *testing.T) {
+	if cut("héllo", 2) != "h" || cut("abc", 5) != "abc" {
+		t.Error("cut")
+	}
+	if shortHost(" Web-01.corp.example.com ") != "web-01" || shortHost("web-01") != "web-01" {
+		t.Error("shortHost")
+	}
+	if likePattern("") != "" || likePattern(" a%b_c\\ ") != `%a\%b\_c\\%` {
+		t.Errorf("likePattern = %q", likePattern(" a%b_c\\ "))
+	}
+	now := time.Now()
+	creds := []Credential{{KeyFingerprint: "AAAA"}, {KeyFingerprint: "BBBB", RevokedAt: &now}}
+	if !holdsKey(creds, "aaaa") || holdsKey(creds, "BBBB") || holdsKey(creds, " ") {
+		t.Error("holdsKey")
+	}
+	for _, tok := range []string{"ept_" + strings.Repeat("a", 30)} {
+		if !validToken(tok) {
+			t.Errorf("validToken(%q)", tok)
+		}
+	}
+	for _, tok := range []string{"", "ept_short", "abc_" + strings.Repeat("a", 30), "ept_" + strings.Repeat("a", 20) + " x"} {
+		if validToken(tok) {
+			t.Errorf("validToken(%q) accepted", tok)
+		}
+	}
+}
+
+func TestDue(t *testing.T) {
+	now := time.Now()
+	ep := uuid.New()
+	old := now.Add(-7 * time.Hour)
+	recent := now.Add(-time.Minute)
+	base := func() candidate {
+		return candidate{hasRow: true, state: LinkLinked, endpointID: &ep, fingerprint: "AAAA", checkedAt: &recent,
+			report: &agentproto.EasyPatchAgent{KeyFingerprint: "aaaa"}}
+	}
+	cases := []struct {
+		name string
+		edit func(*candidate)
+		id   *uuid.UUID
+		want bool
+	}{
+		{"fresh link", func(*candidate) {}, &ep, false},
+		{"new device", func(c *candidate) { c.hasRow = false }, &ep, true},
+		{"pending", func(c *candidate) { c.state = LinkPending }, &ep, true},
+		{"never checked", func(c *candidate) { c.checkedAt = nil }, &ep, true},
+		{"endpoint changed", func(*candidate) {}, ptr(uuid.New()), true},
+		{"fingerprint changed", func(c *candidate) { c.report.KeyFingerprint = "BBBB" }, &ep, true},
+		{"old link", func(c *candidate) { c.checkedAt = &old }, &ep, true},
+		{"recently refused", func(c *candidate) { c.state = LinkUnlinked }, &ep, false},
+		{"refused a while ago", func(c *candidate) { c.state = LinkUnlinked; t := now.Add(-20 * time.Minute); c.checkedAt = &t }, &ep, true},
+	}
+	for _, c := range cases {
+		cd := base()
+		c.edit(&cd)
+		if got := cd.due(now, c.id); got != c.want {
+			t.Errorf("%s: due = %v", c.name, got)
+		}
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+// A co-hosted EasyPatch is reached at its loopback listener, still checked
+// against its own name (ADR-0035).
+func TestClientLocalRoute(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	f := eptest.New(t)
+	upstream := strings.TrimPrefix(f.URL(), "https://")
+	// The test server's certificate is for example.com.
+	route := LocalRoute{Hostname: "example.com", Upstream: upstream}
+	c, err := NewClient("https://example.com", f.Token, f.CAPEM, "1.2.3", WithLocalRoute(route))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, err := c.ServerInfo(ctx); err != nil || info.Version != "1.9.0" {
+		t.Fatalf("through the local route: %+v, %v", info, err)
+	}
+	// Other addresses are dialed as usual.
+	c, err = NewClient(f.URL(), f.Token, f.CAPEM, "1.2.3", WithLocalRoute(LocalRoute{Hostname: "example.com", Upstream: "127.0.0.1:1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ServerInfo(ctx); err != nil {
+		t.Fatalf("another address: %v", err)
+	}
+
+	// A listener standing in for EasyPatch's, recording what arrives.
+	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	got := make(chan []byte, 4)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			b := make([]byte, 28)
+			_, _ = io.ReadFull(conn, b)
+			_ = conn.Close()
+			got <- b
+		}
+	}()
+
+	// Another port on the same name is not the co-hosted EasyPatch (.invalid
+	// names never resolve, so nothing leaves the host).
+	route = LocalRoute{Hostname: "patch.invalid", Upstream: ln.Addr().String(), ProxyProtocol: true}
+	c, err = NewClient("https://patch.invalid:8443", f.Token, "", "1.2.3", WithLocalRoute(route))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.ServerInfo(ctx); err == nil || !strings.Contains(err.Error(), "patch.invalid") {
+		t.Fatalf("patch.invalid:8443: %v", err)
+	}
+	select {
+	case <-got:
+		t.Fatal("patch.invalid:8443 went through the local route")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// With PROXY protocol, the header comes first and names EasyRMM's own
+	// loopback address.
+	c, err = NewClient("https://patch.invalid", f.Token, "", "1.2.3", WithLocalRoute(route))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = c.ServerInfo(ctx) // the listener answers nothing
+	var b []byte
+	select {
+	case b = <-got:
+	case <-ctx.Done():
+		t.Fatal("nothing reached the local listener")
+	}
+	sig := "\r\n\r\n\x00\r\nQUIT\n"
+	if len(b) != 28 || string(b[:12]) != sig || b[12] != 0x21 || b[13] != 0x11 || b[14] != 0 || b[15] != 12 {
+		t.Fatalf("PROXY header %x", b)
+	}
+	if src, dst := net.IP(b[16:20]), net.IP(b[20:24]); !src.IsLoopback() || !dst.Equal(net.IPv4(127, 0, 0, 1)) {
+		t.Fatalf("PROXY addresses %s -> %s", src, dst)
+	}
+	if port := int(b[26])<<8 | int(b[27]); port != ln.Addr().(*net.TCPAddr).Port {
+		t.Fatalf("PROXY destination port %d, want the listener's %s", port, ln.Addr())
+	}
+	// A listener that is not there fails the request.
+	route.Upstream = "127.0.0.1:1"
+	c, _ = NewClient("https://patch.invalid", f.Token, "", "1.2.3", WithLocalRoute(route))
+	if _, err := c.ServerInfo(ctx); err == nil {
+		t.Fatal("no listener, no error")
+	}
+}
+
+func TestConsoleURL(t *testing.T) {
+	for _, c := range []struct {
+		conn Connection
+		want string
+	}{
+		{Connection{URL: "https://127.0.0.1:18443", PublicURL: "https://Patch.Example.com/"}, "https://patch.example.com"},
+		{Connection{URL: "https://patch.example.com"}, "https://patch.example.com"},
+		// EasyPatch reports its public address itself: only https:// is offered.
+		{Connection{URL: "https://patch.example.com", PublicURL: "javascript:alert(1)"}, "https://patch.example.com"},
+		{Connection{URL: "", PublicURL: "http://patch.example.com"}, ""},
+	} {
+		if got := consoleURL(c.conn); got != c.want {
+			t.Errorf("consoleURL(%+v) = %q, want %q", c.conn, got, c.want)
+		}
+	}
+}

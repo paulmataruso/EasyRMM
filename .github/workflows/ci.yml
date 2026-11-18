@@ -26,6 +26,21 @@ jobs:
     name: Integration
     uses: ./.github/workflows/integration-tests.yml
 
+  frontend:
+    name: Frontend
+    uses: ./.github/workflows/frontend-tests.yml
+
+  docker:
+    name: Docker
+    uses: ./.github/workflows/docker-build.yml
+    # Publishing runs only for pushes to main in this repository (see the
+    # workflow); pull requests build, scan and smoke-test the image only.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+
   security:
     name: Security
     uses: ./.github/workflows/security.yml
@@ -37,7 +52,7 @@ jobs:
   result:
     name: CI result
     if: always()
-    needs: [backend, integration, security]
+    needs: [backend, integration, frontend, docker, security]
     runs-on: ubuntu-latest
     steps:
       - name: Require every job to succeed

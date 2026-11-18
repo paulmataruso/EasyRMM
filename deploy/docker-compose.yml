@@ -1,0 +1,163 @@
+# EasyRMM server deployment.
+#
+#   cd deploy && ./scripts/setup.sh --hostname rmm.example.com --acme-email you@example.com
+#   docker compose up -d
+#
+# Every service uses host networking: there are no bridge networks and no
+# port mappings. Internal services listen on loopback only; the server's TLS
+# edge is the only public listener (443, plus 80 for ACME HTTP-01 and
+# redirects). MeshCentral is reached only through that edge, on its own
+# hostname. See docs/deployment/docker.md and docs/architecture/network.md.
+
+name: easyrmm
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+services:
+  postgres:
+    image: postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
+    network_mode: host
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - listen_addresses=127.0.0.1
+      - -c
+      - port=15432
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - max_connections=200
+      - -c
+      - shared_buffers=256MB
+      - -c
+      - log_min_duration_statement=2000
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/setup.sh to create deploy/.env}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=peer
+      EASYRMM_DB_OWNER_PASSWORD: ${EASYRMM_DB_OWNER_PASSWORD:?missing in .env}
+      EASYRMM_DB_APP_PASSWORD: ${EASYRMM_DB_APP_PASSWORD:?missing in .env}
+    volumes:
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/postgres:/var/lib/postgresql
+      - ../docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    shm_size: 256m
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-p", "15432", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    logging: *logging
+
+  server:
+    image: ${EASYRMM_IMAGE:-ghcr.io/paulmataruso/easyrmm-server}:${EASYRMM_VERSION:-latest}
+    build:
+      context: ..
+      dockerfile: docker/server/Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      EASYRMM_PUBLIC_URL: ${EASYRMM_PUBLIC_URL:?missing in .env}
+      EASYRMM_MESH_PUBLIC_URL: ${EASYRMM_MESH_PUBLIC_URL:-}
+      # Empty: acme for a DNS name, internal for an IP address (ADR-0016).
+      EASYRMM_TLS_MODE: ${EASYRMM_TLS_MODE:-}
+      EASYRMM_ACME_EMAIL: ${EASYRMM_ACME_EMAIL:-}
+      EASYRMM_LISTEN_HTTP: ${EASYRMM_LISTEN_HTTP-:80}
+      EASYRMM_LISTEN_HTTPS: ${EASYRMM_LISTEN_HTTPS:-:443}
+      EASYRMM_TLS_CERT_FILE: ${EASYRMM_TLS_CERT_FILE:-}
+      EASYRMM_TLS_KEY_FILE: ${EASYRMM_TLS_KEY_FILE:-}
+      EASYRMM_TRUSTED_PROXIES: ${EASYRMM_TRUSTED_PROXIES:-}
+      EASYRMM_DATABASE_URL: postgres://easyrmm_app:${EASYRMM_DB_APP_PASSWORD}@127.0.0.1:15432/easyrmm?sslmode=disable
+      EASYRMM_DATABASE_MIGRATION_URL: postgres://easyrmm_owner:${EASYRMM_DB_OWNER_PASSWORD}@127.0.0.1:15432/easyrmm?sslmode=disable
+      EASYRMM_SECRET_KEY: ${EASYRMM_SECRET_KEY:?missing in .env}
+      EASYRMM_SECRET_KEY_ID: ${EASYRMM_SECRET_KEY_ID:-k1}
+      EASYRMM_SECRET_KEYS_PREVIOUS: ${EASYRMM_SECRET_KEYS_PREVIOUS:-}
+      EASYRMM_REQUIRE_MFA: ${EASYRMM_REQUIRE_MFA:-true}
+      EASYRMM_SESSION_IDLE_TIMEOUT: ${EASYRMM_SESSION_IDLE_TIMEOUT:-}
+      EASYRMM_SESSION_MAX_AGE: ${EASYRMM_SESSION_MAX_AGE:-}
+      EASYRMM_PASSWORD_RESET_TTL: ${EASYRMM_PASSWORD_RESET_TTL:-}
+      EASYRMM_AUDIT_RETENTION: ${EASYRMM_AUDIT_RETENTION:-}
+      EASYRMM_JOB_RETENTION: ${EASYRMM_JOB_RETENTION:-}
+      EASYRMM_METRICS_RETENTION: ${EASYRMM_METRICS_RETENTION:-}
+      EASYRMM_ALERT_RETENTION: ${EASYRMM_ALERT_RETENTION:-}
+      EASYRMM_ACME_DIRECTORY: ${EASYRMM_ACME_DIRECTORY:-}
+      EASYRMM_SMTP_HOST: ${EASYRMM_SMTP_HOST:-}
+      EASYRMM_SMTP_PORT: ${EASYRMM_SMTP_PORT:-587}
+      EASYRMM_SMTP_USERNAME: ${EASYRMM_SMTP_USERNAME:-}
+      EASYRMM_SMTP_PASSWORD: ${EASYRMM_SMTP_PASSWORD:-}
+      EASYRMM_SMTP_FROM: ${EASYRMM_SMTP_FROM:-}
+      EASYRMM_SMTP_TLS: ${EASYRMM_SMTP_TLS:-starttls}
+      EASYRMM_LOG_LEVEL: ${EASYRMM_LOG_LEVEL:-info}
+      EASYRMM_MESH_ENABLED: ${EASYRMM_MESH_ENABLED:-true}
+      EASYRMM_MESH_CERT_URL: ${EASYRMM_MESH_CERT_URL:-}
+      EASYRMM_IP_ACCESS: ${EASYRMM_IP_ACCESS:-true}
+      EASYRMM_IP_ADDRESSES: ${EASYRMM_IP_ADDRESSES:-}
+      EASYRMM_IP_MESH_PORT: ${EASYRMM_IP_MESH_PORT:-4443}
+      # EasyPatch on this same server, behind this edge (ADR-0035,
+      # docs/deployment/easypatch-cohost.md). Empty: not co-hosted.
+      EASYRMM_EASYPATCH_HOSTNAME: ${EASYRMM_EASYPATCH_HOSTNAME:-}
+      EASYRMM_EASYPATCH_TLS_UPSTREAM: ${EASYRMM_EASYPATCH_TLS_UPSTREAM:-}
+      EASYRMM_EASYPATCH_HTTP_UPSTREAM: ${EASYRMM_EASYPATCH_HTTP_UPSTREAM-127.0.0.1:19080}
+      EASYRMM_EASYPATCH_PROXY_PROTOCOL: ${EASYRMM_EASYPATCH_PROXY_PROTOCOL:-true}
+    volumes:
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/server:/var/lib/easyrmm
+      - ${EASYRMM_TLS_DIR:-/srv/easyrmm/tls}:/etc/easyrmm/tls:ro
+      # The server writes MeshCentral's configuration here (it holds the
+      # shared login key); MeshCentral mounts it read-only.
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/meshcentral-config:/var/lib/easyrmm-meshcentral
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    # no-new-privileges is deliberately not set: it would stop the binary's
+    # cap_net_bind_service file capability from taking effect. The image has
+    # no setuid binaries and the container keeps no other capability.
+    stop_grace_period: 30s
+    logging: *logging
+
+  # Remote desktop, terminal and file access (ADR-0004, ADR-0005). It listens
+  # on 127.0.0.1:14430 only; agents and browsers reach it through the
+  # server's edge on the MeshCentral hostname, which admits browsers only
+  # with a session launched from the EasyRMM console. The start script waits
+  # for the configuration the server writes, creates the service account
+  # EasyRMM acts as, and restarts MeshCentral when the configuration changes.
+  # Set EASYRMM_MESH_ENABLED=false and run `docker compose up -d server
+  # postgres` to run without remote access.
+  meshcentral:
+    image: ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d
+    network_mode: host
+    restart: unless-stopped
+    user: "65532:65532"
+    entrypoint: ["/bin/bash", "/easyrmm/start.sh"]
+    environment:
+      HOME: /tmp
+    volumes:
+      - ../docker/meshcentral/start.sh:/easyrmm/start.sh:ro
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/meshcentral-config:/easyrmm/config:ro
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/meshcentral/data:/opt/meshcentral/meshcentral-data
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/meshcentral/files:/opt/meshcentral/meshcentral-files
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/meshcentral/backups:/opt/meshcentral/meshcentral-backups
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:14430/health.ashx"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      # The first start downloads the agent binaries (about 120 MiB).
+      start_period: 5m
+    logging: *logging

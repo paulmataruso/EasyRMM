@@ -3,18 +3,26 @@
 Open-source remote monitoring and management for Windows and Linux endpoints.
 It is self-hosted, multi-tenant and built for MSPs.
 
-> **Status: early development.** The architecture is settled and the security
-> core of the server is implemented and tested. It is not ready for production
-> use yet. [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) tracks what
-> works today, and [`ROADMAP.md`](ROADMAP.md) shows what comes next.
+> **Status: pre-release, in production hardening.** Tested and in the console:
+> * the server, tenancy, users and roles, the audit log;
+> * remote access through MeshCentral;
+> * the agent and its install commands;
+> * inventory, alerts, scripts and jobs, software deployment, reports;
+> * patching through EasyPatch.
+>
+> Linux endpoints are verified end to end. Windows endpoints are verified for
+> install, enrollment and remote access; the other Windows features are built
+> but not yet run on Windows. There is no tagged release yet.
+> [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) tracks what works
+> today, and [`ROADMAP.md`](ROADMAP.md) what comes next.
 
 ## What it is
 
-* **One install per endpoint.** A single package (MSI, EXE, PowerShell
-  one-liner, DEB, RPM or shell one-liner) installs both our agent and
-  MeshAgent, enrolls the device and registers it. Nothing else needs to be
-  installed by hand.
-* **Remote desktop, terminal and file management** from MeshCentral, built
+* **One install per endpoint.** One PowerShell command on Windows, or one
+  shell command on Linux, installs both our agent and MeshAgent, enrolls the
+  device and registers it. Nothing else needs to be installed by hand. MSI,
+  DEB and RPM packages are planned.
+* **Remote desktop, RDP, terminal and file management** from MeshCentral, built
   into EasyRMM's own interface. Our own authorization and audit trail sit in
   front of every session.
 * **Our own RMM platform** for everything else:
@@ -25,7 +33,7 @@ It is self-hosted, multi-tenant and built for MSPs.
   * reporting
   * native-feeling patch management through [EasyPatch](https://github.com/paulmataruso/EasyPatch)
 * **Secure by default:**
-  * mandatory MFA
+  * MFA on by default (authenticator app, security key or passkey)
   * granular RBAC at organization and site level
   * tenant isolation enforced by PostgreSQL row-level security
   * a hash-chained audit log
@@ -53,26 +61,38 @@ them is in [`docs/architecture/research-report.md`](docs/architecture/research-r
 
 | Path | Contents |
 |---|---|
-| `server/` | Go server (modular monolith), migrations |
-| `web/` | React + TypeScript frontend, designed with Impeccable |
-| `agents/` | Go endpoint agent (Windows, Linux) |
-| `installers/` | MSI, packages and install scripts |
-| `meshcentral/` | MeshCentral configuration and integration assets |
-| `integrations/easypatch/` | EasyPatch connector assets |
-| `docker/`, `deploy/` | Container images and Compose deployment |
-| `docs/` | Architecture, deployment, security, operations, API |
-| `tests/` | End-to-end, security, installer and performance suites |
-| `scripts/` | Developer and CI helpers |
+| `server/` | Go server (modular monolith), migrations; it serves the install scripts and writes MeshCentral's configuration |
+| `web/` | Technician console: React + TypeScript, sharing EasyPatch's design system; Playwright end-to-end tests in `web/e2e/` |
+| `agent/` | EasyRMM endpoint agent (Go; Windows and Linux), including the EasyPatch agent installer |
+| `internal/agentproto/` | Wire protocol shared by the server and the agent |
+| `docker/`, `deploy/` | Container images and the Compose deployment |
+| `docs/` | Architecture and ADRs, deployment, operations, integrations, security, development |
+| `scripts/` | CI, release, end-to-end and test helpers; the backup and load drills in `scripts/drill/` |
+| `tools/agentsim/` | Simulated agents for load tests |
 
-Some directories are created as their phase starts. See the roadmap.
+Tests sit beside the code they test (`*_test.go`, `*_integration_test.go`,
+`*.test.tsx`).
 
 ## Development
 
 ```bash
 make test-db                 # disposable PostgreSQL 18 on 127.0.0.1:55432
+make test-mesh               # disposable MeshCentral for the remote-access tests
+make test-oidc               # disposable Dex (OpenID Connect provider) for the single sign-on tests
 export EASYRMM_TEST_DATABASE_URL='postgres://postgres:easyrmm-test-only@127.0.0.1:55432/postgres?sslmode=disable'
 make check                   # format, vet, lint, unit + integration tests, coverage floors
+make web-test                # console typecheck and unit tests
+make e2e                     # build everything, browser tests against a real server
+make build-agents            # Windows and Linux agents in bin/agents; serve them with EASYRMM_AGENT_DIR=bin/agents
 ```
+
+Endpoints join with the EasyRMM agent: see
+[docs/deployment/agents.md](docs/deployment/agents.md).
+
+Console development is described in
+[docs/development/web-console.md](docs/development/web-console.md). The
+backup and restore drill and the load test are in
+[docs/development/drills.md](docs/development/drills.md).
 
 [CONTRIBUTING.md](CONTRIBUTING.md) explains the workflow.
 

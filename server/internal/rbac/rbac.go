@@ -87,6 +87,22 @@ const (
 	ScopeSite
 )
 
+// String returns the scope's name.
+func (k ScopeKind) String() string {
+	switch k {
+	case ScopeGlobal:
+		return "global"
+	case ScopeOrganization:
+		return "organization"
+	case ScopeSite:
+		return "site"
+	}
+	return "unknown"
+}
+
+// MarshalText encodes the scope by name for JSON.
+func (k ScopeKind) MarshalText() ([]byte, error) { return []byte(k.String()), nil }
+
 // RoleDef describes a built-in role.
 type RoleDef struct {
 	Role        Role
@@ -320,6 +336,31 @@ func (p *Principal) Can(perm Permission, r Resource) bool {
 	return false
 }
 
+// CanAnywhere reports whether the permission holds anywhere: platform-wide,
+// in an organization or at a site. Shared, platform-level objects (the
+// shared script library) are read with it.
+func (p *Principal) CanAnywhere(perm Permission) bool {
+	return p != nil && (p.global[perm] || len(p.orgs[perm]) > 0 || len(p.sites[perm]) > 0)
+}
+
+// CanInOrg reports whether the permission holds in the organization or at
+// any of its sites. Organization-level objects that sites use (an
+// organization's scripts) are read with it.
+func (p *Principal) CanInOrg(perm Permission, orgID uuid.UUID) bool {
+	if p == nil || orgID == uuid.Nil {
+		return p != nil && p.global[perm]
+	}
+	if p.global[perm] || p.orgs[perm][orgID] {
+		return true
+	}
+	for siteID := range p.sites[perm] {
+		if p.siteOrg[siteID] == orgID {
+			return true
+		}
+	}
+	return false
+}
+
 // Scope returns where the permission holds, for building filtered queries.
 func (p *Principal) Scope(perm Permission) Scope {
 	if p == nil {
@@ -379,6 +420,20 @@ func (p *Principal) Permissions() []Permission {
 	out := make([]Permission, 0, len(set))
 	for perm := range set {
 		out = append(out, perm)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+// GlobalPermissions returns the permissions the principal holds
+// platform-wide, for the frontend to show what only those may do: deciding
+// on devices that wait for approval and belong to no organization yet.
+func (p *Principal) GlobalPermissions() []Permission {
+	out := make([]Permission, 0, len(p.global))
+	for perm, ok := range p.global {
+		if ok {
+			out = append(out, perm)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out

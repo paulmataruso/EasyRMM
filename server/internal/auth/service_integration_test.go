@@ -111,7 +111,7 @@ func (e *env) enroll(t *testing.T, email string) (secret, token string, codes []
 	if err != nil {
 		t.Fatal(err)
 	}
-	enr, err := e.svc.BeginTOTPEnrollment(ctx, s, u)
+	enr, err := e.svc.BeginTOTPEnrollment(ctx, s, u, "", meta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,17 +328,28 @@ func TestChangePasswordRevokesOtherSessions(t *testing.T) {
 	tokA, _, _ := e.svc.Login(ctx, "pw@example.com", goodPassword, meta)
 	tokB, _, _ := e.svc.Login(ctx, "pw@example.com", goodPassword, meta)
 	s, u, _ := e.svc.Authenticate(ctx, tokA)
-	if err := e.svc.ChangePassword(ctx, s, u, "not-my-password", "another-strong-phrase-9", meta); !errors.Is(err, auth.ErrInvalidCredentials) {
+	if _, err := e.svc.ChangePassword(ctx, s, u, "not-my-password", "another-strong-phrase-9", meta); !errors.Is(err, auth.ErrInvalidCredentials) {
 		t.Fatalf("wrong current password: %v", err)
 	}
-	if err := e.svc.ChangePassword(ctx, s, u, goodPassword, "short", meta); !errors.Is(err, auth.ErrPasswordTooShort) {
+	if _, err := e.svc.ChangePassword(ctx, s, u, goodPassword, "short", meta); !errors.Is(err, auth.ErrPasswordTooShort) {
 		t.Fatalf("weak new password: %v", err)
 	}
-	if err := e.svc.ChangePassword(ctx, s, u, goodPassword, "another-strong-phrase-9", meta); err != nil {
+	e.now = e.now.Add(time.Minute)
+	tokA2, err := e.svc.ChangePassword(ctx, s, u, goodPassword, "another-strong-phrase-9", meta)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := e.svc.Authenticate(ctx, tokA); err != nil {
+	// The session goes on under a new token, with its lifetime unchanged;
+	// a copy of the old token no longer works.
+	if _, _, err := e.svc.Authenticate(ctx, tokA); !errors.Is(err, auth.ErrInvalidSession) {
+		t.Fatal("the old token survived its own password change")
+	}
+	s2, _, err := e.svc.Authenticate(ctx, tokA2)
+	if err != nil {
 		t.Fatal("current session revoked by its own password change")
+	}
+	if s2.ID != s.ID || !s2.ExpiresAt.Equal(s.ExpiresAt) {
+		t.Fatalf("session changed: %v %v -> %v %v", s.ID, s.ExpiresAt, s2.ID, s2.ExpiresAt)
 	}
 	if _, _, err := e.svc.Authenticate(ctx, tokB); !errors.Is(err, auth.ErrInvalidSession) {
 		t.Fatal("other session survived password change")
@@ -360,6 +371,7 @@ func TestPasswordResetFlow(t *testing.T) {
 	if err := e.svc.RequestPasswordReset(ctx, "reset@example.com", meta); err != nil {
 		t.Fatal(err)
 	}
+	e.svc.Wait()
 	if len(e.mail.sent) != 1 {
 		t.Fatalf("expected exactly one e-mail, got %d", len(e.mail.sent))
 	}
@@ -496,7 +508,11 @@ func TestOptionalTOTPEnrollmentFromActiveSessionAndRegeneratingCodes(t *testing.
 	if _, _, err := e.svc.ConfirmTOTPEnrollment(ctx, s, u, "123456", meta); !errors.Is(err, auth.ErrWrongState) {
 		t.Fatalf("confirm without pending secret: %v", err)
 	}
-	enr, err := e.svc.BeginTOTPEnrollment(ctx, s, u)
+	// From a signed-in session, the password comes first.
+	if _, err := e.svc.BeginTOTPEnrollment(ctx, s, u, "wrong password", meta); !errors.Is(err, auth.ErrInvalidCredentials) {
+		t.Fatalf("totp set-up with a wrong password: %v", err)
+	}
+	enr, err := e.svc.BeginTOTPEnrollment(ctx, s, u, goodPassword, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +535,7 @@ func TestOptionalTOTPEnrollmentFromActiveSessionAndRegeneratingCodes(t *testing.
 		t.Fatal("MFA not reported as enabled")
 	}
 	// Once enabled, a new secret cannot be started from a normal session.
-	if _, err := e.svc.BeginTOTPEnrollment(ctx, s, u); !errors.Is(err, auth.ErrWrongState) {
+	if _, err := e.svc.BeginTOTPEnrollment(ctx, s, u, goodPassword, meta); !errors.Is(err, auth.ErrWrongState) {
 		t.Fatalf("re-enrollment while enabled: %v", err)
 	}
 	if _, err := e.svc.RegenerateRecoveryCodes(ctx, s, u, "wrong password", meta); !errors.Is(err, auth.ErrInvalidCredentials) {
@@ -553,7 +569,7 @@ func TestStateGuards(t *testing.T) {
 	if _, err := e.svc.VerifyMFA(ctx, s, u, "123456", meta); !errors.Is(err, auth.ErrWrongState) {
 		t.Fatalf("VerifyMFA during enrollment: %v", err)
 	}
-	if err := e.svc.ChangePassword(ctx, s, u, goodPassword, "another-strong-phrase-9", meta); !errors.Is(err, auth.ErrWrongState) {
+	if _, err := e.svc.ChangePassword(ctx, s, u, goodPassword, "another-strong-phrase-9", meta); !errors.Is(err, auth.ErrWrongState) {
 		t.Fatalf("ChangePassword before MFA: %v", err)
 	}
 	if _, err := e.svc.RegenerateRecoveryCodes(ctx, s, u, goodPassword, meta); !errors.Is(err, auth.ErrWrongState) {

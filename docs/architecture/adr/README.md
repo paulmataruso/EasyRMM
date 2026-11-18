@@ -8,13 +8,36 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 |---|---|---|
 | [0001](0001-go-modular-monolith.md) | Go modular monolith for server and agent | Accepted |
 | [0002](0002-postgresql-rls-tenant-isolation.md) | PostgreSQL with row-level security and split database roles | Accepted |
-| [0003](0003-go-edge-host-networking.md) | Go TLS edge, host networking and the port plan | Accepted |
-| [0004](0004-meshcentral-dedicated-origin.md) | MeshCentral behind our edge on a dedicated hostname | Accepted |
-| [0005](0005-meshcentral-identity-and-sessions.md) | MeshCentral users, groups, login tokens and session launch | Accepted |
+| [0003](0003-go-edge-host-networking.md) | Go TLS edge, host networking and the port plan | Accepted; refined by 0016 |
+| [0004](0004-meshcentral-dedicated-origin.md) | MeshCentral behind our edge on a dedicated hostname | Accepted; refined by 0014 and 0016 |
+| [0005](0005-meshcentral-identity-and-sessions.md) | MeshCentral users, groups, login tokens and session launch | Accepted; refined by 0014 |
 | [0006](0006-sessions-and-mfa.md) | Opaque cookie sessions with mandatory MFA | Accepted |
 | [0007](0007-hash-chained-audit-log.md) | Append-only, hash-chained audit log | Accepted |
-| [0008](0008-unified-endpoint-installer.md) | Unified endpoint installer bundling MeshAgent | Accepted |
-| [0009](0009-agent-protocol.md) | Agent protocol: device keys, WebSocket with HTTPS polling fallback | Accepted |
+| [0008](0008-unified-endpoint-installer.md) | Unified endpoint installer bundling MeshAgent | Accepted; MeshAgent sourcing superseded by 0015 |
+| [0009](0009-agent-protocol.md) | Agent protocol: device keys, WebSocket with HTTPS polling fallback | Accepted; refined by 0017 |
 | [0010](0010-easypatch-integration.md) | EasyPatch integration through a service API | Accepted |
 | [0011](0011-licensing.md) | AGPL-3.0 for EasyRMM | Accepted |
-| [0012](0012-frontend-stack-and-impeccable.md) | React/TypeScript frontend designed with Impeccable | Accepted |
+| [0012](0012-frontend-stack-and-impeccable.md) | React/TypeScript frontend designed with Impeccable | Accepted; styling superseded by 0013 |
+| [0013](0013-easypatch-design-system.md) | The console shares EasyPatch's design system | Accepted |
+| [0014](0014-remote-access-gateway-and-device-discovery.md) | Remote-access gateway rules and device discovery | Accepted |
+| [0015](0015-enrollment-and-meshagent-delivery.md) | Deployment tokens, agent enrollment and MeshAgent delivery | Accepted |
+| [0016](0016-ip-address-access.md) | Reaching the server by IP address: IP access, internal certificate authority, routing by port | Accepted |
+| [0017](0017-scripts-and-jobs.md) | Scripts and jobs: a tenant-scoped library, signed jobs over a long poll | Accepted |
+| [0018](0018-inventory-and-telemetry.md) | Inventory and telemetry: hash-synced inventory, metrics with every heartbeat | Accepted |
+| [0019](0019-monitoring-and-alerts.md) | Monitoring and alerts: tenant-scoped policies evaluated every minute | Accepted |
+| [0020](0020-windows-agent.md) | The Windows agent: services, install.ps1 with a key pin, PowerShell and cmd, Windows inventory | Accepted |
+| [0021](0021-console-navigation.md) | Console navigation by section: a sidebar tree per section, quick connect, recent connections | Accepted |
+| [0022](0022-gateway-relay-restrictions.md) | No TCP or UDP tunnels through the remote-access gateway | Accepted; refines 0014 |
+| [0023](0023-audit-forwarding.md) | Forwarding the audit log over syslog (RFC 5424 over TLS, TCP or UDP) | Accepted |
+| [0024](0024-enrollment-approval.md) | Installing agents that wait for approval: one command for every computer | Accepted; refines 0015 |
+| [0025](0025-remote-session-latency.md) | Remote session latency: session view tuning, compression, small socket queues | Accepted; refines 0005, 0014 |
+| [0026](0026-rdp-sessions.md) | RDP sessions: a session kind of its own, the web RDP relay for RDP grants only, sized to the window | Accepted; refines 0005, 0022 |
+| [0027](0027-agent-updates.md) | Coordinated agent updates: builds by hash, a few devices at a time, signed instructions, probation and rollback | Accepted; refines 0008, 0009 |
+| [0028](0028-software-deployment.md) | Software deployment: install, update and remove through winget, Chocolatey and the Linux package manager, as jobs of EasyRMM's own scripts | Accepted; builds on 0017, 0018 |
+| [0029](0029-reports.md) | Reports: device inventory, installed software, device health and alert history, in the console and as audited CSV downloads | Accepted; builds on 0018, 0019 |
+| [0030](0030-easypatch-connector.md) | EasyPatch connector: one server through an API token, organizations linked by hand, devices linked by what their EasyPatch agent reports, patch views and actions behind EasyRMM roles | Accepted; refines 0010 |
+| [0031](0031-easypatch-agent-install.md) | The EasyRMM agent installs the EasyPatch agent where there is none: a signed instruction in the heartbeat with EasyPatch's package and a single-use enrollment token, on request or automatically per organization; never a second agent, never a re-enrollment | Accepted; builds on 0027, 0030 |
+| [0032](0032-webauthn-passkeys.md) | Security keys and passkeys (WebAuthn) as a second factor beside or instead of the authenticator app, and passkey sign-in with user verification; the relying party is the public URL's host, so IP-only deployments go without | Accepted; refines 0006 |
+| [0033](0033-relays-bound-to-grants.md) | Tunnel requests and the agent's end of a relay bound to the session's grants; device messages beyond the session types dropped; the agent path held to what MeshCentral's agent port serves; downloads need a files grant | Accepted; amends 0014, 0022 |
+| [0034](0034-oidc-single-sign-on.md) | Single sign-on with OpenID Connect: providers set up by super administrators, code flow with PKCE bound to a sealed cookie, identities linked to invited accounts by provider and subject (first time by a verified email in an allowed domain), EasyRMM's second factor unless the provider is declared to enforce MFA | Accepted; refines 0006, 0032 |
+| [0035](0035-cohosting-easypatch.md) | EasyPatch on the same server: EasyRMM's edge keeps 80 and 443, passes EasyPatch's name through by SNI, still encrypted, to its Caddy on loopback with a PROXY protocol v2 header naming the client, forwards its HTTP-01 challenges, and its connector reaches it over loopback | Accepted; refines 0003, 0010, 0030 |

@@ -48,6 +48,16 @@ func (k *KeyedLimiter) Allow(key string) bool {
 	return b.lim.AllowN(now, 1)
 }
 
+// Ready reports whether an event for key would be allowed now, without
+// consuming a token: a server can turn away a request it would refuse
+// before doing the work of reading it.
+func (k *KeyedLimiter) Ready(key string) bool {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	b, ok := k.buckets[key]
+	return !ok || b.lim.TokensAt(k.now()) >= 1
+}
+
 // evictLocked removes buckets that have refilled completely; if that frees
 // nothing, it drops the least recently seen half. Dropping a bucket only
 // ever makes a key less limited, never more, so this cannot lock anyone out.

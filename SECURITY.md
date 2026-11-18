@@ -25,5 +25,15 @@ those projects; tell us too if EasyRMM's configuration makes them reachable.
 
 ## Hardening documentation
 
-See [`docs/security/`](docs/security/) for the threat model, RBAC model and
-operational hardening guidance.
+See [`docs/security/`](docs/security/):
+
+* [Threat model](docs/security/threat-model.md): what EasyRMM protects, from
+  whom, and where each boundary is enforced.
+* [Phase 9 security review](docs/security/security-review.md): findings and
+  what became of them.
+* [Roles and permissions](docs/security/rbac.md) and
+  [Signing in](docs/security/sign-in.md).
+
+Deployment guidance is in [`docs/deployment/`](docs/deployment/) (TLS and
+the internal certificate authority). The ports to open in a firewall are
+in [`docs/architecture/network.md`](docs/architecture/network.md).
