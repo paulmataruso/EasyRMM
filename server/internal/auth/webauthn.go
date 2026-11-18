@@ -397,7 +397,7 @@ func (s *Service) FinishKeyRegistration(ctx context.Context, sess *Session, user
 		}
 		if sess.State == StateMFAEnrollment {
 			var err error
-			if out.Token, err = s.rotate(ctx, tx, sess.ID, StateActive); err != nil {
+			if out.Token, err = s.rotate(ctx, tx, sess.ID, StateActive, MethodKey); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now() WHERE id = $1`, sess.UserID); err != nil {
@@ -521,7 +521,7 @@ func (s *Service) FinishKeyMFA(ctx context.Context, sess *Session, user *User, b
 		if err != nil {
 			return err
 		}
-		if token, err = s.rotate(ctx, tx, sess.ID, StateActive); err != nil {
+		if token, err = s.rotate(ctx, tx, sess.ID, StateActive, MethodKey); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now(), mfa_failed_attempts = 0 WHERE id = $1`, sess.UserID); err != nil {
@@ -641,7 +641,8 @@ func (s *Service) FinishPasskeyLogin(ctx context.Context, body []byte, meta Requ
 		if err != nil {
 			return err
 		}
-		if token, sess, err = s.createSession(ctx, tx, u.id, StateActive, meta); err != nil {
+		// A passkey sign-in requires user verification: possession and a PIN or biometric.
+		if token, sess, err = s.createSession(ctx, tx, u.id, StateActive, meta, MethodKey, MethodMultiFactor); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE users SET last_login_at = now(), mfa_failed_attempts = 0 WHERE id = $1`, u.id); err != nil {

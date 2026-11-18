@@ -176,6 +176,28 @@ func TestSiteAdminNeverManagesOrgOrUsers(t *testing.T) {
 	}
 }
 
+// Changing EasyPatch's standing rules is for organization administrators
+// and above, and never comes from a site grant.
+func TestPatchConfigure(t *testing.T) {
+	cases := []struct {
+		role Role
+		want bool
+	}{{RoleSuperAdmin, true}, {RoleOrgAdmin, true}, {RoleSiteAdmin, false}, {RoleTechnician, false}, {RoleReadOnly, false}}
+	for _, c := range cases {
+		if got := slices.Contains(Roles[c.role].Permissions, PermPatchConfigure); got != c.want {
+			t.Errorf("%s holds patch.configure: %v", c.role, got)
+		}
+	}
+	org := mustPrincipal(t, Assignment{Role: RoleOrgAdmin, OrganizationID: orgA})
+	if !org.Can(PermPatchConfigure, Org(orgA)) || org.Can(PermPatchConfigure, Org(orgB)) {
+		t.Error("organization administrator: patch.configure outside their organization, or not in it")
+	}
+	site := mustPrincipal(t, Assignment{Role: RoleSiteAdmin, OrganizationID: orgA})
+	if site.Can(PermPatchConfigure, Org(orgA)) || site.CanAnywhere(PermPatchConfigure) {
+		t.Error("site administrator at organization scope holds patch.configure")
+	}
+}
+
 func TestScopeMergesOrgAndSiteGrants(t *testing.T) {
 	p := mustPrincipal(t,
 		Assignment{Role: RoleTechnician, OrganizationID: orgA},

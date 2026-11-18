@@ -1,5 +1,5 @@
 name: Feature request
-description: Suggest an improvement
+description: Suggest an improvement to EasyRMM (for EasyPatch, use the EasyPatch feature request)
 labels: [enhancement]
 body:
   - type: textarea

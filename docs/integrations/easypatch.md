@@ -6,6 +6,19 @@ EasyPatch agent from EasyRMM (ADR-0031): on chosen devices or automatically
 per organization. Operating both:
 [docs/operations/patching.md](../operations/patching.md).
 
+EasyPatch is EasyRMM's patch management component. Its code is in
+`easypatch/` of this repository ([monorepo.md](../development/monorepo.md)),
+under its own licence ([LICENSING.md](../../LICENSING.md)). It still runs on
+its own, and EasyRMM can use any EasyPatch server, not only one installed
+with it. EasyRMM uses EasyPatch's API for simple patching (scan, install,
+restart, retry), links into EasyPatch's console for everything else, and has
+an EasyRMM | EasyPatch switch between the two consoles. People can sign in
+to EasyPatch through EasyRMM, so the switch does not ask for a password
+([ADR-0036](../architecture/adr/0036-easyrmm-signs-in-to-easypatch.md);
+[set it up](../deployment/easypatch-cohost.md#step-4-sign-in-to-easypatch-through-easyrmm)).
+The plan is in
+[the integration plan](../architecture/easypatch-integration-plan.md).
+
 This document first listed the EasyPatch changes the integration would need,
 written against EasyPatch 1.7.1 (ADR-0010). EasyPatch 1.9.0 changed that
 picture; what was built, and what is still wanted, is below.
@@ -28,9 +41,11 @@ script library warns about scripts that patch the system themselves, naming
 each line (see [Scripts and jobs](../operations/scripts-and-jobs.md#scripts-that-install-updates)).
 It warns; it refuses nothing.
 
-EasyRMM has no restart action of its own, so nothing it starts can restart a
-device in the middle of an EasyPatch job. A restart action added later
-should first check the device's running EasyPatch jobs.
+EasyRMM restarts devices only through EasyPatch: a restart job with one
+fixed preset (only if a restart is pending, after EasyPatch's countdown,
+servers confirmed by name). EasyPatch runs one job at a time on an endpoint,
+so the restart never lands in the middle of an install. EasyRMM has no other
+restart action.
 
 ## Topology
 
@@ -50,10 +65,10 @@ every route the console needs accepts them. Devices are linked by what the
 EasyPatch agent reports about itself, checked against the endpoint's
 credential fingerprints, rather than by external ids.
 
-**Proposed to EasyPatch** on the branch `easyrmm-integration` of the
-EasyPatch repository, not merged there (backward compatible; EasyRMM works
-with a stock 1.9.0 without them, and turns each on when the server lists its
-capability in `/api/v1/server-info`):
+**Added to EasyPatch** in `easypatch/`, not in an EasyPatch release yet
+(backward compatible; EasyRMM works with a stock 1.9.0 without them, and
+turns each on when the server lists its capability in
+`/api/v1/server-info`):
 
 1. `capabilities` in `/api/v1/server-info`.
 2. `scheduled-installs`: an optional `scheduledAt` on
@@ -64,11 +79,13 @@ capability in `/api/v1/server-info`):
    callers, recorded in EasyPatch's audit log and on the job.
 4. Update exclusions by API tokens (they failed with 401).
 
-EasyRMM was run against a server built from that branch (2026-11-16). It
-listed both capabilities. A scheduled install of one update on a Linux
-device was held by EasyPatch until its time, delivered at the device's
-first check-in after it, and installed. EasyPatch recorded the job as
-requested by `token:<name> for <EasyRMM user>`.
+They were written on an `easyrmm-integration` branch of EasyPatch before
+EasyPatch came into this repository. EasyRMM was run against a server built
+from that branch (2026-11-16). It listed both capabilities. A scheduled
+install of one update on a Linux device was held by EasyPatch until its
+time, delivered at the device's first check-in after it, and installed.
+EasyPatch recorded the job as requested by
+`token:<name> for <EasyRMM user>`.
 
 **Still wanted, not built:**
 
@@ -86,8 +103,8 @@ requested by `token:<name> for <EasyRMM user>`.
 5. **Licence permission** — EasyPatch is FSL-1.1-ALv2. EasyRMM does not
    redistribute EasyPatch binaries; the integration code in EasyRMM is
    AGPL and talks to EasyPatch only over its API. If the owner wants EasyRMM
-   operators to be explicitly covered, publish an additional permission in
-   the EasyPatch repository.
+   operators to be explicitly covered, publish an additional permission next
+   to EasyPatch's licence, in `easypatch/`.
 
 ## Device correlation (never hostname-only)
 

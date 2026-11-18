@@ -1,6 +1,6 @@
 # Upgrading EasyRMM
 
-Each release is a version tag (`v1.2.3`), a server image
+Each release is a version tag (`easyrmm-v1.2.3`), a server image
 (`ghcr.io/paulmataruso/easyrmm-server:1.2.3`) and a deployment bundle
 (`easyrmm-v1.2.3-deploy.tar.gz`) on the GitHub release page. The bundle
 holds the Compose file, `setup.sh` and the files they use, in the
@@ -27,7 +27,7 @@ From a clone:
 ```bash
 cd /path/to/easyrmm
 git fetch --tags
-git checkout v1.2.3
+git checkout easyrmm-v1.2.3
 cd deploy
 ```
 

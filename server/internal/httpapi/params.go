@@ -51,6 +51,22 @@ func QueryInt(r *http.Request, name string, def, lo, hi int64) (int64, error) {
 	return n, nil
 }
 
+// QueryCount parses an optional count query parameter (a page size, a page
+// number, a number of days) within [lo, hi], returning def when absent. Counts
+// fit in 32 bits, so they convert to int on every platform; use QueryInt for
+// wider values such as cursors.
+func QueryCount(r *http.Request, name string, def, lo, hi int) (int, error) {
+	v := r.URL.Query().Get(name)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.ParseInt(v, 10, 32)
+	if err != nil || n < int64(lo) || n > int64(hi) {
+		return 0, apperr.Invalid(name, "must be a whole number between "+strconv.Itoa(lo)+" and "+strconv.Itoa(hi))
+	}
+	return int(n), nil
+}
+
 // List is the envelope for collection responses.
 type List[T any] struct {
 	Items []T `json:"items"`

@@ -1,0 +1,22 @@
+<!-- EasyPatch wordmark for light backgrounds: "Easy" and "Patch" in deeper shades of the same palette. viewBox cropped to the artwork (original canvas: 0 0 1100 260). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="38 53 990 182">
+  <defs>
+    <linearGradient id="easy" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#102b39"/>
+      <stop offset="1" stop-color="#2a6a7d"/>
+    </linearGradient>
+    <linearGradient id="patch" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3d9e00"/>
+      <stop offset=".48" stop-color="#00a070"/>
+      <stop offset="1" stop-color="#008c96"/>
+    </linearGradient>
+  </defs>
+  <text x="40" y="170" font-family="Arial, sans-serif"
+    font-size="155" font-style="italic" font-weight="800"
+    letter-spacing="-7" fill="url(#easy)">Easy</text>
+  <text x="390" y="170" font-family="Arial, sans-serif"
+    font-size="155" font-style="italic" font-weight="800"
+    letter-spacing="-7" fill="url(#patch)">Patch</text>
+  <path d="M80 195 Q550 260 1020 195"
+    fill="none" stroke="#00d6d8" stroke-width="7" stroke-linecap="round"/>
+</svg>

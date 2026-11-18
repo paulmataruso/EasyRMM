@@ -346,10 +346,16 @@ func (s *Service) CheckConnection(ctx context.Context) (Connection, error) {
 	return s.Connection(ctx)
 }
 
-// noteError records that a call to EasyPatch failed, for Settings to show.
+// noteError records that a call to EasyPatch failed, for Settings and the
+// product switch to show. Only failures that make EasyPatch unusable are
+// recorded: no answer, a server error, or EasyRMM's token refused. EasyPatch
+// refusing one request (a duplicate scan) says nothing about the server.
 func (s *Service) noteError(ctx context.Context, err error) {
 	var e *Error
 	if !errors.As(err, &e) {
+		return
+	}
+	if e.Status != 0 && e.Status < 500 && e.Status != http.StatusUnauthorized && e.Status != http.StatusForbidden {
 		return
 	}
 	ctx = context.WithoutCancel(ctx)

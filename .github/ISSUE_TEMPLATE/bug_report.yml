@@ -1,5 +1,5 @@
 name: Bug report
-description: Something does not work as documented
+description: Something in EasyRMM does not work as documented (for EasyPatch, use the EasyPatch bug report)
 labels: [bug]
 body:
   - type: markdown

@@ -71,15 +71,20 @@ type Token struct {
 
 // Endpoint is an EasyPatch endpoint.
 type Endpoint struct {
-	ID, Org        uuid.UUID
-	OrgName        string
-	Hostname       string
-	Serial         string
-	Status         string
-	Compliance     string
-	Missing        int
-	Fingerprint    string
-	Revoked        bool
+	ID, Org     uuid.UUID
+	OrgName     string
+	Hostname    string
+	Serial      string
+	Status      string
+	Compliance  string
+	Missing     int
+	Fingerprint string
+	Revoked     bool
+	// RebootPending, IsServer and CannotRestart describe a pending restart
+	// as EasyPatch 1.10.0's restart-pending list shows it.
+	RebootPending  bool
+	IsServer       bool
+	CannotRestart  bool
 	Updates        []map[string]any
 	InstalledItems []map[string]any
 }
@@ -91,6 +96,8 @@ type Job struct {
 	Status            string
 	CreatedAt         time.Time
 	NotBefore         *time.Time
+	// RetryOf is the job this one retries.
+	RetryOf *uuid.UUID
 }
 
 // Request is a call the server received.
@@ -146,7 +153,8 @@ func (s *Server) Site(org uuid.UUID, name string) uuid.UUID {
 	defer s.mu.Unlock()
 	id := uuid.New()
 	s.sites = append(s.sites, map[string]any{"id": id, "organizationId": org, "organizationName": "", "name": name, "description": nil,
-		"address": nil, "timeZone": "UTC", "isArchived": false})
+		"address": nil, "timeZone": "UTC", "isActive": true, "endpointCount": 0, "rebootPendingCount": 0,
+		"createdAt": "2026-11-02T10:00:00+00:00", "archivedAt": nil, "tags": nil})
 	return id
 }
 
@@ -193,6 +201,13 @@ func (s *Server) AddEndpoint(org uuid.UUID, hostname, serial, fingerprint string
 	return e
 }
 
+// RemoveEndpoint deletes an endpoint, as deleting it in EasyPatch does.
+func (s *Server) RemoveEndpoint(id uuid.UUID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.endpoints, id)
+}
+
 // Jobs lists the jobs, oldest first.
 func (s *Server) Jobs() []Job {
 	s.mu.Lock()
@@ -202,6 +217,17 @@ func (s *Server) Jobs() []Job {
 		out = append(out, *j)
 	}
 	return out
+}
+
+// SetJobStatus changes a job's status, as its agent's reports would.
+func (s *Server) SetJobStatus(id uuid.UUID, status string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, j := range s.jobs {
+		if j.ID == id {
+			j.Status = status
+		}
+	}
 }
 
 // RequestsTo lists the calls of a method to a path.
@@ -245,7 +271,7 @@ func (e *Endpoint) summary() map[string]any {
 		"osVersion": "13", "osBuild": nil, "architecture": "X64", "agentVersion": "1.9.0", "agentOutdated": false, "isOnline": true,
 		"lastCheckInAt": "2026-11-16T14:34:13.737582+00:00", "lastScanAt": "2026-11-16T14:40:00+00:00",
 		"complianceStatus": e.Compliance, "missingRequiredCount": 1, "missingTotalCount": e.Missing, "failedCount": 1,
-		"rebootPending": false, "osSupportStatus": "Unknown", "currentActivity": "Idle", "lastSeenIp": "192.0.2.10",
+		"rebootPending": e.RebootPending, "osSupportStatus": "Unknown", "currentActivity": "Idle", "lastSeenIp": "192.0.2.10",
 		"platform": "Linux", "missingDeferredCount": 0, "tags": []any{}, "knownExploitedMissingCount": 0,
 	}
 }
@@ -367,6 +393,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, s.Packages)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/organizations":
 		reply(w, 200, s.orgs)
+	case r.Method == http.MethodGet && parts[0] == "organizations" && len(parts) == 3 && parts[2] == "restart-pending":
+		s.restartPending(w, parts[1])
 	case r.Method == http.MethodGet && parts[0] == "organizations" && len(parts) == 3 && parts[2] == "sites":
 		list := []map[string]any{}
 		for _, x := range s.sites {
@@ -413,6 +441,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		j := s.jobs[i]
+		if len(parts) == 3 && parts[2] == "retry" && r.Method == http.MethodPost {
+			s.retry(w, j)
+			return
+		}
 		if len(parts) == 3 && parts[2] == "cancel" && r.Method == http.MethodPost {
 			if j.Status == "Completed" || j.Status == StatusCanceled {
 				problem(w, 409, "job_finished", "The job has finished.")
@@ -570,17 +602,74 @@ func (s *Server) bulk(w http.ResponseWriter, kind string, body map[string]any) {
 			items = append(items, map[string]any{"endpointId": id, "hostname": nil, "success": false, "jobId": nil,
 				"errorCode": "not_found", "message": "Endpoint not found."})
 			failed++
+		case kind == "restart" && e.CannotRestart:
+			items = append(items, map[string]any{"endpointId": id, "hostname": e.Hostname, "success": false, "jobId": nil,
+				"errorCode": "unsupported", "message": e.Hostname + "'s agent cannot restart the computer."})
+			failed++
 		case kind == "install-updates" && e.Missing == 0:
 			items = append(items, map[string]any{"endpointId": id, "hostname": e.Hostname, "success": false, "jobId": nil,
 				"errorCode": "nothing_to_install", "message": e.Hostname + " has no eligible updates."})
 			failed++
 		default:
-			typ := map[string]string{"scan": "UpdateScan", "install-updates": "InstallUpdates"}[kind]
-			j := s.newJob(e, typ, scheduled(body))
+			typ := map[string]string{"scan": "UpdateScan", "install-updates": "InstallUpdates", "restart": "Restart"}[kind]
+			at := scheduled(body)
+			if restart, ok := body["restart"].(map[string]any); ok {
+				at = scheduled(restart)
+			}
+			j := s.newJob(e, typ, at)
 			items = append(items, map[string]any{"endpointId": id, "hostname": e.Hostname, "success": true, "jobId": j.ID,
 				"errorCode": nil, "message": nil})
 			succeeded++
 		}
 	}
 	reply(w, 200, map[string]any{"succeeded": succeeded, "failed": failed, "results": items})
+}
+
+// restartPending answers GET /api/v1/organizations/{id}/restart-pending as
+// EasyPatch 1.10.0 does; a server reporting an earlier version has no such
+// route.
+func (s *Server) restartPending(w http.ResponseWriter, org string) {
+	if strings.HasPrefix(s.Version, "1.9.") || strings.HasPrefix(s.Version, "1.8.") {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+	id, _ := uuid.Parse(org)
+	if slices.IndexFunc(s.orgs, func(o map[string]any) bool { return o["id"] == id }) < 0 {
+		problem(w, 404, "not_found", "Organization not found.")
+		return
+	}
+	list := []map[string]any{}
+	for _, e := range s.sorted() {
+		if e.Org == id && e.Status == "Active" && e.RebootPending {
+			platform, os := "Linux", "Debian GNU/Linux 13 (trixie)"
+			if e.IsServer {
+				platform, os = "Windows", "Windows Server 2025 Standard"
+			}
+			list = append(list, map[string]any{"id": e.ID, "hostname": e.Hostname, "siteId": uuid.New(), "siteName": "Head office",
+				"platform": platform, "operatingSystem": os, "isServer": e.IsServer, "isOnline": true,
+				"rebootPendingSince": "2026-11-16T14:40:00+00:00", "canRestart": !e.CannotRestart})
+		}
+	}
+	reply(w, 200, map[string]any{"total": len(list), "endpoints": list})
+}
+
+// retry answers POST /api/v1/jobs/{id}/retry as EasyPatch does: a finished
+// job runs again as a new one.
+func (s *Server) retry(w http.ResponseWriter, j *Job) {
+	if s.ReadOnly {
+		problem(w, 403, "", "")
+		return
+	}
+	if j.Status == "Queued" || j.Status == "Running" {
+		problem(w, 409, "invalid_state", "Only finished jobs can be retried.")
+		return
+	}
+	e := s.endpoints[j.Endpoint]
+	if e == nil {
+		problem(w, 404, "not_found", "Endpoint not found.")
+		return
+	}
+	n := s.newJob(e, j.Type, nil)
+	n.RetryOf = &j.ID
+	reply(w, 202, n.summary())
 }

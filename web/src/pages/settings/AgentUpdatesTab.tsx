@@ -85,7 +85,7 @@ function RolloutForm({ settings, className }: { settings: AgentUpdateSettings; c
           className="max-w-xs"
           required
         />
-        <InlineError error={save.error} fields={["mode", "maxConcurrent"]} />
+        <InlineError error={save.error} fields={["maxConcurrent"]} />
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-4">
           <span className="text-xs text-muted">
             {settings.updatedAt ? (

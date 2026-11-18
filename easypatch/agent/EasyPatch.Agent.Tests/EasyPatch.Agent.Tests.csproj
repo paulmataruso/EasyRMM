@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EasyPatch.Agent.Tests</RootNamespace>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <NoWarn>$(NoWarn);CA1707;CA2000;CA1001;CA1063;CA1816;CA2213;CA1849;CA1835;CA1416;xUnit1051</NoWarn>
+    <!-- The .NET 10 SDK refuses the VSTest target for Microsoft.Testing.Platform apps unless global.json opts into
+         the MTP "dotnet test" mode. Run through VSTest (xunit.runner.visualstudio) so plain `dotnet test` works;
+         the compiled test project is still a standalone xUnit v3 executable. -->
+    <IsTestingPlatformApplication>false</IsTestingPlatformApplication>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\EasyPatch.Agent.Core\EasyPatch.Agent.Core.csproj" />
+    <ProjectReference Include="..\EasyPatch.Communication\EasyPatch.Communication.csproj" />
+    <ProjectReference Include="..\EasyPatch.Linux\EasyPatch.Linux.csproj" />
+    <ProjectReference Include="..\EasyPatch.MacOS\EasyPatch.MacOS.csproj" />
+    <ProjectReference Include="..\EasyPatch.Unix\EasyPatch.Unix.csproj" />
+  </ItemGroup>
+</Project>

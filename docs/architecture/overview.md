@@ -39,7 +39,7 @@ common collisions. See [network.md](network.md) for the complete port table.
 | MeshAgent | Upstream binary, pinned version | Remote desktop, terminal, file transfer and RDP tunnel transport |
 | MeshCentral | Upstream container, pinned version | Remote-session relay and MeshAgent management; never exposed directly |
 | PostgreSQL | 18 | EasyRMM database (row-level security) and MeshCentral's database |
-| EasyPatch (optional) | Customer's existing deployment | Patch state, policy and patch jobs |
+| EasyPatch (optional) | .NET and React, in `easypatch/`; its own deployment, or any existing EasyPatch server | Patch state, policy and patch jobs |
 
 ### Server modules (`server/internal/…`)
 
@@ -175,7 +175,11 @@ report data about itself and receive its own jobs, nothing else.
 ## 8. EasyPatch
 
 See ADR-0010 and [docs/integrations/easypatch.md](../integrations/easypatch.md).
-EasyPatch remains its own product and its own source of truth for patch state.
+EasyPatch is EasyRMM's patch management component. Its code is in
+`easypatch/` of this repository, under its own licence
+([LICENSING.md](../../LICENSING.md)), and it builds, releases and runs as its
+own server ([monorepo.md](../development/monorepo.md)). It is the source of
+truth for patch state, and EasyRMM can use any EasyPatch server.
 EasyRMM talks to it server-to-server with an EasyPatch API token (ADR-0030)
 and renders patch state natively behind EasyRMM's roles. On request, or for
 every device in an organization set to install automatically, the EasyRMM

@@ -53,14 +53,14 @@ func (a *API) listAlerts(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	limit, err := httpapi.QueryInt(r, "limit", 100, 1, 500)
+	limit, err := httpapi.QueryCount(r, "limit", 100, 1, 500)
 	if err != nil {
 		return err
 	}
 	q := r.URL.Query()
 	items, next, err := a.svc.ListAlerts(r.Context(), httpapi.Caller(r), monitoring.AlertQuery{
 		Status: q.Get("status"), DeviceID: device, OrganizationID: org, SiteID: site, Severity: q.Get("severity"),
-		Before: before, Limit: int(limit),
+		Before: before, Limit: limit,
 	})
 	if err != nil {
 		return err

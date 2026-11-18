@@ -1,0 +1,28 @@
+<!-- EasyPatch logo. viewBox cropped to the artwork (original canvas: 0 0 512 512). -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="58 46 442 442">
+  <defs>
+    <linearGradient id="aqua" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#35f2ed"/>
+      <stop offset="1" stop-color="#00a9d6"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b4ff43"/>
+      <stop offset="1" stop-color="#00c985"/>
+    </linearGradient>
+  </defs>
+  <circle cx="256" cy="256" r="185" fill="#102b39" stroke="#1c5667" stroke-width="18"/>
+  <path d="M125 170 A160 160 0 0 1 375 140 L410 110 M410 110 L405 165"
+    fill="none" stroke="url(#aqua)" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M387 340 A160 160 0 0 1 137 370 L102 400 M102 400 L107 345"
+    fill="none" stroke="url(#green)" stroke-width="25" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="url(#aqua)">
+    <path d="M175 174 247 162v75h-72z"/>
+    <path d="m263 159 76-13v91h-76z"/>
+    <path d="M175 256h72v75l-72-12z"/>
+    <path d="m263 256h76v91l-76-13z"/>
+  </g>
+  <path d="M330 290 L410 260 L490 290 V355 Q480 430 410 465 Q340 430 330 355 Z"
+    fill="#102b39" stroke="url(#green)" stroke-width="12"/>
+  <path d="M375 350 L400 375 L450 315"
+    fill="none" stroke="#eafff5" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

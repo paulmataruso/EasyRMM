@@ -8,6 +8,58 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `npm run screenshots` in `web/` makes the README's screenshots from the
+  console's production build, its API answered from fictional demo data
+  (`web/screenshots/`). It fails when a page asks for something the data does
+  not answer.
+- EasyRMM can be EasyPatch's sign-in provider (ADR-0036): an OpenID
+  provider with one client, EasyPatch, set up by a super administrator under
+  Settings → EasyPatch → Sign-in, its secret shown once. Code flow with PKCE;
+  single-use codes valid 60 seconds; ES256 ID tokens carrying the person's
+  EasyPatch role and organizations from their EasyRMM roles, and
+  `email_verified: false`, and an `amr` that always includes `mfa`. A
+  second factor in the session is required. Audited as `idp.authorize` and
+  `idp.client_*`. EasyPatch's side is in `easypatch/` (its CHANGELOG,
+  "Sign in through EasyRMM").
+- `make e2e-sign-in`: both consoles in a browser over TLS on two domains,
+  signing in once across them; a CI job runs it. The co-hosting guide has a
+  step for signing in to EasyPatch through EasyRMM.
+- Sessions record how they signed in (`amr`: password, single sign-on,
+  authenticator code, security key, recovery code, passkey).
+- Links from EasyPatch into EasyRMM, `/go/from-easypatch/endpoints|
+  organizations|jobs/:id`, open the device's Patches tab, the organization or
+  the job; anything EasyRMM does not link, or the person may not see, opens
+  Patching with a note.
+- **EasyRMM | EasyPatch** under the logo switches to EasyPatch's console in
+  the same tab, on the page of what you were looking at: a device's endpoint
+  (on the tab matching its Patches view), an organization (also from a
+  site), a job, or EasyPatch's lists. Shown to super administrators and to
+  people with a role over a whole organization linked to EasyPatch. A dot
+  warns when EasyPatch was not answering.
+- `patch.configure`, held by organization administrators and above, never
+  from a role over one site: who will be an Admin in EasyPatch rather than
+  ReadOnly.
+- Patching: **Restart…** for devices whose restart is pending, on a
+  device's Patches tab and for chosen devices on the Patching page. One safe
+  preset: only if a restart is still pending, after EasyPatch's countdown,
+  now or at a time up to 31 days ahead; servers restart only when ticked by
+  name. The dialog says which devices will not restart and why. Audited as
+  `patch.restart`.
+- Patching: **Retry** on a job that failed, was cancelled or expired, or
+  left updates uninstalled. The new job opens in its place. Audited as
+  `patch.retry`.
+- Links from EasyRMM to the EasyPatch page that edits what EasyRMM only
+  shows: a device's endpoint page (on the matching tab), its policy, its
+  updates (to exclude them), an update, a job. They open in the same tab
+  through `/go/to-easypatch`, which finds the endpoint from EasyRMM's own
+  links and never says more than the person may see.
+- EasyPatch lives in this repository, under `easypatch/`, with its whole
+  history, its own licence (`LICENSING.md`), build, `easypatch-v*` tags and
+  release workflow. One CI run checks both and runs only what a change
+  touches (`docs/development/monorepo.md`).
+- Contract tests: `make test-contract` runs EasyRMM's EasyPatch connector
+  against a real EasyPatch built from the same commit, and checks the fake
+  EasyPatch the fast tests use against it.
 - EasyPatch on the same server (ADR-0035): with `EASYRMM_EASYPATCH_HOSTNAME`
   set, EasyRMM's edge keeps ports 80 and 443 and passes EasyPatch's name
   through, still encrypted, to EasyPatch's own Caddy on loopback, with a
@@ -270,9 +322,10 @@ All notable changes to this project are documented here. The format follows
   EasyRMM creates for that install. Devices that already have an EasyPatch
   agent are left alone. The console shows each install's progress and, when
   it fails, why.
-- Release pipeline: pushing a version tag re-runs every check, then publishes
-  the scanned multi-arch server image with an SBOM and provenance, and a
-  GitHub release with the deployment bundle (pinned to that image), the
+- Release pipeline: pushing a version tag (`easyrmm-v1.2.3`; EasyPatch's,
+  in the same repository, are `easypatch-v…`) re-runs every check, then
+  publishes the scanned multi-arch server image with an SBOM and provenance,
+  and a GitHub release with the deployment bundle (pinned to that image), the
   agents, checksums and attestations, and the changelog's notes. The release
   files are reproducible (`scripts/release/bundle.sh`).
 - Security keys and passkeys (ADR-0032). At the first sign-in, people choose
@@ -308,6 +361,15 @@ All notable changes to this project are documented here. The format follows
   package (`apt upgrade`, `dnf upgrade`, `zypper patch`, `pacman -Syu`…).
   It also covers turning on automatic updates. The warning names the lines,
   while editing, on the script's page and before a run.
+
+### Changed
+- The README is the front page of the one project: what EasyRMM and EasyPatch
+  each do, how they fit together, the architecture with EasyPatch, and
+  screenshots of the console in dark and light.
+- The documentation presents EasyRMM and EasyPatch as one project in one
+  repository: EasyPatch, under `easypatch/`, is EasyRMM's patch management
+  component. Issues and security reports for both go to this repository.
+  Neither licence changes.
 
 ### Removed
 - The fleet-wide **Software** page. Installed software is shown on each
@@ -426,6 +488,31 @@ All notable changes to this project are documented here. The format follows
   connects by cookie, stays blocked.
 
 ### Fixed
+- `EASYRMM_DATABASE_MAX_CONNS` past 32 bits wrapped around before it was
+  checked, so a value such as `4294967298` started the server with 2
+  connections instead of refusing it. It is now checked first.
+- A device's Patches tab ran its EasyPatch organization and site into the
+  **Open in EasyPatch** link, and said "1 fix vulnerabilities exploited in
+  the wild" for a single update.
+- Settings → EasyPatch showed EasyPatch as failing after it refused a
+  single request (a duplicate scan, an endpoint deleted in EasyPatch). Only
+  no answer, a server error or a refused token count now.
+- **Open EasyPatch** on the Patching page and in Settings opened a new tab;
+  it now opens in the same tab, like the product switch, on EasyPatch's
+  endpoint or job list.
+- Patching dialogs hid the server's reason when it refused a field the
+  dialog has no place for (an install time, for example), leaving the button
+  doing nothing visible. They now show it. **Settings → Agent updates** hid
+  a refused mode the same way.
+- Remote sessions: a write that the gateway's pacing held while the browser
+  fell behind could still reach the connection after it began closing. It now
+  fails as a write on a closed connection does. Found by a flaky test in CI.
+- Continuous integration: secret scanning covers the whole history on every
+  run (gitleaks-action scanned only a pull request's range, which it could not
+  work out once EasyPatch's history came in, and never past 250 commits), and
+  fails when it cannot read the history instead of reporting no leaks.
+  Trivy's findings that do not apply are excepted per file, with the reason,
+  in `.trivyignore.yaml`.
 - A new Docker Compose deployment did not start, found by the backup and
   restore drill. `setup.sh` created `postgres/` owned by root with mode 700,
   which the PostgreSQL 18 image mounts above its data directory, so

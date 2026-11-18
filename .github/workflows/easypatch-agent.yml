@@ -1,0 +1,240 @@
+# EasyPatch's agent: Linux build and tests, the Windows MSIs and the experimental macOS packages.
+#
+# Called by ci.yml (job "EasyPatch agent") when its changes job finds a change to easypatch/agent/,
+# easypatch/shared/, the agent build scripts, Directory.Build.props, Directory.Packages.props, global.json or
+# this file; ci.yml's concurrency group cancels superseded pull request runs. Can also be run by hand.
+#
+# EasyPatch lives in easypatch/: run steps work there (defaults below), and every path given to an action
+# (setup-dotnet, upload-artifact) carries the easypatch/ prefix.
+name: EasyPatch agent
+
+on:
+  workflow_call:
+    secrets:
+      # Optional code-signing certificate for the MSIs; ci.yml passes the repository secrets.
+      EASYPATCH_SIGN_PFX_BASE64:
+        required: false
+      EASYPATCH_SIGN_PFX_PASSWORD:
+        required: false
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Agent version (MAJOR.MINOR.BUILD)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+
+defaults:
+  run:
+    working-directory: easypatch
+
+jobs:
+  test:
+    name: Build and test (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: easypatch/global.json
+      - name: Build, test and publish
+        run: scripts/build-agent.sh --rid all
+
+  installer:
+    name: MSI (Windows)
+    needs: test
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: easypatch/global.json
+      - name: Determine version
+        id: version
+        shell: pwsh
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          $version = $env:INPUT_VERSION
+          if (-not $version) { $version = "1.0.$($env:RUN_NUMBER % 65535)" }
+          if ($version -notmatch '^\d{1,3}\.\d{1,3}\.\d{1,5}$') { throw "Invalid version '$version'" }
+          "value=$version" >> $env:GITHUB_OUTPUT
+      - name: Build agent and MSI (x64, arm64)
+        shell: pwsh
+        env:
+          # Optional: provide a code-signing certificate through repository secrets.
+          EASYPATCH_SIGN_PFX_BASE64: ${{ secrets.EASYPATCH_SIGN_PFX_BASE64 }}
+          EASYPATCH_SIGN_PFX_PASSWORD: ${{ secrets.EASYPATCH_SIGN_PFX_PASSWORD }}
+          EASYPATCH_SIGN_TIMESTAMP_URL: ${{ vars.EASYPATCH_SIGN_TIMESTAMP_URL }}
+        run: |
+          if ($env:EASYPATCH_SIGN_PFX_BASE64) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'easypatch-signing.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:EASYPATCH_SIGN_PFX_BASE64))
+            $env:EASYPATCH_SIGN_PFX_PATH = $pfx
+          }
+          try {
+            ./scripts/build-agent.ps1 -Version '${{ steps.version.outputs.value }}' -Architecture x64,arm64 -SkipTests
+          }
+          finally {
+            if ($env:EASYPATCH_SIGN_PFX_PATH) { Remove-Item $env:EASYPATCH_SIGN_PFX_PATH -Force -ErrorAction SilentlyContinue }
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: easypatch-agent-${{ steps.version.outputs.value }}
+          path: |
+            easypatch/artifacts/installer/*.msi
+            easypatch/artifacts/installer/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  macos-packages:
+    name: macOS packages (experimental)
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: easypatch/global.json
+      - name: Determine version
+        id: version
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          version="${INPUT_VERSION:-1.0.$((RUN_NUMBER % 65535))}"
+          if [[ ! "$version" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,5}$ ]]; then
+            echo "::error::Invalid version '$version'"
+            exit 1
+          fi
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+      - name: Build the .pkg packages (x64, arm64)
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        # No release key here (as for the MSIs above): the agent cannot update itself and the packages are not
+        # release-signed. build-macos-packages.sh checks each package (check-pkg.py).
+        run: scripts/build-macos-packages.sh --version "$VERSION" --arch all --no-test
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: easypatch-macos-agent-${{ steps.version.outputs.value }}
+          path: |
+            easypatch/artifacts/macos/*.pkg
+            easypatch/artifacts/macos/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  macos-smoke:
+    name: macOS install smoke test (${{ matrix.arch }})
+    needs: macos-packages
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    # No checkout here: the packages are downloaded into dist/ at the workspace root, and the steps run there.
+    defaults:
+      run:
+        shell: bash  # -e -o pipefail
+        working-directory: .
+    env:
+      LABEL: com.dhitechnical.easypatch.agent
+      PKG: dist/EasyPatchAgent-${{ needs.macos-packages.outputs.version }}-${{ matrix.arch }}.pkg
+      VERSION: ${{ needs.macos-packages.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: easypatch-macos-agent-${{ needs.macos-packages.outputs.version }}
+          path: dist
+      - name: Install
+        run: |
+          sw_vers
+          uname -m
+          (cd dist && shasum -a 256 -c "$(basename "$PKG").sha256")
+          pkgutil --check-signature "$PKG" || true
+          sudo installer -pkg "$PKG" -target /
+      - name: Check files, owners, modes and the receipt
+        run: |
+          fail=0
+          expect() {
+            actual="$(sudo stat -f '%Sp %Su:%Sg' "$2" 2>&1 || true)"
+            if [ "$actual" = "$1" ]; then echo "ok    $actual  $2"; else echo "::error::$2 is '$actual', expected '$1'"; fail=1; fi
+          }
+          expect 'drwxr-xr-x root:wheel' /Library/EasyPatch
+          expect '-rwxr-xr-x root:wheel' /Library/EasyPatch/easypatch-agent
+          expect '-rwxr-xr-x root:wheel' /Library/EasyPatch/uninstall.sh
+          expect '-rw-r--r-- root:wheel' "/Library/LaunchDaemons/$LABEL.plist"
+          expect 'drwx------ root:wheel' /Library/Logs/EasyPatch
+          expect 'drwxr-xr-x root:wheel' /Library
+          expect 'drwxr-xr-x root:wheel' /Library/LaunchDaemons
+          link="$(readlink /usr/local/bin/easypatch-agent || true)"
+          if [ "$link" = /Library/EasyPatch/easypatch-agent ]; then echo "ok    /usr/local/bin/easypatch-agent -> $link"; else echo "::error::/usr/local/bin/easypatch-agent -> '$link'"; fail=1; fi
+          plutil -lint "/Library/LaunchDaemons/$LABEL.plist"
+          pkgutil --pkg-info "$LABEL"
+          receipt="$(pkgutil --pkg-info "$LABEL" | sed -n 's/^version: //p')"
+          [ "$receipt" = "$VERSION" ] || { echo "::error::the receipt's version is '$receipt', expected $VERSION"; fail=1; }
+          pkgutil --files "$LABEL"
+          file /Library/EasyPatch/easypatch-agent
+          codesign --verify --verbose=2 /Library/EasyPatch/easypatch-agent
+          exit "$fail"
+      - name: LaunchDaemon is loaded
+        run: sudo launchctl print "system/$LABEL"
+      - name: Agent commands
+        timeout-minutes: 20
+        run: |
+          /Library/EasyPatch/easypatch-agent version | tee version.txt
+          grep -q "$VERSION" version.txt || { echo "::error::easypatch-agent version does not print $VERSION"; exit 1; }
+          echo "::group::inventory --json"
+          sudo /usr/local/bin/easypatch-agent inventory --json | tee inventory.json
+          echo "::endgroup::"
+          python3 -c 'import json, sys; json.load(open(sys.argv[1]))' inventory.json
+          echo "::group::scan --json (zero updates is fine)"
+          sudo /usr/local/bin/easypatch-agent scan --json | tee scan.json
+          echo "::endgroup::"
+          python3 -c 'import json, sys; json.load(open(sys.argv[1]))' scan.json
+      - name: Reinstall over the running agent (upgrade path) keeps files that are not in the package
+        run: |
+          sudo touch /Library/EasyPatch/smoke-test-marker
+          sudo installer -pkg "$PKG" -target /
+          sudo test -f /Library/EasyPatch/smoke-test-marker || { echo "::error::the reinstall removed a file that is not in the package"; exit 1; }
+          sudo launchctl print "system/$LABEL" > /dev/null
+      - name: Uninstall
+        run: |
+          sudo /Library/EasyPatch/uninstall.sh
+          fail=0
+          for path in /Library/EasyPatch "/Library/LaunchDaemons/$LABEL.plist" /Library/Logs/EasyPatch /usr/local/bin/easypatch-agent; do
+            if sudo test -e "$path" || sudo test -L "$path"; then echo "::error::$path still exists"; fail=1; fi
+          done
+          if sudo launchctl print "system/$LABEL" > /dev/null 2>&1; then echo "::error::$LABEL is still loaded"; fail=1; fi
+          if pkgutil --pkg-info "$LABEL" > /dev/null 2>&1; then echo "::error::the package receipt is still there"; fail=1; fi
+          if pgrep -f /Library/EasyPatch/easypatch-agent; then echo "::error::the agent is still running"; fail=1; fi
+          stat -f '%Sp %Su:%Sg %N' /Library /Library/LaunchDaemons
+          exit "$fail"
+      - name: Logs
+        if: failure()
+        run: |
+          sudo cat /Library/Logs/EasyPatch/launchd.log 2>/dev/null || true
+          sudo tail -n 200 /var/log/install.log || true

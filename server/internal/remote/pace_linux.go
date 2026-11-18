@@ -158,7 +158,16 @@ func pace(c net.Conn, limit int, held *atomic.Int64, release func()) (net.Conn, 
 }
 
 func (c *pacedConn) Write(b []byte) (int, error) {
-	for polls := 0; c.peerBusy(); polls++ {
+	for polls := 0; ; polls++ {
+		busy, closed := c.peerState()
+		if closed {
+			// Close marks the connection closed before it closes the socket:
+			// a write it held must not slip onto the socket in between.
+			return 0, net.ErrClosed
+		}
+		if !busy {
+			break
+		}
 		wait := paceFast
 		if polls >= paceFastPolls {
 			wait = paceSlow
@@ -175,18 +184,27 @@ func (c *pacedConn) Write(b []byte) (int, error) {
 // peerBusy reports whether the peer has more than limit bytes unread. If the
 // queue cannot be read (or the connection is closed), writes go ahead.
 func (c *pacedConn) peerBusy() bool {
+	busy, _ := c.peerState()
+	return busy
+}
+
+// peerState is peerBusy, and whether Close was called.
+func (c *pacedConn) peerState() (busy, closed bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.q == nil || c.closed {
-		return false
+	if c.closed {
+		return false, true
+	}
+	if c.q == nil {
+		return false, false
 	}
 	n, err := c.q.unread()
 	if err != nil {
 		c.q.close()
 		c.q = nil
-		return false
+		return false, false
 	}
-	return n > c.limit
+	return n > c.limit, false
 }
 
 func (c *pacedConn) Close() error {

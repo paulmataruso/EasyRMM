@@ -8,6 +8,10 @@
 #   EASYRMM_E2E_ADMIN_URL  superuser URL of a disposable PostgreSQL (make test-db)
 #   EASYRMM_E2E_RUN_DIR    where to keep the data directory (default web/e2e/.run)
 #   EASYRMM_E2E_PORT       offload listener (default 18180); health is PORT+11
+#   EASYRMM_E2E_DB         database name (default easyrmm_e2e)
+#   EASYRMM_E2E_PUBLIC_URL public address (default https://rmm.localhost)
+#   EASYRMM_E2E_INSECURE_COOKIES  true (default) for plain HTTP on loopback;
+#                          false behind a TLS proxy (scripts/e2e/sign-in-across.sh)
 #
 # Remote access is enabled but no MeshCentral runs: the console shows devices
 # and reports remote access as unavailable.
@@ -21,7 +25,9 @@ root=$(cd "$(dirname "$0")/../.." && pwd)
 admin_url=${EASYRMM_E2E_ADMIN_URL:-postgres://postgres:easyrmm-test-only@127.0.0.1:55432/postgres?sslmode=disable}
 run_dir=${EASYRMM_E2E_RUN_DIR:-$root/web/e2e/.run}
 port=${EASYRMM_E2E_PORT:-18180}
-db=easyrmm_e2e
+db=${EASYRMM_E2E_DB:-easyrmm_e2e}
+public_url=${EASYRMM_E2E_PUBLIC_URL:-https://rmm.localhost}
+insecure_cookies=${EASYRMM_E2E_INSECURE_COOKIES:-true}
 binary=$root/bin/easyrmm-server
 
 [ -x "$binary" ] || { echo "start-server: $binary is missing; run make build (or make e2e)" >&2; exit 1; }
@@ -51,12 +57,12 @@ rm -rf "$run_dir"
 mkdir -p "$run_dir/data" "$run_dir/meshcentral"
 chmod 700 "$run_dir/data" "$run_dir/meshcentral"
 
-EASYRMM_PUBLIC_URL=https://rmm.localhost \
+EASYRMM_PUBLIC_URL=$public_url \
 EASYRMM_TLS_MODE=offload \
 EASYRMM_TRUSTED_PROXIES=127.0.0.1/32 \
 EASYRMM_LISTEN_OFFLOAD=127.0.0.1:$port \
 EASYRMM_LISTEN_HEALTH=127.0.0.1:$((port + 11)) \
-EASYRMM_DEV_INSECURE_COOKIES=true \
+EASYRMM_DEV_INSECURE_COOKIES=$insecure_cookies \
 EASYRMM_DATA_DIR=$run_dir/data \
 EASYRMM_MESH_CONFIG_DIR=$run_dir/meshcentral \
 EASYRMM_MESH_INTERNAL_URL=http://127.0.0.1:$((port + 12)) \

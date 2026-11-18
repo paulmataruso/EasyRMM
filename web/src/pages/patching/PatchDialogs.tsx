@@ -1,13 +1,14 @@
 import { useEffect, useId, useState } from "react";
 import { Link } from "react-router";
+import { RotateCcw } from "lucide-react";
 import { api } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
-import type { PatchActionInput, PatchActionResult, PatchJobDetail } from "../../api/types";
+import type { PatchActionInput, PatchActionResult, PatchJobDetail, PatchJobView, RestartInput, RestartPlan } from "../../api/types";
 import { Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Alert, Badge, Button, ErrorState, InlineError, Input, KeyValueList, Spinner } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
-import { categoryLabel, isActiveJob, jobOutcome, jobTypeLabel, PatchJobBadge, requester } from "./patchText";
+import { canRetry, categoryLabel, EasyPatchLink, isActiveJob, jobOutcome, jobTypeLabel, PatchJobBadge, requester } from "./patchText";
 
 /** What the patching views refresh after an action. */
 export const PATCH_KEYS = ["/patching", "/audit"];
@@ -108,7 +109,7 @@ export function AgentInstallDialog({ open, onClose, devices, onDone }: { open: b
             authority in their certificate store; EasyRMM does not change it.
           </li>
         </ul>
-        <InlineError error={install.error} fields={["deviceIds"]} />
+        <InlineError error={install.error} />
       </Dialog>
       {outcome.dialog}
     </>
@@ -248,7 +249,7 @@ export function InstallDialog({
               Installs start when each device next checks in with EasyPatch. Installing at a later time needs an EasyPatch server with scheduled installs.
             </p>
           )}
-          <InlineError error={install.error} fields={["scheduledAt", "updateIds", "deviceIds"]} />
+          <InlineError error={install.error} />
         </div>
       </Dialog>
       {outcome.dialog}
@@ -256,8 +257,211 @@ export function InstallDialog({
   );
 }
 
-/** One EasyPatch job: its updates and what happened, refreshing while it runs; cancellable where the caller may. */
-export function PatchJobDialog({ jobId, onClose }: { jobId: string | null; onClose: () => void }) {
+/**
+ * Restarts devices whose operating system reports a pending restart, with EasyRMM's one preset (integration plan,
+ * P2): only if a restart is still pending when the job runs, after EasyPatch's five-minute countdown, now or at a
+ * time. EasyRMM first asks what the restart would do; servers restart only when ticked by name. Prompts, deadlines
+ * and messages stay in EasyPatch.
+ */
+export function RestartDialog({ open, onClose, devices, onDone }: { open: boolean; onClose: () => void; devices: PatchTarget[]; onDone?: () => void }) {
+  const outcome = useOutcome();
+  const [when, setWhen] = useState<"now" | "later">("now");
+  const [at, setAt] = useState(() => localInput(tonight()));
+  const [confirmed, setConfirmed] = useState<Set<string>>(new Set());
+  const whenId = useId();
+  const plan = useApiMutation((ids: string[]) => api.post<RestartPlan>("/patching/restart/plan", { deviceIds: ids }));
+  const restart = useApiMutation((body: RestartInput) => api.post<PatchActionResult>("/patching/restart", body), {
+    invalidate: PATCH_KEYS,
+    onSuccess: (r) => {
+      outcome.report(when === "later" ? "Restart scheduled" : "Restart requested", r);
+      onClose();
+      onDone?.();
+    },
+  });
+  const ids = devices.map((d) => d.id).join(",");
+  useEffect(() => {
+    if (!open) return;
+    setWhen("now");
+    setAt(localInput(tonight()));
+    setConfirmed(new Set());
+    restart.reset();
+    plan.mutate(ids.split(","));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- plan again when the dialog opens, not when the mutations change
+  }, [open, ids]);
+
+  const checks = plan.data?.devices ?? [];
+  const servers = checks.filter((c) => c.restart && c.server);
+  const others = checks.filter((c) => c.restart && !c.server);
+  const skipped = checks.filter((c) => !c.restart);
+  const chosenServers = servers.filter((c) => confirmed.has(c.deviceId));
+  const sending = [...others, ...chosenServers];
+  const allServers = servers.length > 0 && chosenServers.length === servers.length;
+  const scheduledAt = when === "later" && at ? new Date(at) : null;
+  const badTime = scheduledAt !== null && Number.isNaN(scheduledAt.getTime());
+  const where = devices.length === 1 ? devices[0]!.name : plural(devices.length, "device");
+  const tick = (id: string, on: boolean) =>
+    setConfirmed((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+
+  return (
+    <>
+      <Dialog
+        open={open}
+        onClose={onClose}
+        title={`Restart ${where}`}
+        description="Each device restarts only if it still needs a restart when the job runs, after a five-minute countdown that signed-in users see."
+        footer={
+          <>
+            <Button onClick={onClose} disabled={restart.isPending}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              loading={restart.isPending}
+              disabled={!plan.data || sending.length === 0 || badTime || (when === "later" && !at)}
+              onClick={() =>
+                restart.mutate({
+                  deviceIds: sending.map((c) => c.deviceId),
+                  confirmServers: chosenServers.length > 0 ? chosenServers.map((c) => c.deviceId) : undefined,
+                  scheduledAt: scheduledAt && !badTime ? scheduledAt.toISOString() : undefined,
+                })
+              }
+            >
+              {sending.length === 0
+                ? "Restart"
+                : when === "later"
+                  ? `Schedule restart of ${plural(sending.length, "device")}`
+                  : `Restart ${plural(sending.length, "device")}`}
+            </Button>
+          </>
+        }
+      >
+        {plan.isPending || plan.isIdle ? (
+          <Spinner />
+        ) : plan.isError ? (
+          <ErrorState error={plan.error} onRetry={() => plan.mutate(ids.split(","))} compact />
+        ) : (
+          <div className="space-y-4">
+            {servers.length > 0 && (
+              <fieldset className="space-y-2">
+                <legend className="mb-1 text-sm font-medium">
+                  {plan.data!.serversKnown ? "Servers restart only when you tick them" : "Tick each device to restart"}
+                </legend>
+                <p className="text-xs text-muted">
+                  {plan.data!.serversKnown
+                    ? "A restart interrupts everyone using the server."
+                    : "Your EasyPatch server is older than 1.10.0 and cannot say which devices are servers, so each one waits for your tick."}
+                </p>
+                <ul className="max-h-48 divide-y divide-line overflow-y-auto rounded-md border border-line">
+                  {servers.length > 1 && (
+                    <li className="px-3 py-2">
+                      <label className="flex items-center gap-2 text-sm font-medium">
+                        <input
+                          type="checkbox"
+                          checked={allServers}
+                          ref={(el) => {
+                            if (el) el.indeterminate = chosenServers.length > 0 && !allServers;
+                          }}
+                          onChange={(e) => setConfirmed(e.target.checked ? new Set(servers.map((c) => c.deviceId)) : new Set())}
+                          className="size-4 accent-accent"
+                        />
+                        {`All ${servers.length.toLocaleString()}`}
+                      </label>
+                    </li>
+                  )}
+                  {servers.map((c) => (
+                    <li key={c.deviceId} className="px-3 py-2">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={confirmed.has(c.deviceId)}
+                          onChange={(e) => tick(c.deviceId, e.target.checked)}
+                          className="size-4 accent-accent"
+                        />
+                        <span className="min-w-0 break-words">Restart {c.deviceName}</span>
+                        {!c.online && <span className="ml-auto shrink-0 text-xs text-muted">Offline</span>}
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </fieldset>
+            )}
+            {others.length > 0 && (
+              <div>
+                <h3 className="mb-1.5 text-xs font-medium text-muted">{servers.length > 0 ? "Also restarts" : "Restarts"}</h3>
+                <ul className="max-h-40 space-y-0.5 overflow-y-auto text-sm">
+                  {others.map((c) => (
+                    <li key={c.deviceId} className="flex items-baseline gap-2">
+                      <span className="min-w-0 break-words">{c.deviceName}</span>
+                      {!c.online && <span className="text-xs text-muted">Offline</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {skipped.length > 0 && (
+              <div>
+                <h3 className="mb-1.5 text-xs font-medium text-muted">{servers.length + others.length > 0 ? "Not restarted" : "Nothing to restart"}</h3>
+                <ul className="max-h-40 divide-y divide-line overflow-y-auto rounded-md border border-line">
+                  {skipped.map((c) => (
+                    <li key={c.deviceId} className="px-3 py-2 text-sm">
+                      <span className="font-medium">{c.deviceName}</span>
+                      <p className="text-muted">{c.reason}</p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {servers.length + others.length > 0 && (
+              <fieldset className="space-y-2" aria-describedby={whenId}>
+                <legend className="text-xs font-medium text-muted">When</legend>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="radio" name="restart-when" checked={when === "now"} onChange={() => setWhen("now")} className="size-4 accent-accent" />
+                  Now
+                </label>
+                <label className="flex flex-wrap items-center gap-2 text-sm">
+                  <input type="radio" name="restart-when" checked={when === "later"} onChange={() => setWhen("later")} className="size-4 accent-accent" />
+                  At
+                  <Input
+                    type="datetime-local"
+                    aria-label="Restart at"
+                    value={at}
+                    min={localInput(new Date())}
+                    onChange={(e) => {
+                      setAt(e.target.value);
+                      setWhen("later");
+                    }}
+                    className="w-auto"
+                  />
+                </label>
+                <p id={whenId} className="text-xs text-subtle">
+                  Your time zone ({Intl.DateTimeFormat().resolvedOptions().timeZone}). Up to 31 days ahead. A device that is offline then restarts if it
+                  comes back within two hours; otherwise EasyPatch drops its restart.
+                </p>
+              </fieldset>
+            )}
+            <p className="text-xs text-muted">
+              Prompts, deadlines and messages to users are set in EasyPatch.{" "}
+              {devices.length === 1 && <EasyPatchLink to={{ device: devices[0]!.id }}>More restart options in EasyPatch</EasyPatchLink>}
+            </p>
+            <InlineError error={restart.error} />
+          </div>
+        )}
+      </Dialog>
+      {outcome.dialog}
+    </>
+  );
+}
+
+/**
+ * One EasyPatch job: its updates and what happened, refreshing while it runs; cancellable, or run again once
+ * finished, where the caller may. A retry is a new job, which onJob opens.
+ */
+export function PatchJobDialog({ jobId, onClose, onJob }: { jobId: string | null; onClose: () => void; onJob: (id: string) => void }) {
   const toast = useToast();
   const job = useApi<PatchJobDetail>(jobId ? `/patching/jobs/${jobId}` : null, undefined, {
     refetchInterval: (data) => (data && !isActiveJob(data.summary) ? false : 4_000),
@@ -266,8 +470,16 @@ export function PatchJobDialog({ jobId, onClose }: { jobId: string | null; onClo
     invalidate: PATCH_KEYS,
     onSuccess: (j) => toast.success(isActiveJob(j.summary) ? "Asked the device to stop." : "Job cancelled."),
   });
+  const retry = useApiMutation(() => api.post<PatchJobView>(`/patching/jobs/${jobId}/retry`), {
+    invalidate: PATCH_KEYS,
+    onSuccess: (j) => {
+      toast.success("Retry queued.");
+      onJob(j.id);
+    },
+  });
   useEffect(() => {
     cancel.reset();
+    retry.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset when another job opens
   }, [jobId]);
   const d = job.data;
@@ -282,9 +494,19 @@ export function PatchJobDialog({ jobId, onClose }: { jobId: string | null; onClo
       title={s ? `${jobTypeLabel(s.type)} on ${d.deviceName}` : "Patch job"}
       footer={
         <>
+          {jobId && (
+            <EasyPatchLink to={{ job: jobId }} className="mr-auto text-sm">
+              Open in EasyPatch
+            </EasyPatchLink>
+          )}
           {d?.canManage && s && isActiveJob(s) && !s.cancelRequested && (
             <Button variant="danger-ghost" loading={cancel.isPending} onClick={() => cancel.mutate()}>
               Cancel job
+            </Button>
+          )}
+          {d?.canManage && s && canRetry(s) && (
+            <Button icon={<RotateCcw className="size-4" aria-hidden />} loading={retry.isPending} onClick={() => retry.mutate()}>
+              Retry
             </Button>
           )}
           <Button onClick={onClose}>Close</Button>
@@ -298,7 +520,7 @@ export function PatchJobDialog({ jobId, onClose }: { jobId: string | null; onClo
       ) : (
         s && (
           <div className="space-y-4">
-            <InlineError error={cancel.error} />
+            <InlineError error={cancel.error ?? retry.error} />
             {s.errorMessage && (
               <Alert tone="danger" title="EasyPatch reported an error">
                 {s.errorMessage}

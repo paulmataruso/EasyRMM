@@ -1,0 +1,61 @@
+# Keeps EasyPatch's old repository as a read-only mirror of easypatch/: after
+# each push to main that changes easypatch/, its branch is fast-forwarded to
+# the history scripts/easypatch/mirror.sh builds (docs/development/monorepo.md).
+#
+# Off until the owner turns it on, in Settings → Secrets and variables →
+# Actions of this repository:
+#   variable EASYPATCH_MIRROR_REPOSITORY  owner/name of the old repository
+#   variable EASYPATCH_MIRROR_BRANCH      its branch (default main)
+#   secret   EASYPATCH_MIRROR_TOKEN       a fine-grained token with Contents:
+#                                         read and write on that repository only
+# The secret lives in the easypatch-mirror environment, which only main can
+# use. A push is never forced: if the old repository has commits of its own,
+# the job fails and says so.
+name: EasyPatch mirror
+
+on:
+  push:
+    branches: [main]
+    paths: ['easypatch/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: easypatch-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    name: Mirror easypatch/ to the old repository
+    if: vars.EASYPATCH_MIRROR_REPOSITORY != '' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: easypatch-mirror
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build the mirror's history
+        id: build
+        run: echo "head=$(scripts/easypatch/mirror.sh HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Fast-forward the old repository
+        env:
+          TOKEN: ${{ secrets.EASYPATCH_MIRROR_TOKEN }}
+          REPOSITORY: ${{ vars.EASYPATCH_MIRROR_REPOSITORY }}
+          BRANCH: ${{ vars.EASYPATCH_MIRROR_BRANCH || 'main' }}
+          HEAD_COMMIT: ${{ steps.build.outputs.head }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::EASYPATCH_MIRROR_TOKEN is not set in the easypatch-mirror environment."
+            exit 1
+          fi
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)
+          echo "::add-mask::$auth"
+          if ! git -c http.extraheader="AUTHORIZATION: basic $auth" push "https://github.com/$REPOSITORY.git" "$HEAD_COMMIT:refs/heads/$BRANCH"; then
+            echo "::error::Could not fast-forward $REPOSITORY $BRANCH to $HEAD_COMMIT. If it has commits of its own, bring them in under easypatch/ here first (docs/development/monorepo.md)."
+            exit 1
+          fi
+          echo "$REPOSITORY $BRANCH is at $HEAD_COMMIT." >> "$GITHUB_STEP_SUMMARY"

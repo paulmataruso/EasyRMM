@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Download, PackagePlus, Radar } from "lucide-react";
+import { Download, PackagePlus, Power, Radar } from "lucide-react";
 import { useApi, useList } from "../../api/hooks";
 import type { Device, DevicePatching, PatchHistoryEntry, PatchJob, PatchPage, PatchUpdate } from "../../api/types";
 import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, KeyValueList, Segmented, Spinner, TableWrap } from "../../components/ui";
 import { formatDate, formatDateTime, formatRelative, formatSize, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
-import { AgentInstallDialog, InstallDialog, PatchJobDialog, useScan } from "../patching/PatchDialogs";
+import { AgentInstallDialog, InstallDialog, PatchJobDialog, RestartDialog, useScan } from "../patching/PatchDialogs";
 import {
   categoryLabel,
   ComplianceBadge,
+  EasyPatchLink,
+  easyPatchHref,
+  PATCH_VIEW_TAB,
   INSTALLABLE,
   installText,
   isActiveJob,
@@ -89,6 +92,7 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
   const view = (["available", "installed", "history", "jobs"] as View[]).find((v) => v === url.get("patches")) ?? "available";
   const [installing, setInstalling] = useState<{ id: string; title: string }[] | "all" | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [restarting, setRestarting] = useState(false);
   const { scan, dialog } = useScan();
   const e = d.endpoint;
   const target = [{ id: device.id, name: device.name }];
@@ -117,7 +121,12 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
             ]}
           />
           {d.canManage && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              {e?.summary.rebootPending && (
+                <Button icon={<Power className="size-4" aria-hidden />} onClick={() => setRestarting(true)}>
+                  Restart…
+                </Button>
+              )}
               <Button icon={<Radar className="size-4" aria-hidden />} loading={scan.isPending} onClick={() => scan.mutate([device.id])}>
                 Scan now
               </Button>
@@ -143,7 +152,7 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
         {view === "jobs" && <Jobs deviceId={device.id} onOpen={setJobId} />}
       </div>
       <div className="flex min-w-0 flex-col gap-5">
-        <Summary patching={d} />
+        <Summary patching={d} view={view} />
         {d.policy && <PolicyCard patching={d} />}
       </div>
       <InstallDialog
@@ -154,7 +163,8 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
         canSchedule={d.canSchedule}
         onDone={() => url.set({ patches: "jobs" })}
       />
-      <PatchJobDialog jobId={jobId} onClose={() => setJobId(null)} />
+      <RestartDialog open={restarting} onClose={() => setRestarting(false)} devices={target} onDone={() => url.set({ patches: "jobs" })} />
+      <PatchJobDialog jobId={jobId} onClose={() => setJobId(null)} onJob={setJobId} />
       {dialog}
     </div>
   );
@@ -164,7 +174,7 @@ function When({ at, never = "Never" }: { at: string | null | undefined; never?: 
   return at ? <span title={formatDateTime(at)}>{formatRelative(at)}</span> : <span className="text-muted">{never}</span>;
 }
 
-function Summary({ patching: d }: { patching: DevicePatching }) {
+function Summary({ patching: d, view }: { patching: DevicePatching; view: View }) {
   const e = d.endpoint;
   if (!e) {
     return (
@@ -190,7 +200,11 @@ function Summary({ patching: d }: { patching: DevicePatching }) {
             <span className="block text-xs text-muted">{s.missingDeferredCount.toLocaleString()} held back by the policy's delay</span>
           )}
           {s.knownExploitedMissingCount > 0 && (
-            <span className="block text-xs text-danger">{s.knownExploitedMissingCount.toLocaleString()} fix vulnerabilities exploited in the wild</span>
+            <span className="block text-xs text-danger">
+              {s.knownExploitedMissingCount === 1
+                ? "1 fixes a vulnerability exploited in the wild"
+                : `${s.knownExploitedMissingCount.toLocaleString()} fix vulnerabilities exploited in the wild`}
+            </span>
           )}
         </span>
       ),
@@ -244,7 +258,12 @@ function Summary({ patching: d }: { patching: DevicePatching }) {
   items.push([
     "In EasyPatch",
     <span key="o">
-      {s.organizationName} / {s.siteName}
+      <span className="block">
+        {s.organizationName} / {s.siteName}
+      </span>
+      <EasyPatchLink to={{ device: d.deviceId, tab: PATCH_VIEW_TAB[view] }} className="mt-0.5 text-xs">
+        Open in EasyPatch
+      </EasyPatchLink>
     </span>,
   ]);
   return (
@@ -267,15 +286,21 @@ function PolicyCard({ patching: d }: { patching: DevicePatching }) {
   return (
     <Card title="EasyPatch policy">
       <KeyValueList narrow items={items} />
-      <p className="mt-3 border-t border-line pt-3 text-xs text-muted">Policies are set in EasyPatch, for its organization, site or this endpoint.</p>
+      <p className="mt-3 border-t border-line pt-3 text-xs text-muted">
+        Policies are set in EasyPatch, for its organization, site or this endpoint.{" "}
+        <EasyPatchLink to={{ device: d.deviceId, tab: "policy" }}>Change in EasyPatch</EasyPatchLink>
+      </p>
     </Card>
   );
 }
 
+/** An update: its title opens it in EasyPatch, with its vulnerabilities, the other devices that miss it and its hold. */
 function UpdateTitle({ u }: { u: PatchUpdate }) {
   return (
     <>
-      <span className="block font-medium break-words">{u.title}</span>
+      <a href={easyPatchHref({ update: u.updateGuid })} className="block rounded-sm font-medium break-words hover:text-accent" title="Open in EasyPatch">
+        {u.title}
+      </a>
       <span className="text-xs text-muted">
         {u.kbNumber && <>KB{u.kbNumber.replace(/^KB/i, "")} · </>}
         {u.package && u.package.installedVersion && (
@@ -346,10 +371,14 @@ function Available({
       padded={false}
       title={chosen.length > 0 ? `${chosen.length.toLocaleString()} selected` : plural(updates.items.length, "update")}
       actions={
-        chosen.length > 0 && (
+        chosen.length > 0 ? (
           <Button size="sm" variant="primary" onClick={() => onInstall(chosen.map((u) => ({ id: u.updateGuid, title: u.title })))}>
             Install selected…
           </Button>
+        ) : (
+          <EasyPatchLink to={{ device: deviceId, tab: "updates" }} className="text-xs">
+            Exclude in EasyPatch
+          </EasyPatchLink>
         )
       }
     >

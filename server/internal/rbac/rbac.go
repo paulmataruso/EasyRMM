@@ -41,6 +41,10 @@ const (
 	PermSoftwareManage Permission = "software.manage"
 	PermPatchView      Permission = "patch.view"
 	PermPatchManage    Permission = "patch.manage"
+	// PermPatchConfigure marks who may change EasyPatch's standing rules
+	// (policies, exclusions, windows): it makes someone an Admin in
+	// EasyPatch rather than ReadOnly. Only organization-wide grants count.
+	PermPatchConfigure Permission = "patch.configure"
 	PermMonitorView    Permission = "monitoring.view"
 	PermMonitorManage  Permission = "monitoring.manage"
 	PermAlertView      Permission = "alert.view"
@@ -58,7 +62,7 @@ var AllPermissions = []Permission{
 	PermOrgView, PermOrgManage, PermOrgCreate, PermSiteView, PermSiteManage,
 	PermDeviceView, PermDeviceEdit, PermDeviceRetire, PermRemoteDesktop, PermTerminal, PermFiles,
 	PermScriptView, PermScriptManage, PermScriptRun, PermJobView, PermJobManage,
-	PermSoftwareView, PermSoftwareManage, PermPatchView, PermPatchManage,
+	PermSoftwareView, PermSoftwareManage, PermPatchView, PermPatchManage, PermPatchConfigure,
 	PermMonitorView, PermMonitorManage, PermAlertView, PermAlertManage,
 	PermEnrollManage, PermUserView, PermUserManage, PermAuditView, PermReportView, PermSettingsManage,
 }
@@ -145,7 +149,7 @@ var siteAdminPerms = union(technicianPerms, []Permission{
 	PermEnrollManage, PermUserView, PermAuditView,
 })
 
-var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserManage})
+var orgAdminPerms = union(siteAdminPerms, []Permission{PermOrgManage, PermUserManage, PermPatchConfigure})
 
 // Roles is the catalog of built-in roles.
 var Roles = map[Role]RoleDef{
@@ -276,9 +280,9 @@ func NewPrincipal(userID uuid.UUID, assignments []Assignment) (*Principal, error
 				}
 				p.orgs[perm][a.OrganizationID] = true
 			case ScopeSite:
-				if globalOnly[perm] || perm == PermOrgManage || perm == PermUserManage {
-					// A site-scoped role cannot manage its parent organization or
-					// its users, whatever the role definition says.
+				if globalOnly[perm] || perm == PermOrgManage || perm == PermUserManage || perm == PermPatchConfigure {
+					// A site-scoped role cannot manage its parent organization, its
+					// users or its EasyPatch rules, whatever the role definition says.
 					continue
 				}
 				if p.sites[perm] == nil {

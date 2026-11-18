@@ -21,6 +21,7 @@ export type Permission =
   | "software.manage"
   | "patch.view"
   | "patch.manage"
+  | "patch.configure"
   | "monitoring.view"
   | "monitoring.manage"
   | "alert.view"
@@ -1245,6 +1246,72 @@ export interface PatchActionResult {
   succeeded: number;
   failed: number;
   results: { deviceId: string; deviceName: string; ok: boolean; jobId?: string; message?: string }[];
+}
+
+/** Whether to show the EasyRMM | EasyPatch switch, and whether EasyPatch was answering. */
+export interface ProductSwitch {
+  show: boolean;
+  /** False when a call to EasyPatch failed since its last good check. */
+  answering: boolean;
+  failingSince?: string;
+}
+
+/** Where a link from EasyPatch opens the console; `notice` says why it is not the page the link named. */
+export interface EasyPatchLanding {
+  path: string;
+  notice?: string;
+}
+
+/** EasyPatch's registration with EasyRMM's sign-in provider (ADR-0036), without its secret. */
+export interface EasyPatchSignInClient {
+  clientId: string;
+  redirectUri: string;
+  createdAt: string;
+  createdBy?: string;
+  rotatedAt?: string;
+  rotatedBy?: string;
+}
+
+/** Settings → EasyPatch → Sign-in. */
+export interface EasyPatchSignIn {
+  /** EasyPatch is set up and can sign people in through EasyRMM; otherwise `reason` says why not. */
+  available: boolean;
+  reason?: string;
+  issuer: string;
+  /** Where EasyPatch receives sign-ins, from its current address. */
+  redirectUri?: string;
+  client: EasyPatchSignInClient | null;
+}
+
+/** A new or rotated client, with its secret: shown once. */
+export interface EasyPatchSignInSecret extends EasyPatchSignInClient {
+  issuer: string;
+  clientSecret: string;
+}
+
+/** What EasyRMM's restart (only if a restart is pending) would do to one device. */
+export interface RestartCheck {
+  deviceId: string;
+  deviceName: string;
+  /** It would restart; otherwise `reason` says why not. */
+  restart: boolean;
+  reason?: string;
+  /** A server, or any device when EasyPatch cannot tell (`serversKnown`): it restarts only when confirmed by name. */
+  server: boolean;
+  online: boolean;
+}
+
+export interface RestartPlan {
+  devices: RestartCheck[];
+  /** False with EasyPatch before 1.10.0, which cannot say which devices are servers. */
+  serversKnown: boolean;
+}
+
+export interface RestartInput {
+  deviceIds: string[];
+  scheduledAt?: string;
+  /** The servers the person ticked; any server not listed stops the whole request. */
+  confirmServers?: string[];
 }
 
 /** An identity provider for single sign-on (ADR-0034). The client secret is never returned. */

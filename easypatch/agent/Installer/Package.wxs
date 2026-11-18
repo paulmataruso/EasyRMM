@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  EasyPatch Agent MSI (WiX Toolset v5).
+
+  Public properties (all optional on upgrade; SERVERURL is required on first install):
+    SERVERURL        https:// URL of the EasyPatch server
+    ENROLLMENTTOKEN  limited-use enrollment token (hidden: never written to MSI logs)
+    DEPLOYMENTCODE   non-secret deployment code; creates an enrollment request an administrator approves
+    PROXYURL         optional http(s) proxy for the agent's connection to the server
+    SERVERCACERT     optional certificate authority (base64 DER) the agent trusts for its connection to the server only,
+                     for servers with a private CA (set by the install script's "Skip certificate check" option)
+
+  The UpgradeCode below must never change: it is what lets new versions upgrade old ones.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package Name="EasyPatch Agent"
+           Manufacturer="EasyPatch"
+           Version="$(var.ProductVersion)"
+           UpgradeCode="FFC8A7E3-FD7E-4FE0-9494-327AA9E089E4"
+           Scope="perMachine"
+           InstallerVersion="500"
+           Compressed="yes">
+
+    <SummaryInformation Description="EasyPatch Agent $(var.ProductVersion)" Manufacturer="EasyPatch" />
+
+    <!-- Remove the old version first (its uninstall skips unenrollment because UPGRADINGPRODUCTCODE is set). -->
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <!-- Installed apps / Programs and Features icon (the agent executable carries the same icon). -->
+    <Icon Id="EasyPatch.ico" SourceFile="$(sys.SOURCEFILEDIR)..\EasyPatch.Agent\EasyPatch.ico" />
+    <Property Id="ARPPRODUCTICON" Value="EasyPatch.ico" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPCOMMENTS" Value="Windows Update agent for the self-hosted EasyPatch patch management platform." />
+
+    <!-- ===================================================================== properties -->
+
+    <Property Id="SERVERURL" Secure="yes" />
+    <Property Id="PROXYURL" Secure="yes" />
+    <Property Id="SERVERCACERT" Secure="yes" />
+    <Property Id="DEPLOYMENTCODE" Secure="yes" />
+    <Property Id="ENROLLMENTTOKEN" Secure="yes" Hidden="yes" />
+
+    <!-- The default WriteRegistryValues progress template ("Key: [1], Name: [2], Value: [3]") would put the enrollment
+         token into verbose MSI logs. Log the key and value name only. -->
+    <UI>
+      <ProgressText Action="WriteRegistryValues" Message="Writing system registry values" Template="Key: [1], Name: [2]" />
+    </UI>
+
+    <!-- Remember SERVERURL / PROXYURL / SERVERCACERT across upgrades and repairs (command-line values win). -->
+    <Property Id="SAVEDSERVERURL" Secure="yes">
+      <RegistrySearch Id="SavedServerUrl" Root="HKLM" Key="SOFTWARE\EasyPatch\Agent" Name="ServerUrl" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="SAVEDPROXYURL" Secure="yes">
+      <RegistrySearch Id="SavedProxyUrl" Root="HKLM" Key="SOFTWARE\EasyPatch\Agent" Name="ProxyUrl" Type="raw" Bitness="always64" />
+    </Property>
+    <Property Id="SAVEDSERVERCACERT" Secure="yes">
+      <RegistrySearch Id="SavedServerCaCertificate" Root="HKLM" Key="SOFTWARE\EasyPatch\Agent" Name="ServerCaCertificate" Type="raw" Bitness="always64" />
+    </Property>
+    <SetProperty Id="SERVERURL" Value="[SAVEDSERVERURL]" After="AppSearch" Sequence="first" Condition="NOT SERVERURL AND SAVEDSERVERURL" />
+    <SetProperty Id="PROXYURL" Value="[SAVEDPROXYURL]" After="AppSearch" Sequence="first" Condition="NOT PROXYURL AND SAVEDPROXYURL" />
+    <SetProperty Id="SERVERCACERT" Value="[SAVEDSERVERCACERT]" After="AppSearch" Sequence="first" Condition="NOT SERVERCACERT AND SAVEDSERVERCACERT" />
+
+    <Launch Condition="Privileged" Message="The EasyPatch Agent must be installed by an administrator." />
+    <Launch Condition="Installed OR (SERVERURL ~&lt;&lt; &quot;https://&quot;)"
+            Message="SERVERURL is required and must start with https:// (for example: msiexec /i EasyPatchAgent.msi SERVERURL=https://patch.example.com DEPLOYMENTCODE=...)." />
+    <Launch Condition="NOT (ENROLLMENTTOKEN AND DEPLOYMENTCODE)"
+            Message="Specify either ENROLLMENTTOKEN or DEPLOYMENTCODE, not both." />
+    <Launch Condition="VersionNT64 AND (VersionNT &gt;= 603)"
+            Message="The EasyPatch Agent requires 64-bit Windows 10 / Windows Server 2016 or later." />
+
+    <!-- ===================================================================== layout -->
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="EasyPatch Agent" />
+    </StandardDirectory>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="DATAFOLDER" Name="EasyPatch" />
+    </StandardDirectory>
+
+    <Feature Id="Agent" Title="EasyPatch Agent" Level="1">
+      <ComponentGroupRef Id="AgentComponents" />
+    </Feature>
+
+    <!-- ===================================================================== uninstall -->
+
+    <!-- Best-effort server notification and deletion of the agent identity on a real uninstall
+         (never during a major upgrade). Exit code is ignored: uninstall must not fail when the server is down. -->
+    <CustomAction Id="UnenrollAgent"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="&quot;[INSTALLFOLDER]EasyPatch.Agent.exe&quot; unenroll --reason &quot;Agent uninstalled&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="UnenrollAgent" After="StopServices" Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+    </InstallExecuteSequence>
+  </Package>
+
+  <Fragment>
+    <ComponentGroup Id="AgentComponents">
+
+      <!-- Service executable (self-contained single file). -->
+      <Component Id="AgentService" Directory="INSTALLFOLDER" Bitness="always64">
+        <File Id="AgentExe" Source="$(var.PublishDir)EasyPatch.Agent.exe" KeyPath="yes" />
+
+        <ServiceInstall Id="AgentServiceInstall"
+                        Name="EasyPatchAgent"
+                        DisplayName="EasyPatch Agent"
+                        Description="Reports Windows Update status to the EasyPatch server, installs approved updates and carries out restarts requested by an administrator."
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Arguments="run"
+                        Vital="yes">
+          <!-- MsiServiceConfig (Windows Installer 5.0) is the only declarative way to set delayed auto-start and to make
+               recovery actions apply when the service stops with an error exit code. WiX warns about it (WIX1149); the
+               util:ServiceConfig alternative below covers restart actions but not these two settings. -->
+          <ServiceConfig DelayedAutoStart="yes" FailureActionsWhen="failedToStopOrReturnedError" OnInstall="yes" OnReinstall="yes" />
+          <util:ServiceConfig FirstFailureActionType="restart"
+                              SecondFailureActionType="restart"
+                              ThirdFailureActionType="restart"
+                              RestartServiceDelayInSeconds="60"
+                              ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <ServiceControl Id="AgentServiceControl" Name="EasyPatchAgent" Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+
+        <util:EventSource Name="EasyPatch Agent"
+                          Log="Application"
+                          EventMessageFile="[WindowsFolder]Microsoft.NET\Framework64\v4.0.30319\EventLogMessages.dll" />
+      </Component>
+
+      <!-- Data directory: keys, state, outbox and logs. SYSTEM and Administrators only, inheritance disabled. -->
+      <Component Id="DataFolder" Directory="DATAFOLDER" Guid="7D0D9C51-3E58-4B0B-9F0E-2B7C8B0E5A11" Bitness="always64">
+        <CreateFolder>
+          <PermissionEx Sddl="O:BAG:SYD:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)" />
+        </CreateFolder>
+      </Component>
+
+      <!-- Bootstrap registry key, restricted to SYSTEM and Administrators (it may briefly hold an enrollment token). -->
+      <Component Id="RegistryKey" Directory="INSTALLFOLDER" Guid="5F3B7E1C-8A2D-4C61-9E4B-6D2A1C7F9B30" Bitness="always64">
+        <RegistryKey Root="HKLM" Key="SOFTWARE\EasyPatch\Agent" ForceCreateOnInstall="yes">
+          <PermissionEx Sddl="O:BAG:SYD:PAI(A;CI;KA;;;SY)(A;CI;KA;;;BA)" />
+          <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        </RegistryKey>
+      </Component>
+
+      <Component Id="RegistryServerUrl" Directory="INSTALLFOLDER" Guid="0B6E2F4A-91C3-4D7E-8A55-3F1B2C9D7E61" Bitness="always64" Condition="SERVERURL">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\EasyPatch\Agent" Name="ServerUrl" Type="string" Value="[SERVERURL]" KeyPath="yes" />
+      </Component>
+
+      <Component Id="RegistryProxyUrl" Directory="INSTALLFOLDER" Guid="C4A1E8D2-6B3F-4A90-B2D7-8E5F1A3C6B42" Bitness="always64" Condition="PROXYURL">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\EasyPatch\Agent" Name="ProxyUrl" Type="string" Value="[PROXYURL]" KeyPath="yes" />
+      </Component>
+
+      <Component Id="RegistryServerCaCertificate" Directory="INSTALLFOLDER" Guid="3D8A5F27-C61E-4B94-9F03-7A2E5B8C1D46" Bitness="always64" Condition="SERVERCACERT">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\EasyPatch\Agent" Name="ServerCaCertificate" Type="string" Value="[SERVERCACERT]" KeyPath="yes" />
+      </Component>
+
+      <!-- Consumed and deleted by the agent after enrollment; written only when supplied on this install. -->
+      <Component Id="RegistryEnrollmentToken" Directory="INSTALLFOLDER" Guid="9E2D6A41-5C7B-4F83-A1E9-2B4D8C6F0A73" Bitness="always64" Condition="ENROLLMENTTOKEN">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\EasyPatch\Agent" Name="EnrollmentToken" Type="string" Value="[ENROLLMENTTOKEN]" KeyPath="yes" />
+      </Component>
+
+      <Component Id="RegistryDeploymentCode" Directory="INSTALLFOLDER" Guid="E7B3C9A5-2D41-4E6F-8B0A-5C9E3D1F7A84" Bitness="always64" Condition="DEPLOYMENTCODE">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\EasyPatch\Agent" Name="DeploymentCode" Type="string" Value="[DEPLOYMENTCODE]" KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

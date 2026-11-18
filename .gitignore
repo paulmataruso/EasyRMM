@@ -45,6 +45,16 @@ secrets/
 # Runtime data (bind mounts)
 /data/
 
+# EasyPatch's machine-local files: its configuration, database password,
+# release signing key and runtime data. easypatch/.gitignore ignores them too;
+# they are listed here as well so that an edit there can never expose them.
+/easypatch/.env
+/easypatch/secrets/
+/easypatch/local/
+/easypatch/data/
+/easypatch/backups/
+/easypatch/artifacts/
+
 # Claude Code / Impeccable local state
 .claude/settings.local.json
 .impeccable/config.local.json
@@ -65,3 +75,6 @@ Thumbs.db
 /web/e2e/.run/
 /web/e2e/.results/
 /web/e2e/.report/
+/web/screenshots/.results/
+/web/e2e-sign-in/.results/
+/web/e2e-sign-in/.report/

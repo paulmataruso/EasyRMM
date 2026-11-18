@@ -83,3 +83,35 @@ func TestQueryInt(t *testing.T) {
 		}
 	}
 }
+
+func TestQueryCount(t *testing.T) {
+	cases := []struct {
+		query string
+		want  int
+		ok    bool
+	}{
+		{"", 50, true},
+		{"limit=1", 1, true},
+		{"limit=200", 200, true},
+		{"limit=0", 0, false},
+		{"limit=201", 0, false},
+		{"limit=-5", 0, false},
+		{"limit=ten", 0, false},
+		{"limit=2147483648", 0, false},
+		{"limit=4294967297", 0, false},
+		{"limit=99999999999999999999", 0, false},
+	}
+	for _, c := range cases {
+		got, err := QueryCount(httptest.NewRequest(http.MethodGet, "/?"+c.query, nil), "limit", 50, 1, 200)
+		if c.ok {
+			if err != nil || got != c.want {
+				t.Errorf("%q: got %d, %v; want %d", c.query, got, err, c.want)
+			}
+			continue
+		}
+		ae, ok := apperr.As(err)
+		if !ok || ae.Fields["limit"] != "must be a whole number between 1 and 200" {
+			t.Errorf("%q: err = %v", c.query, err)
+		}
+	}
+}

@@ -7,9 +7,12 @@ import (
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
@@ -230,6 +233,86 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Fatalf("cancel: %+v", job)
 	}
 
+	// Retry: a finished job runs again, as a new one.
+	var retried struct {
+		ID         string `json:"id"`
+		Status     string `json:"status"`
+		DeviceName string `json:"deviceName"`
+	}
+	wantStatus(t, admin.do("POST", "/api/v1/patching/jobs/nope/retry", nil), http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("POST", "/api/v1/patching/jobs/"+jobs.Items[1].ID+"/retry", nil), http.StatusConflict, "invalid_state")
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/jobs/"+jobs.Items[0].ID+"/retry", nil, &retried)
+	if retried.ID == jobs.Items[0].ID || retried.Status != "Queued" || retried.DeviceName != "web-01" {
+		t.Fatalf("retry: %+v", retried)
+	}
+
+	// Restart: EasyPatch 1.9.0 cannot tell servers apart, so the device
+	// must be confirmed by name.
+	ep.Set(func() { endpoint.RebootPending = true })
+	var plan struct {
+		ServersKnown bool `json:"serversKnown"`
+		Devices      []struct {
+			DeviceName string `json:"deviceName"`
+			Restart    bool   `json:"restart"`
+			Server     bool   `json:"server"`
+		} `json:"devices"`
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/restart/plan", map[string]any{"deviceIds": []string{device}}, &plan)
+	if plan.ServersKnown || len(plan.Devices) != 1 || !plan.Devices[0].Restart || !plan.Devices[0].Server || plan.Devices[0].DeviceName != "web-01" {
+		t.Fatalf("restart plan: %+v", plan)
+	}
+	r = admin.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}})
+	wantStatus(t, r, http.StatusUnprocessableEntity, "validation_failed")
+	if !strings.Contains(string(r.body), "confirm restarting them: web-01.") {
+		t.Fatalf("unconfirmed restart: %s", r.body)
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "confirmServers": []string{device}}, &res)
+	if res.Succeeded != 1 || res.Results[0].JobID == "" {
+		t.Fatalf("restart: %+v", res)
+	}
+	wantStatus(t, admin.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "scheduledAt": "2026-01-01T00:00:00Z"}),
+		http.StatusUnprocessableEntity, "validation_failed")
+
+	// Links to EasyPatch's console.
+	link := *admin
+	noFollow := *admin.http
+	noFollow.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	link.http = &noFollow
+	for path, want := range map[string]string{
+		"/go/to-easypatch?device=" + device + "&tab=updates": "https://patch.example.com/endpoints/" + endpoint.ID.String() + "?from=easyrmm&tab=updates",
+		"/go/to-easypatch?organization=" + acme:              "https://patch.example.com/organizations/" + epOrg.String() + "?from=easyrmm",
+		"/go/to-easypatch?job=" + jobs.Items[0].ID:           "https://patch.example.com/jobs/" + jobs.Items[0].ID + "?from=easyrmm",
+		"/go/to-easypatch?site=" + hq.ID:                     "https://patch.example.com/organizations/" + epOrg.String() + "?from=easyrmm",
+		"/go/to-easypatch?list=jobs":                         "https://patch.example.com/jobs?from=easyrmm",
+		"/go/to-easypatch":                                   "https://patch.example.com/?from=easyrmm",
+	} {
+		r := link.do("GET", path, nil)
+		if r.status != http.StatusFound || r.header.Get("Location") != want || r.header.Get("Cache-Control") != "no-store" {
+			t.Errorf("%s: %d %q, want %q", path, r.status, r.header.Get("Location"), want)
+		}
+	}
+	wantStatus(t, link.do("GET", "/go/to-easypatch?device=x", nil), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, link.do("GET", "/go/to-easypatch?device="+device+"&organization="+acme, nil), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, link.do("GET", "/go/to-easypatch?list=updates", nil), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, link.do("GET", "/go/to-easypatch?list=jobs&site="+hq.ID, nil), http.StatusUnprocessableEntity, "validation_failed")
+
+	// The product switch: shown to anyone with organization-wide access to a linked organization.
+	var sw struct {
+		Show      bool `json:"show"`
+		Answering bool `json:"answering"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/switch", nil, &sw)
+	if !sw.Show || !sw.Answering {
+		t.Fatalf("switch for the administrator: %+v", sw)
+	}
+	wantStatus(t, h.client().do("GET", "/api/v1/patching/switch", nil), http.StatusUnauthorized, "")
+	stranger := h.client()
+	stranger.http.CheckRedirect = noFollow.CheckRedirect
+	r = stranger.do("GET", "/go/to-easypatch?device="+device+"&tab=jobs", nil)
+	if r.status != http.StatusFound || r.header.Get("Location") != "/login?returnTo="+url.QueryEscape("/go/to-easypatch?device="+device+"&tab=jobs") {
+		t.Fatalf("signed out: %d %q", r.status, r.header.Get("Location"))
+	}
+
 	// A read-only user sees patching but cannot act, nor reach Settings.
 	invite(t, h, admin, "rory@acme.example", []map[string]any{{"role": "read_only", "organizationId": acme}})
 	viewer := h.client()
@@ -240,11 +323,60 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	wantStatus(t, viewer.do("POST", "/api/v1/patching/scan", map[string]any{"deviceIds": []string{device}}), http.StatusForbidden, "forbidden")
 	wantStatus(t, viewer.do("POST", "/api/v1/patching/jobs/"+jobs.Items[1].ID+"/cancel", nil), http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/jobs/"+jobs.Items[0].ID+"/retry", nil), http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/restart/plan", map[string]any{"deviceIds": []string{device}}), http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "confirmServers": []string{device}}),
+		http.StatusForbidden, "forbidden")
 	for _, m := range []string{"GET", "PUT", "DELETE"} {
 		wantStatus(t, viewer.do(m, "/api/v1/settings/easypatch", map[string]string{}), http.StatusForbidden, "forbidden")
 	}
 	wantStatus(t, viewer.do("GET", "/api/v1/settings/easypatch/organizations", nil), http.StatusForbidden, "forbidden")
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/switch", nil, &sw)
+	if !sw.Show {
+		t.Fatalf("switch for a read-only user of the organization: %+v", sw)
+	}
 	wantStatus(t, h.client().do("GET", "/api/v1/patching", nil), http.StatusUnauthorized, "")
+
+	// Links from EasyPatch: its ids, resolved against EasyRMM's link tables and the caller's permissions.
+	type landing struct {
+		Path   string `json:"path"`
+		Notice string `json:"notice"`
+	}
+	from := func(c *client, kind, id string) landing {
+		t.Helper()
+		var l landing
+		c.expect(http.StatusOK, "GET", "/api/v1/patching/from-easypatch/"+kind+"/"+id, nil, &l)
+		return l
+	}
+	for _, c := range []struct {
+		kind, id string
+		want     landing
+	}{
+		{"endpoints", endpoint.ID.String(), landing{Path: "/devices/" + device + "?tab=patches"}},
+		{"organizations", epOrg.String(), landing{Path: "/organizations/" + acme}},
+		{"jobs", jobs.Items[0].ID, landing{Path: "/patching?tab=jobs&job=" + jobs.Items[0].ID}},
+		{"endpoints", uuid.NewString(), landing{Path: "/patching", Notice: "That EasyPatch endpoint is not linked to an EasyRMM device you can see."}},
+		{"organizations", uuid.NewString(), landing{Path: "/patching", Notice: "That EasyPatch organization is not linked to an EasyRMM organization you can see."}},
+	} {
+		if got := from(viewer, c.kind, c.id); got != c.want {
+			t.Errorf("from EasyPatch %s/%s: %+v, want %+v", c.kind, c.id, got, c.want)
+		}
+	}
+	wantStatus(t, viewer.do("GET", "/api/v1/patching/from-easypatch/updates/"+uuid.NewString(), nil), http.StatusNotFound, "not_found")
+	wantStatus(t, viewer.do("GET", "/api/v1/patching/from-easypatch/endpoints/nope", nil), http.StatusNotFound, "not_found")
+	wantStatus(t, h.client().do("GET", "/api/v1/patching/from-easypatch/endpoints/"+endpoint.ID.String(), nil), http.StatusUnauthorized, "")
+	// Someone patching another organization learns nothing about Acme's.
+	var globex idObj
+	admin.expect(http.StatusCreated, "POST", "/api/v1/organizations", map[string]any{"name": "Globex"}, &globex)
+	invite(t, h, admin, "gil@globex.example", []map[string]any{{"role": "technician", "organizationId": globex.ID}})
+	gil := h.client()
+	gil.signIn("gil@globex.example", "a long and unusual passphrase", "")
+	if l := from(gil, "endpoints", endpoint.ID.String()); l.Path != "/patching" || l.Notice == "" {
+		t.Errorf("another organization's endpoint: %+v", l)
+	}
+	if l := from(gil, "organizations", epOrg.String()); l.Path != "/patching" || l.Notice == "" {
+		t.Errorf("another organization: %+v", l)
+	}
 
 	var audit struct {
 		Items []struct {
@@ -256,7 +388,7 @@ func TestEasyPatchAPI(t *testing.T) {
 	for _, a := range audit.Items {
 		got = append(got, a.Action)
 	}
-	if strings.Join(got, ",") != "patch.cancel,patch.install,patch.scan" {
+	if strings.Join(got, ",") != "patch.restart,patch.retry,patch.cancel,patch.install,patch.scan" {
 		t.Fatalf("patch audit: %v", got)
 	}
 
@@ -264,12 +396,19 @@ func TestEasyPatchAPI(t *testing.T) {
 	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil, nil)
 	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil), http.StatusNotFound, "not_found")
 	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/nope", nil), http.StatusNotFound, "not_found")
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/switch", nil, &sw)
+	if sw.Show {
+		t.Fatalf("switch once the organization is unlinked: %+v", sw)
+	}
 	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/settings/easypatch", nil, nil)
 	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch", nil), http.StatusNotFound, "not_found")
 	wantStatus(t, admin.do("POST", "/api/v1/settings/easypatch/check", nil), http.StatusNotFound, "not_found")
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching", nil, &status)
 	if status.Configured {
 		t.Fatalf("status after removal: %+v", status)
+	}
+	if l := from(admin, "endpoints", endpoint.ID.String()); l.Path != "/patching" || !strings.Contains(l.Notice, "not set up") {
+		t.Fatalf("from EasyPatch once it is removed: %+v", l)
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/audit?action=easypatch", nil, &audit)
 	if len(audit.Items) != 4 {

@@ -15,9 +15,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auditfwd"
@@ -36,6 +38,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/devicesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/easypatchapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/enrollapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/idpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/inventoryapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
@@ -43,6 +46,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/ssoapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
+	"github.com/paulmataruso/easyrmm/server/internal/idp"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
@@ -96,6 +100,8 @@ type Deps struct {
 	EasyPatch *easypatch.Service
 	// SSO is single sign-on with OpenID Connect (ADR-0034).
 	SSO *sso.Service
+	// IdP is EasyRMM as EasyPatch's OpenID provider (ADR-0036).
+	IdP *idp.Service
 	// AgentBuilds are the agent binaries the server hands out.
 	AgentBuilds *agents.Builds
 	// PKI is the internal certificate authority, for addresses no public CA
@@ -182,6 +188,13 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 		d.EasyPatch.SetLocalRoute(easypatch.LocalRoute{Hostname: ep.Hostname, Upstream: ep.TLSUpstream, ProxyProtocol: ep.ProxyProtocol})
 	}
 	d.SSO = sso.New(db, auditLog, sealer, d.Auth, cfg.PublicURL)
+	d.IdP = idp.New(db, auditLog, sealer, cfg.PublicURL.String(), d.EasyPatch, func(ctx context.Context, userID uuid.UUID) (*easypatch.Access, error) {
+		p, err := d.Auth.LoadPrincipal(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+		return d.EasyPatch.Access(ctx, access.User(p, auth.DataScope(p), audit.SystemActor("idp")))
+	}, log)
 	d.EasyPatch.SetSigner(jobKey)
 	builds, err := agents.LoadBuilds(cfg.AgentDir)
 	if err != nil {
@@ -314,6 +327,8 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	auditfwdapi.New(d.AuditFwd).Register(mux)
 	easypatchapi.New(d.EasyPatch).Register(mux)
 	ssoapi.New(d.SSO, d.Sessions, cfg.PublicURL).Register(mux)
+	idpAPI := idpapi.New(d.IdP)
+	idpAPI.Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
 	mux.Handle("GET /api/v1/health", httpapi.Handle(func(w http.ResponseWriter, _ *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": Version})
@@ -347,6 +362,9 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
+	// The OpenID provider reads the browser's session (authorize) but skips
+	// the CSRF layer: EasyPatch's server calls the token endpoint itself.
+	idpHandler := httpapi.Chain(idpAPI.Provider(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""), d.Sessions.Load)
 	rt := newRouter(all)
 	hosts := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m, ok := rt.match(r.Host)
@@ -361,6 +379,8 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 			d.Gateway.ServeHTTP(w, r)
 		case strings.HasPrefix(r.URL.Path, agentproto.PathPrefix):
 			agentHandler.ServeHTTP(w, r)
+		case idpapi.IsProviderPath(r.URL.Path):
+			idpHandler.ServeHTTP(w, r)
 		default:
 			app.ServeHTTP(w, r)
 		}

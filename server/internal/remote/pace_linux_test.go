@@ -3,6 +3,7 @@
 package remote
 
 import (
+	"errors"
 	"io"
 	"net"
 	"sync/atomic"
@@ -164,5 +165,29 @@ func TestPaceLeavesOtherConnectionsAlone(t *testing.T) {
 	buf := make([]byte, 2)
 	if _, err := io.ReadFull(peer, buf); err != nil || string(buf) != "ok" {
 		t.Fatalf("peer read %q, %v", buf, err)
+	}
+}
+
+// Close marks the connection closed, calls release and only then closes the
+// socket: a write held when Close begins fails, even in between.
+func TestPaceHeldWriteFailsOnceCloseBegins(t *testing.T) {
+	c, _ := tcpPair(t)
+	done := make(chan error, 1)
+	var p net.Conn
+	p, _ = pace(c, 8<<10, nil, func() {
+		// The socket is still open here; give the held write time to try it.
+		time.Sleep(100 * time.Millisecond)
+	})
+	if _, err := p.Write(make([]byte, 16<<10)); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the peer's queue", func() bool { return p.(*pacedConn).peerBusy() })
+	go func() { _, err := p.Write([]byte("x")); done <- err }()
+	time.Sleep(20 * time.Millisecond)
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("held write: %v, want net.ErrClosed", err)
 	}
 }

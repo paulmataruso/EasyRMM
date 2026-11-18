@@ -1,5 +1,8 @@
-# Publishes a release when a version tag (v1.2.3, or a pre-release such as
-# v1.2.3-rc.1) is pushed to this repository:
+# Publishes a release when an EasyRMM version tag (easyrmm-v1.2.3, or a
+# pre-release such as easyrmm-v1.2.3-rc.1) is pushed to this repository.
+# EasyPatch's tags (easypatch-v...) have their own workflow,
+# easypatch-release.yml. The version is the tag without "easyrmm-" (v1.2.3):
+# the server, the console and the agents report it, as before.
 #
 #   1. the tag and its CHANGELOG.md section are checked;
 #   2. every CI check runs again on the tagged commit;
@@ -14,7 +17,7 @@ name: Release
 
 on:
   push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+", "v[0-9]+.[0-9]+.[0-9]+-*"]
+    tags: ["easyrmm-v[0-9]+.[0-9]+.[0-9]+", "easyrmm-v[0-9]+.[0-9]+.[0-9]+-*"]
 
 permissions:
   contents: read
@@ -33,6 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       prerelease: ${{ steps.tag.outputs.prerelease }}
+      version: ${{ steps.tag.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -41,10 +45,12 @@ jobs:
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          if ! printf '%s' "$TAG" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'; then
-            echo "::error::$TAG is not a release tag (v1.2.3 or v1.2.3-rc.1)"; exit 1
+          if ! printf '%s' "$TAG" | grep -Eqx 'easyrmm-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'; then
+            echo "::error::$TAG is not a release tag (easyrmm-v1.2.3 or easyrmm-v1.2.3-rc.1)"; exit 1
           fi
-          case $TAG in
+          version=${TAG#easyrmm-}
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          case $version in
             *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
             *) echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
           esac
@@ -87,13 +93,13 @@ jobs:
           load: true
           push: false
           tags: easyrmm-server:release
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: VERSION=${{ needs.prepare.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Image reports the release version
         env:
-          TAG: ${{ github.ref_name }}
-        run: docker run --rm easyrmm-server:release version | grep -qF "$TAG"
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: docker run --rm easyrmm-server:release version | grep -qF "$VERSION"
       - name: Scan image (Trivy)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -112,10 +118,11 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           # latest only for a release, never a pre-release; {{major}}.{{minor}} likewise.
+          # The version comes from prepare: the tag itself (easyrmm-v...) is not semver.
           flavor: latest=auto
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.version }}
       - id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -125,7 +132,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: VERSION=${{ needs.prepare.outputs.version }}
           cache-from: type=gha
           provenance: mode=max
           sbom: true
@@ -166,8 +173,9 @@ jobs:
           TAG: ${{ github.ref_name }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
-          flags=""
-          if [ "$PRERELEASE" = true ]; then flags="--prerelease"; fi
-          # shellcheck disable=SC2086 # flags is empty or one word
-          gh release create "$TAG" dist/release/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "EasyRMM ${TAG#v}" \
+          # EasyRMM's releases are this repository's "Latest" (EasyPatch's never are); a pre-release never is.
+          flags="--latest"
+          if [ "$PRERELEASE" = true ]; then flags="--prerelease --latest=false"; fi
+          # shellcheck disable=SC2086 # flags is one or two words, none with spaces
+          gh release create "$TAG" dist/release/* --repo "$GITHUB_REPOSITORY" --verify-tag --title "EasyRMM ${TAG#easyrmm-v}" \
             --notes-file dist/notes.md $flags

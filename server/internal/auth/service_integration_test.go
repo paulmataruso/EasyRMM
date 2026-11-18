@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -140,6 +141,10 @@ func TestLoginRequiresMFAEnrollmentThenTOTP(t *testing.T) {
 	if err != nil || sess.State != auth.StateActive || !user.MFAEnabled {
 		t.Fatalf("after enrollment: %+v %+v %v", sess, user, err)
 	}
+	// The session records how it signed in: a password, then a new authenticator's code.
+	if !slices.Equal(sess.AMR, []string{"pwd", "otp"}) || !auth.MultiFactor(sess.AMR) || sess.AuthenticatedAt == nil {
+		t.Fatalf("after enrollment: amr %v at %v", sess.AMR, sess.AuthenticatedAt)
+	}
 
 	// Second sign-in requires a code; e-mail matching is case-insensitive.
 	e.now = e.now.Add(time.Minute)
@@ -148,6 +153,9 @@ func TestLoginRequiresMFAEnrollmentThenTOTP(t *testing.T) {
 		t.Fatalf("login: state=%v err=%v", sess, err)
 	}
 	s, u, _ := e.svc.Authenticate(ctx, tok)
+	if !slices.Equal(s.AMR, []string{"pwd"}) || auth.MultiFactor(s.AMR) || s.AuthenticatedAt != nil {
+		t.Fatalf("before the code: amr %v at %v", s.AMR, s.AuthenticatedAt)
+	}
 	if _, err := e.svc.VerifyMFA(ctx, s, u, "000000", meta); !errors.Is(err, auth.ErrInvalidCode) {
 		t.Fatalf("wrong code: %v", err)
 	}
@@ -158,8 +166,28 @@ func TestLoginRequiresMFAEnrollmentThenTOTP(t *testing.T) {
 	if _, _, err := e.svc.Authenticate(ctx, tok); !errors.Is(err, auth.ErrInvalidSession) {
 		t.Fatal("pre-MFA token survived rotation")
 	}
-	if s2, _, err := e.svc.Authenticate(ctx, active); err != nil || s2.State != auth.StateActive {
+	s2, _, err := e.svc.Authenticate(ctx, active)
+	if err != nil || s2.State != auth.StateActive {
 		t.Fatalf("rotated token: %v", err)
+	}
+	if !slices.Equal(s2.AMR, []string{"pwd", "otp"}) || s2.AuthenticatedAt == nil || s2.AuthenticatedAt.Sub(e.now).Abs() > time.Millisecond {
+		t.Fatalf("after the code: amr %v at %v", s2.AMR, s2.AuthenticatedAt)
+	}
+}
+
+// Sign-in methods count as two factors only together.
+func TestMultiFactor(t *testing.T) {
+	for _, c := range []struct {
+		amr  []string
+		want bool
+	}{
+		{nil, false}, {[]string{"pwd"}, false}, {[]string{"fed"}, false}, {[]string{"otp"}, false},
+		{[]string{"pwd", "otp"}, true}, {[]string{"pwd", "hwk"}, true}, {[]string{"pwd", "rc"}, true}, {[]string{"fed", "otp"}, true},
+		{[]string{"fed", "mfa"}, true}, {[]string{"hwk", "mfa"}, true},
+	} {
+		if got := auth.MultiFactor(c.amr); got != c.want {
+			t.Errorf("%v: %v", c.amr, got)
+		}
 	}
 }
 
@@ -192,9 +220,14 @@ func TestRecoveryCodesAreSingleUse(t *testing.T) {
 	for i, want := range []error{nil, auth.ErrInvalidCode} {
 		tok, _, _ := e.svc.Login(ctx, "rc@example.com", goodPassword, meta)
 		s, u, _ := e.svc.Authenticate(ctx, tok)
-		_, err := e.svc.VerifyMFA(ctx, s, u, strings.ToUpper(codes[0]), meta)
+		active, err := e.svc.VerifyMFA(ctx, s, u, strings.ToUpper(codes[0]), meta)
 		if !errors.Is(err, want) {
 			t.Fatalf("attempt %d: got %v want %v", i, err, want)
+		}
+		if err == nil {
+			if s, _, _ := e.svc.Authenticate(ctx, active); !slices.Equal(s.AMR, []string{"pwd", "rc"}) {
+				t.Fatalf("recovery code: amr %v", s.AMR)
+			}
 		}
 	}
 }

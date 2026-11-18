@@ -1,0 +1,59 @@
+#!/bin/sh
+# postinstall of the EasyPatch agent package (com.dhitechnical.easypatch.agent). The installer runs it as root with
+# $3 = the target volume. Loads (or reloads) the LaunchDaemon. On an agent self-update this stops the running agent,
+# which is expected: the installer runs in a separate launchd job.
+set -u
+
+label=com.dhitechnical.easypatch.agent
+plist=/Library/LaunchDaemons/$label.plist
+agent=/Library/EasyPatch/easypatch-agent
+link=/usr/local/bin/easypatch-agent
+
+if [ "${3:-}" != "/" ]; then
+    echo "EasyPatch agent installed on ${3:-?}, which is not the startup volume: not starting it."
+    exit 0
+fi
+
+# launchd's log of the agent's output: root only.
+mkdir -p /Library/Logs/EasyPatch
+chown root:wheel /Library/Logs/EasyPatch
+chmod 0700 /Library/Logs/EasyPatch
+
+# Command line: /usr/local/bin/easypatch-agent. A file or a link to something else is left alone.
+if [ ! -d /usr/local/bin ]; then
+    mkdir -p /usr/local/bin && chown root:wheel /usr/local/bin && chmod 0755 /usr/local/bin
+fi
+if [ -L "$link" ] && [ "$(readlink "$link")" = "$agent" ]; then
+    :
+elif [ -e "$link" ] || [ -L "$link" ]; then
+    echo "Not linking $link to $agent: it already exists and is not EasyPatch's."
+elif ! ln -s "$agent" "$link"; then
+    echo "Could not create $link; run $agent directly."
+fi
+
+chown root:wheel "$plist"
+chmod 0644 "$plist"
+
+# Stop the agent if it runs (an upgrade); not loaded is fine. bootout can return before a slow agent has exited
+# (it gets ExitTimeOut, 75 s, to stop), so wait until launchd no longer has the service.
+launchctl bootout "system/$label" >/dev/null 2>&1 || true
+waited=0
+while launchctl print "system/$label" >/dev/null 2>&1 && [ "$waited" -lt 90 ]; do
+    sleep 1
+    waited=$((waited + 1))
+done
+
+launchctl enable "system/$label" || true
+tries=1
+until launchctl bootstrap system "$plist"; do
+    if [ "$tries" -ge 5 ]; then
+        echo "Could not load $plist: the EasyPatch agent is installed but not running." >&2
+        exit 1
+    fi
+    tries=$((tries + 1))
+    sleep 3
+done
+
+echo "EasyPatch agent installed and started ($label)."
+echo "Experimental: the macOS agent is in development and not for production use."
+exit 0

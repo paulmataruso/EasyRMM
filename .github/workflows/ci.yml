@@ -1,6 +1,13 @@
-# Orchestrates every check that must pass before a pull request can merge.
-# Each area lives in its own reusable workflow; the final "CI result" job is
-# the single required status check for branch protection.
+# Orchestrates every check that must pass before a pull request can merge,
+# for EasyRMM and for EasyPatch (easypatch/). Each area lives in its own
+# reusable workflow; the final "CI result" job is the single required status
+# check for branch protection.
+#
+# The changes job decides which areas a pull request or push touches, and
+# the jobs of the others are skipped: a change only under easypatch/ (or to
+# .github/workflows/easypatch-*.yml) skips EasyRMM's checks, and a change
+# only to EasyRMM skips EasyPatch's. This workflow always runs, so "CI
+# result" always reports. Security runs for every change; it scans both.
 name: CI
 
 on:
@@ -18,20 +25,109 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # One output per area, "true" when the changed files need its checks:
+  #   easyrmm           anything outside easypatch/ and easypatch-*.yml;
+  #   easypatch_server  EasyPatch and its workflows except the agent, the
+  #                     docs and Markdown (what server.yml's own filter took);
+  #   easypatch_agent   the agent, shared/, its build scripts, the build
+  #                     props, global.json and easypatch-agent.yml (likewise).
+  #   contract          what the EasyPatch contract tests depend on: EasyPatch's
+  #                     server and its build, EasyRMM's connector, Go modules
+  #                     and the contract script.
+  # EasyRMM's EasyPatch connector (server/internal/easypatch/) counts for
+  # EasyRMM and the EasyPatch server; this file counts for everything. The
+  # merge queue, manual runs, and anything this cannot work out run all.
+  changes:
+    name: Changed files
+    runs-on: ubuntu-latest
+    outputs:
+      easyrmm: ${{ steps.diff.outputs.easyrmm }}
+      easypatch_server: ${{ steps.diff.outputs.easypatch_server }}
+      easypatch_agent: ${{ steps.diff.outputs.easypatch_agent }}
+      contract: ${{ steps.diff.outputs.contract }}
+    steps:
+      - if: github.event_name == 'pull_request' || github.event_name == 'push'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          classify() {
+            case $1 in
+              easypatch/backend/* | easypatch/shared/* | easypatch/deployment/server/* | easypatch/Directory.*.props | \
+                easypatch/global.json | easypatch/docker-compose.yml | server/internal/easypatch/* | go.mod | go.sum | \
+                scripts/contract/*)
+                contract=true ;;
+            esac
+            case $1 in
+              .github/workflows/ci.yml) easyrmm=true easypatch_server=true easypatch_agent=true contract=true; return ;;
+              server/internal/easypatch/*) easyrmm=true easypatch_server=true; return ;;
+              easypatch/* | .github/workflows/easypatch-*.yml) ;;
+              *) easyrmm=true; return ;;
+            esac
+            case $1 in
+              easypatch/agent/* | easypatch/docs/* | easypatch/*.md) ;;
+              *) easypatch_server=true ;;
+            esac
+            case $1 in
+              easypatch/agent/* | easypatch/shared/* | easypatch/scripts/build-agent.* | \
+                easypatch/scripts/build-macos-packages.sh | easypatch/Directory.Build.props | \
+                easypatch/Directory.Packages.props | easypatch/global.json | .github/workflows/easypatch-agent.yml)
+                easypatch_agent=true ;;
+            esac
+          }
+          case $EVENT in
+            pull_request) base=$PR_BASE ;;  # HEAD is the merge commit
+            push) base=$PUSH_BEFORE ;;
+            *) base= ;;
+          esac
+          # A new branch has no "before" (all zeros).
+          case $base in *[!0]*) ;; *) base= ;; esac
+          if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null &&
+            files=$(git diff --name-only --no-renames "$base" HEAD) && [ -n "$files" ]; then
+            easyrmm=false easypatch_server=false easypatch_agent=false contract=false
+            while IFS= read -r file; do
+              echo "$file"
+              classify "$file"
+            done <<< "$files"
+          else
+            echo "No list of changed files for this event; everything runs."
+            easyrmm=true easypatch_server=true easypatch_agent=true contract=true
+          fi
+          {
+            echo "easyrmm=$easyrmm"
+            echo "easypatch_server=$easypatch_server"
+            echo "easypatch_agent=$easypatch_agent"
+            echo "contract=$contract"
+          } | tee -a "$GITHUB_OUTPUT"
+
   backend:
     name: Backend
+    needs: changes
+    if: needs.changes.outputs.easyrmm == 'true'
     uses: ./.github/workflows/backend-tests.yml
 
   integration:
     name: Integration
+    needs: changes
+    if: needs.changes.outputs.easyrmm == 'true'
     uses: ./.github/workflows/integration-tests.yml
 
   frontend:
     name: Frontend
+    needs: changes
+    if: needs.changes.outputs.easyrmm == 'true'
     uses: ./.github/workflows/frontend-tests.yml
 
   docker:
     name: Docker
+    needs: changes
+    if: needs.changes.outputs.easyrmm == 'true'
     uses: ./.github/workflows/docker-build.yml
     # Publishing runs only for pushes to main in this repository (see the
     # workflow); pull requests build, scan and smoke-test the image only.
@@ -41,6 +137,23 @@ jobs:
       id-token: write
       attestations: write
 
+  # EasyPatch's checks need only contents: read; they build images but do not
+  # push them (images are published by easypatch-release.yml).
+  easypatch-server:
+    name: EasyPatch server
+    needs: changes
+    if: needs.changes.outputs.easypatch_server == 'true'
+    uses: ./.github/workflows/easypatch-server.yml
+
+  easypatch-agent:
+    name: EasyPatch agent
+    needs: changes
+    if: needs.changes.outputs.easypatch_agent == 'true'
+    uses: ./.github/workflows/easypatch-agent.yml
+    secrets:
+      EASYPATCH_SIGN_PFX_BASE64: ${{ secrets.EASYPATCH_SIGN_PFX_BASE64 }}
+      EASYPATCH_SIGN_PFX_PASSWORD: ${{ secrets.EASYPATCH_SIGN_PFX_PASSWORD }}
+
   security:
     name: Security
     uses: ./.github/workflows/security.yml
@@ -49,15 +162,80 @@ jobs:
       security-events: write
       pull-requests: read
 
+  # EasyRMM's connector against a real EasyPatch server built from the same
+  # commit (scripts/contract/easypatch.sh).
+  contract:
+    name: EasyPatch contract
+    needs: changes
+    if: needs.changes.outputs.contract == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Connector against EasyPatch built from this commit
+        run: make test-contract
+
+  # Signing in once across EasyRMM and EasyPatch, in Chromium over TLS, with
+  # the two consoles on different domains and EasyPatch built from this commit
+  # (scripts/e2e/sign-in-across.sh).
+  sign-in:
+    name: Sign in across EasyRMM and EasyPatch
+    needs: changes
+    if: needs.changes.outputs.easyrmm == 'true' || needs.changes.outputs.easypatch_server == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Install Chromium for Playwright
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: Start PostgreSQL
+        run: make test-db
+      - name: Build both, then sign in across them
+        run: make e2e-sign-in
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sign-in-report
+          path: |
+            web/e2e-sign-in/.report
+            web/e2e-sign-in/.results
+          retention-days: 7
+          if-no-files-found: ignore
+
   result:
     name: CI result
     if: always()
-    needs: [backend, integration, frontend, docker, security]
+    needs: [changes, backend, integration, frontend, docker, easypatch-server, easypatch-agent, contract, sign-in, security]
     runs-on: ubuntu-latest
     steps:
-      - name: Require every job to succeed
+      - name: Require every job to succeed or to have been skipped
         env:
           NEEDS: ${{ toJSON(needs) }}
+        # Every gated job needs only the changes job, so a skipped job is one
+        # whose area did not change. The changes job itself must succeed:
+        # when it fails, the jobs after it are skipped too. Failed and
+        # cancelled jobs always fail.
         run: |
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
-          echo "$NEEDS" | jq -e 'to_entries | all(.value.result == "success")' > /dev/null
+          echo "$NEEDS" | jq -e \
+            'to_entries | all(.value.result == "success" or (.key != "changes" and .value.result == "skipped"))' > /dev/null

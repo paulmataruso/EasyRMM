@@ -1,0 +1,14 @@
+# Production: a public DNS name with automatic ACME (Let's Encrypt / ZeroSSL) certificates.
+{
+	email {$ACME_EMAIL}
+	admin off
+	servers {
+		protocols h1 h2
+	}
+}
+
+import /etc/caddy/easypatch.caddy
+
+{$EASYPATCH_DOMAIN} {
+	import easypatch
+}

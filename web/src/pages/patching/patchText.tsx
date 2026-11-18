@@ -1,6 +1,7 @@
+import type { ReactNode } from "react";
 import type { AgentInstall, ComplianceStatus, PatchJob, PatchLink, PatchPolicy, PatchUpdateState } from "../../api/types";
-import { ExternalLink } from "lucide-react";
-import { Badge, buttonClasses, Dot, type Tone } from "../../components/ui";
+import { ArrowUpRight } from "lucide-react";
+import { Badge, buttonClasses, cx, Dot, type Tone } from "../../components/ui";
 import { plural } from "../../lib/format";
 
 export const COMPLIANCE: Record<ComplianceStatus, { label: string; tone: Tone; hint: string }> = {
@@ -145,6 +146,15 @@ export function isActiveJob(j: Pick<PatchJob, "status">): boolean {
   return ACTIVE.has(j.status);
 }
 
+/**
+ * Whether a job is worth running again: it finished without doing all it should (failed, cancelled, expired, or
+ * some of its updates failed). EasyPatch does not retry downloads.
+ */
+export function canRetry(j: Pick<PatchJob, "status" | "type" | "failedCount">): boolean {
+  if (isActiveJob(j) || j.type === "DownloadUpdates") return false;
+  return j.status === "Failed" || j.status === "Cancelled" || j.status === "Expired" || j.failedCount > 0;
+}
+
 export function PatchJobBadge({ job }: { job: Pick<PatchJob, "status" | "cancelRequested" | "progressPercent"> }) {
   const s = JOB_STATUS[job.status] ?? {
     label: job.status,
@@ -226,13 +236,65 @@ export function requester(by: string): string {
   return `API token ${token}`;
 }
 
-/** EasyPatch's own console, in a new tab: for what EasyRMM does not show, such as its policies and settings. */
-export function OpenEasyPatch({ href }: { href: string }) {
+/** What a link into EasyPatch's console is about: an EasyRMM device or organization, or an EasyPatch job or update. */
+export interface EasyPatchTarget {
+  device?: string;
+  /** A device's page in EasyPatch: updates, installed, history, jobs or policy. */
+  tab?: "updates" | "installed" | "history" | "jobs" | "policy";
+  organization?: string;
+  /** A site opens its organization: EasyPatch's sites have no page. */
+  site?: string;
+  job?: string;
+  update?: string;
+  /** One of EasyPatch's lists. */
+  list?: "endpoints" | "jobs";
+}
+
+/** The tab of EasyPatch's endpoint page that shows what each view of a device's Patches tab shows. */
+export const PATCH_VIEW_TAB: Record<string, NonNullable<EasyPatchTarget["tab"]>> = {
+  available: "updates",
+  installed: "installed",
+  history: "history",
+  jobs: "jobs",
+};
+
+/**
+ * The address of a link into EasyPatch's console. It goes through EasyRMM's own server, which finds the EasyPatch
+ * page for the device or organization (or EasyPatch's list, when it is not linked) and redirects there.
+ */
+export function easyPatchHref(t: EasyPatchTarget): string {
+  const q = new URLSearchParams();
+  if (t.device) {
+    q.set("device", t.device);
+    if (t.tab) q.set("tab", t.tab);
+  } else if (t.organization) q.set("organization", t.organization);
+  else if (t.site) q.set("site", t.site);
+  else if (t.job) q.set("job", t.job);
+  else if (t.update) q.set("update", t.update);
+  else if (t.list) q.set("list", t.list);
+  const query = q.toString();
+  return query ? `/go/to-easypatch?${query}` : "/go/to-easypatch";
+}
+
+/**
+ * A link to where EasyPatch's console changes something EasyRMM only shows, named for the action ("Change in
+ * EasyPatch"). It opens in the same tab, so Back returns.
+ */
+export function EasyPatchLink({ to, children, className }: { to: EasyPatchTarget; children: ReactNode; className?: string }) {
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className={buttonClasses("secondary", "sm")}>
-      <ExternalLink className="size-3.5" aria-hidden />
+    <a href={easyPatchHref(to)} className={cx("inline-flex items-center gap-0.5 rounded-sm font-medium text-accent hover:underline", className)}>
+      {children}
+      <ArrowUpRight className="size-3.5 shrink-0" aria-hidden />
+    </a>
+  );
+}
+
+/** EasyPatch's own console, for what EasyRMM does not show. Like the product switch, it opens in the same tab. */
+export function OpenEasyPatch({ to = {} }: { to?: EasyPatchTarget }) {
+  return (
+    <a href={easyPatchHref(to)} className={buttonClasses("secondary", "sm")}>
       Open EasyPatch
-      <span className="sr-only"> (opens in a new tab)</span>
+      <ArrowUpRight className="size-3.5" aria-hidden />
     </a>
   );
 }

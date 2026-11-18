@@ -83,13 +83,13 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	limit, err := httpapi.QueryInt(r, "limit", 100, 1, 200)
+	limit, err := httpapi.QueryCount(r, "limit", 100, 1, 200)
 	if err != nil {
 		return err
 	}
 	q := r.URL.Query()
 	items, next, err := a.svc.List(r.Context(), httpapi.Caller(r), users.ListQuery{
-		Search: q.Get("q"), OrganizationID: org, After: q.Get("after"), Limit: int(limit),
+		Search: q.Get("q"), OrganizationID: org, After: q.Get("after"), Limit: limit,
 	})
 	if err != nil {
 		return err

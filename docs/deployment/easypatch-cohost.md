@@ -103,11 +103,18 @@ EasyRMM's own names work as usual.
 
 ## Step 2: EasyPatch
 
-Follow EasyPatch's installation guide (`docs/installation.md` in its
-repository) up to **3. Start**, without starting it: get the files, run
+Follow EasyPatch's
+[installation guide](../../easypatch/docs/installation.md) up to
+**3. Start**, without starting it: get the files, run
 `./scripts/init-secrets.sh`, and set `EASYPATCH_DOMAIN=patch.example.com`
 and `ACME_EMAIL` in its `.env`. Leave `EASYPATCH_PUBLIC_URL` unset: its
 default, `https://patch.example.com`, is right.
+
+EasyPatch's directory is the `easypatch/` folder of the checkout that guide
+makes; the commands below call it `easypatch/`. Use a checkout of its own,
+not EasyRMM's `easyrmm/`: each is upgraded by checking out its own release
+tag. A server installed from EasyPatch's former repository uses that
+checkout instead.
 
 Copy EasyRMM's two files for EasyPatch into EasyPatch's directory, next to
 its `docker-compose.yml`:
@@ -167,8 +174,70 @@ EasyPatch's name on port 443, so it needs no hairpin NAT. EasyPatch records
 EasyRMM's requests as coming from `127.0.0.1`.
 
 **Open EasyPatch**, on EasyRMM's Patching page and in Settings → EasyPatch,
-opens EasyPatch's own console in a new tab. It is a link rather than a
-frame, because EasyPatch refuses to be framed (`frame-ancestors 'none'`).
+and the **EasyRMM | EasyPatch** switch under the logo open EasyPatch's own
+console in the same tab; Back returns. They are links rather than a frame,
+because EasyPatch refuses to be framed (`frame-ancestors 'none'`).
+
+## Step 4: Sign in to EasyPatch through EasyRMM
+
+Optional. People then open EasyPatch from EasyRMM without signing in
+again, and their EasyPatch role follows their EasyRMM roles
+([ADR-0036](../architecture/adr/0036-easyrmm-signs-in-to-easypatch.md);
+EasyPatch's [single sign-on guide](../../easypatch/docs/single-sign-on.md#easyrmm)).
+It needs an EasyPatch with the `easyrmm-sign-in` capability.
+
+**EasyPatch must reach EasyRMM.** EasyPatch's `api` container fetches
+EasyRMM's discovery document and keys, and redeems sign-ins, at
+`https://rmm.example.com`. From inside Docker that name resolves to the
+server's public address.
+
+* **Most servers reach their own public address** (hairpin NAT). Nothing
+  to do.
+* **If yours does not,** point the name at the server itself for the `api`
+  container. Add to `docker-compose.easyrmm.yml`, next to `caddy`, and run
+  `docker compose up -d api`:
+
+  ```yaml
+    api:
+      extra_hosts:
+        - "rmm.example.com:host-gateway"
+  ```
+
+  A firewall on the server must then let EasyPatch's Docker networks reach
+  port 443.
+* **If EasyRMM's certificate comes from your own CA** rather than a public
+  one, EasyPatch must trust it. Make a bundle of the public authorities and
+  yours in EasyPatch's directory, and give it to the `api` container:
+
+  ```bash
+  cat /etc/ssl/certs/ca-certificates.crt your-ca.pem > ca-bundle.pem
+  ```
+
+  ```yaml
+    api:
+      environment:
+        SSL_CERT_FILE: /etc/easypatch/ca-bundle.pem
+      volumes:
+        - ./ca-bundle.pem:/etc/easypatch/ca-bundle.pem:ro
+  ```
+
+Then:
+
+1. In EasyRMM: **Settings → EasyPatch → Sign-in → Set up sign-in**. Copy
+   the issuer, client ID and client secret; the secret is shown once.
+2. In EasyPatch: **Settings → Single sign-on → Add provider**. Tick **This
+   provider is EasyRMM**, enter the three values, and press **Check**: it
+   reads EasyRMM's discovery document from the `api` container, so it shows
+   whether EasyPatch reaches EasyRMM. Then **Add provider**.
+3. In EasyRMM, use the switch under the logo. EasyPatch opens, signed in.
+
+People who already have an EasyPatch account with the same email address
+link it themselves: sign in to EasyPatch, then **My account → Link
+EasyRMM**. While EasyRMM is down, the accounts it manages cannot sign in to
+EasyPatch; other accounts are not affected.
+
+The test `make e2e-sign-in` runs this setup in a browser, over TLS with a
+private CA, with the two consoles on different domains.
 
 ## Check it
 
@@ -250,13 +319,13 @@ If you change Caddy's loopback ports, change them in both places:
 * **Neither product sets a cookie for the parent domain.** Their sign-in
   cookies are `__Host-` cookies, bound to each product's own name.
 
-## For EasyPatch's maintainers
+## Possible improvements to EasyPatch
 
 EasyPatch 1.9.0 needs no change for this. Optional improvements:
 
 * Ship `Caddyfile.easyrmm` in the `easypatch-proxy` image, next to
-  `Caddyfile` and `Caddyfile.dev`. Ship `docker-compose.easyrmm.yml` in the
-  repository. Users would then copy nothing, and the override would not
-  need its `volumes` line.
-* Mention co-hosting in EasyPatch's installation guide, including the
-  `COMPOSE_FILE` line.
+  `Caddyfile` and `Caddyfile.dev`. Keep `docker-compose.easyrmm.yml` in
+  `easypatch/`, next to its `docker-compose.yml`. Users would then copy
+  nothing, and the override would not need its `volumes` line.
+* Describe co-hosting in EasyPatch's installation guide, including the
+  `COMPOSE_FILE` line. It only links to this guide so far.

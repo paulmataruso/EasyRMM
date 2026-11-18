@@ -1,0 +1,13 @@
+Package: easypatch-agent
+Version: @VERSION@
+Architecture: @DEBARCH@
+Maintainer: DHI Technical Services LLC <paulmataruso@dhitechnical.com>
+Section: admin
+Priority: optional
+Installed-Size: @SIZE@
+Depends: libc6 (>= 2.27), libgcc-s1 | libgcc1, libstdc++6, libssl3t64 | libssl3 | libssl1.1, ca-certificates, systemd
+Description: EasyPatch patch management agent
+ Reports missing package updates to an EasyPatch server and installs the
+ updates an administrator approves, with apt. Runs as the easypatch-agent
+ systemd service. Enroll with "easypatch-agent enroll" or the install script
+ from the EasyPatch console.

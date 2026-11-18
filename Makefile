@@ -30,9 +30,10 @@ fmt-check: ## Fail if Go code is not formatted
 		if [ -n "$$out" ]; then echo "Unformatted files:"; echo "$$out"; exit 1; fi
 
 .PHONY: vet
-vet: ## go vet (including integration-tagged files, and the agent built for Windows)
+vet: ## go vet (including integration- and contract-tagged files, and the agent built for Windows)
 	$(GO) vet ./...
 	$(GO) vet -tags integration ./...
+	$(GO) vet -tags contract ./server/internal/easypatch/
 	GOOS=windows $(GO) vet ./agent/... ./internal/...
 
 .PHONY: lint
@@ -87,13 +88,17 @@ test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral
 		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
 
+.PHONY: test-contract
+test-contract: ## The EasyPatch connector against a real EasyPatch built from easypatch/ (needs Docker)
+	GO=$(GO) ./scripts/contract/easypatch.sh
+
 .PHONY: check
 check: fmt-check vet lint test-integration ## Everything CI runs for Go code
 
 .PHONY: build-agents
 build-agents: ## Build the Windows and Linux agents into bin/agents (serve them with EASYRMM_AGENT_DIR=bin/agents)
 	@mkdir -p bin/agents
-	@v=$$(git describe --tags --always --dirty 2>/dev/null || echo dev); \
+	@v=$$(git describe --tags --match 'easyrmm-v*' --always --dirty 2>/dev/null || echo dev); v=$${v#easyrmm-}; \
 	for arch in amd64 arm64; do \
 		CGO_ENABLED=0 GOOS=windows GOARCH=$$arch $(GO) build -trimpath -ldflags "-s -w -X main.Version=$$v" \
 			-o bin/agents/easyrmm-agent-windows-$$arch.exe ./agent/cmd/easyrmm-agent || exit 1; \
@@ -130,3 +135,7 @@ web-test: web-deps ## Typecheck and unit-test the web console, with coverage flo
 .PHONY: e2e
 e2e: web build build-agents ## Browser end-to-end tests against a real server (needs `make test-db`)
 	cd web && EASYRMM_E2E_ADMIN_URL="$${EASYRMM_E2E_ADMIN_URL:-$(TEST_DB_URL)}" npx playwright test
+
+.PHONY: e2e-sign-in
+e2e-sign-in: web build ## Sign in once across EasyRMM and EasyPatch, in a browser over TLS on two domains (needs Docker and `make test-db`)
+	EASYRMM_E2E_ADMIN_URL="$${EASYRMM_E2E_ADMIN_URL:-$(TEST_DB_URL)}" ./scripts/e2e/sign-in-across.sh

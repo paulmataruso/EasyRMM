@@ -90,6 +90,19 @@ rights, and EasyRMM narrows what reaches them.
 * No TCP or UDP routing.
 * The agent path carries no user credentials.
 
+**EasyPatch signing in through EasyRMM** ([ADR-0036](../architecture/adr/0036-easyrmm-signs-in-to-easypatch.md))
+* Off, and every provider route a 404, until a super administrator sets
+  EasyPatch up as the one client. Its secret is kept as a hash; its
+  redirect URI is fixed, and a request naming another is never redirected.
+* Code flow with PKCE (S256), `state` and `nonce` required. Codes are
+  single use, live 60 seconds, are stored hashed and are bound to the
+  client, redirect URI, session, nonce and challenge.
+* A second factor in the session is required whatever
+  `EASYRMM_REQUIRE_MFA` says. Access comes from EasyRMM's roles and is
+  decided again when the code is redeemed.
+* ID tokens say `email_verified: false`, so no EasyPatch setting can link
+  accounts by email.
+
 **Server to integrations** ([ADR-0023](../architecture/adr/0023-audit-forwarding.md), [ADR-0030](../architecture/adr/0030-easypatch-connector.md))
 * Only Super Administrators configure EasyPatch and audit forwarding.
 * Their secrets are sealed and never shown again.

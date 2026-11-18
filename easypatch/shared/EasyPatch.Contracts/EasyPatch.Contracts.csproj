@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>EasyPatch.Contracts</RootNamespace>
+    <Description>Wire contracts, request signing and update classification shared by the EasyPatch server and agent.</Description>
+  </PropertyGroup>
+</Project>

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<pkg-info overwrite-permissions="true" relocatable="false" identifier="com.dhitechnical.easypatch.agent" postinstall-action="none" version="@VERSION@" format-version="2" install-location="/" auth="root">
+    <payload numberOfFiles="@FILES@" installKBytes="@KBYTES@"/>
+    <bundle-version/>
+    <upgrade-bundle/>
+    <update-bundle/>
+    <atomic-update-bundle/>
+    <strict-identifier/>
+    <relocate/>
+    <scripts>
+        <postinstall file="./postinstall"/>
+    </scripts>
+</pkg-info>

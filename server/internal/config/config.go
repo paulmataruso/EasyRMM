@@ -205,7 +205,10 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 			c.Mesh.InternalURL = u
 		}
 	}
-	c.DatabaseMaxConns = int32(l.integer("EASYRMM_DATABASE_MAX_CONNS", 20)) //nolint:gosec // validated below
+	// Checked before the conversion, so a value past 32 bits cannot wrap into the allowed range.
+	if n := l.integer("EASYRMM_DATABASE_MAX_CONNS", 20); n >= 2 && n <= 500 {
+		c.DatabaseMaxConns = int32(n)
+	}
 
 	c.PublicURL = l.httpsURL("EASYRMM_PUBLIC_URL", true)
 	publicIP := c.PublicURL != nil && isIP(c.PublicURL.Hostname())

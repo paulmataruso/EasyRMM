@@ -82,6 +82,7 @@ func TestRejectsUnsafeOrInvalidValues(t *testing.T) {
 		"bad duration":             {"EASYRMM_SESSION_MAX_AGE": "forever"},
 		"bad int":                  {"EASYRMM_DATABASE_MAX_CONNS": "lots"},
 		"too many conns":           {"EASYRMM_DATABASE_MAX_CONNS": "5000"},
+		"conns wrapping to 2":      {"EASYRMM_DATABASE_MAX_CONNS": "4294967298"},
 		"smtp without from":        {"EASYRMM_SMTP_HOST": "smtp.example.com"},
 		"smtp bad tls":             {"EASYRMM_SMTP_HOST": "smtp.example.com", "EASYRMM_SMTP_FROM": "rmm@example.com", "EASYRMM_SMTP_TLS": "ssl3"},
 		"insecure cookies in prod": {"EASYRMM_DEV_INSECURE_COOKIES": "true"},

@@ -55,7 +55,7 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	limit, err := httpapi.QueryInt(r, "limit", 100, 1, 500)
+	limit, err := httpapi.QueryCount(r, "limit", 100, 1, 500)
 	if err != nil {
 		return err
 	}
@@ -64,13 +64,13 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) error {
 		return apperr.Invalid("action", "must be an action name or prefix, such as user or user.invite")
 	}
 	entries, err := a.log.List(r.Context(), scope, audit.Query{
-		OrganizationID: org, ActorID: actor, DeviceID: device, ActionPrefix: action, Before: before, Limit: int(limit) + 1,
+		OrganizationID: org, ActorID: actor, DeviceID: device, ActionPrefix: action, Before: before, Limit: limit + 1,
 	})
 	if err != nil {
 		return err
 	}
 	next := ""
-	if len(entries) > int(limit) {
+	if len(entries) > limit {
 		entries = entries[:limit]
 		next = strconv.FormatInt(entries[len(entries)-1].ID, 10)
 	}
@@ -105,11 +105,11 @@ func (a *API) verify(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	limit, err := httpapi.QueryInt(r, "limit", 100_000, 1, 1_000_000)
+	limit, err := httpapi.QueryCount(r, "limit", 100_000, 1, 1_000_000)
 	if err != nil {
 		return err
 	}
-	res, err := a.log.Verify(r.Context(), after, int(limit))
+	res, err := a.log.Verify(r.Context(), after, limit)
 	if err != nil {
 		return err
 	}

@@ -115,6 +115,9 @@ type Status struct {
 	ConsoleURL string `json:"consoleUrl,omitempty"`
 }
 
+// ConsoleURL is the address people open EasyPatch's console at, or "".
+func ConsoleURL(conn Connection) string { return consoleURL(conn) }
+
 // consoleURL is the address people open EasyPatch's console at. Only an
 // https:// address is offered: EasyPatch reports its public address itself.
 func consoleURL(conn Connection) string {
