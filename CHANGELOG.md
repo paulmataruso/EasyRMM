@@ -33,7 +33,15 @@ All notable changes to this project are documented here. The format follows
   change it. The engine refusing EasyRMM shows as `patching_unavailable`,
   never as a 401 or 403, and EasyPatch's field errors become EasyRMM's.
   Switching to bundled forgets a connected server and its links, with an
-  audit record. Agents cannot reach the engine yet (phase B4).
+  audit record.
+- **EasyPatch agents on EasyRMM's name** (phase B4, ADR-0039): in bundled
+  mode, EasyRMM's edge forwards exactly the engine's agent API and package
+  downloads to it, before the session and CSRF layers, byte for byte so
+  agents' request signatures hold, with the client address EasyRMM
+  resolved. Statements and cookies from outside never reach the engine;
+  its answers cannot set cookies, clear site data or run script on
+  EasyRMM's origin. Paths that could reach the rest of the engine are
+  refused; requests are capped at 20 MB.
 - `npm run screenshots` in `web/` makes the README's screenshots from the
   console's production build, its API answered from fictional demo data
   (`web/screenshots/`). It fails when a page asks for something the data does

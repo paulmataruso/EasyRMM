@@ -23,7 +23,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"net/netip"
+	"net/url"
 	"os"
 	"slices"
 	"sort"
@@ -36,6 +40,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 )
 
 // contract is the EasyPatch server under test.
@@ -162,12 +167,22 @@ type agent struct {
 	endpoint    uuid.UUID
 	fingerprint string
 	sequence    int64
+	// base is where it sends its requests, with header on each: EasyPatch's
+	// own address unless it goes through EasyRMM's edge.
+	base   string
+	header http.Header
 	// What its check-ins report.
 	rebootPending bool
 	capabilities  []string
 }
 
 func (c *contract) enroll(token, hostname string) *agent {
+	c.t.Helper()
+	return c.enrollVia(c.url, nil, token, hostname)
+}
+
+// enrollVia enrolls an agent that sends every request to base, with header.
+func (c *contract) enrollVia(base string, header http.Header, token, hostname string) *agent {
 	c.t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -183,7 +198,7 @@ func (c *contract) enroll(token, hostname string) *agent {
 		EndpointID     uuid.UUID `json:"endpointId"`
 		KeyFingerprint string    `json:"keyFingerprint"`
 	}
-	c.must(http.MethodPost, "/api/v1/agents/enroll", "", map[string]any{
+	status, data := call(c.ctx, c.t, c.http, base, http.MethodPost, "/api/v1/agents/enroll", "", map[string]any{
 		"enrollmentToken": token,
 		"publicKey":       base64.StdEncoding.EncodeToString(spki),
 		"agentVersion":    "1.10.0",
@@ -192,11 +207,17 @@ func (c *contract) enroll(token, hostname string) *agent {
 			"manufacturer": "QEMU", "model": "Standard PC (Q35 + ICH9, 2009)", "osCaption": "Debian GNU/Linux 13 (trixie)",
 			"osBuild": "6.12.48+deb13-amd64", "architecture": "X64", "platform": "Linux", "osId": "debian", "osVersion": "13",
 		},
-	}, http.StatusOK, &r)
+	}, header)
+	if status != http.StatusOK {
+		c.t.Fatalf("enroll through %s answered %d: %s", base, status, data)
+	}
+	if err := json.Unmarshal(data, &r); err != nil {
+		c.t.Fatal(err)
+	}
 	if r.State != "Active" || !strings.HasPrefix(r.CredentialID, "c_") || r.EndpointID == uuid.Nil || r.KeyFingerprint == "" {
 		c.t.Fatalf("enrollment answered %+v", r)
 	}
-	return &agent{c: c, key: key, credential: r.CredentialID, endpoint: r.EndpointID, fingerprint: r.KeyFingerprint}
+	return &agent{c: c, key: key, credential: r.CredentialID, endpoint: r.EndpointID, fingerprint: r.KeyFingerprint, base: base, header: header}
 }
 
 // post sends a signed agent request; route is the path, which is what the
@@ -223,13 +244,16 @@ func (a *agent) post(route string, body, out any) {
 	signature := make([]byte, 64) // IEEE P1363: r then s, 32 bytes each
 	r.FillBytes(signature[:32])
 	s.FillBytes(signature[32:])
-	header := http.Header{}
+	header := a.header.Clone()
+	if header == nil {
+		header = http.Header{}
+	}
 	header.Set("X-EasyPatch-Credential", a.credential)
 	header.Set("X-EasyPatch-Timestamp", timestamp)
 	header.Set("X-EasyPatch-Nonce", nonce)
 	header.Set("X-EasyPatch-Content-SHA256", contentHash)
 	header.Set("X-EasyPatch-Signature", base64.StdEncoding.EncodeToString(signature))
-	status, answer := call(a.c.ctx, t, a.c.http, a.c.url, http.MethodPost, route, "", json.RawMessage(data), header)
+	status, answer := call(a.c.ctx, t, a.c.http, a.base, http.MethodPost, route, "", json.RawMessage(data), header)
 	if status < 200 || status > 299 {
 		t.Fatalf("agent POST %s answered %d: %s", route, status, answer)
 	}
@@ -810,6 +834,79 @@ func TestContract(t *testing.T) {
 		a.rebootPending = true // so the restart-pending list is not empty
 		a.checkIn()
 		checkFake(t, c, org.ID, site.ID, a.endpoint, install.ID, restarted)
+	})
+
+	run("agents through EasyRMM's edge", func(t *testing.T) {
+		// In bundled mode the edge forwards the engine's agent paths (one-
+		// product plan, B4). Agents sign the method, the request target and
+		// the body: the engine accepting them proves all three arrive as
+		// sent. The engine records the client address EasyRMM resolved,
+		// and never sees a statement from outside.
+		target, err := url.Parse(c.engineURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fwd := NewAgentProxy(target, true, slog.New(slog.DiscardHandler))
+		edge := httptest.NewServer(httpapi.Chain(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !AgentPath(r.URL.Path) {
+				http.NotFound(w, r)
+				return
+			}
+			fwd.ServeHTTP(w, httpapi.WithOrigin(r, httpapi.Origin{Console: "https://rmm.example.test"}))
+		}), httpapi.RealIP([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")})))
+		t.Cleanup(edge.Close)
+
+		signer, err := NewSigner(c.engineKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		engine, err := NewEngineClient(c.engineURL, signer, "contract")
+		if err != nil {
+			t.Fatal(err)
+		}
+		admin := WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "contract-edge@example.test", Role: RoleAdmin, Organizations: []uuid.UUID{org.ID}})
+		token, err := engine.CreateEnrollmentToken(admin, org.ID, &site.ID, "EasyRMM edge contract", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// As if through two of EasyRMM's own proxies on loopback, from a
+		// device at 203.0.113.9 that claims another address and makes up a
+		// statement. Passed on as sent, the engine (which reads the last
+		// address) would see 127.0.0.5.
+		via := http.Header{"X-Forwarded-For": {"198.51.100.1, 203.0.113.9, 127.0.0.5"}, StatementHeader: {"forged"}}
+		b := c.enrollVia(edge.URL, via, token.Secret, "contract-edge-"+suffix)
+		b.checkIn()
+
+		// EasyPatch writes the address it saw at its next presence flush.
+		deadline := time.Now().Add(45 * time.Second)
+		for {
+			var ep struct {
+				Summary struct {
+					LastSeenIP string `json:"lastSeenIp"`
+				} `json:"summary"`
+			}
+			if err := engine.do(admin, http.MethodGet, "/api/v1/endpoints/"+b.endpoint.String(), nil, nil, "", &ep); err != nil {
+				t.Fatal(err)
+			}
+			if ep.Summary.LastSeenIP == "203.0.113.9" {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("the engine saw the agent at %q, not at the address EasyRMM resolved", ep.Summary.LastSeenIP)
+			}
+			time.Sleep(time.Second)
+		}
+
+		// Downloads reach the engine too: its answer, sandboxed.
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, edge.URL+"/downloads/agent/EasyPatchAgent-0.0.0-x64.deb", nil)
+		resp, err := c.http.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound || resp.Header.Get("Content-Security-Policy") != "default-src 'none'; frame-ancestors 'none'; sandbox" {
+			t.Errorf("download of a missing package: %d %v", resp.StatusCode, resp.Header)
+		}
 	})
 }
 

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -381,6 +382,16 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	// The OpenID provider reads the browser's session (authorize) but skips
 	// the CSRF layer: EasyPatch's server calls the token endpoint itself.
 	idpHandler := httpapi.Chain(idpAPI.Provider(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""), d.Sessions.Load)
+	// EasyPatch agents reach the patching engine in this deployment through
+	// EasyRMM's own addresses (one-product plan, B4).
+	var patchingAgents http.Handler
+	if cfg.Patching.Bundled() {
+		target, err := url.Parse(cfg.Patching.URL)
+		if err != nil {
+			return nil, fmt.Errorf("EASYRMM_PATCHING_URL: %w", err)
+		}
+		patchingAgents = easypatch.NewAgentProxy(target, !cfg.DevInsecureCookie, log)
+	}
 	rt := newRouter(all)
 	hosts := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m, ok := rt.match(r.Host)
@@ -393,6 +404,10 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 		case m.mesh:
 			// Remote access: agents, and browsers holding a session grant.
 			d.Gateway.ServeHTTP(w, r)
+		case patchingAgents != nil && easypatch.AgentPath(r.URL.Path):
+			// Before the session, CSRF and console layers: an EasyPatch
+			// agent carries none of what they check.
+			patchingAgents.ServeHTTP(w, r)
 		case strings.HasPrefix(r.URL.Path, agentproto.PathPrefix):
 			agentHandler.ServeHTTP(w, r)
 		case idpapi.IsProviderPath(r.URL.Path):

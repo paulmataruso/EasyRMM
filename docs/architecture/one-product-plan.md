@@ -228,7 +228,11 @@ EasyPatch. It:
 
 `/downloads/install/*` (deployment-code scripts) is not forwarded. A test
 proves that EasyRMM serves nothing under those prefixes, and that the header
-never reaches EasyPatch from outside.
+never reaches EasyPatch from outside. *Done (B4,
+[ADR-0039](adr/0039-agents-on-easyrmms-name.md)): also refuses paths that
+could mean another one to the engine, and sandboxes every answer on
+EasyRMM's origin; the contract suite enrolls and checks in a signing agent
+through the forwarder against a real engine.*
 
 **B5. One set of organizations: a reconciler.** A loop in EasyRMM, driven by
 the link tables, makes EasyPatch match EasyRMM, and retries while EasyPatch

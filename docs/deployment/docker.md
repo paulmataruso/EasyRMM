@@ -231,9 +231,14 @@ instead of a connected EasyPatch server:
   forgets the engine's links the same way: links name one server's ids.
 * **Organizations are linked by hand** in Settings → EasyPatch, as with a
   connected server, until the plan's phase B5 creates them.
-* **Not yet: agents.** EasyPatch agents cannot reach the engine until phase
-  B4 forwards their paths through EasyRMM's edge; a device's patch status
-  appears only once its EasyPatch agent is enrolled with the engine.
+* **Agents use EasyRMM's name.** EasyRMM's edge forwards the engine's agent
+  API and package downloads (`/api/v1/agents/`, `/downloads/agent/`,
+  `/downloads/winget/`) and nothing else of it
+  ([ADR-0039](../architecture/adr/0039-agents-on-easyrmms-name.md)).
+  EasyRMM installs the EasyPatch agent itself; EasyPatch's own install
+  one-liners (`/downloads/install/`) do not work on EasyRMM's name. With a
+  certificate from EasyRMM's own authority rather than a public one, the
+  EasyPatch agent does not trust EasyRMM's name yet (phase B7).
 
 ## Security posture of the containers
 
