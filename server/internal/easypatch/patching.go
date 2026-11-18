@@ -31,11 +31,29 @@ const (
 	maxScheduleAhead = 31 * 24 * time.Hour
 )
 
-// epError turns a failed EasyPatch call into what the console shows.
+// epError turns a failed EasyPatch call into what the console shows. The
+// engine in this deployment refusing EasyRMM's statement is EasyRMM's
+// problem, never the user's: it is shown as the engine being unavailable,
+// not as a 401 or 403 the console would take for a lost session.
 func epError(err error) error {
 	var e *Error
 	if !errors.As(err, &e) {
 		return err
+	}
+	if e.Status == http.StatusBadRequest && len(e.Fields) > 0 {
+		f := apperr.Fields{}
+		for name, msg := range e.Fields {
+			f.Add(name, msg)
+		}
+		return f.Err()
+	}
+	if e.Engine {
+		switch {
+		case e.Status == 0 || e.Status >= 500:
+			return apperr.Unavailable("patching_unavailable", e.Detail)
+		case e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden:
+			return apperr.Unavailable("patching_unavailable", "The patching engine refused EasyRMM's call: "+e.Detail)
+		}
 	}
 	switch {
 	case e.Status == 0 || e.Status >= 500:
@@ -120,7 +138,11 @@ func ConsoleURL(conn Connection) string { return consoleURL(conn) }
 
 // consoleURL is the address people open EasyPatch's console at. Only an
 // https:// address is offered: EasyPatch reports its public address itself.
+// The engine in this deployment has no console of its own: EasyRMM's is it.
 func consoleURL(conn Connection) string {
+	if conn.Bundled {
+		return ""
+	}
 	for _, raw := range []string{conn.PublicURL, conn.URL} {
 		if u, err := ParseURL(raw); err == nil {
 			return u.String()
@@ -306,7 +328,7 @@ func (s *Service) Fleet(ctx context.Context, c access.Caller, q FleetQuery) (Fle
 		if _, ok := fetched[*d.easyPatchOrg]; ok {
 			continue
 		}
-		eps, err := s.endpoints(ctx, cl, *d.easyPatchOrg)
+		eps, err := s.endpoints(s.as(ctx, c, RoleReadOnly, *d.easyPatchOrg), cl, *d.easyPatchOrg)
 		if err != nil {
 			s.noteError(ctx, err)
 			out.Errors = append(out.Errors, fmt.Sprintf("%s: %s", d.organizationName, message(epError(err))))
@@ -337,6 +359,48 @@ func (s *Service) Fleet(ctx context.Context, c access.Caller, q FleetQuery) (Fle
 		out.Devices = append(out.Devices, f)
 	}
 	return out, nil
+}
+
+// orgOf is the EasyPatch organization of a linked device, for a statement.
+func orgOf(d deviceRow) []uuid.UUID {
+	if d.easyPatchOrg == nil {
+		return nil
+	}
+	return []uuid.UUID{*d.easyPatchOrg}
+}
+
+// orgsOf is the EasyPatch organizations of linked devices.
+func orgsOf(devices []deviceRow) []uuid.UUID {
+	var out []uuid.UUID
+	for _, d := range devices {
+		out = append(out, orgOf(d)...)
+	}
+	return out
+}
+
+// patchOrganizations is the EasyPatch organizations linked to the
+// organizations where c may see patching (only organizationID's, when it is
+// set), by EasyPatch name.
+func (s *Service) patchOrganizations(ctx context.Context, c access.Caller, organizationID uuid.UUID) ([]uuid.UUID, error) {
+	var orgs []uuid.UUID
+	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT l.easypatch_id, l.organization_id FROM easypatch_organizations l
+			WHERE $1::uuid IS NULL OR l.organization_id = $1 ORDER BY l.easypatch_name`, nullID(organizationID))
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var ep, org uuid.UUID
+			if err := rows.Scan(&ep, &org); err != nil {
+				return err
+			}
+			if c.CanInOrg(rbac.PermPatchView, org) {
+				orgs = append(orgs, ep)
+			}
+		}
+		return rows.Err()
+	})
+	return orgs, err
 }
 
 func nullID(id uuid.UUID) *uuid.UUID {
@@ -390,7 +454,8 @@ func (s *Service) Device(ctx context.Context, c access.Caller, id uuid.UUID) (De
 	if d.state != LinkLinked {
 		return out, nil
 	}
-	ep, err := cl.Endpoint(ctx, *d.endpointID)
+	rctx := s.as(ctx, c, RoleReadOnly, orgOf(d)...)
+	ep, err := cl.Endpoint(rctx, *d.endpointID)
 	if err != nil {
 		s.noteError(ctx, err)
 		out.Error = message(epError(err))
@@ -401,7 +466,7 @@ func (s *Service) Device(ctx context.Context, c access.Caller, id uuid.UUID) (De
 	}
 	ep.Credentials = nil
 	out.Endpoint = &ep
-	if p, err := cl.EffectivePolicy(ctx, *d.endpointID); err == nil {
+	if p, err := cl.EffectivePolicy(rctx, *d.endpointID); err == nil {
 		out.Policy = &p
 	}
 	return out, nil
@@ -434,7 +499,7 @@ func (s *Service) Updates(ctx context.Context, c access.Caller, id uuid.UUID, st
 	if err != nil {
 		return nil, err
 	}
-	list, err := cl.Updates(ctx, *d.endpointID, state)
+	list, err := cl.Updates(s.as(ctx, c, RoleReadOnly, orgOf(d)...), *d.endpointID, state)
 	if err != nil {
 		return nil, epError(err)
 	}
@@ -447,7 +512,7 @@ func (s *Service) InstalledUpdates(ctx context.Context, c access.Caller, id uuid
 	if err != nil {
 		return nil, err
 	}
-	list, err := cl.InstalledUpdates(ctx, *d.endpointID)
+	list, err := cl.InstalledUpdates(s.as(ctx, c, RoleReadOnly, orgOf(d)...), *d.endpointID)
 	if err != nil {
 		return nil, epError(err)
 	}
@@ -460,7 +525,7 @@ func (s *Service) History(ctx context.Context, c access.Caller, id uuid.UUID, pa
 	if err != nil {
 		return Page[HistoryEntry]{}, err
 	}
-	p, err := cl.History(ctx, *d.endpointID, max(page, 1))
+	p, err := cl.History(s.as(ctx, c, RoleReadOnly, orgOf(d)...), *d.endpointID, max(page, 1))
 	if err != nil {
 		return p, epError(err)
 	}
@@ -474,7 +539,7 @@ func (s *Service) DeviceJobs(ctx context.Context, c access.Caller, id uuid.UUID,
 	if err != nil {
 		return Page[Job]{}, err
 	}
-	p, err := cl.EndpointJobs(ctx, *d.endpointID, max(page, 1))
+	p, err := cl.EndpointJobs(s.as(ctx, c, RoleReadOnly, orgOf(d)...), *d.endpointID, max(page, 1))
 	if err != nil {
 		return p, epError(err)
 	}
@@ -552,30 +617,13 @@ func (s *Service) Jobs(ctx context.Context, c access.Caller, q JobsQuery) ([]Job
 	if r == nil {
 		return nil, errNotConfigured
 	}
-	var orgs []uuid.UUID
-	err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT l.easypatch_id, l.organization_id FROM easypatch_organizations l
-			WHERE $1::uuid IS NULL OR l.organization_id = $1 ORDER BY l.easypatch_name`, nullID(q.OrganizationID))
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var ep, org uuid.UUID
-			if err := rows.Scan(&ep, &org); err != nil {
-				return err
-			}
-			if c.CanInOrg(rbac.PermPatchView, org) {
-				orgs = append(orgs, ep)
-			}
-		}
-		return rows.Err()
-	})
+	orgs, err := s.patchOrganizations(ctx, c, q.OrganizationID)
 	if err != nil {
 		return nil, err
 	}
 	var jobs []Job
 	for _, org := range orgs {
-		p, err := cl.Jobs(ctx, org, q.Active, 1)
+		p, err := cl.Jobs(s.as(ctx, c, RoleReadOnly, org), org, q.Active, 1)
 		if err != nil {
 			s.noteError(ctx, err)
 			return nil, epError(err)
@@ -613,7 +661,11 @@ func (s *Service) job(ctx context.Context, c access.Caller, id uuid.UUID) (JobDe
 	if r == nil {
 		return JobDetail{}, deviceRow{}, nil, nil, errNotConfigured
 	}
-	j, err := cl.Job(ctx, id)
+	orgs, err := s.patchOrganizations(ctx, c, uuid.Nil)
+	if err != nil {
+		return JobDetail{}, deviceRow{}, nil, nil, err
+	}
+	j, err := cl.Job(s.as(ctx, c, RoleReadOnly, orgs...), id)
 	if err != nil {
 		return j, deviceRow{}, nil, nil, epError(err)
 	}
@@ -650,7 +702,7 @@ func (s *Service) CancelJob(ctx context.Context, c access.Caller, id uuid.UUID) 
 	if !r.canOperate {
 		return JobDetailView{}, errReadOnly
 	}
-	j, err := cl.CancelJob(ctx, id, c.Actor.Label)
+	j, err := cl.CancelJob(s.as(ctx, c, RoleAdmin, orgOf(d)...), id, c.Actor.Label)
 	if err != nil {
 		return JobDetailView{}, epError(err)
 	}
@@ -816,8 +868,9 @@ func (s *Service) Scan(ctx context.Context, c access.Caller, in ActionInput) (Ac
 	if err != nil {
 		return ActionResult{}, err
 	}
+	actx := s.as(ctx, c, RoleAdmin, orgsOf(devices)...)
 	err = s.bulk(ctx, c, devices, &res, "patch.scan", nil, func(ids []uuid.UUID) (BulkResult, error) {
-		return cl.BulkScan(ctx, ids, c.Actor.Label)
+		return cl.BulkScan(actx, ids, c.Actor.Label)
 	})
 	s.fleet.clear()
 	return res, err
@@ -864,7 +917,7 @@ func (s *Service) Install(ctx context.Context, c access.Caller, in ActionInput) 
 		details["updates"] = len(in.UpdateIDs)
 		if len(devices) == 1 {
 			d := devices[0]
-			j, err := cl.Install(ctx, *d.endpointID, in.UpdateIDs, in.ScheduledAt, c.Actor.Label)
+			j, err := cl.Install(s.as(ctx, c, RoleAdmin, orgOf(d)...), *d.endpointID, in.UpdateIDs, in.ScheduledAt, c.Actor.Label)
 			if err != nil {
 				res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, Message: message(epError(err))})
 				if !IsStatus(err, http.StatusConflict) && !IsStatus(err, http.StatusBadRequest) {
@@ -881,8 +934,9 @@ func (s *Service) Install(ctx context.Context, c access.Caller, in ActionInput) 
 		}
 		return res, nil
 	}
+	actx := s.as(ctx, c, RoleAdmin, orgsOf(devices)...)
 	err = s.bulk(ctx, c, devices, &res, "patch.install", details, func(ids []uuid.UUID) (BulkResult, error) {
-		return cl.BulkInstall(ctx, ids, in.ScheduledAt, c.Actor.Label)
+		return cl.BulkInstall(actx, ids, in.ScheduledAt, c.Actor.Label)
 	})
 	s.fleet.clear()
 	return res, err

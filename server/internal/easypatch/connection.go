@@ -44,6 +44,9 @@ type Service struct {
 	// local reaches an EasyPatch co-hosted behind the edge over loopback
 	// (ADR-0035); zero when there is none.
 	local LocalRoute
+	// engine is the patching engine in this deployment (UseEngine); nil
+	// when patching comes from a server set up in Settings.
+	engine *engine
 }
 
 // SetLocalRoute makes the connector reach the EasyPatch co-hosted on this
@@ -59,7 +62,10 @@ func New(db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer, versio
 // Connection is the EasyPatch server as Settings shows it. The token is
 // never shown again.
 type Connection struct {
-	Configured    bool       `json:"configured"`
+	Configured bool `json:"configured"`
+	// Bundled says patching comes from the engine in this deployment: the
+	// deployment configures it, and Settings cannot change it.
+	Bundled       bool       `json:"bundled"`
 	URL           string     `json:"url"`
 	CACert        string     `json:"caCert"`
 	ServerVersion string     `json:"serverVersion"`
@@ -129,6 +135,11 @@ func (r *connRow) can(capability string) bool {
 
 // Connection returns the settings and what the last check found.
 func (s *Service) Connection(ctx context.Context) (Connection, error) {
+	if s.engine != nil {
+		v := s.engine.row(ctx, s.now(), false).view()
+		v.Bundled, v.UpdatedAt = true, nil
+		return v, nil
+	}
 	var r *connRow
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) (err error) {
 		r, err = loadConn(ctx, tx, false)
@@ -140,6 +151,9 @@ func (s *Service) Connection(ctx context.Context) (Connection, error) {
 // conn returns the settings and a client for them; nil when EasyPatch is not
 // set up.
 func (s *Service) conn(ctx context.Context) (*connRow, *Client, error) {
+	if s.engine != nil {
+		return s.engine.row(ctx, s.now(), false), s.engine.client, nil
+	}
 	var r *connRow
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) (err error) {
 		r, err = loadConn(ctx, tx, false)
@@ -197,6 +211,9 @@ func validToken(t string) bool {
 // unless EasyPatch accepts the token. A different server forgets every
 // organization and device link, which name the old server's ids.
 func (s *Service) UpdateConnection(ctx context.Context, actor audit.Actor, in ConnectionInput) (Connection, error) {
+	if s.engine != nil {
+		return Connection{}, errBundled
+	}
 	in.Token, in.CACert = strings.TrimSpace(in.Token), strings.TrimSpace(in.CACert)
 	var stored *connRow
 	if err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) (err error) {
@@ -264,15 +281,18 @@ func (s *Service) UpdateConnection(ctx context.Context, actor audit.Actor, in Co
 			updatedBy); err != nil {
 			return err
 		}
+		// Links name the old server's ids. With no server stored, any left
+		// are the patching engine's, from before EASYRMM_PATCHING went back
+		// to the connector.
 		forgot := false
-		if stored != nil && !sameServer {
-			if _, err := tx.Exec(ctx, `DELETE FROM easypatch_devices`); err != nil {
-				return err
+		if !sameServer {
+			for _, q := range []string{`DELETE FROM easypatch_devices`, `DELETE FROM easypatch_organizations`} {
+				tag, err := tx.Exec(ctx, q)
+				if err != nil {
+					return err
+				}
+				forgot = forgot || tag.RowsAffected() > 0
 			}
-			if _, err := tx.Exec(ctx, `DELETE FROM easypatch_organizations`); err != nil {
-				return err
-			}
-			forgot = true
 		}
 		if err := s.audit.Write(ctx, tx, audit.Event{
 			Actor: actor, Action: "easypatch.connection_update", TargetType: "easypatch", TargetID: "connection", Outcome: audit.Success,
@@ -293,6 +313,9 @@ func (s *Service) UpdateConnection(ctx context.Context, actor audit.Actor, in Co
 
 // DeleteConnection forgets the EasyPatch server and every link.
 func (s *Service) DeleteConnection(ctx context.Context, actor audit.Actor) error {
+	if s.engine != nil {
+		return errBundled
+	}
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `DELETE FROM easypatch_connection`)
 		if err != nil {
@@ -322,6 +345,10 @@ func (s *Service) DeleteConnection(ctx context.Context, actor audit.Actor) error
 
 // CheckConnection checks the saved server again and records what it found.
 func (s *Service) CheckConnection(ctx context.Context) (Connection, error) {
+	if s.engine != nil {
+		s.engine.row(ctx, s.now(), true)
+		return s.Connection(ctx)
+	}
 	r, c, err := s.conn(ctx)
 	if err != nil {
 		return Connection{}, err
@@ -356,6 +383,10 @@ func (s *Service) noteError(ctx context.Context, err error) {
 		return
 	}
 	if e.Status != 0 && e.Status < 500 && e.Status != http.StatusUnauthorized && e.Status != http.StatusForbidden {
+		return
+	}
+	if s.engine != nil {
+		s.engine.noted(e.Error(), s.now())
 		return
 	}
 	ctx = context.WithoutCancel(ctx)

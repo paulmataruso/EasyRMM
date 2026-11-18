@@ -123,6 +123,7 @@ var fixedInCompose = map[string]string{
 	"EASYRMM_LOG_FORMAT":           "JSON for docker logs",
 	"EASYRMM_DEV_INSECURE_COOKIES": "development only",
 	"EASYRMM_ARGON2_MAX_PARALLEL":  "bounds the memory password hashing takes; four suits the deployment",
+	"EASYRMM_PATCHING_URL":         "where the easypatch-api service listens (TestComposeListeners checks they agree)",
 }
 
 func TestInterpolate(t *testing.T) {
@@ -372,5 +373,23 @@ func TestComposeListeners(t *testing.T) {
 		if other, taken := byPort[port]; taken {
 			t.Errorf("the public edge and %s both use port %s", other, port)
 		}
+	}
+	// EasyRMM calls the engine where Compose has it listen.
+	if engine := "http://" + url("easypatch-api"); engine != DefaultPatchingURL {
+		t.Errorf("the engine listens on %s, but EasyRMM calls %s", engine, DefaultPatchingURL)
+	}
+	// Both programs read the one key, and the server learns the mode.
+	server := composeEnvironment(t, "server")
+	for key, want := range map[string]string{"EASYRMM_PATCHING": "${EASYRMM_PATCHING:-}", "EASYRMM_PATCHING_KEY": "${EASYRMM_PATCHING_KEY:-}"} {
+		if server[key] != want {
+			t.Errorf("server: %s is %q, want %q", key, server[key], want)
+		}
+	}
+	if got := composeEnvironment(t, "easypatch-api")["EasyRmm__GatewayKey"]; got != "${EASYRMM_PATCHING_KEY:-}" {
+		t.Errorf("easypatch-api: EasyRmm__GatewayKey is %q", got)
+	}
+	// Only the API checks statements: nothing else of the engine holds the key.
+	if n := strings.Count(compose, "${EASYRMM_PATCHING_KEY"); n != 2 {
+		t.Errorf("EASYRMM_PATCHING_KEY is passed %d times in %s, want 2 (server and easypatch-api)", n, composeFile)
 	}
 }

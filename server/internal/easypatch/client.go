@@ -61,11 +61,20 @@ type Error struct {
 	// validation_failed…), when it sent one.
 	Code   string
 	Detail string
+	// Fields are EasyPatch's field errors (validation_failed), the first
+	// message of each.
+	Fields map[string]string
+	// Engine says the call went to the patching engine in this deployment
+	// (a statement, not an API token).
+	Engine bool
 }
 
 func (e *Error) Error() string {
-	if e.Status == 0 {
+	switch {
+	case e.Status == 0:
 		return e.Detail
+	case e.Engine:
+		return fmt.Sprintf("The patching engine answered %d: %s", e.Status, e.Detail)
 	}
 	return fmt.Sprintf("EasyPatch answered %d: %s", e.Status, e.Detail)
 }
@@ -76,13 +85,53 @@ func IsStatus(err error, status int) bool {
 	return errors.As(err, &e) && e.Status == status
 }
 
-// Client calls one EasyPatch server's API with an API token.
+// Client calls one EasyPatch server's API with an API token, or the
+// patching engine in this deployment with statements (NewEngineClient).
 type Client struct {
 	base      *url.URL
 	token     string
+	signer    *Signer
 	userAgent string
 	http      *http.Client
 }
+
+// NewEngineClient builds a client for the patching engine in this
+// deployment (one-product plan, phase B3): plain HTTP on loopback, each
+// request with a statement from signer (ADR-0038) rather than a token. The
+// configuration checked rawURL is http:// on a loopback address.
+func NewEngineClient(rawURL string, signer *Signer, version string) (*Client, error) {
+	base, err := url.Parse(rawURL)
+	if err != nil || base.Scheme != "http" || base.Host == "" {
+		return nil, errors.New("easypatch: the engine's address must be http://<loopback address>:<port>")
+	}
+	if ip := net.ParseIP(base.Hostname()); ip == nil || !ip.IsLoopback() {
+		return nil, errors.New("easypatch: the engine is reached on loopback only")
+	}
+	if signer == nil {
+		return nil, errors.New("easypatch: the engine needs a statement signer")
+	}
+	base.Path = strings.TrimSuffix(base.Path, "/")
+	transport := &http.Transport{
+		// Never a proxy: statements stay on this host.
+		Proxy:                 nil,
+		DialContext:           (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		ResponseHeaderTimeout: requestTimeout,
+		MaxIdleConnsPerHost:   16,
+		IdleConnTimeout:       90 * time.Second,
+	}
+	return &Client{
+		base: base, signer: signer, userAgent: "EasyRMM/" + version,
+		http: &http.Client{
+			Transport: transport,
+			Timeout:   requestTimeout,
+			// A statement is made for one request: never follow it elsewhere.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
+	}, nil
+}
+
+// Engine reports whether c calls the patching engine in this deployment.
+func (c *Client) Engine() bool { return c.signer != nil }
 
 // ParseURL checks an EasyPatch server address: https, a host, no query,
 // fragment or credentials. It returns it without a trailing slash.
@@ -238,7 +287,17 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.signer != nil {
+		// The statement names this request exactly as it is sent.
+		st := statementFor(ctx, onBehalfOf)
+		signed, err := c.signer.Sign(st, method, req.URL.RequestURI())
+		if err != nil {
+			return err
+		}
+		req.Header.Set(StatementHeader, signed)
+	} else {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", c.userAgent)
 	if body != nil {
@@ -249,6 +308,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
+		if c.signer != nil {
+			return &Error{Engine: true, Detail: "Cannot reach the patching engine: " + reachError(err)}
+		}
 		return &Error{Detail: "Cannot reach EasyPatch: " + reachError(err)}
 	}
 	defer resp.Body.Close()
@@ -260,7 +322,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return &Error{Status: resp.StatusCode, Detail: "EasyPatch's answer is larger than 32 MiB"}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return problem(resp.StatusCode, data)
+		e := problem(resp.StatusCode, data)
+		e.Engine = c.signer != nil
+		return e
 	}
 	if out == nil || len(data) == 0 {
 		return nil
@@ -291,11 +355,21 @@ func reachError(err error) string {
 // problem reads EasyPatch's problem details.
 func problem(status int, data []byte) *Error {
 	var p struct {
-		Title  string `json:"title"`
-		Detail string `json:"detail"`
-		Code   string `json:"code"`
+		Title  string              `json:"title"`
+		Detail string              `json:"detail"`
+		Code   string              `json:"code"`
+		Errors map[string][]string `json:"errors"`
 	}
 	_ = json.Unmarshal(data, &p)
+	var fields map[string]string
+	for name, msgs := range p.Errors {
+		if len(msgs) > 0 && len(fields) < 50 {
+			if fields == nil {
+				fields = map[string]string{}
+			}
+			fields[cut(name, 100)] = cut(msgs[0], 500)
+		}
+	}
 	detail := strings.TrimSpace(p.Detail)
 	if detail == "" {
 		detail = strings.TrimSpace(p.Title)
@@ -312,7 +386,7 @@ func problem(status int, data []byte) *Error {
 			detail = http.StatusText(status)
 		}
 	}
-	return &Error{Status: status, Code: cut(p.Code, 64), Detail: cut(detail, 500)}
+	return &Error{Status: status, Code: cut(p.Code, 64), Detail: cut(detail, 500), Fields: fields}
 }
 
 // ServerInfo is what /api/v1/server-info says.

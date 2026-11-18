@@ -1014,6 +1014,7 @@ describe("device patches", () => {
 
 const UNSET: EasyPatchConnection = {
   configured: false,
+  bundled: false,
   url: "",
   caCert: "",
   serverVersion: "",
@@ -1023,6 +1024,7 @@ const UNSET: EasyPatchConnection = {
 };
 const SET: EasyPatchConnection = {
   configured: true,
+  bundled: false,
   url: "https://patch.example.com",
   caCert: "",
   serverVersion: "1.9.0",

@@ -202,7 +202,11 @@ installs.
 
 **B3. The connector in bundled mode.** The connector's client talks plain
 HTTP to `127.0.0.1:18180` with statements. The deployment configures it, not
-a settings page, so there is no token to paste and no pairing step.
+a settings page, so there is no token to paste and no pairing step. *Done
+(B3): `EASYRMM_PATCHING=bundled`; each person's call carries their role and
+the organizations it concerns (ADR-0038); tested against a real engine in the
+contract suite. No download goes through the connector yet, so streaming
+waits for the first one (C-phase reports).*
 
 Responses are mapped for the console:
 

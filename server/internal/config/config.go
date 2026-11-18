@@ -4,6 +4,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -96,7 +97,38 @@ type Config struct {
 	// EasyPatch is an EasyPatch server co-hosted behind EasyRMM's edge
 	// (ADR-0035); zero when there is none.
 	EasyPatch EasyPatchHost
+	// Patching says where patching comes from: the engine in this
+	// deployment, or an EasyPatch server set up in Settings.
+	Patching Patching
 }
+
+// Patching modes (EASYRMM_PATCHING).
+const (
+	// PatchingConnector uses an EasyPatch server set up in Settings (the
+	// default, also when EASYRMM_PATCHING is empty).
+	PatchingConnector = "connector"
+	// PatchingBundled uses the patching engine in this deployment, on
+	// loopback, with statements signed by EASYRMM_PATCHING_KEY (ADR-0038).
+	PatchingBundled = "bundled"
+)
+
+// DefaultPatchingURL is where the bundled engine listens
+// (deploy/docker-compose.yml, easypatch-api).
+const DefaultPatchingURL = "http://127.0.0.1:18180"
+
+// Patching is where patching comes from (one-product plan, phase B3).
+type Patching struct {
+	// Mode is PatchingConnector or PatchingBundled.
+	Mode string
+	// URL is the bundled engine's address: http, on loopback.
+	URL string
+	// Key signs EasyRMM's statements to the bundled engine; at least 32
+	// bytes.
+	Key []byte
+}
+
+// Bundled reports whether the patching engine runs in this deployment.
+func (p Patching) Bundled() bool { return p.Mode == PatchingBundled }
 
 // EasyPatchHost is an EasyPatch running on this server behind EasyRMM's
 // edge (ADR-0035). EasyRMM keeps ports 80 and 443; connections for
@@ -290,6 +322,19 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 	if !c.EasyPatch.Enabled() {
 		c.EasyPatch = EasyPatchHost{}
 	}
+	c.Patching = Patching{
+		Mode: strings.ToLower(l.orDefault("EASYRMM_PATCHING", PatchingConnector)),
+		URL:  l.orDefault("EASYRMM_PATCHING_URL", DefaultPatchingURL),
+	}
+	if c.Patching.Bundled() {
+		if raw := l.secret("EASYRMM_PATCHING_KEY"); raw != "" {
+			key, err := base64.StdEncoding.DecodeString(raw)
+			if err != nil {
+				l.errs = append(l.errs, errors.New("EASYRMM_PATCHING_KEY must be base64 (setup.sh generates it)"))
+			}
+			c.Patching.Key = key
+		}
+	}
 	c.validate(l)
 	if len(l.errs) > 0 {
 		return nil, errors.Join(l.errs...)
@@ -390,6 +435,7 @@ func (c *Config) validate(l *loader) {
 	}
 	c.validateMesh(add)
 	c.validateEasyPatch(add)
+	c.validatePatching(add)
 }
 
 // Enabled reports whether EasyPatch is co-hosted.
@@ -423,6 +469,35 @@ func (c *Config) validateEasyPatch(add func(string, ...any)) {
 	upstream("EASYRMM_EASYPATCH_TLS_UPSTREAM", e.TLSUpstream)
 	if e.HTTPUpstream != "" {
 		upstream("EASYRMM_EASYPATCH_HTTP_UPSTREAM", e.HTTPUpstream)
+	}
+}
+
+func (c *Config) validatePatching(add func(string, ...any)) {
+	p := c.Patching
+	switch p.Mode {
+	case PatchingConnector:
+		return
+	case PatchingBundled:
+	default:
+		add("EASYRMM_PATCHING must be bundled or connector, got %q", p.Mode)
+		return
+	}
+	if len(p.Key) < 32 {
+		add("EASYRMM_PATCHING_KEY must be at least 32 bytes, base64-encoded, with EASYRMM_PATCHING=bundled; run deploy/scripts/setup.sh to add it")
+	}
+	// The engine is reached on loopback only, without TLS: anything else
+	// would send statements across the network in the clear.
+	u, err := url.Parse(p.URL)
+	host := ""
+	if err == nil {
+		host = u.Hostname()
+	}
+	if ip := net.ParseIP(host); err != nil || u.Scheme != "http" || ip == nil || !ip.IsLoopback() || u.Port() == "" ||
+		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.User != nil || u.Fragment != "" {
+		add("EASYRMM_PATCHING_URL must be http:// on a loopback address and port, such as %s, got %q", DefaultPatchingURL, p.URL)
+	}
+	if c.EasyPatch.Enabled() {
+		add("EASYRMM_PATCHING=bundled replaces a co-hosted EasyPatch (EASYRMM_EASYPATCH_HOSTNAME); set one or the other")
 	}
 }
 

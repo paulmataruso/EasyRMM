@@ -63,6 +63,16 @@ EasyRMM sends a **statement** with each request, in the
     browser (B3).
   * **No key, no statements.** An engine without the key refuses every
     statement. A key that is set but unusable stops it at start.
+* **How EasyRMM fills them in (B3).** EasyRMM checks its own permissions
+  first, then names only what the call needs:
+  * a person's reads (the patching list, a device's updates, history and
+    jobs) are `ReadOnly` in the EasyPatch organization of the device or
+    list concerned;
+  * a person's actions (scans, installs, cancels) are `Admin` in the
+    organizations of the devices acted on;
+  * EasyRMM's own work (link checks, organization lists, agent installs) is
+    `service`, `Admin` in every organization, which is what the connector's
+    API token allowed, named after whom it is for when anyone.
 * **Interoperability.** One golden statement,
   `server/internal/easypatch/testdata/gateway-statement.json`, binds the two
   sides. EasyRMM's signer must produce exactly it, and the engine must accept

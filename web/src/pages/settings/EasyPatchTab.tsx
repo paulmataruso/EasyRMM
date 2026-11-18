@@ -39,10 +39,10 @@ export function EasyPatchTab() {
   return (
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
-        <ServerForm conn={c} className="xl:col-span-2" />
+        {c.bundled ? <EngineCard conn={c} className="xl:col-span-2" /> : <ServerForm conn={c} className="xl:col-span-2" />}
         <ServerStatus conn={c} />
       </div>
-      {c.configured && <EasyPatchSignIn />}
+      {c.configured && !c.bundled && <EasyPatchSignIn />}
       {c.configured && <OrganizationLinks />}
       {c.configured && <DeviceProblems />}
     </div>
@@ -162,9 +162,38 @@ function ServerForm({ conn, className }: { conn: EasyPatchConnection; className?
   );
 }
 
+/** Patching from the engine in this deployment (EASYRMM_PATCHING=bundled, ADR-0038): there is nothing to enter here. */
+function EngineCard({ conn, className }: { conn: EasyPatchConnection; className?: string }) {
+  return (
+    <Card title="Patching engine" className={className}>
+      <div className="max-w-prose space-y-2 text-sm">
+        <p>
+          Patching runs in this deployment. EasyRMM calls the patching engine on this server and signs each call with the role and organizations of the person
+          acting, so the engine checks them a second time.
+        </p>
+        <p className="text-muted">The deployment sets it up: there is no address or token to enter, and nothing to remove here.</p>
+      </div>
+      <KeyValueList
+        narrow
+        className="mt-4 border-t border-line pt-4"
+        items={[
+          [
+            "Address",
+            <span key="a">
+              <Mono>{conn.url}</Mono> <span className="text-muted">(this server only)</span>
+            </span>,
+          ],
+          ["Set by", <Mono key="s">EASYRMM_PATCHING=bundled</Mono>],
+        ]}
+      />
+    </Card>
+  );
+}
+
 function connState(c: EasyPatchConnection): { label: string; tone: Tone } {
   if (!c.configured) return { label: "Not set up", tone: "neutral" };
   if (c.lastErrorAt && (!c.checkedAt || Date.parse(c.lastErrorAt) > Date.parse(c.checkedAt))) return { label: "Failing", tone: "danger" };
+  if (c.bundled) return { label: "Running", tone: "ok" };
   return c.canOperate ? { label: "Connected", tone: "ok" } : { label: "Connected, read-only", tone: "info" };
 }
 
@@ -185,10 +214,14 @@ function ServerStatus({ conn: c }: { conn: EasyPatchConnection }) {
   ];
   if (c.configured) {
     items.push(["Version", c.serverVersion || "—"]);
-    if (c.publicUrl && c.publicUrl.replace(/\/+$/, "") !== c.url) items.push(["Public address", <Mono key="p">{c.publicUrl}</Mono>]);
-    const consoleUrl = [c.publicUrl, c.url].find((u) => u?.startsWith("https://"));
-    if (consoleUrl) items.push(["Console", <OpenEasyPatch key="c" />]);
-    items.push(["Token", c.canOperate ? "Operator: views, scans and installs" : "Read only: views"]);
+    if (c.bundled) {
+      items.push(["Calls", "Signed one by one, with the person's role and organizations"]);
+    } else {
+      if (c.publicUrl && c.publicUrl.replace(/\/+$/, "") !== c.url) items.push(["Public address", <Mono key="p">{c.publicUrl}</Mono>]);
+      const consoleUrl = [c.publicUrl, c.url].find((u) => u?.startsWith("https://"));
+      if (consoleUrl) items.push(["Console", <OpenEasyPatch key="c" />]);
+      items.push(["Token", c.canOperate ? "Operator: views, scans and installs" : "Read only: views"]);
+    }
     items.push([
       "Install later",
       c.capabilities.includes("scheduled-installs") ? (
@@ -201,7 +234,9 @@ function ServerStatus({ conn: c }: { conn: EasyPatchConnection }) {
     ]);
     items.push([
       "Who acted",
-      c.capabilities.includes("on-behalf-of") ? (
+      c.bundled ? (
+        "The engine records the EasyRMM user"
+      ) : c.capabilities.includes("on-behalf-of") ? (
         "EasyPatch records the EasyRMM user"
       ) : (
         <span key="o" className="text-muted">
@@ -246,11 +281,15 @@ function ServerStatus({ conn: c }: { conn: EasyPatchConnection }) {
       <KeyValueList narrow items={items} />
       <InlineError error={check.error} />
       <div className="mt-4 space-y-2 border-t border-line pt-4 text-sm text-muted">
-        <p>
-          EasyPatch stays where patch data lives. EasyRMM reads it when someone looks, and sends scans and installs with this token after checking the user's
-          own role.
-        </p>
-        <p>EasyRMM checks the server every 10 minutes.</p>
+        {c.bundled ? (
+          <p>The engine keeps patch data in its own database, beside EasyRMM's. EasyRMM reads it when someone looks, after checking the user's own role.</p>
+        ) : (
+          <p>
+            EasyPatch stays where patch data lives. EasyRMM reads it when someone looks, and sends scans and installs with this token after checking the user's
+            own role.
+          </p>
+        )}
+        <p>EasyRMM checks {c.bundled ? "the engine" : "the server"} every 10 minutes.</p>
       </div>
     </Card>
   );

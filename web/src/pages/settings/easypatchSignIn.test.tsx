@@ -13,6 +13,7 @@ const ISSUER = "https://rmm.example.com";
 const REDIRECT = "https://patch.example.com/api/v1/auth/sso/callback";
 const CONNECTED: EasyPatchConnection = {
   configured: true,
+  bundled: false,
   url: "https://patch.example.com",
   caCert: "",
   serverVersion: "1.10.0",

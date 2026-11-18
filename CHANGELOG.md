@@ -25,6 +25,15 @@ All notable changes to this project are documented here. The format follows
   and organization checks; its audit trail names `easyrmm:<user>`. A shared
   test statement keeps EasyRMM's Go signer and the engine's .NET check in
   agreement.
+- **Patching from the engine in the deployment** (phase B3): with
+  `EASYRMM_PATCHING=bundled`, the patching pages use the engine on loopback
+  instead of a server set up in Settings. Each person's call carries their
+  role and the organizations it concerns: read-only for views, Admin for
+  scans and installs. Settings → EasyPatch shows the engine and cannot
+  change it. The engine refusing EasyRMM shows as `patching_unavailable`,
+  never as a 401 or 403, and EasyPatch's field errors become EasyRMM's.
+  Switching to bundled forgets a connected server and its links, with an
+  audit record. Agents cannot reach the engine yet (phase B4).
 - `npm run screenshots` in `web/` makes the README's screenshots from the
   console's production build, its API answered from fictional demo data
   (`web/screenshots/`). It fails when a page asks for something the data does

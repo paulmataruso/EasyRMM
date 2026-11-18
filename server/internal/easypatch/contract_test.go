@@ -34,6 +34,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 )
 
@@ -47,6 +48,11 @@ type contract struct {
 	readOnly string
 	version  string
 	http     *http.Client
+	// engineURL and engineKey reach the same server as the patching engine
+	// in EasyRMM's deployment does: plain HTTP on loopback, statements
+	// signed with the gateway key (ADR-0038).
+	engineURL string
+	engineKey []byte
 }
 
 func newContract(t *testing.T) *contract {
@@ -59,9 +65,12 @@ func newContract(t *testing.T) *contract {
 		version:  os.Getenv("EASYRMM_CONTRACT_EASYPATCH_VERSION"),
 	}
 	caFile := os.Getenv("EASYRMM_CONTRACT_EASYPATCH_CA")
-	if c.url == "" || c.token == "" || c.readOnly == "" || caFile == "" {
+	c.engineURL = os.Getenv("EASYRMM_CONTRACT_ENGINE_URL")
+	key, err := base64.StdEncoding.DecodeString(os.Getenv("EASYRMM_CONTRACT_ENGINE_KEY"))
+	if c.url == "" || c.token == "" || c.readOnly == "" || caFile == "" || c.engineURL == "" || err != nil || len(key) < MinStatementKey {
 		t.Fatal("the contract tests need a real EasyPatch server: run them with make test-contract")
 	}
+	c.engineKey = key
 	ca, err := os.ReadFile(caFile)
 	if err != nil {
 		t.Fatal(err)
@@ -713,6 +722,87 @@ func TestContract(t *testing.T) {
 			for _, e := range page.Items[:min(len(page.Items), 15)] {
 				t.Logf("audit: %s %s", e.Action, e.Details)
 			}
+		}
+	})
+
+	run("the patching engine: statements instead of a token", func(t *testing.T) {
+		signer, err := NewSigner(c.engineKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		engine, err := NewEngineClient(c.engineURL, signer, "contract")
+		if err != nil {
+			t.Fatal(err)
+		}
+		// EasyRMM's own work: Admin in every organization, as the API token.
+		if orgs, err := engine.Organizations(ctx); err != nil || !slices.ContainsFunc(orgs, func(o Organization) bool { return o.ID == org.ID }) {
+			t.Fatalf("organizations as EasyRMM: %+v, %v", orgs, err)
+		}
+		// A person's call sees only the organizations it names.
+		as := func(role string, orgs ...uuid.UUID) context.Context {
+			return WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-engine@example.test", Role: role, Organizations: orgs})
+		}
+		if _, err := engine.Endpoint(as(RoleReadOnly, org.ID), a.endpoint); err != nil {
+			t.Errorf("endpoint, its organization named: %v", err)
+		}
+		if _, err := engine.Endpoint(as(RoleReadOnly, uuid.New()), a.endpoint); !IsStatus(err, http.StatusNotFound) {
+			t.Errorf("endpoint, another organization named: %v", err)
+		}
+		if page, err := engine.Endpoints(as(RoleReadOnly), org.ID, 1); err == nil && len(page.Items) > 0 {
+			t.Errorf("endpoints with no organization named: %+v", page)
+		}
+		// Read-only reads but never acts; the console shows the engine
+		// refusing EasyRMM as the engine being unavailable, never as a 401
+		// or 403 it would take for a lost session.
+		_, err = engine.BulkScan(as(RoleReadOnly, org.ID), []uuid.UUID{a.endpoint}, "")
+		if !IsStatus(err, http.StatusForbidden) {
+			t.Fatalf("read-only scan: %v", err)
+		}
+		if ae, ok := apperr.As(epError(err)); !ok || ae.Kind != apperr.KindUnavailable || ae.Code != "patching_unavailable" {
+			t.Errorf("read-only scan shows as %#v", epError(err))
+		}
+		// An administrator of the organization acts in it, and only in it.
+		token, err := engine.CreateEnrollmentToken(as(RoleAdmin, org.ID), org.ID, &site.ID, "EasyRMM engine contract", "")
+		if err != nil || token.ID == uuid.Nil {
+			t.Fatalf("enrollment token as an administrator of the organization: %+v, %v", token, err)
+		}
+		if err := engine.RevokeEnrollmentToken(as(RoleAdmin, org.ID), token.ID, ""); err != nil {
+			t.Error(err)
+		}
+		if _, err := engine.CreateEnrollmentToken(as(RoleAdmin, uuid.New()), org.ID, &site.ID, "elsewhere", ""); err == nil {
+			t.Error("an administrator of another organization created an enrollment token in this one")
+		}
+		// A wrong key: refused, and shown the same way.
+		other, _ := NewSigner(bytes.Repeat([]byte{1}, 32))
+		wrong, err := NewEngineClient(c.engineURL, other, "contract")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = wrong.Organizations(ctx)
+		if !IsStatus(err, http.StatusUnauthorized) {
+			t.Fatalf("wrong key: %v", err)
+		}
+		if ae, ok := apperr.As(epError(err)); !ok || ae.Kind != apperr.KindUnavailable || ae.Code != "patching_unavailable" {
+			t.Errorf("wrong key shows as %#v", epError(err))
+		}
+		// EasyPatch's field errors become EasyRMM's.
+		err = engine.do(WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "EasyRMM", Role: RoleSuperAdmin, AllOrganizations: true}),
+			http.MethodPost, "/api/v1/notifications/channels", nil, map[string]any{"name": "", "type": "Email", "emailRecipients": []string{}}, "", nil)
+		ae, ok := apperr.As(epError(err))
+		if !ok || ae.Kind != apperr.KindInvalid || ae.Fields["name"] == "" || ae.Fields["emailRecipients"] == "" {
+			t.Errorf("validation errors show as %#v (from %v)", epError(err), err)
+		}
+		// EasyPatch's audit log names EasyRMM's user.
+		type entry struct {
+			Username string `json:"username"`
+			Action   string `json:"action"`
+		}
+		var page struct {
+			Items []entry `json:"items"`
+		}
+		c.must(http.MethodGet, "/api/v1/audit-logs?pageSize=100", c.token, nil, http.StatusOK, &page)
+		if !slices.ContainsFunc(page.Items, func(e entry) bool { return e.Username == "easyrmm:contract-engine@example.test" }) {
+			t.Errorf("no audit entry names easyrmm:contract-engine@example.test: %+v", page.Items[:min(len(page.Items), 10)])
 		}
 	})
 

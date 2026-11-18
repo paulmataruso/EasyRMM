@@ -5,6 +5,9 @@
 package eptest
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -43,6 +46,10 @@ type Server struct {
 	Capabilities []string
 	// ReadOnly makes the token a ReadOnly one: operator calls answer 403.
 	ReadOnly bool
+	// key, for NewEngine, checks statements instead of the token.
+	key []byte
+	// readOnlyCall is whether the request being served may only read.
+	readOnlyCall bool
 	// Down makes every call answer 503.
 	Down bool
 
@@ -105,11 +112,34 @@ type Request struct {
 	Method, Path string
 	OnBehalfOf   string
 	Body         map[string]any
+	// Statement is what EasyRMM's statement said, for NewEngine; nil for a
+	// call with a token, or with a statement that was refused.
+	Statement *Statement
+}
+
+// Statement is what a valid statement from EasyRMM said (ADR-0038).
+type Statement struct {
+	Subject, Name, Role string
+	// AllOrganizations is "orgs": "*"; otherwise Organizations lists them.
+	AllOrganizations bool
+	Organizations    []uuid.UUID
 }
 
 // New starts a server, closed when the test ends.
 func New(t testing.TB) *Server {
 	t.Helper()
+	s := newServer()
+	s.srv = httptest.NewUnstartedServer(http.HandlerFunc(s.serve))
+	// Tests of an untrusted certificate make the server log handshake errors.
+	s.srv.Config.ErrorLog = log.New(io.Discard, "", 0)
+	s.srv.StartTLS()
+	t.Cleanup(s.srv.Close)
+	s.CAPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.srv.Certificate().Raw}))
+	return s
+}
+
+// newServer is a server's state, with an EasyPatch 1.9.0 server's packages.
+func newServer() *Server {
 	s := &Server{Token: "ept_" + strings.Repeat("A", 43), Version: "1.9.0", endpoints: map[uuid.UUID]*Endpoint{}}
 	for _, p := range []struct {
 		version, arch, format string
@@ -120,13 +150,56 @@ func New(t testing.TB) *Server {
 	} {
 		s.Packages = append(s.Packages, Package(fmt.Sprintf("EasyPatchAgent-%s-%s.%s", p.version, p.arch, p.format), p.version, p.arch, p.format, p.latest))
 	}
-	s.srv = httptest.NewUnstartedServer(http.HandlerFunc(s.serve))
-	// Tests of an untrusted certificate make the server log handshake errors.
-	s.srv.Config.ErrorLog = log.New(io.Discard, "", 0)
-	s.srv.StartTLS()
-	t.Cleanup(s.srv.Close)
-	s.CAPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.srv.Certificate().Raw}))
 	return s
+}
+
+// NewEngine starts a server that answers as the patching engine in
+// EasyRMM's deployment does: plain HTTP on loopback, each request with a
+// statement signed with key instead of a token. A statement must be signed
+// with the key and made for the request, and it must not have expired; a
+// ReadOnly one is refused what a read-only token is.
+func NewEngine(t testing.TB, key []byte) *Server {
+	t.Helper()
+	s := newServer()
+	s.key = append([]byte(nil), key...)
+	s.srv = httptest.NewServer(http.HandlerFunc(s.serve)) // 127.0.0.1
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+// statement checks a request's statement as the engine does, minus its
+// tenant rules, which the contract tests check against the real engine.
+func (s *Server) statement(r *http.Request) *Statement {
+	parts := strings.Split(r.Header.Get("X-EasyRMM-Assertion"), ".")
+	if len(parts) != 3 {
+		return nil
+	}
+	mac := hmac.New(sha256.New, s.key)
+	mac.Write([]byte(parts[0] + "." + parts[1]))
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil || !hmac.Equal(sig, mac.Sum(nil)) {
+		return nil
+	}
+	header, err1 := base64.RawURLEncoding.DecodeString(parts[0])
+	payload, err2 := base64.RawURLEncoding.DecodeString(parts[1])
+	var h struct{ Alg, Typ string }
+	var c struct {
+		Iss, Aud, Sub, Name, Role, Htm, Htu string
+		Orgs                                json.RawMessage
+		Iat, Exp                            int64
+	}
+	if err1 != nil || err2 != nil || json.Unmarshal(header, &h) != nil || json.Unmarshal(payload, &c) != nil ||
+		h.Alg != "HS256" || h.Typ != "easyrmm-gateway+jwt" || c.Iss != "easyrmm" || c.Aud != "easypatch" ||
+		c.Htm != r.Method || c.Htu != r.URL.RequestURI() || time.Now().Unix() >= c.Exp+5 || c.Exp-c.Iat > 60 {
+		return nil
+	}
+	st := &Statement{Subject: c.Sub, Name: c.Name, Role: c.Role}
+	if string(c.Orgs) == `"*"` {
+		st.AllOrganizations = true
+	} else if json.Unmarshal(c.Orgs, &st.Organizations) != nil {
+		return nil
+	}
+	return st
 }
 
 // URL is the server's address.
@@ -353,7 +426,17 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusServiceUnavailable, "", "The database is not available.")
 		return
 	}
-	if r.Header.Get("Authorization") != "Bearer "+s.Token {
+	s.readOnlyCall = s.ReadOnly
+	switch {
+	case s.key != nil:
+		st := s.statement(r)
+		if st == nil {
+			problem(w, http.StatusUnauthorized, "unauthenticated", "The statement from EasyRMM is not valid.")
+			return
+		}
+		s.requests[len(s.requests)-1].Statement = st
+		s.readOnlyCall = s.ReadOnly || st.Role == "ReadOnly"
+	case r.Header.Get("Authorization") != "Bearer "+s.Token:
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -373,7 +456,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		reply(w, 200, info)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/enrollment-tokens":
-		if s.ReadOnly {
+		if s.readOnlyCall {
 			problem(w, 403, "", "")
 			return
 		}
@@ -461,7 +544,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 // createToken answers POST /api/v1/enrollment-tokens as EasyPatch does,
 // with each token's plaintext once.
 func (s *Server) createToken(w http.ResponseWriter, body map[string]any) {
-	if s.ReadOnly {
+	if s.readOnlyCall {
 		problem(w, 403, "", "")
 		return
 	}
@@ -564,7 +647,7 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *Endpoi
 			"maintenanceDurationMinutes": 180, "timeZone": "Europe/Paris", "scanStaleAfterHours": 72, "maxConcurrentInstallsPerSite": 10,
 			"sources": map[string]string{"autoInstallEnabled": "Organization"}, "installDelayDays": 3, "securityInstallDelayDays": 0})
 	case r.Method == http.MethodPost && sub == "install-updates":
-		if s.ReadOnly {
+		if s.readOnlyCall {
 			problem(w, 403, "", "")
 			return
 		}
@@ -583,7 +666,7 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *Endpoi
 }
 
 func (s *Server) bulk(w http.ResponseWriter, kind string, body map[string]any) {
-	if s.ReadOnly {
+	if s.readOnlyCall {
 		problem(w, 403, "", "")
 		return
 	}
@@ -656,7 +739,7 @@ func (s *Server) restartPending(w http.ResponseWriter, org string) {
 // retry answers POST /api/v1/jobs/{id}/retry as EasyPatch does: a finished
 // job runs again as a new one.
 func (s *Server) retry(w http.ResponseWriter, j *Job) {
-	if s.ReadOnly {
+	if s.readOnlyCall {
 		problem(w, 403, "", "")
 		return
 	}

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"os"
@@ -313,6 +314,77 @@ func TestEasyPatchCoHosting(t *testing.T) {
 		"upstream without a port": {map[string]string{
 			"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com", "EASYRMM_EASYPATCH_TLS_UPSTREAM": "127.0.0.1",
 		}, "EASYRMM_EASYPATCH_TLS_UPSTREAM"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := load(tc.env)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %v, want one containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestPatchingMode(t *testing.T) {
+	load := func(overrides map[string]string) (*Config, error) {
+		m := base()
+		for k, v := range overrides {
+			m[k] = v
+		}
+		return LoadFrom(env(m), noFiles)
+	}
+	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+
+	// The connector by default, also when Compose passes an empty value; a
+	// key is ignored then.
+	for _, mode := range []map[string]string{nil, {"EASYRMM_PATCHING": ""}, {"EASYRMM_PATCHING": "Connector", "EASYRMM_PATCHING_KEY": "not base64"}} {
+		c, err := load(mode)
+		if err != nil || c.Patching.Bundled() || c.Patching.Mode != PatchingConnector || c.Patching.Key != nil {
+			t.Fatalf("%v: %+v %v", mode, c.Patching, err)
+		}
+	}
+
+	c, err := load(map[string]string{"EASYRMM_PATCHING": "bundled", "EASYRMM_PATCHING_KEY": key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Patching.Bundled() || c.Patching.URL != DefaultPatchingURL || !bytes.Equal(c.Patching.Key, bytes.Repeat([]byte{7}, 32)) {
+		t.Fatalf("bundled: %+v", c.Patching)
+	}
+	c, err = load(map[string]string{"EASYRMM_PATCHING": "bundled", "EASYRMM_PATCHING_KEY": key, "EASYRMM_PATCHING_URL": "http://[::1]:28180"})
+	if err != nil || c.Patching.URL != "http://[::1]:28180" {
+		t.Fatalf("another loopback address: %+v %v", c.Patching, err)
+	}
+	// From a file, as the other secrets may be.
+	files := func(string) ([]byte, error) { return []byte(key + "\n"), nil }
+	m := base()
+	m["EASYRMM_PATCHING"], m["EASYRMM_PATCHING_KEY_FILE"] = "bundled", "/run/secrets/patching_key"
+	if c, err := LoadFrom(env(m), files); err != nil || len(c.Patching.Key) != 32 {
+		t.Fatalf("key file: %+v %v", c, err)
+	}
+
+	bundled := func(more map[string]string) map[string]string {
+		out := map[string]string{"EASYRMM_PATCHING": "bundled", "EASYRMM_PATCHING_KEY": key}
+		for k, v := range more {
+			out[k] = v
+		}
+		return out
+	}
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"unknown mode":   {map[string]string{"EASYRMM_PATCHING": "external"}, "EASYRMM_PATCHING must be bundled or connector"},
+		"no key":         {map[string]string{"EASYRMM_PATCHING": "bundled"}, "EASYRMM_PATCHING_KEY must be at least 32 bytes"},
+		"short key":      {bundled(map[string]string{"EASYRMM_PATCHING_KEY": base64.StdEncoding.EncodeToString(make([]byte, 31))}), "at least 32 bytes"},
+		"key not base64": {bundled(map[string]string{"EASYRMM_PATCHING_KEY": "not base64!"}), "EASYRMM_PATCHING_KEY must be base64"},
+		"https":          {bundled(map[string]string{"EASYRMM_PATCHING_URL": "https://127.0.0.1:18180"}), "EASYRMM_PATCHING_URL must be http:// on a loopback"},
+		"on the network": {bundled(map[string]string{"EASYRMM_PATCHING_URL": "http://192.0.2.20:18180"}), "EASYRMM_PATCHING_URL"},
+		"a name":         {bundled(map[string]string{"EASYRMM_PATCHING_URL": "http://localhost:18180"}), "EASYRMM_PATCHING_URL"},
+		"no port":        {bundled(map[string]string{"EASYRMM_PATCHING_URL": "http://127.0.0.1"}), "EASYRMM_PATCHING_URL"},
+		"a path":         {bundled(map[string]string{"EASYRMM_PATCHING_URL": "http://127.0.0.1:18180/easypatch"}), "EASYRMM_PATCHING_URL"},
+		"credentials":    {bundled(map[string]string{"EASYRMM_PATCHING_URL": "http://a:b@127.0.0.1:18180"}), "EASYRMM_PATCHING_URL"},
+		"with co-hosting": {bundled(map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com"}),
+			"replaces a co-hosted EasyPatch"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := load(tc.env)

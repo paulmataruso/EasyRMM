@@ -35,9 +35,6 @@ x-easypatch-env: &easypatch-env
   # Agents reach the engine on EasyRMM's own address (the edge forwards
   # their paths), so install scripts and package links name it.
   EasyPatch__PublicUrl: ${EASYRMM_PUBLIC_URL:?missing in .env}
-  # The key EasyRMM signs its calls to the engine with (one-product plan,
-  # B2); the server reads the same key.
-  EasyRmm__GatewayKey: ${EASYRMM_PATCHING_KEY:-}
 
 x-easypatch-hardening: &easypatch-hardening
   read_only: true
@@ -137,6 +134,12 @@ services:
       EASYRMM_EASYPATCH_TLS_UPSTREAM: ${EASYRMM_EASYPATCH_TLS_UPSTREAM:-}
       EASYRMM_EASYPATCH_HTTP_UPSTREAM: ${EASYRMM_EASYPATCH_HTTP_UPSTREAM-127.0.0.1:19080}
       EASYRMM_EASYPATCH_PROXY_PROTOCOL: ${EASYRMM_EASYPATCH_PROXY_PROTOCOL:-true}
+      # Where patching comes from: bundled is the engine in this deployment
+      # (profile "patching"), called on loopback with statements signed by
+      # the key (ADR-0038); empty or connector, an EasyPatch server set up in
+      # Settings. setup.sh --patching sets both.
+      EASYRMM_PATCHING: ${EASYRMM_PATCHING:-}
+      EASYRMM_PATCHING_KEY: ${EASYRMM_PATCHING_KEY:-}
     volumes:
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/server:/var/lib/easyrmm
       - ${EASYRMM_TLS_DIR:-/srv/easyrmm/tls}:/etc/easyrmm/tls:ro
@@ -258,6 +261,9 @@ services:
       <<: *easypatch-env
       ASPNETCORE_URLS: http://127.0.0.1:18180
       ASPNETCORE_HTTP_PORTS: ""
+      # The key EasyRMM signs its calls with (ADR-0038); the server reads
+      # the same one. Only the API checks statements.
+      EasyRmm__GatewayKey: ${EASYRMM_PATCHING_KEY:-}
     volumes:
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/keys:/app/keys
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/agent-packages:/app/agent-packages:ro

@@ -187,6 +187,22 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	if ep := cfg.EasyPatch; ep.Enabled() {
 		d.EasyPatch.SetLocalRoute(easypatch.LocalRoute{Hostname: ep.Hostname, Upstream: ep.TLSUpstream, ProxyProtocol: ep.ProxyProtocol})
 	}
+	if p := cfg.Patching; p.Bundled() {
+		// The patching engine in this deployment, on loopback (one-product
+		// plan, B3; ADR-0038).
+		signer, err := easypatch.NewSigner(p.Key)
+		if err != nil {
+			return nil, err
+		}
+		engine, err := easypatch.NewEngineClient(p.URL, signer, Version)
+		if err != nil {
+			return nil, err
+		}
+		if err := d.EasyPatch.UseEngine(ctx, engine); err != nil {
+			return nil, fmt.Errorf("patching engine: %w", err)
+		}
+		log.Info("patching: the engine in this deployment", "url", p.URL)
+	}
 	d.SSO = sso.New(db, auditLog, sealer, d.Auth, cfg.PublicURL)
 	d.IdP = idp.New(db, auditLog, sealer, cfg.PublicURL.String(), d.EasyPatch, func(ctx context.Context, userID uuid.UUID) (*easypatch.Access, error) {
 		p, err := d.Auth.LoadPrincipal(ctx, userID)

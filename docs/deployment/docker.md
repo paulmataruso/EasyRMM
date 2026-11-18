@@ -219,6 +219,22 @@ the keys with the database: they decrypt the engine's stored mail and
 webhook credentials. Until releases carry the engine's image, Compose builds
 it from this repository.
 
+With `EASYRMM_PATCHING=bundled`, EasyRMM's patching pages use the engine
+instead of a connected EasyPatch server:
+
+* **Settings → EasyPatch** shows the engine and its state; there is no
+  address or token to enter, and it cannot be removed there. *Check now*
+  shows whether the engine accepts EasyRMM's key.
+* **Switching to bundled forgets** an EasyPatch server connected in Settings,
+  with its organization and device links, once, at the first start, and the
+  audit log records it. Switching back to `connector` and connecting a server
+  forgets the engine's links the same way: links name one server's ids.
+* **Organizations are linked by hand** in Settings → EasyPatch, as with a
+  connected server, until the plan's phase B5 creates them.
+* **Not yet: agents.** EasyPatch agents cannot reach the engine until phase
+  B4 forwards their paths through EasyRMM's edge; a device's patch status
+  appears only once its EasyPatch agent is enrolled with the engine.
+
 ## Security posture of the containers
 
 * The server runs as UID 65532 on a distroless image with a read-only root

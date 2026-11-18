@@ -1,13 +1,16 @@
 package easypatch
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 )
@@ -53,6 +56,29 @@ type Statement struct {
 	Organizations    []uuid.UUID
 }
 
+// statementKey carries a call's statement in its context.
+type statementKey struct{}
+
+// WithStatement returns ctx carrying s, the statement for calls to the
+// engine made with it. Calls without one act as EasyRMM itself
+// (ServiceSubject) with RoleAdmin in every organization, as the
+// connector's API token does, named after whom they are for, if anyone.
+func WithStatement(ctx context.Context, s Statement) context.Context {
+	return context.WithValue(ctx, statementKey{}, s)
+}
+
+// statementFor is the statement for a call made with ctx.
+func statementFor(ctx context.Context, onBehalfOf string) Statement {
+	if s, ok := ctx.Value(statementKey{}).(Statement); ok {
+		return s
+	}
+	name := "EasyRMM"
+	if onBehalfOf != "" {
+		name = cut(onBehalfOf, 254)
+	}
+	return Statement{Subject: ServiceSubject, Name: name, Role: RoleAdmin, AllOrganizations: true}
+}
+
 // Signer makes statements with the gateway key.
 type Signer struct {
 	key []byte
@@ -88,8 +114,16 @@ type statementClaims struct {
 // Sign returns the statement s for one request: method and target are the
 // request's method and its path with query, exactly as sent.
 func (g *Signer) Sign(s Statement, method, target string) (string, error) {
+	// The engine refuses control characters and long names; an audit name
+	// is not worth failing a call over.
+	s.Name = cut(strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s.Name)), 254)
 	switch {
-	case s.Subject == "" || s.Name == "":
+	case s.Subject == "" || len(s.Subject) > 128 || s.Name == "":
 		return "", errors.New("easypatch: a statement needs a subject and a name")
 	case s.Role != RoleReadOnly && s.Role != RoleAdmin && s.Role != RoleSuperAdmin:
 		return "", fmt.Errorf("easypatch: %q is not an EasyPatch role", s.Role)
