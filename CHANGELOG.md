@@ -484,6 +484,9 @@ All notable changes to this project are documented here. The format follows
   connects by cookie, stays blocked.
 
 ### Fixed
+- `EASYRMM_DATABASE_MAX_CONNS` past 32 bits wrapped around before it was
+  checked, so a value such as `4294967298` started the server with 2
+  connections instead of refusing it. It is now checked first.
 - A device's Patches tab ran its EasyPatch organization and site into the
   **Open in EasyPatch** link, and said "1 fix vulnerabilities exploited in
   the wild" for a single update.

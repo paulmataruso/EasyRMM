@@ -161,9 +161,7 @@ func sdEscape(s string) string {
 // frame wraps a message for a stream transport with octet counting
 // (RFC 6587 section 3.4.1, RFC 5425 section 4.3).
 func frame(m []byte) []byte {
-	n := strconv.Itoa(len(m))
-	out := make([]byte, 0, len(n)+1+len(m))
-	out = append(out, n...)
+	out := strconv.AppendInt(nil, int64(len(m)), 10)
 	out = append(out, ' ')
 	return append(out, m...)
 }

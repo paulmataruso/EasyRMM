@@ -99,7 +99,7 @@ describe("section navigation", () => {
     expect(sidebar.style.width).toMatch(/^clamp\(15rem, (\d+)px, min\(24rem, 33\.3vw\)\)$/);
     expect(Number(/(\d+)px/.exec(sidebar.style.width)![1])).toBeGreaterThan(long.length * 8);
     // Past the limit, names are cut short and shown in full on hover.
-    expect(within(tree).getByRole("treeitem", { name: new RegExp(`^${long.replace(/[()]/g, "\\$&")}`) })).toHaveAttribute("title", long);
+    expect(within(tree).getByRole("treeitem", { name: new RegExp(`^${long.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`) })).toHaveAttribute("title", long);
 
     await user.click(screen.getByRole("button", { name: "Back to the main menu" }));
     expect(sidebar.style.width).toBe("");

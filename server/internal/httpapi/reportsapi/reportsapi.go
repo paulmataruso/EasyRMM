@@ -41,7 +41,7 @@ func query(r *http.Request) (reports.Query, error) {
 	q.Platform, q.Search, q.Severity = v.Get("platform"), v.Get("q"), v.Get("severity")
 	ints := []struct {
 		name    string
-		def, hi int64
+		def, hi int
 		dst     *int
 	}{
 		{"days", reports.DefaultDays, reports.MaxDays, &q.Days},
@@ -49,15 +49,15 @@ func query(r *http.Request) (reports.Query, error) {
 		{"diskPercent", 0, 100, &q.DiskPercent},
 	}
 	for _, p := range ints {
-		lo := int64(0)
+		lo := 0
 		if p.name == "days" {
 			lo = 1
 		}
-		n, err := httpapi.QueryInt(r, p.name, p.def, lo, p.hi)
+		n, err := httpapi.QueryCount(r, p.name, p.def, lo, p.hi)
 		if err != nil {
 			return q, err
 		}
-		*p.dst = int(n)
+		*p.dst = n
 	}
 	return q, nil
 }

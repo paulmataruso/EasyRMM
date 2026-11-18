@@ -221,8 +221,7 @@ func (a *API) installed(w http.ResponseWriter, r *http.Request) error {
 }
 
 func page(r *http.Request) (int, error) {
-	n, err := httpapi.QueryInt(r, "page", 1, 1, 10000)
-	return int(n), err
+	return httpapi.QueryCount(r, "page", 1, 1, 10000)
 }
 
 func (a *API) history(w http.ResponseWriter, r *http.Request) error {
