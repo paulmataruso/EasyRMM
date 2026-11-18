@@ -60,6 +60,21 @@ All notable changes to this project are documented here. The format follows
   key before the build and in the image after it. EasyRMM's compose file no
   longer mounts a package directory, so there is nothing to download or copy.
   CI images carry Linux packages signed with a key made for the run.
+- **One release** (phase B8, ADR-0043): EasyRMM's release workflow builds
+  the patching engine from the same commit (EasyPatch's tests, its agent
+  packages signed with the release key, its server image) and the release
+  bundle's `docker-compose.yml` pins that engine by digest, so upgrading the
+  bundle upgrades both. A manifest (`easyrmm-<version>-manifest.json`)
+  records both images by digest, the engine's version and its agent
+  packages. The engine keeps its own version line, and a version is
+  published only once.
+- **The bundle test** (`make e2e-bundle`, CI's *Bundle end to end*): the
+  deployment a release ships, brought up with the engine on host networking
+  and addressed by IP, then a Debian machine with systemd is set up through
+  the console: first account, install command, EasyPatch agent, a scan and
+  an update from a local package repository. It also checks that only the
+  edge listens beyond loopback, and that the engine refuses missing, forged,
+  altered, expired, replayed and out-of-scope statements.
 - **Patching on installs addressed by IP** (phase B7, ADR-0042): with the
   bundled engine and `EASYRMM_TLS_MODE=internal`, EasyRMM gives the EasyPatch
   agents its own certificate authority, which they trust for EasyRMM's

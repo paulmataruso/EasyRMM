@@ -58,7 +58,12 @@ sudo docker compose up -d
 ```
 
 The Compose project is named `easyrmm` whatever the directory, so
-`up -d` replaces the running containers. When the server starts, it:
+`up -d` replaces the running containers. With the patching engine in the
+deployment (`--patching bundled`), a bundle's `docker-compose.yml` names the
+engine built for that release, by digest, so the same `pull` and `up -d`
+upgrade it too; its database migrations run before it starts
+(`easypatch-migrate`). From a clone, `docker compose up -d --build` builds the
+engine from the checked-out `easypatch/`. When the server starts, it:
 1. applies the release's database migrations, under a lock, before it
    serves anything;
 2. rewrites MeshCentral's configuration;

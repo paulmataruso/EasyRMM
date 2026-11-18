@@ -218,15 +218,20 @@ The engine's data-protection keys and winget copy are under
 the keys with the database: they decrypt the engine's stored mail and
 webhook credentials.
 
-**Agent packages come with the engine's image**: a released image carries
-the EasyPatch agent's Windows and Linux packages of its own version, each
-with its release signature, read-only. There is nothing to download or copy
+**The engine comes with the release.** A release bundle's
+`docker-compose.yml` names the engine built from the same commit, by digest,
+so upgrading the bundle upgrades both; the release's manifest lists both
+images ([ADR-0043](../architecture/adr/0043-one-release.md)). The engine's
+image carries the EasyPatch agent's Windows and Linux packages of its own
+version, each with its release signature, read-only. There is nothing to
+download or copy
 ([ADR-0041](../architecture/adr/0041-agent-packages-in-the-engine-image.md)).
-Until releases carry the engine's image, Compose builds it from this
-repository, **without agent packages**, so EasyRMM cannot install the
-EasyPatch agent. For a test install, `easypatch/scripts/build-test-agent-packages.sh`
-(needs the .NET SDK) stages Linux packages signed with a throwaway key
-before `docker compose build`. Their agents trust only that key.
+From a clone, Compose builds the engine from this repository,
+**without agent packages**, so EasyRMM cannot install the EasyPatch agent.
+For a test install, `easypatch/scripts/build-test-agent-packages.sh` (needs
+the .NET SDK) stages Linux packages signed with a throwaway key before
+`docker compose build`. Their agents trust only that key; `make e2e-bundle`
+works this way.
 
 With `EASYRMM_PATCHING=bundled`, EasyRMM's patching pages use the engine
 instead of a connected EasyPatch server:

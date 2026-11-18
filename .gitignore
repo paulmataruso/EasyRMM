@@ -78,3 +78,5 @@ Thumbs.db
 /web/screenshots/.results/
 /web/e2e-sign-in/.results/
 /web/e2e-sign-in/.report/
+/web/e2e-bundle/.results/
+/web/e2e-bundle/.report/

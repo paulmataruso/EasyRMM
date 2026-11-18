@@ -1,10 +1,17 @@
-# Builds, signs and publishes an EasyPatch release when an EasyPatch version tag (easypatch-v1.4.0) is pushed:
+# Builds, signs and publishes EasyPatch:
 #   * server and proxy images for x64 and ARM64 on GitHub Container Registry, the server image carrying this
 #     release's Windows and Linux agent packages with their release signatures;
 #   * Windows MSIs, Linux .deb/.rpm packages and experimental macOS .pkg packages (x64, ARM64), each with a .sig
-#     release signature;
-#   * a GitHub Release for the tag with the packages, SHA256SUMS, the release public key and the CHANGELOG notes,
-#     never marked "Latest" (that is EasyRMM's, in this repository).
+#     release signature.
+#
+# EasyRMM's release (release.yml) calls it with in-easyrmm-release, so every EasyRMM release carries the patching
+# engine built from the same commit (one-product plan, B8): the version is <Version> in Directory.Build.props, and
+# the server image's digest goes back to EasyRMM's release, whose docker-compose.yml pins it. An EasyPatch version
+# tag (easypatch-v1.4.0) still publishes EasyPatch alone, with a GitHub Release for the tag (the packages,
+# SHA256SUMS, the release public key and the CHANGELOG notes), never marked "Latest" (that is EasyRMM's).
+#
+# Either way a version is published once: a version whose server image was published from another commit is
+# refused, because EasyPatch agents choose updates by version.
 #
 # The release private key is the secret EASYPATCH_RELEASE_KEY of the "easypatch-release" environment, which only
 # easypatch-v* tags may use. It is written to the runner's temporary directory for signing and deleted afterwards.
@@ -16,6 +23,19 @@ name: EasyPatch release
 on:
   push:
     tags: ['easypatch-v[0-9]+.[0-9]+.[0-9]+']
+  workflow_call:
+    inputs:
+      in-easyrmm-release:
+        description: Called from EasyRMM's release, which publishes the GitHub Release
+        type: boolean
+        default: false
+    outputs:
+      version:
+        description: EasyPatch's version
+        value: ${{ jobs.prepare.outputs.version }}
+      server-image:
+        description: The server image, by tag and digest (ghcr.io/<owner>/easypatch-server:<version>@sha256:...)
+        value: ${{ jobs.manifests.outputs.server-image }}
 
 permissions:
   contents: read
@@ -41,6 +61,9 @@ jobs:
     name: Check version
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -51,19 +74,52 @@ jobs:
         id: version
         env:
           TAG: ${{ github.ref_name }}
+          IN_EASYRMM_RELEASE: ${{ inputs.in-easyrmm-release }}
         run: |
-          version="${TAG#easypatch-v}"
           props="$(sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' Directory.Build.props)"
-          if [ "$version" != "$props" ]; then
-            echo "::error::Tag $TAG does not match <Version>$props</Version> in Directory.Build.props"
+          if [ "$IN_EASYRMM_RELEASE" = true ]; then
+            version="$props"
+          else
+            version="${TAG#easypatch-v}"
+            if [ "$version" != "$props" ]; then
+              echo "::error::Tag $TAG does not match <Version>$props</Version> in Directory.Build.props"
+              exit 1
+            fi
+          fi
+          if ! printf '%s' "$version" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::<Version> in Directory.Build.props is not MAJOR.MINOR.BUILD: $version"
             exit 1
           fi
           if ! grep -q "^## \[$version\]" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md has no section for $version"
+            echo "::error::easypatch/CHANGELOG.md has no section for $version"
             exit 1
           fi
           grep -q 'BEGIN PUBLIC KEY' "$PUBLIC_KEY"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      # Agents choose updates by version, so one version is never two builds: a server image of this version
+      # published from another commit (or before images recorded their commit) refuses the release. Running the
+      # release again for the same commit is allowed.
+      - name: Not published before from another commit
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easypatch-server:${VERSION}"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin > /dev/null
+          if raw="$(docker buildx imagetools inspect --raw "$image" 2> "$RUNNER_TEMP/inspect.err")"; then
+            revision="$(printf '%s' "$raw" | jq -r '.annotations["org.opencontainers.image.revision"] // ""')"
+            if [ "$revision" != "$GITHUB_SHA" ]; then
+              echo "::error::EasyPatch $VERSION is already published (${revision:-before images recorded their commit}). Raise <Version> in easypatch/Directory.Build.props and add its CHANGELOG section."
+              exit 1
+            fi
+            echo "$image was published from this commit; publishing again."
+          elif grep -qiE 'not found|manifest unknown|denied' "$RUNNER_TEMP/inspect.err"; then
+            echo "$image is not published yet."
+          else
+            cat "$RUNNER_TEMP/inspect.err" >&2
+            exit 1
+          fi
+          docker logout ghcr.io > /dev/null
 
   backend:
     name: Backend tests
@@ -335,12 +391,15 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      server-image: ${{ steps.tags.outputs.server-image }}
     # No checkout here, so no easypatch/ directory: the step runs in the workspace root.
     defaults:
       run:
         working-directory: .
     steps:
       - name: Tag VERSION and latest for x64 and ARM64
+        id: tags
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -353,15 +412,26 @@ jobs:
               --annotation "index:org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
               --annotation "index:org.opencontainers.image.licenses=FSL-1.1-ALv2" \
               --annotation "index:org.opencontainers.image.version=${VERSION}" \
+              --annotation "index:org.opencontainers.image.revision=${GITHUB_SHA}" \
               -t "${image}:${VERSION}" -t "${image}:latest" \
               "${image}:${VERSION}-amd64" "${image}:${VERSION}-arm64"
             docker buildx imagetools inspect "${image}:${VERSION}"
           done
+          # EasyRMM's release pins the server image by this digest.
+          server="ghcr.io/${owner}/easypatch-server"
+          digest="$(docker buildx imagetools inspect "${server}:${VERSION}" --format '{{json .Manifest}}' | jq -r .digest)"
+          if ! printf '%s' "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+            echo "::error::no digest for ${server}:${VERSION}: $digest"
+            exit 1
+          fi
+          echo "server-image=${server}:${VERSION}@${digest}" >> "$GITHUB_OUTPUT"
           docker logout ghcr.io
 
   publish:
     name: GitHub Release
     needs: [prepare, windows-agent, linux-agent, macos-agent, manifests]
+    # EasyRMM's release publishes its own GitHub Release, with the engine's versions in its manifest.
+    if: ${{ !inputs.in-easyrmm-release }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

@@ -7,6 +7,10 @@ the web console and the agents share one version number.
 
 ### Added
 
+- EasyRMM's release builds and publishes EasyPatch from the same commit (`easypatch-release.yml` is
+  also a reusable workflow, EasyRMM's ADR-0043); an `easypatch-v*` tag still releases EasyPatch
+  alone. Either way a version is published once: the server image's index records its commit, and
+  a version already published from another commit is refused before anything is signed.
 - The Linux agent's `enroll --server-ca <file>` trusts that certificate authority (PEM or DER) for
   the connection to the server only, as the MSI's `SERVERCACERT` does on Windows, for a server
   with a private certificate. It is kept in `agent.conf` (`ServerCaCertificate`); the system's
