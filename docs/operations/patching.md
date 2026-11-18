@@ -10,7 +10,10 @@ to sign in to EasyPatch for day-to-day patching. The design is in
 ## Setting it up
 
 You need an EasyPatch server (1.9.0 or later) that the EasyRMM server can
-reach over https, and a super administrator account in both.
+reach over https, and a super administrator account in both. Any EasyPatch
+server will do. To set one up, see EasyPatch's
+[installation guide](../../easypatch/docs/installation.md), or
+[EasyPatch on the same server as EasyRMM](../deployment/easypatch-cohost.md).
 
 1. **Create an API token in EasyPatch**: Settings → API tokens. Choose the
    EasyPatch organizations EasyRMM should patch, an expiry (up to a year),

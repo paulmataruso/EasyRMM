@@ -4,7 +4,8 @@ The console lives in `web/`. It is a React 19 + TypeScript single-page app
 built with Vite and Tailwind CSS 4, using TanStack Query for server state and
 React Router for navigation. Its look is EasyPatch's design system
 ([ADR-0013](../architecture/adr/0013-easypatch-design-system.md)); keep
-`web/src/index.css` in step with EasyPatch's `frontend/src/index.css`.
+`web/src/index.css` in step with EasyPatch's
+[`easypatch/frontend/src/index.css`](../../easypatch/frontend/src/index.css).
 
 The production build is embedded in the server binary (`server/internal/webui`)
 and served from the same origin as the API, under a strict
@@ -69,6 +70,21 @@ by the Go integration tests against a real MeshCentral and agent
   that is already installed.
 * The Impeccable design detector runs in CI:
   `.claude/skills/impeccable/scripts/impeccable detect web/src`.
+
+## The README's screenshots
+
+`npm run build`, then `npm run screenshots`, in `web/`, writes
+`docs/images/*.png`: each page in dark (`name.png`) and light
+(`name-light.png`), 1440 × 900 at 1.5×, like EasyPatch's own.
+
+* `playwright.screenshots.config.ts` serves the production build with
+  `vite preview`; no server runs.
+* `screenshots/readme.spec.ts` answers every API request from
+  `screenshots/demo.ts`: a fictional MSP, typed against `src/api/types.ts`.
+  The browser's clock is fixed, so relative times read the same each run.
+* A request the demo data does not answer fails the run, so a changed page
+  cannot be photographed showing an error or a spinner. Answer it in
+  `readme.spec.ts`, then look at the images before committing them.
 
 ## Conventions
 

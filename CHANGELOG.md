@@ -8,14 +8,18 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `npm run screenshots` in `web/` makes the README's screenshots from the
+  console's production build, its API answered from fictional demo data
+  (`web/screenshots/`). It fails when a page asks for something the data does
+  not answer.
 - EasyRMM can be EasyPatch's sign-in provider (ADR-0036): an OpenID
   provider with one client, EasyPatch, set up by a super administrator under
   Settings → EasyPatch → Sign-in, its secret shown once. Code flow with PKCE;
   single-use codes valid 60 seconds; ES256 ID tokens carrying the person's
   EasyPatch role and organizations from their EasyRMM roles, and
-  `email_verified: false`. A second factor in the session is required.
-  Audited as `idp.authorize` and `idp.client_*`. EasyPatch's side is not
-  released yet.
+  `email_verified: false`, and an `amr` that always includes `mfa`. A
+  second factor in the session is required. Audited as `idp.authorize` and
+  `idp.client_*`. EasyPatch's side is not released yet.
 - Sessions record how they signed in (`amr`: password, single sign-on,
   authenticator code, security key, recovery code, passkey).
 - Links from EasyPatch into EasyRMM, `/go/from-easypatch/endpoints|
@@ -354,6 +358,15 @@ All notable changes to this project are documented here. The format follows
   It also covers turning on automatic updates. The warning names the lines,
   while editing, on the script's page and before a run.
 
+### Changed
+- The README is the front page of the one project: what EasyRMM and EasyPatch
+  each do, how they fit together, the architecture with EasyPatch, and
+  screenshots of the console in dark and light.
+- The documentation presents EasyRMM and EasyPatch as one project in one
+  repository: EasyPatch, under `easypatch/`, is EasyRMM's patch management
+  component. Issues and security reports for both go to this repository.
+  Neither licence changes.
+
 ### Removed
 - The fleet-wide **Software** page. Installed software is shown on each
   device's page; `GET /api/v1/software` remains.
@@ -471,6 +484,9 @@ All notable changes to this project are documented here. The format follows
   connects by cookie, stays blocked.
 
 ### Fixed
+- A device's Patches tab ran its EasyPatch organization and site into the
+  **Open in EasyPatch** link, and said "1 fix vulnerabilities exploited in
+  the wild" for a single update.
 - Settings → EasyPatch showed EasyPatch as failing after it refused a
   single request (a duplicate scan, an endpoint deleted in EasyPatch). Only
   no answer, a server error or a refused token count now.

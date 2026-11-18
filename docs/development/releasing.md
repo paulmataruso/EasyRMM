@@ -1,7 +1,9 @@
 # Releasing
 
 Releases are cut by pushing a version tag. `.github/workflows/release.yml`
-does the rest; nothing is published from a laptop.
+does the rest; nothing is published from a laptop. This page is about
+EasyRMM's releases; EasyPatch's are released separately
+([EasyPatch releases](#easypatch-releases)).
 
 ## Versions
 
@@ -70,6 +72,23 @@ sha256sum -c SHA256SUMS
 gh attestation verify easyrmm-v1.2.3-deploy.tar.gz --repo paulmataruso/easyrmm
 gh attestation verify oci://ghcr.io/paulmataruso/easyrmm-server:1.2.3 --repo paulmataruso/easyrmm
 ```
+
+## EasyPatch releases
+
+EasyPatch, in `easypatch/`, is built and released on its own:
+
+* Its tags are `easypatch-v1.2.3`. The version must match `<Version>` in
+  `easypatch/Directory.Build.props` and a section of
+  `easypatch/CHANGELOG.md`.
+* Pushing one runs `.github/workflows/easypatch-release.yml`. It runs
+  EasyPatch's tests, builds and release-signs the agent packages, pushes the
+  server and proxy images for x64 and ARM64 to GitHub Container Registry,
+  and creates a GitHub release, never marked Latest.
+* No EasyPatch release has been published from this repository yet.
+  Releases up to 1.10.0, with their downloads, are in EasyPatch's
+  [former repository](https://github.com/paulmataruso/EasyPatch/releases).
+* Release signing:
+  [easypatch/docs/security.md](../../easypatch/docs/security.md#agent-release-signing).
 
 ## Before the first public release
 

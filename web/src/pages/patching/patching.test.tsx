@@ -712,7 +712,7 @@ describe("device patches", () => {
     expect(main().getByText("Downloading · 30%")).toBeInTheDocument();
     expect(main().getByText("Saturday at 02:00 for 3 hours (Europe/Paris)")).toBeInTheDocument();
     expect(main().getByText("Security, Servicing stack")).toBeInTheDocument();
-    expect(main().getByText(/1 fix vulnerabilities exploited in the wild/)).toBeInTheDocument();
+    expect(main().getByText(/1 fixes a vulnerability exploited in the wild/)).toBeInTheDocument();
     // An update already being installed cannot be chosen again.
     expect(main().queryByLabelText("Select curl 8.14.1-2")).not.toBeInTheDocument();
     // What EasyRMM only shows is changed in EasyPatch, on the matching page.

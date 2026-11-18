@@ -1,7 +1,8 @@
 # EasyPatch Architecture
 
 EasyPatch is a self-hosted Windows and Linux patch management platform for Managed Service
-Providers. It has two parts:
+Providers, and EasyRMM's patch management: it is part of the EasyRMM project and lives in
+`easypatch/` of the EasyRMM repository. It also runs on its own. It has two parts:
 
 1. **The server**: a Docker Compose stack in a DMZ, reachable on TCP 443.
 2. **The agent**: a Windows service (`EasyPatchAgent`) or a Linux systemd service

@@ -10,7 +10,7 @@ web
 
 React + TypeScript + Vite in `web/`, with Tailwind CSS 4 (semantic tokens in
 `web/src/index.css`), TanStack Query, React Router and lucide icons: the same
-stack and versions as the sister product EasyPatch's frontend, so the two
+stack and versions as EasyPatch's frontend (`easypatch/frontend/`), so the two
 consoles share one design system. No component kit. The production build is
 embedded into the Go server binary and served from the same origin as the
 API. Confirmed by the project owner.
@@ -32,8 +32,8 @@ administrator, site administrator, technician, read-only.
 
 ## Product Purpose
 
-EasyRMM is an open-source remote monitoring and management platform for
-Windows and Linux endpoints. It gives an MSP one place to see the state of
+EasyRMM is a self-hosted remote monitoring and management platform for
+Windows and Linux endpoints, with EasyPatch as its patch management. It gives an MSP one place to see the state of
 every customer's devices, act on them (scripts, jobs, software, patches,
 remote access), and prove what was done (audit log, reports).
 
@@ -43,8 +43,8 @@ trail hold.
 
 ## Positioning
 
-- Self-hosted and open source (AGPL-3.0-or-later): the MSP owns its data
-  and deployment.
+- Self-hosted: the MSP owns its data and deployment. The platform is open
+  source (AGPL-3.0-or-later); EasyPatch is source-available (FSL-1.1-ALv2).
 - Remote access is powered by the real MeshCentral server and agent, embedded
   in the console in its own browser origin; everything else (tenancy,
   inventory, monitoring, scripting, jobs, alerts, audit, enrollment) is
@@ -97,7 +97,7 @@ Constraints:
 
 - Name: EasyRMM.
 - Visual direction set by the owner (binding, 2026-11-15): EasyRMM matches
-  its sister project EasyPatch (github.com/paulmataruso/EasyPatch). Same
+  EasyPatch, its patch management component (`easypatch/`). Same
   semantic tokens, flat dark and light themes (dark by default, switchable),
   system font stack, navy sidebar, blue accent, the same component
   vocabulary (cards, page headers, toolbars, badges, tables, native dialogs,

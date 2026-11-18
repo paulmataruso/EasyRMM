@@ -200,7 +200,11 @@ function Summary({ patching: d, view }: { patching: DevicePatching; view: View }
             <span className="block text-xs text-muted">{s.missingDeferredCount.toLocaleString()} held back by the policy's delay</span>
           )}
           {s.knownExploitedMissingCount > 0 && (
-            <span className="block text-xs text-danger">{s.knownExploitedMissingCount.toLocaleString()} fix vulnerabilities exploited in the wild</span>
+            <span className="block text-xs text-danger">
+              {s.knownExploitedMissingCount === 1
+                ? "1 fixes a vulnerability exploited in the wild"
+                : `${s.knownExploitedMissingCount.toLocaleString()} fix vulnerabilities exploited in the wild`}
+            </span>
           )}
         </span>
       ),
@@ -254,8 +258,10 @@ function Summary({ patching: d, view }: { patching: DevicePatching; view: View }
   items.push([
     "In EasyPatch",
     <span key="o">
-      {s.organizationName} / {s.siteName}
-      <EasyPatchLink to={{ device: d.deviceId, tab: PATCH_VIEW_TAB[view] }} className="mt-0.5 flex w-fit text-xs">
+      <span className="block">
+        {s.organizationName} / {s.siteName}
+      </span>
+      <EasyPatchLink to={{ device: d.deviceId, tab: PATCH_VIEW_TAB[view] }} className="mt-0.5 text-xs">
         Open in EasyPatch
       </EasyPatchLink>
     </span>,

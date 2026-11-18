@@ -41,14 +41,35 @@ The console, the API, agent check-ins, agent downloads and install scripts all u
 The server runs from the release images on GitHub Container Registry
 (`ghcr.io/paulmataruso/easypatch-server` and `ghcr.io/paulmataruso/easypatch-proxy`, for x64 and
 ARM64). You need the repository for `docker-compose.yml`, the Caddy configuration and the
-scripts. Check out the release tag you want to run:
+scripts. EasyPatch is part of the EasyRMM project: its files are in the `easypatch/` folder of
+the EasyRMM repository, and every command in this guide runs there.
 
 ```bash
-git clone --branch v1.10.0 https://github.com/paulmataruso/EasyPatch.git easypatch
-cd easypatch
+git clone https://github.com/paulmataruso/EasyRMM.git
+cd EasyRMM/easypatch
 ```
 
-To build the images yourself instead, see [Building the images from source](#building-the-images-from-source).
+**Releases.** EasyPatch's releases in the EasyRMM repository are tagged `easypatch-v<version>`. To
+run one, check out its tag (`git checkout easypatch-v<version>`), so that the deployment files
+match its images. Releases up to 1.10.0 were published from EasyPatch's
+[former repository](https://github.com/paulmataruso/EasyPatch/releases), which keeps them and
+their downloads. Their tags are renamed `easypatch-v1.10.0` and so on in the EasyRMM repository's
+history, and point at commits from before EasyPatch moved into `easypatch/`: checking one out puts
+EasyPatch's files at the top of the checkout, not in `easypatch/`, so this guide's paths do not
+fit them.
+
+**The Compose project is called `easypatch`** (`name:` in `docker-compose.yml`), and Docker names
+the server's volumes, including its database, after it. Keep that name for the server. On a
+machine that already runs an EasyPatch server, `docker compose up` in another checkout would take
+over that server's containers and volumes, so give a second copy, such as a development or lab
+server, another name: `docker compose -p easypatch-dev …`, or set `COMPOSE_PROJECT_NAME` in its
+`.env`. On a server that also runs EasyRMM, use a checkout for EasyPatch that is separate from
+EasyRMM's: each is upgraded by checking out its own release tag.
+
+To run EasyPatch on the same server as EasyRMM, behind EasyRMM's edge, follow
+[EasyPatch on the same server as EasyRMM](../../docs/deployment/easypatch-cohost.md) alongside
+this guide. To build the images yourself instead of pulling them, see
+[Building the images from source](#building-the-images-from-source).
 
 ## 2. Prepare secrets and configuration
 
@@ -137,14 +158,16 @@ Then:
 
 ## 6. Offer agent packages
 
-Download the agent packages of the same release from
-[GitHub Releases](https://github.com/paulmataruso/EasyPatch/releases), check them, and copy them,
-each with its `.sig` release signature, to `data/agent-packages/`:
+Download the agent packages of the same release, check them, and copy them, each with its `.sig`
+release signature, to `data/agent-packages/`. EasyPatch's releases are those of the EasyRMM
+repository tagged `easypatch-v<version>`; releases up to 1.10.0 are in EasyPatch's
+[former repository](https://github.com/paulmataruso/EasyPatch/releases). For 1.10.0:
 
 ```bash
 mkdir -p /tmp/easypatch-v1.10.0
 gh release download v1.10.0 --repo paulmataruso/EasyPatch --dir /tmp/easypatch-v1.10.0 \
   --pattern 'EasyPatchAgent-*' --pattern SHA256SUMS
+# a release from the EasyRMM repository: gh release download easypatch-v<version> --repo paulmataruso/EasyRMM …
 # or download the same files from the release page in a browser
 (cd /tmp/easypatch-v1.10.0 && sha256sum --check --ignore-missing SHA256SUMS)
 # Windows and Linux; the macOS .pkg files are experimental (see below)
@@ -217,8 +240,8 @@ Back up first, then switch to the new release and restart:
 
 ```bash
 ./scripts/backup.sh
-git fetch --tags && git checkout v1.4.1      # the new release's docker-compose.yml and scripts
-$EDITOR .env                                 # EASYPATCH_VERSION=1.4.1
+git fetch --tags && git checkout easypatch-v<version>   # the new release's docker-compose.yml and scripts
+$EDITOR .env                                            # EASYPATCH_VERSION=<version>
 docker compose pull
 docker compose up -d
 ```
@@ -227,6 +250,14 @@ Then download the new release's agent packages into `data/agent-packages/` (see
 [Offer agent packages](#6-offer-agent-packages)). With the default *Automatic* agent updates
 policy, agents then update themselves. If you build the images yourself, run
 `docker compose build` instead of `docker compose pull`.
+
+**A server installed from EasyPatch's former repository** runs from a checkout of that
+repository, which has the releases up to 1.10.0. Later releases are tagged only in the EasyRMM
+repository. To move such a server: back up, make a checkout of the EasyRMM repository
+([step 1](#1-get-the-deployment-files)), and copy the files git does not track from the old
+checkout into its `easypatch/`: `.env`, `secrets/`, `data/` and `backups/`, and any
+`docker-compose.override.yml` or co-hosting files. Then upgrade from there as above. Keep the
+Compose project name `easypatch`, so the new checkout uses the same volumes.
 
 `migrate` runs again on `up -d` and applies any new migrations before `api` and `worker` start.
 Agents keep working through the restart. Each agent stores its unsent reports in an outbox and
@@ -342,6 +373,9 @@ credential lifetime, retention and session timeouts, is under **Settings → Ser
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm api create-admin --email admin@example.com
 ```
+
+On a machine that also runs an EasyPatch server, add `-p easypatch-dev` to these commands, or set
+`COMPOSE_PROJECT_NAME` (see [The Compose project](#1-get-the-deployment-files)).
 
 Open `https://localhost:8443` and accept the certificate warning, or trust Caddy's root
 certificate. To use a different port, set `EASYPATCH_HTTPS_PORT`.

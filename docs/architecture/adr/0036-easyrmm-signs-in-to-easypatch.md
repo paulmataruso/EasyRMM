@@ -74,6 +74,9 @@ What must not happen:
   `auth_time`, `nonce`, `name`, `email` with **`email_verified: false`**,
   `amr`, and `easypatch` (below). `email_verified` is false on purpose: it
   stops any EasyPatch provider setting from linking accounts by email.
+  `amr` is the session's methods with `mfa` always added: only multi-factor
+  sessions get a token, and `mfa` is the one value EasyPatch needs to
+  understand (it cannot know that `rc` is a second factor).
 * The token response carries an `access_token`, because OAuth requires one.
   It is random, not stored, and opens nothing.
 

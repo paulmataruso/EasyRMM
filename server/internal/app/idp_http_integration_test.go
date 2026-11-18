@@ -228,7 +228,7 @@ func TestHTTPOpenIDProvider(t *testing.T) {
 	var me sessionView
 	admin.expect(http.StatusOK, "GET", "/api/v1/auth/session", nil, &me)
 	if claims.Subject != me.User.ID || claims.Email != "admin@msp.example" || claims.Name != "Ada Admin" ||
-		claims.EmailVerified == nil || *claims.EmailVerified || !slices.Equal(claims.AMR, []string{"pwd", "otp"}) || claims.AuthTime == 0 ||
+		claims.EmailVerified == nil || *claims.EmailVerified || !slices.Equal(claims.AMR, []string{"pwd", "otp", "mfa"}) || claims.AuthTime == 0 ||
 		claims.EasyPatch.Role != easypatch.RoleSuperAdmin || len(claims.EasyPatch.Organizations) != 0 {
 		t.Fatalf("claims: %+v", claims)
 	}

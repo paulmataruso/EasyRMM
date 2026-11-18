@@ -1,5 +1,5 @@
 name: EasyPatch feature request
-description: Suggest a change or a new feature for EasyPatch (the patch management product in easypatch/).
+description: Suggest a change or a new feature for EasyPatch (EasyRMM's patch management, in easypatch/).
 title: "[EasyPatch] "
 labels: [enhancement, easypatch]
 body:

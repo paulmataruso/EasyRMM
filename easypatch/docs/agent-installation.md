@@ -489,8 +489,10 @@ need them.
 
 ## Building from source
 
-The MSIs attached to [GitHub Releases](https://github.com/paulmataruso/EasyPatch/releases) are
-built and signed by the project's `release` workflow; most installations should use those (see
+The MSIs attached to EasyPatch's GitHub releases (tagged `easypatch-v*` in the EasyRMM
+repository; up to 1.10.0, in EasyPatch's
+[former repository](https://github.com/paulmataruso/EasyPatch/releases)) are built and signed by
+EasyPatch's release workflow; most installations should use those (see
 [installation.md](installation.md#6-offer-agent-packages)). An agent you build with your own
 release key accepts only packages signed with that key, so it does not update to official
 releases (see [security.md](security.md#agent-release-signing)).

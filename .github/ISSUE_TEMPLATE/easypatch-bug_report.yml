@@ -1,12 +1,12 @@
 name: EasyPatch bug report
-description: Something in EasyPatch (the patch management product in easypatch/) does not work as documented.
+description: Something in EasyPatch (EasyRMM's patch management, in easypatch/) does not work as documented.
 title: "[EasyPatch] "
 labels: [bug, easypatch]
 body:
   - type: markdown
     attributes:
       value: |
-        **Security problems:** do not report them here. Use [Report a vulnerability](https://github.com/paulmataruso/EasyPatch/security/advisories/new) instead.
+        **Security problems:** do not report them here. Use [Report a vulnerability](https://github.com/paulmataruso/EasyRMM/security/advisories/new) instead.
 
         Remove host names, IP addresses, tokens, deployment codes and anything else you do not want to publish from logs and screenshots.
   - type: textarea

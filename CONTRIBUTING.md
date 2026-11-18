@@ -3,6 +3,14 @@
 Thank you for helping. EasyRMM manages real computers, so the bar for
 correctness and security is high; these rules keep it that way.
 
+This repository holds the whole project. Changes under `easypatch/`
+(EasyPatch, EasyRMM's patch management) follow
+[easypatch/CONTRIBUTING.md](easypatch/CONTRIBUTING.md) instead, including
+its contributor terms and its licence (FSL-1.1-ALv2). A pull request that
+touches both is covered by both, each for its part
+([LICENSING.md](LICENSING.md)). How the two share the repository and CI is
+in [docs/development/monorepo.md](docs/development/monorepo.md).
+
 ## Ground rules
 
 * Work on a feature branch (`feat/…`, `fix/…`, `docs/…`) and open a pull
@@ -17,11 +25,13 @@ correctness and security is high; these rules keep it that way.
   (`area: imperative summary`, e.g. `auth: rotate session token after MFA`).
 * Sign off your commits (`git commit -s`) to certify the
   [Developer Certificate of Origin](https://developercertificate.org/).
-  Contributions are licensed under AGPL-3.0-or-later.
+  Contributions outside `easypatch/` are licensed under AGPL-3.0-or-later.
 
 ## Development environment
 
 Requirements: Go (version in `go.mod`), Node.js 22+, Docker with Compose.
+EasyPatch's (the .NET SDK and Node.js 24) are in
+[easypatch/CONTRIBUTING.md](easypatch/CONTRIBUTING.md).
 
 ```bash
 make test-db            # starts a disposable PostgreSQL on 127.0.0.1:55432

@@ -3,17 +3,21 @@
 EasyPatch installs software on the computers it manages, so security reports are taken seriously
 and handled before anything else.
 
+EasyPatch is EasyRMM's patch management and part of the EasyRMM project. Its vulnerabilities
+are reported the same way as EasyRMM's, as the project's [security policy](../SECURITY.md)
+describes.
+
 ## Reporting a vulnerability
 
-**Do not open a public issue.** Report it privately through GitHub:
+**Do not open a public issue.** Report it privately through GitHub's private vulnerability
+reporting in the EasyRMM repository:
+<https://github.com/paulmataruso/EasyRMM/security/advisories/new>.
 
-1. Open the [Security tab](https://github.com/paulmataruso/EasyPatch/security) of this repository.
-2. Choose **Report a vulnerability** and describe the problem, the affected version and, if you
-   can, the steps to reproduce it.
-
-You will get an acknowledgement within 7 days. Please give us a reasonable time to release a fix
-before disclosing the issue publicly; we will agree on a date with you and credit you in the
-advisory unless you prefer otherwise.
+Say that it concerns EasyPatch, and describe the problem, the affected version and, if you can,
+the steps to reproduce it. When to expect an acknowledgement is in the project's
+[security policy](../SECURITY.md#reporting-a-vulnerability). Please give us a reasonable time to
+release a fix before disclosing the issue publicly; we will agree on a date with you and credit
+you in the advisory unless you prefer otherwise.
 
 ## Supported versions
 
@@ -22,13 +26,15 @@ to the newest release (agents update themselves when the *Agent updates* policy 
 
 | Version | Supported |
 |---|---|
-| 1.4.x | Yes |
+| 1.10.x | Yes |
 | older | No |
 
 ## Scope
 
 In scope: the server (API, worker, web console), the Windows and Linux agents and their
-installers, the install scripts, the release signing and the Docker deployment in this repository.
+installers, the install scripts, the release signing and the Docker deployment in `easypatch/`.
+EasyRMM's connector to EasyPatch is EasyRMM's code; its scope is in the project's
+[security policy](../SECURITY.md#scope). Both are reported the same way.
 
 Examples of what we especially want to hear about:
 

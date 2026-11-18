@@ -2,6 +2,12 @@
 
 Thank you for your interest in EasyPatch. Bug reports, ideas and pull requests are welcome.
 
+EasyPatch is EasyRMM's patch management and part of the EasyRMM project. It lives in
+`easypatch/` of the [EasyRMM repository](https://github.com/paulmataruso/EasyRMM), where its
+issues and pull requests go. This file covers changes under `easypatch/`. Changes anywhere else
+follow EasyRMM's [CONTRIBUTING.md](../CONTRIBUTING.md), under EasyRMM's license; a pull request
+that touches both is covered by both, each for its part ([LICENSING.md](../LICENSING.md)).
+
 ## License and contributor terms
 
 EasyPatch is licensed under the [Functional Source License, Version 1.1, ALv2 Future
@@ -17,22 +23,22 @@ License](LICENSE.md) (FSL-1.1-ALv2). The copyright holder is DHI Technical Servi
 3. you grant everyone who receives EasyPatch a license to your contribution under the same terms
    as the rest of the version that includes it.
 
-You keep the copyright in your contribution. These terms let the project keep a single license
-and offer commercial licenses. If you cannot agree to them, please open an issue describing the
-change instead of a pull request.
+You keep the copyright in your contribution. These terms let DHI Technical Services LLC keep
+EasyPatch under a single license and offer commercial licenses. If you cannot agree to them,
+please open an issue describing the change instead of a pull request.
 
 ## Reporting bugs and asking for features
 
 * **Security problems:** do not open an issue. Follow [SECURITY.md](SECURITY.md).
-* **Bugs:** use the *Bug report* issue template. Include the server and agent versions, the
-  operating system of the endpoint and the relevant log lines (remove host names, tokens and
+* **Bugs:** use the *EasyPatch bug report* issue template. Include the server and agent versions,
+  the operating system of the endpoint and the relevant log lines (remove host names, tokens and
   anything else you do not want to publish).
-* **Features:** use the *Feature request* template and describe the problem first.
+* **Features:** use the *EasyPatch feature request* template and describe the problem first.
 
 ## Development setup
 
 Requirements: the .NET SDK pinned in `global.json`, Node.js 24, and Docker (the integration
-tests start PostgreSQL with Testcontainers).
+tests start PostgreSQL with Testcontainers). Run these from `easypatch/`:
 
 ```bash
 dotnet build EasyPatch.slnx -c Release
@@ -48,6 +54,10 @@ A local server for trying changes: see *Development and lab mode* in
 
 * Keep a pull request to one change, and explain why it is needed.
 * Builds must pass with warnings as errors, and the tests must pass. Add tests for new behavior.
+* The repository's CI (`ci.yml`) runs EasyPatch's server and agent checks when a change touches
+  them, and the *EasyPatch contract* check, which runs EasyRMM's connector against EasyPatch's
+  server, when the server changes. See
+  [Continuous integration](../docs/development/monorepo.md#continuous-integration).
 * Update the documentation in `docs/` in the same pull request. Documentation must describe what
   the code actually does.
 * Pin new dependencies to exact versions, and prefer MIT, BSD or Apache-2.0 licensed ones.

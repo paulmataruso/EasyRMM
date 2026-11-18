@@ -1,15 +1,20 @@
 # Licensing
 
-This repository holds two products under two licences.
+This repository holds one project, EasyRMM, whose code is under two
+licences. One project does not mean one licence.
 
-| Path | Product | Licence |
+| Path | Code | Licence |
 |---|---|---|
-| Everything except `easypatch/` | EasyRMM | [GNU Affero General Public License v3.0 or later](LICENSE) |
-| `easypatch/` | EasyPatch | [Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2)](easypatch/LICENSE.md), licensor DHI Technical Services LLC |
+| Everything except `easypatch/` | EasyRMM's platform | [GNU Affero General Public License v3.0 or later](LICENSE) |
+| `easypatch/` | EasyPatch, EasyRMM's patch management | [Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2)](easypatch/LICENSE.md), licensor DHI Technical Services LLC |
+
+EasyRMM's platform code is open source under AGPL-3.0-or-later. EasyPatch's
+code is source-available under FSL-1.1-ALv2.
 
 ## How the two relate
 
-* They are separate programs.
+* They are separate programs. EasyPatch also runs on its own, and EasyRMM
+  can use any EasyPatch server.
 * EasyRMM talks to EasyPatch over EasyPatch's HTTP API and links to its
   console.
 * Neither one links or includes the other's code.
@@ -18,7 +23,7 @@ This repository holds two products under two licences.
     repository root.
   * EasyPatch's tags are `easypatch-v*`. Its images and packages are built from
     `easypatch/`.
-* Being in one repository does not change either licence.
+* Being one project in one repository does not change either licence.
 
 ## Contributing
 

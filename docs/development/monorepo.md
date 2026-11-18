@@ -1,8 +1,10 @@
-# One repository, two products
+# One repository, one project
 
-This repository holds EasyRMM and EasyPatch. They are separate programs with
-separate licences ([LICENSING.md](../../LICENSING.md)), builds and releases.
-EasyRMM talks to EasyPatch only over EasyPatch's HTTP API.
+This repository holds the EasyRMM project: EasyRMM's platform and EasyPatch,
+its patch management component, under `easypatch/`. They are separate
+programs with separate licences ([LICENSING.md](../../LICENSING.md)), builds
+and releases. EasyPatch also runs on its own. EasyRMM talks to EasyPatch only
+over EasyPatch's HTTP API.
 
 | | EasyRMM | EasyPatch |
 |---|---|---|
@@ -20,12 +22,16 @@ The integration between them, and the plan for it, are in
 
 EasyPatch's whole history came in with commit `819ae8f` ("Bring EasyPatch
 into this repository, under easypatch/"). It is a merge: its second parent,
-`a890e36`, is the head of EasyPatch's own repository at the time, so every
-EasyPatch commit keeps its hash. `git log -- easypatch/` and `git blame`
+`a890e36`, is the head of EasyPatch's former repository at the time, so
+every EasyPatch commit keeps its hash. `git log -- easypatch/` and `git blame`
 work across the import.
 
 EasyPatch's old release tags were renamed `v1.10.0` → `easypatch-v1.10.0`, so
-they cannot be confused with EasyRMM's.
+they cannot be confused with EasyRMM's. They point at commits from before the
+import, so checking one out puts EasyPatch's files at the top of the
+checkout, not in `easypatch/`. The releases themselves, up to 1.10.0, and
+their downloads stay in the
+[former repository](https://github.com/paulmataruso/EasyPatch/releases).
 
 ## Local files that are never committed
 
@@ -49,11 +55,11 @@ Its own documentation applies, run from `easypatch/`
 ([easypatch/docs/installation.md](../../easypatch/docs/installation.md)), with
 one caution.
 
-> **Name the Compose project.** Docker Compose names a project after its
-> folder, and this folder is called `easypatch`, like the folder a real
-> EasyPatch server usually runs from. On a machine that also runs one,
+> **Name the Compose project.** `easypatch/docker-compose.yml` names its
+> project `easypatch` (and so would the folder's name), the name a real
+> EasyPatch server has too. On a machine that also runs one,
 > `docker compose up` in `easypatch/` would take over that server's
-> containers. Use another name:
+> containers and volumes. Use another name:
 > `docker compose -p easypatch-dev …`, or set `COMPOSE_PROJECT_NAME`.
 
 ## Continuous integration
@@ -95,10 +101,15 @@ It needs Docker and `openssl`, and ports 55433 and 18443 on 127.0.0.1
 (`EASYPATCH_CONTRACT_PG_PORT`, `EASYPATCH_CONTRACT_PORT`). Everything it
 starts is removed afterwards.
 
-## The old EasyPatch repository
+## The former EasyPatch repository
 
-Until the owner retires it, EasyPatch's old repository is a read-only mirror
-of `easypatch/`. `scripts/easypatch/mirror.sh` builds its history: on top of
+EasyPatch's former repository,
+<https://github.com/paulmataruso/EasyPatch>, keeps EasyPatch's releases up
+to 1.10.0 and their downloads (MSIs, signed agent packages). Issues and
+security reports for EasyPatch belong to this repository now.
+
+It can also be a read-only mirror of `easypatch/`.
+`scripts/easypatch/mirror.sh` builds its history: on top of
 the imported head, one commit for each commit on `main` since the import that
 changed `easypatch/`, with the same author, dates and message, and an
 `EasyRMM-Commit:` trailer. The same input always gives the same commits, so
@@ -111,7 +122,7 @@ the variable `EASYPATCH_MIRROR_REPOSITORY` and the secret
 `EASYPATCH_MIRROR_TOKEN` (in the `easypatch-mirror` environment) are set; see
 the workflow's header. It never force-pushes.
 
-If someone commits to the old repository anyway, the mirror job fails, and
+If someone commits to the former repository anyway, the mirror job fails, and
 it keeps failing: the mirror is built from this repository, so it never
 descends from those commits. To recover:
 
@@ -121,9 +132,9 @@ descends from those commits. To recover:
    git subtree pull --prefix=easypatch https://github.com/paulmataruso/EasyPatch.git main
    ```
 
-2. Once that is on `main`, the owner moves the old repository's branch to
-   the mirror's head once, with a force push. Nothing is lost: the commits
+2. Once that is on `main`, the owner moves the former repository's branch
+   to the mirror's head once, with a force push. Nothing is lost: the commits
    are in this repository's history.
 
-Release tags are not mirrored: EasyPatch's releases are published from this
-repository.
+Release tags are not mirrored: EasyPatch's new releases are published from
+this repository, tagged `easypatch-v*`.

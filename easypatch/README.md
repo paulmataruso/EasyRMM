@@ -9,13 +9,11 @@
 </h1>
 
 <p align="center">
-  <b>Self-hosted Windows and Linux patch management for Managed Service Providers.</b>
+  <b>EasyRMM's patch management: self-hosted Windows and Linux patching for Managed Service Providers.</b>
 </p>
 
 <p align="center">
-  <a href="https://github.com/paulmataruso/EasyPatch/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/paulmataruso/EasyPatch?sort=semver"></a>
-  <a href="https://github.com/paulmataruso/EasyPatch/actions/workflows/server.yml"><img alt="Server build" src="https://github.com/paulmataruso/EasyPatch/actions/workflows/server.yml/badge.svg"></a>
-  <a href="https://github.com/paulmataruso/EasyPatch/actions/workflows/agent.yml"><img alt="Agent build" src="https://github.com/paulmataruso/EasyPatch/actions/workflows/agent.yml/badge.svg"></a>
+  <a href="https://github.com/paulmataruso/EasyRMM/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/paulmataruso/EasyRMM/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE.md"><img alt="License: FSL-1.1-ALv2" src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue"></a>
   <img alt="Platforms: Windows and Linux agents" src="https://img.shields.io/badge/agents-Windows%20%7C%20Linux-informational">
 </p>
@@ -25,15 +23,16 @@
   <a href="#screenshots">Screenshots</a> ·
   <a href="#features">Features</a> ·
   <a href="docs/installation.md">Installation</a> ·
-  <a href="https://github.com/paulmataruso/EasyPatch/releases">Downloads</a> ·
+  <a href="docs/installation.md#6-offer-agent-packages">Downloads</a> ·
   <a href="#license">License</a>
 </p>
 
-EasyPatch is a self-hosted patch management platform for Managed Service Providers. A small
-agent reports Windows Update status, or the package upgrades available from apt or dnf, to a
-central web console. From there an administrator installs the missing updates on one computer,
-a site, or a whole customer, sees which missing updates fix actively exploited vulnerabilities,
-and tracks compliance across every customer.
+EasyPatch is the patch management component of [EasyRMM](../README.md) and part of the EasyRMM
+project. It is also a complete program: it can be deployed by itself, and EasyRMM can use any
+EasyPatch server. A small agent reports Windows Update status, or the package upgrades available
+from apt or dnf, to a central web console. From there an administrator installs the missing
+updates on one computer, a site, or a whole customer, sees which missing updates fix actively
+exploited vulnerabilities, and tracks compliance across every customer.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/dashboard-light.png">
@@ -56,6 +55,20 @@ and tracks compliance across every customer.
   when an administrator configures an override. It never touches the WSUS server settings, and
   it puts the original values back when the override is removed. On Linux, repositories and
   `unattended-upgrades` or `dnf-automatic` are reported and never changed.
+
+## Part of EasyRMM
+
+* EasyPatch's code is in `easypatch/` of the
+  [EasyRMM repository](https://github.com/paulmataruso/EasyRMM). Issues and security reports
+  for EasyPatch go there.
+* EasyRMM uses EasyPatch's API for simple patching (scan, install, restart, retry), links into
+  EasyPatch's console for everything else, and has an EasyRMM | EasyPatch switch between the two
+  consoles. See EasyRMM's [patching guide](../docs/operations/patching.md).
+* Signing in to EasyPatch through EasyRMM: EasyRMM's side is built, EasyPatch's side is in
+  progress.
+* EasyPatch keeps its own license ([License](#license)), builds and releases. Its releases are
+  tagged `easypatch-v*` in the EasyRMM repository. Releases up to 1.10.0, and their downloads,
+  are in EasyPatch's [former repository](https://github.com/paulmataruso/EasyPatch/releases).
 
 ## Screenshots
 
@@ -222,7 +235,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 On a Linux host (x64 or ARM64) with Docker, a DNS name pointing at it, and ports 80 and 443 open:
 
 ```bash
-git clone --branch v1.10.0 https://github.com/paulmataruso/EasyPatch.git easypatch && cd easypatch
+git clone https://github.com/paulmataruso/EasyRMM.git && cd EasyRMM/easypatch
 ./scripts/init-secrets.sh                 # database password secret, data directories, .env
 $EDITOR .env                              # set EASYPATCH_DOMAIN and ACME_EMAIL
 docker compose pull                       # ghcr.io/paulmataruso/easypatch-server and -proxy
@@ -230,13 +243,22 @@ docker compose up -d
 docker compose run --rm api create-admin --email admin@example.com
 ```
 
+EasyPatch lives in the `easypatch/` folder of the EasyRMM repository; run every command there.
+To run a specific release, check out its `easypatch-v*` tag first (for 1.10.0 and older, see the
+installation guide). The Compose project is called `easypatch`: on a machine that already runs an
+EasyPatch server, give a second copy another name (`docker compose -p …` or
+`COMPOSE_PROJECT_NAME`), or it takes over that server's containers. See
+[Get the deployment files](docs/installation.md#1-get-the-deployment-files).
+
 Then:
 
 1. Open `https://<EASYPATCH_DOMAIN>`, sign in with that email address and the printed temporary password, set up MFA
    and choose a new password.
-2. Download the agent packages (MSI, `.deb`, `.rpm` and their `.sig` files) from the
-   [release](https://github.com/paulmataruso/EasyPatch/releases/latest) into
-   `data/agent-packages/`.
+2. Download the agent packages (MSI, `.deb`, `.rpm` and their `.sig` files) of the release you
+   run into `data/agent-packages/`: from the EasyRMM repository's releases tagged `easypatch-v*`,
+   or, up to 1.10.0, from EasyPatch's
+   [former repository](https://github.com/paulmataruso/EasyPatch/releases). See
+   [Offer agent packages](docs/installation.md#6-offer-agent-packages).
 3. Create an organization, then deploy agents with an enrollment token or a deployment code.
 
 The full guides are [docs/installation.md](docs/installation.md),
@@ -264,7 +286,8 @@ The full guides are [docs/installation.md](docs/installation.md),
 ## Development
 
 Requirements: the .NET SDK pinned in `global.json` (10.0.404 or a later feature band), Node.js
-24, and Docker (the integration tests start PostgreSQL with Testcontainers).
+24, and Docker (the integration tests start PostgreSQL with Testcontainers). Run these from
+`easypatch/`:
 
 ```bash
 dotnet build EasyPatch.slnx -c Release
@@ -281,11 +304,14 @@ verification and compliance.
 
 The agent builds and tests on Linux with `scripts/build-agent.sh`. The MSIs can be built on
 Linux with Docker (`scripts/build-msi-linux.sh`, which runs WiX under Wine) or on Windows with
-`scripts/build-agent.ps1`, which can also sign them. The `agent` GitHub Actions workflow builds
-them on Windows. `scripts/build-linux-packages.sh` builds the signed `.deb` and `.rpm`
-packages of the Linux agent (Docker). Pushing a version tag (`v1.10.0`) runs the `release`
-workflow, which tests everything, builds and release-signs the agent packages, publishes the x64
-and ARM64 images to GitHub Container Registry and creates the GitHub Release.
+`scripts/build-agent.ps1`, which can also sign them. The EasyPatch agent workflow
+(`.github/workflows/easypatch-agent.yml` at the repository root, run by `ci.yml` when the agent
+changes) builds them on Windows. `scripts/build-linux-packages.sh` builds the signed `.deb` and
+`.rpm` packages of the Linux agent (Docker). Pushing an EasyPatch version tag
+(`easypatch-v<version>`) runs `easypatch-release.yml`, which tests everything, builds and
+release-signs the agent packages, publishes the x64 and ARM64 images to GitHub Container Registry
+and creates the GitHub Release. How EasyPatch shares the repository and its CI with EasyRMM is in
+[docs/development/monorepo.md](../docs/development/monorepo.md).
 
 ```
 shared/      Contracts shared by agent and server (DTOs, request signing, update classification)
@@ -348,5 +374,9 @@ License** ([FSL-1.1-ALv2](LICENSE.md)). Copyright 2026 DHI Technical Services LL
 * Each version becomes available under the Apache License 2.0 two years after it is released.
 * For a commercial license, contact DHI Technical Services LLC at
   [paulmataruso@dhitechnical.com](mailto:paulmataruso@dhitechnical.com).
+
+This license covers `easypatch/` only. The rest of the EasyRMM repository is EasyRMM's code,
+under the GNU Affero General Public License v3.0 or later; see
+[LICENSING.md](../LICENSING.md).
 
 Third-party components keep their own licenses.

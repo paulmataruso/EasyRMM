@@ -103,11 +103,18 @@ EasyRMM's own names work as usual.
 
 ## Step 2: EasyPatch
 
-Follow EasyPatch's installation guide (`docs/installation.md` in its
-repository) up to **3. Start**, without starting it: get the files, run
+Follow EasyPatch's
+[installation guide](../../easypatch/docs/installation.md) up to
+**3. Start**, without starting it: get the files, run
 `./scripts/init-secrets.sh`, and set `EASYPATCH_DOMAIN=patch.example.com`
 and `ACME_EMAIL` in its `.env`. Leave `EASYPATCH_PUBLIC_URL` unset: its
 default, `https://patch.example.com`, is right.
+
+EasyPatch's directory is the `easypatch/` folder of the checkout that guide
+makes; the commands below call it `easypatch/`. Use a checkout of its own,
+not EasyRMM's `easyrmm/`: each is upgraded by checking out its own release
+tag. A server installed from EasyPatch's former repository uses that
+checkout instead.
 
 Copy EasyRMM's two files for EasyPatch into EasyPatch's directory, next to
 its `docker-compose.yml`:
@@ -250,13 +257,13 @@ If you change Caddy's loopback ports, change them in both places:
 * **Neither product sets a cookie for the parent domain.** Their sign-in
   cookies are `__Host-` cookies, bound to each product's own name.
 
-## For EasyPatch's maintainers
+## Possible improvements to EasyPatch
 
 EasyPatch 1.9.0 needs no change for this. Optional improvements:
 
 * Ship `Caddyfile.easyrmm` in the `easypatch-proxy` image, next to
-  `Caddyfile` and `Caddyfile.dev`. Ship `docker-compose.easyrmm.yml` in the
-  repository. Users would then copy nothing, and the override would not
-  need its `volumes` line.
-* Mention co-hosting in EasyPatch's installation guide, including the
-  `COMPOSE_FILE` line.
+  `Caddyfile` and `Caddyfile.dev`. Keep `docker-compose.easyrmm.yml` in
+  `easypatch/`, next to its `docker-compose.yml`. Users would then copy
+  nothing, and the override would not need its `volumes` line.
+* Describe co-hosting in EasyPatch's installation guide, including the
+  `COMPOSE_FILE` line. It only links to this guide so far.

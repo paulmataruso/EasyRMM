@@ -322,7 +322,7 @@ func (s *Service) Token(ctx context.Context, req TokenRequest) (TokenResponse, e
 	idToken, err := s.idToken(ctx, idClaims{
 		Issuer: s.issuer, Audience: clientID, Subject: userID.String(),
 		IssuedAt: now.Unix(), Expiry: now.Add(IDTokenLifetime).Unix(), AuthTime: unixOrZero(authTime),
-		Nonce: nonce, Name: name, Email: email, EmailVerified: false, AMR: amr, EasyPatch: *acc,
+		Nonce: nonce, Name: name, Email: email, EmailVerified: false, AMR: tokenAMR(amr), EasyPatch: *acc,
 	})
 	if err != nil {
 		return TokenResponse{}, err
@@ -360,6 +360,17 @@ type idClaims struct {
 	EmailVerified bool             `json:"email_verified"`
 	AMR           []string         `json:"amr"`
 	EasyPatch     easypatch.Access `json:"easypatch"`
+}
+
+// tokenAMR is the session's methods with "mfa" added. Only multi-factor
+// sessions get a token, and EasyPatch counts a second factor by "mfa" alone
+// (ADR-0036): it cannot know that EasyRMM's "rc" is a second factor.
+func tokenAMR(amr []string) []string {
+	out := slices.Clone(amr)
+	if !slices.Contains(out, auth.MethodMultiFactor) {
+		out = append(out, auth.MethodMultiFactor)
+	}
+	return out
 }
 
 func (s *Service) idToken(ctx context.Context, claims idClaims) (string, error) {
