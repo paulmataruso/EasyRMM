@@ -855,6 +855,10 @@ type AgentPackage struct {
 	IsLatest bool `json:"isLatest"`
 	// Format is msi, deb, rpm or pkg.
 	Format string `json:"format"`
+	// ReleaseKeyID names the release key of the package's valid .sig;
+	// empty without one. SignatureProblem says why a .sig was ignored.
+	ReleaseKeyID     string `json:"releaseKeyId"`
+	SignatureProblem string `json:"signatureProblem"`
 }
 
 // AgentPackages lists the agent packages EasyPatch hosts.

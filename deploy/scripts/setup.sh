@@ -186,7 +186,7 @@ if [[ $(id -u) -ne 0 ]]; then
   echo "  ${data_root}/tls (mode 750)" >&2
   echo "  ${data_root}/meshcentral-config (owner 65532:65532, mode 700)" >&2
   echo "  ${data_root}/meshcentral/{data,files,backups} (owner 65532:65532, mode 700)" >&2
-  echo "  ${data_root}/easypatch/{keys,agent-packages,winget} (owner 1654:1654, mode 700)" >&2
+  echo "  ${data_root}/easypatch/{keys,winget} (owner 1654:1654, mode 700)" >&2
   exit 0
 fi
 install -d -m 0755 "$data_root"
@@ -201,9 +201,10 @@ install -d -m 0755 "$data_root/meshcentral"
 for d in data files backups; do
   install -d -m 0700 -o 65532 -g 65532 "$data_root/meshcentral/$d"
 done
-# The patching engine's image runs as its "app" user, uid 1654.
+# The patching engine's image runs as its "app" user, uid 1654. Its agent
+# packages come with the image.
 install -d -m 0755 "$data_root/easypatch"
-for d in keys agent-packages winget; do
+for d in keys winget; do
   install -d -m 0700 -o 1654 -g 1654 "$data_root/easypatch/$d"
 done
 echo "Data directories ready under ${data_root}."

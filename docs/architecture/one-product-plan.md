@@ -271,6 +271,13 @@ carries the agent packages of its own version, signed by the release
 workflow, the way EasyRMM's server image carries EasyRMM's agents. CI images
 carry packages signed with a test key that only test agents trust.
 
+*Done (B6, [ADR-0041](adr/0041-agent-packages-in-the-engine-image.md)):
+Windows and Linux packages only (macOS stays out while experimental); each
+signature is checked against the committed public key before the build, and
+the image is checked after it. CI makes its test key per run and checks that
+the release key refuses those packages. An image built from source carries
+none until B8 publishes the engine's image.*
+
 **B7. Installs addressed by IP.**
 
 * On Windows, the EasyPatch agent receives EasyRMM's internal CA.

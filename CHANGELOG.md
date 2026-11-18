@@ -54,6 +54,12 @@ All notable changes to this project are documented here. The format follows
   moved to another site takes its endpoint with it; one moved to another
   organization, or deleted, has its EasyPatch agent uninstall itself, and
   the endpoint is revoked if it has not within 7 days.
+- **Agent packages in the engine's image** (phase B6, ADR-0041): a released
+  engine image carries the EasyPatch agent's Windows and Linux packages of its
+  version with their release signatures, checked against the release public
+  key before the build and in the image after it. EasyRMM's compose file no
+  longer mounts a package directory, so there is nothing to download or copy.
+  CI images carry Linux packages signed with a key made for the run.
 - **Organization time zones**: organizations have a time zone (default UTC;
   the browser's for a new one), which patching reports use.
 - **Stop patching for a device**: the device's Patches tab can stop

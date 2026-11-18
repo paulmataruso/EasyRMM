@@ -265,8 +265,9 @@ services:
       # the same one. Only the API checks statements.
       EasyRmm__GatewayKey: ${EASYRMM_PATCHING_KEY:-}
     volumes:
+      # Agent packages come with the image, release-signed (plan, B6): no
+      # directory here, which would hide them.
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/keys:/app/keys
-      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/agent-packages:/app/agent-packages:ro
       # The server's copy of winget for agents that cannot reach GitHub,
       # downloaded by the worker.
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/winget:/app/winget:ro
@@ -305,7 +306,6 @@ services:
       # Read-only: the worker decrypts notification secrets with the keys the
       # API creates.
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/keys:/app/keys:ro
-      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/agent-packages:/app/agent-packages:ro
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/winget:/app/winget
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:18181/health"]

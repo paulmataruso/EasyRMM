@@ -716,10 +716,25 @@ func TestContract(t *testing.T) {
 		}
 	})
 
+	// Whatever packages the image carries (ADR-0041) are of the engine's
+	// own version, each with a valid release signature. CI's contract image
+	// carries none; build one with scripts/build-test-agent-packages.sh to
+	// check them.
 	run("agent packages", func(t *testing.T) {
-		if _, err := ep.AgentPackages(ctx); err != nil {
-			t.Error(err)
+		list, err := ep.AgentPackages(ctx)
+		if err != nil {
+			t.Fatal(err)
 		}
+		info, err := ep.ServerInfo(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range list {
+			if p.Version != info.Version || p.ReleaseKeyID == "" || p.SignatureProblem != "" || !p.IsLatest {
+				t.Errorf("package %+v on a %s engine", p, info.Version)
+			}
+		}
+		t.Logf("%d agent packages", len(list))
 	})
 
 	run("actions name the EasyRMM user in EasyPatch's audit log", func(t *testing.T) {

@@ -7,6 +7,13 @@ the web console and the agents share one version number.
 
 ### Added
 
+- The server image carries the agent packages of its own version: the release workflow stages the
+  Windows and Linux packages it signed, after checking each signature against the release public
+  key, into `/app/agent-packages`, owned by root and read-only to the server
+  (`scripts/stage-agent-packages.sh`, `scripts/check-image-agent-packages.sh`). CI images carry
+  Linux packages signed with a key made for the run (`scripts/build-test-agent-packages.sh`),
+  which the release key refuses. The standalone compose file still mounts `data/agent-packages/`
+  over them.
 - As EasyRMM's patching engine, the administrator API accepts EasyRMM's statements
   (`X-EasyRMM-Assertion`, EasyRMM's ADR-0038) when `EasyRmm__GatewayKey` is set: each is good
   for one request for 30 seconds and acts with the role and organizations it names, through the

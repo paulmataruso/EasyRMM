@@ -5,8 +5,10 @@
 `ghcr.io/paulmataruso/easypatch-proxy:@VERSION@`. New installation: [docs/installation.md](https://github.com/paulmataruso/EasyRMM/blob/easypatch-v@VERSION@/easypatch/docs/installation.md).
 Upgrade: back up, check out `easypatch-v@VERSION@`, set `EASYPATCH_VERSION=@VERSION@` in `.env`, then `docker compose pull && docker compose up -d`.
 
-**Agents**: copy the packages you need, with their `.sig` files, into the server's `data/agent-packages/` directory.
-Agents (Windows 1.2.0 and later, all Linux agents) then update themselves when the *Agent updates* policy is *Automatic*.
+**Agents**: the server image carries this release's Windows and Linux packages with their `.sig` files, so the server
+offers them as soon as it runs. The standalone compose file mounts `data/agent-packages/` over them: there, copy the
+packages you need, with their `.sig` files, into that directory. Agents (Windows 1.2.0 and later, all Linux agents)
+then update themselves when the *Agent updates* policy is *Automatic*.
 
 | File | For |
 |---|---|

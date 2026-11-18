@@ -33,3 +33,6 @@ appsettings.Local.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Agent packages staged for the server image (scripts/stage-agent-packages.sh); built, never committed.
+deployment/server/agent-packages/EasyPatchAgent-*

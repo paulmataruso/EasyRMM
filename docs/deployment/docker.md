@@ -213,11 +213,20 @@ treat it like the other secrets in `.env`. Compose then also runs:
 | `easypatch-api` | The engine, on `127.0.0.1:18180` only, as `easypatch_app` |
 | `easypatch-worker` | Background work, health on `127.0.0.1:18181` only. Needs outbound HTTPS to Microsoft's update and security feeds, CISA's catalogue of exploited vulnerabilities, the Debian security tracker and GitHub (winget) |
 
-The engine's data-protection keys, agent packages and winget copy are under
+The engine's data-protection keys and winget copy are under
 `${EASYRMM_DATA_ROOT}/easypatch/` (owner 1654, the image's user). Back up
 the keys with the database: they decrypt the engine's stored mail and
-webhook credentials. Until releases carry the engine's image, Compose builds
-it from this repository.
+webhook credentials.
+
+**Agent packages come with the engine's image**: a released image carries
+the EasyPatch agent's Windows and Linux packages of its own version, each
+with its release signature, read-only. There is nothing to download or copy
+([ADR-0041](../architecture/adr/0041-agent-packages-in-the-engine-image.md)).
+Until releases carry the engine's image, Compose builds it from this
+repository, **without agent packages**, so EasyRMM cannot install the
+EasyPatch agent. For a test install, `easypatch/scripts/build-test-agent-packages.sh`
+(needs the .NET SDK) stages Linux packages signed with a throwaway key
+before `docker compose build`. Their agents trust only that key.
 
 With `EASYRMM_PATCHING=bundled`, EasyRMM's patching pages use the engine
 instead of a connected EasyPatch server:

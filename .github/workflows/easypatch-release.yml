@@ -1,5 +1,6 @@
 # Builds, signs and publishes an EasyPatch release when an EasyPatch version tag (easypatch-v1.4.0) is pushed:
-#   * server and proxy images for x64 and ARM64 on GitHub Container Registry;
+#   * server and proxy images for x64 and ARM64 on GitHub Container Registry, the server image carrying this
+#     release's Windows and Linux agent packages with their release signatures;
 #   * Windows MSIs, Linux .deb/.rpm packages and experimental macOS .pkg packages (x64, ARM64), each with a .sig
 #     release signature;
 #   * a GitHub Release for the tag with the packages, SHA256SUMS, the release public key and the CHANGELOG notes,
@@ -242,7 +243,7 @@ jobs:
 
   images:
     name: Images (${{ matrix.arch }})
-    needs: [prepare, backend, frontend]
+    needs: [prepare, backend, frontend, windows-agent, linux-agent]
     strategy:
       matrix:
         include:
@@ -259,6 +260,23 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: easypatch/global.json
+      # The server image carries this release's Windows and Linux agent packages (one-product plan, B6). The macOS
+      # packages stay out while they are experimental.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-agent
+          path: easypatch/dist/agent
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: linux-agent
+          path: easypatch/dist/agent
+      - name: Stage the release-signed agent packages
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: scripts/stage-agent-packages.sh --version "$VERSION" --public-key "$PUBLIC_KEY" --formats msi,deb,rpm dist/agent
       - name: Build
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -280,6 +298,11 @@ jobs:
             --label "org.opencontainers.image.title=EasyPatch proxy" \
             --label "org.opencontainers.image.description=Caddy with the EasyPatch web console" \
             -t "ghcr.io/${owner}/easypatch-proxy:${VERSION}-${ARCH}" .
+      - name: The server image carries the release's agent packages, read-only
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: scripts/check-image-agent-packages.sh "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easypatch-server:${VERSION}-${ARCH}"
       - name: Check images contain no secrets or source-control metadata
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
