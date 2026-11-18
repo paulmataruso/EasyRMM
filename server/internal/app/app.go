@@ -199,7 +199,13 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 		if err != nil {
 			return nil, err
 		}
-		if err := d.EasyPatch.UseEngine(ctx, engine); err != nil {
+		var opts []easypatch.EngineOption
+		if cfg.TLSMode == config.TLSInternal && d.PKI != nil {
+			// The engine's public address is EasyRMM's, with EasyRMM's own
+			// certificate authority: agents are given it (B7).
+			opts = append(opts, easypatch.AgentCA(d.PKI.CAPEM))
+		}
+		if err := d.EasyPatch.UseEngine(ctx, engine, opts...); err != nil {
 			return nil, fmt.Errorf("patching engine: %w", err)
 		}
 		log.Info("patching: the engine in this deployment", "url", p.URL)

@@ -34,6 +34,9 @@ var errBundled = apperr.Conflict("patching_bundled",
 // engine is the patching engine and what EasyRMM last saw of it.
 type engine struct {
 	client *Client
+	// agentCA, when set, gives the certificate authority of the engine's
+	// public address, for EasyPatch agents to trust (one-product plan, B7).
+	agentCA func() []byte
 
 	mu          sync.Mutex
 	info        ServerInfo
@@ -42,11 +45,23 @@ type engine struct {
 	lastErrorAt *time.Time
 }
 
+// EngineOption configures UseEngine.
+type EngineOption func(*engine)
+
+// AgentCA has EasyPatch agents installed through EasyRMM trust ca (PEM)
+// for the engine's public address, which is EasyRMM's: its own authority
+// when EasyRMM is addressed by IP (EASYRMM_TLS_MODE=internal). The Windows
+// agent gets it as the MSI's SERVERCACERT, the Linux agent with enroll's
+// --server-ca, each for that one server only.
+func AgentCA(ca func() []byte) EngineOption {
+	return func(e *engine) { e.agentCA = ca }
+}
+
 // UseEngine makes the connector use the patching engine in this deployment
 // through c (NewEngineClient). An EasyPatch server set up in Settings
 // before is forgotten, with its links, which name that server's ids: as
 // when Settings switches to another server. Call it before use.
-func (s *Service) UseEngine(ctx context.Context, c *Client) error {
+func (s *Service) UseEngine(ctx context.Context, c *Client, opts ...EngineOption) error {
 	if c == nil || !c.Engine() {
 		return apperr.Invalid("engine", "not an engine client")
 	}
@@ -70,7 +85,11 @@ func (s *Service) UseEngine(ctx context.Context, c *Client) error {
 	if err != nil {
 		return err
 	}
-	s.engine = &engine{client: c}
+	e := &engine{client: c}
+	for _, o := range opts {
+		o(e)
+	}
+	s.engine = e
 	s.fleet.clear()
 	return nil
 }
@@ -109,7 +128,11 @@ func (e *engine) row(ctx context.Context, now time.Time, force bool) *connRow {
 			e.lastError, e.lastErrorAt = cut(err.Error(), 1000), &now
 		}
 	}
-	return &connRow{url: e.client.base.String(), version: e.info.Version, publicURL: e.info.PublicURL,
+	var ca string
+	if e.agentCA != nil {
+		ca = string(e.agentCA())
+	}
+	return &connRow{url: e.client.base.String(), caCert: ca, version: e.info.Version, publicURL: e.info.PublicURL,
 		capabilities: append([]string{}, e.info.Capabilities...), canOperate: true, checkedAt: e.checkedAt,
 		lastError: e.lastError, lastErrorAt: e.lastErrorAt}
 }

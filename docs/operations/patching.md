@@ -141,13 +141,17 @@ Requirements:
 * An EasyRMM agent that reports the EasyPatch agent's install state (this
   release or later). An older one waits, with a note, until it updates.
 * **Linux**: systemd, and apt-get or dnf. If EasyPatch's certificate comes
-  from a private authority, add that authority to the device's certificate
-  store first (`/usr/local/share/ca-certificates` and
-  `update-ca-certificates`, or `/etc/pki/ca-trust/source/anchors` and
-  `update-ca-trust`). The EasyPatch agent trusts that store only, and
-  EasyRMM does not change it.
+  from a private authority (the one you gave EasyRMM, or with the bundled
+  engine and `EASYRMM_TLS_MODE=internal`, EasyRMM's own), EasyRMM gives it to
+  the EasyPatch agent at enrollment (`--server-ca`), which trusts it for
+  EasyPatch's address only. EasyPatch agents from before that option trust
+  only the device's certificate store: EasyRMM then enrolls them without it,
+  and you add the authority to the store first
+  (`/usr/local/share/ca-certificates` and `update-ca-certificates`, or
+  `/etc/pki/ca-trust/source/anchors` and `update-ca-trust`). EasyRMM does not
+  change the store.
 * **Windows**: nothing more; the MSI is given the CA certificate
-  (`SERVERCACERT`).
+  (`SERVERCACERT`), and trusts it for EasyPatch's address only.
 * One install at a time per device, for at most 20 minutes. An EasyRMM
   agent update waits for it.
 

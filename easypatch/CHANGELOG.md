@@ -7,6 +7,10 @@ the web console and the agents share one version number.
 
 ### Added
 
+- The Linux agent's `enroll --server-ca <file>` trusts that certificate authority (PEM or DER) for
+  the connection to the server only, as the MSI's `SERVERCACERT` does on Windows, for a server
+  with a private certificate. It is kept in `agent.conf` (`ServerCaCertificate`); the system's
+  certificate store is unchanged. A certificate that is not an authority is refused.
 - The server image carries the agent packages of its own version: the release workflow stages the
   Windows and Linux packages it signed, after checking each signature against the release public
   key, into `/app/agent-packages`, owned by root and read-only to the server

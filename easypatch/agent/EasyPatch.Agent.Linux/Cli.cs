@@ -5,6 +5,7 @@ using EasyPatch.Agent.Core.Abstractions;
 using EasyPatch.Agent.Core.Enrollment;
 using EasyPatch.Agent.Core.Logging;
 using EasyPatch.Agent.Core.Runtime;
+using EasyPatch.Agent.Core.Security;
 using EasyPatch.Agent.Core.State;
 using EasyPatch.Communication;
 using EasyPatch.Contracts.Json;
@@ -41,7 +42,7 @@ internal static class Cli
 
     public static async Task<int> EnrollAsync(string[] args)
     {
-        var options = CliArguments.Parse(args, ["--server", "--token-file", "--deployment-code", "--proxy"], ["--force", "--no-start"]);
+        var options = CliArguments.Parse(args, ["--server", "--token-file", "--deployment-code", "--proxy", "--server-ca"], ["--force", "--no-start"]);
         var server = options.Required("--server");
         var code = options.Value("--deployment-code");
         var tokenFile = options.Value("--token-file");
@@ -51,6 +52,8 @@ internal static class Cli
         {
             throw new CliUsageException("Specify either --token-file or --deployment-code, not both.");
         }
+
+        var serverCa = ReadServerCa(options.Value("--server-ca"));
 
         Uri serverUrl;
         try
@@ -111,7 +114,7 @@ internal static class Cli
                 await runtime.UnenrollAsync("Re-enrolled from the command line (--force).", unenrollTimeout.Token);
             }
 
-            ConfFileBootstrapSource.Write(LinuxComposition.ConfigPath, new BootstrapConfig(serverUrl.ToString(), token, code, proxy),
+            ConfFileBootstrapSource.Write(LinuxComposition.ConfigPath, new BootstrapConfig(serverUrl.ToString(), token, code, proxy, serverCa?.Base64),
                 new ConfFileBootstrapSource(LinuxComposition.ConfigPath).ReadValue("LogLevel"));
 
             EnrollmentOutcome outcome;
@@ -166,6 +169,40 @@ internal static class Cli
             {
                 await SystemctlAsync("start");
             }
+        }
+    }
+
+    /// <summary>
+    /// The certificate authority in the <c>--server-ca</c> file (PEM or base64 DER): trusted for the connection to the
+    /// server only, besides the system's, as the MSI's SERVERCACERT is on Windows. For a server whose certificate comes
+    /// from a private authority, such as one addressed by IP.
+    /// </summary>
+    private static ServerCertificateAuthority? ReadServerCa(string? path)
+    {
+        if (path is null)
+        {
+            return null;
+        }
+
+        string text;
+        try
+        {
+            text = File.ReadAllText(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new CliUsageException($"Cannot read --server-ca {path}: {ex.Message}");
+        }
+
+        try
+        {
+            var authority = ServerCertificateAuthority.Parse(text);
+            Console.WriteLine($"Trusting {authority.Subject} (SHA-256 {authority.Sha256}) for the connection to the server.");
+            return authority;
+        }
+        catch (ArgumentException ex)
+        {
+            throw new CliUsageException(ex.Message.Replace("(SERVERCACERT)", "(--server-ca)", StringComparison.Ordinal));
         }
     }
 
@@ -373,11 +410,14 @@ internal static class Cli
             Usage: easypatch-agent <command> [options]
 
               run                       Run the agent (default; used by the easypatch-agent systemd service).
-              enroll --server <url> (--token-file <path|-> | --deployment-code <code>) [--proxy <url>] [--force] [--no-start]
+              enroll --server <url> (--token-file <path|-> | --deployment-code <code>) [--proxy <url>]
+                     [--server-ca <file>] [--force] [--no-start]
                                         Enroll this computer. A token enrolls immediately; a deployment code
                                         creates a request an administrator must approve in the console.
                                         The token is read from a file, from standard input (--token-file -)
                                         or from {TokenEnvironmentVariable}; it is never accepted as an argument.
+                                        --server-ca trusts that certificate authority (PEM) for the connection
+                                        to the server only, for a server with a private certificate.
               status [--json]           Show enrollment and agent status.
               scan [--json]             List the package updates this computer would report (refreshes the package
                                         lists; installs nothing and does not contact the server).

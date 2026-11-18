@@ -381,8 +381,10 @@ func tail(out []byte) string {
 }
 
 // enrollError explains the EasyPatch agent's enroll exit codes, which are
-// the same on Windows and Linux.
-func enrollError(code int, out []byte, p *agentproto.EasyPatchInstallPayload, linux bool) error {
+// the same on Windows and Linux. storeOnly says the agent was not given the
+// instruction's certificate authority (a Linux agent from before
+// --server-ca), so it trusts only the system's certificate store.
+func enrollError(code int, out []byte, p *agentproto.EasyPatchInstallPayload, storeOnly bool) error {
 	switch code {
 	case 0:
 		return nil
@@ -396,8 +398,8 @@ func enrollError(code int, out []byte, p *agentproto.EasyPatchInstallPayload, li
 		return errors.New("the EasyPatch agent's enrollment needs administrator rights, which the EasyRMM agent does not have here (exit code 5)")
 	case 6:
 		msg := "the EasyPatch agent could not reach EasyPatch at " + p.ServerURL + " (exit code 6)"
-		if linux && p.CACert != "" {
-			msg += ". On Linux it trusts only the system's certificate store, so EasyPatch's certificate authority must be added there; EasyRMM does not change it"
+		if storeOnly && p.CACert != "" {
+			msg += ". This EasyPatch agent is too old to be given EasyPatch's certificate authority (--server-ca) and trusts only the system's certificate store: add the authority there, or offer a newer EasyPatch agent package; EasyRMM does not change the store"
 		}
 		return errors.New(msg + ". Its enrollment token is revoked: install again once the device can reach EasyPatch")
 	case 7:

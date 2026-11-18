@@ -286,6 +286,14 @@ none until B8 publishes the engine's image.*
   agent's pinned-CA option (to build if missing).
 * The installation guide says so.
 
+*Done (B7, [ADR-0042](adr/0042-agents-trust-easyrmms-authority.md)): the
+Linux agent's pinned-CA option was missing and is built (`enroll
+--server-ca`, trusted for that server only). With the bundled engine and
+`EASYRMM_TLS_MODE=internal`, install instructions carry EasyRMM's own
+authority, so Windows and Linux agents enroll without changes to the
+device's store. Older Linux agents are enrolled without the option and
+need the store.*
+
 **B8. One release.**
 
 * EasyRMM's release workflow builds EasyPatch's server image and agent

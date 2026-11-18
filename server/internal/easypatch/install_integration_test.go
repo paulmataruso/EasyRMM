@@ -3,9 +3,18 @@
 package easypatch
 
 import (
+	"bytes"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"io"
+	"log/slog"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +24,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
+	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 )
@@ -515,4 +525,93 @@ func TestCAForAgent(t *testing.T) {
 	if got := caForAgent(bundle); got != ep.CAPEM {
 		t.Errorf("bundle: %q", got)
 	}
+}
+
+// TestBundledInstall: with the engine in this deployment, an install goes to
+// the organization and site EasyRMM keeps there (ADR-0040), and, when
+// EasyRMM is addressed by IP with its own certificate authority, carries
+// that authority for the EasyPatch agent to trust (one-product plan, B7).
+func TestBundledInstall(t *testing.T) {
+	f := newFixture(t)
+	engine := eptest.NewEngine(t, reconcileKey)
+	caPEM := testAuthority(t)
+	start := func(opts ...EngineOption) ed25519.PublicKey {
+		signer, err := NewSigner(reconcileKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client, err := NewEngineClient(engine.URL(), signer, "1.0.0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.svc = New(f.db, audit.New(f.db, nil), nil, "1.0.0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+		if err := f.svc.UseEngine(f.ctx, client, opts...); err != nil {
+			t.Fatal(err)
+		}
+		pub, priv, _ := ed25519.GenerateKey(nil)
+		f.svc.SetSigner(priv)
+		return pub
+	}
+	instruction := func(pub ed25519.PublicKey, device uuid.UUID) agentproto.EasyPatchInstallPayload {
+		t.Helper()
+		if res, err := f.svc.InstallAgent(f.ctx, f.admin, ActionInput{DeviceIDs: []uuid.UUID{device}}); err != nil || res.Succeeded != 1 {
+			t.Fatalf("install: %+v, %v", res, err)
+		}
+		s := f.svc.AgentHeartbeat(f.ctx, device, &agentproto.EasyPatchInstallStatus{})
+		if s == nil {
+			t.Fatal("no instruction")
+		}
+		p, err := agentproto.VerifyEasyPatchInstall(pub, *s, device.String(), time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	agentDevice := func(name, platform string) uuid.UUID {
+		d := f.id(`INSERT INTO devices (organization_id, site_id, name, hostname, platform, agent_public_key, agent_arch, enrolled_at)
+			VALUES ($1, $2, $3, lower($3), $4, $5, 'amd64', now()) RETURNING id`, f.acme, f.hq, name, platform, bytes.Repeat([]byte(name[:1]), 32))
+		f.report(d, "", nil)
+		return d
+	}
+
+	pub := start(AgentCA(func() []byte { return caPEM }))
+	f.reconcile()
+	lin := agentDevice("lin-01", "linux")
+	p := instruction(pub, lin)
+	if p.CACert != string(caPEM) || p.ServerURL != "https://patch.example.com" || len(p.Packages) != 2 {
+		t.Fatalf("instruction: %+v", p)
+	}
+	var tok *eptest.Token
+	for _, x := range engine.Tokens() {
+		if x.Org == f.engineOrg(f.acme) {
+			tok = &x
+		}
+	}
+	if tok == nil || tok.Site == nil || *tok.Site != f.engineSite(f.hq) {
+		t.Fatalf("enrollment token: %+v", tok)
+	}
+
+	// Addressed by name: nothing to trust beyond the system's.
+	pub = start()
+	win := agentDevice("win-01", "windows")
+	if p := instruction(pub, win); p.CACert != "" || p.Packages[0].Format != agentproto.EasyPatchMSI {
+		t.Fatalf("by name: %+v", p)
+	}
+}
+
+// testAuthority is a certificate authority's certificate (PEM).
+func testAuthority(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "EasyRMM test authority"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true,
+		KeyUsage: x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }

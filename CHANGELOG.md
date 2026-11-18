@@ -60,6 +60,13 @@ All notable changes to this project are documented here. The format follows
   key before the build and in the image after it. EasyRMM's compose file no
   longer mounts a package directory, so there is nothing to download or copy.
   CI images carry Linux packages signed with a key made for the run.
+- **Patching on installs addressed by IP** (phase B7, ADR-0042): with the
+  bundled engine and `EASYRMM_TLS_MODE=internal`, EasyRMM gives the EasyPatch
+  agents its own certificate authority, which they trust for EasyRMM's
+  address only: the Windows MSI as `SERVERCACERT`, the Linux agent with the
+  new `enroll --server-ca`. A connected EasyPatch server's authority now
+  reaches Linux agents the same way. Linux agents from before that option
+  are enrolled without it, and need the authority in the device's store.
 - **Organization time zones**: organizations have a time zone (default UTC;
   the browser's for a new one), which patching reports use.
 - **Stop patching for a device**: the device's Patches tab can stop

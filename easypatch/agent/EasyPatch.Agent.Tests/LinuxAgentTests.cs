@@ -670,6 +670,21 @@ public sealed class LinuxBootstrapTests : IDisposable
     }
 
     [Fact]
+    public void The_servers_certificate_authority_is_kept_with_the_settings_after_the_secret_is_used()
+    {
+        var path = Path.Combine(_directory.Path, "agent.conf");
+        ConfFileBootstrapSource.Write(path, new BootstrapConfig("https://10.0.0.5/", "secret-token", null, null, "TUlJQmZha2U="));
+        var source = new ConfFileBootstrapSource(path);
+        Assert.Equal("TUlJQmZha2U=", source.Read().ServerCaCertificate);
+
+        source.ClearEnrollmentSecrets();
+
+        Assert.Null(source.Read().EnrollmentToken);
+        Assert.Equal("TUlJQmZha2U=", source.Read().ServerCaCertificate);
+        Assert.Null(new ConfFileBootstrapSource(Path.Combine(_directory.Path, "none.conf")).Read().ServerCaCertificate);
+    }
+
+    [Fact]
     public void A_world_readable_settings_file_is_restricted_when_read()
     {
         var path = Path.Combine(_directory.Path, "agent.conf");

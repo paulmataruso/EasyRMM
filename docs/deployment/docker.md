@@ -248,9 +248,13 @@ instead of a connected EasyPatch server:
   `/downloads/winget/`) and nothing else of it
   ([ADR-0039](../architecture/adr/0039-agents-on-easyrmms-name.md)).
   EasyRMM installs the EasyPatch agent itself; EasyPatch's own install
-  one-liners (`/downloads/install/`) do not work on EasyRMM's name. With a
-  certificate from EasyRMM's own authority rather than a public one, the
-  EasyPatch agent does not trust EasyRMM's name yet (phase B7).
+  one-liners (`/downloads/install/`) do not work on EasyRMM's name.
+* **Installs addressed by IP** (`EASYRMM_TLS_MODE=internal`): EasyRMM gives
+  the EasyPatch agents its own certificate authority, which they trust for
+  EasyRMM's address only: the Windows MSI as `SERVERCACERT`, the Linux
+  agent with `enroll --server-ca`
+  ([ADR-0042](../architecture/adr/0042-agents-trust-easyrmms-authority.md)).
+  Nothing is added to the device's own certificate store.
 
 ## Security posture of the containers
 

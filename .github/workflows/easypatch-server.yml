@@ -96,18 +96,24 @@ jobs:
         env:
           EASYPATCH_DOMAIN: ci.invalid
           ACME_EMAIL: ci@ci.invalid
+        # The images are listed here, where compose has its variables, for the checks below.
         run: |
           mkdir -p secrets && printf 'ci-placeholder' > secrets/db_password
           docker compose config --quiet
           docker compose build
           rm -f secrets/db_password
+          docker compose config --images | grep easypatch- | sort -u > "$RUNNER_TEMP/images"
+          grep -q easypatch-server "$RUNNER_TEMP/images"
+          grep -q easypatch-proxy "$RUNNER_TEMP/images"
       - name: The server image carries the staged agent packages, read-only
-        run: scripts/check-image-agent-packages.sh "$(docker compose config --images | grep easypatch-server | head -n1)"
+        run: scripts/check-image-agent-packages.sh "$(grep easypatch-server "$RUNNER_TEMP/images")"
       - name: Check images contain no secrets or source-control metadata
         run: |
-          for image in $(docker compose config --images | grep easypatch-); do
-            if docker run --rm --entrypoint sh "$image" -c 'find / -xdev \( -name ".env" -o -name "db_password" -o -name "*.pfx" -o -name ".git" \) -not -path "/proc/*" 2>/dev/null' | grep .; then
+          [ -s "$RUNNER_TEMP/images" ]
+          while read -r image; do
+            if docker run --rm --entrypoint sh "$image" -c 'find / -xdev \( -name ".env" -o -name "db_password" -o -name "*.pfx" -o -name ".git" \) -not -path "/proc/*" 2>/dev/null' < /dev/null | grep .; then
               echo "unexpected file in $image" >&2
               exit 1
             fi
-          done
+            echo "$image: no secrets or source-control metadata"
+          done < "$RUNNER_TEMP/images"

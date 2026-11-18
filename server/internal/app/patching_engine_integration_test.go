@@ -43,9 +43,11 @@ func TestPatchingEngineAPI(t *testing.T) {
 		ServerVersion string `json:"serverVersion"`
 		CanOperate    bool   `json:"canOperate"`
 		LastError     string `json:"lastError"`
+		CACert        string `json:"caCert"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch", nil, &conn)
-	if !conn.Configured || !conn.Bundled || conn.URL != engine.URL() || conn.ServerVersion != "1.9.0" || !conn.CanOperate || conn.LastError != "" {
+	if !conn.Configured || !conn.Bundled || conn.URL != engine.URL() || conn.ServerVersion != "1.9.0" || !conn.CanOperate || conn.LastError != "" ||
+		conn.CACert != "" {
 		t.Fatalf("settings: %+v", conn)
 	}
 	wantStatus(t, admin.do("PUT", "/api/v1/settings/easypatch", map[string]string{"url": "https://patch.example.com", "token": "ept_" + strings.Repeat("A", 43)}),
@@ -99,6 +101,18 @@ func TestPatchingEngineAPI(t *testing.T) {
 	wantStatus(t, admin.do("POST", "/api/v1/patching/stop", map[string]any{"deviceIds": []string{}}), http.StatusUnprocessableEntity, "validation_failed")
 	wantStatus(t, admin.do("POST", "/api/v1/patching/allow", map[string]any{"deviceIds": []string{"0b5c7a3e-0000-4000-8000-000000000002"}}),
 		http.StatusNotFound, "not_found")
+
+	// Addressed by IP, with EasyRMM's own authority: EasyPatch agents are
+	// given it to trust (B7).
+	internal := newHarnessWith(t, false, func(c *config.Config) {
+		bundled(key)(c)
+		c.TLSMode = config.TLSInternal
+	})
+	admin3, _ := setUp(t, internal)
+	admin3.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch", nil, &conn)
+	if internal.deps.PKI == nil || conn.CACert != string(internal.deps.PKI.CAPEM()) || !strings.HasPrefix(conn.CACert, "-----BEGIN CERTIFICATE-----") {
+		t.Fatalf("internal TLS: %+v", conn)
+	}
 
 	// Another key than the engine's: refused, and shown as unavailable.
 	h2 := newHarnessWith(t, false, bundled(bytes.Repeat([]byte{6}, 32)))

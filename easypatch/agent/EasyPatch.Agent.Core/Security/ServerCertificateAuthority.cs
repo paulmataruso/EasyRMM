@@ -7,7 +7,7 @@ namespace EasyPatch.Agent.Core.Security;
 /// <summary>
 /// A certificate authority the agent trusts for its own connection to the EasyPatch server, and for nothing else on the
 /// computer (MSI property SERVERCACERT, recorded by the install script's <i>Skip certificate check</i> option for servers
-/// with a private CA such as Caddy's internal one). A certificate the operating system trusts is accepted as always; one
+/// with a private CA such as Caddy's internal one; on Linux, <c>easypatch-agent enroll --server-ca</c>). A certificate the operating system trusts is accepted as always; one
 /// that fails only because its issuer is unknown is accepted when it chains to this authority, is valid now and is meant
 /// for server authentication. A host-name mismatch or a missing certificate is never accepted.
 /// </summary>
@@ -26,6 +26,17 @@ public sealed class ServerCertificateAuthority
 
     /// <summary>SHA-256 of the certificate, as shown by the install script.</summary>
     public string Sha256 => _root.GetCertHashString(HashAlgorithmName.SHA256);
+
+    /// <summary>The certificate as the agent stores it (the MSI's SERVERCACERT, agent.conf): base64 DER on one line.</summary>
+    public string Base64 => Convert.ToBase64String(_root.RawData);
+
+    /// <summary>Has <paramref name="handler"/> accept the server's certificate when the operating system trusts it or it
+    /// chains to this authority (<see cref="Validate"/>).</summary>
+    public void TrustFor(SocketsHttpHandler handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        handler.SslOptions.RemoteCertificateValidationCallback = (_, certificate, chain, errors) => Validate(certificate, chain, errors);
+    }
 
     /// <summary>Reads a base64 DER (as the MSI stores it) or PEM certificate authority certificate.</summary>
     /// <exception cref="ArgumentException">The value is not a certificate, or not a certificate authority's.</exception>

@@ -53,7 +53,7 @@ later), SUSE (zypper), Arch, Alpine (musl), systems without systemd, and 32-bit 
 | Init system | systemd |
 | Privileges | Installation and the `enroll`, `scan` and `unenroll` commands need root. The service runs as root |
 | Network | Outbound HTTPS from the endpoint to the EasyPatch server. No inbound ports. apt and dnf use their own repository configuration and proxy settings |
-| TLS | The server certificate must be trusted by the system CA store (`/etc/ssl/certs` or `/etc/pki/tls`). Certificate validation cannot be disabled |
+| TLS | The server certificate must be trusted by the system CA store (`/etc/ssl/certs` or `/etc/pki/tls`), or chain to the authority given at enrollment with `--server-ca`, which the agent trusts for that server only (as the MSI's `SERVERCACERT` on Windows; for a server with a private certificate, such as one addressed by IP). Certificate validation cannot be disabled |
 | .NET | Not required: the agent is a self-contained executable |
 | Reboot detection on Red Hat | `dnf needs-restarting` (package `dnf-plugins-core` or `dnf-utils`); without it only a newer installed kernel is detected |
 
@@ -243,11 +243,14 @@ useless without the host key file. A TPM is not used.
 Usage: easypatch-agent <command> [options]
 
   run                       Run the agent (default; used by the easypatch-agent systemd service).
-  enroll --server <url> (--token-file <path|-> | --deployment-code <code>) [--proxy <url>] [--force] [--no-start]
+  enroll --server <url> (--token-file <path|-> | --deployment-code <code>) [--proxy <url>]
+         [--server-ca <file>] [--force] [--no-start]
                             Enroll this computer. A token enrolls immediately; a deployment code
                             creates a request an administrator must approve in the console.
                             The token is read from a file, from standard input (--token-file -)
                             or from EASYPATCH_ENROLLMENT_TOKEN; it is never accepted as an argument.
+                            --server-ca trusts that certificate authority (PEM) for the connection
+                            to the server only, for a server with a private certificate.
   status [--json]           Show enrollment and agent status.
   scan [--json]             List the package updates this computer would report (refreshes the package
                             lists; installs nothing and does not contact the server).
