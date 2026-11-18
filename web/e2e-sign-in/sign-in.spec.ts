@@ -156,9 +156,12 @@ test("EasyPatch: its super administrator adds EasyRMM as a provider", async () =
   await ep.getByLabel("Verification code").fill(await nextCode(ep, PATCH_ADMIN.email));
   await ep.getByRole("button", { name: "Enable two-factor authentication" }).click();
   await saveRecoveryCodes(ep);
-  const passkey = ep.getByRole("dialog", { name: "Sign in faster with a passkey" });
+  // EasyPatch offers a passkey once it has loaded the signed-in user, which can be after the page has loaded: checking once
+  // can miss it, and the offer then covers the next click until the test times out. Decline it whenever it shows.
+  await ep.addLocatorHandler(ep.getByRole("dialog", { name: "Sign in faster with a passkey" }), async (offer) => {
+    await offer.getByRole("button", { name: "Not now" }).click();
+  });
   await ep.goto(`${EASYPATCH}/settings?tab=sso`);
-  if (await passkey.isVisible().catch(() => false)) await passkey.getByRole("button", { name: "Not now" }).click();
 
   await ep.getByRole("button", { name: "Add provider" }).click();
   const dialog = ep.getByRole("dialog");
