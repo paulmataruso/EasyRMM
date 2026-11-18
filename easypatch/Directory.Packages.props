@@ -25,7 +25,7 @@
     <PackageVersion Include="Fido2" Version="4.3.3" />
     <PackageVersion Include="Fido2.Models" Version="4.3.3" />
     <PackageVersion Include="NSec.Cryptography" Version="25.4.0" />
-    <PackageVersion Include="libsodium" Version="1.0.20.1" />
+    <PackageVersion Include="libsodium" Version="1.0.22" />
     <!-- Single sign-on (OpenID Connect): discovery, JWKS and ID token validation. Microsoft IdentityModel, MIT. -->
     <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.23.0" />
     <PackageVersion Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.23.0" />
