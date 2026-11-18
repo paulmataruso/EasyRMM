@@ -47,6 +47,10 @@ type Service struct {
 	// engine is the patching engine in this deployment (UseEngine); nil
 	// when patching comes from a server set up in Settings.
 	engine *engine
+
+	// kick starts a reconcile pass (Kick); sync is what passes remember.
+	kick chan struct{}
+	sync syncState
 }
 
 // SetLocalRoute makes the connector reach the EasyPatch co-hosted on this
@@ -56,7 +60,7 @@ func (s *Service) SetLocalRoute(r LocalRoute) { s.local = r }
 // New builds the connector.
 func New(db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer, version string, log *slog.Logger) *Service {
 	return &Service{db: db, audit: auditLog, sealer: sealer, version: version, log: log, now: time.Now,
-		fleet: fleetCache{entries: map[uuid.UUID]fleetEntry{}}}
+		fleet: fleetCache{entries: map[uuid.UUID]fleetEntry{}}, kick: make(chan struct{}, 1)}
 }
 
 // Connection is the EasyPatch server as Settings shows it. The token is
@@ -286,7 +290,8 @@ func (s *Service) UpdateConnection(ctx context.Context, actor audit.Actor, in Co
 		// to the connector.
 		forgot := false
 		if !sameServer {
-			for _, q := range []string{`DELETE FROM easypatch_devices`, `DELETE FROM easypatch_organizations`} {
+			for _, q := range []string{`DELETE FROM easypatch_devices`, `DELETE FROM easypatch_organizations`, `DELETE FROM easypatch_sites`,
+				`DELETE FROM easypatch_removals`, `DELETE FROM easypatch_forgotten`} {
 				tag, err := tx.Exec(ctx, q)
 				if err != nil {
 					return err
@@ -331,8 +336,11 @@ func (s *Service) DeleteConnection(ctx context.Context, actor audit.Actor) error
 		if _, err := tx.Exec(ctx, `DELETE FROM easypatch_installs`); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM easypatch_organizations`); err != nil {
-			return err
+		for _, q := range []string{`DELETE FROM easypatch_organizations`, `DELETE FROM easypatch_sites`, `DELETE FROM easypatch_removals`,
+			`DELETE FROM easypatch_forgotten`} {
+			if _, err := tx.Exec(ctx, q); err != nil {
+				return err
+			}
 		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: actor, Action: "easypatch.connection_delete", TargetType: "easypatch",
 			TargetID: "connection", Outcome: audit.Success})

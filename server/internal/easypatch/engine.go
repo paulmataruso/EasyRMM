@@ -56,7 +56,7 @@ func (s *Service) UseEngine(ctx context.Context, c *Client) error {
 			return err
 		}
 		for _, q := range []string{`DELETE FROM easypatch_connection`, `DELETE FROM easypatch_devices`, `DELETE FROM easypatch_installs`,
-			`DELETE FROM easypatch_organizations`} {
+			`DELETE FROM easypatch_organizations`, `DELETE FROM easypatch_sites`, `DELETE FROM easypatch_removals`, `DELETE FROM easypatch_forgotten`} {
 			if _, err := tx.Exec(ctx, q); err != nil {
 				return err
 			}

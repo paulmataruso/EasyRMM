@@ -39,6 +39,12 @@ server will do. To set one up, see EasyPatch's
    a time, in bulk, or automatically for a whole organization: see
    [Installing the EasyPatch agent](#installing-the-easypatch-agent).
 
+With the patching engine in EasyRMM's own deployment
+(`EASYRMM_PATCHING=bundled`, see [Docker](../deployment/docker.md)), skip
+steps 1 to 3: there is no token, and EasyRMM keeps the engine's
+organizations itself (see
+[Organizations in the bundled engine](#organizations-in-the-bundled-engine)).
+
 The status card shows the EasyPatch version, whether the token can act,
 and two features that depend on the EasyPatch server:
 
@@ -53,6 +59,34 @@ EasyRMM checks the server every 10 minutes and records the last error.
 Replacing the token for the same server: paste the new one and save.
 Pointing EasyRMM at a different server forgets every organization and
 device link, since they name the old server's ids.
+
+### Organizations in the bundled engine
+
+With the bundled engine, every EasyRMM organization and site has its own in
+the engine, and EasyRMM keeps them the same
+([ADR-0040](../architecture/adr/0040-one-set-of-organizations.md)):
+
+* **Created** with EasyRMM's name and the organization's **time zone**
+  (Organizations → edit; the engine's monthly reports use it), with
+  automatic installs of the EasyPatch agent on. An engine organization
+  with exactly the same name that nothing links yet is used instead of a
+  new one.
+* **Renamed** and given a new time zone when EasyRMM's changes. A name
+  another engine organization already holds, in another case or archived,
+  gets the first 8 characters of EasyRMM's id, as in `Acme (1a2b3c4d)`. It
+  gets its plain name back when that is free.
+* **Archived** when deleted in EasyRMM, renamed `… (deleted 2026-11-18
+  1a2b3c4d)` so that the name can be used again. Endpoints stay in an
+  archived organization. An agent EasyRMM did not remove itself keeps
+  checking in until it is revoked in the engine.
+* **Put back** when someone archives or deletes them in the engine's own
+  console. Descriptions, notes and addresses entered there are kept.
+
+This happens as soon as an organization or site changes, and the whole set
+is compared every 5 minutes. If the engine is unavailable or refuses a
+change, EasyRMM tries again every minute. Settings → EasyPatch shows when
+the engine was last in step, what it could not do, and how many archives
+and agent removals are waiting. Organizations are not linked by hand there.
 
 ## Installing the EasyPatch agent
 
@@ -81,7 +115,7 @@ What happens:
    token in EasyPatch for this one install: single use, valid for an hour,
    for the linked EasyPatch organization and the EasyPatch site with the
    same name as the device's EasyRMM site (no site when none has that
-   name). The token is never stored, and is revoked if the install fails.
+   name; with the bundled engine, the site EasyRMM created for it). The token is never stored, and is revoked if the install fails.
 2. The agent downloads the package from EasyPatch, checks its size and
    SHA-256 against EasyPatch's list, installs it (`msiexec` on Windows,
    `apt-get` or `dnf` on Linux) and enrolls it.
@@ -97,8 +131,10 @@ reporting within 30 minutes fails then.
 EasyRMM never installs a second EasyPatch agent: a device whose EasyRMM
 agent reports one, in any state and enrolled with any server, is left
 alone, and the agent checks again just before it installs. It never
-re-enrolls (`--force`), upgrades or removes the EasyPatch agent either;
-EasyPatch updates its own agent.
+re-enrolls (`--force`) or upgrades the EasyPatch agent either; EasyPatch
+updates its own agent. It removes one only as described in
+[Stopping patching for a device](#stopping-patching-for-a-device) and
+[Devices that move or are deleted](#devices-that-move-or-are-deleted).
 
 Requirements:
 
@@ -115,6 +151,44 @@ Requirements:
 * One install at a time per device, for at most 20 minutes. An EasyRMM
   agent update waits for it.
 
+## Stopping patching for a device
+
+On a device's **Patches** tab, **Stop patching…** (needs `patch.manage`):
+
+* EasyRMM drops any install of the EasyPatch agent that is waiting, and
+  never installs it on the device again, automatically or by hand.
+* If EasyRMM linked the device's EasyPatch agent, it sends the agent an
+  uninstall job, as below. An agent EasyRMM has not confirmed as one it
+  manages (enrolled with another server, say) stays installed.
+* It is refused while the agent is being installed. Wait for the install to
+  finish, then stop patching.
+
+**Allow patching again** on the same tab undoes it. A removal not sent yet
+is cancelled. With automatic installs on, the agent is installed again
+within a minute. Otherwise, install it by hand.
+
+## Devices that move or are deleted
+
+* **Deleted in EasyRMM:** the device's EasyPatch agent is uninstalled. The
+  removal is cancelled if another EasyRMM device links or reports the same
+  endpoint, as after two device records are merged.
+* **Moved to another site** of its organization: with the bundled engine,
+  its endpoint moves to that site.
+* **Moved to another organization:** an endpoint cannot change
+  organization in EasyPatch. EasyRMM has the old agent uninstall itself.
+  When it is gone, automatic installs enroll it again in the new
+  organization. The device's Patches tab says so in the meantime.
+
+EasyRMM's console has no screen to move or retire a device yet; this covers
+devices merged by EasyRMM and moves made through the API.
+
+**How an agent is removed:** EasyRMM sends EasyPatch an `uninstall-agent`
+job and checks every 5 minutes. A failed or expired job is sent again. The
+agent is gone when EasyPatch no longer shows its endpoint as active. If it
+is not gone within 7 days, or is too old to uninstall itself, EasyRMM
+revokes the endpoint in EasyPatch, which stops serving it. Removal works
+with a connected server too, with an Operator token.
+
 ## When a device is not linked
 
 EasyRMM links a device only when everything agrees, and otherwise says why
@@ -124,7 +198,7 @@ EasyRMM links a device only when everything agrees, and otherwise says why
 |---|---|
 | The EasyPatch agent is not enrolled and active | Enroll it, or check it on the device: `sudo /opt/easypatch/easypatch-agent status` on Linux, `& "$env:ProgramFiles\EasyPatch Agent\EasyPatch.Agent.exe" status` on Windows |
 | The agent is enrolled with another server | The device belongs to another EasyPatch server; re-enroll it with this one |
-| The organization is not linked | Link the device's EasyRMM organization in Settings → EasyPatch |
+| The organization is not linked | Link the device's EasyRMM organization in Settings → EasyPatch. With the bundled engine, EasyRMM is still creating it: Settings → EasyPatch says why if it cannot |
 | EasyPatch has no such endpoint, or the token cannot see it | Add the endpoint's EasyPatch organization to the token |
 | The endpoint belongs to another EasyPatch organization | The device is enrolled in the wrong EasyPatch organization, or the EasyRMM organization is linked to the wrong one |
 | The endpoint is revoked or decommissioned in EasyPatch | Re-enroll the EasyPatch agent |
@@ -290,7 +364,7 @@ warns about them; see
 | Permission | Allows | Built-in roles |
 |---|---|---|
 | `patch.view` (with `device.view`) | Patching, a device's Patches tab | Every role |
-| `patch.manage` | Scan, install, restart, cancel, retry, install the EasyPatch agent | Technician and above |
+| `patch.manage` | Scan, install, restart, cancel, retry, install the EasyPatch agent, stop and allow patching for a device | Technician and above |
 | `patch.configure` | Change EasyPatch's standing rules: makes someone an Admin in EasyPatch rather than ReadOnly when they sign in to EasyPatch through EasyRMM. Only organization-wide roles hold it | Organization administrator and above |
 | `settings.manage` | Settings → EasyPatch, including automatic installs of the EasyPatch agent | Super administrator |
 
@@ -310,6 +384,10 @@ nobody can act, whatever their role.
 | `easypatch.organization_link`, `easypatch.organization_unlink` | Both organizations |
 | `patch.agent_install` | One record per device an EasyPatch agent install was requested for. Automatic installs are covered by the record of turning them on |
 | `easypatch.organization_update` | **Install automatically** turned on or off, and for which organization |
+| `patch.stop`, `patch.allow` | Patching stopped or allowed again for a device, by whom |
+| `easypatch.organization_create`, `easypatch.organization_adopt`, `easypatch.site_create`, `easypatch.site_adopt` | The bundled engine's organization or site EasyRMM created, or the existing one it took, for which EasyRMM organization or site |
+| `easypatch.organization_archive`, `easypatch.site_archive` | An engine organization or site archived because it was deleted in EasyRMM |
+| `easypatch.agent_uninstall`, `easypatch.endpoint_revoke`, `easypatch.agent_remove` | An uninstall job sent, an endpoint revoked, and a removal finished, each with the device's host name and why |
 | `idp.authorize` | A sign-in to EasyPatch through EasyRMM: the role and how many organizations it gave, or why it was refused (no second factor, no access, not signed in) |
 | `idp.client_create`, `idp.client_rotate`, `idp.client_delete` | Sign-in through EasyRMM set up, its secret replaced, or turned off |
 
@@ -325,7 +403,11 @@ server has the `on-behalf-of` capability.
 * The device list is cached for 30 seconds; a scan or install refreshes it.
 * The EasyPatch Linux agent needs systemd: it runs apt in transient
   systemd units. EasyRMM does not install it where there is none.
-* EasyPatch sites are matched to EasyRMM sites by name only.
+* With a connected server, EasyPatch sites are matched to EasyRMM sites by
+  name only.
+* Each minute, EasyRMM moves at most 200 endpoints to their device's site
+  and handles at most 100 agent removals; the rest wait for the next
+  minute.
 * EasyRMM does not connect to link-local addresses (`169.254.0.0/16`,
   `fe80::/10`) or cloud instance metadata addresses, even when the
   EasyPatch name resolves to one. EasyPatch on the same host or a private

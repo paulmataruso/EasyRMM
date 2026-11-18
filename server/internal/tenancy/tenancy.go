@@ -34,8 +34,11 @@ const (
 
 // Organization is a customer of the MSP (or the MSP itself).
 type Organization struct {
-	ID        uuid.UUID `json:"id"`
-	Name      string    `json:"name"`
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+	// Timezone is the IANA time zone patching reports for the
+	// organization use.
+	Timezone  string    `json:"timezone"`
 	Notes     string    `json:"notes"`
 	SiteCount int       `json:"siteCount"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -77,8 +80,11 @@ type DeviceGroup struct {
 
 // OrganizationInput is the editable part of an organization.
 type OrganizationInput struct {
-	Name  string `json:"name"`
-	Notes string `json:"notes"`
+	Name string `json:"name"`
+	// Timezone is an IANA time zone. Empty: UTC for a new organization,
+	// unchanged for an existing one.
+	Timezone string `json:"timezone"`
+	Notes    string `json:"notes"`
 }
 
 // SiteInput is the editable part of a site.
@@ -99,7 +105,7 @@ type DeviceGroupInput struct {
 type Service struct {
 	db       *database.DB
 	audit    *audit.Logger
-	onChange func()
+	onChange []func()
 }
 
 // New builds the service.
@@ -109,11 +115,11 @@ func New(db *database.DB, auditLog *audit.Logger) *Service {
 
 // OnChange registers a function called after changes that affect remote
 // access: names, sites, roles and account status. It must not block.
-func (s *Service) OnChange(f func()) { s.onChange = f }
+func (s *Service) OnChange(f func()) { s.onChange = append(s.onChange, f) }
 
 func (s *Service) changed() {
-	if s.onChange != nil {
-		s.onChange()
+	for _, f := range s.onChange {
+		f()
 	}
 }
 
@@ -126,8 +132,10 @@ func checkName(f apperr.Fields, name string) {
 
 func (in *OrganizationInput) normalize() error {
 	in.Name = strings.TrimSpace(in.Name)
+	in.Timezone = strings.TrimSpace(in.Timezone)
 	f := apperr.Fields{}
 	checkName(f, in.Name)
+	f.Check(in.Timezone == "" || ValidTimezone(in.Timezone), "timezone", "Choose a time zone from the list, such as Europe/London.")
 	f.Check(utf8.RuneCountInString(in.Notes) <= MaxNotesLength, "notes", "Notes are limited to 10,000 characters.")
 	return f.Err()
 }
@@ -167,12 +175,12 @@ func ValidTimezone(tz string) bool {
 // Organizations
 // ---------------------------------------------------------------------------
 
-const orgColumns = `o.id, o.name, o.notes, o.created_at, o.updated_at,
+const orgColumns = `o.id, o.name, o.timezone, o.notes, o.created_at, o.updated_at,
 	(SELECT count(*) FROM sites s WHERE s.organization_id = o.id)`
 
 func scanOrg(row pgx.Row) (Organization, error) {
 	var o Organization
-	err := row.Scan(&o.ID, &o.Name, &o.Notes, &o.CreatedAt, &o.UpdatedAt, &o.SiteCount)
+	err := row.Scan(&o.ID, &o.Name, &o.Timezone, &o.Notes, &o.CreatedAt, &o.UpdatedAt, &o.SiteCount)
 	return o, err
 }
 
@@ -237,11 +245,14 @@ func (s *Service) CreateOrganization(ctx context.Context, c access.Caller, in Or
 	if err := in.normalize(); err != nil {
 		return nil, err
 	}
+	if in.Timezone == "" {
+		in.Timezone = "UTC"
+	}
 	var o Organization
 	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `INSERT INTO organizations (name, notes) VALUES ($1, $2)
-			RETURNING id, name, notes, created_at, updated_at`, in.Name, in.Notes).
-			Scan(&o.ID, &o.Name, &o.Notes, &o.CreatedAt, &o.UpdatedAt)
+		err := tx.QueryRow(ctx, `INSERT INTO organizations (name, timezone, notes) VALUES ($1, $2, $3)
+			RETURNING id, name, timezone, notes, created_at, updated_at`, in.Name, in.Timezone, in.Notes).
+			Scan(&o.ID, &o.Name, &o.Timezone, &o.Notes, &o.CreatedAt, &o.UpdatedAt)
 		if err != nil {
 			return err
 		}
@@ -251,6 +262,7 @@ func (s *Service) CreateOrganization(ctx context.Context, c access.Caller, in Or
 	if err != nil {
 		return nil, mapOrgWriteError(err)
 	}
+	s.changed()
 	o.CanManage = true
 	o.CanRename = c.CanGlobal(rbac.PermOrgManage)
 	return &o, nil
@@ -278,12 +290,16 @@ func (s *Service) UpdateOrganization(ctx context.Context, c access.Caller, id uu
 		if oldName != in.Name && !c.CanGlobal(rbac.PermOrgManage) {
 			return apperr.Invalid("name", "Only a Super Administrator can rename an organization.")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE organizations SET name = $2, notes = $3 WHERE id = $1`, id, in.Name, in.Notes); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE organizations SET name = $2, timezone = coalesce(nullif($3, ''), timezone), notes = $4 WHERE id = $1`,
+			id, in.Name, in.Timezone, in.Notes); err != nil {
 			return err
 		}
 		details := map[string]any{"name": in.Name}
 		if oldName != in.Name {
 			details["previousName"] = oldName
+		}
+		if in.Timezone != "" {
+			details["timezone"] = in.Timezone
 		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "organization.update", Outcome: audit.Success,
 			OrganizationID: id, TargetType: "organization", TargetID: id.String(), Details: details})
@@ -327,6 +343,8 @@ func (s *Service) DeleteOrganization(ctx context.Context, c access.Caller, id uu
 		return apperr.NotFound()
 	case database.IsForeignKeyViolation(err):
 		return apperr.Conflict("organization_not_empty", "Delete this organization's sites before deleting it.")
+	case err == nil:
+		s.changed()
 	}
 	return err
 }

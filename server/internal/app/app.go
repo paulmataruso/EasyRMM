@@ -203,6 +203,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 			return nil, fmt.Errorf("patching engine: %w", err)
 		}
 		log.Info("patching: the engine in this deployment", "url", p.URL)
+		// Organization and site changes reach the engine within seconds
+		// (one-product plan, B5; ADR-0040).
+		d.Tenancy.OnChange(d.EasyPatch.Kick)
 	}
 	d.SSO = sso.New(db, auditLog, sealer, d.Auth, cfg.PublicURL)
 	d.IdP = idp.New(db, auditLog, sealer, cfg.PublicURL.String(), d.EasyPatch, func(ctx context.Context, userID uuid.UUID) (*easypatch.Access, error) {

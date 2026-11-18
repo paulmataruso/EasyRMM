@@ -42,6 +42,24 @@ All notable changes to this project are documented here. The format follows
   its answers cannot set cookies, clear site data or run script on
   EasyRMM's origin. Paths that could reach the rest of the engine are
   refused; requests are capped at 20 MB.
+- **One set of organizations** (phase B5, ADR-0040): with the bundled engine,
+  every EasyRMM organization and site has its own in the engine, created
+  with EasyRMM's name and time zone, renamed with it, archived under a freed
+  name when deleted, and put back when someone archives or deletes it in the
+  engine. Names that clash ignoring case get part of EasyRMM's id. A create
+  whose reply was lost is adopted, not repeated. Changes reach the engine at
+  once; the whole set is compared every 5 minutes, and again every minute
+  while the engine is unavailable. Settings → EasyPatch shows whether the
+  engine is in step and no longer links organizations by hand. A device
+  moved to another site takes its endpoint with it; one moved to another
+  organization, or deleted, has its EasyPatch agent uninstall itself, and
+  the endpoint is revoked if it has not within 7 days.
+- **Organization time zones**: organizations have a time zone (default UTC;
+  the browser's for a new one), which patching reports use.
+- **Stop patching for a device**: the device's Patches tab can stop
+  patching. EasyRMM removes the EasyPatch agent it linked, and installs none
+  there again until patching is allowed again. Audited as `patch.stop` and
+  `patch.allow`.
 - `npm run screenshots` in `web/` makes the README's screenshots from the
   console's production build, its API answered from fictional demo data
   (`web/screenshots/`). It fails when a page asks for something the data does

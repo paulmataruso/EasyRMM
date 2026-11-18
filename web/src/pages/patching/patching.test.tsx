@@ -959,6 +959,60 @@ describe("device patches", () => {
     expect(main().queryByRole("button", { name: "Install EasyPatch agent…" })).not.toBeInTheDocument();
   });
 
+  it("stops patching a device, and allows it again", async () => {
+    const user = userEvent.setup();
+    let stopped: DevicePatching["stopped"];
+    let removal: DevicePatching["removal"];
+    const server = installFakeApi(
+      deviceRoutes(
+        { deviceId: "d1", link: "none", canManage: true, canSchedule: false },
+        {
+          "GET /patching/devices/:id": () => ok({ deviceId: "d1", link: "none", canManage: true, canSchedule: false, stopped, removal }),
+          "POST /patching/stop": () => {
+            stopped = { at: T, by: "alex@example.com" };
+            removal = { reason: "opted_out", state: "uninstalling", requestedAt: T };
+            return ok({ succeeded: 1, failed: 0, results: [{ deviceId: "d1", deviceName: "WEB-01", ok: true, message: "Patching stopped." }] });
+          },
+          "POST /patching/allow": () => {
+            stopped = undefined;
+            removal = undefined;
+            return ok({
+              succeeded: 1,
+              failed: 0,
+              results: [{ deviceId: "d1", deviceName: "WEB-01", ok: true, message: "Patching allowed again. EasyRMM installs the EasyPatch agent shortly." }],
+            });
+          },
+        },
+      ),
+    );
+    renderApp("/devices/d1?tab=patches");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("button", { name: "Stop patching…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Stop patching WEB-01?" });
+    expect(within(dialog).getByText(/installs no EasyPatch agent on the device again/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Stop patching" }));
+    await waitFor(() => expect(server.callsTo("POST /patching/stop")).toHaveLength(1));
+    expect(server.call("POST /patching/stop").body).toEqual({ deviceIds: ["d1"] });
+
+    expect(await main().findByText("Patching stopped")).toBeInTheDocument();
+    expect(main().getByText(/Stopped by alex@example.com/)).toBeInTheDocument();
+    expect(main().getByText(/The EasyPatch agent is uninstalling itself/)).toBeInTheDocument();
+    expect(main().queryByRole("button", { name: "Install EasyPatch agent…" })).not.toBeInTheDocument();
+
+    await user.click(main().getByRole("button", { name: "Allow patching again" }));
+    await waitFor(() => expect(server.callsTo("POST /patching/allow")).toHaveLength(1));
+    expect(await screen.findByText("Patching allowed again. EasyRMM installs the EasyPatch agent shortly.")).toBeInTheDocument();
+    expect(await main().findByRole("button", { name: "Install EasyPatch agent…" })).toBeInTheDocument();
+  });
+
+  it("does not offer to stop or allow patching without patch.manage", async () => {
+    installFakeApi(deviceRoutes({ deviceId: "d1", link: "none", canManage: false, canSchedule: false, stopped: { at: T } }));
+    renderApp("/devices/d1?tab=patches");
+    await screen.findByRole("main");
+    expect(await main().findByText(/Stopped by a removed user/)).toBeInTheDocument();
+    expect(main().queryByRole("button", { name: "Allow patching again" })).not.toBeInTheDocument();
+  });
+
   it("offers to try a failed install again, and explains automatic ones", async () => {
     installFakeApi(
       deviceRoutes({

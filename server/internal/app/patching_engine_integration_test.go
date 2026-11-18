@@ -18,14 +18,14 @@ import (
 )
 
 // TestPatchingEngineAPI starts EasyRMM with EASYRMM_PATCHING=bundled (one-
-// product plan, B3): Settings shows the engine and cannot change it, links
-// work through it, and the engine refusing EasyRMM reaches the console as
-// the engine being unavailable, never as a 401 or 403.
+// product plan, B3 and B5): Settings shows the engine and cannot change it,
+// organizations reach the engine as they change, and the engine refusing
+// EasyRMM reaches the console as the engine being unavailable, never as a
+// 401 or 403.
 func TestPatchingEngineAPI(t *testing.T) {
 	key := bytes.Repeat([]byte{5}, 32)
 	engine := eptest.NewEngine(t, key)
 	engine.Capabilities = []string{easypatch.CapabilityScheduledInstalls}
-	epOrg := engine.Org("Acme Patch")
 	bundled := func(key []byte) func(*config.Config) {
 		return func(c *config.Config) {
 			c.Patching = config.Patching{Mode: config.PatchingBundled, URL: engine.URL(), Key: key}
@@ -62,18 +62,54 @@ func TestPatchingEngineAPI(t *testing.T) {
 		t.Fatalf("status: %+v", status)
 	}
 
-	admin.expect(http.StatusNoContent, "PUT", "/api/v1/settings/easypatch/organizations/"+acme, map[string]string{"easyPatchId": epOrg.String()}, nil)
+	// Every organization gets its own in the engine (ADR-0040): links are
+	// not chosen, and a change in EasyRMM reaches the engine at the next
+	// pass rather than at the next full comparison.
+	ctx := context.Background()
+	wantStatus(t, admin.do("PUT", "/api/v1/settings/easypatch/organizations/"+acme, map[string]string{"easyPatchId": "0b5c7a3e-0000-4000-8000-000000000001"}),
+		http.StatusConflict, "patching_linked_by_easyrmm")
+	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil), http.StatusConflict, "patching_linked_by_easyrmm")
+	if res, err := h.deps.EasyPatch.Reconcile(ctx); err != nil || res.Created == 0 || len(res.Problems) != 0 {
+		t.Fatalf("first pass: %+v, %v", res, err)
+	}
 	calls := engine.RequestsTo("GET", "/api/v1/organizations")
 	if len(calls) == 0 || calls[len(calls)-1].Statement == nil || calls[len(calls)-1].Statement.Subject != easypatch.ServiceSubject {
 		t.Fatalf("organizations were not read with EasyRMM's statement: %+v", calls)
 	}
+	admin.expect(http.StatusCreated, "POST", "/api/v1/organizations", map[string]string{"name": "Tailspin", "timezone": "Europe/Oslo"}, nil)
+	if res, err := h.deps.EasyPatch.Reconcile(ctx); err != nil || res.Created != 1 {
+		t.Fatalf("pass after a new organization: %+v, %v", res, err)
+	}
+	found := false
+	for _, o := range engine.Organizations() {
+		found = found || (o.Name == "Tailspin" && o.TimeZone == "Europe/Oslo")
+	}
+	if !found {
+		t.Fatalf("the engine has no Tailspin: %+v", engine.Organizations())
+	}
+	var sync struct {
+		At       *string  `json:"at"`
+		Problems []string `json:"problems"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch/sync", nil, &sync)
+	if sync.At == nil || len(sync.Problems) != 0 {
+		t.Fatalf("sync: %+v", sync)
+	}
+	// Stopping patching takes devices the caller may manage.
+	wantStatus(t, admin.do("POST", "/api/v1/patching/stop", map[string]any{"deviceIds": []string{}}), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, admin.do("POST", "/api/v1/patching/allow", map[string]any{"deviceIds": []string{"0b5c7a3e-0000-4000-8000-000000000002"}}),
+		http.StatusNotFound, "not_found")
 
 	// Another key than the engine's: refused, and shown as unavailable.
 	h2 := newHarnessWith(t, false, bundled(bytes.Repeat([]byte{6}, 32)))
 	admin2, _ := setUp(t, h2)
-	acme2 := orgID(t, admin2, "Acme")
-	wantStatus(t, admin2.do("PUT", "/api/v1/settings/easypatch/organizations/"+acme2, map[string]string{"easyPatchId": epOrg.String()}),
-		http.StatusServiceUnavailable, "patching_unavailable")
+	var orgs struct {
+		Error string `json:"error"`
+	}
+	admin2.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch/organizations", nil, &orgs)
+	if !strings.Contains(orgs.Error, "patching engine answered 401") {
+		t.Fatalf("organizations with a wrong key: %+v", orgs)
+	}
 	admin2.expect(http.StatusOK, "POST", "/api/v1/settings/easypatch/check", nil, &conn)
 	if !conn.Bundled || !strings.Contains(conn.LastError, "401") {
 		t.Fatalf("check with a wrong key: %+v", conn)
@@ -157,10 +193,17 @@ func TestPatchingAgentsThroughTheEdge(t *testing.T) {
 	mu.Unlock()
 
 	// Without the bundle, EasyRMM has nothing of its own under these paths.
+	// They are answered as paths EasyRMM does not have: 404, or for
+	// downloads, the console's answer when it is not built (503), as in CI.
 	plain := newHarnessWith(t, false, nil)
-	for _, p := range []string{"/api/v1/agents/check-in", "/downloads/agent/EasyPatchAgent-1.10.0-x64.msi", "/downloads/winget/x.yaml"} {
-		if status, _ := send(plain, "GET", p, nil); status != http.StatusNotFound {
-			t.Errorf("connector mode, %s: %d", p, status)
+	for p, like := range map[string]string{
+		"/api/v1/agents/check-in":                        "/api/v1/no-such-route",
+		"/downloads/agent/EasyPatchAgent-1.10.0-x64.msi": "/no-such-route/x.msi",
+		"/downloads/winget/x.yaml":                       "/no-such-route/x.yaml",
+	} {
+		status, _ := send(plain, "GET", p, nil)
+		if want, _ := send(plain, "GET", like, nil); status != want || (status != http.StatusNotFound && status != http.StatusServiceUnavailable) {
+			t.Errorf("connector mode, %s: %d, and %d for %s", p, status, want, like)
 		}
 	}
 }

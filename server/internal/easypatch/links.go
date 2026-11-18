@@ -71,6 +71,11 @@ type Organizations struct {
 	Error string `json:"error,omitempty"`
 }
 
+// errLinkedByEasyRMM refuses link changes with the engine in the
+// deployment, where every organization has its own (ADR-0040).
+var errLinkedByEasyRMM = apperr.Conflict("patching_linked_by_easyrmm",
+	"With the patching engine in this deployment, EasyRMM gives every organization its own patching organization; there are no links to choose.")
+
 var errNotConfigured = apperr.Conflict("easypatch_not_configured", "EasyPatch is not set up. A super administrator sets it up in Settings → EasyPatch.")
 
 // Organizations lists EasyPatch's organizations and the links.
@@ -122,6 +127,9 @@ func (s *Service) Organizations(ctx context.Context) (Organizations, error) {
 // LinkOrganization patches an EasyRMM organization with an EasyPatch
 // organization, replacing any earlier link. Its devices are checked again.
 func (s *Service) LinkOrganization(ctx context.Context, actor audit.Actor, organizationID, easyPatchID uuid.UUID) error {
+	if s.engine != nil {
+		return errLinkedByEasyRMM
+	}
 	r, c, err := s.conn(ctx)
 	if err != nil {
 		return err
@@ -182,6 +190,9 @@ func (s *Service) LinkOrganization(ctx context.Context, actor audit.Actor, organ
 
 // UnlinkOrganization stops patching an organization from EasyRMM.
 func (s *Service) UnlinkOrganization(ctx context.Context, actor audit.Actor, organizationID uuid.UUID) error {
+	if s.engine != nil {
+		return errLinkedByEasyRMM
+	}
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		var epName, name string
 		err := tx.QueryRow(ctx, `DELETE FROM easypatch_organizations l USING organizations o
@@ -257,6 +268,12 @@ type candidate struct {
 	checkedAt, linkedAt      *time.Time
 	easyPatchOrg             *uuid.UUID
 	easyPatchOrgName         string
+	// linkedOrg is the engine organization the link was checked against;
+	// seenSite, the endpoint's site as last read.
+	linkedOrg, seenSite *uuid.UUID
+	// movedFrom is set by a check that found the endpoint in an engine
+	// organization linked to another of EasyRMM's: the device moved.
+	movedFrom *Endpoint
 }
 
 // due reports whether a candidate should be checked now.
@@ -265,6 +282,9 @@ func (c *candidate) due(now time.Time, reported *uuid.UUID) bool {
 	case !c.hasRow, c.state == LinkPending, c.checkedAt == nil:
 		return true
 	case !sameID(c.endpointID, reported), !strings.EqualFold(c.fingerprint, c.report.KeyFingerprint):
+		return true
+	case c.state == LinkLinked && !sameID(c.linkedOrg, c.easyPatchOrg):
+		// The device's organization, or its link, changed.
 		return true
 	case c.state == LinkLinked:
 		return now.Sub(*c.checkedAt) >= recheckLinked
@@ -292,7 +312,7 @@ func (s *Service) SyncLinks(ctx context.Context) (int, error) {
 	err = s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT d.id, d.organization_id, d.name, d.hostname, coalesce(i.data->'system'->>'serial', ''),
 				i.data->'easyPatch', e.device_id IS NOT NULL, coalesce(e.state, ''), coalesce(e.key_fingerprint, ''), e.endpoint_id,
-				e.checked_at, e.linked_at, l.easypatch_id, coalesce(l.easypatch_name, '')
+				e.checked_at, e.linked_at, l.easypatch_id, coalesce(l.easypatch_name, ''), e.easypatch_org_id, e.easypatch_site_id
 			FROM devices d
 			LEFT JOIN device_inventory i ON i.device_id = d.id
 			LEFT JOIN easypatch_devices e ON e.device_id = d.id
@@ -305,7 +325,8 @@ func (s *Service) SyncLinks(ctx context.Context) (int, error) {
 			var cd candidate
 			var report []byte
 			if err := rows.Scan(&cd.deviceID, &cd.organizationID, &cd.name, &cd.hostname, &cd.serial, &report, &cd.hasRow, &cd.state,
-				&cd.fingerprint, &cd.endpointID, &cd.checkedAt, &cd.linkedAt, &cd.easyPatchOrg, &cd.easyPatchOrgName); err != nil {
+				&cd.fingerprint, &cd.endpointID, &cd.checkedAt, &cd.linkedAt, &cd.easyPatchOrg, &cd.easyPatchOrgName, &cd.linkedOrg,
+				&cd.seenSite); err != nil {
 				return err
 			}
 			if len(report) > 0 && string(report) != "null" {
@@ -399,7 +420,13 @@ func (s *Service) verify(ctx context.Context, c *Client, conn *connRow, cd *cand
 		return LinkUnlinked, fmt.Sprintf("EasyPatch has no endpoint %s, or EasyRMM's token cannot see it.", endpointID), nil
 	case err != nil:
 		return "", "", err
+	}
+	cd.seenSite = ep.Summary.SiteID
+	switch {
 	case ep.Summary.OrganizationID != *cd.easyPatchOrg:
+		if s.engine != nil {
+			cd.movedFrom = &ep.Summary
+		}
 		return LinkUnlinked, cut(fmt.Sprintf("In EasyPatch the endpoint belongs to %s, not to %s, the organization linked to this device's.",
 			ep.Summary.OrganizationName, cd.easyPatchOrgName), 500), nil
 	case ep.Summary.Status != "Active":
@@ -448,13 +475,36 @@ func (s *Service) saveLink(ctx context.Context, cd *candidate, endpointID *uuid.
 				return err
 			}
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO easypatch_devices (device_id, endpoint_id, key_fingerprint, state, reason, checked_at, linked_at)
-			VALUES ($1, $2, $3, $4, $5, now(), CASE WHEN $4 = 'linked' THEN now() END)
+		if m := cd.movedFrom; m != nil {
+			// An endpoint of an organization EasyRMM links to another of its
+			// organizations: the device moved, and the engine cannot move
+			// endpoints between organizations. Its agent is removed, and
+			// automatic installs put it back in the right one.
+			if _, err := tx.Exec(ctx, `INSERT INTO easypatch_removals (endpoint_id, device_id, reason, hostname)
+				SELECT $1, $2, 'moved', $3 WHERE EXISTS (SELECT 1 FROM easypatch_organizations WHERE easypatch_id = $4)
+					AND NOT EXISTS (SELECT 1 FROM easypatch_opt_outs WHERE device_id = $2)
+				ON CONFLICT (endpoint_id) DO NOTHING`, m.ID, cd.deviceID, cut(cd.name, 255), m.OrganizationID); err != nil {
+				return err
+			}
+			var moving bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM easypatch_removals WHERE endpoint_id = $1 AND reason = 'moved')`,
+				m.ID).Scan(&moving); err != nil {
+				return err
+			}
+			if moving {
+				reason = cut(fmt.Sprintf("The device moved from %s. EasyRMM is removing its EasyPatch agent there, so that it is installed again in %s.",
+					m.OrganizationName, cd.easyPatchOrgName), 500)
+			}
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO easypatch_devices (device_id, endpoint_id, key_fingerprint, state, reason, checked_at, linked_at,
+				easypatch_org_id, easypatch_site_id)
+			VALUES ($1, $2, $3, $4, $5, now(), CASE WHEN $4 = 'linked' THEN now() END, $6, $7)
 			ON CONFLICT (device_id) DO UPDATE SET endpoint_id = $2, key_fingerprint = $3, state = $4, reason = $5, checked_at = now(),
 				linked_at = CASE WHEN $4 <> 'linked' THEN NULL
 					WHEN easypatch_devices.state = 'linked' AND easypatch_devices.endpoint_id = $2 THEN easypatch_devices.linked_at
-					ELSE now() END`,
-			cd.deviceID, endpointID, cut(cd.report.KeyFingerprint, 128), state, reason)
+					ELSE now() END,
+				easypatch_org_id = $6, easypatch_site_id = $7`,
+			cd.deviceID, endpointID, cut(cd.report.KeyFingerprint, 128), state, reason, cd.easyPatchOrg, cd.seenSite)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -473,8 +523,9 @@ func (s *Service) forget(ctx context.Context, deviceID uuid.UUID) error {
 	})
 }
 
-// Run checks device links and agent installs every minute, and the server
-// every ten minutes, until ctx ends.
+// Run keeps the engine in step and checks device links and agent installs
+// every minute and when Kick asks, and the server every ten minutes, until
+// ctx ends.
 func (s *Service) Run(ctx context.Context) {
 	links := time.NewTicker(time.Minute)
 	defer links.Stop()
@@ -484,7 +535,14 @@ func (s *Service) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.kick:
+			if _, err := s.Reconcile(ctx); err != nil && ctx.Err() == nil {
+				s.log.Warn("easypatch: keeping the patching engine in step", "err", err)
+			}
 		case <-links.C:
+			if _, err := s.Reconcile(ctx); err != nil && ctx.Err() == nil {
+				s.log.Warn("easypatch: keeping the patching engine in step", "err", err)
+			}
 			if _, err := s.SyncLinks(ctx); err != nil && ctx.Err() == nil {
 				s.log.Warn("easypatch: device links", "err", err)
 			}

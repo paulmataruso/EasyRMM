@@ -11,6 +11,7 @@ const location = () => screen.getByTestId("location").textContent;
 const org = (id: string, name: string, extra: Partial<Organization> = {}): Organization => ({
   id,
   name,
+  timezone: "UTC",
   notes: "",
   siteCount: 0,
   canManage: true,

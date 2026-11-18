@@ -9,9 +9,10 @@ import { Dialog } from "../../components/Dialog";
 import { SearchInput } from "../../components/Filters";
 import { useToast } from "../../components/Toast";
 import { Button, EmptyState, ErrorState, InlineError, PageHeader, Spinner, TableWrap, TextareaField, TextField, Toolbar } from "../../components/ui";
-import { formatDateTime, formatRelative, plural } from "../../lib/format";
+import { browserTimeZone, formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { useUrlState } from "../../lib/urlState";
+import { TimeZoneField } from "./SiteFormDialog";
 
 export function OrganizationsPage() {
   const { can } = useAuth();
@@ -146,9 +147,14 @@ export function OrganizationFormDialog({ open, onClose, onSaved, organization }:
   organization?: Organization;
 }) {
   const toast = useToast();
-  const [form, setForm] = useState<OrganizationInput>({ name: "", notes: "" });
+  const [form, setForm] = useState<OrganizationInput>({ name: "", timezone: "", notes: "" });
   useEffect(() => {
-    if (open) setForm(organization ? { name: organization.name, notes: organization.notes } : { name: "", notes: "" });
+    if (open)
+      setForm(
+        organization
+          ? { name: organization.name, timezone: organization.timezone, notes: organization.notes }
+          : { name: "", timezone: browserTimeZone(), notes: "" },
+      );
   }, [open, organization]);
 
   const save = useApiMutation(
@@ -169,7 +175,7 @@ export function OrganizationFormDialog({ open, onClose, onSaved, organization }:
 
   function submit(e: FormEvent) {
     e.preventDefault();
-    save.mutate({ name: form.name.trim(), notes: form.notes.trim() });
+    save.mutate({ name: form.name.trim(), timezone: form.timezone.trim(), notes: form.notes.trim() });
   }
   // Organization names are unique on the server; only Super Administrators
   // rename, so an organization's own administrators cannot probe for others.
@@ -189,6 +195,12 @@ export function OrganizationFormDialog({ open, onClose, onSaved, organization }:
           maxLength={200}
           autoFocus={!nameLocked}
         />
+        <TimeZoneField
+          value={form.timezone}
+          onChange={(v) => setForm((f) => ({ ...f, timezone: v }))}
+          error={fieldError(save.error, "timezone")}
+          hint="Patching reports for this organization use it."
+        />
         <TextareaField
           label="Notes"
           value={form.notes}
@@ -198,10 +210,10 @@ export function OrganizationFormDialog({ open, onClose, onSaved, organization }:
           maxLength={4000}
           autoFocus={nameLocked}
         />
-        <InlineError error={save.error} fields={["name", "notes"]} />
+        <InlineError error={save.error} fields={["name", "timezone", "notes"]} />
         <div className="flex justify-end gap-2 pt-1">
           <Button onClick={onClose}>Cancel</Button>
-          <Button type="submit" variant="primary" loading={save.isPending} disabled={!form.name.trim()}>
+          <Button type="submit" variant="primary" loading={save.isPending} disabled={!form.name.trim() || !form.timezone.trim()}>
             {organization ? "Save changes" : "Create organization"}
           </Button>
         </div>

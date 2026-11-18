@@ -139,6 +139,8 @@ export interface SessionItem {
 export interface Organization {
   id: string;
   name: string;
+  /** IANA time zone; patching's monthly reports use it. */
+  timezone: string;
   notes: string;
   siteCount: number;
   createdAt: string;
@@ -150,6 +152,7 @@ export interface Organization {
 
 export interface OrganizationInput {
   name: string;
+  timezone: string;
   notes: string;
 }
 
@@ -993,6 +996,32 @@ export interface EasyPatchOrganizations {
   error?: string;
 }
 
+/** How keeping the patching engine in step with EasyRMM goes (bundled mode, ADR-0040). */
+export interface PatchingSync {
+  /** When the last pass ended. */
+  at?: string;
+  /** What the last pass could not do; the next one tries again. */
+  problems: string[];
+  /** Deleted organizations and sites the engine has yet to archive. */
+  archiving: number;
+  /** EasyPatch agents being removed. */
+  removing: number;
+}
+
+/** Patching stopped for a device: its EasyPatch agent removed, and none installed again. */
+export interface PatchingStop {
+  at: string;
+  by?: string;
+}
+
+/** EasyRMM removing a device's EasyPatch agent. */
+export interface AgentRemoval {
+  reason: "opted_out" | "moved" | "deleted";
+  state: "pending" | "uninstalling";
+  requestedAt: string;
+  error?: string;
+}
+
 /** Whether EasyRMM patches a device: linked to its EasyPatch endpoint, refused (with a reason), being checked, or no EasyPatch agent. */
 export type PatchLink = "linked" | "unlinked" | "pending" | "none";
 
@@ -1074,6 +1103,10 @@ export interface PatchFleetDevice {
   checkedAt?: string;
   /** The EasyPatch agent's install, when one was asked for. */
   install?: AgentInstall;
+  /** Patching is stopped for the device. */
+  stopped?: PatchingStop;
+  /** EasyRMM is removing the device's EasyPatch agent. */
+  removal?: AgentRemoval;
 }
 
 export interface PatchFleet {
@@ -1122,6 +1155,10 @@ export interface DevicePatching {
   policy?: PatchPolicy;
   /** The EasyPatch agent's install, when one was asked for. */
   install?: AgentInstall;
+  /** Patching is stopped for the device. */
+  stopped?: PatchingStop;
+  /** EasyRMM is removing the device's EasyPatch agent. */
+  removal?: AgentRemoval;
   /** Why EasyPatch could not be read just now. */
   error?: string;
 }

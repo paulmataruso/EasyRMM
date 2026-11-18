@@ -833,7 +833,178 @@ func TestContract(t *testing.T) {
 	run("eptest answers as EasyPatch does", func(t *testing.T) {
 		a.rebootPending = true // so the restart-pending list is not empty
 		a.checkIn()
-		checkFake(t, c, org.ID, site.ID, a.endpoint, install.ID, restarted)
+		checkFake(t, c, org.ID, site.ID, a.endpoint, install.ID, restarted, suffix)
+	})
+
+	run("organizations, sites and endpoints for the reconciler", func(t *testing.T) {
+		// What EasyRMM's reconciler relies on (one-product plan, B5), as the
+		// engine in the deployment does it.
+		signer, err := NewSigner(c.engineKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		engine, err := NewEngineClient(c.engineURL, signer, "contract")
+		if err != nil {
+			t.Fatal(err)
+		}
+		svc := WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "EasyRMM", Role: RoleAdmin, AllOrganizations: true})
+		scoped := WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "EasyRMM", Role: RoleAdmin, Organizations: []uuid.UUID{org.ID}})
+
+		// Organizations: only an all-organizations principal creates one;
+		// names are unique case-sensitively, archived ones included.
+		name := "Reconcile " + suffix
+		if _, err := engine.CreateOrganization(scoped, name, "UTC"); !IsStatus(err, http.StatusForbidden) {
+			t.Fatalf("create, scoped to one organization: %v", err)
+		}
+		o, err := engine.CreateOrganization(svc, name, "Europe/London")
+		if err != nil || o.ID == uuid.Nil || o.Name != name || o.TimeZone != "Europe/London" || !o.IsActive {
+			t.Fatalf("create: %+v, %v", o, err)
+		}
+		if _, err := engine.CreateOrganization(svc, name, "UTC"); !IsStatus(err, http.StatusConflict) {
+			t.Fatalf("same name: %v", err)
+		}
+		other, err := engine.CreateOrganization(svc, strings.ToUpper(name), "UTC")
+		if err != nil {
+			t.Fatalf("a name differing only by case: %v", err)
+		}
+		if _, err := engine.CreateOrganization(svc, name, "Mars/Olympus"); err == nil {
+			t.Fatal("an unknown time zone was accepted")
+		} else if ae, ok := apperr.As(epError(err)); !ok || ae.Kind != apperr.KindInvalid || ae.Fields["timeZone"] == "" {
+			t.Errorf("unknown time zone shows as %#v", epError(err))
+		}
+		// An update keeps what it is sent back, and replaces the rest.
+		desc := "kept"
+		o.Description = &desc
+		o.TimeZone = "America/New_York"
+		if o, err = engine.UpdateOrganization(svc, o); err != nil || o.TimeZone != "America/New_York" || o.Description == nil || *o.Description != desc {
+			t.Fatalf("update: %+v, %v", o, err)
+		}
+		o.Name = name + " renamed"
+		if o, err = engine.UpdateOrganization(svc, o); err != nil || o.Name != name+" renamed" || o.Description == nil {
+			t.Fatalf("rename: %+v, %v", o, err)
+		}
+		o.Name = strings.ToUpper(name)
+		if _, err := engine.UpdateOrganization(svc, o); !IsStatus(err, http.StatusConflict) {
+			t.Fatalf("rename onto another's name: %v", err)
+		}
+		o.Name = name + " renamed"
+
+		// Sites: unique per organization, archived ones included; a new
+		// site takes its organization's time zone.
+		site1, err := engine.CreateSite(svc, o.ID, "North", "")
+		if err != nil || site1.TimeZone != "America/New_York" || site1.OrganizationID != o.ID {
+			t.Fatalf("site: %+v, %v", site1, err)
+		}
+		site2, err := engine.CreateSite(svc, o.ID, "South", "Asia/Tokyo")
+		if err != nil || site2.TimeZone != "Asia/Tokyo" {
+			t.Fatalf("second site: %+v, %v", site2, err)
+		}
+		if _, err := engine.CreateSite(svc, o.ID, "North", ""); !IsStatus(err, http.StatusConflict) {
+			t.Fatalf("same site name: %v", err)
+		}
+		if _, err := engine.CreateSite(svc, other.ID, "North", ""); err != nil {
+			t.Fatalf("the same site name in another organization: %v", err)
+		}
+		addr := "1 Main St"
+		site1.Address, site1.Name = &addr, "North office"
+		if site1, err = engine.UpdateSite(svc, site1); err != nil || site1.Name != "North office" || site1.Address == nil {
+			t.Fatalf("site update: %+v, %v", site1, err)
+		}
+		if got, err := engine.GetSite(svc, site1.ID); err != nil || got.Name != "North office" {
+			t.Fatalf("site read: %+v, %v", got, err)
+		}
+
+		// Endpoints move between the sites of their organization only.
+		tok, err := engine.CreateEnrollmentToken(svc, o.ID, &site1.ID, "reconcile contract", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := c.enroll(tok.Secret, "contract-reconcile-"+suffix)
+		r.capabilities = []string{"uninstall"} // EasyPatch's agents since 1.6.0
+		r.checkIn()
+		e, err := engine.Endpoint(svc, r.endpoint)
+		if err != nil || e.Summary.SiteID == nil || *e.Summary.SiteID != site1.ID || e.EsuOverride == "" {
+			t.Fatalf("enrolled endpoint: %+v, %v", e.Summary, err)
+		}
+		if err := engine.MoveEndpoint(svc, r.endpoint, &site2.ID); err != nil {
+			t.Fatal(err)
+		}
+		if e, err = engine.Endpoint(svc, r.endpoint); err != nil || e.Summary.SiteID == nil || *e.Summary.SiteID != site2.ID {
+			t.Fatalf("moved: %+v, %v", e.Summary, err)
+		}
+		otherSites, err := engine.AllSites(svc, other.ID)
+		if err != nil || len(otherSites) == 0 {
+			t.Fatalf("other organization's sites: %+v, %v", otherSites, err)
+		}
+		if err := engine.MoveEndpoint(svc, r.endpoint, &otherSites[0].ID); !IsStatus(err, http.StatusBadRequest) {
+			t.Fatalf("a move to another organization's site: %v", err)
+		}
+
+		// Uninstall first: revoking cancels open jobs, the uninstall's too.
+		job, err := engine.UninstallAgent(svc, r.endpoint)
+		if err != nil || job.ID == uuid.Nil {
+			t.Fatalf("uninstall: %+v, %v", job, err)
+		}
+		if _, err := engine.UninstallAgent(svc, r.endpoint); !IsStatus(err, http.StatusConflict) {
+			t.Fatalf("a second uninstall: %v", err)
+		} else if e := (*Error)(nil); !errors.As(err, &e) || e.Code != "duplicate_job" {
+			t.Errorf("a second uninstall: %v", err)
+		}
+		if err := engine.RevokeEndpoint(svc, r.endpoint, "EasyRMM contract"); err != nil {
+			t.Fatal(err)
+		}
+		if d, err := engine.Job(svc, job.ID); err != nil || d.Summary.Status != "Cancelled" { //nolint:misspell // EasyPatch's enum value
+			t.Fatalf("uninstall after revoking: %+v, %v", d.Summary.Status, err)
+		}
+		if _, err := engine.UninstallAgent(svc, r.endpoint); !IsStatus(err, http.StatusConflict) {
+			t.Fatalf("uninstall of a revoked endpoint: %v", err)
+		}
+
+		// Archived: hidden from lists unless asked for, its name still
+		// taken, and no new enrollments.
+		if err := engine.ArchiveSite(svc, site2.ID); err != nil {
+			t.Fatal(err)
+		}
+		if sites, err := engine.Sites(svc, o.ID); err != nil || slices.ContainsFunc(sites, func(x Site) bool { return x.ID == site2.ID }) {
+			t.Fatalf("archived site listed: %+v, %v", sites, err)
+		}
+		if sites, err := engine.AllSites(svc, o.ID); err != nil || !slices.ContainsFunc(sites, func(x SiteDetail) bool { return x.ID == site2.ID && !x.IsActive }) {
+			t.Fatalf("archived site not listed with the archived: %+v, %v", sites, err)
+		}
+		if _, err := engine.CreateSite(svc, o.ID, "South", ""); !IsStatus(err, http.StatusConflict) {
+			t.Fatalf("an archived site's name: %v", err)
+		}
+		if err := engine.ArchiveOrganization(svc, o.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := engine.ArchiveOrganization(svc, o.ID); err != nil {
+			t.Fatalf("archiving twice: %v", err)
+		}
+		if list, err := engine.Organizations(svc); err != nil || slices.ContainsFunc(list, func(x Organization) bool { return x.ID == o.ID }) {
+			t.Fatalf("archived organization listed: %v", err)
+		}
+		if list, err := engine.AllOrganizations(svc); err != nil || !slices.ContainsFunc(list, func(x Organization) bool { return x.ID == o.ID && !x.IsActive }) {
+			t.Fatalf("archived organization not listed with the archived: %v", err)
+		}
+		if _, err := engine.CreateOrganization(svc, o.Name, "UTC"); !IsStatus(err, http.StatusConflict) {
+			t.Fatalf("an archived organization's name: %v", err)
+		}
+		if _, err := engine.CreateEnrollmentToken(svc, o.ID, nil, "archived", ""); !IsStatus(err, http.StatusConflict) {
+			t.Fatalf("a token in an archived organization: %v", err)
+		}
+		// Renamed, the archived organization frees its name.
+		got, err := engine.GetOrganization(svc, o.ID)
+		if err != nil || got.IsActive || got.ArchivedAt == nil {
+			t.Fatalf("archived organization: %+v, %v", got, err)
+		}
+		freed := got.Name
+		got.Name += " (deleted)"
+		if _, err := engine.UpdateOrganization(svc, got); err != nil {
+			t.Fatalf("renaming an archived organization: %v", err)
+		}
+		if _, err := engine.CreateOrganization(svc, freed, "UTC"); err != nil {
+			t.Fatalf("a freed name: %v", err)
+		}
 	})
 
 	run("agents through EasyRMM's edge", func(t *testing.T) {
@@ -916,7 +1087,7 @@ func TestContract(t *testing.T) {
 // only what eptest sends.
 // finished is a finished job of the endpoint with no identical job queued,
 // which EasyPatch would refuse to retry (duplicate_job).
-func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uuid.UUID) {
+func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uuid.UUID, suffix string) {
 	fake := eptest.New(t)
 	fOrg := fake.Org("Contract")
 	fSite := fake.Site(fOrg, "Head office")
@@ -996,6 +1167,22 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		{name: "bulk restart", method: "POST", fake: "/api/v1/endpoints/bulk/restart", real: "/api/v1/endpoints/bulk/restart",
 			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint}, "restart": newRestartPreset(&at)},
 			rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint}, "restart": newRestartPreset(&at)}},
+		q("organization", "GET", "/api/v1/organizations/"+fOrg.String(), "/api/v1/organizations/"+org.String()),
+		{name: "organizations, archived ones too", method: "GET", fake: "/api/v1/organizations?includeArchived=true",
+			real: "/api/v1/organizations?includeArchived=true", element: true, fElem: fOrg, rElem: org},
+		{name: "sites, archived ones too", method: "GET", fake: "/api/v1/organizations/" + fOrg.String() + "/sites?includeArchived=true",
+			real: "/api/v1/organizations/" + org.String() + "/sites?includeArchived=true", element: true, fElem: fSite, rElem: site},
+		q("site", "GET", "/api/v1/sites/"+fSite.String(), "/api/v1/sites/"+site.String()),
+		{name: "create organization", method: "POST", fake: "/api/v1/organizations", real: "/api/v1/organizations",
+			fBody: map[string]any{"name": "Shape " + uuid.NewString(), "timeZone": "Europe/Paris"},
+			rBody: map[string]any{"name": "Shape " + uuid.NewString(), "timeZone": "Europe/Paris"}},
+		{name: "create site", method: "POST", fake: "/api/v1/organizations/" + fOrg.String() + "/sites", real: "/api/v1/organizations/" + org.String() + "/sites",
+			fBody: map[string]any{"name": "Shape " + uuid.NewString(), "timeZone": nil},
+			rBody: map[string]any{"name": "Shape " + uuid.NewString(), "timeZone": nil}},
+		{name: "duplicate organization", method: "POST", fake: "/api/v1/organizations", real: "/api/v1/organizations",
+			fBody: map[string]any{"name": "Contract"}, rBody: map[string]any{"name": "Contract " + suffix}},
+		{name: "invalid time zone", method: "POST", fake: "/api/v1/organizations", real: "/api/v1/organizations",
+			fBody: map[string]any{"name": "Zone", "timeZone": ""}, rBody: map[string]any{"name": "Zone " + suffix, "timeZone": ""}},
 		{name: "enrollment token", method: "POST", fake: "/api/v1/enrollment-tokens", real: "/api/v1/enrollment-tokens",
 			fBody: map[string]any{"organizationId": fOrg, "siteId": fSite, "description": "shape", "expiresInHours": 1, "maxUses": 1, "count": 1},
 			rBody: map[string]any{"organizationId": org, "siteId": site, "description": "shape", "expiresInHours": 1, "maxUses": 1, "count": 1}},

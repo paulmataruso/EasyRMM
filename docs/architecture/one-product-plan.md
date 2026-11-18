@@ -257,6 +257,15 @@ is unavailable.
     reinstalls what an opt-out removed.
 * A reconcile test covers each case, plus a restart in the middle of one.
 
+*Done (B5, [ADR-0040](adr/0040-one-set-of-organizations.md)): organizations
+gain a time zone; names that clash get the EasyRMM id's first 8 characters;
+an unlinked engine organization with the exact name is adopted, which also
+makes a create whose reply was lost safe. A device moved to another
+organization has its agent uninstall itself and is enrolled again there. An
+agent that will not uninstall within 7 days is revoked. Device removals and
+opt-outs also work with a connected server. EasyRMM's console has no device
+move or retire screen yet; the reconciler acts on the database.*
+
 **B6. Agent packages without a manual step.** EasyPatch's server image
 carries the agent packages of its own version, signed by the release
 workflow, the way EasyRMM's server image carries EasyRMM's agents. CI images

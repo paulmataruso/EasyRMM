@@ -86,12 +86,17 @@ func TestBundledEngine(t *testing.T) {
 	wantErr(t, err, apperr.KindConflict, "patching_bundled")
 	wantErr(t, f.svc.DeleteConnection(ctx, f.admin.Actor), apperr.KindConflict, "patching_bundled")
 
-	// Links and the patching pages work as with a connected server. EasyRMM's
-	// own work acts as EasyRMM, in every organization.
-	epAcme := engine.Org("Acme Patch")
-	if err := f.svc.LinkOrganization(ctx, f.admin.Actor, f.acme, epAcme); err != nil {
+	// Every organization has its own in the engine, which EasyRMM creates
+	// and links (ADR-0040): there is no link to choose or remove.
+	wantErr(t, f.svc.LinkOrganization(ctx, f.admin.Actor, f.acme, uuid.New()), apperr.KindConflict, "patching_linked_by_easyrmm")
+	wantErr(t, f.svc.UnlinkOrganization(ctx, f.admin.Actor, f.acme), apperr.KindConflict, "patching_linked_by_easyrmm")
+	if _, err := f.svc.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
+	epAcme := f.engineOrg(f.acme)
+
+	// Links and the patching pages work as with a connected server. EasyRMM's
+	// own work acts as EasyRMM, in every organization.
 	e1 := engine.AddEndpoint(epAcme, "web-01", "", "AAAA-1111")
 	web := f.device(f.acme, f.hq, "web-01")
 	// Agents enroll with the engine's public address (EasyRMM's own, in
@@ -176,6 +181,18 @@ func TestBundledEngine(t *testing.T) {
 	if _, err := NewEngineClient("https://127.0.0.1:18180", signer, "1.0.0"); err == nil {
 		t.Error("https was accepted for the engine")
 	}
+}
+
+// engineOrg is the engine organization linked to an EasyRMM one.
+func (f *fixture) engineOrg(org uuid.UUID) uuid.UUID {
+	f.t.Helper()
+	return f.id(`SELECT easypatch_id FROM easypatch_organizations WHERE organization_id = $1`, org)
+}
+
+// engineSite is the engine site linked to an EasyRMM one.
+func (f *fixture) engineSite(site uuid.UUID) uuid.UUID {
+	f.t.Helper()
+	return f.id(`SELECT easypatch_id FROM easypatch_sites WHERE site_id = $1`, site)
 }
 
 // client is a token client for the fixture's server.

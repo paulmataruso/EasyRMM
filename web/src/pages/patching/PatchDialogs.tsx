@@ -116,6 +116,66 @@ export function AgentInstallDialog({ open, onClose, devices, onDone }: { open: b
   );
 }
 
+/**
+ * Stops patching devices (ADR-0040): EasyRMM removes the EasyPatch agent it manages on them and installs none again,
+ * automatically or when asked, until patching is allowed again.
+ */
+export function StopPatchingDialog({ open, onClose, devices }: { open: boolean; onClose: () => void; devices: PatchTarget[] }) {
+  const toast = useToast();
+  const stop = useApiMutation((ids: string[]) => api.post<PatchActionResult>("/patching/stop", { deviceIds: ids }), {
+    invalidate: PATCH_KEYS,
+    onSuccess: (r) => {
+      const first = r.results[0];
+      if (r.failed > 0 && first) toast.error(first.message || "Patching was not stopped.");
+      else toast.success(devices.length === 1 && first?.message ? first.message : `Patching stopped on ${plural(r.succeeded, "device")}.`);
+      onClose();
+    },
+  });
+  useEffect(() => {
+    if (open) stop.reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset when the dialog opens, not when the mutation changes
+  }, [open]);
+  const where = devices.length === 1 ? devices[0]!.name : plural(devices.length, "device");
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title={`Stop patching ${where}?`}
+      description="For a device that must not be patched, such as a server that may only change in a planned window."
+      footer={
+        <>
+          <Button onClick={onClose} disabled={stop.isPending}>
+            Cancel
+          </Button>
+          <Button variant="danger" loading={stop.isPending} onClick={() => stop.mutate(devices.map((d) => d.id))}>
+            Stop patching
+          </Button>
+        </>
+      }
+    >
+      <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
+        <li>EasyRMM has the EasyPatch agent uninstall itself. An agent that cannot is cut off from patching instead.</li>
+        <li>EasyRMM installs no EasyPatch agent on the device again, automatically or when asked, until you allow patching again.</li>
+        <li>An EasyPatch agent someone installs on the computer by hand is left alone.</li>
+      </ul>
+      <InlineError error={stop.error} />
+    </Dialog>
+  );
+}
+
+/** Allows patching again on a device it was stopped for. */
+export function useAllowPatching() {
+  const toast = useToast();
+  return useApiMutation((ids: string[]) => api.post<PatchActionResult>("/patching/allow", { deviceIds: ids }), {
+    invalidate: PATCH_KEYS,
+    onSuccess: (r) => {
+      const first = r.results[0];
+      if (r.failed > 0) toast.error(first?.message || "Patching was not allowed again.");
+      else toast.success(first?.message || "Patching allowed again.");
+    },
+  });
+}
+
 /** A datetime-local value for a time, in the browser's zone. */
 function localInput(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");

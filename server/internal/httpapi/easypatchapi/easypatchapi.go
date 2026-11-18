@@ -42,6 +42,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	settings("PATCH /api/v1/settings/easypatch/organizations/{id}", a.updateOrganization)
 	settings("DELETE /api/v1/settings/easypatch/organizations/{id}", a.unlinkOrganization)
 	settings("GET /api/v1/settings/easypatch/devices", a.deviceLinks)
+	settings("GET /api/v1/settings/easypatch/sync", a.sync)
 
 	r := func(pattern string, h httpapi.HandlerFunc) {
 		mux.Handle(pattern, httpapi.RequireActive(httpapi.Handle(h)))
@@ -62,6 +63,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/patching/restart/plan", a.planRestart)
 	r("POST /api/v1/patching/restart", a.restart)
 	r("POST /api/v1/patching/agent-install", a.installAgent)
+	r("POST /api/v1/patching/stop", a.stopPatching)
+	r("POST /api/v1/patching/allow", a.allowPatching)
 	// The product switch: for anyone signed in, it says whether to show it.
 	r("GET /api/v1/patching/switch", a.productSwitch)
 	// Where a link from EasyPatch opens the console.
@@ -389,6 +392,29 @@ func (a *API) installAgent(w http.ResponseWriter, r *http.Request) error {
 	}
 	res, err := a.svc.InstallAgent(r.Context(), httpapi.Caller(r), in)
 	return ok(w, res, err)
+}
+
+func (a *API) stopPatching(w http.ResponseWriter, r *http.Request) error {
+	var in easypatch.ActionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.StopPatching(r.Context(), httpapi.Caller(r), in)
+	return ok(w, res, err)
+}
+
+func (a *API) allowPatching(w http.ResponseWriter, r *http.Request) error {
+	var in easypatch.ActionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.AllowPatching(r.Context(), httpapi.Caller(r), in)
+	return ok(w, res, err)
+}
+
+func (a *API) sync(w http.ResponseWriter, r *http.Request) error {
+	st, err := a.svc.Sync(r.Context())
+	return ok(w, st, err)
 }
 
 func parseID(s, field string) (uuid.UUID, error) {

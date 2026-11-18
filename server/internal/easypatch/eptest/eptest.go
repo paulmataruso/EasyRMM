@@ -52,13 +52,17 @@ type Server struct {
 	readOnlyCall bool
 	// Down makes every call answer 503.
 	Down bool
+	// LoseReply, when it returns true for a call, has the server do the
+	// call and then answer 502, as when the connection drops after
+	// EasyPatch saved the change: the caller cannot tell it happened.
+	LoseReply func(method, path string) bool
 
 	// Packages is what agent-packages lists; New fills in those of an
 	// EasyPatch 1.9.0 server.
 	Packages []map[string]any
 
-	orgs      []map[string]any
-	sites     []map[string]any
+	orgs      []*OrgInfo
+	sites     []*SiteInfo
 	endpoints map[uuid.UUID]*Endpoint
 	jobs      []*Job
 	tokens    []*Token
@@ -87,6 +91,15 @@ type Endpoint struct {
 	Missing     int
 	Fingerprint string
 	Revoked     bool
+	// Site is the endpoint's site, if any; Notes and Esu what its update
+	// keeps.
+	Site     *uuid.UUID
+	SiteName string
+	Notes    *string
+	Esu      string
+	// CannotUninstall is an agent older than 1.6.0, which cannot remove
+	// itself.
+	CannotUninstall bool
 	// RebootPending, IsServer and CannotRestart describe a pending restart
 	// as EasyPatch 1.10.0's restart-pending list shows it.
 	RebootPending  bool
@@ -129,7 +142,7 @@ type Statement struct {
 func New(t testing.TB) *Server {
 	t.Helper()
 	s := newServer()
-	s.srv = httptest.NewUnstartedServer(http.HandlerFunc(s.serve))
+	s.srv = httptest.NewUnstartedServer(http.HandlerFunc(s.handle))
 	// Tests of an untrusted certificate make the server log handshake errors.
 	s.srv.Config.ErrorLog = log.New(io.Discard, "", 0)
 	s.srv.StartTLS()
@@ -162,9 +175,22 @@ func NewEngine(t testing.TB, key []byte) *Server {
 	t.Helper()
 	s := newServer()
 	s.key = append([]byte(nil), key...)
-	s.srv = httptest.NewServer(http.HandlerFunc(s.serve)) // 127.0.0.1
+	s.srv = httptest.NewServer(http.HandlerFunc(s.handle)) // 127.0.0.1
 	t.Cleanup(s.srv.Close)
 	return s
+}
+
+// handle serves a call, losing its reply when LoseReply says to.
+func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	lose := s.LoseReply != nil && s.LoseReply(r.Method, r.URL.Path)
+	s.mu.Unlock()
+	if !lose {
+		s.serve(w, r)
+		return
+	}
+	s.serve(httptest.NewRecorder(), r)
+	problem(w, http.StatusBadGateway, "", "The connection was lost.")
 }
 
 // statement checks a request's statement as the engine does, minus its
@@ -225,9 +251,11 @@ func (s *Server) Site(org uuid.UUID, name string) uuid.UUID {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id := uuid.New()
-	s.sites = append(s.sites, map[string]any{"id": id, "organizationId": org, "organizationName": "", "name": name, "description": nil,
-		"address": nil, "timeZone": "UTC", "isActive": true, "endpointCount": 0, "rebootPendingCount": 0,
-		"createdAt": "2026-11-02T10:00:00+00:00", "archivedAt": nil, "tags": nil})
+	tz := "UTC"
+	if o := s.org(org); o != nil {
+		tz = o.TimeZone
+	}
+	s.sites = append(s.sites, &SiteInfo{ID: id, Org: org, Name: name, TimeZone: tz, Active: true})
 	return id
 }
 
@@ -247,8 +275,7 @@ func (s *Server) Org(name string) uuid.UUID {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id := uuid.New()
-	s.orgs = append(s.orgs, map[string]any{"id": id, "name": name, "description": nil, "timeZone": "UTC", "isActive": true,
-		"siteCount": 1, "endpointCount": 0})
+	s.orgs = append(s.orgs, &OrgInfo{ID: id, Name: name, TimeZone: "UTC", Active: true})
 	return id
 }
 
@@ -258,13 +285,16 @@ func (s *Server) AddEndpoint(org uuid.UUID, hostname, serial, fingerprint string
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	name := ""
-	for _, o := range s.orgs {
-		if o["id"] == org {
-			name = o["name"].(string)
-		}
+	if o := s.org(org); o != nil {
+		name = o.Name
 	}
 	e := &Endpoint{ID: uuid.New(), Org: org, OrgName: name, Hostname: hostname, Serial: serial, Status: "Active",
-		Compliance: "MissingUpdates", Missing: 2, Fingerprint: fingerprint}
+		Compliance: "MissingUpdates", Missing: 2, Fingerprint: fingerprint, Esu: "Auto"}
+	// In the organization's first site, as an enrollment token for it puts
+	// it.
+	if i := slices.IndexFunc(s.sites, func(x *SiteInfo) bool { return x.Org == org && x.Active }); i >= 0 {
+		e.Site, e.SiteName = &s.sites[i].ID, s.sites[i].Name
+	}
 	e.Updates = []map[string]any{
 		update("openssl 3.5.7-1~deb13u3", "Security", "Missing"),
 		update("tzdata 2026c-0+deb13u1", "Other", "Failed"),
@@ -292,13 +322,17 @@ func (s *Server) Jobs() []Job {
 	return out
 }
 
-// SetJobStatus changes a job's status, as its agent's reports would.
+// SetJobStatus changes a job's status, as its agent's reports would. An
+// uninstall that completes unenrolls its endpoint, as the agent does.
 func (s *Server) SetJobStatus(id uuid.UUID, status string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, j := range s.jobs {
 		if j.ID == id {
 			j.Status = status
+			if e := s.endpoints[j.Endpoint]; e != nil && j.Type == "UninstallAgent" && status == "Completed" {
+				e.Status = "Decommissioned"
+			}
 		}
 	}
 }
@@ -340,7 +374,7 @@ func update(title, category, state string) map[string]any {
 func (e *Endpoint) summary() map[string]any {
 	return map[string]any{
 		"id": e.ID, "hostname": e.Hostname, "organizationId": e.Org, "organizationName": e.OrgName,
-		"siteId": uuid.New(), "siteName": "Head office", "status": e.Status, "operatingSystem": "Debian GNU/Linux 13 (trixie)",
+		"siteId": e.Site, "siteName": nullable(e.SiteName), "status": e.Status, "operatingSystem": "Debian GNU/Linux 13 (trixie)",
 		"osVersion": "13", "osBuild": nil, "architecture": "X64", "agentVersion": "1.9.0", "agentOutdated": false, "isOnline": true,
 		"lastCheckInAt": "2026-11-16T14:34:13.737582+00:00", "lastScanAt": "2026-11-16T14:40:00+00:00",
 		"complianceStatus": e.Compliance, "missingRequiredCount": 1, "missingTotalCount": e.Missing, "failedCount": 1,
@@ -362,7 +396,7 @@ func (e *Endpoint) detail() map[string]any {
 		"summary": e.summary(), "dnsDomain": nil, "serialNumber": serial, "manufacturer": "QEMU",
 		"lastScanAttemptAt": "2026-11-16T14:40:00+00:00", "lastScanError": nil, "rebootReasons": []string{},
 		"rebootPendingSince": nil, "installedCount": len(e.InstalledItems), "pendingRebootUpdateCount": 0,
-		"complianceEvaluatedAt": "2026-11-16T14:40:01+00:00",
+		"complianceEvaluatedAt": "2026-11-16T14:40:01+00:00", "notes": e.Notes, "esuOverride": e.Esu,
 		"credentials": []map[string]any{{"credentialId": "c_test", "keyFingerprint": e.Fingerprint, "createdAt": "2026-11-16T14:34:05+00:00",
 			"expiresAt": "2027-11-16T14:34:05+00:00", "revokedAt": revoked, "revokedReason": nil, "lastUsedAt": nil}},
 	}
@@ -400,6 +434,15 @@ func problem(w http.ResponseWriter, status int, code, detail string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"type": "about:blank", "title": http.StatusText(status), "status": status,
 		"detail": detail, "code": code, "correlationId": "0HTEST"})
 }
+
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func jsonEncode(w io.Writer, v any) error { return json.NewEncoder(w).Encode(v) }
 
 func reply(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -474,18 +517,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agent-packages":
 		reply(w, 200, s.Packages)
-	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/organizations":
-		reply(w, 200, s.orgs)
-	case r.Method == http.MethodGet && parts[0] == "organizations" && len(parts) == 3 && parts[2] == "restart-pending":
-		s.restartPending(w, parts[1])
-	case r.Method == http.MethodGet && parts[0] == "organizations" && len(parts) == 3 && parts[2] == "sites":
-		list := []map[string]any{}
-		for _, x := range s.sites {
-			if x["organizationId"].(uuid.UUID).String() == parts[1] {
-				list = append(list, x)
-			}
-		}
-		reply(w, 200, list)
+	case parts[0] == "organizations":
+		s.serveOrganizations(w, r, parts, body)
+	case parts[0] == "sites" && len(parts) >= 2:
+		s.serveSite(w, r, parts, body)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/endpoints":
 		org, _ := uuid.Parse(q.Get("organizationId"))
 		var list []map[string]any
@@ -553,8 +588,13 @@ func (s *Server) createToken(w http.ResponseWriter, body map[string]any) {
 	uses, _ := body["maxUses"].(float64)
 	count, _ := body["count"].(float64)
 	desc, _ := body["description"].(string)
-	if err != nil || slices.IndexFunc(s.orgs, func(o map[string]any) bool { return o["id"] == org }) < 0 {
+	o := s.org(org)
+	if err != nil || o == nil {
 		problem(w, 404, "not_found", "Organization not found.")
+		return
+	}
+	if !o.Active {
+		problem(w, 409, "archived", "The organization is archived.")
 		return
 	}
 	if hours < 1 || hours > 720 || uses < 1 || uses > 1000 || count < 1 || count > 100 || len(desc) > 500 {
@@ -564,8 +604,8 @@ func (s *Server) createToken(w http.ResponseWriter, body map[string]any) {
 	var site *uuid.UUID
 	if v, ok := body["siteId"].(string); ok {
 		id, err := uuid.Parse(v)
-		if err != nil || slices.IndexFunc(s.sites, func(x map[string]any) bool { return x["id"] == id && x["organizationId"] == org }) < 0 {
-			problem(w, 400, "validation_failed", "The site does not belong to the organization.")
+		if x := s.site(id); err != nil || x == nil || x.Org != org || !x.Active {
+			problem(w, 400, "validation_failed", "The site does not belong to the organization or is archived.")
 			return
 		}
 		site = &id
@@ -617,6 +657,14 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *Endpoi
 	switch {
 	case r.Method == http.MethodGet && sub == "":
 		reply(w, 200, e.detail())
+	case r.Method != http.MethodGet && s.readOnlyCall && (sub == "" || sub == "uninstall-agent" || sub == "revoke"):
+		problem(w, 403, "forbidden", "You do not have permission.")
+	case r.Method == http.MethodPut && sub == "":
+		s.updateEndpoint(w, e, body)
+	case r.Method == http.MethodPost && sub == "uninstall-agent":
+		s.uninstall(w, e)
+	case r.Method == http.MethodPost && sub == "revoke":
+		s.revoke(w, e)
 	case r.Method == http.MethodGet && sub == "updates":
 		state := r.URL.Query().Get("state")
 		list := []map[string]any{}
@@ -717,7 +765,7 @@ func (s *Server) restartPending(w http.ResponseWriter, org string) {
 		return
 	}
 	id, _ := uuid.Parse(org)
-	if slices.IndexFunc(s.orgs, func(o map[string]any) bool { return o["id"] == id }) < 0 {
+	if s.org(id) == nil {
 		problem(w, 404, "not_found", "Organization not found.")
 		return
 	}

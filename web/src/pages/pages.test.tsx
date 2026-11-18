@@ -84,10 +84,13 @@ describe("organizations", () => {
     await user.clear(within(form).getByLabelText(/^Name/));
     await user.type(within(form).getByLabelText(/^Name/), "  Tailspin Toys ");
     await user.type(within(form).getByLabelText(/^Notes/), "Onboarding in progress.");
+    // The browser's time zone to start with; patching's reports use it.
+    await user.clear(within(form).getByLabelText(/^Time zone/));
+    await user.type(within(form).getByLabelText(/^Time zone/), "Europe/London");
     await user.click(within(form).getByRole("button", { name: "Create organization" }));
     expect(await screen.findByText("Organization “Tailspin Toys” created.")).toBeInTheDocument();
     await waitFor(() => expect(location()).toBe("/organizations/o9"));
-    expect(server.call("POST /organizations", 1).body).toEqual({ name: "Tailspin Toys", notes: "Onboarding in progress." });
+    expect(server.call("POST /organizations", 1).body).toEqual({ name: "Tailspin Toys", timezone: "Europe/London", notes: "Onboarding in progress." });
   });
 
   it("does not offer creation to people without org.create", async () => {
@@ -146,7 +149,7 @@ describe("organizations", () => {
     await user.type(within(form).getByLabelText(/^Notes/), "New notes.");
     await user.click(within(form).getByRole("button", { name: "Save changes" }));
     expect(await screen.findByText("Organization updated.")).toBeInTheDocument();
-    expect(server.call("PUT /organizations/:id", 0).body).toEqual({ name: "Northwind Traders", notes: "New notes." });
+    expect(server.call("PUT /organizations/:id", 0).body).toEqual({ name: "Northwind Traders", timezone: "UTC", notes: "New notes." });
   });
 
   it("explains why a non-empty organization cannot be deleted", async () => {

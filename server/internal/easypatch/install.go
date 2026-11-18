@@ -110,20 +110,27 @@ type installTarget struct {
 	report                     *agentproto.EasyPatchAgent
 	easyPatchOrg               *uuid.UUID
 	autoInstall                bool
+	// easyPatchSite is the engine site linked to the device's (ADR-0040).
+	easyPatchSite *uuid.UUID
+	// optedOut: patching was stopped for the device; removing: EasyRMM is
+	// removing its EasyPatch agent.
+	optedOut, removing bool
 }
 
 const targetSelect = `SELECT d.id, d.organization_id, d.site_id, d.name, s.name, d.platform, coalesce(d.agent_arch, ''), d.agent_public_key IS NOT NULL,
-		i.device_id IS NOT NULL, i.data->'easyPatch', l.easypatch_id, coalesce(l.auto_install, false)
+		i.device_id IS NOT NULL, i.data->'easyPatch', l.easypatch_id, coalesce(l.auto_install, false), ls.easypatch_id,
+		EXISTS (SELECT 1 FROM easypatch_opt_outs o WHERE o.device_id = d.id), EXISTS (SELECT 1 FROM easypatch_removals r WHERE r.device_id = d.id)
 	FROM devices d JOIN sites s ON s.id = d.site_id
 	LEFT JOIN device_inventory i ON i.device_id = d.id
 	LEFT JOIN easypatch_organizations l ON l.organization_id = d.organization_id
+	LEFT JOIN easypatch_sites ls ON ls.site_id = d.site_id
 	WHERE d.id = $1`
 
 func loadTarget(ctx context.Context, tx pgx.Tx, id uuid.UUID) (installTarget, error) {
 	var t installTarget
 	var report []byte
 	err := tx.QueryRow(ctx, targetSelect, id).Scan(&t.id, &t.organizationID, &t.siteID, &t.name, &t.siteName, &t.platform, &t.arch,
-		&t.enrolled, &t.inventoried, &report, &t.easyPatchOrg, &t.autoInstall)
+		&t.enrolled, &t.inventoried, &report, &t.easyPatchOrg, &t.autoInstall, &t.easyPatchSite, &t.optedOut, &t.removing)
 	if err != nil {
 		return t, err
 	}
@@ -154,6 +161,10 @@ const notEnrolled = "NotEnrolled"
 // "" when it can.
 func (t *installTarget) ineligible() string {
 	switch {
+	case t.optedOut:
+		return "Patching is stopped for this device. Allow patching again first."
+	case t.removing:
+		return "EasyRMM is removing this device's EasyPatch agent. Try again once it is gone."
 	case t.easyPatchOrg == nil:
 		return "This device's organization is not linked to an EasyPatch organization. A super administrator links it in Settings → EasyPatch."
 	case !t.enrolled:
@@ -442,16 +453,18 @@ func (s *Service) instruction(ctx context.Context, deviceID, attempt uuid.UUID, 
 		return nil, nil, fmt.Sprintf("EasyPatch has no agent package for %s %s. Its packages are listed under Deploy → Agent packages.",
 			platformName(t.platform), agentproto.EasyPatchArch(t.arch)), nil
 	}
-	var site *uuid.UUID
-	sites, err := cl.Sites(ctx, *t.easyPatchOrg)
-	if err != nil {
-		s.noteError(ctx, err)
-		return nil, nil, "EasyPatch could not list the organization's sites: " + message(epError(err)), nil
-	}
-	for _, x := range sites {
-		if strings.EqualFold(strings.TrimSpace(x.Name), strings.TrimSpace(t.siteName)) {
-			site = &x.ID
-			break
+	site := t.easyPatchSite
+	if site == nil {
+		sites, err := cl.Sites(ctx, *t.easyPatchOrg)
+		if err != nil {
+			s.noteError(ctx, err)
+			return nil, nil, "EasyPatch could not list the organization's sites: " + message(epError(err)), nil
+		}
+		for _, x := range sites {
+			if strings.EqualFold(strings.TrimSpace(x.Name), strings.TrimSpace(t.siteName)) {
+				site = &x.ID
+				break
+			}
 		}
 	}
 	token, err := cl.CreateEnrollmentToken(ctx, *t.easyPatchOrg, site, cut("EasyRMM install on "+t.name, 200), onBehalfOf)
@@ -608,7 +621,9 @@ func (s *Service) SweepInstalls(ctx context.Context) (int, error) {
 		}
 		// A device qualifies the way ineligible() decides, in SQL.
 		const qualifies = `d.agent_public_key IS NOT NULL AND d.platform IN ('windows', 'linux') AND d.agent_arch IN ('amd64', 'arm64')
-			AND coalesce(i.data->'easyPatch'->>'status', 'NotEnrolled') = 'NotEnrolled'`
+			AND coalesce(i.data->'easyPatch'->>'status', 'NotEnrolled') = 'NotEnrolled'
+			AND NOT EXISTS (SELECT 1 FROM easypatch_opt_outs o WHERE o.device_id = d.id)
+			AND NOT EXISTS (SELECT 1 FROM easypatch_removals r WHERE r.device_id = d.id)`
 		tag, err := tx.Exec(ctx, `INSERT INTO easypatch_installs (device_id, state, automatic)
 			SELECT d.id, 'waiting', true FROM devices d
 			JOIN easypatch_organizations l ON l.organization_id = d.organization_id AND l.auto_install

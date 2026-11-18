@@ -1,11 +1,19 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Download, PackagePlus, Power, Radar } from "lucide-react";
+import { CircleSlash, Download, PackagePlus, Power, Radar } from "lucide-react";
 import { useApi, useList } from "../../api/hooks";
 import type { Device, DevicePatching, PatchHistoryEntry, PatchJob, PatchPage, PatchUpdate } from "../../api/types";
 import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, KeyValueList, Segmented, Spinner, TableWrap } from "../../components/ui";
 import { formatDate, formatDateTime, formatRelative, formatSize, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
-import { AgentInstallDialog, InstallDialog, PatchJobDialog, RestartDialog, useScan } from "../patching/PatchDialogs";
+import {
+  AgentInstallDialog,
+  InstallDialog,
+  PatchJobDialog,
+  RestartDialog,
+  StopPatchingDialog,
+  useAllowPatching,
+  useScan,
+} from "../patching/PatchDialogs";
 import {
   categoryLabel,
   ComplianceBadge,
@@ -32,12 +40,43 @@ export function PatchesPanel({ device }: { device: Device }) {
   if (p.isPending) return <Spinner />;
   if (p.isError) return <ErrorState error={p.error} onRetry={() => void p.refetch()} />;
   const d = p.data;
+  if (d.stopped) return <Stopped patching={d} stopped={d.stopped} device={device} />;
   if (d.link !== "linked") return <NotLinked patching={d} device={device} />;
   return <Linked patching={d} device={device} />;
 }
 
+/** Patching stopped for the device (ADR-0040): its EasyPatch agent removed, or being removed, and none installed. */
+function Stopped({ patching: d, stopped, device }: { patching: DevicePatching; stopped: NonNullable<DevicePatching["stopped"]>; device: Device }) {
+  const allow = useAllowPatching();
+  const removal = d.removal?.reason === "opted_out" ? d.removal : undefined;
+  return (
+    <Card>
+      <EmptyState
+        title="Patching stopped"
+        icon={<CircleSlash className="size-6 text-muted" aria-hidden />}
+        action={
+          d.canManage && (
+            <Button variant="primary" loading={allow.isPending} onClick={() => allow.mutate([device.id])}>
+              Allow patching again
+            </Button>
+          )
+        }
+      >
+        Stopped by {stopped.by || "a removed user"} <span title={formatDateTime(stopped.at)}>{formatRelative(stopped.at)}</span>.{" "}
+        {!removal
+          ? "EasyRMM installs no EasyPatch agent on this device, automatically or when asked."
+          : removal.state === "pending"
+            ? "EasyRMM is about to have the EasyPatch agent uninstall itself."
+            : "The EasyPatch agent is uninstalling itself. One that has not within a week is cut off from patching instead."}
+        {removal?.error && <span className="mt-2 block text-danger">{removal.error}</span>}
+      </EmptyState>
+    </Card>
+  );
+}
+
 function NotLinked({ patching: d, device }: { patching: DevicePatching; device: Device }) {
   const [installing, setInstalling] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const title = d.link === "pending" ? "Checking this device's EasyPatch agent" : d.link === "none" ? "No EasyPatch agent" : "Not patched from EasyRMM";
   // EasyRMM's agent can install the EasyPatch agent on Windows and Linux (ADR-0031).
   const canInstall = d.link === "none" && d.canManage && device.agent !== null && (device.platform === "windows" || device.platform === "linux");
@@ -51,9 +90,13 @@ function NotLinked({ patching: d, device }: { patching: DevicePatching; device: 
         action={
           canInstall &&
           !running && (
-            <Button variant="primary" icon={<PackagePlus className="size-4" aria-hidden />} onClick={() => setInstalling(true)}>
-              {d.install?.state === "failed" ? "Try the install again…" : "Install EasyPatch agent…"}
-            </Button>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button variant="primary" icon={<PackagePlus className="size-4" aria-hidden />} onClick={() => setInstalling(true)}>
+                {d.install?.state === "failed" ? "Try the install again…" : "Install EasyPatch agent…"}
+              </Button>
+              {/* Before automatic installs reach a device that must not be patched. */}
+              <Button onClick={() => setStopping(true)}>Stop patching…</Button>
+            </div>
           )
         }
       >
@@ -83,6 +126,7 @@ function NotLinked({ patching: d, device }: { patching: DevicePatching; device: 
         )}
       </EmptyState>
       <AgentInstallDialog open={installing} onClose={() => setInstalling(false)} devices={[{ id: device.id, name: device.name }]} />
+      <StopPatchingDialog open={stopping} onClose={() => setStopping(false)} devices={[{ id: device.id, name: device.name }]} />
     </Card>
   );
 }
@@ -93,6 +137,7 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
   const [installing, setInstalling] = useState<{ id: string; title: string }[] | "all" | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const { scan, dialog } = useScan();
   const e = d.endpoint;
   const target = [{ id: device.id, name: device.name }];
@@ -154,6 +199,14 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
       <div className="flex min-w-0 flex-col gap-5">
         <Summary patching={d} view={view} />
         {d.policy && <PolicyCard patching={d} />}
+        {d.canManage && (
+          <Card title="Patching this device">
+            <p className="text-sm text-muted">For a device that must not be patched, stopping removes the EasyPatch agent and keeps it off.</p>
+            <Button className="mt-3" variant="danger-ghost" size="sm" onClick={() => setStopping(true)}>
+              Stop patching…
+            </Button>
+          </Card>
+        )}
       </div>
       <InstallDialog
         open={installing !== null}
@@ -164,6 +217,7 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
         onDone={() => url.set({ patches: "jobs" })}
       />
       <RestartDialog open={restarting} onClose={() => setRestarting(false)} devices={target} onDone={() => url.set({ patches: "jobs" })} />
+      <StopPatchingDialog open={stopping} onClose={() => setStopping(false)} devices={target} />
       <PatchJobDialog jobId={jobId} onClose={() => setJobId(null)} onJob={setJobId} />
       {dialog}
     </div>

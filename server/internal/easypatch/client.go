@@ -420,6 +420,7 @@ func (c *Client) CanOperate(ctx context.Context) (bool, error) {
 type Organization struct {
 	ID            uuid.UUID `json:"id"`
 	Name          string    `json:"name"`
+	TimeZone      string    `json:"timeZone"`
 	IsActive      bool      `json:"isActive"`
 	SiteCount     int       `json:"siteCount"`
 	EndpointCount int       `json:"endpointCount"`
@@ -446,6 +447,7 @@ type Endpoint struct {
 	Hostname             string     `json:"hostname"`
 	OrganizationID       uuid.UUID  `json:"organizationId"`
 	OrganizationName     string     `json:"organizationName"`
+	SiteID               *uuid.UUID `json:"siteId"`
 	SiteName             string     `json:"siteName"`
 	Status               string     `json:"status"`
 	OperatingSystem      string     `json:"operatingSystem"`
@@ -494,6 +496,8 @@ type EndpointDetail struct {
 	PendingRebootUpdateCount int          `json:"pendingRebootUpdateCount"`
 	ComplianceEvaluatedAt    *time.Time   `json:"complianceEvaluatedAt"`
 	Credentials              []Credential `json:"credentials"`
+	Notes                    *string      `json:"notes"`
+	EsuOverride              string       `json:"esuOverride"`
 }
 
 // Endpoint reads one endpoint.

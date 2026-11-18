@@ -149,6 +149,7 @@ export function OrganizationDetailPage() {
           <KeyValueList
             narrow
             items={[
+              ["Time zone", o.timezone],
               ["Notes", o.notes ? <span className="whitespace-pre-wrap">{o.notes}</span> : <span className="text-muted">None</span>],
               ["Created", formatDateTime(o.createdAt)],
               ["Updated", formatDateTime(o.updatedAt)],

@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { Loader2, RefreshCw } from "lucide-react";
 import { api, fieldError } from "../../api/client";
 import { useApi, useApiMutation, useList, useOrganizations } from "../../api/hooks";
-import type { EasyPatchConnection, EasyPatchConnectionInput, EasyPatchDeviceLink, EasyPatchOrganizations } from "../../api/types";
+import type { EasyPatchConnection, EasyPatchConnectionInput, EasyPatchDeviceLink, EasyPatchOrganizations, PatchingSync } from "../../api/types";
 import { ConfirmDialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import {
@@ -43,7 +43,7 @@ export function EasyPatchTab() {
         <ServerStatus conn={c} />
       </div>
       {c.configured && !c.bundled && <EasyPatchSignIn />}
-      {c.configured && <OrganizationLinks />}
+      {c.configured && <OrganizationLinks bundled={c.bundled} />}
       {c.configured && <DeviceProblems />}
     </div>
   );
@@ -296,10 +296,11 @@ function ServerStatus({ conn: c }: { conn: EasyPatchConnection }) {
 }
 
 /** Which EasyPatch organization patches each EasyRMM organization. */
-function OrganizationLinks() {
+function OrganizationLinks({ bundled }: { bundled: boolean }) {
   const toast = useToast();
   const orgs = useOrganizations();
   const links = useApi<EasyPatchOrganizations>("/settings/easypatch/organizations", undefined, { refetchInterval: 60_000 });
+  const sync = useApi<PatchingSync>("/settings/easypatch/sync", undefined, { enabled: bundled, refetchInterval: 60_000 });
   const [unlinking, setUnlinking] = useState<{ id: string; name: string; ep: string } | null>(null);
   const link = useApiMutation(
     ({ id, easyPatchId }: { id: string; easyPatchId: string; name: string }) => api.put(`/settings/easypatch/organizations/${id}`, { easyPatchId }),
@@ -336,11 +337,22 @@ function OrganizationLinks() {
 
   return (
     <Card title="Organizations" padded={false}>
-      <p className="border-b border-line px-4 py-3 text-sm text-muted">
-        Link each EasyRMM organization to the EasyPatch organization its devices are enrolled in. A device is patched from EasyRMM once EasyRMM confirms its
-        EasyPatch agent belongs to the linked organization. With <span className="font-medium text-fg">Install automatically</span>, EasyRMM's agent installs
-        and enrolls the EasyPatch agent on the organization's Windows and Linux devices that have none, new ones included.
-      </p>
+      {bundled ? (
+        <div className="border-b border-line px-4 py-3 text-sm text-muted">
+          <p>
+            Every organization and site has its own in the patching engine. EasyRMM creates, renames and archives them as you change yours, so there is nothing
+            to link. With <span className="font-medium text-fg">Install automatically</span>, on for new organizations, EasyRMM's agent installs and enrolls the
+            EasyPatch agent on the organization's Windows and Linux devices that have none. To keep one device unpatched, stop patching on its Patches tab.
+          </p>
+          {sync.data && <SyncLine sync={sync.data} />}
+        </div>
+      ) : (
+        <p className="border-b border-line px-4 py-3 text-sm text-muted">
+          Link each EasyRMM organization to the EasyPatch organization its devices are enrolled in. A device is patched from EasyRMM once EasyRMM confirms its
+          EasyPatch agent belongs to the linked organization. With <span className="font-medium text-fg">Install automatically</span>, EasyRMM's agent installs
+          and enrolls the EasyPatch agent on the organization's Windows and Linux devices that have none, new ones included.
+        </p>
+      )}
       {links.data.error && (
         <Alert tone="danger" className="m-4" title="EasyPatch's organizations could not be read">
           {links.data.error}
@@ -367,6 +379,7 @@ function OrganizationLinks() {
                 return (
                   <OrgRow
                     key={o.id}
+                    fixed={bundled}
                     name={o.name}
                     linked={l?.easyPatchId ?? ""}
                     linkedName={l?.easyPatchName}
@@ -402,6 +415,7 @@ function OrganizationLinks() {
 }
 
 function OrgRow({
+  fixed,
   name,
   linked,
   linkedName,
@@ -414,6 +428,8 @@ function OrgRow({
   onLink,
   onUnlink,
 }: {
+  /** Links are EasyRMM's own (bundled mode, ADR-0040): shown, not chosen. */
+  fixed: boolean;
   name: string;
   linked: string;
   linkedName?: string;
@@ -432,23 +448,29 @@ function OrgRow({
   const missing = linked !== "" && !choices.some((c) => c.id === linked);
   return (
     <tr>
-      <td className="font-medium">
-        <label htmlFor={id}>{name}</label>
-      </td>
+      <td className="font-medium">{fixed ? name : <label htmlFor={id}>{name}</label>}</td>
       <td>
-        <div className="flex items-center gap-2">
-          <Select id={id} value={linked} disabled={busy} className="max-w-64" onChange={(e) => (e.target.value ? onLink(e.target.value) : onUnlink())}>
-            <option value="">Not linked</option>
-            {missing && <option value={linked}>{linkedName} (not found in EasyPatch)</option>}
-            {choices.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-                {c.isActive ? "" : " (inactive)"}
-              </option>
-            ))}
-          </Select>
-          {busy && <Loader2 className="size-4 animate-spin text-muted" aria-label="Saving" />}
-        </div>
+        {fixed ? (
+          linked ? (
+            <span>{linkedName}</span>
+          ) : (
+            <span className="text-muted">Being created</span>
+          )
+        ) : (
+          <div className="flex items-center gap-2">
+            <Select id={id} value={linked} disabled={busy} className="max-w-64" onChange={(e) => (e.target.value ? onLink(e.target.value) : onUnlink())}>
+              <option value="">Not linked</option>
+              {missing && <option value={linked}>{linkedName} (not found in EasyPatch)</option>}
+              {choices.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                  {c.isActive ? "" : " (inactive)"}
+                </option>
+              ))}
+            </Select>
+            {busy && <Loader2 className="size-4 animate-spin text-muted" aria-label="Saving" />}
+          </div>
+        )}
       </td>
       <td className="hidden text-muted md:table-cell">
         {devices ? (
@@ -480,6 +502,39 @@ function OrgRow({
         )}
       </td>
     </tr>
+  );
+}
+
+/** How keeping the patching engine in step goes: when it last was, what it could not do, and what is waiting. */
+function SyncLine({ sync }: { sync: PatchingSync }) {
+  const waiting = [
+    sync.archiving > 0 && `archiving ${plural(sync.archiving, "deleted organization or site", "deleted organizations and sites")}`,
+    sync.removing > 0 && `removing the EasyPatch agent from ${plural(sync.removing, "device")}`,
+  ].filter(Boolean);
+  return (
+    <div className="mt-2" role="status">
+      {sync.problems.length > 0 ? (
+        <Alert tone="warn" title="The patching engine is not fully in step yet">
+          <ul className="list-disc space-y-0.5 pl-4">
+            {sync.problems.slice(0, 5).map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+          <p className="mt-1">EasyRMM tries again every minute.</p>
+        </Alert>
+      ) : (
+        <p className="text-xs text-subtle">
+          {sync.at ? (
+            <>
+              In step <span title={formatDateTime(sync.at)}>{formatRelative(sync.at)}</span>
+            </>
+          ) : (
+            "Not compared yet; EasyRMM does within a minute of starting"
+          )}
+          {waiting.length > 0 && <>; {waiting.join(" and ")}</>}.
+        </p>
+      )}
+    </div>
   );
 }
 

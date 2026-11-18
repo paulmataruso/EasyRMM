@@ -181,22 +181,58 @@ type deviceRow struct {
 	checkedAt                  *time.Time
 	easyPatchOrg               *uuid.UUID
 	install                    *AgentInstall
+	stopped                    *PatchingStop
+	removal                    *AgentRemoval
 }
 
 func (d *deviceRow) resource() rbac.Resource { return rbac.Site(d.organizationID, d.siteID) }
 
 const deviceSelect = `SELECT d.id, d.organization_id, d.site_id, d.device_group_id, d.name, o.name, s.name, d.platform,
-		coalesce(e.state, 'none'), coalesce(e.reason, ''), e.endpoint_id, e.checked_at, l.easypatch_id, ` + installColumns + `
+		coalesce(e.state, 'none'), coalesce(e.reason, ''), e.endpoint_id, e.checked_at, l.easypatch_id, ` + installColumns + `,
+		po.opted_out_at, pu.email, rm.reason, rm.state, rm.requested_at, rm.last_error
 	FROM devices d JOIN organizations o ON o.id = d.organization_id JOIN sites s ON s.id = d.site_id
 	LEFT JOIN easypatch_devices e ON e.device_id = d.id
-	LEFT JOIN easypatch_organizations l ON l.organization_id = d.organization_id` + installJoin
+	LEFT JOIN easypatch_organizations l ON l.organization_id = d.organization_id
+	LEFT JOIN easypatch_opt_outs po ON po.device_id = d.id LEFT JOIN users pu ON pu.id = po.opted_out_by
+	LEFT JOIN LATERAL (SELECT r.reason, r.state, r.requested_at, r.last_error FROM easypatch_removals r WHERE r.device_id = d.id
+		ORDER BY r.requested_at DESC LIMIT 1) rm ON true` + installJoin
+
+// PatchingStop says patching is stopped for a device: EasyRMM removed its
+// EasyPatch agent, or is removing it, and installs none (ADR-0040).
+type PatchingStop struct {
+	At time.Time `json:"at"`
+	By string    `json:"by,omitempty"`
+}
+
+// AgentRemoval is EasyRMM removing a device's EasyPatch agent.
+type AgentRemoval struct {
+	// Reason is opted_out (patching stopped) or moved (to another
+	// organization).
+	Reason string `json:"reason"`
+	// State is pending (not sent yet) or uninstalling.
+	State       string    `json:"state"`
+	RequestedAt time.Time `json:"requestedAt"`
+	Error       string    `json:"error,omitempty"`
+}
 
 func scanDevice(row pgx.Row) (deviceRow, error) {
 	var d deviceRow
 	var x installScan
-	err := row.Scan(append([]any{&d.id, &d.organizationID, &d.siteID, &d.groupID, &d.name, &d.organizationName, &d.siteName, &d.platform,
-		&d.state, &d.reason, &d.endpointID, &d.checkedAt, &d.easyPatchOrg}, x.dest()...)...)
+	var stopAt, rmAt *time.Time
+	var stopBy, rmReason, rmState, rmError *string
+	err := row.Scan(append(append([]any{&d.id, &d.organizationID, &d.siteID, &d.groupID, &d.name, &d.organizationName, &d.siteName, &d.platform,
+		&d.state, &d.reason, &d.endpointID, &d.checkedAt, &d.easyPatchOrg}, x.dest()...),
+		&stopAt, &stopBy, &rmReason, &rmState, &rmAt, &rmError)...)
 	d.install = x.view()
+	if stopAt != nil {
+		d.stopped = &PatchingStop{At: *stopAt}
+		if stopBy != nil {
+			d.stopped.By = *stopBy
+		}
+	}
+	if rmReason != nil {
+		d.removal = &AgentRemoval{Reason: *rmReason, State: *rmState, RequestedAt: *rmAt, Error: *rmError}
+	}
 	return d, err
 }
 
@@ -263,6 +299,10 @@ type FleetDevice struct {
 	// Install is the device's EasyPatch agent install (ADR-0031), when one
 	// was asked for.
 	Install *AgentInstall `json:"install,omitempty"`
+	// Stopped says patching is stopped for the device; Removal, that
+	// EasyRMM is removing its EasyPatch agent.
+	Stopped *PatchingStop `json:"stopped,omitempty"`
+	Removal *AgentRemoval `json:"removal,omitempty"`
 }
 
 // Fleet is the patching list.
@@ -338,7 +378,7 @@ func (s *Service) Fleet(ctx context.Context, c access.Caller, q FleetQuery) (Fle
 	for _, d := range rows {
 		f := FleetDevice{DeviceID: d.id, Name: d.name, OrganizationID: d.organizationID, OrganizationName: d.organizationName,
 			SiteID: d.siteID, SiteName: d.siteName, Platform: d.platform, Link: d.state, Reason: d.reason, CheckedAt: d.checkedAt,
-			CanManage: c.Can(rbac.PermPatchManage, d.resource()), Install: d.install}
+			CanManage: c.Can(rbac.PermPatchManage, d.resource()), Install: d.install, Stopped: d.stopped, Removal: d.removal}
 		if d.state == LinkLinked && d.easyPatchOrg != nil && d.endpointID != nil {
 			if e, ok := fetched[*d.easyPatchOrg][*d.endpointID]; ok {
 				f.Endpoint = &e
@@ -431,6 +471,10 @@ type DevicePatching struct {
 	// Install is the device's EasyPatch agent install (ADR-0031), when one
 	// was asked for.
 	Install *AgentInstall `json:"install,omitempty"`
+	// Stopped says patching is stopped for the device; Removal, that
+	// EasyRMM is removing its EasyPatch agent.
+	Stopped *PatchingStop `json:"stopped,omitempty"`
+	Removal *AgentRemoval `json:"removal,omitempty"`
 	// Error says why EasyPatch could not be read; the link still shows.
 	Error string `json:"error,omitempty"`
 }
@@ -450,7 +494,7 @@ func (s *Service) Device(ctx context.Context, c access.Caller, id uuid.UUID) (De
 	}
 	out := DevicePatching{DeviceID: d.id, Link: d.state, Reason: d.reason, CheckedAt: d.checkedAt,
 		CanManage: r.canOperate && c.Can(rbac.PermPatchManage, d.resource()), CanSchedule: r.can(CapabilityScheduledInstalls),
-		Install: d.install}
+		Install: d.install, Stopped: d.stopped, Removal: d.removal}
 	if d.state != LinkLinked {
 		return out, nil
 	}

@@ -229,8 +229,11 @@ instead of a connected EasyPatch server:
   with its organization and device links, once, at the first start, and the
   audit log records it. Switching back to `connector` and connecting a server
   forgets the engine's links the same way: links name one server's ids.
-* **Organizations are linked by hand** in Settings → EasyPatch, as with a
-  connected server, until the plan's phase B5 creates them.
+* **EasyRMM keeps the engine's organizations.** Every organization and site
+  has its own in the engine, created, renamed and archived with EasyRMM's
+  ([ADR-0040](../architecture/adr/0040-one-set-of-organizations.md),
+  [Patching](../operations/patching.md#organizations-in-the-bundled-engine));
+  there is nothing to link in Settings.
 * **Agents use EasyRMM's name.** EasyRMM's edge forwards the engine's agent
   API and package downloads (`/api/v1/agents/`, `/downloads/agent/`,
   `/downloads/winget/`) and nothing else of it
