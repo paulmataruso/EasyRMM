@@ -2,7 +2,7 @@
 # EasyPatch proxy image: Caddy (TLS, security headers, reverse proxy) plus the built admin console.
 # Build context: repository root.  docker build -f deployment/caddy/Dockerfile -t easypatch-proxy .
 
-FROM node:24.22.2-alpine3.24 AS spa
+FROM node:24.22.3-alpine3.24 AS spa
 WORKDIR /src
 COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
 RUN npm ci --no-audit --no-fund
