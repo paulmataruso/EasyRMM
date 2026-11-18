@@ -49,9 +49,12 @@ jobs:
       # Permissive licences only (ADR-0037); PDFsharp 6.5 and later, for one, are AGPL.
       - name: Package licence check
         run: |
-          shipped="backend/API backend/Worker $(ls agent/*/*.csproj | grep -v Tests | xargs -n1 dirname | tr '\n' ' ')"
-          for p in $shipped; do dotnet restore "$p" --verbosity quiet; done
-          python3 ../scripts/ci/check-nuget-licences.py $shipped
+          set -- backend/API backend/Worker
+          for project in agent/*/*.csproj; do
+            case $project in *Tests*) ;; *) set -- "$@" "$(dirname "$project")" ;; esac
+          done
+          for p in "$@"; do dotnet restore "$p" --verbosity quiet; done
+          python3 ../scripts/ci/check-nuget-licences.py "$@"
       - name: Vulnerable package check
         run: |
           dotnet list backend/API/EasyPatch.Api.csproj package --vulnerable --include-transitive | tee vulnerable.txt
