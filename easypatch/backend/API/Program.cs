@@ -49,6 +49,7 @@ builder.Services.AddHttpClient(OidcService.HttpClientName, c => c.Timeout = Time
     })
     .RemoveAllLoggers();
 builder.Services.AddSingleton<CsrfProtection>();
+builder.Services.AddSingleton<EasyRmmGateway>();
 builder.Services.AddHostedService<PresenceFlushService>();
 
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -63,6 +64,7 @@ builder.Services.AddAuthentication(ConsoleAuthentication.SchemeName)
     .AddPolicyScheme(ConsoleAuthentication.SchemeName, null, o => o.ForwardDefaultSelector = ConsoleAuthentication.Select)
     .AddScheme<SessionAuthenticationOptions, SessionAuthenticationHandler>(SessionAuthenticationHandler.SchemeName, null)
     .AddScheme<ApiTokenAuthenticationOptions, ApiTokenAuthenticationHandler>(ApiTokenAuthenticationHandler.SchemeName, null)
+    .AddScheme<EasyRmmAuthenticationOptions, EasyRmmAuthenticationHandler>(EasyRmmAuthenticationHandler.SchemeName, null)
     .AddScheme<AgentAuthenticationOptions, AgentAuthenticationHandler>(AgentAuthenticationHandler.SchemeName, null);
 builder.Services.AddEasyPatchAuthorization();
 builder.Services.AddEasyPatchRateLimits(builder.Configuration);
@@ -90,6 +92,8 @@ builder.Services.Configure<ForwardedHeadersOptions>(o =>
 });
 
 var app = builder.Build();
+// An unusable gateway key stops the server now rather than at EasyRMM's first call.
+_ = app.Services.GetRequiredService<EasyRmmGateway>();
 
 app.UseForwardedHeaders();
 app.UseMiddleware<CorrelationIdMiddleware>();

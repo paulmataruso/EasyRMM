@@ -358,6 +358,7 @@ services:
       RateLimits__AgentPerMinute: "120"    # per agent credential
       RateLimits__DownloadsPerMinute: "60" # per IP: package and install-script downloads
       RateLimits__AdminPerMinute: "600"    # per user (or IP when anonymous): admin API
+      RateLimits__EasyRmmServicePerMinute: "6000" # EasyRMM's own work, when EasyPatch is its patching engine
 ```
 
 The values shown are the defaults. Everything else, including job limits, offline threshold,

@@ -7,6 +7,11 @@ the web console and the agents share one version number.
 
 ### Added
 
+- As EasyRMM's patching engine, the administrator API accepts EasyRMM's statements
+  (`X-EasyRMM-Assertion`, EasyRMM's ADR-0038) when `EasyRmm__GatewayKey` is set: each is good
+  for one request for 30 seconds and acts with the role and organizations it names, through the
+  usual role and organization checks, without a user, session or CSRF token. The audit trail
+  names `easyrmm:<user>`. A key that is set but not usable stops the server at start.
 - `/api/v1/server-info` lists the server's `capabilities`, so integrations can check for the
   features below before relying on them.
 - Install requests, for one endpoint or in bulk, take an optional `scheduledAt` up to 31 days

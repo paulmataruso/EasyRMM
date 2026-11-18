@@ -1,0 +1,13 @@
+{
+  "_comment": "A statement from EasyRMM to its patching engine, shared by EasyRMM's Go tests (statement_test.go: the signer must produce exactly this) and EasyPatch's .NET tests (EasyRmmStatementTests: the engine must accept exactly this). It is signed with a test key that both tests build themselves, the 32 bytes 0, 1, 2 … 31, never used elsewhere. The token is stored in parts: header, payload and signature, base64url-encoded, joined with dots.",
+  "now": 1795521600,
+  "method": "POST",
+  "target": "/api/v1/endpoints/0b4b5c3e-2a8f-4f7e-9f3d-6a1e2b3c4d5e/scan?force=false",
+  "subject": "6f1c2a52-3e0d-4b8a-9d55-0b6f1e8c2a10",
+  "name": "jane@example.com",
+  "role": "Admin",
+  "organizations": ["d6f0a6a4-1d2b-4c3e-8f9a-0b1c2d3e4f50"],
+  "header": "{\"alg\":\"HS256\",\"typ\":\"easyrmm-gateway+jwt\"}",
+  "payload": "{\"iss\":\"easyrmm\",\"aud\":\"easypatch\",\"sub\":\"6f1c2a52-3e0d-4b8a-9d55-0b6f1e8c2a10\",\"name\":\"jane@example.com\",\"role\":\"Admin\",\"orgs\":[\"d6f0a6a4-1d2b-4c3e-8f9a-0b1c2d3e4f50\"],\"htm\":\"POST\",\"htu\":\"/api/v1/endpoints/0b4b5c3e-2a8f-4f7e-9f3d-6a1e2b3c4d5e/scan?force=false\",\"iat\":1795521600,\"exp\":1795521630}",
+  "signature": "Hn7hygcr8iD_J_px7wjlGEAyA5-YJgKitkDX1wosi3Q"
+}

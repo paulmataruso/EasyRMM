@@ -167,6 +167,7 @@ set_setting() {
 umask 077
 fill_secret EASYPATCH_DB_OWNER_PASSWORD "$(openssl rand -hex 32)"
 fill_secret EASYPATCH_DB_APP_PASSWORD "$(openssl rand -hex 32)"
+fill_secret EASYRMM_PATCHING_KEY "$(openssl rand -base64 32)"
 case "$patching" in
   bundled)
     set_setting EASYRMM_PATCHING bundled

@@ -19,6 +19,8 @@ public static class EasyPatchClaims
     public const string Organization = "easypatch:org";
     public const string ApiTokenId = "easypatch:api_token";
     public const string AllOrganizations = "easypatch:all_orgs";
+    /// <summary>Who a statement from EasyRMM acts for: an EasyRMM user's id, or "service" (EasyRmmAuthenticationHandler).</summary>
+    public const string EasyRmmSubject = "easypatch:easyrmm_sub";
 
     public const string CredentialId = "easypatch:credential";
     public const string CredentialDbId = "easypatch:credential_db";

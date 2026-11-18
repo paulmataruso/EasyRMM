@@ -156,12 +156,16 @@ feeds, CISA KEV and the Debian security tracker; the installation guide
 lists them.
 
 **B2. The gateway assertion.** EasyRMM calls EasyPatch with a short signed
-statement per request, in its own header, `X-EasyRMM-Assertion`.
+statement per request, in its own header, `X-EasyRMM-Assertion`
+([ADR-0038](adr/0038-statements-to-the-patching-engine.md)). *Done (B2):
+EasyRMM's signer, EasyPatch's `EasyRmm` scheme, and one golden statement
+that both sides' tests check.*
 
 The statement:
 
 * **Format.** A JWT with `typ` `easyrmm-gateway+jwt`, signed HS256 with a
-  32-byte key that `setup.sh` generates and both programs read from a file.
+  32-byte key that `setup.sh` generates into `.env` (`EASYRMM_PATCHING_KEY`),
+  like the deployment's other secrets, and both programs read.
   They run on one host, so a shared key gives an attacker on the host nothing
   they would not already have. It also avoids distributing or rotating public
   keys.
@@ -566,8 +570,8 @@ plan:
   headers. It is replaced by binding to loopback and stripping the header at
   the edge.
 * **Key distribution.** EasyRMM's keys are published only once ADR-0036's
-  client exists, and only on public origins. Now: an HS256 key shared
-  through a file.
+  client exists, and only on public origins. Now: an HS256 key that the
+  deployment gives both programs.
 * **A prefix allow-list could not separate needed from forbidden routes.**
   The question disappears with the typed API, which exposes only what EasyRMM
   chooses.

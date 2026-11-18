@@ -29,4 +29,9 @@
     <!-- Windows Update / inventory doubles shared with the agent tests, used to drive the real AgentRuntime. -->
     <Compile Include="..\..\agent\EasyPatch.Agent.Tests\Infrastructure\Fakes.cs" Link="AgentFakes\Fakes.cs" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- A statement signed by EasyRMM's Go signer: the engine must accept exactly this (EasyRmmStatementTests). -->
+    <None Include="..\..\..\server\internal\easypatch\testdata\gateway-statement.json" Link="testdata\gateway-statement.json"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

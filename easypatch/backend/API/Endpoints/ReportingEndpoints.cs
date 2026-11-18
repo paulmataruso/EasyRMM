@@ -342,7 +342,7 @@ public static class SettingsEndpoints
         app.MapPut("/api/v1/settings", async (ServerSettings request, SettingsService settings, EasyPatchDbContext db, AuditService audit,
             System.Security.Claims.ClaimsPrincipal user, CancellationToken ct) =>
         {
-            var updated = await settings.UpdateAsync(request, user.GetUserId(), ct);
+            var updated = await settings.UpdateAsync(request, user.FindUserId(), ct);
             audit.Record("settings.update", "ServerSettings", "1", details: request);
             await db.SaveChangesAsync(ct);
             settings.Invalidate();

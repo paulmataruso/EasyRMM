@@ -63,18 +63,24 @@ public sealed class ApiTokenAuthenticationHandler(
 }
 
 /// <summary>
-/// The administrator API's scheme: the session cookie when the request has one (the console), otherwise a bearer API token. A
-/// request is authenticated by exactly one of them, so a session and a token are never combined.
+/// The administrator API's scheme: a statement from EasyRMM when the request carries one (EasyPatch as EasyRMM's patching engine),
+/// else the session cookie when the request has one (the console), otherwise a bearer API token. A request is authenticated by
+/// exactly one of them, so they are never combined: a request with a statement that is not valid is refused, whatever else it has.
 /// </summary>
 public static class ConsoleAuthentication
 {
     public const string SchemeName = "Console";
 
     public static string Select(HttpContext context) =>
-        !context.Request.Cookies.ContainsKey(SessionAuthenticationHandler.CookieName) && ApiTokenAuthenticationHandler.HasBearer(context.Request)
-            ? ApiTokenAuthenticationHandler.SchemeName
-            : SessionAuthenticationHandler.SchemeName;
+        EasyRmmAuthenticationHandler.HasAssertion(context.Request)
+            ? EasyRmmAuthenticationHandler.SchemeName
+            : !context.Request.Cookies.ContainsKey(SessionAuthenticationHandler.CookieName) && ApiTokenAuthenticationHandler.HasBearer(context.Request)
+                ? ApiTokenAuthenticationHandler.SchemeName
+                : SessionAuthenticationHandler.SchemeName;
 
     public static bool IsApiToken(this ClaimsPrincipal principal) =>
         principal.Identity is { IsAuthenticated: true, AuthenticationType: ApiTokenAuthenticationHandler.SchemeName };
+
+    public static bool IsEasyRmm(this ClaimsPrincipal principal) =>
+        principal.Identity is { IsAuthenticated: true, AuthenticationType: EasyRmmAuthenticationHandler.SchemeName };
 }

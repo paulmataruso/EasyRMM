@@ -70,9 +70,10 @@ public sealed class SessionStateHandler : AuthorizationHandler<SessionStateRequi
     protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, SessionStateRequirement requirement)
     {
         var user = context.User;
-        if (user.IsApiToken())
+        if (user.IsApiToken() || user.IsEasyRmm())
         {
-            // API tokens have no MFA or password state; their role and organizations are checked like a user's.
+            // API tokens have no MFA or password state; their role and organizations are checked like a user's. EasyRMM applies its
+            // own sign-in and second-factor rules before it signs a statement.
             context.Succeed(requirement);
         }
         else if (user.FindFirstValue(EasyPatchClaims.MfaCompleted) != "true")
@@ -120,14 +121,15 @@ public sealed class ProblemAuthorizationResultHandler : IAuthorizationMiddleware
     }
 }
 
-/// <summary>Request-scoped tenant (organization) visibility derived from the session or API token.</summary>
+/// <summary>Request-scoped tenant (organization) visibility derived from the session, API token or statement from EasyRMM.</summary>
 public sealed class HttpTenantContext : ITenantContext
 {
     public HttpTenantContext(IHttpContextAccessor accessor)
     {
         var user = accessor.HttpContext?.User;
         var scheme = user?.Identity?.IsAuthenticated == true ? user.Identity.AuthenticationType : null;
-        if (user is null || scheme is not (SessionAuthenticationHandler.SchemeName or ApiTokenAuthenticationHandler.SchemeName))
+        if (user is null || scheme is not (SessionAuthenticationHandler.SchemeName or ApiTokenAuthenticationHandler.SchemeName
+                or EasyRmmAuthenticationHandler.SchemeName))
         {
             IsUnrestricted = false;
             AllowedOrganizationIds = new HashSet<Guid>();
@@ -135,7 +137,8 @@ public sealed class HttpTenantContext : ITenantContext
         }
 
         var orgs = user.FindAll(EasyPatchClaims.Organization).Select(c => Guid.Parse(c.Value)).ToHashSet();
-        // Users and tokens restricted to organizations that were all deleted see nothing: only the explicit flag means "all".
+        // Users and tokens restricted to organizations that were all deleted see nothing: only the explicit flag means "all". A
+        // statement from EasyRMM sees every organization only when it says so ("orgs": "*"), whatever its role.
         IsUnrestricted = user.FindFirstValue(EasyPatchClaims.AllOrganizations) == "true"
                          || (scheme == SessionAuthenticationHandler.SchemeName && user.GetRole() == UserRole.SuperAdmin);
         AllowedOrganizationIds = orgs;

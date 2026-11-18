@@ -35,6 +35,9 @@ x-easypatch-env: &easypatch-env
   # Agents reach the engine on EasyRMM's own address (the edge forwards
   # their paths), so install scripts and package links name it.
   EasyPatch__PublicUrl: ${EASYRMM_PUBLIC_URL:?missing in .env}
+  # The key EasyRMM signs its calls to the engine with (one-product plan,
+  # B2); the server reads the same key.
+  EasyRmm__GatewayKey: ${EASYRMM_PATCHING_KEY:-}
 
 x-easypatch-hardening: &easypatch-hardening
   read_only: true

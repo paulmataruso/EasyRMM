@@ -139,7 +139,7 @@ public static class TagEndpoints
             AuditService audit, ClaimsPrincipal user, CancellationToken ct) =>
         {
             _ = await db.Tags.AnyAsync(t => t.Id == id, ct) ? 0 : throw AppException.NotFound("Tag");
-            var stored = await policies.UpsertTagPolicyAsync(id, OrganizationEndpoints.FromRequest(request), user.GetUserId(), ct);
+            var stored = await policies.UpsertTagPolicyAsync(id, OrganizationEndpoints.FromRequest(request), user.FindUserId(), ct);
             audit.Record("policy.update", "Policy", stored.Id.ToString(), details: new { TagId = id, Policy = request });
             await db.SaveChangesAsync(ct);
             await compliance.RecomputeAsync(await TaggedEndpointsAsync(db, id, ct), ct);

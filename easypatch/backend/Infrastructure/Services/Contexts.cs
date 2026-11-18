@@ -40,9 +40,13 @@ public static class ActorContextExtensions
     /// <summary>The actor name of requests made with an API token (<c>token:&lt;name&gt;</c>).</summary>
     public const string ApiTokenPrefix = "token:";
 
-    /// <summary>True for a signed-in administrator or an API token (not the system or an agent).</summary>
+    /// <summary>The actor name of requests EasyRMM makes as its patching engine's console (<c>easyrmm:&lt;name&gt;</c>).</summary>
+    public const string EasyRmmPrefix = "easyrmm:";
+
+    /// <summary>True for a signed-in administrator, an API token or EasyRMM (not the system or an agent).</summary>
     public static bool IsAdministrator(this IActorContext actor) =>
-        actor.UserId is not null || actor.Username?.StartsWith(ApiTokenPrefix, StringComparison.Ordinal) == true;
+        actor.UserId is not null || actor.Username?.StartsWith(ApiTokenPrefix, StringComparison.Ordinal) == true ||
+        actor.Username?.StartsWith(EasyRmmPrefix, StringComparison.Ordinal) == true;
 }
 
 public sealed class SystemTenantContext : ITenantContext

@@ -16,6 +16,15 @@ All notable changes to this project are documented here. The format follows
   install; setup.sh adds the new secrets to an older `.env` without changing
   what it has. A compose test keeps every service on host networking, every
   listener but the edge on loopback, and no two on one port.
+- **EasyRMM's statements to its patching engine** (phase B2, ADR-0038): EasyRMM
+  can call the engine with a statement per request in `X-EasyRMM-Assertion`,
+  signed with `EASYRMM_PATCHING_KEY` from `.env`, naming who acts and the
+  role and organizations that one call may use, for that method and target
+  only, for 30 seconds. The engine builds its principal from the statement,
+  without user rows, sessions or CSRF tokens, and still applies its own role
+  and organization checks; its audit trail names `easyrmm:<user>`. A shared
+  test statement keeps EasyRMM's Go signer and the engine's .NET check in
+  agreement.
 - `npm run screenshots` in `web/` makes the README's screenshots from the
   console's production build, its API answered from fictional demo data
   (`web/screenshots/`). It fails when a page asks for something the data does

@@ -26,6 +26,8 @@ public static class RateLimits
         var agent = Limit("AgentPerMinute", 120);
         var admin = Limit("AdminPerMinute", 600);
         var downloads = Limit("DownloadsPerMinute", 60);
+        // EasyRMM's own work (provisioning, link checks, installs) for every organization at once.
+        var easyRmmService = Limit("EasyRmmServicePerMinute", 6000);
 
         services.AddRateLimiter(options =>
         {
@@ -47,12 +49,17 @@ public static class RateLimits
                 return Window(credential.Length is > 0 and <= 64 ? "cred:" + credential : IpKey(ctx), agent);
             });
 
-            // Every authenticated admin request is limited per user or API token; anonymous requests per IP.
+            // Every authenticated admin request is limited per user, API token or EasyRMM user; anonymous requests per IP.
             options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
             {
                 if (!ctx.Request.Path.StartsWithSegments("/api/v1") || ctx.Request.Path.StartsWithSegments("/" + AgentRoutes.Prefix))
                 {
                     return RateLimitPartition.GetNoLimiter("unlimited");
+                }
+
+                if (ctx.User.FindFirstValue(EasyPatchClaims.EasyRmmSubject) is { } subject)
+                {
+                    return Window("easyrmm:" + subject, subject == EasyRmmStatement.ServiceSubject ? easyRmmService : admin);
                 }
 
                 var user = ctx.User.FindFirstValue(EasyPatchClaims.UserId);

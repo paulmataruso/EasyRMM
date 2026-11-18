@@ -201,8 +201,10 @@ docker compose up -d
 `--patching bundled` sets `EASYRMM_PATCHING=bundled` and
 `COMPOSE_PROFILES=patching` in `.env`; `--patching connector` goes back.
 On an existing install, rerun `setup.sh` the same way: it adds the engine's
-database passwords to `.env` without changing anything else there. Compose
-then also runs:
+database passwords and `EASYRMM_PATCHING_KEY` to `.env` without changing
+anything else there. That key signs EasyRMM's calls to the engine, one short
+statement per request ([ADR-0038](../architecture/adr/0038-statements-to-the-patching-engine.md));
+treat it like the other secrets in `.env`. Compose then also runs:
 
 | Service | What it does |
 |---|---|
