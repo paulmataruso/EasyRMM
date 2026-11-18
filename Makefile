@@ -135,3 +135,7 @@ web-test: web-deps ## Typecheck and unit-test the web console, with coverage flo
 .PHONY: e2e
 e2e: web build build-agents ## Browser end-to-end tests against a real server (needs `make test-db`)
 	cd web && EASYRMM_E2E_ADMIN_URL="$${EASYRMM_E2E_ADMIN_URL:-$(TEST_DB_URL)}" npx playwright test
+
+.PHONY: e2e-sign-in
+e2e-sign-in: web build ## Sign in once across EasyRMM and EasyPatch, in a browser over TLS on two domains (needs Docker and `make test-db`)
+	EASYRMM_E2E_ADMIN_URL="$${EASYRMM_E2E_ADMIN_URL:-$(TEST_DB_URL)}" ./scripts/e2e/sign-in-across.sh

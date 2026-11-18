@@ -12,9 +12,11 @@ under its own licence ([LICENSING.md](../../LICENSING.md)). It still runs on
 its own, and EasyRMM can use any EasyPatch server, not only one installed
 with it. EasyRMM uses EasyPatch's API for simple patching (scan, install,
 restart, retry), links into EasyPatch's console for everything else, and has
-an EasyRMM | EasyPatch switch between the two consoles. Signing in to
-EasyPatch through EasyRMM is built on EasyRMM's side; EasyPatch's side is in
-progress. The plan is in
+an EasyRMM | EasyPatch switch between the two consoles. People can sign in
+to EasyPatch through EasyRMM, so the switch does not ask for a password
+([ADR-0036](../architecture/adr/0036-easyrmm-signs-in-to-easypatch.md);
+[set it up](../deployment/easypatch-cohost.md#step-4-sign-in-to-easypatch-through-easyrmm)).
+The plan is in
 [the integration plan](../architecture/easypatch-integration-plan.md).
 
 This document first listed the EasyPatch changes the integration would need,

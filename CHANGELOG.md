@@ -19,7 +19,11 @@ All notable changes to this project are documented here. The format follows
   EasyPatch role and organizations from their EasyRMM roles, and
   `email_verified: false`, and an `amr` that always includes `mfa`. A
   second factor in the session is required. Audited as `idp.authorize` and
-  `idp.client_*`. EasyPatch's side is not released yet.
+  `idp.client_*`. EasyPatch's side is in `easypatch/` (its CHANGELOG,
+  "Sign in through EasyRMM").
+- `make e2e-sign-in`: both consoles in a browser over TLS on two domains,
+  signing in once across them; a CI job runs it. The co-hosting guide has a
+  step for signing in to EasyPatch through EasyRMM.
 - Sessions record how they signed in (`amr`: password, single sign-on,
   authenticator code, security key, recovery code, passkey).
 - Links from EasyPatch into EasyRMM, `/go/from-easypatch/endpoints|

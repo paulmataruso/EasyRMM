@@ -64,8 +64,8 @@ exploited vulnerabilities, and tracks compliance across every customer.
 * EasyRMM uses EasyPatch's API for simple patching (scan, install, restart, retry), links into
   EasyPatch's console for everything else, and has an EasyRMM | EasyPatch switch between the two
   consoles. See EasyRMM's [patching guide](../docs/operations/patching.md).
-* Signing in to EasyPatch through EasyRMM: EasyRMM's side is built, EasyPatch's side is in
-  progress.
+* People can sign in to EasyPatch through EasyRMM: EasyPatch's [single sign-on
+  guide](docs/single-sign-on.md#easyrmm) explains the setup and the accounts EasyRMM manages.
 * EasyPatch keeps its own license ([License](#license)), builds and releases. Its releases are
   tagged `easypatch-v*` in the EasyRMM repository. Releases up to 1.10.0, and their downloads,
   are in EasyPatch's [former repository](https://github.com/paulmataruso/EasyPatch/releases).

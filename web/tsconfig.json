@@ -16,5 +16,5 @@
     "noEmit": true,
     "types": ["node", "vite/client", "vitest/globals", "@testing-library/jest-dom"]
   },
-  "include": ["src", "e2e", "screenshots", "vite.config.ts", "playwright.config.ts", "playwright.screenshots.config.ts"]
+  "include": ["src", "e2e", "e2e-sign-in", "screenshots", "vite.config.ts", "playwright.config.ts", "playwright.sign-in.config.ts", "playwright.screenshots.config.ts"]
 }

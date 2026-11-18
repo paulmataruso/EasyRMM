@@ -160,9 +160,9 @@ regenerated when the console changes.
   address and an API token: one on the same machine, behind EasyRMM's edge
   ([ADR-0035](docs/architecture/adr/0035-cohosting-easypatch.md)), or one
   elsewhere. EasyPatch also runs on its own, without EasyRMM.
-* **One sign-in** is being built: EasyRMM as EasyPatch's sign-in provider, so
-  the switch never asks for a password. EasyRMM's side is done; EasyPatch's
-  side is in progress
+* **One sign-in.** EasyRMM can be EasyPatch's sign-in provider, so the switch
+  never asks for a password, and each person's EasyPatch role follows their
+  EasyRMM roles
   ([ADR-0036](docs/architecture/adr/0036-easyrmm-signs-in-to-easypatch.md)).
 
 The plan behind this, and its progress, is in

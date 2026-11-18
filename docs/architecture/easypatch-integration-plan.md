@@ -3,8 +3,7 @@
 * Status: **Draft 2**, 2026-11-17. Draft 1 was critiqued against the code by an
   independent review and by its author. Section 13 lists every finding and
   what changed.
-* Progress: P0 to P3 are built (see section 10). In P4, EasyRMM's side is
-  built (ADR-0036); EasyPatch's side is next.
+* Progress: P0 to P4 are built (see section 10). P5 is later work.
 * Scope: EasyRMM owns EasyPatch. Both live in this repository; EasyPatch is
   under `easypatch/`.
 
@@ -609,8 +608,28 @@ bounce, the code exchange and ID token verification, and covers single use,
 PKCE, expiry, sign-out, access removed before redemption, a session without
 recorded methods, a foreign redirect URI, both client authentication
 methods and rotation; two of its checks were shown to fail when the code
-they cover was broken. Not yet: EasyPatch's side, so no browser has signed in
-to EasyPatch this way.
+they cover was broken.
+
+*Done in EasyPatch (P4b, P4c):* the provider kind "This provider is EasyRMM",
+accounts EasyRMM manages (role and organizations from the claim at every
+sign-in, no password or passkey sign-in, not editable in EasyPatch), Link
+EasyRMM for existing accounts, one-hour sessions renewed through EasyRMM by
+the sign-in page itself, `from=easyrmm`, the EasyRMM | EasyPatch switch, and
+the `easyrmm-sign-in` capability. Checked: EasyPatch's integration tests
+drive the callback with tokens EasyRMM's way (creation, the claim, linking,
+refusals, the last super administrator), and its console's unit tests cover
+the switch's targets and when the sign-in page starts by itself.
+
+*Done end to end (P4d):* `make e2e-sign-in` (`scripts/e2e/sign-in-across.sh`)
+runs both consoles in Chromium over TLS with a private CA, EasyRMM at
+`rmm.easyrmm.localhost` and EasyPatch at `patch.easypatch.localhost`: two
+registrable domains, so EasyRMM's `SameSite=Strict` cookie never crosses. It
+sets up both sides through their consoles, switches from EasyRMM to EasyPatch
+and back without a sign-in page (a watcher in both consoles records any
+password form, and is shown to catch one), renews an ended EasyPatch session
+by itself, and stops renewing after sign-out. EasyPatch there is built from
+`easypatch/` in this commit; CI runs it as "Sign in across EasyRMM and
+EasyPatch". The co-hosting guide has the step for EasyPatch reaching EasyRMM.
 
 **P5 Later**
 * Back-channel logout.
