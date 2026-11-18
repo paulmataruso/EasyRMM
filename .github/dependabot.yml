@@ -49,6 +49,11 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: "dotnet-ef"
         update-types: ["version-update:semver-major"]
+      # PDFsharp 6.5.0 and later are AGPL-3.0; 6.2.x is the last MIT line (ADR-0037).
+      - dependency-name: "PDFsharp"
+        versions: [">= 6.3.0"]
+      - dependency-name: "PDFsharp-MigraDoc"
+        versions: [">= 6.3.0"]
     groups:
       dotnet-runtime:
         patterns:

@@ -67,6 +67,7 @@ jobs:
             case $1 in
               .github/workflows/ci.yml) easyrmm=true easypatch_server=true easypatch_agent=true contract=true; return ;;
               server/internal/easypatch/*) easyrmm=true easypatch_server=true; return ;;
+              scripts/ci/check-nuget-licences.py) easypatch_server=true; return ;;
               easypatch/* | .github/workflows/easypatch-*.yml) ;;
               *) easyrmm=true; return ;;
             esac

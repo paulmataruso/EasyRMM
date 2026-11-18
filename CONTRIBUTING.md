@@ -34,7 +34,7 @@ change instead of a pull request.
 
 Dependencies must be under a permissive licence (MIT, BSD, ISC, Apache-2.0,
 MPL-2.0). Copyleft licences (GPL, AGPL, LGPL) cannot be accepted: CI checks
-Go modules and the console's npm packages.
+Go modules, the consoles' npm packages and EasyPatch's NuGet packages.
 
 ## Ground rules
 

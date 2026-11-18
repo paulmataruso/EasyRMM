@@ -29,7 +29,10 @@ as the licensor of all of it.
   including paid managed services; selling it, or offering it for others to
   run their own remote management or patching, is a Competing Use.
 * Dependencies must be under permissive licences. CI checks Go modules (as
-  before) and now the console's npm packages too.
+  before) and now the consoles' npm packages and EasyPatch's NuGet packages
+  too (`scripts/ci/check-npm-licences.mjs`, `check-nuget-licences.py`).
+  Dependabot is told not to propose PDFsharp 6.3 or later, whose newer
+  releases are AGPL.
 * Wording: EasyRMM is "source-available", never "open source"; each version
   becomes Apache-2.0 two years after its release.
 

@@ -45,6 +45,13 @@ jobs:
           dotnet build backend/Tests/EasyPatch.Tests.csproj -c Release
       - name: Test (unit and integration; PostgreSQL via Testcontainers)
         run: dotnet test backend/Tests/EasyPatch.Tests.csproj -c Release --no-build
+      # Shipped code only: the server, the worker and the agent's projects, not tests or tools.
+      # Permissive licences only (ADR-0037); PDFsharp 6.5 and later, for one, are AGPL.
+      - name: Package licence check
+        run: |
+          shipped="backend/API backend/Worker $(ls agent/*/*.csproj | grep -v Tests | xargs -n1 dirname | tr '\n' ' ')"
+          for p in $shipped; do dotnet restore "$p" --verbosity quiet; done
+          python3 ../scripts/ci/check-nuget-licences.py $shipped
       - name: Vulnerable package check
         run: |
           dotnet list backend/API/EasyPatch.Api.csproj package --vulnerable --include-transitive | tee vulnerable.txt

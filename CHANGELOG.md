@@ -367,7 +367,8 @@ All notable changes to this project are documented here. The format follows
   licensor DHI Technical Services LLC (ADR-0037), instead of AGPL-3.0-or-later
   for EasyRMM's code. One `LICENSE.md` at the root; contributions grant DHI
   Technical Services LLC a licence (`CONTRIBUTING.md`); CI now checks the
-  consoles' npm package licences too. Copies obtained under the AGPL between
+  licences of the consoles' npm packages and EasyPatch's NuGet packages too,
+  and Dependabot no longer proposes PDFsharp versions that are AGPL. Copies obtained under the AGPL between
   2026-11-15 and 2026-11-18 keep it (`LICENSING.md`).
 - The README is the front page of the one project: what EasyRMM and EasyPatch
   each do, how they fit together, the architecture with EasyPatch, and

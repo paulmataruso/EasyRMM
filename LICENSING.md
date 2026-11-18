@@ -46,8 +46,9 @@ whole repository, `easypatch/` included.
 ## Third-party software
 
 Dependencies keep their own licences:
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). CI holds Go modules and the
-console's npm packages to an allow-list of permissive licences (MIT,
-Apache-2.0, BSD, ISC, MPL-2.0); EasyPatch's changelog names each .NET
-dependency's licence when it is added
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). CI holds every shipped
+dependency to an allow-list of permissive licences (MIT, Apache-2.0, BSD,
+ISC, MPL-2.0, and the PostgreSQL Licence for Npgsql): Go modules, the
+consoles' npm packages and EasyPatch's NuGet packages. EasyPatch's changelog
+also names each .NET dependency's licence when it is added
 ([easypatch/CHANGELOG.md](easypatch/CHANGELOG.md)).
