@@ -142,6 +142,10 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 		return nil, err
 	}
 	usersSvc := users.New(db, auditLog, authSvc, hasher)
+	// With Authentik, before the first-run page could offer itself (ADR-0044).
+	if err := firstAdministrator(ctx, cfg, usersSvc, log); err != nil {
+		return nil, err
+	}
 	setup, err := usersapi.NewSetup(ctx, usersSvc, cfg.DataDir, log)
 	if err != nil {
 		return nil, err
@@ -225,6 +229,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 		d.Tenancy.OnChange(d.EasyPatch.Kick)
 	}
 	d.SSO = sso.New(db, auditLog, sealer, d.Auth, cfg.PublicURL)
+	if err := useAuthentik(ctx, cfg, d.SSO, d.PKI); err != nil {
+		return nil, fmt.Errorf("authentik: %w", err)
+	}
 	d.IdP = idp.New(db, auditLog, sealer, cfg.PublicURL.String(), d.EasyPatch, func(ctx context.Context, userID uuid.UUID) (*easypatch.Access, error) {
 		p, err := d.Auth.LoadPrincipal(ctx, userID)
 		if err != nil {
@@ -419,6 +426,10 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 		for _, name := range cfg.Patching.AgentHostnames {
 			extra[name] = h
 		}
+	}
+	// Authentik's sign-in name (ADR-0044).
+	if a := cfg.Authentik; a.Enabled() {
+		extra[a.Hostname] = authentikProxy(a.Upstream, !cfg.DevInsecureCookie, log)
 	}
 	rt := newRouter(all)
 	hosts := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -655,7 +666,10 @@ func Cleanup(ctx context.Context, db *database.DB) error {
 			OR idle_expires_at < now() - interval '7 days' OR revoked_at < now() - interval '7 days'`); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM password_reset_tokens WHERE expires_at < now() - interval '1 day'`)
+		if _, err := tx.Exec(ctx, `DELETE FROM password_reset_tokens WHERE expires_at < now() - interval '1 day'`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `DELETE FROM recovery_links WHERE expires_at < now() - interval '1 day'`)
 		return err
 	})
 }

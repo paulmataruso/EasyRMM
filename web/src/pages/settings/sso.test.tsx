@@ -16,8 +16,21 @@ const ENTRA: SsoProvider = {
   trustEmail: true,
   trustMfa: false,
   enabled: true,
+  managed: false,
   createdAt: "2026-11-17T09:00:00Z",
   updatedAt: "2026-11-17T09:00:00Z",
+};
+
+// The deployment's own Authentik (ADR-0044).
+const AUTHENTIK: SsoProvider = {
+  ...ENTRA,
+  id: "b2927669-72ce-48a1-a83d-8215013be7ab",
+  name: "Authentik",
+  issuer: "https://auth.example.com/application/o/easyrmm/",
+  clientId: "easyrmm",
+  allowedDomains: ["example.com"],
+  trustMfa: true,
+  managed: true,
 };
 
 const main = () => within(screen.getByRole("main"));
@@ -114,6 +127,19 @@ describe("single sign-on settings", () => {
     const dialog = await screen.findByRole("dialog", { name: "Remove Microsoft?" });
     await user.click(within(dialog).getByRole("button", { name: "Remove" }));
     await waitFor(() => expect(server.callsTo(`DELETE /settings/sso/providers/${ENTRA.id}`)).toHaveLength(1));
+  });
+
+  it("shows the deployment's provider locked", async () => {
+    installFakeApi(settingsRoutes({ redirectUri: REDIRECT, providers: [AUTHENTIK, ENTRA] }));
+    renderApp("/settings?tab=sso");
+    await screen.findByRole("heading", { name: "Single sign-on", level: 1 });
+    const row = (await main().findByText("Authentik")).closest("tr")!;
+    expect(within(row).getByText("Set by the deployment")).toBeInTheDocument();
+    expect(within(row).getByText("The provider's")).toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Edit Authentik" })).not.toBeInTheDocument();
+    expect(within(row).queryByRole("button", { name: "Remove Authentik" })).not.toBeInTheDocument();
+    // Other providers are still the administrator's.
+    expect(main().getByRole("button", { name: "Edit Microsoft" })).toBeInTheDocument();
   });
 
   it("is not offered without settings.manage", async () => {

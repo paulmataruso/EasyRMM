@@ -2049,6 +2049,8 @@ export interface SsoProvider {
   trustEmail: boolean;
   trustMfa: boolean;
   enabled: boolean;
+  /** Set up by the deployment (Authentik in this deployment, ADR-0044): shown, but not changed or removed here. */
+  managed: boolean;
   createdAt: string;
   updatedAt: string;
 }

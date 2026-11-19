@@ -264,6 +264,43 @@ describe("password reset and invitation links", () => {
   });
 });
 
+describe("recovery links", () => {
+  it("signs in once with the token from the fragment", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi({
+      ...baseRoutes(null),
+      "POST /auth/recover": ok(sessionView()),
+      "GET /organizations": ok({ items: [] }),
+      "GET /sites": ok({ items: [] }),
+      "GET /users": ok({ items: [] }),
+      "GET /audit": ok({ items: [] }),
+    });
+    renderApp("/recover#token=recovery-token-1");
+    expect(await screen.findByRole("heading", { name: "Recovery sign-in" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Sign in" }));
+    await waitFor(() => expect(location()).toBe("/"));
+    expect(server.call("POST /auth/recover").body).toEqual({ token: "recovery-token-1" });
+  });
+
+  it("says when the link was used or has expired", async () => {
+    const user = userEvent.setup();
+    installFakeApi({
+      ...baseRoutes(null),
+      "POST /auth/recover": fail(400, "invalid_recovery_link", "This link has expired or was already used. Run easyrmm-server recover on the server for a new one."),
+    });
+    renderApp("/recover#token=used");
+    await user.click(await screen.findByRole("button", { name: "Sign in" }));
+    expect(await screen.findByText(/This link has expired or was already used/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeEnabled();
+  });
+
+  it("explains an incomplete link", async () => {
+    installFakeApi(baseRoutes(null));
+    renderApp("/recover");
+    expect(await screen.findByText(/This link is incomplete. Copy the whole link/)).toBeInTheDocument();
+  });
+});
+
 describe("navigation by permission", () => {
   it("hides Settings from people who cannot see users or the audit log", async () => {
     installFakeApi({

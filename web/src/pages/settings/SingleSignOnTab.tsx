@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Lock, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, fieldError } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
 import type { SsoProvider, SsoProviderInput, SsoSettings } from "../../api/types";
@@ -99,18 +99,27 @@ export function SingleSignOnTab() {
                       </Badge>
                     </td>
                     <td className="text-right whitespace-nowrap">
-                      <Button size="sm" variant="ghost" icon={<Pencil className="size-3.5" aria-hidden />} onClick={() => setEditing(p)} aria-label={`Edit ${p.name}`}>
-                        Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="danger-ghost"
-                        icon={<Trash2 className="size-3.5" aria-hidden />}
-                        onClick={() => setDeleting(p)}
-                        aria-label={`Remove ${p.name}`}
-                      >
-                        Remove
-                      </Button>
+                      {p.managed ? (
+                        <span className="inline-flex items-center gap-1.5 text-xs text-muted" title="Set in the server's configuration (deploy/.env), not here">
+                          <Lock className="size-3.5" aria-hidden />
+                          Set by the deployment
+                        </span>
+                      ) : (
+                        <>
+                          <Button size="sm" variant="ghost" icon={<Pencil className="size-3.5" aria-hidden />} onClick={() => setEditing(p)} aria-label={`Edit ${p.name}`}>
+                            Edit
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="danger-ghost"
+                            icon={<Trash2 className="size-3.5" aria-hidden />}
+                            onClick={() => setDeleting(p)}
+                            aria-label={`Remove ${p.name}`}
+                          >
+                            Remove
+                          </Button>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}

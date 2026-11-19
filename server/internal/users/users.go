@@ -890,6 +890,41 @@ func (s *Service) Bootstrap(ctx context.Context, in SetupInput, meta auth.Reques
 	return id, err
 }
 
+// BootstrapDeployment creates the first super administrator of a deployment
+// that signs in through its own Authentik (ADR-0044): the administrator's
+// email, no password, and no organization, which the console's empty state
+// creates. Their first sign-in through Authentik links them by that address.
+// Once any account exists it does nothing, and reports false.
+func (s *Service) BootstrapDeployment(ctx context.Context, rawEmail string) (bool, error) {
+	email, ok := NormalizeEmail(rawEmail)
+	if !ok {
+		return false, apperr.Invalid("email", "Enter a valid email address.")
+	}
+	name := email[:strings.LastIndexByte(email, '@')]
+	created := false
+	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(lockUserAdmin)); err != nil {
+			return err
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users)`).Scan(&exists); err != nil || exists {
+			return err
+		}
+		var id uuid.UUID
+		if err := tx.QueryRow(ctx, `INSERT INTO users (email, display_name) VALUES ($1, $2) RETURNING id`, email, name).Scan(&id); err != nil {
+			return err
+		}
+		if err := insertAssignments(ctx, tx, id, uuid.Nil, []rbac.Assignment{{Role: rbac.RoleSuperAdmin}}); err != nil {
+			return err
+		}
+		created = true
+		return s.audit.Write(ctx, tx, audit.Event{Actor: audit.SystemActor("deployment"), Action: "setup.complete",
+			Outcome: audit.Success, TargetType: "user", TargetID: id.String(),
+			Details: map[string]any{"email": email, "signIn": "authentik"}})
+	})
+	return created, err
+}
+
 func nullUUID(id uuid.UUID) *uuid.UUID {
 	if id == uuid.Nil {
 		return nil

@@ -1031,3 +1031,59 @@ export function ResetPasswordPage({ invite = false }: { invite?: boolean }) {
     </AuthShell>
   );
 }
+
+/**
+ * The one-time sign-in link `easyrmm-server recover` prints for a super administrator, for when single sign-on is
+ * down (ADR-0044). Like a reset link, its token is in the fragment, read once and removed from the address bar.
+ */
+export function RecoverPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { applySession } = useAuth();
+  const [token] = useState(() => new URLSearchParams(location.hash.replace(/^#/, "")).get("token") ?? "");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  useEffect(() => {
+    if (location.hash) window.history.replaceState(window.history.state, "", location.pathname);
+  }, [location.hash, location.pathname]);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const view = await request<SessionView>("POST", "/auth/recover", { body: { token }, silentAuth: true });
+      applySession(view);
+      navigate("/", { replace: true });
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }
+
+  if (!token) {
+    return (
+      <AuthShell title="Recovery sign-in">
+        <div className="flex flex-col gap-3.5">
+          <Alert tone="warn">This link is incomplete. Copy the whole link the recover command printed, or run it again.</Alert>
+          <Link to="/login" className={buttonClasses("secondary")}>
+            Go to sign in
+          </Link>
+        </div>
+      </AuthShell>
+    );
+  }
+
+  return (
+    <AuthShell title="Recovery sign-in" subtitle="A one-time link from the server, for when single sign-on is not working.">
+      <form onSubmit={submit} className="flex flex-col gap-3.5" noValidate>
+        <InlineError error={error} />
+        <Button type="submit" variant="primary" loading={busy} className="w-full" icon={<LogIn className="size-4" aria-hidden />}>
+          Sign in
+        </Button>
+        <p className="text-center text-xs text-muted">The link works once. Signing in with it is recorded in the audit log.</p>
+      </form>
+    </AuthShell>
+  );
+}

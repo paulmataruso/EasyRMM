@@ -1,14 +1,18 @@
 // Command easyrmm-server runs the EasyRMM server.
 //
-//	easyrmm-server             run the server (default)
-//	easyrmm-server migrate     apply database migrations and exit
-//	easyrmm-server healthcheck exit 0 when the local server is ready
-//	easyrmm-server version     print the version
+//	easyrmm-server                   run the server (default)
+//	easyrmm-server migrate           apply database migrations and exit
+//	easyrmm-server recover [--email] print a one-time sign-in link for a super administrator
+//	easyrmm-server healthcheck       exit 0 when the local server is ready
+//	easyrmm-server version           print the version
 package main
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -39,8 +43,10 @@ func run(args []string) int {
 	case "healthcheck":
 		return healthcheck()
 	case "serve", "migrate", "import-easypatch":
+	case "recover":
+		return recoverCommand(args[1:], os.Stdout, os.Stderr)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q (expected serve, migrate, import-easypatch, healthcheck or version)\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command %q (expected serve, migrate, import-easypatch, recover, healthcheck or version)\n", cmd)
 		return 2
 	}
 
@@ -78,6 +84,41 @@ func run(args []string) int {
 		return 1
 	}
 	log.Info("server stopped")
+	return 0
+}
+
+// recoverCommand prints a one-time sign-in link for a super administrator,
+// for when single sign-on is down (ADR-0044):
+//
+//	docker compose exec server easyrmm-server recover [--email admin@example.com]
+func recoverCommand(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("recover", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	email := fs.String("email", "", "the super administrator to sign in as (needed when there are several)")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "recover: unexpected argument %q\n", fs.Arg(0))
+		return 2
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error:\n%v\n", err)
+		return 1
+	}
+	log := app.NewLogger(cfg.LogFormat, "warn")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	if err := app.Recover(ctx, cfg, log, *email, stdout); err != nil {
+		fmt.Fprintf(stderr, "recover: %v\n", err)
+		return 1
+	}
 	return 0
 }
 

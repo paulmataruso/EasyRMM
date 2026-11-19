@@ -14,6 +14,7 @@ import {
   MfaSetupRequiredPage,
   MfaVerifyPage,
   PasskeyPromptPage,
+  RecoverPage,
   ResetPasswordPage,
   safeReturnTo,
   SetupPage,
@@ -131,6 +132,7 @@ export function App() {
       {/* Reset and invitation links work whatever the browser's sign-in state. */}
       <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/welcome" element={<ResetPasswordPage invite />} />
+      <Route path="/recover" element={<RecoverPage />} />
 
       <Route path="/go/to-easypatch" element={<Gate stage="ready"><ServerLink /></Gate>} />
       <Route path="/oauth2/*" element={<Gate stage="ready"><ServerLink /></Gate>} />
