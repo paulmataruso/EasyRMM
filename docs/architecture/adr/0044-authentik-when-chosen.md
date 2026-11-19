@@ -206,7 +206,7 @@ browser; otherwise `--new-invitation`.
 `make e2e-authentik` (CI's *Authentik end to end*; `scripts/e2e/authentik.sh`)
 builds EasyRMM's and the engine's images from the commit. It sets up the
 release's deployment tree with
-`setup.sh --patching bundled --with-authentik` for `https://127.0.0.1`
+`setup.sh --with-authentik` for `https://127.0.0.1`
 (internal authority) and `auth.easyrmm.test`. That name resolves nowhere:
 Chromium maps it to 127.0.0.1, and EasyRMM reaches it over loopback. The
 test brings the tree up on host networking and checks that only the edge
