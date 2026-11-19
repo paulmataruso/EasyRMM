@@ -12,6 +12,10 @@ import { jobRun } from "../src/test/fixtures";
 import {
   alerts,
   alertSummary,
+  defaultPolicyView,
+  organizationPolicy,
+  organizationTags,
+  patchTags,
   auditLog,
   byId,
   devicePatching,
@@ -39,7 +43,7 @@ import {
   users,
 } from "./demo";
 
-const OUT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "docs", "images");
+const OUT = process.env.EASYRMM_SCREENSHOTS_OUT ?? join(dirname(fileURLToPath(import.meta.url)), "..", "..", "docs", "images");
 
 const list = <T,>(items: T[]) => ({ items });
 
@@ -66,6 +70,12 @@ function answer(method: string, path: string, q: URLSearchParams): unknown {
     if (rest === "/jobs") return { items: patchJobs.filter((j) => j.deviceId === id), page: 1, pageSize: 25, totalCount: 1 };
     return undefined;
   }
+  const orgMatch = /^\/organizations\/([^/]+)(\/sites)?$/.exec(path);
+  if (orgMatch) {
+    const [, id, sub] = orgMatch;
+    if (sub) return list(sites.filter((s) => s.organizationId === id));
+    return organizations.find((o) => o.id === id);
+  }
   switch (path) {
     case "/setup":
       return { required: false, passwordMinLength: 12 };
@@ -87,6 +97,8 @@ function answer(method: string, path: string, q: URLSearchParams): unknown {
     }
     case "/devices/recent-connections":
       return list(recentConnections);
+    case "/enrollment-requests/waiting":
+      return { waiting: 0 };
     case "/remote-access/status":
       return remoteAccess;
     case "/alerts/summary":
@@ -143,6 +155,14 @@ function answer(method: string, path: string, q: URLSearchParams): unknown {
       return updateView;
     case `/patching/updates/${UPDATE_GUID}/devices`:
       return { items: updateDevices, page: 1, pageSize: 200, totalCount: updateDevices.length };
+    case "/patching/policies/organization/o-harbor":
+      return organizationPolicy;
+    case "/patching/tags/of/organization/o-harbor":
+      return { tags: organizationTags, canAssign: true };
+    case "/patching/policies/default":
+      return defaultPolicyView;
+    case "/patching/tags":
+      return { items: patchTags, canManage: true };
   }
   return undefined;
 }
@@ -224,6 +244,12 @@ for (const theme of ["dark", "light"] as const) {
       await open(page, theme, `/patching/updates/${UPDATE_GUID}`);
       await expect(page.getByText("CVE-2026-41001")).toBeVisible();
       await shoot(page, "patching-update", theme);
+    });
+
+    test("patch policy", async ({ page }) => {
+      await open(page, theme, "/organizations/o-harbor?tab=patch-policy");
+      await expect(page.getByRole("heading", { name: "Windows Update settings" })).toBeVisible();
+      await shoot(page, "patch-policy", theme);
     });
 
     test("alerts", async ({ page }) => {

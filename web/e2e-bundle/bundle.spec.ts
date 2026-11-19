@@ -5,7 +5,9 @@
 // the update a local package repository offers. On the device's Patches tab (C1) the update is
 // excluded and included again and the policy shows; Patching lists the update across devices, and
 // its page holds it and releases the hold (C2); installing it from the Patches tab, after the
-// preview, changes the package on the machine. scripts/e2e/bundle.sh starts everything and runs this.
+// preview, changes the package on the machine. A value set on the organization (C4) reaches the site
+// and the device, as do a tag's policy and the device's own. scripts/e2e/bundle.sh starts everything
+// and runs this.
 
 import { execFileSync } from "node:child_process";
 import { expect, test, type Page } from "@playwright/test";
@@ -303,4 +305,69 @@ test("Patching's Jobs tab finds the install by type and status; a restart is pla
   await restart.getByRole("button", { name: "Cancel" }).click();
   const jobs = await api<{ items: Job[] }>("GET", `/api/v1/patching/devices/${deviceId}/jobs`);
   expect(jobs.items.filter((j) => j.type === "Restart")).toEqual([]);
+});
+
+test("an organization's policy, a tag's and the device's own reach the device, each from its level", async () => {
+  const page = admin;
+  const main = page.getByRole("main");
+  const orgs = await api<{ items: { id: string; name: string }[] }>("GET", "/api/v1/organizations");
+  const org = orgs.items.find((o) => o.name === ORG)!;
+  const device = await api<{ siteId: string }>("GET", `/api/v1/devices/${deviceId}`);
+  const override = async (label: string) =>
+    main.getByRole("radiogroup", { name: `${label}: where its value comes from` }).getByRole("radio", { name: "Override" }).click();
+  const save = async () => {
+    await main.getByRole("button", { name: "Save policy" }).click();
+    await expect(page.getByText("Policy saved.").last()).toBeVisible();
+  };
+
+  // The organization scans every 12 hours; its site inherits that from it.
+  await page.goto(`/organizations/${org.id}?tab=patch-policy`);
+  await override("Scans");
+  await main.getByRole("spinbutton", { name: "Scans" }).fill("720");
+  await save();
+  await page.goto(`/sites/${device.siteId}?tab=patch-policy`);
+  await expect(main.getByRole("radiogroup", { name: "Scans: where its value comes from" }).locator("..")).toContainText(
+    "Every 12 hours · from the organization",
+  );
+
+  // A tag whose policy installs optional updates.
+  await page.goto("/settings?tab=patching&view=tags");
+  await main.getByRole("button", { name: "Add tag" }).click();
+  const add = page.getByRole("dialog", { name: "Add tag" });
+  await add.getByLabel("Name").fill("Bundle ring");
+  await add.getByLabel("Priority").fill("10");
+  await add.getByRole("button", { name: "Add tag" }).click();
+  await expect(add).toBeHidden();
+  await main.getByRole("button", { name: "Add a policy" }).click();
+  await expect(main.getByRole("form", { name: "Bundle ring patch policy" })).toBeVisible();
+  await override("Optional updates");
+  await main.getByRole("radio", { name: "Install", exact: true }).click();
+  await save();
+
+  // The device gets the tag, and a value of its own.
+  await page.goto(`/devices/${deviceId}?tab=patches&patches=policy`);
+  await main.getByRole("button", { name: "Change tags" }).click();
+  const tags = page.getByRole("dialog", { name: "This device's tags" });
+  await tags.getByRole("checkbox", { name: /Bundle ring/ }).check();
+  await tags.getByRole("button", { name: "Save tags" }).click();
+  await expect(tags).toBeHidden();
+  await expect(main.getByTitle("Bundle ring")).toBeVisible();
+  await main.getByRole("button", { name: "Set values for this device" }).click();
+  await override("Scan out of date after");
+  await main.getByRole("spinbutton", { name: "Scan out of date after" }).fill("72");
+  await save();
+  await main.getByRole("button", { name: "Back to the policy in effect" }).click();
+
+  // EasyPatch's effective policy for the device, with the layer each value comes from.
+  await expect(async () => {
+    await page.reload();
+    const installing = main.getByRole("heading", { name: "Installing" }).locator("xpath=ancestor::section[1]");
+    await expect(installing.getByText("Tag: Bundle ring")).toBeVisible({ timeout: 5_000 });
+    await expect(installing.getByText("Installed", { exact: true })).toBeVisible();
+    const schedule = main.getByRole("heading", { name: "Agent schedule" }).locator("xpath=ancestor::section[1]");
+    await expect(schedule.getByText("Every 12 hours")).toBeVisible();
+    await expect(schedule.getByText("Organization")).toBeVisible();
+    await expect(schedule.getByText("72 hours")).toBeVisible();
+    await expect(schedule.getByText("This device")).toBeVisible();
+  }).toPass({ timeout: 60_000, intervals: [3_000] });
 });

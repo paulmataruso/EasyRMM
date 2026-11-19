@@ -227,14 +227,16 @@ export function categoryLabel(c: string): string {
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-/** When EasyPatch installs on its own: "Off", "Any time", or "Saturday 02:00 for 3 hours (Europe/Paris)". */
+/**
+ * When EasyPatch installs on its own: "Off", or "Saturday 02:00 for 3 hours (Europe/Paris)". EasyPatch installs automatically
+ * only inside a maintenance window, so automatic installs with no window install nothing.
+ */
 export function maintenanceText(p: PatchPolicy): string {
   if (!p.autoInstallEnabled) return "Off: updates install only when someone starts an install";
-  if (!p.maintenanceStart) return "On, at any time (no maintenance window)";
-  const days =
-    p.maintenanceDays && p.maintenanceDays.length > 0 && p.maintenanceDays.length < 7
-      ? p.maintenanceDays.map((d) => DAYS[d] ?? String(d)).join(", ")
-      : "Every day";
+  if (!p.maintenanceStart || !p.maintenanceDays || p.maintenanceDays.length === 0) {
+    return "On, but there is no maintenance window, so nothing installs automatically";
+  }
+  const days = p.maintenanceDays.length < 7 ? p.maintenanceDays.map((d) => DAYS[d] ?? String(d)).join(", ") : "Every day";
   const minutes = p.maintenanceDurationMinutes ?? 0;
   const length = minutes === 0 ? "" : minutes % 60 === 0 ? ` for ${plural(minutes / 60, "hour")}` : ` for ${plural(minutes, "minute")}`;
   return `${days} at ${p.maintenanceStart}${length} (${p.timeZone})`;

@@ -21,7 +21,11 @@ import type {
   PatchFleetUpdate,
   PatchJobView,
   PatchPolicy,
+  PatchPolicyLayer,
+  PatchPolicyView,
   PatchStatus,
+  PatchTag,
+  PatchTagRef,
   PatchUpdate,
   PatchUpdateDevice,
   PatchUpdateView,
@@ -44,12 +48,7 @@ const GiB = 1024 ** 3;
 /** What a build from an untagged checkout reports (Makefile: git describe). */
 const AGENT_VERSION = "8519085";
 
-export const session: SessionView = {
-  state: "active",
-  user: { id: "u-sam", email: "sam.okafor@example.com", displayName: "Sam Okafor", status: "active", mfaEnabled: true, totp: false, securityKeys: 1 },
-  csrfToken: "demo",
-  expiresAt: "2030-01-01T00:00:00Z",
-  permissions: [
+const SUPER_PERMISSIONS: SessionView["permissions"] = [
     "org.view",
     "org.manage",
     "org.create",
@@ -80,8 +79,16 @@ export const session: SessionView = {
     "audit.view",
     "report.view",
     "settings.manage",
-  ],
-  globalPermissions: [],
+  ];
+
+export const session: SessionView = {
+  state: "active",
+  user: { id: "u-sam", email: "sam.okafor@example.com", displayName: "Sam Okafor", status: "active", mfaEnabled: true, totp: false, securityKeys: 1 },
+  csrfToken: "demo",
+  expiresAt: "2030-01-01T00:00:00Z",
+  permissions: SUPER_PERMISSIONS,
+  // A super administrator holds every permission everywhere.
+  globalPermissions: SUPER_PERMISSIONS,
   isSuperAdmin: true,
   features: { remoteAccess: true },
 };
@@ -788,3 +795,158 @@ export const updateDevices: PatchUpdateDevice[] = [
   updateDevice("d-hdg-front1", "Installed", 60 * 27),
 ];
 
+// Policies and tags (one-product plan, C4).
+
+const noValues: PatchPolicyLayer = {
+  checkInIntervalSeconds: null,
+  scanIntervalMinutes: null,
+  inventoryIntervalMinutes: null,
+  jitterPercent: null,
+  allowedCategories: null,
+  includeOptional: null,
+  excludedKbs: [],
+  acceptEulas: null,
+  autoInstallEnabled: null,
+  maintenanceDays: null,
+  maintenanceStart: null,
+  maintenanceDurationMinutes: null,
+  preDownloadHours: null,
+  installDelayDays: null,
+  securityInstallDelayDays: null,
+  knownExploitedSkipsDelay: null,
+  scanStaleAfterHours: null,
+  maxConcurrentInstallsPerSite: null,
+  trayIconEnabled: null,
+  installNotificationsEnabled: null,
+  agentAutoUpdateEnabled: null,
+  restartSchedule: null,
+  windowsUpdate: null,
+  applicationUpdates: null,
+};
+
+/** The default policy: automatic installs on Saturday nights, a week's grace for non-security updates. */
+export const defaultPolicy: PatchPolicyLayer = {
+  checkInIntervalSeconds: 60,
+  scanIntervalMinutes: 360,
+  inventoryIntervalMinutes: 1440,
+  jitterPercent: 10,
+  allowedCategories: ["Security", "Critical", "Cumulative", "Definition", "ServicingStack", "DotNet", "Other"],
+  includeOptional: false,
+  excludedKbs: ["KB5005565"],
+  acceptEulas: true,
+  autoInstallEnabled: true,
+  maintenanceDays: [6],
+  maintenanceStart: "22:00",
+  maintenanceDurationMinutes: 240,
+  preDownloadHours: 4,
+  installDelayDays: 7,
+  securityInstallDelayDays: 0,
+  knownExploitedSkipsDelay: true,
+  scanStaleAfterHours: 48,
+  maxConcurrentInstallsPerSite: 10,
+  trayIconEnabled: true,
+  installNotificationsEnabled: true,
+  agentAutoUpdateEnabled: true,
+  restartSchedule: null,
+  windowsUpdate: {
+    automaticUpdates: { managed: true, value: { mode: "NotifyDownload", scheduledInstallDay: 0, scheduledInstallHour: 3 } },
+    featureUpdates: { managed: true, value: { deferDays: 180, targetProductVersion: "", targetReleaseVersion: "" } },
+    qualityUpdates: null,
+    restartBehavior: null,
+  },
+  applicationUpdates: { enabled: false, approvedApps: [] },
+};
+
+function fromDefault(over: Record<string, string> = {}): Record<string, string> {
+  const from: Record<string, string> = {};
+  for (const k of Object.keys(defaultPolicy)) from[k] = "Default policy";
+  for (const g of ["automaticUpdates", "featureUpdates", "qualityUpdates", "restartBehavior"]) from[`windowsUpdate.${g}`] = "Default policy";
+  return { ...from, "windowsUpdate.qualityUpdates": "EasyPatch's defaults", "windowsUpdate.restartBehavior": "EasyPatch's defaults", ...over };
+}
+
+/**
+ * Harbor Dental Group's policy: clinics close at 19:00, so its window opens earlier, it restarts on Sunday mornings
+ * when a restart is pending, and it keeps its imaging software's browser up to date.
+ */
+export const organizationPolicy: PatchPolicyView = {
+  level: "organization",
+  name: "Harbor Dental Group",
+  own: {
+    ...noValues,
+    maintenanceDays: [0, 6],
+    maintenanceStart: "20:00",
+    maintenanceDurationMinutes: 360,
+    excludedKbs: ["KB5034441"],
+    restartSchedule: {
+      enabled: true,
+      days: [0],
+      time: "06:00",
+      condition: "OnlyIfPending",
+      mode: "PromptWithDeadline",
+      countdownMinutes: 5,
+      deadlineMinutes: 120,
+      expiryMinutes: 240,
+    },
+    applicationUpdates: { enabled: true, approvedApps: ["Google.Chrome", "Mozilla.Firefox"] },
+  },
+  hasOwn: true,
+  updatedAt: days(3),
+  inherited: defaultPolicy,
+  inheritedFrom: fromDefault(),
+  windows: true,
+  canEdit: true,
+  organizationId: "o-harbor",
+};
+
+export const patchTags: PatchTag[] = [
+  {
+    id: "t-pilot",
+    name: "Pilot ring",
+    color: "amber",
+    description: "Gets updates first, without the week's delay.",
+    priority: 50,
+    endpointCount: 4,
+    siteCount: 0,
+    organizationCount: 0,
+    hasPolicy: true,
+    createdAt: days(200),
+  },
+  {
+    id: "t-servers",
+    name: "Servers",
+    color: "teal",
+    description: "Restarts only in the window, never prompted.",
+    priority: 40,
+    endpointCount: 9,
+    siteCount: 0,
+    organizationCount: 0,
+    hasPolicy: true,
+    createdAt: days(400),
+  },
+  {
+    id: "t-clinical",
+    name: "Clinical workstations",
+    color: "blue",
+    description: null,
+    priority: 10,
+    endpointCount: 0,
+    siteCount: 0,
+    organizationCount: 1,
+    hasPolicy: false,
+    createdAt: days(90),
+  },
+];
+
+export const organizationTags: PatchTagRef[] = [{ id: "t-clinical", name: "Clinical workstations", color: "blue" }];
+
+export const defaultPolicyView: PatchPolicyView = {
+  level: "default",
+  name: "Default policy",
+  own: defaultPolicy,
+  hasOwn: true,
+  updatedAt: days(40),
+  inherited: defaultPolicy,
+  inheritedFrom: fromDefault(),
+  windows: true,
+  canEdit: true,
+};

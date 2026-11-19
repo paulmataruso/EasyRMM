@@ -179,7 +179,7 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
           <Segmented
             label="Updates to show"
             value={view}
-            onChange={(v) => url.set({ patches: v === "available" ? null : v })}
+            onChange={(v) => url.set({ patches: v === "available" ? null : v, policy: null })}
             options={[
               {
                 value: "available",

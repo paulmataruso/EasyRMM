@@ -99,7 +99,7 @@ func (s *Server) orgDetail(o *OrgInfo) map[string]any {
 	}
 	return map[string]any{"id": o.ID, "name": o.Name, "description": o.Description, "contactName": nil, "contactEmail": nil,
 		"notes": o.Notes, "timeZone": o.TimeZone, "isActive": o.Active, "createdAt": "2026-11-02T10:00:00+00:00",
-		"updatedAt": "2026-11-02T10:00:00+00:00", "archivedAt": o.ArchivedAt, "sites": sites}
+		"updatedAt": "2026-11-02T10:00:00+00:00", "archivedAt": o.ArchivedAt, "sites": sites, "tags": s.tagRefs(o.ID, "")}
 }
 
 func (s *Server) siteDTO(x *SiteInfo) map[string]any {
@@ -115,7 +115,7 @@ func (s *Server) siteDTO(x *SiteInfo) map[string]any {
 	}
 	return map[string]any{"id": x.ID, "organizationId": x.Org, "organizationName": name, "name": x.Name, "description": x.Description,
 		"address": x.Address, "timeZone": x.TimeZone, "isActive": x.Active, "endpointCount": count, "rebootPendingCount": 0,
-		"createdAt": "2026-11-02T10:00:00+00:00", "archivedAt": x.ArchivedAt}
+		"createdAt": "2026-11-02T10:00:00+00:00", "archivedAt": x.ArchivedAt, "tags": s.tagRefs(x.ID, "")}
 }
 
 // fields answers 400 validation_failed with EasyPatch's errors map.

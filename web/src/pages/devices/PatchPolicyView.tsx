@@ -1,14 +1,17 @@
 import type { ReactNode } from "react";
 import type { Device, DevicePatching, PatchPolicy, PatchRestartSchedule, PatchWindowsUpdate } from "../../api/types";
-import { Alert, Badge, Card, KeyValueList, TableWrap, type Tone } from "../../components/ui";
+import { Alert, Badge, Button, Card, KeyValueList, TableWrap, type Tone } from "../../components/ui";
 import { formatDateTime, plural } from "../../lib/format";
-import { categoryLabel, EasyPatchLink, useEasyPatchConsole } from "../patching/patchText";
+import { useUrlState } from "../../lib/urlState";
+import { categoryLabel } from "../patching/patchText";
+import { PolicyPanel } from "../patching/PolicyEditor";
+import { TagsField } from "../patching/Tags";
 
 // A device's effective EasyPatch policy (one-product plan, C1): every value EasyPatch applies to it, and the layer
-// that set it. Editing policies comes with the policy pages (C4); where EasyPatch has a console of its own, it links
-// there.
+// that set it. The device's own policy, which overrides the rest, is edited beside it with the shared policy editor
+// (C4), and its tags are set here too.
 
-const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+export const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /** The layer a value comes from, keyed by its name: EasyPatch writes PascalCase keys ("MaintenanceWindow"). */
 function sourceOf<T>(map: Record<string, T> | null | undefined, field: string): T | undefined {
@@ -61,7 +64,7 @@ function daysText(days: number[] | null | undefined): string {
 }
 
 /** "Saturday at 22:00 for 4 hours", or "None". */
-export function windowText(p: PatchPolicy): string {
+export function windowText(p: Pick<PatchPolicy, "maintenanceDays" | "maintenanceStart" | "maintenanceDurationMinutes">): string {
   if (!p.maintenanceStart || !p.maintenanceDays || p.maintenanceDays.length === 0) return "None";
   const length = p.maintenanceDurationMinutes ? ` for ${minutesText(p.maintenanceDurationMinutes)}` : "";
   return `${daysText(p.maintenanceDays)} at ${p.maintenanceStart.slice(0, 5)}${length}`;
@@ -82,23 +85,23 @@ export function restartScheduleText(s: PatchRestartSchedule | null | undefined):
   return `${daysText(s.days)} at ${s.time.slice(0, 5)}, ${s.condition === "OnlyIfPending" ? "only when a restart is pending" : "always"}, ${mode}`;
 }
 
-const AUTO_UPDATE_MODES: Record<string, string> = {
+export const AUTO_UPDATE_MODES: Record<string, string> = {
   Disabled: "Automatic Updates off",
   NotifyDownload: "Notify before downloading and installing",
   AutoDownloadNotifyInstall: "Download automatically, notify to install",
   AutoDownloadScheduleInstall: "Download automatically, install on a schedule",
 };
-const INSTALL_DAYS = ["every day", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+export const INSTALL_DAYS = ["every day", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const hour = (h: number) => `${String(h).padStart(2, "0")}:00`;
 
-const WU_GROUPS: { key: keyof PatchWindowsUpdate; group: string; label: string }[] = [
+export const WU_GROUPS: { key: keyof PatchWindowsUpdate; group: string; label: string }[] = [
   { key: "automaticUpdates", group: "AutomaticUpdates", label: "Automatic Updates" },
   { key: "featureUpdates", group: "FeatureUpdates", label: "Feature updates" },
   { key: "qualityUpdates", group: "QualityUpdates", label: "Quality updates and pausing" },
   { key: "restartBehavior", group: "RestartBehavior", label: "Restart behaviour" },
 ];
 
-function windowsUpdateText(w: PatchWindowsUpdate, key: keyof PatchWindowsUpdate): string {
+export function windowsUpdateText(w: PatchWindowsUpdate, key: keyof PatchWindowsUpdate): string {
   switch (key) {
     case "automaticUpdates": {
       const v = w.automaticUpdates;
@@ -135,19 +138,35 @@ const APPLIED: Record<string, { label: string; tone: Tone }> = {
   NotManaged: { label: "Not managed", tone: "neutral" },
 };
 
-function delayText(days: number): string {
+export function delayText(days: number): string {
   return days > 0 ? `${plural(days, "day")} after release` : "None";
 }
 
-function everyText(minutes: number): string {
+export function everyText(minutes: number): string {
   return `Every ${minutesText(minutes)}`;
 }
 
 /** The device's whole effective policy, value by value, each with the layer that set it. */
 export function PolicyView({ patching: d, device }: { patching: DevicePatching; device: Device }) {
-  const hasConsole = useEasyPatchConsole();
+  const url = useUrlState();
   const p = d.policy;
   if (!p) return null;
+  if (url.get("policy") === "own") {
+    return (
+      <PolicyPanel
+        level="device"
+        id={device.id}
+        intro={
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <TagsField level="device" id={device.id} />
+            <Button size="sm" variant="ghost" onClick={() => url.set({ policy: null })}>
+              Back to the policy in effect
+            </Button>
+          </div>
+        }
+      />
+    );
+  }
   const e = d.endpoint;
   const windows = device.platform === "windows";
   const row = (label: string, field: string, value: ReactNode): [ReactNode, ReactNode] => [
@@ -163,17 +182,17 @@ export function PolicyView({ patching: d, device }: { patching: DevicePatching; 
   const wu = p.windowsUpdate;
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-sm text-muted">
-        {e?.hasOwnPolicy
-          ? "This device has its own policy, which overrides its tags, site, organization and the default for the values it sets."
-          : "This device follows its tags, site, organization and the default policy: the most specific one that sets a value wins, and excluded KBs add up."}
-        {hasConsole && (
-          <>
-            {" "}
-            <EasyPatchLink to={{ device: d.deviceId, tab: "policy" }}>Change in EasyPatch</EasyPatchLink>
-          </>
-        )}
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="max-w-3xl text-sm text-muted">
+          {e?.hasOwnPolicy
+            ? "This device has its own policy, which overrides its tags, site, organization and the default for the values it sets."
+            : "This device follows its tags, site, organization and the default policy: the most specific one that sets a value wins, and excluded KBs add up."}
+        </p>
+        <Button size="sm" onClick={() => url.set({ policy: "own" })}>
+          {e?.hasOwnPolicy ? "This device's own policy" : "Set values for this device"}
+        </Button>
+      </div>
+      <TagsField level="device" id={device.id} />
       <div className="grid grid-cols-1 items-start gap-4 2xl:grid-cols-2">
         <Card title="Installing">
           <KeyValueList
@@ -181,7 +200,11 @@ export function PolicyView({ patching: d, device }: { patching: DevicePatching; 
               row(
                 "Automatic installs",
                 "autoInstallEnabled",
-                p.autoInstallEnabled ? "On, inside the maintenance window. Installing never restarts the device." : "Off: updates install only when someone starts an install",
+                !p.autoInstallEnabled
+                  ? "Off: updates install only when someone starts an install"
+                  : windowText(p) === "None"
+                    ? "On, but there is no maintenance window, so nothing installs automatically"
+                    : "On, inside the maintenance window. Installing never restarts the device.",
               ),
               row("Maintenance window", "maintenanceWindow", p.maintenanceStart ? `${windowText(p)} (${p.timeZone})` : "None"),
               ...(windows

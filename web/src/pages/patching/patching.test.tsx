@@ -12,6 +12,7 @@ import type {
   PatchJobDetail,
   PatchJobView,
   PatchPolicy,
+  PatchPolicyView,
   PatchStatus,
   PatchUpdate,
   RestartPlan,
@@ -1520,11 +1521,12 @@ describe("maintenance text", () => {
   it("says when automatic installs run", () => {
     expect(maintenanceText(POLICY)).toBe("Saturday at 02:00 for 3 hours (Europe/Paris)");
     expect(maintenanceText({ ...POLICY, autoInstallEnabled: false })).toMatch(/^Off/);
-    expect(maintenanceText({ ...POLICY, maintenanceStart: null })).toMatch(/any time/);
+    expect(maintenanceText({ ...POLICY, maintenanceStart: null })).toMatch(/no maintenance window, so nothing installs/);
+    expect(maintenanceText({ ...POLICY, maintenanceDays: [] })).toMatch(/no maintenance window/);
     expect(
       maintenanceText({
         ...POLICY,
-        maintenanceDays: null,
+        maintenanceDays: [0, 1, 2, 3, 4, 5, 6],
         maintenanceDurationMinutes: 90,
       }),
     ).toBe("Every day at 02:00 for 90 minutes (Europe/Paris)");
@@ -1633,6 +1635,25 @@ const PRESETS = {
   ],
 };
 
+/** The device's own policy: nothing set, everything inherited from EasyPatch's defaults. */
+const DEVICE_POLICY: PatchPolicyView = (() => {
+  const own = {
+    checkInIntervalSeconds: null, scanIntervalMinutes: null, inventoryIntervalMinutes: null, jitterPercent: null, allowedCategories: null,
+    includeOptional: null, excludedKbs: [], acceptEulas: null, autoInstallEnabled: null, maintenanceDays: null, maintenanceStart: null,
+    maintenanceDurationMinutes: null, preDownloadHours: null, installDelayDays: null, securityInstallDelayDays: null,
+    knownExploitedSkipsDelay: null, scanStaleAfterHours: null, maxConcurrentInstallsPerSite: null, trayIconEnabled: null,
+    installNotificationsEnabled: null, agentAutoUpdateEnabled: null, restartSchedule: null, windowsUpdate: null, applicationUpdates: null,
+  };
+  const inherited = {
+    ...own, checkInIntervalSeconds: 60, scanIntervalMinutes: 360, inventoryIntervalMinutes: 1440, jitterPercent: 10,
+    allowedCategories: ["Security"], includeOptional: false, acceptEulas: true, autoInstallEnabled: false, maintenanceDays: [],
+    maintenanceStart: "02:00", maintenanceDurationMinutes: 180, preDownloadHours: 0, installDelayDays: 0, securityInstallDelayDays: 0,
+    knownExploitedSkipsDelay: true, scanStaleAfterHours: 48, maxConcurrentInstallsPerSite: 10, trayIconEnabled: true,
+    installNotificationsEnabled: true, agentAutoUpdateEnabled: true, applicationUpdates: { enabled: false, approvedApps: [] },
+  };
+  return { level: "device", name: "APP-01", own, hasOwn: false, inherited, inheritedFrom: {}, windows: true, canEdit: true };
+})();
+
 function winRoutes(patching: DevicePatching = WIN_LINKED, extra: Record<string, FakeHandler | FakeReply> = {}) {
   return deviceRoutes(patching, {
     "GET /devices/:id": ok(WIN),
@@ -1650,6 +1671,13 @@ function winRoutes(patching: DevicePatching = WIN_LINKED, extra: Record<string, 
     }),
     "GET /patching/devices/:id/jobs": ok({ items: [], page: 1, pageSize: 50, totalCount: 0 }),
     "GET /patching/messages": ok(PRESETS),
+    "GET /patching/tags/of/device/:id": ok({
+      tags: [
+        { id: "t1", name: "Workstations", color: "blue", inheritedFrom: "Site" },
+        { id: "t2", name: "Pilot ring", color: "amber" },
+      ],
+      canAssign: false,
+    }),
     ...extra,
   });
 }
@@ -1859,7 +1887,7 @@ describe("device patch actions", () => {
 
   it("shows the whole effective policy, with the layer that set each value", async () => {
     const user = userEvent.setup();
-    installFakeApi(winRoutes());
+    const server = installFakeApi(winRoutes());
     renderApp("/devices/d2?tab=patches");
     await screen.findByRole("main");
     await user.click(await main().findByRole("button", { name: "Whole policy" }));
@@ -1881,7 +1909,19 @@ describe("device patch actions", () => {
     expect(main().getByText("Conflict")).toBeInTheDocument();
     expect(main().getByText("A Group Policy object also sets this.")).toBeInTheDocument();
     expect(main().getByText(/Update policies from MDM, such as Intune/)).toBeInTheDocument();
-    expect(main().getByRole("link", { name: "Change in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d2&tab=policy");
+    // Its tags, one through its site; editing is EasyRMM's (C4), not a link into EasyPatch.
+    expect(await main().findByTitle("Workstations (from its site)")).toBeInTheDocument();
+    expect(main().getByTitle("Pilot ring")).toBeInTheDocument();
+    expect(main().queryByRole("button", { name: "Change tags" })).not.toBeInTheDocument();
+    expect(main().queryByRole("link", { name: "Change in EasyPatch" })).not.toBeInTheDocument();
+    // The device's own policy, edited beside it (C4).
+    server.on("GET /patching/policies/device/:id", ok(DEVICE_POLICY));
+    await user.click(main().getByRole("button", { name: "Set values for this device" }));
+    expect(await main().findByRole("form", { name: "APP-01 patch policy" })).toBeInTheDocument();
+    expect(main().getByRole("heading", { name: "Windows Update settings" })).toBeInTheDocument();
+    expect(main().getByTitle("Workstations (from its site)")).toBeInTheDocument();
+    await user.click(main().getByRole("button", { name: "Back to the policy in effect" }));
+    expect(await main().findByRole("heading", { name: "Installing" })).toBeInTheDocument();
   });
 
   it("previews an install, with what it leaves out and why", async () => {

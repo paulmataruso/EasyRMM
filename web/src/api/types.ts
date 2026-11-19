@@ -1335,6 +1335,105 @@ export interface PatchPolicy {
   sourceTags: Record<string, string> | null;
 }
 
+/** The levels of an EasyPatch policy (one-product plan, C4). */
+export type PolicyLevel = "default" | "organization" | "site" | "device" | "tag";
+
+type WindowsUpdateGroups = { [K in keyof PatchWindowsUpdate]: NonNullable<PatchWindowsUpdate[K]> };
+
+/** One group of Windows Update settings at one level: not managed leaves Windows alone, even when a level above manages it. */
+export interface PatchGroupSetting<T> {
+  managed: boolean;
+  value: T | null;
+}
+
+/** One level's own policy: null inherits. The window, the restart schedule, application updates and each Windows Update group are set as a whole. */
+export interface PatchPolicyLayer {
+  checkInIntervalSeconds: number | null;
+  scanIntervalMinutes: number | null;
+  inventoryIntervalMinutes: number | null;
+  jitterPercent: number | null;
+  allowedCategories: string[] | null;
+  includeOptional: boolean | null;
+  /** Added to the levels' above: a level cannot lift what it inherits. */
+  excludedKbs: string[] | null;
+  acceptEulas: boolean | null;
+  autoInstallEnabled: boolean | null;
+  /** Set means this level has a window; an empty list is no window. */
+  maintenanceDays: number[] | null;
+  maintenanceStart: string | null;
+  maintenanceDurationMinutes: number | null;
+  preDownloadHours: number | null;
+  installDelayDays: number | null;
+  securityInstallDelayDays: number | null;
+  knownExploitedSkipsDelay: boolean | null;
+  scanStaleAfterHours: number | null;
+  maxConcurrentInstallsPerSite: number | null;
+  trayIconEnabled: boolean | null;
+  installNotificationsEnabled: boolean | null;
+  agentAutoUpdateEnabled: boolean | null;
+  restartSchedule: PatchRestartSchedule | null;
+  windowsUpdate: { [K in keyof WindowsUpdateGroups]: PatchGroupSetting<WindowsUpdateGroups[K]> | null } | null;
+  applicationUpdates: { enabled: boolean; approvedApps: string[] | null } | null;
+}
+
+/** A level's policy for the editor: its own values and what it inherits, already resolved by the server. */
+export interface PatchPolicyView {
+  level: PolicyLevel;
+  name: string;
+  own: PatchPolicyLayer;
+  hasOwn: boolean;
+  updatedAt?: string;
+  /** Every value set. */
+  inherited: PatchPolicyLayer;
+  /** The level each inherited value comes from ("Default policy", "Organization", "Site", "Tag Ring 1", "EasyPatch's defaults"), keyed by its field. */
+  inheritedFrom: Record<string, string>;
+  /** The time zone of the window and the restart schedule; empty when each device's own applies. */
+  timeZone?: string;
+  /** False for a device that is not a Windows computer. */
+  windows: boolean;
+  canEdit: boolean;
+  /** Why nobody may change it in EasyRMM: the default policy with a connected EasyPatch server. */
+  readOnlyReason?: string;
+  organizationId?: string;
+}
+
+export type TagColor = "gray" | "blue" | "green" | "amber" | "red" | "purple" | "teal" | "pink";
+
+/** An EasyPatch tag. Counts are 0 for someone who does not see every organization. */
+export interface PatchTag {
+  id: string;
+  name: string;
+  color: TagColor;
+  description: string | null;
+  /** The highest priority's policy applies last and wins. */
+  priority: number;
+  endpointCount: number;
+  siteCount: number;
+  organizationCount: number;
+  hasPolicy: boolean;
+  createdAt: string;
+}
+
+export interface PatchTagList {
+  items: PatchTag[];
+  canManage: boolean;
+  /** Why nobody may manage tags in EasyRMM: with a connected EasyPatch server, its own console does. */
+  readOnlyReason?: string;
+}
+
+export interface PatchTagRef {
+  id: string;
+  name: string;
+  color: TagColor;
+  /** "Site" or "Organization" for a device's tag it has through them. */
+  inheritedFrom?: string;
+}
+
+export interface PatchAssignedTags {
+  tags: PatchTagRef[];
+  canAssign: boolean;
+}
+
 /** What installing on a device would do, from its last scan; the agent scans again before installing. */
 export interface PatchInstallPreview {
   /** AllEligible or Selected. */

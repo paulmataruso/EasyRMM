@@ -28,6 +28,8 @@ type OrganizationDetail struct {
 	TimeZone     string     `json:"timeZone"`
 	IsActive     bool       `json:"isActive"`
 	ArchivedAt   *time.Time `json:"archivedAt"`
+	// Tags are the organization's own tags.
+	Tags []TagRef `json:"tags"`
 }
 
 type organizationRequest struct {
@@ -93,6 +95,8 @@ type SiteDetail struct {
 	TimeZone       string     `json:"timeZone"`
 	IsActive       bool       `json:"isActive"`
 	ArchivedAt     *time.Time `json:"archivedAt"`
+	// Tags are the site's own tags.
+	Tags []TagRef `json:"tags"`
 }
 
 type siteRequest struct {

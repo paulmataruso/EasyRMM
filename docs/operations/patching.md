@@ -18,7 +18,8 @@ server will do. To set one up, see EasyPatch's
 1. **Create an API token in EasyPatch**: Settings → API tokens. Choose the
    EasyPatch organizations EasyRMM should patch, an expiry (up to a year),
    and the role:
-   * **Operator** lets EasyRMM scan and install.
+   * **Operator** lets EasyRMM scan, install and change organizations',
+     sites' and devices' policies.
    * **Read only** lets EasyRMM show patch status, and nothing else.
 
    EasyPatch shows the token once; copy it.
@@ -439,21 +440,116 @@ device is not linked.
 * EasyPatch runs one job at a time on a device, so a restart never starts
   in the middle of an install.
 
-Recurring restarts are part of the EasyPatch policy.
+Recurring restarts are part of the patch policy (below).
+
+### Policies
+
+<picture><source media="(prefers-color-scheme: light)" srcset="../images/patch-policy-light.png"><img src="../images/patch-policy.png" alt="An organization's Patch policy tab: its tags, then each value with Inherit or Override and where an inherited value comes from: automatic installs and the maintenance window, what installs, application updates, restarts, the agent's schedule and Windows Update settings"></picture>
+
+A patch policy says when EasyPatch scans and installs, what it installs and
+how computers restart. It is set in layers, each overriding the ones above
+it:
+
+| Layer | Where | Who changes it |
+|---|---|---|
+| EasyPatch's defaults | Built in | Nobody |
+| Default policy | Settings → **Patching** | Super administrators |
+| An organization | The organization's **Patch policy** tab | `patch.configure` in the organization |
+| A site | The site's **Patch policy** tab | `patch.configure` in its organization |
+| A tag | Settings → **Patching** → Tags, the tag's policy | Super administrators |
+| A device | Its Patches tab → Policy → **Set values for this device** | `patch.configure` in its organization |
+
+A device with several tags that set the same value takes it from the tag
+with the highest priority. A device's **Policy** view shows the policy in
+effect, each value with the layer it comes from.
+
+Each value of a layer is **Inherit**, shown with where it comes from (for
+example *Every 12 hours · from the organization*), or **Override**. Saving
+keeps exactly the values overridden at that layer. **Inherit everything**
+clears a layer; on the default policy, **Restore EasyPatch's defaults** puts
+EasyPatch's back. Both ask you to type the layer's name. Anyone who sees
+patching in an organization sees its policies; tags' policies need
+`patch.view` everywhere.
+
+A policy holds:
+
+* **Automatic installs**: on or off; the maintenance window (days, start and
+  length), the only time EasyPatch installs automatically; on Windows,
+  downloading up to 24 hours ahead; how many days to wait before installing
+  security updates (0 to 90) and others (0 to 365); and whether updates
+  fixing known-exploited vulnerabilities skip the wait.
+* **What installs**: categories (security, critical, cumulative, definition,
+  servicing stack, .NET, feature, driver, other), optional updates,
+  accepting licence terms, and KBs never to install.
+* **Application updates** (Windows): winget packages, by ID, updated in the
+  maintenance window.
+* **Restarts and users**: a recurring restart, with the same choices as
+  **Restart…**; on Windows, EasyPatch's tray icon and install notifications;
+  and EasyPatch agent updates.
+* **Agent schedule**: how often the agent checks in, scans and sends its
+  inventory, the spread around those times, when a scan counts as out of
+  date, and how many devices of a site install at once (set on the default
+  policy, an organization or a site).
+* **Windows Update settings** (Windows): Automatic Updates, feature updates,
+  quality updates and pausing, and restart behaviour. Each group is
+  inherited, **left alone** (Windows keeps its own settings, even where a
+  layer above manages them) or **managed**.
+
+Sections for Windows only are not shown for Linux and macOS devices. Times
+are in the site's time zone; on the default policy, an organization or a
+tag, in each device's site's.
+
+EasyRMM checks a policy as EasyPatch does before saving it, and refuses two
+things that would stop patching without saying so: no category to install,
+and a layer that turns automatic installs on, or changes the window, with
+no maintenance window left. A tag that turns automatic installs on sets its
+own window.
+
+**Application updates or the Software tab.** Both can update applications
+with winget. The policy's application updates are how applications are kept
+up to date on a schedule: EasyPatch updates the listed packages in the
+maintenance window, like the rest of the policy. A device's **Software** tab
+and Jobs → **Install software**
+([ADR-0028](../architecture/adr/0028-software-deployment.md)) are one-off
+actions that run when you ask, without waiting for the window. The policy
+editor says so and links to Jobs.
+
+### Tags
+
+Tags group devices across organizations (a pilot ring, servers) so one
+policy applies to all of them. Super administrators add, change and delete
+them under Settings → **Patching** → Tags: a name, a colour, a priority from
+0 to 1000 and a description; deleting one asks for its name. **Change
+tags** on an organization's, site's or device's page gives it tags, at most
+20, for super administrators. A device also has its site's and
+organization's tags, shown with a dashed outline. Others with patching see
+the tags in use in their organizations.
+
+### With a connected EasyPatch server
+
+EasyPatch's API tokens are Operator or Read only, never SuperAdmin, and
+EasyPatch keeps its default policy, its tags and tags' policies to
+SuperAdmin. With a connected server, EasyRMM therefore:
+
+* shows the default policy, and says it is changed in EasyPatch's console;
+* lists tags and gives them to organizations, sites and devices (with a
+  token for every organization; EasyPatch refuses one for chosen
+  organizations), but does not add, change or delete them;
+* does not show tags' policies; a device's Policy view still shows the
+  values a tag sets.
+
+Organizations', sites' and devices' policies are changed in EasyRMM, as with
+the bundled engine.
 
 ### Changing things in EasyPatch
 
-Policies, maintenance windows, rings and holds are not edited in EasyRMM's
-console yet. With a connected EasyPatch server, which has a console of its
-own, EasyRMM links to the page that edits them, in the same tab, so the
-browser's Back button returns. The bundled engine has no console, so
-EasyRMM shows no such links, and its policies cannot be changed yet: they
-are EasyPatch's defaults.
+With a connected EasyPatch server, which has a console of its own, EasyRMM
+links to its pages, in the same tab, so the browser's Back button returns.
+The bundled engine has no console, so EasyRMM shows no such links.
 
 | In EasyRMM | Link | Opens in EasyPatch |
 |---|---|---|
 | A device's **In EasyPatch** row | Open in EasyPatch | The device's endpoint page, on the tab matching the view (updates, installed, history, jobs, policy) |
-| A device's **Policy** view | Change in EasyPatch | The endpoint's policy tab |
 | An update's title | (the title) | The update's page: vulnerabilities, other devices missing it, hold |
 | A job | Open in EasyPatch | The job's page |
 
@@ -545,7 +641,7 @@ warns about them; see
 |---|---|---|
 | `patch.view` (with `device.view`) | Patching, a device's Patches tab | Every role |
 | `patch.manage` | Scan, install, restart, cancel, retry, exclude and include updates, remove an update, install or remove an update across devices, message users, install and update the EasyPatch agent, stop and allow patching for a device | Technician and above |
-| `patch.configure` | Change EasyPatch's standing rules: hold an update in the organization and release its holds (in every organization: super administrators only); makes someone an Admin in EasyPatch rather than ReadOnly when they sign in to EasyPatch through EasyRMM. Only organization-wide roles hold it | Organization administrator and above |
+| `patch.configure` | Change EasyPatch's standing rules: the patch policy of the organization, its sites and devices; hold an update in the organization and release its holds (in every organization, the default policy, tags and tags' policies: super administrators only); makes someone an Admin in EasyPatch rather than ReadOnly when they sign in to EasyPatch through EasyRMM. Only organization-wide roles hold it | Organization administrator and above |
 | `settings.manage` | Settings → EasyPatch, including automatic installs of the EasyPatch agent | Super administrator |
 
 Both are checked at the device's site before EasyPatch is called; a job is
@@ -565,6 +661,9 @@ nobody can act, whatever their role.
 | `patch.notify` | One record per device messaged: the message, and the restart time it names |
 | `patch.agent_update` | One record per device whose agent was asked to update, with the EasyPatch job id |
 | `patch.retry` | The job retried, the new job and the device |
+| `patch.policy_update`, `patch.policy_reset` | The layer (default, organization, site, tag or device) and its name; for a change, the values changed |
+| `patch.tag_create`, `patch.tag_update`, `patch.tag_delete` | The tag's name, colour and priority; a renamed tag's old name; for a deleted one, how many devices had it and whether it had a policy |
+| `patch.tag_assign` | The organization, site or device, and the tags given and taken off |
 | `easypatch.connection_update`, `easypatch.connection_delete` | The server, its version, whether the token changed and can act, and whether links were forgotten |
 | `easypatch.organization_link`, `easypatch.organization_unlink` | Both organizations |
 | `patch.agent_install` | One record per device an EasyPatch agent install was requested for. Automatic installs are covered by the record of turning them on |
@@ -589,6 +688,7 @@ server has the `on-behalf-of` capability.
 * A restart whether or not a restart is pending reaches at most 100 devices
   at once; one only where a restart is pending, 1,000.
 * The device list is cached for 30 seconds; a scan or install refreshes it.
+* An organization, a site or a device has at most 20 tags of its own.
 * The update list shows 50 updates a page and an update's page 200 devices
   a page. Installing or removing an update across devices reaches at most
   1,000 devices at once: choose an organization or a site beyond that.

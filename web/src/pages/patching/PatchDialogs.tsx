@@ -391,7 +391,7 @@ export function InstallDialog({
   );
 }
 
-const RESTART_MODES: { value: RestartMode; label: string; hint: string }[] = [
+export const RESTART_MODES: { value: RestartMode; label: string; hint: string }[] = [
   { value: "Countdown", label: "Count down, then restart", hint: "Signed-in users see the countdown and can only restart sooner." },
   {
     value: "PromptWithDeadline",
@@ -402,9 +402,9 @@ const RESTART_MODES: { value: RestartMode; label: string; hint: string }[] = [
   { value: "Immediate", label: "Restart at once", hint: "No warning, even with users signed in." },
 ];
 
-const COUNTDOWNS = [1, 5, 10, 15, 30, 60];
-const DEADLINES = [15, 30, 60, 120, 240, 480, 1440, 3 * 1440, 7 * 1440];
-const EXPIRIES = [15, 30, 60, 120, 240, 480, 1440];
+export const COUNTDOWNS = [1, 5, 10, 15, 30, 60];
+export const DEADLINES = [15, 30, 60, 120, 240, 480, 1440, 3 * 1440, 7 * 1440];
+export const EXPIRIES = [15, 30, 60, 120, 240, 480, 1440];
 
 /** "15 minutes", "4 hours", "3 days". */
 function minutesText(m: number): string {

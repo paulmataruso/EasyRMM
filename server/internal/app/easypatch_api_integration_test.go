@@ -630,6 +630,112 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Fatalf("patch audit: %v", got)
 	}
 
+	// Policies at every level, and tags (one-product plan, C4). A connected
+	// server's token is never SuperAdmin, so the default policy and tags are
+	// read here and changed in EasyPatch's console.
+	type policyView struct {
+		Name           string `json:"name"`
+		HasOwn         bool   `json:"hasOwn"`
+		CanEdit        bool   `json:"canEdit"`
+		ReadOnlyReason string `json:"readOnlyReason"`
+		Own            struct {
+			ScanIntervalMinutes *int `json:"scanIntervalMinutes"`
+			InstallDelayDays    *int `json:"installDelayDays"`
+		} `json:"own"`
+		Inherited struct {
+			ScanIntervalMinutes *int `json:"scanIntervalMinutes"`
+		} `json:"inherited"`
+		InheritedFrom map[string]string `json:"inheritedFrom"`
+	}
+	var pol policyView
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/policies/default", nil, &pol)
+	if pol.CanEdit || !pol.HasOwn || pol.ReadOnlyReason == "" || pol.Own.ScanIntervalMinutes == nil || *pol.Own.ScanIntervalMinutes != 360 {
+		t.Fatalf("default policy: %+v", pol)
+	}
+	wantStatus(t, admin.do("PUT", "/api/v1/patching/policies/default", map[string]any{"scanIntervalMinutes": 120}), http.StatusConflict, "easypatch_server_wide")
+	wantStatus(t, admin.do("DELETE", "/api/v1/patching/policies/default", nil), http.StatusConflict, "easypatch_server_wide")
+	wantStatus(t, viewer.do("PUT", "/api/v1/patching/policies/default", map[string]any{}), http.StatusForbidden, "forbidden")
+	orgPolicy := "/api/v1/patching/policies/organization/" + acme
+	viewer.expect(http.StatusOK, "GET", orgPolicy, nil, &pol)
+	if pol.HasOwn || pol.CanEdit || *pol.Inherited.ScanIntervalMinutes != 360 || pol.InheritedFrom["scanIntervalMinutes"] != "Default policy" {
+		t.Fatalf("Acme's policy for a reader: %+v", pol)
+	}
+	pol = policyView{}
+	admin.expect(http.StatusOK, "PUT", orgPolicy, map[string]any{"installDelayDays": 2}, &pol)
+	if !pol.HasOwn || !pol.CanEdit || pol.ReadOnlyReason != "" || *pol.Own.InstallDelayDays != 2 {
+		t.Fatalf("saved Acme's policy: %+v", pol)
+	}
+	wantStatus(t, admin.do("PUT", orgPolicy, map[string]any{"installDelayDays": 400}), http.StatusUnprocessableEntity, "validation_failed")
+	admin.expect(http.StatusOK, "DELETE", orgPolicy, nil, &pol)
+	if pol.HasOwn {
+		t.Fatalf("reset Acme's policy: %+v", pol)
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/policies/device/"+device, nil, &pol)
+	if pol.Name != "web-01" || pol.InheritedFrom["scanIntervalMinutes"] != "Default policy" {
+		t.Fatalf("web-01's policy: %+v", pol)
+	}
+	for _, path := range []string{"/api/v1/patching/policies/group/" + acme, "/api/v1/patching/policies/organization/nope",
+		"/api/v1/patching/policies/default/" + acme, "/api/v1/patching/tags/of/group/" + acme} {
+		wantStatus(t, admin.do("GET", path, nil), http.StatusNotFound, "not_found")
+	}
+
+	ring := ep.AddTag("Ring 0", "teal", 10).String()
+	wantStatus(t, admin.do("POST", "/api/v1/patching/tags", map[string]any{"name": "Ring 1", "color": "blue", "priority": 10}),
+		http.StatusConflict, "easypatch_server_wide")
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/tags", map[string]any{"name": "Ring 2", "color": "blue"}), http.StatusForbidden, "forbidden")
+	wantStatus(t, admin.do("PUT", "/api/v1/patching/tags/"+ring, map[string]any{"name": "Ring 1", "color": "teal"}), http.StatusConflict, "easypatch_server_wide")
+	wantStatus(t, admin.do("DELETE", "/api/v1/patching/tags/"+ring, nil), http.StatusConflict, "easypatch_server_wide")
+	wantStatus(t, admin.do("GET", "/api/v1/patching/policies/tag/"+ring, nil), http.StatusConflict, "easypatch_server_wide")
+	var tags struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+		CanManage      bool   `json:"canManage"`
+		ReadOnlyReason string `json:"readOnlyReason"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/tags", nil, &tags)
+	if len(tags.Items) != 1 || tags.Items[0].Name != "Ring 0" || tags.CanManage || tags.ReadOnlyReason == "" {
+		t.Fatalf("tags: %+v", tags)
+	}
+	var assigned struct {
+		Tags []struct {
+			Name          string `json:"name"`
+			InheritedFrom string `json:"inheritedFrom"`
+		} `json:"tags"`
+		CanAssign bool `json:"canAssign"`
+	}
+	admin.expect(http.StatusOK, "PUT", "/api/v1/patching/tags/of/organization/"+acme, map[string]any{"tagIds": []string{ring}}, &assigned)
+	if len(assigned.Tags) != 1 || !assigned.CanAssign {
+		t.Fatalf("Acme's tags: %+v", assigned)
+	}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/tags/of/device/"+device, nil, &assigned)
+	if len(assigned.Tags) != 1 || assigned.Tags[0].InheritedFrom != "Organization" || assigned.CanAssign {
+		t.Fatalf("web-01's tags: %+v", assigned)
+	}
+	for _, c := range []struct{ method, path string }{
+		{"PUT", "/api/v1/patching/policies/default"}, {"PUT", orgPolicy}, {"POST", "/api/v1/patching/tags"},
+		{"PUT", "/api/v1/patching/tags/" + ring}, {"PUT", "/api/v1/patching/tags/of/organization/" + acme},
+	} {
+		if r := admin.do(c.method, c.path, notObject); r.status != http.StatusBadRequest && r.status != http.StatusUnprocessableEntity {
+			t.Errorf("%s %s with an array: %d %s", c.method, c.path, r.status, r.body)
+		}
+	}
+	for _, c := range []struct{ method, path string }{
+		{"PUT", "/api/v1/patching/tags/nope"}, {"DELETE", "/api/v1/patching/tags/nope"}, {"PUT", "/api/v1/patching/tags/of/organization/nope"},
+		{"PUT", "/api/v1/patching/policies/organization/nope"}, {"DELETE", "/api/v1/patching/policies/organization/nope"},
+	} {
+		wantStatus(t, admin.do(c.method, c.path, map[string]any{}), http.StatusNotFound, "not_found")
+	}
+	admin.expect(http.StatusOK, "PUT", "/api/v1/patching/tags/of/organization/"+acme, map[string]any{"tagIds": []string{}}, &assigned)
+	admin.expect(http.StatusOK, "GET", "/api/v1/audit?action=patch", nil, &audit)
+	got = []string{}
+	for _, a := range audit.Items[:4] {
+		got = append(got, a.Action)
+	}
+	if strings.Join(got, ",") != "patch.tag_assign,patch.tag_assign,patch.policy_reset,patch.policy_update" {
+		t.Errorf("policy and tag audit: %v", got)
+	}
+
 	// Unlinking and removing.
 	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil, nil)
 	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil), http.StatusNotFound, "not_found")

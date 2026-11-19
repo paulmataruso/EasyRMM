@@ -428,6 +428,31 @@ never forces), and recurring restarts, which are part of the policy (C4).
 The bundle test filters the install on the Jobs tab, opens it, and plans a
 restart of the machine whether or not one is pending, without sending it.*
 
+*Done (C4): one policy editor serves every layer: the default policy
+(Settings → **Patching**), an organization and a site (a **Patch policy**
+tab on their pages), a tag (Settings → Patching → Tags) and a device
+(**Set values for this device** on its Policy view). Each value is inherited,
+with the layer it comes from, or overridden; saving replaces the layer, and
+**Inherit everything** (on the default, **Restore EasyPatch's defaults**)
+clears it after the layer's name is typed. Tags are added, changed, deleted
+and given to organizations, sites and devices in EasyRMM. Organization, site
+and device policies are Admin statements for the organization and need
+`patch.configure` there; the default policy, tags and tags' policies are
+SuperAdmin statements for every organization and need a super
+administrator. EasyPatch's API tokens are never SuperAdmin, so with a
+connected server EasyRMM reads the default policy and assigns tags but
+leaves changing them, and tags' policies, to EasyPatch's console, and says
+so. **Winget, decided:** the policy's application updates are how EasyRMM
+keeps applications up to date on a schedule (winget, in the maintenance
+window); the Software tab and Jobs → Install software (ADR-0028) stay as
+one-off actions that do not wait for the window. The editor says which is
+which and links to Jobs. Not ported: giving or taking a tag from many
+devices at once, as EasyPatch's endpoint list did; tags are given one
+organization, site or device at a time. The bundle test sets a value on the
+organization and sees it inherited by the site, adds a tag with a policy,
+gives it to the device with a value of the device's own, and finds each in
+the device's policy in effect with its layer.*
+
 EasyPatch's console is about 18,800 lines of TypeScript without tests. Each
 area is ported with its tests and compared against the old page.
 

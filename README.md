@@ -84,7 +84,7 @@ regenerated when the console changes.
     </td>
     <td>
       <a href="docs/images/device-patches.png"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/device-patches-light.png"><img src="docs/images/device-patches.png" alt="A device's Patches tab: missing updates with an exploited-in-the-wild flag, Scan now and Install updates, its patch status and EasyPatch policy"></picture></a>
-      <br><sub><b>A device's updates.</b> Scan and install from EasyRMM; policy stays in EasyPatch.</sub>
+      <br><sub><b>A device's updates.</b> Scan, install and restart; the policy in effect, value by value.</sub>
     </td>
   </tr>
   <tr>
@@ -142,12 +142,14 @@ regenerated when the console changes.
 
 ## How EasyRMM and EasyPatch fit together
 
-* **EasyRMM uses EasyPatch's API** for simple patching: patch status, scan,
-  install, restart and retry, on one device or many, now or scheduled. The
+* **EasyRMM uses EasyPatch's API** for patching: patch status, scan,
+  install, restart and retry, on one device or many, now or scheduled;
+  holds; and patch policies for organizations, sites, devices and tags. The
   devices' patches show on their own pages in EasyRMM.
-* **Everything else is in EasyPatch's console**: policies, update rings,
-  holds and rollbacks, reports, alerts. EasyRMM links to the matching
-  EasyPatch page.
+* **Not in EasyRMM's console yet**: patch reports and alerts, the
+  [one-product plan](docs/architecture/one-product-plan.md)'s next steps.
+  With a connected EasyPatch server, they, its default policy and its tags
+  are in EasyPatch's own console, and EasyRMM links to the matching page.
 * **The EasyRMM | EasyPatch switch** under the logo moves between the two
   consoles, landing on the same device, organization or job.
 * **EasyRMM installs EasyPatch's agent** through its own agent, per

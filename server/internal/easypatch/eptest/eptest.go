@@ -46,6 +46,10 @@ type Server struct {
 	Capabilities []string
 	// ReadOnly makes the token a ReadOnly one: operator calls answer 403.
 	ReadOnly bool
+	// Restricted makes the token one for chosen organizations as far as
+	// assigning tags goes, which EasyPatch keeps to callers for every
+	// organization: it answers 403. Nothing else changes.
+	Restricted bool
 	// key, for NewEngine, checks statements instead of the token.
 	key []byte
 	// readOnlyCall is whether the request being served may only read.
@@ -68,6 +72,11 @@ type Server struct {
 	tokens    []*Token
 	holds     []*HoldInfo
 	requests  []Request
+	// policies are the levels' policies, by policyKey; tags the tags, and
+	// tagged an organization's, site's or endpoint's own tags.
+	policies map[string]map[string]any
+	tags     []*TagInfo
+	tagged   map[uuid.UUID][]uuid.UUID
 }
 
 // Token is an enrollment token EasyPatch created.
@@ -555,6 +564,12 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		reply(w, 200, s.Packages)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/user-messages":
 		reply(w, 200, messagePresets())
+	case parts[0] == "policies" && len(parts) == 2 && parts[1] == "global":
+		s.servePolicy(w, r, ScopeGlobal, uuid.Nil, body)
+	case parts[0] == "tags":
+		s.serveTags(w, r, parts, body)
+	case (parts[0] == "organizations" || parts[0] == "sites") && len(parts) == 3 && (parts[2] == "policy" || parts[2] == "tags"):
+		s.serveLevel(w, r, parts, body)
 	case parts[0] == "organizations":
 		s.serveOrganizations(w, r, parts, body)
 	case parts[0] == "sites" && len(parts) >= 2:
@@ -710,7 +725,16 @@ func scheduled(body map[string]any) *time.Time {
 func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *Endpoint, sub string, body map[string]any, pg int) {
 	switch {
 	case r.Method == http.MethodGet && sub == "":
-		reply(w, 200, e.detail())
+		d := e.detail()
+		d["summary"].(map[string]any)["tags"] = s.endpointTags(e)
+		d["hasOwnPolicy"] = s.policies[policyKey(ScopeEndpoint, e.ID)] != nil
+		reply(w, 200, d)
+	case sub == "policy":
+		s.servePolicy(w, r, ScopeEndpoint, e.ID, body)
+	case sub == "tags" && r.Method == http.MethodPut:
+		s.serveTagAssignment(w, e.ID, body)
+	case sub == "tag-policies" && r.Method == http.MethodGet:
+		reply(w, 200, s.tagPolicies(e))
 	case r.Method != http.MethodGet && s.readOnlyCall && (sub == "" || sub == "uninstall-agent" || sub == "revoke"):
 		problem(w, 403, "forbidden", "You do not have permission.")
 	case r.Method == http.MethodPut && sub == "":

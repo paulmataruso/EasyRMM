@@ -1045,6 +1045,250 @@ func TestContract(t *testing.T) {
 		}
 	})
 
+	// Policies at every level, and tags (one-product plan, C4): what EasyRMM
+	// sends round-trips, EasyPatch refuses what EasyRMM refuses, and EasyRMM's
+	// resolution of the layers is EasyPatch's.
+	run("policies at every level, and tags", func(t *testing.T) {
+		signer, err := NewSigner(c.engineKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		engine, err := NewEngineClient(c.engineURL, signer, "contract")
+		if err != nil {
+			t.Fatal(err)
+		}
+		as := func(role string, orgs ...uuid.UUID) context.Context {
+			return WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-policy@example.test", Role: role, Organizations: orgs})
+		}
+		reader, admin := as(RoleReadOnly, org.ID), as(RoleAdmin, org.ID)
+		super := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-policy@example.test", Role: RoleSuperAdmin, AllOrganizations: true})
+		everyOrg := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-policy@example.test", Role: RoleAdmin, AllOrganizations: true})
+
+		// The global policy is always whole; saving it fills in what is left
+		// out. Only a super administrator saves it.
+		global, err := engine.LevelPolicy(reader, globalPolicyPath)
+		if err != nil || global.ID == nil || global.ScanIntervalMinutes == nil || global.AllowedCategories == nil || global.MaintenanceStart == nil {
+			t.Fatalf("global: %+v, %v", global, err)
+		}
+		t.Cleanup(func() {
+			if _, err := engine.SetLevelPolicy(super, globalPolicyPath, global.PolicyLayer, ""); err != nil {
+				t.Errorf("restore the global policy: %v", err)
+			}
+		})
+		if g, err := engine.SetLevelPolicy(super, globalPolicyPath, PolicyLayer{ScanIntervalMinutes: ptr(240)}, ""); err != nil ||
+			*g.ScanIntervalMinutes != 240 || g.JitterPercent == nil || *g.JitterPercent != *global.JitterPercent {
+			t.Fatalf("save global: %+v, %v", g, err)
+		}
+		if _, err := engine.SetLevelPolicy(admin, globalPolicyPath, PolicyLayer{}, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an administrator saved the global policy: %v", err)
+		}
+
+		// A level with no policy answers with every value null.
+		op, sp, endp := organizationPolicyPath(org.ID), sitePolicyPath(site.ID), endpointPolicyPath(a.endpoint)
+		if none, err := engine.LevelPolicy(reader, op); err != nil || none.ID != nil || none.ScanIntervalMinutes != nil || none.ExcludedKbs == nil {
+			t.Fatalf("no organization policy: %+v, %v", none, err)
+		}
+		// Everything the editor sends, as normalizePolicy leaves it.
+		layer := PolicyLayer{InstallDelayDays: ptr(3), ExcludedKbs: []string{"KB5044284"}, AllowedCategories: []string{"Security", "Critical"},
+			MaintenanceDays: []int{1, 3}, MaintenanceStart: ptr("22:30"), MaintenanceDurationMinutes: ptr(120), AutoInstallEnabled: ptr(true),
+			RestartSchedule: &RestartSchedule{Enabled: true, Days: []int{0}, Time: "04:00", Condition: "OnlyIfPending", Mode: "PromptWithDeadline",
+				CountdownMinutes: 5, DeadlineMinutes: 240, ExpiryMinutes: 120},
+			WindowsUpdate: &LayerWindowsUpdate{QualityUpdates: &GroupSetting[QualityUpdates]{Managed: true, Value: &QualityUpdates{DeferDays: ptr(7)}},
+				FeatureUpdates: &GroupSetting[FeatureUpdates]{Managed: false},
+				AutomaticUpdates: &GroupSetting[AutomaticUpdates]{Managed: true, Value: &AutomaticUpdates{Mode: "AutoDownloadScheduleInstall",
+					ScheduledInstallDay: 0, ScheduledInstallHour: 3}},
+				RestartBehavior: &GroupSetting[RestartBehavior]{Managed: true, Value: &RestartBehavior{NoAutoRestartWithSignedInUsers: true,
+					ActiveHoursStart: ptr(8), ActiveHoursEnd: ptr(18)}}},
+			ApplicationUpdates: &ApplicationUpdates{Enabled: true, ApprovedApps: []string{"Mozilla.Firefox"}}}
+		inherited, _ := resolvePolicy(nil)
+		if err := normalizePolicy(&layer, LevelOrganization, inherited); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := engine.SetLevelPolicy(reader, op, layer, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("a reader saved a policy: %v", err)
+		}
+		if _, err := engine.SetLevelPolicy(admin, op, layer, "contract-policy@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		saved, err := engine.LevelPolicy(reader, op)
+		if err != nil {
+			t.Fatal(err)
+		}
+		saved.ExcludedKbs = orEmpty(saved.ExcludedKbs)
+		if diff := changedPolicyFields(layer, saved.PolicyLayer); saved.ID == nil || len(diff) > 0 {
+			t.Fatalf("round trip changed %v: %+v", diff, saved.PolicyLayer)
+		}
+		// What EasyRMM refuses, EasyPatch refuses too.
+		for name, bad := range map[string]PolicyLayer{
+			"scan interval":       {ScanIntervalMinutes: ptr(5)},
+			"group with nothing":  {WindowsUpdate: &LayerWindowsUpdate{QualityUpdates: &GroupSetting[QualityUpdates]{Managed: true}}},
+			"active hours span":   {WindowsUpdate: &LayerWindowsUpdate{RestartBehavior: &GroupSetting[RestartBehavior]{Managed: true, Value: &RestartBehavior{ActiveHoursStart: ptr(6), ActiveHoursEnd: ptr(1)}}}},
+			"restart with no day": {RestartSchedule: &RestartSchedule{Enabled: true, Days: []int{}, Time: "03:00", Condition: "Always", Mode: "Immediate", ExpiryMinutes: 120}},
+			"winget id":           {ApplicationUpdates: &ApplicationUpdates{Enabled: true, ApprovedApps: []string{"firefox"}}},
+			"KB":                  {ExcludedKbs: []string{"KB12a"}},
+		} {
+			// Sent first: normalizing drops what it refuses.
+			if _, err := engine.SetLevelPolicy(admin, sp, bad, ""); !IsStatus(err, http.StatusBadRequest) {
+				t.Errorf("%s: EasyPatch accepts it: %v", name, err)
+			}
+			if err := normalizePolicy(&bad, LevelOrganization, inherited); err == nil {
+				t.Errorf("%s: EasyRMM accepts it", name)
+			}
+		}
+		if _, err := engine.SetLevelPolicy(admin, endp, PolicyLayer{MaxConcurrentInstallsPerSite: ptr(2)}, ""); !IsStatus(err, http.StatusBadRequest) {
+			t.Errorf("an endpoint set its site's limit: %v", err)
+		}
+
+		// Tags: managed by super administrators, assigned by administrators
+		// of every organization.
+		name := "Contract " + suffix
+		tag, err := engine.CreateTag(super, TagInput{Name: name, Color: "teal", Priority: 5}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = engine.DeleteTag(super, tag.ID, "") })
+		if _, err := engine.CreateTag(super, TagInput{Name: strings.ToUpper(name), Color: "red"}, ""); !IsStatus(err, http.StatusConflict) {
+			t.Errorf("a duplicate name: %v", err)
+		}
+		if _, err := engine.CreateTag(admin, TagInput{Name: "Not mine " + suffix, Color: "red"}, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an administrator added a tag: %v", err)
+		}
+		if _, err := engine.SetLevelPolicy(super, tagPolicyPath(tag.ID), PolicyLayer{InstallDelayDays: ptr(9)}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := engine.SetLevelPolicy(super, tagPolicyPath(tag.ID), PolicyLayer{MaxConcurrentInstallsPerSite: ptr(2)}, ""); !IsStatus(err, http.StatusBadRequest) {
+			t.Errorf("a tag set a site's limit: %v", err)
+		}
+		if err := engine.SetTags(admin, "sites", site.ID, []uuid.UUID{tag.ID}, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an administrator of one organization assigned a tag: %v", err)
+		}
+		if err := engine.SetTags(everyOrg, "sites", site.ID, []uuid.UUID{tag.ID}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if err := engine.SetTags(everyOrg, "organizations", org.ID, []uuid.UUID{uuid.New()}, ""); !IsStatus(err, http.StatusNotFound) {
+			t.Errorf("an unknown tag: %v", err)
+		}
+
+		// A connected server's API token is an Admin token, never SuperAdmin:
+		// it reads the global policy and assigns tags (for every
+		// organization), but does not change the global policy or tags, nor
+		// read a tag's policy. EasyRMM refuses those itself with a connected
+		// server.
+		if _, err := ep.LevelPolicy(ctx, globalPolicyPath); err != nil {
+			t.Errorf("the token reads the global policy: %v", err)
+		}
+		if _, err := ep.SetLevelPolicy(ctx, globalPolicyPath, global.PolicyLayer, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("the token saved the global policy: %v", err)
+		}
+		if _, err := ep.CreateTag(ctx, TagInput{Name: "Token " + suffix, Color: "red"}, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("the token added a tag: %v", err)
+		}
+		if _, err := ep.LevelPolicy(ctx, tagPolicyPath(tag.ID)); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("the token read a tag's policy: %v", err)
+		}
+		if err := ep.SetTags(ctx, "organizations", org.ID, []uuid.UUID{tag.ID}, ""); err != nil {
+			t.Errorf("the token assigned a tag: %v", err)
+		}
+		if err := ep.SetTags(ctx, "organizations", org.ID, []uuid.UUID{}, ""); err != nil {
+			t.Errorf("the token removed a tag: %v", err)
+		}
+		// It reads and saves an organization's policy, as EasyRMM does with a
+		// connected server.
+		if cur, err := ep.LevelPolicy(ctx, op); err != nil || cur.ID == nil {
+			t.Errorf("the token read an organization's policy: %+v, %v", cur, err)
+		} else if _, err := ep.SetLevelPolicy(ctx, op, cur.PolicyLayer, ""); err != nil {
+			t.Errorf("the token saved an organization's policy: %v", err)
+		}
+		if st, err := engine.GetSite(reader, site.ID); err != nil || len(st.Tags) != 1 || st.Tags[0].ID != tag.ID || st.Tags[0].InheritedFrom != "" {
+			t.Errorf("site's tags: %+v, %v", st.Tags, err)
+		}
+		if e, err := engine.Endpoint(reader, a.endpoint); err != nil || len(e.Summary.Tags) != 1 || e.Summary.Tags[0].InheritedFrom != "Site" {
+			t.Errorf("endpoint's tags: %+v, %v", e.Summary.Tags, err)
+		}
+		list, err := engine.Tags(super)
+		if i := slices.IndexFunc(list, func(x Tag) bool { return x.ID == tag.ID }); err != nil || i < 0 || list[i].SiteCount != 1 ||
+			list[i].EndpointCount != 1 || !list[i].HasPolicy {
+			t.Errorf("tags for a super administrator: %+v, %v", list, err)
+		}
+		list, err = engine.Tags(reader)
+		if i := slices.IndexFunc(list, func(x Tag) bool { return x.ID == tag.ID }); err != nil || i < 0 || list[i].EndpointCount != 0 {
+			t.Errorf("tags for a reader: %+v, %v", list, err)
+		}
+		if _, err := engine.SetLevelPolicy(admin, sp, PolicyLayer{TrayIconEnabled: ptr(false)}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := engine.SetLevelPolicy(admin, endp, PolicyLayer{AgentAutoUpdateEnabled: ptr(false), ExcludedKbs: []string{"KB5000001"}}, ""); err != nil {
+			t.Fatal(err)
+		}
+
+		// EasyRMM resolves the layers as EasyPatch does.
+		var layers []namedLayer
+		for _, l := range []namedPath{{"Global", globalPolicyPath}, {"Organization", op}, {"Site", sp}} {
+			p, err := engine.LevelPolicy(reader, l.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			layers = append(layers, namedLayer{l.name, p.PolicyLayer})
+		}
+		tags, err := engine.TagPolicies(reader, a.endpoint)
+		if err != nil || len(tags) != 1 || tags[0].Tag.Name != name || *tags[0].Policy.InstallDelayDays != 9 {
+			t.Fatalf("tag policies: %+v, %v", tags, err)
+		}
+		// A connected server's token reads them too: a device's policy shows
+		// what its tags set even where their policies cannot be read.
+		if viaToken, err := ep.TagPolicies(ctx, a.endpoint); err != nil || len(viaToken) != 1 || *viaToken[0].Policy.InstallDelayDays != 9 {
+			t.Errorf("tag policies with the token: %+v, %v", viaToken, err)
+		}
+		layers = append(layers, namedLayer{"Tag", tags[0].Policy.PolicyLayer})
+		own, err := engine.LevelPolicy(reader, endp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mine, from := resolvePolicy(append(layers, namedLayer{"Endpoint", own.PolicyLayer}))
+		eff, err := engine.EffectivePolicy(reader, a.endpoint)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if *mine.InstallDelayDays != eff.InstallDelayDays || *mine.ScanIntervalMinutes != eff.ScanIntervalMinutes ||
+			*mine.TrayIconEnabled != eff.TrayIconEnabled || *mine.AgentAutoUpdateEnabled != eff.AgentAutoUpdateEnabled ||
+			*mine.AutoInstallEnabled != eff.AutoInstallEnabled || !slices.Equal(mine.MaintenanceDays, eff.MaintenanceDays) ||
+			*mine.MaintenanceStart != eff.MaintenanceStart || !slices.Equal(mine.AllowedCategories, eff.AllowedCategories) ||
+			!slices.Equal(mine.ExcludedKbs, eff.ExcludedKbs) || mine.RestartSchedule.Time != eff.RestartSchedule.Time ||
+			*mine.WindowsUpdate.QualityUpdates.Value.DeferDays != *eff.WindowsUpdate.QualityUpdates.DeferDays || eff.WindowsUpdate.FeatureUpdates != nil {
+			t.Errorf("resolved:\n EasyRMM   %+v\n EasyPatch %+v", mine, eff)
+		}
+		for mineKey, theirs := range map[string]string{"installDelayDays": "InstallDelayDays", "scanIntervalMinutes": "ScanIntervalMinutes",
+			"trayIconEnabled": "TrayIconEnabled", "agentAutoUpdateEnabled": "AgentAutoUpdateEnabled", "maintenanceDays": "MaintenanceWindow",
+			"windowsUpdate.qualityUpdates": "WindowsUpdate.QualityUpdates", "jitterPercent": "JitterPercent"} {
+			if from[mineKey] != eff.Sources[theirs] {
+				t.Errorf("%s comes from %q for EasyRMM, %q for EasyPatch", mineKey, from[mineKey], eff.Sources[theirs])
+			}
+		}
+		if eff.SourceTags["InstallDelayDays"] != name {
+			t.Errorf("source tags: %v", eff.SourceTags)
+		}
+
+		// Renaming, deleting, and resetting each level.
+		if renamed, err := engine.UpdateTag(super, tag.ID, TagInput{Name: name + " renamed", Color: "pink", Priority: 6}, ""); err != nil ||
+			renamed.Name != name+" renamed" || renamed.Priority != 6 {
+			t.Errorf("rename: %+v, %v", renamed, err)
+		}
+		if err := engine.DeleteTag(super, tag.ID, ""); err != nil {
+			t.Fatal(err)
+		}
+		if tags, err := engine.TagPolicies(reader, a.endpoint); err != nil || len(tags) != 0 {
+			t.Errorf("tag policies once it is deleted: %+v, %v", tags, err)
+		}
+		for _, p := range []string{endp, sp, op} {
+			if err := engine.DeleteLevelPolicy(admin, p, ""); err != nil {
+				t.Fatal(err)
+			}
+			if lp, err := engine.LevelPolicy(reader, p); err != nil || lp.ID != nil {
+				t.Errorf("%s after reset: %+v, %v", p, lp, err)
+			}
+		}
+	})
+
 	run("errors", func(t *testing.T) {
 		_, err := ep.Endpoint(ctx, uuid.New())
 		var e *Error
@@ -1576,6 +1820,14 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		{name: "fleet install", method: "POST", fake: "/api/v1/updates/" + fUpdate.String() + "/install",
 			real:  "/api/v1/updates/" + rUpdate.String() + "/install",
 			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint}}, rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint}}},
+		// Policies and tags (one-product plan, C4).
+		q("global policy", "GET", "/api/v1/policies/global", "/api/v1/policies/global"),
+		q("no organization policy", "GET", "/api/v1/organizations/"+fOrg.String()+"/policy", "/api/v1/organizations/"+org.String()+"/policy"),
+		q("no endpoint policy", "GET", "/api/v1/endpoints/"+fEndpoint.String()+"/policy", "/api/v1/endpoints/"+endpoint.String()+"/policy"),
+		{name: "save a site policy", method: "PUT", fake: "/api/v1/sites/" + fSite.String() + "/policy", real: "/api/v1/sites/" + site.String() + "/policy",
+			fBody: shapePolicy, rBody: shapePolicy},
+		q("tag policies", "GET", "/api/v1/endpoints/"+fEndpoint.String()+"/tag-policies", "/api/v1/endpoints/"+endpoint.String()+"/tag-policies"),
+		q("tags", "GET", "/api/v1/tags", "/api/v1/tags"),
 	}
 	ask := func(qu question) (f, r any) {
 		fStatus, fData := call(c.ctx, t, fakeHTTP, fake.URL(), qu.method, qu.fake, fake.Token, qu.fBody, nil)
@@ -1701,3 +1953,13 @@ func sameShape(where string, fake, real any, dictionaries []string) []string {
 	}
 	return problems
 }
+
+// shapePolicy is a site policy with every kind of value, for comparing the
+// shape of EasyPatch's answer with eptest's.
+var shapePolicy = PolicyLayer{ScanStaleAfterHours: ptr(72), ExcludedKbs: []string{"KB5044284"}, AllowedCategories: []string{"Security"},
+	MaintenanceDays: []int{2}, MaintenanceStart: ptr("01:00"), MaintenanceDurationMinutes: ptr(60),
+	RestartSchedule: &RestartSchedule{Enabled: false, Days: []int{}, Time: "03:00", Condition: "OnlyIfPending", Mode: "PromptWithDeadline",
+		CountdownMinutes: 5, DeadlineMinutes: 240, ExpiryMinutes: 120},
+	WindowsUpdate: &LayerWindowsUpdate{QualityUpdates: &GroupSetting[QualityUpdates]{Managed: true, Value: &QualityUpdates{DeferDays: ptr(3)}},
+		FeatureUpdates: &GroupSetting[FeatureUpdates]{Managed: false}},
+	ApplicationUpdates: &ApplicationUpdates{Enabled: true, ApprovedApps: []string{"Mozilla.Firefox"}}}

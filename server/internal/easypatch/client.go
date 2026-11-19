@@ -443,12 +443,15 @@ type Page[T any] struct {
 
 // Endpoint is an EasyPatch endpoint as its lists show it.
 type Endpoint struct {
-	ID                   uuid.UUID  `json:"id"`
-	Hostname             string     `json:"hostname"`
-	OrganizationID       uuid.UUID  `json:"organizationId"`
-	OrganizationName     string     `json:"organizationName"`
-	SiteID               *uuid.UUID `json:"siteId"`
-	SiteName             string     `json:"siteName"`
+	ID               uuid.UUID  `json:"id"`
+	Hostname         string     `json:"hostname"`
+	OrganizationID   uuid.UUID  `json:"organizationId"`
+	OrganizationName string     `json:"organizationName"`
+	SiteID           *uuid.UUID `json:"siteId"`
+	SiteName         string     `json:"siteName"`
+	// Tags are the endpoint's tags, with those it has through its site or
+	// organization (InheritedFrom says which).
+	Tags                 []TagRef   `json:"tags"`
 	Status               string     `json:"status"`
 	OperatingSystem      string     `json:"operatingSystem"`
 	Platform             string     `json:"platform"`

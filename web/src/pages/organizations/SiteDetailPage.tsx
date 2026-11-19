@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { FolderTree, MonitorDown, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, fieldError } from "../../api/client";
 import { useApi, useApiMutation, useList } from "../../api/hooks";
-import type { DeviceGroup, DeviceGroupInput, Organization, Site } from "../../api/types";
+import type { DeviceGroup, DeviceGroupInput, Organization, PatchStatus, Site } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog, Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
@@ -19,10 +19,14 @@ import {
   PageHeader,
   Spinner,
   TableWrap,
+  Tabs,
   TextareaField,
   TextField,
 } from "../../components/ui";
 import { formatDateTime } from "../../lib/format";
+import { useUrlState } from "../../lib/urlState";
+import { PolicyPanel } from "../patching/PolicyEditor";
+import { TagsField } from "../patching/Tags";
 import { SiteFormDialog } from "./SiteFormDialog";
 
 export function SiteDetailPage() {
@@ -37,6 +41,11 @@ export function SiteDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [groupForm, setGroupForm] = useState<{ open: boolean; group?: DeviceGroup }>({ open: false });
   const [groupToDelete, setGroupToDelete] = useState<DeviceGroup | null>(null);
+  const url = useUrlState();
+  // The Patch policy tab shows once EasyPatch is set up (ADR-0030).
+  const patching = useApi<PatchStatus>(can("patch.view") ? "/patching" : null, undefined, { staleTime: 60_000 });
+  const patched = patching.data?.configured === true;
+  const tab = patched && url.get("tab") === "patch-policy" ? "patch-policy" : "overview";
 
   const removeSite = useApiMutation(() => api.del(`/sites/${id}`), {
     invalidate: ["/organizations", "/sites", "/audit"],
@@ -98,91 +107,110 @@ export function SiteDetailPage() {
         }
       />
 
-      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
-        <Card
-          title="Device groups"
-          className="xl:col-span-2"
-          padded={false}
-          actions={
-            s.canManage && (
-              <Button size="sm" variant="primary" icon={<Plus className="size-3.5" aria-hidden />} onClick={() => setGroupForm({ open: true })}>
-                Add device group
-              </Button>
-            )
-          }
-        >
-          {groups.isPending ? (
-            <Spinner />
-          ) : groups.isError ? (
-            <ErrorState error={groups.error} onRetry={() => void groups.refetch()} compact />
-          ) : groups.items.length === 0 ? (
-            <EmptyState
-              title="No device groups yet"
-              icon={<FolderTree className="size-8" aria-hidden />}
-              action={
-                s.canManage ? (
-                  <Button variant="primary" onClick={() => setGroupForm({ open: true })}>
-                    Add the first device group
-                  </Button>
-                ) : undefined
-              }
-            >
-              Device groups sort a site's devices, for example Servers, Workstations or Front desk.
-            </EmptyState>
-          ) : (
-            <TableWrap className="rounded-none border-0">
-              <table className="table-base">
-                <thead>
-                  <tr>
-                    <th>Device group</th>
-                    <th>Description</th>
-                    <th>Created</th>
-                    {s.canManage && (
-                      <th className="text-right">
-                        <span className="sr-only">Actions</span>
-                      </th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {groups.items.map((g) => (
-                    <tr key={g.id}>
-                      <td className="font-medium">{g.name}</td>
-                      <td className="max-w-md truncate text-muted">{g.description || "—"}</td>
-                      <td className="whitespace-nowrap text-muted">{formatDateTime(g.createdAt)}</td>
+      {patched && (
+        <Tabs
+          tabs={[
+            { id: "overview", label: "Overview" },
+            { id: "patch-policy", label: "Patch policy" },
+          ]}
+          active={tab}
+          onChange={(t) => url.set({ tab: t === "overview" ? null : t })}
+        />
+      )}
+
+      {tab === "patch-policy" && (
+        <div role="tabpanel" aria-labelledby="tab-patch-policy">
+          <PolicyPanel level="site" id={s.id} intro={<TagsField level="site" id={s.id} />} />
+        </div>
+      )}
+
+      {tab === "overview" && (
+        <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
+          <Card
+            title="Device groups"
+            className="xl:col-span-2"
+            padded={false}
+            actions={
+              s.canManage && (
+                <Button size="sm" variant="primary" icon={<Plus className="size-3.5" aria-hidden />} onClick={() => setGroupForm({ open: true })}>
+                  Add device group
+                </Button>
+              )
+            }
+          >
+            {groups.isPending ? (
+              <Spinner />
+            ) : groups.isError ? (
+              <ErrorState error={groups.error} onRetry={() => void groups.refetch()} compact />
+            ) : groups.items.length === 0 ? (
+              <EmptyState
+                title="No device groups yet"
+                icon={<FolderTree className="size-8" aria-hidden />}
+                action={
+                  s.canManage ? (
+                    <Button variant="primary" onClick={() => setGroupForm({ open: true })}>
+                      Add the first device group
+                    </Button>
+                  ) : undefined
+                }
+              >
+                Device groups sort a site's devices, for example Servers, Workstations or Front desk.
+              </EmptyState>
+            ) : (
+              <TableWrap className="rounded-none border-0">
+                <table className="table-base">
+                  <thead>
+                    <tr>
+                      <th>Device group</th>
+                      <th>Description</th>
+                      <th>Created</th>
                       {s.canManage && (
-                        <td className="text-right whitespace-nowrap">
-                          <IconButton label={`Edit ${g.name}`} onClick={() => setGroupForm({ open: true, group: g })}>
-                            <Pencil className="size-4" aria-hidden />
-                          </IconButton>
-                          <IconButton label={`Delete ${g.name}`} onClick={() => setGroupToDelete(g)} className="hover:text-danger">
-                            <Trash2 className="size-4" aria-hidden />
-                          </IconButton>
-                        </td>
+                        <th className="text-right">
+                          <span className="sr-only">Actions</span>
+                        </th>
                       )}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </TableWrap>
-          )}
-        </Card>
+                  </thead>
+                  <tbody>
+                    {groups.items.map((g) => (
+                      <tr key={g.id}>
+                        <td className="font-medium">{g.name}</td>
+                        <td className="max-w-md truncate text-muted">{g.description || "—"}</td>
+                        <td className="whitespace-nowrap text-muted">{formatDateTime(g.createdAt)}</td>
+                        {s.canManage && (
+                          <td className="text-right whitespace-nowrap">
+                            <IconButton label={`Edit ${g.name}`} onClick={() => setGroupForm({ open: true, group: g })}>
+                              <Pencil className="size-4" aria-hidden />
+                            </IconButton>
+                            <IconButton label={`Delete ${g.name}`} onClick={() => setGroupToDelete(g)} className="hover:text-danger">
+                              <Trash2 className="size-4" aria-hidden />
+                            </IconButton>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            )}
+          </Card>
 
-        <Card title="Details">
-          <KeyValueList
-            narrow
-            items={[
-              ["Organization", <Link to={`/organizations/${s.organizationId}`} className="text-accent hover:underline">{s.organizationName}</Link>],
-              ["Time zone", s.timezone],
-              ["Address", s.address || <span className="text-muted">None</span>],
-              ["Notes", s.notes ? <span className="whitespace-pre-wrap">{s.notes}</span> : <span className="text-muted">None</span>],
-              ["Created", formatDateTime(s.createdAt)],
-              ["Updated", formatDateTime(s.updatedAt)],
-              ["Your access", s.canManage ? "Manage" : "View only"],
-            ]}
-          />
-        </Card>
-      </div>
+          <Card title="Details">
+            <KeyValueList
+              narrow
+              items={[
+                ["Organization", <Link to={`/organizations/${s.organizationId}`} className="text-accent hover:underline">{s.organizationName}</Link>],
+                ["Time zone", s.timezone],
+                ["Address", s.address || <span className="text-muted">None</span>],
+                ["Notes", s.notes ? <span className="whitespace-pre-wrap">{s.notes}</span> : <span className="text-muted">None</span>],
+                ["Created", formatDateTime(s.createdAt)],
+                ["Updated", formatDateTime(s.updatedAt)],
+                ["Your access", s.canManage ? "Manage" : "View only"],
+              ]}
+            />
+          </Card>
+        </div>
+      )}
 
       <SiteFormDialog open={editing} organizationId={s.organizationId} site={s} onClose={() => setEditing(false)} onSaved={() => setEditing(false)} />
       <DeviceGroupDialog

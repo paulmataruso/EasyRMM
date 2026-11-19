@@ -7,6 +7,7 @@ import { AgentUpdatesTab } from "./AgentUpdatesTab";
 import { AuditForwardingTab } from "./AuditForwardingTab";
 import { AuditTab } from "./AuditTab";
 import { EasyPatchTab } from "./EasyPatchTab";
+import { PatchingTab } from "./PatchingTab";
 import { RemoteAccessTab } from "./RemoteAccessTab";
 import { SingleSignOnTab } from "./SingleSignOnTab";
 import { UsersTab } from "./UsersTab";
@@ -18,6 +19,7 @@ const SUBTITLES: Record<string, string> = {
   "agent-updates": "Keep every EasyRMM agent on the build this server ships, a few devices at a time.",
   forwarding: "A copy of every audit record, sent as it is written to your syslog server or SIEM.",
   easypatch: "The EasyPatch server that patches your devices, and which of its organizations each EasyRMM organization is.",
+  patching: "The default patch policy every organization starts from, and tags that apply a policy to devices across organizations.",
   sso: "Identity providers people can sign in through with OpenID Connect, instead of their EasyRMM password.",
 };
 
@@ -40,7 +42,7 @@ export function SettingsPage() {
       <Tabs
         className="lg:hidden"
         active={part.id}
-        onChange={(t) => url.set({ tab: t === first.id ? null : t, q: null, organizationId: null, action: null, actorId: null, invite: null, after: null })}
+        onChange={(t) => url.set({ tab: t === first.id ? null : t, q: null, organizationId: null, action: null, actorId: null, invite: null, after: null, view: null, tag: null })}
         tabs={parts.map((p) => ({ id: p.id, label: p.label }))}
       />
       {part.id === "users" && <UsersTab />}
@@ -49,6 +51,7 @@ export function SettingsPage() {
       {part.id === "agent-updates" && <AgentUpdatesTab />}
       {part.id === "forwarding" && <AuditForwardingTab />}
       {part.id === "easypatch" && <EasyPatchTab />}
+      {part.id === "patching" && <PatchingTab />}
       {part.id === "sso" && <SingleSignOnTab />}
     </>
   );

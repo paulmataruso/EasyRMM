@@ -116,6 +116,23 @@ All notable changes to this project are documented here. The format follows
   each read from EasyPatch to tell servers apart); and how long an offline
   device gets to come back. It is on every patched device, not only those
   reporting a pending restart. Servers still restart only when ticked.
+- **Patch policies and tags** (one-product plan, phase C4): the default
+  policy (Settings → **Patching**), an organization's and a site's (their new
+  **Patch policy** tab), a tag's and a device's own (**Set values for this
+  device** on its Policy view) are edited in EasyRMM. Each value is
+  inherited, shown with the layer it comes from, or overridden: automatic
+  installs and the maintenance window, delays, categories, excluded KBs,
+  application updates, a recurring restart, the tray icon and notifications,
+  the agent's schedule and Windows Update settings. Tags are added, changed
+  and deleted under Settings → Patching → Tags and given to organizations,
+  sites and devices with **Change tags**. Policies need `patch.configure` in
+  the organization; the default policy, tags and their policies a super
+  administrator. With a connected EasyPatch server, whose API token is never
+  SuperAdmin, the default policy and tags are read and assigned in EasyRMM
+  but changed in EasyPatch's console. Audited as `patch.policy_update`,
+  `patch.policy_reset`, `patch.tag_create`, `patch.tag_update`,
+  `patch.tag_delete` and `patch.tag_assign`. The **Change in EasyPatch** link
+  on a device's Policy view is gone.
 - **Organization time zones**: organizations have a time zone (default UTC;
   the browser's for a new one), which patching reports use.
 - **Stop patching for a device**: the device's Patches tab can stop
