@@ -586,8 +586,9 @@ All notable changes to this project are documented here. The format follows
   `release.yml` builds the patching engine in its own jobs instead of
   calling EasyPatch's workflow. The engine's image now gets the same Trivy
   scan, SBOM, build provenance and GitHub attestation as EasyRMM's, its CI
-  checks and agent tests run again on the tagged commit, and no image is
-  pushed until every check of both has passed. An EasyRMM pre-release no
+  checks and agent tests run again on the tagged commit, and no image tag
+  anyone pulls is pushed until every check and scan of both images has
+  passed. An EasyRMM pre-release no
   longer moves the engine's `latest` tag.
 - **The patching engine is always in the deployment** (one-product plan,
   phase S1): its services have no Compose profile and `EASYRMM_PATCHING` is

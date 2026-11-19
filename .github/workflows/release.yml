@@ -13,11 +13,13 @@
 #      engine's;
 #   3. the engine's Windows and Linux agent packages are built and signed with
 #      EasyPatch's release key;
-#   4. only then are the images pushed, each built for amd64 and arm64,
-#      checked, scanned for vulnerabilities (Trivy) and pushed with an SBOM
-#      and build provenance: EasyRMM's server, tagged 1.2.3, 1.2 and latest,
-#      and the engine, carrying those agent packages, tagged with its own
-#      version and latest (pre-releases get only their own tags);
+#   4. then the images, each built for amd64 and arm64, checked, scanned for
+#      vulnerabilities (Trivy) and pushed with an SBOM and build provenance,
+#      in this order so that no tag anyone pulls appears before every check
+#      of both images has passed: the engine, carrying those agent packages,
+#      under per-architecture tags only (1.10.1-amd64); then EasyRMM's
+#      server, tagged 1.2.3, 1.2 and latest; then the engine's version and
+#      latest (pre-releases get only their own tags);
 #   5. the deployment bundle, its manifest and the agents are built
 #      (scripts/release/bundle.sh), with the engine pinned by digest in the
 #      bundle's docker-compose.yml, attested, and attached to a GitHub release
@@ -267,7 +269,9 @@ jobs:
 
   # Each architecture on its own runner: the image carries that release's
   # agent packages, checked, then the same scan, SBOM and provenance as
-  # EasyRMM's image (ADR-0046). Nothing is pushed until every check passed.
+  # EasyRMM's image (ADR-0046). Nothing is pushed until every test passed,
+  # and then only under a per-architecture tag, which nobody pulls:
+  # engine-manifest tags the version after EasyRMM's image passed its scan.
   engine-image:
     name: Patching engine image (${{ matrix.arch }})
     needs: [engine-version, backend, integration, frontend, engine, windows-agent, linux-agent]
@@ -367,7 +371,7 @@ jobs:
 
   engine-manifest:
     name: Patching engine image tags
-    needs: [prepare, engine-version, engine-image]
+    needs: [prepare, engine-version, engine-image, image]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -416,9 +420,11 @@ jobs:
           subject-digest: ${{ steps.tags.outputs.digest }}
           push-to-registry: true
 
+  # After the engine's images passed their checks and scan, so that a
+  # finding there leaves no EasyRMM tag pushed.
   image:
     name: Server image
-    needs: [prepare, backend, integration, frontend, engine, agent-tests]
+    needs: [prepare, backend, integration, frontend, engine, agent-tests, engine-image]
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.push.outputs.digest }}

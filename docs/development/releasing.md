@@ -72,8 +72,11 @@ YYYY-MM-DD`. Running a failed release again for the same commit is allowed.
       with the changelog's notes and the engine's version.
 
 If any step fails, nothing after it runs. No image is pushed until every
-check has passed, and the GitHub release is created only after both images
-are. The agent packages are signed with the `easypatch-release`
+test has passed. The engine's images are pushed first under
+per-architecture tags only (`1.10.1-amd64`, `1.10.1-arm64`), which nothing
+pulls; EasyRMM's tags and then the engine's version and `latest` follow
+only after both images passed their checks and scans, and the GitHub
+release only after all of them. The agent packages are signed with the `easypatch-release`
 environment's key, so that environment's deployment rule must admit
 `easyrmm-v*` tags. To retry after fixing a problem in the workflow, delete
 the tag and the draft release (if any), then tag again. Never move a
