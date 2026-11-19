@@ -1,8 +1,8 @@
 import { useMemo, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ArrowUpCircle, CircleX, Download, ListChecks, Power, Radar, ServerOff, ShieldAlert, ShieldCheck, Unlink, WifiOff } from "lucide-react";
+import { ArrowUpCircle, BellRing, CircleX, Download, ListChecks, Power, Radar, ServerOff, ShieldAlert, ShieldCheck, Unlink, WifiOff } from "lucide-react";
 import { useApi, useList } from "../../api/hooks";
-import type { ComplianceStatus, PatchFleet, PatchJobView } from "../../api/types";
+import type { ComplianceStatus, PatchAlertCounts, PatchFleet, PatchJobView } from "../../api/types";
 import { OrganizationSelect } from "../../components/Filters";
 import { Alert, Card, cx, Dot, EmptyState, ErrorState, Spinner, TableWrap, Toolbar, type Tone } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
@@ -19,6 +19,7 @@ export function PatchingOverview() {
   const organizationId = url.get("organizationId");
   const fleet = useApi<PatchFleet>("/patching/devices", { organizationId: organizationId || undefined }, { keepPrevious: true, refetchInterval: 60_000 });
   const jobs = useList<PatchJobView>("/patching/jobs", { organizationId: organizationId || undefined, active: "true" }, { refetchInterval: 30_000 });
+  const alerts = useApi<PatchAlertCounts>("/patching/alerts/summary", { organizationId: organizationId || undefined }, { refetchInterval: 60_000 });
   const t = useMemo(() => (fleet.data ? tally(fleet.data) : null), [fleet.data]);
 
   return (
@@ -46,7 +47,13 @@ export function PatchingOverview() {
             ))}
             <div className="mb-5 grid items-start gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
               <Compliance t={t} organizationId={organizationId} />
-              <Attention t={t} unmatched={fleet.data.unmatched.length} activeJobs={jobs.items.length} organizationId={organizationId} />
+              <Attention
+                t={t}
+                unmatched={fleet.data.unmatched.length}
+                activeJobs={jobs.items.length}
+                alerts={alerts.data}
+                organizationId={organizationId}
+              />
             </div>
             {t.orgs.length > 1 && <Organizations orgs={t.orgs} />}
             <Unmatched fleet={fleet.data} />
@@ -227,10 +234,27 @@ const TEXT: Record<Tone, string> = {
 };
 
 /** What needs attention, worst first; only what has a count. */
-function Attention({ t, unmatched, activeJobs, organizationId }: { t: Tally; unmatched: number; activeJobs: number; organizationId: string }) {
+function Attention({ t, unmatched, activeJobs, alerts, organizationId }: {
+  t: Tally;
+  unmatched: number;
+  activeJobs: number;
+  /** Missing while they load, or when EasyPatch could not count them. */
+  alerts?: PatchAlertCounts;
+  organizationId: string;
+}) {
   const icon = (I: typeof ShieldAlert) => <I className="size-4" aria-hidden />;
   const show = "Show devices";
   const all: AttentionRow[] = [
+    {
+      key: "alerts",
+      tone: alerts && alerts.critical > 0 ? "danger" : "warn",
+      icon: icon(BellRing),
+      count: alerts?.open ?? 0,
+      more: alerts?.capped,
+      text: (n) => (n === 1 ? "patching alert is open" : "patching alerts are open"),
+      to: `/patching?${new URLSearchParams({ tab: "alerts", ...(organizationId ? { organizationId } : {}) }).toString()}`,
+      action: "Show alerts",
+    },
     {
       key: "exploited",
       tone: "danger",

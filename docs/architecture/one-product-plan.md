@@ -508,6 +508,42 @@ and reloads it, adds, changes and deletes a lifecycle entry, downloads the
 agent's .deb and finds each change in EasyPatch's audit log under the
 EasyRMM user.*
 
+*Done (C7): Patching → **Alerts** lists EasyPatch's alerts for the devices
+the caller sees: for each linked organization where the caller has
+`patch.view` anywhere, a ReadOnly statement reads its alerts; a device's
+are kept when the device is one the caller sees, an organization's own and
+those of endpoints with no EasyRMM device when the caller sees the whole
+organization. **Acknowledge** finds each alert among the open ones of the
+organizations where the caller manages patching, keeps those the caller
+may act on, and sends them in one Admin statement, recorded once per
+device and once per organization. The overview's attention list leads
+with the open count: EasyPatch's summary for organizations seen whole, a
+count of the listed alerts for the others. Settings → Patching →
+**Alert rules** and **Notifications** are EasyPatch's server-wide rules and
+channels, for super administrators (SuperAdmin statements) with the
+bundled engine; EasyRMM checks each rule's threshold against the type's
+bounds and maps organizations and tags to EasyRMM's, never shows a
+webhook's address (only its host) and records none. Email channels send
+through EasyRMM's own mail server, which EasyRMM gives the engine at each
+start, so only **Allow webhooks to private network addresses** is changed
+here, sent back with the rest of the mail settings unchanged. With a
+connected server, alerts use the token and rules and channels are refused
+as EasyPatch's console's. **Found:** EasyPatch always blocks webhooks to
+the subnets its host is on, and the bundled engine shares the host's
+network, so a webhook receiver on the server's own subnet cannot be
+reached even with private networks allowed; documented as a limit. The
+contract test holds EasyRMM's rule types to EasyPatch's, lists with every
+filter, acknowledges, creates, changes, tests and deletes rules and
+channels (a webhook's address kept on change, a signing key only for a
+generic webhook, a second test refused), pages the messages, and compares
+eptest's answers to the real ones. The bundle test adds an email channel,
+sends a test that fails for want of a mail server, has EasyPatch's rule
+for unsupported operating systems send to it, moves Debian 12's end of
+support 10 days out, waits for EasyPatch to raise the machine's alert,
+acknowledges it in Patching → Alerts, sees the alert queued for the
+channel, and puts everything back. Real delivery to a mail server or a
+webhook receiver is not tested.*
+
 EasyPatch's console is about 18,800 lines of TypeScript without tests. Each
 area is ported with its tests and compared against the old page.
 

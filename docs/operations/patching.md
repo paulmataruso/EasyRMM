@@ -231,9 +231,10 @@ them, and refreshes every minute:
   date, a bar of how the rest stand, and each status with its count, linked
   to the device list filtered to it. Devices not patched from EasyRMM are
   counted beside it, not in it.
-* **Needs attention**, worst first, only what has a count: devices missing
-  updates for vulnerabilities exploited in the wild (linked to those
-  updates), devices with failed updates, devices missing required updates,
+* **Needs attention**, worst first, only what has a count: open patching
+  alerts (linked to [Alerts](#alerts); acknowledged ones are not counted),
+  devices missing updates for vulnerabilities exploited in the wild (linked
+  to those updates), devices with failed updates, devices missing required updates,
   devices waiting for a restart, scans out of date or never run, EasyPatch
   agents out of date or offline, devices not patched from EasyRMM,
   EasyPatch endpoints with no EasyRMM device, and patch jobs queued or
@@ -363,6 +364,50 @@ it ran out of time. A job that failed, was cancelled or expired, or left
 some updates uninstalled, can be run again with **Retry**; the new job
 opens in its place. EasyPatch refuses a retry while the same job is already
 queued.
+
+### Alerts
+
+<picture><source media="(prefers-color-scheme: light)" srcset="../images/patching-alerts-light.png"><img src="../images/patching-alerts.png" alt="Patching, Alerts: open and acknowledged alerts, the most severe first, each with its device, when it opened and who acknowledged it"></picture>
+
+EasyPatch checks its alert rules every 2 minutes and opens an alert for
+each device, or organization, a rule matches: a device offline, an update
+that failed to install, a security update missing some days after it
+became required, a scan out of date, a restart waiting some days, EasyPatch
+agents waiting for approval, an operating system out of support or near
+its end (by the [OS lifecycle](#easypatchs-own-settings)), an update for an
+exploited vulnerability missing, or an update on hold. It resolves an alert
+itself once its cause is gone; when the cause comes back within an hour it
+opens the same alert again, and after that a new one.
+These are EasyPatch's alerts; EasyRMM's own alerts (disk space, a device
+offline to EasyRMM's agent) are under **Alerts** in the main menu.
+
+The **Alerts** tab lists those needing attention (open and acknowledged),
+the most severe first, then the newest; show only open, acknowledged or
+resolved ones, or all of them, and filter by organization, severity, type
+of rule and words in the alert. Each alert shows its device, linked to the
+device's Patches tab, or, for an organization's own alert (agents waiting
+for approval, an update on hold), the organization; an EasyPatch endpoint
+with no EasyRMM device shows its host name. You see the alerts of the
+devices whose patching you see; an organization's own alerts, and those of
+endpoints with no EasyRMM device, only when you see the whole
+organization. `?deviceId=` shows one device's alerts.
+
+**Acknowledge** says someone is on it: the alert stays until EasyPatch
+resolves it, shows who acknowledged it and when, and is no longer counted
+on the overview. Select several to acknowledge them together. You can
+acknowledge an open alert of a device you manage patching for
+(`patch.manage` at its site), and an organization's own alert when you
+manage patching for the whole organization. An alert someone else
+acknowledged, or that resolved, meanwhile is left as it is, and EasyRMM
+says how many it acknowledged.
+
+The API: `GET /api/v1/patching/alerts` with `organizationId`, `deviceId`,
+`status` (`unresolved`, the default, `open`, `acknowledged`, `resolved` or
+`all`), `severity` (`Critical`, `Warning`, `Info`), `ruleType` and
+`search`; `GET /api/v1/patching/alerts/summary` with `organizationId` (open
+and acknowledged counts, and the unresolved by severity); and
+`POST /api/v1/patching/alerts/acknowledge` with `alertIds`, which answers
+how many it acknowledged.
 
 ### Excluding and removing updates
 
@@ -563,9 +608,11 @@ server, reports go through the mail server set in EasyPatch's console
 
 ### EasyPatch's own settings
 
-Settings → **Patching** has four more views, of EasyPatch's settings that
-are the same for every organization. Those with `patch.configure` see them;
-super administrators change them.
+Settings → **Patching** has more views, of EasyPatch's settings that are
+the same for every organization. Those with `patch.configure` see the
+first four, and super administrators change them; alert rules and
+notifications are for super administrators only, as they reach every
+organization.
 
 * **Server**: EasyPatch's version and its server settings. *Vulnerability
   data*: whether EasyPatch downloads CISA's known exploited
@@ -618,6 +665,47 @@ super administrators change them.
   entries of no organization (server settings, the OS lifecycle,
   EasyPatch's own tasks) are for those who see every organization.
   EasyRMM's audit log keeps its own record of what is done here.
+* **Alert rules** (super administrators, with the bundled engine): what
+  makes EasyPatch raise an [alert](#alerts). EasyPatch comes with one rule
+  of each type. A rule has a name, a type, a severity and, for some types,
+  a threshold (a device offline for so many hours, from 1 to 720; a
+  security update missing so many days after it became required, from 0
+  to 365; a restart waiting so many days, from 1 to 90; an operating
+  system whose support ends within so many days, from 0 to 365, 0 meaning
+  once it has ended). It covers every organization or one, and, for the
+  types that look at devices, every device or those with a tag. It sends
+  each new alert to the channels it names (none: Patching → Alerts only),
+  again every so many hours while the alert stays open (0, the default,
+  sends it once; at most 720), and, when asked, when the alert resolves.
+  Turn a rule off to keep it for later. Changing what a rule looks for, or
+  where, or turning it off, resolves its open alerts; the next check opens
+  again those that still apply. Deleting a rule resolves its alerts. A rule
+  EasyPatch has for an organization EasyRMM does not link says so and
+  cannot be saved until it covers a linked one.
+* **Notifications** (super administrators, with the bundled engine): the
+  channels rules send to, and the messages sent.
+  *Channels*: email (up to 20 recipients) or a webhook (`https://` only;
+  Slack, Microsoft Teams Workflows, or generic JSON). EasyPatch keeps a
+  webhook's address encrypted and never shows it again, only its host:
+  leave the address empty when changing a channel to keep it. A generic
+  webhook's messages are signed with HMAC-SHA256 of the body in the
+  `X-EasyPatch-Signature` header; its signing key is shown once, when the
+  channel is added, and a new one can be made (the old one stops working at
+  once). **Send a test** queues a test message (one each 30 seconds per
+  channel). A channel that is off sends nothing; a type cannot change.
+  Deleting a channel deletes its messages; rules stop sending to it.
+  *Email and webhooks*: email channels send through EasyRMM's mail server,
+  as monthly reports do ([Where email comes from](#reports)); without one
+  they cannot send, and the page says so. Webhooks go to public addresses
+  only, unless **Allow webhooks to private network addresses** is on.
+  Loopback, link-local and multicast addresses, and the subnets the server
+  itself is on, stay blocked even then: the engine shares the host's
+  network, so a webhook on the server's own subnet cannot be reached; put
+  it behind a router, or use a public address.
+  *Messages*: each message to a channel, newest first, with its result and,
+  for one that failed, why. EasyPatch tries a failed message again, waiting
+  longer each time (1, 2, 4 minutes and so on, up to an hour), and gives up
+  on a test after 3 attempts.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="../images/patch-server-settings-light.png"><img src="../images/patch-server-settings.png" alt="Settings, Patching, Server: EasyPatch's vulnerability data with each feed's last download and entries, and the rollout guard's settings"></picture>
 
@@ -627,7 +715,16 @@ changed, `readOnlyReason`); `GET` and `POST /api/v1/patching/lifecycle`,
 `PUT` and `DELETE …/{id}`; `GET /api/v1/patching/agent-packages`; and
 `GET /api/v1/patching/audit` with `organizationId`, `area` (the start of an
 action's name, as `policy.`), `from` and `to` (RFC 3339 instants, `to`
-excluded) and `page`.
+excluded) and `page`. Alert rules: `GET` and `POST
+/api/v1/patching/alert-rules` (the list adds the rule `types` with their
+thresholds, and the `channels`), `PUT` and `DELETE …/{id}`. Notifications:
+`GET /api/v1/patching/notifications` (the channels, the mail server and
+`allowPrivateNetworkWebhooks`) and `PUT` with `allowPrivateNetworkWebhooks`;
+`POST /api/v1/patching/notifications/channels`, `PUT` and `DELETE …/{id}`,
+`POST …/{id}/test` and `POST …/{id}/rotate-secret` (a generic webhook's new
+signing key, in `signingSecret`); and
+`GET /api/v1/patching/notifications/deliveries` with `channelId`, `status`
+(`Pending`, `Sent`, `Failed`) and `page`.
 
 ### With a connected EasyPatch server
 
@@ -644,7 +741,10 @@ SuperAdmin. With a connected server, EasyRMM therefore:
 * shows EasyPatch's server settings and OS lifecycle, and says they are
   changed in EasyPatch's console;
 * shows EasyPatch's audit log with an Operator token; EasyPatch refuses it
-  to a Read only token, and EasyRMM says so.
+  to a Read only token, and EasyRMM says so;
+* lists and acknowledges alerts with an Operator token (a Read only token
+  lists them only), but keeps alert rules, notification channels and their
+  messages to EasyPatch's console, and says so under Settings → Patching.
 
 Organizations', sites' and devices' policies are changed in EasyRMM, as with
 the bundled engine.
@@ -754,6 +854,9 @@ warns about them; see
 | `report.view` and `patch.manage` over the organization | Make, email and delete its monthly reports | Technician and above, with an organization-wide role |
 | `report.view` and `patch.configure` over the organization | Change its report schedule | Organization administrator and above |
 | `patch.configure` anywhere | Settings → Patching: the default policy and tags, and EasyPatch's server settings, OS lifecycle and agent packages (changing the server settings and OS lifecycle: super administrators only) | Organization administrator and above |
+| `patch.view` (with `device.view`) | Patching → Alerts: the alerts of the devices you see; an organization's own alerts when you see it whole | Every role |
+| `patch.manage` | Acknowledge alerts: a device's where you manage its patching, an organization's own when you manage the whole organization | Technician and above |
+| `patch.configure` everywhere | Settings → Patching → Alert rules and Notifications, with the bundled engine | Super administrator |
 | `audit.view` and `patch.view` | Settings → Patching → Audit log: EasyPatch's audit log, for organizations you audit whole; with both everywhere, all of it | Organization administrator and above (a site administrator's role does not cover an organization whole) |
 | `settings.manage` | Settings → EasyPatch, including automatic installs of the EasyPatch agent | Super administrator |
 
@@ -781,6 +884,11 @@ nobody can act, whatever their role.
 | `patch.report_schedule` | An organization's report schedule changed: on or off, the day, how many recipients, and whether it lists each device |
 | `patch.settings_update` | EasyPatch's server settings changed: each setting changed, from and to. Saving with nothing changed records nothing |
 | `patch.lifecycle_create`, `patch.lifecycle_update`, `patch.lifecycle_delete` | An OS lifecycle entry added, changed or deleted: its product, edition group, build, version and dates |
+| `patch.alert_acknowledge` | Alerts acknowledged: one record per device (how many, and their titles, at most 20), and one per organization for its own alerts |
+| `patch.alert_rule_create`, `patch.alert_rule_update`, `patch.alert_rule_delete` | An alert rule added, changed or deleted: its name, type, severity, threshold, on or off, organization and tag, how many channels, reminders and whether it sends on resolve |
+| `patch.channel_create`, `patch.channel_update`, `patch.channel_delete` | A notification channel added, changed or deleted: its name, type, on or off, how many recipients, a webhook's format and host (never its address), and whether the address changed |
+| `patch.channel_test`, `patch.channel_rotate_secret` | A test sent to a channel; a webhook's new signing key made (the key is not recorded) |
+| `patch.notifications_update` | Webhooks to private networks allowed or blocked, from and to |
 | `report.export` | A patch compliance or installations CSV downloaded, with its filters and rows, as for every report |
 | `easypatch.connection_update`, `easypatch.connection_delete` | The server, its version, whether the token changed and can act, and whether links were forgotten |
 | `easypatch.organization_link`, `easypatch.organization_unlink` | Both organizations |
@@ -820,6 +928,17 @@ server has the `on-behalf-of` capability.
 * The overview lists at most 500 EasyPatch endpoints with no EasyRMM
   device.
 * EasyPatch's audit log shows 50 entries a page, up to page 10,000.
+* Patching → Alerts shows at most 200 alerts that match, the most severe
+  first, and says when there are more; at most 200 are acknowledged at
+  once. An organization's alert counts on the overview, for those who see
+  only some of its sites, read at most 200 of its alerts and say so.
+* An alert rule has a name of at most 100 characters and sends to at most
+  20 channels. A channel has a name of at most 100 characters, at most 20
+  email recipients, or a webhook address of at most 2,048 characters.
+  Messages show 50 a page, up to page 10,000.
+* Real email and webhook delivery of alerts has not been tested against a
+  mail server or a webhook receiver: the bundle test runs without either,
+  and checks that the message is queued and why it could not be sent.
 * An OS lifecycle entry's product has at most 64 characters, its edition
   group and version 50 and its notes 1,000; builds go from 1 to 1,000,000.
 * The EasyPatch Linux agent needs systemd: it runs apt in transient

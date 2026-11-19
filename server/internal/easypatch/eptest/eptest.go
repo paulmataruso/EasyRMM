@@ -92,6 +92,13 @@ type Server struct {
 	lifecycle []*LifecycleInfo
 	audit     []*AuditInfo
 	auditSeq  int64
+	// Alerts and notifications (alerts.go): alerts, their rules (EasyPatch's
+	// own, added at first use), channels and deliveries.
+	alerts      []*AlertInfo
+	rules       []*RuleInfo
+	rulesSeeded bool
+	channels    []*ChannelInfo
+	deliveries  []*DeliveryInfo
 }
 
 // Token is an enrollment token EasyPatch created.
@@ -589,6 +596,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.serveMonthlyReports(w, r, parts, body, q, pg, size)
 	case parts[0] == "notifications" && len(parts) == 2 && parts[1] == "settings":
 		s.serveMail(w, r, body)
+	case parts[0] == "notifications" && len(parts) >= 2 && parts[1] == "channels" && len(parts) <= 4:
+		s.serveChannels(w, r, parts, body)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/notifications/deliveries":
+		s.serveDeliveries(w, q, pg, size)
+	case parts[0] == "alerts" && len(parts) <= 2:
+		s.serveAlerts(w, r, parts, q, body, pg, size)
+	case parts[0] == "alert-rules" && len(parts) <= 2:
+		s.serveAlertRules(w, r, parts, body)
 	case parts[0] == "settings" && len(parts) == 1:
 		s.serveSettings(w, r, body)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/vulnerability-feeds":

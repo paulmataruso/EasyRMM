@@ -165,6 +165,23 @@ All notable changes to this project are documented here. The format follows
   settings and OS lifecycle are changed in EasyPatch's console. Audited as
   `patch.settings_update` and `patch.lifecycle_create`,
   `patch.lifecycle_update` and `patch.lifecycle_delete`.
+- **Patching alerts, alert rules and notifications** (one-product plan,
+  phase C7): Patching gains an **Alerts** tab with the alerts EasyPatch's
+  rules raise for the devices you see (and an organization's own, for those
+  who see it whole), the most severe first, filtered by organization,
+  state, severity, type and words, and acknowledged one at a time or
+  together; the overview counts the open ones. Settings → **Patching**
+  gains **Alert rules** (what raises an alert, its threshold, the
+  organization and tag it covers, the channels it sends to, reminders and
+  resolve messages) and **Notifications** (email and Slack, Teams or signed
+  generic webhook channels, tested, with a generic webhook's signing key
+  shown once and renewable; EasyRMM's mail server, which email channels
+  send through; webhooks to private networks; the messages sent), for
+  super administrators with the bundled engine. With a connected server,
+  alerts are listed and acknowledged with the token, and rules and
+  channels stay in EasyPatch's console. Audited as
+  `patch.alert_acknowledge`, `patch.alert_rule_*`, `patch.channel_*` and
+  `patch.notifications_update`.
 - **Organization time zones**: organizations have a time zone (default UTC;
   the browser's for a new one), which patching reports use.
 - **Stop patching for a device**: the device's Patches tab can stop

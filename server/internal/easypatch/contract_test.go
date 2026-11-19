@@ -311,6 +311,13 @@ func pkg(guid uuid.UUID, name, version, installed, repository string, security b
 	}
 }
 
+// AlertRuleTypes lists EasyPatch's types of rule, which RuleTypes mirrors.
+func (c *Client) AlertRuleTypes(ctx context.Context) ([]AlertRuleType, error) {
+	var out []AlertRuleType
+	err := c.do(ctx, http.MethodGet, alertRulesPath+"/types", nil, nil, "", &out)
+	return out, err
+}
+
 func TestContract(t *testing.T) {
 	c := newContract(t)
 	ep, ro := c.client(c.token), c.client(c.readOnly)
@@ -1593,6 +1600,266 @@ func TestContract(t *testing.T) {
 		}
 		if _, err := ro.AuditLogs(ctx, AuditFilter{}, 1, 5); !IsStatus(err, http.StatusForbidden) {
 			t.Errorf("a read-only token reads the audit log: %v", err)
+		}
+	})
+
+	// Alerts, alert rules and notification channels (one-product plan, C7).
+	run("alerts, alert rules and notification channels", func(t *testing.T) {
+		signer, err := NewSigner(c.engineKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		engine, err := NewEngineClient(c.engineURL, signer, "contract")
+		if err != nil {
+			t.Fatal(err)
+		}
+		const who = "contract-alerts@example.test"
+		super := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: who, Role: RoleSuperAdmin, AllOrganizations: true})
+		admin := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: who, Role: RoleAdmin, Organizations: []uuid.UUID{org.ID}})
+		reader := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: who, Role: RoleReadOnly, Organizations: []uuid.UUID{org.ID}})
+
+		// EasyRMM's table of rule types is EasyPatch's.
+		types, err := engine.AlertRuleTypes(super)
+		want, _ := json.Marshal(RuleTypes())
+		got, _ := json.Marshal(types)
+		if err != nil || string(got) != string(want) {
+			t.Errorf("rule types: EasyPatch %s, EasyRMM %s, %v", got, want, err)
+		}
+		if _, err := ep.AlertRuleTypes(ctx); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an API token reads the rule types: %v", err)
+		}
+		rules, err := engine.AlertRules(super)
+		if err != nil || len(rules) < 9 {
+			t.Fatalf("rules: %+v, %v", rules, err)
+		}
+		for _, r := range rules {
+			if !slices.Contains(AlertRuleKinds, r.Type) || !slices.Contains(AlertSeverities, r.Severity) {
+				t.Errorf("rule %q: %s, %s", r.Name, r.Type, r.Severity)
+			}
+		}
+
+		// Every filter EasyRMM sends is taken; acknowledging needs Admin.
+		filters := []AlertFilter{{Status: "unresolved", Search: "contract", OrganizationID: org.ID}, {Status: "open"}, {Status: "acknowledged"},
+			{Status: "resolved"}, {Status: "all", EndpointID: uuid.New()}}
+		for _, s := range AlertSeverities {
+			filters = append(filters, AlertFilter{Severity: s})
+		}
+		for _, k := range AlertRuleKinds {
+			filters = append(filters, AlertFilter{RuleType: k})
+		}
+		for _, f := range filters {
+			if _, err := engine.Alerts(reader, f, 1, PageSize); err != nil {
+				t.Errorf("alerts %+v: %v", f, err)
+			}
+		}
+		if _, err := ep.Alerts(ctx, AlertFilter{}, 1, 5); err != nil {
+			t.Errorf("alerts with the token: %v", err)
+		}
+		if _, err := engine.AlertSummary(reader); err != nil {
+			t.Errorf("summary: %v", err)
+		}
+		if n, err := engine.AcknowledgeAlerts(admin, []uuid.UUID{uuid.New()}); err != nil || n != 0 {
+			t.Errorf("acknowledge an unknown alert: %d, %v", n, err)
+		}
+		if _, err := engine.AcknowledgeAlerts(reader, []uuid.UUID{uuid.New()}); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("a ReadOnly statement acknowledges: %v", err)
+		}
+		if _, err := engine.AcknowledgeAlerts(admin, nil); !IsStatus(err, http.StatusBadRequest) {
+			t.Errorf("acknowledge none: %v", err)
+		}
+
+		// Channels: field errors carry the names EasyRMM gives its own.
+		mail, err := engine.CreateChannel(super, ChannelInput{Name: "Contract mail", Type: "Email", Enabled: true,
+			EmailRecipients: []string{"ops@example.test", "OPS@example.test"}})
+		if err != nil || len(mail.Channel.EmailRecipients) != 1 || mail.SigningSecret != "" || mail.Channel.LastDelivery != nil {
+			t.Fatalf("email channel: %+v, %v", mail, err)
+		}
+		t.Cleanup(func() { _ = engine.DeleteChannel(super, mail.Channel.ID) })
+		generic, slack := "Generic", "Slack"
+		address := "https://hooks.example.test/contract?token=secret"
+		hook, err := engine.CreateChannel(super, ChannelInput{Name: "Contract hook", Type: "Webhook", Enabled: true, WebhookFormat: &generic,
+			WebhookURL: &address})
+		if err != nil || hook.SigningSecret == "" || !hook.Channel.HasSigningSecret || hook.Channel.WebhookHost != "hooks.example.test" ||
+			len(hook.Channel.EmailRecipients) != 0 {
+			t.Fatalf("webhook: %+v, %v", hook, err)
+		}
+		t.Cleanup(func() { _ = engine.DeleteChannel(super, hook.Channel.ID) })
+		if _, err := ep.CreateChannel(ctx, ChannelInput{Name: "Token", Type: "Email", EmailRecipients: []string{"ops@example.test"}}); !IsStatus(err,
+			http.StatusForbidden) {
+			t.Errorf("an API token adds a channel: %v", err)
+		}
+		plain := "http://hooks.example.test/x"
+		for field, in := range map[string]ChannelInput{
+			"name":            {Name: " ", Type: "Email", EmailRecipients: []string{"ops@example.test"}},
+			"emailRecipients": {Name: "Mail", Type: "Email", EmailRecipients: []string{"not an address"}},
+			"webhookFormat":   {Name: "Hook", Type: "Webhook", WebhookURL: &address},
+			"webhookUrl":      {Name: "Hook", Type: "Webhook", WebhookFormat: &slack, WebhookURL: &plain},
+		} {
+			_, err := engine.CreateChannel(super, in)
+			var e *Error
+			if !errors.As(err, &e) || e.Status != http.StatusBadRequest || e.Fields[field] == "" {
+				t.Errorf("%s: %#v", field, err)
+			}
+		}
+		u, err := engine.UpdateChannel(super, hook.Channel.ID, ChannelInput{Name: "Contract hook", Type: "Webhook", Enabled: true, WebhookFormat: &slack})
+		if err != nil || u.Channel.WebhookHost != "hooks.example.test" || u.Channel.HasSigningSecret || u.SigningSecret != "" {
+			t.Errorf("to Slack, keeping the address: %+v, %v", u, err)
+		}
+		var e *Error
+		if _, err := engine.UpdateChannel(super, hook.Channel.ID, ChannelInput{Name: "Hook", Type: "Email",
+			EmailRecipients: []string{"ops@example.test"}}); !errors.As(err, &e) || e.Fields["type"] == "" {
+			t.Errorf("type changed: %#v", err)
+		}
+		if _, err := engine.RotateChannelSecret(super, hook.Channel.ID); !IsStatus(err, http.StatusBadRequest) {
+			t.Errorf("a Slack webhook's secret: %v", err)
+		}
+		u, err = engine.UpdateChannel(super, hook.Channel.ID, ChannelInput{Name: "Contract hook", Type: "Webhook", Enabled: true, WebhookFormat: &generic})
+		if err != nil || u.SigningSecret == "" {
+			t.Errorf("generic again: %+v, %v", u, err)
+		}
+		if r, err := engine.RotateChannelSecret(super, hook.Channel.ID); err != nil || r.SigningSecret == "" || r.SigningSecret == u.SigningSecret {
+			t.Errorf("rotated: %+v, %v", r, err)
+		}
+		d, err := engine.TestChannel(super, mail.Channel.ID)
+		if err != nil || d.Kind != "Test" || d.Status != "Pending" || d.ChannelName != "Contract mail" {
+			t.Errorf("test: %+v, %v", d, err)
+		}
+		if _, err := engine.TestChannel(super, mail.Channel.ID); !IsStatus(err, http.StatusTooManyRequests) {
+			t.Errorf("a second test at once: %v", err)
+		}
+		p, err := engine.Deliveries(super, mail.Channel.ID, "", 1, 50)
+		if err != nil || !slices.ContainsFunc(p.Items, func(x Delivery) bool { return x.ID == d.ID }) {
+			t.Errorf("deliveries: %+v, %v", p, err)
+		}
+		for _, status := range DeliveryStatuses {
+			if _, err := engine.Deliveries(super, uuid.Nil, status, 1, 5); err != nil {
+				t.Errorf("deliveries %s: %v", status, err)
+			}
+		}
+		if _, err := ep.Deliveries(ctx, uuid.Nil, "", 1, 5); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an API token reads the deliveries: %v", err)
+		}
+
+		// The webhook switch changes alone; blank text is kept as none.
+		m, err := engine.MailSettings(super)
+		if err != nil {
+			t.Fatal(err)
+		}
+		keep := func(m MailSettings, private bool) MailSettingsInput {
+			return MailSettingsInput{SMTPHost: m.SMTPHost, SMTPPort: m.SMTPPort, SMTPSecurity: m.SMTPSecurity, SMTPUsername: m.SMTPUsername,
+				FromAddress: m.FromAddress, FromName: m.FromName, SMTPSkipCertificateCheck: m.SMTPSkipCertificateCheck, AllowPrivateNetworkWebhooks: private}
+		}
+		t.Cleanup(func() {
+			if err := engine.SetMailSettings(super, keep(m, m.AllowPrivateNetworkWebhooks)); err != nil {
+				t.Errorf("restore the mail settings: %v", err)
+			}
+		})
+		if err := engine.SetMailSettings(super, keep(m, !m.AllowPrivateNetworkWebhooks)); err != nil {
+			t.Fatal(err)
+		}
+		if m2, err := engine.MailSettings(super); err != nil || m2.AllowPrivateNetworkWebhooks == m.AllowPrivateNetworkWebhooks ||
+			m2.SMTPHost != m.SMTPHost || m2.FromAddress != m.FromAddress || m2.SMTPPasswordConfigured != m.SMTPPasswordConfigured {
+			t.Errorf("the webhook switch: %+v, then %+v, %v", m, m2, err)
+		}
+		var raw map[string]any
+		if err := engine.SetMailSettings(super, MailSettingsInput{SMTPPort: 587, SMTPSecurity: "StartTls", SMTPUsername: " "}); err != nil {
+			t.Fatal(err)
+		}
+		if err := engine.do(super, http.MethodGet, mailSettingsPath, nil, nil, "", &raw); err != nil || raw["smtpHost"] != nil || raw["smtpUsername"] != nil {
+			t.Errorf("blank text: %+v, %v", raw, err)
+		}
+
+		// Rules name EasyPatch's organization, a tag and channels.
+		tag, err := engine.CreateTag(super, TagInput{Name: "Contract alerts " + uuid.NewString()[:8], Color: "blue"}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = engine.DeleteTag(super, tag.ID, "") })
+		two := 2
+		in := AlertRuleInput{Name: "Contract offline", Type: "EndpointOffline", Enabled: true, Severity: "Critical", Threshold: &two,
+			OrganizationID: &org.ID, TagID: &tag.ID, ChannelIDs: []uuid.UUID{mail.Channel.ID, hook.Channel.ID}, NotifyOnResolve: true, RenotifyHours: 24}
+		r, err := engine.CreateAlertRule(super, in)
+		if err != nil || r.ThresholdUnit != "hours" || r.OrganizationID == nil || *r.OrganizationID != org.ID || r.TagID == nil || len(r.ChannelIDs) != 2 ||
+			r.UnresolvedAlerts != 0 || !r.NotifyOnResolve || r.RenotifyHours != 24 {
+			t.Fatalf("rule: %+v, %v", r, err)
+		}
+		t.Cleanup(func() { _ = engine.DeleteAlertRule(super, r.ID) })
+		if _, err := ep.CreateAlertRule(ctx, in); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an API token adds a rule: %v", err)
+		}
+		zero := 0
+		for name, change := range map[string]func(*AlertRuleInput){
+			"threshold":       func(x *AlertRuleInput) { x.Threshold = &zero },
+			"tag on held":     func(x *AlertRuleInput) { x.Type, x.Threshold = "UpdateHeld", nil },
+			"unknown channel": func(x *AlertRuleInput) { x.ChannelIDs = []uuid.UUID{uuid.New()} },
+			"reminders":       func(x *AlertRuleInput) { x.RenotifyHours = 721 },
+		} {
+			bad := in
+			change(&bad)
+			if _, err := engine.CreateAlertRule(super, bad); !IsStatus(err, http.StatusBadRequest) {
+				t.Errorf("%s: %v", name, err)
+			}
+		}
+		in.Severity, in.TagID = "Warning", nil
+		if u, err := engine.UpdateAlertRule(super, r.ID, in); err != nil || u.Severity != "Warning" || u.TagID != nil {
+			t.Errorf("updated: %+v, %v", u, err)
+		}
+		// A channel deleted leaves the rules that send to it.
+		if err := engine.DeleteChannel(super, hook.Channel.ID); err != nil {
+			t.Fatal(err)
+		}
+		rules, _ = engine.AlertRules(super)
+		if i := slices.IndexFunc(rules, func(x AlertRule) bool { return x.ID == r.ID }); i < 0 || len(rules[i].ChannelIDs) != 1 {
+			t.Errorf("after the channel went: %+v", rules)
+		}
+		if err := engine.DeleteAlertRule(super, r.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := engine.DeleteAlertRule(super, r.ID); !IsStatus(err, http.StatusNotFound) {
+			t.Errorf("deleted twice: %v", err)
+		}
+		if p, err := engine.AuditLogs(super, AuditFilter{Action: "alert_rule."}, 1, 10); err != nil || len(p.Items) == 0 || p.Items[0].Username != "easyrmm:"+who {
+			t.Errorf("audit: %+v, %v", p, err)
+		}
+
+		// The fake answers in the same shapes.
+		fake := eptest.NewEngine(t, c.engineKey)
+		fakeClient, err := NewEngineClient(fake.URL(), signer, "contract")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fOrg := fake.Org("Contract")
+		fMail, err := fakeClient.CreateChannel(super, ChannelInput{Name: "Contract mail", Type: "Email", Enabled: true, EmailRecipients: []string{"ops@example.test"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fakeClient.TestChannel(super, fMail.Channel.ID); err != nil {
+			t.Fatal(err)
+		}
+		mail2, err := engine.CreateChannel(super, ChannelInput{Name: "Contract mail 2", Type: "Email", Enabled: true, EmailRecipients: []string{"ops@example.test"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = engine.DeleteChannel(super, mail2.Channel.ID) })
+		if _, err := engine.TestChannel(super, mail2.Channel.ID); err != nil {
+			t.Fatal(err)
+		}
+		fake.AddAlert(eptest.AlertInfo{RuleType: "UpdateHeld", Severity: "Warning", Title: "Contract: 1 update on hold", Org: fOrg})
+		five := url.Values{"pageSize": {"5"}}
+		for path, q := range map[string]url.Values{"/api/v1/alert-rules": nil, "/api/v1/alert-rules/types": nil, channelsPath: nil,
+			"/api/v1/notifications/deliveries": five, "/api/v1/alerts": five, "/api/v1/alerts/summary": nil, mailSettingsPath: nil} {
+			var f, r any
+			if err := fakeClient.do(super, http.MethodGet, path, q, nil, "", &f); err != nil {
+				t.Errorf("eptest %s: %v", path, err)
+				continue
+			}
+			if err := engine.do(super, http.MethodGet, path, q, nil, "", &r); err != nil {
+				t.Errorf("EasyPatch %s: %v", path, err)
+				continue
+			}
+			for _, p := range sameShape(path, f, r, nil) {
+				t.Error(p)
+			}
 		}
 	})
 

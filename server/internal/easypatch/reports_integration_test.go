@@ -310,7 +310,7 @@ func TestMonthlyReports(t *testing.T) {
 	// No mail server at all removes the engine's.
 	f.svc = f.engineService(f.engine, Mail(MailConfig{}))
 	f.reconcile()
-	if m := f.engine.Mail(); m["smtpHost"] != "" || m["smtpPassword"] != "" {
+	if m := f.engine.Mail(); m["smtpHost"] != nil || m["smtpPassword"] != "" {
 		t.Fatalf("mail server removed: %v", m)
 	}
 

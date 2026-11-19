@@ -10,8 +10,11 @@
 // compliance and the install; a monthly PDF is made, downloaded and deleted, emailing it says
 // EasyRMM has no mail server, and a schedule is set. Under Settings → Patching (C6) a server
 // setting is changed, an OS lifecycle entry added, changed and deleted, the agent's .deb downloaded,
-// and EasyPatch's own audit log names the EasyRMM user who did each. scripts/e2e/bundle.sh starts
-// everything and runs this.
+// and EasyPatch's own audit log names the EasyRMM user who did each. Alerts (C7): an email channel
+// is added and tested, which fails for want of a mail server; EasyPatch's own rule for unsupported
+// operating systems sends to it; moving Debian 12's end of support near makes EasyPatch raise an
+// alert for the machine, which Patching → Alerts shows and acknowledges, and the channel is sent it.
+// scripts/e2e/bundle.sh starts everything and runs this.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -506,4 +509,130 @@ test("Settings → Patching changes a server setting and the OS lifecycle, lists
     "patch.lifecycle_create",
     "patch.settings_update",
   ]);
+});
+
+/** A date this many days from today in UTC, as EasyPatch counts days, as 2006-01-02. */
+function utcDays(days: number): string {
+  return new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+}
+
+type Alert = { id: string; ruleType: string; status: string; deviceId?: string; title: string; acknowledgedBy: string | null };
+type Delivery = { kind: string; status: string; lastError: string | null; channelName: string };
+
+test("an alert rule raises an alert for the machine, which Patching → Alerts acknowledges and an email channel is sent", async () => {
+  test.setTimeout(600_000);
+  const page = admin;
+  const main = page.getByRole("main");
+  const CHANNEL = "Fabrikam on-call";
+
+  // An email channel; with no mail server, its test cannot send, and the console says why in EasyRMM's words.
+  await page.goto("/settings?tab=patching&view=notifications");
+  await expect(main.getByText("No mail server").first()).toBeVisible();
+  await main.getByRole("button", { name: "Add channel" }).click();
+  const add = page.getByRole("dialog", { name: "Add channel" });
+  await add.getByRole("textbox", { name: /Name/ }).fill(CHANNEL);
+  await add.getByRole("textbox", { name: /Recipients/ }).fill("oncall@example.com");
+  await add.getByRole("button", { name: "Add channel" }).click();
+  await expect(page.getByText(`${CHANNEL} added.`)).toBeVisible();
+  await main.getByRole("button", { name: `Send a test to ${CHANNEL}` }).click();
+  await expect(page.getByText(`Test sent to ${CHANNEL}.`, { exact: false })).toBeVisible();
+  const channels = await api<{ channels: { id: string; name: string }[] }>("GET", "/api/v1/patching/notifications");
+  const channelId = channels.channels.find((c) => c.name === CHANNEL)!.id;
+  await expect
+    .poll(async () => (await api<{ items: Delivery[] }>("GET", `/api/v1/patching/notifications/deliveries?channelId=${channelId}`)).items.find((d) => d.kind === "Test")?.lastError ?? "", {
+      timeout: 120_000,
+      intervals: [5_000],
+    })
+    .toContain("SMTP is not configured");
+  await page.reload();
+  const messages = main.getByRole("table", { name: "Messages to notification channels" });
+  await expect(messages.getByRole("row").filter({ hasText: "Test" }).filter({ hasText: CHANNEL })).toContainText("EasyRMM has no mail server");
+
+  // EasyPatch's own rule for unsupported operating systems sends to it.
+  await page.goto("/settings?tab=patching&view=rules");
+  await main.getByRole("button", { name: "Edit Operating system unsupported" }).click();
+  const rule = page.getByRole("dialog", { name: "Edit alert rule" });
+  await expect(rule.getByRole("spinbutton", { name: /Days before support ends/ })).toHaveValue("30");
+  await rule.getByRole("checkbox", { name: new RegExp(CHANNEL) }).check();
+  await rule.getByRole("button", { name: "Save rule" }).click();
+  await expect(page.getByText("Operating system unsupported saved.")).toBeVisible();
+  await expect(main.getByRole("table", { name: "Alert rules" }).getByRole("row").filter({ hasText: "Operating system unsupported" })).toContainText(CHANNEL);
+
+  // Debian 12's end of support, 10 days away: within the rule's 30.
+  await page.goto("/settings?tab=patching&view=lifecycle");
+  await main.getByRole("button", { name: "Edit Debian 12 (bookworm)" }).click();
+  let entry = page.getByRole("dialog", { name: "Edit lifecycle entry" });
+  const ended = await entry.getByLabel(/^Security updates end/).inputValue();
+  await entry.getByLabel(/^Security updates end/).fill(utcDays(10));
+  await entry.getByRole("button", { name: "Save entry" }).click();
+  await expect(page.getByText("Debian 12 (bookworm) saved.")).toBeVisible();
+
+  // EasyPatch checks its rules every 2 minutes.
+  let raised: Alert | undefined;
+  await expect
+    .poll(
+      async () => {
+        const list = await api<{ items: Alert[] }>("GET", "/api/v1/patching/alerts?ruleType=OsUnsupported");
+        raised = list.items.find((a) => a.deviceId === deviceId);
+        return raised?.status ?? "";
+      },
+      { timeout: 300_000, intervals: [10_000] },
+    )
+    .toBe("Open");
+  expect(raised!.title).toContain(`support ends on ${utcDays(10)}`);
+
+  // Patching → Alerts shows it for the device, and acknowledges it.
+  await page.goto("/patching?tab=alerts&ruleType=OsUnsupported");
+  const alerts = main.getByRole("table", { name: "Patching alerts" });
+  const row = alerts.getByRole("row").filter({ hasText: raised!.title });
+  await expect(row).toContainText("Operating system unsupported");
+  await expect(row.getByRole("link", { name: hostname }).first()).toHaveAttribute("href", `/devices/${deviceId}?tab=patches`);
+  await row.getByRole("button", { name: `Acknowledge ${raised!.title}` }).click();
+  await expect(page.getByText("1 alert acknowledged.")).toBeVisible();
+  await expect(row).toContainText(`by ${ADMIN.email}`);
+  const after = await api<{ items: Alert[] }>("GET", `/api/v1/patching/alerts?ruleType=OsUnsupported&deviceId=${deviceId}`);
+  expect(after.items[0]).toMatchObject({ id: raised!.id, status: "Acknowledged", acknowledgedBy: `easyrmm:${ADMIN.email}` });
+
+  // The overview counts open alerts only: an acknowledged one is someone's already.
+  const counts = await api<{ open: number; acknowledged: number }>("GET", "/api/v1/patching/alerts/summary");
+  expect(counts.acknowledged).toBeGreaterThanOrEqual(1);
+
+  // The rule sent the channel the alert.
+  await expect
+    .poll(async () => (await api<{ items: Delivery[] }>("GET", `/api/v1/patching/notifications/deliveries?channelId=${channelId}`)).items.some((d) => d.kind === "AlertsOpened"), {
+      timeout: 120_000,
+      intervals: [5_000],
+    })
+    .toBe(true);
+
+  // Debian 12's date back as it was; the rule back to no channels, and the channel deleted.
+  await page.goto("/settings?tab=patching&view=lifecycle");
+  await main.getByRole("button", { name: "Edit Debian 12 (bookworm)" }).click();
+  entry = page.getByRole("dialog", { name: "Edit lifecycle entry" });
+  await entry.getByLabel(/^Security updates end/).fill(ended);
+  await entry.getByRole("button", { name: "Save entry" }).click();
+  await expect(page.getByText("Debian 12 (bookworm) saved.")).toBeVisible();
+  await page.goto("/settings?tab=patching&view=rules");
+  await main.getByRole("button", { name: "Edit Operating system unsupported" }).click();
+  await page.getByRole("dialog", { name: "Edit alert rule" }).getByRole("checkbox", { name: new RegExp(CHANNEL) }).uncheck();
+  await page.getByRole("dialog", { name: "Edit alert rule" }).getByRole("button", { name: "Save rule" }).click();
+  await expect(page.getByText("Operating system unsupported saved.")).toBeVisible();
+  await page.goto("/settings?tab=patching&view=notifications");
+  await main.getByRole("button", { name: `Delete ${CHANNEL}` }).click();
+  await page.getByRole("dialog", { name: "Delete channel" }).getByRole("button", { name: "Delete channel" }).click();
+  await expect(page.getByText(`${CHANNEL} deleted.`)).toBeVisible();
+
+  // EasyRMM's audit log has each.
+  const audit = await api<{ items: { action: string; deviceId?: string }[] }>("GET", "/api/v1/audit?action=patch");
+  expect(audit.items.slice(0, 8).map((a) => a.action)).toEqual([
+    "patch.channel_delete",
+    "patch.alert_rule_update",
+    "patch.lifecycle_update",
+    "patch.alert_acknowledge",
+    "patch.lifecycle_update",
+    "patch.alert_rule_update",
+    "patch.channel_test",
+    "patch.channel_create",
+  ]);
+  expect(audit.items[3]!.deviceId).toBe(deviceId);
 });

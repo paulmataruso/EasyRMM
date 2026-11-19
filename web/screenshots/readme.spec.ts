@@ -31,6 +31,8 @@ import {
   organizations,
   PATCH_DEVICE,
   patchComplianceReport,
+  patchAlertCounts,
+  patchAlerts,
   patchJobs,
   patchLifecycle,
   patchServerSettings,
@@ -154,6 +156,10 @@ function answer(method: string, path: string, q: URLSearchParams): unknown {
       return fleet;
     case "/patching/jobs":
       return list(patchJobs);
+    case "/patching/alerts":
+      return { items: patchAlerts, capped: false };
+    case "/patching/alerts/summary":
+      return patchAlertCounts;
     case "/patching/updates":
       return { items: fleetUpdates, page: 1, pageSize: 50, totalCount: fleetUpdates.length };
     case `/patching/updates/${UPDATE_GUID}`:
@@ -266,6 +272,12 @@ for (const theme of ["dark", "light"] as const) {
       await open(page, theme, "/patching");
       await expect(page.getByText("HDG-FRONTDESK-2")).toBeVisible();
       await shoot(page, "patching-overview", theme);
+    });
+
+    test("patching alerts", async ({ page }) => {
+      await open(page, theme, "/patching?tab=alerts");
+      await expect(page.getByText("AF-FS01 misses an update for an exploited vulnerability")).toBeVisible();
+      await shoot(page, "patching-alerts", theme);
     });
 
     test("patching update", async ({ page }) => {

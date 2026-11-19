@@ -218,13 +218,19 @@ function routes(session = TECH, extra: Record<string, FakeHandler | FakeReply> =
     "GET /patching": ok(READY),
     "GET /patching/devices": ok(FLEET),
     "GET /patching/jobs": ok({ items: [] }),
+    "GET /patching/alerts/summary": ok({ open: 0, acknowledged: 0, critical: 0, warning: 0, info: 0, capped: false }),
     ...extra,
   };
 }
 
 describe("patching overview", () => {
   it("is where Patching opens, with what needs attention worst first", async () => {
-    installFakeApi(routes(TECH, { "GET /patching/jobs": ok({ items: [{ id: "j1" }, { id: "j2" }] }) }));
+    installFakeApi(
+      routes(TECH, {
+        "GET /patching/jobs": ok({ items: [{ id: "j1" }, { id: "j2" }] }),
+        "GET /patching/alerts/summary": ok({ open: 3, acknowledged: 1, critical: 1, warning: 3, info: 0, capped: false }),
+      }),
+    );
     renderApp("/patching");
     await screen.findByRole("main");
     expect(await main().findByRole("tab", { name: "Overview", selected: true })).toBeInTheDocument();
@@ -237,8 +243,10 @@ describe("patching overview", () => {
     expect(main().getByRole("img", { name: /Up to date: 1, Updates missing: 1, Updates failed: 1, Not scanned recently: 1/ })).toBeInTheDocument();
 
     const attention = within(main().getByRole("heading", { name: "Needs attention" }).closest("section")!);
+    expect(await attention.findByText("patching alerts are open")).toBeInTheDocument();
     const rows = attention.getAllByRole("listitem").map((li) => li.textContent);
     expect(rows).toEqual([
+      expect.stringContaining("3patching alerts are open"),
       expect.stringContaining("1device misses updates for vulnerabilities exploited in the wild"),
       expect.stringContaining("1device has updates that failed to install"),
       expect.stringContaining("1device misses required updates"),
@@ -252,6 +260,7 @@ describe("patching overview", () => {
     expect(attention.getByRole("link", { name: "Show the updates" })).toHaveAttribute("href", "/patching?tab=updates&exploited=true");
     expect(attention.getAllByRole("link", { name: "Show devices" })[0]).toHaveAttribute("href", "/patching?tab=devices&compliance=FailedUpdates");
     expect(attention.getByRole("link", { name: "Show jobs" })).toHaveAttribute("href", "/patching?tab=jobs");
+    expect(attention.getByRole("link", { name: "Show alerts" })).toHaveAttribute("href", "/patching?tab=alerts");
 
     // Organizations, least up to date first.
     const orgs = within(main().getByRole("heading", { name: "Organizations, least up to date first" }).closest("section")!);
@@ -286,6 +295,7 @@ describe("patching overview", () => {
     expect(main().queryByText("Organizations, least up to date first")).not.toBeInTheDocument();
     expect(server.call("GET /patching/devices").query.get("organizationId")).toBe("o1");
     expect(server.call("GET /patching/jobs").query.get("active")).toBe("true");
+    expect(server.call("GET /patching/alerts/summary").query.get("organizationId")).toBe("o1");
     await user.click(main().getByRole("link", { name: "Up to date" }));
     expect(await main().findByRole("tab", { name: "Devices", selected: true })).toBeInTheDocument();
   });
@@ -302,12 +312,13 @@ describe("patching overview", () => {
       routes(TECH, {
         "GET /patching/devices": ok({ ...FLEET, errors: ["Contoso Dental: EasyPatch did not answer."], truncated: true }),
         "GET /patching/jobs": ok({ items: Array.from({ length: 200 }, (_, i) => ({ id: `j${i}` })) }),
+        "GET /patching/alerts/summary": ok({ open: 200, acknowledged: 0, critical: 0, warning: 200, info: 0, capped: true }),
       }),
     );
     renderApp("/patching");
     await screen.findByRole("main");
     expect(await main().findByText("Contoso Dental: EasyPatch did not answer.")).toBeInTheDocument();
-    expect(main().getByText("200+")).toBeInTheDocument();
+    await waitFor(() => expect(main().getAllByText("200+")).toHaveLength(2)); // the jobs, and the alerts
     expect(main().getByText(/Counted over the first 5 devices/)).toBeInTheDocument();
   });
 });

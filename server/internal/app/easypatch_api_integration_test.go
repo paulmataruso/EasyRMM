@@ -924,6 +924,75 @@ func TestEasyPatchAPI(t *testing.T) {
 		}
 	}
 
+	// Alerts (one-product plan, C7): a connected server's are read and
+	// acknowledged with EasyRMM's token; its rules and channels are its
+	// console's.
+	alertID := ep.AddAlert(eptest.AlertInfo{RuleType: "UpdateHeld", Severity: "Warning", Title: "Acme Patch: 1 update on hold", Org: epOrg})
+	var alerts struct {
+		Items []struct {
+			ID               string `json:"id"`
+			OrganizationID   string `json:"organizationId"`
+			OrganizationName string `json:"organizationName"`
+			CanAcknowledge   bool   `json:"canAcknowledge"`
+		} `json:"items"`
+		Capped bool `json:"capped"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/alerts?severity=Warning&ruleType=UpdateHeld&search=hold&organizationId="+acme, nil, &alerts)
+	if len(alerts.Items) != 1 || alerts.Items[0].ID != alertID.String() || alerts.Items[0].OrganizationID != acme ||
+		alerts.Items[0].OrganizationName != "Acme" || !alerts.Items[0].CanAcknowledge || alerts.Capped {
+		t.Fatalf("alerts: %+v", alerts)
+	}
+	var counts map[string]any
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/alerts/summary", nil, &counts)
+	if counts["open"] != 1.0 || counts["warning"] != 1.0 || counts["capped"] != false {
+		t.Fatalf("counts: %+v", counts)
+	}
+	ack := map[string]any{"alertIds": []string{alertID.String()}}
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/alerts/acknowledge", ack), http.StatusForbidden, "forbidden")
+	var acked map[string]int
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/alerts/acknowledge", ack, &acked)
+	if acked["acknowledged"] != 1 {
+		t.Fatalf("acknowledged: %+v", acked)
+	}
+	for _, q := range []string{"alerts?status=Open", "alerts?severity=high", "alerts?ruleType=Offline", "alerts?organizationId=nope",
+		"alerts?deviceId=nope", "alerts/summary?organizationId=nope", "notifications/deliveries?page=0"} {
+		wantStatus(t, admin.do("GET", "/api/v1/patching/"+q, nil), http.StatusUnprocessableEntity, "validation_failed")
+	}
+	wantStatus(t, admin.do("POST", "/api/v1/patching/alerts/acknowledge", map[string]any{"alertIds": []string{}}), http.StatusUnprocessableEntity,
+		"validation_failed")
+	wantStatus(t, viewer.do("GET", "/api/v1/patching/alert-rules", nil), http.StatusForbidden, "forbidden")
+	rule := uuid.NewString()
+	for _, c := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", "/api/v1/patching/alert-rules", nil},
+		{"POST", "/api/v1/patching/alert-rules", map[string]any{"name": "Offline", "type": "EndpointOffline", "severity": "Warning", "threshold": 4}},
+		{"PUT", "/api/v1/patching/alert-rules/" + rule, map[string]any{"name": "Offline"}},
+		{"DELETE", "/api/v1/patching/alert-rules/" + rule, nil},
+		{"GET", "/api/v1/patching/notifications", nil},
+		{"PUT", "/api/v1/patching/notifications", map[string]any{"allowPrivateNetworkWebhooks": true}},
+		{"GET", "/api/v1/patching/notifications/deliveries?status=Failed", nil},
+		{"POST", "/api/v1/patching/notifications/channels", map[string]any{"name": "Ops", "type": "Email", "emailRecipients": []string{"ops@example.com"}}},
+		{"PUT", "/api/v1/patching/notifications/channels/" + rule, map[string]any{"name": "Ops"}},
+		{"DELETE", "/api/v1/patching/notifications/channels/" + rule, nil},
+		{"POST", "/api/v1/patching/notifications/channels/" + rule + "/test", nil},
+		{"POST", "/api/v1/patching/notifications/channels/" + rule + "/rotate-secret", nil},
+	} {
+		wantStatus(t, admin.do(c.method, c.path, c.body), http.StatusConflict, "easypatch_server_wide")
+	}
+	for _, path := range []string{"alert-rules/nope", "notifications/channels/nope"} {
+		wantStatus(t, admin.do("DELETE", "/api/v1/patching/"+path, nil), http.StatusNotFound, "not_found")
+	}
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/api/v1/patching/alerts/acknowledge"}, {"POST", "/api/v1/patching/alert-rules"}, {"PUT", "/api/v1/patching/notifications"},
+		{"POST", "/api/v1/patching/notifications/channels"},
+	} {
+		if r := admin.do(c.method, c.path, notObject); r.status != http.StatusBadRequest && r.status != http.StatusUnprocessableEntity {
+			t.Errorf("%s %s with an array: %d %s", c.method, c.path, r.status, r.body)
+		}
+	}
+
 	// Unlinking and removing.
 	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil, nil)
 	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil), http.StatusNotFound, "not_found")

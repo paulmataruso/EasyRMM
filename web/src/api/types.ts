@@ -1592,6 +1592,174 @@ export interface PatchAuditPage {
   everything: boolean;
 }
 
+// EasyPatch's alerts, alert rules and notification channels (one-product plan, C7).
+
+export type PatchAlertSeverity = "Critical" | "Warning" | "Info";
+export type PatchAlertStatus = "Open" | "Acknowledged" | "Resolved";
+export type PatchAlertRuleKind =
+  | "EndpointOffline"
+  | "InstallFailed"
+  | "SecurityUpdateMissing"
+  | "ScanStale"
+  | "RestartPending"
+  | "EnrollmentPending"
+  | "OsUnsupported"
+  | "KnownExploitedMissing"
+  | "UpdateHeld";
+
+export interface PatchAlert {
+  id: string;
+  ruleId: string | null;
+  ruleName: string | null;
+  ruleType: PatchAlertRuleKind;
+  severity: PatchAlertSeverity;
+  status: PatchAlertStatus;
+  title: string;
+  details: string | null;
+  /** EasyRMM's organization. */
+  organizationId: string;
+  organizationName: string;
+  /** The EasyRMM device, when the endpoint is one; none for an organization's alert. */
+  deviceId?: string;
+  deviceName?: string;
+  /** EasyPatch's name for the endpoint, which an endpoint with no EasyRMM device has only. */
+  hostname: string | null;
+  openedAt: string;
+  lastSeenAt: string;
+  resolvedAt: string | null;
+  acknowledgedAt: string | null;
+  acknowledgedBy: string | null;
+  canAcknowledge: boolean;
+}
+
+export interface PatchAlertList {
+  items: PatchAlert[];
+  /** More match than were listed. */
+  capped: boolean;
+}
+
+/** Unresolved alerts: open leaves out the acknowledged; the severities count both. */
+export interface PatchAlertCounts {
+  open: number;
+  acknowledged: number;
+  critical: number;
+  warning: number;
+  info: number;
+  capped: boolean;
+}
+
+export interface PatchAlertRuleType {
+  type: PatchAlertRuleKind;
+  thresholdUnit: "hours" | "days" | null;
+  thresholdMin: number | null;
+  thresholdMax: number | null;
+  thresholdDefault: number | null;
+  /** Looks at devices one by one, so it can be limited to a tag. */
+  supportsTag: boolean;
+}
+
+export interface PatchAlertRuleInput {
+  name: string;
+  type: PatchAlertRuleKind;
+  enabled: boolean;
+  severity: PatchAlertSeverity;
+  threshold: number | null;
+  /** EasyRMM's organization; none covers every one. */
+  organizationId: string | null;
+  tagId: string | null;
+  channelIds: string[];
+  notifyOnResolve: boolean;
+  /** 0 never reminds. */
+  renotifyHours: number;
+}
+
+export interface PatchAlertRule extends PatchAlertRuleInput {
+  id: string;
+  thresholdUnit: string | null;
+  organizationName?: string;
+  /** Covers an EasyPatch organization EasyRMM does not link. */
+  unlinkedOrganization?: boolean;
+  tagName?: string;
+  unresolvedAlerts: number;
+  updatedAt: string;
+}
+
+export interface PatchChannelRef {
+  id: string;
+  name: string;
+  type: "Email" | "Webhook";
+  enabled: boolean;
+}
+
+export interface PatchAlertRuleList {
+  items: PatchAlertRule[];
+  types: PatchAlertRuleType[];
+  channels: PatchChannelRef[];
+}
+
+export type PatchWebhookFormat = "Generic" | "Slack" | "Teams";
+/** A message to a notification channel; the worker retries one that failed until its attempts run out. */
+export type PatchNotificationStatus = "Pending" | "Sent" | "Failed";
+
+export interface PatchChannel {
+  id: string;
+  name: string;
+  type: "Email" | "Webhook";
+  enabled: boolean;
+  emailRecipients: string[];
+  webhookFormat: PatchWebhookFormat | null;
+  /** EasyPatch never gives a webhook's address back, only its host. */
+  webhookHost: string | null;
+  hasSigningSecret: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastDelivery: { status: PatchNotificationStatus; createdAt: string; lastError: string | null } | null;
+}
+
+export interface PatchChannelInput {
+  name: string;
+  type: "Email" | "Webhook";
+  enabled: boolean;
+  emailRecipients: string[];
+  webhookFormat: PatchWebhookFormat | null;
+  /** None on a change keeps the stored address. */
+  webhookUrl: string | null;
+}
+
+export interface PatchChannelSaved {
+  channel: PatchChannel;
+  /** A generic webhook's signing key, shown this once. */
+  signingSecret: string | null;
+}
+
+export interface PatchDelivery {
+  id: string;
+  channelId: string;
+  channelName: string;
+  kind: "AlertsOpened" | "AlertsResolved" | "AlertsReminder" | "Test";
+  subject: string;
+  status: PatchNotificationStatus;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  nextAttemptAt: string;
+  sentAt: string | null;
+}
+
+export interface PatchDeliveryPage {
+  items: PatchDelivery[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+}
+
+export interface PatchNotifications {
+  channels: PatchChannel[];
+  /** The mail server email channels send through: EasyRMM's, given to EasyPatch at each start. */
+  mail: { host: string; port: number; security: string; fromAddress: string; fromName: string };
+  allowPrivateNetworkWebhooks: boolean;
+}
+
 export interface PatchTagList {
   items: PatchTag[];
   canManage: boolean;

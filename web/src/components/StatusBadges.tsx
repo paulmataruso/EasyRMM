@@ -146,6 +146,16 @@ const ACTIONS: Record<string, string> = {
   "patch.lifecycle_create": "Added an OS lifecycle entry",
   "patch.lifecycle_update": "Changed an OS lifecycle entry",
   "patch.lifecycle_delete": "Deleted an OS lifecycle entry",
+  "patch.alert_acknowledge": "Acknowledged patching alerts",
+  "patch.alert_rule_create": "Added a patching alert rule",
+  "patch.alert_rule_update": "Changed a patching alert rule",
+  "patch.alert_rule_delete": "Deleted a patching alert rule",
+  "patch.channel_create": "Added a notification channel",
+  "patch.channel_update": "Changed a notification channel",
+  "patch.channel_delete": "Deleted a notification channel",
+  "patch.channel_test": "Sent a test notification",
+  "patch.channel_rotate_secret": "Made a new webhook signing key",
+  "patch.notifications_update": "Changed patching notification settings",
 };
 
 export function actionLabel(action: string): string {
@@ -183,6 +193,10 @@ export function auditTarget(e: AuditEntry): string {
   if (name && typeof d.device === "string") return `${name} on ${d.device}`;
   if (name) return name;
   if (typeof d.script === "string" && typeof d.device === "string") return `${d.script} on ${d.device}`;
+  if (e.action === "patch.alert_acknowledge" && typeof d.alerts === "number") {
+    const n = d.alerts === 1 ? "1 alert" : `${d.alerts.toLocaleString()} alerts`;
+    return typeof d.device === "string" ? `${n} on ${d.device}` : `${n} of the organization`;
+  }
   if (typeof d.package === "string" && typeof d.device === "string") {
     const verb = typeof d.action === "string" ? SOFTWARE_VERBS[d.action] : undefined;
     return `${verb ? `${verb} ` : ""}${d.package} on ${d.device}`;
@@ -196,6 +210,7 @@ export function auditTarget(e: AuditEntry): string {
   }
   if (e.targetType === "easypatch") return typeof d.url === "string" ? d.url : "EasyPatch server";
   if (e.targetType === "easypatch_settings") return "EasyPatch server settings";
+  if (e.targetType === "easypatch_notifications") return "Patching notifications";
   if (e.targetType === "easypatch_lifecycle" && typeof d.product === "string") {
     return typeof d.versionLabel === "string" ? `${d.product} ${d.versionLabel}` : d.product;
   }

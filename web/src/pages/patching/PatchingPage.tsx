@@ -25,6 +25,7 @@ import {
   type EasyPatchTarget,
 } from "./patchText";
 import { PatchingOverview } from "./PatchingOverview";
+import { ALERT_FILTERS, PatchAlerts } from "./PatchAlerts";
 import { JOB_FILTERS, PatchJobs } from "./PatchJobs";
 import { PatchUpdates } from "./PatchUpdates";
 
@@ -38,12 +39,13 @@ const TABS = [
   { id: "devices", label: "Devices" },
   { id: "updates", label: "Updates" },
   { id: "jobs", label: "Jobs" },
+  { id: "alerts", label: "Alerts" },
 ] as const;
 
 type PatchingTab = (typeof TABS)[number]["id"];
 
 /** Where "Open EasyPatch" goes from each tab. */
-const CONSOLE: Record<PatchingTab, EasyPatchTarget> = { overview: {}, devices: { list: "endpoints" }, updates: {}, jobs: { list: "jobs" } };
+const CONSOLE: Record<PatchingTab, EasyPatchTarget> = { overview: {}, devices: { list: "endpoints" }, updates: {}, jobs: { list: "jobs" }, alerts: {} };
 
 const CLEARED = {
   q: null,
@@ -57,6 +59,7 @@ const CLEARED = {
   page: null,
   active: null,
   ...JOB_FILTERS,
+  ...ALERT_FILTERS,
 };
 
 export function PatchingPage() {
@@ -125,8 +128,10 @@ export function PatchingPage() {
               <Fleet status={status.data} />
             ) : tab === "updates" ? (
               <PatchUpdates />
-            ) : (
+            ) : tab === "jobs" ? (
               <PatchJobs onJob={(id) => url.set({ job: id })} />
+            ) : (
+              <PatchAlerts />
             )}
           </div>
           <PatchJobDialog jobId={jobId} onClose={() => url.set({ job: null })} onJob={(id) => url.set({ job: id })} />

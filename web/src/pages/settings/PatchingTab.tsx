@@ -6,8 +6,10 @@ import { useAuth } from "../../auth/AuthContext";
 import { Button, buttonClasses, EmptyState, ErrorState, Segmented, SelectField, Spinner } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
 import { AgentPackagesPanel } from "../patching/AgentPackages";
+import { AlertRulesPanel } from "../patching/AlertRules";
 import { EngineAuditPanel } from "../patching/EngineAudit";
 import { LifecyclePanel } from "../patching/Lifecycle";
+import { NotificationsPanel } from "../patching/Notifications";
 import { PolicyPanel } from "../patching/PolicyEditor";
 import { ReportSchedules } from "../patching/ReportSchedules";
 import { ServerSettingsPanel } from "../patching/ServerSettings";
@@ -18,15 +20,17 @@ import { TagChip, TagsManager } from "../patching/Tags";
 // administrators change them; others with patching see them, as they shape their own organizations' policies.
 // Report schedules (C5) are each organization's, changed by those who configure its patching. EasyPatch's server
 // settings, OS lifecycle, agent packages and audit log (C6) are server-wide too: super administrators change them.
+// Alert rules and notification channels (C7) are server-wide and send alerts about every organization, so only super
+// administrators see them.
 
-type View = "default" | "tags" | "reports" | "server" | "lifecycle" | "packages" | "audit";
+type View = "default" | "tags" | "reports" | "server" | "lifecycle" | "packages" | "rules" | "notifications" | "audit";
 
 /** What a filter of one view means nothing to: cleared when the view changes. */
 const VIEW_STATE = { tag: null, organizationId: null, area: null, from: null, to: null, page: null };
 
 export function PatchingTab() {
   const url = useUrlState();
-  const { can } = useAuth();
+  const { can, canGlobal } = useAuth();
   const status = useApi<PatchStatus>("/patching", undefined, { staleTime: 60_000 });
   if (status.isPending) return <Spinner />;
   if (status.isError) return <ErrorState error={status.error} onRetry={() => void status.refetch()} />;
@@ -43,7 +47,7 @@ export function PatchingTab() {
           ) : undefined
         }
       >
-        Policies, tags, report schedules and EasyPatch&apos;s own settings come with EasyPatch, which patches your devices.
+        Policies, tags, report schedules, alert rules and EasyPatch&apos;s own settings come with EasyPatch, which patches your devices.
       </EmptyState>
     );
   }
@@ -54,6 +58,12 @@ export function PatchingTab() {
     { value: "server", label: "Server" },
     { value: "lifecycle", label: "OS lifecycle" },
     { value: "packages", label: "Agent packages" },
+    ...(canGlobal("patch.configure")
+      ? [
+          { value: "rules" as const, label: "Alert rules" },
+          { value: "notifications" as const, label: "Notifications" },
+        ]
+      : []),
     ...(can("audit.view") && can("patch.view") ? [{ value: "audit" as const, label: "Audit log" }] : []),
   ];
   const view = options.find((o) => o.value === url.get("view"))?.value ?? "default";
@@ -61,15 +71,15 @@ export function PatchingTab() {
   const tag = url.get("tag");
   return (
     <div className="flex flex-col gap-4">
-      {/* Seven views do not fit a phone's width side by side: there, a list. */}
-      <SelectField label="Show" className="max-w-64 md:hidden" value={view} onChange={(e) => choose(e.target.value as View)}>
+      {/* Nine views do not fit a narrow screen side by side: there, a list. */}
+      <SelectField label="Show" className="max-w-64 xl:hidden" value={view} onChange={(e) => choose(e.target.value as View)}>
         {options.map((o) => (
           <option key={o.value} value={o.value}>
             {o.label}
           </option>
         ))}
       </SelectField>
-      <div className="hidden md:block">
+      <div className="hidden xl:block">
         <Segmented label="Patching settings" options={options} value={view} onChange={choose} />
       </div>
       {view === "default" && <PolicyPanel level="default" />}
@@ -79,6 +89,8 @@ export function PatchingTab() {
       {view === "server" && <ServerSettingsPanel />}
       {view === "lifecycle" && <LifecyclePanel />}
       {view === "packages" && <AgentPackagesPanel />}
+      {view === "rules" && <AlertRulesPanel />}
+      {view === "notifications" && <NotificationsPanel />}
       {view === "audit" && <EngineAuditPanel />}
     </div>
   );

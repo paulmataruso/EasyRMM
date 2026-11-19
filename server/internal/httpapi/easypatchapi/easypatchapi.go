@@ -85,6 +85,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerPolicies(r)
 	a.registerReports(r)
 	a.registerSettings(r)
+	a.registerAlerts(r)
 	// The product switch: for anyone signed in, it says whether to show it.
 	r("GET /api/v1/patching/switch", a.productSwitch)
 	// Where a link from EasyPatch opens the console.

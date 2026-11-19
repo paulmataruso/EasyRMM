@@ -424,6 +424,10 @@ func (s *Server) serveMail(w http.ResponseWriter, r *http.Request, body map[stri
 		for _, k := range []string{"smtpHost", "smtpPort", "smtpSecurity", "smtpUsername", "fromAddress", "fromName", "allowPrivateNetworkWebhooks",
 			"smtpSkipCertificateValidation"} {
 			s.mail[k] = body[k]
+			// EasyPatch keeps blank text as none.
+			if v, ok := body[k].(string); ok && strings.TrimSpace(v) == "" {
+				s.mail[k] = nil
+			}
 		}
 		if pw, ok := body["smtpPassword"].(string); ok {
 			s.mail["smtpPassword"] = pw
