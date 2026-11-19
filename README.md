@@ -146,12 +146,14 @@ regenerated when the console changes.
   install, restart and retry, on one device or many, now or scheduled;
   holds; patch policies for organizations, sites, devices and tags; and
   patch reports: compliance with its trend, installations, and monthly PDFs
-  made, emailed and scheduled. The devices' patches show on their own pages
-  in EasyRMM.
+  made, emailed and scheduled; and EasyPatch's own server settings, OS
+  lifecycle dates, agent packages and audit log. The devices' patches show
+  on their own pages in EasyRMM.
 * **Not in EasyRMM's console yet**: patch alerts, the
   [one-product plan](docs/architecture/one-product-plan.md)'s next step.
-  With a connected EasyPatch server, they, its default policy and its tags
-  are in EasyPatch's own console, and EasyRMM links to the matching page.
+  With a connected EasyPatch server, they, its default policy, its tags,
+  its server settings and its OS lifecycle are changed in EasyPatch's own
+  console, and EasyRMM links to the matching page.
 * **The EasyRMM | EasyPatch switch** under the logo moves between the two
   consoles, landing on the same device, organization or job.
 * **EasyRMM installs EasyPatch's agent** through its own agent, per

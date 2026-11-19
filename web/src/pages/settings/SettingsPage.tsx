@@ -20,7 +20,7 @@ const SUBTITLES: Record<string, string> = {
   forwarding: "A copy of every audit record, sent as it is written to your syslog server or SIEM.",
   easypatch: "The EasyPatch server that patches your devices, and which of its organizations each EasyRMM organization is.",
   patching:
-    "The default patch policy every organization starts from, tags that apply a policy to devices across organizations, and each organization's monthly report schedule.",
+    "EasyPatch's default policy and tags, each organization's monthly report schedule, and EasyPatch's own settings, OS lifecycle dates, agent packages and audit log.",
   sso: "Identity providers people can sign in through with OpenID Connect, instead of their EasyRMM password.",
 };
 
@@ -43,7 +43,7 @@ export function SettingsPage() {
       <Tabs
         className="lg:hidden"
         active={part.id}
-        onChange={(t) => url.set({ tab: t === first.id ? null : t, q: null, organizationId: null, action: null, actorId: null, invite: null, after: null, view: null, tag: null })}
+        onChange={(t) => url.set({ tab: t === first.id ? null : t, q: null, organizationId: null, action: null, actorId: null, invite: null, after: null, view: null, tag: null, area: null, from: null, to: null, page: null })}
         tabs={parts.map((p) => ({ id: p.id, label: p.label }))}
       />
       {part.id === "users" && <UsersTab />}

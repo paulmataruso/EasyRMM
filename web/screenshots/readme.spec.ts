@@ -32,6 +32,8 @@ import {
   PATCH_DEVICE,
   patchComplianceReport,
   patchJobs,
+  patchLifecycle,
+  patchServerSettings,
   patchStatus,
   patchTrend,
   productSwitch,
@@ -172,6 +174,10 @@ function answer(method: string, path: string, q: URLSearchParams): unknown {
       return patchTrend;
     case "/patching/reports/monthly":
       return monthlyReports;
+    case "/patching/settings":
+      return patchServerSettings;
+    case "/patching/lifecycle":
+      return patchLifecycle;
     case "/patching/report-schedules":
       return organizations.map((o, i) => ({
         organizationId: o.id,
@@ -278,6 +284,12 @@ for (const theme of ["dark", "light"] as const) {
       await open(page, theme, "/reports?report=patch-compliance");
       await expect(page.getByRole("group", { name: /Machines up to date/ })).toBeVisible();
       await shoot(page, "patch-reports", theme);
+    });
+
+    test("patch server settings", async ({ page }) => {
+      await open(page, theme, "/settings?tab=patching&view=server");
+      await expect(page.getByRole("heading", { name: "Rollout guard" })).toBeVisible();
+      await shoot(page, "patch-server-settings", theme);
     });
 
     test("alerts", async ({ page }) => {

@@ -561,6 +561,74 @@ TLS, so `EASYRMM_SMTP_TLS=none` is refused for reports. With a connected
 server, reports go through the mail server set in EasyPatch's console
 (Settings → Notifications), and EasyRMM says so when it has none.
 
+### EasyPatch's own settings
+
+Settings → **Patching** has four more views, of EasyPatch's settings that
+are the same for every organization. Those with `patch.configure` see them;
+super administrators change them.
+
+* **Server**: EasyPatch's version and its server settings. *Vulnerability
+  data*: whether EasyPatch downloads CISA's known exploited
+  vulnerabilities (every 6 hours), Microsoft's security updates and the
+  Debian security tracker (daily), with each feed's last download, its
+  entries and its last error; turn it off on a server without internet
+  access. *Rollout guard*: whether EasyPatch holds a Windows update for
+  every organization once it failed on at least so many devices and so
+  many percent of those that tried it, over so many days; the hold is
+  released under Patching → Updates. *Monthly reports*: the "Prepared by"
+  line (at most 100 characters; empty leaves it out) and how many months
+  reports are kept. *Jobs*: installs at once across the server, when a job
+  not started expires, when a running one fails, how long one waits for a
+  restart, how long an agent has to start a job before it is offered again
+  and how many offers before it fails. *Agents*: when a device counts as
+  offline, how long agent credentials last and how many days before they
+  expire agents renew them (fewer than they last). *Keep for*: how long
+  EasyPatch keeps device events (with resolved alerts and notifications),
+  its audit log (with the daily compliance records), finished jobs, scan
+  results and update history; it deletes older records every 6 hours.
+  EasyRMM checks each value against EasyPatch's bounds before saving and
+  saves only what changed. EasyPatch's settings for its own console (its
+  sign-in, sessions and enrollment approvals) are not shown and are kept
+  as they are.
+* **OS lifecycle**: when each operating system build stops getting
+  security updates, and, where there are any, when paid extended security
+  updates end. EasyPatch matches a Windows device by product (Windows 10,
+  Windows 11, Windows Server), edition group (Home and Pro, Enterprise and
+  Education, Enterprise LTSC, IoT Enterprise LTSC, Server, or Any edition
+  as a fallback) and build, and a Linux device by distribution and release
+  (Ubuntu's year and month, as 2404; the major version for the others). A
+  device whose build has no entry shows its support as unknown. EasyPatch
+  comes with entries for the current releases; add one for each new
+  release (a new Fedora every six months, for instance) and check the
+  dates against the vendor's lifecycle pages. Each product, edition and
+  build has one entry.
+* **Agent packages**: the EasyPatch agent packages the server holds, with
+  their version, system, architecture, size, SHA-256 and release
+  signature, and a download link (EasyRMM's own address with the bundled
+  engine; EasyPatch's with a connected server). EasyRMM's agent installs
+  the newest package for a device ([above](#installing-the-easypatch-agent)).
+* **Audit log**: EasyPatch's own audit log, for those with `audit.view`
+  and `patch.view`: what EasyRMM's users did through EasyRMM (named by
+  their EasyRMM email), what was done in EasyPatch's console or with an
+  API token, and what EasyPatch did on its own, such as the rollout guard
+  holding an update. Organizations and devices carry their EasyRMM names
+  and link to them. Filter by organization, area and day (in your
+  browser's time zone); 50 entries a page, newest first. You see the
+  entries of the organizations whose audit log and patching you see whole;
+  entries of no organization (server settings, the OS lifecycle,
+  EasyPatch's own tasks) are for those who see every organization.
+  EasyRMM's audit log keeps its own record of what is done here.
+
+<picture><source media="(prefers-color-scheme: light)" srcset="../images/patch-server-settings-light.png"><img src="../images/patch-server-settings.png" alt="Settings, Patching, Server: EasyPatch's vulnerability data with each feed's last download and entries, and the rollout guard's settings"></picture>
+
+The API: `GET` and `PUT /api/v1/patching/settings` (every setting shown
+here; the answer adds `feeds`, `version`, `canEdit` and, when it cannot be
+changed, `readOnlyReason`); `GET` and `POST /api/v1/patching/lifecycle`,
+`PUT` and `DELETE …/{id}`; `GET /api/v1/patching/agent-packages`; and
+`GET /api/v1/patching/audit` with `organizationId`, `area` (the start of an
+action's name, as `policy.`), `from` and `to` (RFC 3339 instants, `to`
+excluded) and `page`.
+
 ### With a connected EasyPatch server
 
 EasyPatch's API tokens are Operator or Read only, never SuperAdmin, and
@@ -572,7 +640,11 @@ SuperAdmin. With a connected server, EasyRMM therefore:
   token for every organization; EasyPatch refuses one for chosen
   organizations), but does not add, change or delete them;
 * does not show tags' policies; a device's Policy view still shows the
-  values a tag sets.
+  values a tag sets;
+* shows EasyPatch's server settings and OS lifecycle, and says they are
+  changed in EasyPatch's console;
+* shows EasyPatch's audit log with an Operator token; EasyPatch refuses it
+  to a Read only token, and EasyRMM says so.
 
 Organizations', sites' and devices' policies are changed in EasyRMM, as with
 the bundled engine.
@@ -681,6 +753,8 @@ warns about them; see
 | `report.view` (with `patch.view`) | The patch reports: compliance and installations for the devices you see; the compliance trend, monthly reports and report schedules of organizations you see whole | Every role |
 | `report.view` and `patch.manage` over the organization | Make, email and delete its monthly reports | Technician and above, with an organization-wide role |
 | `report.view` and `patch.configure` over the organization | Change its report schedule | Organization administrator and above |
+| `patch.configure` anywhere | Settings → Patching: the default policy and tags, and EasyPatch's server settings, OS lifecycle and agent packages (changing the server settings and OS lifecycle: super administrators only) | Organization administrator and above |
+| `audit.view` and `patch.view` | Settings → Patching → Audit log: EasyPatch's audit log, for organizations you audit whole; with both everywhere, all of it | Organization administrator and above (a site administrator's role does not cover an organization whole) |
 | `settings.manage` | Settings → EasyPatch, including automatic installs of the EasyPatch agent | Super administrator |
 
 Both are checked at the device's site before EasyPatch is called; a job is
@@ -705,6 +779,8 @@ nobody can act, whatever their role.
 | `patch.tag_assign` | The organization, site or device, and the tags given and taken off |
 | `patch.report_generate`, `patch.report_download`, `patch.report_send`, `patch.report_delete` | A monthly report made (and whether it lists each device), downloaded, emailed (to how many recipients) or deleted: the organization, the month, whether it was the month so far, and the file |
 | `patch.report_schedule` | An organization's report schedule changed: on or off, the day, how many recipients, and whether it lists each device |
+| `patch.settings_update` | EasyPatch's server settings changed: each setting changed, from and to. Saving with nothing changed records nothing |
+| `patch.lifecycle_create`, `patch.lifecycle_update`, `patch.lifecycle_delete` | An OS lifecycle entry added, changed or deleted: its product, edition group, build, version and dates |
 | `report.export` | A patch compliance or installations CSV downloaded, with its filters and rows, as for every report |
 | `easypatch.connection_update`, `easypatch.connection_delete` | The server, its version, whether the token changed and can act, and whether links were forgotten |
 | `easypatch.organization_link`, `easypatch.organization_unlink` | Both organizations |
@@ -743,6 +819,9 @@ server has the `on-behalf-of` capability.
   1,000 devices at once: choose an organization or a site beyond that.
 * The overview lists at most 500 EasyPatch endpoints with no EasyRMM
   device.
+* EasyPatch's audit log shows 50 entries a page, up to page 10,000.
+* An OS lifecycle entry's product has at most 64 characters, its edition
+  group and version 50 and its notes 1,000; builds go from 1 to 1,000,000.
 * The EasyPatch Linux agent needs systemd: it runs apt in transient
   systemd units. EasyRMM does not install it where there is none.
 * With a connected server, EasyPatch sites are matched to EasyRMM sites by

@@ -757,7 +757,7 @@ function Row({
 }
 
 /** A whole number; empty is null when optional, otherwise not a number, which the checks refuse. */
-function NumberInput({ label, value, min, max, unit, optional, onChange }: {
+export function NumberInput({ label, value, min, max, unit, optional, onChange }: {
   label: string;
   value: number | null;
   min: number;

@@ -85,6 +85,13 @@ type Server struct {
 	reports       []*ReportInfo
 	schedules     map[uuid.UUID]*ScheduleInfo
 	mail          map[string]any
+	// Server-wide settings (settings.go): server settings, vulnerability
+	// feeds, OS lifecycle entries and the audit log.
+	settings  map[string]any
+	feeds     []map[string]any
+	lifecycle []*LifecycleInfo
+	audit     []*AuditInfo
+	auditSeq  int64
 }
 
 // Token is an enrollment token EasyPatch created.
@@ -582,6 +589,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.serveMonthlyReports(w, r, parts, body, q, pg, size)
 	case parts[0] == "notifications" && len(parts) == 2 && parts[1] == "settings":
 		s.serveMail(w, r, body)
+	case parts[0] == "settings" && len(parts) == 1:
+		s.serveSettings(w, r, body)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/vulnerability-feeds":
+		s.serveFeeds(w)
+	case parts[0] == "lifecycle" && len(parts) <= 2:
+		s.serveLifecycle(w, r, parts, body)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/audit-logs":
+		s.serveAudit(w, q, pg, size)
 	case parts[0] == "organizations" && len(parts) == 3 && parts[2] == "report-schedule":
 		id, _ := uuid.Parse(parts[1])
 		o := s.org(id)

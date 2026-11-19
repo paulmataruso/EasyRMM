@@ -855,6 +855,75 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Errorf("report audit: %v", got)
 	}
 
+	// Server-wide settings (one-product plan, C6): a connected server's are
+	// read in EasyRMM and changed in EasyPatch's console.
+	var settings struct {
+		Settings       map[string]any `json:"settings"`
+		Feeds          []any          `json:"feeds"`
+		CanEdit        bool           `json:"canEdit"`
+		ReadOnlyReason string         `json:"readOnlyReason"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/settings", nil, &settings)
+	if settings.CanEdit || !strings.Contains(settings.ReadOnlyReason, "EasyPatch's own console") || settings.Settings["globalMaxConcurrentInstalls"] != 50.0 ||
+		settings.Feeds == nil {
+		t.Fatalf("settings: %+v", settings)
+	}
+	wantStatus(t, viewer.do("GET", "/api/v1/patching/settings", nil), http.StatusForbidden, "forbidden")
+	wantStatus(t, admin.do("PUT", "/api/v1/patching/settings", settings.Settings), http.StatusConflict, "easypatch_server_wide")
+	var lifecycle struct {
+		Items []struct {
+			ID      string `json:"id"`
+			Product string `json:"product"`
+		} `json:"items"`
+		CanEdit bool `json:"canEdit"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/lifecycle", nil, &lifecycle)
+	if len(lifecycle.Items) != 2 || lifecycle.CanEdit {
+		t.Fatalf("lifecycle: %+v", lifecycle)
+	}
+	entry := map[string]any{"product": "Windows 11", "editionGroup": "HomePro", "buildNumber": 26200, "versionLabel": "25H2", "endOfServicing": "2027-10-12"}
+	wantStatus(t, admin.do("POST", "/api/v1/patching/lifecycle", entry), http.StatusConflict, "easypatch_server_wide")
+	wantStatus(t, admin.do("PUT", "/api/v1/patching/lifecycle/"+lifecycle.Items[0].ID, entry), http.StatusConflict, "easypatch_server_wide")
+	wantStatus(t, admin.do("DELETE", "/api/v1/patching/lifecycle/"+lifecycle.Items[0].ID, nil), http.StatusConflict, "easypatch_server_wide")
+	wantStatus(t, admin.do("DELETE", "/api/v1/patching/lifecycle/nope", nil), http.StatusNotFound, "not_found")
+	var packages struct {
+		Items []struct {
+			FileName string `json:"fileName"`
+			URL      string `json:"url"`
+		} `json:"items"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/agent-packages", nil, &packages)
+	if len(packages.Items) == 0 || packages.Items[0].URL != "https://patch.example.com/downloads/agent/"+packages.Items[0].FileName {
+		t.Fatalf("packages: %+v", packages)
+	}
+	ep.AddAudit(eptest.AuditInfo{Username: "jo", Org: &epOrg, Action: "policy.update"})
+	ep.AddAudit(eptest.AuditInfo{Action: "update.hold"})
+	var engineAudit struct {
+		Items []struct {
+			Action           string `json:"action"`
+			Actor            string `json:"actor"`
+			Via              string `json:"via"`
+			OrganizationName string `json:"organizationName"`
+		} `json:"items"`
+		TotalCount int  `json:"totalCount"`
+		Everything bool `json:"everything"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/audit?area=policy.&from=2020-01-01T00:00:00Z", nil, &engineAudit)
+	if len(engineAudit.Items) != 1 || engineAudit.Items[0].Actor != "jo" || engineAudit.Items[0].OrganizationName != "Acme" || !engineAudit.Everything {
+		t.Fatalf("EasyPatch's audit: %+v", engineAudit)
+	}
+	wantStatus(t, viewer.do("GET", "/api/v1/patching/audit", nil), http.StatusForbidden, "forbidden")
+	for _, q := range []string{"area=billing.", "from=yesterday", "to=2020-01-01", "organizationId=nope", "page=0"} {
+		wantStatus(t, admin.do("GET", "/api/v1/patching/audit?"+q, nil), http.StatusUnprocessableEntity, "validation_failed")
+	}
+	for _, c := range []struct{ method, path string }{
+		{"PUT", "/api/v1/patching/settings"}, {"POST", "/api/v1/patching/lifecycle"}, {"PUT", "/api/v1/patching/lifecycle/" + lifecycle.Items[0].ID},
+	} {
+		if r := admin.do(c.method, c.path, notObject); r.status != http.StatusBadRequest && r.status != http.StatusUnprocessableEntity {
+			t.Errorf("%s %s with an array: %d %s", c.method, c.path, r.status, r.body)
+		}
+	}
+
 	// Unlinking and removing.
 	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil, nil)
 	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil), http.StatusNotFound, "not_found")

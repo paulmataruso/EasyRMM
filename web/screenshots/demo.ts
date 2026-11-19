@@ -22,6 +22,8 @@ import type {
   PatchJobView,
   PatchMonthlyReport,
   PatchMonthlyReportList,
+  PatchLifecycleList,
+  PatchSettingsView,
   PatchPolicy,
   PatchPolicyLayer,
   PatchPolicyView,
@@ -1091,4 +1093,51 @@ export const monthlyReports: PatchMonthlyReportList = {
   ],
   capped: false,
   canGenerate: organizations.map((o) => o.id),
+};
+
+/** Settings → Patching → Server (one-product plan, C6). */
+export const patchServerSettings: PatchSettingsView = {
+  settings: {
+    globalMaxConcurrentInstalls: 50,
+    jobDefaultExpiryHours: 168,
+    runningJobTimeoutHours: 12,
+    waitingForRebootExpiryDays: 30,
+    deliveryLeaseMinutes: 10,
+    maxDeliveryAttempts: 5,
+    offlineThresholdMinutes: 10,
+    credentialLifetimeDays: 365,
+    credentialRotateBeforeDays: 30,
+    retentionEventsDays: 90,
+    retentionAuditDays: 365,
+    retentionJobsDays: 180,
+    retentionScansDays: 90,
+    retentionHistoryDays: 730,
+    retentionReportsMonths: 24,
+    vulnerabilityFeedsEnabled: true,
+    reportBrandName: "Northwind IT Services",
+    rolloutGuardEnabled: true,
+    rolloutGuardMinFailedEndpoints: 3,
+    rolloutGuardFailurePercent: 20,
+    rolloutGuardWindowDays: 7,
+  },
+  feeds: [
+    { name: "kev", lastAttemptAt: ago(95), lastSuccessAt: ago(95), version: "2026.11.17", itemCount: 1484 },
+    { name: "msrc", lastAttemptAt: ago(610), lastSuccessAt: ago(610), version: "2026-Nov", itemCount: 9213 },
+    { name: "debian", lastAttemptAt: ago(615), lastSuccessAt: ago(615), itemCount: 41_877 },
+  ],
+  version: "1.10.0",
+  canEdit: true,
+};
+
+/** Settings → Patching → OS lifecycle. */
+export const patchLifecycle: PatchLifecycleList = {
+  items: [
+    { id: "lc-1", product: "Windows 10", editionGroup: "HomePro", buildNumber: 19045, versionLabel: "22H2", endOfServicing: "2025-10-14", esuEndDate: "2028-10-10", notes: "Commercial ESU through 2028-10-10." },
+    { id: "lc-2", product: "Windows 11", editionGroup: "HomePro", buildNumber: 26200, versionLabel: "25H2", endOfServicing: "2027-10-12", esuEndDate: null, notes: null },
+    { id: "lc-3", product: "Windows 11", editionGroup: "HomePro", buildNumber: 26100, versionLabel: "24H2", endOfServicing: "2026-10-13", esuEndDate: null, notes: null },
+    { id: "lc-4", product: "Windows Server", editionGroup: "Server", buildNumber: 26100, versionLabel: "2025", endOfServicing: "2034-10-10", esuEndDate: null, notes: null },
+    { id: "lc-5", product: "Windows Server", editionGroup: "Server", buildNumber: 17763, versionLabel: "2019", endOfServicing: "2029-01-09", esuEndDate: null, notes: null },
+    { id: "lc-6", product: "Ubuntu", editionGroup: "LTS", buildNumber: 2404, versionLabel: "24.04 LTS", endOfServicing: "2029-05-31", esuEndDate: "2034-04-30", notes: "ESU: Ubuntu Pro (ESM) until 2034-04." },
+  ],
+  canEdit: true,
 };

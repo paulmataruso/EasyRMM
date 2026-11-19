@@ -149,6 +149,22 @@ All notable changes to this project are documented here. The format follows
   `patch.report_download`, `patch.report_send`, `patch.report_delete` and
   `patch.report_schedule`. Charts over more than two weeks label their axis
   by date.
+- **EasyPatch's own settings** (one-product plan, phase C6): Settings →
+  **Patching** gains **Server** (EasyPatch's version; whether it downloads
+  vulnerability data, with each feed's last download and error; the rollout
+  guard; the monthly reports' "Prepared by" line; job, agent and retention
+  settings, checked against EasyPatch's bounds), **OS lifecycle** (each
+  operating system build's end of security updates and of extended
+  updates, added, changed and deleted), **Agent packages** (the EasyPatch
+  agent packages the server holds, with their signatures and a download)
+  and **Audit log** (EasyPatch's own audit log, with EasyRMM's names for
+  organizations, devices and users; filtered by organization, area and
+  day). Those with `patch.configure` see the first three, and super
+  administrators change the server settings and OS lifecycle; the audit log
+  needs `audit.view` and `patch.view`. With a connected server, the
+  settings and OS lifecycle are changed in EasyPatch's console. Audited as
+  `patch.settings_update` and `patch.lifecycle_create`,
+  `patch.lifecycle_update` and `patch.lifecycle_delete`.
 - **Organization time zones**: organizations have a time zone (default UTC;
   the browser's for a new one), which patching reports use.
 - **Stop patching for a device**: the device's Patches tab can stop

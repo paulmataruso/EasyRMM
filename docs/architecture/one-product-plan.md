@@ -478,6 +478,36 @@ device's compliance and the update it installed, downloads the CSV, makes
 the month's report, downloads its PDF, is told no mail server is set,
 deletes the report and sets a schedule.*
 
+*Done (C6): Settings → **Patching** has EasyPatch's own settings, the same
+for every organization. **Server** shows EasyPatch's version and server
+settings: vulnerability data with each feed's state, the rollout guard, the
+monthly reports' brand line and retention, and job, agent and retention
+settings, each checked against EasyPatch's bounds. EasyPatch replaces all
+its settings at once, so EasyRMM reads them, overlays what it shows and
+sends the rest back unchanged (its console's sign-in, session and approval
+settings are not shown). **OS lifecycle** lists, adds, changes and deletes
+the end-of-servicing dates EasyPatch matches devices to, offering the
+products and Windows edition groups EasyPatch matches on. **Agent packages**
+lists the packages with their signatures, downloaded through EasyRMM's own
+address with the bundled engine. **Audit log** is EasyPatch's audit log for
+the organizations the caller audits whole (Admin statements for those
+organizations, or every organization), with EasyRMM's names. Reading is a
+ReadOnly statement for anyone with `patch.configure`; changes are SuperAdmin
+statements for super administrators, recorded as `patch.settings_update`
+(each change, from and to; nothing when nothing changed) and
+`patch.lifecycle_*`. With a connected server, EasyRMM's token may not change
+them, and EasyRMM says so; a Read only token is refused the audit log.
+**Found:** EasyPatch's validator allows a lifecycle product of 100
+characters where its database keeps 64, so 65 to 100 answer 500; EasyRMM
+stops at 64. The contract test reads and changes the real engine's
+settings and sees the hidden ones kept, refuses an API token, creates,
+updates and deletes a lifecycle entry (a duplicate is a conflict), reads
+the audit log with statements for every organization and for one, and
+holds eptest's answers to the real ones. The bundle test changes a setting
+and reloads it, adds, changes and deletes a lifecycle entry, downloads the
+agent's .deb and finds each change in EasyPatch's audit log under the
+EasyRMM user.*
+
 EasyPatch's console is about 18,800 lines of TypeScript without tests. Each
 area is ported with its tests and compared against the old page.
 

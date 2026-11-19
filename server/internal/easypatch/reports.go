@@ -55,6 +55,12 @@ type reportOrg struct {
 // reportOrganizations lists the linked organizations (or the one asked for)
 // where the caller holds report.view and perm over the whole organization.
 func (s *Service) reportOrganizations(ctx context.Context, c access.Caller, org uuid.UUID, perm rbac.Permission) ([]reportOrg, error) {
+	return s.wholeOrganizations(ctx, c, org, rbac.PermReportView, perm)
+}
+
+// linkedOrganizations lists the linked organizations, or the one asked for,
+// by name.
+func (s *Service) linkedOrganizations(ctx context.Context, c access.Caller, org uuid.UUID) ([]reportOrg, error) {
 	var out []reportOrg
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT l.organization_id, l.easypatch_id, o.name FROM easypatch_organizations l
@@ -67,9 +73,7 @@ func (s *Service) reportOrganizations(ctx context.Context, c access.Caller, org 
 			if err := rows.Scan(&o.id, &o.ep, &o.name); err != nil {
 				return err
 			}
-			if c.Can(rbac.PermReportView, rbac.Org(o.id)) && c.Can(perm, rbac.Org(o.id)) {
-				out = append(out, o)
-			}
+			out = append(out, o)
 		}
 		return rows.Err()
 	})

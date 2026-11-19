@@ -8,8 +8,10 @@
 // preview, changes the package on the machine. A value set on the organization (C4) reaches the site
 // and the device, as do a tag's policy and the device's own. Reports (C5) list the device's
 // compliance and the install; a monthly PDF is made, downloaded and deleted, emailing it says
-// EasyRMM has no mail server, and a schedule is set. scripts/e2e/bundle.sh starts everything and
-// runs this.
+// EasyRMM has no mail server, and a schedule is set. Under Settings → Patching (C6) a server
+// setting is changed, an OS lifecycle entry added, changed and deleted, the agent's .deb downloaded,
+// and EasyPatch's own audit log names the EasyRMM user who did each. scripts/e2e/bundle.sh starts
+// everything and runs this.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -438,3 +440,70 @@ test("Reports list the device's compliance and the install; a monthly report is 
   ]);
 });
 
+test("Settings → Patching changes a server setting and the OS lifecycle, lists the agent packages, and EasyPatch's audit log names who did it", async () => {
+  const page = admin;
+  const main = page.getByRole("main");
+
+  // A server setting, saved in the engine and still there after a reload.
+  await page.goto("/settings?tab=patching&view=server");
+  await expect(main.getByText(/^EasyPatch \d+\.\d+\.\d+\./)).toBeVisible();
+  await main.getByRole("textbox", { name: "Prepared by" }).fill("Fabrikam IT");
+  await main.getByRole("spinbutton", { name: "Finished jobs" }).fill("120");
+  await main.getByRole("button", { name: "Save settings" }).click();
+  await expect(page.getByText("EasyPatch's settings saved.")).toBeVisible();
+  await page.reload();
+  await expect(main.getByRole("spinbutton", { name: "Finished jobs" })).toHaveValue("120");
+  await expect(main.getByRole("textbox", { name: "Prepared by" })).toHaveValue("Fabrikam IT");
+  const saved = await api<{ settings: { reportBrandName: string | null; retentionJobsDays: number } }>("GET", "/api/v1/patching/settings");
+  expect(saved.settings).toMatchObject({ reportBrandName: "Fabrikam IT", retentionJobsDays: 120 });
+
+  // An OS lifecycle entry, added, changed and deleted; EasyPatch's own entries are there.
+  await page.goto("/settings?tab=patching&view=lifecycle");
+  const lifecycle = main.getByRole("table", { name: "Operating system lifecycle" });
+  await expect(lifecycle.getByRole("row").filter({ hasText: "Debian 12 (bookworm)" })).toBeVisible();
+  await main.getByRole("button", { name: "Add entry" }).click();
+  let entry = page.getByRole("dialog", { name: "Add lifecycle entry" });
+  await entry.getByLabel("Product").selectOption("Debian");
+  await entry.getByLabel(/^Build/).fill("99");
+  await entry.getByLabel(/^Version/).fill("99 (e2e)");
+  await entry.getByLabel(/^Security updates end/).fill("2031-06-30");
+  await entry.getByRole("button", { name: "Add entry" }).click();
+  await expect(page.getByText("Debian 99 (e2e) added.")).toBeVisible();
+  const row = lifecycle.getByRole("row").filter({ hasText: "Debian 99 (e2e)" });
+  await expect(row).toContainText("Supported");
+  await main.getByRole("button", { name: "Edit Debian 99 (e2e)" }).click();
+  entry = page.getByRole("dialog", { name: "Edit lifecycle entry" });
+  await entry.getByLabel(/^Extended updates end/).fill("2033-06-30");
+  await entry.getByRole("button", { name: "Save entry" }).click();
+  await expect(page.getByText("Debian 99 (e2e) saved.")).toBeVisible();
+  await main.getByRole("button", { name: "Delete Debian 99 (e2e)" }).click();
+  await page.getByRole("dialog", { name: "Delete entry" }).getByRole("button", { name: "Delete entry" }).click();
+  await expect(page.getByText("Debian 99 (e2e) deleted.")).toBeVisible();
+  await expect(row).toHaveCount(0);
+
+  // The agent packages, from EasyRMM's own address: the .deb is a Debian package.
+  await page.goto("/settings?tab=patching&view=packages");
+  const deb = main.getByRole("table", { name: "EasyPatch agent packages" }).getByRole("row").filter({ hasText: "Debian and Ubuntu" }).first();
+  await expect(deb).toContainText("Newest");
+  const [download] = await Promise.all([page.waitForEvent("download"), deb.getByRole("link", { name: /\.deb$/ }).click()]);
+  expect(readFileSync(await download.path()).subarray(0, 8).toString()).toBe("!<arch>\n");
+
+  // EasyPatch's audit log says the EasyRMM user did each, through EasyRMM.
+  await page.goto("/settings?tab=patching&view=audit");
+  await main.getByLabel("Area").selectOption({ label: "OS lifecycle" });
+  const engineAudit = main.getByRole("table", { name: "EasyPatch's audit log" });
+  for (const action of ["OS lifecycle entry added", "OS lifecycle entry changed", "OS lifecycle entry deleted"]) {
+    await expect(engineAudit.getByRole("row").filter({ hasText: action }).filter({ hasText: ADMIN.email })).toContainText("Through EasyRMM");
+  }
+  await main.getByLabel("Area").selectOption({ label: "Server settings" });
+  await expect(engineAudit.getByRole("row").filter({ hasText: "Server settings changed" }).filter({ hasText: ADMIN.email })).toBeVisible();
+
+  // And EasyRMM's audit log has its own record of each.
+  const audit = await api<{ items: { action: string }[] }>("GET", "/api/v1/audit?action=patch");
+  expect(audit.items.slice(0, 4).map((a) => a.action)).toEqual([
+    "patch.lifecycle_delete",
+    "patch.lifecycle_update",
+    "patch.lifecycle_create",
+    "patch.settings_update",
+  ]);
+});

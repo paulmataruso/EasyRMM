@@ -1483,6 +1483,115 @@ export interface PatchReportSchedule {
   canEdit: boolean;
 }
 
+/** EasyPatch's server settings as Settings → Patching → Server shows them (one-product plan, C6). */
+export interface PatchServerSettings {
+  globalMaxConcurrentInstalls: number;
+  jobDefaultExpiryHours: number;
+  runningJobTimeoutHours: number;
+  waitingForRebootExpiryDays: number;
+  deliveryLeaseMinutes: number;
+  maxDeliveryAttempts: number;
+  offlineThresholdMinutes: number;
+  credentialLifetimeDays: number;
+  credentialRotateBeforeDays: number;
+  retentionEventsDays: number;
+  retentionAuditDays: number;
+  retentionJobsDays: number;
+  retentionScansDays: number;
+  retentionHistoryDays: number;
+  retentionReportsMonths: number;
+  vulnerabilityFeedsEnabled: boolean;
+  /** The "Prepared by" line of monthly reports; null leaves it out. */
+  reportBrandName: string | null;
+  rolloutGuardEnabled: boolean;
+  rolloutGuardMinFailedEndpoints: number;
+  rolloutGuardFailurePercent: number;
+  rolloutGuardWindowDays: number;
+}
+
+/** A vulnerability feed EasyPatch's worker downloads: kev, msrc or debian. */
+export interface PatchVulnerabilityFeed {
+  name: string;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+  lastError?: string;
+  version?: string;
+  itemCount: number;
+}
+
+export interface PatchSettingsView {
+  settings: PatchServerSettings;
+  feeds: PatchVulnerabilityFeed[];
+  version: string;
+  canEdit: boolean;
+  /** Why nobody may change them in EasyRMM: with a connected EasyPatch server, its own console does. */
+  readOnlyReason?: string;
+}
+
+/** An operating system build's end of servicing, matched by product, edition group and build. Dates are 2006-01-02. */
+export interface PatchLifecycleInput {
+  product: string;
+  editionGroup: string;
+  buildNumber: number;
+  versionLabel: string;
+  endOfServicing: string;
+  esuEndDate: string | null;
+  notes: string | null;
+}
+
+export interface PatchLifecycleEntry extends PatchLifecycleInput {
+  id: string;
+}
+
+export interface PatchLifecycleList {
+  items: PatchLifecycleEntry[];
+  canEdit: boolean;
+  readOnlyReason?: string;
+}
+
+/** An EasyPatch agent package, with where to download it. */
+export interface PatchAgentPackage {
+  fileName: string;
+  version: string;
+  architecture: string;
+  sizeBytes: number;
+  sha256: string;
+  isLatest: boolean;
+  /** msi, deb, rpm or pkg. */
+  format: string;
+  releaseKeyId?: string;
+  signatureProblem?: string;
+  url: string;
+}
+
+/** An entry of EasyPatch's own audit log. */
+export interface PatchAuditEntry {
+  id: number;
+  createdAt: string;
+  /** An EasyRMM user's name (via easyrmm), an EasyPatch user or API token (easypatch), or EasyPatch itself (system). */
+  actor: string;
+  via: "easyrmm" | "easypatch" | "system";
+  action: string;
+  targetType?: string;
+  targetId?: string;
+  organizationId?: string;
+  organizationName?: string;
+  deviceId?: string;
+  deviceName?: string;
+  /** JSON, as EasyPatch recorded it. */
+  details?: string;
+  ipAddress?: string;
+}
+
+export interface PatchAuditPage {
+  items: PatchAuditEntry[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  /** Includes the entries of no organization, for those who audit everywhere. */
+  everything: boolean;
+}
+
 export interface PatchTagList {
   items: PatchTag[];
   canManage: boolean;

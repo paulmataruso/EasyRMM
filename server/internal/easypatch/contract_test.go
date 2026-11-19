@@ -1475,6 +1475,127 @@ func TestContract(t *testing.T) {
 		}
 	})
 
+	// Settings → Patching's server-wide views (one-product plan, C6).
+	run("server settings, OS lifecycle and the audit log", func(t *testing.T) {
+		signer, err := NewSigner(c.engineKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		engine, err := NewEngineClient(c.engineURL, signer, "contract")
+		if err != nil {
+			t.Fatal(err)
+		}
+		const who = "contract-settings@example.test"
+		super := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: who, Role: RoleSuperAdmin, AllOrganizations: true})
+
+		// Every setting EasyRMM shows is one of EasyPatch's.
+		var raw map[string]json.RawMessage
+		c.must(http.MethodGet, "/api/v1/settings", c.token, nil, http.StatusOK, &raw)
+		b, _ := json.Marshal(ServerSettings{})
+		var shown map[string]any
+		_ = json.Unmarshal(b, &shown)
+		for k := range shown {
+			if _, ok := raw[k]; !ok {
+				t.Errorf("EasyPatch has no setting %q", k)
+			}
+		}
+		before, err := ep.ServerSettings(ctx)
+		if err != nil || before.GlobalMaxConcurrentInstalls == 0 || before.RetentionAuditDays == 0 {
+			t.Fatalf("settings: %+v, %v", before, err)
+		}
+		if _, err := ep.SetServerSettings(ctx, before); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an API token changes the settings: %v", err)
+		}
+		t.Cleanup(func() {
+			if _, err := engine.SetServerSettings(super, before); err != nil {
+				t.Errorf("restore the settings: %v", err)
+			}
+		})
+		in := before
+		brand := "Contract IT"
+		in.ReportBrandName, in.RolloutGuardFailurePercent = &brand, before.RolloutGuardFailurePercent%100+1
+		got, err := engine.SetServerSettings(super, in)
+		if err != nil || got.ReportBrandName == nil || *got.ReportBrandName != brand || got.RolloutGuardFailurePercent != in.RolloutGuardFailurePercent {
+			t.Errorf("changed: %+v, %v", got, err)
+		}
+		// What EasyRMM does not show is kept.
+		var after map[string]json.RawMessage
+		c.must(http.MethodGet, "/api/v1/settings", c.token, nil, http.StatusOK, &after)
+		for k, v := range raw {
+			if _, ok := shown[k]; !ok && string(after[k]) != string(v) {
+				t.Errorf("%s changed from %s to %s", k, v, after[k])
+			}
+		}
+		bad := before
+		bad.GlobalMaxConcurrentInstalls = 0
+		if _, err := engine.SetServerSettings(super, bad); !IsStatus(err, http.StatusBadRequest) {
+			t.Errorf("no installs at once: %v", err)
+		}
+		if _, err := ep.VulnerabilityFeeds(ctx); err != nil {
+			t.Errorf("feeds: %v", err)
+		}
+
+		// Lifecycle entries: read with the token, changed with a SuperAdmin
+		// statement; EasyRMM's 64 characters of a product fit.
+		list, err := ro.Lifecycle(ctx)
+		if err != nil || len(list) == 0 || list[0].Product == "" || list[0].EndOfServicing == "" {
+			t.Fatalf("lifecycle: %+v, %v", list, err)
+		}
+		entry := LifecycleInput{Product: "Contract OS " + strings.Repeat("x", 52), EditionGroup: "Contract", BuildNumber: 900_000 + int(time.Now().UnixNano()%99_999),
+			VersionLabel: "1.0", EndOfServicing: "2030-01-31"}
+		if _, err := ep.CreateLifecycle(ctx, entry); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an API token adds an entry: %v", err)
+		}
+		e, err := engine.CreateLifecycle(super, entry)
+		if err != nil || e.ID == uuid.Nil || e.Product != entry.Product || e.EndOfServicing != "2030-01-31" || e.EsuEndDate != nil {
+			t.Fatalf("created: %+v, %v", e, err)
+		}
+		if _, err := engine.CreateLifecycle(super, entry); !IsStatus(err, http.StatusConflict) {
+			t.Errorf("the same build again: %v", err)
+		}
+		esu := "2033-01-31"
+		entry.EsuEndDate = &esu
+		if u, err := engine.UpdateLifecycle(super, e.ID, entry); err != nil || u.EsuEndDate == nil || *u.EsuEndDate != esu {
+			t.Errorf("updated: %+v, %v", u, err)
+		}
+		early := "2029-01-01"
+		entry.EsuEndDate = &early
+		if _, err := engine.UpdateLifecycle(super, e.ID, entry); !IsStatus(err, http.StatusBadRequest) {
+			t.Errorf("extended support ending first: %v", err)
+		}
+		if err := engine.DeleteLifecycle(super, e.ID); err != nil {
+			t.Fatal(err)
+		}
+		if err := engine.DeleteLifecycle(super, e.ID); !IsStatus(err, http.StatusNotFound) {
+			t.Errorf("deleted twice: %v", err)
+		}
+
+		// The audit log names the EasyRMM user; an Admin statement for one
+		// organization sees its entries only, and a read-only token none.
+		all := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: who, Role: RoleAdmin, AllOrganizations: true})
+		p, err := engine.AuditLogs(all, AuditFilter{Action: "lifecycle."}, 1, 50)
+		if err != nil || !slices.ContainsFunc(p.Items, func(a AuditLog) bool {
+			return a.Action == "lifecycle.create" && a.Username == "easyrmm:"+who && a.TargetID == e.ID.String() && a.OrganizationID == nil
+		}) || slices.ContainsFunc(p.Items, func(a AuditLog) bool { return !strings.HasPrefix(a.Action, "lifecycle.") }) {
+			t.Errorf("lifecycle entries: %+v, %v", p.Items[:min(len(p.Items), 5)], err)
+		}
+		if p, err := engine.AuditLogs(all, AuditFilter{Action: "settings."}, 1, 5); err != nil || len(p.Items) == 0 || p.Items[0].Username != "easyrmm:"+who {
+			t.Errorf("settings entries: %+v, %v", p, err)
+		}
+		one := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: who, Role: RoleAdmin, Organizations: []uuid.UUID{org.ID}})
+		p, err = engine.AuditLogs(one, AuditFilter{}, 1, 200)
+		if err != nil || len(p.Items) == 0 || slices.ContainsFunc(p.Items, func(a AuditLog) bool { return a.OrganizationID == nil || *a.OrganizationID != org.ID }) {
+			t.Errorf("one organization's entries: %d, %v", len(p.Items), err)
+		}
+		future := time.Now().Add(time.Hour)
+		if p, err := engine.AuditLogs(all, AuditFilter{From: &future}, 1, 5); err != nil || len(p.Items) != 0 {
+			t.Errorf("from an hour ahead: %+v, %v", p, err)
+		}
+		if _, err := ro.AuditLogs(ctx, AuditFilter{}, 1, 5); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("a read-only token reads the audit log: %v", err)
+		}
+	})
+
 	run("errors", func(t *testing.T) {
 		_, err := ep.Endpoint(ctx, uuid.New())
 		var e *Error
@@ -1895,6 +2016,8 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		fe.RebootPending = true
 	})
 	fakeHTTP := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: fakeTLS(t, fake.CAPEM)}}
+	fake.AddAudit(eptest.AuditInfo{Username: "token:easyrmm", Org: &fOrg, Endpoint: &fEndpoint, Action: "endpoint.update", TargetType: "Endpoint",
+		TargetID: fEndpoint.String(), Details: "{}", IPAddress: "192.0.2.1"})
 	at := time.Now().Add(4 * time.Hour).UTC().Truncate(time.Second)
 	install := map[string]any{"mode": "Selected", "updateGuids": []uuid.UUID{}, "force": false, "scheduledAt": at}
 	// The fake's endpoint has its own update GUIDs; ask each for one of its own.
@@ -1982,6 +2105,11 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		q("install preview", "GET", "/api/v1/endpoints/"+fEndpoint.String()+"/install-preview?mode=all",
 			"/api/v1/endpoints/"+endpoint.String()+"/install-preview?mode=all"),
 		q("message presets", "GET", "/api/v1/user-messages", "/api/v1/user-messages"),
+		// Server-wide settings (one-product plan, C6).
+		q("server settings", "GET", "/api/v1/settings", "/api/v1/settings"),
+		q("vulnerability feeds", "GET", "/api/v1/vulnerability-feeds", "/api/v1/vulnerability-feeds"),
+		q("lifecycle", "GET", "/api/v1/lifecycle", "/api/v1/lifecycle"),
+		q("audit log", "GET", "/api/v1/audit-logs?pageSize=5", "/api/v1/audit-logs?pageSize=5"),
 		{name: "message on Linux", method: "POST", fake: "/api/v1/endpoints/bulk/notify", real: "/api/v1/endpoints/bulk/notify",
 			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint}, "message": map[string]any{"preset": "SaveYourWork", "restartAt": nil}},
 			rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint}, "message": map[string]any{"preset": "SaveYourWork", "restartAt": nil}}},

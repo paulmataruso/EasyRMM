@@ -142,6 +142,10 @@ const ACTIONS: Record<string, string> = {
   "patch.report_send": "Emailed a monthly patch report",
   "patch.report_delete": "Deleted a monthly patch report",
   "patch.report_schedule": "Changed a patch report schedule",
+  "patch.settings_update": "Changed EasyPatch's server settings",
+  "patch.lifecycle_create": "Added an OS lifecycle entry",
+  "patch.lifecycle_update": "Changed an OS lifecycle entry",
+  "patch.lifecycle_delete": "Deleted an OS lifecycle entry",
 };
 
 export function actionLabel(action: string): string {
@@ -191,6 +195,10 @@ export function auditTarget(e: AuditEntry): string {
     return typeof d.easyPatchName === "string" ? `${d.organization} → ${d.easyPatchName}` : d.organization;
   }
   if (e.targetType === "easypatch") return typeof d.url === "string" ? d.url : "EasyPatch server";
+  if (e.targetType === "easypatch_settings") return "EasyPatch server settings";
+  if (e.targetType === "easypatch_lifecycle" && typeof d.product === "string") {
+    return typeof d.versionLabel === "string" ? `${d.product} ${d.versionLabel}` : d.product;
+  }
   if (e.actorType === "user" && e.targetType === "user" && e.targetId === e.actorId) return "Own account";
   return e.targetType ? e.targetType.replace(/_/g, " ") : "—";
 }
