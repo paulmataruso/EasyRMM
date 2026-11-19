@@ -9,33 +9,23 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
-	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// TestBundledEngine runs the connector on the patching engine in this
-// deployment (one-product plan, B3): it replaces a server set up in Settings,
-// cannot be changed there, and calls the engine with statements that carry
-// each person's role and organizations rather than a token.
+// TestBundledEngine: EasyRMM calls the patching engine in this deployment
+// (one-product plan, B3) with statements that carry each person's role and
+// organizations, and creates and links every organization there itself
+// (ADR-0040).
 func TestBundledEngine(t *testing.T) {
 	f := newFixture(t)
 	ctx := f.ctx
-
-	// A server set up in Settings before, with a link.
-	f.connect()
-	old := f.ep.Org("Acme Patch")
-	if err := f.svc.LinkOrganization(ctx, f.admin.Actor, f.acme, old); err != nil {
-		t.Fatal(err)
-	}
-
 	key := bytes.Repeat([]byte{9}, 32)
 	engine := eptest.NewEngine(t, key)
-	engine.Capabilities = []string{CapabilityScheduledInstalls, CapabilityOnBehalfOf}
+	engine.Capabilities = []string{CapabilityScheduledInstalls}
 	signer, err := NewSigner(key)
 	if err != nil {
 		t.Fatal(err)
@@ -44,56 +34,28 @@ func TestBundledEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.UseEngine(ctx, client); err != nil {
+	if err := f.svc.UseEngine(client); err != nil {
 		t.Fatal(err)
 	}
-	if !f.svc.Bundled() {
-		t.Fatal("not bundled")
-	}
 
-	// The old server and its links are forgotten, and the audit log says why.
-	var rows int
-	if err := f.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM easypatch_connection) + (SELECT count(*) FROM easypatch_organizations)`).Scan(&rows)
-	}); err != nil || rows != 0 {
-		t.Fatalf("%d rows of the old server left, %v", rows, err)
-	}
-	if got := f.audits("easypatch.connection_delete"); len(got) != 1 || !strings.Contains(got[0].Details["reason"].(string), "replaced by the patching engine") {
-		t.Fatalf("audit: %+v", got)
-	}
-	// Starting again forgets nothing more.
-	if err := f.svc.UseEngine(ctx, client); err != nil || len(f.audits("easypatch.connection_delete")) != 1 {
-		t.Fatalf("second start: %v", err)
-	}
-
-	// Settings shows the engine, and cannot change it; there is no console
-	// of its own to open.
+	// Settings shows the engine; there is no console of its own to open.
 	conn, err := f.svc.Connection(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !conn.Configured || !conn.Bundled || !conn.CanOperate || conn.URL != engine.URL() || conn.ServerVersion != "1.9.0" ||
-		!slices.Contains(conn.Capabilities, CapabilityScheduledInstalls) || conn.UpdatedAt != nil {
+	if !conn.Configured || conn.URL != engine.URL() || conn.ServerVersion != "1.9.0" || !slices.Contains(conn.Capabilities, CapabilityScheduledInstalls) {
 		t.Fatalf("connection: %+v", conn)
 	}
-	if st, err := f.svc.Status(ctx, f.admin); err != nil || !st.Configured || !st.CanOperate || !st.CanSchedule || !st.Bundled {
+	if st, err := f.svc.Status(ctx, f.admin); err != nil || !st.Configured || !st.CanSchedule {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
-	_, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: f.ep.URL(), Token: f.ep.Token, CACert: f.ep.CAPEM})
-	wantErr(t, err, apperr.KindConflict, "patching_bundled")
-	wantErr(t, f.svc.DeleteConnection(ctx, f.admin.Actor), apperr.KindConflict, "patching_bundled")
-
-	// Every organization has its own in the engine, which EasyRMM creates
-	// and links (ADR-0040): there is no link to choose or remove.
-	wantErr(t, f.svc.LinkOrganization(ctx, f.admin.Actor, f.acme, uuid.New()), apperr.KindConflict, "patching_linked_by_easyrmm")
-	wantErr(t, f.svc.UnlinkOrganization(ctx, f.admin.Actor, f.acme), apperr.KindConflict, "patching_linked_by_easyrmm")
 	if _, err := f.svc.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
 	epAcme := f.engineOrg(f.acme)
 
-	// Links and the patching pages work as with a connected server. EasyRMM's
-	// own work acts as EasyRMM, in every organization.
+	// Links and the patching pages: EasyRMM's own work acts as EasyRMM, in
+	// every organization.
 	e1 := engine.AddEndpoint(epAcme, "web-01", "", "AAAA-1111")
 	web := f.device(f.acme, f.hq, "web-01")
 	// Agents enroll with the engine's public address (EasyRMM's own, in
@@ -157,21 +119,18 @@ func TestBundledEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := newFixture(t)
-	if err := g.svc.UseEngine(ctx, wrong); err != nil {
+	if err := g.svc.UseEngine(wrong); err != nil {
 		t.Fatal(err)
 	}
 	conn, err = g.svc.CheckConnection(ctx)
-	if err != nil || !conn.Bundled || conn.LastError == "" || conn.LastErrorAt == nil {
+	if err != nil || !conn.Configured || conn.LastError == "" || conn.LastErrorAt == nil {
 		t.Fatalf("a wrong key is shown in Settings: %+v, %v", conn, err)
 	}
 	if orgs, err := g.svc.Organizations(ctx); err != nil || !strings.Contains(orgs.Error, "patching engine answered 401") {
 		t.Fatalf("organizations with a wrong key: %+v, %v", orgs, err)
 	}
 
-	// An engine client is required, and only loopback is accepted.
-	if err := f.svc.UseEngine(ctx, f.client()); err == nil {
-		t.Error("a token client became the engine")
-	}
+	// Only loopback is accepted.
 	if _, err := NewEngineClient("http://192.0.2.20:18180", signer, "1.0.0"); err == nil {
 		t.Error("an engine beyond loopback was accepted")
 	}
@@ -190,14 +149,4 @@ func (f *fixture) engineOrg(org uuid.UUID) uuid.UUID {
 func (f *fixture) engineSite(site uuid.UUID) uuid.UUID {
 	f.t.Helper()
 	return f.id(`SELECT easypatch_id FROM easypatch_sites WHERE site_id = $1`, site)
-}
-
-// client is a token client for the fixture's server.
-func (f *fixture) client() *Client {
-	f.t.Helper()
-	c, err := NewClient(f.ep.URL(), f.ep.Token, f.ep.CAPEM, "1.0.0")
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	return c
 }

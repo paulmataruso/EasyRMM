@@ -40,13 +40,13 @@ func TestEngineErrorsForTheConsole(t *testing.T) {
 		code string
 	}{
 		"field errors":           {&Error{Status: 400, Code: "validation_failed", Detail: "name: x", Fields: map[string]string{"name": "x"}}, apperr.KindInvalid, ""},
-		"engine unreachable":     {&Error{Engine: true, Detail: "Cannot reach the patching engine: connection refused"}, apperr.KindUnavailable, "patching_unavailable"},
-		"engine failing":         {&Error{Engine: true, Status: 503, Detail: "The database is not available."}, apperr.KindUnavailable, "patching_unavailable"},
-		"engine refuses the key": {&Error{Engine: true, Status: 401, Detail: "not valid"}, apperr.KindUnavailable, "patching_unavailable"},
-		"engine refuses a role":  {&Error{Engine: true, Status: 403, Detail: "no"}, apperr.KindUnavailable, "patching_unavailable"},
-		"engine: not found":      {&Error{Engine: true, Status: 404, Detail: "not found"}, apperr.KindNotFound, ""},
-		"engine: duplicate job":  {&Error{Engine: true, Status: 409, Code: "duplicate_job", Detail: "queued"}, apperr.KindConflict, "duplicate_job"},
-		"server refuses a token": {&Error{Status: 401, Detail: "expired"}, apperr.KindUnavailable, "easypatch_token"},
+		"engine unreachable":     {&Error{Detail: "Cannot reach the patching engine: connection refused"}, apperr.KindUnavailable, "patching_unavailable"},
+		"engine failing":         {&Error{Status: 503, Detail: "The database is not available."}, apperr.KindUnavailable, "patching_unavailable"},
+		"engine refuses the key": {&Error{Status: 401, Detail: "not valid"}, apperr.KindUnavailable, "patching_unavailable"},
+		"engine refuses a role":  {&Error{Status: 403, Detail: "no"}, apperr.KindUnavailable, "patching_unavailable"},
+		"engine: not found":      {&Error{Status: 404, Detail: "not found"}, apperr.KindNotFound, ""},
+		"engine: duplicate job":  {&Error{Status: 409, Code: "duplicate_job", Detail: "queued"}, apperr.KindConflict, "duplicate_job"},
+		"engine: refused":        {&Error{Status: 400, Detail: "bad"}, apperr.KindConflict, "easypatch_refused"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ae, ok := apperr.As(epError(tc.err))
@@ -58,7 +58,7 @@ func TestEngineErrorsForTheConsole(t *testing.T) {
 			}
 		})
 	}
-	if got := (&Error{Engine: true, Status: 401, Detail: "x"}).Error(); !strings.HasPrefix(got, "The patching engine answered 401") {
+	if got := (&Error{Status: 401, Detail: "x"}).Error(); !strings.HasPrefix(got, "The patching engine answered 401") {
 		t.Errorf("message %q", got)
 	}
 }
@@ -82,7 +82,7 @@ func TestEngineProbe(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	if r := e.row(ctx, now, false); r.lastError != "" || r.version != "1.9.0" || !r.canOperate || r.capabilities == nil || r.url != srv.URL() {
+	if r := e.row(ctx, now, false); r.lastError != "" || r.version != "1.9.0" || r.capabilities == nil || r.url != srv.URL() {
 		t.Fatalf("healthy: %+v", r)
 	}
 	// Read again only when due, or when asked.
@@ -166,7 +166,7 @@ func TestEngineClient(t *testing.T) {
 	if _, err := NewEngineClient("http://127.0.0.1:18180", nil, "test"); err == nil {
 		t.Error("no signer was accepted")
 	}
-	if c := engineClient(t, "http://[::1]:18180/", key); !c.Engine() || c.base.String() != "http://[::1]:18180" {
+	if c := engineClient(t, "http://[::1]:18180/", key); c.base.String() != "http://[::1]:18180" {
 		t.Errorf("client %v", c.base)
 	}
 
@@ -177,7 +177,7 @@ func TestEngineClient(t *testing.T) {
 	t.Cleanup(redirect.Close)
 	_, err := engineClient(t, redirect.URL, key).Organizations(context.Background())
 	var e *Error
-	if !errors.As(err, &e) || e.Status != http.StatusFound || !e.Engine {
+	if !errors.As(err, &e) || e.Status != http.StatusFound {
 		t.Fatalf("redirect: %#v", err)
 	}
 	// Nothing listening.
@@ -185,7 +185,7 @@ func TestEngineClient(t *testing.T) {
 	url := closed.URL
 	closed.Close()
 	_, err = engineClient(t, url, key).Organizations(context.Background())
-	if !errors.As(err, &e) || e.Status != 0 || !e.Engine || !strings.Contains(e.Detail, "Cannot reach the patching engine") {
+	if !errors.As(err, &e) || e.Status != 0 || !strings.Contains(e.Detail, "Cannot reach the patching engine") {
 		t.Fatalf("closed: %#v", err)
 	}
 }

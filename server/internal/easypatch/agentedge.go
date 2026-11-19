@@ -33,7 +33,7 @@ var agentPrefixes = []string{"/api/v1/agents/", "/downloads/agent/", "/downloads
 const AgentBodyLimit = 20 << 20
 
 // AgentPath reports whether p is one of the engine's agent paths, which
-// the edge forwards to it in bundled mode.
+// the edge forwards to it.
 func AgentPath(p string) bool {
 	for _, prefix := range agentPrefixes {
 		if strings.HasPrefix(p, prefix) {

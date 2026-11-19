@@ -166,7 +166,7 @@ func (t *installTarget) ineligible() string {
 	case t.removing:
 		return "EasyRMM is removing this device's EasyPatch agent. Try again once it is gone."
 	case t.easyPatchOrg == nil:
-		return "This device's organization is not linked to an EasyPatch organization. A super administrator links it in Settings → EasyPatch."
+		return "This device's organization has no patching organization yet: EasyRMM makes it on its next pass. Try again in a minute."
 	case !t.enrolled:
 		return "This device has no EasyRMM agent to install the EasyPatch agent with."
 	case formats(t.platform) == nil:
@@ -439,13 +439,15 @@ func (s *Service) instruction(ctx context.Context, deviceID, attempt uuid.UUID, 
 	if why := t.ineligible(); why != "" {
 		return nil, nil, why, nil
 	}
+	// Agents enroll with the engine's public address (EasyRMM's own), never
+	// its loopback one.
 	server := strings.TrimRight(r.publicURL, "/")
 	if server == "" {
-		server = strings.TrimRight(r.url, "/")
+		return nil, nil, "The patching engine has no public address for agents to enroll with. Check that it runs with EASYRMM_PUBLIC_URL.", nil
 	}
 	pkgs, err := cl.AgentPackages(ctx)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return nil, nil, "EasyPatch could not list its agent packages: " + message(epError(err)), nil
 	}
 	chosen := choosePackages(pkgs, server, t.platform, agentproto.EasyPatchArch(t.arch))
@@ -457,7 +459,7 @@ func (s *Service) instruction(ctx context.Context, deviceID, attempt uuid.UUID, 
 	if site == nil {
 		sites, err := cl.Sites(ctx, *t.easyPatchOrg)
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return nil, nil, "EasyPatch could not list the organization's sites: " + message(epError(err)), nil
 		}
 		for _, x := range sites {
@@ -469,7 +471,7 @@ func (s *Service) instruction(ctx context.Context, deviceID, attempt uuid.UUID, 
 	}
 	token, err := cl.CreateEnrollmentToken(ctx, *t.easyPatchOrg, site, cut("EasyRMM install on "+t.name, 200), onBehalfOf)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return nil, nil, "EasyPatch did not create an enrollment token: " + message(epError(err)), nil
 	}
 	now := s.now()

@@ -34,12 +34,9 @@ type ExclusionInput struct {
 // manageable reads a linked device the caller may manage patching of, and
 // a client that may act.
 func (s *Service) manageable(ctx context.Context, c access.Caller, id uuid.UUID) (deviceRow, *Client, error) {
-	d, r, cl, err := s.linked(ctx, c, id, rbac.PermPatchManage)
+	d, _, cl, err := s.linked(ctx, c, id, rbac.PermPatchManage)
 	if err != nil {
 		return d, nil, err
-	}
-	if !r.canOperate {
-		return d, nil, errReadOnly
 	}
 	return d, cl, nil
 }

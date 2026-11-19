@@ -14,7 +14,6 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch"
-	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
 )
 
@@ -25,9 +24,6 @@ import (
 // it with the server stopped, so that the reconciler does not act on the
 // engine's records before they are linked.
 func ImportEasyPatch(ctx context.Context, cfg *config.Config, log *slog.Logger, out io.Writer) error {
-	if !cfg.Patching.Bundled() {
-		return errors.New("importing EasyPatch needs the patching engine in this deployment")
-	}
 	migCfg, err := pgx.ParseConfig(cfg.DatabaseMigrationURL)
 	if err != nil {
 		return fmt.Errorf("EASYRMM_DATABASE_MIGRATION_URL: %w", err)
@@ -42,10 +38,6 @@ func ImportEasyPatch(ctx context.Context, cfg *config.Config, log *slog.Logger, 
 		return err
 	}
 	defer db.Close()
-	sealer, err := secrets.NewSealer(cfg.SecretKeys...)
-	if err != nil {
-		return err
-	}
 	signer, err := easypatch.NewSigner(cfg.Patching.Key)
 	if err != nil {
 		return err
@@ -67,8 +59,8 @@ func ImportEasyPatch(ctx context.Context, cfg *config.Config, log *slog.Logger, 
 		return err
 	}
 	auditLog := audit.New(db, time.Now)
-	svc := easypatch.New(db, auditLog, sealer, Version, log)
-	if err := svc.UseEngine(ctx, engine); err != nil {
+	svc := easypatch.New(db, auditLog, Version, log)
+	if err := svc.UseEngine(engine); err != nil {
 		return err
 	}
 	rep, err := svc.Import(ctx, tenancy.New(db, auditLog))

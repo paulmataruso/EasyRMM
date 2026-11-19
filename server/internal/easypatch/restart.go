@@ -159,7 +159,7 @@ func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, 
 			plan.ServersKnown = false
 			endpoints, err := s.endpoints(rctx, cl, org)
 			if err != nil {
-				s.noteError(ctx, err)
+				s.noteError(err)
 				return RestartPlan{}, nil, epError(err)
 			}
 			for _, i := range idx {
@@ -176,7 +176,7 @@ func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, 
 				}
 			}
 		case err != nil:
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return RestartPlan{}, nil, epError(err)
 		default:
 			listed := map[uuid.UUID]PendingRestart{}
@@ -217,7 +217,7 @@ func (s *Service) checkAnyRestart(ctx context.Context, cl *Client, endpointID uu
 	case IsStatus(err, http.StatusNotFound):
 		check.Reason = "EasyPatch no longer lists its endpoint."
 	case err != nil:
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return epError(err)
 	case !slices.Contains(e.AgentCapabilities, AgentCanRestart):
 		check.Reason = "Its EasyPatch agent cannot restart the computer; update the agent first."
@@ -326,15 +326,12 @@ func (s *Service) Restart(ctx context.Context, c access.Caller, in RestartInput)
 // RetryJob runs a finished job of a device the caller may manage patching
 // of again, as a new job, which it returns.
 func (s *Service) RetryJob(ctx context.Context, c access.Caller, id uuid.UUID) (JobView, error) {
-	old, d, r, cl, err := s.job(ctx, c, id)
+	old, d, _, cl, err := s.job(ctx, c, id)
 	if err != nil {
 		return JobView{}, err
 	}
 	if !c.Can(rbac.PermPatchManage, d.resource()) {
 		return JobView{}, apperr.Forbidden()
-	}
-	if !r.canOperate {
-		return JobView{}, errReadOnly
 	}
 	j, err := cl.RetryJob(ctx, id, c.Actor.Label)
 	if err != nil {

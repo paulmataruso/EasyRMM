@@ -4,7 +4,6 @@ package easypatch
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"io"
@@ -25,7 +24,6 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
-	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
 )
 
@@ -40,19 +38,13 @@ type fixture struct {
 	admin            access.Caller
 }
 
+// newFixture is EasyRMM on the patching engine as eptest serves it, with
+// Acme (HQ and Branch) and Globex (Plant).
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	inst := testdb.New(t)
-	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
-		t.Fatal(err)
-	}
-	sealer, err := secrets.NewSealer(secrets.Key{ID: "k1", Raw: raw})
-	if err != nil {
-		t.Fatal(err)
-	}
-	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, ep: eptest.New(t)}
-	f.svc = New(inst.DB, audit.New(inst.DB, nil), sealer, "1.0.0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, ep: eptest.NewEngine(t, reconcileKey)}
+	f.svc = f.engineService(f.ep)
 	f.acme = f.id(`INSERT INTO organizations (name) VALUES ('Acme') RETURNING id`)
 	f.hq = f.id(`INSERT INTO sites (organization_id, name) VALUES ($1, 'HQ') RETURNING id`, f.acme)
 	f.branch = f.id(`INSERT INTO sites (organization_id, name) VALUES ($1, 'Branch') RETURNING id`, f.acme)
@@ -103,19 +95,33 @@ func (f *fixture) report(device uuid.UUID, serial string, rep *agentproto.EasyPa
 		ON CONFLICT (device_id) DO UPDATE SET data = $2`, device, b)
 }
 
+// unconfigured is a service before UseEngine: patching is not set up.
+func (f *fixture) unconfigured() *Service {
+	return New(f.db, audit.New(f.db, nil), "1.0.0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// withoutEngine has f run before UseEngine.
+func (f *fixture) withoutEngine() *fixture {
+	f.svc = f.unconfigured()
+	return f
+}
+
+// enginePublicURL is the engine's public address, as eptest's server-info
+// gives it: where agents enroll.
+const enginePublicURL = "https://patch.example.com"
+
 // enrolled is what an enrolled EasyPatch agent reports.
 func (f *fixture) enrolled(e *eptest.Endpoint) *agentproto.EasyPatchAgent {
-	return &agentproto.EasyPatchAgent{Version: "1.9.0", Status: "Active", ServerURL: f.ep.URL(), EndpointID: e.ID.String(),
+	return &agentproto.EasyPatchAgent{Version: "1.9.0", Status: "Active", ServerURL: enginePublicURL, EndpointID: e.ID.String(),
 		KeyFingerprint: e.Fingerprint}
 }
 
-func (f *fixture) connect() Connection {
+// linkOrg records org as linked to the engine's organization epOrg, as the
+// reconciler does when it adopts one (ADR-0040), without a pass that would
+// change the engine's organizations.
+func (f *fixture) linkOrg(org, epOrg uuid.UUID, name string) {
 	f.t.Helper()
-	c, err := f.svc.UpdateConnection(f.ctx, f.admin.Actor, ConnectionInput{URL: f.ep.URL(), Token: f.ep.Token, CACert: f.ep.CAPEM})
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	return c
+	f.exec(`INSERT INTO easypatch_organizations (organization_id, easypatch_id, easypatch_name) VALUES ($1, $2, $3)`, org, epOrg, name)
 }
 
 func (f *fixture) sync() int {
@@ -196,78 +202,35 @@ func TestConnection(t *testing.T) {
 	f := newFixture(t)
 	ctx := f.ctx
 
-	c, err := f.svc.Connection(ctx)
+	// Before UseEngine, patching is not set up.
+	none := f.unconfigured()
+	c, err := none.Connection(ctx)
 	if err != nil || c.Configured || c.Capabilities == nil {
 		t.Fatalf("unset: %+v, %v", c, err)
 	}
-	_, err = f.svc.Organizations(ctx)
+	_, err = none.Organizations(ctx)
 	wantErr(t, err, apperr.KindConflict, "easypatch_not_configured")
-	_, err = f.svc.CheckConnection(ctx)
+	_, err = none.CheckConnection(ctx)
 	wantErr(t, err, apperr.KindNotFound, "")
-	wantErr(t, f.svc.DeleteConnection(ctx, f.admin.Actor), apperr.KindNotFound, "")
-	if n, err := f.svc.SyncLinks(ctx); n != 0 || err != nil {
-		t.Fatalf("sync without a server: %d %v", n, err)
+	if n, err := none.SyncLinks(ctx); n != 0 || err != nil {
+		t.Fatalf("sync without the engine: %d %v", n, err)
 	}
+	if res, err := none.Reconcile(ctx); err != nil || res.Created != 0 {
+		t.Fatalf("reconcile without the engine: %+v %v", res, err)
+	}
+	wantErr(t, none.UseEngine(nil), apperr.KindInvalid, "")
 
-	// What is checked before EasyPatch is called.
-	in := ConnectionInput{URL: "http://patch.example.com", Token: f.ep.Token}
-	_, err = f.svc.UpdateConnection(ctx, f.admin.Actor, in)
-	wantField(t, err, "url", "https://")
-	_, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: f.ep.URL()})
-	wantField(t, err, "token", "is required")
-	_, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: f.ep.URL(), Token: "secret"})
-	wantField(t, err, "token", "ept_")
-	_, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: f.ep.URL(), Token: f.ep.Token, CACert: "not a certificate"})
-	wantField(t, err, "caCert", "PEM")
-	_, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: f.ep.URL(), Token: f.ep.Token, CACert: strings.Repeat("x", 70000)})
-	wantField(t, err, "caCert", "64 KiB")
-
-	// What EasyPatch answers.
-	_, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: f.ep.URL(), Token: f.ep.Token})
-	wantField(t, err, "url", "certificate is not trusted")
-	_, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: f.ep.URL(), Token: "ept_" + strings.Repeat("B", 43), CACert: f.ep.CAPEM})
-	wantField(t, err, "token", "EasyPatch refused the token")
-	f.ep.Set(func() { f.ep.Version = "" })
-	_, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: f.ep.URL(), Token: f.ep.Token, CACert: f.ep.CAPEM})
-	wantField(t, err, "url", "does not answer like EasyPatch")
-	f.ep.Set(func() { f.ep.Version = "1.9.0" })
-	if got := f.audits("easypatch."); len(got) != 0 {
-		t.Fatalf("refused settings were audited: %+v", got)
-	}
-
-	c = f.connect()
-	if !c.Configured || c.ServerVersion != "1.9.0" || c.PublicURL != "https://patch.example.com" || !c.CanOperate || c.URL != f.ep.URL() ||
-		c.CheckedAt == nil || c.UpdatedBy != "ada@example.com" || len(c.Capabilities) != 0 || c.CACert == "" {
-		t.Fatalf("connected: %+v", c)
-	}
-	var sealed string
-	_ = f.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT token_sealed FROM easypatch_connection`).Scan(&sealed)
-	})
-	if strings.Contains(sealed, f.ep.Token) || strings.Contains(sealed, f.ep.Token[4:20]) {
-		t.Fatal("the token is stored in the clear")
-	}
-	if b, _ := json.Marshal(c); strings.Contains(string(b), f.ep.Token) {
-		t.Fatal("the token is shown")
-	}
-	got := f.audits("easypatch.")
-	if len(got) != 1 || got[0].Action != "easypatch.connection_update" || got[0].Details["tokenChanged"] != true ||
-		got[0].Details["canOperate"] != true || got[0].Details["linksForgotten"] != false {
-		t.Fatalf("audit: %+v", got)
-	}
-
-	// The same server, written differently, keeps the stored token.
-	c, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: strings.ToUpper(f.ep.URL()[:8]) + f.ep.URL()[8:] + "/", CACert: f.ep.CAPEM})
-	if err != nil || c.URL != f.ep.URL() {
-		t.Fatalf("same server: %+v, %v", c, err)
+	// The engine as Settings shows it.
+	c, err = f.svc.Connection(ctx)
+	if err != nil || !c.Configured || c.ServerVersion != "1.9.0" || c.PublicURL != enginePublicURL || c.URL != f.ep.URL() ||
+		c.CheckedAt == nil || len(c.Capabilities) != 0 || c.LastError != "" {
+		t.Fatalf("engine: %+v, %v", c, err)
 	}
 
 	// Checks record what they find.
-	f.ep.Set(func() {
-		f.ep.ReadOnly, f.ep.Capabilities = true, []string{CapabilityScheduledInstalls, CapabilityOnBehalfOf}
-	})
+	f.ep.Set(func() { f.ep.Capabilities = []string{CapabilityScheduledInstalls} })
 	c, err = f.svc.CheckConnection(ctx)
-	if err != nil || c.CanOperate || !slices.Equal(c.Capabilities, []string{CapabilityScheduledInstalls, CapabilityOnBehalfOf}) || c.LastError != "" {
+	if err != nil || !slices.Equal(c.Capabilities, []string{CapabilityScheduledInstalls}) || c.LastError != "" {
 		t.Fatalf("check: %+v, %v", c, err)
 	}
 	f.ep.Set(func() { f.ep.Down = true })
@@ -275,50 +238,9 @@ func TestConnection(t *testing.T) {
 	if err != nil || c.LastError == "" || c.LastErrorAt == nil || !strings.Contains(c.LastError, "database is not available") {
 		t.Fatalf("check while down: %+v, %v", c, err)
 	}
-	f.ep.Set(func() { f.ep.Down, f.ep.ReadOnly = false, false })
-	if c, _ = f.svc.CheckConnection(ctx); c.LastError != "" || !c.CanOperate {
+	f.ep.Set(func() { f.ep.Down = false })
+	if c, _ = f.svc.CheckConnection(ctx); c.LastError != "" {
 		t.Fatalf("check after: %+v", c)
-	}
-
-	// Another server forgets the links, which name the old server's ids.
-	org := f.ep.Org("Acme Patch")
-	if err := f.svc.LinkOrganization(ctx, f.admin.Actor, f.acme, org); err != nil {
-		t.Fatal(err)
-	}
-	d := f.device(f.acme, f.hq, "web-01")
-	f.exec(`INSERT INTO easypatch_devices (device_id, state, reason) VALUES ($1, 'unlinked', 'test')`, d)
-	other := eptest.New(t)
-	c, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: other.URL(), CACert: other.CAPEM})
-	wantField(t, err, "token", "is required")
-	c, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: other.URL(), Token: other.Token, CACert: other.CAPEM})
-	if err != nil || c.URL != other.URL() {
-		t.Fatalf("other server: %+v, %v", c, err)
-	}
-	if l := f.link(d); l.state != LinkNone {
-		t.Fatalf("device link kept: %+v", l)
-	}
-	if o, _ := f.svc.Organizations(ctx); len(o.Links) != 0 {
-		t.Fatalf("organization links kept: %+v", o.Links)
-	}
-	if got := f.audits("easypatch.connection_update"); got[len(got)-1].Details["linksForgotten"] != true {
-		t.Fatalf("audit: %+v", got[len(got)-1])
-	}
-
-	// A token the server's key cannot open asks for the token again.
-	f.exec(`UPDATE easypatch_connection SET token_sealed = 'garbage', updated_at = now()`)
-	_, err = f.svc.Organizations(ctx)
-	wantErr(t, err, apperr.KindUnavailable, "easypatch_token")
-	_, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: other.URL(), CACert: other.CAPEM})
-	wantField(t, err, "token", "cannot be opened")
-
-	if err := f.svc.DeleteConnection(ctx, f.admin.Actor); err != nil {
-		t.Fatal(err)
-	}
-	if c, _ := f.svc.Connection(ctx); c.Configured {
-		t.Fatal("still configured")
-	}
-	if got := f.audits("easypatch.connection_delete"); len(got) != 1 || got[0].Label != "ada@example.com" {
-		t.Fatalf("audit: %+v", got)
 	}
 
 	// Run stops with its context.
@@ -327,26 +249,14 @@ func TestConnection(t *testing.T) {
 	f.svc.Run(runCtx)
 }
 
+// TestOrganizationsAndLinks checks which device is which engine endpoint.
+// Organizations are linked as the reconciler links them; Globex is not, at
+// first.
 func TestOrganizationsAndLinks(t *testing.T) {
 	f := newFixture(t)
 	ctx := f.ctx
-	f.connect()
 	epAcme, epGlobex := f.ep.Org("Acme Patch"), f.ep.Org("Globex Patch")
-
-	wantField(t, f.svc.LinkOrganization(ctx, f.admin.Actor, f.acme, uuid.New()), "easyPatchId", "no such organization")
-	wantErr(t, f.svc.LinkOrganization(ctx, f.admin.Actor, uuid.New(), epAcme), apperr.KindNotFound, "")
-	if err := f.svc.LinkOrganization(ctx, f.admin.Actor, f.acme, epAcme); err != nil {
-		t.Fatal(err)
-	}
-	err := f.svc.LinkOrganization(ctx, f.admin.Actor, f.globex, epAcme)
-	wantErr(t, err, apperr.KindConflict, "easypatch_organization_linked")
-	if !strings.Contains(err.Error(), "Acme Patch in EasyPatch is already linked to Acme.") {
-		t.Fatalf("message: %v", err)
-	}
-	// Linking again replaces the link.
-	if err := f.svc.LinkOrganization(ctx, f.admin.Actor, f.acme, epAcme); err != nil {
-		t.Fatal(err)
-	}
+	f.linkOrg(f.acme, epAcme, "Acme Patch")
 
 	ep := func(org uuid.UUID, host, serial string) *eptest.Endpoint {
 		return f.ep.AddEndpoint(org, host, serial, strings.ToUpper(host[:4])+"-E2EA-533D-A960")
@@ -393,10 +303,10 @@ func TestOrganizationsAndLinks(t *testing.T) {
 			r := f.enrolled(e1)
 			r.ServerURL = "https://other.example.com"
 			return r
-		}, LinkUnlinked, "The EasyPatch agent is enrolled with https://other.example.com, not with the EasyPatch server EasyRMM uses."},
+		}, LinkUnlinked, "The EasyPatch agent is enrolled with https://other.example.com, not with this deployment's patching engine."},
 		{"web-02.corp.example.com", "", func() *agentproto.EasyPatchAgent {
 			r := f.enrolled(e7)
-			r.ServerURL = "https://patch.example.com/" // EasyPatch's public address
+			r.ServerURL = "HTTPS://patch.example.com:443/" // the same address, written differently
 			return r
 		}, LinkLinked, ""},
 		{"noid-01", "", func() *agentproto.EasyPatchAgent {
@@ -408,7 +318,7 @@ func TestOrganizationsAndLinks(t *testing.T) {
 			r := f.enrolled(e1)
 			r.EndpointID = uuid.NewString()
 			return r
-		}, LinkUnlinked, "EasyPatch has no endpoint"},
+		}, LinkUnlinked, "The patching engine has no endpoint"},
 	}
 	devices := map[string]uuid.UUID{}
 	for _, c := range cases {
@@ -429,7 +339,7 @@ func TestOrganizationsAndLinks(t *testing.T) {
 			t.Errorf("%s: %+v", c.name, l)
 		}
 	}
-	if l := f.link(g1); l.state != LinkUnlinked || l.reason != "The device's organization is not linked to an EasyPatch organization (Settings → EasyPatch)." {
+	if l := f.link(g1); l.state != LinkUnlinked || l.reason != "The device's organization has no patching organization yet: EasyRMM makes it on its next pass." {
 		t.Errorf("globex: %+v", l)
 	}
 	if l := f.link(quiet); l.state != LinkNone {
@@ -488,7 +398,7 @@ func TestOrganizationsAndLinks(t *testing.T) {
 	}
 
 	// A changed report is checked at once; a removed one is forgotten.
-	f.report(devices["app-01"], "", &agentproto.EasyPatchAgent{Version: "1.9.0", Status: "Active", ServerURL: f.ep.URL(),
+	f.report(devices["app-01"], "", &agentproto.EasyPatchAgent{Version: "1.9.0", Status: "Active", ServerURL: enginePublicURL,
 		EndpointID: e3.ID.String(), KeyFingerprint: "0000-0000"})
 	f.report(devices["web-02.corp.example.com"], "", nil)
 	f.sync()
@@ -499,14 +409,12 @@ func TestOrganizationsAndLinks(t *testing.T) {
 		t.Errorf("removed report kept: %+v", l)
 	}
 
-	// Linking Globex checks its devices again.
-	if err := f.svc.LinkOrganization(ctx, f.admin.Actor, f.globex, epGlobex); err != nil {
-		t.Fatal(err)
-	}
-	if l := f.link(g1); l.state != LinkPending {
-		t.Errorf("not pending: %+v", l)
-	}
+	// Once the reconciler links Globex, its refused device is linked at the
+	// next try.
+	f.linkOrg(f.globex, epGlobex, "Globex Patch")
+	f.svc.now = func() time.Time { return time.Now().Add(16 * time.Minute) }
 	f.sync()
+	f.svc.now = time.Now
 	if l := f.link(g1); l.state != LinkLinked {
 		t.Errorf("globex device: %+v", l)
 	}
@@ -515,7 +423,7 @@ func TestOrganizationsAndLinks(t *testing.T) {
 		t.Fatalf("organizations: %+v, %v", orgs, err)
 	}
 	acme := orgs.Links[0]
-	if acme.OrganizationName != "Acme" || acme.EasyPatchName != "Acme Patch" || acme.LinkedBy != "ada@example.com" ||
+	if acme.OrganizationName != "Acme" || acme.EasyPatchName != "Acme Patch" || acme.LinkedBy != "" ||
 		acme.Devices.Linked != 1 || acme.Devices.Unlinked != 12 || acme.Devices.Pending != 0 {
 		t.Fatalf("acme link: %+v", acme)
 	}
@@ -524,22 +432,7 @@ func TestOrganizationsAndLinks(t *testing.T) {
 	if err != nil || len(orgs.EasyPatch) != 0 || len(orgs.Links) != 2 || !strings.Contains(orgs.Error, "database is not available") {
 		t.Fatalf("organizations while down: %+v, %v", orgs, err)
 	}
-	wantErr(t, f.svc.LinkOrganization(ctx, f.admin.Actor, f.globex, epGlobex), apperr.KindUnavailable, "easypatch_unavailable")
 	f.ep.Set(func() { f.ep.Down = false })
-
-	if err := f.svc.UnlinkOrganization(ctx, f.admin.Actor, f.globex); err != nil {
-		t.Fatal(err)
-	}
-	wantErr(t, f.svc.UnlinkOrganization(ctx, f.admin.Actor, f.globex), apperr.KindNotFound, "")
-	f.sync()
-	if l := f.link(g1); l.state != LinkUnlinked {
-		t.Errorf("unlinked organization's device: %+v", l)
-	}
-	got := f.audits("easypatch.organization")
-	if len(got) != 4 || got[0].Action != "easypatch.organization_link" || got[0].Details["easyPatchName"] != "Acme Patch" ||
-		got[3].Action != "easypatch.organization_unlink" || got[3].Details["easyPatchName"] != "Globex Patch" {
-		t.Fatalf("audit: %+v", got)
-	}
 }
 
 // patchingFixture: Acme is linked to an EasyPatch organization. HQ has
@@ -555,11 +448,8 @@ type patchingFixture struct {
 
 func newPatching(t *testing.T) *patchingFixture {
 	f := &patchingFixture{fixture: newFixture(t)}
-	f.connect()
 	f.epAcme = f.ep.Org("Acme Patch")
-	if err := f.svc.LinkOrganization(f.ctx, f.admin.Actor, f.acme, f.epAcme); err != nil {
-		t.Fatal(err)
-	}
+	f.linkOrg(f.acme, f.epAcme, "Acme Patch")
 	f.e1 = f.ep.AddEndpoint(f.epAcme, "web-01", "", "AAAA-1111")
 	f.e2 = f.ep.AddEndpoint(f.epAcme, "db-01", "", "BBBB-2222")
 	e3 := f.ep.AddEndpoint(f.epAcme, "app-01", "", "CCCC-3333")
@@ -594,7 +484,7 @@ func TestFleetAndViews(t *testing.T) {
 	ctx := f.ctx
 
 	st, err := f.svc.Status(ctx, f.viewer)
-	if err != nil || !st.Configured || !st.CanOperate || st.CanSchedule || st.Bundled {
+	if err != nil || !st.Configured || st.CanSchedule {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 	_, err = f.svc.Status(ctx, f.none)
@@ -700,7 +590,7 @@ func TestFleetAndViews(t *testing.T) {
 		t.Fatalf("refused device: %+v, %v", d, err)
 	}
 	f.ep.Set(func() { f.ep.Down = true })
-	if d, err := f.svc.Device(ctx, f.admin, f.web); err != nil || d.Endpoint != nil || !strings.Contains(d.Error, "EasyPatch: The database") {
+	if d, err := f.svc.Device(ctx, f.admin, f.web); err != nil || d.Endpoint != nil || !strings.Contains(d.Error, "The database is not available") {
 		t.Fatalf("device while down: %+v, %v", d, err)
 	}
 	f.ep.Set(func() { f.ep.Down = false })
@@ -732,7 +622,7 @@ func TestFleetAndViews(t *testing.T) {
 	}
 	f.ep.Set(func() { f.ep.Down = true })
 	_, err = f.svc.InstalledUpdates(ctx, f.viewer, f.web)
-	wantErr(t, err, apperr.KindUnavailable, "easypatch_unavailable")
+	wantErr(t, err, apperr.KindUnavailable, "patching_unavailable")
 	_, err = f.svc.History(ctx, f.viewer, f.web, 1)
 	wantErr(t, err, apperr.KindUnavailable, "")
 	_, err = f.svc.DeviceJobs(ctx, f.viewer, f.web, 1)
@@ -773,7 +663,7 @@ func TestActions(t *testing.T) {
 		t.Fatalf("lab-01: %+v", r)
 	}
 	scans := f.ep.RequestsTo("POST", "/api/v1/endpoints/bulk/scan")
-	if len(scans) != 1 || scans[0].OnBehalfOf != "tess@example.com" || len(scans[0].Body["endpointIds"].([]any)) != 1 {
+	if len(scans) != 1 || scans[0].Statement.Name != "tess@example.com" || len(scans[0].Body["endpointIds"].([]any)) != 1 {
 		t.Fatalf("scan request: %+v", scans)
 	}
 	got := f.audits("patch.scan")
@@ -812,7 +702,7 @@ func TestActions(t *testing.T) {
 		t.Fatalf("install selected: %+v, %v", res, err)
 	}
 	reqs := f.ep.RequestsTo("POST", "/api/v1/endpoints/"+f.e1.ID.String()+"/install-updates")
-	if len(reqs) != 1 || reqs[0].Body["mode"] != "Selected" || reqs[0].OnBehalfOf != "tess@example.com" {
+	if len(reqs) != 1 || reqs[0].Body["mode"] != "Selected" || reqs[0].Statement.Name != "tess@example.com" {
 		t.Fatalf("selected request: %+v", reqs)
 	}
 	got = f.audits("patch.install")
@@ -964,35 +854,16 @@ func TestActions(t *testing.T) {
 	if len(got) != 1 || got[0].Details["jobId"] != webJob.String() || got[0].Label != "tess@example.com" {
 		t.Fatalf("cancel audit: %+v", got)
 	}
-	if c := f.ep.RequestsTo("POST", "/api/v1/jobs/"+webJob.String()+"/cancel"); c[0].OnBehalfOf != "tess@example.com" {
+	if c := f.ep.RequestsTo("POST", "/api/v1/jobs/"+webJob.String()+"/cancel"); c[0].Statement.Name != "tess@example.com" {
 		t.Fatalf("cancel request: %+v", c)
 	}
 
-	// A read-only token cannot act.
-	f.ep.Set(func() { f.ep.ReadOnly = true })
-	if _, err := f.svc.CheckConnection(ctx); err != nil {
-		t.Fatal(err)
-	}
-	_, err = f.svc.Scan(ctx, f.tech, ActionInput{DeviceIDs: []uuid.UUID{f.web}})
-	wantErr(t, err, apperr.KindConflict, "easypatch_read_only")
-	_, err = f.svc.Install(ctx, f.tech, ActionInput{DeviceIDs: []uuid.UUID{f.web}})
-	wantErr(t, err, apperr.KindConflict, "easypatch_read_only")
-	_, err = f.svc.CancelJob(ctx, f.tech, webJob)
-	wantErr(t, err, apperr.KindConflict, "easypatch_read_only")
-	if d, _ := f.svc.Device(ctx, f.tech, f.web); d.CanManage {
-		t.Fatal("read-only token: can manage")
-	}
-	f.ep.Set(func() { f.ep.ReadOnly = false })
-	if _, err := f.svc.CheckConnection(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	// EasyPatch failing a whole request.
+	// The engine failing a whole request.
 	f.ep.Set(func() { f.ep.Down = true })
 	_, err = f.svc.Scan(ctx, f.tech, ActionInput{DeviceIDs: []uuid.UUID{f.web}})
-	wantErr(t, err, apperr.KindUnavailable, "easypatch_unavailable")
+	wantErr(t, err, apperr.KindUnavailable, "patching_unavailable")
 	_, err = f.svc.Install(ctx, f.tech, ActionInput{DeviceIDs: []uuid.UUID{f.web}, UpdateIDs: []uuid.UUID{guid}})
-	wantErr(t, err, apperr.KindUnavailable, "easypatch_unavailable")
+	wantErr(t, err, apperr.KindUnavailable, "patching_unavailable")
 	_, err = f.svc.Jobs(ctx, f.tech, JobsQuery{})
 	wantErr(t, err, apperr.KindUnavailable, "")
 	f.ep.Set(func() { f.ep.Down = false })
@@ -1000,10 +871,8 @@ func TestActions(t *testing.T) {
 		t.Fatalf("%d patch audit records", n)
 	}
 
-	// Without a server, nothing works.
-	if err := f.svc.DeleteConnection(ctx, f.admin.Actor); err != nil {
-		t.Fatal(err)
-	}
+	// Without the engine, nothing works.
+	f.withoutEngine()
 	_, err = f.svc.Fleet(ctx, f.admin, FleetQuery{})
 	wantErr(t, err, apperr.KindConflict, "easypatch_not_configured")
 	_, err = f.svc.Device(ctx, f.admin, f.web)

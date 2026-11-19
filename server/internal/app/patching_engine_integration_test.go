@@ -28,7 +28,7 @@ func TestPatchingEngineAPI(t *testing.T) {
 	engine.Capabilities = []string{easypatch.CapabilityScheduledInstalls}
 	bundled := func(key []byte) func(*config.Config) {
 		return func(c *config.Config) {
-			c.Patching = config.Patching{Mode: config.PatchingBundled, URL: engine.URL(), Key: key}
+			c.Patching = config.Patching{URL: engine.URL(), Key: key}
 		}
 	}
 
@@ -38,21 +38,17 @@ func TestPatchingEngineAPI(t *testing.T) {
 
 	var conn struct {
 		Configured    bool   `json:"configured"`
-		Bundled       bool   `json:"bundled"`
 		URL           string `json:"url"`
 		ServerVersion string `json:"serverVersion"`
-		CanOperate    bool   `json:"canOperate"`
 		LastError     string `json:"lastError"`
 		CACert        string `json:"caCert"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch", nil, &conn)
-	if !conn.Configured || !conn.Bundled || conn.URL != engine.URL() || conn.ServerVersion != "1.9.0" || !conn.CanOperate || conn.LastError != "" ||
-		conn.CACert != "" {
+	if !conn.Configured || conn.URL != engine.URL() || conn.ServerVersion != "1.9.0" || conn.LastError != "" || conn.CACert != "" {
 		t.Fatalf("settings: %+v", conn)
 	}
-	wantStatus(t, admin.do("PUT", "/api/v1/settings/easypatch", map[string]string{"url": "https://patch.example.com", "token": "ept_" + strings.Repeat("A", 43)}),
-		http.StatusConflict, "patching_bundled")
-	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch", nil), http.StatusConflict, "patching_bundled")
+	wantStatus(t, admin.do("PUT", "/api/v1/settings/easypatch", map[string]string{"url": "https://patch.example.com"}), http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch", nil), http.StatusNotFound, "not_found")
 
 	var status struct {
 		Configured  bool `json:"configured"`
@@ -68,8 +64,8 @@ func TestPatchingEngineAPI(t *testing.T) {
 	// pass rather than at the next full comparison.
 	ctx := context.Background()
 	wantStatus(t, admin.do("PUT", "/api/v1/settings/easypatch/organizations/"+acme, map[string]string{"easyPatchId": "0b5c7a3e-0000-4000-8000-000000000001"}),
-		http.StatusConflict, "patching_linked_by_easyrmm")
-	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil), http.StatusConflict, "patching_linked_by_easyrmm")
+		http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil), http.StatusNotFound, "not_found")
 	if res, err := h.deps.EasyPatch.Reconcile(ctx); err != nil || res.Created == 0 || len(res.Problems) != 0 {
 		t.Fatalf("first pass: %+v, %v", res, err)
 	}
@@ -124,7 +120,7 @@ func TestPatchingEngineAPI(t *testing.T) {
 		t.Fatalf("organizations with a wrong key: %+v", orgs)
 	}
 	admin2.expect(http.StatusOK, "POST", "/api/v1/settings/easypatch/check", nil, &conn)
-	if !conn.Bundled || !strings.Contains(conn.LastError, "401") {
+	if !conn.Configured || !strings.Contains(conn.LastError, "401") {
 		t.Fatalf("check with a wrong key: %+v", conn)
 	}
 }
@@ -146,7 +142,7 @@ func TestPatchingAgentsThroughTheEdge(t *testing.T) {
 	}))
 	t.Cleanup(engine.Close)
 	h := newHarnessWith(t, false, func(c *config.Config) {
-		c.Patching = config.Patching{Mode: config.PatchingBundled, URL: engine.URL, Key: bytes.Repeat([]byte{7}, 32)}
+		c.Patching = config.Patching{URL: engine.URL, Key: bytes.Repeat([]byte{7}, 32)}
 	})
 	// send answers the status and headers of a request to h.
 	send := func(h *harness, method, path string, header map[string]string) (int, http.Header) {
@@ -209,7 +205,7 @@ func TestPatchingAgentsThroughTheEdge(t *testing.T) {
 	// paths reach the engine; a person is sent to EasyRMM's patching pages;
 	// a name EasyRMM does not serve is still refused.
 	imported := newHarnessWith(t, false, func(c *config.Config) {
-		c.Patching = config.Patching{Mode: config.PatchingBundled, URL: engine.URL, Key: bytes.Repeat([]byte{7}, 32),
+		c.Patching = config.Patching{URL: engine.URL, Key: bytes.Repeat([]byte{7}, 32),
 			AgentHostnames: []string{"patch.old.test"}}
 	})
 	at := func(host, method, path string) (int, http.Header) {
@@ -253,19 +249,4 @@ func TestPatchingAgentsThroughTheEdge(t *testing.T) {
 		t.Errorf("%d more requests reached the engine", len(got)-n)
 	}
 	mu.Unlock()
-
-	// Without the bundle, EasyRMM has nothing of its own under these paths.
-	// They are answered as paths EasyRMM does not have: 404, or for
-	// downloads, the console's answer when it is not built (503), as in CI.
-	plain := newHarnessWith(t, false, nil)
-	for p, like := range map[string]string{
-		"/api/v1/agents/check-in":                        "/api/v1/no-such-route",
-		"/downloads/agent/EasyPatchAgent-1.10.0-x64.msi": "/no-such-route/x.msi",
-		"/downloads/winget/x.yaml":                       "/no-such-route/x.yaml",
-	} {
-		status, _ := send(plain, "GET", p, nil)
-		if want, _ := send(plain, "GET", like, nil); status != want || (status != http.StatusNotFound && status != http.StatusServiceUnavailable) {
-			t.Errorf("connector mode, %s: %d, and %d for %s", p, status, want, like)
-		}
-	}
 }

@@ -15,7 +15,6 @@ import (
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
-	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 )
 
@@ -71,14 +70,12 @@ type Organizations struct {
 	Error string `json:"error,omitempty"`
 }
 
-// errLinkedByEasyRMM refuses link changes with the engine in the
-// deployment, where every organization has its own (ADR-0040).
-var errLinkedByEasyRMM = apperr.Conflict("patching_linked_by_easyrmm",
-	"With the patching engine in this deployment, EasyRMM gives every organization its own patching organization; there are no links to choose.")
+// errNotConfigured is a call before UseEngine: in a deployment, the
+// engine is always set up.
+var errNotConfigured = apperr.Conflict("easypatch_not_configured", "Patching is not available: the patching engine is not set up in this deployment.")
 
-var errNotConfigured = apperr.Conflict("easypatch_not_configured", "EasyPatch is not set up. A super administrator sets it up in Settings → EasyPatch.")
-
-// Organizations lists EasyPatch's organizations and the links.
+// Organizations lists the engine's organizations and the links EasyRMM
+// made (ADR-0040).
 func (s *Service) Organizations(ctx context.Context) (Organizations, error) {
 	r, c, err := s.conn(ctx)
 	if err != nil {
@@ -90,7 +87,7 @@ func (s *Service) Organizations(ctx context.Context) (Organizations, error) {
 	out := Organizations{EasyPatch: []Organization{}, Links: []OrganizationLink{}}
 	if list, err := c.Organizations(ctx); err != nil {
 		out.Error = err.Error()
-		s.noteError(ctx, err)
+		s.noteError(err)
 	} else {
 		out.EasyPatch = list
 	}
@@ -122,98 +119,6 @@ func (s *Service) Organizations(ctx context.Context) (Organizations, error) {
 		return rows.Err()
 	})
 	return out, err
-}
-
-// LinkOrganization patches an EasyRMM organization with an EasyPatch
-// organization, replacing any earlier link. Its devices are checked again.
-func (s *Service) LinkOrganization(ctx context.Context, actor audit.Actor, organizationID, easyPatchID uuid.UUID) error {
-	if s.engine != nil {
-		return errLinkedByEasyRMM
-	}
-	r, c, err := s.conn(ctx)
-	if err != nil {
-		return err
-	}
-	if r == nil {
-		return errNotConfigured
-	}
-	list, err := c.Organizations(ctx)
-	if err != nil {
-		return epError(err)
-	}
-	var ep *Organization
-	for i := range list {
-		if list[i].ID == easyPatchID {
-			ep = &list[i]
-		}
-	}
-	if ep == nil {
-		return apperr.Invalid("easyPatchId", "EasyPatch has no such organization, or EasyRMM's token cannot see it")
-	}
-	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		var name string
-		if err := tx.QueryRow(ctx, `SELECT name FROM organizations WHERE id = $1`, organizationID).Scan(&name); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return apperr.NotFound()
-			}
-			return err
-		}
-		var other string
-		err := tx.QueryRow(ctx, `SELECT o.name FROM easypatch_organizations l JOIN organizations o ON o.id = l.organization_id
-			WHERE l.easypatch_id = $1 AND l.organization_id <> $2`, easyPatchID, organizationID).Scan(&other)
-		if err == nil {
-			return apperr.Conflict("easypatch_organization_linked", fmt.Sprintf("%s in EasyPatch is already linked to %s.", ep.Name, other))
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		var by *uuid.UUID
-		if actor.ID != uuid.Nil {
-			by = &actor.ID
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO easypatch_organizations (organization_id, easypatch_id, easypatch_name, linked_by)
-			VALUES ($1, $2, $3, $4) ON CONFLICT (organization_id) DO UPDATE SET easypatch_id = $2, easypatch_name = $3, linked_at = now(),
-			linked_by = $4`, organizationID, easyPatchID, cut(ep.Name, 200), by); err != nil {
-			return err
-		}
-		if err := recheckOrganization(ctx, tx, organizationID); err != nil {
-			return err
-		}
-		return s.audit.Write(ctx, tx, audit.Event{Actor: actor, Action: "easypatch.organization_link", OrganizationID: organizationID,
-			TargetType: "organization", TargetID: organizationID.String(), Outcome: audit.Success,
-			Details: map[string]any{"organization": name, "easyPatchId": easyPatchID.String(), "easyPatchName": ep.Name}})
-	})
-	if err == nil {
-		s.fleet.clear()
-	}
-	return err
-}
-
-// UnlinkOrganization stops patching an organization from EasyRMM.
-func (s *Service) UnlinkOrganization(ctx context.Context, actor audit.Actor, organizationID uuid.UUID) error {
-	if s.engine != nil {
-		return errLinkedByEasyRMM
-	}
-	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		var epName, name string
-		err := tx.QueryRow(ctx, `DELETE FROM easypatch_organizations l USING organizations o
-			WHERE l.organization_id = $1 AND o.id = l.organization_id RETURNING l.easypatch_name, o.name`,
-			organizationID).Scan(&epName, &name)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return apperr.NotFound()
-		} else if err != nil {
-			return err
-		}
-		if err := recheckOrganization(ctx, tx, organizationID); err != nil {
-			return err
-		}
-		return s.audit.Write(ctx, tx, audit.Event{Actor: actor, Action: "easypatch.organization_unlink", OrganizationID: organizationID,
-			TargetType: "organization", TargetID: organizationID.String(), Outcome: audit.Success,
-			Details: map[string]any{"organization": name, "easyPatchName": epName}})
-	})
-	if err == nil {
-		s.fleet.clear()
-	}
-	return err
 }
 
 // recheckOrganization has the next pass check an organization's devices.
@@ -363,7 +268,7 @@ func (s *Service) SyncLinks(ctx context.Context) (int, error) {
 		state, reason, err := s.verify(ctx, c, r, cd, reported)
 		if err != nil {
 			// EasyPatch could not answer: keep what was known.
-			s.noteError(ctx, err)
+			s.noteError(err)
 			continue
 		}
 		if err := s.saveLink(ctx, cd, reported, state, reason); err != nil {
@@ -410,14 +315,14 @@ func (s *Service) verify(ctx context.Context, c *Client, conn *connRow, cd *cand
 	case endpointID == nil:
 		return LinkUnlinked, "The EasyPatch agent did not report its endpoint id.", nil
 	case !SameServer(rep.ServerURL, conn.url) && !SameServer(rep.ServerURL, conn.publicURL) && !conn.imported(rep.ServerURL):
-		return LinkUnlinked, cut(fmt.Sprintf("The EasyPatch agent is enrolled with %s, not with the EasyPatch server EasyRMM uses.", rep.ServerURL), 500), nil
+		return LinkUnlinked, cut(fmt.Sprintf("The EasyPatch agent is enrolled with %s, not with this deployment's patching engine.", rep.ServerURL), 500), nil
 	case cd.easyPatchOrg == nil:
-		return LinkUnlinked, "The device's organization is not linked to an EasyPatch organization (Settings → EasyPatch).", nil
+		return LinkUnlinked, "The device's organization has no patching organization yet: EasyRMM makes it on its next pass.", nil
 	}
 	ep, err := c.Endpoint(ctx, *endpointID)
 	switch {
 	case IsStatus(err, http.StatusNotFound):
-		return LinkUnlinked, fmt.Sprintf("EasyPatch has no endpoint %s, or EasyRMM's token cannot see it.", endpointID), nil
+		return LinkUnlinked, fmt.Sprintf("The patching engine has no endpoint %s.", endpointID), nil
 	case err != nil:
 		return "", "", err
 	}
@@ -432,9 +337,7 @@ func (s *Service) verify(ctx context.Context, c *Client, conn *connRow, cd *cand
 			"It came from the imported EasyPatch, so EasyRMM leaves its agent alone: enroll the device's EasyRMM agent in the organization that matches %s.",
 			ep.Summary.OrganizationName, cd.easyPatchOrgName, ep.Summary.OrganizationName), 500), nil
 	case ep.Summary.OrganizationID != *cd.easyPatchOrg:
-		if s.engine != nil {
-			cd.movedFrom = &ep.Summary
-		}
+		cd.movedFrom = &ep.Summary
 		return LinkUnlinked, cut(fmt.Sprintf("In EasyPatch the endpoint belongs to %s, not to %s, the organization linked to this device's.",
 			ep.Summary.OrganizationName, cd.easyPatchOrgName), 500), nil
 	case ep.Summary.Status != "Active":

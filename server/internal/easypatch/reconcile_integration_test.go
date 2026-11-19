@@ -19,7 +19,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
-	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
@@ -31,15 +30,7 @@ import (
 
 var reconcileKey = bytes.Repeat([]byte{7}, 32)
 
-// bundle runs the fixture's connector on a patching engine.
-func (f *fixture) bundle() *eptest.Server {
-	f.t.Helper()
-	engine := eptest.NewEngine(f.t, reconcileKey)
-	f.svc = f.engineService(engine)
-	return engine
-}
-
-// engineService is a connector started on engine, as at EasyRMM's start:
+// engineService is a service started on engine, as at EasyRMM's start:
 // with nothing remembered but the database.
 func (f *fixture) engineService(engine *eptest.Server, opts ...EngineOption) *Service {
 	f.t.Helper()
@@ -51,8 +42,8 @@ func (f *fixture) engineService(engine *eptest.Server, opts ...EngineOption) *Se
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	svc := New(f.db, audit.New(f.db, nil), nil, "1.0.0", slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err := svc.UseEngine(f.ctx, client, opts...); err != nil {
+	svc := New(f.db, audit.New(f.db, nil), "1.0.0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := svc.UseEngine(client, opts...); err != nil {
 		f.t.Fatal(err)
 	}
 	return svc
@@ -125,7 +116,7 @@ func engineReport(e *eptest.Endpoint) *agentproto.EasyPatchAgent {
 // the engine, named and in the time zone as in EasyRMM.
 func TestReconcileOrganizations(t *testing.T) {
 	f := newFixture(t)
-	engine := f.bundle()
+	engine := f.ep
 	// The engine has an organization named as Globex, one whose name
 	// differs from Acme's only by case, and an archived Initech.
 	globexEP := engine.Org("Globex")
@@ -232,16 +223,13 @@ func TestReconcileOrganizations(t *testing.T) {
 		engineSite(t, engine, f.engineSite(f.plant)).Org != again {
 		t.Fatalf("Globex made again: %v", again)
 	}
-
-	// Links are EasyRMM's: they cannot be changed by hand.
-	wantErr(t, f.svc.LinkOrganization(f.ctx, f.admin.Actor, f.acme, globexEP), apperr.KindConflict, "patching_linked_by_easyrmm")
 }
 
 // TestReconcileDeleted: what EasyRMM deletes is archived in the engine
 // under a name that frees the old one.
 func TestReconcileDeleted(t *testing.T) {
 	f := newFixture(t)
-	engine := f.bundle()
+	engine := f.ep
 	f.reconcile()
 	oldGlobex, oldPlant, oldBranch := f.engineOrg(f.globex), f.engineSite(f.plant), f.engineSite(f.branch)
 
@@ -341,7 +329,7 @@ func uninstallJobs(engine *eptest.Server, endpoint uuid.UUID) []eptest.Job {
 // installed again there.
 func TestReconcileMoves(t *testing.T) {
 	f := newFixture(t)
-	engine := f.bundle()
+	engine := f.ep
 	f.reconcile()
 	web, e := f.linkedDevice(engine, f.acme, f.hq, "web-01")
 	if res := f.reconcile(); res.Moved != 0 {
@@ -451,7 +439,7 @@ func TestReconcileImportedNames(t *testing.T) {
 // and nothing installs one again until patching is allowed.
 func TestReconcileOptOut(t *testing.T) {
 	f := newFixture(t)
-	engine := f.bundle()
+	engine := f.ep
 	f.reconcile()
 	web, e := f.linkedDevice(engine, f.acme, f.hq, "web-01")
 	only := ActionInput{DeviceIDs: []uuid.UUID{web}}
@@ -569,7 +557,7 @@ func TestReconcileOptOut(t *testing.T) {
 // removed, unless EasyRMM still has the computer under another record.
 func TestReconcileDeletedDevice(t *testing.T) {
 	f := newFixture(t)
-	engine := f.bundle()
+	engine := f.ep
 	f.reconcile()
 	web, e := f.linkedDevice(engine, f.acme, f.hq, "web-01")
 	app, e2 := f.linkedDevice(engine, f.acme, f.hq, "app-01")
@@ -595,7 +583,7 @@ func TestReconcileDeletedDevice(t *testing.T) {
 // EasyRMM restarted) is finished by the next without doing anything twice.
 func TestReconcileRestart(t *testing.T) {
 	f := newFixture(t)
-	engine := f.bundle()
+	engine := f.ep
 	engine.Set(func() {
 		engine.LoseReply = func(m, p string) bool { return m == http.MethodPost && p == "/api/v1/organizations" }
 	})
@@ -641,7 +629,7 @@ func TestReconcileRestart(t *testing.T) {
 // Settings says what is waiting.
 func TestReconcileEngineDown(t *testing.T) {
 	f := newFixture(t)
-	engine := f.bundle()
+	engine := f.ep
 	engine.Set(func() { engine.Down = true })
 	res := f.reconcile()
 	if len(res.Problems) == 0 || res.Created != 0 {
@@ -669,34 +657,12 @@ func TestReconcileEngineDown(t *testing.T) {
 	}
 }
 
-// TestReconcileConnector: with a server set up in Settings, organizations
-// stay the server's: EasyRMM archives nothing there.
-func TestReconcileConnector(t *testing.T) {
-	f := newFixture(t)
-	f.connect()
-	if err := f.svc.LinkOrganization(f.ctx, f.admin.Actor, f.globex, f.ep.Org("Globex Patch")); err != nil {
-		t.Fatal(err)
-	}
-	f.exec(`DELETE FROM sites WHERE id = $1`, f.plant)
-	f.exec(`DELETE FROM organizations WHERE id = $1`, f.globex)
-	if n := f.count(`SELECT count(*) FROM easypatch_forgotten`); n != 1 {
-		t.Fatalf("%d forgotten", n)
-	}
-	before := f.ep.Changes()
-	if res := f.reconcile(); res.Archived != 0 || res.Created != 0 {
-		t.Fatalf("connector: %+v", res)
-	}
-	if f.count(`SELECT count(*) FROM easypatch_forgotten`) != 0 || f.ep.Changes() != before {
-		t.Fatal("the connector changed the server's organizations")
-	}
-}
-
 // TestReconcileEdges: sites archived or deleted in the engine's console, an
 // organization deleted in EasyRMM while the engine creates it, and what an
 // uninstall can run into.
 func TestReconcileEdges(t *testing.T) {
 	f := newFixture(t)
-	engine := f.bundle()
+	engine := f.ep
 	f.reconcile()
 
 	// A site archived in the engine's console is restored; one deleted
@@ -814,7 +780,7 @@ func TestReconcileEdges(t *testing.T) {
 // TestReconcileRun: Run reconciles at a kick, and stops with its context.
 func TestReconcileRun(t *testing.T) {
 	f := newFixture(t)
-	engine := f.bundle()
+	engine := f.ep
 	ctx, cancel := context.WithCancel(f.ctx)
 	done := make(chan struct{})
 	go func() { f.svc.Run(ctx); close(done) }()
@@ -845,7 +811,7 @@ func deleteSite(t *testing.T, engine *eptest.Server, id uuid.UUID) {
 // when the engine did what was asked and only its reply was lost.
 func TestReconcileEngineFails(t *testing.T) {
 	f := newFixture(t)
-	engine := f.bundle()
+	engine := f.ep
 	f.reconcile()
 	acme, hq := f.engineOrg(f.acme), f.engineSite(f.hq)
 	api := "/api/v1/"

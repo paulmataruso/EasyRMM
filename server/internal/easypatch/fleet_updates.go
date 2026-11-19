@@ -25,9 +25,7 @@ import (
 //
 // EasyPatch counts per organization or site, not per device, so the
 // catalog covers whole organizations where the caller sees patching across
-// the organization, or one site they may see. A connected EasyPatch server
-// answers EasyRMM's API token for every organization it has, linked or not,
-// so there every call names the one organization it covers.
+// the organization, or one site they may see.
 
 // UpdateScope is where the catalog counts: every organization the caller
 // sees whole, one organization, or one site.
@@ -52,10 +50,7 @@ type linkedOrg struct {
 	name string
 }
 
-var (
-	errChooseSite = apperr.Invalid("siteId", "Your role covers single sites in this organization: choose one of them.")
-	errChooseOrg  = apperr.Invalid("organizationId", "Choose an organization: EasyPatch counts its updates one organization at a time.")
-)
+var errChooseSite = apperr.Invalid("siteId", "Your role covers single sites in this organization: choose one of them.")
 
 // linkedOrgs reads the organizations linked to EasyPatch that the caller may
 // see patching in, by EasyPatch id.
@@ -124,10 +119,11 @@ func (s *Service) resolveScope(ctx context.Context, c access.Caller, cl *Client,
 			return out, errOrgNotLinked
 		}
 		if epSite == nil {
-			// A connected server's sites are matched by name, as installs do.
+			// A site the reconciler has not recorded yet is found by name,
+			// as installs do.
 			sites, err := cl.Sites(s.as(ctx, c, RoleReadOnly, *ep), *ep)
 			if err != nil {
-				s.noteError(ctx, err)
+				s.noteError(err)
 				return out, epError(err)
 			}
 			for _, x := range sites {
@@ -170,8 +166,6 @@ func (s *Service) resolveScope(ctx context.Context, c access.Caller, cl *Client,
 		return out, errChooseSite
 	case len(out.orgs) == 1:
 		out.fleet = FleetScope{OrganizationID: &out.orgs[0]}
-	case len(out.orgs) > 1 && !s.Bundled():
-		return out, errChooseOrg
 	}
 	return out, nil
 }
@@ -207,7 +201,7 @@ func (s *Service) Catalog(ctx context.Context, c access.Caller, scope UpdateScop
 	q.FleetScope = sc.fleet
 	p, err := cl.Catalog(s.as(ctx, c, RoleReadOnly, sc.orgs...), q)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return p, epError(err)
 	}
 	p.Items = orEmpty(p.Items)
@@ -227,7 +221,7 @@ type HoldView struct {
 
 // holdViews maps holds to EasyRMM's organizations, leaving out holds of
 // organizations the caller may not see.
-func (s *Service) holdViews(c access.Caller, canOperate bool, holds []Hold, linked map[uuid.UUID]linkedOrg) []HoldView {
+func (s *Service) holdViews(c access.Caller, holds []Hold, linked map[uuid.UUID]linkedOrg) []HoldView {
 	out := []HoldView{}
 	for _, h := range holds {
 		if h.ReleasedAt != nil {
@@ -235,14 +229,14 @@ func (s *Service) holdViews(c access.Caller, canOperate bool, holds []Hold, link
 		}
 		v := HoldView{Hold: h}
 		if h.OrganizationID == nil {
-			v.CanRelease = canOperate && c.CanGlobal(rbac.PermPatchConfigure)
+			v.CanRelease = c.CanGlobal(rbac.PermPatchConfigure)
 		} else {
 			o, ok := linked[*h.OrganizationID]
 			if !ok {
 				continue
 			}
 			v.OrganizationID, v.OrganizationName = &o.id, o.name
-			v.CanRelease = canOperate && c.Can(rbac.PermPatchConfigure, rbac.Org(o.id))
+			v.CanRelease = c.Can(rbac.PermPatchConfigure, rbac.Org(o.id))
 		}
 		out = append(out, v)
 	}
@@ -292,24 +286,20 @@ func (s *Service) Update(ctx context.Context, c access.Caller, guid uuid.UUID, s
 		if IsStatus(err, http.StatusNotFound) {
 			return UpdateView{}, apperr.NotFound()
 		}
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return UpdateView{}, epError(err)
 	}
 	d.KbNumbers, d.Products, d.SupersededUpdateGUIDs = orEmpty(d.KbNumbers), orEmpty(d.Products), orEmpty(d.SupersededUpdateGUIDs)
 	d.Vulnerabilities = orEmpty(d.Vulnerabilities)
-	v := UpdateView{FleetUpdateDetail: d, Holds: s.holdViews(c, r.canOperate, d.Holds, sc.byEngine),
-		CanManage: r.canOperate && c.CanAnywhere(rbac.PermPatchManage)}
-	v.HoldIn = []HoldOrganization{}
-	if r.canOperate {
-		v.CanHoldEverywhere = c.CanGlobal(rbac.PermPatchConfigure)
-		for _, o := range sc.byEngine {
-			if c.Can(rbac.PermPatchConfigure, rbac.Org(o.id)) {
-				v.HoldIn = append(v.HoldIn, HoldOrganization{ID: o.id, Name: o.name})
-			}
+	v := UpdateView{FleetUpdateDetail: d, Holds: s.holdViews(c, d.Holds, sc.byEngine), CanManage: c.CanAnywhere(rbac.PermPatchManage),
+		CanHoldEverywhere: c.CanGlobal(rbac.PermPatchConfigure), HoldIn: []HoldOrganization{}}
+	for _, o := range sc.byEngine {
+		if c.Can(rbac.PermPatchConfigure, rbac.Org(o.id)) {
+			v.HoldIn = append(v.HoldIn, HoldOrganization{ID: o.id, Name: o.name})
 		}
-		slices.SortFunc(v.HoldIn, func(a, b HoldOrganization) int { return strings.Compare(a.Name, b.Name) })
-		v.CanHold = v.CanHoldEverywhere || len(v.HoldIn) > 0
 	}
+	slices.SortFunc(v.HoldIn, func(a, b HoldOrganization) int { return strings.Compare(a.Name, b.Name) })
+	v.CanHold = v.CanHoldEverywhere || len(v.HoldIn) > 0
 	return v, nil
 }
 
@@ -353,7 +343,7 @@ func (s *Service) UpdateDevices(ctx context.Context, c access.Caller, guid uuid.
 	}
 	p, err := cl.FleetUpdateEndpoints(s.as(ctx, c, RoleReadOnly, sc.orgs...), guid, sc.fleet, state, page)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return out, epError(err)
 	}
 	devices, linked, err := s.endpointDevices(ctx, c, p.Items)
@@ -366,7 +356,7 @@ func (s *Service) UpdateDevices(ctx context.Context, c access.Caller, guid uuid.
 		if d, ok := devices[e.EndpointID]; ok {
 			id := d.id
 			row.DeviceID, row.DeviceName, row.OrganizationName, row.SiteName, row.Platform = &id, d.name, d.organizationName, d.siteName, d.platform
-			row.CanManage = r.canOperate && c.Can(rbac.PermPatchManage, d.resource())
+			row.CanManage = c.Can(rbac.PermPatchManage, d.resource())
 		} else if linked[e.EndpointID] {
 			// A device the caller may not see.
 			continue
@@ -446,7 +436,7 @@ func (s *Service) fleetTargets(ctx context.Context, c access.Caller, cl *Client,
 		for page := 1; len(endpoints) <= MaxBulk; page++ {
 			p, err := cl.FleetUpdateEndpoints(actx, guid, sc.fleet, st, page)
 			if err != nil {
-				s.noteError(ctx, err)
+				s.noteError(err)
 				return nil, epError(err)
 			}
 			for _, e := range p.Items {
@@ -566,7 +556,7 @@ func (s *Service) HoldUpdate(ctx context.Context, c access.Caller, guid uuid.UUI
 	if err := f.Err(); err != nil {
 		return HoldView{}, err
 	}
-	r, cl, err := s.operable(ctx)
+	_, cl, err := s.operable(ctx)
 	if err != nil {
 		return HoldView{}, err
 	}
@@ -605,7 +595,7 @@ func (s *Service) HoldUpdate(ctx context.Context, c access.Caller, guid uuid.UUI
 		if IsStatus(err, http.StatusNotFound) {
 			return HoldView{}, apperr.NotFound()
 		}
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return HoldView{}, epError(err)
 	}
 	ev := audit.Event{Actor: c.Actor, Action: "patch.hold", TargetType: "update", TargetID: guid.String(), Outcome: audit.Success,
@@ -616,7 +606,7 @@ func (s *Service) HoldUpdate(ctx context.Context, c access.Caller, guid uuid.UUI
 	if err := s.record(ctx, []audit.Event{ev}); err != nil {
 		return HoldView{}, err
 	}
-	views := s.holdViews(c, r.canOperate, []Hold{h}, linked)
+	views := s.holdViews(c, []Hold{h}, linked)
 	if len(views) == 0 {
 		return HoldView{Hold: h}, nil
 	}
@@ -625,7 +615,7 @@ func (s *Service) HoldUpdate(ctx context.Context, c access.Caller, guid uuid.UUI
 
 // ReleaseHold lets a held update install automatically again.
 func (s *Service) ReleaseHold(ctx context.Context, c access.Caller, guid, id uuid.UUID) (HoldView, error) {
-	r, cl, err := s.operable(ctx)
+	_, cl, err := s.operable(ctx)
 	if err != nil {
 		return HoldView{}, err
 	}
@@ -639,11 +629,11 @@ func (s *Service) ReleaseHold(ctx context.Context, c access.Caller, guid, id uui
 	}
 	holds, err := cl.Holds(s.as(ctx, c, RoleReadOnly, orgs...), guid)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return HoldView{}, epError(err)
 	}
 	var hold *HoldView
-	for _, v := range s.holdViews(c, r.canOperate, holds, linked) {
+	for _, v := range s.holdViews(c, holds, linked) {
 		if v.ID == id {
 			hold = &v
 		}
@@ -664,7 +654,7 @@ func (s *Service) ReleaseHold(ctx context.Context, c access.Caller, guid, id uui
 	}
 	h, err := cl.ReleaseHold(actx, id, c.Actor.Label)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return HoldView{}, epError(err)
 	}
 	ev := audit.Event{Actor: c.Actor, Action: "patch.release_hold", TargetType: "update", TargetID: guid.String(), Outcome: audit.Success,

@@ -94,40 +94,24 @@ type Config struct {
 	SMTP              SMTPConfig
 	Mesh              MeshConfig
 	DevInsecureCookie bool // only for local development over plain HTTP
-	// Patching says where patching comes from: the engine in this
-	// deployment, or an EasyPatch server set up in Settings.
+	// Patching is the patching engine in this deployment.
 	Patching Patching
 	// Authentik is the sign-in service in this deployment (ADR-0044); zero
 	// when there is none.
 	Authentik Authentik
 }
 
-// Patching modes.
-const (
-	// PatchingBundled uses the patching engine in this deployment, on
-	// loopback, with statements signed by EASYRMM_PATCHING_KEY (ADR-0038):
-	// the only mode a deployment has since the switch-over (one-product
-	// plan, phase S).
-	PatchingBundled = "bundled"
-	// PatchingConnector uses an EasyPatch server set up in Settings. It is
-	// no longer a deployment setting: EASYRMM_PATCHING=connector is read
-	// only so that the connector's own tests run until it is removed
-	// (phase R).
-	PatchingConnector = "connector"
-)
-
 // DefaultPatchingURL is where the bundled engine listens
 // (deploy/docker-compose.yml, easypatch-api).
 const DefaultPatchingURL = "http://127.0.0.1:18180"
 
-// Patching is where patching comes from (one-product plan, phase B3).
+// Patching is the patching engine in this deployment: EasyPatch's server,
+// called on loopback with statements signed by EASYRMM_PATCHING_KEY
+// (one-product plan, phases B3 and S; ADR-0038).
 type Patching struct {
-	// Mode is PatchingConnector or PatchingBundled.
-	Mode string
-	// URL is the bundled engine's address: http, on loopback.
+	// URL is the engine's address: http, on loopback.
 	URL string
-	// Key signs EasyRMM's statements to the bundled engine; at least 32
-	// bytes.
+	// Key signs EasyRMM's statements to the engine; at least 32 bytes.
 	Key []byte
 	// AgentHostnames are further names EasyPatch agents reach the engine
 	// at: those of a standalone EasyPatch imported into this deployment,
@@ -135,9 +119,6 @@ type Patching struct {
 	// phase S). EasyRMM's edge serves the agents' paths there.
 	AgentHostnames []string
 }
-
-// Bundled reports whether the patching engine runs in this deployment.
-func (p Patching) Bundled() bool { return p.Mode == PatchingBundled }
 
 // MeshConfig configures the MeshCentral remote-access integration.
 type MeshConfig struct {
@@ -310,21 +291,22 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 	if l.str("EASYRMM_EASYPATCH_HOSTNAME", "") != "" {
 		l.errs = append(l.errs, errors.New("EASYRMM_EASYPATCH_HOSTNAME is no longer a setting: EasyPatch on this server is replaced by the patching engine in this deployment; remove it, then import that EasyPatch (deploy/scripts/import-easypatch.sh)"))
 	}
-	c.Patching = Patching{
-		Mode: strings.ToLower(l.orDefault("EASYRMM_PATCHING", PatchingBundled)),
-		URL:  l.orDefault("EASYRMM_PATCHING_URL", DefaultPatchingURL),
+	// Before the engine always ran here, EASYRMM_PATCHING chose between it
+	// ("bundled", still harmless) and an EasyPatch server set up in Settings
+	// (ADR-0046).
+	if mode := l.str("EASYRMM_PATCHING", ""); mode != "" && !strings.EqualFold(mode, "bundled") {
+		l.errs = append(l.errs, fmt.Errorf("EASYRMM_PATCHING is no longer a setting (patching always uses the engine in this deployment); remove it, got %q", mode))
 	}
+	c.Patching = Patching{URL: l.orDefault("EASYRMM_PATCHING_URL", DefaultPatchingURL)}
 	for _, h := range splitList(l.str("EASYRMM_PATCHING_AGENT_HOSTNAMES", "")) {
 		c.Patching.AgentHostnames = append(c.Patching.AgentHostnames, strings.ToLower(strings.TrimSuffix(h, ".")))
 	}
-	if c.Patching.Bundled() {
-		if raw := l.secret("EASYRMM_PATCHING_KEY"); raw != "" {
-			key, err := base64.StdEncoding.DecodeString(raw)
-			if err != nil {
-				l.errs = append(l.errs, errors.New("EASYRMM_PATCHING_KEY must be base64 (setup.sh generates it)"))
-			}
-			c.Patching.Key = key
+	if raw := l.secret("EASYRMM_PATCHING_KEY"); raw != "" {
+		key, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			l.errs = append(l.errs, errors.New("EASYRMM_PATCHING_KEY must be base64 (setup.sh generates it)"))
 		}
+		c.Patching.Key = key
 	}
 	c.loadAuthentik(l)
 	c.validate(l)
@@ -433,14 +415,6 @@ func (c *Config) validate(l *loader) {
 
 func (c *Config) validatePatching(add func(string, ...any)) {
 	p := c.Patching
-	switch p.Mode {
-	case PatchingConnector:
-		return
-	case PatchingBundled:
-	default:
-		add("EASYRMM_PATCHING is no longer a setting (patching always uses the engine in this deployment); remove it, got %q", p.Mode)
-		return
-	}
 	if len(p.Key) < 32 {
 		add("EASYRMM_PATCHING_KEY must be at least 32 bytes, base64-encoded; run deploy/scripts/setup.sh to add it")
 	}
@@ -487,9 +461,6 @@ func (c *Config) ExtraHostnames() []string {
 // validateExtraHostnames checks that each further name is a DNS name that
 // nothing else in the deployment already answers.
 func (c *Config) validateExtraHostnames(add func(string, ...any)) {
-	if len(c.Patching.AgentHostnames) > 0 && !c.Patching.Bundled() {
-		add("EASYRMM_PATCHING_AGENT_HOSTNAMES needs the patching engine in this deployment: they are where the agents of an imported EasyPatch reach it")
-	}
 	taken := map[string]string{}
 	for _, o := range c.Origins() {
 		taken[canonicalHost(o.Console.Hostname())] = "EASYRMM_PUBLIC_URL"

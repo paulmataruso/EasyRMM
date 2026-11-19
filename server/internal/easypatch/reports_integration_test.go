@@ -14,7 +14,6 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
-	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/reports"
 )
 
@@ -379,28 +378,5 @@ func TestReportSchedules(t *testing.T) {
 	}
 	if _, err := f.svc.SetReportSchedule(ctx, f.admin, uuid.New(), in); !isCode(err, "easypatch_not_linked") {
 		t.Fatalf("an organization that is not linked: %v", err)
-	}
-}
-
-// With a connected EasyPatch server, its own mail server sends reports.
-func TestMonthlyReportsConnected(t *testing.T) {
-	f := newFixture(t)
-	ctx := f.ctx
-	f.connect()
-	if err := f.svc.LinkOrganization(ctx, f.admin.Actor, f.acme, f.ep.Org("Acme Patch")); err != nil {
-		t.Fatal(err)
-	}
-	last := time.Now().UTC().AddDate(0, -1, 0)
-	rep, err := f.svc.GenerateMonthlyReport(ctx, f.admin, f.acme, last.Year(), int(last.Month()), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := f.svc.SendMonthlyReport(ctx, f.admin, rep.ID, []string{"cfo@example.com"}); !isCode(err, "mail_not_configured") ||
-		!strings.Contains(err.Error(), "EasyPatch's console") {
-		t.Fatalf("no mail server: %v", err)
-	}
-	reader := f.user("rita@example.com", rbac.Assignment{Role: rbac.RoleReadOnly, OrganizationID: f.acme})
-	if list, err := f.svc.MonthlyReports(ctx, reader, f.acme); err != nil || len(list.Items) != 1 || list.Items[0].CanManage {
-		t.Fatalf("reader's list: %+v, %v", list, err)
 	}
 }

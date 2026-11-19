@@ -3,10 +3,12 @@
 package app_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -14,13 +16,35 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 )
 
-// TestEasyPatchAPI sets EasyPatch up, links an organization and a device,
-// and patches the device through the console API (ADR-0030).
+// engineHarness starts EasyRMM with the patching engine in its deployment.
+func engineHarness(t *testing.T) (*eptest.Server, *harness) {
+	t.Helper()
+	key := bytes.Repeat([]byte{6}, 32)
+	ep := eptest.NewEngine(t, key)
+	return ep, newHarnessWith(t, false, func(c *config.Config) { c.Patching = config.Patching{URL: ep.URL(), Key: key} })
+}
+
+// engineOrgNamed is the engine's organization of that name.
+func engineOrgNamed(t *testing.T, ep *eptest.Server, name string) uuid.UUID {
+	t.Helper()
+	for _, o := range ep.Organizations() {
+		if o.Name == name {
+			return o.ID
+		}
+	}
+	t.Fatalf("the engine has no organization %q: %+v", name, ep.Organizations())
+	return uuid.Nil
+}
+
+// TestEasyPatchAPI: EasyRMM links an organization and a device to the
+// patching engine in its deployment, and patches the device through the
+// console API (ADR-0030, ADR-0040).
 func TestEasyPatchAPI(t *testing.T) {
-	h := newHarness(t, false)
+	ep, h := engineHarness(t)
 	admin, _ := setUp(t, h)
 	ctx := context.Background()
 	acme := orgID(t, admin, "Acme")
@@ -42,60 +66,64 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	device := enr.DeviceID
 
-	ep := eptest.New(t)
-	epOrg := ep.Org("Acme Patch")
-	endpoint := ep.AddEndpoint(epOrg, "web-01", "S-1", "1FBB-E2EA-533D-A960")
-
-	// Settings.
+	// Settings shows the engine; nothing there changes it.
 	var conn struct {
 		Configured    bool     `json:"configured"`
 		ServerVersion string   `json:"serverVersion"`
-		CanOperate    bool     `json:"canOperate"`
 		Capabilities  []string `json:"capabilities"`
 		LastError     string   `json:"lastError"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch", nil, &conn)
-	if conn.Configured || conn.Capabilities == nil {
-		t.Fatalf("unset: %+v", conn)
-	}
-	wantStatus(t, admin.do("GET", "/api/v1/patching/devices", nil), http.StatusConflict, "easypatch_not_configured")
-	wantStatus(t, admin.do("PUT", "/api/v1/settings/easypatch", map[string]string{"url": "http://x", "token": ep.Token}), http.StatusUnprocessableEntity, "validation_failed")
-	wantStatus(t, admin.do("PUT", "/api/v1/settings/easypatch", map[string]any{"url": ep.URL(), "token": 7}), http.StatusUnprocessableEntity, "validation_failed")
-	r := admin.expect(http.StatusOK, "PUT", "/api/v1/settings/easypatch", map[string]string{"url": ep.URL(), "token": ep.Token, "caCert": ep.CAPEM}, &conn)
-	if !conn.Configured || conn.ServerVersion != "1.9.0" || !conn.CanOperate || strings.Contains(string(r.body), ep.Token) {
-		t.Fatalf("set: %s", r.body)
+	if !conn.Configured || conn.ServerVersion != "1.9.0" || conn.Capabilities == nil {
+		t.Fatalf("settings: %+v", conn)
 	}
 	admin.expect(http.StatusOK, "POST", "/api/v1/settings/easypatch/check", nil, &conn)
 	if conn.LastError != "" {
 		t.Fatalf("check: %+v", conn)
 	}
+	for _, c := range []struct{ method, path string }{
+		{"PUT", "/api/v1/settings/easypatch"}, {"DELETE", "/api/v1/settings/easypatch"},
+		{"PUT", "/api/v1/settings/easypatch/organizations/" + acme}, {"DELETE", "/api/v1/settings/easypatch/organizations/" + acme},
+	} {
+		wantStatus(t, admin.do(c.method, c.path, map[string]string{}), http.StatusNotFound, "not_found")
+	}
 
+	// EasyRMM creates Acme and its site in the engine; web-01's EasyPatch
+	// agent enrolls there.
+	if res, err := h.deps.EasyPatch.Reconcile(ctx); err != nil || len(res.Problems) != 0 {
+		t.Fatalf("reconcile: %+v, %v", res, err)
+	}
+	epOrg := engineOrgNamed(t, ep, "Acme")
+	endpoint := ep.AddEndpoint(epOrg, "web-01", "S-1", "1FBB-E2EA-533D-A960")
+	type link struct {
+		OrganizationName string `json:"organizationName"`
+		EasyPatchName    string `json:"easyPatchName"`
+		Devices          struct {
+			Linked int `json:"linked"`
+		} `json:"devices"`
+	}
 	var orgs struct {
-		EasyPatch []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"easyPatch"`
-		Links []struct {
-			OrganizationName string `json:"organizationName"`
-			EasyPatchName    string `json:"easyPatchName"`
-			Devices          struct {
-				Linked int `json:"linked"`
-			} `json:"devices"`
-		} `json:"links"`
+		Links []link `json:"links"`
 	}
-	admin.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch/organizations", nil, &orgs)
-	if len(orgs.EasyPatch) != 1 || orgs.EasyPatch[0].Name != "Acme Patch" || len(orgs.Links) != 0 {
-		t.Fatalf("organizations: %+v", orgs)
+	acmeLink := func() link {
+		t.Helper()
+		admin.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch/organizations", nil, &orgs)
+		for _, l := range orgs.Links {
+			if l.OrganizationName == "Acme" {
+				return l
+			}
+		}
+		t.Fatalf("Acme is not linked: %+v", orgs)
+		return link{}
 	}
-	wantStatus(t, admin.do("PUT", "/api/v1/settings/easypatch/organizations/"+acme, map[string]string{"easyPatchId": "nope"}), http.StatusUnprocessableEntity, "validation_failed")
-	wantStatus(t, admin.do("PUT", "/api/v1/settings/easypatch/organizations/nope", map[string]string{"easyPatchId": epOrg.String()}), http.StatusNotFound, "not_found")
-	wantStatus(t, admin.do("PUT", "/api/v1/settings/easypatch/organizations/"+acme, "x"), http.StatusBadRequest, "bad_request")
-	admin.expect(http.StatusNoContent, "PUT", "/api/v1/settings/easypatch/organizations/"+acme, map[string]string{"easyPatchId": epOrg.String()}, nil)
+	if l := acmeLink(); l.EasyPatchName != "Acme" || l.Devices.Linked != 0 {
+		t.Fatalf("Acme's link: %+v", l)
+	}
 
 	// The agent reports its EasyPatch agent; the link is checked.
 	body, _ := json.Marshal(agentproto.Inventory{
 		System: agentproto.SystemInfo{Serial: "S-1"},
-		EasyPatch: &agentproto.EasyPatchAgent{Version: "1.9.0", Status: "Active", ServerURL: ep.URL() + "/",
+		EasyPatch: &agentproto.EasyPatchAgent{Version: "1.9.0", Status: "Active", ServerURL: "https://patch.example.com/",
 			EndpointID: endpoint.ID.String(), KeyFingerprint: endpoint.Fingerprint},
 	})
 	if _, err := ac.Inventory(ctx, body); err != nil {
@@ -104,9 +132,8 @@ func TestEasyPatchAPI(t *testing.T) {
 	if n, err := h.deps.EasyPatch.SyncLinks(ctx); n != 1 || err != nil {
 		t.Fatalf("sync: %d %v", n, err)
 	}
-	admin.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch/organizations", nil, &orgs)
-	if len(orgs.Links) != 1 || orgs.Links[0].Devices.Linked != 1 {
-		t.Fatalf("links: %+v", orgs.Links)
+	if l := acmeLink(); l.Devices.Linked != 1 {
+		t.Fatalf("Acme's link with web-01: %+v", l)
 	}
 	var problems struct {
 		Items []any `json:"items"`
@@ -118,10 +145,10 @@ func TestEasyPatchAPI(t *testing.T) {
 
 	// Patching.
 	var status struct {
-		Configured, CanOperate, CanSchedule bool
+		Configured, CanSchedule bool
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching", nil, &status)
-	if !status.Configured || !status.CanOperate || status.CanSchedule {
+	if !status.Configured || status.CanSchedule {
 		t.Fatalf("status: %+v", status)
 	}
 	var fleet struct {
@@ -280,7 +307,7 @@ func TestEasyPatchAPI(t *testing.T) {
 	if plan.ServersKnown || len(plan.Devices) != 1 || !plan.Devices[0].Restart || !plan.Devices[0].Server || plan.Devices[0].DeviceName != "web-01" {
 		t.Fatalf("restart plan: %+v", plan)
 	}
-	r = admin.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}})
+	r := admin.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}})
 	wantStatus(t, r, http.StatusUnprocessableEntity, "validation_failed")
 	if !strings.Contains(string(r.body), "confirm restarting them: web-01.") {
 		t.Fatalf("unconfirmed restart: %s", r.body)
@@ -527,9 +554,7 @@ func TestEasyPatchAPI(t *testing.T) {
 	wantStatus(t, admin.do("POST", "/api/v1/patching/updates/"+openssl+"/holds/nope/release", nil), http.StatusNotFound, "not_found")
 	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/devices/"+device+"/install-preview", nil, &preview)
 	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/messages", nil, &presets)
-	for _, m := range []string{"GET", "PUT", "DELETE"} {
-		wantStatus(t, viewer.do(m, "/api/v1/settings/easypatch", map[string]string{}), http.StatusForbidden, "forbidden")
-	}
+	wantStatus(t, viewer.do("GET", "/api/v1/settings/easypatch", nil), http.StatusForbidden, "forbidden")
 	wantStatus(t, viewer.do("GET", "/api/v1/settings/easypatch/organizations", nil), http.StatusForbidden, "forbidden")
 	wantStatus(t, h.client().do("GET", "/api/v1/patching", nil), http.StatusUnauthorized, "")
 
@@ -591,15 +616,12 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Fatalf("patch audit: %v", got)
 	}
 
-	// Policies at every level, and tags (one-product plan, C4). A connected
-	// server's token is never SuperAdmin, so the default policy and tags are
-	// read here and changed in EasyPatch's console.
+	// Policies at every level, and tags (one-product plan, C4).
 	type policyView struct {
-		Name           string `json:"name"`
-		HasOwn         bool   `json:"hasOwn"`
-		CanEdit        bool   `json:"canEdit"`
-		ReadOnlyReason string `json:"readOnlyReason"`
-		Own            struct {
+		Name    string `json:"name"`
+		HasOwn  bool   `json:"hasOwn"`
+		CanEdit bool   `json:"canEdit"`
+		Own     struct {
 			ScanIntervalMinutes *int `json:"scanIntervalMinutes"`
 			InstallDelayDays    *int `json:"installDelayDays"`
 		} `json:"own"`
@@ -610,12 +632,19 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	var pol policyView
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching/policies/default", nil, &pol)
-	if pol.CanEdit || !pol.HasOwn || pol.ReadOnlyReason == "" || pol.Own.ScanIntervalMinutes == nil || *pol.Own.ScanIntervalMinutes != 360 {
+	if !pol.CanEdit || !pol.HasOwn || pol.Own.ScanIntervalMinutes == nil || *pol.Own.ScanIntervalMinutes != 360 {
 		t.Fatalf("default policy: %+v", pol)
 	}
-	wantStatus(t, admin.do("PUT", "/api/v1/patching/policies/default", map[string]any{"scanIntervalMinutes": 120}), http.StatusConflict, "easypatch_server_wide")
-	wantStatus(t, admin.do("DELETE", "/api/v1/patching/policies/default", nil), http.StatusConflict, "easypatch_server_wide")
+	admin.expect(http.StatusOK, "PUT", "/api/v1/patching/policies/default", map[string]any{"scanIntervalMinutes": 360, "installDelayDays": 1}, &pol)
+	if !pol.HasOwn || *pol.Own.ScanIntervalMinutes != 360 || *pol.Own.InstallDelayDays != 1 {
+		t.Fatalf("saved the default policy: %+v", pol)
+	}
 	wantStatus(t, viewer.do("PUT", "/api/v1/patching/policies/default", map[string]any{}), http.StatusForbidden, "forbidden")
+	var tag idObj
+	admin.expect(http.StatusCreated, "POST", "/api/v1/patching/tags", map[string]any{"name": "Ring 1", "color": "blue", "priority": 10}, &tag)
+	admin.expect(http.StatusOK, "PUT", "/api/v1/patching/tags/"+tag.ID, map[string]any{"name": "Ring 2", "color": "teal", "priority": 20}, nil)
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/policies/tag/"+tag.ID, nil, &pol)
+	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/patching/tags/"+tag.ID, nil, nil)
 	orgPolicy := "/api/v1/patching/policies/organization/" + acme
 	viewer.expect(http.StatusOK, "GET", orgPolicy, nil, &pol)
 	if pol.HasOwn || pol.CanEdit || *pol.Inherited.ScanIntervalMinutes != 360 || pol.InheritedFrom["scanIntervalMinutes"] != "Default policy" {
@@ -623,7 +652,7 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	pol = policyView{}
 	admin.expect(http.StatusOK, "PUT", orgPolicy, map[string]any{"installDelayDays": 2}, &pol)
-	if !pol.HasOwn || !pol.CanEdit || pol.ReadOnlyReason != "" || *pol.Own.InstallDelayDays != 2 {
+	if !pol.HasOwn || !pol.CanEdit || *pol.Own.InstallDelayDays != 2 {
 		t.Fatalf("saved Acme's policy: %+v", pol)
 	}
 	wantStatus(t, admin.do("PUT", orgPolicy, map[string]any{"installDelayDays": 400}), http.StatusUnprocessableEntity, "validation_failed")
@@ -641,21 +670,15 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 
 	ring := ep.AddTag("Ring 0", "teal", 10).String()
-	wantStatus(t, admin.do("POST", "/api/v1/patching/tags", map[string]any{"name": "Ring 1", "color": "blue", "priority": 10}),
-		http.StatusConflict, "easypatch_server_wide")
 	wantStatus(t, viewer.do("POST", "/api/v1/patching/tags", map[string]any{"name": "Ring 2", "color": "blue"}), http.StatusForbidden, "forbidden")
-	wantStatus(t, admin.do("PUT", "/api/v1/patching/tags/"+ring, map[string]any{"name": "Ring 1", "color": "teal"}), http.StatusConflict, "easypatch_server_wide")
-	wantStatus(t, admin.do("DELETE", "/api/v1/patching/tags/"+ring, nil), http.StatusConflict, "easypatch_server_wide")
-	wantStatus(t, admin.do("GET", "/api/v1/patching/policies/tag/"+ring, nil), http.StatusConflict, "easypatch_server_wide")
 	var tags struct {
 		Items []struct {
 			Name string `json:"name"`
 		} `json:"items"`
-		CanManage      bool   `json:"canManage"`
-		ReadOnlyReason string `json:"readOnlyReason"`
+		CanManage bool `json:"canManage"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching/tags", nil, &tags)
-	if len(tags.Items) != 1 || tags.Items[0].Name != "Ring 0" || tags.CanManage || tags.ReadOnlyReason == "" {
+	if len(tags.Items) != 1 || tags.Items[0].Name != "Ring 0" || !tags.CanManage {
 		t.Fatalf("tags: %+v", tags)
 	}
 	var assigned struct {
@@ -763,8 +786,8 @@ func TestEasyPatchAPI(t *testing.T) {
 	send := "/api/v1/patching/reports/monthly/" + monthly.ID + "/send"
 	r = admin.do("POST", send, map[string]any{"recipients": []string{"cfo@example.com"}})
 	wantStatus(t, r, http.StatusConflict, "mail_not_configured")
-	if !strings.Contains(string(r.body), "EasyPatch's console") {
-		t.Errorf("a connected server's mail: %s", r.body)
+	if !strings.Contains(string(r.body), "EASYRMM_SMTP_HOST") {
+		t.Errorf("without a mail server: %s", r.body)
 	}
 	wantStatus(t, viewer.do("DELETE", "/api/v1/patching/reports/monthly/"+monthly.ID, nil), http.StatusForbidden, "forbidden")
 	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/patching/reports/monthly/"+monthly.ID, nil, nil)
@@ -816,21 +839,22 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Errorf("report audit: %v", got)
 	}
 
-	// Server-wide settings (one-product plan, C6): a connected server's are
-	// read in EasyRMM and changed in EasyPatch's console.
+	// Server-wide settings (one-product plan, C6), a super administrator's.
 	var settings struct {
-		Settings       map[string]any `json:"settings"`
-		Feeds          []any          `json:"feeds"`
-		CanEdit        bool           `json:"canEdit"`
-		ReadOnlyReason string         `json:"readOnlyReason"`
+		Settings map[string]any `json:"settings"`
+		Feeds    []any          `json:"feeds"`
+		CanEdit  bool           `json:"canEdit"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching/settings", nil, &settings)
-	if settings.CanEdit || !strings.Contains(settings.ReadOnlyReason, "EasyPatch's own console") || settings.Settings["globalMaxConcurrentInstalls"] != 50.0 ||
-		settings.Feeds == nil {
+	if !settings.CanEdit || settings.Settings["globalMaxConcurrentInstalls"] != 50.0 || settings.Feeds == nil {
 		t.Fatalf("settings: %+v", settings)
 	}
 	wantStatus(t, viewer.do("GET", "/api/v1/patching/settings", nil), http.StatusForbidden, "forbidden")
-	wantStatus(t, admin.do("PUT", "/api/v1/patching/settings", settings.Settings), http.StatusConflict, "easypatch_server_wide")
+	settings.Settings["globalMaxConcurrentInstalls"] = 40
+	admin.expect(http.StatusOK, "PUT", "/api/v1/patching/settings", settings.Settings, &settings)
+	if settings.Settings["globalMaxConcurrentInstalls"] != 40.0 {
+		t.Fatalf("saved settings: %+v", settings)
+	}
 	var lifecycle struct {
 		Items []struct {
 			ID      string `json:"id"`
@@ -839,13 +863,16 @@ func TestEasyPatchAPI(t *testing.T) {
 		CanEdit bool `json:"canEdit"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching/lifecycle", nil, &lifecycle)
-	if len(lifecycle.Items) != 2 || lifecycle.CanEdit {
+	if len(lifecycle.Items) != 2 || !lifecycle.CanEdit {
 		t.Fatalf("lifecycle: %+v", lifecycle)
 	}
 	entry := map[string]any{"product": "Windows 11", "editionGroup": "HomePro", "buildNumber": 26200, "versionLabel": "25H2", "endOfServicing": "2027-10-12"}
-	wantStatus(t, admin.do("POST", "/api/v1/patching/lifecycle", entry), http.StatusConflict, "easypatch_server_wide")
-	wantStatus(t, admin.do("PUT", "/api/v1/patching/lifecycle/"+lifecycle.Items[0].ID, entry), http.StatusConflict, "easypatch_server_wide")
-	wantStatus(t, admin.do("DELETE", "/api/v1/patching/lifecycle/"+lifecycle.Items[0].ID, nil), http.StatusConflict, "easypatch_server_wide")
+	var added idObj
+	admin.expect(http.StatusCreated, "POST", "/api/v1/patching/lifecycle", entry, &added)
+	entry["versionLabel"] = "25H2 (1)"
+	admin.expect(http.StatusOK, "PUT", "/api/v1/patching/lifecycle/"+added.ID, entry, nil)
+	wantStatus(t, admin.do("PUT", "/api/v1/patching/lifecycle/"+lifecycle.Items[0].ID, entry), http.StatusUnprocessableEntity, "validation_failed")
+	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/patching/lifecycle/"+added.ID, nil, nil)
 	wantStatus(t, admin.do("DELETE", "/api/v1/patching/lifecycle/nope", nil), http.StatusNotFound, "not_found")
 	var packages struct {
 		Items []struct {
@@ -854,7 +881,8 @@ func TestEasyPatchAPI(t *testing.T) {
 		} `json:"items"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching/agent-packages", nil, &packages)
-	if len(packages.Items) == 0 || packages.Items[0].URL != "https://patch.example.com/downloads/agent/"+packages.Items[0].FileName {
+	// Served from EasyRMM's own address, as the engine's are.
+	if len(packages.Items) == 0 || packages.Items[0].URL != "/downloads/agent/"+packages.Items[0].FileName {
 		t.Fatalf("packages: %+v", packages)
 	}
 	ep.AddAudit(eptest.AuditInfo{Username: "jo", Org: &epOrg, Action: "policy.update"})
@@ -885,9 +913,7 @@ func TestEasyPatchAPI(t *testing.T) {
 		}
 	}
 
-	// Alerts (one-product plan, C7): a connected server's are read and
-	// acknowledged with EasyRMM's token; its rules and channels are its
-	// console's.
+	// Alerts (one-product plan, C7), their rules and channels.
 	alertID := ep.AddAlert(eptest.AlertInfo{RuleType: "UpdateHeld", Severity: "Warning", Title: "Acme Patch: 1 update on hold", Org: epOrg})
 	var alerts struct {
 		Items []struct {
@@ -922,26 +948,31 @@ func TestEasyPatchAPI(t *testing.T) {
 	wantStatus(t, admin.do("POST", "/api/v1/patching/alerts/acknowledge", map[string]any{"alertIds": []string{}}), http.StatusUnprocessableEntity,
 		"validation_failed")
 	wantStatus(t, viewer.do("GET", "/api/v1/patching/alert-rules", nil), http.StatusForbidden, "forbidden")
-	rule := uuid.NewString()
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/alert-rules", nil, nil)
+	var rule idObj
+	var channel struct {
+		Channel idObj `json:"channel"`
+	}
+	admin.expect(http.StatusCreated, "POST", "/api/v1/patching/alert-rules",
+		map[string]any{"name": "Offline", "type": "EndpointOffline", "severity": "Warning", "threshold": 4, "enabled": true}, &rule)
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/notifications", nil, nil)
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/notifications/deliveries?status=Failed", nil, nil)
+	admin.expect(http.StatusCreated, "POST", "/api/v1/patching/notifications/channels",
+		map[string]any{"name": "Ops", "type": "Email", "emailRecipients": []string{"ops@example.com"}, "enabled": true}, &channel)
+	gone := uuid.NewString()
 	for _, c := range []struct {
 		method, path string
 		body         any
 	}{
-		{"GET", "/api/v1/patching/alert-rules", nil},
-		{"POST", "/api/v1/patching/alert-rules", map[string]any{"name": "Offline", "type": "EndpointOffline", "severity": "Warning", "threshold": 4}},
-		{"PUT", "/api/v1/patching/alert-rules/" + rule, map[string]any{"name": "Offline"}},
-		{"DELETE", "/api/v1/patching/alert-rules/" + rule, nil},
-		{"GET", "/api/v1/patching/notifications", nil},
-		{"PUT", "/api/v1/patching/notifications", map[string]any{"allowPrivateNetworkWebhooks": true}},
-		{"GET", "/api/v1/patching/notifications/deliveries?status=Failed", nil},
-		{"POST", "/api/v1/patching/notifications/channels", map[string]any{"name": "Ops", "type": "Email", "emailRecipients": []string{"ops@example.com"}}},
-		{"PUT", "/api/v1/patching/notifications/channels/" + rule, map[string]any{"name": "Ops"}},
-		{"DELETE", "/api/v1/patching/notifications/channels/" + rule, nil},
-		{"POST", "/api/v1/patching/notifications/channels/" + rule + "/test", nil},
-		{"POST", "/api/v1/patching/notifications/channels/" + rule + "/rotate-secret", nil},
+		{"PUT", "/api/v1/patching/alert-rules/" + gone, map[string]any{"name": "Offline", "type": "EndpointOffline", "severity": "Warning", "threshold": 4}},
+		{"PUT", "/api/v1/patching/notifications/channels/" + gone, map[string]any{"name": "Ops", "type": "Email", "emailRecipients": []string{"ops@example.com"}}},
+		{"POST", "/api/v1/patching/notifications/channels/" + gone + "/test", nil},
+		{"POST", "/api/v1/patching/notifications/channels/" + gone + "/rotate-secret", nil},
 	} {
-		wantStatus(t, admin.do(c.method, c.path, c.body), http.StatusConflict, "easypatch_server_wide")
+		wantStatus(t, admin.do(c.method, c.path, c.body), http.StatusNotFound, "not_found")
 	}
+	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/patching/alert-rules/"+rule.ID, nil, nil)
+	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/patching/notifications/channels/"+channel.Channel.ID, nil, nil)
 	for _, path := range []string{"alert-rules/nope", "notifications/channels/nope"} {
 		wantStatus(t, admin.do("DELETE", "/api/v1/patching/"+path, nil), http.StatusNotFound, "not_found")
 	}
@@ -953,31 +984,12 @@ func TestEasyPatchAPI(t *testing.T) {
 			t.Errorf("%s %s with an array: %d %s", c.method, c.path, r.status, r.body)
 		}
 	}
-
-	// Unlinking and removing.
-	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil, nil)
-	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil), http.StatusNotFound, "not_found")
-	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/nope", nil), http.StatusNotFound, "not_found")
-	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/settings/easypatch", nil, nil)
-	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch", nil), http.StatusNotFound, "not_found")
-	wantStatus(t, admin.do("POST", "/api/v1/settings/easypatch/check", nil), http.StatusNotFound, "not_found")
-	admin.expect(http.StatusOK, "GET", "/api/v1/patching", nil, &status)
-	if status.Configured {
-		t.Fatalf("status after removal: %+v", status)
-	}
-	if l := from(admin, "endpoints", endpoint.ID.String()); l.Path != "/patching" || !strings.Contains(l.Notice, "not set up") {
-		t.Fatalf("from EasyPatch once it is removed: %+v", l)
-	}
-	admin.expect(http.StatusOK, "GET", "/api/v1/audit?action=easypatch", nil, &audit)
-	if len(audit.Items) != 4 {
-		t.Fatalf("easypatch audit: %+v", audit.Items)
-	}
 }
 
 // TestEasyPatchAgentInstallAPI installs the EasyPatch agent through the
 // console API and an agent's heartbeats (ADR-0031).
 func TestEasyPatchAgentInstallAPI(t *testing.T) {
-	h := newHarness(t, false)
+	ep, h := engineHarness(t)
 	admin, _ := setUp(t, h)
 	ctx := context.Background()
 	acme := orgID(t, admin, "Acme")
@@ -1004,11 +1016,10 @@ func TestEasyPatchAgentInstallAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ep := eptest.New(t)
-	epOrg := ep.Org("Acme Patch")
-	ep.Site(epOrg, "HQ")
-	admin.expect(http.StatusOK, "PUT", "/api/v1/settings/easypatch", map[string]string{"url": ep.URL(), "token": ep.Token, "caCert": ep.CAPEM}, nil)
-	admin.expect(http.StatusNoContent, "PUT", "/api/v1/settings/easypatch/organizations/"+acme, map[string]string{"easyPatchId": epOrg.String()}, nil)
+	// EasyRMM creates Acme and HQ in the engine.
+	if res, err := h.deps.EasyPatch.Reconcile(ctx); err != nil || len(res.Problems) != 0 {
+		t.Fatalf("reconcile: %+v, %v", res, err)
+	}
 
 	// Automatic installs, per organization.
 	wantStatus(t, admin.do("PATCH", "/api/v1/settings/easypatch/organizations/"+acme, map[string]any{}), http.StatusUnprocessableEntity, "validation_failed")
@@ -1021,7 +1032,11 @@ func TestEasyPatchAgentInstallAPI(t *testing.T) {
 		} `json:"links"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch/organizations", nil, &orgs)
-	if len(orgs.Links) != 1 || !orgs.Links[0].AutoInstall {
+	if len(orgs.Links) == 0 || !slices.ContainsFunc(orgs.Links, func(l struct {
+		AutoInstall bool `json:"autoInstall"`
+	}) bool {
+		return l.AutoInstall
+	}) {
 		t.Fatalf("organizations: %+v", orgs)
 	}
 	admin.expect(http.StatusNoContent, "PATCH", "/api/v1/settings/easypatch/organizations/"+acme, map[string]any{"autoInstall": false}, nil)

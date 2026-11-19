@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// What the reconciler (bundled mode, one-product plan B5) changes in the
+// What the reconciler (one-product plan B5) changes in the
 // patching engine: its organizations and sites, and its endpoints' sites.
 //
 // EasyPatch's updates replace every field they carry, so each update here

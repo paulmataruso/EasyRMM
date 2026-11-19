@@ -22,11 +22,6 @@ func TestImportEasyPatch(t *testing.T) {
 	ctx := context.Background()
 	var out bytes.Buffer
 
-	// Only with the engine in the deployment.
-	if err := ImportEasyPatch(ctx, cfg, discard(), &out); err == nil || !strings.Contains(err.Error(), "needs the patching engine") {
-		t.Fatalf("without the engine: %v", err)
-	}
-
 	key := bytes.Repeat([]byte{9}, 32)
 	engine := eptest.NewEngine(t, key)
 	contoso := engine.Org("Contoso")
@@ -36,7 +31,7 @@ func TestImportEasyPatch(t *testing.T) {
 	engine.ChangeOrganization(away, func(o *eptest.OrgInfo) { o.TimeZone = "Nowhere/Else" })
 	gone := engine.Org("Gone")
 	engine.ChangeOrganization(gone, func(o *eptest.OrgInfo) { now := time.Now(); o.Active, o.ArchivedAt = false, &now })
-	cfg.Patching = config.Patching{Mode: config.PatchingBundled, URL: engine.URL(), Key: key}
+	cfg.Patching = config.Patching{URL: engine.URL(), Key: key}
 
 	if err := ImportEasyPatch(ctx, cfg, discard(), &out); err != nil {
 		t.Fatal(err)
@@ -77,7 +72,6 @@ Note: Organization "Away": its time zone "Nowhere/Else" is not one EasyRMM knows
 	for name, broken := range map[string]func(c *config.Config){
 		"migration URL": func(c *config.Config) { c.DatabaseMigrationURL = "postgres://%zz" },
 		"database URL":  func(c *config.Config) { c.DatabaseURL = "postgres://%zz" },
-		"secret keys":   func(c *config.Config) { c.SecretKeys = nil },
 		"key":           func(c *config.Config) { c.Patching.Key = []byte{1} },
 		"engine URL":    func(c *config.Config) { c.Patching.URL = "ftp://" + freeAddr(t) },
 		"refused":       func(c *config.Config) { c.Patching.Key = bytes.Repeat([]byte{8}, 32) },

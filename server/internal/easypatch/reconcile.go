@@ -24,10 +24,6 @@ import (
 // stopped. Every step is safe to repeat. What the engine did but EasyRMM
 // did not get to record, such as an organization created just before a
 // restart, is found again by its name rather than made twice.
-//
-// Removing a device's EasyPatch agent (a deleted device, an opt-out, a
-// move to another organization) works with a connected EasyPatch server
-// too; organizations and sites are the engine's only.
 
 const (
 	// syncEvery is how often organizations and sites are compared in full
@@ -118,47 +114,35 @@ func (s *Service) Reconcile(ctx context.Context) (ReconcileResult, error) {
 	if err != nil {
 		return res, err
 	}
-	if s.engine == nil {
-		// A server set up in Settings keeps its own organizations: what
-		// EasyRMM deleted is not EasyRMM's to archive there.
-		if err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-			_, err := tx.Exec(ctx, `DELETE FROM easypatch_forgotten`)
-			return err
-		}); err != nil {
-			return res, err
-		}
-	}
 	if r == nil {
 		return res, nil
 	}
 	now := s.now()
-	if s.engine != nil {
-		s.sync.mu.Lock()
-		due := now.Sub(s.sync.full) >= syncEvery
-		s.sync.mu.Unlock()
-		if due {
-			before := len(res.Problems)
-			if err := s.archiveForgotten(ctx, c, &res); err != nil {
-				return res, err
-			}
-			orgs, err := s.syncOrganizations(ctx, c, &res)
-			if err != nil {
-				return res, err
-			}
-			if err := s.syncSites(ctx, c, orgs, &res); err != nil {
-				return res, err
-			}
-			if len(res.Problems) == before {
-				s.sync.mu.Lock()
-				s.sync.full = now
-				s.sync.mu.Unlock()
-			}
-		}
-		if err := s.placeEndpoints(ctx, c, &res); err != nil {
+	s.sync.mu.Lock()
+	due := now.Sub(s.sync.full) >= syncEvery
+	s.sync.mu.Unlock()
+	if due {
+		before := len(res.Problems)
+		if err := s.archiveForgotten(ctx, c, &res); err != nil {
 			return res, err
 		}
-		s.syncMail(ctx, c, &res)
+		orgs, err := s.syncOrganizations(ctx, c, &res)
+		if err != nil {
+			return res, err
+		}
+		if err := s.syncSites(ctx, c, orgs, &res); err != nil {
+			return res, err
+		}
+		if len(res.Problems) == before {
+			s.sync.mu.Lock()
+			s.sync.full = now
+			s.sync.mu.Unlock()
+		}
 	}
+	if err := s.placeEndpoints(ctx, c, &res); err != nil {
+		return res, err
+	}
+	s.syncMail(ctx, c, &res)
 	if err := s.removeAgents(ctx, c, &res); err != nil {
 		return res, err
 	}
@@ -332,7 +316,7 @@ func (s *Service) archiveForgotten(ctx context.Context, c *Client, res *Reconcil
 func (s *Service) archiveOne(ctx context.Context, c *Client, f forgottenRow) string {
 	marker := fmt.Sprintf(" (deleted %s %s)", f.at.UTC().Format("2006-01-02"), shortID(f.id))
 	fail := func(what string, err error) string {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return fmt.Sprintf("Archiving %s %q, deleted in EasyRMM: %s: %s", strings.ReplaceAll(f.kind, "_", " "), f.name, what, message(epError(err)))
 	}
 	switch f.kind {
@@ -413,7 +397,7 @@ func (s *Service) syncOrganizations(ctx context.Context, c *Client, res *Reconci
 	}
 	list, err := c.AllOrganizations(ctx)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		res.problem("Reading the patching engine's organizations: %s", message(epError(err)))
 		return nil, nil
 	}
@@ -454,7 +438,7 @@ func (s *Service) syncOrganizations(ctx context.Context, c *Client, res *Reconci
 				}
 				d, err := c.CreateOrganization(ctx, name, o.tz)
 				if err != nil {
-					s.noteError(ctx, err)
+					s.noteError(err)
 					res.problem("Creating organization %q in the patching engine: %s", o.name, message(epError(err)))
 					continue
 				}
@@ -479,7 +463,7 @@ func (s *Service) syncOrganizations(ctx context.Context, c *Client, res *Reconci
 		}
 		if !ep.active {
 			if err := c.RestoreOrganization(ctx, ep.id); err != nil {
-				s.noteError(ctx, err)
+				s.noteError(err)
 				res.problem("Restoring organization %q in the patching engine: %s", o.name, message(epError(err)))
 				continue
 			}
@@ -496,7 +480,7 @@ func (s *Service) syncOrganizations(ctx context.Context, c *Client, res *Reconci
 				_, err = c.UpdateOrganization(ctx, d)
 			}
 			if err != nil {
-				s.noteError(ctx, err)
+				s.noteError(err)
 				res.problem("Updating organization %q in the patching engine: %s", o.name, message(epError(err)))
 			} else {
 				ep.name, zones[ep.id] = name, o.tz
@@ -623,7 +607,7 @@ func (s *Service) syncSites(ctx context.Context, c *Client, orgs map[uuid.UUID]u
 		}
 		list, err := c.AllSites(ctx, epOrg)
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			res.problem("Reading the sites of an organization in the patching engine: %s", message(epError(err)))
 			continue
 		}
@@ -671,7 +655,7 @@ func (s *Service) syncOrgSites(ctx context.Context, c *Client, epOrg uuid.UUID, 
 				}
 				d, err := c.CreateSite(ctx, epOrg, name, r.tz)
 				if err != nil {
-					s.noteError(ctx, err)
+					s.noteError(err)
 					res.problem("Creating site %q in the patching engine: %s", r.name, message(epError(err)))
 					continue
 				}
@@ -696,7 +680,7 @@ func (s *Service) syncOrgSites(ctx context.Context, c *Client, epOrg uuid.UUID, 
 		}
 		if !ep.active {
 			if err := c.RestoreSite(ctx, ep.id); err != nil {
-				s.noteError(ctx, err)
+				s.noteError(err)
 				res.problem("Restoring site %q in the patching engine: %s", r.name, message(epError(err)))
 				continue
 			}
@@ -713,7 +697,7 @@ func (s *Service) syncOrgSites(ctx context.Context, c *Client, epOrg uuid.UUID, 
 				_, err = c.UpdateSite(ctx, d)
 			}
 			if err != nil {
-				s.noteError(ctx, err)
+				s.noteError(err)
 				res.problem("Updating site %q in the patching engine: %s", r.name, message(epError(err)))
 			} else {
 				ep.name, zones[ep.id] = name, r.tz
@@ -770,7 +754,7 @@ func (s *Service) placeEndpoints(ctx context.Context, c *Client, res *ReconcileR
 			q = `UPDATE easypatch_devices SET state = 'pending', reason = '', checked_at = NULL WHERE device_id = $1 AND endpoint_id = $2
 				AND $3::uuid IS NOT NULL`
 		default:
-			s.noteError(ctx, err)
+			s.noteError(err)
 			res.problem("Moving an endpoint to its device's site: %s", message(epError(err)))
 			return nil
 		}
@@ -880,7 +864,7 @@ func (s *Service) removalStep(ctx context.Context, c *Client, x *removalRow, now
 		who = "endpoint " + x.endpoint.String()
 	}
 	engineDown := func(err error) removalStep {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return removalStep{stop: true, problem: fmt.Sprintf("Removing the EasyPatch agent of %s: %s", who, message(epError(err)))}
 	}
 	revoke := func(why string) removalStep {
@@ -904,7 +888,7 @@ func (s *Service) removalStep(ctx context.Context, c *Client, x *removalRow, now
 			// stop patching.
 			return revoke(fmt.Sprintf("its agent is too old to uninstall itself (%s)", reasonText(x.reason)))
 		case IsStatus(err, http.StatusConflict), IsStatus(err, http.StatusBadRequest), IsStatus(err, http.StatusForbidden):
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return removalStep{problem: fmt.Sprintf("Removing the EasyPatch agent of %s: %s", who, message(epError(err)))}
 		default:
 			return engineDown(err)

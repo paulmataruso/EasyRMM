@@ -7,20 +7,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
-	"github.com/paulmataruso/easyrmm/server/internal/database"
 )
 
 // The patching engine in this deployment (one-product plan, phases B3 and
-// S). The connector calls the engine on loopback with statements (ADR-0038)
-// instead of an EasyPatch server set up in Settings:
-// the deployment configures it, so there is no token to paste and nothing
-// to pair. Everything else — links, the patching pages, agent installs —
-// works as with a connected server.
+// S; ADR-0046): EasyRMM calls it on loopback with statements (ADR-0038).
+// The deployment configures it, so there is no token to paste and nothing
+// to pair.
 
 // engineCheckEvery is how often the engine's version and capabilities are
 // read again.
@@ -28,9 +24,6 @@ const engineCheckEvery = 5 * time.Minute
 
 // engineProbeTimeout bounds one look at the engine.
 const engineProbeTimeout = 5 * time.Second
-
-var errBundled = apperr.Conflict("patching_bundled",
-	"Patching comes from the engine in this deployment; there is no EasyPatch server to set up here.")
 
 // engine is the patching engine and what EasyRMM last saw of it.
 type engine struct {
@@ -151,33 +144,11 @@ func (s *Service) syncMail(ctx context.Context, c *Client, res *ReconcileResult)
 	s.log.Info("patching: the engine sends reports through EasyRMM's mail server", "host", e.mail.Host)
 }
 
-// UseEngine makes the connector use the patching engine in this deployment
-// through c (NewEngineClient). An EasyPatch server set up in Settings
-// before is forgotten, with its links, which name that server's ids: as
-// when Settings switches to another server. Call it before use.
-func (s *Service) UseEngine(ctx context.Context, c *Client, opts ...EngineOption) error {
-	if c == nil || !c.Engine() {
-		return apperr.Invalid("engine", "not an engine client")
-	}
-	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		stored, err := loadConn(ctx, tx, true)
-		if err != nil || stored == nil {
-			return err
-		}
-		for _, q := range []string{`DELETE FROM easypatch_connection`, `DELETE FROM easypatch_devices`, `DELETE FROM easypatch_installs`,
-			`DELETE FROM easypatch_organizations`, `DELETE FROM easypatch_sites`, `DELETE FROM easypatch_removals`, `DELETE FROM easypatch_forgotten`} {
-			if _, err := tx.Exec(ctx, q); err != nil {
-				return err
-			}
-		}
-		s.log.Warn("easypatch: the patching engine in this deployment replaces the EasyPatch server set up in Settings; its links are forgotten",
-			"url", stored.url)
-		return s.audit.Write(ctx, tx, audit.Event{Actor: audit.SystemActor("easypatch"), Action: "easypatch.connection_delete",
-			TargetType: "easypatch", TargetID: "connection", Outcome: audit.Success,
-			Details: map[string]any{"url": stored.url, "reason": "replaced by the patching engine in this deployment"}})
-	})
-	if err != nil {
-		return err
+// UseEngine has the service use the patching engine through c
+// (NewEngineClient). Call it before use.
+func (s *Service) UseEngine(c *Client, opts ...EngineOption) error {
+	if c == nil {
+		return apperr.Invalid("engine", "no engine client")
 	}
 	e := &engine{client: c}
 	for _, o := range opts {
@@ -188,13 +159,9 @@ func (s *Service) UseEngine(ctx context.Context, c *Client, opts ...EngineOption
 	return nil
 }
 
-// Bundled reports whether patching comes from the engine in this
-// deployment.
-func (s *Service) Bundled() bool { return s.engine != nil }
-
-// row is the engine as a stored connection would describe it. It reads the
-// engine's version and capabilities when they are older than
-// engineCheckEvery, or when force is set.
+// row is what EasyRMM knows of the engine. It reads the engine's version
+// and capabilities when they are older than engineCheckEvery, or when
+// force is set.
 func (e *engine) row(ctx context.Context, now time.Time, force bool) *connRow {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -227,7 +194,7 @@ func (e *engine) row(ctx context.Context, now time.Time, force bool) *connRow {
 		ca = string(e.agentCA())
 	}
 	return &connRow{url: e.client.base.String(), caCert: ca, version: e.info.Version, publicURL: e.info.PublicURL,
-		importedURLs: e.importedURLs, capabilities: append([]string{}, e.info.Capabilities...), canOperate: true, checkedAt: e.checkedAt,
+		importedURLs: e.importedURLs, capabilities: append([]string{}, e.info.Capabilities...), checkedAt: e.checkedAt,
 		lastError: e.lastError, lastErrorAt: e.lastErrorAt}
 }
 
@@ -241,8 +208,7 @@ func (e *engine) noted(msg string, at time.Time) {
 // as returns ctx carrying the statement for a call c makes to the engine:
 // c as the actor, with role, in the given EasyPatch organizations only (none
 // when there are none). EasyRMM has checked c's permissions already; the
-// statement lets the engine check the same, a second time. Calls to a
-// connected server ignore it and use EasyRMM's API token.
+// statement lets the engine check the same, a second time.
 func (s *Service) as(ctx context.Context, c access.Caller, role string, orgs ...uuid.UUID) context.Context {
 	st := s.statement(c, role)
 	st.Organizations = dedupe(orgs)

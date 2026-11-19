@@ -18,14 +18,8 @@ import (
 
 // Settings → Patching → Alert rules and Notifications (one-product plan,
 // C7): what raises EasyPatch's alerts, and where it sends them. Both are
-// server-wide and EasyPatch keeps them to its super administrators, so
-// EasyRMM's super administrators read and change them, with the bundled
-// engine only: a connected server's API token may do neither.
-
-const notificationsReason = "With a connected EasyPatch server, its alert rules and notification channels are set in EasyPatch's own console: " +
-	"EasyRMM's API token may not read or change them."
-
-var errNotifications = apperr.Conflict("easypatch_server_wide", notificationsReason)
+// server-wide and the engine keeps them to its super administrators, so
+// EasyRMM's super administrators read and change them.
 
 // The limits EasyPatch puts on rules and channels.
 const (
@@ -72,9 +66,9 @@ func RuleTypes() []AlertRuleType {
 	return out
 }
 
-// notifications checks that the caller may read the rules and channels,
-// and change them when change is set.
-func (s *Service) notifications(ctx context.Context, c access.Caller, change bool) (*Client, error) {
+// notifications checks that the caller may read and change the rules and
+// channels.
+func (s *Service) notifications(ctx context.Context, c access.Caller) (*Client, error) {
 	r, cl, err := s.conn(ctx)
 	switch {
 	case err != nil:
@@ -83,10 +77,6 @@ func (s *Service) notifications(ctx context.Context, c access.Caller, change boo
 		return nil, errNotConfigured
 	case !c.CanGlobal(rbac.PermPatchConfigure):
 		return nil, apperr.Forbidden()
-	case !s.Bundled():
-		return nil, errNotifications
-	case change && !r.canOperate:
-		return nil, errReadOnly
 	}
 	return cl, nil
 }
@@ -136,12 +126,12 @@ func (s *Service) ruleContext(ctx context.Context, c access.Caller, cl *Client) 
 	st := s.everywhere(ctx, c, RoleSuperAdmin)
 	tags, err := cl.Tags(st)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return rc, epError(err)
 	}
 	channels, err := cl.Channels(st)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return rc, epError(err)
 	}
 	return ruleContext{orgs: orgs, tags: tags, channels: channels}, nil
@@ -167,13 +157,13 @@ func (rc ruleContext) view(r AlertRule) AlertRuleView {
 
 // AlertRules lists EasyPatch's alert rules.
 func (s *Service) AlertRules(ctx context.Context, c access.Caller) (AlertRuleList, error) {
-	cl, err := s.notifications(ctx, c, false)
+	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return AlertRuleList{}, err
 	}
 	rules, err := cl.AlertRules(s.everywhere(ctx, c, RoleSuperAdmin))
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return AlertRuleList{}, epError(err)
 	}
 	rc, err := s.ruleContext(ctx, c, cl)
@@ -270,7 +260,7 @@ func (s *Service) recordRule(ctx context.Context, c access.Caller, action string
 
 // CreateAlertRule adds an alert rule.
 func (s *Service) CreateAlertRule(ctx context.Context, c access.Caller, in AlertRuleRequest) (AlertRuleView, error) {
-	cl, err := s.notifications(ctx, c, true)
+	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return AlertRuleView{}, err
 	}
@@ -284,7 +274,7 @@ func (s *Service) CreateAlertRule(ctx context.Context, c access.Caller, in Alert
 	}
 	r, err := cl.CreateAlertRule(s.everywhere(ctx, c, RoleSuperAdmin), input)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return AlertRuleView{}, epError(err)
 	}
 	v := rc.view(r)
@@ -295,7 +285,7 @@ func (s *Service) CreateAlertRule(ctx context.Context, c access.Caller, in Alert
 // what it looks for or where changes, or it is turned off; the next check
 // opens again those that still apply.
 func (s *Service) UpdateAlertRule(ctx context.Context, c access.Caller, id uuid.UUID, in AlertRuleRequest) (AlertRuleView, error) {
-	cl, err := s.notifications(ctx, c, true)
+	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return AlertRuleView{}, err
 	}
@@ -313,7 +303,7 @@ func (s *Service) UpdateAlertRule(ctx context.Context, c access.Caller, id uuid.
 	}
 	r, err := cl.UpdateAlertRule(s.everywhere(ctx, c, RoleSuperAdmin), id, input)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return AlertRuleView{}, epError(err)
 	}
 	v := rc.view(r)
@@ -322,7 +312,7 @@ func (s *Service) UpdateAlertRule(ctx context.Context, c access.Caller, id uuid.
 
 // DeleteAlertRule deletes an alert rule; EasyPatch resolves its alerts.
 func (s *Service) DeleteAlertRule(ctx context.Context, c access.Caller, id uuid.UUID) error {
-	cl, err := s.notifications(ctx, c, true)
+	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return err
 	}
@@ -331,7 +321,7 @@ func (s *Service) DeleteAlertRule(ctx context.Context, c access.Caller, id uuid.
 		return err
 	}
 	if err := cl.DeleteAlertRule(s.everywhere(ctx, c, RoleSuperAdmin), id); err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return epError(err)
 	}
 	return s.recordRule(ctx, c, "patch.alert_rule_delete", cur)
@@ -341,7 +331,7 @@ func (s *Service) DeleteAlertRule(ctx context.Context, c access.Caller, id uuid.
 func (s *Service) alertRule(ctx context.Context, c access.Caller, cl *Client, id uuid.UUID) (AlertRuleView, ruleContext, error) {
 	rules, err := cl.AlertRules(s.everywhere(ctx, c, RoleSuperAdmin))
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return AlertRuleView{}, ruleContext{}, epError(err)
 	}
 	i := slices.IndexFunc(rules, func(r AlertRule) bool { return r.ID == id })
@@ -375,19 +365,19 @@ type NotificationsView struct {
 
 // Notifications reads EasyPatch's notification channels and settings.
 func (s *Service) Notifications(ctx context.Context, c access.Caller) (NotificationsView, error) {
-	cl, err := s.notifications(ctx, c, false)
+	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return NotificationsView{}, err
 	}
 	st := s.everywhere(ctx, c, RoleSuperAdmin)
 	channels, err := cl.Channels(st)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return NotificationsView{}, epError(err)
 	}
 	m, err := cl.MailSettings(st)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return NotificationsView{}, epError(err)
 	}
 	for i := range channels {
@@ -406,14 +396,14 @@ type NotificationSettings struct {
 // SetNotificationSettings changes whether webhooks may go to private
 // networks, keeping the mail server as it is.
 func (s *Service) SetNotificationSettings(ctx context.Context, c access.Caller, in NotificationSettings) (NotificationsView, error) {
-	cl, err := s.notifications(ctx, c, true)
+	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return NotificationsView{}, err
 	}
 	st := s.everywhere(ctx, c, RoleSuperAdmin)
 	m, err := cl.MailSettings(st)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return NotificationsView{}, epError(err)
 	}
 	if m.AllowPrivateNetworkWebhooks != in.AllowPrivateNetworkWebhooks {
@@ -423,7 +413,7 @@ func (s *Service) SetNotificationSettings(ctx context.Context, c access.Caller, 
 			SMTPUsername: m.SMTPUsername, FromAddress: m.FromAddress, FromName: m.FromName, SMTPSkipCertificateCheck: m.SMTPSkipCertificateCheck,
 			AllowPrivateNetworkWebhooks: in.AllowPrivateNetworkWebhooks})
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return NotificationsView{}, epError(err)
 		}
 		if err := s.record(ctx, []audit.Event{{Actor: c.Actor, Action: "patch.notifications_update", TargetType: "easypatch_notifications",
@@ -504,7 +494,7 @@ func (s *Service) recordChannel(ctx context.Context, c access.Caller, action str
 // CreateChannel adds a notification channel. A generic webhook's signing
 // secret is in the answer, this once.
 func (s *Service) CreateChannel(ctx context.Context, c access.Caller, in ChannelRequest) (ChannelSaved, error) {
-	cl, err := s.notifications(ctx, c, true)
+	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return ChannelSaved{}, err
 	}
@@ -514,7 +504,7 @@ func (s *Service) CreateChannel(ctx context.Context, c access.Caller, in Channel
 	}
 	saved, err := cl.CreateChannel(s.everywhere(ctx, c, RoleSuperAdmin), input)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return ChannelSaved{}, epError(err)
 	}
 	saved.Channel.EmailRecipients = orEmpty(saved.Channel.EmailRecipients)
@@ -525,7 +515,7 @@ func (s *Service) CreateChannel(ctx context.Context, c access.Caller, in Channel
 func (s *Service) channel(ctx context.Context, c access.Caller, cl *Client, id uuid.UUID) (Channel, error) {
 	channels, err := cl.Channels(s.everywhere(ctx, c, RoleSuperAdmin))
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return Channel{}, epError(err)
 	}
 	i := slices.IndexFunc(channels, func(ch Channel) bool { return ch.ID == id })
@@ -539,7 +529,7 @@ func (s *Service) channel(ctx context.Context, c access.Caller, cl *Client, id u
 // unless a new one is given; one becoming a generic webhook gets a signing
 // secret, in the answer.
 func (s *Service) UpdateChannel(ctx context.Context, c access.Caller, id uuid.UUID, in ChannelRequest) (ChannelSaved, error) {
-	cl, err := s.notifications(ctx, c, true)
+	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return ChannelSaved{}, err
 	}
@@ -553,7 +543,7 @@ func (s *Service) UpdateChannel(ctx context.Context, c access.Caller, id uuid.UU
 	}
 	saved, err := cl.UpdateChannel(s.everywhere(ctx, c, RoleSuperAdmin), id, input)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return ChannelSaved{}, epError(err)
 	}
 	saved.Channel.EmailRecipients = orEmpty(saved.Channel.EmailRecipients)
@@ -563,7 +553,7 @@ func (s *Service) UpdateChannel(ctx context.Context, c access.Caller, id uuid.UU
 // DeleteChannel deletes a notification channel; EasyPatch takes it out of
 // the rules that send to it.
 func (s *Service) DeleteChannel(ctx context.Context, c access.Caller, id uuid.UUID) error {
-	cl, err := s.notifications(ctx, c, true)
+	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return err
 	}
@@ -572,7 +562,7 @@ func (s *Service) DeleteChannel(ctx context.Context, c access.Caller, id uuid.UU
 		return err
 	}
 	if err := cl.DeleteChannel(s.everywhere(ctx, c, RoleSuperAdmin), id); err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return epError(err)
 	}
 	return s.recordChannel(ctx, c, "patch.channel_delete", cur, nil)
@@ -581,7 +571,7 @@ func (s *Service) DeleteChannel(ctx context.Context, c access.Caller, id uuid.UU
 // RotateChannelSecret gives a generic webhook a new signing secret, in the
 // answer this once; the old one stops working.
 func (s *Service) RotateChannelSecret(ctx context.Context, c access.Caller, id uuid.UUID) (ChannelSaved, error) {
-	cl, err := s.notifications(ctx, c, true)
+	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return ChannelSaved{}, err
 	}
@@ -594,7 +584,7 @@ func (s *Service) RotateChannelSecret(ctx context.Context, c access.Caller, id u
 	}
 	saved, err := cl.RotateChannelSecret(s.everywhere(ctx, c, RoleSuperAdmin), id)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return ChannelSaved{}, epError(err)
 	}
 	saved.Channel.EmailRecipients = orEmpty(saved.Channel.EmailRecipients)
@@ -607,7 +597,7 @@ var errTestTooSoon = apperr.Conflict("easypatch_test_too_soon", "A test went to 
 // TestChannel has EasyPatch send a test message to a channel, the way it
 // sends alerts; the deliveries show how it went.
 func (s *Service) TestChannel(ctx context.Context, c access.Caller, id uuid.UUID) (Delivery, error) {
-	cl, err := s.notifications(ctx, c, true)
+	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return Delivery{}, err
 	}
@@ -620,7 +610,7 @@ func (s *Service) TestChannel(ctx context.Context, c access.Caller, id uuid.UUID
 	case IsStatus(err, http.StatusTooManyRequests):
 		return Delivery{}, errTestTooSoon
 	case err != nil:
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return Delivery{}, epError(err)
 	}
 	return d, s.recordChannel(ctx, c, "patch.channel_test", cur, nil)
@@ -650,13 +640,13 @@ func (s *Service) Deliveries(ctx context.Context, c access.Caller, q DeliveriesQ
 	case q.Page < 1 || q.Page > maxDeliveryPage:
 		return DeliveryPage{}, apperr.Invalid("page", "Choose a page from 1 to 10,000.")
 	}
-	cl, err := s.notifications(ctx, c, false)
+	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return DeliveryPage{}, err
 	}
 	p, err := cl.Deliveries(s.everywhere(ctx, c, RoleSuperAdmin), q.ChannelID, q.Status, q.Page, deliveryPageSize)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return DeliveryPage{}, epError(err)
 	}
 	return DeliveryPage{Items: orEmpty(p.Items), Page: q.Page, PageSize: deliveryPageSize, TotalCount: p.TotalCount}, nil

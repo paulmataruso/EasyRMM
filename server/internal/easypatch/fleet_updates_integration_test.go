@@ -39,7 +39,7 @@ type fleetFixture struct {
 func newFleetFixture(t *testing.T) *fleetFixture {
 	t.Helper()
 	f := &fleetFixture{fixture: newFixture(t)}
-	f.engine = f.bundle()
+	f.engine = f.ep
 	f.reconcile()
 	f.epAcme, f.epGlobex = f.engineOrg(f.acme), f.engineOrg(f.globex)
 	f.web, f.eWeb = f.linkedDevice(f.engine, f.acme, f.hq, "WEB-01")
@@ -450,29 +450,23 @@ func TestUnmatchedEndpoints(t *testing.T) {
 	}
 }
 
-// TestCatalogConnected: a connected server answers for every
-// organization it has, so the catalog covers one at a time, and its
-// sites are matched by name.
-func TestCatalogConnected(t *testing.T) {
+// TestCatalogSites: a site the reconciler has not recorded yet is found in
+// the engine by name; a site the engine does not have, or an organization
+// that is not linked, says so.
+func TestCatalogSites(t *testing.T) {
 	f := newFixture(t)
 	ctx := f.ctx
-	_, err := f.svc.Catalog(ctx, f.admin, UpdateScope{}, CatalogQuery{})
+	_, err := f.unconfigured().Catalog(ctx, f.admin, UpdateScope{}, CatalogQuery{})
 	wantErr(t, err, apperr.KindConflict, "easypatch_not_configured")
 
-	f.connect()
 	acme, globex := f.ep.Org("Acme Patch"), f.ep.Org("Globex Patch")
 	hq := f.ep.Site(acme, "hq")
-	for org, ep := range map[uuid.UUID]uuid.UUID{f.acme: acme, f.globex: globex} {
-		if err := f.svc.LinkOrganization(ctx, f.admin.Actor, org, ep); err != nil {
-			t.Fatal(err)
-		}
-	}
+	f.linkOrg(f.acme, acme, "Acme Patch")
+	f.linkOrg(f.globex, globex, "Globex Patch")
 	web := f.ep.AddEndpoint(acme, "web-01", "", "AAAA-1111")
 	db := f.ep.AddEndpoint(acme, "db-01", "", "AAAA-2222")
 	f.ep.Set(func() { web.Site, web.SiteName, db.Site, db.SiteName = &hq, "hq", nil, "" })
 
-	_, err = f.svc.Catalog(ctx, f.admin, UpdateScope{}, CatalogQuery{})
-	wantField(t, err, "organizationId", "one organization at a time")
 	p, err := f.svc.Catalog(ctx, f.admin, UpdateScope{OrganizationID: f.acme}, CatalogQuery{})
 	if u := find(p.Items, openssl); err != nil || u == nil || u.MissingCount != 2 {
 		t.Fatalf("Acme: %+v, %v", p, err)

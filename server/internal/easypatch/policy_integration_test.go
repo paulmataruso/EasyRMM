@@ -4,7 +4,6 @@ package easypatch
 
 import (
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -319,68 +318,8 @@ func anyStrings(v any) []string {
 // Without EasyPatch, with EasyPatch down, or when its answer is lost, every
 // policy and tag call fails with EasyPatch's error and changes nothing in
 // EasyRMM's audit log.
-// A connected EasyPatch server's API token is never SuperAdmin: EasyRMM
-// reads the default policy but does not change it, lists and assigns tags
-// but does not manage them, and leaves tags' policies to EasyPatch's
-// console. Organizations' policies are changed as with the bundled engine.
-func TestPolicyConnected(t *testing.T) {
-	f := newFixture(t)
-	ctx := f.ctx
-	f.connect()
-	if err := f.svc.LinkOrganization(ctx, f.admin.Actor, f.acme, f.ep.Org("Acme Patch")); err != nil {
-		t.Fatal(err)
-	}
-	ring := f.ep.AddTag("Ring 1", "blue", 10)
-
-	v, err := f.svc.Policy(ctx, f.admin, LevelDefault, uuid.Nil)
-	if err != nil || v.CanEdit || !strings.Contains(v.ReadOnlyReason, "EasyPatch's own console") {
-		t.Fatalf("default: %+v, %v", v, err)
-	}
-	for name, err := range map[string]error{
-		"save the default":    second(f.svc.SavePolicy(ctx, f.admin, LevelDefault, uuid.Nil, PolicyLayer{ScanIntervalMinutes: ptr(120)})),
-		"reset the default":   second(f.svc.ResetPolicy(ctx, f.admin, LevelDefault, uuid.Nil)),
-		"add a tag":           second(f.svc.CreateTag(ctx, f.admin, TagInput{Name: "Ring 2", Color: "blue"})),
-		"change a tag":        second(f.svc.UpdateTag(ctx, f.admin, ring, TagInput{Name: "Ring 0", Color: "blue"})),
-		"delete a tag":        f.svc.DeleteTag(ctx, f.admin, ring),
-		"read a tag's policy": second(f.svc.Policy(ctx, f.admin, LevelTag, ring)),
-		"save a tag's policy": second(f.svc.SavePolicy(ctx, f.admin, LevelTag, ring, PolicyLayer{InstallDelayDays: ptr(1)})),
-	} {
-		if !isCode(err, "easypatch_server_wide") {
-			t.Errorf("%s: %v", name, err)
-		}
-	}
-	if len(f.ep.RequestsTo("PUT", "/api/v1/policies/global"))+len(f.ep.RequestsTo("POST", "/api/v1/tags")) != 0 {
-		t.Error("EasyPatch was asked")
-	}
-	// Someone who may not configure patching everywhere is refused as
-	// before, not told about the console.
-	reader := f.user("rita@example.com", rbac.Assignment{Role: rbac.RoleReadOnly, OrganizationID: f.acme})
-	if _, err := f.svc.SavePolicy(ctx, reader, LevelDefault, uuid.Nil, PolicyLayer{}); !isKind(err, apperr.KindForbidden) {
-		t.Errorf("a reader saves the default: %v", err)
-	}
-
-	if v, err = f.svc.SavePolicy(ctx, f.admin, LevelOrganization, f.acme, PolicyLayer{InstallDelayDays: ptr(2)}); err != nil ||
-		!v.CanEdit || v.ReadOnlyReason != "" || *v.Own.InstallDelayDays != 2 {
-		t.Fatalf("Acme's policy: %+v, %v", v, err)
-	}
-
-	l, err := f.svc.Tags(ctx, f.admin)
-	if err != nil || l.CanManage || l.ReadOnlyReason == "" || len(l.Items) != 1 {
-		t.Fatalf("tags: %+v, %v", l, err)
-	}
-	a, err := f.svc.SetTags(ctx, f.admin, LevelOrganization, f.acme, []uuid.UUID{ring})
-	if err != nil || !a.CanAssign || len(a.Tags) != 1 || a.Tags[0].Name != "Ring 1" {
-		t.Fatalf("assign: %+v, %v", a, err)
-	}
-	// A token for chosen organizations may not assign tags.
-	f.ep.Set(func() { f.ep.Restricted = true })
-	if _, err := f.svc.SetTags(ctx, f.admin, LevelOrganization, f.acme, nil); !isCode(err, "easypatch_tags_refused") {
-		t.Errorf("assign with a restricted token: %v", err)
-	}
-}
-
 func TestPolicyFailures(t *testing.T) {
-	none := newFixture(t)
+	none := newFixture(t).withoutEngine()
 	for name, err := range map[string]error{
 		"policy":   second(none.svc.Policy(none.ctx, none.admin, LevelDefault, uuid.Nil)),
 		"save":     second(none.svc.SavePolicy(none.ctx, none.admin, LevelDefault, uuid.Nil, PolicyLayer{})),

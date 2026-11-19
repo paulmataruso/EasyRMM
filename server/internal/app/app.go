@@ -182,42 +182,11 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, log)
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
-	d.EasyPatch = easypatch.New(db, auditLog, sealer, Version, log)
-	// The patch reports read patching through the connector (one-product
-	// plan, C5).
+	d.EasyPatch = easypatch.New(db, auditLog, Version, log)
+	// The patch reports read patching through it (one-product plan, C5).
 	d.Reports.UsePatching(d.EasyPatch)
-	if p := cfg.Patching; p.Bundled() {
-		// The patching engine in this deployment, on loopback (one-product
-		// plan, B3; ADR-0038).
-		signer, err := easypatch.NewSigner(p.Key)
-		if err != nil {
-			return nil, err
-		}
-		engine, err := easypatch.NewEngineClient(p.URL, signer, Version)
-		if err != nil {
-			return nil, err
-		}
-		var opts []easypatch.EngineOption
-		if cfg.TLSMode == config.TLSInternal && d.PKI != nil {
-			// The engine's public address is EasyRMM's, with EasyRMM's own
-			// certificate authority: agents are given it (B7).
-			opts = append(opts, easypatch.AgentCA(d.PKI.CAPEM))
-		}
-		// An imported EasyPatch's agents still use its names (phase S).
-		if len(p.AgentHostnames) > 0 {
-			opts = append(opts, easypatch.AgentHostnames(p.AgentHostnames))
-		}
-		// The engine emails monthly reports through EasyRMM's mail server
-		// (one-product plan, C5).
-		opts = append(opts, easypatch.Mail(easypatch.MailConfig{Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, Username: cfg.SMTP.Username,
-			Password: cfg.SMTP.Password, From: cfg.SMTP.From, TLS: cfg.SMTP.TLS}))
-		if err := d.EasyPatch.UseEngine(ctx, engine, opts...); err != nil {
-			return nil, fmt.Errorf("patching engine: %w", err)
-		}
-		log.Info("patching: the engine in this deployment", "url", p.URL)
-		// Organization and site changes reach the engine within seconds
-		// (one-product plan, B5; ADR-0040).
-		d.Tenancy.OnChange(d.EasyPatch.Kick)
+	if err := usePatchingEngine(cfg, d, log); err != nil {
+		return nil, err
 	}
 	d.SSO = sso.New(db, auditLog, sealer, d.Auth, cfg.PublicURL)
 	if err := useAuthentik(ctx, cfg, d.SSO, d.PKI); err != nil {
@@ -241,6 +210,42 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 }
 
 // buildRemote assembles the MeshCentral integration.
+// usePatchingEngine gives d.EasyPatch the patching engine in this
+// deployment, on loopback (one-product plan, B3 and S; ADR-0038).
+func usePatchingEngine(cfg *config.Config, d *Deps, log *slog.Logger) error {
+	p := cfg.Patching
+	signer, err := easypatch.NewSigner(p.Key)
+	if err != nil {
+		return err
+	}
+	engine, err := easypatch.NewEngineClient(p.URL, signer, Version)
+	if err != nil {
+		return err
+	}
+	var opts []easypatch.EngineOption
+	if cfg.TLSMode == config.TLSInternal && d.PKI != nil {
+		// The engine's public address is EasyRMM's, with EasyRMM's own
+		// certificate authority: agents are given it (B7).
+		opts = append(opts, easypatch.AgentCA(d.PKI.CAPEM))
+	}
+	// An imported EasyPatch's agents still use its names (phase S).
+	if len(p.AgentHostnames) > 0 {
+		opts = append(opts, easypatch.AgentHostnames(p.AgentHostnames))
+	}
+	// The engine emails monthly reports through EasyRMM's mail server
+	// (one-product plan, C5).
+	opts = append(opts, easypatch.Mail(easypatch.MailConfig{Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, Username: cfg.SMTP.Username,
+		Password: cfg.SMTP.Password, From: cfg.SMTP.From, TLS: cfg.SMTP.TLS}))
+	if err := d.EasyPatch.UseEngine(engine, opts...); err != nil {
+		return fmt.Errorf("patching engine: %w", err)
+	}
+	log.Info("patching: the engine in this deployment", "url", p.URL)
+	// Organization and site changes reach the engine within seconds
+	// (one-product plan, B5; ADR-0040).
+	d.Tenancy.OnChange(d.EasyPatch.Kick)
+	return nil
+}
+
 func buildRemote(ctx context.Context, cfg *config.Config, d *Deps, sealer *secrets.Sealer, log *slog.Logger) error {
 	sec, err := remote.LoadSecrets(ctx, d.DB, sealer)
 	if err != nil {
@@ -390,21 +395,17 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
 	// EasyPatch agents reach the patching engine in this deployment through
 	// EasyRMM's own addresses (one-product plan, B4).
-	var patchingAgents http.Handler
-	if cfg.Patching.Bundled() {
-		target, err := url.Parse(cfg.Patching.URL)
-		if err != nil {
-			return nil, fmt.Errorf("EASYRMM_PATCHING_URL: %w", err)
-		}
-		patchingAgents = easypatch.NewAgentProxy(target, !cfg.DevInsecureCookie, log)
+	target, err := url.Parse(cfg.Patching.URL)
+	if err != nil {
+		return nil, fmt.Errorf("EASYRMM_PATCHING_URL: %w", err)
 	}
-	// The names served besides the origins (config.ExtraHostnames).
+	patchingAgents := easypatch.NewAgentProxy(target, !cfg.DevInsecureCookie, log)
+	// The names served besides the origins (config.ExtraHostnames): an
+	// imported EasyPatch's, for its agents.
 	extra := hostHandlers{}
-	if patchingAgents != nil {
-		h := easypatch.AgentHost(patchingAgents, originString(cfg.PublicURL))
-		for _, name := range cfg.Patching.AgentHostnames {
-			extra[name] = h
-		}
+	agentHost := easypatch.AgentHost(patchingAgents, originString(cfg.PublicURL))
+	for _, name := range cfg.Patching.AgentHostnames {
+		extra[name] = agentHost
 	}
 	// Authentik's sign-in name (ADR-0044).
 	if a := cfg.Authentik; a.Enabled() {

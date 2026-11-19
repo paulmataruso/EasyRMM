@@ -27,14 +27,14 @@ func TestServerSettings(t *testing.T) {
 		"itemCount": 0}})
 
 	v, err := f.svc.ServerSettings(ctx, f.admin)
-	if err != nil || !v.CanEdit || v.ReadOnlyReason != "" || v.Settings.GlobalMaxConcurrentInstalls != 50 || !v.Settings.RolloutGuardEnabled ||
+	if err != nil || !v.CanEdit || v.Settings.GlobalMaxConcurrentInstalls != 50 || !v.Settings.RolloutGuardEnabled ||
 		v.Settings.ReportBrandName != nil || len(v.Feeds) != 2 || v.Feeds[0].ItemCount != 1484 || v.Feeds[1].LastError != "The feed answered 503." {
 		t.Fatalf("super administrator: %+v, %v", v, err)
 	}
 	if st := f.lastStatement("GET", "/api/v1/settings"); st.Role != RoleReadOnly || st.AllOrganizations || len(st.Organizations) != 0 {
 		t.Fatalf("read statement: %+v", st)
 	}
-	if v, err := f.svc.ServerSettings(ctx, f.orgAdmin); err != nil || v.CanEdit || v.ReadOnlyReason != "" {
+	if v, err := f.svc.ServerSettings(ctx, f.orgAdmin); err != nil || v.CanEdit {
 		t.Fatalf("organization administrator: %+v, %v", v, err)
 	}
 	if _, err := f.svc.ServerSettings(ctx, f.tech); !isKind(err, apperr.KindForbidden) {
@@ -264,46 +264,10 @@ func TestEngineAudit(t *testing.T) {
 	}
 }
 
-// With a connected server, settings and lifecycle are read in EasyRMM and
-// changed in EasyPatch's console; packages download from EasyPatch; a
-// read-only token is refused the audit log.
-func TestServerWideConnected(t *testing.T) {
-	f := newFixture(t)
-	ctx := f.ctx
-	f.connect()
-	if err := f.svc.LinkOrganization(ctx, f.admin.Actor, f.acme, f.ep.Org("Acme Patch")); err != nil {
-		t.Fatal(err)
-	}
-	v, err := f.svc.ServerSettings(ctx, f.admin)
-	if err != nil || v.CanEdit || v.ReadOnlyReason != serverSettingsReason || v.Version != "1.9.0" {
-		t.Fatalf("settings: %+v, %v", v, err)
-	}
-	if _, err := f.svc.SetServerSettings(ctx, f.admin, v.Settings); !isCode(err, "easypatch_server_wide") {
-		t.Fatalf("change: %v", err)
-	}
-	if l, err := f.svc.Lifecycle(ctx, f.admin); err != nil || l.CanEdit || len(l.Items) != 2 {
-		t.Fatalf("lifecycle: %+v, %v", l, err)
-	}
-	if err := f.svc.DeleteLifecycle(ctx, f.admin, uuid.New()); !isCode(err, "easypatch_server_wide") {
-		t.Fatalf("delete: %v", err)
-	}
-	list, err := f.svc.AgentPackageList(ctx, f.admin)
-	if err != nil || !strings.HasPrefix(list[0].URL, "https://patch.example.com/downloads/agent/") {
-		t.Fatalf("packages: %+v, %v", list, err)
-	}
-	if p, err := f.svc.AuditLog(ctx, f.admin, AuditQuery{}); err != nil || !p.Everything {
-		t.Fatalf("audit: %+v, %v", p, err)
-	}
-	f.ep.Set(func() { f.ep.ReadOnly = true })
-	if _, err := f.svc.AuditLog(ctx, f.admin, AuditQuery{}); !isCode(err, "easypatch_audit_refused") {
-		t.Fatalf("read-only token: %v", err)
-	}
-}
-
-// Before EasyPatch is set up, and while the engine does not answer, each
-// view says so; an entry changed into another's build is refused.
+// Before the engine is set up, and while it does not answer, each view
+// says so; an entry changed into another's build is refused.
 func TestServerWideUnavailable(t *testing.T) {
-	plain := newFixture(t)
+	plain := newFixture(t).withoutEngine()
 	for name, call := range map[string]func() error{
 		"settings":  func() error { _, err := plain.svc.ServerSettings(plain.ctx, plain.admin); return err },
 		"lifecycle": func() error { _, err := plain.svc.Lifecycle(plain.ctx, plain.admin); return err },

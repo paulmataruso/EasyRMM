@@ -86,9 +86,6 @@ type PolicyView struct {
 	// Windows settings do not apply.
 	Windows bool `json:"windows"`
 	CanEdit bool `json:"canEdit"`
-	// ReadOnlyReason says why nobody may change the level in EasyRMM: the
-	// default policy and tags' with a connected server.
-	ReadOnlyReason string `json:"readOnlyReason,omitempty"`
 	// OrganizationID is the EasyRMM organization, when the level is in one.
 	OrganizationID *uuid.UUID `json:"organizationId,omitempty"`
 }
@@ -119,23 +116,7 @@ type policyTarget struct {
 
 type namedPath struct{ name, path string }
 
-// A connected EasyPatch server's API token is an Admin or a ReadOnly token,
-// never SuperAdmin, so what EasyPatch keeps to super administrators (the
-// default policy, tags and tags' policies) is changed in its own console.
-// The bundled engine takes EasyRMM's statements instead, which can be.
-var errServerWide = apperr.Conflict("easypatch_server_wide",
-	"With a connected EasyPatch server, the default policy and tags are changed in EasyPatch's own console: EasyRMM's API token may not change them.")
-
-// errTagPolicyHidden is a tag's policy asked for with a connected server,
-// whose token may not read it either.
-var errTagPolicyHidden = apperr.Conflict("easypatch_server_wide",
-	"With a connected EasyPatch server, a tag's policy is seen and changed in EasyPatch's own console: EasyRMM's API token may not read it.")
-
-// serverWideReason is why the default policy and tags cannot be changed in
-// EasyRMM with a connected server.
-const serverWideReason = "With a connected EasyPatch server, the default policy, tags and tags' policies are changed in EasyPatch's own console: EasyRMM's API token may not change them."
-
-var errNoEngineSite = apperr.Conflict("easypatch_site_not_found", "EasyPatch has no site for this site yet; it is created when the site's first device gets the EasyPatch agent.")
+var errNoEngineSite = apperr.Conflict("easypatch_site_not_found", "The patching engine has no site for this site yet: EasyRMM creates it on its next pass, within a minute.")
 
 // policyTarget resolves a level and checks that the caller may read it, and
 // edit it when edit is set.
@@ -152,9 +133,6 @@ func (s *Service) policyTarget(ctx context.Context, c access.Caller, cl *Client,
 		if !c.CanAnywhere(rbac.PermPatchView) || (edit && !c.CanGlobal(rbac.PermPatchConfigure)) {
 			return policyTarget{}, apperr.Forbidden()
 		}
-		if edit && !s.Bundled() {
-			return policyTarget{}, errServerWide
-		}
 		return policyTarget{level: level, name: "Default policy", path: globalPolicyPath, windows: true, targetType: "patch_policy",
 			timeZone: func(context.Context) string { return "" }}, nil
 
@@ -165,12 +143,9 @@ func (s *Service) policyTarget(ctx context.Context, c access.Caller, cl *Client,
 		if edit && !c.CanGlobal(rbac.PermPatchConfigure) {
 			return policyTarget{}, apperr.Forbidden()
 		}
-		if !s.Bundled() {
-			return policyTarget{}, errTagPolicyHidden
-		}
 		tags, err := cl.Tags(s.everywhere(ctx, c, RoleReadOnly))
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return policyTarget{}, epError(err)
 		}
 		i := slices.IndexFunc(tags, func(t Tag) bool { return t.ID == id })
@@ -232,10 +207,11 @@ func (s *Service) policyTarget(ctx context.Context, c access.Caller, cl *Client,
 			return policyTarget{}, err
 		}
 		if epSite == nil {
-			// A connected server's sites are matched by name, as installs do.
+			// A site the reconciler has not recorded yet is found by name,
+			// as installs do.
 			sites, err := cl.Sites(s.as(ctx, c, RoleReadOnly, *ep), *ep)
 			if err != nil {
-				s.noteError(ctx, err)
+				s.noteError(err)
 				return policyTarget{}, epError(err)
 			}
 			for _, x := range sites {
@@ -283,7 +259,7 @@ func (s *Service) policyTarget(ctx context.Context, c access.Caller, cl *Client,
 		case IsStatus(err, http.StatusNotFound):
 			return policyTarget{}, apperr.Conflict("easypatch_endpoint_gone", "EasyPatch no longer lists this device's endpoint.")
 		case err != nil:
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return policyTarget{}, epError(err)
 		}
 		if e.Summary.SiteID != nil {
@@ -322,7 +298,7 @@ func (s *Service) policyView(ctx context.Context, c access.Caller, cl *Client, r
 	}
 	own, err := cl.LevelPolicy(rctx, t.path)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return PolicyView{}, epError(err)
 	}
 	layers := []namedLayer{}
@@ -332,7 +308,7 @@ func (s *Service) policyView(ctx context.Context, c access.Caller, cl *Client, r
 		case IsStatus(err, http.StatusNotFound):
 			continue
 		case err != nil:
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return PolicyView{}, epError(err)
 		}
 		layers = append(layers, namedLayer{p.name, lp.PolicyLayer})
@@ -340,7 +316,7 @@ func (s *Service) policyView(ctx context.Context, c access.Caller, cl *Client, r
 	if t.endpoint != nil {
 		tags, err := cl.TagPolicies(rctx, *t.endpoint)
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return PolicyView{}, epError(err)
 		}
 		for _, tp := range tags {
@@ -350,10 +326,7 @@ func (s *Service) policyView(ctx context.Context, c access.Caller, cl *Client, r
 	inherited, from := resolvePolicy(layers)
 	v := PolicyView{Level: t.level, Name: t.name, Own: own.PolicyLayer, HasOwn: own.ID != nil, UpdatedAt: own.UpdatedAt,
 		Inherited: inherited, InheritedFrom: from, TimeZone: t.timeZone(rctx), Windows: t.windows,
-		CanEdit: r.canOperate && s.canEditPolicy(c, t)}
-	if t.level == LevelDefault && !s.Bundled() {
-		v.ReadOnlyReason = serverWideReason
-	}
+		CanEdit: s.canEditPolicy(c, t)}
 	if t.org != uuid.Nil {
 		org := t.org
 		v.OrganizationID = &org
@@ -369,7 +342,7 @@ func (s *Service) policyView(ctx context.Context, c access.Caller, cl *Client, r
 
 func (s *Service) canEditPolicy(c access.Caller, t policyTarget) bool {
 	if t.level == LevelDefault || t.level == LevelTag {
-		return s.Bundled() && c.CanGlobal(rbac.PermPatchConfigure)
+		return c.CanGlobal(rbac.PermPatchConfigure)
 	}
 	return c.Can(rbac.PermPatchConfigure, rbac.Org(t.org))
 }
@@ -408,7 +381,7 @@ func (s *Service) SavePolicy(ctx context.Context, c access.Caller, level string,
 		return PolicyView{}, err
 	}
 	if _, err := cl.SetLevelPolicy(s.policyWriter(ctx, c, t), t.path, in, c.Actor.Label); err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return PolicyView{}, epError(err)
 	}
 	changed := changedPolicyFields(before.Own, in)
@@ -437,7 +410,7 @@ func (s *Service) ResetPolicy(ctx context.Context, c access.Caller, level string
 		err = cl.DeleteLevelPolicy(wctx, t.path, c.Actor.Label)
 	}
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return PolicyView{}, epError(err)
 	}
 	if err := s.recordPolicy(ctx, c, t, "patch.policy_reset", map[string]any{}); err != nil {

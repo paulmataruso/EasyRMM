@@ -1,6 +1,7 @@
 package easypatch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -68,21 +69,21 @@ func TestSameServer(t *testing.T) {
 	}
 }
 
-func newTestClient(t *testing.T, f *eptest.Server) *Client {
+// clientKey signs the statements of the client tests.
+var clientKey = bytes.Repeat([]byte{5}, 32)
+
+// newTestClient starts an engine and a client for it.
+func newTestClient(t *testing.T) (*eptest.Server, *Client) {
 	t.Helper()
-	c, err := NewClient(f.URL(), f.Token, f.CAPEM, "1.2.3")
-	if err != nil {
-		t.Fatal(err)
-	}
-	return c
+	f := eptest.NewEngine(t, clientKey)
+	return f, engineClient(t, f.URL(), clientKey)
 }
 
 func TestClient(t *testing.T) {
 	ctx := context.Background()
-	f := eptest.New(t)
+	f, c := newTestClient(t)
 	org := f.Org("Acme Patch")
 	e := f.AddEndpoint(org, "web-01", "SN1", "1FBB-E2EA-533D-A960")
-	c := newTestClient(t, f)
 
 	info, err := c.ServerInfo(ctx)
 	if err != nil || info.Version != "1.9.0" || info.PublicURL != "https://patch.example.com" || info.Capabilities != nil {
@@ -147,11 +148,11 @@ func TestClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	reqs := f.RequestsTo("POST", "/api/v1/endpoints/"+e.ID.String()+"/install-updates")
-	if len(reqs) != 2 || reqs[0].OnBehalfOf != "tess@example.com" || reqs[0].Body["mode"] != "AllEligible" ||
+	if len(reqs) != 2 || reqs[0].Statement.Name != "tess@example.com" || reqs[0].Body["mode"] != "AllEligible" ||
 		reqs[0].Body["updateGuids"] != nil || reqs[0].Body["scheduledAt"] != nil || reqs[0].Body["force"] != false {
 		t.Fatalf("first install = %+v", reqs)
 	}
-	if reqs[1].OnBehalfOf != "" || reqs[1].Body["mode"] != "Selected" || reqs[1].Body["scheduledAt"] != at.Format(time.RFC3339) ||
+	if reqs[1].Statement.Name != "EasyRMM" || reqs[1].Body["mode"] != "Selected" || reqs[1].Body["scheduledAt"] != at.Format(time.RFC3339) ||
 		reqs[1].Body["updateGuids"].([]any)[0] != guid.String() {
 		t.Fatalf("second install = %+v", reqs[1])
 	}
@@ -161,7 +162,7 @@ func TestClient(t *testing.T) {
 	if !errors.As(err, &epErr) || epErr.Status != 409 || epErr.Code != "nothing_to_install" || epErr.Detail != "web-01 has no eligible updates." {
 		t.Fatalf("nothing to install: %#v", err)
 	}
-	if err.Error() != "EasyPatch answered 409: web-01 has no eligible updates." {
+	if err.Error() != "The patching engine answered 409: web-01 has no eligible updates." {
 		t.Fatalf("message = %q", err.Error())
 	}
 	f.Set(func() { e.Missing = 2 })
@@ -199,85 +200,48 @@ func TestClient(t *testing.T) {
 
 func TestClientFailures(t *testing.T) {
 	ctx := context.Background()
-	f := eptest.New(t)
+	f, c := newTestClient(t)
 
-	// A wrong token.
-	c, err := NewClient(f.URL(), "ept_wrong-token-0123456789", f.CAPEM, "1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = c.ServerInfo(ctx)
-	if !IsStatus(err, http.StatusUnauthorized) || !strings.Contains(err.Error(), "expired or been revoked") {
-		t.Fatalf("wrong token: %v", err)
-	}
-	if _, err := c.CanOperate(ctx); !IsStatus(err, http.StatusUnauthorized) {
-		t.Fatalf("CanOperate with a wrong token: %v", err)
+	// Statements signed with another key.
+	_, err := engineClient(t, f.URL(), bytes.Repeat([]byte{6}, 32)).ServerInfo(ctx)
+	if !IsStatus(err, http.StatusUnauthorized) || !strings.Contains(err.Error(), "statement from EasyRMM is not valid") {
+		t.Fatalf("another key: %v", err)
 	}
 
-	// A certificate EasyRMM does not trust.
-	c, _ = NewClient(f.URL(), f.Token, "", "1")
-	_, err = c.ServerInfo(ctx)
-	var e *Error
-	if !errors.As(err, &e) || e.Status != 0 || !strings.Contains(err.Error(), "certificate is not trusted") {
-		t.Fatalf("untrusted: %v", err)
-	}
-
-	// Not to cloud instance metadata (netguard).
-	c, _ = NewClient("https://169.254.169.254", f.Token, "", "1")
-	if _, err := c.ServerInfo(ctx); err == nil || !strings.Contains(err.Error(), "does not connect to 169.254.169.254") {
-		t.Fatalf("metadata address: %v", err)
-	}
-
-	// EasyPatch down.
-	c = newTestClient(t, f)
+	// The engine down.
 	f.Set(func() { f.Down = true })
 	if _, err := c.Organizations(ctx); !IsStatus(err, 503) || !strings.Contains(err.Error(), "database is not available") {
 		t.Fatalf("down: %v", err)
 	}
 	f.Set(func() { f.Down = false })
 
-	// Constructor checks.
-	if _, err := NewClient("http://x", "t", "", "1"); err == nil {
-		t.Fatal("http accepted")
-	}
-	if _, err := NewClient("https://x", "", "", "1"); err == nil {
-		t.Fatal("no token accepted")
-	}
-	if _, err := NewClient("https://x", "t", "not pem", "1"); err == nil {
-		t.Fatal("bad CA accepted")
-	}
-
-	// Redirects are not followed (the token stays with the server) and odd
-	// answers are refused.
-	odd := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Odd answers are refused, and a problem without a detail is given one.
+	odd := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/server-info":
-			http.Redirect(w, r, "https://elsewhere.example.com/", http.StatusFound)
 		case "/api/v1/organizations":
 			_, _ = w.Write([]byte(`{"not":"a list"}`))
 		case "/api/v1/endpoints/" + uuid.Nil.String():
 			w.WriteHeader(http.StatusForbidden)
+		case "/api/v1/server-info":
+			w.WriteHeader(http.StatusUnauthorized)
 		default:
 			w.WriteHeader(http.StatusTeapot)
 			_, _ = w.Write([]byte(`{"title":"` + strings.Repeat("é", 400) + `"}`))
 		}
 	}))
 	defer odd.Close()
-	c, err = NewClient(odd.URL, "ept_x", "", "1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.http.Transport = odd.Client().Transport
-	if _, err := c.ServerInfo(ctx); !IsStatus(err, http.StatusFound) {
-		t.Fatalf("redirect: %v", err)
-	}
+	c = engineClient(t, odd.URL, clientKey)
 	if _, err := c.Organizations(ctx); err == nil || !strings.Contains(err.Error(), "not what EasyRMM expects") {
 		t.Fatalf("odd answer: %v", err)
 	}
 	if _, err := c.Endpoint(ctx, uuid.Nil); !IsStatus(err, 403) || !strings.Contains(err.Error(), "may not do this") {
 		t.Fatalf("forbidden: %v", err)
 	}
+	if _, err := c.ServerInfo(ctx); !IsStatus(err, 401) || !strings.Contains(err.Error(), "EASYRMM_PATCHING_KEY") {
+		t.Fatalf("unauthorized: %v", err)
+	}
 	_, err = c.Job(ctx, uuid.New())
+	var e *Error
 	if !errors.As(err, &e) || len(e.Detail) > 500 || !strings.HasPrefix(e.Detail, "éé") || strings.ContainsRune(e.Detail, '�') {
 		t.Fatalf("long problem: %q", e.Detail)
 	}
@@ -289,9 +253,9 @@ func TestEPError(t *testing.T) {
 		kind apperr.Kind
 		code string
 	}{
-		{&Error{Detail: "Cannot reach EasyPatch"}, apperr.KindUnavailable, "easypatch_unavailable"},
-		{&Error{Status: 502, Detail: "bad gateway"}, apperr.KindUnavailable, "easypatch_unavailable"},
-		{&Error{Status: 401, Detail: "expired"}, apperr.KindUnavailable, "easypatch_token"},
+		{&Error{Detail: "Cannot reach the patching engine"}, apperr.KindUnavailable, "patching_unavailable"},
+		{&Error{Status: 502, Detail: "bad gateway"}, apperr.KindUnavailable, "patching_unavailable"},
+		{&Error{Status: 401, Detail: "expired"}, apperr.KindUnavailable, "patching_unavailable"},
 		{&Error{Status: 404, Detail: "gone"}, apperr.KindNotFound, "not_found"},
 		{&Error{Status: 409, Code: "duplicate_job", Detail: "already queued"}, apperr.KindConflict, "duplicate_job"},
 		{&Error{Status: 400, Detail: "bad"}, apperr.KindConflict, "easypatch_refused"},
@@ -322,16 +286,6 @@ func TestHelpers(t *testing.T) {
 	creds := []Credential{{KeyFingerprint: "AAAA"}, {KeyFingerprint: "BBBB", RevokedAt: &now}}
 	if !holdsKey(creds, "aaaa") || holdsKey(creds, "BBBB") || holdsKey(creds, " ") {
 		t.Error("holdsKey")
-	}
-	for _, tok := range []string{"ept_" + strings.Repeat("a", 30)} {
-		if !validToken(tok) {
-			t.Errorf("validToken(%q)", tok)
-		}
-	}
-	for _, tok := range []string{"", "ept_short", "abc_" + strings.Repeat("a", 30), "ept_" + strings.Repeat("a", 20) + " x"} {
-		if validToken(tok) {
-			t.Errorf("validToken(%q) accepted", tok)
-		}
 	}
 }
 

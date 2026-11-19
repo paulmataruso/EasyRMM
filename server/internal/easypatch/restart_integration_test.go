@@ -65,7 +65,7 @@ func TestRestart(t *testing.T) {
 		t.Fatalf("restart: %+v, %v", res, err)
 	}
 	reqs := f.ep.RequestsTo("POST", "/api/v1/endpoints/bulk/restart")
-	if len(reqs) != 1 || reqs[0].OnBehalfOf != "ada@example.com" || len(reqs[0].Body["endpointIds"].([]any)) != 2 {
+	if len(reqs) != 1 || reqs[0].Statement.Name != "ada@example.com" || len(reqs[0].Body["endpointIds"].([]any)) != 2 {
 		t.Fatalf("restart request: %+v", reqs)
 	}
 	preset := reqs[0].Body["restart"].(map[string]any)
@@ -133,14 +133,6 @@ func TestRestart(t *testing.T) {
 		res.Succeeded != 1 {
 		t.Fatalf("confirmed restart with EasyPatch 1.9.0: %+v, %v", res, err)
 	}
-
-	// A read-only token cannot restart.
-	f.ep.Set(func() { f.ep.ReadOnly = true })
-	if _, err := f.svc.CheckConnection(ctx); err != nil {
-		t.Fatal(err)
-	}
-	_, err = f.svc.PlanRestart(ctx, f.admin, []uuid.UUID{f.web}, "")
-	wantErr(t, err, apperr.KindConflict, "easypatch_read_only")
 }
 
 // TestRestartOptions: how a restart asks the people signed in, whether it
@@ -275,7 +267,7 @@ func TestRetryJob(t *testing.T) {
 		t.Fatalf("retry: %+v, %v", j, err)
 	}
 	reqs := f.ep.RequestsTo("POST", "/api/v1/jobs/"+first.String()+"/retry")
-	if len(reqs) != 2 || reqs[1].OnBehalfOf != "tess@example.com" {
+	if len(reqs) != 2 || reqs[1].Statement.Name != "tess@example.com" {
 		t.Fatalf("retry requests: %+v", reqs)
 	}
 	got := f.audits("patch.retry")
@@ -284,12 +276,10 @@ func TestRetryJob(t *testing.T) {
 		t.Fatalf("retry audit: %+v", got)
 	}
 
+	// The engine refusing EasyRMM's change.
 	f.ep.Set(func() { f.ep.ReadOnly = true })
-	if _, err := f.svc.CheckConnection(ctx); err != nil {
-		t.Fatal(err)
-	}
 	_, err = f.svc.RetryJob(ctx, f.tech, first)
-	wantErr(t, err, apperr.KindConflict, "easypatch_read_only")
+	wantErr(t, err, apperr.KindUnavailable, "patching_unavailable")
 }
 
 // TestConnectionHealth: what counts as the engine failing, and what clears it.

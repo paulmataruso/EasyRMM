@@ -74,7 +74,7 @@ func TestDeviceActions(t *testing.T) {
 		t.Fatalf("excluded update: %s", s)
 	}
 	reqs := f.ep.RequestsTo("POST", "/api/v1/endpoints/"+f.e1.ID.String()+"/exclusions")
-	if len(reqs) != 1 || reqs[0].OnBehalfOf != "tess@example.com" || reqs[0].Body["updateGuid"] != openssl.String() ||
+	if len(reqs) != 1 || reqs[0].Statement.Name != "tess@example.com" || reqs[0].Body["updateGuid"] != openssl.String() ||
 		reqs[0].Body["reason"] != "breaks the web server" {
 		t.Fatalf("exclusion request: %+v", reqs)
 	}
@@ -131,7 +131,7 @@ func TestDeviceActions(t *testing.T) {
 		t.Fatalf("removal: %+v, %v", res, err)
 	}
 	removal := f.ep.RequestsTo("POST", "/api/v1/endpoints/"+f.e1.ID.String()+"/updates/"+openssl.String()+"/uninstall")
-	if len(removal) != 1 || removal[0].Body["block"] != true || removal[0].Body["reason"] != "breaks printing" || removal[0].OnBehalfOf != "tess@example.com" {
+	if len(removal) != 1 || removal[0].Body["block"] != true || removal[0].Body["reason"] != "breaks printing" || removal[0].Statement.Name != "tess@example.com" {
 		t.Fatalf("removal request: %+v", removal)
 	}
 	got = f.audits("patch.remove_update")
@@ -173,7 +173,7 @@ func TestDeviceActions(t *testing.T) {
 		}
 	}
 	sent := f.ep.RequestsTo("POST", "/api/v1/endpoints/bulk/notify")
-	if len(sent) != 1 || sent[0].OnBehalfOf != "ada@example.com" {
+	if len(sent) != 1 || sent[0].Statement.Name != "ada@example.com" {
 		t.Fatalf("notify request: %+v", sent)
 	}
 	if m, _ := sent[0].Body["message"].(map[string]any); m["preset"] != "SaveYourWork" || m["restartAt"] != nil {
@@ -212,33 +212,23 @@ func TestDeviceActions(t *testing.T) {
 		t.Fatalf("agent update audit: %+v", got)
 	}
 
-	// A read-only token reads but cannot act.
+	// The engine refusing EasyRMM's changes: reads still work, and each
+	// change says the engine refused it, not that the person may not.
 	f.ep.Set(func() { f.ep.ReadOnly = true })
-	if _, err := f.svc.CheckConnection(ctx); err != nil {
-		t.Fatal(err)
-	}
-	wantErr(t, f.svc.Exclude(ctx, f.tech, f.web, ExclusionInput{UpdateID: openssl}), apperr.KindConflict, "easypatch_read_only")
-	wantErr(t, f.svc.Include(ctx, f.tech, f.web, openssl), apperr.KindConflict, "easypatch_read_only")
+	wantErr(t, f.svc.Exclude(ctx, f.tech, f.web, ExclusionInput{UpdateID: openssl}), apperr.KindUnavailable, "patching_unavailable")
 	_, err = f.svc.RemoveUpdate(ctx, f.tech, f.web, openssl, RemoveInput{})
-	wantErr(t, err, apperr.KindConflict, "easypatch_read_only")
-	_, err = f.svc.Notify(ctx, f.tech, NotifyInput{DeviceIDs: []uuid.UUID{f.web}, Preset: "SaveYourWork"})
-	wantErr(t, err, apperr.KindConflict, "easypatch_read_only")
-	_, err = f.svc.UpdateAgent(ctx, f.tech, ActionInput{DeviceIDs: []uuid.UUID{f.web}})
-	wantErr(t, err, apperr.KindConflict, "easypatch_read_only")
+	wantErr(t, err, apperr.KindUnavailable, "patching_unavailable")
 	if _, err := f.svc.InstallPreview(ctx, f.tech, f.web, nil); err != nil {
-		t.Fatalf("preview with a read-only token: %v", err)
+		t.Fatalf("preview while the engine refuses changes: %v", err)
 	}
 	if _, err := f.svc.MessagePresets(ctx, f.tech); err != nil {
-		t.Fatalf("presets with a read-only token: %v", err)
+		t.Fatalf("presets while the engine refuses changes: %v", err)
 	}
 	f.ep.Set(func() { f.ep.ReadOnly = false })
-	if _, err := f.svc.CheckConnection(ctx); err != nil {
-		t.Fatal(err)
-	}
 
-	// EasyPatch failing.
+	// The engine failing.
 	f.ep.Set(func() { f.ep.Down = true })
-	wantErr(t, f.svc.Exclude(ctx, f.tech, f.web, ExclusionInput{UpdateID: openssl}), apperr.KindUnavailable, "easypatch_unavailable")
+	wantErr(t, f.svc.Exclude(ctx, f.tech, f.web, ExclusionInput{UpdateID: openssl}), apperr.KindUnavailable, "patching_unavailable")
 	_, err = f.svc.InstallPreview(ctx, f.tech, f.web, nil)
 	wantErr(t, err, apperr.KindUnavailable, "")
 	_, err = f.svc.RemoveUpdate(ctx, f.tech, f.web, openssl, RemoveInput{})
@@ -247,10 +237,8 @@ func TestDeviceActions(t *testing.T) {
 	wantErr(t, err, apperr.KindUnavailable, "")
 	f.ep.Set(func() { f.ep.Down = false })
 
-	// Without a server.
-	if err := f.svc.DeleteConnection(ctx, f.admin.Actor); err != nil {
-		t.Fatal(err)
-	}
+	// Without the engine.
+	f.withoutEngine()
 	_, err = f.svc.MessagePresets(ctx, f.tech)
 	wantErr(t, err, apperr.KindConflict, "easypatch_not_configured")
 	_, err = f.svc.Notify(ctx, f.admin, NotifyInput{DeviceIDs: []uuid.UUID{f.web}, Preset: "SaveYourWork"})
@@ -273,7 +261,7 @@ func TestDeviceActionsStatements(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.UseEngine(ctx, client); err != nil {
+	if err := f.svc.UseEngine(client); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.svc.Reconcile(ctx); err != nil {

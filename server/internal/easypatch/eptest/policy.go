@@ -115,10 +115,9 @@ func (s *Server) TagsOf(id uuid.UUID) []uuid.UUID {
 }
 
 // superAdmin says the call may do what EasyPatch keeps to super
-// administrators. An API token is an Admin or a ReadOnly token, never
-// SuperAdmin; only a statement can be.
+// administrators.
 func (s *Server) superAdmin() bool {
-	return s.key != nil && s.role() == "SuperAdmin"
+	return s.role() == "SuperAdmin"
 }
 
 func (s *Server) findTag(id uuid.UUID) *TagInfo {
@@ -242,7 +241,7 @@ func (s *Server) servePolicy(w http.ResponseWriter, r *http.Request, scope strin
 
 // serveTagAssignment answers PUT /api/v1/{organizations,sites,endpoints}/{id}/tags.
 func (s *Server) serveTagAssignment(w http.ResponseWriter, id uuid.UUID, body map[string]any) {
-	if s.readOnlyCall || !s.unrestricted() || (s.key == nil && s.Restricted) {
+	if s.readOnlyCall || !s.unrestricted() {
 		problem(w, 403, "forbidden", "Only administrators without organization restrictions can assign tags.")
 		return
 	}

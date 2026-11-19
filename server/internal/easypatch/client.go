@@ -1,16 +1,15 @@
-// Package easypatch connects EasyRMM to an EasyPatch server (ADR-0030):
-// the connection settings, which EasyPatch organization and endpoint each
-// EasyRMM organization and device is, and the patch views and actions of
-// the console. EasyPatch stays the source of truth for patch data; this
-// package reads it through EasyPatch's API when it is asked for, with an
-// EasyPatch API token, after EasyRMM's own permission checks.
+// Package easypatch is EasyRMM's side of the patching engine in this
+// deployment, EasyPatch's server (ADR-0038, ADR-0046): which engine
+// organization and endpoint each EasyRMM organization and device is, and
+// the patch views and actions of the console. The engine stays the source
+// of truth for patch data; this package reads it through the engine's API
+// when it is asked for, with a statement for each call, after EasyRMM's own
+// permission checks.
 package easypatch
 
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,8 +22,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/paulmataruso/easyrmm/server/internal/netguard"
 )
 
 const (
@@ -34,23 +31,16 @@ const (
 	maxResponse = 32 << 20
 	// PageSize is the largest page EasyPatch's lists return.
 	PageSize = 200
-	// onBehalfOfHeader names the EasyRMM user an action is for. EasyPatch
-	// records it when it supports it (CapabilityOnBehalfOf) and ignores it
-	// otherwise.
-	onBehalfOfHeader = "X-EasyPatch-On-Behalf-Of"
 )
 
 // Capabilities a server may list in /api/v1/server-info.
 const (
 	// CapabilityScheduledInstalls: install requests accept scheduledAt.
 	CapabilityScheduledInstalls = "scheduled-installs"
-	// CapabilityOnBehalfOf: API token requests may name the user they are
-	// for.
-	CapabilityOnBehalfOf = "on-behalf-of"
 )
 
-// Error is a failed call: EasyPatch's answer, or Status 0 when it could not
-// be reached.
+// Error is a failed call: the engine's answer, or Status 0 when it could
+// not be reached.
 type Error struct {
 	Status int
 	// Code is EasyPatch's machine-readable code (duplicate_job,
@@ -60,19 +50,13 @@ type Error struct {
 	// Fields are EasyPatch's field errors (validation_failed), the first
 	// message of each.
 	Fields map[string]string
-	// Engine says the call went to the patching engine in this deployment
-	// (a statement, not an API token).
-	Engine bool
 }
 
 func (e *Error) Error() string {
-	switch {
-	case e.Status == 0:
+	if e.Status == 0 {
 		return e.Detail
-	case e.Engine:
-		return fmt.Sprintf("The patching engine answered %d: %s", e.Status, e.Detail)
 	}
-	return fmt.Sprintf("EasyPatch answered %d: %s", e.Status, e.Detail)
+	return fmt.Sprintf("The patching engine answered %d: %s", e.Status, e.Detail)
 }
 
 // IsStatus reports whether err is EasyPatch answering with status.
@@ -81,11 +65,10 @@ func IsStatus(err error, status int) bool {
 	return errors.As(err, &e) && e.Status == status
 }
 
-// Client calls one EasyPatch server's API with an API token, or the
-// patching engine in this deployment with statements (NewEngineClient).
+// Client calls the patching engine in this deployment with statements
+// (NewEngineClient).
 type Client struct {
 	base      *url.URL
-	token     string
 	signer    *Signer
 	userAgent string
 	http      *http.Client
@@ -125,9 +108,6 @@ func NewEngineClient(rawURL string, signer *Signer, version string) (*Client, er
 		},
 	}, nil
 }
-
-// Engine reports whether c calls the patching engine in this deployment.
-func (c *Client) Engine() bool { return c.signer != nil }
 
 // ParseURL checks an EasyPatch server address: https, a host, no query,
 // fragment or credentials. It returns it without a trailing slash.
@@ -173,46 +153,6 @@ func hostPort(u *url.URL) string {
 	return net.JoinHostPort(u.Hostname(), port)
 }
 
-// NewClient builds a client for the server at rawURL. caPEM, when set, is
-// trusted besides the system's certificate authorities.
-func NewClient(rawURL, token, caPEM, version string) (*Client, error) {
-	base, err := ParseURL(rawURL)
-	if err != nil {
-		return nil, fmt.Errorf("url %w", err)
-	}
-	if token == "" {
-		return nil, errors.New("an API token is required")
-	}
-	roots, err := x509.SystemCertPool()
-	if err != nil || roots == nil {
-		roots = x509.NewCertPool()
-	}
-	if strings.TrimSpace(caPEM) != "" && !roots.AppendCertsFromPEM([]byte(caPEM)) {
-		return nil, errors.New("the CA certificate is not PEM")
-	}
-	// No link-local or cloud metadata addresses (netguard).
-	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Control: netguard.Control}
-	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           dialer.DialContext,
-		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots},
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: requestTimeout,
-		MaxIdleConnsPerHost:   4,
-		IdleConnTimeout:       90 * time.Second,
-		ForceAttemptHTTP2:     true,
-	}
-	return &Client{
-		base: base, token: token, userAgent: "EasyRMM/" + version,
-		http: &http.Client{
-			Transport: transport,
-			Timeout:   requestTimeout,
-			// A token is never sent anywhere but the configured server.
-			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-		},
-	}, nil
-}
-
 // do sends a request and decodes a JSON answer into out (nil for none).
 func (c *Client) do(ctx context.Context, method, path string, query url.Values, body any, onBehalfOf string, out any) error {
 	u := *c.base
@@ -230,31 +170,20 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	if err != nil {
 		return err
 	}
-	if c.signer != nil {
-		// The statement names this request exactly as it is sent.
-		st := statementFor(ctx, onBehalfOf)
-		signed, err := c.signer.Sign(st, method, req.URL.RequestURI())
-		if err != nil {
-			return err
-		}
-		req.Header.Set(StatementHeader, signed)
-	} else {
-		req.Header.Set("Authorization", "Bearer "+c.token)
+	// The statement names this request exactly as it is sent.
+	signed, err := c.signer.Sign(statementFor(ctx, onBehalfOf), method, req.URL.RequestURI())
+	if err != nil {
+		return err
 	}
+	req.Header.Set(StatementHeader, signed)
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", c.userAgent)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if onBehalfOf != "" {
-		req.Header.Set(onBehalfOfHeader, onBehalfOf)
-	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		if c.signer != nil {
-			return &Error{Engine: true, Detail: "Cannot reach the patching engine: " + reachError(err)}
-		}
-		return &Error{Detail: "Cannot reach EasyPatch: " + reachError(err)}
+		return &Error{Detail: "Cannot reach the patching engine: " + reachError(err)}
 	}
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
@@ -265,9 +194,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return &Error{Status: resp.StatusCode, Detail: "EasyPatch's answer is larger than 32 MiB"}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		e := problem(resp.StatusCode, data)
-		e.Engine = c.signer != nil
-		return e
+		return problem(resp.StatusCode, data)
 	}
 	if raw, ok := out.(*[]byte); ok {
 		// A file, such as a monthly report's PDF, as EasyPatch sent it.
@@ -289,12 +216,7 @@ func reachError(err error) string {
 	if errors.As(err, &ue) {
 		err = ue.Err
 	}
-	var cert *tls.CertificateVerificationError
-	var unknown x509.UnknownAuthorityError
-	switch {
-	case errors.As(err, &unknown) || errors.As(err, &cert):
-		return "its certificate is not trusted (" + err.Error() + "); add the CA certificate that signed it"
-	case errors.Is(err, context.DeadlineExceeded):
+	if errors.Is(err, context.DeadlineExceeded) {
 		return "it did not answer within 30 seconds"
 	}
 	return err.Error()
@@ -325,9 +247,9 @@ func problem(status int, data []byte) *Error {
 	if detail == "" {
 		switch status {
 		case http.StatusUnauthorized:
-			detail = "the API token is not valid: it may have expired or been revoked"
+			detail = "EasyRMM's statement is not valid: EASYRMM_PATCHING_KEY may differ from the engine's gateway key"
 		case http.StatusForbidden:
-			detail = "the API token may not do this"
+			detail = "the statement's role may not do this"
 		case http.StatusNotFound:
 			detail = "not found"
 		default:
@@ -354,8 +276,8 @@ func (c *Client) ServerInfo(ctx context.Context) (ServerInfo, error) {
 	return s, err
 }
 
-// CanOperate reports whether the token may act (an Admin token) rather than
-// only read: listing enrollment tokens needs the operator role.
+// CanOperate reports whether the engine lets EasyRMM act as an
+// administrator: listing enrollment tokens needs that role.
 func (c *Client) CanOperate(ctx context.Context) (bool, error) {
 	err := c.do(ctx, http.MethodGet, "/api/v1/enrollment-tokens", nil, nil, "", nil)
 	if IsStatus(err, http.StatusForbidden) {
@@ -374,7 +296,7 @@ type Organization struct {
 	EndpointCount int       `json:"endpointCount"`
 }
 
-// Organizations lists the organizations the token can see.
+// Organizations lists the engine's organizations.
 func (c *Client) Organizations(ctx context.Context) ([]Organization, error) {
 	var list []Organization
 	err := c.do(ctx, http.MethodGet, "/api/v1/organizations", nil, nil, "", &list)

@@ -35,9 +35,6 @@ type TagList struct {
 	// CanManage says the caller may add, change and delete tags and their
 	// policies.
 	CanManage bool `json:"canManage"`
-	// ReadOnlyReason says why nobody may manage tags in EasyRMM: with a
-	// connected server, only EasyPatch's console can.
-	ReadOnlyReason string `json:"readOnlyReason,omitempty"`
 }
 
 // AssignedTags are an organization's, site's or device's tags.
@@ -48,30 +45,18 @@ type AssignedTags struct {
 	CanAssign bool     `json:"canAssign"`
 }
 
-func (s *Service) canManageTags(c access.Caller) bool {
-	return s.Bundled() && c.CanGlobal(rbac.PermPatchConfigure)
-}
-
-// canAssignTags says the caller may change an organization's, site's or
-// device's tags. A connected server's token may, when it is for every
-// organization.
-func (s *Service) canAssignTags(c access.Caller) bool { return c.CanGlobal(rbac.PermPatchConfigure) }
+// canManageTags says the caller may add, change and delete tags and their
+// policies, and change an organization's, site's or device's tags: the
+// engine keeps tags to its super administrators.
+func (s *Service) canManageTags(c access.Caller) bool { return c.CanGlobal(rbac.PermPatchConfigure) }
 
 // manageTags checks that the caller may add, change or delete tags.
 func (s *Service) manageTags(c access.Caller) error {
-	if !c.CanGlobal(rbac.PermPatchConfigure) {
+	if !s.canManageTags(c) {
 		return apperr.Forbidden()
-	}
-	if !s.Bundled() {
-		return errServerWide
 	}
 	return nil
 }
-
-// errTagsRefused is EasyPatch refusing a connected server's token tags:
-// assigning them needs a token without organization restrictions.
-var errTagsRefused = apperr.Conflict("easypatch_tags_refused",
-	"EasyPatch refused: assigning tags needs an API token for every organization. Use one under Settings → EasyPatch, or assign tags in EasyPatch's console.")
 
 // Tags lists the tags: every one for someone who sees patching everywhere,
 // those in use in their organizations for anyone else.
@@ -103,14 +88,10 @@ func (s *Service) Tags(ctx context.Context, c access.Caller) (TagList, error) {
 	}
 	tags, err := cl.Tags(rctx)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return TagList{}, epError(err)
 	}
-	list := TagList{Items: orEmpty(tags), CanManage: r.canOperate && s.canManageTags(c)}
-	if !s.Bundled() {
-		list.ReadOnlyReason = serverWideReason
-	}
-	return list, nil
+	return TagList{Items: orEmpty(tags), CanManage: s.canManageTags(c)}, nil
 }
 
 // normalizeTag checks a tag as EasyPatch does.
@@ -151,7 +132,7 @@ func (s *Service) CreateTag(ctx context.Context, c access.Caller, in TagInput) (
 		if IsStatus(err, http.StatusConflict) {
 			return Tag{}, errTagExists
 		}
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return Tag{}, epError(err)
 	}
 	return t, s.recordTag(ctx, c, "patch.tag_create", t.ID, map[string]any{"name": t.Name, "color": t.Color, "priority": t.Priority})
@@ -180,7 +161,7 @@ func (s *Service) UpdateTag(ctx context.Context, c access.Caller, id uuid.UUID, 
 	case IsStatus(err, http.StatusConflict):
 		return Tag{}, errTagExists
 	case err != nil:
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return Tag{}, epError(err)
 	}
 	details := map[string]any{"name": t.Name}
@@ -215,7 +196,7 @@ func (s *Service) DeleteTag(ctx context.Context, c access.Caller, id uuid.UUID) 
 	case IsStatus(err, http.StatusNotFound):
 		return apperr.NotFound()
 	case err != nil:
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return epError(err)
 	}
 	s.fleet.clear()
@@ -226,7 +207,7 @@ func (s *Service) DeleteTag(ctx context.Context, c access.Caller, id uuid.UUID) 
 func (s *Service) tag(ctx context.Context, c access.Caller, cl *Client, id uuid.UUID) (Tag, error) {
 	tags, err := cl.Tags(s.everywhere(ctx, c, RoleReadOnly))
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return Tag{}, epError(err)
 	}
 	i := slices.IndexFunc(tags, func(t Tag) bool { return t.ID == id })
@@ -259,10 +240,10 @@ func (s *Service) AssignedTags(ctx context.Context, c access.Caller, level strin
 	}
 	tags, err := s.assigned(s.as(ctx, c, RoleReadOnly, t.epOrg), cl, t)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return AssignedTags{}, epError(err)
 	}
-	return AssignedTags{Tags: tags, CanAssign: r.canOperate && s.canAssignTags(c)}, nil
+	return AssignedTags{Tags: tags, CanAssign: s.canManageTags(c)}, nil
 }
 
 var errTagLevel = apperr.Invalid("level", "Choose organization, site or device.")
@@ -294,7 +275,7 @@ func (s *Service) assigned(ctx context.Context, cl *Client, t policyTarget) ([]T
 
 // SetTags replaces an organization's, site's or device's own tags.
 func (s *Service) SetTags(ctx context.Context, c access.Caller, level string, id uuid.UUID, ids []uuid.UUID) (AssignedTags, error) {
-	r, cl, err := s.operable(ctx)
+	_, cl, err := s.operable(ctx)
 	if err != nil {
 		return AssignedTags{}, err
 	}
@@ -305,7 +286,7 @@ func (s *Service) SetTags(ctx context.Context, c access.Caller, level string, id
 	if err != nil {
 		return AssignedTags{}, err
 	}
-	if !s.canAssignTags(c) {
+	if !s.canManageTags(c) {
 		return AssignedTags{}, apperr.Forbidden()
 	}
 	want := dedupe(ids)
@@ -314,7 +295,7 @@ func (s *Service) SetTags(ctx context.Context, c access.Caller, level string, id
 	}
 	all, err := cl.Tags(s.everywhere(ctx, c, RoleReadOnly))
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return AssignedTags{}, epError(err)
 	}
 	names := map[uuid.UUID]string{}
@@ -329,7 +310,7 @@ func (s *Service) SetTags(ctx context.Context, c access.Caller, level string, id
 	rctx := s.as(ctx, c, RoleReadOnly, t.epOrg)
 	before, err := s.assigned(rctx, cl, t)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return AssignedTags{}, epError(err)
 	}
 	var added, removed []string
@@ -349,10 +330,7 @@ func (s *Service) SetTags(ctx context.Context, c access.Caller, level string, id
 	}
 	if len(added) > 0 || len(removed) > 0 {
 		if err := cl.SetTags(s.everywhere(ctx, c, RoleAdmin), t.kind, t.epID, want, c.Actor.Label); err != nil {
-			if IsStatus(err, http.StatusForbidden) && !s.Bundled() {
-				return AssignedTags{}, errTagsRefused
-			}
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return AssignedTags{}, epError(err)
 		}
 		ev := audit.Event{Actor: c.Actor, Action: "patch.tag_assign", TargetType: t.targetType, TargetID: t.targetID.String(),
@@ -365,8 +343,8 @@ func (s *Service) SetTags(ctx context.Context, c access.Caller, level string, id
 	}
 	after, err := s.assigned(rctx, cl, t)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return AssignedTags{}, epError(err)
 	}
-	return AssignedTags{Tags: after, CanAssign: r.canOperate}, nil
+	return AssignedTags{Tags: after, CanAssign: true}, nil
 }

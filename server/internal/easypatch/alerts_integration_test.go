@@ -509,51 +509,10 @@ func TestNotifications(t *testing.T) {
 	}
 }
 
-// With a connected server, alerts are read and acknowledged with
-// EasyRMM's token, and rules and channels are EasyPatch's console's.
-func TestAlertsConnected(t *testing.T) {
-	f := newFixture(t)
-	ctx := f.ctx
-	f.connect()
-	org := f.ep.Org("Acme Patch")
-	if err := f.svc.LinkOrganization(ctx, f.admin.Actor, f.acme, org); err != nil {
-		t.Fatal(err)
-	}
-	id := f.ep.AddAlert(eptest.AlertInfo{RuleType: "UpdateHeld", Severity: "Warning", Title: "Acme Patch: 1 update on hold", Org: org})
-	f.ep.AddAlert(eptest.AlertInfo{RuleType: "UpdateHeld", Severity: "Warning", Title: "Unlinked: 1 update on hold", Org: f.ep.Org("Unlinked")})
-	l, err := f.svc.Alerts(ctx, f.admin, AlertsQuery{})
-	if err != nil || !sameIDs(alertIDs(l), id) || !l.Items[0].CanAcknowledge {
-		t.Fatalf("alerts: %+v, %v", l, err)
-	}
-	if n, err := f.svc.AcknowledgeAlerts(ctx, f.admin, []uuid.UUID{id}); err != nil || n != 1 {
-		t.Fatalf("acknowledge: %d, %v", n, err)
-	}
-	for name, call := range map[string]func() error{
-		"rules":         func() error { _, err := f.svc.AlertRules(ctx, f.admin); return err },
-		"notifications": func() error { _, err := f.svc.Notifications(ctx, f.admin); return err },
-		"channel":       func() error { _, err := f.svc.CreateChannel(ctx, f.admin, ChannelRequest{}); return err },
-		"deliveries":    func() error { _, err := f.svc.Deliveries(ctx, f.admin, DeliveriesQuery{Page: 1}); return err },
-	} {
-		if err := call(); !isCode(err, "easypatch_server_wide") {
-			t.Errorf("%s: %v", name, err)
-		}
-	}
-	f.ep.Set(func() { f.ep.ReadOnly = true })
-	if _, err := f.svc.CheckConnection(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if l, err := f.svc.Alerts(ctx, f.admin, AlertsQuery{Status: "all"}); err != nil || len(l.Items) != 1 || l.Items[0].CanAcknowledge {
-		t.Fatalf("read-only token's alerts: %+v, %v", l, err)
-	}
-	if _, err := f.svc.AcknowledgeAlerts(ctx, f.admin, []uuid.UUID{id}); !isCode(err, "easypatch_read_only") {
-		t.Fatalf("read-only token: %v", err)
-	}
-}
-
-// Before EasyPatch is set up, and while the engine does not answer, each
-// call says so.
+// Before the engine is set up, and while it does not answer, each call
+// says so.
 func TestAlertsUnavailable(t *testing.T) {
-	plain := newFixture(t)
+	plain := newFixture(t).withoutEngine()
 	f := newFleetFixture(t)
 	f.engine.Set(func() { f.engine.Down = true })
 	for name, call := range map[string]func(*fixture) error{

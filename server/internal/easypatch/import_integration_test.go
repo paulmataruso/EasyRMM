@@ -47,7 +47,7 @@ func TestImport(t *testing.T) {
 
 	// Without the engine, nothing to import into.
 	ten := tenancy.New(f.db, audit.New(f.db, nil))
-	if _, err := f.svc.Import(f.ctx, ten); !errors.Is(err, errImportNeedsEngine) {
+	if _, err := f.unconfigured().Import(f.ctx, ten); !errors.Is(err, errImportNeedsEngine) {
 		t.Fatalf("without the engine: %v", err)
 	}
 
@@ -57,7 +57,7 @@ func TestImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.svc.UseEngine(f.ctx, refused); err != nil {
+	if err := f.svc.UseEngine(refused); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.svc.Import(f.ctx, ten); err == nil || !strings.Contains(err.Error(), "reading the patching engine's organizations") ||

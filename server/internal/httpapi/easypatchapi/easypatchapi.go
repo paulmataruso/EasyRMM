@@ -1,6 +1,6 @@
-// Package easypatchapi serves the EasyPatch connector (ADR-0030): its
-// settings, for super administrators, and the patch views and actions of
-// the console.
+// Package easypatchapi serves patching: the patching engine's state and
+// EasyRMM's links to it, for super administrators, and the patch views and
+// actions of the console.
 package easypatchapi
 
 import (
@@ -16,7 +16,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// API serves the connector.
+// API serves patching.
 type API struct{ svc *easypatch.Service }
 
 // New builds the API.
@@ -33,13 +33,9 @@ func (a *API) Register(mux *http.ServeMux) {
 		})))
 	}
 	settings("GET /api/v1/settings/easypatch", a.connection)
-	settings("PUT /api/v1/settings/easypatch", a.updateConnection)
-	settings("DELETE /api/v1/settings/easypatch", a.deleteConnection)
 	settings("POST /api/v1/settings/easypatch/check", a.checkConnection)
 	settings("GET /api/v1/settings/easypatch/organizations", a.organizations)
-	settings("PUT /api/v1/settings/easypatch/organizations/{id}", a.linkOrganization)
 	settings("PATCH /api/v1/settings/easypatch/organizations/{id}", a.updateOrganization)
-	settings("DELETE /api/v1/settings/easypatch/organizations/{id}", a.unlinkOrganization)
 	settings("GET /api/v1/settings/easypatch/devices", a.deviceLinks)
 	settings("GET /api/v1/settings/easypatch/sync", a.sync)
 
@@ -101,23 +97,6 @@ func (a *API) connection(w http.ResponseWriter, r *http.Request) error {
 	return ok(w, c, err)
 }
 
-func (a *API) updateConnection(w http.ResponseWriter, r *http.Request) error {
-	var in easypatch.ConnectionInput
-	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
-		return err
-	}
-	c, err := a.svc.UpdateConnection(r.Context(), httpapi.Actor(r), in)
-	return ok(w, c, err)
-}
-
-func (a *API) deleteConnection(w http.ResponseWriter, r *http.Request) error {
-	if err := a.svc.DeleteConnection(r.Context(), httpapi.Actor(r)); err != nil {
-		return err
-	}
-	w.WriteHeader(http.StatusNoContent)
-	return nil
-}
-
 func (a *API) checkConnection(w http.ResponseWriter, r *http.Request) error {
 	c, err := a.svc.CheckConnection(r.Context())
 	return ok(w, c, err)
@@ -126,28 +105,6 @@ func (a *API) checkConnection(w http.ResponseWriter, r *http.Request) error {
 func (a *API) organizations(w http.ResponseWriter, r *http.Request) error {
 	o, err := a.svc.Organizations(r.Context())
 	return ok(w, o, err)
-}
-
-func (a *API) linkOrganization(w http.ResponseWriter, r *http.Request) error {
-	id, err := httpapi.PathID(r)
-	if err != nil {
-		return err
-	}
-	var in struct {
-		EasyPatchID string `json:"easyPatchId"`
-	}
-	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
-		return err
-	}
-	ep, err := parseID(in.EasyPatchID, "easyPatchId")
-	if err != nil {
-		return err
-	}
-	if err := a.svc.LinkOrganization(r.Context(), httpapi.Actor(r), id, ep); err != nil {
-		return err
-	}
-	w.WriteHeader(http.StatusNoContent)
-	return nil
 }
 
 func (a *API) updateOrganization(w http.ResponseWriter, r *http.Request) error {
@@ -165,18 +122,6 @@ func (a *API) updateOrganization(w http.ResponseWriter, r *http.Request) error {
 		return apperr.Invalid("autoInstall", "must be true or false")
 	}
 	if err := a.svc.SetAutoInstall(r.Context(), httpapi.Actor(r), id, *in.AutoInstall); err != nil {
-		return err
-	}
-	w.WriteHeader(http.StatusNoContent)
-	return nil
-}
-
-func (a *API) unlinkOrganization(w http.ResponseWriter, r *http.Request) error {
-	id, err := httpapi.PathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.svc.UnlinkOrganization(r.Context(), httpapi.Actor(r), id); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)

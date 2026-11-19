@@ -89,7 +89,7 @@ func (s *Service) alertOrganizations(ctx context.Context, c access.Caller, org u
 // alertViews keeps the alerts the caller may see: a device's when they see
 // its patching, an organization's (or of an endpoint EasyRMM does not
 // link) when they see the whole organization's.
-func (s *Service) alertViews(ctx context.Context, c access.Caller, canOperate bool, orgs []reportOrg, alerts []Alert) ([]AlertView, error) {
+func (s *Service) alertViews(ctx context.Context, c access.Caller, orgs []reportOrg, alerts []Alert) ([]AlertView, error) {
 	byEngine := map[uuid.UUID]reportOrg{}
 	for _, o := range orgs {
 		byEngine[o.ep] = o
@@ -117,7 +117,7 @@ func (s *Service) alertViews(ctx context.Context, c access.Caller, canOperate bo
 		} else if !c.Can(rbac.PermPatchView, rbac.Org(o.id)) {
 			continue
 		}
-		v.CanAcknowledge = canOperate && a.Status == "Open" && c.Can(rbac.PermPatchManage, res)
+		v.CanAcknowledge = a.Status == "Open" && c.Can(rbac.PermPatchManage, res)
 		out = append(out, v)
 	}
 	return out, nil
@@ -185,13 +185,13 @@ func (s *Service) Alerts(ctx context.Context, c access.Caller, q AlertsQuery) (A
 		filter.OrganizationID = o.ep
 		p, err := cl.Alerts(s.as(ctx, c, RoleReadOnly, o.ep), filter, 1, PageSize)
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return AlertList{}, epError(err)
 		}
 		alerts = append(alerts, p.Items...)
 		capped = capped || p.TotalCount > len(p.Items)
 	}
-	out, err := s.alertViews(ctx, c, r.canOperate, orgs, alerts)
+	out, err := s.alertViews(ctx, c, orgs, alerts)
 	if err != nil {
 		return AlertList{}, err
 	}
@@ -237,11 +237,11 @@ func (s *Service) AlertCounts(ctx context.Context, c access.Caller, org uuid.UUI
 		}
 		p, err := cl.Alerts(s.as(ctx, c, RoleReadOnly, o.ep), AlertFilter{Status: "unresolved", OrganizationID: o.ep}, 1, PageSize)
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return AlertCounts{}, epError(err)
 		}
 		out.Capped = out.Capped || p.TotalCount > len(p.Items)
-		views, err := s.alertViews(ctx, c, false, []reportOrg{o}, p.Items)
+		views, err := s.alertViews(ctx, c, []reportOrg{o}, p.Items)
 		if err != nil {
 			return AlertCounts{}, err
 		}
@@ -252,7 +252,7 @@ func (s *Service) AlertCounts(ctx context.Context, c access.Caller, org uuid.UUI
 	if len(whole) > 0 {
 		sum, err := cl.AlertSummary(s.as(ctx, c, RoleReadOnly, whole...))
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return AlertCounts{}, epError(err)
 		}
 		out.Open += sum.Open
@@ -292,7 +292,7 @@ func (s *Service) AcknowledgeAlerts(ctx context.Context, c access.Caller, ids []
 	if len(ids) == 0 || len(ids) > maxAcknowledge {
 		return 0, apperr.Invalid("alertIds", "Choose 1 to 200 alerts.")
 	}
-	r, cl, err := s.operable(ctx)
+	_, cl, err := s.operable(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -311,7 +311,7 @@ func (s *Service) AcknowledgeAlerts(ctx context.Context, c access.Caller, ids []
 		for page := 1; page <= ackPages && len(want) > 0; page++ {
 			p, err := cl.Alerts(s.as(ctx, c, RoleReadOnly, o.ep), AlertFilter{Status: "open", OrganizationID: o.ep}, page, PageSize)
 			if err != nil {
-				s.noteError(ctx, err)
+				s.noteError(err)
 				return 0, epError(err)
 			}
 			for _, a := range p.Items {
@@ -325,7 +325,7 @@ func (s *Service) AcknowledgeAlerts(ctx context.Context, c access.Caller, ids []
 			}
 		}
 	}
-	views, err := s.alertViews(ctx, c, r.canOperate, orgs, found)
+	views, err := s.alertViews(ctx, c, orgs, found)
 	if err != nil {
 		return 0, err
 	}
@@ -340,7 +340,7 @@ func (s *Service) AcknowledgeAlerts(ctx context.Context, c access.Caller, ids []
 	}
 	n, err := cl.AcknowledgeAlerts(s.as(ctx, c, RoleAdmin, engineOrgs...), chosen)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return 0, epError(err)
 	}
 	return n, s.record(ctx, acknowledgeEvents(c, views))

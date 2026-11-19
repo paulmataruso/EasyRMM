@@ -80,13 +80,13 @@ func (s *Service) linkedOrganizations(ctx context.Context, c access.Caller, org 
 	return out, err
 }
 
-// reportConn is the connection for a report, or errNotConfigured.
-func (s *Service) reportConn(ctx context.Context) (*connRow, *Client, error) {
+// reportConn is the engine's client for a report, or errNotConfigured.
+func (s *Service) reportConn(ctx context.Context) (*Client, error) {
 	r, cl, err := s.conn(ctx)
 	if err == nil && r == nil {
 		err = errNotConfigured
 	}
-	return r, cl, err
+	return cl, err
 }
 
 // Trend is the daily compliance of the organizations a caller sees as a
@@ -110,7 +110,7 @@ func (s *Service) ComplianceTrend(ctx context.Context, c access.Caller, org uuid
 	if days < 7 || days > MaxReportDays {
 		return Trend{}, apperr.Invalid("days", "Choose from 7 to 365 days.")
 	}
-	_, cl, err := s.reportConn(ctx)
+	cl, err := s.reportConn(ctx)
 	if err != nil {
 		return Trend{}, err
 	}
@@ -124,7 +124,7 @@ func (s *Service) ComplianceTrend(ctx context.Context, c access.Caller, org uuid
 	for _, o := range orgs {
 		points, err := cl.ComplianceTrend(s.as(ctx, c, RoleReadOnly, o.ep), o.ep, from, to)
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return Trend{}, epError(err)
 		}
 		for _, p := range points {
@@ -217,7 +217,7 @@ func (s *Service) Installations(ctx context.Context, c access.Caller, q Installa
 	if err := f.Err(); err != nil {
 		return Installations{}, err
 	}
-	_, cl, err := s.reportConn(ctx)
+	cl, err := s.reportConn(ctx)
 	if err != nil {
 		return Installations{}, err
 	}
@@ -234,7 +234,7 @@ func (s *Service) Installations(ctx context.Context, c access.Caller, q Installa
 		for page := 1; ; page++ {
 			p, err := cl.Installations(s.as(ctx, c, RoleReadOnly, org), filter, page)
 			if err != nil {
-				s.noteError(ctx, err)
+				s.noteError(err)
 				return Installations{}, epError(err)
 			}
 			rows = append(rows, p.Items...)
@@ -310,7 +310,7 @@ func (s *Service) MonthlyReports(ctx context.Context, c access.Caller, org uuid.
 	if !c.CanAnywhere(rbac.PermReportView) || !c.CanAnywhere(rbac.PermPatchView) {
 		return MonthlyReportList{}, apperr.Forbidden()
 	}
-	r, cl, err := s.reportConn(ctx)
+	cl, err := s.reportConn(ctx)
 	if err != nil {
 		return MonthlyReportList{}, err
 	}
@@ -322,10 +322,10 @@ func (s *Service) MonthlyReports(ctx context.Context, c access.Caller, org uuid.
 	for _, o := range orgs {
 		p, err := cl.MonthlyReports(s.as(ctx, c, RoleReadOnly, o.ep), o.ep, 1)
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return MonthlyReportList{}, epError(err)
 		}
-		manage := r.canOperate && c.Can(rbac.PermPatchManage, rbac.Org(o.id))
+		manage := c.Can(rbac.PermPatchManage, rbac.Org(o.id))
 		for _, m := range p.Items {
 			out.Items = append(out.Items, MonthlyReportView{MonthlyReport: m, OrganizationID: o.id, OrganizationName: o.name, CanManage: manage})
 		}
@@ -344,7 +344,7 @@ func (s *Service) MonthlyReports(ctx context.Context, c access.Caller, org uuid.
 // monthlyReport reads a report and the organization it belongs to, when
 // the caller holds report.view and perm over that organization.
 func (s *Service) monthlyReport(ctx context.Context, c access.Caller, id uuid.UUID, perm rbac.Permission) (MonthlyReport, reportOrg, *Client, error) {
-	_, cl, err := s.reportConn(ctx)
+	cl, err := s.reportConn(ctx)
 	if err != nil {
 		return MonthlyReport{}, reportOrg{}, nil, err
 	}
@@ -364,7 +364,7 @@ func (s *Service) monthlyReport(ctx context.Context, c access.Caller, id uuid.UU
 		if IsStatus(err, http.StatusNotFound) || IsStatus(err, http.StatusForbidden) {
 			return MonthlyReport{}, reportOrg{}, nil, apperr.NotFound()
 		}
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return MonthlyReport{}, reportOrg{}, nil, epError(err)
 	}
 	i := slices.IndexFunc(orgs, func(o reportOrg) bool { return o.ep == m.OrganizationID })
@@ -380,7 +380,7 @@ func (s *Service) monthlyReport(ctx context.Context, c access.Caller, id uuid.UU
 // GenerateMonthlyReport makes an organization's report of a month: a past
 // one, or the current one so far.
 func (s *Service) GenerateMonthlyReport(ctx context.Context, c access.Caller, org uuid.UUID, year, month int, endpointList bool) (MonthlyReportView, error) {
-	r, cl, err := s.operable(ctx)
+	_, cl, err := s.operable(ctx)
 	if err != nil {
 		return MonthlyReportView{}, err
 	}
@@ -405,13 +405,13 @@ func (s *Service) GenerateMonthlyReport(ctx context.Context, c access.Caller, or
 	o := orgs[0]
 	m, err := cl.GenerateMonthlyReport(s.as(ctx, c, RoleAdmin, o.ep), o.ep, year, month, endpointList, c.Actor.Label)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return MonthlyReportView{}, epError(err)
 	}
 	if err := s.recordReport(ctx, c, "patch.report_generate", o, m, map[string]any{"includeEndpointList": endpointList}); err != nil {
 		return MonthlyReportView{}, err
 	}
-	return MonthlyReportView{MonthlyReport: m, OrganizationID: o.id, OrganizationName: o.name, CanManage: r.canOperate}, nil
+	return MonthlyReportView{MonthlyReport: m, OrganizationID: o.id, OrganizationName: o.name, CanManage: true}, nil
 }
 
 // MonthlyReportPDF reads a monthly report's PDF, and records that it left
@@ -423,7 +423,7 @@ func (s *Service) MonthlyReportPDF(ctx context.Context, c access.Caller, id uuid
 	}
 	pdf, err := cl.MonthlyReportPDF(s.as(ctx, c, RoleReadOnly, o.ep), id)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return MonthlyReport{}, nil, epError(err)
 	}
 	if err := s.recordReport(ctx, c, "patch.report_download", o, m, nil); err != nil {
@@ -466,7 +466,7 @@ func (s *Service) DeleteMonthlyReport(ctx context.Context, c access.Caller, id u
 		return err
 	}
 	if err := cl.DeleteMonthlyReport(s.as(ctx, c, RoleAdmin, o.ep), id, c.Actor.Label); err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return epError(err)
 	}
 	return s.recordReport(ctx, c, "patch.report_delete", o, m, nil)
@@ -514,31 +514,25 @@ func validRecipients(in []string, required bool) ([]string, error) {
 	return out, nil
 }
 
-// mailError explains EasyPatch refusing to email a report, in EasyRMM's
-// terms: with the bundled engine, EasyRMM's own mail server sends it.
+// mailError explains the engine refusing to email a report, in EasyRMM's
+// terms: EasyRMM's own mail server sends it.
 func (s *Service) mailError(ctx context.Context, err error) error {
 	var e *Error
 	if !errors.As(err, &e) {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return epError(err)
 	}
 	switch e.Code {
 	case "smtp_not_configured":
-		if s.Bundled() {
-			return apperr.Conflict("mail_not_configured", "EasyRMM has no mail server to send reports with. Set EASYRMM_SMTP_HOST and the other EASYRMM_SMTP_ settings, then restart EasyRMM.")
-		}
-		return apperr.Conflict("mail_not_configured", "EasyPatch has no mail server to send reports with. Set one in EasyPatch's console, under Settings → Notifications.")
+		return apperr.Conflict("mail_not_configured", "EasyRMM has no mail server to send reports with. Set EASYRMM_SMTP_HOST and the other EASYRMM_SMTP_ settings, then restart EasyRMM.")
 	case "smtp_not_encrypted":
-		if s.Bundled() {
-			return apperr.Conflict("mail_not_encrypted", "Reports are emailed only over STARTTLS or TLS, and EASYRMM_SMTP_TLS is none.")
-		}
-		return apperr.Conflict("mail_not_encrypted", "Reports are emailed only over STARTTLS or TLS; change EasyPatch's mail server security in its console.")
+		return apperr.Conflict("mail_not_encrypted", "Reports are emailed only over STARTTLS or TLS, and EASYRMM_SMTP_TLS is none.")
 	case "report_too_large":
 		return apperr.Conflict("report_too_large", "The report is larger than 15 MB, too large to email: download it instead.")
 	case "no_recipients":
 		return apperr.Invalid("recipients", "Enter recipients, or add them to the organization's report schedule.")
 	}
-	s.noteError(ctx, err)
+	s.noteError(err)
 	return epError(err)
 }
 
@@ -556,7 +550,7 @@ func (s *Service) ReportSchedules(ctx context.Context, c access.Caller) ([]Sched
 	if !c.CanAnywhere(rbac.PermReportView) || !c.CanAnywhere(rbac.PermPatchView) {
 		return nil, apperr.Forbidden()
 	}
-	r, cl, err := s.reportConn(ctx)
+	cl, err := s.reportConn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -568,11 +562,11 @@ func (s *Service) ReportSchedules(ctx context.Context, c access.Caller) ([]Sched
 	for _, o := range orgs {
 		sc, err := cl.ReportSchedule(s.as(ctx, c, RoleReadOnly, o.ep), o.ep)
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return nil, epError(err)
 		}
 		out = append(out, ScheduleView{ReportSchedule: orEmptySchedule(sc), OrganizationID: o.id, OrganizationName: o.name,
-			CanEdit: r.canOperate && c.Can(rbac.PermPatchConfigure, rbac.Org(o.id))})
+			CanEdit: c.Can(rbac.PermPatchConfigure, rbac.Org(o.id))})
 	}
 	return out, nil
 }
@@ -599,7 +593,7 @@ func (s *Service) SetReportSchedule(ctx context.Context, c access.Caller, org uu
 		return ScheduleView{}, err
 	}
 	in.Recipients = to
-	_, cl, err := s.reportConn(ctx)
+	cl, err := s.reportConn(ctx)
 	if err != nil {
 		return ScheduleView{}, err
 	}
@@ -613,7 +607,7 @@ func (s *Service) SetReportSchedule(ctx context.Context, c access.Caller, org uu
 	o := orgs[0]
 	sc, err := cl.SetReportSchedule(s.as(ctx, c, RoleAdmin, o.ep), o.ep, in, c.Actor.Label)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return ScheduleView{}, epError(err)
 	}
 	ev := audit.Event{Actor: c.Actor, Action: "patch.report_schedule", TargetType: "organization", TargetID: o.id.String(), OrganizationID: o.id,

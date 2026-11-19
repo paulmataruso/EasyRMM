@@ -116,7 +116,7 @@ func TestComposeEnvironment(t *testing.T) {
 			if cfg.Mesh.CertURL != c.cert {
 				t.Errorf("certificate URL %q, want %s", cfg.Mesh.CertURL, c.cert)
 			}
-			if !cfg.Patching.Bundled() {
+			if cfg.Patching.URL != DefaultPatchingURL || len(cfg.Patching.Key) != 32 {
 				t.Errorf("patching %+v: want the engine in this deployment", cfg.Patching)
 			}
 			if !slices.Equal(cfg.ExtraHostnames(), c.extra) {

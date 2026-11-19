@@ -57,15 +57,8 @@ func (s *Server) Holds() []HoldInfo {
 	return out
 }
 
-// role is the request's role: the statement's, or Admin for the token (a
-// read-only token, ReadOnly).
+// role is the request's role, as its statement names it.
 func (s *Server) role() string {
-	if s.key == nil {
-		if s.ReadOnly {
-			return "ReadOnly"
-		}
-		return "Admin"
-	}
 	return s.requests[len(s.requests)-1].Statement.Role
 }
 
@@ -422,9 +415,6 @@ func (s *Server) holdDTO(h *HoldInfo) map[string]any {
 
 // actorName is who EasyPatch records a change as.
 func (s *Server) actorName() string {
-	if s.key == nil {
-		return "token:easyrmm"
-	}
 	return "easyrmm:" + s.requests[len(s.requests)-1].Statement.Name
 }
 

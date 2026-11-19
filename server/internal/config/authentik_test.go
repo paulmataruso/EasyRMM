@@ -51,7 +51,7 @@ func TestAuthentik(t *testing.T) {
 		t.Errorf("the edge serves %v", c.ExtraHostnames())
 	}
 	// With an imported EasyPatch's names too.
-	c, err = load(map[string]string{"EASYRMM_PATCHING": "bundled", "EASYRMM_PATCHING_KEY": testKey, "EASYRMM_PATCHING_AGENT_HOSTNAMES": "patch.example.com"})
+	c, err = load(map[string]string{"EASYRMM_PATCHING_KEY": testKey, "EASYRMM_PATCHING_AGENT_HOSTNAMES": "patch.example.com"})
 	if err != nil || !slices.Equal(c.ExtraHostnames(), []string{"patch.example.com", "auth.example.com"}) {
 		t.Fatalf("extra names %v, %v", c.ExtraHostnames(), err)
 	}

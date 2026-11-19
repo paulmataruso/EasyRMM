@@ -25,15 +25,9 @@ import (
 // Those who configure patching anywhere (patch.configure) see the settings,
 // lifecycle and packages, which shape every organization's patching. They
 // are server-wide, so only super administrators change them, with
-// SuperAdmin statements, and only with the bundled engine: a connected
-// server's API token is never SuperAdmin. The audit log needs audit.view
+// SuperAdmin statements. The audit log needs audit.view
 // and patch.view over the organizations it shows; a super administrator
 // also sees the server-wide entries.
-
-// serverSettingsReason says why a connected server's settings are read-only.
-const serverSettingsReason = "With a connected EasyPatch server, its server settings and OS lifecycle are changed in EasyPatch's own console: EasyRMM's API token may not change them."
-
-var errServerSettings = apperr.Conflict("easypatch_server_wide", serverSettingsReason)
 
 // SettingsView is EasyPatch's server settings as Settings → Patching shows
 // them.
@@ -41,9 +35,8 @@ type SettingsView struct {
 	Settings ServerSettings      `json:"settings"`
 	Feeds    []VulnerabilityFeed `json:"feeds"`
 	// Version is the EasyPatch server's.
-	Version        string `json:"version"`
-	CanEdit        bool   `json:"canEdit"`
-	ReadOnlyReason string `json:"readOnlyReason,omitempty"`
+	Version string `json:"version"`
+	CanEdit bool   `json:"canEdit"`
 }
 
 // readServerWide checks that the caller may see the server-wide settings.
@@ -68,22 +61,8 @@ func (s *Service) changeServerWide(ctx context.Context, c access.Caller) (*Clien
 		return nil, err
 	case !c.CanGlobal(rbac.PermPatchConfigure):
 		return nil, apperr.Forbidden()
-	case !s.Bundled():
-		return nil, errServerSettings
 	}
 	return cl, nil
-}
-
-// serverWide says whether the caller may change server-wide settings, and
-// why not when it is not their role.
-func (s *Service) serverWide(r *connRow, c access.Caller) (bool, string) {
-	switch {
-	case !s.Bundled():
-		return false, serverSettingsReason
-	case !r.canOperate:
-		return false, errReadOnly.Message
-	}
-	return c.CanGlobal(rbac.PermPatchConfigure), ""
 }
 
 // ServerSettings reads EasyPatch's server settings and the state of its
@@ -96,17 +75,15 @@ func (s *Service) ServerSettings(ctx context.Context, c access.Caller) (Settings
 	rctx := s.as(ctx, c, RoleReadOnly)
 	settings, err := cl.ServerSettings(rctx)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return SettingsView{}, epError(err)
 	}
 	feeds, err := cl.VulnerabilityFeeds(rctx)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return SettingsView{}, epError(err)
 	}
-	v := SettingsView{Settings: settings, Feeds: orEmpty(feeds), Version: r.version}
-	v.CanEdit, v.ReadOnlyReason = s.serverWide(r, c)
-	return v, nil
+	return SettingsView{Settings: settings, Feeds: orEmpty(feeds), Version: r.version, CanEdit: c.CanGlobal(rbac.PermPatchConfigure)}, nil
 }
 
 // settingRange is a server setting's bounds, as EasyPatch checks them.
@@ -195,13 +172,13 @@ func (s *Service) SetServerSettings(ctx context.Context, c access.Caller, in Ser
 	st := s.everywhere(ctx, c, RoleSuperAdmin)
 	before, err := cl.ServerSettings(st)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return SettingsView{}, epError(err)
 	}
 	changes := settingsChanges(before, in)
 	if len(changes) > 0 {
 		if _, err := cl.SetServerSettings(st, in); err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return SettingsView{}, epError(err)
 		}
 		if err := s.record(ctx, []audit.Event{{Actor: c.Actor, Action: "patch.settings_update", TargetType: "easypatch_settings",
@@ -214,20 +191,19 @@ func (s *Service) SetServerSettings(ctx context.Context, c access.Caller, in Ser
 
 // LifecycleList is the lifecycle entries, by product, newest build first.
 type LifecycleList struct {
-	Items          []LifecycleEntry `json:"items"`
-	CanEdit        bool             `json:"canEdit"`
-	ReadOnlyReason string           `json:"readOnlyReason,omitempty"`
+	Items   []LifecycleEntry `json:"items"`
+	CanEdit bool             `json:"canEdit"`
 }
 
 // Lifecycle lists the operating systems' end-of-servicing dates.
 func (s *Service) Lifecycle(ctx context.Context, c access.Caller) (LifecycleList, error) {
-	r, cl, err := s.readServerWide(ctx, c)
+	_, cl, err := s.readServerWide(ctx, c)
 	if err != nil {
 		return LifecycleList{}, err
 	}
 	items, err := cl.Lifecycle(s.as(ctx, c, RoleReadOnly))
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return LifecycleList{}, epError(err)
 	}
 	slices.SortStableFunc(items, func(a, b LifecycleEntry) int {
@@ -239,9 +215,7 @@ func (s *Service) Lifecycle(ctx context.Context, c access.Caller) (LifecycleList
 		}
 		return strings.Compare(a.EditionGroup, b.EditionGroup)
 	})
-	l := LifecycleList{Items: orEmpty(items)}
-	l.CanEdit, l.ReadOnlyReason = s.serverWide(r, c)
-	return l, nil
+	return LifecycleList{Items: orEmpty(items), CanEdit: c.CanGlobal(rbac.PermPatchConfigure)}, nil
 }
 
 // normalizeLifecycle checks a lifecycle entry as EasyPatch does.
@@ -314,7 +288,7 @@ func (s *Service) CreateLifecycle(ctx context.Context, c access.Caller, in Lifec
 	}
 	e, err := cl.CreateLifecycle(s.everywhere(ctx, c, RoleSuperAdmin), in)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return LifecycleEntry{}, lifecycleError(err)
 	}
 	s.fleet.clear()
@@ -332,7 +306,7 @@ func (s *Service) UpdateLifecycle(ctx context.Context, c access.Caller, id uuid.
 	}
 	e, err := cl.UpdateLifecycle(s.everywhere(ctx, c, RoleSuperAdmin), id, in)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return LifecycleEntry{}, lifecycleError(err)
 	}
 	s.fleet.clear()
@@ -349,7 +323,7 @@ func (s *Service) DeleteLifecycle(ctx context.Context, c access.Caller, id uuid.
 	st := s.everywhere(ctx, c, RoleSuperAdmin)
 	items, err := cl.Lifecycle(st)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return epError(err)
 	}
 	i := slices.IndexFunc(items, func(e LifecycleEntry) bool { return e.ID == id })
@@ -357,7 +331,7 @@ func (s *Service) DeleteLifecycle(ctx context.Context, c access.Caller, id uuid.
 		return apperr.NotFound()
 	}
 	if err := cl.DeleteLifecycle(st, id); err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return epError(err)
 	}
 	s.fleet.clear()
@@ -368,34 +342,26 @@ func (s *Service) DeleteLifecycle(ctx context.Context, c access.Caller, id uuid.
 // it.
 type PackageView struct {
 	AgentPackage
-	// URL downloads the package: EasyRMM's own address with the bundled
-	// engine, EasyPatch's with a connected server.
+	// URL downloads the package, from EasyRMM's own address.
 	URL string `json:"url"`
 }
 
 // AgentPackageList lists the EasyPatch agent packages, newest first.
 func (s *Service) AgentPackageList(ctx context.Context, c access.Caller) ([]PackageView, error) {
-	r, cl, err := s.readServerWide(ctx, c)
+	_, cl, err := s.readServerWide(ctx, c)
 	if err != nil {
 		return nil, err
 	}
 	pkgs, err := cl.AgentPackages(s.as(ctx, c, RoleReadOnly))
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		return nil, epError(err)
-	}
-	base := ""
-	if !s.Bundled() {
-		base = strings.TrimRight(r.url, "/")
-		if r.publicURL != "" {
-			base = strings.TrimRight(r.publicURL, "/")
-		}
 	}
 	out := make([]PackageView, 0, len(pkgs))
 	for _, p := range pkgs {
 		v := PackageView{AgentPackage: p}
 		if strings.HasPrefix(p.DownloadURL, "/downloads/agent/") {
-			v.URL = base + p.DownloadURL
+			v.URL = p.DownloadURL
 		}
 		out = append(out, v)
 	}
@@ -452,11 +418,6 @@ type AuditPage struct {
 	Everything bool         `json:"everything"`
 }
 
-// errAuditRefused is a connected server refusing its audit log to a
-// read-only token.
-var errAuditRefused = apperr.Conflict("easypatch_audit_refused",
-	"EasyPatch shows its audit log to Operator API tokens only, and EasyRMM's is read-only. Read it in EasyPatch's console, or replace the token in Settings → EasyPatch.")
-
 func (q *AuditQuery) check() error {
 	f := apperr.Fields{}
 	f.Check(q.From == nil || q.To == nil || q.From.Before(*q.To), "to", "End on or after the first day.")
@@ -509,11 +470,8 @@ func (s *Service) AuditLog(ctx context.Context, c access.Caller, q AuditQuery) (
 		f.OrganizationID = &orgs[0].ep
 	}
 	p, err := cl.AuditLogs(rctx, f, page, auditPageSize)
-	switch {
-	case IsStatus(err, http.StatusForbidden) && !s.Bundled():
-		return AuditPage{}, errAuditRefused
-	case err != nil:
-		s.noteError(ctx, err)
+	if err != nil {
+		s.noteError(err)
 		return AuditPage{}, epError(err)
 	}
 	byEP := map[uuid.UUID]reportOrg{}

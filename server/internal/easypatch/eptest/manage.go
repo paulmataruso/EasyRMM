@@ -387,12 +387,8 @@ func (s *Server) sortedOrgs() []*OrgInfo {
 	return list
 }
 
-// unrestricted is whether the request's principal sees every organization:
-// the token, or a statement naming all organizations.
+// unrestricted is whether the request's statement names all organizations.
 func (s *Server) unrestricted() bool {
-	if s.key == nil {
-		return true
-	}
 	st := s.requests[len(s.requests)-1].Statement
 	return st != nil && st.AllOrganizations
 }

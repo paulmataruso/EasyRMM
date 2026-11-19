@@ -61,8 +61,8 @@ type statementKey struct{}
 
 // WithStatement returns ctx carrying s, the statement for calls to the
 // engine made with it. Calls without one act as EasyRMM itself
-// (ServiceSubject) with RoleAdmin in every organization, as the
-// connector's API token does, named after whom they are for, if anyone.
+// (ServiceSubject) with RoleAdmin in every organization, named after whom
+// they are for, if anyone.
 func WithStatement(ctx context.Context, s Statement) context.Context {
 	return context.WithValue(ctx, statementKey{}, s)
 }

@@ -1,7 +1,8 @@
-// Package eptest serves the part of EasyPatch's API that EasyRMM's
-// connector uses, for tests, the way net/http/httptest serves HTTP. Its
-// answers have the field names and shapes EasyPatch 1.9.0 sends, recorded
-// from a real server; it keeps endpoints, updates and jobs in memory.
+// Package eptest serves the part of the patching engine's API that EasyRMM
+// uses, for tests, the way net/http/httptest serves HTTP. Its answers have
+// the field names and shapes EasyPatch's server sends, recorded from a real
+// one and held to it by the contract test; it keeps endpoints, updates and
+// jobs in memory.
 package eptest
 
 import (
@@ -9,10 +10,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -29,28 +28,24 @@ import (
 // spells it.
 const StatusCanceled = "Cancelled" //nolint:misspell // EasyPatch's enum value
 
-// Server is a fake EasyPatch server over TLS with its own certificate.
-// Change its state inside Set.
+// Server is a fake patching engine: plain HTTP on loopback, as in
+// EasyRMM's deployment. Change its state inside Set.
 type Server struct {
 	srv *httptest.Server
-	// Token is the API token the server accepts.
-	Token string
-	// CAPEM is the certificate that signs the server's.
-	CAPEM string
 
 	mu sync.Mutex
-	// Version is what server-info reports.
-	Version string
+	// Version is what server-info reports, and PublicURL the address it
+	// gives agents (https://patch.example.com).
+	Version   string
+	PublicURL string
 	// Capabilities is what server-info lists; nil leaves the field out, as
 	// EasyPatch 1.9.0 does.
 	Capabilities []string
-	// ReadOnly makes the token a ReadOnly one: operator calls answer 403.
+	// ReadOnly has the engine take every statement as a ReadOnly one, as
+	// when it does not let EasyRMM act as an administrator: what changes
+	// something answers 403.
 	ReadOnly bool
-	// Restricted makes the token one for chosen organizations as far as
-	// assigning tags goes, which EasyPatch keeps to callers for every
-	// organization: it answers 403. Nothing else changes.
-	Restricted bool
-	// key, for NewEngine, checks statements instead of the token.
+	// key checks statements.
 	key []byte
 	// readOnlyCall is whether the request being served may only read.
 	readOnlyCall bool
@@ -61,7 +56,7 @@ type Server struct {
 	// EasyPatch saved the change: the caller cannot tell it happened.
 	LoseReply func(method, path string) bool
 
-	// Packages is what agent-packages lists; New fills in those of an
+	// Packages is what agent-packages lists; NewEngine fills in those of an
 	// EasyPatch 1.9.0 server.
 	Packages []map[string]any
 
@@ -158,10 +153,9 @@ type Job struct {
 // Request is a call the server received.
 type Request struct {
 	Method, Path string
-	OnBehalfOf   string
 	Body         map[string]any
-	// Statement is what EasyRMM's statement said, for NewEngine; nil for a
-	// call with a token, or with a statement that was refused.
+	// Statement is what EasyRMM's statement said; nil for a statement that
+	// was refused.
 	Statement *Statement
 }
 
@@ -173,22 +167,9 @@ type Statement struct {
 	Organizations    []uuid.UUID
 }
 
-// New starts a server, closed when the test ends.
-func New(t testing.TB) *Server {
-	t.Helper()
-	s := newServer()
-	s.srv = httptest.NewUnstartedServer(http.HandlerFunc(s.handle))
-	// Tests of an untrusted certificate make the server log handshake errors.
-	s.srv.Config.ErrorLog = log.New(io.Discard, "", 0)
-	s.srv.StartTLS()
-	t.Cleanup(s.srv.Close)
-	s.CAPEM = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.srv.Certificate().Raw}))
-	return s
-}
-
 // newServer is a server's state, with an EasyPatch 1.9.0 server's packages.
 func newServer() *Server {
-	s := &Server{Token: "ept_" + strings.Repeat("A", 43), Version: "1.9.0", endpoints: map[uuid.UUID]*Endpoint{}}
+	s := &Server{Version: "1.9.0", PublicURL: "https://patch.example.com", endpoints: map[uuid.UUID]*Endpoint{}}
 	for _, p := range []struct {
 		version, arch, format string
 		latest                bool
@@ -203,9 +184,9 @@ func newServer() *Server {
 
 // NewEngine starts a server that answers as the patching engine in
 // EasyRMM's deployment does: plain HTTP on loopback, each request with a
-// statement signed with key instead of a token. A statement must be signed
-// with the key and made for the request, and it must not have expired; a
-// ReadOnly one is refused what a read-only token is.
+// statement signed with key. A statement must be signed with the key and
+// made for the request, and it must not have expired; a ReadOnly one may
+// only read. The server is closed when the test ends.
 func NewEngine(t testing.TB, key []byte) *Server {
 	t.Helper()
 	s := newServer()
@@ -531,25 +512,18 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.requests = append(s.requests, Request{Method: r.Method, Path: r.URL.Path, OnBehalfOf: r.Header.Get("X-EasyPatch-On-Behalf-Of"), Body: body})
+	s.requests = append(s.requests, Request{Method: r.Method, Path: r.URL.Path, Body: body})
 	if s.Down {
 		problem(w, http.StatusServiceUnavailable, "", "The database is not available.")
 		return
 	}
-	s.readOnlyCall = s.ReadOnly
-	switch {
-	case s.key != nil:
-		st := s.statement(r)
-		if st == nil {
-			problem(w, http.StatusUnauthorized, "unauthenticated", "The statement from EasyRMM is not valid.")
-			return
-		}
-		s.requests[len(s.requests)-1].Statement = st
-		s.readOnlyCall = s.ReadOnly || st.Role == "ReadOnly"
-	case r.Header.Get("Authorization") != "Bearer "+s.Token:
-		w.WriteHeader(http.StatusUnauthorized)
+	st := s.statement(r)
+	if st == nil {
+		problem(w, http.StatusUnauthorized, "unauthenticated", "The statement from EasyRMM is not valid.")
 		return
 	}
+	s.requests[len(s.requests)-1].Statement = st
+	s.readOnlyCall = s.ReadOnly || st.Role == "ReadOnly"
 	q := r.URL.Query()
 	pg, _ := strconv.Atoi(q.Get("page"))
 	pg = max(pg, 1)
@@ -560,7 +534,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/"), "/")
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/server-info":
-		info := map[string]any{"version": s.Version, "publicUrl": "https://patch.example.com", "serverTime": time.Now().UTC()}
+		info := map[string]any{"version": s.Version, "publicUrl": s.PublicURL, "serverTime": time.Now().UTC()}
 		if s.Capabilities != nil {
 			info["capabilities"] = s.Capabilities
 		}

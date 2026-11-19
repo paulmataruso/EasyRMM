@@ -3,7 +3,7 @@
 // allow-list of permissive licences (ADR-0037: no copyleft dependencies). Run from a directory where
 // `npm ci` has run:
 //
-//   node scripts/ci/check-npm-licences.mjs web easypatch/frontend
+//   node scripts/ci/check-npm-licences.mjs web
 //
 // Prints one line per package and exits 1 if any licence is missing or not allowed. Uses only Node's
 // standard library and npm itself.

@@ -336,7 +336,7 @@ func TestContract(t *testing.T) {
 		if c.version != "" && info.Version != c.version {
 			t.Errorf("version %q, want %q", info.Version, c.version)
 		}
-		for _, capability := range []string{CapabilityScheduledInstalls, CapabilityOnBehalfOf} {
+		for _, capability := range []string{CapabilityScheduledInstalls} {
 			if !slices.Contains(info.Capabilities, capability) {
 				t.Errorf("capabilities %v lack %q", info.Capabilities, capability)
 			}
@@ -2279,7 +2279,7 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 	fEndpoint := fe.ID
 	fake.Set(func() {
 		fake.Version = "1.10.0"
-		fake.Capabilities = []string{CapabilityScheduledInstalls, CapabilityOnBehalfOf}
+		fake.Capabilities = []string{CapabilityScheduledInstalls}
 		fe.RebootPending = true
 	})
 	fakeHTTP := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: fakeTLS(t, fake.CAPEM)}}

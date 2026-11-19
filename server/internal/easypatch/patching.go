@@ -31,9 +31,9 @@ const (
 	maxScheduleAhead = 31 * 24 * time.Hour
 )
 
-// epError turns a failed EasyPatch call into what the console shows. The
-// engine in this deployment refusing EasyRMM's statement is EasyRMM's
-// problem, never the user's: it is shown as the engine being unavailable,
+// epError turns a failed call to the engine into what the console shows.
+// The engine refusing EasyRMM's statement is EasyRMM's problem, never the
+// user's: it is shown as the engine being unavailable,
 // not as a 401 or 403 the console would take for a lost session.
 func epError(err error) error {
 	var e *Error
@@ -47,19 +47,11 @@ func epError(err error) error {
 		}
 		return f.Err()
 	}
-	if e.Engine {
-		switch {
-		case e.Status == 0 || e.Status >= 500:
-			return apperr.Unavailable("patching_unavailable", e.Detail)
-		case e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden:
-			return apperr.Unavailable("patching_unavailable", "The patching engine refused EasyRMM's call: "+e.Detail)
-		}
-	}
 	switch {
 	case e.Status == 0 || e.Status >= 500:
-		return apperr.Unavailable("easypatch_unavailable", "EasyPatch: "+e.Detail)
+		return apperr.Unavailable("patching_unavailable", e.Detail)
 	case e.Status == http.StatusUnauthorized || e.Status == http.StatusForbidden:
-		return apperr.Unavailable("easypatch_token", "EasyPatch refused EasyRMM's API token: "+e.Detail)
+		return apperr.Unavailable("patching_unavailable", "The patching engine refused EasyRMM's call: "+e.Detail)
 	case e.Status == http.StatusNotFound:
 		return apperr.NotFound()
 	}
@@ -126,11 +118,7 @@ func (s *Service) endpoints(ctx context.Context, c *Client, organizationID uuid.
 // Status is what the console needs before showing patching.
 type Status struct {
 	Configured  bool `json:"configured"`
-	CanOperate  bool `json:"canOperate"`
 	CanSchedule bool `json:"canSchedule"`
-	// Bundled says patching comes from the engine in this deployment, which
-	// emails reports through EasyRMM's mail server.
-	Bundled bool `json:"bundled"`
 }
 
 // Status says whether patching is available, to anyone who may see it
@@ -143,9 +131,7 @@ func (s *Service) Status(ctx context.Context, c access.Caller) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	st := Status{Configured: conn.Configured, CanOperate: conn.CanOperate,
-		CanSchedule: slices.Contains(conn.Capabilities, CapabilityScheduledInstalls), Bundled: s.Bundled()}
-	return st, nil
+	return Status{Configured: conn.Configured, CanSchedule: slices.Contains(conn.Capabilities, CapabilityScheduledInstalls)}, nil
 }
 
 // ---------------------------------------------------------------- devices
@@ -366,7 +352,7 @@ func (s *Service) Fleet(ctx context.Context, c access.Caller, q FleetQuery) (Fle
 		}
 		eps, err := s.endpoints(s.as(ctx, c, RoleReadOnly, *d.easyPatchOrg), cl, *d.easyPatchOrg)
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			out.Errors = append(out.Errors, fmt.Sprintf("%s: %s", d.organizationName, message(epError(err))))
 		}
 		fetched[*d.easyPatchOrg] = eps
@@ -420,7 +406,7 @@ func (s *Service) unmatched(ctx context.Context, c access.Caller, cl *Client, or
 		if _, ok := fetched[ep]; !ok {
 			eps, err := s.endpoints(s.as(ctx, c, RoleReadOnly, ep), cl, ep)
 			if err != nil {
-				s.noteError(ctx, err)
+				s.noteError(err)
 				out.Errors = append(out.Errors, fmt.Sprintf("%s: %s", linked[ep].name, message(epError(err))))
 			}
 			fetched[ep] = eps
@@ -561,7 +547,7 @@ func (s *Service) Device(ctx context.Context, c access.Caller, id uuid.UUID) (De
 		return DevicePatching{}, errNotConfigured
 	}
 	out := DevicePatching{DeviceID: d.id, Link: d.state, Reason: d.reason, CheckedAt: d.checkedAt,
-		CanManage: r.canOperate && c.Can(rbac.PermPatchManage, d.resource()), CanSchedule: r.can(CapabilityScheduledInstalls),
+		CanManage: c.Can(rbac.PermPatchManage, d.resource()), CanSchedule: r.can(CapabilityScheduledInstalls),
 		Install: d.install, Stopped: d.stopped, Removal: d.removal}
 	if d.state != LinkLinked {
 		return out, nil
@@ -569,7 +555,7 @@ func (s *Service) Device(ctx context.Context, c access.Caller, id uuid.UUID) (De
 	rctx := s.as(ctx, c, RoleReadOnly, orgOf(d)...)
 	ep, err := cl.Endpoint(rctx, *d.endpointID)
 	if err != nil {
-		s.noteError(ctx, err)
+		s.noteError(err)
 		out.Error = message(epError(err))
 		if IsStatus(err, http.StatusNotFound) {
 			out.Error = "EasyPatch no longer has this endpoint; EasyRMM checks the link again shortly."
@@ -780,7 +766,7 @@ func (s *Service) Jobs(ctx context.Context, c access.Caller, q JobsQuery) (JobLi
 		filter.OrganizationID = org
 		p, err := cl.Jobs(s.as(ctx, c, RoleReadOnly, org), filter, 1)
 		if err != nil {
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return JobList{}, epError(err)
 		}
 		jobs = append(jobs, p.Items...)
@@ -798,7 +784,7 @@ func (s *Service) Jobs(ctx context.Context, c access.Caller, q JobsQuery) (JobLi
 	for _, j := range jobs {
 		if d, ok := devices[j.EndpointID]; ok {
 			out = append(out, JobView{Job: j, DeviceID: d.id, DeviceName: d.name,
-				CanManage: r.canOperate && c.Can(rbac.PermPatchManage, d.resource())})
+				CanManage: c.Can(rbac.PermPatchManage, d.resource())})
 		}
 	}
 	slices.SortFunc(out, func(a, b JobView) int { return b.CreatedAt.Compare(a.CreatedAt) })
@@ -838,25 +824,22 @@ func (s *Service) job(ctx context.Context, c access.Caller, id uuid.UUID) (JobDe
 
 // Job reads one job of a device the caller may see.
 func (s *Service) Job(ctx context.Context, c access.Caller, id uuid.UUID) (JobDetailView, error) {
-	j, d, r, _, err := s.job(ctx, c, id)
+	j, d, _, _, err := s.job(ctx, c, id)
 	if err != nil {
 		return JobDetailView{}, err
 	}
 	j.Items, j.Events = orEmpty(j.Items), orEmpty(j.Events)
-	return JobDetailView{JobDetail: j, DeviceID: d.id, DeviceName: d.name, CanManage: r.canOperate && c.Can(rbac.PermPatchManage, d.resource())}, nil
+	return JobDetailView{JobDetail: j, DeviceID: d.id, DeviceName: d.name, CanManage: c.Can(rbac.PermPatchManage, d.resource())}, nil
 }
 
 // CancelJob cancels a job of a device the caller may manage patching of.
 func (s *Service) CancelJob(ctx context.Context, c access.Caller, id uuid.UUID) (JobDetailView, error) {
-	_, d, r, cl, err := s.job(ctx, c, id)
+	_, d, _, cl, err := s.job(ctx, c, id)
 	if err != nil {
 		return JobDetailView{}, err
 	}
 	if !c.Can(rbac.PermPatchManage, d.resource()) {
 		return JobDetailView{}, apperr.Forbidden()
-	}
-	if !r.canOperate {
-		return JobDetailView{}, errReadOnly
 	}
 	j, err := cl.CancelJob(s.as(ctx, c, RoleAdmin, orgOf(d)...), id, c.Actor.Label)
 	if err != nil {
@@ -870,8 +853,6 @@ func (s *Service) CancelJob(ctx context.Context, c access.Caller, id uuid.UUID) 
 	j.Items, j.Events = orEmpty(j.Items), orEmpty(j.Events)
 	return JobDetailView{JobDetail: j, DeviceID: d.id, DeviceName: d.name, CanManage: true}, nil
 }
-
-var errReadOnly = apperr.Conflict("easypatch_read_only", "EasyRMM's EasyPatch API token is read-only; a super administrator can replace it with an Operator token in Settings → EasyPatch.")
 
 // ---------------------------------------------------------------- actions
 
@@ -1004,8 +985,6 @@ func (s *Service) operable(ctx context.Context) (*connRow, *Client, error) {
 		return nil, nil, err
 	case r == nil:
 		return nil, nil, errNotConfigured
-	case !r.canOperate:
-		return nil, nil, errReadOnly
 	}
 	return r, cl, nil
 }
