@@ -185,26 +185,20 @@ Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).
 | `EASYRMM_METRICS_RETENTION` | `168h` (7 days) | How long per-minute device measurements are kept for charts; at least `24h`. See [Inventory and health](../operations/inventory.md) |
 | `EASYRMM_ALERT_RETENTION` | `2160h` (90 days) | How long resolved alerts are kept; at least `24h`. See [Alerts](../operations/alerts.md) |
 
-## Patching engine inside the deployment (testing)
+## Patching engine
 
-EasyPatch is becoming part of EasyRMM
-([one-product plan](../architecture/one-product-plan.md)). Its engine can
-already run inside this deployment, for testing until the plan's switch-over;
-the supported way to patch is still an EasyPatch server connected in
-Settings ([patching guide](../operations/patching.md)).
+EasyPatch's patching engine runs inside this deployment
+([one-product plan](../architecture/one-product-plan.md)): `setup.sh` sets it
+up and `docker compose up -d` starts it with everything else. There is no
+setting to turn it on or off.
 
-```bash
-./scripts/setup.sh --hostname rmm.example.com --acme-email you@example.com --patching bundled
-docker compose up -d
-```
-
-`--patching bundled` sets `EASYRMM_PATCHING=bundled` and
-`COMPOSE_PROFILES=patching` in `.env`; `--patching connector` goes back.
-On an existing install, rerun `setup.sh` the same way: it adds the engine's
-database passwords and `EASYRMM_PATCHING_KEY` to `.env` without changing
-anything else there. That key signs EasyRMM's calls to the engine, one short
-statement per request ([ADR-0038](../architecture/adr/0038-statements-to-the-patching-engine.md));
-treat it like the other secrets in `.env`. Compose then also runs:
+On an existing install, rerun `setup.sh` with its usual options: it adds the
+engine's database passwords and `EASYRMM_PATCHING_KEY` to `.env` if they are
+missing, and removes `EASYRMM_PATCHING` and `COMPOSE_PROFILES=patching`,
+which no longer exist, without changing anything else there. The key signs
+EasyRMM's calls to the engine, one short statement per request
+([ADR-0038](../architecture/adr/0038-statements-to-the-patching-engine.md));
+treat it like the other secrets in `.env`. The engine's services are:
 
 | Service | What it does |
 |---|---|
@@ -212,6 +206,9 @@ treat it like the other secrets in `.env`. Compose then also runs:
 | `easypatch-migrate` | Applies the engine's migrations as `easypatch_owner`, then exits |
 | `easypatch-api` | The engine, on `127.0.0.1:18180` only, as `easypatch_app` |
 | `easypatch-worker` | Background work, health on `127.0.0.1:18181` only. Needs outbound HTTPS to Microsoft's update and security feeds, CISA's catalogue of exploited vulnerabilities, the Debian security tracker and GitHub (winget) |
+
+To bring a standalone EasyPatch's endpoints, history and settings over, see
+[Importing a standalone EasyPatch](../operations/import-easypatch.md).
 
 The engine's data-protection keys and winget copy are under
 `${EASYRMM_DATA_ROOT}/easypatch/` (owner 1654, the image's user). Back up
@@ -233,16 +230,14 @@ the .NET SDK) stages Linux packages signed with a throwaway key before
 `docker compose build`. Their agents trust only that key; `make e2e-bundle`
 works this way.
 
-With `EASYRMM_PATCHING=bundled`, EasyRMM's patching pages use the engine
-instead of a connected EasyPatch server:
+EasyRMM's patching pages use the engine:
 
 * **Settings → EasyPatch** shows the engine and its state; there is no
   address or token to enter, and it cannot be removed there. *Check now*
   shows whether the engine accepts EasyRMM's key.
-* **Switching to bundled forgets** an EasyPatch server connected in Settings,
-  with its organization and device links, once, at the first start, and the
-  audit log records it. Switching back to `connector` and connecting a server
-  forgets the engine's links the same way: links name one server's ids.
+* **An EasyPatch server connected in Settings** by an earlier version is
+  forgotten, with its organization and device links, once, at the first
+  start, and the audit log records it.
 * **EasyRMM keeps the engine's organizations.** Every organization and site
   has its own in the engine, created, renamed and archived with EasyRMM's
   ([ADR-0040](../architecture/adr/0040-one-set-of-organizations.md),
@@ -271,7 +266,7 @@ instead of a connected EasyPatch server:
 * PostgreSQL listens on loopback only and uses SCRAM-SHA-256. The server
   connects with two roles: `easyrmm_owner` (migrations only) and
   `easyrmm_app` (runtime, data access only, subject to row-level security).
-* The patching engine, when bundled, runs as UID 1654 with a read-only root
+* The patching engine runs as UID 1654 with a read-only root
   filesystem, every capability dropped and `no-new-privileges`, on loopback
   only. Its runtime role, `easypatch_app`, reads and writes rows in its own
   database and can neither change the schema nor connect to EasyRMM's.

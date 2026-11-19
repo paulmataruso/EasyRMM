@@ -13,8 +13,8 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 )
 
-// Agents on EasyRMM's name (one-product plan, B4). With
-// EASYRMM_PATCHING=bundled, EasyPatch agents talk to EasyRMM's own address:
+// Agents on EasyRMM's name (one-product plan, B4). EasyPatch agents talk to
+// EasyRMM's own address:
 // the edge forwards exactly the paths they use to the patching engine on
 // loopback, before the session, CSRF and console layers, none of which apply
 // to an agent. Everything else of the engine stays on loopback.

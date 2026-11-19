@@ -162,7 +162,7 @@ function ServerForm({ conn, className }: { conn: EasyPatchConnection; className?
   );
 }
 
-/** Patching from the engine in this deployment (EASYRMM_PATCHING=bundled, ADR-0038): there is nothing to enter here. */
+/** Patching from the engine in this deployment (ADR-0038): there is nothing to enter here. */
 function EngineCard({ conn, className }: { conn: EasyPatchConnection; className?: string }) {
   return (
     <Card title="Patching engine" className={className}>
@@ -183,7 +183,7 @@ function EngineCard({ conn, className }: { conn: EasyPatchConnection; className?
               <Mono>{conn.url}</Mono> <span className="text-muted">(this server only)</span>
             </span>,
           ],
-          ["Set by", <Mono key="s">EASYRMM_PATCHING=bundled</Mono>],
+          ["Calls signed with", <Mono key="s">EASYRMM_PATCHING_KEY</Mono>],
         ]}
       />
     </Card>

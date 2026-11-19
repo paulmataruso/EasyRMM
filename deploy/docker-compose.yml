@@ -134,11 +134,8 @@ services:
       EASYRMM_EASYPATCH_TLS_UPSTREAM: ${EASYRMM_EASYPATCH_TLS_UPSTREAM:-}
       EASYRMM_EASYPATCH_HTTP_UPSTREAM: ${EASYRMM_EASYPATCH_HTTP_UPSTREAM-127.0.0.1:19080}
       EASYRMM_EASYPATCH_PROXY_PROTOCOL: ${EASYRMM_EASYPATCH_PROXY_PROTOCOL:-true}
-      # Where patching comes from: bundled is the engine in this deployment
-      # (profile "patching"), called on loopback with statements signed by
-      # the key (ADR-0038); empty or connector, an EasyPatch server set up in
-      # Settings. setup.sh --patching sets both.
-      EASYRMM_PATCHING: ${EASYRMM_PATCHING:-}
+      # The patching engine in this deployment is called on loopback with
+      # statements signed by this key (ADR-0038); setup.sh generates it.
       EASYRMM_PATCHING_KEY: ${EASYRMM_PATCHING_KEY:-}
       # An imported EasyPatch's names: its agents keep reaching the engine
       # there, through EasyRMM's edge.
@@ -198,12 +195,10 @@ services:
     logging: *logging
 
   # --- Patching engine (EasyPatch) --------------------------------------------
-  # EasyRMM's patching engine inside this deployment (one-product plan, phase
-  # B: docs/architecture/one-product-plan.md). These services start only with
-  # the "patching" profile, which `scripts/setup.sh --patching bundled` sets
-  # in .env (COMPOSE_PROFILES=patching). Until the plan's switch-over they
-  # are for testing: the default is still an EasyPatch server connected in
-  # Settings (ADR-0030).
+  # EasyRMM's patching engine inside this deployment (one-product plan,
+  # phases B and S: docs/architecture/one-product-plan.md). EasyRMM's
+  # patching pages use it, and EasyPatch agents reach it through EasyRMM's
+  # edge.
   #
   # Everything listens on loopback only: the API on 127.0.0.1:18180, the
   # worker's health endpoint on 127.0.0.1:18181. ASPNETCORE_URLS sets the
@@ -214,7 +209,6 @@ services:
   # on an existing install, where PostgreSQL's init scripts never run again.
   easypatch-db-init:
     image: postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
-    profiles: [patching]
     network_mode: host
     restart: "no"
     depends_on:
@@ -237,7 +231,6 @@ services:
     build:
       context: ../easypatch
       dockerfile: deployment/server/Dockerfile
-    profiles: [patching]
     network_mode: host
     restart: "no"
     depends_on:
@@ -254,7 +247,6 @@ services:
 
   easypatch-api:
     image: ${EASYPATCH_IMAGE:-ghcr.io/paulmataruso/easypatch-server}:${EASYPATCH_VERSION:-dev}
-    profiles: [patching]
     network_mode: host
     restart: unless-stopped
     depends_on:
@@ -290,7 +282,6 @@ services:
   # and whatever mail server and webhooks are configured.
   easypatch-worker:
     image: ${EASYPATCH_IMAGE:-ghcr.io/paulmataruso/easypatch-server}:${EASYPATCH_VERSION:-dev}
-    profiles: [patching]
     network_mode: host
     restart: unless-stopped
     # After the API: the API creates the data-protection key on its first

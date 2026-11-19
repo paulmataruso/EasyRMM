@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -388,6 +389,61 @@ func TestReconcileMoves(t *testing.T) {
 	}
 	if len(f.audits("easypatch.agent_uninstall")) != 1 || len(f.audits("easypatch.agent_remove")) != 1 {
 		t.Fatal("not audited")
+	}
+}
+
+// TestReconcileImportedNames: the agents of an imported EasyPatch report
+// its old address (one-product plan, phase S). They link like the engine's
+// own, and one in another organization than its device's is left alone:
+// removing it to install another would lose its history.
+func TestReconcileImportedNames(t *testing.T) {
+	f := newFixture(t)
+	engine := eptest.NewEngine(t, reconcileKey)
+	f.svc = f.engineService(engine, AgentHostnames([]string{"patch.old.test", "easypatch.old.test"}))
+	f.reconcile()
+
+	at := func(e *eptest.Endpoint, url string) *agentproto.EasyPatchAgent {
+		r := engineReport(e)
+		r.ServerURL = url
+		return r
+	}
+	for i, url := range []string{"https://patch.old.test", "https://EasyPatch.old.test:443/", "https://patch.example.com"} {
+		name := fmt.Sprintf("old-%d", i)
+		e := engine.AddEndpoint(f.engineOrg(f.acme), name, "", "FP-"+name)
+		d := f.device(f.acme, f.hq, name)
+		f.report(d, "", at(e, url))
+		f.sync()
+		if l := f.link(d); l.state != LinkLinked {
+			t.Errorf("enrolled with %s: %+v", url, l)
+		}
+	}
+	// Another server's agent is still not the engine's.
+	e := engine.AddEndpoint(f.engineOrg(f.acme), "other", "", "FP-other")
+	d := f.device(f.acme, f.hq, "other")
+	f.report(d, "", at(e, "https://patch.other.test"))
+	f.sync()
+	if l := f.link(d); l.state != LinkUnlinked || !strings.Contains(l.reason, "enrolled with https://patch.other.test") {
+		t.Fatalf("another server's agent: %+v", l)
+	}
+
+	// In another organization: explained, and its agent stays.
+	e = engine.AddEndpoint(f.engineOrg(f.acme), "elsewhere", "", "FP-elsewhere")
+	d = f.device(f.globex, f.plant, "elsewhere")
+	f.report(d, "", at(e, "https://patch.old.test"))
+	f.sync()
+	if l := f.link(d); l.state != LinkUnlinked || !strings.Contains(l.reason, "came from the imported EasyPatch, so EasyRMM leaves its agent alone") {
+		t.Fatalf("an imported agent in another organization: %+v", l)
+	}
+	if res := f.reconcile(); res.Uninstalls != 0 || f.count(`SELECT count(*) FROM easypatch_removals`) != 0 || len(uninstallJobs(engine, e.ID)) != 0 {
+		t.Fatalf("an imported agent was removed: %+v", res)
+	}
+	// The engine's own agent in the same place is moved, as before.
+	e = engine.AddEndpoint(f.engineOrg(f.acme), "moved", "", "FP-moved")
+	d = f.device(f.globex, f.plant, "moved")
+	f.report(d, "", engineReport(e))
+	f.sync()
+	if n := f.count(`SELECT count(*) FROM easypatch_removals WHERE reason = 'moved' AND device_id = $1`, d); n != 1 {
+		t.Fatalf("the engine's own agent in another organization: %d removals", n)
 	}
 }
 

@@ -94,11 +94,25 @@ type ConnectionInput struct {
 
 type connRow struct {
 	url, sealed, caCert, version, publicURL, lastError string
-	capabilities                                       []string
-	canOperate                                         bool
-	checkedAt, lastErrorAt                             *time.Time
-	updatedAt                                          time.Time
-	updatedBy                                          *string
+	// importedURLs are an imported EasyPatch's addresses, which the engine
+	// answers for its agents (AgentHostnames); none for a connected server.
+	importedURLs           []string
+	capabilities           []string
+	canOperate             bool
+	checkedAt, lastErrorAt *time.Time
+	updatedAt              time.Time
+	updatedBy              *string
+}
+
+// imported reports whether an agent enrolled with serverURL reaches this
+// server through one of an imported EasyPatch's names.
+func (r *connRow) imported(serverURL string) bool {
+	for _, u := range r.importedURLs {
+		if SameServer(serverURL, u) {
+			return true
+		}
+	}
+	return false
 }
 
 func loadConn(ctx context.Context, tx pgx.Tx, lock bool) (*connRow, error) {
@@ -286,8 +300,8 @@ func (s *Service) UpdateConnection(ctx context.Context, actor audit.Actor, in Co
 			return err
 		}
 		// Links name the old server's ids. With no server stored, any left
-		// are the patching engine's, from before EASYRMM_PATCHING went back
-		// to the connector.
+		// are the patching engine's, from before the deployment went back to
+		// the connector (only in the connector's own tests since phase S).
 		forgot := false
 		if !sameServer {
 			for _, q := range []string{`DELETE FROM easypatch_devices`, `DELETE FROM easypatch_organizations`, `DELETE FROM easypatch_sites`,

@@ -409,7 +409,7 @@ func (s *Service) verify(ctx context.Context, c *Client, conn *connRow, cd *cand
 		return LinkUnlinked, fmt.Sprintf("The EasyPatch agent is not enrolled and active (its status is %s).", status), nil
 	case endpointID == nil:
 		return LinkUnlinked, "The EasyPatch agent did not report its endpoint id.", nil
-	case !SameServer(rep.ServerURL, conn.url) && !SameServer(rep.ServerURL, conn.publicURL):
+	case !SameServer(rep.ServerURL, conn.url) && !SameServer(rep.ServerURL, conn.publicURL) && !conn.imported(rep.ServerURL):
 		return LinkUnlinked, cut(fmt.Sprintf("The EasyPatch agent is enrolled with %s, not with the EasyPatch server EasyRMM uses.", rep.ServerURL), 500), nil
 	case cd.easyPatchOrg == nil:
 		return LinkUnlinked, "The device's organization is not linked to an EasyPatch organization (Settings → EasyPatch).", nil
@@ -423,6 +423,14 @@ func (s *Service) verify(ctx context.Context, c *Client, conn *connRow, cd *cand
 	}
 	cd.seenSite = ep.Summary.SiteID
 	switch {
+	case ep.Summary.OrganizationID != *cd.easyPatchOrg && conn.imported(rep.ServerURL):
+		// An imported EasyPatch's agent (one-product plan, phase S): its
+		// endpoint keeps its history in its own organization, so EasyRMM
+		// does not remove it to install another, as it does for a device
+		// that moved.
+		return LinkUnlinked, cut(fmt.Sprintf("In EasyPatch the endpoint belongs to %s, not to %s, the organization linked to this device's. "+
+			"It came from the imported EasyPatch, so EasyRMM leaves its agent alone: enroll the device's EasyRMM agent in the organization that matches %s.",
+			ep.Summary.OrganizationName, cd.easyPatchOrgName, ep.Summary.OrganizationName), 500), nil
 	case ep.Summary.OrganizationID != *cd.easyPatchOrg:
 		if s.engine != nil {
 			cd.movedFrom = &ep.Summary

@@ -170,6 +170,9 @@ docker run -d --name "$name-proxy" --network host \
   "$proxy_image" >/dev/null
 
 echo "Starting EasyRMM behind it ..."
+# Signing in across the two products is the connector's (ADR-0036), which
+# phase R removes with this test.
+EASYRMM_PATCHING=connector \
 EASYRMM_E2E_PORT=$rmm_upstream \
 EASYRMM_E2E_DB=easyrmm_signin \
 EASYRMM_E2E_PUBLIC_URL="https://$rmm_host:$rmm_port" \

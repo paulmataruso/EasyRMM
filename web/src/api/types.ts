@@ -945,7 +945,7 @@ export interface Report {
 /** The EasyPatch server EasyRMM patches through. The API token is never sent back. */
 export interface EasyPatchConnection {
   configured: boolean;
-  /** Patching comes from the engine in this deployment (EASYRMM_PATCHING=bundled): the deployment sets it up, Settings cannot change it. */
+  /** Patching comes from the engine in this deployment: the deployment sets it up, Settings cannot change it. */
   bundled: boolean;
   url: string;
   caCert: string;

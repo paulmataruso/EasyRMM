@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -28,7 +29,7 @@ func TestComposeEnvironment(t *testing.T) {
 		setup map[string]string // what setup.sh writes for this host
 		mesh  string
 		cert  string
-		ep    EasyPatchHost
+		extra []string
 	}{
 		{
 			name: "DNS name",
@@ -49,21 +50,21 @@ func TestComposeEnvironment(t *testing.T) {
 			cert: "https://127.0.0.1:4443",
 		},
 		{
-			name: "EasyPatch on the same server",
+			name: "an imported EasyPatch's name",
 			setup: map[string]string{
 				"EASYRMM_PUBLIC_URL": "https://rmm.example.com", "EASYRMM_TLS_MODE": "acme",
-				"EASYRMM_ACME_EMAIL": "ops@example.com", "EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com",
+				"EASYRMM_ACME_EMAIL": "ops@example.com", "EASYRMM_PATCHING_AGENT_HOSTNAMES": "patch.example.com",
 			},
-			mesh: "https://mesh.rmm.example.com",
-			cert: "https://127.0.0.1:443",
-			ep:   EasyPatchHost{Hostname: "patch.example.com", TLSUpstream: "127.0.0.1:19443", HTTPUpstream: "127.0.0.1:19080", ProxyProtocol: true},
+			mesh:  "https://mesh.rmm.example.com",
+			cert:  "https://127.0.0.1:443",
+			extra: []string{"patch.example.com"},
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dotenv := readDotenv(t, envExample)
 			for k, v := range map[string]string{
 				"EASYRMM_MESH_PUBLIC_URL": "", "POSTGRES_PASSWORD": "p", "EASYRMM_DB_OWNER_PASSWORD": "o",
-				"EASYRMM_DB_APP_PASSWORD": "a", "EASYRMM_SECRET_KEY": testKey,
+				"EASYRMM_DB_APP_PASSWORD": "a", "EASYRMM_SECRET_KEY": testKey, "EASYRMM_PATCHING_KEY": testKey,
 			} {
 				dotenv[k] = v
 			}
@@ -101,8 +102,11 @@ func TestComposeEnvironment(t *testing.T) {
 			if cfg.Mesh.CertURL != c.cert {
 				t.Errorf("certificate URL %q, want %s", cfg.Mesh.CertURL, c.cert)
 			}
-			if cfg.EasyPatch != c.ep {
-				t.Errorf("co-hosted EasyPatch %+v, want %+v", cfg.EasyPatch, c.ep)
+			if !cfg.Patching.Bundled() || cfg.EasyPatch.Enabled() {
+				t.Errorf("patching %+v, co-hosted EasyPatch %+v: want the engine in this deployment only", cfg.Patching, cfg.EasyPatch)
+			}
+			if !slices.Equal(cfg.ExtraHostnames(), c.extra) {
+				t.Errorf("further names %v, want %v", cfg.ExtraHostnames(), c.extra)
 			}
 		})
 	}
@@ -124,6 +128,7 @@ var fixedInCompose = map[string]string{
 	"EASYRMM_DEV_INSECURE_COOKIES": "development only",
 	"EASYRMM_ARGON2_MAX_PARALLEL":  "bounds the memory password hashing takes; four suits the deployment",
 	"EASYRMM_PATCHING_URL":         "where the easypatch-api service listens (TestComposeListeners checks they agree)",
+	"EASYRMM_PATCHING":             "no longer a setting: the engine in this deployment, always (phase S)",
 }
 
 func TestInterpolate(t *testing.T) {
@@ -245,6 +250,8 @@ func TestEasyPatchOverrideMatchesDefaults(t *testing.T) {
 		"EASYRMM_PUBLIC_URL": "https://rmm.example.com", "EASYRMM_ACME_EMAIL": "ops@example.com",
 		"EASYRMM_DATABASE_URL": "postgres://a@127.0.0.1/x", "EASYRMM_DATABASE_MIGRATION_URL": "postgres://o@127.0.0.1/x",
 		"EASYRMM_SECRET_KEY": testKey, "EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com",
+		// Co-hosting only goes with the connector, until phase R removes both.
+		"EASYRMM_PATCHING": PatchingConnector,
 	}), noFiles)
 	if err != nil {
 		t.Fatal(err)
@@ -316,17 +323,19 @@ func TestComposeListeners(t *testing.T) {
 		}
 	}
 
-	// Compose checks required variables (${X:?}) even for services whose
-	// profile is off: one in the patching engine's services would stop every
-	// install whose .env predates it.
+	// A required variable (${X:?}) in the patching engine's services would
+	// stop, with Compose's terse message, an install whose .env predates
+	// it; setup.sh adds what is missing, and EasyRMM explains a missing key.
 	if m := regexp.MustCompile(`\$\{EASYPATCH_[A-Z_]+:?\?`).FindString(compose); m != "" {
-		t.Errorf("%s marks %s… required: an install without the patching profile could not start", composeFile, m)
+		t.Errorf("%s marks %s… required: an install whose .env predates it could not start", composeFile, m)
 	}
 
 	c, err := LoadFrom(env(map[string]string{
 		"EASYRMM_PUBLIC_URL": "https://rmm.example.com", "EASYRMM_ACME_EMAIL": "ops@example.com",
 		"EASYRMM_DATABASE_URL": "postgres://a@127.0.0.1/x", "EASYRMM_DATABASE_MIGRATION_URL": "postgres://o@127.0.0.1/x",
 		"EASYRMM_SECRET_KEY": testKey, "EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com",
+		// Co-hosting only goes with the connector, until phase R removes both.
+		"EASYRMM_PATCHING": PatchingConnector,
 	}), noFiles)
 	if err != nil {
 		t.Fatal(err)
@@ -378,12 +387,17 @@ func TestComposeListeners(t *testing.T) {
 	if engine := "http://" + url("easypatch-api"); engine != DefaultPatchingURL {
 		t.Errorf("the engine listens on %s, but EasyRMM calls %s", engine, DefaultPatchingURL)
 	}
-	// Both programs read the one key, and the server learns the mode.
+	// Both programs read the one key. The engine always runs (phase S): no
+	// profile leaves it out, and the mode is no longer a setting.
 	server := composeEnvironment(t, "server")
-	for key, want := range map[string]string{"EASYRMM_PATCHING": "${EASYRMM_PATCHING:-}", "EASYRMM_PATCHING_KEY": "${EASYRMM_PATCHING_KEY:-}"} {
-		if server[key] != want {
-			t.Errorf("server: %s is %q, want %q", key, server[key], want)
-		}
+	if got := server["EASYRMM_PATCHING_KEY"]; got != "${EASYRMM_PATCHING_KEY:-}" {
+		t.Errorf("server: EASYRMM_PATCHING_KEY is %q", got)
+	}
+	if _, ok := server["EASYRMM_PATCHING"]; ok {
+		t.Error("server: EASYRMM_PATCHING is passed, but it is no longer a setting")
+	}
+	if strings.Contains(compose, "[patching]") {
+		t.Errorf("%s puts the patching engine in a profile: it runs in every install", composeFile)
 	}
 	if got := composeEnvironment(t, "easypatch-api")["EasyRmm__GatewayKey"]; got != "${EASYRMM_PATCHING_KEY:-}" {
 		t.Errorf("easypatch-api: EasyRmm__GatewayKey is %q", got)

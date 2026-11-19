@@ -102,14 +102,18 @@ type Config struct {
 	Patching Patching
 }
 
-// Patching modes (EASYRMM_PATCHING).
+// Patching modes.
 const (
-	// PatchingConnector uses an EasyPatch server set up in Settings (the
-	// default, also when EASYRMM_PATCHING is empty).
-	PatchingConnector = "connector"
 	// PatchingBundled uses the patching engine in this deployment, on
-	// loopback, with statements signed by EASYRMM_PATCHING_KEY (ADR-0038).
+	// loopback, with statements signed by EASYRMM_PATCHING_KEY (ADR-0038):
+	// the only mode a deployment has since the switch-over (one-product
+	// plan, phase S).
 	PatchingBundled = "bundled"
+	// PatchingConnector uses an EasyPatch server set up in Settings. It is
+	// no longer a deployment setting: EASYRMM_PATCHING=connector is read
+	// only so that the connector's own tests run until it is removed
+	// (phase R).
+	PatchingConnector = "connector"
 )
 
 // DefaultPatchingURL is where the bundled engine listens
@@ -328,7 +332,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		c.EasyPatch = EasyPatchHost{}
 	}
 	c.Patching = Patching{
-		Mode: strings.ToLower(l.orDefault("EASYRMM_PATCHING", PatchingConnector)),
+		Mode: strings.ToLower(l.orDefault("EASYRMM_PATCHING", PatchingBundled)),
 		URL:  l.orDefault("EASYRMM_PATCHING_URL", DefaultPatchingURL),
 	}
 	for _, h := range splitList(l.str("EASYRMM_PATCHING_AGENT_HOSTNAMES", "")) {
@@ -488,11 +492,11 @@ func (c *Config) validatePatching(add func(string, ...any)) {
 		return
 	case PatchingBundled:
 	default:
-		add("EASYRMM_PATCHING must be bundled or connector, got %q", p.Mode)
+		add("EASYRMM_PATCHING is no longer a setting (patching always uses the engine in this deployment); remove it, got %q", p.Mode)
 		return
 	}
 	if len(p.Key) < 32 {
-		add("EASYRMM_PATCHING_KEY must be at least 32 bytes, base64-encoded, with EASYRMM_PATCHING=bundled; run deploy/scripts/setup.sh to add it")
+		add("EASYRMM_PATCHING_KEY must be at least 32 bytes, base64-encoded; run deploy/scripts/setup.sh to add it")
 	}
 	// The engine is reached on loopback only, without TLS: anything else
 	// would send statements across the network in the clear.
@@ -506,7 +510,7 @@ func (c *Config) validatePatching(add func(string, ...any)) {
 		add("EASYRMM_PATCHING_URL must be http:// on a loopback address and port, such as %s, got %q", DefaultPatchingURL, p.URL)
 	}
 	if c.EasyPatch.Enabled() {
-		add("EASYRMM_PATCHING=bundled replaces a co-hosted EasyPatch (EASYRMM_EASYPATCH_HOSTNAME); set one or the other")
+		add("EASYRMM_EASYPATCH_HOSTNAME: a co-hosted EasyPatch is replaced by the patching engine in this deployment; import it instead (deploy/scripts/import-easypatch.sh) and remove the setting")
 	}
 }
 
@@ -537,7 +541,7 @@ func (c *Config) ExtraHostnames() []string {
 // nothing else in the deployment already answers.
 func (c *Config) validateExtraHostnames(add func(string, ...any)) {
 	if len(c.Patching.AgentHostnames) > 0 && !c.Patching.Bundled() {
-		add("EASYRMM_PATCHING_AGENT_HOSTNAMES needs EASYRMM_PATCHING=bundled: they are where the agents of an imported EasyPatch reach this deployment's engine")
+		add("EASYRMM_PATCHING_AGENT_HOSTNAMES needs the patching engine in this deployment: they are where the agents of an imported EasyPatch reach it")
 	}
 	taken := map[string]string{}
 	for _, o := range c.Origins() {

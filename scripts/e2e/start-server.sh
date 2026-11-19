@@ -13,8 +13,9 @@
 #   EASYRMM_E2E_INSECURE_COOKIES  true (default) for plain HTTP on loopback;
 #                          false behind a TLS proxy (scripts/e2e/sign-in-across.sh)
 #
-# Remote access is enabled but no MeshCentral runs: the console shows devices
-# and reports remote access as unavailable.
+# Remote access is enabled but no MeshCentral runs, nor a patching engine
+# (none listens on PORT+13): the console shows devices and reports remote
+# access and patching as unavailable.
 #
 # Playwright starts this script (web/playwright.config.ts) and stops it when the
 # suite ends. It expects bin/easyrmm-server to be built with the web UI embedded
@@ -70,5 +71,7 @@ EASYRMM_AGENT_DIR=$root/bin/agents \
 EASYRMM_DATABASE_URL="postgres://easyrmm_app:$app_pw@$hostport/$db?sslmode=disable" \
 EASYRMM_DATABASE_MIGRATION_URL="postgres://easyrmm_owner:$owner_pw@$hostport/$db?sslmode=disable" \
 EASYRMM_SECRET_KEY=$(openssl rand -base64 32) \
+EASYRMM_PATCHING_KEY=$(openssl rand -base64 32) \
+EASYRMM_PATCHING_URL=http://127.0.0.1:$((port + 13)) \
 EASYRMM_LOG_LEVEL=warn \
 exec "$binary" serve

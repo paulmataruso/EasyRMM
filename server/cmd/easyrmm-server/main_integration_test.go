@@ -34,6 +34,8 @@ func setEnv(t *testing.T) (offload, health string) {
 		"EASYRMM_LISTEN_OFFLOAD":         offload,
 		"EASYRMM_LISTEN_HEALTH":          health,
 		"EASYRMM_SECRET_KEY":             base64.StdEncoding.EncodeToString(key),
+		"EASYRMM_PATCHING_KEY":           base64.StdEncoding.EncodeToString(key),
+		"EASYRMM_PATCHING_URL":           "http://" + freeAddr(t), // no engine: patching is unavailable
 		"EASYRMM_DATABASE_URL":           inst.SuperDSN + sep + "role=easyrmm_app",
 		"EASYRMM_DATABASE_MIGRATION_URL": inst.SuperDSN + sep + "role=easyrmm_owner",
 		"EASYRMM_DATA_DIR":               t.TempDir(),

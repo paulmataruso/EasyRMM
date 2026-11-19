@@ -5,7 +5,7 @@
 # install with EasyRMM's own certificate authority.
 #
 #  1. The deployment tree a release ships (scripts/release/deploy-tree.sh) is
-#     set up with setup.sh --patching bundled, for https://127.0.0.1, and
+#     set up with setup.sh, for https://127.0.0.1, and
 #     brought up with images built from this checkout: EasyRMM's server, and
 #     EasyPatch's server carrying Linux agent packages signed with a key made
 #     for the run.
@@ -105,7 +105,7 @@ docker build -q -t "$host_image" "$root/scripts/e2e/bundle-host" > /dev/null
 # --- The deployment -----------------------------------------------------------
 "$root/scripts/release/deploy-tree.sh" "$work/easyrmm"
 (cd "$deploy" && as_root ./scripts/setup.sh --hostname 127.0.0.1 --ip-addresses 127.0.0.1 \
-  --data-root "$work/data" --patching bundled > /dev/null)
+  --data-root "$work/data" > /dev/null)
 as_root sed -i \
   -e "s|^EASYRMM_IMAGE=.*|EASYRMM_IMAGE=${server_image%:*}|" -e "s|^EASYRMM_VERSION=.*|EASYRMM_VERSION=${server_image##*:}|" \
   -e "s|^EASYPATCH_IMAGE=.*|EASYPATCH_IMAGE=${engine_image%:*}|" -e "s|^EASYPATCH_VERSION=.*|EASYPATCH_VERSION=${engine_image##*:}|" \

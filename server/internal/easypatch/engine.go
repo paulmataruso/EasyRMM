@@ -15,9 +15,9 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 )
 
-// The patching engine in this deployment (one-product plan, phase B3). With
-// EASYRMM_PATCHING=bundled, the connector calls the engine on loopback with
-// statements (ADR-0038) instead of an EasyPatch server set up in Settings:
+// The patching engine in this deployment (one-product plan, phases B3 and
+// S). The connector calls the engine on loopback with statements (ADR-0038)
+// instead of an EasyPatch server set up in Settings:
 // the deployment configures it, so there is no token to paste and nothing
 // to pair. Everything else — links, the patching pages, agent installs —
 // works as with a connected server.
@@ -30,7 +30,7 @@ const engineCheckEvery = 5 * time.Minute
 const engineProbeTimeout = 5 * time.Second
 
 var errBundled = apperr.Conflict("patching_bundled",
-	"Patching comes from the engine in this deployment (EASYRMM_PATCHING=bundled); there is no EasyPatch server to set up here.")
+	"Patching comes from the engine in this deployment; there is no EasyPatch server to set up here.")
 
 // engine is the patching engine and what EasyRMM last saw of it.
 type engine struct {
@@ -42,6 +42,9 @@ type engine struct {
 	// mailSynced says the engine has it (one-product plan, C5).
 	mail       *MailConfig
 	mailSynced bool
+	// importedURLs are an imported EasyPatch's addresses, which its agents
+	// still use (AgentHostnames).
+	importedURLs []string
 
 	mu          sync.Mutex
 	info        ServerInfo
@@ -60,6 +63,18 @@ type EngineOption func(*engine)
 // --server-ca, each for that one server only.
 func AgentCA(ca func() []byte) EngineOption {
 	return func(e *engine) { e.agentCA = ca }
+}
+
+// AgentHostnames are an imported, standalone EasyPatch's names
+// (EASYRMM_PATCHING_AGENT_HOSTNAMES), which its agents enrolled with and
+// still use: EasyRMM's edge serves them, and an agent reporting one of them
+// is the engine's (one-product plan, phase S).
+func AgentHostnames(names []string) EngineOption {
+	return func(e *engine) {
+		for _, n := range names {
+			e.importedURLs = append(e.importedURLs, "https://"+n)
+		}
+	}
 }
 
 // MailConfig is EasyRMM's mail server (EASYRMM_SMTP_*). An empty Host means
@@ -159,7 +174,7 @@ func (s *Service) UseEngine(ctx context.Context, c *Client, opts ...EngineOption
 			"url", stored.url)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: audit.SystemActor("easypatch"), Action: "easypatch.connection_delete",
 			TargetType: "easypatch", TargetID: "connection", Outcome: audit.Success,
-			Details: map[string]any{"url": stored.url, "reason": "replaced by the patching engine in this deployment (EASYRMM_PATCHING=bundled)"}})
+			Details: map[string]any{"url": stored.url, "reason": "replaced by the patching engine in this deployment"}})
 	})
 	if err != nil {
 		return err
@@ -212,7 +227,7 @@ func (e *engine) row(ctx context.Context, now time.Time, force bool) *connRow {
 		ca = string(e.agentCA())
 	}
 	return &connRow{url: e.client.base.String(), caCert: ca, version: e.info.Version, publicURL: e.info.PublicURL,
-		capabilities: append([]string{}, e.info.Capabilities...), canOperate: true, checkedAt: e.checkedAt,
+		importedURLs: e.importedURLs, capabilities: append([]string{}, e.info.Capabilities...), canOperate: true, checkedAt: e.checkedAt,
 		lastError: e.lastError, lastErrorAt: e.lastErrorAt}
 }
 

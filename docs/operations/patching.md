@@ -9,57 +9,29 @@ to sign in to EasyPatch for day-to-day patching. The design is in
 
 ## Setting it up
 
-You need an EasyPatch server (1.9.0 or later) that the EasyRMM server can
-reach over https, and a super administrator account in both. Any EasyPatch
-server will do. To set one up, see EasyPatch's
-[installation guide](../../easypatch/docs/installation.md), or
-[EasyPatch on the same server as EasyRMM](../deployment/easypatch-cohost.md).
+There is nothing to set up: EasyPatch's patching engine runs inside
+EasyRMM's deployment ([Docker](../deployment/docker.md#patching-engine)),
+and EasyRMM calls it on the same server with its own key.
 
-1. **Create an API token in EasyPatch**: Settings → API tokens. Choose the
-   EasyPatch organizations EasyRMM should patch, an expiry (up to a year),
-   and the role:
-   * **Operator** lets EasyRMM scan, install and change organizations',
-     sites' and devices' policies.
-   * **Read only** lets EasyRMM show patch status, and nothing else.
-
-   EasyPatch shows the token once; copy it.
-2. **Connect EasyRMM**: Settings → EasyPatch. Enter EasyPatch's address
-   (`https://patch.example.com`) and the token. If EasyPatch's certificate
-   is signed by your own authority, paste that authority's certificate
-   (PEM). EasyRMM checks the address and the token with EasyPatch before it
-   saves anything; the token is stored encrypted and never shown again.
-3. **Link organizations**: in the Organizations table, choose the EasyPatch
-   organization each EasyRMM organization's devices are enrolled in. One
-   EasyPatch organization serves one EasyRMM organization.
-4. **Devices link themselves.** The EasyRMM agent asks the EasyPatch agent
+1. **Organizations follow EasyRMM's.** Every organization and site has its
+   own in the engine, created, renamed and archived with EasyRMM's (see
+   [Organizations in the bundled engine](#organizations-in-the-bundled-engine)).
+2. **Devices get the EasyPatch agent.** Automatic installs are on for every
+   organization: within minutes of a device's EasyRMM agent enrolling,
+   EasyRMM installs the EasyPatch agent on it (see
+   [Installing the EasyPatch agent](#installing-the-easypatch-agent)).
+3. **Devices link themselves.** The EasyRMM agent asks the EasyPatch agent
    on the device who it is (`status --json`) and reports it with its
    inventory, at start and then hourly. Within a minute of that report
-   EasyRMM checks with EasyPatch that the endpoint really is this device,
+   EasyRMM checks with the engine that the endpoint really is this device,
    and the device appears in **Patching**.
-5. **Devices without an EasyPatch agent** can get one from EasyRMM, one at
-   a time, in bulk, or automatically for a whole organization: see
-   [Installing the EasyPatch agent](#installing-the-easypatch-agent).
 
-With the patching engine in EasyRMM's own deployment
-(`EASYRMM_PATCHING=bundled`, see [Docker](../deployment/docker.md)), skip
-steps 1 to 3: there is no token, and EasyRMM keeps the engine's
-organizations itself (see
-[Organizations in the bundled engine](#organizations-in-the-bundled-engine)).
+Coming from a standalone EasyPatch server? Its endpoints, history and
+settings can be brought over, and its agents keep reporting without being
+reinstalled: see [Importing a standalone EasyPatch](import-easypatch.md).
 
-The status card shows the EasyPatch version, whether the token can act,
-and two features that depend on the EasyPatch server:
-
-* **Install later**: installs at a chosen time. Servers that do not list
-  the `scheduled-installs` capability (stock EasyPatch 1.9.0) can only
-  install now; EasyRMM does not offer a time there.
-* **Who acted**: servers with the `on-behalf-of` capability record the
-  EasyRMM user in their own audit log and on the job. Otherwise EasyPatch
-  records the API token, and EasyRMM's audit log records the user.
-
-EasyRMM checks the server every 10 minutes and records the last error.
-Replacing the token for the same server: paste the new one and save.
-Pointing EasyRMM at a different server forgets every organization and
-device link, since they name the old server's ids.
+Settings → EasyPatch shows the engine's version and state; *Check now*
+shows whether it accepts EasyRMM's key.
 
 ### Organizations in the bundled engine
 

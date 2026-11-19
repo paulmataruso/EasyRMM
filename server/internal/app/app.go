@@ -208,6 +208,10 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 			// certificate authority: agents are given it (B7).
 			opts = append(opts, easypatch.AgentCA(d.PKI.CAPEM))
 		}
+		// An imported EasyPatch's agents still use its names (phase S).
+		if len(p.AgentHostnames) > 0 {
+			opts = append(opts, easypatch.AgentHostnames(p.AgentHostnames))
+		}
 		// The engine emails monthly reports through EasyRMM's mail server
 		// (one-product plan, C5).
 		opts = append(opts, easypatch.Mail(easypatch.MailConfig{Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, Username: cfg.SMTP.Username,

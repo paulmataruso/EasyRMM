@@ -13,16 +13,15 @@
 # Options for IP access (ADR-0016): --ip-addresses 203.0.113.10,... lists the
 # addresses to answer on (default: detected); --no-ip-access turns it off.
 #
-# --patching bundled runs the patching engine inside this deployment
-# (docs/architecture/one-product-plan.md, phase B; for testing until its
-# switch-over); --patching connector goes back to an EasyPatch server
-# connected in Settings, the default.
+# Patching runs in this deployment: EasyPatch's engine, on loopback. To
+# bring a standalone EasyPatch's data over, see scripts/import-easypatch.sh.
 #
 # An existing .env is never overwritten (its secrets protect existing data):
 # setup.sh only adds secrets that later versions need and it lacks, and
-# changes the patching setting when --patching is given.
+# removes settings that no longer exist.
 set -euo pipefail
 
+self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 cd "$(dirname "$0")/.."
 
 hostname=""
@@ -35,10 +34,10 @@ key_file=""
 data_root="/srv/easyrmm"
 ip_access="true"
 ip_addresses=""
-patching=""
 
 usage() {
-  sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+  # The comment block at the top of this file.
+  awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$self"
   exit "${1:-0}"
 }
 
@@ -54,7 +53,6 @@ while [[ $# -gt 0 ]]; do
     --data-root) data_root="${2:-}"; shift 2 ;;
     --ip-addresses) ip_addresses="${2:-}"; shift 2 ;;
     --no-ip-access) ip_access="false"; shift ;;
-    --patching) patching="${2:-}"; shift 2 ;;
     -h|--help) usage 0 ;;
     *) echo "unknown option: $1" >&2; usage 2 ;;
   esac
@@ -104,10 +102,6 @@ esac
 for f in "$cert_file" "$key_file"; do
   [[ -z "$f" || "$f" =~ ^/[A-Za-z0-9_./-]+$ ]] || die "certificate paths must be absolute paths inside the container (letters, digits, _ . / - only)"
 done
-case "$patching" in
-  ""|bundled|connector) ;;
-  *) die "--patching must be bundled or connector" ;;
-esac
 command -v openssl >/dev/null || die "openssl is required"
 
 if [[ -e .env ]]; then
@@ -168,16 +162,16 @@ umask 077
 fill_secret EASYPATCH_DB_OWNER_PASSWORD "$(openssl rand -hex 32)"
 fill_secret EASYPATCH_DB_APP_PASSWORD "$(openssl rand -hex 32)"
 fill_secret EASYRMM_PATCHING_KEY "$(openssl rand -base64 32)"
-case "$patching" in
-  bundled)
-    set_setting EASYRMM_PATCHING bundled
-    set_setting COMPOSE_PROFILES patching
-    echo "Patching engine: bundled (EASYRMM_PATCHING=bundled, COMPOSE_PROFILES=patching)." ;;
-  connector)
-    set_setting EASYRMM_PATCHING ""
-    set_setting COMPOSE_PROFILES ""
-    echo "Patching engine: an EasyPatch server connected in Settings." ;;
-esac
+# Settings from before the patching engine always ran here: it no longer
+# has a switch, nor its services a profile.
+if grep -q '^EASYRMM_PATCHING=' .env; then
+  sed -i '/^EASYRMM_PATCHING=/d' .env
+  echo "Removed EASYRMM_PATCHING from .env: patching always runs in this deployment."
+fi
+if grep -qx 'COMPOSE_PROFILES=patching' .env; then
+  sed -i '/^COMPOSE_PROFILES=patching$/d' .env
+  echo "Removed COMPOSE_PROFILES=patching from .env."
+fi
 
 if [[ $(id -u) -ne 0 ]]; then
   echo "Not running as root: create these directories yourself:" >&2

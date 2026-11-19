@@ -41,7 +41,7 @@ describe("patching from the engine in this deployment", () => {
     expect(await main().findByRole("heading", { name: "Patching engine" })).toBeInTheDocument();
     expect(main().getByText("Running")).toBeInTheDocument();
     expect(main().getByText("http://127.0.0.1:18180")).toBeInTheDocument();
-    expect(main().getByText("EASYRMM_PATCHING=bundled")).toBeInTheDocument();
+    expect(main().getByText("EASYRMM_PATCHING_KEY")).toBeInTheDocument();
     expect(main().getByText("Signed one by one, with the person's role and organizations")).toBeInTheDocument();
     expect(main().queryByLabelText("API token")).not.toBeInTheDocument();
     expect(main().queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();

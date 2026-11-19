@@ -17,7 +17,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 )
 
-// TestPatchingEngineAPI starts EasyRMM with EASYRMM_PATCHING=bundled (one-
+// TestPatchingEngineAPI starts EasyRMM with the engine in its deployment (one-
 // product plan, B3 and B5): Settings shows the engine and cannot change it,
 // organizations reach the engine as they change, and the engine refusing
 // EasyRMM reaches the console as the engine being unavailable, never as a

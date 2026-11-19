@@ -58,7 +58,7 @@ func TestBundledEngine(t *testing.T) {
 	}); err != nil || rows != 0 {
 		t.Fatalf("%d rows of the old server left, %v", rows, err)
 	}
-	if got := f.audits("easypatch.connection_delete"); len(got) != 1 || !strings.Contains(got[0].Details["reason"].(string), "EASYRMM_PATCHING=bundled") {
+	if got := f.audits("easypatch.connection_delete"); len(got) != 1 || !strings.Contains(got[0].Details["reason"].(string), "replaced by the patching engine") {
 		t.Fatalf("audit: %+v", got)
 	}
 	// Starting again forgets nothing more.

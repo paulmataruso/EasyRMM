@@ -81,9 +81,11 @@ jobs:
           sudo chmod 640 /srv/easyrmm-ci/tls/privkey.pem /srv/easyrmm-ci/tls/fullchain.pem
           sudo sed -i -e 's|^EASYRMM_IMAGE=.*|EASYRMM_IMAGE=easyrmm-server|' \
                       -e 's|^EASYRMM_VERSION=.*|EASYRMM_VERSION=ci|' .env
+      # EasyRMM's own services: the patching engine's image is built and
+      # its services run in CI's "Bundle end to end" job (scripts/e2e/bundle.sh).
       - name: Start the stack
         working-directory: deploy
-        run: sudo docker compose up -d --no-build --wait --wait-timeout 180
+        run: sudo docker compose up -d --no-build --wait --wait-timeout 180 postgres server meshcentral
       - name: Public edge on 443/80, everything else on loopback
         run: |
           sudo ss -ltnp | tee listeners.txt
