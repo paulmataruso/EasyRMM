@@ -11,7 +11,6 @@ All containers use `network_mode: host`. Defaults below are configurable.
 | 14430/tcp | `127.0.0.1` | MeshCentral | No | MeshCentral HTTP with TLS offloaded to the edge |
 | 18080/tcp | `127.0.0.1` | easyrmm-server | No | Only in `offload` mode, behind an upstream NGINX |
 | 18081/tcp | `127.0.0.1` | easyrmm-server | No | Liveness (`/healthz`) and readiness (`/readyz`) probes used by the container health check |
-| 19443/tcp, 19080/tcp | `127.0.0.1` | EasyPatch's Caddy | No | Only when EasyPatch shares the server: EasyRMM's edge passes EasyPatch's name through to them (ADR-0035, [easypatch-cohost.md](../deployment/easypatch-cohost.md)) |
 | 18280/tcp, 18243/tcp | `127.0.0.1` | authentik-server | No | Only with `setup.sh --with-authentik`: EasyRMM's edge serves Authentik's name and forwards it to 18280 (ADR-0044). Metrics are off |
 | 18281/tcp | `127.0.0.1` | authentik-worker | No | Only with `--with-authentik`: the worker's health check |
 
@@ -27,7 +26,6 @@ MeshCentral features that would open more ports are disabled: HTTP redirect
 |---|---|
 | `rmm.example.com` | Web UI, API, EasyRMM agent API (`/api/agent/`) and installers |
 | `mesh.rmm.example.com` (configurable) | MeshCentral agents and embedded remote sessions (separate browser origin, ADR-0004) |
-| `patch.example.com` (optional) | EasyPatch on the same server (`EASYRMM_EASYPATCH_HOSTNAME`): passed through by SNI, still encrypted, to EasyPatch's own Caddy (ADR-0035) |
 | An imported EasyPatch's names (optional) | `EASYRMM_PATCHING_AGENT_HOSTNAMES`: its agents keep the address they enrolled with. EasyRMM's edge serves them with TLS like its own names, sends the EasyPatch agents' paths to the patching engine, and sends anything else to the console's patching pages |
 | `auth.example.com` (optional) | Authentik, with `setup.sh --with-authentik` (`EASYRMM_AUTHENTIK_HOSTNAME`): EasyRMM's edge serves it with TLS like its own names and forwards it to Authentik on loopback. EasyRMM's own calls to it (discovery, keys, tokens) go to its edge on loopback, so the server need not reach its public address (ADR-0044) |
 
@@ -43,8 +41,7 @@ certificate browsers trust.
 The edge routes by `Host`, host and port: the console name goes to the
 application, the MeshCentral name to the remote-access gateway, an imported
 EasyPatch's names to the patching engine's agent paths, anything else gets
-HTTP 421. A co-hosted EasyPatch's name is taken out earlier, by the TLS
-server name, before the edge does any TLS of its own.
+HTTP 421.
 MeshCentral itself listens on loopback only and never sees a request the
 gateway has not checked.
 

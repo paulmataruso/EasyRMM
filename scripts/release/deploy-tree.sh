@@ -23,13 +23,11 @@ if [ -e "$dir" ] && [ -n "$(ls -A "$dir")" ]; then
   exit 1
 fi
 
-mkdir -p "$dir/deploy/scripts" "$dir/deploy/easypatch" "$dir/docker/postgres/init" "$dir/docker/meshcentral" \
+mkdir -p "$dir/deploy/scripts" "$dir/docker/postgres/init" "$dir/docker/meshcentral" \
   "$dir/docker/authentik/blueprints" "$dir/docs/deployment" "$dir/docs/operations"
 cp "$root/LICENSE.md" "$root/LICENSING.md" "$root/CHANGELOG.md" "$dir/"
 cp "$root/deploy/docker-compose.yml" "$root/deploy/.env.example" "$dir/deploy/"
 cp "$root/deploy/scripts/setup.sh" "$root/deploy/scripts/import-easypatch.sh" "$dir/deploy/scripts/"
-# For EasyPatch on the same server (docs/deployment/easypatch-cohost.md).
-cp "$root/deploy/easypatch/Caddyfile.easyrmm" "$root/deploy/easypatch/docker-compose.easyrmm.yml" "$dir/deploy/easypatch/"
 cp "$root/docker/postgres/init/"*.sh "$dir/docker/postgres/init/"
 cp "$root/docker/postgres/easypatch-db-init.sh" "$dir/docker/postgres/"
 cp "$root/docker/meshcentral/start.sh" "$dir/docker/meshcentral/"
@@ -37,7 +35,7 @@ cp "$root/docker/meshcentral/start.sh" "$dir/docker/meshcentral/"
 cp "$root/docker/postgres/authentik-db-init.sh" "$dir/docker/postgres/"
 cp "$root/docker/authentik/start.sh" "$root/docker/authentik/setup.py" "$dir/docker/authentik/"
 cp "$root/docker/authentik/blueprints/easyrmm.yaml" "$dir/docker/authentik/blueprints/"
-cp "$root/docs/deployment/docker.md" "$root/docs/deployment/agents.md" "$root/docs/deployment/easypatch-cohost.md" "$dir/docs/deployment/"
+cp "$root/docs/deployment/docker.md" "$root/docs/deployment/agents.md" "$dir/docs/deployment/"
 cp "$root/docs/operations/backup-restore.md" "$root/docs/operations/upgrading.md" "$root/docs/operations/import-easypatch.md" \
   "$dir/docs/operations/"
 

@@ -116,8 +116,8 @@ func TestComposeEnvironment(t *testing.T) {
 			if cfg.Mesh.CertURL != c.cert {
 				t.Errorf("certificate URL %q, want %s", cfg.Mesh.CertURL, c.cert)
 			}
-			if !cfg.Patching.Bundled() || cfg.EasyPatch.Enabled() {
-				t.Errorf("patching %+v, co-hosted EasyPatch %+v: want the engine in this deployment only", cfg.Patching, cfg.EasyPatch)
+			if !cfg.Patching.Bundled() {
+				t.Errorf("patching %+v: want the engine in this deployment", cfg.Patching)
 			}
 			if !slices.Equal(cfg.ExtraHostnames(), c.extra) {
 				t.Errorf("further names %v, want %v", cfg.ExtraHostnames(), c.extra)
@@ -259,54 +259,6 @@ func interpolate(raw string, vars map[string]string) (string, error) {
 	return out, err
 }
 
-// TestEasyPatchOverrideMatchesDefaults keeps the files shipped for EasyPatch
-// (ADR-0035) in step with this server's defaults: the override publishes
-// Caddy where EASYRMM_EASYPATCH_*_UPSTREAM point, on loopback only, and runs
-// the Caddyfile that reads PROXY headers.
-func TestEasyPatchOverrideMatchesDefaults(t *testing.T) {
-	c, err := LoadFrom(env(map[string]string{
-		"EASYRMM_PUBLIC_URL": "https://rmm.example.com", "EASYRMM_ACME_EMAIL": "ops@example.com",
-		"EASYRMM_DATABASE_URL": "postgres://a@127.0.0.1/x", "EASYRMM_DATABASE_MIGRATION_URL": "postgres://o@127.0.0.1/x",
-		"EASYRMM_SECRET_KEY": testKey, "EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com",
-		// Co-hosting only goes with the connector, until phase R removes both.
-		"EASYRMM_PATCHING": PatchingConnector,
-	}), noFiles)
-	if err != nil {
-		t.Fatal(err)
-	}
-	override, err := os.ReadFile("../../../deploy/easypatch/docker-compose.easyrmm.yml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	caddyfile, err := os.ReadFile("../../../deploy/easypatch/Caddyfile.easyrmm")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{
-		"ports: !override",
-		`"` + c.EasyPatch.HTTPUpstream + `:80"`,
-		`"` + c.EasyPatch.TLSUpstream + `:443"`,
-		"/etc/caddy/Caddyfile.easyrmm",
-		"./Caddyfile.easyrmm:/etc/caddy/Caddyfile.easyrmm:ro",
-		"EASYPATCH_EDGE_SUBNET: ${EASYPATCH_EDGE_SUBNET:-172.30.0.0/24}",
-	} {
-		if !strings.Contains(string(override), want) {
-			t.Errorf("docker-compose.easyrmm.yml lacks %q", want)
-		}
-	}
-	if regexp.MustCompile(`(?m)^\s*- "(0\.0\.0\.0:)?(80|443):`).Match(override) {
-		t.Error("docker-compose.easyrmm.yml publishes Caddy beyond loopback")
-	}
-	for _, want := range []string{
-		"servers :443 {", "proxy_protocol {", "allow {$EASYPATCH_EDGE_SUBNET:172.30.0.0/24}", "tls\n",
-		"import /etc/caddy/easypatch.caddy", "{$EASYPATCH_DOMAIN} {",
-	} {
-		if !strings.Contains(string(caddyfile), want) {
-			t.Errorf("Caddyfile.easyrmm lacks %q", want)
-		}
-	}
-}
-
 // TestComposeListeners keeps every service of deploy/docker-compose.yml on
 // host networking, every listener but the server's public edge on loopback,
 // and no two listeners on one port (the one-product plan's port table):
@@ -354,9 +306,7 @@ func TestComposeListeners(t *testing.T) {
 	c, err := LoadFrom(env(map[string]string{
 		"EASYRMM_PUBLIC_URL": "https://rmm.example.com", "EASYRMM_ACME_EMAIL": "ops@example.com",
 		"EASYRMM_DATABASE_URL": "postgres://a@127.0.0.1/x", "EASYRMM_DATABASE_MIGRATION_URL": "postgres://o@127.0.0.1/x",
-		"EASYRMM_SECRET_KEY": testKey, "EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com",
-		// Co-hosting only goes with the connector, until phase R removes both.
-		"EASYRMM_PATCHING": PatchingConnector,
+		"EASYRMM_SECRET_KEY": testKey, "EASYRMM_PATCHING_KEY": testKey,
 	}), noFiles)
 	if err != nil {
 		t.Fatal(err)
@@ -374,17 +324,15 @@ func TestComposeListeners(t *testing.T) {
 		t.Fatalf("cannot find MeshCentral's or PostgreSQL's listener in %s", composeFile)
 	}
 	loopback := map[string]string{
-		"EasyRMM health":            c.ListenHealth,
-		"EasyRMM offload":           c.ListenOffload,
-		"MeshCentral":               mesh[1],
-		"PostgreSQL":                net.JoinHostPort(pg[1], pg[2]),
-		"co-hosted EasyPatch, TLS":  c.EasyPatch.TLSUpstream,
-		"co-hosted EasyPatch, HTTP": c.EasyPatch.HTTPUpstream,
-		"patching engine API":       url("easypatch-api"),
-		"patching engine worker":    url("easypatch-worker"),
-		"Authentik, HTTP":           composeEnvironment(t, "authentik-server")["AUTHENTIK_LISTEN__HTTP"],
-		"Authentik, HTTPS":          composeEnvironment(t, "authentik-server")["AUTHENTIK_LISTEN__HTTPS"],
-		"Authentik's worker":        composeEnvironment(t, "authentik-worker")["AUTHENTIK_LISTEN__HTTP"],
+		"EasyRMM health":         c.ListenHealth,
+		"EasyRMM offload":        c.ListenOffload,
+		"MeshCentral":            mesh[1],
+		"PostgreSQL":             net.JoinHostPort(pg[1], pg[2]),
+		"patching engine API":    url("easypatch-api"),
+		"patching engine worker": url("easypatch-worker"),
+		"Authentik, HTTP":        composeEnvironment(t, "authentik-server")["AUTHENTIK_LISTEN__HTTP"],
+		"Authentik, HTTPS":       composeEnvironment(t, "authentik-server")["AUTHENTIK_LISTEN__HTTPS"],
+		"Authentik's worker":     composeEnvironment(t, "authentik-worker")["AUTHENTIK_LISTEN__HTTP"],
 	}
 	byPort := map[string]string{}
 	for name, addr := range loopback {

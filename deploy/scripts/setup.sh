@@ -325,6 +325,16 @@ if [[ ",$profiles," == *,patching,* ]]; then
   fi
   echo "Removed the patching profile from COMPOSE_PROFILES in .env: its services have none."
 fi
+# EasyPatch on the same server (ADR-0035) is gone (ADR-0046). Empty settings
+# are tidied away; a name is left for the operator, and the server refuses
+# to start with it.
+if [[ -n "$(sed -n 's/^EASYRMM_EASYPATCH_HOSTNAME=//p' .env | tail -n 1)" ]]; then
+  echo "EASYRMM_EASYPATCH_HOSTNAME is set: EasyPatch on this server is replaced by the patching engine." >&2
+  echo "EasyRMM does not start while it is set. Remove it, then import that EasyPatch (docs/operations/import-easypatch.md)." >&2
+elif grep -q '^EASYRMM_EASYPATCH_' .env; then
+  sed -i '/^EASYRMM_EASYPATCH_/d' .env
+  echo "Removed the empty EASYRMM_EASYPATCH_* settings from .env: EasyPatch no longer shares the server that way."
+fi
 if [[ "$with_authentik" == true ]]; then
   authentik_env
 fi

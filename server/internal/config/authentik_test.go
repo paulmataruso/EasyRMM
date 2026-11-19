@@ -77,10 +77,6 @@ func TestAuthentik(t *testing.T) {
 		"an IP address":      {map[string]string{"EASYRMM_AUTHENTIK_HOSTNAME": "192.0.2.4"}, "EASYRMM_AUTHENTIK_HOSTNAME must list DNS names"},
 		"the console's":      {map[string]string{"EASYRMM_AUTHENTIK_HOSTNAME": "rmm.example.com"}, "EASYRMM_AUTHENTIK_HOSTNAME lists rmm.example.com, which EASYRMM_PUBLIC_URL already uses"},
 		"remote access's":    {map[string]string{"EASYRMM_AUTHENTIK_HOSTNAME": "mesh.rmm.example.com"}, "which EASYRMM_MESH_PUBLIC_URL already uses"},
-		"co-hosted EasyPatch's": {
-			map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "auth.example.com"},
-			"EASYRMM_AUTHENTIK_HOSTNAME lists auth.example.com, which EASYRMM_EASYPATCH_HOSTNAME already uses",
-		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := load(tc.env)

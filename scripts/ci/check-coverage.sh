@@ -64,7 +64,6 @@ floors=(
   # Outbound connections a Super Administrator configures: no cloud
   # metadata or link-local addresses.
   "server/internal/netguard                95"
-  "server/internal/proxyproto              95"
   # Agent updates: they replace the program every endpoint runs.
   "server/internal/httpapi/agentupdatesapi 90"
   # Remote access: the MeshCentral client, and the service and gateway that

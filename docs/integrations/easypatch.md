@@ -48,12 +48,14 @@ restart action.
 
 ## Topology
 
-EasyPatch keeps its own deployment and hostname (e.g. `patch.example.com`).
-It can run on another host, or on the same server as EasyRMM: EasyRMM's edge
-then keeps ports 80 and 443 and passes EasyPatch's name through, still
-encrypted, to EasyPatch's Caddy on loopback (ADR-0035,
-[easypatch-cohost.md](../deployment/easypatch-cohost.md)). Either way
-EasyRMM reaches it over HTTPS only; on the same server, over loopback.
+EasyPatch's server runs in EasyRMM's deployment as the patching engine, on
+loopback ([docker.md](../deployment/docker.md)). It has no name or console
+of its own: EasyRMM calls it on loopback, and its agents reach it through
+EasyRMM's edge, on EasyRMM's name or an imported server's old one. Running
+EasyPatch on the same server behind EasyRMM's edge (ADR-0035) was retired
+([ADR-0046](../architecture/adr/0046-what-one-product-retires.md)); such a
+server is imported instead
+([import-easypatch.md](../operations/import-easypatch.md)).
 
 ## EasyPatch changes
 

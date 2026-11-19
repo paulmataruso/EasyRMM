@@ -3,8 +3,6 @@ package easypatch
 import (
 	"context"
 	"errors"
-	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -372,96 +370,3 @@ func TestDue(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
-
-// A co-hosted EasyPatch is reached at its loopback listener, still checked
-// against its own name (ADR-0035).
-func TestClientLocalRoute(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	f := eptest.New(t)
-	upstream := strings.TrimPrefix(f.URL(), "https://")
-	// The test server's certificate is for example.com.
-	route := LocalRoute{Hostname: "example.com", Upstream: upstream}
-	c, err := NewClient("https://example.com", f.Token, f.CAPEM, "1.2.3", WithLocalRoute(route))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if info, err := c.ServerInfo(ctx); err != nil || info.Version != "1.9.0" {
-		t.Fatalf("through the local route: %+v, %v", info, err)
-	}
-	// Other addresses are dialed as usual.
-	c, err = NewClient(f.URL(), f.Token, f.CAPEM, "1.2.3", WithLocalRoute(LocalRoute{Hostname: "example.com", Upstream: "127.0.0.1:1"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.ServerInfo(ctx); err != nil {
-		t.Fatalf("another address: %v", err)
-	}
-
-	// A listener standing in for EasyPatch's, recording what arrives.
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	got := make(chan []byte, 4)
-	go func() {
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-			b := make([]byte, 28)
-			_, _ = io.ReadFull(conn, b)
-			_ = conn.Close()
-			got <- b
-		}
-	}()
-
-	// Another port on the same name is not the co-hosted EasyPatch (.invalid
-	// names never resolve, so nothing leaves the host).
-	route = LocalRoute{Hostname: "patch.invalid", Upstream: ln.Addr().String(), ProxyProtocol: true}
-	c, err = NewClient("https://patch.invalid:8443", f.Token, "", "1.2.3", WithLocalRoute(route))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.ServerInfo(ctx); err == nil || !strings.Contains(err.Error(), "patch.invalid") {
-		t.Fatalf("patch.invalid:8443: %v", err)
-	}
-	select {
-	case <-got:
-		t.Fatal("patch.invalid:8443 went through the local route")
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	// With PROXY protocol, the header comes first and names EasyRMM's own
-	// loopback address.
-	c, err = NewClient("https://patch.invalid", f.Token, "", "1.2.3", WithLocalRoute(route))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, _ = c.ServerInfo(ctx) // the listener answers nothing
-	var b []byte
-	select {
-	case b = <-got:
-	case <-ctx.Done():
-		t.Fatal("nothing reached the local listener")
-	}
-	sig := "\r\n\r\n\x00\r\nQUIT\n"
-	if len(b) != 28 || string(b[:12]) != sig || b[12] != 0x21 || b[13] != 0x11 || b[14] != 0 || b[15] != 12 {
-		t.Fatalf("PROXY header %x", b)
-	}
-	if src, dst := net.IP(b[16:20]), net.IP(b[20:24]); !src.IsLoopback() || !dst.Equal(net.IPv4(127, 0, 0, 1)) {
-		t.Fatalf("PROXY addresses %s -> %s", src, dst)
-	}
-	if port := int(b[26])<<8 | int(b[27]); port != ln.Addr().(*net.TCPAddr).Port {
-		t.Fatalf("PROXY destination port %d, want the listener's %s", port, ln.Addr())
-	}
-	// A listener that is not there fails the request.
-	route.Upstream = "127.0.0.1:1"
-	c, _ = NewClient("https://patch.invalid", f.Token, "", "1.2.3", WithLocalRoute(route))
-	if _, err := c.ServerInfo(ctx); err == nil {
-		t.Fatal("no listener, no error")
-	}
-}

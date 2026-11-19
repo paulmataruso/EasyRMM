@@ -619,6 +619,14 @@ All notable changes to this project are documented here. The format follows
   ADR-0046): its OpenID routes, Settings → EasyPatch → **Sign-in**, the
   `make e2e-sign-in` test and its CI job. Migration 00022 drops its tables;
   past `idp.*` audit records stay. Sessions still record how they signed in.
+- **EasyPatch on the same server behind EasyRMM's edge** (ADR-0035,
+  superseded by ADR-0046), refused since S1: the SNI passthrough, the PROXY
+  protocol code, `EASYRMM_EASYPATCH_TLS_UPSTREAM`, `…_HTTP_UPSTREAM` and
+  `…_PROXY_PROTOCOL`, `deploy/easypatch/` and
+  `docs/deployment/easypatch-cohost.md`. `EASYRMM_EASYPATCH_HOSTNAME` set
+  still stops the server; import such an EasyPatch instead.
+  `scripts/setup.sh` removes the empty `EASYRMM_EASYPATCH_*` lines from
+  `.env`.
 
 ### Security
 - The EasyPatch connection and audit forwarding do not connect to

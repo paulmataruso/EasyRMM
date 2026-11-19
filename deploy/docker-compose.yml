@@ -172,12 +172,9 @@ services:
       EASYRMM_IP_ACCESS: ${EASYRMM_IP_ACCESS:-true}
       EASYRMM_IP_ADDRESSES: ${EASYRMM_IP_ADDRESSES:-}
       EASYRMM_IP_MESH_PORT: ${EASYRMM_IP_MESH_PORT:-4443}
-      # EasyPatch on this same server, behind this edge (ADR-0035,
-      # docs/deployment/easypatch-cohost.md). Empty: not co-hosted.
+      # EasyPatch on this server behind the edge was retired (ADR-0046):
+      # passed only so that the server refuses an .env that still names it.
       EASYRMM_EASYPATCH_HOSTNAME: ${EASYRMM_EASYPATCH_HOSTNAME:-}
-      EASYRMM_EASYPATCH_TLS_UPSTREAM: ${EASYRMM_EASYPATCH_TLS_UPSTREAM:-}
-      EASYRMM_EASYPATCH_HTTP_UPSTREAM: ${EASYRMM_EASYPATCH_HTTP_UPSTREAM-127.0.0.1:19080}
-      EASYRMM_EASYPATCH_PROXY_PROTOCOL: ${EASYRMM_EASYPATCH_PROXY_PROTOCOL:-true}
       # The patching engine in this deployment is called on loopback with
       # statements signed by this key (ADR-0038); setup.sh generates it.
       EASYRMM_PATCHING_KEY: ${EASYRMM_PATCHING_KEY:-}

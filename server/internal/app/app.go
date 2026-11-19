@@ -186,9 +186,6 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	// The patch reports read patching through the connector (one-product
 	// plan, C5).
 	d.Reports.UsePatching(d.EasyPatch)
-	if ep := cfg.EasyPatch; ep.Enabled() {
-		d.EasyPatch.SetLocalRoute(easypatch.LocalRoute{Hostname: ep.Hostname, Upstream: ep.TLSUpstream, ProxyProtocol: ep.ProxyProtocol})
-	}
 	if p := cfg.Patching; p.Bundled() {
 		// The patching engine in this deployment, on loopback (one-product
 		// plan, B3; ADR-0038).
