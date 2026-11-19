@@ -254,6 +254,8 @@ entries:
       client_type: confidential
       client_id: easyrmm
       client_secret: !Env EASYRMM_AUTHENTIK_CLIENT_SECRET
+      # The code flow only (2026.8 allows no grant type unless listed).
+      grant_types: [authorization_code]
       redirect_uris:
         - matching_mode: strict
           url: !Format ["%s/api/v1/auth/sso/callback", !Context public_url]
