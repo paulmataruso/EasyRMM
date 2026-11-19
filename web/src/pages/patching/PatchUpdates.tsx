@@ -1,14 +1,13 @@
-import { useId } from "react";
 import { Link } from "react-router";
 import { PackageCheck, PauseCircle } from "lucide-react";
 import { fieldError } from "../../api/client";
 import { useApi } from "../../api/hooks";
 import type { PatchFleetUpdate, PatchPage, PatchUpdateState } from "../../api/types";
 import { OrganizationSelect, SearchInput, SiteSelect } from "../../components/Filters";
-import { Badge, Card, cx, EmptyState, ErrorState, Field, Select, Spinner, TableWrap, Toolbar } from "../../components/ui";
+import { Badge, Card, cx, EmptyState, ErrorState, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDate, formatSize } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
-import { categoryLabel, Pager, UPDATE_STATES } from "./patchText";
+import { categoryLabel, FilterSelect, Pager, UPDATE_STATES } from "./patchText";
 
 /** EasyPatch's update categories. */
 export const UPDATE_CATEGORIES = ["Security", "Critical", "Cumulative", "Definition", "ServicingStack", "DotNet", "Feature", "Driver", "Other", "Application"];
@@ -30,27 +29,6 @@ export function scopeQuery(organizationId: string, siteId: string): string {
   if (siteId) q.set("siteId", siteId);
   const s = q.toString();
   return s ? `?${s}` : "";
-}
-
-function FilterSelect({ label, value, onChange, options, className }: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-  className?: string;
-}) {
-  const id = useId();
-  return (
-    <Field label={label} htmlFor={id} className={className}>
-      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </Select>
-    </Field>
-  );
 }
 
 /**

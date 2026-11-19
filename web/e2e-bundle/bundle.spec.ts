@@ -273,3 +273,34 @@ test("installing the update from the Patches tab, after its preview, updates the
     )
     .toBe("Completed");
 });
+
+test("Patching's Jobs tab finds the install by type and status; a restart is planned on the machine but not sent", async () => {
+  const page = admin;
+  await page.goto("/patching?tab=jobs");
+  const main = page.getByRole("main");
+  await main.getByRole("radio", { name: "All recent" }).click();
+  await main.getByLabel("Type").selectOption({ label: "Install updates" });
+  await main.getByLabel("Status").selectOption({ label: "Completed" });
+  await main.getByLabel("Requested").selectOption({ label: "Last 24 hours" });
+  await main.getByRole("button", { name: "Install updates" }).first().click();
+  const job = page.getByRole("dialog", { name: /^Install updates on / });
+  await expect(job.getByText("Sent to the device")).toBeVisible();
+  await expect(job.getByText("1 of 1 update installed")).toBeVisible();
+  await job.getByRole("button", { name: "Close" }).last().click();
+  await main.getByLabel("Type").selectOption({ label: "Restart" });
+  await expect(main.getByText("No jobs match")).toBeVisible();
+
+  // The engine is asked whether the machine can restart and whether it is a server; nothing is sent.
+  await page.goto(`/devices/${deviceId}?tab=patches`);
+  await page.getByRole("main").getByRole("button", { name: "Restart…" }).click();
+  const restart = page.getByRole("dialog", { name: /^Restart / });
+  const pending = restart.getByRole("checkbox", { name: "Only if a restart is pending" });
+  if (await pending.isChecked()) await pending.uncheck();
+  await expect(restart.getByRole("heading", { name: "Restarts" })).toBeVisible();
+  await expect(restart.getByText("Servers restart only when you tick them")).toBeHidden();
+  await restart.getByRole("radio", { name: "Ask users, with a deadline" }).click();
+  await expect(restart.getByRole("button", { name: "Restart 1 device" })).toBeEnabled();
+  await restart.getByRole("button", { name: "Cancel" }).click();
+  const jobs = await api<{ items: Job[] }>("GET", `/api/v1/patching/devices/${deviceId}/jobs`);
+  expect(jobs.items.filter((j) => j.type === "Restart")).toEqual([]);
+});

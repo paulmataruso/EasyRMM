@@ -496,7 +496,7 @@ func TestContract(t *testing.T) {
 		if jobs, err := ep.EndpointJobs(ctx, a.endpoint, 1); err != nil || !slices.ContainsFunc(jobs.Items, func(j Job) bool { return j.ID == install.ID }) {
 			t.Errorf("endpoint jobs %+v, %v", jobs, err)
 		}
-		if jobs, err := ep.Jobs(ctx, org.ID, true, 1); err != nil || !slices.ContainsFunc(jobs.Items, func(j Job) bool { return j.ID == install.ID }) {
+		if jobs, err := ep.Jobs(ctx, JobFilter{OrganizationID: org.ID, Active: true}, 1); err != nil || !slices.ContainsFunc(jobs.Items, func(j Job) bool { return j.ID == install.ID }) {
 			t.Errorf("active jobs %+v, %v", jobs, err)
 		}
 		if _, err := ro.Install(ctx, a.endpoint, []uuid.UUID{openssl}, nil, ""); !IsStatus(err, http.StatusForbidden) {
@@ -616,13 +616,13 @@ func TestContract(t *testing.T) {
 		if e := p.Endpoints[0]; e.ID != a.endpoint || e.Platform != "Linux" || e.IsServer || !e.CanRestart || e.RebootPendingSince == nil {
 			t.Errorf("pending endpoint %+v", e)
 		}
-		if _, err := ro.BulkRestart(ctx, []uuid.UUID{a.endpoint}, nil, ""); !IsStatus(err, http.StatusForbidden) {
+		if _, err := ro.BulkRestart(ctx, []uuid.UUID{a.endpoint}, RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending"}, ""); !IsStatus(err, http.StatusForbidden) {
 			t.Errorf("read-only restart: %v", err)
 		}
 
 		// At a time: held until then.
 		at := time.Now().Add(5 * time.Hour).UTC().Truncate(time.Second)
-		later, err := ep.BulkRestart(ctx, []uuid.UUID{a.endpoint}, &at, "contract-restart@example.test")
+		later, err := ep.BulkRestart(ctx, []uuid.UUID{a.endpoint}, RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending", ScheduledAt: &at}, "contract-restart@example.test")
 		if err != nil || later.Succeeded != 1 || len(later.Results) != 1 || later.Results[0].JobID == nil {
 			t.Fatalf("restart later %+v, %v", later, err)
 		}
@@ -635,7 +635,7 @@ func TestContract(t *testing.T) {
 		}
 
 		// Now: the agent receives EasyRMM's preset at its next check-in.
-		now, err := ep.BulkRestart(ctx, []uuid.UUID{a.endpoint}, nil, "")
+		now, err := ep.BulkRestart(ctx, []uuid.UUID{a.endpoint}, RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending"}, "")
 		if err != nil || now.Succeeded != 1 || now.Results[0].JobID == nil {
 			t.Fatalf("restart now %+v, %v", now, err)
 		}
@@ -659,6 +659,63 @@ func TestContract(t *testing.T) {
 		}
 		if p, err := ep.RestartPending(ctx, org.ID); err != nil || p.Total != 0 {
 			t.Errorf("after the restart: %+v, %v", p, err)
+		}
+
+		// The options EasyRMM offers (one-product plan, C3): a prompt with a
+		// deadline, whether or not a restart is pending, waiting an hour for
+		// an offline computer. The endpoint says it can restart and whether
+		// it is a server.
+		if d, err := ep.Endpoint(ctx, a.endpoint); err != nil || !slices.Contains(d.AgentCapabilities, AgentCanRestart) ||
+			d.OsProductType == "Server" || d.OsProductType == "DomainController" {
+			t.Errorf("endpoint for a restart that need not be pending %+v, %v", d, err)
+		}
+		deadline, expiry := 120, 60
+		prompt, err := ep.BulkRestart(ctx, []uuid.UUID{a.endpoint}, RestartOptions{Mode: "PromptWithDeadline", Condition: "Always",
+			DeadlineMinutes: &deadline, ExpiresAfterMinutes: &expiry}, "contract-restart@example.test")
+		if err != nil || prompt.Succeeded != 1 || prompt.Results[0].JobID == nil {
+			t.Fatalf("restart with a prompt %+v, %v", prompt, err)
+		}
+		pid := *prompt.Results[0].JobID
+		in = a.checkIn()
+		i = slices.IndexFunc(in.Jobs, func(j deliveredJob) bool { return j.JobID == pid })
+		if i < 0 {
+			t.Fatalf("the prompted restart was not delivered: %+v", in)
+		}
+		if r := in.Jobs[i].Restart; r["mode"] != "PromptWithDeadline" || r["condition"] != "Always" || r["deadlineMinutes"] != 120.0 {
+			t.Errorf("delivered prompted restart %+v", in.Jobs[i])
+		}
+		if job, err := ep.Job(ctx, pid); err != nil || job.Summary.CreatedAt.Add(time.Hour).Sub(job.Summary.ExpiresAt).Abs() > time.Minute {
+			t.Errorf("prompted restart's expiry %+v, %v", job, err)
+		}
+		if _, err := ep.CancelJob(ctx, pid, ""); err != nil {
+			t.Fatal(err)
+		}
+		// What EasyRMM refuses first, EasyPatch refuses too: per endpoint,
+		// in a bulk request.
+		short, long := 14, 10081
+		for _, o := range []RestartOptions{{Mode: "Countdown", Condition: "Always", ExpiresAfterMinutes: &short},
+			{Mode: "PromptWithDeadline", Condition: "Always", DeadlineMinutes: &long}} {
+			if r, err := ep.BulkRestart(ctx, []uuid.UUID{a.endpoint}, o, ""); err != nil || r.Failed != 1 ||
+				r.Results[0].ErrorCode != "validation_failed" {
+				t.Errorf("restart %+v: %+v, %v", o, r, err)
+			}
+		}
+
+		// Jobs filtered as the Jobs tab does: one endpoint's finished
+		// restarts started by hand, and nothing from the future.
+		done, err := ep.Jobs(ctx, JobFilter{OrganizationID: org.ID, EndpointID: &a.endpoint, Type: "Restart", Status: "Completed",
+			Trigger: "Manual"}, 1)
+		if err != nil || !slices.ContainsFunc(done.Items, func(j Job) bool { return j.ID == restarted }) {
+			t.Errorf("finished restarts %+v, %v", done, err)
+		}
+		for _, j := range done.Items {
+			if j.Type != "Restart" || j.Status != "Completed" || j.EndpointID != a.endpoint {
+				t.Errorf("filtered job %+v", j)
+			}
+		}
+		future := time.Now().Add(time.Hour)
+		if none, err := ep.Jobs(ctx, JobFilter{OrganizationID: org.ID, From: &future}, 1); err != nil || none.TotalCount != 0 {
+			t.Errorf("jobs from the future %+v, %v", none, err)
 		}
 	})
 
@@ -1474,8 +1531,8 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 			"/api/v1/organizations/"+org.String()+"/restart-pending"),
 		q("retry", "POST", "/api/v1/jobs/"+fJob.ID.String()+"/retry", "/api/v1/jobs/"+finished.String()+"/retry"),
 		{name: "bulk restart", method: "POST", fake: "/api/v1/endpoints/bulk/restart", real: "/api/v1/endpoints/bulk/restart",
-			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint}, "restart": newRestartPreset(&at)},
-			rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint}, "restart": newRestartPreset(&at)}},
+			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint}, "restart": RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending", ScheduledAt: &at}},
+			rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint}, "restart": RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending", ScheduledAt: &at}}},
 		q("organization", "GET", "/api/v1/organizations/"+fOrg.String(), "/api/v1/organizations/"+org.String()),
 		{name: "organizations, archived ones too", method: "GET", fake: "/api/v1/organizations?includeArchived=true",
 			real: "/api/v1/organizations?includeArchived=true", element: true, fElem: fOrg, rElem: org},

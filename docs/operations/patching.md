@@ -261,13 +261,10 @@ device with an EasyPatch agent:
   the wild.
 * Filters: organization, site, device group, status, name.
 
-Choose devices to **Scan** them or **Install updates** (every update the
-device's EasyPatch policy allows). The **Jobs** tab lists EasyPatch's jobs
-for the devices you can see, refreshing every few seconds while any is
-running. Open one for its updates, events and progress. A running job can
-be cancelled. A job that failed, was cancelled or expired, or left some
-updates uninstalled, can be run again with **Retry**; the new job opens in
-its place. EasyPatch refuses a retry while the same job is already queued.
+Choose devices to **Scan** them, **Install updates** (every update the
+device's EasyPatch policy allows) or **Restart** them (see
+[Restarts](#restarts)). The jobs that carry this out are on the
+[Jobs](#jobs) tab.
 
 A device's **Patches** tab shows:
 
@@ -345,6 +342,27 @@ rollout guard); such holds say so.
 with `patch.configure` there; holds in every organization only by super
 administrators. EasyPatch refuses a second hold in the same place.
 
+### Jobs
+
+The **Jobs** tab lists EasyPatch's jobs for the devices you can see:
+**Still running** by default, refreshing every few seconds while any is,
+or **All recent**. Filter by organization and type; all recent jobs also by
+status, how they started (by hand, on a schedule, or by EasyPatch itself)
+and when they were requested (the last 24 hours, 7 days or 30 days). The
+tab shows the newest 200 jobs that match and says when older ones are left
+out; narrow the filters to find them.
+
+Open a job for its updates, events and progress: when it was requested and
+by whom (or how it started), when a scheduled job starts, until when a
+queued job waits for its device, when it was sent to the device (and how
+many times), started and finished, and the job it runs again when it is a
+retry. A running job can be cancelled; until the device stops, the job says
+the cancellation was asked for. A job whose device stopped reporting says
+it ran out of time. A job that failed, was cancelled or expired, or left
+some updates uninstalled, can be run again with **Retry**; the new job
+opens in its place. EasyPatch refuses a retry while the same job is already
+queued.
+
 ### Excluding and removing updates
 
 **Exclude…** on an update to install keeps it off this device: EasyPatch
@@ -384,26 +402,44 @@ reinstall it once.
 
 ### Restarts
 
-**Restart…** appears on a device's Patches tab, and for chosen devices on
-the Patching page, when EasyPatch reports that a restart is pending. EasyRMM
-has one way to restart a device, chosen to be safe:
+**Restart…** is on a device's Patches tab when EasyPatch reports a pending
+restart or the device's EasyPatch agent can restart the computer, and for
+chosen devices on the Patching page. The dialog first asks EasyPatch what
+the restart would do, and lists the devices that will not restart and why:
+no restart is pending, the EasyPatch agent cannot restart the computer
+(update the agent), EasyPatch no longer lists the device's endpoint, or the
+device is not linked.
 
-* The device restarts only if a restart is still pending when the job
-  runs.
-* Signed-in users see EasyPatch's five-minute countdown first.
-* It happens now, or at a time up to 31 days ahead. A device that is
-  offline then restarts if it comes back within two hours; otherwise
-  EasyPatch drops the restart.
+* **Only if a restart is pending** is ticked when any chosen device reports
+  one: a device then restarts only if a restart is still pending when the
+  job runs. Untick it to restart every chosen device, whatever it reports,
+  at most 100 at once; EasyRMM then reads each one from EasyPatch to tell
+  servers apart and to check that its agent can restart the computer.
+* **Signed-in users** are treated in one of four ways:
+
+  | Choice | What the people signed in see |
+  |---|---|
+  | Count down, then restart (5 minutes by default; 1 to 60) | A countdown; they can only restart sooner |
+  | Ask users, with a deadline (4 hours by default; 15 minutes to 7 days) | They restart now or postpone, never past the deadline; then a five-minute countdown |
+  | Ask users, no deadline | They choose when; the restart fails if nobody agrees within 7 days |
+  | Restart at once | Nothing: it restarts without warning |
+
+  A computer nobody is signed in to restarts at once, whatever the choice.
+  Without EasyPatch's tray icon (Linux and macOS agents, or Windows where
+  the icon is not running) the operating system warns instead: a countdown
+  uses its own shutdown warning (on Linux, the messages of
+  `shutdown -r`), a restart with a deadline waits for the deadline, and one
+  without a deadline waits for the tray icon and fails after 7 days.
+* **When**: now, or at a time up to 31 days ahead. A device that is offline
+  then gets from 15 minutes to 24 hours to come back (two hours by
+  default); otherwise EasyPatch drops its restart.
 * **Servers restart only when you tick them**, by name, one by one or all
   at once. EasyPatch before 1.10.0 cannot say which devices are servers, so
   every device then needs a tick.
 * EasyPatch runs one job at a time on a device, so a restart never starts
   in the middle of an install.
 
-The dialog lists the devices that will not restart and why: no restart is
-pending, the EasyPatch agent is too old to restart the computer, or the
-device is not linked. Prompts, deadlines and restart schedules are set in
-the policy.
+Recurring restarts are part of the EasyPatch policy.
 
 ### Changing things in EasyPatch
 
@@ -420,7 +456,6 @@ are EasyPatch's defaults.
 | A device's **Policy** view | Change in EasyPatch | The endpoint's policy tab |
 | An update's title | (the title) | The update's page: vulnerabilities, other devices missing it, hold |
 | A job | Open in EasyPatch | The job's page |
-| A restart of one device | More restart options in EasyPatch | The endpoint's page |
 
 These links go through `/go/to-easypatch` on EasyRMM, which finds the
 device's EasyPatch endpoint from EasyRMM's own links and redirects. A
@@ -522,7 +557,7 @@ nobody can act, whatever their role.
 | Action | Recorded |
 |---|---|
 | `patch.scan`, `patch.install` | One record per device that started, with the EasyPatch job id; installs record which updates and any scheduled time, and an install from an update's page its update id |
-| `patch.restart` | One record per device that was asked to restart, with the EasyPatch job id, the condition, any scheduled time and the servers you confirmed |
+| `patch.restart` | One record per device that was asked to restart, with the EasyPatch job id, how signed-in users were treated (the countdown or deadline), whether only if a restart is pending or always, how long it waits for an offline device, any scheduled time and the servers you confirmed |
 | `patch.cancel` | The job and its device |
 | `patch.exclude`, `patch.include` | The update excluded on the device, or included again, and the reason given |
 | `patch.remove_update` | The update, the removal job, and whether it was excluded too, with the reason; from an update's page, one record per device |
@@ -549,7 +584,10 @@ server has the `on-behalf-of` capability.
 
 * One EasyPatch server per EasyRMM installation.
 * The device list reads at most 10,000 endpoints per EasyPatch organization
-  and shows at most 5,000 devices; the job list shows the newest 200 jobs.
+  and shows at most 5,000 devices; the job list shows the newest 200 jobs
+  that match its filters.
+* A restart whether or not a restart is pending reaches at most 100 devices
+  at once; one only where a restart is pending, 1,000.
 * The device list is cached for 30 seconds; a scan or install refreshes it.
 * The update list shows 50 updates a page and an update's page 200 devices
   a page. Installing or removing an update across devices reaches at most

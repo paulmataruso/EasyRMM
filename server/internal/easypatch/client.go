@@ -486,7 +486,9 @@ type Credential struct {
 
 // EndpointDetail is one endpoint in full.
 type EndpointDetail struct {
-	Summary                  Endpoint     `json:"summary"`
+	Summary Endpoint `json:"summary"`
+	// OsProductType is Workstation, Server or DomainController (Windows).
+	OsProductType            string       `json:"osProductType"`
 	SerialNumber             string       `json:"serialNumber"`
 	LastScanAttemptAt        *time.Time   `json:"lastScanAttemptAt"`
 	LastScanError            string       `json:"lastScanError"`
@@ -519,6 +521,7 @@ type EndpointDetail struct {
 
 // What EasyPatch agents can do, as they report it (agentCapabilities).
 const (
+	AgentCanRestart          = "restart"
 	AgentCanNotifyUser       = "notify-user"
 	AgentCanUninstallUpdates = "uninstall-updates"
 	AgentCanTray             = "tray"
@@ -739,13 +742,19 @@ type JobEvent struct {
 
 // JobDetail is one job in full.
 type JobDetail struct {
-	Summary      Job        `json:"summary"`
-	InstallMode  string     `json:"installMode"`
-	NotBefore    *time.Time `json:"notBefore"`
-	DeliveredAt  *time.Time `json:"deliveredAt"`
-	LastProgress *time.Time `json:"lastProgressAt"`
-	Items        []JobItem  `json:"items"`
-	Events       []JobEvent `json:"events"`
+	Summary        Job        `json:"summary"`
+	InstallMode    string     `json:"installMode"`
+	NotBefore      *time.Time `json:"notBefore"`
+	DeliveredAt    *time.Time `json:"deliveredAt"`
+	AcknowledgedAt *time.Time `json:"acknowledgedAt"`
+	LastProgress   *time.Time `json:"lastProgressAt"`
+	// DeliveryCount is how many times the job was handed to the agent.
+	DeliveryCount int `json:"deliveryCount"`
+	// RetryOfJobID is the job this one runs again.
+	RetryOfJobID      *uuid.UUID `json:"retryOfJobId"`
+	CancelRequestedAt *time.Time `json:"cancelRequestedAt"`
+	Items             []JobItem  `json:"items"`
+	Events            []JobEvent `json:"events"`
 }
 
 // EndpointJobs lists one page of an endpoint's jobs, newest first.
@@ -756,13 +765,51 @@ func (c *Client) EndpointJobs(ctx context.Context, endpointID uuid.UUID, page in
 	return p, err
 }
 
-// Jobs lists one page of an organization's jobs, newest first; active keeps
-// those still to finish.
-func (c *Client) Jobs(ctx context.Context, organizationID uuid.UUID, active bool, page int) (Page[Job], error) {
+// statusCanceled is EasyPatch's status of a canceled job, spelled as its
+// API spells it.
+const statusCanceled = "Cancelled" //nolint:misspell // EasyPatch's enum value
+
+// JobStatuses, JobTypes and JobTriggers are EasyPatch's.
+var (
+	JobStatuses = []string{"Queued", "Delivered", "Acknowledged", "Running", "Completed", "Failed", statusCanceled, "Expired", "WaitingForReboot"}
+	JobTypes    = []string{"UpdateScan", "InstallUpdates", "InventoryRefresh", "Restart", "NotifyUser", "AgentUpdate", "UninstallAgent",
+		"UninstallUpdate", "DownloadUpdates"}
+	JobTriggers = []string{"Manual", "Scheduled", "System"}
+)
+
+// JobFilter narrows an organization's jobs. Active keeps those still to
+// finish; the others are EasyPatch's (JobStatuses, JobTypes, JobTriggers);
+// From and To bound when the job was created ([From, To)).
+type JobFilter struct {
+	OrganizationID uuid.UUID
+	EndpointID     *uuid.UUID
+	Active         bool
+	Status         string
+	Type           string
+	Trigger        string
+	From, To       *time.Time
+}
+
+// Jobs lists one page of an organization's jobs, newest first.
+func (c *Client) Jobs(ctx context.Context, f JobFilter, page int) (Page[Job], error) {
 	var p Page[Job]
-	q := url.Values{"organizationId": {organizationID.String()}, "page": {strconv.Itoa(page)}, "pageSize": {strconv.Itoa(PageSize)}}
-	if active {
+	q := url.Values{"organizationId": {f.OrganizationID.String()}, "page": {strconv.Itoa(page)}, "pageSize": {strconv.Itoa(PageSize)}}
+	if f.EndpointID != nil {
+		q.Set("endpointId", f.EndpointID.String())
+	}
+	if f.Active {
 		q.Set("active", "true")
+	}
+	for k, v := range map[string]string{"status": f.Status, "type": f.Type, "trigger": f.Trigger} {
+		if v != "" {
+			q.Set(k, v)
+		}
+	}
+	if f.From != nil {
+		q.Set("from", f.From.UTC().Format(time.RFC3339))
+	}
+	if f.To != nil {
+		q.Set("to", f.To.UTC().Format(time.RFC3339))
 	}
 	err := c.do(ctx, http.MethodGet, "/api/v1/jobs", q, nil, "", &p)
 	return p, err
@@ -989,28 +1036,33 @@ func (c *Client) RestartPending(ctx context.Context, organizationID uuid.UUID) (
 	return p, err
 }
 
-// restartPreset is the only restart EasyRMM asks for: only if a restart is
-// pending when the job runs, after EasyPatch's default countdown (five
-// minutes, which users can shorten but not postpone), now or at a time.
-// Prompts, deadlines and messages stay in EasyPatch's console.
-type restartPreset struct {
-	Mode        string     `json:"mode"`
-	Condition   string     `json:"condition"`
+// RestartOptions say how a restart treats the people signed in, when it
+// starts and how long it waits for an offline computer (EasyPatch's
+// RestartRequest). Nil minutes take EasyPatch's defaults.
+type RestartOptions struct {
+	// Mode is Countdown, PromptWithDeadline, PromptNoDeadline or Immediate.
+	Mode string `json:"mode"`
+	// Condition is OnlyIfPending or Always.
+	Condition string `json:"condition"`
+	// CountdownMinutes is the Countdown mode's (1–60).
+	CountdownMinutes *int `json:"countdownMinutes,omitempty"`
+	// DeadlineMinutes is the PromptWithDeadline mode's (15 minutes–7 days).
+	DeadlineMinutes *int `json:"deadlineMinutes,omitempty"`
+	// ScheduledAt starts it then rather than now.
 	ScheduledAt *time.Time `json:"scheduledAt,omitempty"`
-	Force       bool       `json:"force"`
+	// ExpiresAfterMinutes is how long it waits for an offline computer
+	// (15 minutes–24 hours).
+	ExpiresAfterMinutes *int `json:"expiresAfterMinutes,omitempty"`
+	Force               bool `json:"force"`
 }
 
-func newRestartPreset(scheduledAt *time.Time) restartPreset {
-	return restartPreset{Mode: "Countdown", Condition: "OnlyIfPending", ScheduledAt: scheduledAt}
-}
-
-// BulkRestart restarts endpoints with EasyRMM's preset (restartPreset).
-func (c *Client) BulkRestart(ctx context.Context, ids []uuid.UUID, scheduledAt *time.Time, onBehalfOf string) (BulkResult, error) {
+// BulkRestart restarts endpoints.
+func (c *Client) BulkRestart(ctx context.Context, ids []uuid.UUID, opts RestartOptions, onBehalfOf string) (BulkResult, error) {
 	var r BulkResult
 	body := struct {
-		EndpointIDs []uuid.UUID   `json:"endpointIds"`
-		Restart     restartPreset `json:"restart"`
-	}{ids, newRestartPreset(scheduledAt)}
+		EndpointIDs []uuid.UUID    `json:"endpointIds"`
+		Restart     RestartOptions `json:"restart"`
+	}{ids, opts}
 	err := c.do(ctx, http.MethodPost, "/api/v1/endpoints/bulk/restart", nil, body, onBehalfOf, &r)
 	return r, err
 }

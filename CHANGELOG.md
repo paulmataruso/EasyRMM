@@ -105,6 +105,17 @@ All notable changes to this project are documented here. The format follows
   removes a Windows update across devices, and holds it in an organization
   or, for super administrators, everywhere. Holds need `patch.configure` and
   are audited as `patch.hold` and `patch.release_hold`.
+- **Patch jobs and restarts** (one-product plan, phase C3): the **Jobs** tab
+  filters by type, and all recent jobs by status, how they started and when
+  they were requested, and says when older ones are left out; a job shows
+  when it was sent to the device and how often, when a queued job gives up,
+  the job a retry runs again, a cancellation asked for, and its progress.
+  **Restart…** offers what EasyPatch's restart did: a countdown of 1 to 60
+  minutes, asking users with a deadline of up to 7 days or without one, or
+  at once; only if a restart is pending, or always (at most 100 devices,
+  each read from EasyPatch to tell servers apart); and how long an offline
+  device gets to come back. It is on every patched device, not only those
+  reporting a pending restart. Servers still restart only when ticked.
 - **Organization time zones**: organizations have a time zone (default UTC;
   the browser's for a new one), which patching reports use.
 - **Stop patching for a device**: the device's Patches tab can stop

@@ -498,3 +498,37 @@ func TestCatalogConnected(t *testing.T) {
 	_, err = f.svc.Catalog(ctx, f.admin, UpdateScope{OrganizationID: other}, CatalogQuery{})
 	wantErr(t, err, apperr.KindConflict, "easypatch_not_linked")
 }
+
+// TestRestartStatements: the engine is asked as the person restarting, as
+// ReadOnly to plan and as an Admin of the devices' organization to restart
+// (one-product plan, C3).
+func TestRestartStatements(t *testing.T) {
+	f := newFleetFixture(t)
+	ctx := f.ctx
+	f.engine.Set(func() {
+		f.engine.Version = "1.10.0"
+		f.eWeb.RebootPending = true
+	})
+	if plan, err := f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.web}, ""); err != nil || !plan.Devices[0].Restart {
+		t.Fatalf("plan: %+v, %v", plan, err)
+	}
+	st := f.lastStatement("GET", "/api/v1/organizations/"+f.epAcme.String()+"/restart-pending")
+	if st.Role != RoleReadOnly || st.Subject != f.tech.Actor.ID.String() || !slices.Equal(st.Organizations, []uuid.UUID{f.epAcme}) {
+		t.Fatalf("plan's statement: %+v", st)
+	}
+	if res, err := f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: []uuid.UUID{f.web}}); err != nil || res.Succeeded != 1 {
+		t.Fatalf("restart: %+v, %v", res, err)
+	}
+	st = f.lastStatement("POST", "/api/v1/endpoints/bulk/restart")
+	if st.Role != RoleAdmin || st.Subject != f.tech.Actor.ID.String() || !slices.Equal(st.Organizations, []uuid.UUID{f.epAcme}) {
+		t.Fatalf("restart's statement: %+v", st)
+	}
+	// Whether or not a restart is pending: the endpoint is read as ReadOnly.
+	if plan, err := f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.dbHost}, "Always"); err != nil || !plan.Devices[0].Restart {
+		t.Fatalf("plan always: %+v, %v", plan, err)
+	}
+	if st := f.lastStatement("GET", "/api/v1/endpoints/"+f.eDB.ID.String()); st.Role != RoleReadOnly ||
+		!slices.Equal(st.Organizations, []uuid.UUID{f.epAcme}) {
+		t.Fatalf("endpoint read's statement: %+v", st)
+	}
+}

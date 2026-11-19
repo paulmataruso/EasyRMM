@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import type { AgentInstall, ComplianceStatus, PatchJob, PatchLink, PatchPolicy, PatchStatus, PatchUpdateState } from "../../api/types";
 import { ArrowUpRight } from "lucide-react";
 import { useApi } from "../../api/hooks";
-import { Badge, Button, buttonClasses, cx, Dot, type Tone } from "../../components/ui";
+import { Badge, Button, buttonClasses, cx, Dot, Field, Select, type Tone } from "../../components/ui";
 import { plural } from "../../lib/format";
 
 export const COMPLIANCE: Record<ComplianceStatus, { label: string; tone: Tone; hint: string }> = {
@@ -110,6 +110,20 @@ const JOB_TYPES: Record<string, string> = {
   UninstallAgent: "Uninstall the EasyPatch agent",
 };
 
+/** EasyPatch's job types, for filters. */
+export const JOB_TYPE_OPTIONS = Object.entries(JOB_TYPES).map(([value, label]) => ({ value, label }));
+
+/** How a job started (EasyPatch's trigger). */
+export const JOB_TRIGGERS: Record<string, string> = {
+  Manual: "By hand",
+  Scheduled: "On a schedule",
+  System: "By EasyPatch",
+};
+
+export function triggerLabel(trigger: string): string {
+  return JOB_TRIGGERS[trigger] ?? trigger;
+}
+
 export function jobTypeLabel(type: string): string {
   return JOB_TYPES[type] ?? type;
 }
@@ -139,6 +153,9 @@ const JOB_STATUS: Record<string, { label: string; tone: Tone }> = {
   Cancelled: { label: "Cancelled", tone: "neutral" },
   Expired: { label: "Expired", tone: "warn" },
 };
+
+/** EasyPatch's job statuses, for filters. */
+export const JOB_STATUS_OPTIONS = Object.entries(JOB_STATUS).map(([value, s]) => ({ value, label: s.label }));
 
 /** EasyPatch job statuses that still change. */
 const ACTIVE = new Set(["Queued", "Delivered", "Acknowledged", "Running", "WaitingForReboot"]);
@@ -360,5 +377,33 @@ export function Pager({ page, total, size, onPage, previous = "Previous", next =
         </Button>
       </span>
     </div>
+  );
+}
+
+/** A labelled select for a list's filters; the first option is usually "any". */
+export function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+  className,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  className?: string;
+}) {
+  const id = useId();
+  return (
+    <Field label={label} htmlFor={id} className={className}>
+      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </Select>
+    </Field>
   );
 }

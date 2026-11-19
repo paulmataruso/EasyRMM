@@ -25,6 +25,7 @@ import {
   type EasyPatchTarget,
 } from "./patchText";
 import { PatchingOverview } from "./PatchingOverview";
+import { JOB_FILTERS, PatchJobs } from "./PatchJobs";
 import { PatchUpdates } from "./PatchUpdates";
 
 /**
@@ -44,7 +45,19 @@ type PatchingTab = (typeof TABS)[number]["id"];
 /** Where "Open EasyPatch" goes from each tab. */
 const CONSOLE: Record<PatchingTab, EasyPatchTarget> = { overview: {}, devices: { list: "endpoints" }, updates: {}, jobs: { list: "jobs" } };
 
-const CLEARED = { q: null, siteId: null, groupId: null, compliance: null, category: null, state: null, exploited: null, sort: null, page: null, active: null };
+const CLEARED = {
+  q: null,
+  siteId: null,
+  groupId: null,
+  compliance: null,
+  category: null,
+  state: null,
+  exploited: null,
+  sort: null,
+  page: null,
+  active: null,
+  ...JOB_FILTERS,
+};
 
 export function PatchingPage() {
   const url = useUrlState();
@@ -113,7 +126,7 @@ export function PatchingPage() {
             ) : tab === "updates" ? (
               <PatchUpdates />
             ) : (
-              <Jobs onJob={(id) => url.set({ job: id })} />
+              <PatchJobs onJob={(id) => url.set({ job: id })} />
             )}
           </div>
           <PatchJobDialog jobId={jobId} onClose={() => url.set({ job: null })} onJob={(id) => url.set({ job: id })} />
@@ -241,7 +254,6 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
 
   const chosen = selectable.filter((d) => selected.has(d.deviceId));
   const toPatch = chosen.filter((d) => d.link === "linked");
-  const toRestart = toPatch.filter((d) => d.endpoint?.rebootPending);
   const agentless = chosen.filter((d) => d.link === "none");
   // With both kinds chosen, each action says how many devices it acts on.
   const mixed = toPatch.length > 0 && agentless.length > 0;
@@ -299,11 +311,9 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
                   >
                     {mixed ? `Scan ${toPatch.length.toLocaleString()}` : "Scan"}
                   </Button>
-                  {toRestart.length > 0 && (
-                    <Button size="sm" icon={<Power className="size-3.5" aria-hidden />} onClick={() => setRestarting(true)}>
-                      {toRestart.length < chosen.length ? `Restart ${toRestart.length.toLocaleString()}…` : "Restart…"}
-                    </Button>
-                  )}
+                  <Button size="sm" icon={<Power className="size-3.5" aria-hidden />} onClick={() => setRestarting(true)}>
+                    {mixed ? `Restart ${toPatch.length.toLocaleString()}…` : "Restart…"}
+                  </Button>
                   <Button size="sm" variant="primary" icon={<Download className="size-3.5" aria-hidden />} onClick={() => setInstalling(true)}>
                     {mixed ? `Install updates on ${toPatch.length.toLocaleString()}…` : "Install updates…"}
                   </Button>
@@ -438,7 +448,8 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
       <RestartDialog
         open={restarting}
         onClose={() => setRestarting(false)}
-        devices={toRestart.map((d) => ({ id: d.deviceId, name: d.name }))}
+        devices={toPatch.map((d) => ({ id: d.deviceId, name: d.name }))}
+        pendingOnly={toPatch.some((d) => d.endpoint?.rebootPending)}
         onDone={() => setSelected(new Set())}
       />
       <AgentInstallDialog
@@ -452,89 +463,6 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
         From EasyPatch, refreshed every minute. Scans and installs start when each device next checks in with EasyPatch; the EasyPatch agent installs at its
         next check-in with EasyRMM.
       </p>
-    </>
-  );
-}
-
-/** Recent EasyPatch jobs of the devices the caller may see; refreshes quickly while any is running. */
-function Jobs({ onJob }: { onJob: (id: string) => void }) {
-  const url = useUrlState();
-  const organizationId = url.get("organizationId");
-  const which = url.get("active") === "false" ? "all" : "active";
-  const jobs = useList<PatchJobView>(
-    "/patching/jobs",
-    {
-      organizationId: organizationId || undefined,
-      active: which === "active" ? "true" : undefined,
-    },
-    {
-      keepPrevious: true,
-      refetchInterval: (data) => (data?.items.some(isActiveJob) ? 4_000 : 30_000),
-    },
-  );
-  return (
-    <>
-      <Toolbar>
-        <Segmented
-          label="Jobs to show"
-          className="self-end"
-          value={which}
-          onChange={(v) => url.set({ active: v === "all" ? "false" : null })}
-          options={[
-            { value: "active", label: "Still running" },
-            { value: "all", label: "All recent" },
-          ]}
-        />
-        <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v })} />
-      </Toolbar>
-      {jobs.isPending ? (
-        <Spinner />
-      ) : jobs.isError ? (
-        <ErrorState error={jobs.error} onRetry={() => void jobs.refetch()} />
-      ) : jobs.items.length === 0 ? (
-        <Card>
-          <EmptyState title={which === "active" ? "No patch jobs running" : "No patch jobs yet"} icon={<ListChecks className="size-8" aria-hidden />} compact>
-            Scans and installs started here, from a device, or by EasyPatch's own schedules show here while they run.
-          </EmptyState>
-        </Card>
-      ) : (
-        <TableWrap>
-          <table className="table-base">
-            <thead>
-              <tr>
-                <th>Job</th>
-                <th>Status</th>
-                <th className="hidden md:table-cell">Result</th>
-                <th className="hidden lg:table-cell">Requested by</th>
-                <th className="hidden sm:table-cell">Started</th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.items.map((j) => (
-                <tr key={j.id} className="cursor-pointer" onClick={() => onJob(j.id)}>
-                  <td>
-                    <button type="button" className="rounded-sm text-left font-medium hover:text-accent" onClick={(e) => (e.stopPropagation(), onJob(j.id))}>
-                      {jobTypeLabel(j.type)}
-                    </button>
-                    <p className="text-xs text-muted">{j.deviceName}</p>
-                  </td>
-                  <td>
-                    <PatchJobBadge job={j} />
-                    {j.progressMessage && isActiveJob(j) && <p className="mt-1 max-w-xs truncate text-xs text-muted">{j.progressMessage}</p>}
-                  </td>
-                  <td className="hidden text-muted md:table-cell">
-                    {j.errorMessage ? <span className="text-danger">{j.errorMessage}</span> : jobOutcome(j) || "—"}
-                  </td>
-                  <td className="hidden max-w-56 truncate text-muted lg:table-cell">{requester(j.requestedBy)}</td>
-                  <td className="hidden whitespace-nowrap text-muted sm:table-cell" title={formatDateTime(j.createdAt)}>
-                    {formatRelative(j.createdAt)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableWrap>
-      )}
     </>
   );
 }

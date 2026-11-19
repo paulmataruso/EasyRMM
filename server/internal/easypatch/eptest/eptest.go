@@ -402,7 +402,16 @@ func (e *Endpoint) detail() map[string]any {
 	}
 	// As agents 1.9.0 report them: Linux agents have no tray.
 	capabilities := []string{"restart", "self-update", "uninstall"}
-	format, users := "deb", any(nil)
+	if e.CannotRestart {
+		capabilities = capabilities[1:]
+	}
+	format, users, product := "deb", any(nil), any(nil)
+	switch {
+	case e.IsServer:
+		product = "Server"
+	case e.Windows:
+		product = "Workstation"
+	}
 	if e.Windows {
 		capabilities = append(capabilities, "notify-user", "tray", "windows-update-policy", "app-updates", "uninstall-updates", "download-updates")
 		format, users = "msi", 1
@@ -415,7 +424,7 @@ func (e *Endpoint) detail() map[string]any {
 			"servicingPackages": []string{}, "fileOperations": []map[string]any{}, "fileOperationCount": 0, "detailsSupported": false}
 	}
 	return map[string]any{
-		"summary": e.summary(), "dnsDomain": nil, "serialNumber": serial, "manufacturer": "QEMU",
+		"summary": e.summary(), "dnsDomain": nil, "osProductType": product, "serialNumber": serial, "manufacturer": "QEMU",
 		"lastScanAttemptAt": "2026-11-16T14:40:00+00:00", "lastScanError": nil, "rebootReasons": []string{},
 		"rebootPendingSince": since, "installedCount": len(e.InstalledItems), "pendingRebootUpdateCount": 0,
 		"complianceEvaluatedAt": "2026-11-16T14:40:01+00:00", "notes": e.Notes, "esuOverride": e.Esu,
@@ -575,13 +584,25 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.serveHolds(w, r, parts[1:], q)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/jobs":
 		org, _ := uuid.Parse(q.Get("organizationId"))
+		endpoint, _ := uuid.Parse(q.Get("endpointId"))
+		from, _ := time.Parse(time.RFC3339, q.Get("from"))
+		to, _ := time.Parse(time.RFC3339, q.Get("to"))
 		var list []map[string]any
 		for i := len(s.jobs) - 1; i >= 0; i-- {
 			j := s.jobs[i]
 			active := j.Status == "Queued" || j.Status == "Running"
-			if j.Org == org && (q.Get("active") != "true" || active) {
-				list = append(list, j.summary())
+			switch {
+			case j.Org != org, q.Get("active") == "true" && !active,
+				endpoint != uuid.Nil && j.Endpoint != endpoint,
+				q.Get("status") != "" && j.Status != q.Get("status"),
+				q.Get("type") != "" && j.Type != q.Get("type"),
+				// Every job of the fake is started by hand.
+				q.Get("trigger") != "" && q.Get("trigger") != "Manual",
+				!from.IsZero() && j.CreatedAt.Before(from),
+				!to.IsZero() && !j.CreatedAt.Before(to):
+				continue
 			}
+			list = append(list, j.summary())
 		}
 		reply(w, 200, paged(list, pg, size))
 	case parts[0] == "jobs" && len(parts) >= 2:

@@ -731,37 +731,81 @@ func (s *Service) linkedDevices(ctx context.Context, c access.Caller, endpoints 
 	return out, err
 }
 
-// JobsQuery narrows the patching job list.
+// JobsQuery narrows the patching job list: to an organization or one
+// device, jobs still to finish (Active), and EasyPatch's status, type and
+// trigger, and when the job was created ([From, To)).
 type JobsQuery struct {
 	OrganizationID uuid.UUID
+	DeviceID       uuid.UUID
 	Active         bool
+	Status         string
+	Type           string
+	Trigger        string
+	From, To       *time.Time
 }
 
-// Jobs lists recent EasyPatch jobs of devices the caller may see, newest
-// first (at most 200).
-func (s *Service) Jobs(ctx context.Context, c access.Caller, q JobsQuery) ([]JobView, error) {
+// JobList is the newest jobs that match, at most PageSize; Capped says
+// there may be older ones.
+type JobList struct {
+	Items  []JobView `json:"items"`
+	Capped bool      `json:"capped"`
+}
+
+func (q JobsQuery) validate() error {
+	switch {
+	case q.Status != "" && !slices.Contains(JobStatuses, q.Status):
+		return apperr.Invalid("status", "Choose a status.")
+	case q.Type != "" && !slices.Contains(JobTypes, q.Type):
+		return apperr.Invalid("type", "Choose a type.")
+	case q.Trigger != "" && !slices.Contains(JobTriggers, q.Trigger):
+		return apperr.Invalid("trigger", "Choose how it was started.")
+	case q.From != nil && q.To != nil && !q.From.Before(*q.To):
+		return apperr.Invalid("to", "Choose an end after the start.")
+	}
+	return nil
+}
+
+// Jobs lists the newest EasyPatch jobs of devices the caller may see that
+// match, at most PageSize.
+func (s *Service) Jobs(ctx context.Context, c access.Caller, q JobsQuery) (JobList, error) {
 	if !c.CanAnywhere(rbac.PermPatchView) {
-		return nil, apperr.Forbidden()
+		return JobList{}, apperr.Forbidden()
+	}
+	if err := q.validate(); err != nil {
+		return JobList{}, err
 	}
 	r, cl, err := s.conn(ctx)
 	if err != nil {
-		return nil, err
+		return JobList{}, err
 	}
 	if r == nil {
-		return nil, errNotConfigured
+		return JobList{}, errNotConfigured
 	}
-	orgs, err := s.patchOrganizations(ctx, c, q.OrganizationID)
-	if err != nil {
-		return nil, err
+	filter := JobFilter{Active: q.Active, Status: q.Status, Type: q.Type, Trigger: q.Trigger, From: q.From, To: q.To}
+	var orgs []uuid.UUID
+	if q.DeviceID != uuid.Nil {
+		d, err := s.device(ctx, c, q.DeviceID, rbac.PermPatchView)
+		if err != nil {
+			return JobList{}, err
+		}
+		if d.endpointID == nil || d.easyPatchOrg == nil {
+			return JobList{Items: []JobView{}}, nil
+		}
+		filter.EndpointID, orgs = d.endpointID, []uuid.UUID{*d.easyPatchOrg}
+	} else if orgs, err = s.patchOrganizations(ctx, c, q.OrganizationID); err != nil {
+		return JobList{}, err
 	}
 	var jobs []Job
+	capped := false
 	for _, org := range orgs {
-		p, err := cl.Jobs(s.as(ctx, c, RoleReadOnly, org), org, q.Active, 1)
+		filter.OrganizationID = org
+		p, err := cl.Jobs(s.as(ctx, c, RoleReadOnly, org), filter, 1)
 		if err != nil {
 			s.noteError(ctx, err)
-			return nil, epError(err)
+			return JobList{}, epError(err)
 		}
 		jobs = append(jobs, p.Items...)
+		capped = capped || p.TotalCount > len(p.Items)
 	}
 	ids := make([]uuid.UUID, 0, len(jobs))
 	for _, j := range jobs {
@@ -769,7 +813,7 @@ func (s *Service) Jobs(ctx context.Context, c access.Caller, q JobsQuery) ([]Job
 	}
 	devices, err := s.linkedDevices(ctx, c, ids)
 	if err != nil {
-		return nil, err
+		return JobList{}, err
 	}
 	out := []JobView{}
 	for _, j := range jobs {
@@ -780,9 +824,9 @@ func (s *Service) Jobs(ctx context.Context, c access.Caller, q JobsQuery) ([]Job
 	}
 	slices.SortFunc(out, func(a, b JobView) int { return b.CreatedAt.Compare(a.CreatedAt) })
 	if len(out) > PageSize {
-		out = out[:PageSize]
+		out, capped = out[:PageSize], true
 	}
-	return out, nil
+	return JobList{Items: out, Capped: capped}, nil
 }
 
 // job reads a job and the device it ran on, if the caller may see it.

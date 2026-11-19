@@ -859,11 +859,13 @@ func TestActions(t *testing.T) {
 	}
 
 	// Jobs, as each user may see them.
-	jobs, err := f.svc.Jobs(ctx, f.admin, JobsQuery{})
-	if err != nil || len(jobs) != 5 || jobs[0].CreatedAt.Before(jobs[4].CreatedAt) || jobs[0].DeviceName == "" || !jobs[0].CanManage {
+	list, err := f.svc.Jobs(ctx, f.admin, JobsQuery{})
+	jobs := list.Items
+	if err != nil || len(jobs) != 5 || list.Capped || jobs[0].CreatedAt.Before(jobs[4].CreatedAt) || jobs[0].DeviceName == "" || !jobs[0].CanManage {
 		t.Fatalf("jobs: %d %+v, %v", len(jobs), jobs, err)
 	}
-	tj, _ := f.svc.Jobs(ctx, f.tech, JobsQuery{Active: true})
+	tl, _ := f.svc.Jobs(ctx, f.tech, JobsQuery{Active: true})
+	tj := tl.Items
 	for _, j := range tj {
 		if j.DeviceID != f.web {
 			t.Fatalf("technician sees %s", j.DeviceName)
@@ -872,14 +874,62 @@ func TestActions(t *testing.T) {
 	if len(tj) != 4 {
 		t.Fatalf("technician jobs: %d", len(tj))
 	}
-	if vj, _ := f.svc.Jobs(ctx, f.viewer, JobsQuery{OrganizationID: f.acme}); len(vj) != 5 || vj[0].CanManage {
+	if vj, _ := f.svc.Jobs(ctx, f.viewer, JobsQuery{OrganizationID: f.acme}); len(vj.Items) != 5 || vj.Items[0].CanManage {
 		t.Fatalf("viewer jobs: %+v", vj)
 	}
-	if oj, _ := f.svc.Jobs(ctx, f.outsider, JobsQuery{}); len(oj) != 0 {
+	if oj, _ := f.svc.Jobs(ctx, f.outsider, JobsQuery{}); len(oj.Items) != 0 {
 		t.Fatalf("outsider jobs: %+v", oj)
 	}
 	_, err = f.svc.Jobs(ctx, f.none, JobsQuery{})
 	wantErr(t, err, apperr.KindForbidden, "")
+
+	// Filters reach EasyPatch: a type, a status, how it started, a device and
+	// when it was created.
+	byType := func(q JobsQuery) []string {
+		t.Helper()
+		l, err := f.svc.Jobs(ctx, f.admin, q)
+		if err != nil {
+			t.Fatalf("jobs %+v: %v", q, err)
+		}
+		var out []string
+		for _, j := range l.Items {
+			out = append(out, j.DeviceName+":"+j.Type)
+		}
+		return out
+	}
+	scanJobs := byType(JobsQuery{Type: "UpdateScan"})
+	if len(scanJobs) == 0 || len(scanJobs) == 5 {
+		t.Fatalf("scans: %v", scanJobs)
+	}
+	for _, j := range scanJobs {
+		if !strings.HasSuffix(j, ":UpdateScan") {
+			t.Fatalf("scans: %v", scanJobs)
+		}
+	}
+	if got := byType(JobsQuery{Trigger: "Scheduled"}); len(got) != 0 {
+		t.Fatalf("scheduled jobs: %v", got)
+	}
+	if got := byType(JobsQuery{Status: "Completed"}); len(got) != 0 {
+		t.Fatalf("completed jobs: %v", got)
+	}
+	if got := byType(JobsQuery{DeviceID: f.db}); len(got) != 1 || !strings.HasPrefix(got[0], "db-01:") {
+		t.Fatalf("one device's jobs: %v", got)
+	}
+	future := time.Now().Add(time.Hour)
+	if got := byType(JobsQuery{From: &future}); len(got) != 0 {
+		t.Fatalf("jobs from the future: %v", got)
+	}
+	if got := byType(JobsQuery{To: &future}); len(got) != 5 {
+		t.Fatalf("jobs before the future: %v", got)
+	}
+	// A device the caller may not see, and filters EasyPatch would refuse.
+	_, err = f.svc.Jobs(ctx, f.tech, JobsQuery{DeviceID: f.db})
+	wantErr(t, err, apperr.KindNotFound, "")
+	for field, q := range map[string]JobsQuery{"status": {Status: "Done"}, "type": {Type: "Reboot"}, "trigger": {Trigger: "Cron"},
+		"to": {From: &future, To: &future}} {
+		_, err = f.svc.Jobs(ctx, f.admin, q)
+		wantField(t, err, field, "Choose")
+	}
 
 	var webJob, dbJob uuid.UUID
 	for _, j := range jobs {

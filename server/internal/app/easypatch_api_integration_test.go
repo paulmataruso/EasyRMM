@@ -216,6 +216,26 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	wantStatus(t, admin.do("GET", "/api/v1/patching/jobs?active=maybe", nil), http.StatusUnprocessableEntity, "validation_failed")
 	wantStatus(t, admin.do("GET", "/api/v1/patching/jobs?organizationId=x", nil), http.StatusUnprocessableEntity, "validation_failed")
+	// Filters (one-product plan, C3): by device, type and when it was created.
+	var filtered struct {
+		Items []struct {
+			Type string `json:"type"`
+		} `json:"items"`
+		Capped bool `json:"capped"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/jobs?deviceId="+device+"&type=UpdateScan&from=2020-01-01T00:00:00Z", nil, &filtered)
+	if len(filtered.Items) == 0 || filtered.Capped {
+		t.Fatalf("filtered jobs: %+v", filtered)
+	}
+	for _, j := range filtered.Items {
+		if j.Type != "UpdateScan" {
+			t.Fatalf("filtered jobs: %+v", filtered)
+		}
+	}
+	for _, q := range []string{"from=yesterday", "to=2026-13-01T00:00:00Z", "status=Done", "type=Reboot", "trigger=Cron", "deviceId=x",
+		"from=2026-11-02T00:00:00Z&to=2026-11-01T00:00:00Z"} {
+		wantStatus(t, admin.do("GET", "/api/v1/patching/jobs?"+q, nil), http.StatusUnprocessableEntity, "validation_failed")
+	}
 	var job struct {
 		Summary struct {
 			Status string `json:"status"`
@@ -272,12 +292,62 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	wantStatus(t, admin.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "scheduledAt": "2026-01-01T00:00:00Z"}),
 		http.StatusUnprocessableEntity, "validation_failed")
+	// How users are asked, and whether a restart need be pending (C3).
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "confirmServers": []string{device},
+		"mode": "PromptWithDeadline", "deadlineMinutes": 120, "expiresAfterMinutes": 60}, &res)
+	if res.Succeeded != 1 {
+		t.Fatalf("restart with a deadline: %+v", res)
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/restart/plan", map[string]any{"deviceIds": []string{device}, "condition": "Always"}, &plan)
+	if !plan.Devices[0].Restart {
+		t.Fatalf("restart plan, always: %+v", plan)
+	}
+	for _, bad := range []map[string]any{{"mode": "Reboot"}, {"condition": "Sometimes"}, {"countdownMinutes": 0}, {"mode": "PromptWithDeadline", "deadlineMinutes": 5},
+		{"expiresAfterMinutes": 2000}} {
+		bad["deviceIds"], bad["confirmServers"] = []string{device}, []string{device}
+		wantStatus(t, admin.do("POST", "/api/v1/patching/restart", bad), http.StatusUnprocessableEntity, "validation_failed")
+	}
+	wantStatus(t, admin.do("POST", "/api/v1/patching/restart/plan", map[string]any{"deviceIds": []string{device}, "condition": "Sometimes"}),
+		http.StatusUnprocessableEntity, "validation_failed")
 
 	// The device's Patches tab (one-product plan, C1). web-01 is a Linux
 	// endpoint: EasyPatch refuses messages and removals there.
 	var guid string
 	ep.Set(func() { guid = endpoint.Updates[0]["updateGuid"].(uuid.UUID).String() })
 	dp := "/api/v1/patching/devices/" + device
+
+	// Requests refused before EasyPatch is asked: a body that is not an
+	// object, an id that is not one, a scope that is not one.
+	notObject := []int{1}
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/api/v1/patching/restart/plan"}, {"POST", "/api/v1/patching/restart"}, {"POST", "/api/v1/patching/stop"},
+		{"POST", "/api/v1/patching/allow"}, {"POST", dp + "/exclusions"}, {"POST", dp + "/updates/" + guid + "/remove"},
+		{"POST", "/api/v1/patching/notify"}, {"POST", "/api/v1/patching/agent-update"},
+		{"POST", "/api/v1/patching/updates/" + guid + "/remove"}, {"POST", "/api/v1/patching/updates/" + guid + "/holds"},
+	} {
+		if r := admin.do(c.method, c.path, notObject); r.status != http.StatusBadRequest && r.status != http.StatusUnprocessableEntity {
+			t.Errorf("%s %s with an array: %d %s", c.method, c.path, r.status, r.body)
+		}
+	}
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/v1/patching/devices/nope/install-preview"}, {"POST", "/api/v1/patching/devices/nope/exclusions"},
+		{"DELETE", "/api/v1/patching/devices/nope/exclusions/" + guid}, {"POST", "/api/v1/patching/devices/nope/updates/" + guid + "/remove"},
+		{"GET", "/api/v1/patching/updates/nope"}, {"GET", "/api/v1/patching/updates/nope/devices"},
+		{"POST", "/api/v1/patching/updates/nope/remove"}, {"POST", "/api/v1/patching/updates/nope/holds"},
+		{"POST", "/api/v1/patching/updates/nope/holds/" + guid + "/release"},
+	} {
+		if r := admin.do(c.method, c.path, map[string]any{}); r.status != http.StatusNotFound && r.status != http.StatusUnprocessableEntity {
+			t.Errorf("%s %s: %d %s", c.method, c.path, r.status, r.body)
+		}
+	}
+	for _, path := range []string{"/api/v1/patching/updates/" + guid + "?organizationId=x", "/api/v1/patching/updates/" + guid + "/devices?siteId=x"} {
+		wantStatus(t, admin.do("GET", path, nil), http.StatusUnprocessableEntity, "validation_failed")
+	}
+	var exploited struct {
+		Items []map[string]any `json:"items"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/updates?knownExploited=true&organizationId="+acme, nil, &exploited)
+
 	admin.expect(http.StatusNoContent, "POST", dp+"/exclusions", map[string]any{"updateId": guid, "reason": "breaks printing"}, nil)
 	wantStatus(t, admin.do("POST", dp+"/exclusions", map[string]any{}), http.StatusUnprocessableEntity, "validation_failed")
 	var preview struct {
@@ -556,7 +626,7 @@ func TestEasyPatchAPI(t *testing.T) {
 		got = append(got, a.Action)
 	}
 	if strings.Join(got, ",") != "patch.release_hold,patch.hold,patch.install,patch.install,patch.agent_update,patch.include,patch.exclude,"+
-		"patch.restart,patch.retry,patch.cancel,patch.install,patch.scan" {
+		"patch.restart,patch.restart,patch.retry,patch.cancel,patch.install,patch.scan" {
 		t.Fatalf("patch audit: %v", got)
 	}
 

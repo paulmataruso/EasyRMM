@@ -1251,7 +1251,7 @@ export interface PatchEndpointDetail {
 }
 
 /** What EasyPatch agents report they can do. */
-export const PATCH_AGENT_CAN = { notifyUser: "notify-user", uninstallUpdates: "uninstall-updates", tray: "tray" } as const;
+export const PATCH_AGENT_CAN = { notifyUser: "notify-user", uninstallUpdates: "uninstall-updates", tray: "tray", restart: "restart" } as const;
 
 /** Whether the agent can update itself, and to what. */
 export interface PatchAgentUpdate {
@@ -1479,12 +1479,24 @@ export interface PatchJobItem {
   completedAt: string | null;
 }
 
+/** The newest jobs that match, at most 200; `capped` when older ones were left out. */
+export interface PatchJobList {
+  items: PatchJobView[];
+  capped: boolean;
+}
+
 export interface PatchJobDetail {
   summary: PatchJob;
   installMode: string;
   notBefore: string | null;
   deliveredAt: string | null;
+  acknowledgedAt: string | null;
   lastProgressAt: string | null;
+  /** How many times the job was handed to the agent. */
+  deliveryCount: number;
+  /** The job this one runs again. */
+  retryOfJobId: string | null;
+  cancelRequestedAt: string | null;
   items: PatchJobItem[];
   events: { id: number; type: string; severity: string; message: string; createdAt: string }[];
   deviceId: string;
@@ -1545,7 +1557,7 @@ export interface EasyPatchSignInSecret extends EasyPatchSignInClient {
   clientSecret: string;
 }
 
-/** What EasyRMM's restart (only if a restart is pending) would do to one device. */
+/** What a restart would do to one device. */
 export interface RestartCheck {
   deviceId: string;
   deviceName: string;
@@ -1563,8 +1575,20 @@ export interface RestartPlan {
   serversKnown: boolean;
 }
 
+/** How a restart treats the people signed in. */
+export type RestartMode = "Countdown" | "PromptWithDeadline" | "PromptNoDeadline" | "Immediate";
+
 export interface RestartInput {
   deviceIds: string[];
+  mode?: RestartMode;
+  /** OnlyIfPending (the default): only if a restart is still pending when the job runs; Always: whatever the device reports. */
+  condition?: "OnlyIfPending" | "Always";
+  /** Countdown: 1 to 60 minutes. */
+  countdownMinutes?: number;
+  /** PromptWithDeadline: 15 minutes to 7 days. */
+  deadlineMinutes?: number;
+  /** How long a restart waits for an offline device: 15 minutes to 24 hours (EasyPatch's default is two hours). */
+  expiresAfterMinutes?: number;
   scheduledAt?: string;
   /** The servers the person ticked; any server not listed stops the whole request. */
   confirmServers?: string[];

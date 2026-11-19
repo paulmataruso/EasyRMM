@@ -193,7 +193,7 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
           />
           {d.canManage && (
             <div className="flex flex-wrap gap-2">
-              {e?.summary.rebootPending && (
+              {(e?.summary.rebootPending || agentCan(d, PATCH_AGENT_CAN.restart)) && (
                 <Button icon={<Power className="size-4" aria-hidden />} onClick={() => setRestarting(true)}>
                   Restart…
                 </Button>
@@ -260,7 +260,7 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
         preview
         onDone={toJobs}
       />
-      <RestartDialog open={restarting} onClose={() => setRestarting(false)} devices={target} onDone={toJobs} />
+      <RestartDialog open={restarting} onClose={() => setRestarting(false)} devices={target} pendingOnly={Boolean(e?.summary.rebootPending)} onDone={toJobs} />
       <StopPatchingDialog open={stopping} onClose={() => setStopping(false)} devices={target} />
       <ExcludeDialog device={device} update={excluding} onClose={() => setExcluding(null)} />
       <RemoveUpdateDialog device={device} update={removing} onClose={() => setRemoving(null)} onDone={toJobs} />

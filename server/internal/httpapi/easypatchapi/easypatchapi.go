@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -275,15 +276,29 @@ func (a *API) jobs(w http.ResponseWriter, r *http.Request) error {
 	if q.OrganizationID, err = httpapi.QueryID(r, "organizationId"); err != nil {
 		return err
 	}
-	switch r.URL.Query().Get("active") {
+	if q.DeviceID, err = httpapi.QueryID(r, "deviceId"); err != nil {
+		return err
+	}
+	v := r.URL.Query()
+	switch v.Get("active") {
 	case "", "false":
 	case "true":
 		q.Active = true
 	default:
 		return apperr.Invalid("active", "must be true or false")
 	}
+	q.Status, q.Type, q.Trigger = v.Get("status"), v.Get("type"), v.Get("trigger")
+	for name, t := range map[string]**time.Time{"from": &q.From, "to": &q.To} {
+		if raw := v.Get(name); raw != "" {
+			at, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				return apperr.Invalid(name, "Give a time as in 2026-11-18T09:00:00Z.")
+			}
+			*t = &at
+		}
+	}
 	list, err := a.svc.Jobs(r.Context(), httpapi.Caller(r), q)
-	return ok(w, map[string]any{"items": list}, err)
+	return ok(w, list, err)
 }
 
 func (a *API) job(w http.ResponseWriter, r *http.Request) error {
@@ -316,11 +331,13 @@ func (a *API) retryJob(w http.ResponseWriter, r *http.Request) error {
 func (a *API) planRestart(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
 		DeviceIDs []uuid.UUID `json:"deviceIds"`
+		// Condition is OnlyIfPending (the default) or Always.
+		Condition string `json:"condition"`
 	}
 	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
 		return err
 	}
-	p, err := a.svc.PlanRestart(r.Context(), httpapi.Caller(r), in.DeviceIDs)
+	p, err := a.svc.PlanRestart(r.Context(), httpapi.Caller(r), in.DeviceIDs, in.Condition)
 	return ok(w, p, err)
 }
 

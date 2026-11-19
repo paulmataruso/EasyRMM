@@ -411,6 +411,23 @@ compliance trend (reports, C5) and open alerts (C7), and removing and
 holding in one step (two steps now). The bundle test finds the update in the
 list, opens its page, holds it and releases the hold.*
 
+*Done (C3): **Jobs** filters as EasyPatch's job list did (type, status,
+trigger, requested since), over the newest 200 jobs that match in the
+organizations the caller sees, and says when older ones are left out. A job
+shows its trigger, when it was sent and how often, when a queued job gives
+up, the job a retry runs again, a cancellation asked for, a time-out and its
+progress. **Restart…** takes EasyPatch's restart options: countdown (1 to 60
+minutes), prompt with a deadline (15 minutes to 7 days) or without, or
+immediate; only if pending or always; and how long an offline device gets
+(15 minutes to 24 hours). With always, EasyRMM reads each endpoint
+(at most 100) for its product type, so servers still need a tick, and for
+the restart capability. It is offered on any patched device. Planning is a
+ReadOnly statement, the restart an Admin statement for the devices'
+organizations. Not ported: forcing a restart past another job (EasyRMM
+never forces), and recurring restarts, which are part of the policy (C4).
+The bundle test filters the install on the Jobs tab, opens it, and plans a
+restart of the machine whether or not one is pending, without sending it.*
+
 EasyPatch's console is about 18,800 lines of TypeScript without tests. Each
 area is ported with its tests and compared against the old page.
 

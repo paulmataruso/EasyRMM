@@ -181,7 +181,7 @@ func TestClient(t *testing.T) {
 		t.Fatalf("bulk install body = %+v", r[0].Body)
 	}
 
-	jobs, err := c.Jobs(ctx, org, true, 1)
+	jobs, err := c.Jobs(ctx, JobFilter{OrganizationID: org, Active: true}, 1)
 	if err != nil || jobs.TotalCount != 4 {
 		t.Fatalf("Jobs = %+v, %v", jobs, err)
 	}

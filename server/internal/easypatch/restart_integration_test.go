@@ -25,15 +25,15 @@ func TestRestart(t *testing.T) {
 	})
 
 	// Who may restart what.
-	_, err := f.svc.PlanRestart(ctx, f.viewer, []uuid.UUID{f.web})
+	_, err := f.svc.PlanRestart(ctx, f.viewer, []uuid.UUID{f.web}, "")
 	wantErr(t, err, apperr.KindForbidden, "")
-	_, err = f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.web, f.db})
+	_, err = f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.web, f.db}, "")
 	wantErr(t, err, apperr.KindNotFound, "")
-	_, err = f.svc.PlanRestart(ctx, f.tech, nil)
+	_, err = f.svc.PlanRestart(ctx, f.tech, nil, "")
 	wantField(t, err, "deviceIds", "from 1 to 1000")
 
 	// The plan: servers are marked; devices that cannot restart say why.
-	plan, err := f.svc.PlanRestart(ctx, f.admin, []uuid.UUID{f.web, f.db, f.app, f.lab, f.web})
+	plan, err := f.svc.PlanRestart(ctx, f.admin, []uuid.UUID{f.web, f.db, f.app, f.lab, f.web}, "")
 	if err != nil || !plan.ServersKnown || len(plan.Devices) != 4 {
 		t.Fatalf("plan: %+v, %v", plan, err)
 	}
@@ -93,7 +93,7 @@ func TestRestart(t *testing.T) {
 		t.Fatalf("nothing pending: %+v, %v", res, err)
 	}
 	f.ep.Set(func() { f.e1.RebootPending, f.e1.CannotRestart = true, true })
-	if plan, err := f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.web}); err != nil || plan.Devices[0].Restart ||
+	if plan, err := f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.web}, ""); err != nil || plan.Devices[0].Restart ||
 		!strings.Contains(plan.Devices[0].Reason, "cannot restart") {
 		t.Fatalf("agent that cannot restart: %+v, %v", plan, err)
 	}
@@ -126,7 +126,7 @@ func TestRestart(t *testing.T) {
 	// confirmed, and the pending restart comes from its endpoint list.
 	f.ep.Set(func() { f.ep.Version = "1.9.0" })
 	f.svc.fleet.clear()
-	plan, err = f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.web})
+	plan, err = f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.web}, "")
 	if err != nil || plan.ServersKnown || !plan.Devices[0].Restart || !plan.Devices[0].Server {
 		t.Fatalf("plan with EasyPatch 1.9.0: %+v, %v", plan, err)
 	}
@@ -142,8 +142,114 @@ func TestRestart(t *testing.T) {
 	if _, err := f.svc.CheckConnection(ctx); err != nil {
 		t.Fatal(err)
 	}
-	_, err = f.svc.PlanRestart(ctx, f.admin, []uuid.UUID{f.web})
+	_, err = f.svc.PlanRestart(ctx, f.admin, []uuid.UUID{f.web}, "")
 	wantErr(t, err, apperr.KindConflict, "easypatch_read_only")
+}
+
+// TestRestartOptions: how a restart asks the people signed in, whether it
+// needs a pending restart, and how long it waits for an offline computer
+// (one-product plan, C3).
+func TestRestartOptions(t *testing.T) {
+	f := newPatching(t)
+	ctx := f.ctx
+	f.ep.Set(func() {
+		f.ep.Version = "1.10.0"
+		f.e1.RebootPending = true
+	})
+	n := func(v int) *int { return &v }
+	web := []uuid.UUID{f.web}
+
+	// What EasyPatch would refuse is refused first, and nothing is sent.
+	for field, o := range map[string]RestartOptions{
+		"mode":                {Mode: "Reboot"},
+		"condition":           {Condition: "Sometimes"},
+		"countdownMinutes":    {CountdownMinutes: n(61)},
+		"deadlineMinutes":     {Mode: "PromptWithDeadline", DeadlineMinutes: n(10)},
+		"expiresAfterMinutes": {ExpiresAfterMinutes: n(14)},
+	} {
+		_, err := f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: web, RestartOptions: o})
+		wantField(t, err, field, "Choose")
+	}
+	_, err := f.svc.PlanRestart(ctx, f.tech, web, "Sometimes")
+	wantField(t, err, "condition", "Choose")
+	if n := len(f.ep.RequestsTo("POST", "/api/v1/endpoints/bulk/restart")); n != 0 {
+		t.Fatalf("refused restarts sent %d requests", n)
+	}
+
+	// A prompt with a deadline: minutes the mode does not use are dropped.
+	res, err := f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: web, RestartOptions: RestartOptions{
+		Mode: "PromptWithDeadline", DeadlineMinutes: n(480), CountdownMinutes: n(9), ExpiresAfterMinutes: n(60), Force: true}})
+	if err != nil || res.Succeeded != 1 {
+		t.Fatalf("prompt with a deadline: %+v, %v", res, err)
+	}
+	reqs := f.ep.RequestsTo("POST", "/api/v1/endpoints/bulk/restart")
+	sent := reqs[len(reqs)-1].Body["restart"].(map[string]any)
+	if sent["mode"] != "PromptWithDeadline" || sent["condition"] != "OnlyIfPending" || sent["deadlineMinutes"] != float64(480) ||
+		sent["countdownMinutes"] != nil || sent["expiresAfterMinutes"] != float64(60) || sent["force"] != false {
+		t.Fatalf("restart sent: %+v", sent)
+	}
+	got := f.audits("patch.restart")
+	if last := got[len(got)-1]; last.Details["mode"] != "when a signed-in user agrees, at the latest after 480 minutes" ||
+		last.Details["expiresAfterMinutes"] != float64(60) || last.Details["condition"] != "only if a restart is pending" {
+		t.Fatalf("restart audit: %+v", last.Details)
+	}
+	for mode, want := range map[string]string{"Immediate": "at once", "PromptNoDeadline": "when a signed-in user agrees",
+		"Countdown": "after a 15-minute countdown"} {
+		if _, err := f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: web,
+			RestartOptions: RestartOptions{Mode: mode, CountdownMinutes: n(15), DeadlineMinutes: n(60)}}); err != nil {
+			t.Fatal(err)
+		}
+		got := f.audits("patch.restart")
+		if last := got[len(got)-1]; last.Details["mode"] != want {
+			t.Fatalf("%s audit: %+v", mode, last.Details)
+		}
+	}
+
+	// Whether or not a restart is pending: servers are told apart by their
+	// product type, and agents that cannot restart say so.
+	f.ep.Set(func() {
+		f.e1.RebootPending = false
+		f.e2.IsServer = true
+	})
+	if plan, err := f.svc.PlanRestart(ctx, f.admin, []uuid.UUID{f.web, f.db}, ""); err != nil || plan.Devices[0].Restart || plan.Devices[1].Restart {
+		t.Fatalf("nothing pending: %+v, %v", plan, err)
+	}
+	plan, err := f.svc.PlanRestart(ctx, f.admin, []uuid.UUID{f.web, f.db}, "Always")
+	if err != nil || len(plan.Devices) != 2 {
+		t.Fatalf("always: %+v, %v", plan, err)
+	}
+	if c := plan.Devices[0]; !c.Restart || c.Server || !c.Online {
+		t.Fatalf("web-01, always: %+v", c)
+	}
+	if c := plan.Devices[1]; !c.Restart || !c.Server {
+		t.Fatalf("db-01, always: %+v", c)
+	}
+	always := RestartOptions{Condition: "Always"}
+	_, err = f.svc.Restart(ctx, f.admin, RestartInput{DeviceIDs: []uuid.UUID{f.web, f.db}, RestartOptions: always})
+	wantField(t, err, "confirmServers", "These are servers; confirm restarting them: db-01.")
+	res, err = f.svc.Restart(ctx, f.admin, RestartInput{DeviceIDs: []uuid.UUID{f.web, f.db}, RestartOptions: always, ConfirmServers: []uuid.UUID{f.db}})
+	if err != nil || res.Succeeded != 2 {
+		t.Fatalf("restart always: %+v, %v", res, err)
+	}
+	reqs = f.ep.RequestsTo("POST", "/api/v1/endpoints/bulk/restart")
+	if sent := reqs[len(reqs)-1].Body["restart"].(map[string]any); sent["condition"] != "Always" {
+		t.Fatalf("restart always sent: %+v", sent)
+	}
+	got = f.audits("patch.restart")
+	if last := got[len(got)-1]; last.Details["condition"] != "always" {
+		t.Fatalf("restart always audit: %+v", last.Details)
+	}
+	f.ep.Set(func() { f.e1.CannotRestart = true })
+	if plan, err := f.svc.PlanRestart(ctx, f.tech, web, "Always"); err != nil || plan.Devices[0].Restart ||
+		!strings.Contains(plan.Devices[0].Reason, "cannot restart") {
+		t.Fatalf("always, agent that cannot restart: %+v, %v", plan, err)
+	}
+	many := make([]uuid.UUID, maxAlwaysRestart+1)
+	for i := range many {
+		many[i] = uuid.New()
+	}
+	_, err = f.svc.PlanRestart(ctx, f.admin, many, "Always")
+	wantField(t, err, "deviceIds", "at most 100 devices")
 }
 
 func TestRetryJob(t *testing.T) {
