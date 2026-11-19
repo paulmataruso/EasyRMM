@@ -680,6 +680,34 @@ the person's.
 6. signing in again asks for the second factor;
 7. `easyrmm-server recover` signs in with Authentik stopped.
 
+*Done (A), [ADR-0044](adr/0044-authentik-when-chosen.md): as above, with
+these differences. **The invitation** cannot be made by `setup.sh` itself,
+which runs before Authentik exists: `setup.sh` decides it (id, email,
+expiry) and an `authentik-setup` service, run after each start, creates it
+and sets what blueprints cannot (no changing one's email or username,
+initials as avatars). Authentik uses an invitation up when its link is
+**opened**; a half-done sign-up can be finished in the same browser.
+`--with-authentik` refuses TLS offload, since the edge must hold Authentik's
+name, and the administrator's email becomes ACME's account address when none
+is given. The recovery link is valid for 15 minutes and is stored as a hash
+(migration 00021, which also marks the managed provider). Authentik's
+health checks allow 15 minutes for its first start, which migrates its
+database, so the first `docker compose up -d` waits for it. **Found:**
+Authentik 2026.8 refuses every grant a provider does not list, so the
+blueprint lists the code grant; its email scope sends
+`email_verified: false`, so the provider trusts the email (it is fixed by
+the invitation and cannot be changed); authenticator apps show the issuer
+"authentik", which 2026.8.5 does not let a stage change. `make e2e-authentik`
+passes all seven steps locally (CI's *Authentik end to end* has not run on
+GitHub yet). In step 3, "patching works" means the bundled engine reads the
+new organization's (empty) fleet and keeps an alert rule for it; enrolling
+and patching a machine stays the bundle test's. The test goes through
+Authentik's pages a stage at a time and reloads when Chromium drops a
+request because the host's network interfaces changed (other containers on
+a shared machine). Not verified: ACME for Authentik's name, the hairpin
+through a real public address, WebAuthn as Authentik's factor, and
+upgrading Authentik in place.*
+
 ### R. Retire what one product no longer needs
 
 Once S has shipped, these go.

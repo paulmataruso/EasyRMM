@@ -176,6 +176,59 @@ Devices join with the EasyRMM agent, which installs MeshAgent from this
 server: see [Installing the EasyRMM agent](agents.md). The image includes the
 Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).
 
+## Sign-in with Authentik
+
+With `--with-authentik`, everyone signs in to EasyRMM through
+[Authentik](https://goauthentik.io), running in this deployment, with a
+second factor on every sign-in ([ADR-0044](../architecture/adr/0044-authentik-when-chosen.md)).
+
+```bash
+sudo ./scripts/setup.sh --hostname rmm.example.com --with-authentik
+# Sign-in name for Authentik (such as auth.example.com): auth.example.com
+# Administrator's email address: you@example.com
+sudo docker compose up -d
+```
+
+`setup.sh` prints an invitation link for the administrator. Point DNS for
+Authentik's name at the server as well. The first `docker compose up -d`
+waits for Authentik's first start, a few minutes while it sets up its
+database; then open the link. Choose a name and a password, set up an
+authenticator app or a security key, and you land in EasyRMM as its super
+administrator. There is no setup token and no first-run page.
+
+* **The invitation** is valid for 7 days and once. Authentik uses it up
+  when the link is opened; a sign-up left half-way can be finished in the
+  same browser. For another, run
+  `sudo ./scripts/setup.sh --new-invitation`, then `sudo docker compose up -d`.
+* **Other people** are invited in EasyRMM as usual (Settings → Users), and
+  sign in with an Authentik account with the same email address, which
+  Authentik's administrator makes. Roles are granted in EasyRMM only:
+  Authentik's groups never grant any.
+* **Authentik's own administrator** is `akadmin`, with the password in
+  `/srv/easyrmm/authentik/secrets/akadmin-password`. Its console is at
+  `https://auth.example.com/if/admin/`.
+* **When Authentik is down,** EasyRMM's sign-in through it fails with
+  "Sign-in is not answering". A super administrator can still get in with a
+  one-time link, valid for 15 minutes:
+
+  ```bash
+  sudo docker compose exec server easyrmm-server recover
+  # several super administrators: add --email you@example.com
+  ```
+
+  Using it is recorded in the audit log.
+
+Authentik's settings are in `.env`: `EASYRMM_AUTHENTIK_HOSTNAME`,
+`EASYRMM_AUTHENTIK_ADMIN_EMAIL`, and the secrets
+`EASYRMM_AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_SECRET_KEY` and
+`AUTHENTIK_DB_PASSWORD`. Its data is the `authentik` database in the same
+PostgreSQL, and `/srv/easyrmm/authentik/`; back both up with the rest.
+Settings → Single sign-on shows the Authentik provider as set by the
+deployment, so it is changed only through `.env`. EasyRMM's edge holds
+Authentik's name with its own certificate, so `--with-authentik` does not
+work with TLS offload. Authentik listens on loopback only:
+`127.0.0.1:18280` and `18243` (its server) and `18281` (its worker).
+
 ## Retention
 
 | Variable | Default | Meaning |

@@ -205,6 +205,22 @@ All notable changes to this project are documented here. The format follows
   reason shown. The deployment's engine must not patch anything yet.
   Guide: `docs/operations/import-easypatch.md`. `make e2e-import` imports a
   real EasyPatch 1.10.0 server and agent.
+- **Sign-in with Authentik** (one-product plan, phase A; ADR-0044):
+  `scripts/setup.sh --with-authentik` asks for Authentik's name and the
+  administrator's email, and prints an invitation link. After
+  `docker compose up -d`, the link makes the administrator's Authentik
+  account (name, password, an authenticator app or security key) and lands
+  them in EasyRMM as its super administrator, without a setup token or
+  first-run page. Authentik 2026.8.5 runs from the same compose file on
+  loopback only (its database in the same PostgreSQL), behind EasyRMM's
+  edge on its own name, with update checks, analytics and error reports
+  off. EasyRMM's provider for it is set by the deployment and shown locked
+  in Settings → Single sign-on, and its calls to Authentik go to its own
+  edge on loopback. Authentik's groups never grant roles.
+  `setup.sh --new-invitation` issues another invitation.
+- **`easyrmm-server recover`** prints a one-time sign-in link for a super
+  administrator, valid for 15 minutes, for when single sign-on is not
+  working. Audited as `auth.recovery_link`, and each use as `auth.login`.
 - **Organization time zones**: organizations have a time zone (default UTC;
   the browser's for a new one), which patching reports use.
 - **Stop patching for a device**: the device's Patches tab can stop

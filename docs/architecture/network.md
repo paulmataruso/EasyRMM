@@ -12,6 +12,8 @@ All containers use `network_mode: host`. Defaults below are configurable.
 | 18080/tcp | `127.0.0.1` | easyrmm-server | No | Only in `offload` mode, behind an upstream NGINX |
 | 18081/tcp | `127.0.0.1` | easyrmm-server | No | Liveness (`/healthz`) and readiness (`/readyz`) probes used by the container health check |
 | 19443/tcp, 19080/tcp | `127.0.0.1` | EasyPatch's Caddy | No | Only when EasyPatch shares the server: EasyRMM's edge passes EasyPatch's name through to them (ADR-0035, [easypatch-cohost.md](../deployment/easypatch-cohost.md)) |
+| 18280/tcp, 18243/tcp | `127.0.0.1` | authentik-server | No | Only with `setup.sh --with-authentik`: EasyRMM's edge serves Authentik's name and forwards it to 18280 (ADR-0044). Metrics are off |
+| 18281/tcp | `127.0.0.1` | authentik-worker | No | Only with `--with-authentik`: the worker's health check |
 
 Endpoints only make **outbound** connections to 443. No inbound endpoint
 connectivity is ever required.
@@ -27,6 +29,7 @@ MeshCentral features that would open more ports are disabled: HTTP redirect
 | `mesh.rmm.example.com` (configurable) | MeshCentral agents and embedded remote sessions (separate browser origin, ADR-0004) |
 | `patch.example.com` (optional) | EasyPatch on the same server (`EASYRMM_EASYPATCH_HOSTNAME`): passed through by SNI, still encrypted, to EasyPatch's own Caddy (ADR-0035) |
 | An imported EasyPatch's names (optional) | `EASYRMM_PATCHING_AGENT_HOSTNAMES`: its agents keep the address they enrolled with. EasyRMM's edge serves them with TLS like its own names, sends the EasyPatch agents' paths to the patching engine, and sends anything else to the console's patching pages |
+| `auth.example.com` (optional) | Authentik, with `setup.sh --with-authentik` (`EASYRMM_AUTHENTIK_HOSTNAME`): EasyRMM's edge serves it with TLS like its own names and forwards it to Authentik on loopback. EasyRMM's own calls to it (discovery, keys, tokens) go to its edge on loopback, so the server need not reach its public address (ADR-0044) |
 
 All resolve to the same address. A wildcard record works too.
 
