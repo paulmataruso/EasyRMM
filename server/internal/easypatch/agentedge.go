@@ -43,6 +43,21 @@ func AgentPath(p string) bool {
 	return false
 }
 
+// AgentHost serves a name only EasyPatch agents use, that of an imported
+// standalone EasyPatch (config.Patching.AgentHostnames): the agents' paths
+// go to agents, and everything else (a person following a link to the old
+// console) is sent to EasyRMM's patching pages at console.
+func AgentHost(agents http.Handler, console string) http.Handler {
+	target := strings.TrimRight(console, "/") + "/patching"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if AgentPath(r.URL.Path) {
+			agents.ServeHTTP(w, r)
+			return
+		}
+		http.Redirect(w, r, target, http.StatusFound)
+	})
+}
+
 // cleanAgentPath reports whether a request's path means the same to the
 // engine as to EasyRMM: no dot segments, empty segments, backslashes or
 // encoded separators that a server could resolve to a path outside the

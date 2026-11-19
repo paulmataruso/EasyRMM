@@ -81,6 +81,31 @@ func TestAgentPaths(t *testing.T) {
 	}
 }
 
+// TestAgentHost: on an imported EasyPatch's name, agents reach the engine
+// and people are sent to EasyRMM's patching pages.
+func TestAgentHost(t *testing.T) {
+	agents := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	h := AgentHost(agents, "https://rmm.example.com/")
+	for p, want := range map[string]int{
+		"/api/v1/agents/check-in":                 http.StatusTeapot,
+		"/downloads/agent/EasyPatchAgent-1.9.msi": http.StatusTeapot,
+		"/downloads/winget/manifest.yaml":         http.StatusTeapot,
+		"/":                                       http.StatusFound,
+		"/endpoints/0f6b?tab=updates":             http.StatusFound,
+		"/downloads/install/abc.ps1":              http.StatusFound,
+		"/api/v1/organizations":                   http.StatusFound,
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "https://patch.old.test"+p, nil))
+		if rec.Code != want {
+			t.Errorf("%s: %d, want %d", p, rec.Code, want)
+		}
+		if want == http.StatusFound && rec.Header().Get("Location") != "https://rmm.example.com/patching" {
+			t.Errorf("%s sent to %q", p, rec.Header().Get("Location"))
+		}
+	}
+}
+
 func TestAgentProxy(t *testing.T) {
 	target, got := recordingEngine(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Set-Cookie", "easyrmm_session=stolen; Path=/")

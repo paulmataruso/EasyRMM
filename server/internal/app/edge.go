@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -45,7 +47,7 @@ func knownHost(cfg *config.Config, host string) bool {
 			return true
 		}
 	}
-	return false
+	return slices.Contains(cfg.ExtraHostnames(), host)
 }
 
 func hostOnly(hostport string) string {
@@ -104,19 +106,10 @@ func (e *edge) run(ctx context.Context) error {
 	case config.TLSOffload:
 		e.servers = append(e.servers, e.newServer(e.cfg.ListenOffload, e.handler, nil))
 	case config.TLSAcme:
-		var hosts []string
-		for _, o := range e.cfg.Origins() {
-			if !o.Internal {
-				hosts = append(hosts, o.Console.Hostname())
-				if o.Mesh != nil {
-					hosts = append(hosts, o.Mesh.Hostname())
-				}
-			}
-		}
 		m := &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
 			Cache:      autocert.DirCache(filepath.Join(e.cfg.DataDir, "acme")),
-			HostPolicy: autocert.HostWhitelist(hosts...),
+			HostPolicy: autocert.HostWhitelist(acmeHosts(e.cfg)...),
 			Email:      e.cfg.ACMEEmail,
 			Client:     &acme.Client{DirectoryURL: e.cfg.ACMEDirectory},
 		}
@@ -125,6 +118,9 @@ func (e *edge) run(ctx context.Context) error {
 	case config.TLSManual:
 		r, err := newCertReloader(e.cfg.CertFile, e.cfg.KeyFile, e.log)
 		if err != nil {
+			return err
+		}
+		if err := covers(r.cert, e.cfg.ExtraHostnames()); err != nil {
 			return err
 		}
 		primary = r.get
@@ -190,7 +186,48 @@ func (e *edge) run(ctx context.Context) error {
 	}
 }
 
+// acmeHosts are the names ACME may get certificates for: the DNS origins'
+// and the names served besides them.
+func acmeHosts(cfg *config.Config) []string {
+	var hosts []string
+	for _, o := range cfg.Origins() {
+		if !o.Internal {
+			hosts = append(hosts, o.Console.Hostname())
+			if o.Mesh != nil {
+				hosts = append(hosts, o.Mesh.Hostname())
+			}
+		}
+	}
+	return append(hosts, cfg.ExtraHostnames()...)
+}
+
 type getCertificate func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+
+// covers checks that the operator's certificate is valid for the names the
+// edge serves besides its origins: they share it, as manual mode has one.
+func covers(c *tls.Certificate, names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	leaf := c.Leaf
+	if leaf == nil {
+		var err error
+		if leaf, err = x509.ParseCertificate(c.Certificate[0]); err != nil {
+			return fmt.Errorf("reading TLS certificate: %w", err)
+		}
+	}
+	var missing []string
+	for _, n := range names {
+		if leaf.VerifyHostname(n) != nil {
+			missing = append(missing, n)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("the certificate in EASYRMM_TLS_CERT_FILE is not valid for %s, which this server also answers: add them to the certificate, or use EASYRMM_TLS_MODE=acme",
+			strings.Join(missing, ", "))
+	}
+	return nil
+}
 
 // certificates picks the certificate for a connection. A server name means
 // a DNS origin: the configured source (ACME or files). Without one the

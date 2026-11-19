@@ -408,10 +408,22 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 		}
 		patchingAgents = easypatch.NewAgentProxy(target, !cfg.DevInsecureCookie, log)
 	}
+	// The names served besides the origins (config.ExtraHostnames).
+	extra := hostHandlers{}
+	if patchingAgents != nil {
+		h := easypatch.AgentHost(patchingAgents, originString(cfg.PublicURL))
+		for _, name := range cfg.Patching.AgentHostnames {
+			extra[name] = h
+		}
+	}
 	rt := newRouter(all)
 	hosts := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m, ok := rt.match(r.Host)
 		if !ok {
+			if h, ok := extra.match(r.Host); ok {
+				h.ServeHTTP(w, r)
+				return
+			}
 			httpapi.WriteError(w, r, &httpapi.Error{Status: http.StatusMisdirectedRequest, Code: "unknown_host", Message: "This server does not serve that address."})
 			return
 		}

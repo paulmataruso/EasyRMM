@@ -26,6 +26,7 @@ MeshCentral features that would open more ports are disabled: HTTP redirect
 | `rmm.example.com` | Web UI, API, EasyRMM agent API (`/api/agent/`) and installers |
 | `mesh.rmm.example.com` (configurable) | MeshCentral agents and embedded remote sessions (separate browser origin, ADR-0004) |
 | `patch.example.com` (optional) | EasyPatch on the same server (`EASYRMM_EASYPATCH_HOSTNAME`): passed through by SNI, still encrypted, to EasyPatch's own Caddy (ADR-0035) |
+| An imported EasyPatch's names (optional) | `EASYRMM_PATCHING_AGENT_HOSTNAMES`: its agents keep the address they enrolled with. EasyRMM's edge serves them with TLS like its own names, sends the EasyPatch agents' paths to the patching engine, and sends anything else to the console's patching pages |
 
 All resolve to the same address. A wildcard record works too.
 
@@ -37,8 +38,9 @@ and MeshCentral are the same site. Remote sessions also need HTTPS with a
 certificate browsers trust.
 
 The edge routes by `Host`, host and port: the console name goes to the
-application, the MeshCentral name to the remote-access gateway, anything else
-gets HTTP 421. A co-hosted EasyPatch's name is taken out earlier, by the TLS
+application, the MeshCentral name to the remote-access gateway, an imported
+EasyPatch's names to the patching engine's agent paths, anything else gets
+HTTP 421. A co-hosted EasyPatch's name is taken out earlier, by the TLS
 server name, before the edge does any TLS of its own.
 MeshCentral itself listens on loopback only and never sees a request the
 gateway has not checked.

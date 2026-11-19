@@ -140,6 +140,9 @@ services:
       # Settings. setup.sh --patching sets both.
       EASYRMM_PATCHING: ${EASYRMM_PATCHING:-}
       EASYRMM_PATCHING_KEY: ${EASYRMM_PATCHING_KEY:-}
+      # An imported EasyPatch's names: its agents keep reaching the engine
+      # there, through EasyRMM's edge.
+      EASYRMM_PATCHING_AGENT_HOSTNAMES: ${EASYRMM_PATCHING_AGENT_HOSTNAMES:-}
     volumes:
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/server:/var/lib/easyrmm
       - ${EASYRMM_TLS_DIR:-/srv/easyrmm/tls}:/etc/easyrmm/tls:ro

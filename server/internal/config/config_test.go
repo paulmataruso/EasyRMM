@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -321,6 +323,59 @@ func TestEasyPatchCoHosting(t *testing.T) {
 				t.Fatalf("error %v, want one containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestPatchingAgentHostnames: an imported EasyPatch's names are served
+// besides the origins (one-product plan, phase S), and must not be a name
+// something else in the deployment answers.
+func TestPatchingAgentHostnames(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	load := func(overrides map[string]string) (*Config, error) {
+		m := base()
+		m["EASYRMM_PATCHING"], m["EASYRMM_PATCHING_KEY"] = "bundled", key
+		for k, v := range overrides {
+			m[k] = v
+		}
+		return LoadFrom(env(m), noFiles)
+	}
+	c, err := load(nil)
+	if err != nil || c.Patching.AgentHostnames != nil || c.ExtraHostnames() != nil {
+		t.Fatalf("none by default: %+v %v", c, err)
+	}
+	c, err = load(map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": " Patch.Example.com. , easypatch.example.net,"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"patch.example.com", "easypatch.example.net"}; !slices.Equal(c.Patching.AgentHostnames, want) || !slices.Equal(c.ExtraHostnames(), want) {
+		t.Fatalf("names %v, extra %v", c.Patching.AgentHostnames, c.ExtraHostnames())
+	}
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"an IP address":      {map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": "192.0.2.4"}, "must list DNS names"},
+		"one label":          {map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": "patch"}, "must list DNS names"},
+		"a URL":              {map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": "https://patch.example.com"}, "must list DNS names"},
+		"the console's":      {map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": "RMM.example.com"}, "lists rmm.example.com, which EASYRMM_PUBLIC_URL already uses"},
+		"remote access's":    {map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": "mesh.rmm.example.com"}, "which EASYRMM_MESH_PUBLIC_URL already uses"},
+		"twice":              {map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": "patch.example.com,patch.example.com"}, "lists patch.example.com, which EASYRMM_PATCHING_AGENT_HOSTNAMES already uses"},
+		"without the bundle": {map[string]string{"EASYRMM_PATCHING": "", "EASYRMM_PATCHING_AGENT_HOSTNAMES": "patch.example.com"}, "needs EASYRMM_PATCHING=bundled"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := load(tc.env)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %v, want one containing %q", err, tc.want)
+			}
+		})
+	}
+	// A co-hosted EasyPatch's name is taken too (and co-hosting is refused
+	// with the bundle besides).
+	c = &Config{EasyPatch: EasyPatchHost{Hostname: "patch.example.com"}, Patching: Patching{Mode: PatchingBundled, AgentHostnames: []string{"patch.example.com"}}}
+	var errs []string
+	c.validateExtraHostnames(func(f string, a ...any) { errs = append(errs, fmt.Sprintf(f, a...)) })
+	if len(errs) != 1 || !strings.Contains(errs[0], "which EASYRMM_EASYPATCH_HOSTNAME already uses") {
+		t.Fatalf("co-hosted name: %v", errs)
 	}
 }
 

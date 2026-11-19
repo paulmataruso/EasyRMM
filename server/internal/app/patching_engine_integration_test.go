@@ -206,6 +206,55 @@ func TestPatchingAgentsThroughTheEdge(t *testing.T) {
 	}
 	mu.Unlock()
 
+	// An imported EasyPatch's name (one-product plan, phase S): its agents'
+	// paths reach the engine; a person is sent to EasyRMM's patching pages;
+	// a name EasyRMM does not serve is still refused.
+	imported := newHarnessWith(t, false, func(c *config.Config) {
+		c.Patching = config.Patching{Mode: config.PatchingBundled, URL: engine.URL, Key: bytes.Repeat([]byte{7}, 32),
+			AgentHostnames: []string{"patch.old.test"}}
+	})
+	at := func(host, method, path string) (int, http.Header) {
+		t.Helper()
+		req, err := http.NewRequest(method, imported.srv.URL+path, strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Host = host
+		c := *imported.srv.Client()
+		c.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		return resp.StatusCode, resp.Header
+	}
+	for _, host := range []string{"patch.old.test", "Patch.Old.Test:443"} {
+		if status, header := at(host, "POST", "/api/v1/agents/check-in"); status != http.StatusAccepted || header.Get("X-Engine") != "yes" {
+			t.Errorf("an agent on %s: %d", host, status)
+		}
+	}
+	mu.Lock()
+	if len(got) != n+2 || got[n].Host != "patch.old.test" {
+		t.Errorf("an imported EasyPatch's agents: %d requests reached the engine, the first for %q", len(got)-n, got[n].Host)
+	}
+	n = len(got)
+	mu.Unlock()
+	for _, p := range []string{"/", "/api/v1/organizations", "/downloads/install/ABCD-1234.ps1"} {
+		if status, header := at("patch.old.test", "GET", p); status != http.StatusFound || header.Get("Location") != "https://rmm.test/patching" {
+			t.Errorf("%s on the imported EasyPatch's name: %d %q", p, status, header.Get("Location"))
+		}
+	}
+	if status, _ := at("patch.other.test", "POST", "/api/v1/agents/check-in"); status != http.StatusMisdirectedRequest {
+		t.Errorf("a name EasyRMM does not serve: %d", status)
+	}
+	mu.Lock()
+	if len(got) != n {
+		t.Errorf("%d more requests reached the engine", len(got)-n)
+	}
+	mu.Unlock()
+
 	// Without the bundle, EasyRMM has nothing of its own under these paths.
 	// They are answered as paths EasyRMM does not have: 404, or for
 	// downloads, the console's answer when it is not built (503), as in CI.

@@ -125,6 +125,11 @@ type Patching struct {
 	// Key signs EasyRMM's statements to the bundled engine; at least 32
 	// bytes.
 	Key []byte
+	// AgentHostnames are further names EasyPatch agents reach the engine
+	// at: those of a standalone EasyPatch imported into this deployment,
+	// whose agents keep the address they enrolled with (one-product plan,
+	// phase S). EasyRMM's edge serves the agents' paths there.
+	AgentHostnames []string
 }
 
 // Bundled reports whether the patching engine runs in this deployment.
@@ -326,6 +331,9 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		Mode: strings.ToLower(l.orDefault("EASYRMM_PATCHING", PatchingConnector)),
 		URL:  l.orDefault("EASYRMM_PATCHING_URL", DefaultPatchingURL),
 	}
+	for _, h := range splitList(l.str("EASYRMM_PATCHING_AGENT_HOSTNAMES", "")) {
+		c.Patching.AgentHostnames = append(c.Patching.AgentHostnames, strings.ToLower(strings.TrimSuffix(h, ".")))
+	}
 	if c.Patching.Bundled() {
 		if raw := l.secret("EASYRMM_PATCHING_KEY"); raw != "" {
 			key, err := base64.StdEncoding.DecodeString(raw)
@@ -436,6 +444,7 @@ func (c *Config) validate(l *loader) {
 	c.validateMesh(add)
 	c.validateEasyPatch(add)
 	c.validatePatching(add)
+	c.validateExtraHostnames(add)
 }
 
 // Enabled reports whether EasyPatch is co-hosted.
@@ -498,6 +507,58 @@ func (c *Config) validatePatching(add func(string, ...any)) {
 	}
 	if c.EasyPatch.Enabled() {
 		add("EASYRMM_PATCHING=bundled replaces a co-hosted EasyPatch (EASYRMM_EASYPATCH_HOSTNAME); set one or the other")
+	}
+}
+
+// extraHost is a name the edge serves besides its origins, and the
+// setting that names it.
+type extraHost struct{ name, setting string }
+
+func (c *Config) extraHosts() []extraHost {
+	var out []extraHost
+	for _, h := range c.Patching.AgentHostnames {
+		out = append(out, extraHost{h, "EASYRMM_PATCHING_AGENT_HOSTNAMES"})
+	}
+	return out
+}
+
+// ExtraHostnames are the names the edge serves besides its origins, with
+// TLS from the same source as theirs (ACME, the certificate file or the
+// internal certificate authority): an imported EasyPatch's names.
+func (c *Config) ExtraHostnames() []string {
+	var out []string
+	for _, h := range c.extraHosts() {
+		out = append(out, h.name)
+	}
+	return out
+}
+
+// validateExtraHostnames checks that each further name is a DNS name that
+// nothing else in the deployment already answers.
+func (c *Config) validateExtraHostnames(add func(string, ...any)) {
+	if len(c.Patching.AgentHostnames) > 0 && !c.Patching.Bundled() {
+		add("EASYRMM_PATCHING_AGENT_HOSTNAMES needs EASYRMM_PATCHING=bundled: they are where the agents of an imported EasyPatch reach this deployment's engine")
+	}
+	taken := map[string]string{}
+	for _, o := range c.Origins() {
+		taken[canonicalHost(o.Console.Hostname())] = "EASYRMM_PUBLIC_URL"
+		if o.Mesh != nil {
+			taken[canonicalHost(o.Mesh.Hostname())] = "EASYRMM_MESH_PUBLIC_URL"
+		}
+	}
+	if c.EasyPatch.Enabled() {
+		taken[c.EasyPatch.Hostname] = "EASYRMM_EASYPATCH_HOSTNAME"
+	}
+	for _, h := range c.extraHosts() {
+		if isIP(h.name) || !validHostname(h.name) {
+			add("%s must list DNS names such as patch.example.com, got %q", h.setting, h.name)
+			continue
+		}
+		if other, ok := taken[h.name]; ok {
+			add("%s lists %s, which %s already uses", h.setting, h.name, other)
+			continue
+		}
+		taken[h.name] = h.setting
 	}
 }
 
