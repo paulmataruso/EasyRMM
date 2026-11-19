@@ -139,7 +139,7 @@ jobs:
       attestations: write
 
   # EasyPatch's checks need only contents: read; they build images but do not
-  # push them (images are published by easypatch-release.yml).
+  # push them (release.yml publishes them, with EasyRMM's release).
   easypatch-server:
     name: EasyPatch server
     needs: changes

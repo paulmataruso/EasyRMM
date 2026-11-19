@@ -66,7 +66,9 @@ checkout with the steps below, and checks:
 * that the patching engine has the same organizations and the same keys.
 
 Its first run, on 16 November 2026, found that the guide's database
-commands failed and that a fresh deployment did not start; both are fixed.
+commands failed and that a fresh deployment did not start; both are fixed. A run on 19 November 2026, after the patching engine joined every
+deployment, backed up and restored the engine's database and keys with the
+steps above and passed.
 
 ## Restore onto a new host
 

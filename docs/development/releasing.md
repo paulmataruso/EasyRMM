@@ -3,24 +3,21 @@
 Releases are cut by pushing a version tag. `.github/workflows/release.yml`
 does the rest; nothing is published from a laptop. Each EasyRMM release
 carries the patching engine built from the same commit (one-product plan,
-B8; [ADR-0043](../architecture/adr/0043-one-release.md)). EasyPatch can
-still be released on its own until phase R
-([EasyPatch releases](#easypatch-releases)).
+B8; [ADR-0043](../architecture/adr/0043-one-release.md)), and it is the only
+release: EasyPatch is no longer released on its own (R5,
+[ADR-0046](../architecture/adr/0046-what-one-product-retires.md)).
 
 ## Versions
 
 Semantic versioning, tags `easyrmm-v1.2.3`. A pre-release adds a suffix,
 `easyrmm-v1.2.3-rc.1`. The `easyrmm-` prefix keeps EasyRMM's tags apart from
-EasyPatch's (`easypatch-v1.10.0`), which this repository also holds and
-which `.github/workflows/easypatch-release.yml` releases.
+EasyPatch's old ones (`easypatch-v1.10.0`), which this repository also holds
+and which nothing releases any more.
 
-| Tag | Image tags | GitHub release |
-|---|---|---|
-| `easyrmm-v1.2.3` | `1.2.3`, `1.2`, `latest` | Release, marked Latest |
-| `easyrmm-v1.2.3-rc.1` | `1.2.3-rc.1` only | Pre-release |
-
-EasyPatch's releases are never marked Latest, so the repository's latest
-release is always EasyRMM's.
+| Tag | EasyRMM's image tags | The engine's image tags | GitHub release |
+|---|---|---|---|
+| `easyrmm-v1.2.3` | `1.2.3`, `1.2`, `latest` | its version (`1.10.1`), `latest` | Release, marked Latest |
+| `easyrmm-v1.2.3-rc.1` | `1.2.3-rc.1` only | its version only | Pre-release |
 
 The server, the console and the agents carry the tag without its prefix as
 their version, `v1.2.3` (`easyrmm-server version`, `easyrmm-agent version`).
@@ -51,27 +48,36 @@ YYYY-MM-DD`. Running a failed release again for the same commit is allowed.
 
 3. Watch the **Release** workflow. It:
    1. checks the tag's form and finds its changelog section;
-   2. runs the backend, integration and frontend checks again on the tagged
-      commit;
-   3. builds the server image, checks it reports the version, and scans it
-      with Trivy (high and critical fixable findings fail the release);
-   4. pushes the image for amd64 and arm64 to
-      `ghcr.io/paulmataruso/easyrmm-server`, with an SBOM, build provenance
-      and a GitHub attestation;
-   5. builds the patching engine with `easypatch-release.yml`: EasyPatch's
-      tests, its agent packages signed with the release key, and its server
-      image for amd64 and arm64 carrying them, pushed to
-      `ghcr.io/paulmataruso/easypatch-server` with the commit recorded;
-   6. builds the release files with `scripts/release/bundle.sh`, with the
+   2. checks the engine's version: its `easypatch/CHANGELOG.md` section, the
+      release public key, and that no engine image of that version was
+      published from another commit;
+   3. runs every CI check again on the tagged commit: the backend,
+      integration and frontend checks, and the engine's (its tests, package
+      licences and vulnerable packages, an image built with test packages)
+      and its agents' tests;
+   4. builds the EasyPatch agent's Windows MSIs and Linux packages for x64
+      and ARM64, signed with the release key (the `easypatch-release`
+      environment's secret);
+   5. builds EasyRMM's server image, checks it reports the version, scans it
+      with Trivy (high and critical fixable findings fail the release) and
+      pushes it for amd64 and arm64 to `ghcr.io/paulmataruso/easyrmm-server`,
+      with an SBOM, build provenance and a GitHub attestation;
+   6. builds the engine's image on each architecture carrying those
+      packages, checks it carries them read-only and holds no secrets, scans
+      it with Trivy the same way, and pushes it to
+      `ghcr.io/paulmataruso/easypatch-server` with an SBOM, build
+      provenance, the commit recorded, and a GitHub attestation;
+   7. builds the release files with `scripts/release/bundle.sh`, with the
       engine pinned by digest, attests them, and creates the GitHub release
       with the changelog's notes and the engine's version.
 
-If any step fails, nothing after it runs. The images are pushed only after
-every check passes, and the GitHub release is created only after both are
-pushed. The engine's jobs sign with the `easypatch-release` environment's
-key, so that environment's deployment rule must admit `easyrmm-v*` tags as
-well as `easypatch-v*`. To retry after fixing a problem in the workflow, delete the tag
-and the draft release (if any), then tag again. Never move a published tag.
+If any step fails, nothing after it runs. No image is pushed until every
+check has passed, and the GitHub release is created only after both images
+are. The agent packages are signed with the `easypatch-release`
+environment's key, so that environment's deployment rule must admit
+`easyrmm-v*` tags. To retry after fixing a problem in the workflow, delete
+the tag and the draft release (if any), then tag again. Never move a
+published tag.
 
 ## What a release contains
 
@@ -100,24 +106,23 @@ that a release matches its source.
 sha256sum -c SHA256SUMS
 gh attestation verify easyrmm-v1.2.3-deploy.tar.gz --repo paulmataruso/easyrmm
 gh attestation verify oci://ghcr.io/paulmataruso/easyrmm-server:1.2.3 --repo paulmataruso/easyrmm
+gh attestation verify oci://ghcr.io/paulmataruso/easypatch-server:1.10.1 --repo paulmataruso/easyrmm
 ```
 
 ## EasyPatch releases
 
-EasyPatch, in `easypatch/`, is built and released on its own:
+EasyPatch is released only as EasyRMM's patching engine, with each EasyRMM
+release (above). Its `easypatch-v*` tags, its own GitHub releases and its
+proxy image went in one-product R3 and R5.
 
-* Its tags are `easypatch-v1.2.3`. The version must match `<Version>` in
-  `easypatch/Directory.Build.props` and a section of
-  `easypatch/CHANGELOG.md`.
-* Pushing one runs `.github/workflows/easypatch-release.yml`, the same
-  workflow EasyRMM's release calls. It runs EasyPatch's tests, builds and
-  release-signs the agent packages, pushes the server and proxy images for
-  x64 and ARM64 to GitHub Container Registry, and creates a GitHub release,
-  never marked Latest. It refuses a version already published from another
-  commit, whichever release published it.
-* No EasyPatch release has been published from this repository yet.
-  Releases up to 1.10.0, with their downloads, are in EasyPatch's
-  [former repository](https://github.com/paulmataruso/EasyPatch/releases).
+* Releases up to 1.10.0, with their downloads, stay in EasyPatch's
+  [former repository](https://github.com/paulmataruso/EasyPatch/releases);
+  a server running one is imported
+  ([Importing a standalone EasyPatch](../operations/import-easypatch.md)).
+* The experimental macOS agent packages were published only with
+  EasyPatch's own releases. They are not in the engine's image, and an
+  EasyRMM release does not build them: `easypatch/scripts/build-macos-packages.sh`
+  builds and signs them by hand.
 * Release signing:
   [easypatch/docs/security.md](../../easypatch/docs/security.md#agent-release-signing).
 

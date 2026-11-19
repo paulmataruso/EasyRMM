@@ -14,8 +14,8 @@ and its agents reach it through EasyRMM's edge.
 | Code | everything except `easypatch/` | `easypatch/` |
 | Language | Go, React (`web/`) | .NET 10 |
 | Built from | the repository root | `easypatch/` |
-| Release tags | `easyrmm-v1.2.3` | `easypatch-v1.10.0` |
-| Release workflow | `release.yml` | `easypatch-release.yml` |
+| Release tags | `easyrmm-v1.2.3` | none since one-product R5: released with EasyRMM; `easypatch-v1.10.0` and older are history |
+| Release workflow | `release.yml` | `release.yml`, with EasyRMM |
 | Contributing terms | [CONTRIBUTING.md](../../CONTRIBUTING.md) | [easypatch/CONTRIBUTING.md](../../easypatch/CONTRIBUTING.md) |
 
 How they became one product is in
@@ -112,7 +112,8 @@ here, and its description links here.
 * It keeps EasyPatch's releases up to 1.10.0 and their downloads (MSIs,
   signed agent packages), which existing installations and links use. Do not
   delete them.
-* New releases are published from this repository, tagged `easypatch-v*`.
+* New releases are EasyRMM's, from this repository: the engine is released
+  with each one ([Releasing](releasing.md)).
 * Issues, pull requests and security reports for EasyPatch belong here.
 * A server installed from the former repository is imported into an EasyRMM
   deployment ([Importing a standalone EasyPatch](../operations/import-easypatch.md));

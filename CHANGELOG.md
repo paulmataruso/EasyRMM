@@ -582,6 +582,13 @@ All notable changes to this project are documented here. The format follows
   while editing, on the script's page and before a run.
 
 ### Changed
+- **One release workflow** (one-product plan, phase R5; ADR-0046):
+  `release.yml` builds the patching engine in its own jobs instead of
+  calling EasyPatch's workflow. The engine's image now gets the same Trivy
+  scan, SBOM, build provenance and GitHub attestation as EasyRMM's, its CI
+  checks and agent tests run again on the tagged commit, and no image is
+  pushed until every check of both has passed. An EasyRMM pre-release no
+  longer moves the engine's `latest` tag.
 - **The patching engine is always in the deployment** (one-product plan,
   phase S1): its services have no Compose profile and `EASYRMM_PATCHING` is
   no longer a setting. The server refuses to start with it set to anything
@@ -658,6 +665,11 @@ All notable changes to this project are documented here. The format follows
   and its agents' signed requests. Its account tables stay, unused, so
   upgrading needs no migration, and `prepare-import` still disables an
   imported server's accounts.
+- **EasyPatch's own releases** (phase R5): `easypatch-release.yml`, its
+  `easypatch-v*` tags and GitHub releases. The engine is released only with
+  EasyRMM, by `release.yml`. The experimental macOS agent packages, which
+  only those releases carried, are no longer published;
+  `easypatch/scripts/build-macos-packages.sh` still builds them.
 
 ### Security
 - The EasyPatch connection and audit forwarding do not connect to

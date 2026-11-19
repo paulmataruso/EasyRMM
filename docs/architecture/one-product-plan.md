@@ -786,6 +786,16 @@ commands, which now fail with a message. The account tables, entities and
 EF configuration stay: no migration, and `prepare-import` still disables an
 imported server's accounts.*
 
+*Done (R5): `release.yml` builds the engine in its own jobs:
+`easypatch-release.yml`, its `easypatch-v*` trigger, its GitHub release and
+notes template went. The engine's CI checks and agent tests run again on the
+tagged commit, its agent packages are signed with EasyPatch's release key,
+and its image is built per architecture, checked, scanned with Trivy and
+pushed with an SBOM, provenance and an attestation, as EasyRMM's is; no
+image is pushed before every check of both has passed. The experimental
+macOS packages, published only by EasyPatch's own releases, are no longer
+built by a release.*
+
 ### D. A real test instance
 
 With the owner:
