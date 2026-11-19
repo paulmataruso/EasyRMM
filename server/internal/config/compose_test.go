@@ -30,6 +30,7 @@ func TestComposeEnvironment(t *testing.T) {
 		mesh  string
 		cert  string
 		extra []string
+		ak    Authentik
 	}{
 		{
 			name: "DNS name",
@@ -58,6 +59,19 @@ func TestComposeEnvironment(t *testing.T) {
 			mesh:  "https://mesh.rmm.example.com",
 			cert:  "https://127.0.0.1:443",
 			extra: []string{"patch.example.com"},
+		},
+		{
+			name: "Authentik",
+			setup: map[string]string{
+				"EASYRMM_PUBLIC_URL": "https://rmm.example.com", "EASYRMM_TLS_MODE": "acme",
+				"EASYRMM_ACME_EMAIL": "ops@example.com", "EASYRMM_AUTHENTIK_HOSTNAME": "auth.example.com",
+				"EASYRMM_AUTHENTIK_ADMIN_EMAIL": "admin@example.com", "EASYRMM_AUTHENTIK_CLIENT_SECRET": strings.Repeat("c", 64),
+			},
+			mesh:  "https://mesh.rmm.example.com",
+			cert:  "https://127.0.0.1:443",
+			extra: []string{"auth.example.com"},
+			ak: Authentik{Hostname: "auth.example.com", AdminEmail: "admin@example.com", ClientSecret: strings.Repeat("c", 64),
+				Upstream: DefaultAuthentikUpstream},
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -108,6 +122,9 @@ func TestComposeEnvironment(t *testing.T) {
 			if !slices.Equal(cfg.ExtraHostnames(), c.extra) {
 				t.Errorf("further names %v, want %v", cfg.ExtraHostnames(), c.extra)
 			}
+			if cfg.Authentik != c.ak {
+				t.Errorf("Authentik %+v, want %+v", cfg.Authentik, c.ak)
+			}
 		})
 	}
 }
@@ -129,6 +146,7 @@ var fixedInCompose = map[string]string{
 	"EASYRMM_ARGON2_MAX_PARALLEL":  "bounds the memory password hashing takes; four suits the deployment",
 	"EASYRMM_PATCHING_URL":         "where the easypatch-api service listens (TestComposeListeners checks they agree)",
 	"EASYRMM_PATCHING":             "no longer a setting: the engine in this deployment, always (phase S)",
+	"EASYRMM_AUTHENTIK_UPSTREAM":   "where the authentik-server service listens (TestComposeListeners checks they agree)",
 }
 
 func TestInterpolate(t *testing.T) {
@@ -329,6 +347,9 @@ func TestComposeListeners(t *testing.T) {
 	if m := regexp.MustCompile(`\$\{EASYPATCH_[A-Z_]+:?\?`).FindString(compose); m != "" {
 		t.Errorf("%s marks %s… required: an install whose .env predates it could not start", composeFile, m)
 	}
+	if m := regexp.MustCompile(`\$\{(?:EASYRMM_)?AUTHENTIK_[A-Z_]+:?\?`).FindString(compose); m != "" {
+		t.Errorf("%s marks %s… required: an install without the authentik profile could not start", composeFile, m)
+	}
 
 	c, err := LoadFrom(env(map[string]string{
 		"EASYRMM_PUBLIC_URL": "https://rmm.example.com", "EASYRMM_ACME_EMAIL": "ops@example.com",
@@ -361,6 +382,9 @@ func TestComposeListeners(t *testing.T) {
 		"co-hosted EasyPatch, HTTP": c.EasyPatch.HTTPUpstream,
 		"patching engine API":       url("easypatch-api"),
 		"patching engine worker":    url("easypatch-worker"),
+		"Authentik, HTTP":           composeEnvironment(t, "authentik-server")["AUTHENTIK_LISTEN__HTTP"],
+		"Authentik, HTTPS":          composeEnvironment(t, "authentik-server")["AUTHENTIK_LISTEN__HTTPS"],
+		"Authentik's worker":        composeEnvironment(t, "authentik-worker")["AUTHENTIK_LISTEN__HTTP"],
 	}
 	byPort := map[string]string{}
 	for name, addr := range loopback {
@@ -382,6 +406,14 @@ func TestComposeListeners(t *testing.T) {
 		if other, taken := byPort[port]; taken {
 			t.Errorf("the public edge and %s both use port %s", other, port)
 		}
+	}
+	// Authentik has no metrics listener, and the edge forwards its name where
+	// it listens.
+	if !strings.Contains(compose, "\n  AUTHENTIK_LISTEN__METRICS: \"\"\n") {
+		t.Errorf("%s does not empty AUTHENTIK_LISTEN__METRICS, which would listen on every interface", composeFile)
+	}
+	if got := composeEnvironment(t, "authentik-server")["AUTHENTIK_LISTEN__HTTP"]; got != DefaultAuthentikUpstream {
+		t.Errorf("Authentik listens on %s, but EasyRMM's edge forwards to %s", got, DefaultAuthentikUpstream)
 	}
 	// EasyRMM calls the engine where Compose has it listen.
 	if engine := "http://" + url("easypatch-api"); engine != DefaultPatchingURL {

@@ -100,6 +100,9 @@ type Config struct {
 	// Patching says where patching comes from: the engine in this
 	// deployment, or an EasyPatch server set up in Settings.
 	Patching Patching
+	// Authentik is the sign-in service in this deployment (ADR-0044); zero
+	// when there is none.
+	Authentik Authentik
 }
 
 // Patching modes.
@@ -347,6 +350,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 			c.Patching.Key = key
 		}
 	}
+	c.loadAuthentik(l)
 	c.validate(l)
 	if len(l.errs) > 0 {
 		return nil, errors.Join(l.errs...)
@@ -448,6 +452,7 @@ func (c *Config) validate(l *loader) {
 	c.validateMesh(add)
 	c.validateEasyPatch(add)
 	c.validatePatching(add)
+	c.validateAuthentik(add)
 	c.validateExtraHostnames(add)
 }
 
@@ -523,12 +528,16 @@ func (c *Config) extraHosts() []extraHost {
 	for _, h := range c.Patching.AgentHostnames {
 		out = append(out, extraHost{h, "EASYRMM_PATCHING_AGENT_HOSTNAMES"})
 	}
+	if c.Authentik.Enabled() {
+		out = append(out, extraHost{c.Authentik.Hostname, "EASYRMM_AUTHENTIK_HOSTNAME"})
+	}
 	return out
 }
 
 // ExtraHostnames are the names the edge serves besides its origins, with
 // TLS from the same source as theirs (ACME, the certificate file or the
-// internal certificate authority): an imported EasyPatch's names.
+// internal certificate authority): an imported EasyPatch's names, and
+// Authentik's sign-in name.
 func (c *Config) ExtraHostnames() []string {
 	var out []string
 	for _, h := range c.extraHosts() {

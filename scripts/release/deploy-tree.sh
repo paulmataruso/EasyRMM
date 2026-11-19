@@ -5,7 +5,7 @@
 #
 #   deploy/                 docker-compose.yml, .env.example, scripts/setup.sh and
 #                           scripts/import-easypatch.sh
-#   docker/                 the PostgreSQL and MeshCentral start scripts it mounts
+#   docker/                 the PostgreSQL, MeshCentral and Authentik files it mounts
 #   docs/                   the deployment, agent, backup and upgrade guides
 #   LICENSE.md, LICENSING.md, CHANGELOG.md
 #
@@ -24,7 +24,7 @@ if [ -e "$dir" ] && [ -n "$(ls -A "$dir")" ]; then
 fi
 
 mkdir -p "$dir/deploy/scripts" "$dir/deploy/easypatch" "$dir/docker/postgres/init" "$dir/docker/meshcentral" \
-  "$dir/docs/deployment" "$dir/docs/operations"
+  "$dir/docker/authentik/blueprints" "$dir/docs/deployment" "$dir/docs/operations"
 cp "$root/LICENSE.md" "$root/LICENSING.md" "$root/CHANGELOG.md" "$dir/"
 cp "$root/deploy/docker-compose.yml" "$root/deploy/.env.example" "$dir/deploy/"
 cp "$root/deploy/scripts/setup.sh" "$root/deploy/scripts/import-easypatch.sh" "$dir/deploy/scripts/"
@@ -33,6 +33,10 @@ cp "$root/deploy/easypatch/Caddyfile.easyrmm" "$root/deploy/easypatch/docker-com
 cp "$root/docker/postgres/init/"*.sh "$dir/docker/postgres/init/"
 cp "$root/docker/postgres/easypatch-db-init.sh" "$dir/docker/postgres/"
 cp "$root/docker/meshcentral/start.sh" "$dir/docker/meshcentral/"
+# Authentik, with setup.sh --with-authentik (ADR-0044).
+cp "$root/docker/postgres/authentik-db-init.sh" "$dir/docker/postgres/"
+cp "$root/docker/authentik/start.sh" "$root/docker/authentik/setup.py" "$dir/docker/authentik/"
+cp "$root/docker/authentik/blueprints/easyrmm.yaml" "$dir/docker/authentik/blueprints/"
 cp "$root/docs/deployment/docker.md" "$root/docs/deployment/agents.md" "$root/docs/deployment/easypatch-cohost.md" "$dir/docs/deployment/"
 cp "$root/docs/operations/backup-restore.md" "$root/docs/operations/upgrading.md" "$root/docs/operations/import-easypatch.md" \
   "$dir/docs/operations/"
@@ -46,5 +50,6 @@ if [ -n "$missing" ]; then
 fi
 find "$dir" -type d -exec chmod 0755 {} +
 find "$dir" -type f -exec chmod 0644 {} +
-chmod 0755 "$dir/deploy/scripts/setup.sh" "$dir/deploy/scripts/import-easypatch.sh" "$dir/docker/postgres/init/"*.sh "$dir/docker/postgres/easypatch-db-init.sh" \
-  "$dir/docker/meshcentral/start.sh"
+chmod 0755 "$dir/deploy/scripts/setup.sh" "$dir/deploy/scripts/import-easypatch.sh" "$dir/docker/postgres/init/"*.sh \
+  "$dir/docker/postgres/easypatch-db-init.sh" "$dir/docker/meshcentral/start.sh" "$dir/docker/postgres/authentik-db-init.sh" \
+  "$dir/docker/authentik/start.sh"

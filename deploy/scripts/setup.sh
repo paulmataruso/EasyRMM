@@ -9,12 +9,18 @@
 #   ./scripts/setup.sh --hostname rmm.example.com --tls-mode manual \
 #       --cert-file /etc/easyrmm/tls/fullchain.pem --key-file /etc/easyrmm/tls/privkey.pem
 #   ./scripts/setup.sh --hostname 203.0.113.10        (no DNS: the server's own CA)
+#   ./scripts/setup.sh --hostname rmm.example.com --with-authentik
 #
 # Options for IP access (ADR-0016): --ip-addresses 203.0.113.10,... lists the
 # addresses to answer on (default: detected); --no-ip-access turns it off.
 #
 # Patching runs in this deployment: EasyPatch's engine, on loopback. To
 # bring a standalone EasyPatch's data over, see scripts/import-easypatch.sh.
+#
+# --with-authentik makes Authentik everyone's sign-in (ADR-0044): it asks for
+# Authentik's name (such as auth.example.com) and the administrator's email,
+# or takes them from --authentik-hostname and --admin-email, and prints the
+# administrator's invitation link. --new-invitation prints another.
 #
 # An existing .env is never overwritten (its secrets protect existing data):
 # setup.sh only adds secrets that later versions need and it lacks, and
@@ -35,6 +41,11 @@ data_root="/srv/easyrmm"
 ip_access="true"
 ip_addresses=""
 
+with_authentik=false
+authentik_hostname=""
+admin_email=""
+new_invitation=false
+
 usage() {
   # The comment block at the top of this file.
   awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$self"
@@ -53,12 +64,145 @@ while [[ $# -gt 0 ]]; do
     --data-root) data_root="${2:-}"; shift 2 ;;
     --ip-addresses) ip_addresses="${2:-}"; shift 2 ;;
     --no-ip-access) ip_access="false"; shift ;;
+    --with-authentik) with_authentik=true; shift ;;
+    --authentik-hostname) with_authentik=true; authentik_hostname="${2:-}"; shift 2 ;;
+    --admin-email) admin_email="${2:-}"; shift 2 ;;
+    --new-invitation) new_invitation=true; shift ;;
     -h|--help) usage 0 ;;
     *) echo "unknown option: $1" >&2; usage 2 ;;
   esac
 done
 
 die() { echo "error: $*" >&2; exit 1; }
+
+# --- Authentik (--with-authentik, --new-invitation; ADR-0044) -----------------
+# Authentik as everyone's sign-in. Its services are in docker-compose.yml
+# (profile "authentik"), its blueprint and start-up in docker/authentik/.
+# setup.sh cannot reach Authentik before it runs, so it decides the
+# administrator's invitation here (id, email, expiry) and leaves it in
+# ${data_root}/authentik/invitations/pending; the authentik-setup service
+# creates it in Authentik at the next `docker compose up -d`.
+authentik_valid_email='^[A-Za-z0-9._%+-]+@([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$'
+
+# authentik_ask fills in what --with-authentik needs, asking when it can.
+authentik_ask() {
+  [[ $(id -u) -eq 0 ]] || die "--with-authentik needs root (sudo): Authentik's files belong to its own user"
+  if [[ -z "$authentik_hostname" ]]; then
+    [[ -t 0 ]] || die "--authentik-hostname is required when setup.sh cannot ask"
+    read -r -p "Sign-in name for Authentik (such as auth.example.com): " authentik_hostname
+  fi
+  if [[ -z "$admin_email" ]]; then
+    [[ -t 0 ]] || die "--admin-email is required when setup.sh cannot ask"
+    read -r -p "Administrator's email address: " admin_email
+  fi
+  authentik_hostname="${authentik_hostname,,}"
+  authentik_hostname="${authentik_hostname%.}"
+  admin_email="${admin_email,,}"
+  [[ "$authentik_hostname" =~ $valid_host ]] || die "the sign-in name must be a DNS name such as auth.example.com"
+  [[ "$authentik_hostname" != "$hostname" && "$authentik_hostname" != "${mesh_hostname:-mesh.$hostname}" ]] ||
+    die "the sign-in name must differ from EasyRMM's own names"
+  [[ "$admin_email" =~ $authentik_valid_email ]] || die "the administrator's email must be an address such as admin@example.com"
+  [[ "$tls_mode" != "offload" ]] || die "--with-authentik needs EasyRMM's own TLS (acme, manual or internal): its edge serves Authentik's name"
+  # ACME's account address, when none is given: the administrator's.
+  [[ -n "$acme_email" ]] || acme_email="$admin_email"
+}
+
+# authentik_env writes Authentik's settings and secrets to .env.
+authentik_env() {
+  set_setting EASYRMM_AUTHENTIK_HOSTNAME "$authentik_hostname"
+  set_setting EASYRMM_AUTHENTIK_ADMIN_EMAIL "$admin_email"
+  fill_secret EASYRMM_AUTHENTIK_CLIENT_SECRET "$(openssl rand -hex 32)"
+  fill_secret AUTHENTIK_SECRET_KEY "$(openssl rand -hex 50)"
+  fill_secret AUTHENTIK_DB_PASSWORD "$(openssl rand -hex 32)"
+  local profiles
+  profiles=$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -n 1)
+  case ",$profiles," in
+    *,authentik,*) ;;
+    ,,) set_setting COMPOSE_PROFILES authentik ;;
+    *) set_setting COMPOSE_PROFILES "$profiles,authentik" ;;
+  esac
+  echo "Sign-in: Authentik at https://${authentik_hostname} (COMPOSE_PROFILES=$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -n 1))."
+}
+
+# authentik_invite decides a 7-day, single-use invitation for the
+# administrator's email and prints its link. Authentik's user (uid 1000)
+# owns the pending file; the authentik-setup service creates the invitation
+# from it and removes it.
+authentik_invite() {
+  local dir="$1" host="$2" email="$3" h id expires
+  h=$(openssl rand -hex 16)
+  id="${h:0:8}-${h:8:4}-4${h:13:3}-$(printf '%x' $(( (0x${h:16:1} & 3) | 8 )))${h:17:3}-${h:20:12}"
+  expires=$(( $(date +%s) + 7 * 24 * 3600 ))
+  (umask 077 && printf 'id=%s\nemail=%s\nexpires=%s\n' "$id" "$email" "$expires" > "$dir/pending.tmp")
+  chown 1000:1000 "$dir/pending.tmp"
+  mv "$dir/pending.tmp" "$dir/pending"
+  authentik_link="https://${host}/if/flow/easyrmm-enrollment/?itoken=${id}"
+  echo "Invitation for ${email}, valid for 7 days and once:"
+  echo "  ${authentik_link}"
+}
+
+# authentik_files makes Authentik's directories, akadmin's password (only
+# once) and the administrator's first invitation.
+authentik_files() {
+  install -d -m 0755 "$data_root/authentik"
+  for d in data secrets invitations; do
+    install -d -m 0700 -o 1000 -g 1000 "$data_root/authentik/$d"
+  done
+  local pw="$data_root/authentik/secrets/akadmin-password"
+  if [[ ! -s "$pw" ]]; then
+    (umask 077 && openssl rand -base64 30 | tr '+/' '-_' > "$pw")
+    chown 1000:1000 "$pw"
+    chmod 0600 "$pw"
+    echo "Authentik's own administrator is akadmin; its password is in ${pw} (mode 600)."
+  fi
+  if [[ ! -e "$data_root/authentik/invitations/issued" ]]; then
+    authentik_invite "$data_root/authentik/invitations" "$authentik_hostname" "$admin_email"
+    touch "$data_root/authentik/invitations/issued"
+  else
+    authentik_link=""
+    echo "An invitation was issued before; ./scripts/setup.sh --new-invitation prints another."
+  fi
+}
+
+authentik_next() {
+  echo
+  echo "Next:"
+  if [[ "$is_ip" == true ]]; then
+    echo "  1. Point DNS for ${authentik_hostname} at this server (${hostname})."
+  else
+    echo "  1. Point DNS for ${hostname}, ${mesh_hostname:-mesh.${hostname}} and ${authentik_hostname} at this server."
+  fi
+  echo "  2. Allow inbound TCP 443 (and 80 for ACME HTTP-01), and outbound HTTPS to"
+  echo "     github.com for MeshCentral's first-start agent download."
+  echo "  3. docker compose up -d"
+  if [[ -n "$authentik_link" ]]; then
+    echo "  4. Open the invitation link above, choose a password and set up a second factor."
+    echo "     You land in EasyRMM as its super administrator."
+  else
+    echo "  4. Sign in at https://${hostname}/ with Authentik."
+  fi
+}
+
+# new_invitation_only is --new-invitation: another invitation for the
+# administrator, for when the first expired or was lost.
+new_invitation_only() {
+  [[ $(id -u) -eq 0 ]] || die "--new-invitation needs root (sudo)"
+  [[ -e .env ]] || die "no .env here: run setup.sh --with-authentik first"
+  local host email root
+  host=$(sed -n 's/^EASYRMM_AUTHENTIK_HOSTNAME=//p' .env | tail -n 1)
+  email=$(sed -n 's/^EASYRMM_AUTHENTIK_ADMIN_EMAIL=//p' .env | tail -n 1)
+  root=$(sed -n 's/^EASYRMM_DATA_ROOT=//p' .env | tail -n 1)
+  [[ -n "$host" && -n "$email" ]] || die "Authentik is not set up in .env: run setup.sh --with-authentik"
+  [[ -d "${root:-/srv/easyrmm}/authentik/invitations" ]] || die "${root:-/srv/easyrmm}/authentik/invitations is missing: run setup.sh --with-authentik"
+  authentik_invite "${root:-/srv/easyrmm}/authentik/invitations" "$host" "$email"
+  touch "${root:-/srv/easyrmm}/authentik/invitations/issued"
+  echo "It works after the next: docker compose up -d"
+  echo "(Any earlier invitation of setup.sh's that is still unused stops working then.)"
+}
+if [[ "$new_invitation" == true ]]; then
+  new_invitation_only
+  exit 0
+fi
 
 valid_host='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$'
 valid_ipv4='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
@@ -88,6 +232,9 @@ fi
 if [[ -n "$mesh_hostname" ]]; then
   [[ "$mesh_hostname" =~ $valid_host ]] || die "--mesh-hostname must be a DNS name"
   [[ "$mesh_hostname" != "$hostname" ]] || die "--mesh-hostname must differ from --hostname"
+fi
+if [[ "$with_authentik" == true ]]; then
+  authentik_ask
 fi
 case "$tls_mode" in
   acme) [[ -n "$acme_email" ]] || die "--acme-email is required for --tls-mode acme" ;;
@@ -168,9 +315,18 @@ if grep -q '^EASYRMM_PATCHING=' .env; then
   sed -i '/^EASYRMM_PATCHING=/d' .env
   echo "Removed EASYRMM_PATCHING from .env: patching always runs in this deployment."
 fi
-if grep -qx 'COMPOSE_PROFILES=patching' .env; then
-  sed -i '/^COMPOSE_PROFILES=patching$/d' .env
-  echo "Removed COMPOSE_PROFILES=patching from .env."
+profiles=$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -n 1)
+if [[ ",$profiles," == *,patching,* ]]; then
+  profiles=$(printf '%s\n' "${profiles//,/$'\n'}" | grep -vx patching | paste -sd , - || true)
+  if [[ -n "$profiles" ]]; then
+    set_setting COMPOSE_PROFILES "$profiles"
+  else
+    sed -i '/^COMPOSE_PROFILES=/d' .env
+  fi
+  echo "Removed the patching profile from COMPOSE_PROFILES in .env: its services have none."
+fi
+if [[ "$with_authentik" == true ]]; then
+  authentik_env
 fi
 
 if [[ $(id -u) -ne 0 ]]; then
@@ -202,6 +358,11 @@ for d in keys winget; do
   install -d -m 0700 -o 1654 -g 1654 "$data_root/easypatch/$d"
 done
 echo "Data directories ready under ${data_root}."
+if [[ "$with_authentik" == true ]]; then
+  authentik_files
+  authentik_next
+  exit 0
+fi
 echo
 echo "Next:"
 echo "  1. Point DNS for ${hostname} and ${mesh_hostname:-mesh.${hostname}} at this server."

@@ -43,6 +43,50 @@ x-easypatch-hardening: &easypatch-hardening
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
 
+# Authentik's settings, shared by its services below (profile "authentik",
+# which setup.sh --with-authentik sets; ADR-0044). As with the engine's, its
+# secrets are not marked required (:?): authentik-db-init and start.sh refuse
+# to run without them instead.
+x-authentik-env: &authentik-env
+  AUTHENTIK_POSTGRESQL__HOST: 127.0.0.1
+  AUTHENTIK_POSTGRESQL__PORT: "15432"
+  AUTHENTIK_POSTGRESQL__NAME: authentik
+  AUTHENTIK_POSTGRESQL__USER: authentik
+  AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD:-}
+  AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:-}
+  AUTHENTIK_WEB__BASE_URL: https://${EASYRMM_AUTHENTIK_HOSTNAME:-}
+  # No update checks, analytics or error reports leave the server.
+  AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+  AUTHENTIK_DISABLE_STARTUP_ANALYTICS: "true"
+  AUTHENTIK_ERROR_REPORTING__ENABLED: "false"
+  # Only EasyRMM's edge, on loopback, may say who the client is.
+  AUTHENTIK_LISTEN__TRUSTED_PROXY_CIDRS: 127.0.0.0/8,::1/128
+  # Empty: no metrics listener.
+  AUTHENTIK_LISTEN__METRICS: ""
+  # No outposts: no Docker or Kubernetes discovery, no embedded proxy.
+  AUTHENTIK_OUTPOSTS__DISCOVER: "false"
+  AUTHENTIK_OUTPOSTS__DISABLE_EMBEDDED_OUTPOST: "true"
+  # For EasyRMM's blueprint (docker/authentik/blueprints/easyrmm.yaml).
+  EASYRMM_PUBLIC_URL: ${EASYRMM_PUBLIC_URL:?missing in .env}
+  EASYRMM_AUTHENTIK_CLIENT_SECRET: ${EASYRMM_AUTHENTIK_CLIENT_SECRET:-}
+
+x-authentik-hardening: &authentik-hardening
+  read_only: true
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+# The image's own check, with time for the first start, which migrates
+# Authentik's database: minutes on a small server. authentik-setup waits for
+# the worker to be healthy, so the first `docker compose up -d` waits too.
+x-authentik-healthcheck: &authentik-healthcheck
+  test: ["CMD", "ak", "healthcheck"]
+  interval: 15s
+  timeout: 30s
+  retries: 3
+  start_period: 15m
+
 services:
   postgres:
     image: postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
@@ -140,6 +184,12 @@ services:
       # An imported EasyPatch's names: its agents keep reaching the engine
       # there, through EasyRMM's edge.
       EASYRMM_PATCHING_AGENT_HOSTNAMES: ${EASYRMM_PATCHING_AGENT_HOSTNAMES:-}
+      # Authentik in this deployment (ADR-0044; setup.sh --with-authentik):
+      # its sign-in name, served by this edge, and the first administrator.
+      # Empty: no Authentik.
+      EASYRMM_AUTHENTIK_HOSTNAME: ${EASYRMM_AUTHENTIK_HOSTNAME:-}
+      EASYRMM_AUTHENTIK_ADMIN_EMAIL: ${EASYRMM_AUTHENTIK_ADMIN_EMAIL:-}
+      EASYRMM_AUTHENTIK_CLIENT_SECRET: ${EASYRMM_AUTHENTIK_CLIENT_SECRET:-}
     volumes:
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/server:/var/lib/easyrmm
       - ${EASYRMM_TLS_DIR:-/srv/easyrmm/tls}:/etc/easyrmm/tls:ro
@@ -309,4 +359,111 @@ services:
       start_period: 60s
     <<: *easypatch-hardening
     stop_grace_period: 30s
+    logging: *logging
+
+  # --- Sign-in (Authentik) -----------------------------------------------------
+  # Authentik as this deployment's sign-in (one-product plan, phase A;
+  # ADR-0044). These services start only with the "authentik" profile, which
+  # `scripts/setup.sh --with-authentik` adds to COMPOSE_PROFILES in .env.
+  # EasyRMM's edge serves Authentik's sign-in name (EASYRMM_AUTHENTIK_HOSTNAME)
+  # and forwards it to the server on loopback; Authentik itself listens on
+  # loopback only: the server on 127.0.0.1:18280 (HTTP) and 18243 (HTTPS),
+  # the worker on 127.0.0.1:18281. Its data is the "authentik" database in
+  # the same PostgreSQL. Image: Authentik 2026.8.5 (MIT, with the enterprise
+  # directory under its own licence, which this deployment never activates).
+
+  # Creates Authentik's database and role, or brings them up to date: also
+  # on an existing install, where PostgreSQL's init scripts never run again.
+  authentik-db-init:
+    image: postgres:18.6-alpine3.24@sha256:9ba53c7d41ea093baf5c1ba635ba5434c4f979880527d49bb7d9237d3193085b
+    profiles: [authentik]
+    network_mode: host
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    user: "70:70"
+    entrypoint: ["/bin/sh", "/easyrmm/authentik-db-init.sh"]
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?run scripts/setup.sh to create deploy/.env}
+      AUTHENTIK_DB_PASSWORD: ${AUTHENTIK_DB_PASSWORD:-}
+    volumes:
+      - ../docker/postgres/authentik-db-init.sh:/easyrmm/authentik-db-init.sh:ro
+    <<: *authentik-hardening
+    logging: *logging
+
+  # The web server: sign-in pages, the OpenID provider, its API.
+  authentik-server:
+    image: ghcr.io/goauthentik/server:2026.8.5@sha256:602227a86455d6772e3d16b7d852713c4f864f40df5df894abd1285bb53979a5
+    profiles: [authentik]
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      authentik-db-init:
+        condition: service_completed_successfully
+    # start.sh gives Authentik akadmin's first password from its file.
+    entrypoint: ["/bin/sh", "/easyrmm/bin/start.sh"]
+    command: ["server"]
+    environment:
+      <<: *authentik-env
+      AUTHENTIK_LISTEN__HTTP: 127.0.0.1:18280
+      AUTHENTIK_LISTEN__HTTPS: 127.0.0.1:18243
+    volumes:
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/authentik/data:/data
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/authentik/secrets:/easyrmm/secrets:ro
+      - ../docker/authentik:/easyrmm/bin:ro
+      - ../docker/authentik/blueprints:/blueprints/easyrmm:ro
+    shm_size: 512m
+    <<: *authentik-hardening
+    stop_grace_period: 30s
+    healthcheck: *authentik-healthcheck
+    logging: *logging
+
+  # Background work, and the blueprints: EasyRMM's is applied at the first
+  # start and whenever it changes.
+  authentik-worker:
+    image: ghcr.io/goauthentik/server:2026.8.5@sha256:602227a86455d6772e3d16b7d852713c4f864f40df5df894abd1285bb53979a5
+    profiles: [authentik]
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      authentik-db-init:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "/easyrmm/bin/start.sh"]
+    command: ["worker"]
+    environment:
+      <<: *authentik-env
+      AUTHENTIK_LISTEN__HTTP: 127.0.0.1:18281
+    volumes:
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/authentik/data:/data
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/authentik/secrets:/easyrmm/secrets:ro
+      - ../docker/authentik:/easyrmm/bin:ro
+      - ../docker/authentik/blueprints:/blueprints/easyrmm:ro
+    shm_size: 512m
+    <<: *authentik-hardening
+    stop_grace_period: 30s
+    healthcheck: *authentik-healthcheck
+    logging: *logging
+
+  # After every start: the settings blueprints cannot make, and the
+  # invitation setup.sh decided, if one is pending (docker/authentik/setup.py).
+  authentik-setup:
+    image: ghcr.io/goauthentik/server:2026.8.5@sha256:602227a86455d6772e3d16b7d852713c4f864f40df5df894abd1285bb53979a5
+    profiles: [authentik]
+    network_mode: host
+    restart: "no"
+    depends_on:
+      authentik-worker:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/easyrmm/bin/start.sh"]
+    command: ["shell", "-c", "exec(open('/easyrmm/bin/setup.py').read())"]
+    environment:
+      <<: *authentik-env
+    volumes:
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/authentik/data:/data
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/authentik/secrets:/easyrmm/secrets:ro
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/authentik/invitations:/easyrmm/invitations
+      - ../docker/authentik:/easyrmm/bin:ro
+    shm_size: 512m
+    <<: *authentik-hardening
     logging: *logging
