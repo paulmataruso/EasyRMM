@@ -222,6 +222,9 @@ jobs:
             web/e2e-sign-in/.results
           retention-days: 7
           if-no-files-found: ignore
+          # The report and results directories start with a dot, which
+          # upload-artifact leaves out unless told otherwise.
+          include-hidden-files: true
 
   # EasyRMM with its patching engine, brought up from deploy/docker-compose.yml
   # on host networking and addressed by IP, end to end with a Linux machine:
@@ -267,6 +270,9 @@ jobs:
             web/e2e-bundle/.results
           retention-days: 7
           if-no-files-found: ignore
+          # The report and results directories start with a dot, which
+          # upload-artifact leaves out unless told otherwise.
+          include-hidden-files: true
 
   result:
     name: CI result

@@ -82,6 +82,9 @@ jobs:
             web/e2e/.results
           retention-days: 7
           if-no-files-found: ignore
+          # The report and results directories start with a dot, which
+          # upload-artifact leaves out unless told otherwise.
+          include-hidden-files: true
       - name: Database logs on failure
         if: failure()
         run: docker logs easyrmm-testdb | tail -200
