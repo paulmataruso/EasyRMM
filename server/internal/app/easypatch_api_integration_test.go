@@ -736,6 +736,125 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Errorf("policy and tag audit: %v", got)
 	}
 
+	// Patch reports (one-product plan, C5).
+	now := time.Now().UTC()
+	ep.SetTrend(epOrg, eptest.TrendDay{Date: now.Format(time.DateOnly), Total: 2, Compliant: 1})
+	ep.AddInstallation(endpoint, eptest.InstallationInfo{Title: "2026-11 Cumulative Update", KB: "KB5070001", CompletedAt: now.Add(-time.Hour)})
+	var trend struct {
+		Points []struct {
+			Date              string  `json:"date"`
+			CompliancePercent float64 `json:"compliancePercent"`
+		} `json:"points"`
+		Organizations int `json:"organizations"`
+	}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/reports/trend?days=7&organizationId="+acme, nil, &trend)
+	if trend.Organizations != 1 || len(trend.Points) != 1 || trend.Points[0].CompliancePercent != 50 {
+		t.Fatalf("trend: %+v", trend)
+	}
+	wantStatus(t, viewer.do("GET", "/api/v1/patching/reports/trend?days=3", nil), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, viewer.do("GET", "/api/v1/patching/reports/trend?organizationId=nope", nil), http.StatusUnprocessableEntity, "validation_failed")
+	var report struct {
+		Total int     `json:"total"`
+		Rows  [][]any `json:"rows"`
+	}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/reports/patch-compliance?q=web", nil, &report)
+	if report.Total != 1 || report.Rows[0][2] != "web-01" {
+		t.Fatalf("compliance report: %+v", report)
+	}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/reports/patch-installations?result=Succeeded&days=7", nil, &report)
+	if report.Total != 1 || report.Rows[0][4] != "KB5070001" {
+		t.Fatalf("installations report: %+v", report)
+	}
+	if r := viewer.do("GET", "/api/v1/reports/patch-installations/csv", nil); r.status != http.StatusOK || !strings.Contains(string(r.body), "KB5070001") {
+		t.Fatalf("installations CSV: %d %s", r.status, r.body)
+	}
+	wantStatus(t, viewer.do("GET", "/api/v1/reports/patch-installations?category=Firmware", nil), http.StatusUnprocessableEntity, "validation_failed")
+
+	last := now.AddDate(0, -1, 0)
+	month := map[string]any{"organizationId": acme, "year": last.Year(), "month": int(last.Month()), "includeEndpointList": true}
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/reports/monthly", month), http.StatusForbidden, "forbidden")
+	var monthly struct {
+		ID          string `json:"id"`
+		PeriodStart string `json:"periodStart"`
+		CanManage   bool   `json:"canManage"`
+	}
+	admin.expect(http.StatusCreated, "POST", "/api/v1/patching/reports/monthly", month, &monthly)
+	if monthly.PeriodStart != last.Format("2006-01")+"-01" || !monthly.CanManage {
+		t.Fatalf("generated: %+v", monthly)
+	}
+	var monthlies struct {
+		Items []struct {
+			ID        string `json:"id"`
+			CanManage bool   `json:"canManage"`
+		} `json:"items"`
+		CanGenerate []string `json:"canGenerate"`
+	}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/reports/monthly?organizationId="+acme, nil, &monthlies)
+	if len(monthlies.Items) != 1 || monthlies.Items[0].CanManage || len(monthlies.CanGenerate) != 0 {
+		t.Fatalf("monthly reports for a reader: %+v", monthlies)
+	}
+	wantStatus(t, viewer.do("GET", "/api/v1/patching/reports/monthly?organizationId=nope", nil), http.StatusUnprocessableEntity, "validation_failed")
+	pdf := viewer.do("GET", "/api/v1/patching/reports/monthly/"+monthly.ID+"/pdf", nil)
+	if pdf.status != http.StatusOK || pdf.header.Get("Content-Type") != "application/pdf" || !strings.HasPrefix(string(pdf.body), "%PDF-") ||
+		!strings.HasPrefix(pdf.header.Get("Content-Disposition"), `attachment; filename="patch-report-`) {
+		t.Fatalf("PDF: %d %v", pdf.status, pdf.header)
+	}
+	send := "/api/v1/patching/reports/monthly/" + monthly.ID + "/send"
+	r = admin.do("POST", send, map[string]any{"recipients": []string{"cfo@example.com"}})
+	wantStatus(t, r, http.StatusConflict, "mail_not_configured")
+	if !strings.Contains(string(r.body), "EasyPatch's console") {
+		t.Errorf("a connected server's mail: %s", r.body)
+	}
+	wantStatus(t, viewer.do("DELETE", "/api/v1/patching/reports/monthly/"+monthly.ID, nil), http.StatusForbidden, "forbidden")
+	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/patching/reports/monthly/"+monthly.ID, nil, nil)
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/v1/patching/reports/monthly/nope/pdf"}, {"POST", "/api/v1/patching/reports/monthly/nope/send"},
+		{"DELETE", "/api/v1/patching/reports/monthly/nope"}, {"PUT", "/api/v1/patching/report-schedules/nope"},
+		{"GET", "/api/v1/patching/reports/monthly/" + monthly.ID + "/pdf"},
+	} {
+		wantStatus(t, admin.do(c.method, c.path, map[string]any{}), http.StatusNotFound, "not_found")
+	}
+
+	var schedules []struct {
+		OrganizationID string   `json:"organizationId"`
+		Enabled        bool     `json:"enabled"`
+		Recipients     []string `json:"recipients"`
+		DayOfMonth     int      `json:"dayOfMonth"`
+		CanEdit        bool     `json:"canEdit"`
+	}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/report-schedules", nil, &schedules)
+	if len(schedules) != 1 || schedules[0].OrganizationID != acme || schedules[0].CanEdit || schedules[0].Enabled {
+		t.Fatalf("schedules for a reader: %+v", schedules)
+	}
+	schedule := map[string]any{"enabled": true, "recipients": []string{"cfo@example.com"}, "dayOfMonth": 3, "includeEndpointList": true}
+	wantStatus(t, viewer.do("PUT", "/api/v1/patching/report-schedules/"+acme, schedule), http.StatusForbidden, "forbidden")
+	var saved struct {
+		Enabled    bool     `json:"enabled"`
+		DayOfMonth int      `json:"dayOfMonth"`
+		Recipients []string `json:"recipients"`
+	}
+	admin.expect(http.StatusOK, "PUT", "/api/v1/patching/report-schedules/"+acme, schedule, &saved)
+	if !saved.Enabled || saved.DayOfMonth != 3 || len(saved.Recipients) != 1 {
+		t.Fatalf("schedule: %+v", saved)
+	}
+	wantStatus(t, admin.do("PUT", "/api/v1/patching/report-schedules/"+acme, map[string]any{"dayOfMonth": 0}), http.StatusUnprocessableEntity,
+		"validation_failed")
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/api/v1/patching/reports/monthly"}, {"POST", send}, {"PUT", "/api/v1/patching/report-schedules/" + acme},
+	} {
+		if r := admin.do(c.method, c.path, notObject); r.status != http.StatusBadRequest && r.status != http.StatusUnprocessableEntity {
+			t.Errorf("%s %s with an array: %d %s", c.method, c.path, r.status, r.body)
+		}
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/audit?action=patch", nil, &audit)
+	got = []string{}
+	for _, a := range audit.Items[:4] {
+		got = append(got, a.Action)
+	}
+	if strings.Join(got, ",") != "patch.report_schedule,patch.report_delete,patch.report_download,patch.report_generate" {
+		t.Errorf("report audit: %v", got)
+	}
+
 	// Unlinking and removing.
 	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil, nil)
 	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch/organizations/"+acme, nil), http.StatusNotFound, "not_found")

@@ -326,6 +326,11 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		e.Engine = c.signer != nil
 		return e
 	}
+	if raw, ok := out.(*[]byte); ok {
+		// A file, such as a monthly report's PDF, as EasyPatch sent it.
+		*raw = data
+		return nil
+	}
 	if out == nil || len(data) == 0 {
 		return nil
 	}
@@ -451,9 +456,13 @@ type Endpoint struct {
 	SiteName         string     `json:"siteName"`
 	// Tags are the endpoint's tags, with those it has through its site or
 	// organization (InheritedFrom says which).
-	Tags                 []TagRef   `json:"tags"`
-	Status               string     `json:"status"`
-	OperatingSystem      string     `json:"operatingSystem"`
+	Tags            []TagRef `json:"tags"`
+	Status          string   `json:"status"`
+	OperatingSystem string   `json:"operatingSystem"`
+	OSBuild         string   `json:"osBuild"`
+	// OSSupportStatus is Supported, ExtendedSecurityUpdates, Unsupported
+	// (the operating system gets no more security updates) or Unknown.
+	OSSupportStatus      string     `json:"osSupportStatus"`
 	Platform             string     `json:"platform"`
 	AgentVersion         string     `json:"agentVersion"`
 	AgentOutdated        bool       `json:"agentOutdated"`

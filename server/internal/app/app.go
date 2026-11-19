@@ -185,6 +185,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
 	d.EasyPatch = easypatch.New(db, auditLog, sealer, Version, log)
+	// The patch reports read patching through the connector (one-product
+	// plan, C5).
+	d.Reports.UsePatching(d.EasyPatch)
 	if ep := cfg.EasyPatch; ep.Enabled() {
 		d.EasyPatch.SetLocalRoute(easypatch.LocalRoute{Hostname: ep.Hostname, Upstream: ep.TLSUpstream, ProxyProtocol: ep.ProxyProtocol})
 	}
@@ -205,6 +208,10 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 			// certificate authority: agents are given it (B7).
 			opts = append(opts, easypatch.AgentCA(d.PKI.CAPEM))
 		}
+		// The engine emails monthly reports through EasyRMM's mail server
+		// (one-product plan, C5).
+		opts = append(opts, easypatch.Mail(easypatch.MailConfig{Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, Username: cfg.SMTP.Username,
+			Password: cfg.SMTP.Password, From: cfg.SMTP.From, TLS: cfg.SMTP.TLS}))
 		if err := d.EasyPatch.UseEngine(ctx, engine, opts...); err != nil {
 			return nil, fmt.Errorf("patching engine: %w", err)
 		}

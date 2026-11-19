@@ -1289,6 +1289,192 @@ func TestContract(t *testing.T) {
 		}
 	})
 
+	// Reports (one-product plan, C5): the trend, installations, schedules
+	// and monthly PDFs as EasyRMM reads them, and the mail settings the
+	// bundled engine is given.
+	run("reports", func(t *testing.T) {
+		now := time.Now().UTC()
+		points, err := ep.ComplianceTrend(ctx, org.ID, now.AddDate(0, 0, -29).Format(time.DateOnly), now.Format(time.DateOnly))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range points {
+			if len(p.Date) != len("2006-01-02") || p.Compliant > p.TotalEndpoints || p.CompliancePercent < 0 || p.CompliancePercent > 100 {
+				t.Errorf("trend point %+v", p)
+			}
+		}
+
+		// The install canceled earlier finished with openssl.
+		window := InstallationFilter{OrganizationID: org.ID, From: now.Add(-24 * time.Hour), To: now.Add(time.Minute)}
+		rows, err := ep.Installations(ctx, window, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := slices.IndexFunc(rows.Items, func(r InstallationRow) bool { return r.JobID == install.ID })
+		if i < 0 {
+			t.Fatalf("installations %+v", rows)
+		}
+		if r := rows.Items[i]; r.EndpointID != a.endpoint || r.UpdateGUID != openssl || r.Status != statusCanceled || r.Category != "Security" ||
+			r.CompletedAt == nil || r.Hostname == "" || r.OrganizationName == "" || r.RequestedBy == "" {
+			t.Errorf("installation %+v", r)
+		}
+		for name, f := range map[string]InstallationFilter{
+			"another result":   {OrganizationID: org.ID, From: window.From, To: window.To, Result: "Failed"},
+			"another category": {OrganizationID: org.ID, From: window.From, To: window.To, Category: "Driver"},
+			"before it":        {OrganizationID: org.ID, From: window.From, To: window.From.Add(time.Minute)},
+		} {
+			if p, err := ep.Installations(ctx, f, 1); err != nil || slices.ContainsFunc(p.Items, func(r InstallationRow) bool { return r.JobID == install.ID }) {
+				t.Errorf("%s: %+v, %v", name, p, err)
+			}
+		}
+		if p, err := ep.Installations(ctx, InstallationFilter{OrganizationID: org.ID, From: window.From, To: window.To, Result: statusCanceled,
+			Category: "Security"}, 1); err != nil || !slices.ContainsFunc(p.Items, func(r InstallationRow) bool { return r.JobID == install.ID }) {
+			t.Errorf("its result and category: %+v, %v", p, err)
+		}
+
+		// A schedule: saved by an Admin token, refused to a read-only one.
+		sc, err := ep.ReportSchedule(ctx, org.ID)
+		if err != nil || sc.OrganizationID != org.ID || sc.DayOfMonth < 1 || sc.TimeZone == "" {
+			t.Fatalf("schedule: %+v, %v", sc, err)
+		}
+		in := ReportScheduleInput{Enabled: true, Recipients: []string{"cfo@example.com"}, DayOfMonth: 5}
+		if _, err := ro.SetReportSchedule(ctx, org.ID, in, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("read-only schedule: %v", err)
+		}
+		for name, bad := range map[string]ReportScheduleInput{"day 29": {DayOfMonth: 29}, "no recipients": {Enabled: true, DayOfMonth: 5},
+			"bad address": {DayOfMonth: 5, Recipients: []string{"cfo@"}}} {
+			var e *Error
+			if _, err := ep.SetReportSchedule(ctx, org.ID, bad, ""); !errors.As(err, &e) || e.Status != http.StatusBadRequest || len(e.Fields) == 0 {
+				t.Errorf("%s: %#v", name, err)
+			}
+		}
+		sc, err = ep.SetReportSchedule(ctx, org.ID, in, "contract-report@example.test")
+		if err != nil || !sc.Enabled || sc.DayOfMonth != 5 || !slices.Equal(sc.Recipients, in.Recipients) || sc.IncludeEndpointList ||
+			sc.NextReportDate == nil || sc.NextReportPeriod == nil || sc.EnabledAt == nil || sc.UpdatedAt == nil {
+			t.Fatalf("saved schedule: %+v, %v", sc, err)
+		}
+
+		// A report of last month, its PDF, and emailing it.
+		last := now.AddDate(0, -1, 0)
+		if _, err := ep.GenerateMonthlyReport(ctx, org.ID, now.Year()+1, 1, true, ""); !isEngineCode(err, "invalid_period") {
+			t.Errorf("next year: %v", err)
+		}
+		if _, err := ro.GenerateMonthlyReport(ctx, org.ID, last.Year(), int(last.Month()), true, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("read-only generate: %v", err)
+		}
+		rep, err := ep.GenerateMonthlyReport(ctx, org.ID, last.Year(), int(last.Month()), true, "contract-report@example.test")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rep.OrganizationID != org.ID || rep.PeriodStart != last.Format("2006-01")+"-01" || rep.MonthToDate || rep.Scheduled ||
+			!strings.HasSuffix(rep.FileName, ".pdf") || rep.SizeBytes == 0 || len(rep.Sha256) != 64 || rep.DeliveryStatus != "" {
+			t.Errorf("report %+v", rep)
+		}
+		if p, err := ro.MonthlyReports(ctx, org.ID, 1); err != nil || !slices.ContainsFunc(p.Items, func(m MonthlyReport) bool { return m.ID == rep.ID }) {
+			t.Errorf("list: %+v, %v", p, err)
+		}
+		if m, err := ro.MonthlyReport(ctx, rep.ID); err != nil || m.FileName != rep.FileName {
+			t.Errorf("one: %+v, %v", m, err)
+		}
+		pdf, err := ro.MonthlyReportPDF(ctx, rep.ID)
+		if err != nil || !bytes.HasPrefix(pdf, []byte("%PDF-")) || int64(len(pdf)) != rep.SizeBytes {
+			t.Errorf("PDF: %d bytes, %v", len(pdf), err)
+		}
+		if _, err := ep.MonthlyReport(ctx, uuid.New()); !IsStatus(err, http.StatusNotFound) {
+			t.Errorf("no such report: %v", err)
+		}
+		// The Admin token may not read the mail settings: a connected
+		// server's own console sets them.
+		if _, err := ep.MailSettings(ctx); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("token reads the mail settings: %v", err)
+		}
+		signer, err := NewSigner(c.engineKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		engine, err := NewEngineClient(c.engineURL, signer, "contract")
+		if err != nil {
+			t.Fatal(err)
+		}
+		super := WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "EasyRMM", Role: RoleSuperAdmin, AllOrganizations: true})
+		mail, err := engine.MailSettings(super)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mail.SMTPHost == "" {
+			if _, err := ep.SendMonthlyReport(ctx, rep.ID, []string{"cfo@example.com"}, ""); !isEngineCode(err, "smtp_not_configured") {
+				t.Errorf("no mail server: %v", err)
+			}
+		}
+		t.Cleanup(func() {
+			restore := MailSettingsInput{SMTPHost: mail.SMTPHost, SMTPPort: mail.SMTPPort, SMTPSecurity: mail.SMTPSecurity, SMTPUsername: mail.SMTPUsername,
+				FromAddress: mail.FromAddress, FromName: mail.FromName, AllowPrivateNetworkWebhooks: mail.AllowPrivateNetworkWebhooks,
+				SMTPSkipCertificateCheck: mail.SMTPSkipCertificateCheck}
+			if !mail.SMTPPasswordConfigured {
+				restore.SMTPPassword = ptr("")
+			}
+			if err := engine.SetMailSettings(super, restore); err != nil {
+				t.Errorf("restore the mail settings: %v", err)
+			}
+		})
+		plain := MailConfig{Host: "mail.example.test", Port: 25, From: "Reports <reports@example.test>", TLS: "none"}
+		if err := engine.SetMailSettings(super, plain.mailSettings(mail)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ep.SendMonthlyReport(ctx, rep.ID, []string{"cfo@example.com"}, ""); !isEngineCode(err, "smtp_not_encrypted") {
+			t.Errorf("a plain mail server: %v", err)
+		}
+		tls := MailConfig{Host: "mail.example.test", Port: 465, Username: "reports", Password: "contract-only", From: "Reports <reports@example.test>",
+			TLS: "implicit"}
+		if err := engine.SetMailSettings(super, tls.mailSettings(mail)); err != nil {
+			t.Fatal(err)
+		}
+		got, err := engine.MailSettings(super)
+		if err != nil || got.SMTPHost != "mail.example.test" || got.SMTPPort != 465 || got.SMTPSecurity != "SslOnConnect" || got.SMTPUsername != "reports" ||
+			!got.SMTPPasswordConfigured || got.FromAddress != "reports@example.test" || got.FromName != "Reports" ||
+			got.AllowPrivateNetworkWebhooks != mail.AllowPrivateNetworkWebhooks {
+			t.Errorf("mail settings: %+v, %v", got, err)
+		}
+		if _, err := ep.SendMonthlyReport(ctx, rep.ID, []string{"cfo@"}, ""); !IsStatus(err, http.StatusBadRequest) {
+			t.Errorf("a bad address: %v", err)
+		}
+		// No recipients takes the schedule's.
+		sent, err := ep.SendMonthlyReport(ctx, rep.ID, nil, "contract-report@example.test")
+		if err != nil || sent.DeliveryStatus == "" || !slices.Equal(sent.Recipients, in.Recipients) || sent.QueuedAt == nil {
+			t.Errorf("sent: %+v, %v", sent, err)
+		}
+		if _, err := ep.SetReportSchedule(ctx, org.ID, ReportScheduleInput{DayOfMonth: 1}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ep.SendMonthlyReport(ctx, rep.ID, nil, ""); !isEngineCode(err, "no_recipients") {
+			t.Errorf("no recipients anywhere: %v", err)
+		}
+		// A report of the month so far, made with a statement.
+		admin := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-report@example.test", Role: RoleAdmin,
+			Organizations: []uuid.UUID{org.ID}})
+		soFar, err := engine.GenerateMonthlyReport(admin, org.ID, now.Year(), int(now.Month()), false, "")
+		if err != nil || !soFar.MonthToDate || soFar.GeneratedBy == "" {
+			t.Errorf("month so far: %+v, %v", soFar, err)
+		}
+		other := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-report@example.test", Role: RoleReadOnly,
+			Organizations: []uuid.UUID{uuid.New()}})
+		if _, err := engine.MonthlyReport(other, rep.ID); !IsStatus(err, http.StatusForbidden) && !IsStatus(err, http.StatusNotFound) {
+			t.Errorf("another organization's statement: %v", err)
+		}
+
+		if err := ro.DeleteMonthlyReport(ctx, rep.ID, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("read-only delete: %v", err)
+		}
+		for _, id := range []uuid.UUID{rep.ID, soFar.ID} {
+			if err := ep.DeleteMonthlyReport(ctx, id, "contract-report@example.test"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := ep.MonthlyReport(ctx, rep.ID); !IsStatus(err, http.StatusNotFound) {
+			t.Errorf("deleted: %v", err)
+		}
+	})
+
 	run("errors", func(t *testing.T) {
 		_, err := ep.Endpoint(ctx, uuid.New())
 		var e *Error
@@ -1963,3 +2149,9 @@ var shapePolicy = PolicyLayer{ScanStaleAfterHours: ptr(72), ExcludedKbs: []strin
 	WindowsUpdate: &LayerWindowsUpdate{QualityUpdates: &GroupSetting[QualityUpdates]{Managed: true, Value: &QualityUpdates{DeferDays: ptr(3)}},
 		FeatureUpdates: &GroupSetting[FeatureUpdates]{Managed: false}},
 	ApplicationUpdates: &ApplicationUpdates{Enabled: true, ApprovedApps: []string{"Mozilla.Firefox"}}}
+
+// isEngineCode says err is EasyPatch's problem with code.
+func isEngineCode(err error, code string) bool {
+	var e *Error
+	return errors.As(err, &e) && e.Code == code
+}

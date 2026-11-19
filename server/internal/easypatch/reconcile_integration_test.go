@@ -40,7 +40,7 @@ func (f *fixture) bundle() *eptest.Server {
 
 // engineService is a connector started on engine, as at EasyRMM's start:
 // with nothing remembered but the database.
-func (f *fixture) engineService(engine *eptest.Server) *Service {
+func (f *fixture) engineService(engine *eptest.Server, opts ...EngineOption) *Service {
 	f.t.Helper()
 	signer, err := NewSigner(reconcileKey)
 	if err != nil {
@@ -51,7 +51,7 @@ func (f *fixture) engineService(engine *eptest.Server) *Service {
 		f.t.Fatal(err)
 	}
 	svc := New(f.db, audit.New(f.db, nil), nil, "1.0.0", slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err := svc.UseEngine(f.ctx, client); err != nil {
+	if err := svc.UseEngine(f.ctx, client, opts...); err != nil {
 		f.t.Fatal(err)
 	}
 	return svc

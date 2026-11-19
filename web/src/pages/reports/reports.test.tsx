@@ -58,6 +58,29 @@ function report(name: ReportName, extra: Partial<Report> = {}): Report {
       ],
       rows: [["2026-11-16T10:00:00Z", "WEB-01", "Disk nearly full"]],
     },
+    "patch-compliance": {
+      title: "Patch compliance",
+      columns: [
+        { key: "device", label: "Device", type: "text" },
+        { key: "compliance", label: "Compliance", type: "text" },
+        { key: "notPatched", label: "Not patched because", type: "text" },
+        { key: "missingRequired", label: "Required updates missing", type: "number" },
+      ],
+      rows: [
+        ["WEB-01", "Updates missing", "", 2],
+        ["PRINTER", "Not patched", "EasyPatch's agent is not on the device.", null],
+      ],
+    },
+    "patch-installations": {
+      title: "Patch installations",
+      columns: [
+        { key: "completed", label: "Finished", type: "time" },
+        { key: "device", label: "Device", type: "text" },
+        { key: "update", label: "Update", type: "text" },
+        { key: "result", label: "Result", type: "text" },
+      ],
+      rows: [["2026-11-16T10:00:00Z", "WEB-01", "2026-11 Cumulative Update", "Installed"]],
+    },
   };
   const b = base[name];
   return { name, ...b, total: b.rows.length, truncated: false, generatedAt: "2026-11-16T12:00:00Z", ...extra };

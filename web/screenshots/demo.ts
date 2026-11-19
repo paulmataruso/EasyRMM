@@ -20,12 +20,15 @@ import type {
   PatchFleetDevice,
   PatchFleetUpdate,
   PatchJobView,
+  PatchMonthlyReport,
+  PatchMonthlyReportList,
   PatchPolicy,
   PatchPolicyLayer,
   PatchPolicyView,
   PatchStatus,
   PatchTag,
   PatchTagRef,
+  PatchTrend,
   PatchUpdate,
   PatchUpdateDevice,
   PatchUpdateView,
@@ -33,6 +36,7 @@ import type {
   ProductSwitch,
   RecentConnection,
   RemoteAccessStatus,
+  Report,
   SessionView,
   Site,
   User,
@@ -361,7 +365,7 @@ export function healthHistory(range: string): MetricsHistory {
 // ---------------------------------------------------------------------------------------------
 // Patching through EasyPatch
 
-export const patchStatus: PatchStatus = { configured: true, canOperate: true, canSchedule: true, consoleUrl: "https://patch.example.com" };
+export const patchStatus: PatchStatus = { configured: true, canOperate: true, canSchedule: true, bundled: false, consoleUrl: "https://patch.example.com" };
 export const productSwitch: ProductSwitch = { show: true, answering: true };
 
 type Compliance = Pick<
@@ -949,4 +953,142 @@ export const defaultPolicyView: PatchPolicyView = {
   inheritedFrom: fromDefault(),
   windows: true,
   canEdit: true,
+};
+
+// ---------------------------------------------------------------------------------------------
+// Patch reports (one-product plan, C5)
+
+const COMPLIANCE_LABELS: Record<string, string> = {
+  Compliant: "Up to date",
+  MissingUpdates: "Updates missing",
+  FailedUpdates: "Updates failed",
+  RebootRequired: "Restart needed",
+  ScanStale: "Scan out of date",
+  NeverScanned: "Never scanned",
+};
+
+/** The compliance report as the server builds it from the fleet (reports/patch.go). */
+export const patchComplianceReport: Report = {
+  name: "patch-compliance",
+  title: "Patch compliance",
+  columns: [
+    { key: "organization", label: "Organization", type: "text" },
+    { key: "site", label: "Site", type: "text" },
+    { key: "device", label: "Device", type: "text" },
+    { key: "platform", label: "Platform", type: "text" },
+    { key: "compliance", label: "Compliance", type: "text" },
+    { key: "notPatched", label: "Not patched because", type: "text" },
+    { key: "missingRequired", label: "Required updates missing", type: "number" },
+    { key: "missingTotal", label: "Updates missing", type: "number" },
+    { key: "failed", label: "Updates failed", type: "number" },
+    { key: "knownExploited", label: "Known exploited", type: "number" },
+    { key: "restartPending", label: "Restart pending", type: "bool" },
+    { key: "os", label: "Operating system", type: "text" },
+    { key: "osBuild", label: "Build", type: "text" },
+    { key: "osSupport", label: "OS support", type: "text" },
+    { key: "online", label: "Online in EasyPatch", type: "bool" },
+    { key: "lastScan", label: "Last scan", type: "time" },
+    { key: "lastCheckIn", label: "Last EasyPatch check-in", type: "time" },
+  ],
+  rows: fleet.devices.map((d) => {
+    const e = d.endpoint!;
+    const windows = d.platform === "windows";
+    return [
+      d.organizationName,
+      d.siteName,
+      d.name,
+      windows ? "Windows" : "Linux",
+      COMPLIANCE_LABELS[e.complianceStatus] ?? e.complianceStatus,
+      "",
+      e.missingRequiredCount,
+      e.missingTotalCount,
+      e.failedCount,
+      e.knownExploitedMissingCount,
+      e.rebootPending,
+      e.operatingSystem,
+      windows ? "26100.7171" : "",
+      windows ? "Supported" : "",
+      e.isOnline,
+      e.lastScanAt ?? null,
+      e.lastCheckInAt ?? null,
+    ];
+  }),
+  total: fleet.devices.length,
+  truncated: false,
+  generatedAt: NOW.toISOString(),
+};
+
+/**
+ * Thirty days of compliance: high, a drop the day after Patch Tuesday (10 November) as the month's updates arrive,
+ * and the climb back as Saturday's maintenance windows install them.
+ */
+export const patchTrend: PatchTrend = (() => {
+  const total = fleet.devices.length + fleet.unmatched.length;
+  const shares = [
+    0.86, 0.86, 0.89, 0.89, 0.89, 0.92, 0.92, 0.94, 0.94, 0.94, 0.94, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97,
+    0.36, 0.42, 0.47, 0.81, 0.83, 0.86, 0.89,
+  ];
+  const points = shares.map((share, i) => {
+    const d = new Date(NOW);
+    d.setUTCDate(d.getUTCDate() - (shares.length - 1 - i));
+    const compliant = Math.round(share * total);
+    const missing = total - compliant;
+    return {
+      date: d.toISOString().slice(0, 10),
+      totalEndpoints: total,
+      compliant,
+      missingUpdates: missing,
+      failedUpdates: 0,
+      rebootRequired: 0,
+      scanStale: 0,
+      neverScanned: 0,
+      offline: 0,
+      missingRequiredUpdates: missing * 2,
+      compliancePercent: Math.round((compliant / total) * 1000) / 10,
+    };
+  });
+  return { points, organizations: organizations.length };
+})();
+
+function monthlyReport(id: string, organizationId: string, periodStart: string, extra: Partial<PatchMonthlyReport> = {}): PatchMonthlyReport {
+  return {
+    id,
+    organizationId,
+    organizationName: orgName(organizationId),
+    periodStart,
+    periodEnd: periodStart.slice(0, 8) + "31",
+    monthToDate: false,
+    scheduled: true,
+    generatedAt: days(16),
+    // EasyPatch names no one for a report its schedule made.
+    generatedBy: undefined,
+    fileName: `patch-report-${organizationId}-${periodStart.slice(0, 7)}.pdf`,
+    sizeBytes: 214_000,
+    deliveryStatus: "Sent",
+    recipients: ["it@example.com"],
+    sentAt: days(16),
+    canManage: true,
+    ...extra,
+  };
+}
+
+export const monthlyReports: PatchMonthlyReportList = {
+  items: [
+    monthlyReport("mr-5", "o-harbor", "2026-11-01", {
+      monthToDate: true,
+      scheduled: false,
+      generatedAt: ago(40),
+      generatedBy: "jordan@example.com",
+      periodEnd: "2026-11-17",
+      deliveryStatus: "",
+      recipients: [],
+      sentAt: null,
+    }),
+    monthlyReport("mr-4", "o-harbor", "2026-10-01", { recipients: ["office.manager@example.com", "it@example.com"] }),
+    monthlyReport("mr-3", "o-meridian", "2026-10-01", { sizeBytes: 388_000 }),
+    monthlyReport("mr-2", "o-cedar", "2026-10-01", { deliveryStatus: "Failed", lastError: "550 5.1.1 Mailbox unavailable", sentAt: null }),
+    monthlyReport("mr-1", "o-alder", "2026-10-01", { scheduled: false, generatedBy: "jordan@example.com", deliveryStatus: "", recipients: [], sentAt: null }),
+  ],
+  capped: false,
+  canGenerate: organizations.map((o) => o.id),
 };

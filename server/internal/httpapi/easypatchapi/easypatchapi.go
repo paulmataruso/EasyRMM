@@ -83,6 +83,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/patching/updates/{update}/holds", a.holdUpdate)
 	r("POST /api/v1/patching/updates/{update}/holds/{id}/release", a.releaseHold)
 	a.registerPolicies(r)
+	a.registerReports(r)
 	// The product switch: for anyone signed in, it says whether to show it.
 	r("GET /api/v1/patching/switch", a.productSwitch)
 	// Where a link from EasyPatch opens the console.

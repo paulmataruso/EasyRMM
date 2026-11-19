@@ -40,6 +40,7 @@ const READY: PatchStatus = {
   configured: true,
   canOperate: true,
   canSchedule: false,
+  bundled: false,
   consoleUrl: "https://patch.example.com",
 };
 

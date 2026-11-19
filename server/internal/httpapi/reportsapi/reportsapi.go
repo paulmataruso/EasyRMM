@@ -39,6 +39,7 @@ func query(r *http.Request) (reports.Query, error) {
 	}
 	v := r.URL.Query()
 	q.Platform, q.Search, q.Severity = v.Get("platform"), v.Get("q"), v.Get("severity")
+	q.Compliance, q.Category, q.Result = v.Get("compliance"), v.Get("category"), v.Get("result")
 	ints := []struct {
 		name    string
 		def, hi int

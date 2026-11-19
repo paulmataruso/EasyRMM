@@ -144,10 +144,12 @@ regenerated when the console changes.
 
 * **EasyRMM uses EasyPatch's API** for patching: patch status, scan,
   install, restart and retry, on one device or many, now or scheduled;
-  holds; and patch policies for organizations, sites, devices and tags. The
-  devices' patches show on their own pages in EasyRMM.
-* **Not in EasyRMM's console yet**: patch reports and alerts, the
-  [one-product plan](docs/architecture/one-product-plan.md)'s next steps.
+  holds; patch policies for organizations, sites, devices and tags; and
+  patch reports: compliance with its trend, installations, and monthly PDFs
+  made, emailed and scheduled. The devices' patches show on their own pages
+  in EasyRMM.
+* **Not in EasyRMM's console yet**: patch alerts, the
+  [one-product plan](docs/architecture/one-product-plan.md)'s next step.
   With a connected EasyPatch server, they, its default policy and its tags
   are in EasyPatch's own console, and EasyRMM links to the matching page.
 * **The EasyRMM | EasyPatch switch** under the logo moves between the two

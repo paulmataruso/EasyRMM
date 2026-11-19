@@ -594,7 +594,7 @@ func TestFleetAndViews(t *testing.T) {
 	ctx := f.ctx
 
 	st, err := f.svc.Status(ctx, f.viewer)
-	if err != nil || !st.Configured || !st.CanOperate || st.CanSchedule || st.ConsoleURL != "https://patch.example.com" {
+	if err != nil || !st.Configured || !st.CanOperate || st.CanSchedule || st.Bundled || st.ConsoleURL != "https://patch.example.com" {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 	_, err = f.svc.Status(ctx, f.none)

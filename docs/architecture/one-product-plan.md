@@ -453,6 +453,31 @@ organization and sees it inherited by the site, adds a tag with a policy,
 gives it to the device with a value of the device's own, and finds each in
 the device's policy in effect with its layer.*
 
+*Done (C5): **Reports** has EasyPatch's reports: **Patch compliance** is the
+device list as a report, with each operating system's build and support
+status and why a device is not patched, above the dashboard's compliance
+trend (now ported) over 30 or 90 days or a year, added up over the
+organizations the caller sees whole; **Patch installations** is EasyPatch's
+installations report, at most 5,000 rows; **Monthly patch reports** makes an
+organization's PDF for a past month or the month so far, downloads, emails
+and deletes it. Each organization's schedule is under Settings → **Patching**
+→ **Report schedules**. Both reports are EasyRMM report definitions, so they
+filter, export CSV and are audited like the others. The trend, the list and
+the PDF are ReadOnly statements; making, emailing and deleting are Admin
+statements needing `patch.manage` over the organization, and schedules need
+`patch.configure`. **Email, decided:** with the bundled engine, EasyRMM gives
+it the `EASYRMM_SMTP_` mail server at each start (a SuperAdmin service
+statement), so one mail server serves the deployment; with a connected
+server, reports use the mail server in EasyPatch's console, and EasyRMM says
+so when there is none. The rest of EasyPatch's notification settings (alert
+email and webhooks) is C7. The contract test gives the real engine mail
+settings as EasyRMM does and reads them back, and sees it refuse to email
+without a mail server and over an unencrypted one. Not verified: a report
+delivered through a real mail server, and a PDF of a real Windows fleet. The bundle test lists the
+device's compliance and the update it installed, downloads the CSV, makes
+the month's report, downloads its PDF, is told no mail server is set,
+deletes the report and sets a schedule.*
+
 EasyPatch's console is about 18,800 lines of TypeScript without tests. Each
 area is ported with its tests and compared against the old page.
 

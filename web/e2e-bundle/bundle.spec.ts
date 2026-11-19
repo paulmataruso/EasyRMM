@@ -6,10 +6,13 @@
 // excluded and included again and the policy shows; Patching lists the update across devices, and
 // its page holds it and releases the hold (C2); installing it from the Patches tab, after the
 // preview, changes the package on the machine. A value set on the organization (C4) reaches the site
-// and the device, as do a tag's policy and the device's own. scripts/e2e/bundle.sh starts everything
-// and runs this.
+// and the device, as do a tag's policy and the device's own. Reports (C5) list the device's
+// compliance and the install; a monthly PDF is made, downloaded and deleted, emailing it says
+// EasyRMM has no mail server, and a schedule is set. scripts/e2e/bundle.sh starts everything and
+// runs this.
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { enrollAuthenticator } from "../e2e/authenticator";
 
@@ -371,3 +374,67 @@ test("an organization's policy, a tag's and the device's own reach the device, e
     await expect(schedule.getByText("This device")).toBeVisible();
   }).toPass({ timeout: 60_000, intervals: [3_000] });
 });
+
+test("Reports list the device's compliance and the install; a monthly report is made, downloaded and scheduled", async () => {
+  const page = admin;
+  const main = page.getByRole("main");
+
+  // Compliance, with the trend over the organization; installations, with the update test 7 installed.
+  await page.goto("/reports?report=patch-compliance");
+  await expect(main.getByRole("table", { name: "Patch compliance" }).getByRole("row").filter({ hasText: hostname })).toBeVisible();
+  await expect(main.getByRole("heading", { name: "Compliance trend" })).toBeVisible();
+  await page.goto("/reports?report=patch-installations");
+  const installed = main.getByRole("table", { name: "Patch installations" }).getByRole("row").filter({ hasText: PACKAGE });
+  await expect(installed.filter({ hasText: "Installed" })).toBeVisible();
+  const [csv] = await Promise.all([page.waitForEvent("download"), page.getByRole("link", { name: "Download CSV" }).click()]);
+  expect(readFileSync(await csv.path(), "utf8")).toContain(PACKAGE);
+
+  // A report of the month so far, from the engine, as a PDF.
+  await page.goto("/reports?report=patch-monthly");
+  await main.getByRole("button", { name: "Make a report" }).click();
+  const make = page.getByRole("dialog", { name: "Make a monthly report" });
+  const now = new Date();
+  await make.getByLabel("Organization").selectOption({ label: ORG });
+  await make.getByLabel("Year").selectOption(String(now.getUTCFullYear()));
+  await make.getByLabel("Month").selectOption(String(now.getUTCMonth() + 1));
+  await make.getByRole("button", { name: "Make report" }).click();
+  await expect(make).toBeHidden({ timeout: 60_000 });
+  const report = main.getByRole("table", { name: "Monthly patch reports" }).getByRole("row").filter({ hasText: "so far" });
+  await expect(report).toContainText(ORG);
+  const [pdf] = await Promise.all([page.waitForEvent("download"), report.getByRole("link", { name: /^Download the / }).click()]);
+  expect(readFileSync(await pdf.path()).subarray(0, 5).toString()).toBe("%PDF-");
+
+  // The deployment has no mail server (no EASYRMM_SMTP_HOST), and says so.
+  await report.getByRole("button", { name: "Email" }).click();
+  const email = page.getByRole("dialog", { name: "Email this report" });
+  await email.getByLabel("Recipients").fill("it@example.com");
+  await email.getByRole("button", { name: "Send" }).click();
+  await expect(email.getByText(/EasyRMM has no mail server to send reports with/)).toBeVisible();
+  await email.getByRole("button", { name: "Cancel" }).click();
+
+  await report.getByRole("button", { name: /^Delete the / }).click();
+  await page.getByRole("dialog", { name: "Delete this report?" }).getByRole("button", { name: "Delete report" }).click();
+  await expect(main.getByText("No monthly reports yet")).toBeVisible();
+
+  // A schedule: the 5th of each month.
+  await page.goto("/settings?tab=patching&view=reports");
+  const schedules = main.getByRole("table", { name: "Monthly report schedules" });
+  await schedules.getByRole("button", { name: `Change ${ORG}'s schedule` }).click();
+  const schedule = page.getByRole("dialog", { name: `${ORG}'s monthly report` });
+  await schedule.getByLabel(/Make and email a report each month/).check();
+  await schedule.getByLabel("Day of the month").selectOption({ label: "5th" });
+  await schedule.getByLabel("Recipients").fill("it@example.com");
+  await schedule.getByRole("button", { name: "Save schedule" }).click();
+  await expect(schedule).toBeHidden();
+  await expect(schedules.getByRole("row").filter({ hasText: ORG })).toContainText("On the 5th of each month");
+
+  // Each action on a report is audited; an email that was not sent is not.
+  const audit = await api<{ items: { action: string }[] }>("GET", "/api/v1/audit?action=patch");
+  expect(audit.items.slice(0, 4).map((a) => a.action)).toEqual([
+    "patch.report_schedule",
+    "patch.report_delete",
+    "patch.report_download",
+    "patch.report_generate",
+  ]);
+});
+

@@ -6,11 +6,13 @@ import { useAuth } from "../../auth/AuthContext";
 import { Button, buttonClasses, EmptyState, ErrorState, Segmented, Spinner } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
 import { PolicyPanel } from "../patching/PolicyEditor";
+import { ReportSchedules } from "../patching/ReportSchedules";
 import { TagChip, TagsManager } from "../patching/Tags";
 
 // Settings → Patching (one-product plan, C4): the default policy every organization starts from, and tags, whose
 // policies apply to devices across organizations. Both are EasyPatch's server-wide settings, so only super
 // administrators change them; others with patching see them, as they shape their own organizations' policies.
+// Report schedules (C5) are each organization's, changed by those who configure its patching.
 
 export function PatchingTab() {
   const url = useUrlState();
@@ -31,11 +33,12 @@ export function PatchingTab() {
           ) : undefined
         }
       >
-        Policies and tags come with EasyPatch, which patches your devices.
+        Policies, tags and report schedules come with EasyPatch, which patches your devices.
       </EmptyState>
     );
   }
-  const view = url.get("view") === "tags" ? "tags" : "default";
+  const requested = url.get("view");
+  const view = requested === "tags" || requested === "reports" ? requested : "default";
   const tag = url.get("tag");
   return (
     <div className="flex flex-col gap-4">
@@ -45,6 +48,7 @@ export function PatchingTab() {
         options={[
           { value: "default", label: "Default policy" },
           { value: "tags", label: "Tags" },
+          ...(can("report.view") ? [{ value: "reports" as const, label: "Report schedules" }] : []),
         ]}
         value={view}
         onChange={(v) => url.set({ view: v === "default" ? null : v, tag: null })}
@@ -52,6 +56,7 @@ export function PatchingTab() {
       {view === "default" && <PolicyPanel level="default" />}
       {view === "tags" && !tag && <TagsManager onPolicy={(t) => url.set({ tag: t.id })} />}
       {view === "tags" && tag && <TagPolicy id={tag} onBack={() => url.set({ tag: null })} />}
+      {view === "reports" && <ReportSchedules bundled={status.data.bundled} />}
     </div>
   );
 }

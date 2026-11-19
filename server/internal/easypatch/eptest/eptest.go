@@ -77,6 +77,14 @@ type Server struct {
 	policies map[string]map[string]any
 	tags     []*TagInfo
 	tagged   map[uuid.UUID][]uuid.UUID
+	// The reports (reports.go): each organization's daily compliance, the
+	// updates jobs finished with, monthly reports, their schedules, and
+	// the mail settings they are emailed with.
+	trend         map[uuid.UUID][]TrendDay
+	installations []*InstallationInfo
+	reports       []*ReportInfo
+	schedules     map[uuid.UUID]*ScheduleInfo
+	mail          map[string]any
 }
 
 // Token is an enrollment token EasyPatch created.
@@ -385,17 +393,17 @@ func update(title, category, state string) map[string]any {
 }
 
 func (e *Endpoint) summary() map[string]any {
-	platform, os, version := "Linux", "Debian GNU/Linux 13 (trixie)", "13"
+	platform, os, version, build, support := "Linux", "Debian GNU/Linux 13 (trixie)", "13", any(nil), "Unknown"
 	if e.Windows {
-		platform, os, version = "Windows", "Windows Server 2025 Standard", "10.0.26100"
+		platform, os, version, build, support = "Windows", "Windows Server 2025 Standard", "10.0.26100", "26100.2314", "Supported"
 	}
 	return map[string]any{
 		"id": e.ID, "hostname": e.Hostname, "organizationId": e.Org, "organizationName": e.OrgName,
 		"siteId": e.Site, "siteName": nullable(e.SiteName), "status": e.Status, "operatingSystem": os,
-		"osVersion": version, "osBuild": nil, "architecture": "X64", "agentVersion": "1.9.0", "agentOutdated": false, "isOnline": true,
+		"osVersion": version, "osBuild": build, "architecture": "X64", "agentVersion": "1.9.0", "agentOutdated": false, "isOnline": true,
 		"lastCheckInAt": "2026-11-16T14:34:13.737582+00:00", "lastScanAt": "2026-11-16T14:40:00+00:00",
 		"complianceStatus": e.Compliance, "missingRequiredCount": 1, "missingTotalCount": e.Missing, "failedCount": 1,
-		"rebootPending": e.RebootPending, "osSupportStatus": "Unknown", "currentActivity": "Idle", "lastSeenIp": "192.0.2.10",
+		"rebootPending": e.RebootPending, "osSupportStatus": support, "currentActivity": "Idle", "lastSeenIp": "192.0.2.10",
 		"platform": platform, "missingDeferredCount": 0, "tags": []any{}, "knownExploitedMissingCount": 0,
 	}
 }
@@ -568,6 +576,20 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.servePolicy(w, r, ScopeGlobal, uuid.Nil, body)
 	case parts[0] == "tags":
 		s.serveTags(w, r, parts, body)
+	case parts[0] == "reports":
+		s.serveReports(w, r, parts, q, pg, size)
+	case parts[0] == "monthly-reports":
+		s.serveMonthlyReports(w, r, parts, body, q, pg, size)
+	case parts[0] == "notifications" && len(parts) == 2 && parts[1] == "settings":
+		s.serveMail(w, r, body)
+	case parts[0] == "organizations" && len(parts) == 3 && parts[2] == "report-schedule":
+		id, _ := uuid.Parse(parts[1])
+		o := s.org(id)
+		if o == nil {
+			problem(w, 404, "not_found", "Organization was not found.")
+			return
+		}
+		s.serveSchedule(w, r, o, body)
 	case (parts[0] == "organizations" || parts[0] == "sites") && len(parts) == 3 && (parts[2] == "policy" || parts[2] == "tags"):
 		s.serveLevel(w, r, parts, body)
 	case parts[0] == "organizations":

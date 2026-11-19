@@ -76,7 +76,7 @@ func TestBundledEngine(t *testing.T) {
 		!slices.Contains(conn.Capabilities, CapabilityScheduledInstalls) || conn.UpdatedAt != nil || ConsoleURL(conn) != "" {
 		t.Fatalf("connection: %+v", conn)
 	}
-	if st, err := f.svc.Status(ctx, f.admin); err != nil || !st.Configured || !st.CanOperate || !st.CanSchedule || st.ConsoleURL != "" {
+	if st, err := f.svc.Status(ctx, f.admin); err != nil || !st.Configured || !st.CanOperate || !st.CanSchedule || !st.Bundled || st.ConsoleURL != "" {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 	if u, err := f.svc.EasyPatchURL(ctx, f.admin, GoTarget{List: "jobs"}); err != nil || u != "" {

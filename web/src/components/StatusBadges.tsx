@@ -131,6 +131,17 @@ const ACTIONS: Record<string, string> = {
   "patch.agent_update": "Requested EasyPatch agent update",
   "patch.hold": "Held an update",
   "patch.release_hold": "Released an update's hold",
+  "patch.policy_update": "Changed a patch policy",
+  "patch.policy_reset": "Reset a patch policy",
+  "patch.tag_create": "Added a patch tag",
+  "patch.tag_update": "Changed a patch tag",
+  "patch.tag_delete": "Deleted a patch tag",
+  "patch.tag_assign": "Changed patch tags",
+  "patch.report_generate": "Made a monthly patch report",
+  "patch.report_download": "Downloaded a monthly patch report",
+  "patch.report_send": "Emailed a monthly patch report",
+  "patch.report_delete": "Deleted a monthly patch report",
+  "patch.report_schedule": "Changed a patch report schedule",
 };
 
 export function actionLabel(action: string): string {

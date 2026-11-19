@@ -359,7 +359,7 @@ func TestReportLimitsAndChecks(t *testing.T) {
 	// scope would let them through.
 	acme := f.user("acme@example.com", rbac.Assignment{Role: rbac.RoleOrgAdmin, OrganizationID: f.acme})
 	wide := access.User(acme.Principal, database.System, acme.Actor)
-	for _, name := range Names() {
+	for _, name := range dbReports() {
 		rep, err := f.svc.Run(f.ctx, wide, name, Query{}, PreviewRows)
 		if err != nil {
 			t.Fatal(err)
@@ -383,7 +383,7 @@ func TestReportLimitsAndChecks(t *testing.T) {
 	// Past the limit a report stops and says so.
 	maxRows = 2
 	t.Cleanup(func() { maxRows = MaxRows })
-	for _, name := range Names() {
+	for _, name := range dbReports() {
 		rep, err := f.svc.Run(f.ctx, admin, name, Query{}, PreviewRows)
 		if err != nil {
 			t.Fatal(err)
@@ -408,4 +408,16 @@ func TestReportLimitsAndChecks(t *testing.T) {
 	if !strings.Contains(f.str(`SELECT details::text FROM audit_log WHERE action = 'report.export' AND target_id = 'health'`), `"offlineDays": 3`) {
 		t.Error("the health export's filters are not audited")
 	}
+}
+
+// dbReports are the reports read from EasyRMM's database. The patch reports
+// come from EasyPatch, and the easypatch package tests them with it.
+func dbReports() []string {
+	var out []string
+	for _, n := range Names() {
+		if definitions[n].patch == nil {
+			out = append(out, n)
+		}
+	}
+	return out
 }

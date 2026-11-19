@@ -19,7 +19,8 @@ const SUBTITLES: Record<string, string> = {
   "agent-updates": "Keep every EasyRMM agent on the build this server ships, a few devices at a time.",
   forwarding: "A copy of every audit record, sent as it is written to your syslog server or SIEM.",
   easypatch: "The EasyPatch server that patches your devices, and which of its organizations each EasyRMM organization is.",
-  patching: "The default patch policy every organization starts from, and tags that apply a policy to devices across organizations.",
+  patching:
+    "The default patch policy every organization starts from, tags that apply a policy to devices across organizations, and each organization's monthly report schedule.",
   sso: "Identity providers people can sign in through with OpenID Connect, instead of their EasyRMM password.",
 };
 

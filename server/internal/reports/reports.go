@@ -96,6 +96,12 @@ type Query struct {
 	DiskPercent int
 	// Severity is warning, critical, or empty for both (alerts).
 	Severity string
+	// Compliance is an EasyPatch compliance status, or unlinked for devices
+	// EasyPatch does not patch (patch-compliance).
+	Compliance string
+	// Category and Result are EasyPatch's update category and an update's
+	// result (patch-installations).
+	Category, Result string
 }
 
 // Defaults for the query fields that have them.
@@ -128,6 +134,9 @@ type definition struct {
 	perm    rbac.Permission
 	columns []Column
 	run     func(ctx context.Context, tx pgx.Tx, q Query, out emit) error
+	// patch, instead of run, reads the report from the patching connector
+	// and says whether it had more rows than it gave.
+	patch func(ctx context.Context, src PatchSource, c access.Caller, q Query, out emit) (bool, error)
 }
 
 var definitions = map[string]definition{
@@ -135,16 +144,23 @@ var definitions = map[string]definition{
 	"software": softwareReport,
 	"health":   healthReport,
 	"alerts":   alertsReport,
+
+	"patch-compliance":    patchComplianceReport,
+	"patch-installations": patchInstallationsReport,
 }
 
 // Names lists the reports there are.
-func Names() []string { return []string{"devices", "software", "health", "alerts"} }
+func Names() []string {
+	return []string{"devices", "software", "health", "alerts", "patch-compliance", "patch-installations"}
+}
 
 // Service runs reports.
 type Service struct {
 	db    *database.DB
 	audit *audit.Logger
 	now   func() time.Time
+	// patch is where the patch reports come from (UsePatching).
+	patch PatchSource
 }
 
 // New builds the service.
@@ -156,7 +172,7 @@ func New(db *database.DB, auditLog *audit.Logger) *Service {
 // all).
 func (s *Service) Run(ctx context.Context, c access.Caller, name string, q Query, keep int) (*Report, error) {
 	def, ok := definitions[name]
-	if !ok {
+	if !ok || (def.patch != nil && s.patch == nil) {
 		return nil, apperr.NotFound()
 	}
 	if !c.CanAnywhere(rbac.PermReportView) || !c.CanAnywhere(def.perm) {
@@ -166,29 +182,36 @@ func (s *Service) Run(ctx context.Context, c access.Caller, name string, q Query
 		return nil, err
 	}
 	rep := &Report{Name: name, Title: def.title, Columns: def.columns, Rows: [][]any{}, GeneratedAt: s.now().UTC(), from: map[uuid.UUID]*orgRows{}}
-	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		return def.run(ctx, tx, q, func(org, site uuid.UUID, row []any) bool {
-			if !c.Can(rbac.PermReportView, rbac.Site(org, site)) || !c.Can(def.perm, rbac.Site(org, site)) {
-				return true
-			}
-			if rep.Total == maxRows {
-				rep.Truncated = true
-				return false
-			}
-			rep.Total++
-			o := rep.from[org]
-			if o == nil {
-				o = &orgRows{sites: map[uuid.UUID]bool{}}
-				rep.from[org] = o
-			}
-			o.rows++
-			o.sites[site] = true
-			if len(rep.Rows) < keep {
-				rep.Rows = append(rep.Rows, row)
-			}
+	out := func(org, site uuid.UUID, row []any) bool {
+		if !c.Can(rbac.PermReportView, rbac.Site(org, site)) || !c.Can(def.perm, rbac.Site(org, site)) {
 			return true
-		})
-	})
+		}
+		if rep.Total == maxRows {
+			rep.Truncated = true
+			return false
+		}
+		rep.Total++
+		o := rep.from[org]
+		if o == nil {
+			o = &orgRows{sites: map[uuid.UUID]bool{}}
+			rep.from[org] = o
+		}
+		o.rows++
+		o.sites[site] = true
+		if len(rep.Rows) < keep {
+			rep.Rows = append(rep.Rows, row)
+		}
+		return true
+	}
+	if def.patch != nil {
+		truncated, err := def.patch(ctx, s.patch, c, q, out)
+		if err != nil {
+			return nil, err
+		}
+		rep.Truncated = rep.Truncated || truncated
+		return rep, nil
+	}
+	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error { return def.run(ctx, tx, q, out) })
 	if err != nil {
 		return nil, err
 	}
@@ -203,12 +226,17 @@ func (s *Service) Run(ctx context.Context, c access.Caller, name string, q Query
 // under an organization the export took nothing from. An export with no
 // rows is recorded at platform level.
 func (s *Service) Export(ctx context.Context, c access.Caller, name string, q Query) (*Report, error) {
+	if q.Days == 0 {
+		// As Run reads it, so that the audit entry says the same.
+		q.Days = DefaultDays
+	}
 	rep, err := s.Run(ctx, c, name, q, MaxRows)
 	if err != nil {
 		return nil, err
 	}
 	details := map[string]any{"report": name, "rows": rep.Total, "truncated": rep.Truncated}
-	for k, v := range map[string]string{"platform": q.Platform, "q": q.Search, "severity": q.Severity} {
+	for k, v := range map[string]string{"platform": q.Platform, "q": q.Search, "severity": q.Severity, "compliance": q.Compliance,
+		"category": q.Category, "result": q.Result} {
 		if v != "" {
 			details[k] = v
 		}
@@ -220,7 +248,7 @@ func (s *Service) Export(ctx context.Context, c access.Caller, name string, q Qu
 		details["siteId"] = q.SiteID.String()
 	}
 	switch name {
-	case "alerts":
+	case "alerts", "patch-installations":
 		details["days"] = q.Days
 	case "health":
 		details["offlineDays"], details["diskPercent"] = q.OfflineDays, q.DiskPercent

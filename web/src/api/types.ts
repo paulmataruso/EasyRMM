@@ -914,7 +914,7 @@ export interface AlertSummary {
 
 // --- Reports (ADR-0029) --------------------------------------------------------------------
 
-export type ReportName = "devices" | "software" | "health" | "alerts";
+export type ReportName = "devices" | "software" | "health" | "alerts" | "patch-compliance" | "patch-installations";
 
 export interface ReportColumn {
   key: string;
@@ -1039,6 +1039,8 @@ export interface PatchStatus {
   configured: boolean;
   canOperate: boolean;
   canSchedule: boolean;
+  /** Patching comes from the engine in this deployment, which emails reports through EasyRMM's mail server. */
+  bundled: boolean;
   /** EasyPatch's own console, to open in a new tab. */
   consoleUrl?: string;
 }
@@ -1412,6 +1414,73 @@ export interface PatchTag {
   organizationCount: number;
   hasPolicy: boolean;
   createdAt: string;
+}
+
+/** One day of compliance, added up over the organizations a report covers (one-product plan, C5). */
+export interface PatchTrendPoint {
+  /** 2006-01-02 */
+  date: string;
+  totalEndpoints: number;
+  compliant: number;
+  missingUpdates: number;
+  failedUpdates: number;
+  rebootRequired: number;
+  scanStale: number;
+  neverScanned: number;
+  offline: number;
+  missingRequiredUpdates: number;
+  compliancePercent: number;
+}
+
+export interface PatchTrend {
+  points: PatchTrendPoint[];
+  /** The organizations the caller sees whole, which the trend adds up. */
+  organizations: number;
+}
+
+export type PatchDeliveryStatus = "Pending" | "Sending" | "Sent" | "Failed";
+
+export interface PatchMonthlyReport {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  /** The month's first day and last (today for a report of the month so far), as 2006-01-02. */
+  periodStart: string;
+  periodEnd: string;
+  monthToDate: boolean;
+  scheduled: boolean;
+  generatedAt: string;
+  generatedBy?: string;
+  fileName: string;
+  sizeBytes: number;
+  deliveryStatus?: PatchDeliveryStatus | "";
+  recipients: string[];
+  sentAt?: string | null;
+  lastError?: string;
+  canManage: boolean;
+}
+
+export interface PatchMonthlyReportList {
+  items: PatchMonthlyReport[];
+  /** There are older reports than the list holds. */
+  capped: boolean;
+  /** The organizations the caller may make reports of. */
+  canGenerate: string[];
+}
+
+export interface PatchReportSchedule {
+  organizationId: string;
+  organizationName: string;
+  enabled: boolean;
+  recipients: string[];
+  /** 1 to 28: the day the month before's report is made and emailed. */
+  dayOfMonth: number;
+  includeEndpointList: boolean;
+  /** In the organization's time zone, as 2006-01-02. */
+  nextReportDate?: string | null;
+  nextReportPeriod?: string | null;
+  timeZone: string;
+  canEdit: boolean;
 }
 
 export interface PatchTagList {

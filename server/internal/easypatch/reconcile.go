@@ -157,6 +157,7 @@ func (s *Service) Reconcile(ctx context.Context) (ReconcileResult, error) {
 		if err := s.placeEndpoints(ctx, c, &res); err != nil {
 			return res, err
 		}
+		s.syncMail(ctx, c, &res)
 	}
 	if err := s.removeAgents(ctx, c, &res); err != nil {
 		return res, err

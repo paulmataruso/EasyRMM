@@ -525,6 +525,42 @@ tags** on an organization's, site's or device's page gives it tags, at most
 organization's tags, shown with a dashed outline. Others with patching see
 the tags in use in their organizations.
 
+### Reports
+
+**Reports** in the main menu has three patch reports
+([Reports](reports.md#patch-reports)): **Patch compliance**, each device's
+patching as EasyPatch last saw it, with the organizations' compliance trend
+over 30 or 90 days or a year; **Patch installations**, what EasyPatch's jobs
+installed, failed to install, skipped or cancelled; and **Monthly patch
+reports**, a PDF of an organization's patching over a month.
+
+A monthly report covers an organization: its compliance, what was
+installed and what failed over the month, and, with **List each device**, a
+page per device. **Make a report** makes one for a past month, or for the
+current month so far, at most 10 years back. **PDF** downloads it; **Email**
+sends it as an attachment to the addresses given, or, left empty, to the
+organization's schedule's recipients (at most 20); the bin deletes it. A
+report larger than 15 MB cannot be emailed. The list shows the newest 200
+reports; choose an organization to see its own.
+
+Settings → **Patching** → **Report schedules** sets, for each organization,
+a day of the month (1 to 28) on which EasyPatch makes the report of the
+month before, in the organization's time zone, and emails it to the
+schedule's recipients. A schedule that is on needs at least one recipient.
+Reports made on a schedule are listed with the others, marked
+*Scheduled*, with whether the email was sent.
+
+**Where email comes from.** With the bundled engine, EasyRMM gives the
+engine its own mail server, the `EASYRMM_SMTP_` settings in `.env` that
+also send invitations and password resets, each time EasyRMM starts
+(`EASYRMM_SMTP_TLS`: `starttls`, `implicit` or `none`; `EASYRMM_SMTP_FROM`
+may carry a name, as `EasyRMM <rmm@example.com>`). Without
+`EASYRMM_SMTP_HOST`, **Email** and schedules say that EasyRMM has no mail
+server to send reports with. EasyPatch sends reports only over STARTTLS or
+TLS, so `EASYRMM_SMTP_TLS=none` is refused for reports. With a connected
+server, reports go through the mail server set in EasyPatch's console
+(Settings → Notifications), and EasyRMM says so when it has none.
+
 ### With a connected EasyPatch server
 
 EasyPatch's API tokens are Operator or Read only, never SuperAdmin, and
@@ -642,6 +678,9 @@ warns about them; see
 | `patch.view` (with `device.view`) | Patching, a device's Patches tab | Every role |
 | `patch.manage` | Scan, install, restart, cancel, retry, exclude and include updates, remove an update, install or remove an update across devices, message users, install and update the EasyPatch agent, stop and allow patching for a device | Technician and above |
 | `patch.configure` | Change EasyPatch's standing rules: the patch policy of the organization, its sites and devices; hold an update in the organization and release its holds (in every organization, the default policy, tags and tags' policies: super administrators only); makes someone an Admin in EasyPatch rather than ReadOnly when they sign in to EasyPatch through EasyRMM. Only organization-wide roles hold it | Organization administrator and above |
+| `report.view` (with `patch.view`) | The patch reports: compliance and installations for the devices you see; the compliance trend, monthly reports and report schedules of organizations you see whole | Every role |
+| `report.view` and `patch.manage` over the organization | Make, email and delete its monthly reports | Technician and above, with an organization-wide role |
+| `report.view` and `patch.configure` over the organization | Change its report schedule | Organization administrator and above |
 | `settings.manage` | Settings → EasyPatch, including automatic installs of the EasyPatch agent | Super administrator |
 
 Both are checked at the device's site before EasyPatch is called; a job is
@@ -664,6 +703,9 @@ nobody can act, whatever their role.
 | `patch.policy_update`, `patch.policy_reset` | The layer (default, organization, site, tag or device) and its name; for a change, the values changed |
 | `patch.tag_create`, `patch.tag_update`, `patch.tag_delete` | The tag's name, colour and priority; a renamed tag's old name; for a deleted one, how many devices had it and whether it had a policy |
 | `patch.tag_assign` | The organization, site or device, and the tags given and taken off |
+| `patch.report_generate`, `patch.report_download`, `patch.report_send`, `patch.report_delete` | A monthly report made (and whether it lists each device), downloaded, emailed (to how many recipients) or deleted: the organization, the month, whether it was the month so far, and the file |
+| `patch.report_schedule` | An organization's report schedule changed: on or off, the day, how many recipients, and whether it lists each device |
+| `report.export` | A patch compliance or installations CSV downloaded, with its filters and rows, as for every report |
 | `easypatch.connection_update`, `easypatch.connection_delete` | The server, its version, whether the token changed and can act, and whether links were forgotten |
 | `easypatch.organization_link`, `easypatch.organization_unlink` | Both organizations |
 | `patch.agent_install` | One record per device an EasyPatch agent install was requested for. Automatic installs are covered by the record of turning them on |
@@ -689,6 +731,13 @@ server has the `on-behalf-of` capability.
   at once; one only where a restart is pending, 1,000.
 * The device list is cached for 30 seconds; a scan or install refreshes it.
 * An organization, a site or a device has at most 20 tags of its own.
+* The patch installations report reads at most 5,000 rows and says so;
+  narrow it by organization, site or period. Its periods go back at most a
+  year, as does the compliance trend.
+* The compliance trend has a point a day: EasyPatch records each
+  organization's compliance every 30 minutes and keeps the day's last
+  record (by UTC date), for as long as it keeps its audit log (a year by
+  default). Days before an organization had endpoints are not counted.
 * The update list shows 50 updates a page and an update's page 200 devices
   a page. Installing or removing an update across devices reaches at most
   1,000 devices at once: choose an organization or a site beyond that.

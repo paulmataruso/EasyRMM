@@ -128,6 +128,9 @@ type Status struct {
 	Configured  bool `json:"configured"`
 	CanOperate  bool `json:"canOperate"`
 	CanSchedule bool `json:"canSchedule"`
+	// Bundled says patching comes from the engine in this deployment, which
+	// emails reports through EasyRMM's mail server.
+	Bundled bool `json:"bundled"`
 	// ConsoleURL is EasyPatch's own console, for people to open: its public
 	// address, else the address EasyRMM uses. "" when not configured.
 	ConsoleURL string `json:"consoleUrl,omitempty"`
@@ -162,7 +165,7 @@ func (s *Service) Status(ctx context.Context, c access.Caller) (Status, error) {
 		return Status{}, err
 	}
 	st := Status{Configured: conn.Configured, CanOperate: conn.CanOperate,
-		CanSchedule: slices.Contains(conn.Capabilities, CapabilityScheduledInstalls)}
+		CanSchedule: slices.Contains(conn.Capabilities, CapabilityScheduledInstalls), Bundled: s.Bundled()}
 	if conn.Configured {
 		st.ConsoleURL = consoleURL(conn)
 	}

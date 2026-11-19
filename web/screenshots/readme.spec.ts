@@ -26,11 +26,14 @@ import {
   healthHistory,
   healthInventory,
   missingUpdates,
+  monthlyReports,
   NOW,
   organizations,
   PATCH_DEVICE,
+  patchComplianceReport,
   patchJobs,
   patchStatus,
+  patchTrend,
   productSwitch,
   recentConnections,
   remoteAccess,
@@ -163,6 +166,25 @@ function answer(method: string, path: string, q: URLSearchParams): unknown {
       return defaultPolicyView;
     case "/patching/tags":
       return { items: patchTags, canManage: true };
+    case "/reports/patch-compliance":
+      return patchComplianceReport;
+    case "/patching/reports/trend":
+      return patchTrend;
+    case "/patching/reports/monthly":
+      return monthlyReports;
+    case "/patching/report-schedules":
+      return organizations.map((o, i) => ({
+        organizationId: o.id,
+        organizationName: o.name,
+        enabled: i % 2 === 0,
+        recipients: i % 2 === 0 ? ["it@example.com"] : [],
+        dayOfMonth: 2,
+        includeEndpointList: i !== 2,
+        nextReportDate: i % 2 === 0 ? "2026-12-02" : null,
+        nextReportPeriod: i % 2 === 0 ? "2026-11-01" : null,
+        timeZone: TIME_ZONE,
+        canEdit: true,
+      }));
   }
   return undefined;
 }
@@ -250,6 +272,12 @@ for (const theme of ["dark", "light"] as const) {
       await open(page, theme, "/organizations/o-harbor?tab=patch-policy");
       await expect(page.getByRole("heading", { name: "Windows Update settings" })).toBeVisible();
       await shoot(page, "patch-policy", theme);
+    });
+
+    test("patch reports", async ({ page }) => {
+      await open(page, theme, "/reports?report=patch-compliance");
+      await expect(page.getByRole("group", { name: /Machines up to date/ })).toBeVisible();
+      await shoot(page, "patch-reports", theme);
     });
 
     test("alerts", async ({ page }) => {

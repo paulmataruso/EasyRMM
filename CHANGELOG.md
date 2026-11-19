@@ -133,6 +133,22 @@ All notable changes to this project are documented here. The format follows
   `patch.policy_reset`, `patch.tag_create`, `patch.tag_update`,
   `patch.tag_delete` and `patch.tag_assign`. The **Change in EasyPatch** link
   on a device's Policy view is gone.
+- **Patch reports** (one-product plan, phase C5): **Reports** gains **Patch
+  compliance** (each device's patching, with why a device is not patched,
+  its operating system's build and support, and the organizations'
+  compliance trend over 30 or 90 days or a year), **Patch installations**
+  (each update EasyPatch's jobs finished with over a period: installed,
+  failed, skipped or cancelled, why, and who asked) and **Monthly patch
+  reports**: an organization's month as a PDF, made by hand or on a
+  schedule, downloaded, emailed or deleted. Schedules are set per
+  organization under Settings → **Patching** → **Report schedules**. With
+  the bundled engine, reports are emailed through EasyRMM's own
+  `EASYRMM_SMTP_` mail server, given to the engine at each start. Making,
+  emailing and deleting need `patch.manage` over the organization, and
+  schedules `patch.configure`. Audited as `patch.report_generate`,
+  `patch.report_download`, `patch.report_send`, `patch.report_delete` and
+  `patch.report_schedule`. Charts over more than two weeks label their axis
+  by date.
 - **Organization time zones**: organizations have a time zone (default UTC;
   the browser's for a new one), which patching reports use.
 - **Stop patching for a device**: the device's Patches tab can stop
