@@ -97,29 +97,14 @@ erDiagram
     policies }o--|| organizations : "org scope"
     policies }o--|| sites : "site scope"
     policies |o--|| endpoints : "endpoint scope"
-    users ||--o{ user_sessions : has
-    users ||--o{ user_organization_access : "scoped to"
-    users ||--o{ password_reset_tokens : has
-    users ||--o{ webauthn_credentials : has
-    users ||--o{ external_logins : "signs in with"
-    oidc_providers ||--o{ external_logins : links
-    users ||--o{ audit_logs : performs
     api_tokens ||--o{ audit_logs : performs
     organizations ||--o{ compliance_snapshots : tracks
 ```
 
 | Table | Key columns / notes |
 |---|---|
-| `users` | username (display name), email (the sign-in name; stored in lower case, unique on `lower(email)`), Argon2id `password_hash`, `role` (SuperAdmin, Admin, ReadOnly), MFA secret (protected with ASP.NET Data Protection), recovery code hashes, lockout counters, `security_stamp` |
-| `user_sessions` | SHA-256 of the session token, MFA-completed flag, idle and absolute expiry, `revoked_at` |
-| `webauthn_credentials` | Passkeys and security keys: credential ID (unique), public key, signature counter, AAGUID, transports, name, passkey and backup flags, created and last used |
-| `webauthn_challenges` | Pending WebAuthn ceremonies: the options with their challenge, bound to a session or to the hash of a browser cookie; single use, 5-minute expiry |
-| `oidc_providers` | Single sign-on providers: name, issuer, client ID, client secret (Data Protection), scopes, enabled, email trust, provider MFA, account creation (role, allowed domains) |
-| `external_logins` | Links from users to provider accounts: issuer and subject (unique), provider, email at linking, created and last used |
-| `oidc_login_states` | Pending single sign-on attempts: hash of `state`, nonce, PKCE verifier, browser-binding hash, return path; single use, 10-minute expiry |
-| `user_organization_access` | The organizations a non-SuperAdmin user can see when `users.all_organizations` is false. With no rows they see none: deleting organizations never widens access. Managed under Settings → Users. |
-| `password_reset_tokens` | Hashed, single-use, expiring tokens issued by an administrator |
-| `api_tokens` | API tokens for scripts and integrations: SHA-256 of the secret, display prefix, `role` (ReadOnly or Admin), `all_organizations` or `organization_ids`, expiry, last use time and address, `revoked_at`. Managed under Settings → API tokens. |
+| `api_tokens` | API tokens for scripts and integrations: SHA-256 of the secret, display prefix, `role` (ReadOnly or Admin), `all_organizations` or `organization_ids`, expiry, last use time and address, `revoked_at`. Created with the `create-api-token` command. |
+| `users`, `user_organization_access`, `user_sessions`, `password_reset_tokens`, `webauthn_credentials`, `webauthn_challenges`, `oidc_providers`, `external_logins`, `oidc_login_states` | EasyPatch's former accounts, sessions, passkeys and single sign-on. They stay in the schema, but nothing uses them to authenticate: EasyPatch has no sign-in of its own. `prepare-import` disables the accounts of a standalone database brought into EasyRMM and empties the other tables. Audit records of that time keep their `user_id`. |
 | `organizations`, `sites` | `is_active` and `archived_at`. Archiving is preferred to deleting; hard delete is only allowed when no endpoints exist. |
 | `endpoints` | Identity, OS and hardware inventory, agent version and capabilities, check-in, scan and inventory timestamps, reboot state and reasons, signed-in user and tray counts, update source, Windows Update policy status reported by the agent, OS support status, and denormalized compliance counters |
 | `agent_credentials` | Public ID `c_…`, ECDSA P-256 **public key only**, expiry, revocation, `replaced_by` |
@@ -137,7 +122,7 @@ erDiagram
 | `server_settings` | A single `jsonb` row for global limits, retention periods and credential lifetimes |
 | `os_lifecycle_entries` | Editable lifecycle table (product, edition class, build, end of servicing) used for support status |
 | `endpoint_events` | Per-endpoint activity (scans, jobs, enrollment, reboot changes, online and offline transitions) |
-| `audit_logs` | Every administrative action, with user (or `token:<name>` for an API token), IP and correlation ID |
+| `audit_logs` | Every administrative action, with who acted (`easyrmm:<name>` for a statement from EasyRMM, `token:<name>` for an API token, `cli` for a command), IP and correlation ID |
 | `compliance_snapshots` | Daily per-organization counters for trend reporting |
 | `vulnerabilities`, `msrc_kb_cves`, `msrc_build_fixes`, `debian_fixes`, `vulnerability_feeds` | Downloaded vulnerability data (see [section 8](#8-vulnerability-data)) and the state of each download |
 
@@ -218,7 +203,7 @@ editor has no per-site install limit).
 **Tags** are MSP-wide labels (for example update rings such as "Pilot" and "Broad"). Super
 administrators create tags and tag policies. Administrators without organization restrictions
 assign tags to endpoints, sites and organizations (`endpoint_tags`, `site_tags`,
-`organization_tags`); restricted users only see the tags of their own endpoints, sites and
+`organization_tags`); restricted callers only see the tags of their own endpoints, sites and
 organizations. An endpoint has its own tags plus those of its site and organization, so tagging
 a site or a customer puts all of its computers in a ring. A tag policy applies to every
 endpoint with the tag, however it got it; the tag filter, alert rule scopes and counts use the

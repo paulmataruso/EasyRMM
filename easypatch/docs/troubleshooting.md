@@ -44,24 +44,19 @@ problem.
 | `429 Too Many Requests` | A rate limit was hit. Many agents behind one NAT address share the per-IP limits for enrollment and downloads. The per-agent limit applies per credential |
 | Disk usage grows | Check how long the engine keeps its records: EasyRMM's **Settings → Patching → Server**, *Keep for*. Container logs rotate at 20 MB × 5 files per service |
 
-## Signing in
+## API access
+
+EasyPatch has no sign-in of its own: people sign in to EasyRMM, which calls the engine with a
+signed statement for each request. Scripts use API tokens.
 
 | Symptom | Fix |
 |---|---|
-| "Email or password is incorrect" for a correct password | Users sign in with their email address, not their username. The account may also be locked after five failed attempts. The lockout starts at 15 minutes and doubles with each lockout, up to 24 hours. Wait, or run `docker compose run --rm api unlock --email <address>` |
-| Authenticator codes are rejected | The authenticator device's clock is wrong (codes are valid for ±30 seconds), or the code was already used (each code works once). Use a recovery code, or have a SuperAdmin reset MFA under **Settings → Users** |
-| No "Sign in with a passkey" button; **Passkeys and security keys** says they are not available | The console is reached by an IP address or over plain HTTP. Browsers allow WebAuthn only for a DNS name over HTTPS with a certificate they trust: set `EASYPATCH_DOMAIN` to such a name. Passkeys registered under another domain do not work after a change |
-| The browser says the passkey request was cancelled or timed out | The prompt was closed, or the key was not touched within the time limit. Try again; each attempt gets a new challenge that is valid for 5 minutes |
-| "No EasyPatch account matches this sign-in" after single sign-on | The audit log (`auth.sso_failed`) has the reason. `email_not_verified`: the provider did not say the address is verified (Entra ID never does; see **Trust the provider's email claim** in [single-sign-on.md](single-sign-on.md)). `no_matching_user`: no user has that address and account creation is off. `domain_not_allowed`, `linked_to_other_account` (the user is linked to another account at that provider; unlink it under **Settings → Users → Edit**) or `inactive` |
-| "Single sign-on failed" or "not available" | Use **Check** under **Settings → Single sign-on**: the issuer must match the discovery document exactly and the `api` container must reach the provider over HTTPS. At the provider, the redirect URI must be exactly the one shown on that page. `invalid_token:SecurityTokenInvalidLifetimeException` in the audit log means the server's or the provider's clock is off by more than 2 minutes |
-| Lost MFA device and no recovery codes | Another SuperAdmin resets MFA under **Settings → Users**. If none can sign in: `docker compose run --rm api reset-mfa --email <address>` |
-| Forgotten password | A SuperAdmin creates a reset link under **Settings → Users**, or on the host: `docker compose run --rm api reset-password --email <address>` |
-| The upgrade stops with "these addresses belong to more than one user" | Users sign in with their email address, so no two users may have the same address (ignoring case). Start the previous version again, give each of the listed users a different address under **Settings → Users**, then upgrade again |
-| Signed out unexpectedly | Sessions end after the idle timeout (default 30 minutes) or the maximum session length (default 12 hours). Both are under **Settings → Server settings** |
-| `403` with code `csrf_failed` | The page was open across a sign-out or session change. Reload it |
-| A script with an API token gets `401` | The token is wrong, expired or revoked (see **Settings → API tokens**), or the header is not exactly `Authorization: Bearer ept_…`. A request that also sends the console's session cookie is authenticated by the session instead |
-| A script with an API token gets `403` | The token's role does not allow the route (ReadOnly tokens cannot change anything, and no token can manage users, API tokens or server settings), or the request sent a session cookie without the CSRF header |
-| All MFA users must re-enroll after a restore or migration | The Data Protection key ring (`dpkeys` volume) was not restored with the database. Restore `dpkeys.tar` from the same backup |
+| `easypatch-api` stops at start with `EasyRmm:GatewayKey is not base64.` or `… must be at least 32 bytes.` | `EASYRMM_PATCHING_KEY` in EasyRMM's `.env` is damaged. Put back the value from your backup of `.env`, or empty it (`EASYRMM_PATCHING_KEY=`) and rerun EasyRMM's `deploy/scripts/setup.sh` with its usual options, which fills in a new one; then `docker compose up -d` |
+| EasyRMM's patching pages fail and the API log has `Refused a statement from EasyRMM … : bad signature` | The API and EasyRMM's server do not share the key. Both read `EASYRMM_PATCHING_KEY` from EasyRMM's `.env`; after it changed, run `docker compose up -d` so both services are recreated with it |
+| The API log has `Refused a statement from EasyRMM … : expired or not yet valid` | The request reached the API more than 5 seconds after its statement expired (EasyRMM makes each good for 30 seconds), for example after a stall of the host or a jump of its clock. Retry; if it persists, check the host's time synchronization |
+| A script with an API token gets `401` | The token is wrong, expired or revoked, or the header is not exactly `Authorization: Bearer ept_…`. A request that also carries `X-EasyRMM-Assertion` is authenticated by that statement and the token is ignored |
+| A script with an API token gets `403` | The token's role does not allow the route. ReadOnly tokens cannot change anything, and no token can use the SuperAdmin routes (server settings, the global policy, tags, alert rules, notifications, the lifecycle table) |
+| An API token leaked or is no longer needed | Tokens cannot be listed or revoked through the API. Create a replacement with `create-api-token` if needed, then end the old one in the engine's database, from EasyRMM's `deploy/` folder: `docker compose exec -u postgres postgres psql -p 15432 -d easypatch -c "UPDATE api_tokens SET revoked_at = now() WHERE name = '<name>' AND revoked_at IS NULL"` |
 
 ## Endpoints and agents
 

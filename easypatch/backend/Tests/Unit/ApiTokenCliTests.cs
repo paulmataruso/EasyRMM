@@ -4,7 +4,7 @@ using Xunit;
 
 namespace EasyPatch.Tests.Unit;
 
-/// <summary><c>create-api-token</c> checks its options as <c>POST /api/v1/api-tokens</c> checks a request.</summary>
+/// <summary><c>create-api-token</c> checks its options; the account commands are gone.</summary>
 public sealed class ApiTokenCliTests
 {
     private static Dictionary<string, string?> Options(params (string Key, string Value)[] pairs)
@@ -76,5 +76,17 @@ public sealed class ApiTokenCliTests
         Assert.Equal(new[] { a, b }, parsed.OrganizationIds);
         Assert.Throws<ArgumentException>(() => AdminCli.ParseApiTokenOptions(Options(("name", "x"), ("role", "read-only"), ("expires-days", "7"),
             ("organizations", "acme"))));
+    }
+
+    [Theory]
+    [InlineData("create-admin")]
+    [InlineData("reset-password")]
+    [InlineData("reset-mfa")]
+    [InlineData("unlock")]
+    public async Task The_removed_account_commands_fail_instead_of_starting_the_server(string command)
+    {
+        // Program.cs runs the CLI, not the web server, for these names; the CLI refuses them before it touches configuration or the database.
+        Assert.Contains(command, AdminCli.Commands);
+        Assert.Equal(2, await AdminCli.RunAsync([command, "--email", "admin@example.test"]));
     }
 }

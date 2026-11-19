@@ -125,11 +125,11 @@ public static class OrganizationEndpoints
         });
 
         orgs.MapPut("/{id:guid}/policy", async (Guid id, PolicyRequest request, PolicyService policies, ComplianceService compliance, EasyPatchDbContext db,
-            ITenantContext tenant, AuditService audit, ClaimsPrincipal user, CancellationToken ct) =>
+            ITenantContext tenant, AuditService audit, IActorContext actor, CancellationToken ct) =>
         {
             tenant.EnsureAccess(id);
             _ = await db.Organizations.AnyAsync(o => o.Id == id, ct) ? 0 : throw AppException.NotFound("Organization");
-            var stored = await policies.UpsertAsync(PolicyScope.Organization, id, null, FromRequest(request), user.FindUserId(), ct);
+            var stored = await policies.UpsertAsync(PolicyScope.Organization, id, null, FromRequest(request), actor.UserId, ct);
             audit.Record("policy.update", "Policy", stored.Id.ToString(), id, details: request);
             await db.SaveChangesAsync(ct);
             await compliance.RecomputeScopeAsync(id, null, ct);
@@ -204,11 +204,11 @@ public static class OrganizationEndpoints
         });
 
         sites.MapPut("/{id:guid}/policy", async (Guid id, PolicyRequest request, PolicyService policies, ComplianceService compliance, EasyPatchDbContext db,
-            ITenantContext tenant, AuditService audit, ClaimsPrincipal user, CancellationToken ct) =>
+            ITenantContext tenant, AuditService audit, IActorContext actor, CancellationToken ct) =>
         {
             var site = await db.Sites.AsNoTracking().FirstOrDefaultAsync(s => s.Id == id, ct) ?? throw AppException.NotFound("Site");
             tenant.EnsureAccess(site.OrganizationId);
-            var stored = await policies.UpsertAsync(PolicyScope.Site, site.OrganizationId, id, FromRequest(request), user.FindUserId(), ct);
+            var stored = await policies.UpsertAsync(PolicyScope.Site, site.OrganizationId, id, FromRequest(request), actor.UserId, ct);
             audit.Record("policy.update", "Policy", stored.Id.ToString(), site.OrganizationId, details: request);
             await db.SaveChangesAsync(ct);
             await compliance.RecomputeScopeAsync(site.OrganizationId, id, ct);
@@ -234,9 +234,9 @@ public static class OrganizationEndpoints
         global.MapGet("/global", async (PolicyService policies, CancellationToken ct) => TypedResults.Ok(ToDto(await policies.GetGlobalAsync(ct))))
             .RequireAuthorization(Policies.Viewer);
         global.MapPut("/global", async (PolicyRequest request, PolicyService policies, ComplianceService compliance, EasyPatchDbContext db, AuditService audit,
-            ClaimsPrincipal user, CancellationToken ct) =>
+            IActorContext actor, CancellationToken ct) =>
         {
-            var stored = await policies.UpsertAsync(PolicyScope.Global, null, null, FromRequest(request), user.FindUserId(), ct);
+            var stored = await policies.UpsertAsync(PolicyScope.Global, null, null, FromRequest(request), actor.UserId, ct);
             audit.Record("policy.update", "Policy", stored.Id.ToString(), details: request);
             await db.SaveChangesAsync(ct);
             await compliance.RecomputeScopeAsync(null, null, ct);

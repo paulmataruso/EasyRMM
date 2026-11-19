@@ -1,30 +1,19 @@
 using System.Security.Claims;
 using EasyPatch.Core.Entities;
 using EasyPatch.Infrastructure.Services;
-using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Authorization.Policy;
 
 namespace EasyPatch.Api.Security;
 
 public static class Policies
 {
-    /// <summary>Signed in with a session, MFA possibly still pending (MFA verification, logout, /me).</summary>
-    public const string SessionAny = "SessionAny";
-
-    /// <summary>Signed in and past the MFA step, but MFA enrollment or a password change may still be required.</summary>
-    public const string SessionMfaPassed = "SessionMfaPassed";
-
-    /// <summary>Fully signed in with a session, any role: the user's own account (MFA, recovery codes, sessions). Not API tokens.</summary>
-    public const string Account = "Account";
-
-    /// <summary>Fully authenticated session or API token, any role (read access).</summary>
+    /// <summary>A statement from EasyRMM or an API token, any role (read access).</summary>
     public const string Viewer = "Viewer";
 
-    /// <summary>Fully authenticated Admin or SuperAdmin session, or an Admin API token (operations).</summary>
+    /// <summary>A statement from EasyRMM with the Admin or SuperAdmin role, or an Admin API token (operations).</summary>
     public const string Operator = "Operator";
 
-    /// <summary>Fully authenticated SuperAdmin (users, API tokens, server settings, global policy, lifecycle). API tokens are never
-    /// SuperAdmin, so they are refused.</summary>
+    /// <summary>A statement from EasyRMM with the SuperAdmin role (server settings, global policy, tags, alert rules, notifications,
+    /// lifecycle). API tokens are never SuperAdmin, so they are refused.</summary>
     public const string SuperAdmin = "SuperAdmin";
 
     /// <summary>Active agent credential.</summary>
@@ -35,21 +24,11 @@ public static class Policies
 
     public static IServiceCollection AddEasyPatchAuthorization(this IServiceCollection services)
     {
-        services.AddSingleton<IAuthorizationHandler, SessionStateHandler>();
-        services.AddSingleton<IAuthorizationMiddlewareResultHandler, ProblemAuthorizationResultHandler>();
         services.AddAuthorizationBuilder()
-            .AddPolicy(SessionAny, p => p.AddAuthenticationSchemes(SessionAuthenticationHandler.SchemeName).RequireAuthenticatedUser())
-            .AddPolicy(SessionMfaPassed, p => p.AddAuthenticationSchemes(SessionAuthenticationHandler.SchemeName).RequireAuthenticatedUser()
-                .AddRequirements(new SessionStateRequirement(requireMfaSetup: false, requirePasswordCurrent: false)))
-            .AddPolicy(Account, p => p.AddAuthenticationSchemes(SessionAuthenticationHandler.SchemeName).RequireAuthenticatedUser()
-                .AddRequirements(new SessionStateRequirement(true, true)))
-            .AddPolicy(Viewer, p => p.AddAuthenticationSchemes(ConsoleAuthentication.SchemeName).RequireAuthenticatedUser()
-                .AddRequirements(new SessionStateRequirement(true, true)))
+            .AddPolicy(Viewer, p => p.AddAuthenticationSchemes(ConsoleAuthentication.SchemeName).RequireAuthenticatedUser())
             .AddPolicy(Operator, p => p.AddAuthenticationSchemes(ConsoleAuthentication.SchemeName).RequireAuthenticatedUser()
-                .AddRequirements(new SessionStateRequirement(true, true))
                 .RequireRole(nameof(UserRole.Admin), nameof(UserRole.SuperAdmin)))
             .AddPolicy(SuperAdmin, p => p.AddAuthenticationSchemes(ConsoleAuthentication.SchemeName).RequireAuthenticatedUser()
-                .AddRequirements(new SessionStateRequirement(true, true))
                 .RequireRole(nameof(UserRole.SuperAdmin)))
             .AddPolicy(Agent, p => p.AddAuthenticationSchemes(AgentAuthenticationHandler.SchemeName).RequireAuthenticatedUser()
                 .RequireClaim(EasyPatchClaims.AgentKind, AgentAuthenticationHandler.KindActive))
@@ -59,89 +38,24 @@ public static class Policies
     }
 }
 
-public sealed class SessionStateRequirement(bool requireMfaSetup, bool requirePasswordCurrent) : IAuthorizationRequirement
-{
-    public bool RequireMfaSetup { get; } = requireMfaSetup;
-    public bool RequirePasswordCurrent { get; } = requirePasswordCurrent;
-}
-
-public sealed class SessionStateHandler : AuthorizationHandler<SessionStateRequirement>
-{
-    protected override Task HandleRequirementAsync(AuthorizationHandlerContext context, SessionStateRequirement requirement)
-    {
-        var user = context.User;
-        if (user.IsApiToken() || user.IsEasyRmm())
-        {
-            // API tokens have no MFA or password state; their role and organizations are checked like a user's. EasyRMM applies its
-            // own sign-in and second-factor rules before it signs a statement.
-            context.Succeed(requirement);
-        }
-        else if (user.FindFirstValue(EasyPatchClaims.MfaCompleted) != "true")
-        {
-            context.Fail(new AuthorizationFailureReason(this, "mfa_required"));
-        }
-        else if (requirement.RequireMfaSetup && user.FindFirstValue(EasyPatchClaims.MfaSetupRequired) == "true")
-        {
-            context.Fail(new AuthorizationFailureReason(this, "mfa_setup_required"));
-        }
-        else if (requirement.RequirePasswordCurrent && user.FindFirstValue(EasyPatchClaims.MustChangePassword) == "true")
-        {
-            context.Fail(new AuthorizationFailureReason(this, "password_change_required"));
-        }
-        else
-        {
-            context.Succeed(requirement);
-        }
-
-        return Task.CompletedTask;
-    }
-}
-
-/// <summary>Turns authorization failures into problem+json with a machine-readable code.</summary>
-public sealed class ProblemAuthorizationResultHandler : IAuthorizationMiddlewareResultHandler
-{
-    private readonly AuthorizationMiddlewareResultHandler fallback = new();
-
-    public async Task HandleAsync(RequestDelegate next, HttpContext context, AuthorizationPolicy policy, PolicyAuthorizationResult authorizeResult)
-    {
-        if (authorizeResult.Forbidden && authorizeResult.AuthorizationFailure?.FailureReasons.FirstOrDefault(r => r.Handler is SessionStateHandler) is { } reason)
-        {
-            var message = reason.Message switch
-            {
-                "mfa_required" => "Enter your verification code to finish signing in.",
-                "mfa_setup_required" => "Set up multi-factor authentication to continue.",
-                "password_change_required" => "You must change your password before continuing.",
-                _ => "You do not have permission to perform this action.",
-            };
-            await ProblemResults.WriteAsync(context, StatusCodes.Status403Forbidden, reason.Message, message);
-            return;
-        }
-
-        await fallback.HandleAsync(next, context, policy, authorizeResult);
-    }
-}
-
-/// <summary>Request-scoped tenant (organization) visibility derived from the session, API token or statement from EasyRMM.</summary>
+/// <summary>Request-scoped tenant (organization) visibility derived from the API token or the statement from EasyRMM.</summary>
 public sealed class HttpTenantContext : ITenantContext
 {
     public HttpTenantContext(IHttpContextAccessor accessor)
     {
         var user = accessor.HttpContext?.User;
         var scheme = user?.Identity?.IsAuthenticated == true ? user.Identity.AuthenticationType : null;
-        if (user is null || scheme is not (SessionAuthenticationHandler.SchemeName or ApiTokenAuthenticationHandler.SchemeName
-                or EasyRmmAuthenticationHandler.SchemeName))
+        if (user is null || scheme is not (ApiTokenAuthenticationHandler.SchemeName or EasyRmmAuthenticationHandler.SchemeName))
         {
             IsUnrestricted = false;
             AllowedOrganizationIds = new HashSet<Guid>();
             return;
         }
 
-        var orgs = user.FindAll(EasyPatchClaims.Organization).Select(c => Guid.Parse(c.Value)).ToHashSet();
-        // Users and tokens restricted to organizations that were all deleted see nothing: only the explicit flag means "all". A
-        // statement from EasyRMM sees every organization only when it says so ("orgs": "*"), whatever its role.
-        IsUnrestricted = user.FindFirstValue(EasyPatchClaims.AllOrganizations) == "true"
-                         || (scheme == SessionAuthenticationHandler.SchemeName && user.GetRole() == UserRole.SuperAdmin);
-        AllowedOrganizationIds = orgs;
+        // Only the explicit flag means "all", whatever the role: a token or statement for organizations that were all deleted sees
+        // nothing. A statement from EasyRMM sees every organization only when it says so ("orgs": "*").
+        IsUnrestricted = user.FindFirstValue(EasyPatchClaims.AllOrganizations) == "true";
+        AllowedOrganizationIds = user.FindAll(EasyPatchClaims.Organization).Select(c => Guid.Parse(c.Value)).ToHashSet();
     }
 
     public bool IsUnrestricted { get; }
@@ -152,7 +66,8 @@ public sealed class HttpActorContext(IHttpContextAccessor accessor) : IActorCont
 {
     private HttpContext? Context => accessor.HttpContext;
 
-    public Guid? UserId => Guid.TryParse(Context?.User.FindFirstValue(EasyPatchClaims.UserId), out var id) ? id : null;
+    /// <summary>Always null: EasyPatch has no accounts of its own. Statements and tokens are named in <see cref="Username"/>.</summary>
+    public Guid? UserId => null;
 
     public string? Username => Context?.User.FindFirstValue(EasyPatchClaims.Username)
                                ?? (Context?.User.FindFirstValue(EasyPatchClaims.CredentialId) is { } c ? "agent:" + c : null);

@@ -13,6 +13,10 @@ public sealed record ServerSettings
     public int CredentialLifetimeDays { get; init; } = 365;
     public int CredentialRotateBeforeDays { get; init; } = 30;
     public int EnrollmentRequestExpiryDays { get; init; } = 7;
+
+    // RequireMfa, SessionIdleMinutes and SessionAbsoluteHours have no effect: EasyPatch has no sign-in of its own. They stay in the
+    // API's settings because EasyRMM's connector test fake (server/internal/easypatch/eptest) still answers with them and its contract
+    // test checks that every field it sends is in EasyPatch's answer. Remove them together.
     public bool RequireMfa { get; init; } = true;
     public int SessionIdleMinutes { get; init; } = 30;
     public int SessionAbsoluteHours { get; init; } = 12;

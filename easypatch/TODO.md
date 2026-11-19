@@ -10,12 +10,6 @@ release contains.
   (`backend/API/Endpoints/EndpointEndpoints.cs`) orders by the `AgentVersion` string. Sort numerically,
   for example on the integer parts in SQL or on a stored sort key. Agent update decisions and the
   *outdated agent* filter already compare `System.Version` and are correct.
-- [ ] **SSO: organization access for accounts created on first sign-in.** An account that single sign-on
-  creates reaches every organization (new users get *all organizations*). For MSPs, add a
-  per-provider setting for the organizations such accounts get (all, or chosen ones), applied when the
-  account is created. Show it in *Settings → Single sign-on* and add tests. Update
-  `docs/single-sign-on.md` and `docs/security.md`.
-
 - [ ] **Agent API: a `null` list answers 500.** A signed agent request that sends `null` for a list, for
   example `"activeJobIds": null` on check-in, fails with `500 internal_error` (an `ArgumentNullException` in
   `JobService.LeaseForCheckInAsync`) instead of `400 validation_failed`. EasyPatch's agents always send lists, so
@@ -25,29 +19,10 @@ release contains.
 
 ## Test on a real instance
 
-These need the console at a DNS name with a certificate browsers trust. Passkeys do not work at an IP
-address or behind a certificate warning, and Google refuses an IP address as a redirect URI.
+These need an EasyRMM instance with real endpoints.
 
-- [ ] **Passkeys and security keys:**
-  - Add one under *My account → Passkeys and security keys*.
-  - Sign out, then use *Sign in with a passkey*.
-  - Use a security key as the second step after the password.
-  - Check the offer to create a passkey after sign-in, and *Not now* (remembered for 30 days).
-- [ ] **Single sign-on:**
-  - Add a provider (Entra ID, Google or Keycloak) under *Settings → Single sign-on*.
-  - Register `https://<EASYPATCH_DOMAIN>/api/v1/auth/sso/callback` at the provider.
-  - Sign in and check linking by verified email. Entra ID needs *Trust the provider's email claim*, which
-    is safe only for a single-tenant app.
-  - Check that EasyPatch MFA still applies unless *The provider enforces MFA* is set.
 - [ ] **Restart all that need it** on an organization and on a site whose endpoints report a pending
   restart. Schedule it outside working hours when servers are included.
-
-## Optional features (not built)
-
-- [ ] SSO-only mode: no password sign-in for users who use single sign-on.
-- [ ] Map identity provider groups to EasyPatch roles and organizations.
-- [ ] Sign out at the provider (RP-initiated logout).
-- [ ] `private_key_jwt` client authentication, and multi-tenant Entra ID issuers.
 
 ## macOS agent: before removing "experimental"
 

@@ -59,12 +59,10 @@ compliance across every customer.
   EasyRMM's console and roles, and EasyRMM calls the engine for them
   ([ADR-0038](../docs/architecture/adr/0038-statements-to-the-patching-engine.md)). Agents reach
   it through EasyRMM's address. See EasyRMM's [patching guide](../docs/operations/patching.md).
-* EasyPatch no longer has a web console, proxy or installer of its own, and is not installed by
-  itself. A standalone EasyPatch server (releases 1.4 to 1.10) moves into EasyRMM with its
+* EasyPatch no longer has a web console, proxy, installer or accounts of its own, and is not
+  installed by itself. A standalone EasyPatch server (releases 1.4 to 1.10) moves into EasyRMM with its
   endpoints, history and settings: see
   [Importing a standalone EasyPatch](../docs/operations/import-easypatch.md).
-* People can sign in to EasyPatch through EasyRMM: EasyPatch's [single sign-on
-  guide](docs/single-sign-on.md#easyrmm) explains the setup and the accounts EasyRMM manages.
 * EasyPatch has the same license as the rest of EasyRMM ([License](#license)). It keeps its own
   builds and releases for now. Its releases are
   tagged `easypatch-v*` in the EasyRMM repository. Releases up to 1.10.0, and their downloads,
@@ -150,19 +148,15 @@ compliance across every customer.
   * limited-use, expiring enrollment tokens;
   * tokenless deployment codes for RMM scripts. Each computer that uses one waits for an
     administrator to approve it, after the administrator compares key fingerprints.
-* **Strong admin security**:
-  * sign-in with the email address; Argon2id password hashing and mandatory MFA with recovery
-    codes, by authenticator app (TOTP) or security key;
-  * passkeys (WebAuthn) for passwordless sign-in, offered after sign-in to users without one
-    (needs a DNS name with a trusted certificate);
-  * single sign-on with OpenID Connect providers (Microsoft Entra ID, Google, Keycloak and
-    others), linking existing users by verified email address. See
-    [docs/single-sign-on.md](docs/single-sign-on.md);
-  * server-side sessions, CSRF protection, lockout and rate limits;
-  * three roles: SuperAdmin, Admin, ReadOnly;
-  * API tokens for scripts and integrations: read-only or operator, optionally limited to
-    some organizations, expiring and revocable, stored only as hashes;
-  * an audit log of administrative actions.
+* **Admin access through EasyRMM**:
+  * no sign-in of its own: EasyRMM signs a short statement for each call, naming the person, the
+    role and the organizations (see [docs/security.md](docs/security.md#admin-authentication));
+  * three roles: SuperAdmin, Admin, ReadOnly, and per-organization access, checked by the
+    engine for every call;
+  * API tokens for scripts and integrations, made on the server with `create-api-token`:
+    read-only or operator, optionally limited to some organizations, expiring, stored only as
+    hashes;
+  * rate limits and an audit log of administrative actions.
 * **Per-device agent credentials.** Each agent generates its own ECDSA P-256 key pair; only the
   public key goes to the server. Every request is signed with a timestamp and nonce for replay
   protection, and keys rotate automatically. The agent contains no shared secret.
@@ -217,10 +211,9 @@ screens, EasyRMM's patching pages now do that work: see EasyRMM's
 | [application-updates.md](docs/application-updates.md) | Third-party application updates with winget: requirements, approval, what the agent runs, restarts, limitations and trust model |
 | [compliance.md](docs/compliance.md) | Compliance statuses and rules, required updates, CVE and known-exploited data, OS support status, reports and monthly PDF reports |
 | [alerts.md](docs/alerts.md) | Alert rules, notification channels (email, Slack, Teams, signed webhooks), delivery and troubleshooting |
-| [single-sign-on.md](docs/single-sign-on.md) | Single sign-on with OpenID Connect: how accounts are linked, MFA, settings, Entra ID, Google and Keycloak setup |
 | [security.md](docs/security.md) | Security model, threat model, hardening checklist, known limitations |
-| [api.md](docs/api.md) | REST API (admin and agent protocol). The live OpenAPI document is served at `/api/docs` to signed-in administrators |
-| [troubleshooting.md](docs/troubleshooting.md) | Diagnosing server, sign-in, agent and job problems |
+| [api.md](docs/api.md) | REST API (admin and agent protocol). The live OpenAPI document is served at `/api/openapi/v1.json` to statements from EasyRMM and API tokens |
+| [troubleshooting.md](docs/troubleshooting.md) | Diagnosing server, API access, agent and job problems |
 
 ## Development
 

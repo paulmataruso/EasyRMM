@@ -7,7 +7,8 @@ namespace EasyPatch.Infrastructure.Services;
 
 /// <summary>
 /// API tokens for scripts and integrations. The secret is a 256-bit random value shown once at creation; only its SHA-256 hash is
-/// stored, and the secret is never written to logs or audit records. Callers (super administrators) are authorized by the endpoint.
+/// stored, and the secret is never written to logs or audit records. Tokens are made on the server with <c>create-api-token</c>;
+/// no route creates, lists or revokes them.
 /// </summary>
 public sealed class ApiTokenService(EasyPatchDbContext db, AuditService audit, IActorContext actor, TimeProvider clock)
 {
@@ -88,20 +89,6 @@ public sealed class ApiTokenService(EasyPatchDbContext db, AuditService audit, I
         });
         await db.SaveChangesAsync(ct);
         return (token, secret);
-    }
-
-    public async Task<ApiToken> RevokeAsync(Guid id, CancellationToken ct = default)
-    {
-        var token = await db.ApiTokens.FirstOrDefaultAsync(t => t.Id == id, ct) ?? throw AppException.NotFound("API token");
-        if (token.RevokedAt is null)
-        {
-            token.RevokedAt = clock.GetUtcNow();
-            token.RevokedBy = actor.Username;
-            audit.Record("api_token.revoke", "ApiToken", token.Id.ToString(), details: new { token.Name, token.Prefix });
-            await db.SaveChangesAsync(ct);
-        }
-
-        return token;
     }
 
     private Task<bool> NameTakenAsync(string name, CancellationToken ct)

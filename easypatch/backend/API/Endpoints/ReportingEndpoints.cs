@@ -340,9 +340,9 @@ public static class SettingsEndpoints
             .WithTags("Settings").RequireAuthorization(Policies.Viewer);
 
         app.MapPut("/api/v1/settings", async (ServerSettings request, SettingsService settings, EasyPatchDbContext db, AuditService audit,
-            System.Security.Claims.ClaimsPrincipal user, CancellationToken ct) =>
+            IActorContext actor, CancellationToken ct) =>
         {
-            var updated = await settings.UpdateAsync(request, user.FindUserId(), ct);
+            var updated = await settings.UpdateAsync(request, actor.UserId, ct);
             audit.Record("settings.update", "ServerSettings", "1", details: request);
             await db.SaveChangesAsync(ct);
             settings.Invalidate();

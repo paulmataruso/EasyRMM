@@ -136,10 +136,10 @@ public static class TagEndpoints
         }).RequireAuthorization(Policies.SuperAdmin);
 
         tags.MapPut("/{id:guid}/policy", async (Guid id, PolicyRequest request, EasyPatchDbContext db, PolicyService policies, ComplianceService compliance,
-            AuditService audit, ClaimsPrincipal user, CancellationToken ct) =>
+            AuditService audit, IActorContext actor, CancellationToken ct) =>
         {
             _ = await db.Tags.AnyAsync(t => t.Id == id, ct) ? 0 : throw AppException.NotFound("Tag");
-            var stored = await policies.UpsertTagPolicyAsync(id, OrganizationEndpoints.FromRequest(request), user.FindUserId(), ct);
+            var stored = await policies.UpsertTagPolicyAsync(id, OrganizationEndpoints.FromRequest(request), actor.UserId, ct);
             audit.Record("policy.update", "Policy", stored.Id.ToString(), details: new { TagId = id, Policy = request });
             await db.SaveChangesAsync(ct);
             await compliance.RecomputeAsync(await TaggedEndpointsAsync(db, id, ct), ct);

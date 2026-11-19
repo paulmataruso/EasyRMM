@@ -1,5 +1,8 @@
 namespace EasyPatch.Core.Entities;
 
+/// <summary>An account of a standalone EasyPatch (up to 1.10.0). Nobody signs in with one any more: people sign in to EasyRMM.
+/// The account tables stay so an imported database keeps its history, and <c>prepare-import</c> disables what it brings;
+/// sessions, passkeys, single sign-on and password resets are kept the same way, unused.</summary>
 public sealed class User
 {
     public Guid Id { get; set; }

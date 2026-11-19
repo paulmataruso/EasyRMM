@@ -9,8 +9,8 @@ namespace EasyPatch.Api.Security;
 public sealed class ApiTokenAuthenticationOptions : AuthenticationSchemeOptions;
 
 /// <summary>
-/// Authenticates <c>Authorization: Bearer ept_…</c> requests with an API token. The secret is hashed and looked up; it is never
-/// logged. Tokens are not sent by browsers automatically, so token requests need no CSRF token.
+/// Authenticates <c>Authorization: Bearer ept_…</c> requests with an API token (made with <c>create-api-token</c>). The secret is
+/// hashed and looked up; it is never logged.
 /// </summary>
 public sealed class ApiTokenAuthenticationHandler(
     IOptionsMonitor<ApiTokenAuthenticationOptions> options,
@@ -56,7 +56,9 @@ public sealed class ApiTokenAuthenticationHandler(
     }
 
     protected override Task HandleChallengeAsync(AuthenticationProperties properties) =>
-        ProblemResults.WriteAsync(Context, StatusCodes.Status401Unauthorized, "unauthenticated", "The API token is invalid, expired or revoked.");
+        ProblemResults.WriteAsync(Context, StatusCodes.Status401Unauthorized, "unauthenticated", HasBearer(Request)
+            ? "The API token is invalid, expired or revoked."
+            : "Send an API token, or call through EasyRMM.");
 
     protected override Task HandleForbiddenAsync(AuthenticationProperties properties) =>
         ProblemResults.WriteAsync(Context, StatusCodes.Status403Forbidden, "forbidden", "This API token does not have permission to perform this action.");
@@ -64,8 +66,8 @@ public sealed class ApiTokenAuthenticationHandler(
 
 /// <summary>
 /// The administrator API's scheme: a statement from EasyRMM when the request carries one (EasyPatch as EasyRMM's patching engine),
-/// else the session cookie when the request has one (the console), otherwise a bearer API token. A request is authenticated by
-/// exactly one of them, so they are never combined: a request with a statement that is not valid is refused, whatever else it has.
+/// otherwise a bearer API token. A request is authenticated by exactly one of them, so they are never combined: a request with a
+/// statement that is not valid is refused, whatever else it has. EasyPatch has no sign-in, session or cookie of its own.
 /// </summary>
 public static class ConsoleAuthentication
 {
@@ -74,9 +76,7 @@ public static class ConsoleAuthentication
     public static string Select(HttpContext context) =>
         EasyRmmAuthenticationHandler.HasAssertion(context.Request)
             ? EasyRmmAuthenticationHandler.SchemeName
-            : !context.Request.Cookies.ContainsKey(SessionAuthenticationHandler.CookieName) && ApiTokenAuthenticationHandler.HasBearer(context.Request)
-                ? ApiTokenAuthenticationHandler.SchemeName
-                : SessionAuthenticationHandler.SchemeName;
+            : ApiTokenAuthenticationHandler.SchemeName;
 
     public static bool IsApiToken(this ClaimsPrincipal principal) =>
         principal.Identity is { IsAuthenticated: true, AuthenticationType: ApiTokenAuthenticationHandler.SchemeName };

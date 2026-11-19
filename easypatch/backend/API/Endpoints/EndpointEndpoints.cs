@@ -216,12 +216,12 @@ public static class EndpointEndpoints
         });
 
         g.MapPut("/{id:guid}/policy", async (Guid id, PolicyRequest request, EasyPatchDbContext db, ITenantContext tenant, PolicyService policies,
-            ComplianceService compliance, AuditService audit, ClaimsPrincipal user, CancellationToken ct) =>
+            ComplianceService compliance, AuditService audit, IActorContext actor, CancellationToken ct) =>
         {
             var endpoint = await db.Endpoints.AsNoTracking().FirstOrDefaultAsync(e => e.Id == id, ct) ?? throw AppException.NotFound("Endpoint");
             tenant.EnsureAccess(endpoint.OrganizationId);
             var stored = await policies.UpsertAsync(PolicyScope.Endpoint, endpoint.OrganizationId, null, id, OrganizationEndpoints.FromRequest(request),
-                user.FindUserId(), ct);
+                actor.UserId, ct);
             audit.Record("policy.update", "Policy", stored.Id.ToString(), endpoint.OrganizationId, id, request);
             await db.SaveChangesAsync(ct);
             await compliance.RecomputeAsync([id], ct);
@@ -289,7 +289,7 @@ public static class EndpointEndpoints
         }).RequireAuthorization(Policies.Operator);
 
         g.MapPost("/{id:guid}/exclusions", async (Guid id, ExclusionRequest request, EasyPatchDbContext db, ITenantContext tenant, AuditService audit,
-            ComplianceService compliance, ClaimsPrincipal user, TimeProvider clock, CancellationToken ct) =>
+            ComplianceService compliance, IActorContext actor, TimeProvider clock, CancellationToken ct) =>
         {
             var endpoint = await LoadForUpdateAsync(db, tenant, id, ct);
             new Validator().Optional("reason", request.Reason, 500).Check(request.UpdateGuid != Guid.Empty, "updateGuid", "Required.").ThrowIfInvalid();
@@ -298,7 +298,7 @@ public static class EndpointEndpoints
                 db.UpdateExclusions.Add(new UpdateExclusion
                 {
                     Id = Guid.CreateVersion7(), EndpointId = id, UpdateGuid = request.UpdateGuid, Reason = Validator.Clean(request.Reason),
-                    CreatedAt = clock.GetUtcNow(), CreatedByUserId = user.FindUserId(),
+                    CreatedAt = clock.GetUtcNow(), CreatedByUserId = actor.UserId,
                 });
                 audit.Record("endpoint.update_excluded", "Endpoint", id.ToString(), endpoint.OrganizationId, id, new { request.UpdateGuid, request.Reason });
                 await db.SaveChangesAsync(ct);
