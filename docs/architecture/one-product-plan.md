@@ -391,6 +391,26 @@ overview cards (the device page has its own) and the endpoint's activity
 tab (EasyRMM's audit log has what its console did). The bundle test
 excludes, includes, previews and installs through the tab.*
 
+*Done (C2): Patching opens on an overview instead of EasyPatch's dashboard:
+the share of devices up to date with a bar of the rest, a worklist of what
+needs attention worst first (exploited vulnerabilities, failures, missing
+required updates, restarts, stale or missing scans, agents out of date or
+offline, devices not patched from EasyRMM, endpoints with no EasyRMM device,
+running jobs), each linked to the list that shows it, organizations least up
+to date first, and the endpoints with no EasyRMM device with how to link
+them. **Updates** is EasyPatch's update catalogue, counted over whole
+organizations or one site (site-level roles choose a site), and an update's
+page is its update detail: what it fixes, with CISA's and Microsoft's
+exploitation data, the devices reporting it by state, installing it on
+chosen devices or wherever it is missing, removing a Windows update across
+devices, and holds (placed and released with `patch.configure` in the
+organization; everywhere only by super administrators). The engine is asked
+as ReadOnly for what is read, Admin for installs, removals and organization
+holds, SuperAdmin for holds everywhere. Not ported: the dashboard's
+compliance trend (reports, C5) and open alerts (C7), and removing and
+holding in one step (two steps now). The bundle test finds the update in the
+list, opens its page, holds it and releases the hold.*
+
 EasyPatch's console is about 18,800 lines of TypeScript without tests. Each
 area is ported with its tests and compared against the old page.
 

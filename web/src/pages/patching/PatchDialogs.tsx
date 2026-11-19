@@ -20,7 +20,7 @@ export interface PatchTarget {
 }
 
 /** The outcome of a scan or install, said in a toast; devices that did not start are listed in a dialog. */
-function useOutcome() {
+export function useOutcome() {
   const toast = useToast();
   const [result, setResult] = useState<PatchActionResult | null>(null);
   const report = (verb: string, r: PatchActionResult) => {

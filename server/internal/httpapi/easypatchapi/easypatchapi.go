@@ -73,6 +73,14 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/patching/messages", a.messagePresets)
 	r("POST /api/v1/patching/notify", a.notify)
 	r("POST /api/v1/patching/agent-update", a.updateAgent)
+	// Patching → Updates (one-product plan, C2).
+	r("GET /api/v1/patching/updates", a.catalog)
+	r("GET /api/v1/patching/updates/{update}", a.update)
+	r("GET /api/v1/patching/updates/{update}/devices", a.updateDevices)
+	r("POST /api/v1/patching/updates/{update}/install", a.installUpdate)
+	r("POST /api/v1/patching/updates/{update}/remove", a.removeFromDevices)
+	r("POST /api/v1/patching/updates/{update}/holds", a.holdUpdate)
+	r("POST /api/v1/patching/updates/{update}/holds/{id}/release", a.releaseHold)
 	// The product switch: for anyone signed in, it says whether to show it.
 	r("GET /api/v1/patching/switch", a.productSwitch)
 	// Where a link from EasyPatch opens the console.
@@ -533,4 +541,123 @@ func (a *API) updateAgent(w http.ResponseWriter, r *http.Request) error {
 	}
 	res, err := a.svc.UpdateAgent(r.Context(), httpapi.Caller(r), in)
 	return ok(w, res, err)
+}
+
+// updateScope reads the organizationId and siteId a catalog view counts in.
+func updateScope(r *http.Request) (easypatch.UpdateScope, error) {
+	var sc easypatch.UpdateScope
+	var err error
+	if sc.OrganizationID, err = httpapi.QueryID(r, "organizationId"); err != nil {
+		return sc, err
+	}
+	sc.SiteID, err = httpapi.QueryID(r, "siteId")
+	return sc, err
+}
+
+func (a *API) catalog(w http.ResponseWriter, r *http.Request) error {
+	sc, err := updateScope(r)
+	if err != nil {
+		return err
+	}
+	q := r.URL.Query()
+	in := easypatch.CatalogQuery{Category: q.Get("category"), State: q.Get("state"), Search: q.Get("q"), Sort: q.Get("sort"), Desc: q.Get("dir") != "asc"}
+	switch q.Get("knownExploited") {
+	case "true", "false":
+		v := q.Get("knownExploited") == "true"
+		in.KnownExploited = &v
+	case "":
+	default:
+		return apperr.Invalid("knownExploited", "must be true or false")
+	}
+	if in.Page, err = page(r); err != nil {
+		return err
+	}
+	p, err := a.svc.Catalog(r.Context(), httpapi.Caller(r), sc, in)
+	return ok(w, p, err)
+}
+
+func (a *API) update(w http.ResponseWriter, r *http.Request) error {
+	guid, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	sc, err := updateScope(r)
+	if err != nil {
+		return err
+	}
+	v, err := a.svc.Update(r.Context(), httpapi.Caller(r), guid, sc)
+	return ok(w, v, err)
+}
+
+func (a *API) updateDevices(w http.ResponseWriter, r *http.Request) error {
+	guid, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	sc, err := updateScope(r)
+	if err != nil {
+		return err
+	}
+	p, err := page(r)
+	if err != nil {
+		return err
+	}
+	list, err := a.svc.UpdateDevices(r.Context(), httpapi.Caller(r), guid, sc, r.URL.Query().Get("state"), p)
+	return ok(w, list, err)
+}
+
+func (a *API) installUpdate(w http.ResponseWriter, r *http.Request) error {
+	guid, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	var in easypatch.FleetActionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.InstallUpdate(r.Context(), httpapi.Caller(r), guid, in)
+	return ok(w, res, err)
+}
+
+func (a *API) removeFromDevices(w http.ResponseWriter, r *http.Request) error {
+	guid, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	var in easypatch.FleetActionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.RemoveUpdateFromDevices(r.Context(), httpapi.Caller(r), guid, in)
+	return ok(w, res, err)
+}
+
+func (a *API) holdUpdate(w http.ResponseWriter, r *http.Request) error {
+	guid, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	var in easypatch.HoldInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	h, err := a.svc.HoldUpdate(r.Context(), httpapi.Caller(r), guid, in)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusCreated, h)
+	return nil
+}
+
+func (a *API) releaseHold(w http.ResponseWriter, r *http.Request) error {
+	guid, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	h, err := a.svc.ReleaseHold(r.Context(), httpapi.Caller(r), guid, id)
+	return ok(w, h, err)
 }

@@ -3,8 +3,9 @@
 // is made on the first-run page; the machine runs the install command the console shows; EasyRMM
 // installs the EasyPatch agent, which enrolls through EasyRMM's address and links; a scan finds
 // the update a local package repository offers. On the device's Patches tab (C1) the update is
-// excluded and included again, the policy shows, and installing it, after the preview, changes the
-// package on the machine. scripts/e2e/bundle.sh starts everything and runs this.
+// excluded and included again and the policy shows; Patching lists the update across devices, and
+// its page holds it and releases the hold (C2); installing it from the Patches tab, after the
+// preview, changes the package on the machine. scripts/e2e/bundle.sh starts everything and runs this.
 
 import { execFileSync } from "node:child_process";
 import { expect, test, type Page } from "@playwright/test";
@@ -207,6 +208,37 @@ test("the Patches tab excludes the update, includes it again and shows the polic
   await expect(main.getByText("Automatic installs")).toBeVisible();
   // The engine in EasyRMM's deployment has no console of its own, so nothing links to one.
   await expect(main.getByRole("link", { name: /EasyPatch/ })).toHaveCount(0);
+});
+
+test("Patching lists the update across devices; its page holds it and releases the hold", async () => {
+  const page = admin;
+  const title = update!.title;
+  await page.goto("/patching");
+  const main = page.getByRole("main");
+  await expect(main.getByRole("tab", { name: "Overview", selected: true })).toBeVisible();
+  await expect(main.getByRole("heading", { name: "Needs attention" })).toBeVisible();
+
+  await main.getByRole("tab", { name: "Updates" }).click();
+  await main.getByRole("link", { name: title }).click();
+  await expect(main.getByRole("heading", { name: title, level: 1 })).toBeVisible();
+  await expect(main.locator(`a[href="/devices/${deviceId}?tab=patches"]`)).toBeVisible();
+
+  await main.getByRole("button", { name: "Hold…" }).click();
+  const hold = page.getByRole("dialog", { name: "Hold this update?" });
+  await hold.getByLabel("Hold it in").selectOption({ label: ORG });
+  await hold.getByLabel(/Why/).fill("Bundle test");
+  await hold.getByRole("button", { name: "Hold update" }).click();
+  await expect(hold).toBeHidden();
+  await expect(main.getByText(`On hold in ${ORG}`)).toBeVisible();
+  const held = await api<{ summary: { onHold: boolean }; holds: { reason: string }[] }>("GET", `/api/v1/patching/updates/${update!.updateGuid}`);
+  expect(held.summary.onHold).toBe(true);
+  expect(held.holds).toEqual([expect.objectContaining({ reason: "Bundle test" })]);
+
+  await main.getByRole("button", { name: "Release hold" }).click();
+  const release = page.getByRole("dialog", { name: `Release the hold in ${ORG}?` });
+  await release.getByRole("button", { name: "Release hold" }).click();
+  await expect(release).toBeHidden();
+  await expect(main.getByText(`On hold in ${ORG}`)).toBeHidden();
 });
 
 test("installing the update from the Patches tab, after its preview, updates the machine", async () => {

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { AgentInstall, ComplianceStatus, PatchJob, PatchLink, PatchPolicy, PatchStatus, PatchUpdateState } from "../../api/types";
 import { ArrowUpRight } from "lucide-react";
 import { useApi } from "../../api/hooks";
-import { Badge, buttonClasses, cx, Dot, type Tone } from "../../components/ui";
+import { Badge, Button, buttonClasses, cx, Dot, type Tone } from "../../components/ui";
 import { plural } from "../../lib/format";
 
 export const COMPLIANCE: Record<ComplianceStatus, { label: string; tone: Tone; hint: string }> = {
@@ -179,7 +179,7 @@ export function jobOutcome(j: PatchJob): string {
   return parts.join(", ");
 }
 
-const UPDATE_STATES: Record<PatchUpdateState, { label: string; tone: Tone }> = {
+export const UPDATE_STATES: Record<PatchUpdateState, { label: string; tone: Tone }> = {
   Missing: { label: "Missing", tone: "warn" },
   Failed: { label: "Failed", tone: "danger" },
   PendingVerification: { label: "Verifying", tone: "info" },
@@ -333,4 +333,32 @@ const SKIP_REASONS: Record<string, string> = {
 
 export function skipReasonText(reason: string): string {
   return SKIP_REASONS[reason] ?? reason;
+}
+
+/** Pages of an EasyPatch list, numbered from 1; nothing when it fits on one. */
+export function Pager({ page, total, size, onPage, previous = "Previous", next = "Next" }: {
+  page: number;
+  total: number;
+  size: number;
+  onPage: (p: number) => void;
+  previous?: string;
+  next?: string;
+}) {
+  const pages = Math.max(1, Math.ceil(total / size));
+  if (pages <= 1) return null;
+  return (
+    <div className="mt-2 flex items-center justify-between text-xs text-muted">
+      <span>
+        Page {page.toLocaleString()} of {pages.toLocaleString()}
+      </span>
+      <span className="flex gap-2">
+        <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => onPage(page - 1)}>
+          {previous}
+        </Button>
+        <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => onPage(page + 1)}>
+          {next}
+        </Button>
+      </span>
+    </div>
+  );
 }

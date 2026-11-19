@@ -150,14 +150,21 @@ func (e *engine) noted(msg string, at time.Time) {
 // statement lets the engine check the same, a second time. Calls to a
 // connected server ignore it and use EasyRMM's API token.
 func (s *Service) as(ctx context.Context, c access.Caller, role string, orgs ...uuid.UUID) context.Context {
-	st := Statement{Subject: ServiceSubject, Name: c.Actor.Label, Role: role, Organizations: dedupe(orgs)}
+	st := s.statement(c, role)
+	st.Organizations = dedupe(orgs)
+	return WithStatement(ctx, st)
+}
+
+// statement names the caller and the role a call needs, in no organization.
+func (s *Service) statement(c access.Caller, role string) Statement {
+	st := Statement{Subject: ServiceSubject, Name: c.Actor.Label, Role: role}
 	if c.Actor.Type == audit.ActorUser && c.Actor.ID != uuid.Nil {
 		st.Subject = c.Actor.ID.String()
 	}
 	if st.Name == "" {
 		st.Name = "EasyRMM"
 	}
-	return WithStatement(ctx, st)
+	return st
 }
 
 func dedupe(ids []uuid.UUID) []uuid.UUID {

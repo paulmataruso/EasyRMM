@@ -22,20 +22,37 @@ import {
   OpenEasyPatch,
   PatchJobBadge,
   requester,
+  type EasyPatchTarget,
 } from "./patchText";
+import { PatchingOverview } from "./PatchingOverview";
+import { PatchUpdates } from "./PatchUpdates";
 
 /**
- * Patching across organizations, through EasyPatch (ADR-0030): which devices miss updates, scans and installs on
- * many devices at once, the jobs that carry them out, and installing the EasyPatch agent where it is missing
- * (ADR-0031).
+ * Patching across organizations, through EasyPatch (ADR-0030): what needs attention, which devices miss updates, every
+ * update across them, scans and installs on many devices at once, the jobs that carry them out, and installing the
+ * EasyPatch agent where it is missing (ADR-0031).
  */
+const TABS = [
+  { id: "overview", label: "Overview" },
+  { id: "devices", label: "Devices" },
+  { id: "updates", label: "Updates" },
+  { id: "jobs", label: "Jobs" },
+] as const;
+
+type PatchingTab = (typeof TABS)[number]["id"];
+
+/** Where "Open EasyPatch" goes from each tab. */
+const CONSOLE: Record<PatchingTab, EasyPatchTarget> = { overview: {}, devices: { list: "endpoints" }, updates: {}, jobs: { list: "jobs" } };
+
+const CLEARED = { q: null, siteId: null, groupId: null, compliance: null, category: null, state: null, exploited: null, sort: null, page: null, active: null };
+
 export function PatchingPage() {
   const url = useUrlState();
   const { can } = useAuth();
   const status = useApi<PatchStatus>("/patching", undefined, {
     staleTime: 30_000,
   });
-  const tab = url.get("tab") === "jobs" ? "jobs" : "devices";
+  const tab = TABS.find((t) => t.id === url.get("tab"))?.id ?? "overview";
   const jobId = url.get("job") || null;
   // Why a link from EasyPatch opened here instead of the page it named (FromEasyPatchPage).
   const notice = (useLocation().state as { notice?: string } | null)?.notice;
@@ -45,7 +62,7 @@ export function PatchingPage() {
       <PageHeader
         title="Patching"
         subtitle="Operating system and application updates on the devices EasyPatch patches, read from EasyPatch as you look."
-        actions={status.data?.consoleUrl && <OpenEasyPatch to={{ list: tab === "jobs" ? "jobs" : "endpoints" }} />}
+        actions={status.data?.consoleUrl && <OpenEasyPatch to={CONSOLE[tab]} />}
       />
       {notice && (
         <Alert tone="info" className="mb-4" title="Opened from EasyPatch">
@@ -84,14 +101,20 @@ export function PatchingPage() {
           )}
           <Tabs
             active={tab}
-            onChange={(t) => url.set({ tab: t === "devices" ? null : t })}
-            tabs={[
-              { id: "devices", label: "Devices" },
-              { id: "jobs", label: "Jobs" },
-            ]}
+            // Each tab has its own filters; the organization carries over.
+            onChange={(t) => url.set({ tab: t === "overview" ? null : t, ...CLEARED })}
+            tabs={[...TABS]}
           />
           <div role="tabpanel" aria-labelledby={`tab-${tab}`}>
-            {tab === "devices" ? <Fleet status={status.data} /> : <Jobs onJob={(id) => url.set({ job: id })} />}
+            {tab === "overview" ? (
+              <PatchingOverview />
+            ) : tab === "devices" ? (
+              <Fleet status={status.data} />
+            ) : tab === "updates" ? (
+              <PatchUpdates />
+            ) : (
+              <Jobs onJob={(id) => url.set({ job: id })} />
+            )}
           </div>
           <PatchJobDialog jobId={jobId} onClose={() => url.set({ job: null })} onJob={(id) => url.set({ job: id })} />
         </>

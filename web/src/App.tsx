@@ -38,6 +38,7 @@ import { JobsPage } from "./pages/jobs/JobsPage";
 import { AlertsPage } from "./pages/alerts/AlertsPage";
 import { FromEasyPatchPage } from "./pages/patching/FromEasyPatch";
 import { PatchingPage } from "./pages/patching/PatchingPage";
+import { UpdatePage } from "./pages/patching/UpdatePage";
 import { ReportsPage } from "./pages/reports/ReportsPage";
 import { JobDetailPage } from "./pages/jobs/JobDetailPage";
 import { RunDetailPage } from "./pages/jobs/RunDetailPage";
@@ -155,6 +156,7 @@ export function App() {
         <Route path="jobs/:id" element={<JobDetailPage />} />
         <Route path="jobs/:jobId/runs/:runId" element={<RunDetailPage />} />
         <Route path="patching" element={<PatchingPage />} />
+        <Route path="patching/updates/:guid" element={<UpdatePage />} />
         <Route path="go/from-easypatch/:kind/:id" element={<FromEasyPatchPage />} />
         <Route path="reports" element={<ReportsPage />} />
         <Route path="settings" element={<SettingsPage />} />

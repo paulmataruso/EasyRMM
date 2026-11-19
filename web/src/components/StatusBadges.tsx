@@ -129,6 +129,8 @@ const ACTIONS: Record<string, string> = {
   "patch.remove_update": "Requested an update removal",
   "patch.notify": "Messaged a device's users",
   "patch.agent_update": "Requested EasyPatch agent update",
+  "patch.hold": "Held an update",
+  "patch.release_hold": "Released an update's hold",
 };
 
 export function actionLabel(action: string): string {

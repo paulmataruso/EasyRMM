@@ -1111,9 +1111,114 @@ export interface PatchFleetDevice {
 
 export interface PatchFleet {
   devices: PatchFleetDevice[];
+  /**
+   * EasyPatch endpoints of organizations the caller sees whole that no EasyRMM device is linked to (one-product plan,
+   * C2); only without site, group, status or name filters.
+   */
+  unmatched: PatchUnmatchedEndpoint[];
   truncated: boolean;
   /** EasyPatch organizations that could not be read, with why. */
   errors: string[];
+}
+
+/** An EasyPatch endpoint with no EasyRMM device; organizationId and organizationName are EasyRMM's. */
+export type PatchUnmatchedEndpoint = PatchEndpoint;
+
+/** One update across the devices in a scope (Patching → Updates). */
+export interface PatchFleetUpdate {
+  updateGuid: string;
+  title: string;
+  kbNumber: string;
+  category: string;
+  msrcSeverity: string;
+  releaseDate: string | null;
+  sizeBytes: number | null;
+  missingCount: number;
+  failedCount: number;
+  installedCount: number;
+  /** Installed and waiting for a restart. */
+  pendingRebootCount: number;
+  excludedCount: number;
+  package: { name: string; version: string; installedVersion: string; repository: string; advisories: string[] | null } | null;
+  cveCount: number;
+  knownExploited: boolean;
+  reofferedCount: number;
+  onHold: boolean;
+}
+
+/** A CVE an update fixes; kev: in CISA's Known Exploited Vulnerabilities catalog. */
+export interface PatchVulnerability {
+  cveId: string;
+  title: string;
+  severity: string;
+  cvssBase: number | null;
+  msrcExploited: boolean;
+  kev: boolean;
+  kevDateAdded: string | null;
+  kevDueDate: string | null;
+  kevRansomware: boolean;
+  kevName: string;
+}
+
+/** An update EasyPatch does not install automatically: in one organization (EasyRMM's), or in every one. */
+export interface PatchHold {
+  id: string;
+  updateGuid: string;
+  title: string;
+  kbNumber: string;
+  organizationId: string | null;
+  organizationName: string;
+  /** Automatic: EasyPatch's rollout guard, after installs failed. */
+  source: "Automatic" | "Manual" | string;
+  reason: string;
+  failedEndpoints: number | null;
+  attemptedEndpoints: number | null;
+  createdAt: string;
+  createdBy: string;
+  releasedAt: string | null;
+  releasedBy: string;
+  canRelease: boolean;
+}
+
+export interface PatchUpdateView {
+  summary: PatchFleetUpdate;
+  description: string;
+  supportUrl: string;
+  kbNumbers: string[];
+  products: string[];
+  msClassification: string;
+  rebootLikely: boolean;
+  supersededUpdateGuids: string[];
+  vulnerabilities: PatchVulnerability[];
+  holds: PatchHold[];
+  /** May install or remove updates somewhere; each device says where. */
+  canManage: boolean;
+  /** May hold it: patch.configure in an organization, or everywhere. */
+  canHold: boolean;
+  /** The organizations it can be held in, by name. */
+  holdIn: { id: string; name: string }[];
+  /** May hold it in every organization (super administrators). */
+  canHoldEverywhere: boolean;
+}
+
+/** A device, or an EasyPatch endpoint without one (deviceId null), that reports an update. */
+export interface PatchUpdateDevice {
+  endpointId: string;
+  hostname: string;
+  deviceId: string | null;
+  deviceName: string;
+  organizationName: string;
+  siteName: string;
+  platform: string;
+  isOnline: boolean;
+  state: PatchUpdateState;
+  isRequired: boolean;
+  isExcluded: boolean;
+  failedAttempts: number;
+  errorCode: string;
+  errorMessage: string;
+  stateChangedAt: string;
+  canManage: boolean;
 }
 
 export interface PatchEndpointDetail {

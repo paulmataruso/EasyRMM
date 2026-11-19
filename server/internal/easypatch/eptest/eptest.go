@@ -66,6 +66,7 @@ type Server struct {
 	endpoints map[uuid.UUID]*Endpoint
 	jobs      []*Job
 	tokens    []*Token
+	holds     []*HoldInfo
 	requests  []Request
 }
 
@@ -356,7 +357,7 @@ func (s *Server) RequestsTo(method, path string) []Request {
 func update(title, category, state string) map[string]any {
 	name, version, _ := strings.Cut(title, " ")
 	u := map[string]any{
-		"updateGuid": uuid.New(), "revisionNumber": 1, "title": title, "description": nil, "kbNumber": nil, "kbNumbers": []string{},
+		"updateGuid": UpdateGUID(title), "revisionNumber": 1, "title": title, "description": nil, "kbNumber": nil, "kbNumbers": []string{},
 		"category": category, "msClassification": nil, "msrcSeverity": nil, "releaseDate": "2026-11-10T00:00:00+00:00",
 		"sizeBytes": 1543210, "rebootLikely": false, "supportUrl": nil, "state": state, "isRequired": category == "Security",
 		"isExcluded": false, "firstDetectedAt": "2026-11-15T10:00:00+00:00", "stateChangedAt": "2026-11-16T10:00:00+00:00",
@@ -568,6 +569,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.serveEndpoint(w, r, e, strings.Join(parts[2:], "/"), body, pg)
+	case parts[0] == "updates":
+		s.serveFleet(w, r, parts[1:], body, q, pg, size)
+	case parts[0] == "update-holds":
+		s.serveHolds(w, r, parts[1:], q)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/jobs":
 		org, _ := uuid.Parse(q.Get("organizationId"))
 		var list []map[string]any

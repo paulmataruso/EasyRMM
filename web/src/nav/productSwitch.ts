@@ -6,7 +6,8 @@ const DEVICE_PAGES = new Set(["add", "approvals"]);
 /**
  * What EasyPatch shows of the page someone is on (integration plan, 6.2), for the product switch to keep their place:
  * a device opens its endpoint, on the tab matching its Patches view; an organization or site opens the
- * organization; a patch job opens the job; Patching opens EasyPatch's endpoint or job list; anything else, its home.
+ * organization; a patch job or an update opens it; Patching's device and job lists open EasyPatch's; anything else,
+ * including Patching's overview and update list, its home.
  */
 export function switchTarget(pathname: string, search: string): EasyPatchTarget {
   const q = new URLSearchParams(search);
@@ -23,9 +24,11 @@ export function switchTarget(pathname: string, search: string): EasyPatchTarget 
     case "sites":
       return id ? { site: id } : {};
     case "patching": {
+      if (id === "updates" && rest[0]) return { update: rest[0] };
       const job = q.get("job");
       if (job) return { job };
-      return { list: q.get("tab") === "jobs" ? "jobs" : "endpoints" };
+      const tab = q.get("tab");
+      return tab === "jobs" ? { list: "jobs" } : tab === "devices" ? { list: "endpoints" } : {};
     }
     default:
       return {};

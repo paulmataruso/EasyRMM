@@ -27,6 +27,7 @@ import {
   jobTypeLabel,
   LinkBadge,
   maintenanceText,
+  Pager,
   PatchJobBadge,
   requester,
   UpdateStateBadge,
@@ -750,25 +751,6 @@ function Installed({ patching: d, device, onRemove }: { patching: DevicePatching
   );
 }
 
-function Pager({ page, total, size, onPage }: { page: number; total: number; size: number; onPage: (p: number) => void }) {
-  const pages = Math.max(1, Math.ceil(total / size));
-  if (pages <= 1) return null;
-  return (
-    <div className="mt-2 flex items-center justify-between text-xs text-muted">
-      <span>
-        Page {page} of {pages.toLocaleString()}
-      </span>
-      <span className="flex gap-2">
-        <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => onPage(page - 1)}>
-          Newer
-        </Button>
-        <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => onPage(page + 1)}>
-          Older
-        </Button>
-      </span>
-    </div>
-  );
-}
 
 function History({ deviceId }: { deviceId: string }) {
   const [page, setPage] = useState(1);
@@ -812,7 +794,7 @@ function History({ deviceId }: { deviceId: string }) {
           </tbody>
         </table>
       </TableWrap>
-      <Pager page={page} total={h.data.totalCount} size={h.data.pageSize || 50} onPage={setPage} />
+      <Pager page={page} total={h.data.totalCount} size={h.data.pageSize || 50} onPage={setPage} previous="Newer" next="Older" />
     </>
   );
 }
@@ -872,7 +854,7 @@ function Jobs({ deviceId, onOpen }: { deviceId: string; onOpen: (id: string) => 
           </tbody>
         </table>
       </TableWrap>
-      <Pager page={page} total={jobs.data.totalCount} size={jobs.data.pageSize || 50} onPage={setPage} />
+      <Pager page={page} total={jobs.data.totalCount} size={jobs.data.pageSize || 50} onPage={setPage} previous="Newer" next="Older" />
     </>
   );
 }

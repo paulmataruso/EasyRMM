@@ -69,6 +69,7 @@ function endpoint(id: string, hostname: string, extra: Partial<PatchEndpoint> = 
 }
 
 const FLEET: PatchFleet = {
+  unmatched: [],
   devices: [
     {
       deviceId: "d1",
@@ -171,7 +172,7 @@ describe("patching page", () => {
         }),
       }),
     );
-    renderApp("/patching");
+    renderApp("/patching?tab=devices");
     await screen.findByRole("main");
     expect(await screen.findByRole("heading", { name: "Patching", level: 1 })).toBeInTheDocument();
     expect(await main().findByText("WEB-01")).toBeInTheDocument();
@@ -216,7 +217,7 @@ describe("patching page", () => {
         }),
       }),
     );
-    renderApp("/patching");
+    renderApp("/patching?tab=devices");
     await screen.findByRole("main");
     await main().findByText("WEB-01");
     await user.selectOptions(main().getByLabelText("Status"), "FailedUpdates");
@@ -279,7 +280,7 @@ describe("patching page", () => {
         }),
       }),
     );
-    renderApp("/patching");
+    renderApp("/patching?tab=devices");
     await screen.findByRole("main");
     await main().findByText("PC-04");
     const table = within(main().getByRole("table"));
@@ -324,7 +325,7 @@ describe("patching page", () => {
         canSchedule: false,
       }),
     });
-    renderApp("/patching");
+    renderApp("/patching?tab=devices");
     await screen.findByRole("main");
     expect(await main().findByText("EasyPatch is not set up")).toBeInTheDocument();
     expect(main().getByRole("link", { name: "Set up EasyPatch" })).toHaveAttribute("href", "/settings?tab=easypatch");
@@ -332,7 +333,7 @@ describe("patching page", () => {
 
   it("opens EasyPatch's own list of what the tab shows, in the same tab", async () => {
     installFakeApi(patchingRoutes({ "GET /patching": ok({ ...READY, consoleUrl: "https://patch.example.com" }), "GET /patching/jobs": ok({ items: [] }) }));
-    renderApp("/patching");
+    renderApp("/patching?tab=devices");
     await screen.findByRole("main");
     // Role queries over the whole fleet table are slow; the link's text is enough to find it.
     const link = (await main().findByText("Open EasyPatch")).closest("a")!;
@@ -349,7 +350,7 @@ describe("patching page", () => {
       "GET /patching": ok({ ...READY, canOperate: false }),
       "GET /patching/devices": ok(FLEET),
     });
-    renderApp("/patching");
+    renderApp("/patching?tab=devices");
     await screen.findByRole("main");
     await main().findByText("WEB-01");
     expect(main().getByText("Read-only")).toBeInTheDocument();
@@ -366,7 +367,7 @@ describe("patching page", () => {
         }),
       }),
     );
-    renderApp("/patching");
+    renderApp("/patching?tab=devices");
     await screen.findByRole("main");
     expect(await main().findByText(/The database is not available/)).toBeInTheDocument();
     expect(main().getByText("No devices to patch yet")).toBeInTheDocument();
@@ -476,7 +477,7 @@ describe("patching page", () => {
         "POST /patching/restart": ok({ succeeded: 1, failed: 0, results: [{ deviceId: "d1", deviceName: "WEB-01", ok: true, jobId: "j7" }] }),
       }),
     );
-    renderApp("/patching");
+    renderApp("/patching?tab=devices");
     await screen.findByRole("main");
     await main().findByText("WEB-01");
     await user.click(main().getByLabelText("Select WEB-01"));
@@ -513,7 +514,7 @@ describe("patching page", () => {
         }),
       }),
     );
-    renderApp("/patching");
+    renderApp("/patching?tab=devices");
     await screen.findByRole("main");
     await main().findByText("WEB-01");
     await user.click(main().getByLabelText("Select DB-01"));
@@ -569,7 +570,7 @@ describe("patching page", () => {
 
   it("is in the main menu for those who may see patching", async () => {
     installFakeApi(patchingRoutes());
-    renderApp("/patching");
+    renderApp("/patching?tab=devices");
     await screen.findByRole("main");
     const nav = await screen.findByRole("navigation", { name: "Main" });
     expect(within(nav).getByRole("link", { name: "Patching" })).toBeInTheDocument();

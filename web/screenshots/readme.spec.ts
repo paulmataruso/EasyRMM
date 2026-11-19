@@ -17,6 +17,7 @@ import {
   devicePatching,
   devices,
   fleet,
+  fleetUpdates,
   HEALTH_DEVICE,
   healthHistory,
   healthInventory,
@@ -32,6 +33,9 @@ import {
   session,
   sites,
   TIME_ZONE,
+  UPDATE_GUID,
+  updateDevices,
+  updateView,
   users,
 } from "./demo";
 
@@ -133,6 +137,12 @@ function answer(method: string, path: string, q: URLSearchParams): unknown {
       return fleet;
     case "/patching/jobs":
       return list(patchJobs);
+    case "/patching/updates":
+      return { items: fleetUpdates, page: 1, pageSize: 50, totalCount: fleetUpdates.length };
+    case `/patching/updates/${UPDATE_GUID}`:
+      return updateView;
+    case `/patching/updates/${UPDATE_GUID}/devices`:
+      return { items: updateDevices, page: 1, pageSize: 200, totalCount: updateDevices.length };
   }
   return undefined;
 }
@@ -199,9 +209,21 @@ for (const theme of ["dark", "light"] as const) {
     });
 
     test("patching", async ({ page }) => {
-      await open(page, theme, "/patching");
+      await open(page, theme, "/patching?tab=devices");
       await expect(page.getByText("AF-FS01").first()).toBeVisible();
       await shoot(page, "patching", theme);
+    });
+
+    test("patching overview", async ({ page }) => {
+      await open(page, theme, "/patching");
+      await expect(page.getByText("HDG-FRONTDESK-2")).toBeVisible();
+      await shoot(page, "patching-overview", theme);
+    });
+
+    test("patching update", async ({ page }) => {
+      await open(page, theme, `/patching/updates/${UPDATE_GUID}`);
+      await expect(page.getByText("CVE-2026-41001")).toBeVisible();
+      await shoot(page, "patching-update", theme);
     });
 
     test("alerts", async ({ page }) => {

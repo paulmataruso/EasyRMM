@@ -215,8 +215,43 @@ as its report changes; linked devices are checked again every six hours.
 
 ## Patching
 
-**Patching** in the main menu lists the devices of linked organizations and
-every device with an EasyPatch agent:
+**Patching** in the main menu opens on its **Overview**, with **Devices**,
+**Updates** and **Jobs** beside it. Each tab keeps its own filters; the
+organization chosen carries over.
+
+### Overview
+
+<picture><source media="(prefers-color-scheme: light)" srcset="../images/patching-overview-light.png"><img src="../images/patching-overview.png" alt="Patching overview: the share of devices up to date with a bar of the rest, a worklist of what needs attention worst first, and organizations least up to date first"></picture>
+
+The overview counts the devices you can see, as EasyPatch last reported
+them, and refreshes every minute:
+
+* **Up to date**: the share of devices EasyPatch reports on that are up to
+  date, a bar of how the rest stand, and each status with its count, linked
+  to the device list filtered to it. Devices not patched from EasyRMM are
+  counted beside it, not in it.
+* **Needs attention**, worst first, only what has a count: devices missing
+  updates for vulnerabilities exploited in the wild (linked to those
+  updates), devices with failed updates, devices missing required updates,
+  devices waiting for a restart, scans out of date or never run, EasyPatch
+  agents out of date or offline, devices not patched from EasyRMM,
+  EasyPatch endpoints with no EasyRMM device, and patch jobs queued or
+  running.
+* **Organizations, least up to date first**, when there is more than one:
+  the share up to date, devices, devices missing required updates, with
+  failed updates and missing updates for exploited vulnerabilities.
+* **In EasyPatch, not in EasyRMM**: EasyPatch endpoints of linked
+  organizations that no EasyRMM device is linked to, so they show nowhere
+  else. Install EasyRMM's agent on each machine in the same organization:
+  EasyRMM links the device to the EasyPatch agent already there when their
+  host names match, and the device's Patches tab says why when it cannot.
+  Only organizations whose whole you can see are listed; site-level roles do
+  not see this list.
+
+### Devices
+
+The **Devices** tab lists the devices of linked organizations and every
+device with an EasyPatch agent:
 
 * **Status** is EasyPatch's compliance: up to date, updates missing,
   updates failed, restart needed, scan out of date, never scanned. Devices
@@ -258,6 +293,57 @@ scans again before installing.
 Scans and installs start when the device next checks in with EasyPatch
 (every minute by default). Updates that need a restart finish at the next
 restart.
+
+### Updates across devices
+
+The **Updates** tab lists every update the devices in view report, counted
+across them: how many miss it, failed it, wait for a restart after it, have
+it installed or have it excluded. By default it lists updates some device
+still needs, those fixing vulnerabilities exploited in the wild first;
+filter by organization, site, category, the state devices are in, or
+exploitation, search by title, KB or package, and order by the most
+missing, failed or installed.
+
+EasyPatch counts updates over whole organizations or one site. Someone
+whose role covers single sites of an organization chooses one of them, and
+with a connected EasyPatch server that is not EasyRMM's own engine, an
+organization is chosen when more than one is linked.
+
+<picture><source media="(prefers-color-scheme: light)" srcset="../images/patching-update-light.png"><img src="../images/patching-update.png" alt="An update's page: what it fixes, the vulnerabilities with CISA's exploitation data, and Install where missing, Remove and Hold"></picture>
+
+An update's page shows what it is (release date, size, classification,
+products, KB articles, the package and its advisories, whether it is likely
+to need a restart, what it replaces, the vendor's page), the vulnerabilities
+it fixes with CVSS scores and exploitation (CISA's Known Exploited
+Vulnerabilities catalog, with its due date and ransomware use, or
+Microsoft's report), its holds, and the devices reporting it, filtered by
+state. Devices open their Patches tab; an EasyPatch endpoint with no EasyRMM
+device is shown as such.
+
+* **Install** on the devices chosen, or **Install where missing…** on every
+  device in view where it is missing or failed, except where it is excluded.
+  EasyPatch installs it whatever its category, also when it is on hold.
+  EasyPatch endpoints with no EasyRMM device are left out; devices where you
+  may not install are listed afterwards.
+* **Remove…** uninstalls it from every device in view where it is installed
+  or waits for a restart, as **Remove…** on a device's Patches tab does, and
+  excludes it there unless you untick it. Only Windows updates are removed;
+  EasyPatch refuses Linux and macOS devices, and each is listed afterwards.
+  Packages and applications are not offered for removal.
+
+### Holds
+
+**Hold…** keeps an update out of scheduled installs and installs of every
+missing update, in one organization or, for super administrators, in every
+organization, until the hold is released. A hold needs a reason, shown with
+it in EasyRMM and in EasyPatch. Installing a held update by hand, on its
+page or on a device, still installs it. EasyPatch also holds an update
+itself when it fails on too many of the devices it was tried on (its
+rollout guard); such holds say so.
+
+**Release hold** lifts it. Holds in an organization are placed and released
+with `patch.configure` there; holds in every organization only by super
+administrators. EasyPatch refuses a second hold in the same place.
 
 ### Excluding and removing updates
 
@@ -423,8 +509,8 @@ warns about them; see
 | Permission | Allows | Built-in roles |
 |---|---|---|
 | `patch.view` (with `device.view`) | Patching, a device's Patches tab | Every role |
-| `patch.manage` | Scan, install, restart, cancel, retry, exclude and include updates, remove an update, message users, install and update the EasyPatch agent, stop and allow patching for a device | Technician and above |
-| `patch.configure` | Change EasyPatch's standing rules: makes someone an Admin in EasyPatch rather than ReadOnly when they sign in to EasyPatch through EasyRMM. Only organization-wide roles hold it | Organization administrator and above |
+| `patch.manage` | Scan, install, restart, cancel, retry, exclude and include updates, remove an update, install or remove an update across devices, message users, install and update the EasyPatch agent, stop and allow patching for a device | Technician and above |
+| `patch.configure` | Change EasyPatch's standing rules: hold an update in the organization and release its holds (in every organization: super administrators only); makes someone an Admin in EasyPatch rather than ReadOnly when they sign in to EasyPatch through EasyRMM. Only organization-wide roles hold it | Organization administrator and above |
 | `settings.manage` | Settings → EasyPatch, including automatic installs of the EasyPatch agent | Super administrator |
 
 Both are checked at the device's site before EasyPatch is called; a job is
@@ -435,11 +521,12 @@ nobody can act, whatever their role.
 
 | Action | Recorded |
 |---|---|
-| `patch.scan`, `patch.install` | One record per device that started, with the EasyPatch job id; installs record which updates and any scheduled time |
+| `patch.scan`, `patch.install` | One record per device that started, with the EasyPatch job id; installs record which updates and any scheduled time, and an install from an update's page its update id |
 | `patch.restart` | One record per device that was asked to restart, with the EasyPatch job id, the condition, any scheduled time and the servers you confirmed |
 | `patch.cancel` | The job and its device |
 | `patch.exclude`, `patch.include` | The update excluded on the device, or included again, and the reason given |
-| `patch.remove_update` | The update, the removal job, and whether it was excluded too, with the reason |
+| `patch.remove_update` | The update, the removal job, and whether it was excluded too, with the reason; from an update's page, one record per device |
+| `patch.hold`, `patch.release_hold` | The update, the reason and where it is held: the organization, or every organization |
 | `patch.notify` | One record per device messaged: the message, and the restart time it names |
 | `patch.agent_update` | One record per device whose agent was asked to update, with the EasyPatch job id |
 | `patch.retry` | The job retried, the new job and the device |
@@ -464,6 +551,11 @@ server has the `on-behalf-of` capability.
 * The device list reads at most 10,000 endpoints per EasyPatch organization
   and shows at most 5,000 devices; the job list shows the newest 200 jobs.
 * The device list is cached for 30 seconds; a scan or install refreshes it.
+* The update list shows 50 updates a page and an update's page 200 devices
+  a page. Installing or removing an update across devices reaches at most
+  1,000 devices at once: choose an organization or a site beyond that.
+* The overview lists at most 500 EasyPatch endpoints with no EasyRMM
+  device.
 * The EasyPatch Linux agent needs systemd: it runs apt in transient
   systemd units. EasyRMM does not install it where there is none.
 * With a connected server, EasyPatch sites are matched to EasyRMM sites by

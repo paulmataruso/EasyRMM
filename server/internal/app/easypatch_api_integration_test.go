@@ -329,6 +329,90 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Fatalf("agent update: %+v", res)
 	}
 
+	// Patching → Updates (one-product plan, C2): the catalog, an update's
+	// page and devices, installing and removing it, and holds.
+	var catalog struct {
+		Items []struct {
+			UpdateGUID   string `json:"updateGuid"`
+			MissingCount int    `json:"missingCount"`
+			OnHold       bool   `json:"onHold"`
+		} `json:"items"`
+		PageSize int `json:"pageSize"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/updates?category=Security&sort=missing&dir=desc&q=openssl", nil, &catalog)
+	if len(catalog.Items) != 1 || catalog.Items[0].MissingCount != 1 || catalog.PageSize != 50 {
+		t.Fatalf("catalog: %+v", catalog)
+	}
+	openssl := catalog.Items[0].UpdateGUID
+	for _, q := range []string{"category=Firmware", "state=Gone", "sort=title", "knownExploited=maybe", "page=0", "organizationId=x", "siteId=x"} {
+		wantStatus(t, admin.do("GET", "/api/v1/patching/updates?"+q, nil), http.StatusUnprocessableEntity, "validation_failed")
+	}
+	var update struct {
+		Summary struct {
+			MissingCount int `json:"missingCount"`
+		} `json:"summary"`
+		Vulnerabilities []map[string]any `json:"vulnerabilities"`
+		Holds           []map[string]any `json:"holds"`
+		CanManage       bool             `json:"canManage"`
+		CanHold         bool             `json:"canHold"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/updates/"+openssl+"?organizationId="+acme, nil, &update)
+	if update.Summary.MissingCount != 1 || len(update.Vulnerabilities) != 1 || update.Holds == nil || !update.CanManage || !update.CanHold {
+		t.Fatalf("update: %+v", update)
+	}
+	wantStatus(t, admin.do("GET", "/api/v1/patching/updates/nope", nil), http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("GET", "/api/v1/patching/updates/"+uuid.NewString(), nil), http.StatusNotFound, "not_found")
+	var updateDevices struct {
+		Items []struct {
+			DeviceID   *string `json:"deviceId"`
+			DeviceName string  `json:"deviceName"`
+			State      string  `json:"state"`
+		} `json:"items"`
+		TotalCount int `json:"totalCount"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/updates/"+openssl+"/devices?state=Missing", nil, &updateDevices)
+	if updateDevices.TotalCount != 1 || updateDevices.Items[0].DeviceID == nil || *updateDevices.Items[0].DeviceID != device ||
+		updateDevices.Items[0].DeviceName != "web-01" {
+		t.Fatalf("update's devices: %+v", updateDevices)
+	}
+	wantStatus(t, admin.do("GET", "/api/v1/patching/updates/"+openssl+"/devices?state=Gone", nil), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, admin.do("GET", "/api/v1/patching/updates/"+openssl+"/devices?page=x", nil), http.StatusUnprocessableEntity, "validation_failed")
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/updates/"+openssl+"/install", map[string]any{"deviceIds": []string{device}}, &res)
+	if res.Succeeded != 1 || res.Results[0].JobID == "" {
+		t.Fatalf("install the update: %+v", res)
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/updates/"+openssl+"/install", map[string]any{"all": true}, &res)
+	if res.Succeeded != 1 {
+		t.Fatalf("install the update everywhere: %+v", res)
+	}
+	wantStatus(t, admin.do("POST", "/api/v1/patching/updates/"+openssl+"/install", "x"), http.StatusBadRequest, "bad_request")
+	wantStatus(t, admin.do("POST", "/api/v1/patching/updates/nope/install", map[string]any{"all": true}), http.StatusNotFound, "not_found")
+	var libc6 string
+	ep.Set(func() { libc6 = endpoint.InstalledItems[0]["updateGuid"].(uuid.UUID).String() })
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/updates/"+libc6+"/remove", map[string]any{"all": true, "block": true, "reason": "Breaks printing"},
+		&refused)
+	if refused.Failed != 1 || !strings.Contains(refused.Results[0].Message, "Removing updates is only available on Windows") {
+		t.Fatalf("removal from every device on Linux: %+v", refused)
+	}
+	var hold struct {
+		ID               string `json:"id"`
+		OrganizationID   string `json:"organizationId"`
+		OrganizationName string `json:"organizationName"`
+		CanRelease       bool   `json:"canRelease"`
+	}
+	admin.expect(http.StatusCreated, "POST", "/api/v1/patching/updates/"+openssl+"/holds", map[string]any{"organizationId": acme, "reason": "Breaks printing"}, &hold)
+	if hold.OrganizationID != acme || hold.OrganizationName != "Acme" || !hold.CanRelease {
+		t.Fatalf("hold: %+v", hold)
+	}
+	wantStatus(t, admin.do("POST", "/api/v1/patching/updates/"+openssl+"/holds", map[string]any{"organizationId": acme, "reason": "Again"}),
+		http.StatusConflict, "already_held")
+	wantStatus(t, admin.do("POST", "/api/v1/patching/updates/"+openssl+"/holds", map[string]any{"organizationId": acme}),
+		http.StatusUnprocessableEntity, "validation_failed")
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/updates?q=openssl", nil, &catalog)
+	if len(catalog.Items) != 1 || !catalog.Items[0].OnHold {
+		t.Fatalf("held in the catalog: %+v", catalog)
+	}
+
 	// Links to EasyPatch's console.
 	link := *admin
 	noFollow := *admin.http
@@ -389,6 +473,25 @@ func TestEasyPatchAPI(t *testing.T) {
 	wantStatus(t, viewer.do("POST", "/api/v1/patching/notify", map[string]any{"deviceIds": []string{device}, "preset": "SaveYourWork"}),
 		http.StatusForbidden, "forbidden")
 	wantStatus(t, viewer.do("POST", "/api/v1/patching/agent-update", map[string]any{"deviceIds": []string{device}}), http.StatusForbidden, "forbidden")
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/updates", nil, &catalog)
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/updates/"+openssl, nil, &update)
+	if update.CanManage || update.CanHold || len(update.Holds) != 1 || update.Holds[0]["canRelease"] != false {
+		t.Fatalf("the viewer's update: %+v", update)
+	}
+	for _, body := range []map[string]any{{"deviceIds": []string{device}}, {"all": true}} {
+		wantStatus(t, viewer.do("POST", "/api/v1/patching/updates/"+openssl+"/install", body), http.StatusForbidden, "forbidden")
+		wantStatus(t, viewer.do("POST", "/api/v1/patching/updates/"+libc6+"/remove", body), http.StatusForbidden, "forbidden")
+	}
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/updates/"+openssl+"/holds", map[string]any{"organizationId": acme, "reason": "Mine"}),
+		http.StatusForbidden, "forbidden")
+	release := "/api/v1/patching/updates/" + openssl + "/holds/" + hold.ID + "/release"
+	wantStatus(t, viewer.do("POST", release, nil), http.StatusForbidden, "forbidden")
+	admin.expect(http.StatusOK, "POST", release, nil, &hold)
+	if hold.CanRelease {
+		t.Fatalf("released: %+v", hold)
+	}
+	wantStatus(t, admin.do("POST", release, nil), http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("POST", "/api/v1/patching/updates/"+openssl+"/holds/nope/release", nil), http.StatusNotFound, "not_found")
 	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/devices/"+device+"/install-preview", nil, &preview)
 	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/messages", nil, &presets)
 	for _, m := range []string{"GET", "PUT", "DELETE"} {
@@ -452,7 +555,8 @@ func TestEasyPatchAPI(t *testing.T) {
 	for _, a := range audit.Items {
 		got = append(got, a.Action)
 	}
-	if strings.Join(got, ",") != "patch.agent_update,patch.include,patch.exclude,patch.restart,patch.retry,patch.cancel,patch.install,patch.scan" {
+	if strings.Join(got, ",") != "patch.release_hold,patch.hold,patch.install,patch.install,patch.agent_update,patch.include,patch.exclude,"+
+		"patch.restart,patch.retry,patch.cancel,patch.install,patch.scan" {
 		t.Fatalf("patch audit: %v", got)
 	}
 

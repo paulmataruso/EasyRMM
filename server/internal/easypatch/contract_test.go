@@ -811,6 +811,183 @@ func TestContract(t *testing.T) {
 		}
 	})
 
+	run("the update catalog and holds", func(t *testing.T) {
+		// What one-product plan C2 relies on: the catalog counted over an
+		// organization or a site, one update with the endpoints that report
+		// it, installing and removing it across endpoints, and holds.
+		scope := FleetScope{OrganizationID: &org.ID}
+		p, err := ep.Catalog(ctx, CatalogQuery{FleetScope: scope})
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := slices.IndexFunc(p.Items, func(u FleetUpdate) bool { return u.UpdateGUID == tzdata })
+		if i < 0 || p.Items[i].MissingCount != 1 || p.Items[i].Title != "tzdata 2026c-0+deb13u1" || p.Items[i].Category != "Other" ||
+			p.Items[i].Package == nil || p.PageSize != CatalogPageSize || p.Items[i].OnHold {
+			t.Fatalf("catalog %+v", p)
+		}
+		if slices.ContainsFunc(p.Items, func(u FleetUpdate) bool { return u.UpdateGUID == libc }) {
+			t.Errorf("an update installed everywhere is listed: %+v", p.Items)
+		}
+		installed, err := ep.Catalog(ctx, CatalogQuery{FleetScope: scope, State: "Installed"})
+		if i := slices.IndexFunc(installed.Items, func(u FleetUpdate) bool { return u.UpdateGUID == libc }); err != nil || i < 0 ||
+			installed.Items[i].InstalledCount != 1 {
+			t.Errorf("installed updates %+v, %v", installed, err)
+		}
+		for name, q := range map[string]CatalogQuery{
+			"site":        {FleetScope: FleetScope{OrganizationID: &org.ID, SiteID: &site.ID}},
+			"search":      {FleetScope: scope, Search: "TZDATA"},
+			"category":    {FleetScope: scope, Category: "Other"},
+			"most failed": {FleetScope: scope, Sort: "failed", Desc: true},
+		} {
+			if p, err := ep.Catalog(ctx, q); err != nil || !slices.ContainsFunc(p.Items, func(u FleetUpdate) bool { return u.UpdateGUID == tzdata }) {
+				t.Errorf("%s: %+v, %v", name, p, err)
+			}
+		}
+		other := uuid.New()
+		if p, err := ep.Catalog(ctx, CatalogQuery{FleetScope: FleetScope{SiteID: &other}}); err != nil || len(p.Items) != 0 {
+			t.Errorf("another site: %+v, %v", p, err)
+		}
+		exploited := true
+		if p, err := ep.Catalog(ctx, CatalogQuery{FleetScope: scope, KnownExploited: &exploited}); err != nil ||
+			slices.ContainsFunc(p.Items, func(u FleetUpdate) bool { return u.UpdateGUID == tzdata }) {
+			t.Errorf("known exploited: %+v, %v", p, err)
+		}
+
+		d, err := ep.FleetUpdate(ctx, tzdata, scope)
+		if err != nil || d.Summary.MissingCount != 1 || d.Summary.Title != "tzdata 2026c-0+deb13u1" || d.KbNumbers == nil || len(d.Holds) != 0 {
+			t.Fatalf("update %+v, %v", d, err)
+		}
+		if _, err := ep.FleetUpdate(ctx, uuid.New(), scope); !IsStatus(err, http.StatusNotFound) {
+			t.Errorf("unknown update: %v", err)
+		}
+		ends, err := ep.FleetUpdateEndpoints(ctx, tzdata, scope, "", 1)
+		if err != nil || ends.TotalCount != 1 || ends.Items[0].EndpointID != a.endpoint || ends.Items[0].Hostname != "contract-"+suffix ||
+			ends.Items[0].State != "Missing" || ends.Items[0].SiteName != "Head office" || ends.Items[0].IsExcluded {
+			t.Errorf("update's endpoints %+v, %v", ends, err)
+		}
+		if ends, err := ep.FleetUpdateEndpoints(ctx, tzdata, scope, "Installed", 1); err != nil || len(ends.Items) != 0 {
+			t.Errorf("endpoints where it is installed %+v, %v", ends, err)
+		}
+
+		// Installing on the endpoint: a job, or a reason (the scheduled
+		// install of tzdata may still be queued).
+		r, err := ep.FleetInstall(ctx, tzdata, []uuid.UUID{a.endpoint}, "contract-fleet@example.test")
+		if err != nil || len(r.Results) != 1 || r.Results[0].EndpointID != a.endpoint {
+			t.Fatalf("install on endpoints %+v, %v", r, err)
+		}
+		if x := r.Results[0]; (x.Success && x.JobID == nil) || (!x.Success && (x.ErrorCode == "" || x.Message == "")) {
+			t.Errorf("install result %+v", x)
+		} else if x.Success {
+			if _, err := ep.CancelJob(ctx, *x.JobID, ""); err != nil {
+				t.Error(err)
+			}
+		} else {
+			t.Logf("install on endpoints: %s %s", x.ErrorCode, x.Message)
+		}
+		// Endpoints where it is not missing are left out, unanswered.
+		if r, err := ep.FleetInstall(ctx, libc, []uuid.UUID{a.endpoint}, ""); err != nil || len(r.Results) != 0 {
+			t.Errorf("install where it is installed %+v, %v", r, err)
+		}
+		if _, err := ro.FleetInstall(ctx, tzdata, []uuid.UUID{a.endpoint}, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("read-only install: %v", err)
+		}
+		// Removing: refused on Linux, per endpoint.
+		r, err = ep.FleetRemove(ctx, libc, []uuid.UUID{a.endpoint}, true, "contract", "")
+		if err != nil || len(r.Results) != 1 || r.Results[0].Success || r.Results[0].ErrorCode != "not_supported_on_linux" {
+			t.Errorf("removal on Linux %+v, %v", r, err)
+		}
+		if r, err := ep.FleetRemove(ctx, tzdata, []uuid.UUID{a.endpoint}, false, "", ""); err != nil || len(r.Results) != 0 {
+			t.Errorf("removal where it is not installed %+v, %v", r, err)
+		}
+
+		// Holds.
+		h, err := ep.HoldUpdate(ctx, tzdata, &org.ID, "contract hold", "contract-hold@example.test")
+		if err != nil || h.ID == uuid.Nil || h.OrganizationID == nil || *h.OrganizationID != org.ID || h.Source != "Manual" ||
+			h.Reason != "contract hold" || !h.CanRelease || h.ReleasedAt != nil || h.Title != "tzdata 2026c-0+deb13u1" {
+			t.Fatalf("hold %+v, %v", h, err)
+		}
+		_, err = ep.HoldUpdate(ctx, tzdata, &org.ID, "again", "")
+		var e *Error
+		if !errors.As(err, &e) || e.Status != http.StatusConflict || e.Code != "already_held" {
+			t.Errorf("holding again: %#v", err)
+		}
+		if _, err := ep.HoldUpdate(ctx, uuid.New(), &org.ID, "unknown", ""); !IsStatus(err, http.StatusNotFound) {
+			t.Errorf("holding an unknown update: %v", err)
+		}
+		if _, err := ro.HoldUpdate(ctx, tzdata, &org.ID, "read-only", ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("read-only hold: %v", err)
+		}
+		if d, err := ep.FleetUpdate(ctx, tzdata, scope); err != nil || !d.Summary.OnHold || len(d.Holds) != 1 || d.Holds[0].ID != h.ID {
+			t.Errorf("held update %+v, %v", d, err)
+		}
+		if p, err := ep.Catalog(ctx, CatalogQuery{FleetScope: scope, Search: "tzdata"}); err != nil || len(p.Items) != 1 || !p.Items[0].OnHold {
+			t.Errorf("held in the catalog %+v, %v", p, err)
+		}
+		if list, err := ep.Holds(ctx, tzdata); err != nil || !slices.ContainsFunc(list, func(x Hold) bool { return x.ID == h.ID }) {
+			t.Errorf("holds %+v, %v", list, err)
+		}
+		released, err := ep.ReleaseHold(ctx, h.ID, "contract-release@example.test")
+		if err != nil || released.ReleasedAt == nil || released.CanRelease {
+			t.Fatalf("release %+v, %v", released, err)
+		}
+		if _, err := ep.ReleaseHold(ctx, h.ID, ""); err != nil {
+			t.Errorf("releasing again: %v", err)
+		}
+		if list, err := ep.Holds(ctx, tzdata); err != nil || slices.ContainsFunc(list, func(x Hold) bool { return x.ID == h.ID }) {
+			t.Errorf("holds once released %+v, %v", list, err)
+		}
+
+		// Through the engine: statements bound the catalog, an
+		// administrator holds in the organization, a super administrator
+		// everywhere.
+		signer, err := NewSigner(c.engineKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		engine, err := NewEngineClient(c.engineURL, signer, "contract")
+		if err != nil {
+			t.Fatal(err)
+		}
+		as := func(role string, orgs ...uuid.UUID) context.Context {
+			return WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-engine@example.test", Role: role, Organizations: orgs})
+		}
+		if p, err := engine.Catalog(as(RoleReadOnly, org.ID), CatalogQuery{}); err != nil ||
+			!slices.ContainsFunc(p.Items, func(u FleetUpdate) bool { return u.UpdateGUID == tzdata }) {
+			t.Errorf("catalog, the organization named: %+v, %v", p, err)
+		}
+		if p, err := engine.Catalog(as(RoleReadOnly, uuid.New()), CatalogQuery{Search: "tzdata 2026c"}); err != nil ||
+			slices.ContainsFunc(p.Items, func(u FleetUpdate) bool { return u.UpdateGUID == tzdata }) {
+			t.Errorf("catalog, another organization named: %+v, %v", p, err)
+		}
+		mine, err := engine.HoldUpdate(as(RoleAdmin, org.ID), tzdata, &org.ID, "engine hold", "")
+		if err != nil || !mine.CanRelease || mine.CreatedBy != "easyrmm:contract-engine@example.test" {
+			t.Fatalf("hold as an administrator of the organization: %+v, %v", mine, err)
+		}
+		if _, err := engine.HoldUpdate(as(RoleAdmin, org.ID), tzdata, nil, "everywhere", ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an administrator held an update everywhere: %v", err)
+		}
+		if _, err := engine.HoldUpdate(as(RoleAdmin, uuid.New()), tzdata, &org.ID, "elsewhere", ""); err == nil {
+			t.Error("an administrator of another organization held an update in this one")
+		}
+		if _, err := engine.ReleaseHold(as(RoleAdmin, org.ID), mine.ID, ""); err != nil {
+			t.Error(err)
+		}
+		super := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-engine@example.test", Role: RoleSuperAdmin, AllOrganizations: true})
+		every, err := engine.HoldUpdate(super, tzdata, nil, "engine hold everywhere", "")
+		if err != nil || every.OrganizationID != nil || !every.CanRelease {
+			t.Fatalf("hold everywhere as a super administrator: %+v, %v", every, err)
+		}
+		if list, err := engine.Holds(as(RoleReadOnly, org.ID), tzdata); err != nil || len(list) != 1 || list[0].ID != every.ID || list[0].CanRelease {
+			t.Errorf("a hold everywhere, as a reader: %+v, %v", list, err)
+		}
+		if _, err := engine.ReleaseHold(as(RoleAdmin, org.ID), every.ID, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an administrator released a hold everywhere: %v", err)
+		}
+		if _, err := engine.ReleaseHold(super, every.ID, ""); err != nil {
+			t.Error(err)
+		}
+	})
+
 	run("errors", func(t *testing.T) {
 		_, err := ep.Endpoint(ctx, uuid.New())
 		var e *Error
@@ -1244,9 +1421,9 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		}
 		return list[0].UpdateGUID
 	}
-	fakeInstall := map[string]any{"mode": "Selected", "updateGuids": []uuid.UUID{pick(fake.URL(), fakeHTTP, fake.Token, fEndpoint)},
-		"force": false, "scheduledAt": at}
-	install["updateGuids"] = []uuid.UUID{pick(c.url, c.http, c.token, endpoint)}
+	fUpdate, rUpdate := pick(fake.URL(), fakeHTTP, fake.Token, fEndpoint), pick(c.url, c.http, c.token, endpoint)
+	fakeInstall := map[string]any{"mode": "Selected", "updateGuids": []uuid.UUID{fUpdate}, "force": false, "scheduledAt": at}
+	install["updateGuids"] = []uuid.UUID{rUpdate}
 
 	// The fake's job comes from an install like the real one's.
 	_, data := call(c.ctx, t, fakeHTTP, fake.URL(), http.MethodPost, "/api/v1/endpoints/"+fEndpoint.String()+"/install-updates", fake.Token,
@@ -1330,38 +1507,67 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		{name: "enrollment token", method: "POST", fake: "/api/v1/enrollment-tokens", real: "/api/v1/enrollment-tokens",
 			fBody: map[string]any{"organizationId": fOrg, "siteId": fSite, "description": "shape", "expiresInHours": 1, "maxUses": 1, "count": 1},
 			rBody: map[string]any{"organizationId": org, "siteId": site, "description": "shape", "expiresInHours": 1, "maxUses": 1, "count": 1}},
+		// The update catalog (one-product plan, C2).
+		q("catalog", "GET", "/api/v1/updates?organizationId="+fOrg.String(), "/api/v1/updates?organizationId="+org.String()),
+		q("catalog of a site", "GET", "/api/v1/updates?organizationId="+fOrg.String()+"&siteId="+fSite.String()+"&sort=missing&dir=desc",
+			"/api/v1/updates?organizationId="+org.String()+"&siteId="+site.String()+"&sort=missing&dir=desc"),
+		q("fleet update", "GET", "/api/v1/updates/"+fUpdate.String()+"?organizationId="+fOrg.String(),
+			"/api/v1/updates/"+rUpdate.String()+"?organizationId="+org.String()),
+		q("unknown fleet update", "GET", "/api/v1/updates/"+uuid.NewString(), "/api/v1/updates/"+uuid.NewString()),
+		q("fleet update's endpoints", "GET", "/api/v1/updates/"+fUpdate.String()+"/endpoints?organizationId="+fOrg.String(),
+			"/api/v1/updates/"+rUpdate.String()+"/endpoints?organizationId="+org.String()),
+		{name: "fleet install", method: "POST", fake: "/api/v1/updates/" + fUpdate.String() + "/install",
+			real:  "/api/v1/updates/" + rUpdate.String() + "/install",
+			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint}}, rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint}}},
 	}
-	for _, qu := range questions {
+	ask := func(qu question) (f, r any) {
 		fStatus, fData := call(c.ctx, t, fakeHTTP, fake.URL(), qu.method, qu.fake, fake.Token, qu.fBody, nil)
 		rStatus, rData := call(c.ctx, t, c.http, c.url, qu.method, qu.real, c.token, qu.rBody, nil)
 		if fStatus != rStatus {
 			t.Errorf("%s: eptest answers %d, EasyPatch %d: %s", qu.name, fStatus, rStatus, rData)
-			continue
+			return nil, nil
 		}
-		var f, r any
 		if err := json.Unmarshal(fData, &f); err != nil {
 			t.Errorf("%s: eptest: %v", qu.name, err)
-			continue
+			return nil, nil
 		}
 		if err := json.Unmarshal(rData, &r); err != nil {
 			t.Errorf("%s: EasyPatch: %v", qu.name, err)
-			continue
+			return nil, nil
 		}
 		if qu.element {
 			f, r = elementWithID(f, qu.fElem), elementWithID(r, qu.rElem)
 			if f == nil || r == nil {
 				t.Errorf("%s: the one asked about is missing (eptest %v, EasyPatch %v)", qu.name, f != nil, r != nil)
-				continue
+				return nil, nil
 			}
 		}
 		if f == nil || r == nil {
 			t.Errorf("%s: an empty answer", qu.name)
-			continue
+			return nil, nil
 		}
 		for _, p := range sameShape(qu.name, f, r, qu.dictionaryKeys) {
 			t.Error(p)
 		}
+		return f, r
 	}
+	for _, qu := range questions {
+		ask(qu)
+	}
+
+	// A hold, placed, listed, refused again and released on both.
+	placeHold := question{name: "hold", method: "POST", fake: "/api/v1/updates/" + fUpdate.String() + "/holds",
+		real: "/api/v1/updates/" + rUpdate.String() + "/holds", fBody: map[string]any{"organizationId": fOrg, "reason": "shape"},
+		rBody: map[string]any{"organizationId": org, "reason": "shape"}}
+	fHold, rHold := ask(placeHold)
+	if fHold == nil || rHold == nil {
+		return
+	}
+	placeHold.name = "hold again"
+	ask(placeHold)
+	ask(q("holds", "GET", "/api/v1/update-holds?updateGuid="+fUpdate.String(), "/api/v1/update-holds?updateGuid="+rUpdate.String()))
+	fID, rID := fHold.(map[string]any)["id"].(string), rHold.(map[string]any)["id"].(string)
+	ask(q("release", "POST", "/api/v1/update-holds/"+fID+"/release", "/api/v1/update-holds/"+rID+"/release"))
 }
 
 func fakeTLS(t *testing.T, caPEM string) *tls.Config {

@@ -305,9 +305,26 @@ type FleetDevice struct {
 	Removal *AgentRemoval `json:"removal,omitempty"`
 }
 
+// UnmatchedEndpoint is an EasyPatch endpoint in a linked organization that
+// no EasyRMM device is linked to, such as one enrolled before EasyRMM's agent
+// was on its machine.
+type UnmatchedEndpoint struct {
+	Endpoint
+	// OrganizationID and OrganizationName are EasyRMM's.
+	OrganizationID   uuid.UUID `json:"organizationId"`
+	OrganizationName string    `json:"organizationName"`
+}
+
+// maxUnmatched is how many unmatched endpoints the patching list holds.
+const maxUnmatched = 500
+
 // Fleet is the patching list.
 type Fleet struct {
 	Devices []FleetDevice `json:"devices"`
+	// Unmatched lists, for organizations the caller sees whole, endpoints
+	// with no EasyRMM device; only without site, group, status or name
+	// filters.
+	Unmatched []UnmatchedEndpoint `json:"unmatched"`
 	// Truncated says there were more devices than the list holds.
 	Truncated bool `json:"truncated"`
 	// Errors says which EasyPatch organizations could not be read.
@@ -333,7 +350,7 @@ func (s *Service) Fleet(ctx context.Context, c access.Caller, q FleetQuery) (Fle
 	if r == nil {
 		return Fleet{}, errNotConfigured
 	}
-	out := Fleet{Devices: []FleetDevice{}, Errors: []string{}}
+	out := Fleet{Devices: []FleetDevice{}, Unmatched: []UnmatchedEndpoint{}, Errors: []string{}}
 	var rows []deviceRow
 	err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		list, err := tx.Query(ctx, deviceSelect+`
@@ -398,7 +415,79 @@ func (s *Service) Fleet(ctx context.Context, c access.Caller, q FleetQuery) (Fle
 		}
 		out.Devices = append(out.Devices, f)
 	}
-	return out, nil
+	if q.SiteID != uuid.Nil || q.GroupID != uuid.Nil || q.Compliance != "" || q.Search != "" {
+		return out, nil
+	}
+	return out, s.unmatched(ctx, c, cl, q.OrganizationID, fetched, &out)
+}
+
+// unmatched adds the endpoints of organizations the caller sees whole that no
+// device is linked to.
+func (s *Service) unmatched(ctx context.Context, c access.Caller, cl *Client, organizationID uuid.UUID, fetched map[uuid.UUID]map[uuid.UUID]Endpoint,
+	out *Fleet) error {
+	linked, err := s.linkedOrgs(ctx, c)
+	if err != nil {
+		return err
+	}
+	var candidates []uuid.UUID
+	for ep, o := range linked {
+		if (organizationID == uuid.Nil || o.id == organizationID) && c.Can(rbac.PermPatchView, rbac.Org(o.id)) {
+			candidates = append(candidates, ep)
+		}
+	}
+	slices.SortFunc(candidates, func(a, b uuid.UUID) int { return strings.Compare(linked[a].name, linked[b].name) })
+	var ids []uuid.UUID
+	for _, ep := range candidates {
+		if _, ok := fetched[ep]; !ok {
+			eps, err := s.endpoints(s.as(ctx, c, RoleReadOnly, ep), cl, ep)
+			if err != nil {
+				s.noteError(ctx, err)
+				out.Errors = append(out.Errors, fmt.Sprintf("%s: %s", linked[ep].name, message(epError(err))))
+			}
+			fetched[ep] = eps
+		}
+		for id := range fetched[ep] {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	matched := map[uuid.UUID]bool{}
+	err = s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `SELECT endpoint_id FROM easypatch_devices WHERE endpoint_id = ANY($1)`, ids)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var id uuid.UUID
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			matched[id] = true
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return err
+	}
+	for _, ep := range candidates {
+		var list []UnmatchedEndpoint
+		for id, e := range fetched[ep] {
+			if !matched[id] {
+				list = append(list, UnmatchedEndpoint{Endpoint: e, OrganizationID: linked[ep].id, OrganizationName: linked[ep].name})
+			}
+		}
+		slices.SortFunc(list, func(a, b UnmatchedEndpoint) int { return strings.Compare(a.Hostname, b.Hostname) })
+		for _, u := range list {
+			if len(out.Unmatched) == maxUnmatched {
+				out.Truncated = true
+				return nil
+			}
+			out.Unmatched = append(out.Unmatched, u)
+		}
+	}
+	return nil
 }
 
 // orgOf is the EasyPatch organization of a linked device, for a statement.
@@ -864,7 +953,7 @@ func (s *Service) bulk(ctx context.Context, c access.Caller, devices []deviceRow
 	}
 	for _, d := range devices {
 		if !answered[*d.endpointID] {
-			res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, Message: "EasyPatch did not say what became of this device."})
+			res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, Message: unansweredMessage})
 		}
 	}
 	return s.record(ctx, events)

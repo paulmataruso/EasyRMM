@@ -94,6 +94,17 @@ All notable changes to this project are documented here. The format follows
   `patch.remove_update`, `patch.notify` and `patch.agent_update`. Links to
   EasyPatch's console show only where there is one: the bundled engine has
   none.
+- **Patching's overview, its update list and holds** (one-product plan, phase
+  C2): Patching opens on an overview of the devices you can see (the share
+  up to date, what needs attention worst first with links to the filtered
+  lists, organizations least up to date first, and EasyPatch endpoints with
+  no EasyRMM device, with how to link them). The **Updates** tab lists every
+  update across devices with its counts, exploited ones first, filtered and
+  ordered; an update's page shows what it fixes, its holds and the devices
+  reporting it, and installs it on chosen devices or wherever it is missing,
+  removes a Windows update across devices, and holds it in an organization
+  or, for super administrators, everywhere. Holds need `patch.configure` and
+  are audited as `patch.hold` and `patch.release_hold`.
 - **Organization time zones**: organizations have a time zone (default UTC;
   the browser's for a new one), which patching reports use.
 - **Stop patching for a device**: the device's Patches tab can stop

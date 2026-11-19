@@ -18,10 +18,13 @@ import type {
   PatchEndpoint,
   PatchFleet,
   PatchFleetDevice,
+  PatchFleetUpdate,
   PatchJobView,
   PatchPolicy,
   PatchStatus,
   PatchUpdate,
+  PatchUpdateDevice,
+  PatchUpdateView,
   Platform,
   ProductSwitch,
   RecentConnection,
@@ -407,6 +410,32 @@ const linkedOrgs = new Set(["o-alder", "o-bright", "o-cedar", "o-harbor", "o-mer
 export const fleet: PatchFleet = {
   truncated: false,
   errors: [],
+  // A front-desk PC enrolled in EasyPatch before EasyRMM's agent was on it.
+  unmatched: [
+    {
+      id: "e0000000-0000-4000-8000-000000000900",
+      hostname: "HDG-FRONTDESK-2",
+      organizationId: "o-harbor",
+      organizationName: "Harbor Dental Group",
+      siteName: "Eastside clinic",
+      status: "Active",
+      operatingSystem: "Windows 11 Pro 24H2",
+      platform: "Windows",
+      agentVersion: "1.10.0",
+      agentOutdated: false,
+      isOnline: true,
+      lastCheckInAt: ago(4),
+      lastScanAt: ago(95),
+      complianceStatus: "MissingUpdates",
+      missingRequiredCount: 2,
+      missingTotalCount: 2,
+      missingDeferredCount: 0,
+      failedCount: 0,
+      rebootPending: false,
+      knownExploitedMissingCount: 0,
+      currentActivity: "",
+    },
+  ],
   devices: devices
     .filter((d) => linkedOrgs.has(d.organizationId))
     .map(
@@ -613,3 +642,149 @@ export const patchJobs: PatchJobView[] = [
     canManage: true,
   },
 ];
+
+// ---------------------------------------------------------------------------------------------
+// Updates across devices (Patching → Updates and an update's page)
+
+function fleetUpdate(n: number, title: string, kb: string, category: string, severity: string, extra: Partial<PatchFleetUpdate>): PatchFleetUpdate {
+  return {
+    updateGuid: `u0000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+    title,
+    kbNumber: kb,
+    category,
+    msrcSeverity: severity,
+    releaseDate: days(7),
+    sizeBytes: 520 * 1024 ** 2,
+    missingCount: 0,
+    failedCount: 0,
+    installedCount: 0,
+    pendingRebootCount: 0,
+    excludedCount: 0,
+    package: null,
+    cveCount: 0,
+    knownExploited: false,
+    reofferedCount: 0,
+    onHold: false,
+    ...extra,
+  };
+}
+
+/** The same invented updates as AF-FS01's, counted across the linked organizations. */
+export const fleetUpdates: PatchFleetUpdate[] = [
+  fleetUpdate(1, missingUpdates[0]!.title, "KB5099001", "Security", "Critical", {
+    sizeBytes: 612 * 1024 ** 2,
+    missingCount: 2,
+    failedCount: 1,
+    installedCount: 5,
+    pendingRebootCount: 1,
+    cveCount: 3,
+    knownExploited: true,
+  }),
+  fleetUpdate(2, missingUpdates[1]!.title, "KB5099002", "Security", "Important", { sizeBytes: 74 * 1024 ** 2, missingCount: 4, installedCount: 8, cveCount: 2 }),
+  fleetUpdate(5, "openssl 3.5.4-1~deb13u1", "", "Security", "", {
+    sizeBytes: 2 * 1024 ** 2,
+    missingCount: 1,
+    installedCount: 1,
+    cveCount: 1,
+    package: { name: "openssl", version: "3.5.4-1~deb13u1", installedVersion: "3.5.1-1", repository: "trixie-security", advisories: ["DSA-6061-1"] },
+  }),
+  fleetUpdate(3, missingUpdates[2]!.title, "KB5099003", "Definition", "", { sizeBytes: 15 * 1024 ** 2, missingCount: 3, installedCount: 10, releaseDate: days(1) }),
+  fleetUpdate(4, missingUpdates[3]!.title, "KB5099004", "ServicingStack", "", { sizeBytes: 22 * 1024 ** 2, missingCount: 2, installedCount: 11, onHold: true }),
+];
+
+export const UPDATE_GUID = fleetUpdates[0]!.updateGuid;
+
+export const updateView: PatchUpdateView = {
+  summary: fleetUpdates[0]!,
+  description:
+    "This security update fixes vulnerabilities in the print spooler, the kernel and Remote Desktop Services. It includes the quality improvements of the previous month's preview update.",
+  supportUrl: "https://support.example.com/kb/5099001",
+  kbNumbers: ["5099001"],
+  products: ["Microsoft server operating system, version 21H2"],
+  msClassification: "Security Updates",
+  rebootLikely: true,
+  supersededUpdateGuids: ["u0000000-0000-4000-8000-000000000099"],
+  vulnerabilities: [
+    {
+      cveId: "CVE-2026-41001",
+      title: "Windows Print Spooler elevation of privilege vulnerability",
+      severity: "Critical",
+      cvssBase: 8.8,
+      msrcExploited: true,
+      kev: true,
+      kevDateAdded: "2026-11-11",
+      kevDueDate: "2026-12-02",
+      kevRansomware: true,
+      kevName: "Microsoft Windows Print Spooler",
+    },
+    {
+      cveId: "CVE-2026-41017",
+      title: "Windows kernel information disclosure vulnerability",
+      severity: "Important",
+      cvssBase: 5.5,
+      msrcExploited: false,
+      kev: false,
+      kevDateAdded: null,
+      kevDueDate: null,
+      kevRansomware: false,
+      kevName: "",
+    },
+    {
+      cveId: "CVE-2026-41023",
+      title: "Remote Desktop Services denial of service vulnerability",
+      severity: "Important",
+      cvssBase: 7.5,
+      msrcExploited: false,
+      kev: false,
+      kevDateAdded: null,
+      kevDueDate: null,
+      kevRansomware: false,
+      kevName: "",
+    },
+  ],
+  holds: [],
+  canManage: true,
+  canHold: true,
+  holdIn: organizations.filter((o) => linkedOrgs.has(o.id)).map((o) => ({ id: o.id, name: o.name })),
+  canHoldEverywhere: true,
+};
+
+function updateDevice(id: string, state: PatchUpdateDevice["state"], minutes: number, extra: Partial<PatchUpdateDevice> = {}): PatchUpdateDevice {
+  const d = byId(id)!;
+  return {
+    endpointId: `e-${id}`,
+    hostname: d.hostname,
+    deviceId: d.id,
+    deviceName: d.name,
+    organizationName: d.organizationName,
+    siteName: d.siteName,
+    platform: d.platform,
+    isOnline: d.online,
+    state,
+    isRequired: true,
+    isExcluded: false,
+    failedAttempts: 0,
+    errorCode: "",
+    errorMessage: "",
+    stateChangedAt: ago(minutes),
+    canManage: true,
+    ...extra,
+  };
+}
+
+export const updateDevices: PatchUpdateDevice[] = [
+  updateDevice("d-af-fs01", "Missing", 60 * 24 * 6),
+  updateDevice("d-af-lt-01", "Installed", 60 * 30),
+  updateDevice("d-af-rec", "Installed", 60 * 29),
+  updateDevice("d-ba-cad01", "PendingReboot", 60 * 5),
+  updateDevice("d-ba-cad02", "Installed", 60 * 28),
+  updateDevice("d-cvl-circ", "Installed", 60 * 52),
+  updateDevice("d-cvl-pub3", "Failed", 60 * 26, {
+    failedAttempts: 2,
+    errorCode: "0x800f0922",
+    errorMessage: "The update could not be installed: the system reserved partition is too small.",
+  }),
+  updateDevice("d-hdg-dc01", "Missing", 60 * 24 * 6),
+  updateDevice("d-hdg-front1", "Installed", 60 * 27),
+];
+
