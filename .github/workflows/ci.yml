@@ -32,9 +32,10 @@ jobs:
   #   easypatch_agent   the agent, shared/, its build scripts, the build
   #                     props, global.json and easypatch-agent.yml (likewise).
   #   contract          what the EasyPatch contract tests depend on: EasyPatch's
-  #                     server and its build, EasyRMM's connector, Go modules
-  #                     and the contract script.
-  # EasyRMM's EasyPatch connector (server/internal/easypatch/) counts for
+  #                     server and its build, EasyRMM's side of the patching
+  #                     engine, Go modules, the contract script and the
+  #                     PostgreSQL image it takes from deploy/docker-compose.yml.
+  # EasyRMM's side of the patching engine (server/internal/easypatch/) counts for
   # EasyRMM and the EasyPatch server; this file counts for everything. The
   # merge queue, manual runs, and anything this cannot work out run all.
   changes:
@@ -60,7 +61,7 @@ jobs:
           classify() {
             case $1 in
               easypatch/backend/* | easypatch/shared/* | easypatch/deployment/server/* | easypatch/Directory.*.props | \
-                easypatch/global.json | easypatch/docker-compose.yml | server/internal/easypatch/* | go.mod | go.sum | \
+                easypatch/global.json | deploy/docker-compose.yml | server/internal/easypatch/* | go.mod | go.sum | \
                 scripts/contract/*)
                 contract=true ;;
             esac
@@ -163,8 +164,8 @@ jobs:
       security-events: write
       pull-requests: read
 
-  # EasyRMM's connector against a real EasyPatch server built from the same
-  # commit (scripts/contract/easypatch.sh).
+  # EasyRMM's calls to the patching engine, with statements, against a real
+  # EasyPatch server built from the same commit (scripts/contract/easypatch.sh).
   contract:
     name: EasyPatch contract
     needs: changes
@@ -178,7 +179,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Connector against EasyPatch built from this commit
+      - name: EasyRMM against the engine built from this commit
         run: make test-contract
 
   # EasyRMM with its patching engine, brought up from deploy/docker-compose.yml

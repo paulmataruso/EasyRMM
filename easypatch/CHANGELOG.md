@@ -47,8 +47,7 @@ EasyRMM's import script (EasyRMM's `docs/operations/import-easypatch.md`).
 - **The proxy image** (`easypatch-proxy`) and its Caddy configuration (`deployment/caddy/`). The
   release workflow no longer builds or publishes it; the server image (`easypatch-server`) is
   unchanged. EasyRMM's edge serves the agents.
-- **The standalone deployment:** `docker-compose.yml` (all but the PostgreSQL image EasyRMM's
-  contract test reads, until that test reads EasyRMM's own), `docker-compose.dev.yml`,
+- **The standalone deployment:** `docker-compose.yml`, `docker-compose.dev.yml`,
   `.env.example`, `scripts/init-secrets.sh`, `scripts/backup.sh`, `scripts/restore.sh` and the
   installation guide (`docs/installation.md`).
 - The console's screenshots in `docs/images/`. The logo and wordmarks moved to `branding/`.

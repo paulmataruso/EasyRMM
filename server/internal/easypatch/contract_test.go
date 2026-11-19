@@ -1,11 +1,15 @@
 //go:build contract
 
-// The contract tests run the connector against a real EasyPatch server built
-// from the same commit's easypatch/ directory. scripts/contract/easypatch.sh
-// starts one and runs them (make test-contract; CI's "EasyPatch contract"
-// job). The fast tests use eptest's recorded answers; these check the
-// connector against the real server, and eptest's answers against its
-// answers, so neither drifts from EasyPatch unnoticed.
+// The contract tests run EasyRMM's client of the patching engine against a
+// real EasyPatch server built from the same commit's easypatch/ directory.
+// scripts/contract/easypatch.sh starts one and runs them (make
+// test-contract; CI's "EasyPatch contract" job). EasyRMM calls it as it
+// does in its deployment: plain HTTP on loopback, each request with a
+// statement signed with the gateway key (ADR-0038). Simulated agents reach
+// it at its public address, over HTTPS. The fast tests use eptest's
+// recorded answers; these check the client against the real engine, and
+// eptest's answers against its answers, so neither drifts from EasyPatch
+// unnoticed.
 package easypatch
 
 import (
@@ -45,42 +49,47 @@ import (
 
 // contract is the EasyPatch server under test.
 type contract struct {
-	t        *testing.T
-	ctx      context.Context
-	url      string
-	caPEM    string
-	token    string
-	readOnly string
-	version  string
-	http     *http.Client
+	t   *testing.T
+	ctx context.Context
+	// url is the engine's public address, where agents enroll and check
+	// in: HTTPS with a certificate made for the run, which http trusts.
+	url     string
+	http    *http.Client
+	version string
 	// engineURL and engineKey reach the same server as the patching engine
 	// in EasyRMM's deployment does: plain HTTP on loopback, statements
-	// signed with the gateway key (ADR-0038).
+	// signed with the gateway key (ADR-0038). engine is EasyRMM's client
+	// of it, and signer its signer.
 	engineURL string
 	engineKey []byte
+	signer    *Signer
+	engine    *Client
 }
 
 func newContract(t *testing.T) *contract {
 	t.Helper()
 	c := &contract{
-		t:        t,
-		url:      os.Getenv("EASYRMM_CONTRACT_EASYPATCH_URL"),
-		token:    os.Getenv("EASYRMM_CONTRACT_EASYPATCH_TOKEN"),
-		readOnly: os.Getenv("EASYRMM_CONTRACT_EASYPATCH_READONLY_TOKEN"),
-		version:  os.Getenv("EASYRMM_CONTRACT_EASYPATCH_VERSION"),
+		t:         t,
+		url:       os.Getenv("EASYRMM_CONTRACT_EASYPATCH_URL"),
+		version:   os.Getenv("EASYRMM_CONTRACT_EASYPATCH_VERSION"),
+		engineURL: os.Getenv("EASYRMM_CONTRACT_ENGINE_URL"),
 	}
 	caFile := os.Getenv("EASYRMM_CONTRACT_EASYPATCH_CA")
-	c.engineURL = os.Getenv("EASYRMM_CONTRACT_ENGINE_URL")
 	key, err := base64.StdEncoding.DecodeString(os.Getenv("EASYRMM_CONTRACT_ENGINE_KEY"))
-	if c.url == "" || c.token == "" || c.readOnly == "" || caFile == "" || c.engineURL == "" || err != nil || len(key) < MinStatementKey {
+	if c.url == "" || caFile == "" || c.engineURL == "" || err != nil || len(key) < MinStatementKey {
 		t.Fatal("the contract tests need a real EasyPatch server: run them with make test-contract")
 	}
 	c.engineKey = key
+	if c.signer, err = NewSigner(key); err != nil {
+		t.Fatal(err)
+	}
+	if c.engine, err = NewEngineClient(c.engineURL, c.signer, "contract"); err != nil {
+		t.Fatal(err)
+	}
 	ca, err := os.ReadFile(caFile)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.caPEM = string(ca)
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(ca) {
 		t.Fatal("the CA certificate is not PEM")
@@ -93,19 +102,36 @@ func newContract(t *testing.T) *contract {
 	return c
 }
 
-// client is the connector's client with a token.
-func (c *contract) client(token string) *Client {
-	c.t.Helper()
-	cl, err := NewClient(c.url, token, c.caPEM, "contract")
-	if err != nil {
-		c.t.Fatal(err)
-	}
-	return cl
+// as is a call through EasyRMM for name: role in the organizations named,
+// and in none when none are.
+func (c *contract) as(name, role string, orgs ...uuid.UUID) context.Context {
+	return WithStatement(c.ctx, Statement{Subject: uuid.NewString(), Name: name, Role: role, Organizations: orgs})
 }
 
-// call sends a request to base with a token ("" for none) and returns the
-// status and the body.
-func call(ctx context.Context, t *testing.T, hc *http.Client, base, method, path, token string, body any, header http.Header) (int, []byte) {
+// everywhere is a call through EasyRMM for name, with role in every
+// organization.
+func (c *contract) everywhere(name, role string) context.Context {
+	return WithStatement(c.ctx, Statement{Subject: uuid.NewString(), Name: name, Role: role, AllOrganizations: true})
+}
+
+// signed is a header with s, signed for one request: method and path (with
+// its query) as sent, to whichever server it goes.
+func signed(t *testing.T, signer *Signer, s Statement, method, path string) http.Header {
+	t.Helper()
+	u, err := url.Parse(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := signer.Sign(s, method, u.RequestURI())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return http.Header{StatementHeader: {st}}
+}
+
+// call sends a request to base with header and returns the status and the
+// body.
+func call(ctx context.Context, t *testing.T, hc *http.Client, base, method, path string, body any, header http.Header) (int, []byte) {
 	t.Helper()
 	var r io.Reader
 	if body != nil {
@@ -122,9 +148,6 @@ func call(ctx context.Context, t *testing.T, hc *http.Client, base, method, path
 	for k, v := range header {
 		req.Header[k] = v
 	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -140,11 +163,12 @@ func call(ctx context.Context, t *testing.T, hc *http.Client, base, method, path
 	return resp.StatusCode, data
 }
 
-// must sends a request that must answer want, and decodes the answer into
-// out (nil for none).
-func (c *contract) must(method, path, token string, body any, want int, out any) {
+// must sends a request to the engine as EasyRMM's own work (the statement
+// of a call without one in its context: Admin in every organization) that
+// must answer want, and decodes the answer into out (nil for none).
+func (c *contract) must(method, path string, body any, want int, out any) {
 	c.t.Helper()
-	status, data := call(c.ctx, c.t, c.http, c.url, method, path, token, body, nil)
+	status, data := call(c.ctx, c.t, c.http, c.engineURL, method, path, body, signed(c.t, c.signer, statementFor(c.ctx, ""), method, path))
 	if status != want {
 		c.t.Fatalf("%s %s answered %d, want %d: %s", method, path, status, want, data)
 	}
@@ -198,7 +222,7 @@ func (c *contract) enrollVia(base string, header http.Header, token, hostname st
 		EndpointID     uuid.UUID `json:"endpointId"`
 		KeyFingerprint string    `json:"keyFingerprint"`
 	}
-	status, data := call(c.ctx, c.t, c.http, base, http.MethodPost, "/api/v1/agents/enroll", "", map[string]any{
+	status, data := call(c.ctx, c.t, c.http, base, http.MethodPost, "/api/v1/agents/enroll", map[string]any{
 		"enrollmentToken": token,
 		"publicKey":       base64.StdEncoding.EncodeToString(spki),
 		"agentVersion":    "1.10.0",
@@ -253,7 +277,7 @@ func (a *agent) post(route string, body, out any) {
 	header.Set("X-EasyPatch-Nonce", nonce)
 	header.Set("X-EasyPatch-Content-SHA256", contentHash)
 	header.Set("X-EasyPatch-Signature", base64.StdEncoding.EncodeToString(signature))
-	status, answer := call(a.c.ctx, t, a.c.http, a.base, http.MethodPost, route, "", json.RawMessage(data), header)
+	status, answer := call(a.c.ctx, t, a.c.http, a.base, http.MethodPost, route, json.RawMessage(data), header)
 	if status < 200 || status > 299 {
 		t.Fatalf("agent POST %s answered %d: %s", route, status, answer)
 	}
@@ -320,8 +344,11 @@ func (c *Client) AlertRuleTypes(ctx context.Context) ([]AlertRuleType, error) {
 
 func TestContract(t *testing.T) {
 	c := newContract(t)
-	ep, ro := c.client(c.token), c.client(c.readOnly)
-	ctx := c.ctx
+	// A call made with ctx carries EasyRMM's own statement: Admin in every
+	// organization, named after whom it is for, if anyone. reader is a
+	// person who may only read, in every organization.
+	engine, ctx := c.engine, c.ctx
+	reader := c.everywhere("contract-reader@example.test", RoleReadOnly)
 	run := func(name string, fn func(t *testing.T)) {
 		if !t.Run(name, fn) {
 			t.FailNow() // each step needs the ones before it
@@ -329,7 +356,7 @@ func TestContract(t *testing.T) {
 	}
 
 	run("server info", func(t *testing.T) {
-		info, err := ep.ServerInfo(ctx)
+		info, err := engine.ServerInfo(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -349,31 +376,31 @@ func TestContract(t *testing.T) {
 		}
 	})
 
-	run("operator and read-only tokens", func(t *testing.T) {
-		if ok, err := ep.CanOperate(ctx); !ok || err != nil {
-			t.Errorf("operator token: CanOperate %v, %v", ok, err)
+	run("EasyRMM's own statement and a read-only one", func(t *testing.T) {
+		if ok, err := engine.CanOperate(ctx); !ok || err != nil {
+			t.Errorf("EasyRMM: CanOperate %v, %v", ok, err)
 		}
-		if ok, err := ro.CanOperate(ctx); ok || err != nil {
-			t.Errorf("read-only token: CanOperate %v, %v", ok, err)
+		if ok, err := engine.CanOperate(reader); ok || err != nil {
+			t.Errorf("read-only: CanOperate %v, %v", ok, err)
 		}
 	})
 
-	// The connector never creates organizations or sites; the test does,
-	// as an administrator would in EasyPatch's console.
+	// An organization and a site to work in, made with the engine's API (the
+	// reconciler's calls are checked later on).
 	suffix := uuid.NewString()[:8]
 	var org struct {
 		ID uuid.UUID `json:"id"`
 	}
-	c.must(http.MethodPost, "/api/v1/organizations", c.token, map[string]any{"name": "Contract " + suffix, "timeZone": "UTC"},
+	c.must(http.MethodPost, "/api/v1/organizations", map[string]any{"name": "Contract " + suffix, "timeZone": "UTC"},
 		http.StatusCreated, &org)
 	var site struct {
 		ID uuid.UUID `json:"id"`
 	}
-	c.must(http.MethodPost, "/api/v1/organizations/"+org.ID.String()+"/sites", c.token, map[string]any{"name": "Head office", "timeZone": "UTC"},
+	c.must(http.MethodPost, "/api/v1/organizations/"+org.ID.String()+"/sites", map[string]any{"name": "Head office", "timeZone": "UTC"},
 		http.StatusCreated, &site)
 
 	run("organizations and sites", func(t *testing.T) {
-		orgs, err := ep.Organizations(ctx)
+		orgs, err := engine.Organizations(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -381,18 +408,18 @@ func TestContract(t *testing.T) {
 		if i < 0 || orgs[i].Name != "Contract "+suffix || !orgs[i].IsActive {
 			t.Fatalf("organizations %+v lack the new one", orgs)
 		}
-		sites, err := ep.Sites(ctx, org.ID)
+		sites, err := engine.Sites(ctx, org.ID)
 		if err != nil || !slices.ContainsFunc(sites, func(s Site) bool { return s.ID == site.ID && s.Name == "Head office" }) {
 			t.Fatalf("sites %+v, %v", sites, err)
 		}
-		if _, err := ro.Organizations(ctx); err != nil {
-			t.Errorf("read-only token: %v", err)
+		if _, err := engine.Organizations(reader); err != nil {
+			t.Errorf("read-only: %v", err)
 		}
 	})
 
 	var a *agent
 	run("enrollment tokens and an agent", func(t *testing.T) {
-		token, err := ep.CreateEnrollmentToken(ctx, org.ID, &site.ID, "EasyRMM contract", "contract-enroll@example.test")
+		token, err := engine.CreateEnrollmentToken(ctx, org.ID, &site.ID, "EasyRMM contract", "contract-enroll@example.test")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -401,12 +428,12 @@ func TestContract(t *testing.T) {
 		}
 		a = c.enroll(token.Secret, "contract-"+suffix)
 		for range 2 { // revoking twice is harmless
-			if err := ep.RevokeEnrollmentToken(ctx, token.ID, "contract-enroll@example.test"); err != nil {
+			if err := engine.RevokeEnrollmentToken(ctx, token.ID, "contract-enroll@example.test"); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if _, err := ro.CreateEnrollmentToken(ctx, org.ID, nil, "read-only", ""); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("read-only token created an enrollment token: %v", err)
+		if _, err := engine.CreateEnrollmentToken(reader, org.ID, nil, "read-only", ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("a reader created an enrollment token: %v", err)
 		}
 	})
 
@@ -426,7 +453,7 @@ func TestContract(t *testing.T) {
 		"title": "libc6 2.41-12+deb13u1", "operation": "Installation", "resultCode": 2, "date": now.Add(-24 * time.Hour)}}}, nil)
 
 	run("endpoints and their updates", func(t *testing.T) {
-		page, err := ep.Endpoints(ctx, org.ID, 1)
+		page, err := engine.Endpoints(ctx, org.ID, 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -438,7 +465,7 @@ func TestContract(t *testing.T) {
 			e.Platform != "Linux" || !e.IsOnline || e.MissingTotalCount != 2 || e.LastScanAt == nil {
 			t.Errorf("endpoint %+v", e)
 		}
-		detail, err := ep.Endpoint(ctx, a.endpoint)
+		detail, err := engine.Endpoint(ctx, a.endpoint)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -447,7 +474,7 @@ func TestContract(t *testing.T) {
 			detail.Credentials[0].RevokedAt != nil {
 			t.Errorf("endpoint detail %+v", detail)
 		}
-		updates, err := ep.Updates(ctx, a.endpoint, "")
+		updates, err := engine.Updates(ctx, a.endpoint, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -461,23 +488,23 @@ func TestContract(t *testing.T) {
 			u.Package.Repository != "Debian-Security:13/trixie-security" || u.ActiveJob != nil {
 			t.Errorf("openssl update %+v (package %+v)", u, u.Package)
 		}
-		if missing, err := ep.Updates(ctx, a.endpoint, "Missing"); err != nil || len(missing) != 2 {
+		if missing, err := engine.Updates(ctx, a.endpoint, "Missing"); err != nil || len(missing) != 2 {
 			t.Errorf("missing updates %+v, %v", missing, err)
 		}
-		if installed, err := ep.InstalledUpdates(ctx, a.endpoint); err != nil ||
+		if installed, err := engine.InstalledUpdates(ctx, a.endpoint); err != nil ||
 			!slices.ContainsFunc(installed, func(u Update) bool { return u.UpdateGUID == libc }) {
 			t.Errorf("installed updates %+v, %v", installed, err)
 		}
-		history, err := ep.History(ctx, a.endpoint, 1)
+		history, err := engine.History(ctx, a.endpoint, 1)
 		if err != nil || len(history.Items) != 1 || history.Items[0].Title != "libc6 2.41-12+deb13u1" || history.Items[0].Operation != "Installation" {
 			t.Errorf("history %+v, %v", history, err)
 		}
-		policy, err := ep.EffectivePolicy(ctx, a.endpoint)
+		policy, err := engine.EffectivePolicy(ctx, a.endpoint)
 		if err != nil || policy.ScanIntervalMinutes <= 0 || policy.TimeZone == "" {
 			t.Errorf("effective policy %+v, %v", policy, err)
 		}
-		if _, err := ro.Endpoint(ctx, a.endpoint); err != nil {
-			t.Errorf("read-only token: %v", err)
+		if _, err := engine.Endpoint(reader, a.endpoint); err != nil {
+			t.Errorf("read-only: %v", err)
 		}
 	})
 
@@ -485,7 +512,7 @@ func TestContract(t *testing.T) {
 	var restarted uuid.UUID // a restart job the agent completed
 	run("install, follow and cancel a job", func(t *testing.T) {
 		var err error
-		install, err = ep.Install(ctx, a.endpoint, []uuid.UUID{openssl}, nil, "contract-install@example.test")
+		install, err = engine.Install(ctx, a.endpoint, []uuid.UUID{openssl}, nil, "contract-install@example.test")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -493,21 +520,21 @@ func TestContract(t *testing.T) {
 			install.Status != "Queued" {
 			t.Fatalf("install job %+v", install)
 		}
-		job, err := ep.Job(ctx, install.ID)
+		job, err := engine.Job(ctx, install.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if job.InstallMode != "Selected" || len(job.Items) != 1 || job.Items[0].UpdateGUID != openssl || job.Items[0].Status != "Pending" {
 			t.Errorf("job detail %+v", job)
 		}
-		if jobs, err := ep.EndpointJobs(ctx, a.endpoint, 1); err != nil || !slices.ContainsFunc(jobs.Items, func(j Job) bool { return j.ID == install.ID }) {
+		if jobs, err := engine.EndpointJobs(ctx, a.endpoint, 1); err != nil || !slices.ContainsFunc(jobs.Items, func(j Job) bool { return j.ID == install.ID }) {
 			t.Errorf("endpoint jobs %+v, %v", jobs, err)
 		}
-		if jobs, err := ep.Jobs(ctx, JobFilter{OrganizationID: org.ID, Active: true}, 1); err != nil || !slices.ContainsFunc(jobs.Items, func(j Job) bool { return j.ID == install.ID }) {
+		if jobs, err := engine.Jobs(ctx, JobFilter{OrganizationID: org.ID, Active: true}, 1); err != nil || !slices.ContainsFunc(jobs.Items, func(j Job) bool { return j.ID == install.ID }) {
 			t.Errorf("active jobs %+v, %v", jobs, err)
 		}
-		if _, err := ro.Install(ctx, a.endpoint, []uuid.UUID{openssl}, nil, ""); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("read-only token installed updates: %v", err)
+		if _, err := engine.Install(reader, a.endpoint, []uuid.UUID{openssl}, nil, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("read-only statement installed updates: %v", err)
 		}
 
 		// The agent picks the job up and starts installing.
@@ -520,7 +547,7 @@ func TestContract(t *testing.T) {
 		a.post("/api/v1/agents/jobs/"+install.ID.String()+"/ack", map[string]any{}, nil)
 		a.report(install.ID, "Running", map[string]any{"updateGuid": openssl, "title": "openssl 3.5.7-1~deb13u3", "category": "Security",
 			"status": "Installing", "installPercent": 40, "startedAt": time.Now().UTC()})
-		job, err = ep.Job(ctx, install.ID)
+		job, err = engine.Job(ctx, install.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -528,7 +555,7 @@ func TestContract(t *testing.T) {
 			job.Items[0].InstallPercent == nil || *job.Items[0].InstallPercent != 40 {
 			t.Errorf("running job %+v", job)
 		}
-		updates, err := ep.Updates(ctx, a.endpoint, "")
+		updates, err := engine.Updates(ctx, a.endpoint, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -538,7 +565,7 @@ func TestContract(t *testing.T) {
 		}
 
 		// Canceling asks the agent to stop; the job ends when it says so.
-		job, err = ep.CancelJob(ctx, install.ID, "contract-cancel@example.test")
+		job, err = engine.CancelJob(ctx, install.ID, "contract-cancel@example.test")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -550,7 +577,7 @@ func TestContract(t *testing.T) {
 		}
 		a.report(install.ID, eptest.StatusCanceled, map[string]any{"updateGuid": openssl, "title": "openssl 3.5.7-1~deb13u3",
 			"category": "Security", "status": eptest.StatusCanceled, "completedAt": time.Now().UTC()})
-		job, err = ep.Job(ctx, install.ID)
+		job, err = engine.Job(ctx, install.ID)
 		if err != nil || job.Summary.Status != eptest.StatusCanceled || job.Summary.CompletedAt == nil {
 			t.Errorf("job after the agent stopped %+v, %v", job, err)
 		}
@@ -558,11 +585,11 @@ func TestContract(t *testing.T) {
 
 	run("scheduled installs", func(t *testing.T) {
 		at := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Second)
-		job, err := ep.Install(ctx, a.endpoint, []uuid.UUID{tzdata}, &at, "")
+		job, err := engine.Install(ctx, a.endpoint, []uuid.UUID{tzdata}, &at, "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		detail, err := ep.Job(ctx, job.ID)
+		detail, err := engine.Job(ctx, job.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -574,14 +601,14 @@ func TestContract(t *testing.T) {
 		}) {
 			t.Error("a job scheduled for later was delivered now")
 		}
-		detail, err = ep.CancelJob(ctx, job.ID, "")
+		detail, err = engine.CancelJob(ctx, job.ID, "")
 		if err != nil || detail.Summary.Status != eptest.StatusCanceled {
 			t.Errorf("canceled scheduled job %+v, %v", detail.Summary, err)
 		}
 	})
 
 	run("retry a finished job", func(t *testing.T) {
-		retry, err := ep.RetryJob(ctx, install.ID, "contract-retry@example.test")
+		retry, err := engine.RetryJob(ctx, install.ID, "contract-retry@example.test")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -591,19 +618,19 @@ func TestContract(t *testing.T) {
 		var detail struct {
 			RetryOfJobID uuid.UUID `json:"retryOfJobId"`
 		}
-		c.must(http.MethodGet, "/api/v1/jobs/"+retry.ID.String(), c.token, nil, http.StatusOK, &detail)
+		c.must(http.MethodGet, "/api/v1/jobs/"+retry.ID.String(), nil, http.StatusOK, &detail)
 		if detail.RetryOfJobID != install.ID {
 			t.Errorf("a retry of %v, want %v", detail.RetryOfJobID, install.ID)
 		}
-		// Only a finished job runs again, and not with a read-only token.
+		// Only a finished job runs again, and not for a reader.
 		var e *Error
-		if _, err := ep.RetryJob(ctx, retry.ID, ""); !errors.As(err, &e) || e.Status != http.StatusConflict || e.Code != "invalid_state" {
+		if _, err := engine.RetryJob(ctx, retry.ID, ""); !errors.As(err, &e) || e.Status != http.StatusConflict || e.Code != "invalid_state" {
 			t.Errorf("retry of a queued job: %#v", err)
 		}
-		if _, err := ro.RetryJob(ctx, install.ID, ""); !IsStatus(err, http.StatusForbidden) {
+		if _, err := engine.RetryJob(reader, install.ID, ""); !IsStatus(err, http.StatusForbidden) {
 			t.Errorf("read-only retry: %v", err)
 		}
-		if _, err := ep.CancelJob(ctx, retry.ID, ""); err != nil {
+		if _, err := engine.CancelJob(ctx, retry.ID, ""); err != nil {
 			t.Fatal(err)
 		}
 	})
@@ -611,38 +638,38 @@ func TestContract(t *testing.T) {
 	run("restart only where a restart is pending", func(t *testing.T) {
 		a.capabilities = []string{"restart"}
 		a.checkIn()
-		if p, err := ep.RestartPending(ctx, org.ID); err != nil || p.Total != 0 || len(p.Endpoints) != 0 {
+		if p, err := engine.RestartPending(ctx, org.ID); err != nil || p.Total != 0 || len(p.Endpoints) != 0 {
 			t.Fatalf("nothing pending: %+v, %v", p, err)
 		}
 		a.rebootPending = true
 		a.checkIn()
-		p, err := ep.RestartPending(ctx, org.ID)
+		p, err := engine.RestartPending(ctx, org.ID)
 		if err != nil || p.Total != 1 || len(p.Endpoints) != 1 {
 			t.Fatalf("pending: %+v, %v", p, err)
 		}
 		if e := p.Endpoints[0]; e.ID != a.endpoint || e.Platform != "Linux" || e.IsServer || !e.CanRestart || e.RebootPendingSince == nil {
 			t.Errorf("pending endpoint %+v", e)
 		}
-		if _, err := ro.BulkRestart(ctx, []uuid.UUID{a.endpoint}, RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending"}, ""); !IsStatus(err, http.StatusForbidden) {
+		if _, err := engine.BulkRestart(reader, []uuid.UUID{a.endpoint}, RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending"}, ""); !IsStatus(err, http.StatusForbidden) {
 			t.Errorf("read-only restart: %v", err)
 		}
 
 		// At a time: held until then.
 		at := time.Now().Add(5 * time.Hour).UTC().Truncate(time.Second)
-		later, err := ep.BulkRestart(ctx, []uuid.UUID{a.endpoint}, RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending", ScheduledAt: &at}, "contract-restart@example.test")
+		later, err := engine.BulkRestart(ctx, []uuid.UUID{a.endpoint}, RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending", ScheduledAt: &at}, "contract-restart@example.test")
 		if err != nil || later.Succeeded != 1 || len(later.Results) != 1 || later.Results[0].JobID == nil {
 			t.Fatalf("restart later %+v, %v", later, err)
 		}
-		job, err := ep.Job(ctx, *later.Results[0].JobID)
+		job, err := engine.Job(ctx, *later.Results[0].JobID)
 		if err != nil || job.Summary.Type != "Restart" || job.NotBefore == nil || !job.NotBefore.Equal(at) {
 			t.Errorf("restart later %+v (not before %v), %v", job.Summary, job.NotBefore, err)
 		}
-		if _, err := ep.CancelJob(ctx, job.Summary.ID, ""); err != nil {
+		if _, err := engine.CancelJob(ctx, job.Summary.ID, ""); err != nil {
 			t.Fatal(err)
 		}
 
 		// Now: the agent receives EasyRMM's preset at its next check-in.
-		now, err := ep.BulkRestart(ctx, []uuid.UUID{a.endpoint}, RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending"}, "")
+		now, err := engine.BulkRestart(ctx, []uuid.UUID{a.endpoint}, RestartOptions{Mode: "Countdown", Condition: "OnlyIfPending"}, "")
 		if err != nil || now.Succeeded != 1 || now.Results[0].JobID == nil {
 			t.Fatalf("restart now %+v, %v", now, err)
 		}
@@ -661,10 +688,10 @@ func TestContract(t *testing.T) {
 		a.report(id, "Completed")
 		a.rebootPending = false
 		a.checkIn()
-		if job, err := ep.Job(ctx, id); err != nil || job.Summary.Status != "Completed" {
+		if job, err := engine.Job(ctx, id); err != nil || job.Summary.Status != "Completed" {
 			t.Errorf("restart after the agent's report %+v, %v", job.Summary, err)
 		}
-		if p, err := ep.RestartPending(ctx, org.ID); err != nil || p.Total != 0 {
+		if p, err := engine.RestartPending(ctx, org.ID); err != nil || p.Total != 0 {
 			t.Errorf("after the restart: %+v, %v", p, err)
 		}
 
@@ -672,12 +699,12 @@ func TestContract(t *testing.T) {
 		// deadline, whether or not a restart is pending, waiting an hour for
 		// an offline computer. The endpoint says it can restart and whether
 		// it is a server.
-		if d, err := ep.Endpoint(ctx, a.endpoint); err != nil || !slices.Contains(d.AgentCapabilities, AgentCanRestart) ||
+		if d, err := engine.Endpoint(ctx, a.endpoint); err != nil || !slices.Contains(d.AgentCapabilities, AgentCanRestart) ||
 			d.OsProductType == "Server" || d.OsProductType == "DomainController" {
 			t.Errorf("endpoint for a restart that need not be pending %+v, %v", d, err)
 		}
 		deadline, expiry := 120, 60
-		prompt, err := ep.BulkRestart(ctx, []uuid.UUID{a.endpoint}, RestartOptions{Mode: "PromptWithDeadline", Condition: "Always",
+		prompt, err := engine.BulkRestart(ctx, []uuid.UUID{a.endpoint}, RestartOptions{Mode: "PromptWithDeadline", Condition: "Always",
 			DeadlineMinutes: &deadline, ExpiresAfterMinutes: &expiry}, "contract-restart@example.test")
 		if err != nil || prompt.Succeeded != 1 || prompt.Results[0].JobID == nil {
 			t.Fatalf("restart with a prompt %+v, %v", prompt, err)
@@ -691,10 +718,10 @@ func TestContract(t *testing.T) {
 		if r := in.Jobs[i].Restart; r["mode"] != "PromptWithDeadline" || r["condition"] != "Always" || r["deadlineMinutes"] != 120.0 {
 			t.Errorf("delivered prompted restart %+v", in.Jobs[i])
 		}
-		if job, err := ep.Job(ctx, pid); err != nil || job.Summary.CreatedAt.Add(time.Hour).Sub(job.Summary.ExpiresAt).Abs() > time.Minute {
+		if job, err := engine.Job(ctx, pid); err != nil || job.Summary.CreatedAt.Add(time.Hour).Sub(job.Summary.ExpiresAt).Abs() > time.Minute {
 			t.Errorf("prompted restart's expiry %+v, %v", job, err)
 		}
-		if _, err := ep.CancelJob(ctx, pid, ""); err != nil {
+		if _, err := engine.CancelJob(ctx, pid, ""); err != nil {
 			t.Fatal(err)
 		}
 		// What EasyRMM refuses first, EasyPatch refuses too: per endpoint,
@@ -702,7 +729,7 @@ func TestContract(t *testing.T) {
 		short, long := 14, 10081
 		for _, o := range []RestartOptions{{Mode: "Countdown", Condition: "Always", ExpiresAfterMinutes: &short},
 			{Mode: "PromptWithDeadline", Condition: "Always", DeadlineMinutes: &long}} {
-			if r, err := ep.BulkRestart(ctx, []uuid.UUID{a.endpoint}, o, ""); err != nil || r.Failed != 1 ||
+			if r, err := engine.BulkRestart(ctx, []uuid.UUID{a.endpoint}, o, ""); err != nil || r.Failed != 1 ||
 				r.Results[0].ErrorCode != "validation_failed" {
 				t.Errorf("restart %+v: %+v, %v", o, r, err)
 			}
@@ -710,7 +737,7 @@ func TestContract(t *testing.T) {
 
 		// Jobs filtered as the Jobs tab does: one endpoint's finished
 		// restarts started by hand, and nothing from the future.
-		done, err := ep.Jobs(ctx, JobFilter{OrganizationID: org.ID, EndpointID: &a.endpoint, Type: "Restart", Status: "Completed",
+		done, err := engine.Jobs(ctx, JobFilter{OrganizationID: org.ID, EndpointID: &a.endpoint, Type: "Restart", Status: "Completed",
 			Trigger: "Manual"}, 1)
 		if err != nil || !slices.ContainsFunc(done.Items, func(j Job) bool { return j.ID == restarted }) {
 			t.Errorf("finished restarts %+v, %v", done, err)
@@ -721,14 +748,14 @@ func TestContract(t *testing.T) {
 			}
 		}
 		future := time.Now().Add(time.Hour)
-		if none, err := ep.Jobs(ctx, JobFilter{OrganizationID: org.ID, From: &future}, 1); err != nil || none.TotalCount != 0 {
+		if none, err := engine.Jobs(ctx, JobFilter{OrganizationID: org.ID, From: &future}, 1); err != nil || none.TotalCount != 0 {
 			t.Errorf("jobs from the future %+v, %v", none, err)
 		}
 	})
 
 	run("bulk actions", func(t *testing.T) {
 		unknown := uuid.New()
-		scan, err := ep.BulkScan(ctx, []uuid.UUID{a.endpoint, unknown}, "")
+		scan, err := engine.BulkScan(ctx, []uuid.UUID{a.endpoint, unknown}, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -750,15 +777,15 @@ func TestContract(t *testing.T) {
 			}
 		}
 		at := time.Now().Add(3 * time.Hour).UTC().Truncate(time.Second)
-		bulk, err := ep.BulkInstall(ctx, []uuid.UUID{a.endpoint}, &at, "")
+		bulk, err := engine.BulkInstall(ctx, []uuid.UUID{a.endpoint}, &at, "")
 		if err != nil || bulk.Succeeded != 1 || len(bulk.Results) != 1 || bulk.Results[0].JobID == nil {
 			t.Fatalf("bulk install %+v, %v", bulk, err)
 		}
-		if job, err := ep.Job(ctx, *bulk.Results[0].JobID); err != nil || job.NotBefore == nil || !job.NotBefore.Equal(at) {
+		if job, err := engine.Job(ctx, *bulk.Results[0].JobID); err != nil || job.NotBefore == nil || !job.NotBefore.Equal(at) {
 			t.Errorf("bulk-scheduled job %+v, %v", job, err)
 		}
-		if _, err := ro.BulkScan(ctx, []uuid.UUID{a.endpoint}, ""); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("read-only token scanned: %v", err)
+		if _, err := engine.BulkScan(reader, []uuid.UUID{a.endpoint}, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("read-only statement scanned: %v", err)
 		}
 	})
 
@@ -768,11 +795,11 @@ func TestContract(t *testing.T) {
 		// the install preview, messages and agent updates. The simulated
 		// agent is a Linux one, which EasyPatch refuses messages and
 		// removals for.
-		detail, err := ep.Endpoint(ctx, a.endpoint)
+		detail, err := engine.Endpoint(ctx, a.endpoint)
 		if err != nil || !slices.Contains(detail.AgentCapabilities, "restart") || detail.AgentUpdate == nil || detail.HasOwnPolicy {
 			t.Fatalf("endpoint detail %+v, %v", detail, err)
 		}
-		policy, err := ep.EffectivePolicy(ctx, a.endpoint)
+		policy, err := engine.EffectivePolicy(ctx, a.endpoint)
 		if err != nil || len(policy.Sources) == 0 || !policy.AgentAutoUpdateEnabled || !policy.KnownExploitedSkipsDelay || policy.CheckInIntervalSeconds <= 0 {
 			t.Fatalf("effective policy %+v, %v", policy, err)
 		}
@@ -782,15 +809,15 @@ func TestContract(t *testing.T) {
 			}
 		}
 
-		if err := ep.Exclude(ctx, a.endpoint, tzdata, "contract", "contract-exclude@example.test"); err != nil {
+		if err := engine.Exclude(ctx, a.endpoint, tzdata, "contract", "contract-exclude@example.test"); err != nil {
 			t.Fatal(err)
 		}
-		if err := ep.Exclude(ctx, a.endpoint, tzdata, "", ""); err != nil {
+		if err := engine.Exclude(ctx, a.endpoint, tzdata, "", ""); err != nil {
 			t.Fatalf("excluding twice: %v", err)
 		}
 		find := func() Update {
 			t.Helper()
-			list, err := ep.Updates(ctx, a.endpoint, "")
+			list, err := engine.Updates(ctx, a.endpoint, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -803,60 +830,60 @@ func TestContract(t *testing.T) {
 		if u := find(); u.State != "Excluded" || !u.IsExcluded {
 			t.Errorf("excluded update %+v", u)
 		}
-		p, err := ep.InstallPreview(ctx, a.endpoint, nil)
+		p, err := engine.InstallPreview(ctx, a.endpoint, nil)
 		if err != nil || p.Mode != "AllEligible" || !slices.ContainsFunc(p.Skipped, func(x PreviewSkip) bool { return x.UpdateGUID == tzdata && x.Reason == "Excluded" }) ||
 			slices.ContainsFunc(p.Items, func(x PreviewItem) bool { return x.UpdateGUID == tzdata }) || p.Filter == nil {
 			t.Errorf("preview with tzdata excluded %+v, %v", p, err)
 		}
-		p, err = ep.InstallPreview(ctx, a.endpoint, []uuid.UUID{openssl, tzdata})
+		p, err = engine.InstallPreview(ctx, a.endpoint, []uuid.UUID{openssl, tzdata})
 		if err != nil || p.Mode != "Selected" || len(p.Items)+len(p.Skipped) != 2 {
 			t.Errorf("preview of two updates %+v, %v", p, err)
 		}
-		if _, err := ro.InstallPreview(ctx, a.endpoint, nil); err != nil {
+		if _, err := engine.InstallPreview(reader, a.endpoint, nil); err != nil {
 			t.Errorf("read-only preview: %v", err)
 		}
-		if err := ro.Exclude(ctx, a.endpoint, openssl, "", ""); !IsStatus(err, http.StatusForbidden) {
+		if err := engine.Exclude(reader, a.endpoint, openssl, "", ""); !IsStatus(err, http.StatusForbidden) {
 			t.Errorf("read-only exclusion: %v", err)
 		}
-		if err := ep.Include(ctx, a.endpoint, tzdata, "contract-include@example.test"); err != nil {
+		if err := engine.Include(ctx, a.endpoint, tzdata, "contract-include@example.test"); err != nil {
 			t.Fatal(err)
 		}
 		if u := find(); u.State == "Excluded" || u.IsExcluded {
 			t.Errorf("included update %+v", u)
 		}
-		if err := ep.Include(ctx, a.endpoint, tzdata, ""); err != nil {
+		if err := engine.Include(ctx, a.endpoint, tzdata, ""); err != nil {
 			t.Errorf("including an update that is not excluded: %v", err)
 		}
 
 		// Removing an update: refused on Linux, with a reason to show.
-		_, err = ep.RemoveUpdate(ctx, a.endpoint, libc, true, "contract", "")
+		_, err = engine.RemoveUpdate(ctx, a.endpoint, libc, true, "contract", "")
 		var e *Error
 		if !errors.As(err, &e) || e.Status != http.StatusConflict || e.Code != "not_supported_on_linux" || !strings.Contains(e.Detail, "only available on Windows") {
 			t.Errorf("removal on Linux: %#v", err)
 		}
 
-		presets, err := ep.MessagePresets(ctx)
+		presets, err := engine.MessagePresets(ctx)
 		if err != nil || len(presets) != 6 || presets[5].Preset != "RestartScheduled" || !presets[5].NeedsRestartTime ||
 			!strings.Contains(presets[5].Body, "{time}") || presets[0].Preset != "UpdatesInstalling" || presets[0].Title == "" {
 			t.Errorf("message presets %+v, %v", presets, err)
 		}
-		if _, err := ro.MessagePresets(ctx); err != nil {
+		if _, err := engine.MessagePresets(reader); err != nil {
 			t.Errorf("read-only presets: %v", err)
 		}
 		at := time.Now().Add(time.Hour).UTC()
-		n, err := ep.BulkNotify(ctx, []uuid.UUID{a.endpoint}, Message{Preset: "RestartScheduled", RestartAt: &at}, "")
+		n, err := engine.BulkNotify(ctx, []uuid.UUID{a.endpoint}, Message{Preset: "RestartScheduled", RestartAt: &at}, "")
 		if err != nil || n.Failed != 1 || n.Results[0].Success || n.Results[0].ErrorCode != "not_supported_on_linux" ||
 			!strings.Contains(n.Results[0].Message, "Messages to users are only available on Windows") {
 			t.Errorf("message on Linux %+v, %v", n, err)
 		}
-		if _, err := ro.BulkNotify(ctx, []uuid.UUID{a.endpoint}, Message{Preset: "SaveYourWork"}, ""); !IsStatus(err, http.StatusForbidden) {
+		if _, err := engine.BulkNotify(reader, []uuid.UUID{a.endpoint}, Message{Preset: "SaveYourWork"}, ""); !IsStatus(err, http.StatusForbidden) {
 			t.Errorf("read-only message: %v", err)
 		}
 
 		// An agent update is planned against what the agent reports: the
 		// simulated one has no release key, so EasyPatch refuses with a
 		// reason (agent_upgrade_required) that the console shows.
-		u, err := ep.BulkAgentUpdate(ctx, []uuid.UUID{a.endpoint}, "contract-agent-update@example.test")
+		u, err := engine.BulkAgentUpdate(ctx, []uuid.UUID{a.endpoint}, "contract-agent-update@example.test")
 		if err != nil || len(u.Results) != 1 {
 			t.Fatalf("agent update %+v, %v", u, err)
 		}
@@ -865,12 +892,12 @@ func TestContract(t *testing.T) {
 		} else {
 			t.Logf("agent update: success %v, %s %s", r.Success, r.ErrorCode, r.Message)
 			if r.JobID != nil {
-				if _, err := ep.CancelJob(ctx, *r.JobID, ""); err != nil {
+				if _, err := engine.CancelJob(ctx, *r.JobID, ""); err != nil {
 					t.Error(err)
 				}
 			}
 		}
-		if _, err := ro.BulkAgentUpdate(ctx, []uuid.UUID{a.endpoint}, ""); !IsStatus(err, http.StatusForbidden) {
+		if _, err := engine.BulkAgentUpdate(reader, []uuid.UUID{a.endpoint}, ""); !IsStatus(err, http.StatusForbidden) {
 			t.Errorf("read-only agent update: %v", err)
 		}
 	})
@@ -880,7 +907,7 @@ func TestContract(t *testing.T) {
 		// organization or a site, one update with the endpoints that report
 		// it, installing and removing it across endpoints, and holds.
 		scope := FleetScope{OrganizationID: &org.ID}
-		p, err := ep.Catalog(ctx, CatalogQuery{FleetScope: scope})
+		p, err := engine.Catalog(ctx, CatalogQuery{FleetScope: scope})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -892,7 +919,7 @@ func TestContract(t *testing.T) {
 		if slices.ContainsFunc(p.Items, func(u FleetUpdate) bool { return u.UpdateGUID == libc }) {
 			t.Errorf("an update installed everywhere is listed: %+v", p.Items)
 		}
-		installed, err := ep.Catalog(ctx, CatalogQuery{FleetScope: scope, State: "Installed"})
+		installed, err := engine.Catalog(ctx, CatalogQuery{FleetScope: scope, State: "Installed"})
 		if i := slices.IndexFunc(installed.Items, func(u FleetUpdate) bool { return u.UpdateGUID == libc }); err != nil || i < 0 ||
 			installed.Items[i].InstalledCount != 1 {
 			t.Errorf("installed updates %+v, %v", installed, err)
@@ -903,117 +930,108 @@ func TestContract(t *testing.T) {
 			"category":    {FleetScope: scope, Category: "Other"},
 			"most failed": {FleetScope: scope, Sort: "failed", Desc: true},
 		} {
-			if p, err := ep.Catalog(ctx, q); err != nil || !slices.ContainsFunc(p.Items, func(u FleetUpdate) bool { return u.UpdateGUID == tzdata }) {
+			if p, err := engine.Catalog(ctx, q); err != nil || !slices.ContainsFunc(p.Items, func(u FleetUpdate) bool { return u.UpdateGUID == tzdata }) {
 				t.Errorf("%s: %+v, %v", name, p, err)
 			}
 		}
 		other := uuid.New()
-		if p, err := ep.Catalog(ctx, CatalogQuery{FleetScope: FleetScope{SiteID: &other}}); err != nil || len(p.Items) != 0 {
+		if p, err := engine.Catalog(ctx, CatalogQuery{FleetScope: FleetScope{SiteID: &other}}); err != nil || len(p.Items) != 0 {
 			t.Errorf("another site: %+v, %v", p, err)
 		}
 		exploited := true
-		if p, err := ep.Catalog(ctx, CatalogQuery{FleetScope: scope, KnownExploited: &exploited}); err != nil ||
+		if p, err := engine.Catalog(ctx, CatalogQuery{FleetScope: scope, KnownExploited: &exploited}); err != nil ||
 			slices.ContainsFunc(p.Items, func(u FleetUpdate) bool { return u.UpdateGUID == tzdata }) {
 			t.Errorf("known exploited: %+v, %v", p, err)
 		}
 
-		d, err := ep.FleetUpdate(ctx, tzdata, scope)
+		d, err := engine.FleetUpdate(ctx, tzdata, scope)
 		if err != nil || d.Summary.MissingCount != 1 || d.Summary.Title != "tzdata 2026c-0+deb13u1" || d.KbNumbers == nil || len(d.Holds) != 0 {
 			t.Fatalf("update %+v, %v", d, err)
 		}
-		if _, err := ep.FleetUpdate(ctx, uuid.New(), scope); !IsStatus(err, http.StatusNotFound) {
+		if _, err := engine.FleetUpdate(ctx, uuid.New(), scope); !IsStatus(err, http.StatusNotFound) {
 			t.Errorf("unknown update: %v", err)
 		}
-		ends, err := ep.FleetUpdateEndpoints(ctx, tzdata, scope, "", 1)
+		ends, err := engine.FleetUpdateEndpoints(ctx, tzdata, scope, "", 1)
 		if err != nil || ends.TotalCount != 1 || ends.Items[0].EndpointID != a.endpoint || ends.Items[0].Hostname != "contract-"+suffix ||
 			ends.Items[0].State != "Missing" || ends.Items[0].SiteName != "Head office" || ends.Items[0].IsExcluded {
 			t.Errorf("update's endpoints %+v, %v", ends, err)
 		}
-		if ends, err := ep.FleetUpdateEndpoints(ctx, tzdata, scope, "Installed", 1); err != nil || len(ends.Items) != 0 {
+		if ends, err := engine.FleetUpdateEndpoints(ctx, tzdata, scope, "Installed", 1); err != nil || len(ends.Items) != 0 {
 			t.Errorf("endpoints where it is installed %+v, %v", ends, err)
 		}
 
 		// Installing on the endpoint: a job, or a reason (the scheduled
 		// install of tzdata may still be queued).
-		r, err := ep.FleetInstall(ctx, tzdata, []uuid.UUID{a.endpoint}, "contract-fleet@example.test")
+		r, err := engine.FleetInstall(ctx, tzdata, []uuid.UUID{a.endpoint}, "contract-fleet@example.test")
 		if err != nil || len(r.Results) != 1 || r.Results[0].EndpointID != a.endpoint {
 			t.Fatalf("install on endpoints %+v, %v", r, err)
 		}
 		if x := r.Results[0]; (x.Success && x.JobID == nil) || (!x.Success && (x.ErrorCode == "" || x.Message == "")) {
 			t.Errorf("install result %+v", x)
 		} else if x.Success {
-			if _, err := ep.CancelJob(ctx, *x.JobID, ""); err != nil {
+			if _, err := engine.CancelJob(ctx, *x.JobID, ""); err != nil {
 				t.Error(err)
 			}
 		} else {
 			t.Logf("install on endpoints: %s %s", x.ErrorCode, x.Message)
 		}
 		// Endpoints where it is not missing are left out, unanswered.
-		if r, err := ep.FleetInstall(ctx, libc, []uuid.UUID{a.endpoint}, ""); err != nil || len(r.Results) != 0 {
+		if r, err := engine.FleetInstall(ctx, libc, []uuid.UUID{a.endpoint}, ""); err != nil || len(r.Results) != 0 {
 			t.Errorf("install where it is installed %+v, %v", r, err)
 		}
-		if _, err := ro.FleetInstall(ctx, tzdata, []uuid.UUID{a.endpoint}, ""); !IsStatus(err, http.StatusForbidden) {
+		if _, err := engine.FleetInstall(reader, tzdata, []uuid.UUID{a.endpoint}, ""); !IsStatus(err, http.StatusForbidden) {
 			t.Errorf("read-only install: %v", err)
 		}
 		// Removing: refused on Linux, per endpoint.
-		r, err = ep.FleetRemove(ctx, libc, []uuid.UUID{a.endpoint}, true, "contract", "")
+		r, err = engine.FleetRemove(ctx, libc, []uuid.UUID{a.endpoint}, true, "contract", "")
 		if err != nil || len(r.Results) != 1 || r.Results[0].Success || r.Results[0].ErrorCode != "not_supported_on_linux" {
 			t.Errorf("removal on Linux %+v, %v", r, err)
 		}
-		if r, err := ep.FleetRemove(ctx, tzdata, []uuid.UUID{a.endpoint}, false, "", ""); err != nil || len(r.Results) != 0 {
+		if r, err := engine.FleetRemove(ctx, tzdata, []uuid.UUID{a.endpoint}, false, "", ""); err != nil || len(r.Results) != 0 {
 			t.Errorf("removal where it is not installed %+v, %v", r, err)
 		}
 
 		// Holds.
-		h, err := ep.HoldUpdate(ctx, tzdata, &org.ID, "contract hold", "contract-hold@example.test")
+		h, err := engine.HoldUpdate(ctx, tzdata, &org.ID, "contract hold", "contract-hold@example.test")
 		if err != nil || h.ID == uuid.Nil || h.OrganizationID == nil || *h.OrganizationID != org.ID || h.Source != "Manual" ||
 			h.Reason != "contract hold" || !h.CanRelease || h.ReleasedAt != nil || h.Title != "tzdata 2026c-0+deb13u1" {
 			t.Fatalf("hold %+v, %v", h, err)
 		}
-		_, err = ep.HoldUpdate(ctx, tzdata, &org.ID, "again", "")
+		_, err = engine.HoldUpdate(ctx, tzdata, &org.ID, "again", "")
 		var e *Error
 		if !errors.As(err, &e) || e.Status != http.StatusConflict || e.Code != "already_held" {
 			t.Errorf("holding again: %#v", err)
 		}
-		if _, err := ep.HoldUpdate(ctx, uuid.New(), &org.ID, "unknown", ""); !IsStatus(err, http.StatusNotFound) {
+		if _, err := engine.HoldUpdate(ctx, uuid.New(), &org.ID, "unknown", ""); !IsStatus(err, http.StatusNotFound) {
 			t.Errorf("holding an unknown update: %v", err)
 		}
-		if _, err := ro.HoldUpdate(ctx, tzdata, &org.ID, "read-only", ""); !IsStatus(err, http.StatusForbidden) {
+		if _, err := engine.HoldUpdate(reader, tzdata, &org.ID, "read-only", ""); !IsStatus(err, http.StatusForbidden) {
 			t.Errorf("read-only hold: %v", err)
 		}
-		if d, err := ep.FleetUpdate(ctx, tzdata, scope); err != nil || !d.Summary.OnHold || len(d.Holds) != 1 || d.Holds[0].ID != h.ID {
+		if d, err := engine.FleetUpdate(ctx, tzdata, scope); err != nil || !d.Summary.OnHold || len(d.Holds) != 1 || d.Holds[0].ID != h.ID {
 			t.Errorf("held update %+v, %v", d, err)
 		}
-		if p, err := ep.Catalog(ctx, CatalogQuery{FleetScope: scope, Search: "tzdata"}); err != nil || len(p.Items) != 1 || !p.Items[0].OnHold {
+		if p, err := engine.Catalog(ctx, CatalogQuery{FleetScope: scope, Search: "tzdata"}); err != nil || len(p.Items) != 1 || !p.Items[0].OnHold {
 			t.Errorf("held in the catalog %+v, %v", p, err)
 		}
-		if list, err := ep.Holds(ctx, tzdata); err != nil || !slices.ContainsFunc(list, func(x Hold) bool { return x.ID == h.ID }) {
+		if list, err := engine.Holds(ctx, tzdata); err != nil || !slices.ContainsFunc(list, func(x Hold) bool { return x.ID == h.ID }) {
 			t.Errorf("holds %+v, %v", list, err)
 		}
-		released, err := ep.ReleaseHold(ctx, h.ID, "contract-release@example.test")
+		released, err := engine.ReleaseHold(ctx, h.ID, "contract-release@example.test")
 		if err != nil || released.ReleasedAt == nil || released.CanRelease {
 			t.Fatalf("release %+v, %v", released, err)
 		}
-		if _, err := ep.ReleaseHold(ctx, h.ID, ""); err != nil {
+		if _, err := engine.ReleaseHold(ctx, h.ID, ""); err != nil {
 			t.Errorf("releasing again: %v", err)
 		}
-		if list, err := ep.Holds(ctx, tzdata); err != nil || slices.ContainsFunc(list, func(x Hold) bool { return x.ID == h.ID }) {
+		if list, err := engine.Holds(ctx, tzdata); err != nil || slices.ContainsFunc(list, func(x Hold) bool { return x.ID == h.ID }) {
 			t.Errorf("holds once released %+v, %v", list, err)
 		}
 
-		// Through the engine: statements bound the catalog, an
-		// administrator holds in the organization, a super administrator
-		// everywhere.
-		signer, err := NewSigner(c.engineKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		engine, err := NewEngineClient(c.engineURL, signer, "contract")
-		if err != nil {
-			t.Fatal(err)
-		}
+		// People's statements bound the catalog, an administrator holds in
+		// the organization, a super administrator everywhere.
 		as := func(role string, orgs ...uuid.UUID) context.Context {
-			return WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-engine@example.test", Role: role, Organizations: orgs})
+			return c.as("contract-engine@example.test", role, orgs...)
 		}
 		if p, err := engine.Catalog(as(RoleReadOnly, org.ID), CatalogQuery{}); err != nil ||
 			!slices.ContainsFunc(p.Items, func(u FleetUpdate) bool { return u.UpdateGUID == tzdata }) {
@@ -1036,7 +1054,7 @@ func TestContract(t *testing.T) {
 		if _, err := engine.ReleaseHold(as(RoleAdmin, org.ID), mine.ID, ""); err != nil {
 			t.Error(err)
 		}
-		super := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-engine@example.test", Role: RoleSuperAdmin, AllOrganizations: true})
+		super := c.everywhere("contract-engine@example.test", RoleSuperAdmin)
 		every, err := engine.HoldUpdate(super, tzdata, nil, "engine hold everywhere", "")
 		if err != nil || every.OrganizationID != nil || !every.CanRelease {
 			t.Fatalf("hold everywhere as a super administrator: %+v, %v", every, err)
@@ -1056,20 +1074,9 @@ func TestContract(t *testing.T) {
 	// sends round-trips, EasyPatch refuses what EasyRMM refuses, and EasyRMM's
 	// resolution of the layers is EasyPatch's.
 	run("policies at every level, and tags", func(t *testing.T) {
-		signer, err := NewSigner(c.engineKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		engine, err := NewEngineClient(c.engineURL, signer, "contract")
-		if err != nil {
-			t.Fatal(err)
-		}
-		as := func(role string, orgs ...uuid.UUID) context.Context {
-			return WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-policy@example.test", Role: role, Organizations: orgs})
-		}
-		reader, admin := as(RoleReadOnly, org.ID), as(RoleAdmin, org.ID)
-		super := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-policy@example.test", Role: RoleSuperAdmin, AllOrganizations: true})
-		everyOrg := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-policy@example.test", Role: RoleAdmin, AllOrganizations: true})
+		const who = "contract-policy@example.test"
+		reader, admin := c.as(who, RoleReadOnly, org.ID), c.as(who, RoleAdmin, org.ID)
+		super, everyOrg := c.everywhere(who, RoleSuperAdmin), c.everywhere(who, RoleAdmin)
 
 		// The global policy is always whole; saving it fills in what is left
 		// out. Only a super administrator saves it.
@@ -1176,35 +1183,20 @@ func TestContract(t *testing.T) {
 			t.Errorf("an unknown tag: %v", err)
 		}
 
-		// A connected server's API token is an Admin token, never SuperAdmin:
-		// it reads the global policy and assigns tags (for every
-		// organization), but does not change the global policy or tags, nor
-		// read a tag's policy. EasyRMM refuses those itself with a connected
-		// server.
-		if _, err := ep.LevelPolicy(ctx, globalPolicyPath); err != nil {
-			t.Errorf("the token reads the global policy: %v", err)
+		// A tag's own policy is read by a super administrator only; an
+		// administrator of every organization assigns tags, and removes them
+		// with an empty list.
+		if _, err := engine.LevelPolicy(everyOrg, tagPolicyPath(tag.ID)); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an administrator read a tag's policy: %v", err)
 		}
-		if _, err := ep.SetLevelPolicy(ctx, globalPolicyPath, global.PolicyLayer, ""); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("the token saved the global policy: %v", err)
+		if p, err := engine.LevelPolicy(super, tagPolicyPath(tag.ID)); err != nil || p.InstallDelayDays == nil || *p.InstallDelayDays != 9 {
+			t.Errorf("a tag's policy for a super administrator: %+v, %v", p, err)
 		}
-		if _, err := ep.CreateTag(ctx, TagInput{Name: "Token " + suffix, Color: "red"}, ""); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("the token added a tag: %v", err)
+		if err := engine.SetTags(everyOrg, "organizations", org.ID, []uuid.UUID{tag.ID}, ""); err != nil {
+			t.Errorf("assigned to the organization: %v", err)
 		}
-		if _, err := ep.LevelPolicy(ctx, tagPolicyPath(tag.ID)); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("the token read a tag's policy: %v", err)
-		}
-		if err := ep.SetTags(ctx, "organizations", org.ID, []uuid.UUID{tag.ID}, ""); err != nil {
-			t.Errorf("the token assigned a tag: %v", err)
-		}
-		if err := ep.SetTags(ctx, "organizations", org.ID, []uuid.UUID{}, ""); err != nil {
-			t.Errorf("the token removed a tag: %v", err)
-		}
-		// It reads and saves an organization's policy, as EasyRMM does with a
-		// connected server.
-		if cur, err := ep.LevelPolicy(ctx, op); err != nil || cur.ID == nil {
-			t.Errorf("the token read an organization's policy: %+v, %v", cur, err)
-		} else if _, err := ep.SetLevelPolicy(ctx, op, cur.PolicyLayer, ""); err != nil {
-			t.Errorf("the token saved an organization's policy: %v", err)
+		if err := engine.SetTags(everyOrg, "organizations", org.ID, []uuid.UUID{}, ""); err != nil {
+			t.Errorf("removed from the organization: %v", err)
 		}
 		if st, err := engine.GetSite(reader, site.ID); err != nil || len(st.Tags) != 1 || st.Tags[0].ID != tag.ID || st.Tags[0].InheritedFrom != "" {
 			t.Errorf("site's tags: %+v, %v", st.Tags, err)
@@ -1237,14 +1229,11 @@ func TestContract(t *testing.T) {
 			}
 			layers = append(layers, namedLayer{l.name, p.PolicyLayer})
 		}
+		// A reader, who cannot read a tag's policy, reads what the device's
+		// tags set.
 		tags, err := engine.TagPolicies(reader, a.endpoint)
 		if err != nil || len(tags) != 1 || tags[0].Tag.Name != name || *tags[0].Policy.InstallDelayDays != 9 {
 			t.Fatalf("tag policies: %+v, %v", tags, err)
-		}
-		// A connected server's token reads them too: a device's policy shows
-		// what its tags set even where their policies cannot be read.
-		if viaToken, err := ep.TagPolicies(ctx, a.endpoint); err != nil || len(viaToken) != 1 || *viaToken[0].Policy.InstallDelayDays != 9 {
-			t.Errorf("tag policies with the token: %+v, %v", viaToken, err)
 		}
 		layers = append(layers, namedLayer{"Tag", tags[0].Policy.PolicyLayer})
 		own, err := engine.LevelPolicy(reader, endp)
@@ -1301,7 +1290,7 @@ func TestContract(t *testing.T) {
 	// bundled engine is given.
 	run("reports", func(t *testing.T) {
 		now := time.Now().UTC()
-		points, err := ep.ComplianceTrend(ctx, org.ID, now.AddDate(0, 0, -29).Format(time.DateOnly), now.Format(time.DateOnly))
+		points, err := engine.ComplianceTrend(ctx, org.ID, now.AddDate(0, 0, -29).Format(time.DateOnly), now.Format(time.DateOnly))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1313,7 +1302,7 @@ func TestContract(t *testing.T) {
 
 		// The install canceled earlier finished with openssl.
 		window := InstallationFilter{OrganizationID: org.ID, From: now.Add(-24 * time.Hour), To: now.Add(time.Minute)}
-		rows, err := ep.Installations(ctx, window, 1)
+		rows, err := engine.Installations(ctx, window, 1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1330,32 +1319,32 @@ func TestContract(t *testing.T) {
 			"another category": {OrganizationID: org.ID, From: window.From, To: window.To, Category: "Driver"},
 			"before it":        {OrganizationID: org.ID, From: window.From, To: window.From.Add(time.Minute)},
 		} {
-			if p, err := ep.Installations(ctx, f, 1); err != nil || slices.ContainsFunc(p.Items, func(r InstallationRow) bool { return r.JobID == install.ID }) {
+			if p, err := engine.Installations(ctx, f, 1); err != nil || slices.ContainsFunc(p.Items, func(r InstallationRow) bool { return r.JobID == install.ID }) {
 				t.Errorf("%s: %+v, %v", name, p, err)
 			}
 		}
-		if p, err := ep.Installations(ctx, InstallationFilter{OrganizationID: org.ID, From: window.From, To: window.To, Result: statusCanceled,
+		if p, err := engine.Installations(ctx, InstallationFilter{OrganizationID: org.ID, From: window.From, To: window.To, Result: statusCanceled,
 			Category: "Security"}, 1); err != nil || !slices.ContainsFunc(p.Items, func(r InstallationRow) bool { return r.JobID == install.ID }) {
 			t.Errorf("its result and category: %+v, %v", p, err)
 		}
 
-		// A schedule: saved by an Admin token, refused to a read-only one.
-		sc, err := ep.ReportSchedule(ctx, org.ID)
+		// A schedule: saved with an Admin statement, refused to a reader.
+		sc, err := engine.ReportSchedule(ctx, org.ID)
 		if err != nil || sc.OrganizationID != org.ID || sc.DayOfMonth < 1 || sc.TimeZone == "" {
 			t.Fatalf("schedule: %+v, %v", sc, err)
 		}
 		in := ReportScheduleInput{Enabled: true, Recipients: []string{"cfo@example.com"}, DayOfMonth: 5}
-		if _, err := ro.SetReportSchedule(ctx, org.ID, in, ""); !IsStatus(err, http.StatusForbidden) {
+		if _, err := engine.SetReportSchedule(reader, org.ID, in, ""); !IsStatus(err, http.StatusForbidden) {
 			t.Errorf("read-only schedule: %v", err)
 		}
 		for name, bad := range map[string]ReportScheduleInput{"day 29": {DayOfMonth: 29}, "no recipients": {Enabled: true, DayOfMonth: 5},
 			"bad address": {DayOfMonth: 5, Recipients: []string{"cfo@"}}} {
 			var e *Error
-			if _, err := ep.SetReportSchedule(ctx, org.ID, bad, ""); !errors.As(err, &e) || e.Status != http.StatusBadRequest || len(e.Fields) == 0 {
+			if _, err := engine.SetReportSchedule(ctx, org.ID, bad, ""); !errors.As(err, &e) || e.Status != http.StatusBadRequest || len(e.Fields) == 0 {
 				t.Errorf("%s: %#v", name, err)
 			}
 		}
-		sc, err = ep.SetReportSchedule(ctx, org.ID, in, "contract-report@example.test")
+		sc, err = engine.SetReportSchedule(ctx, org.ID, in, "contract-report@example.test")
 		if err != nil || !sc.Enabled || sc.DayOfMonth != 5 || !slices.Equal(sc.Recipients, in.Recipients) || sc.IncludeEndpointList ||
 			sc.NextReportDate == nil || sc.NextReportPeriod == nil || sc.EnabledAt == nil || sc.UpdatedAt == nil {
 			t.Fatalf("saved schedule: %+v, %v", sc, err)
@@ -1363,13 +1352,13 @@ func TestContract(t *testing.T) {
 
 		// A report of last month, its PDF, and emailing it.
 		last := now.AddDate(0, -1, 0)
-		if _, err := ep.GenerateMonthlyReport(ctx, org.ID, now.Year()+1, 1, true, ""); !isEngineCode(err, "invalid_period") {
+		if _, err := engine.GenerateMonthlyReport(ctx, org.ID, now.Year()+1, 1, true, ""); !isEngineCode(err, "invalid_period") {
 			t.Errorf("next year: %v", err)
 		}
-		if _, err := ro.GenerateMonthlyReport(ctx, org.ID, last.Year(), int(last.Month()), true, ""); !IsStatus(err, http.StatusForbidden) {
+		if _, err := engine.GenerateMonthlyReport(reader, org.ID, last.Year(), int(last.Month()), true, ""); !IsStatus(err, http.StatusForbidden) {
 			t.Errorf("read-only generate: %v", err)
 		}
-		rep, err := ep.GenerateMonthlyReport(ctx, org.ID, last.Year(), int(last.Month()), true, "contract-report@example.test")
+		rep, err := engine.GenerateMonthlyReport(ctx, org.ID, last.Year(), int(last.Month()), true, "contract-report@example.test")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1377,31 +1366,23 @@ func TestContract(t *testing.T) {
 			!strings.HasSuffix(rep.FileName, ".pdf") || rep.SizeBytes == 0 || len(rep.Sha256) != 64 || rep.DeliveryStatus != "" {
 			t.Errorf("report %+v", rep)
 		}
-		if p, err := ro.MonthlyReports(ctx, org.ID, 1); err != nil || !slices.ContainsFunc(p.Items, func(m MonthlyReport) bool { return m.ID == rep.ID }) {
+		if p, err := engine.MonthlyReports(reader, org.ID, 1); err != nil || !slices.ContainsFunc(p.Items, func(m MonthlyReport) bool { return m.ID == rep.ID }) {
 			t.Errorf("list: %+v, %v", p, err)
 		}
-		if m, err := ro.MonthlyReport(ctx, rep.ID); err != nil || m.FileName != rep.FileName {
+		if m, err := engine.MonthlyReport(reader, rep.ID); err != nil || m.FileName != rep.FileName {
 			t.Errorf("one: %+v, %v", m, err)
 		}
-		pdf, err := ro.MonthlyReportPDF(ctx, rep.ID)
+		pdf, err := engine.MonthlyReportPDF(reader, rep.ID)
 		if err != nil || !bytes.HasPrefix(pdf, []byte("%PDF-")) || int64(len(pdf)) != rep.SizeBytes {
 			t.Errorf("PDF: %d bytes, %v", len(pdf), err)
 		}
-		if _, err := ep.MonthlyReport(ctx, uuid.New()); !IsStatus(err, http.StatusNotFound) {
+		if _, err := engine.MonthlyReport(ctx, uuid.New()); !IsStatus(err, http.StatusNotFound) {
 			t.Errorf("no such report: %v", err)
 		}
-		// The Admin token may not read the mail settings: a connected
-		// server's own console sets them.
-		if _, err := ep.MailSettings(ctx); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("token reads the mail settings: %v", err)
-		}
-		signer, err := NewSigner(c.engineKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		engine, err := NewEngineClient(c.engineURL, signer, "contract")
-		if err != nil {
-			t.Fatal(err)
+		// The mail settings need a super administrator, as EasyRMM gives the
+		// engine its mail server (syncMail): an Admin statement is refused.
+		if _, err := engine.MailSettings(ctx); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an Admin statement reads the mail settings: %v", err)
 		}
 		super := WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "EasyRMM", Role: RoleSuperAdmin, AllOrganizations: true})
 		mail, err := engine.MailSettings(super)
@@ -1409,7 +1390,7 @@ func TestContract(t *testing.T) {
 			t.Fatal(err)
 		}
 		if mail.SMTPHost == "" {
-			if _, err := ep.SendMonthlyReport(ctx, rep.ID, []string{"cfo@example.com"}, ""); !isEngineCode(err, "smtp_not_configured") {
+			if _, err := engine.SendMonthlyReport(ctx, rep.ID, []string{"cfo@example.com"}, ""); !isEngineCode(err, "smtp_not_configured") {
 				t.Errorf("no mail server: %v", err)
 			}
 		}
@@ -1428,7 +1409,7 @@ func TestContract(t *testing.T) {
 		if err := engine.SetMailSettings(super, plain.mailSettings(mail)); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ep.SendMonthlyReport(ctx, rep.ID, []string{"cfo@example.com"}, ""); !isEngineCode(err, "smtp_not_encrypted") {
+		if _, err := engine.SendMonthlyReport(ctx, rep.ID, []string{"cfo@example.com"}, ""); !isEngineCode(err, "smtp_not_encrypted") {
 			t.Errorf("a plain mail server: %v", err)
 		}
 		tls := MailConfig{Host: "mail.example.test", Port: 465, Username: "reports", Password: "contract-only", From: "Reports <reports@example.test>",
@@ -1442,18 +1423,18 @@ func TestContract(t *testing.T) {
 			got.AllowPrivateNetworkWebhooks != mail.AllowPrivateNetworkWebhooks {
 			t.Errorf("mail settings: %+v, %v", got, err)
 		}
-		if _, err := ep.SendMonthlyReport(ctx, rep.ID, []string{"cfo@"}, ""); !IsStatus(err, http.StatusBadRequest) {
+		if _, err := engine.SendMonthlyReport(ctx, rep.ID, []string{"cfo@"}, ""); !IsStatus(err, http.StatusBadRequest) {
 			t.Errorf("a bad address: %v", err)
 		}
 		// No recipients takes the schedule's.
-		sent, err := ep.SendMonthlyReport(ctx, rep.ID, nil, "contract-report@example.test")
+		sent, err := engine.SendMonthlyReport(ctx, rep.ID, nil, "contract-report@example.test")
 		if err != nil || sent.DeliveryStatus == "" || !slices.Equal(sent.Recipients, in.Recipients) || sent.QueuedAt == nil {
 			t.Errorf("sent: %+v, %v", sent, err)
 		}
-		if _, err := ep.SetReportSchedule(ctx, org.ID, ReportScheduleInput{DayOfMonth: 1}, ""); err != nil {
+		if _, err := engine.SetReportSchedule(ctx, org.ID, ReportScheduleInput{DayOfMonth: 1}, ""); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ep.SendMonthlyReport(ctx, rep.ID, nil, ""); !isEngineCode(err, "no_recipients") {
+		if _, err := engine.SendMonthlyReport(ctx, rep.ID, nil, ""); !isEngineCode(err, "no_recipients") {
 			t.Errorf("no recipients anywhere: %v", err)
 		}
 		// A report of the month so far, made with a statement.
@@ -1469,35 +1450,27 @@ func TestContract(t *testing.T) {
 			t.Errorf("another organization's statement: %v", err)
 		}
 
-		if err := ro.DeleteMonthlyReport(ctx, rep.ID, ""); !IsStatus(err, http.StatusForbidden) {
+		if err := engine.DeleteMonthlyReport(reader, rep.ID, ""); !IsStatus(err, http.StatusForbidden) {
 			t.Errorf("read-only delete: %v", err)
 		}
 		for _, id := range []uuid.UUID{rep.ID, soFar.ID} {
-			if err := ep.DeleteMonthlyReport(ctx, id, "contract-report@example.test"); err != nil {
+			if err := engine.DeleteMonthlyReport(ctx, id, "contract-report@example.test"); err != nil {
 				t.Fatal(err)
 			}
 		}
-		if _, err := ep.MonthlyReport(ctx, rep.ID); !IsStatus(err, http.StatusNotFound) {
+		if _, err := engine.MonthlyReport(ctx, rep.ID); !IsStatus(err, http.StatusNotFound) {
 			t.Errorf("deleted: %v", err)
 		}
 	})
 
 	// Settings → Patching's server-wide views (one-product plan, C6).
 	run("server settings, OS lifecycle and the audit log", func(t *testing.T) {
-		signer, err := NewSigner(c.engineKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		engine, err := NewEngineClient(c.engineURL, signer, "contract")
-		if err != nil {
-			t.Fatal(err)
-		}
 		const who = "contract-settings@example.test"
-		super := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: who, Role: RoleSuperAdmin, AllOrganizations: true})
+		super := c.everywhere(who, RoleSuperAdmin)
 
 		// Every setting EasyRMM shows is one of EasyPatch's.
 		var raw map[string]json.RawMessage
-		c.must(http.MethodGet, "/api/v1/settings", c.token, nil, http.StatusOK, &raw)
+		c.must(http.MethodGet, "/api/v1/settings", nil, http.StatusOK, &raw)
 		b, _ := json.Marshal(ServerSettings{})
 		var shown map[string]any
 		_ = json.Unmarshal(b, &shown)
@@ -1506,12 +1479,13 @@ func TestContract(t *testing.T) {
 				t.Errorf("EasyPatch has no setting %q", k)
 			}
 		}
-		before, err := ep.ServerSettings(ctx)
+		before, err := engine.ServerSettings(ctx)
 		if err != nil || before.GlobalMaxConcurrentInstalls == 0 || before.RetentionAuditDays == 0 {
 			t.Fatalf("settings: %+v, %v", before, err)
 		}
-		if _, err := ep.SetServerSettings(ctx, before); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("an API token changes the settings: %v", err)
+		// Only a super administrator changes them.
+		if _, err := engine.SetServerSettings(ctx, before); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an Admin statement changes the settings: %v", err)
 		}
 		t.Cleanup(func() {
 			if _, err := engine.SetServerSettings(super, before); err != nil {
@@ -1527,7 +1501,7 @@ func TestContract(t *testing.T) {
 		}
 		// What EasyRMM does not show is kept.
 		var after map[string]json.RawMessage
-		c.must(http.MethodGet, "/api/v1/settings", c.token, nil, http.StatusOK, &after)
+		c.must(http.MethodGet, "/api/v1/settings", nil, http.StatusOK, &after)
 		for k, v := range raw {
 			if _, ok := shown[k]; !ok && string(after[k]) != string(v) {
 				t.Errorf("%s changed from %s to %s", k, v, after[k])
@@ -1538,20 +1512,20 @@ func TestContract(t *testing.T) {
 		if _, err := engine.SetServerSettings(super, bad); !IsStatus(err, http.StatusBadRequest) {
 			t.Errorf("no installs at once: %v", err)
 		}
-		if _, err := ep.VulnerabilityFeeds(ctx); err != nil {
+		if _, err := engine.VulnerabilityFeeds(ctx); err != nil {
 			t.Errorf("feeds: %v", err)
 		}
 
-		// Lifecycle entries: read with the token, changed with a SuperAdmin
-		// statement; EasyRMM's 64 characters of a product fit.
-		list, err := ro.Lifecycle(ctx)
+		// Lifecycle entries: read by a reader, changed with a SuperAdmin
+		// statement only; EasyRMM's 64 characters of a product fit.
+		list, err := engine.Lifecycle(reader)
 		if err != nil || len(list) == 0 || list[0].Product == "" || list[0].EndOfServicing == "" {
 			t.Fatalf("lifecycle: %+v, %v", list, err)
 		}
 		entry := LifecycleInput{Product: "Contract OS " + strings.Repeat("x", 52), EditionGroup: "Contract", BuildNumber: 900_000 + int(time.Now().UnixNano()%99_999),
 			VersionLabel: "1.0", EndOfServicing: "2030-01-31"}
-		if _, err := ep.CreateLifecycle(ctx, entry); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("an API token adds an entry: %v", err)
+		if _, err := engine.CreateLifecycle(ctx, entry); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an Admin statement adds an entry: %v", err)
 		}
 		e, err := engine.CreateLifecycle(super, entry)
 		if err != nil || e.ID == uuid.Nil || e.Product != entry.Product || e.EndOfServicing != "2030-01-31" || e.EsuEndDate != nil {
@@ -1578,8 +1552,8 @@ func TestContract(t *testing.T) {
 		}
 
 		// The audit log names the EasyRMM user; an Admin statement for one
-		// organization sees its entries only, and a read-only token none.
-		all := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: who, Role: RoleAdmin, AllOrganizations: true})
+		// organization sees its entries only, and a reader none.
+		all := c.everywhere(who, RoleAdmin)
 		p, err := engine.AuditLogs(all, AuditFilter{Action: "lifecycle."}, 1, 50)
 		if err != nil || !slices.ContainsFunc(p.Items, func(a AuditLog) bool {
 			return a.Action == "lifecycle.create" && a.Username == "easyrmm:"+who && a.TargetID == e.ID.String() && a.OrganizationID == nil
@@ -1589,7 +1563,7 @@ func TestContract(t *testing.T) {
 		if p, err := engine.AuditLogs(all, AuditFilter{Action: "settings."}, 1, 5); err != nil || len(p.Items) == 0 || p.Items[0].Username != "easyrmm:"+who {
 			t.Errorf("settings entries: %+v, %v", p, err)
 		}
-		one := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: who, Role: RoleAdmin, Organizations: []uuid.UUID{org.ID}})
+		one := c.as(who, RoleAdmin, org.ID)
 		p, err = engine.AuditLogs(one, AuditFilter{}, 1, 200)
 		if err != nil || len(p.Items) == 0 || slices.ContainsFunc(p.Items, func(a AuditLog) bool { return a.OrganizationID == nil || *a.OrganizationID != org.ID }) {
 			t.Errorf("one organization's entries: %d, %v", len(p.Items), err)
@@ -1598,35 +1572,27 @@ func TestContract(t *testing.T) {
 		if p, err := engine.AuditLogs(all, AuditFilter{From: &future}, 1, 5); err != nil || len(p.Items) != 0 {
 			t.Errorf("from an hour ahead: %+v, %v", p, err)
 		}
-		if _, err := ro.AuditLogs(ctx, AuditFilter{}, 1, 5); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("a read-only token reads the audit log: %v", err)
+		if _, err := engine.AuditLogs(reader, AuditFilter{}, 1, 5); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("a reader reads the audit log: %v", err)
 		}
 	})
 
 	// Alerts, alert rules and notification channels (one-product plan, C7).
 	run("alerts, alert rules and notification channels", func(t *testing.T) {
-		signer, err := NewSigner(c.engineKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		engine, err := NewEngineClient(c.engineURL, signer, "contract")
-		if err != nil {
-			t.Fatal(err)
-		}
 		const who = "contract-alerts@example.test"
-		super := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: who, Role: RoleSuperAdmin, AllOrganizations: true})
-		admin := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: who, Role: RoleAdmin, Organizations: []uuid.UUID{org.ID}})
-		reader := WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: who, Role: RoleReadOnly, Organizations: []uuid.UUID{org.ID}})
+		super, admin, reader := c.everywhere(who, RoleSuperAdmin), c.as(who, RoleAdmin, org.ID), c.as(who, RoleReadOnly, org.ID)
 
-		// EasyRMM's table of rule types is EasyPatch's.
+		// EasyRMM's table of rule types is EasyPatch's. Rules, channels and
+		// deliveries are a super administrator's: an Admin statement is
+		// refused.
 		types, err := engine.AlertRuleTypes(super)
 		want, _ := json.Marshal(RuleTypes())
 		got, _ := json.Marshal(types)
 		if err != nil || string(got) != string(want) {
 			t.Errorf("rule types: EasyPatch %s, EasyRMM %s, %v", got, want, err)
 		}
-		if _, err := ep.AlertRuleTypes(ctx); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("an API token reads the rule types: %v", err)
+		if _, err := engine.AlertRuleTypes(ctx); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an Admin statement reads the rule types: %v", err)
 		}
 		rules, err := engine.AlertRules(super)
 		if err != nil || len(rules) < 9 {
@@ -1652,8 +1618,8 @@ func TestContract(t *testing.T) {
 				t.Errorf("alerts %+v: %v", f, err)
 			}
 		}
-		if _, err := ep.Alerts(ctx, AlertFilter{}, 1, 5); err != nil {
-			t.Errorf("alerts with the token: %v", err)
+		if _, err := engine.Alerts(ctx, AlertFilter{}, 1, 5); err != nil {
+			t.Errorf("alerts with EasyRMM's own statement: %v", err)
 		}
 		if _, err := engine.AlertSummary(reader); err != nil {
 			t.Errorf("summary: %v", err)
@@ -1684,9 +1650,9 @@ func TestContract(t *testing.T) {
 			t.Fatalf("webhook: %+v, %v", hook, err)
 		}
 		t.Cleanup(func() { _ = engine.DeleteChannel(super, hook.Channel.ID) })
-		if _, err := ep.CreateChannel(ctx, ChannelInput{Name: "Token", Type: "Email", EmailRecipients: []string{"ops@example.test"}}); !IsStatus(err,
+		if _, err := engine.CreateChannel(ctx, ChannelInput{Name: "Token", Type: "Email", EmailRecipients: []string{"ops@example.test"}}); !IsStatus(err,
 			http.StatusForbidden) {
-			t.Errorf("an API token adds a channel: %v", err)
+			t.Errorf("an Admin statement adds a channel: %v", err)
 		}
 		plain := "http://hooks.example.test/x"
 		for field, in := range map[string]ChannelInput{
@@ -1736,8 +1702,8 @@ func TestContract(t *testing.T) {
 				t.Errorf("deliveries %s: %v", status, err)
 			}
 		}
-		if _, err := ep.Deliveries(ctx, uuid.Nil, "", 1, 5); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("an API token reads the deliveries: %v", err)
+		if _, err := engine.Deliveries(ctx, uuid.Nil, "", 1, 5); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an Admin statement reads the deliveries: %v", err)
 		}
 
 		// The webhook switch changes alone; blank text is kept as none.
@@ -1784,8 +1750,8 @@ func TestContract(t *testing.T) {
 			t.Fatalf("rule: %+v, %v", r, err)
 		}
 		t.Cleanup(func() { _ = engine.DeleteAlertRule(super, r.ID) })
-		if _, err := ep.CreateAlertRule(ctx, in); !IsStatus(err, http.StatusForbidden) {
-			t.Errorf("an API token adds a rule: %v", err)
+		if _, err := engine.CreateAlertRule(ctx, in); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("an Admin statement adds a rule: %v", err)
 		}
 		zero := 0
 		for name, change := range map[string]func(*AlertRuleInput){
@@ -1824,7 +1790,7 @@ func TestContract(t *testing.T) {
 
 		// The fake answers in the same shapes.
 		fake := eptest.NewEngine(t, c.engineKey)
-		fakeClient, err := NewEngineClient(fake.URL(), signer, "contract")
+		fakeClient, err := NewEngineClient(fake.URL(), c.signer, "contract")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1864,20 +1830,17 @@ func TestContract(t *testing.T) {
 	})
 
 	run("errors", func(t *testing.T) {
-		_, err := ep.Endpoint(ctx, uuid.New())
+		_, err := engine.Endpoint(ctx, uuid.New())
 		var e *Error
 		if !IsStatus(err, http.StatusNotFound) || !errors.As(err, &e) || e.Code == "" || e.Detail == "" {
 			t.Errorf("unknown endpoint: %#v", err)
 		}
-		if _, err := ep.Job(ctx, uuid.New()); !IsStatus(err, http.StatusNotFound) {
+		if _, err := engine.Job(ctx, uuid.New()); !IsStatus(err, http.StatusNotFound) {
 			t.Errorf("unknown job: %v", err)
 		}
-		bad, err := NewClient(c.url, "ept_"+strings.Repeat("A", 43), c.caPEM, "contract")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := bad.Organizations(ctx); !IsStatus(err, http.StatusUnauthorized) {
-			t.Errorf("unknown token: %v", err)
+		// Without a statement, nothing but server-info answers.
+		if status, data := call(ctx, t, c.http, c.engineURL, http.MethodGet, "/api/v1/organizations", nil, nil); status != http.StatusUnauthorized {
+			t.Errorf("no statement: %d %s", status, data)
 		}
 	})
 
@@ -1886,11 +1849,11 @@ func TestContract(t *testing.T) {
 	// carries none; build one with scripts/build-test-agent-packages.sh to
 	// check them.
 	run("agent packages", func(t *testing.T) {
-		list, err := ep.AgentPackages(ctx)
+		list, err := engine.AgentPackages(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		info, err := ep.ServerInfo(ctx)
+		info, err := engine.ServerInfo(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1903,48 +1866,37 @@ func TestContract(t *testing.T) {
 	})
 
 	run("actions name the EasyRMM user in EasyPatch's audit log", func(t *testing.T) {
+		// A call without a statement in its context is named after whom it
+		// is for (statementFor), and EasyPatch records easyrmm:<name>.
 		type entry struct {
-			Action  string `json:"action"`
-			Details string `json:"details"`
+			Action   string `json:"action"`
+			Username string `json:"username"`
 		}
 		var page struct {
 			Items []entry `json:"items"`
 		}
-		c.must(http.MethodGet, "/api/v1/audit-logs?pageSize=100", c.token, nil, http.StatusOK, &page)
+		c.must(http.MethodGet, "/api/v1/audit-logs?pageSize=200&organizationId="+org.ID.String(), nil, http.StatusOK, &page)
 		for _, who := range []string{"contract-enroll@example.test", "contract-install@example.test", "contract-cancel@example.test",
 			"contract-retry@example.test", "contract-restart@example.test"} {
-			if !slices.ContainsFunc(page.Items, func(e entry) bool {
-				var details struct {
-					OnBehalfOf string `json:"onBehalfOf"`
-				}
-				return json.Unmarshal([]byte(e.Details), &details) == nil && details.OnBehalfOf == who
-			}) {
+			if !slices.ContainsFunc(page.Items, func(e entry) bool { return e.Username == "easyrmm:"+who }) {
 				t.Errorf("no audit entry names %s", who)
 			}
 		}
 		if t.Failed() {
 			for _, e := range page.Items[:min(len(page.Items), 15)] {
-				t.Logf("audit: %s %s", e.Action, e.Details)
+				t.Logf("audit: %s %s", e.Action, e.Username)
 			}
 		}
 	})
 
-	run("the patching engine: statements instead of a token", func(t *testing.T) {
-		signer, err := NewSigner(c.engineKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		engine, err := NewEngineClient(c.engineURL, signer, "contract")
-		if err != nil {
-			t.Fatal(err)
-		}
-		// EasyRMM's own work: Admin in every organization, as the API token.
+	run("the patching engine: statements", func(t *testing.T) {
+		// EasyRMM's own work: Admin in every organization.
 		if orgs, err := engine.Organizations(ctx); err != nil || !slices.ContainsFunc(orgs, func(o Organization) bool { return o.ID == org.ID }) {
 			t.Fatalf("organizations as EasyRMM: %+v, %v", orgs, err)
 		}
 		// A person's call sees only the organizations it names.
 		as := func(role string, orgs ...uuid.UUID) context.Context {
-			return WithStatement(ctx, Statement{Subject: uuid.NewString(), Name: "contract-engine@example.test", Role: role, Organizations: orgs})
+			return c.as("contract-engine@example.test", role, orgs...)
 		}
 		if _, err := engine.Endpoint(as(RoleReadOnly, org.ID), a.endpoint); err != nil {
 			t.Errorf("endpoint, its organization named: %v", err)
@@ -1962,7 +1914,7 @@ func TestContract(t *testing.T) {
 		// Read-only reads but never acts; the console shows the engine
 		// refusing EasyRMM as the engine being unavailable, never as a 401
 		// or 403 it would take for a lost session.
-		_, err = engine.BulkScan(as(RoleReadOnly, org.ID), []uuid.UUID{a.endpoint}, "")
+		_, err := engine.BulkScan(as(RoleReadOnly, org.ID), []uuid.UUID{a.endpoint}, "")
 		if !IsStatus(err, http.StatusForbidden) {
 			t.Fatalf("read-only scan: %v", err)
 		}
@@ -2008,7 +1960,7 @@ func TestContract(t *testing.T) {
 		var page struct {
 			Items []entry `json:"items"`
 		}
-		c.must(http.MethodGet, "/api/v1/audit-logs?pageSize=100", c.token, nil, http.StatusOK, &page)
+		c.must(http.MethodGet, "/api/v1/audit-logs?pageSize=100", nil, http.StatusOK, &page)
 		if !slices.ContainsFunc(page.Items, func(e entry) bool { return e.Username == "easyrmm:contract-engine@example.test" }) {
 			t.Errorf("no audit entry names easyrmm:contract-engine@example.test: %+v", page.Items[:min(len(page.Items), 10)])
 		}
@@ -2023,14 +1975,6 @@ func TestContract(t *testing.T) {
 	run("organizations, sites and endpoints for the reconciler", func(t *testing.T) {
 		// What EasyRMM's reconciler relies on (one-product plan, B5), as the
 		// engine in the deployment does it.
-		signer, err := NewSigner(c.engineKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		engine, err := NewEngineClient(c.engineURL, signer, "contract")
-		if err != nil {
-			t.Fatal(err)
-		}
 		svc := WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "EasyRMM", Role: RoleAdmin, AllOrganizations: true})
 		scoped := WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "EasyRMM", Role: RoleAdmin, Organizations: []uuid.UUID{org.ID}})
 
@@ -2211,14 +2155,6 @@ func TestContract(t *testing.T) {
 		}), httpapi.RealIP([]netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")})))
 		t.Cleanup(edge.Close)
 
-		signer, err := NewSigner(c.engineKey)
-		if err != nil {
-			t.Fatal(err)
-		}
-		engine, err := NewEngineClient(c.engineURL, signer, "contract")
-		if err != nil {
-			t.Fatal(err)
-		}
 		admin := WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "contract-edge@example.test", Role: RoleAdmin, Organizations: []uuid.UUID{org.ID}})
 		token, err := engine.CreateEnrollmentToken(admin, org.ID, &site.ID, "EasyRMM edge contract", "")
 		if err != nil {
@@ -2235,19 +2171,19 @@ func TestContract(t *testing.T) {
 		// EasyPatch writes the address it saw at its next presence flush.
 		deadline := time.Now().Add(45 * time.Second)
 		for {
-			var ep struct {
+			var seen struct {
 				Summary struct {
 					LastSeenIP string `json:"lastSeenIp"`
 				} `json:"summary"`
 			}
-			if err := engine.do(admin, http.MethodGet, "/api/v1/endpoints/"+b.endpoint.String(), nil, nil, "", &ep); err != nil {
+			if err := engine.do(admin, http.MethodGet, "/api/v1/endpoints/"+b.endpoint.String(), nil, nil, "", &seen); err != nil {
 				t.Fatal(err)
 			}
-			if ep.Summary.LastSeenIP == "203.0.113.9" {
+			if seen.Summary.LastSeenIP == "203.0.113.9" {
 				break
 			}
 			if time.Now().After(deadline) {
-				t.Fatalf("the engine saw the agent at %q, not at the address EasyRMM resolved", ep.Summary.LastSeenIP)
+				t.Fatalf("the engine saw the agent at %q, not at the address EasyRMM resolved", seen.Summary.LastSeenIP)
 			}
 			time.Sleep(time.Second)
 		}
@@ -2265,14 +2201,14 @@ func TestContract(t *testing.T) {
 	})
 }
 
-// checkFake asks eptest and the real server the same questions and checks
-// that every field eptest answers with is in EasyPatch's answer, with a
-// value of the same JSON type. EasyPatch may send more: the connector reads
-// only what eptest sends.
-// finished is a finished job of the endpoint with no identical job queued,
-// which EasyPatch would refuse to retry (duplicate_job).
+// checkFake asks eptest and the real engine the same questions, each with
+// EasyRMM's own statement, and checks that every field eptest answers with
+// is in EasyPatch's answer, with a value of the same JSON type. EasyPatch
+// may send more: EasyRMM reads only what eptest sends. finished is a
+// finished job of the endpoint with no identical job queued, which EasyPatch
+// would refuse to retry (duplicate_job).
 func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uuid.UUID, suffix string) {
-	fake := eptest.New(t)
+	fake := eptest.NewEngine(t, c.engineKey)
 	fOrg := fake.Org("Contract")
 	fSite := fake.Site(fOrg, "Head office")
 	fe := fake.AddEndpoint(fOrg, "contract", "SN-contract", "fingerprint")
@@ -2282,14 +2218,17 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		fake.Capabilities = []string{CapabilityScheduledInstalls}
 		fe.RebootPending = true
 	})
-	fakeHTTP := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: fakeTLS(t, fake.CAPEM)}}
-	fake.AddAudit(eptest.AuditInfo{Username: "token:easyrmm", Org: &fOrg, Endpoint: &fEndpoint, Action: "endpoint.update", TargetType: "Endpoint",
+	fake.AddAudit(eptest.AuditInfo{Username: "easyrmm:EasyRMM", Org: &fOrg, Endpoint: &fEndpoint, Action: "endpoint.update", TargetType: "Endpoint",
 		TargetID: fEndpoint.String(), Details: "{}", IPAddress: "192.0.2.1"})
+	// send asks base with the statement of a call made without one.
+	send := func(base, method, path string, body any) (int, []byte) {
+		return call(c.ctx, t, c.http, base, method, path, body, signed(t, c.signer, statementFor(c.ctx, ""), method, path))
+	}
 	at := time.Now().Add(4 * time.Hour).UTC().Truncate(time.Second)
 	install := map[string]any{"mode": "Selected", "updateGuids": []uuid.UUID{}, "force": false, "scheduledAt": at}
 	// The fake's endpoint has its own update GUIDs; ask each for one of its own.
-	pick := func(base string, hc *http.Client, token string, e uuid.UUID) uuid.UUID {
-		_, data := call(c.ctx, t, hc, base, http.MethodGet, "/api/v1/endpoints/"+e.String()+"/updates", token, nil, nil)
+	pick := func(base string, e uuid.UUID) uuid.UUID {
+		_, data := send(base, http.MethodGet, "/api/v1/endpoints/"+e.String()+"/updates", nil)
 		var list []struct {
 			UpdateGUID uuid.UUID `json:"updateGuid"`
 		}
@@ -2298,13 +2237,12 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		}
 		return list[0].UpdateGUID
 	}
-	fUpdate, rUpdate := pick(fake.URL(), fakeHTTP, fake.Token, fEndpoint), pick(c.url, c.http, c.token, endpoint)
+	fUpdate, rUpdate := pick(fake.URL(), fEndpoint), pick(c.engineURL, endpoint)
 	fakeInstall := map[string]any{"mode": "Selected", "updateGuids": []uuid.UUID{fUpdate}, "force": false, "scheduledAt": at}
 	install["updateGuids"] = []uuid.UUID{rUpdate}
 
 	// The fake's job comes from an install like the real one's.
-	_, data := call(c.ctx, t, fakeHTTP, fake.URL(), http.MethodPost, "/api/v1/endpoints/"+fEndpoint.String()+"/install-updates", fake.Token,
-		fakeInstall, nil)
+	_, data := send(fake.URL(), http.MethodPost, "/api/v1/endpoints/"+fEndpoint.String()+"/install-updates", fakeInstall)
 	var fJob struct {
 		ID uuid.UUID `json:"id"`
 	}
@@ -2411,8 +2349,8 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		q("tags", "GET", "/api/v1/tags", "/api/v1/tags"),
 	}
 	ask := func(qu question) (f, r any) {
-		fStatus, fData := call(c.ctx, t, fakeHTTP, fake.URL(), qu.method, qu.fake, fake.Token, qu.fBody, nil)
-		rStatus, rData := call(c.ctx, t, c.http, c.url, qu.method, qu.real, c.token, qu.rBody, nil)
+		fStatus, fData := send(fake.URL(), qu.method, qu.fake, qu.fBody)
+		rStatus, rData := send(c.engineURL, qu.method, qu.real, qu.rBody)
 		if fStatus != rStatus {
 			t.Errorf("%s: eptest answers %d, EasyPatch %d: %s", qu.name, fStatus, rStatus, rData)
 			return nil, nil
@@ -2458,14 +2396,6 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 	ask(q("holds", "GET", "/api/v1/update-holds?updateGuid="+fUpdate.String(), "/api/v1/update-holds?updateGuid="+rUpdate.String()))
 	fID, rID := fHold.(map[string]any)["id"].(string), rHold.(map[string]any)["id"].(string)
 	ask(q("release", "POST", "/api/v1/update-holds/"+fID+"/release", "/api/v1/update-holds/"+rID+"/release"))
-}
-
-func fakeTLS(t *testing.T, caPEM string) *tls.Config {
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM([]byte(caPEM)) {
-		t.Fatal("eptest's CA is not PEM")
-	}
-	return &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots}
 }
 
 func elementWithID(v any, id uuid.UUID) any {

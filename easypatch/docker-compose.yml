@@ -1,8 +1,0 @@
-# Not a deployment. EasyPatch runs as the patching engine inside EasyRMM's deployment (deploy/docker-compose.yml);
-# its own Compose files, proxy and installer are gone (EasyRMM's ADR-0046, phase R3).
-#
-# This file only names the PostgreSQL image that EasyRMM's contract test (scripts/contract/easypatch.sh) starts.
-# It goes when that test reads the image from deploy/docker-compose.yml instead (phase R2).
-services:
-  postgres:
-    image: postgres:18.6-alpine3.24

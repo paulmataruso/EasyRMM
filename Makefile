@@ -90,7 +90,7 @@ test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral
 	./scripts/ci/check-coverage.sh coverage.txt
 
 .PHONY: test-contract
-test-contract: ## The EasyPatch connector against a real EasyPatch built from easypatch/ (needs Docker)
+test-contract: ## EasyRMM's calls to the patching engine against a real one built from easypatch/ (needs Docker)
 	GO=$(GO) ./scripts/contract/easypatch.sh
 
 .PHONY: check
