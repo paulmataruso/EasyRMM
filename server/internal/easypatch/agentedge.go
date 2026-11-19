@@ -132,7 +132,7 @@ func NewAgentProxy(target *url.URL, secure bool, log *slog.Logger) http.Handler 
 				httpapi.WriteError(w, r, agentBodyTooLarge)
 				return
 			}
-			httpapi.LoggerFrom(r.Context()).Warn("patching engine unreachable for an agent", "error", err, "path", r.URL.Path)
+			httpapi.LoggerFrom(r.Context()).Warn("patching engine unreachable for an agent", "error", err, "path", httpapi.LogSafe(r.URL.Path))
 			w.Header().Set("Retry-After", "30")
 			httpapi.WriteError(w, r, &httpapi.Error{Status: http.StatusBadGateway, Code: "patching_unavailable",
 				Message: "The patching engine is not answering. Try again shortly."})

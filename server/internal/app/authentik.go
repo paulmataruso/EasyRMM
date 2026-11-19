@@ -145,7 +145,7 @@ func authentikProxy(upstream string, secure bool, log *slog.Logger) http.Handler
 			return nil
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			httpapi.LoggerFrom(r.Context()).Warn("authentik unreachable", "error", err, "path", r.URL.Path)
+			httpapi.LoggerFrom(r.Context()).Warn("authentik unreachable", "error", err, "path", httpapi.LogSafe(r.URL.Path))
 			w.Header().Set("Retry-After", "30")
 			w.Header().Set("Cache-Control", "no-store")
 			http.Error(w, "Sign-in is not answering. Try again in a minute.", http.StatusBadGateway)

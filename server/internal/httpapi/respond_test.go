@@ -253,3 +253,16 @@ func TestLoggerFromDefault(t *testing.T) {
 		t.Fatal("expected the default logger")
 	}
 }
+
+func TestLogSafe(t *testing.T) {
+	for in, want := range map[string]string{
+		"/api/v1/devices":            "/api/v1/devices",
+		"/a\nlevel=ERROR msg=forged": `/a\nlevel=ERROR msg=forged`,
+		"/a\r\nb":                    `/a\r\nb`,
+		"":                           "",
+	} {
+		if got := LogSafe(in); got != want {
+			t.Errorf("LogSafe(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

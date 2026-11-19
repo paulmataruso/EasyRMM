@@ -178,6 +178,13 @@ func Handle(h HandlerFunc) http.Handler {
 
 type loggerKey struct{}
 
+// LogSafe returns s, something a client sent such as a request's path, with
+// its line breaks escaped, for a log line: whoever reads the log as plain
+// text must not take a line the client wrote for one of the server's.
+func LogSafe(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r", `\r`), "\n", `\n`)
+}
+
 // LoggerFrom returns the request-scoped logger, or the default logger.
 func LoggerFrom(ctx interface{ Value(any) any }) *slog.Logger {
 	if l, ok := ctx.Value(loggerKey{}).(*slog.Logger); ok {

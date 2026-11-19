@@ -165,9 +165,12 @@ for _ in $(seq 1 60); do
   docker exec "$project-old-db" pg_isready -h 127.0.0.1 -p 25432 -U easypatch > /dev/null 2>&1 && break
   sleep 1
 done
-as_root install -d -m 0700 -o 1654 -g 1654 "$work/old-data/keys"
+# The folders this script writes first, as the caller: install -d run as
+# root would make old-data root's, and a runner that is not root (CI's)
+# could then not add agent-packages to it.
 mkdir -p "$work/old-data/agent-packages"
 chmod 0755 "$work/old-data" "$work/old-data/agent-packages"
+as_root install -d -m 0700 -o 1654 -g 1654 "$work/old-data/keys"
 docker run --rm --network host "${old_env[@]}" "$old_image" migrate > /dev/null
 printf '%s' "$admin_pw" | docker run --rm -i --network host "${old_env[@]}" -v "$work/old-data/keys:/app/keys" "$old_image" \
   create-admin --email admin@import.test --name admin --password-stdin > /dev/null
