@@ -1,15 +1,15 @@
-import { Link } from "react-router";
-import { ArrowLeft, ShieldOff } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
 import { useApi } from "../../api/hooks";
 import type { PatchStatus, PatchTagList } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
-import { Button, buttonClasses, EmptyState, ErrorState, Segmented, SelectField, Spinner } from "../../components/ui";
+import { Button, ErrorState, Segmented, SelectField, Spinner } from "../../components/ui";
 import { useUrlState } from "../../lib/urlState";
 import { AgentPackagesPanel } from "../patching/AgentPackages";
 import { AlertRulesPanel } from "../patching/AlertRules";
 import { EngineAuditPanel } from "../patching/EngineAudit";
 import { LifecyclePanel } from "../patching/Lifecycle";
 import { NotificationsPanel } from "../patching/Notifications";
+import { NoPatchingEngine } from "../patching/patchText";
 import { PolicyPanel } from "../patching/PolicyEditor";
 import { ReportSchedules } from "../patching/ReportSchedules";
 import { ServerSettingsPanel } from "../patching/ServerSettings";
@@ -34,23 +34,7 @@ export function PatchingTab() {
   const status = useApi<PatchStatus>("/patching", undefined, { staleTime: 60_000 });
   if (status.isPending) return <Spinner />;
   if (status.isError) return <ErrorState error={status.error} onRetry={() => void status.refetch()} />;
-  if (!status.data.configured) {
-    return (
-      <EmptyState
-        title="EasyPatch is not set up"
-        icon={<ShieldOff className="size-8" aria-hidden />}
-        action={
-          can("settings.manage") ? (
-            <Link to="/settings?tab=easypatch" className={buttonClasses("primary")}>
-              Set up EasyPatch
-            </Link>
-          ) : undefined
-        }
-      >
-        Policies, tags, report schedules, alert rules and EasyPatch&apos;s own settings come with EasyPatch, which patches your devices.
-      </EmptyState>
-    );
-  }
+  if (!status.data.configured) return <NoPatchingEngine />;
   const options: { value: View; label: string }[] = [
     { value: "default", label: "Default policy" },
     { value: "tags", label: "Tags" },
@@ -85,7 +69,7 @@ export function PatchingTab() {
       {view === "default" && <PolicyPanel level="default" />}
       {view === "tags" && !tag && <TagsManager onPolicy={(t) => url.set({ tag: t.id })} />}
       {view === "tags" && tag && <TagPolicy id={tag} onBack={() => url.set({ tag: null })} />}
-      {view === "reports" && <ReportSchedules bundled={status.data.bundled} />}
+      {view === "reports" && <ReportSchedules />}
       {view === "server" && <ServerSettingsPanel />}
       {view === "lifecycle" && <LifecyclePanel />}
       {view === "packages" && <AgentPackagesPanel />}

@@ -263,7 +263,7 @@ describe("scripts", () => {
     installFakeApi({
       ...baseRoutes(PATCHER),
       ...lists,
-      "GET /patching": ok({ configured: true, canOperate: true, canSchedule: false }),
+      "GET /patching": ok({ configured: true, canSchedule: false }),
       "GET /scripts/:id": ok({ ...SCRIPTS[0], body }),
       "GET /jobs": ok({ items: [] }),
       "GET /devices": ok({ items: [] }),
@@ -280,7 +280,7 @@ describe("scripts", () => {
   it("warns live in the editor, and stops once the line is gone", async () => {
     const user = userEvent.setup();
     const PATCHER = sessionView({ permissions: [...ADMIN.permissions, "patch.view"] });
-    const server = installFakeApi({ ...baseRoutes(PATCHER), ...lists, "GET /patching": ok({ configured: true, canOperate: true, canSchedule: false }) });
+    const server = installFakeApi({ ...baseRoutes(PATCHER), ...lists, "GET /patching": ok({ configured: true, canSchedule: false }) });
     renderApp("/scripts/new");
     const editor = await screen.findByLabelText(/^Body/);
     await user.click(editor);
@@ -299,7 +299,7 @@ describe("scripts", () => {
     const PATCHER = sessionView({ permissions: [...ADMIN.permissions, "patch.view"] });
     const server = installFakeApi({
       ...baseRoutes(PATCHER),
-      "GET /patching": ok({ configured: false, canOperate: false, canSchedule: false }),
+      "GET /patching": ok({ configured: false, canSchedule: false }),
       "GET /scripts/:id": ok({ ...SCRIPTS[0], body: "apt-get -y upgrade\n" }),
       "GET /jobs": ok({ items: [] }),
       "GET /devices": ok({ items: [] }),

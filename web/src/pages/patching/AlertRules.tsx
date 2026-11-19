@@ -12,20 +12,7 @@ import { plural } from "../../lib/format";
 import { PatchSeverityBadge, RULE_KIND_ORDER, RULE_KINDS, SEVERITIES, thresholdText } from "./patchAlertText";
 
 // Settings → Patching → Alert rules (one-product plan, C7): what makes EasyPatch raise an alert, for which organizations
-// and devices, and where it sends it. Server-wide, so only super administrators see and change them, with the bundled
-// engine: a connected server keeps them in its own console.
-
-/** A connected server's rules and channels are its console's: said, not shown as a failure. */
-export function ServerWideNotice({ error, onRetry }: { error: unknown; onRetry: () => void }) {
-  if (error instanceof ApiError && error.code === "easypatch_server_wide") {
-    return (
-      <Alert tone="info" title="Set in EasyPatch">
-        {error.message}
-      </Alert>
-    );
-  }
-  return <ErrorState error={error} onRetry={onRetry} />;
-}
+// and devices, and where it sends it. Server-wide, so only super administrators see and change them.
 
 function covers(r: PatchAlertRule): string {
   if (r.unlinkedOrganization) return "An EasyPatch organization EasyRMM does not link";
@@ -46,7 +33,7 @@ export function AlertRulesPanel() {
     },
   });
   if (list.isPending) return <Spinner />;
-  if (list.isError) return <ServerWideNotice error={list.error} onRetry={() => void list.refetch()} />;
+  if (list.isError) return <ErrorState error={list.error} onRetry={() => void list.refetch()} />;
   const { items, channels } = list.data;
   const channelName = (id: string) => channels.find((c) => c.id === id)?.name ?? "A deleted channel";
 

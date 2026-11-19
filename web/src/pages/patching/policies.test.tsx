@@ -18,7 +18,7 @@ async function open(path: string) {
   await screen.findByRole("main");
 }
 
-const READY: PatchStatus = { configured: true, canOperate: true, canSchedule: false, bundled: true };
+const READY: PatchStatus = { configured: true, canSchedule: false };
 
 /** Configures patching in its organizations; not a super administrator. */
 const ORG_ADMIN = sessionView({
@@ -377,14 +377,16 @@ describe("policy editor", () => {
     expect(main().getAllByText("· set here")).toHaveLength(1);
   });
 
-  it("says so when the organization is not patched by EasyPatch", async () => {
+  it("says so when the organization is not in the patching engine yet", async () => {
     installFakeApi(
       orgRoutes(ORG_ADMIN, {
         "GET /patching/policies/organization/:id": fail(409, "easypatch_not_linked", "This organization is not linked to EasyPatch."),
       }),
     );
     await open("/organizations/o1?tab=patch-policy");
-    expect(await main().findByText("Not patched by EasyPatch")).toBeInTheDocument();
+    expect(await main().findByText("Not in the patching engine yet")).toBeInTheDocument();
+    expect(main().getByText(/EasyRMM creates it by itself/)).toBeInTheDocument();
+    expect(main().queryByText(/links it/)).not.toBeInTheDocument();
   });
 
   it("hides the tab until EasyPatch is set up", async () => {
@@ -572,41 +574,33 @@ describe("Settings → Patching", () => {
     expect(main().queryByRole("button", { name: /^Delete/ })).not.toBeInTheDocument();
   });
 
-  it("points to Settings → EasyPatch until EasyPatch is set up", async () => {
+  it("says patching is not available without the patching engine, offering nothing to set up", async () => {
     installFakeApi(settingsRoutes(SUPER, { "GET /patching": ok({ ...READY, configured: false }) }));
     await open("/settings?tab=patching");
-    expect(await main().findByText("EasyPatch is not set up")).toBeInTheDocument();
-    expect(main().getByRole("link", { name: "Set up EasyPatch" })).toHaveAttribute("href", "/settings?tab=easypatch");
+    expect(await main().findByText("Patching is not available")).toBeInTheDocument();
+    expect(main().getByText("deploy/scripts/setup.sh")).toBeInTheDocument();
+    expect(main().queryByRole("link", { name: /Set up/ })).not.toBeInTheDocument();
+    expect(main().queryByRole("radio", { name: "Tags" })).not.toBeInTheDocument();
   });
 
-  const REASON = "With a connected EasyPatch server, the default policy, tags and tags' policies are changed in EasyPatch's own console.";
-  const connected = () =>
-    settingsRoutes(SUPER, {
-      ...policyRoutes("default", view("default", "Default policy", { own: BUILT_IN, inherited: BUILT_IN, canEdit: false, readOnlyReason: REASON })),
-      "GET /patching/tags": ok({ items: TAGS, canManage: false, readOnlyReason: REASON }),
-      "GET /patching/policies/tag/:id": fail(409, "easypatch_server_wide", "A tag's policy is seen and changed in EasyPatch's own console."),
-    });
-
-  it("with a connected EasyPatch server, leaves the default policy and tags to EasyPatch's console", async () => {
+  it("shows tags' policies to those who see patching everywhere but may not change them", async () => {
     const user = userEvent.setup();
-    installFakeApi(connected());
+    // Configures patching in its own organizations and sees it everywhere.
+    const READER = sessionView({ ...ORG_ADMIN, globalPermissions: ["org.view", "site.view", "patch.view"] });
+    installFakeApi(
+      settingsRoutes(READER, {
+        ...policyRoutes("default", view("default", "Default policy", { own: BUILT_IN, inherited: BUILT_IN, canEdit: false })),
+        "GET /patching/tags": ok({ items: TAGS, canManage: false }),
+      }),
+    );
     await open("/settings?tab=patching");
-    expect(await main().findByText(REASON)).toBeInTheDocument();
+    expect(await main().findByText("Only super administrators change the default policy and tags' policies.")).toBeInTheDocument();
     expect(main().queryByRole("button", { name: "Save policy" })).not.toBeInTheDocument();
 
     await user.click(main().getByRole("radio", { name: "Tags" }));
     const table = await main().findByRole("table");
-    expect(main().getByText(/Tags made there can be given to organizations, sites and devices here/)).toBeInTheDocument();
-    expect(within(table).getByText("Has a policy")).toBeInTheDocument();
-    expect(main().queryByRole("button", { name: "View policy" })).not.toBeInTheDocument();
+    expect(within(table).getAllByRole("button", { name: "View policy" }).length).toBeGreaterThan(0);
     expect(main().queryByRole("button", { name: "Add tag" })).not.toBeInTheDocument();
-  });
-
-  it("with a connected EasyPatch server, says a tag's policy is in EasyPatch's console", async () => {
-    installFakeApi(connected());
-    await open("/settings?tab=patching&view=tags&tag=t1");
-    expect(await main().findByText("Managed in EasyPatch")).toBeInTheDocument();
-    expect(main().getByText("A tag's policy is seen and changed in EasyPatch's own console.")).toBeInTheDocument();
   });
 
   it("says who changes the default policy to everyone else", async () => {

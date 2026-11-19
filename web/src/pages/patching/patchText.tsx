@@ -1,9 +1,17 @@
-import { useId, type ReactNode } from "react";
-import type { AgentInstall, ComplianceStatus, PatchJob, PatchLink, PatchPolicy, PatchStatus, PatchUpdateState } from "../../api/types";
-import { ArrowUpRight } from "lucide-react";
-import { useApi } from "../../api/hooks";
-import { Badge, Button, buttonClasses, cx, Dot, Field, Select, type Tone } from "../../components/ui";
+import { useId } from "react";
+import type { AgentInstall, ComplianceStatus, PatchJob, PatchLink, PatchPolicy, PatchUpdateState } from "../../api/types";
+import { ShieldOff } from "lucide-react";
+import { Badge, Button, Dot, EmptyState, Field, Mono, Select, type Tone } from "../../components/ui";
 import { plural } from "../../lib/format";
+
+/** A deployment without the patching engine (ADR-0046): nothing in the console sets it up, so nothing here offers to. */
+export function NoPatchingEngine() {
+  return (
+    <EmptyState title="Patching is not available" icon={<ShieldOff className="size-8" aria-hidden />}>
+      The patching engine is not set up in this deployment. <Mono>deploy/scripts/setup.sh</Mono> sets it up on the server.
+    </EmptyState>
+  );
+}
 
 export const COMPLIANCE: Record<ComplianceStatus, { label: string; tone: Tone; hint: string }> = {
   Compliant: {
@@ -243,9 +251,10 @@ export function maintenanceText(p: PatchPolicy): string {
 }
 
 /**
- * Who asked for a job: an EasyPatch user, or an API token such as EasyRMM's — "token:<name>", or "token:<name> for <person>" when the
- * EasyPatch server records who the token acted for (its on-behalf-of capability). EasyRMM sends its users' email addresses, so the
- * person is what follows the last " for " when it looks like one; a token named "Patch for prod" stays a token.
+ * Who asked for a job. Jobs from before EasyPatch moved into EasyRMM, kept by an import, name an EasyPatch user or an API token,
+ * such as the one EasyRMM's former connector used — "token:<name>", or "token:<name> for <person>" when EasyPatch recorded who the
+ * token acted for (its on-behalf-of capability). EasyRMM sent its users' email addresses, so the person is what follows the last
+ * " for " when it looks like one; a token named "Patch for prod" stays a token.
  */
 export function requester(by: string): string {
   if (!by.startsWith("token:")) return by;

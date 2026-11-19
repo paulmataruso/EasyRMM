@@ -12,7 +12,7 @@ import { addresses, reportMonth } from "./PatchReports";
 
 const location = () => screen.getByTestId("location").textContent;
 
-const BUNDLED: PatchStatus = { configured: true, canOperate: true, canSchedule: true, bundled: true };
+const READY: PatchStatus = { configured: true, canSchedule: true };
 
 /** Manages and configures patching in Acme, and reads reports; not a super administrator. */
 const MANAGER = sessionView({
@@ -116,7 +116,7 @@ function routes(session = MANAGER, extra: Record<string, unknown> = {}) {
   return {
     ...baseRoutes(session),
     "GET /organizations": ok({ items: [ACME] }),
-    "GET /patching": ok(BUNDLED),
+    "GET /patching": ok(READY),
     "GET /reports/:name": (r: FakeRequest) =>
       ok(r.params.name === "patch-installations" ? installations : r.params.name === "patch-compliance" ? compliance : { ...installations, name: r.params.name, title: "Device inventory" }),
     "GET /patching/reports/trend": ok(trend()),
@@ -127,8 +127,8 @@ function routes(session = MANAGER, extra: Record<string, unknown> = {}) {
 }
 
 describe("patch reports", () => {
-  it("offers the patch reports once EasyPatch is set up", async () => {
-    installFakeApi(routes(MANAGER, { "GET /patching": ok({ ...BUNDLED, configured: false }) }));
+  it("offers the patch reports only with the patching engine", async () => {
+    installFakeApi(routes(MANAGER, { "GET /patching": ok({ ...READY, configured: false }) }));
     renderApp("/reports");
     await screen.findByRole("table", { name: "Device inventory" });
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual(["Device inventory", "Device health"]);
@@ -335,7 +335,6 @@ describe("report schedules", () => {
   it("shows a schedule that is on, read-only to those who may not change it", async () => {
     installFakeApi(
       routes(MANAGER, {
-        "GET /patching": ok({ ...BUNDLED, bundled: false }),
         "GET /patching/report-schedules": ok([
           schedule({ enabled: true, dayOfMonth: 3, recipients: ["cfo@example.com"], includeEndpointList: false, nextReportDate: "2026-12-03", canEdit: false }),
         ]),
@@ -348,7 +347,7 @@ describe("report schedules", () => {
     expect(within(table).getByText("cfo@example.com")).toBeInTheDocument();
     expect(within(table).getByText("Europe/London")).toBeInTheDocument();
     expect(within(table).queryByRole("button")).not.toBeInTheDocument();
-    expect(screen.getByText(/emailed through EasyPatch's mail server/)).toBeInTheDocument();
+    expect(screen.getByText(/emailed through EasyRMM's mail server/)).toBeInTheDocument();
   });
 
   it("says when there is no organization to schedule", async () => {

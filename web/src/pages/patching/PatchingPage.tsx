@@ -3,7 +3,6 @@ import { Link, useLocation } from "react-router";
 import { Download, ListChecks, PackagePlus, Power, Radar, ShieldCheck } from "lucide-react";
 import { useApi, useList } from "../../api/hooks";
 import type { DeviceGroup, PatchFleet, PatchFleetDevice, PatchJobView, PatchStatus } from "../../api/types";
-import { useAuth } from "../../auth/AuthContext";
 import { OrganizationSelect, SearchInput, SiteSelect } from "../../components/Filters";
 import { Alert, Button, Card, cx, EmptyState, ErrorState, Field, PageHeader, Segmented, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
@@ -19,6 +18,7 @@ import {
   jobOutcome,
   jobTypeLabel,
   LinkBadge,
+  NoPatchingEngine,
   PatchJobBadge,
   requester,
 } from "./patchText";
@@ -28,7 +28,7 @@ import { JOB_FILTERS, PatchJobs } from "./PatchJobs";
 import { PatchUpdates } from "./PatchUpdates";
 
 /**
- * Patching across organizations, through EasyPatch (ADR-0030): what needs attention, which devices miss updates, every
+ * Patching across organizations, through the patching engine (ADR-0038): what needs attention, which devices miss updates, every
  * update across them, scans and installs on many devices at once, the jobs that carry them out, and installing the
  * EasyPatch agent where it is missing (ADR-0031).
  */
@@ -59,7 +59,6 @@ const CLEARED = {
 
 export function PatchingPage() {
   const url = useUrlState();
-  const { can } = useAuth();
   const status = useApi<PatchStatus>("/patching", undefined, {
     staleTime: 30_000,
   });
@@ -85,30 +84,10 @@ export function PatchingPage() {
         <ErrorState error={status.error} onRetry={() => void status.refetch()} />
       ) : !status.data.configured ? (
         <Card>
-          <EmptyState
-            title="EasyPatch is not set up"
-            icon={<ShieldCheck className="size-8" aria-hidden />}
-            action={
-              can("settings.manage") ? (
-                <Link to="/settings?tab=easypatch" className="font-medium text-accent hover:underline">
-                  Set up EasyPatch
-                </Link>
-              ) : undefined
-            }
-          >
-            {can("settings.manage")
-              ? "Connect EasyRMM to your EasyPatch server with an API token, then link organizations. Devices with the EasyPatch agent then show here."
-              : "A super administrator connects EasyRMM to EasyPatch in Settings. Devices with the EasyPatch agent then show here."}
-          </EmptyState>
+          <NoPatchingEngine />
         </Card>
       ) : (
         <>
-          {!status.data.canOperate && (
-            <Alert tone="info" className="mb-4" title="Read-only">
-              EasyRMM's EasyPatch API token can only read, so scans and installs are off. A super administrator can replace it with an Operator token in
-              Settings → EasyPatch.
-            </Alert>
-          )}
           <Tabs
             active={tab}
             // Each tab has its own filters; the organization carries over.
@@ -215,7 +194,7 @@ function Fleet({ status }: { status: PatchStatus }) {
             <Card>
               <EmptyState title={filtered ? "No devices match these filters" : "No devices to patch yet"} icon={<ShieldCheck className="size-8" aria-hidden />}>
                 {!filtered &&
-                  "Devices show here once their organization is linked to an EasyPatch organization, or once their EasyRMM agent reports an EasyPatch agent."}
+                  "Devices show here once EasyRMM has created their organization in the patching engine, or once their EasyRMM agent reports an EasyPatch agent."}
               </EmptyState>
             </Card>
           ) : (
@@ -238,8 +217,8 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
   const { scan, dialog } = useScan();
   // Linked devices can be scanned and patched; devices without an EasyPatch agent can be given one.
   const selectable = useMemo(
-    () => devices.filter((d) => d.canManage && status.canOperate && (d.link === "linked" || d.link === "none")),
-    [devices, status.canOperate],
+    () => devices.filter((d) => d.canManage && (d.link === "linked" || d.link === "none")),
+    [devices],
   );
 
   // Devices that leave the list, or can no longer be acted on, leave the selection.

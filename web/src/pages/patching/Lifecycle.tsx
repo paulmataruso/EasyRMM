@@ -5,7 +5,7 @@ import { useApi, useApiMutation } from "../../api/hooks";
 import type { PatchLifecycleEntry, PatchLifecycleInput, PatchLifecycleList } from "../../api/types";
 import { ConfirmDialog, Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Alert, Badge, Button, Card, EmptyState, ErrorState, Field, IconButton, InlineError, Select, SelectField, Spinner, TableWrap, TextareaField, TextField } from "../../components/ui";
+import { Badge, Button, Card, EmptyState, ErrorState, Field, IconButton, InlineError, Select, SelectField, Spinner, TableWrap, TextareaField, TextField } from "../../components/ui";
 
 // Settings → Patching → OS lifecycle (one-product plan, C6): when each operating system build stops getting security
 // updates. EasyPatch matches a device's product, edition group and build to an entry to say whether its operating system
@@ -85,7 +85,7 @@ export function LifecyclePanel() {
   });
   if (list.isPending) return <Spinner />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => void list.refetch()} />;
-  const { items, canEdit, readOnlyReason } = list.data;
+  const { items, canEdit } = list.data;
   const products = [...new Set(items.map((e) => e.product))];
   const shown = product ? items.filter((e) => e.product === product) : items;
   return (
@@ -118,13 +118,7 @@ export function LifecyclePanel() {
           </Field>
         )}
       </div>
-      {readOnlyReason ? (
-        <div className="border-b border-line p-4">
-          <Alert tone="info">{readOnlyReason}</Alert>
-        </div>
-      ) : (
-        !canEdit && <p className="border-b border-line px-4 py-3 text-sm text-muted">Only super administrators change these dates.</p>
-      )}
+      {!canEdit && <p className="border-b border-line px-4 py-3 text-sm text-muted">Only super administrators change these dates.</p>}
       {shown.length === 0 ? (
         <EmptyState title="No entries" icon={<CalendarX2 className="size-8" aria-hidden />}>
           Without entries, every device&apos;s operating system support is unknown.

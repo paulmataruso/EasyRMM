@@ -218,8 +218,8 @@ test("3. an organization is made, and patching works for it", async () => {
   expect(organizationId).toMatch(/^[0-9a-f-]{36}$/);
 
   // The engine in this deployment answers: the fleet is read from it, and is empty.
-  const status = await api<{ configured: boolean; bundled: boolean; canOperate: boolean }>(page, "GET", "/api/v1/patching");
-  expect(status).toMatchObject({ configured: true, bundled: true, canOperate: true });
+  const status = await api<{ configured: boolean }>(page, "GET", "/api/v1/patching");
+  expect(status).toMatchObject({ configured: true });
   const fleet = await api<{ devices: unknown[]; errors?: string[] }>(page, "GET", `/api/v1/patching/devices?organizationId=${organizationId}`);
   expect(fleet.devices).toEqual([]);
   expect(fleet.errors ?? []).toEqual([]);

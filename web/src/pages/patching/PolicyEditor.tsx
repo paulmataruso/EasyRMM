@@ -210,23 +210,16 @@ export function PolicyPanel({ level, id, intro }: { level: PolicyLevel; id?: str
     const code = view.error instanceof ApiError ? view.error.code : "";
     if (code === "easypatch_not_linked") {
       return (
-        <EmptyState title="Not patched by EasyPatch" icon={<ShieldOff className="size-8" aria-hidden />}>
-          This organization is not linked to an EasyPatch organization, so it has no patch policy. A super administrator links it under
-          Settings → EasyPatch.
-        </EmptyState>
-      );
-    }
-    if (code === "easypatch_server_wide") {
-      return (
-        <EmptyState title="Managed in EasyPatch" icon={<ShieldOff className="size-8" aria-hidden />}>
-          {view.error.message}
+        <EmptyState title="Not in the patching engine yet" icon={<ShieldOff className="size-8" aria-hidden />}>
+          This organization has no organization of its own in the patching engine yet, so it has no patch policy. EasyRMM creates it by
+          itself, usually within a few minutes; when it cannot, a super administrator sees why under Settings → EasyPatch.
         </EmptyState>
       );
     }
     if (code === "easypatch_site_not_found") {
       return (
         <EmptyState title="No patch policy yet" icon={<ShieldOff className="size-8" aria-hidden />}>
-          EasyPatch has no site for this site yet. It is created when the site's first device gets the EasyPatch agent; until then the
+          The patching engine has no site for this site yet. EasyRMM creates it by itself, usually within a few minutes; until then the
           site's devices follow the organization's policy.
         </EmptyState>
       );
@@ -372,10 +365,9 @@ function PolicyForm({ view, path, intro }: { view: PatchPolicyView; path: string
       </div>
       {!canEdit && (
         <Alert tone="info">
-          {view.readOnlyReason ??
-            (top || level === "tag"
-              ? "Only super administrators change the default policy and tags' policies."
-              : "You can see this policy. Changing it needs permission to configure patching in this organization.")}
+          {top || level === "tag"
+            ? "Only super administrators change the default policy and tags' policies."
+            : "You can see this policy. Changing it needs permission to configure patching in this organization."}
         </Alert>
       )}
 

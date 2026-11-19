@@ -3,8 +3,6 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   DevicePatching,
-  EasyPatchConnection,
-  EasyPatchOrganizations,
   PatchEndpoint,
   PatchFleet,
   PatchActionResult,
@@ -18,7 +16,7 @@ import type {
   RestartPlan,
 } from "../../api/types";
 import { baseRoutes, fail, installFakeApi, noContent, ok, sessionView, unreportedRoutes, type FakeHandler, type FakeReply } from "../../test/fakeApi";
-import { device, org } from "../../test/fixtures";
+import { device } from "../../test/fixtures";
 import { renderApp, renderWithProviders } from "../../test/render";
 import { activityText, maintenanceText, requester } from "./patchText";
 import { RestartDialog } from "./PatchDialogs";
@@ -35,12 +33,10 @@ const VIEWER = sessionView({
   permissions: ["org.view", "site.view", "device.view", "patch.view"],
 });
 
-/** A connected EasyPatch server. */
+/** The patching engine, without the scheduled-installs capability. */
 const READY: PatchStatus = {
   configured: true,
-  canOperate: true,
   canSchedule: false,
-  bundled: false,
 };
 
 function endpoint(id: string, hostname: string, extra: Partial<PatchEndpoint> = {}): PatchEndpoint {
@@ -230,7 +226,7 @@ describe("patching page", () => {
     });
     // Without the scheduled-installs capability, installs start at once.
     expect(within(dialog).queryByLabelText("Install at")).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/needs an EasyPatch server with scheduled installs/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/This patching engine cannot install at a later time/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Install now" }));
     await waitFor(() => expect(server.callsTo("POST /patching/install")).toHaveLength(1));
     expect(server.call("POST /patching/install").body).toEqual({
@@ -312,7 +308,7 @@ describe("patching page", () => {
     expect(main().getByRole("button", { name: "Install EasyPatch agent…" })).toBeInTheDocument();
   });
 
-  it("says when EasyPatch is not set up", async () => {
+  it("says when the deployment has no patching engine, offering nothing to connect", async () => {
     installFakeApi({
       ...baseRoutes(
         sessionView({
@@ -321,28 +317,30 @@ describe("patching page", () => {
       ),
       "GET /patching": ok({
         configured: false,
-        canOperate: false,
         canSchedule: false,
       }),
     });
     renderApp("/patching?tab=devices");
     await screen.findByRole("main");
-    expect(await main().findByText("EasyPatch is not set up")).toBeInTheDocument();
-    expect(main().getByRole("link", { name: "Set up EasyPatch" })).toHaveAttribute("href", "/settings?tab=easypatch");
+    expect(await main().findByText("Patching is not available")).toBeInTheDocument();
+    expect(main().getByText(/The patching engine is not set up in this deployment/)).toBeInTheDocument();
+    expect(main().getByText("deploy/scripts/setup.sh")).toBeInTheDocument();
+    expect(main().queryByRole("link", { name: /Set up/ })).not.toBeInTheDocument();
+    expect(main().queryByRole("tab", { name: "Devices" })).not.toBeInTheDocument();
   });
 
-  it("is read-only for a viewer, and when EasyPatch's token cannot act", async () => {
+  it("is read-only for a viewer", async () => {
     installFakeApi({
       ...patchingRoutes(),
       ...baseRoutes(VIEWER),
-      "GET /patching": ok({ ...READY, canOperate: false }),
-      "GET /patching/devices": ok(FLEET),
+      // The server says which devices the person may act on.
+      "GET /patching/devices": ok({ ...FLEET, devices: FLEET.devices.map((d) => ({ ...d, canManage: false })) }),
     });
     renderApp("/patching?tab=devices");
     await screen.findByRole("main");
     await main().findByText("WEB-01");
-    expect(main().getByText("Read-only")).toBeInTheDocument();
     expect(main().queryByRole("checkbox")).not.toBeInTheDocument();
+    expect(main().queryByRole("button", { name: /^Scan/ })).not.toBeInTheDocument();
   });
 
   it("shows EasyPatch errors and an empty list", async () => {
@@ -990,7 +988,7 @@ describe("device patches", () => {
     expect(main().getByText("Windows Update")).toBeInTheDocument();
     await user.click(main().getByRole("button", { name: "Restart…" }));
     const dialog = await screen.findByRole("dialog", { name: "Restart WEB-01" });
-    // An EasyPatch server before 1.10.0 cannot tell servers apart, so every device waits for a tick.
+    // An engine before 1.10.0 cannot tell servers apart, so every device waits for a tick.
     expect(await within(dialog).findByText("Tick each device to restart")).toBeInTheDocument();
     expect(within(dialog).getByText(/older than 1\.10\.0/)).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Restart" })).toBeDisabled();
@@ -1260,16 +1258,15 @@ describe("device patches", () => {
     await screen.findByRole("main");
     expect(await main().findByText("EasyPatch agent installed")).toBeInTheDocument();
     expect(main().getByText(/Requested by a removed user/)).toBeInTheDocument();
-    expect(main().getByText(/Install the EasyPatch agent and enroll it with your EasyPatch server/)).toBeInTheDocument();
+    expect(main().getByText(/someone who manages patching here can have EasyRMM install it/)).toBeInTheDocument();
     expect(main().queryByRole("button", { name: /Install EasyPatch agent/ })).not.toBeInTheDocument();
   });
 
-  it("has no Patches tab until EasyPatch is set up", async () => {
+  it("has no Patches tab without the patching engine", async () => {
     installFakeApi({
       ...deviceRoutes(LINKED),
       "GET /patching": ok({
         configured: false,
-        canOperate: false,
         canSchedule: false,
       }),
     });
@@ -1280,191 +1277,8 @@ describe("device patches", () => {
   });
 });
 
-const UNSET: EasyPatchConnection = {
-  configured: false,
-  bundled: false,
-  url: "",
-  caCert: "",
-  serverVersion: "",
-  publicUrl: "",
-  capabilities: [],
-  canOperate: false,
-};
-const SET: EasyPatchConnection = {
-  configured: true,
-  bundled: false,
-  url: "https://patch.example.com",
-  caCert: "",
-  serverVersion: "1.9.0",
-  publicUrl: "https://patch.example.com",
-  capabilities: [],
-  canOperate: true,
-  checkedAt: T,
-  updatedAt: T,
-  updatedBy: "alex@example.com",
-};
-const ORGS: EasyPatchOrganizations = {
-  easyPatch: [
-    {
-      id: "ep-o1",
-      name: "Northwind Patch",
-      isActive: true,
-      siteCount: 1,
-      endpointCount: 3,
-    },
-    {
-      id: "ep-o2",
-      name: "Contoso Patch",
-      isActive: true,
-      siteCount: 1,
-      endpointCount: 1,
-    },
-  ],
-  links: [
-    {
-      organizationId: "o1",
-      organizationName: "Northwind Traders",
-      easyPatchId: "ep-o1",
-      easyPatchName: "Northwind Patch",
-      linkedAt: T,
-      autoInstall: false,
-      devices: { linked: 2, unlinked: 1, pending: 0 },
-    },
-  ],
-};
-
-describe("EasyPatch settings", () => {
-  it("connects to EasyPatch, checking the token first", async () => {
-    const user = userEvent.setup();
-    let saved = false;
-    const server = installFakeApi({
-      ...baseRoutes(sessionView()),
-      "GET /settings/easypatch": () => ok(saved ? SET : UNSET),
-      "GET /settings/easypatch/organizations": ok(ORGS),
-      "GET /settings/easypatch/devices": ok({ items: [] }),
-      "GET /audit": ok({ items: [] }),
-      "PUT /settings/easypatch": (r) => {
-        if ((r.body as { token: string }).token === "ept_wrong")
-          return fail(422, "validation_failed", "Some fields need attention.", {
-            token: "EasyPatch refused the token: the API token is not valid",
-          });
-        saved = true;
-        return ok(SET);
-      },
-    });
-    renderApp("/settings?tab=easypatch");
-    await screen.findByRole("main");
-    expect(await screen.findByRole("heading", { name: "EasyPatch", level: 1 })).toBeInTheDocument();
-    expect(await main().findByText("Not set up")).toBeInTheDocument();
-    await user.type(main().getByLabelText(/^Address/), "https://patch.example.com");
-    await user.type(main().getByLabelText(/^API token/), "ept_wrong");
-    await user.click(main().getByRole("button", { name: "Connect" }));
-    expect(await main().findByText(/EasyPatch refused the token/)).toBeInTheDocument();
-    await user.clear(main().getByLabelText(/^API token/));
-    await user.type(main().getByLabelText(/^API token/), "ept_right");
-    await user.click(main().getByRole("button", { name: "Connect" }));
-    await waitFor(() => expect(server.callsTo("PUT /settings/easypatch")).toHaveLength(2));
-    expect(server.call("PUT /settings/easypatch", 1).body).toEqual({
-      url: "https://patch.example.com",
-      token: "ept_right",
-      caCert: "",
-    });
-    expect(await screen.findByText("Connected to EasyPatch 1.9.0")).toBeInTheDocument();
-    expect(await main().findByText("Connected")).toBeInTheDocument();
-    expect(main().getByText(/Not supported by this EasyPatch/)).toBeInTheDocument();
-    // The stored token is kept unless a new one is pasted.
-    expect(main().getByLabelText(/^API token/)).toHaveAttribute("placeholder", "Stored");
-  });
-
-  it("links organizations and lists devices that are not linked", async () => {
-    const user = userEvent.setup();
-    const server = installFakeApi({
-      ...baseRoutes(sessionView()),
-      "GET /organizations": ok({
-        items: [org("o1", "Northwind Traders"), org("o2", "Contoso")],
-      }),
-      "GET /settings/easypatch": ok({
-        ...SET,
-        canOperate: false,
-        lastError: "Cannot reach EasyPatch: connection refused",
-        lastErrorAt: "2026-11-16T11:00:00Z",
-      }),
-      "GET /settings/easypatch/organizations": ok(ORGS),
-      "GET /settings/easypatch/devices": ok({
-        items: [
-          {
-            deviceId: "d3",
-            deviceName: "APP-01",
-            organizationName: "Northwind Traders",
-            state: "unlinked",
-            reason: "Host names differ.",
-            checkedAt: T,
-          },
-        ],
-      }),
-      "PUT /settings/easypatch/organizations/:id": noContent,
-      "PATCH /settings/easypatch/organizations/:id": noContent,
-      "DELETE /settings/easypatch/organizations/:id": noContent,
-      "POST /settings/easypatch/check": ok(SET),
-      "GET /audit": ok({ items: [] }),
-    });
-    renderApp("/settings?tab=easypatch");
-    await screen.findByRole("main");
-    expect(await main().findByText("Failing")).toBeInTheDocument();
-    expect(main().getByText("Read only: views")).toBeInTheDocument();
-    expect(await main().findByText("Host names differ.")).toBeInTheDocument();
-    expect(main().getByText(/2 devices patched/)).toBeInTheDocument();
-
-    // Automatic installs of the EasyPatch agent, for linked organizations only.
-    await user.click(main().getByLabelText("Install the EasyPatch agent automatically in Northwind Traders"));
-    await waitFor(() => expect(server.callsTo("PATCH /settings/easypatch/organizations/:id")).toHaveLength(1));
-    expect(server.call("PATCH /settings/easypatch/organizations/:id").params.id).toBe("o1");
-    expect(server.call("PATCH /settings/easypatch/organizations/:id").body).toEqual({ autoInstall: true });
-    expect(await screen.findByText(/EasyRMM installs the EasyPatch agent on devices in Northwind Traders that have none/)).toBeInTheDocument();
-    expect(main().queryByLabelText("Install the EasyPatch agent automatically in Contoso")).not.toBeInTheDocument();
-
-    // Contoso can only take the EasyPatch organization nobody has.
-    const contoso = main().getByLabelText("Contoso");
-    expect(within(contoso).queryByRole("option", { name: "Northwind Patch" })).not.toBeInTheDocument();
-    await user.selectOptions(contoso, "ep-o2");
-    await waitFor(() => expect(server.callsTo("PUT /settings/easypatch/organizations/:id")).toHaveLength(1));
-    expect(server.call("PUT /settings/easypatch/organizations/:id").params.id).toBe("o2");
-    expect(server.call("PUT /settings/easypatch/organizations/:id").body).toEqual({ easyPatchId: "ep-o2" });
-
-    await user.selectOptions(main().getByLabelText("Northwind Traders"), "");
-    const confirm = await screen.findByRole("dialog", {
-      name: "Stop patching Northwind Traders from EasyRMM?",
-    });
-    await user.click(within(confirm).getByRole("button", { name: "Unlink" }));
-    await waitFor(() => expect(server.callsTo("DELETE /settings/easypatch/organizations/:id")).toHaveLength(1));
-
-    await user.click(main().getByRole("button", { name: "Check now" }));
-    await waitFor(() => expect(server.callsTo("POST /settings/easypatch/check")).toHaveLength(1));
-  });
-
-  it("removes the server after confirming", async () => {
-    const user = userEvent.setup();
-    const server = installFakeApi({
-      ...baseRoutes(sessionView()),
-      "GET /settings/easypatch": ok(SET),
-      "GET /settings/easypatch/organizations": ok({ ...ORGS, links: [] }),
-      "GET /settings/easypatch/devices": ok({ items: [] }),
-      "DELETE /settings/easypatch": noContent,
-      "GET /audit": ok({ items: [] }),
-    });
-    renderApp("/settings?tab=easypatch");
-    await screen.findByRole("main");
-    await user.click(await main().findByRole("button", { name: "Remove" }));
-    const confirm = await screen.findByRole("dialog", {
-      name: "Remove EasyPatch?",
-    });
-    await user.click(within(confirm).getByRole("button", { name: "Remove" }));
-    await waitFor(() => expect(server.callsTo("DELETE /settings/easypatch")).toHaveLength(1));
-    expect(await screen.findByText(/EasyPatch removed/)).toBeInTheDocument();
-  });
-});
-
 describe("job requester", () => {
+  // Jobs from a standalone EasyPatch, kept by an import, name API tokens and the people they acted for.
   it("names the person an API token acted for when EasyPatch records it", () => {
     expect(requester("tess@example.com")).toBe("tess@example.com");
     expect(requester("token:easyrmm")).toBe("API token easyrmm");

@@ -23,7 +23,7 @@ function ordinal(n: number): string {
   return `${n}${suffix}`;
 }
 
-export function ReportSchedules({ bundled }: { bundled: boolean }) {
+export function ReportSchedules() {
   const list = useApi<PatchReportSchedule[]>("/patching/report-schedules");
   const [editing, setEditing] = useState<PatchReportSchedule | null>(null);
   if (list.isPending) return <Spinner />;
@@ -31,15 +31,13 @@ export function ReportSchedules({ bundled }: { bundled: boolean }) {
   return (
     <Card title="Monthly report schedules" padded={false}>
       <p className="max-w-3xl px-4 pt-3 text-sm text-muted">
-        On the day you choose, each organization&apos;s report of the month before is made and emailed to its recipients.{" "}
-        {bundled
-          ? "Reports are emailed through EasyRMM's mail server, set with the EASYRMM_SMTP_ settings."
-          : "Reports are emailed through EasyPatch's mail server, set in EasyPatch's console."}{" "}
-        Reports made on a schedule are listed under Reports → Monthly patch reports.
+        On the day you choose, each organization&apos;s report of the month before is made and emailed to its recipients. Reports are
+        emailed through EasyRMM&apos;s mail server, set with the EASYRMM_SMTP_ settings. Reports made on a schedule are listed under
+        Reports → Monthly patch reports.
       </p>
       {list.data.length === 0 ? (
         <EmptyState title="No organizations to schedule" compact icon={<CalendarClock className="size-8" aria-hidden />}>
-          Schedules belong to organizations linked to EasyPatch whose patching you see as a whole.
+          Schedules belong to organizations in the patching engine whose patching you see as a whole.
         </EmptyState>
       ) : (
         <TableWrap className="mt-3 rounded-none border-x-0 border-b-0">

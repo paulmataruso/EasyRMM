@@ -8,7 +8,6 @@ import { ConfirmDialog, Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Alert, Badge, Button, Card, EmptyState, ErrorState, IconButton, Mono, Select, SelectField, Spinner, TableWrap, TextareaField, TextField } from "../../components/ui";
 import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
-import { ServerWideNotice } from "./AlertRules";
 import { DeliveryBadge } from "./patchAlertText";
 
 // Settings → Patching → Notifications (one-product plan, C7): the channels EasyPatch sends alerts to, the messages it
@@ -42,7 +41,7 @@ function destination(c: PatchChannel): string {
 export function NotificationsPanel() {
   const view = useApi<PatchNotifications>("/patching/notifications");
   if (view.isPending) return <Spinner />;
-  if (view.isError) return <ServerWideNotice error={view.error} onRetry={() => void view.refetch()} />;
+  if (view.isError) return <ErrorState error={view.error} onRetry={() => void view.refetch()} />;
   return (
     <div className="flex flex-col gap-4">
       <Channels channels={view.data.channels} mailServer={view.data.mail.host !== ""} />

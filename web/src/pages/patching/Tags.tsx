@@ -225,9 +225,7 @@ export function TagsManager({ onPolicy }: { onPolicy: (tag: PatchTag) => void })
   });
   if (list.isPending) return <Spinner />;
   if (list.isError) return <ErrorState error={list.error} onRetry={() => void list.refetch()} />;
-  const { items, canManage, readOnlyReason } = list.data;
-  // With a connected EasyPatch server, EasyRMM's token may not read a tag's policy.
-  const viewable = seePolicies && !readOnlyReason;
+  const { items, canManage } = list.data;
   return (
     <Card
       title="Tags"
@@ -244,11 +242,6 @@ export function TagsManager({ onPolicy }: { onPolicy: (tag: PatchTag) => void })
         A tag's policy applies to the devices that have the tag, directly or through their site or organization. It overrides
         their site's and organization's policy and is overridden by a device's own. When tags disagree, the higher priority wins.
       </p>
-      {readOnlyReason && (
-        <div className="border-b border-line p-4">
-          <Alert tone="info">{readOnlyReason} Tags made there can be given to organizations, sites and devices here.</Alert>
-        </div>
-      )}
       {items.length === 0 ? (
         <EmptyState
           title="No tags yet"
@@ -284,7 +277,7 @@ export function TagsManager({ onPolicy }: { onPolicy: (tag: PatchTag) => void })
                   </td>
                   <td className="text-right tabular-nums">{t.priority}</td>
                   <td>
-                    {viewable && (canManage || t.hasPolicy) ? (
+                    {seePolicies && (canManage || t.hasPolicy) ? (
                       <button type="button" className="text-left text-accent hover:underline" onClick={() => onPolicy(t)}>
                         {!canManage ? "View policy" : t.hasPolicy ? "Edit policy" : "Add a policy"}
                       </button>

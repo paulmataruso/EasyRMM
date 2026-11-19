@@ -34,7 +34,8 @@ export function PatchingOverview() {
       ) : t && t.devices === 0 && fleet.data.unmatched.length === 0 ? (
         <Card>
           <EmptyState title="No devices to patch yet" icon={<ShieldCheck className="size-8" aria-hidden />}>
-            Devices show here once their organization is linked to EasyPatch, or once their EasyRMM agent reports an EasyPatch agent.
+            Devices show here once EasyRMM has created their organization in the patching engine, or once their EasyRMM agent reports an
+            EasyPatch agent.
           </EmptyState>
         </Card>
       ) : (

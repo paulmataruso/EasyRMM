@@ -104,8 +104,8 @@ function NotLinked({ patching: d, device }: { patching: DevicePatching; device: 
           (!device.agent
             ? "EasyRMM finds the EasyPatch agent through its own agent, which this device does not have."
             : canInstall
-              ? "The EasyRMM agent has not reported an EasyPatch agent on this device. EasyRMM can install it and enroll it with your EasyPatch server."
-              : "The EasyRMM agent has not reported an EasyPatch agent on this device. Install the EasyPatch agent and enroll it with your EasyPatch server; the EasyRMM agent reports it with its next inventory, within an hour.")}
+              ? "The EasyRMM agent has not reported an EasyPatch agent on this device. EasyRMM can install it and enroll it in the patching engine."
+              : "The EasyRMM agent has not reported an EasyPatch agent on this device. On Windows and Linux, someone who manages patching here can have EasyRMM install it; the EasyRMM agent reports it with its next inventory, within an hour.")}
         {d.link === "pending" && "EasyRMM is making sure the EasyPatch endpoint the device reports is this device. This takes up to a minute."}
         {d.link === "unlinked" && (
           <>

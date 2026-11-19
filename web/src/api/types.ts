@@ -939,34 +939,22 @@ export interface Report {
 }
 
 // ---------------------------------------------------------------------------------------------
-// EasyPatch (ADR-0030)
+// EasyPatch, the patching engine in this deployment (ADR-0038, ADR-0046)
 // ---------------------------------------------------------------------------------------------
 
-/** The EasyPatch server EasyRMM patches through. The API token is never sent back. */
+/** The patching engine EasyRMM calls on this server. The deployment sets it up; Settings only shows it. */
 export interface EasyPatchConnection {
+  /** False only when the deployment has no patching engine. */
   configured: boolean;
-  /** Patching comes from the engine in this deployment: the deployment sets it up, Settings cannot change it. */
-  bundled: boolean;
   url: string;
   caCert: string;
   serverVersion: string;
   publicUrl: string;
-  /** Optional features the server lists: "scheduled-installs", "on-behalf-of". */
+  /** Optional features the engine lists: "scheduled-installs", "on-behalf-of". */
   capabilities: string[];
-  /** The token is an Admin token; a ReadOnly one only reads. */
-  canOperate: boolean;
   checkedAt?: string;
   lastError?: string;
   lastErrorAt?: string;
-  updatedAt?: string;
-  updatedBy?: string;
-}
-
-export interface EasyPatchConnectionInput {
-  url: string;
-  /** Empty keeps the stored token, on the same server. */
-  token: string;
-  caCert: string;
 }
 
 export interface EasyPatchOrganization {
@@ -996,7 +984,7 @@ export interface EasyPatchOrganizations {
   error?: string;
 }
 
-/** How keeping the patching engine in step with EasyRMM goes (bundled mode, ADR-0040). */
+/** How keeping the patching engine in step with EasyRMM goes (ADR-0040). */
 export interface PatchingSync {
   /** When the last pass ended. */
   at?: string;
@@ -1036,11 +1024,9 @@ export interface EasyPatchDeviceLink {
 }
 
 export interface PatchStatus {
+  /** False only when the deployment has no patching engine. */
   configured: boolean;
-  canOperate: boolean;
   canSchedule: boolean;
-  /** Patching comes from the engine in this deployment, which emails reports through EasyRMM's mail server. */
-  bundled: boolean;
 }
 
 export type ComplianceStatus = "Compliant" | "MissingUpdates" | "FailedUpdates" | "RebootRequired" | "ScanStale" | "NeverScanned";
@@ -1392,8 +1378,6 @@ export interface PatchPolicyView {
   /** False for a device that is not a Windows computer. */
   windows: boolean;
   canEdit: boolean;
-  /** Why nobody may change it in EasyRMM: the default policy with a connected EasyPatch server. */
-  readOnlyReason?: string;
   organizationId?: string;
 }
 
@@ -1521,9 +1505,8 @@ export interface PatchSettingsView {
   settings: PatchServerSettings;
   feeds: PatchVulnerabilityFeed[];
   version: string;
+  /** Only super administrators change them. */
   canEdit: boolean;
-  /** Why nobody may change them in EasyRMM: with a connected EasyPatch server, its own console does. */
-  readOnlyReason?: string;
 }
 
 /** An operating system build's end of servicing, matched by product, edition group and build. Dates are 2006-01-02. */
@@ -1543,8 +1526,8 @@ export interface PatchLifecycleEntry extends PatchLifecycleInput {
 
 export interface PatchLifecycleList {
   items: PatchLifecycleEntry[];
+  /** Only super administrators change it. */
   canEdit: boolean;
-  readOnlyReason?: string;
 }
 
 /** An EasyPatch agent package, with where to download it. */
@@ -1761,8 +1744,6 @@ export interface PatchNotifications {
 export interface PatchTagList {
   items: PatchTag[];
   canManage: boolean;
-  /** Why nobody may manage tags in EasyRMM: with a connected EasyPatch server, its own console does. */
-  readOnlyReason?: string;
 }
 
 export interface PatchTagRef {

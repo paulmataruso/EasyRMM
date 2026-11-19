@@ -289,10 +289,10 @@ export const auditLog: AuditEntry[] = [
   }),
   audit(9115, 120, "u-priya.nair", "alert.acknowledge", { targetType: "alert", targetId: "a4", details: { name: "Memory pressure", device: "HDG-DC01" } }),
   audit(9114, 190, "u-dev.patel", "device.enroll", { targetType: "device", targetId: "d-mf-disp2", details: { device: "MF-DISPATCH-02" } }),
-  audit(9113, 260, "u-sam.okafor", "easypatch.organization_link", {
+  audit(9113, 260, "u-sam.okafor", "easypatch.organization_update", {
     targetType: "organization",
     targetId: "o-bright",
-    details: { organization: "Brightline Architects", easyPatchName: "Brightline Architects" },
+    details: { organization: "Brightline Architects", autoInstall: true },
   }),
   audit(9112, 330, "u-erin.walsh", "user.invite", { targetType: "user", targetId: "u-lucas", details: { email: "lucas.moreau@example.com" } }),
   audit(9111, 400, "u-jordan.lee", "auth.login", { targetType: "user", targetId: "u-jordan.lee" }),
@@ -366,9 +366,9 @@ export function healthHistory(range: string): MetricsHistory {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Patching through EasyPatch
+// Patching through the patching engine in the deployment
 
-export const patchStatus: PatchStatus = { configured: true, canOperate: true, canSchedule: true, bundled: true };
+export const patchStatus: PatchStatus = { configured: true, canSchedule: true };
 
 type Compliance = Pick<
   PatchEndpoint,

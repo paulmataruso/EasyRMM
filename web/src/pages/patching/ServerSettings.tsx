@@ -9,7 +9,7 @@ import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/
 import { NumberInput } from "./PolicyEditor";
 
 // Settings → Patching → Server (one-product plan, C6): EasyPatch's own settings, the same for every organization. Super
-// administrators change them with the bundled engine; with a connected server, its own console does.
+// administrators change them.
 
 type NumberKey = { [K in keyof PatchServerSettings]: PatchServerSettings[K] extends number ? K : never }[keyof PatchServerSettings];
 
@@ -148,7 +148,7 @@ export function ServerSettingsPanel() {
 
 function SettingsForm({ view }: { view: PatchSettingsView }) {
   const toast = useToast();
-  const { canEdit, readOnlyReason } = view;
+  const { canEdit } = view;
   const base = view.settings;
   const [form, setForm] = useState<PatchServerSettings>(base);
   const save = useApiMutation((s: PatchServerSettings) => api.put<PatchSettingsView>("/patching/settings", s), {
@@ -200,11 +200,7 @@ function SettingsForm({ view }: { view: PatchSettingsView }) {
         EasyPatch {view.version}. These settings are the same for every organization; patch policies set the rest, per organization,
         site, tag and device.
       </p>
-      {readOnlyReason ? (
-        <Alert tone="info">{readOnlyReason}</Alert>
-      ) : (
-        !canEdit && <Alert tone="info">Only super administrators change EasyPatch&apos;s server settings.</Alert>
-      )}
+      {!canEdit && <Alert tone="info">Only super administrators change EasyPatch&apos;s server settings.</Alert>}
 
       <Card title="Vulnerability data" padded={false}>
         <SettingRow

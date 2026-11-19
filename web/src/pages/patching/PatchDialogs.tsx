@@ -90,7 +90,7 @@ export function AgentInstallDialog({ open, onClose, devices, onDone }: { open: b
         open={open}
         onClose={onClose}
         title={`Install the EasyPatch agent on ${where}`}
-        description={`At its next check-in, within a minute, ${devices.length === 1 ? "the" : "each"} device's EasyRMM agent downloads the EasyPatch agent from your EasyPatch server, checks it, installs it and enrolls it in the EasyPatch organization linked to the device's organization.`}
+        description={`At its next check-in, within a minute, ${devices.length === 1 ? "the" : "each"} device's EasyRMM agent downloads the EasyPatch agent from the patching engine, checks it, installs it and enrolls it in the device's organization in the engine.`}
         footer={
           <>
             <Button onClick={onClose} disabled={install.isPending}>
@@ -106,7 +106,7 @@ export function AgentInstallDialog({ open, onClose, devices, onDone }: { open: b
           <li>A device that already has an EasyPatch agent is left alone, whichever server it is enrolled with.</li>
           <li>The device joins the EasyPatch site with the same name as its EasyRMM site, or no site when there is none.</li>
           <li>
-            Linux devices need systemd and apt-get or dnf. If your EasyPatch server's certificate comes from a private authority, Linux devices need that
+            Linux devices need systemd and apt-get or dnf. If EasyRMM&apos;s certificate comes from a private authority, Linux devices need that
             authority in their certificate store; EasyRMM does not change it.
           </li>
         </ul>
@@ -380,7 +380,7 @@ export function InstallDialog({
             </fieldset>
           ) : (
             <p className="text-xs text-muted">
-              Installs start when each device next checks in with EasyPatch. Installing at a later time needs an EasyPatch server with scheduled installs.
+              Installs start when each device next checks in with EasyPatch. This patching engine cannot install at a later time.
             </p>
           )}
           <InlineError error={install.error} />
@@ -578,7 +578,7 @@ export function RestartDialog({
                   <p className="text-xs text-muted">
                     {plan.data!.serversKnown
                       ? "A restart interrupts everyone using the server."
-                      : "Your EasyPatch server is older than 1.10.0 and cannot say which devices are servers, so each one waits for your tick."}
+                      : "This patching engine is older than 1.10.0 and cannot say which devices are servers, so each one waits for your tick."}
                   </p>
                   <ul className="max-h-48 divide-y divide-line overflow-y-auto rounded-md border border-line">
                     {servers.length > 1 && (

@@ -16,7 +16,7 @@ async function open(path: string) {
   await screen.findByRole("main");
 }
 
-const READY: PatchStatus = { configured: true, canOperate: true, canSchedule: false, bundled: true };
+const READY: PatchStatus = { configured: true, canSchedule: false };
 
 const SUPER = sessionView({
   permissions: ["org.view", "site.view", "device.view", "settings.manage", "audit.view", "report.view", "patch.view", "patch.manage", "patch.configure"],
@@ -188,13 +188,13 @@ describe("Settings → Patching → Server", () => {
     expect(main().queryByRole("button", { name: "Save settings" })).not.toBeInTheDocument();
   });
 
-  it("with a connected EasyPatch server, says its console changes them", async () => {
-    const reason = "With a connected EasyPatch server, its server settings and OS lifecycle are changed in EasyPatch's own console: EasyRMM's API token may not change them.";
-    installFakeApi(routes(SUPER, { "GET /patching/settings": ok(settingsView({ canEdit: false, readOnlyReason: reason, feeds: [], settings: { ...SETTINGS, vulnerabilityFeedsEnabled: false } })) }));
+  it("says when no vulnerability data is downloaded", async () => {
+    const view = settingsView({ feeds: [], settings: { ...SETTINGS, vulnerabilityFeedsEnabled: false } });
+    installFakeApi(routes(SUPER, { "GET /patching/settings": ok(view) }));
     await open("/settings?tab=patching&view=server");
-    expect(await main().findByText(reason)).toBeInTheDocument();
-    expect(main().getByText("Nothing downloaded.")).toBeInTheDocument();
+    expect(await main().findByText("Nothing downloaded.")).toBeInTheDocument();
     expect(main().queryByText(/Only super administrators/)).not.toBeInTheDocument();
+    expect(main().getByRole("checkbox", { name: "Download from Microsoft, CISA and Debian" })).not.toBeChecked();
   });
 });
 
@@ -299,10 +299,11 @@ describe("Settings → Patching → OS lifecycle", () => {
   });
 
   it("says what no entries mean", async () => {
-    installFakeApi(routes(SUPER, { "GET /patching/lifecycle": ok({ items: [], canEdit: false, readOnlyReason: "Changed in EasyPatch's own console." }) }));
+    installFakeApi(routes(SUPER, { "GET /patching/lifecycle": ok({ items: [], canEdit: true }) }));
     await open("/settings?tab=patching&view=lifecycle");
     expect(await main().findByText("No entries")).toBeInTheDocument();
-    expect(main().getByText("Changed in EasyPatch's own console.")).toBeInTheDocument();
+    expect(main().getByText(/Without entries, every device's operating system support is unknown/)).toBeInTheDocument();
+    expect(main().queryByText("Only super administrators change these dates.")).not.toBeInTheDocument();
   });
 });
 

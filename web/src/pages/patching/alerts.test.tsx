@@ -30,7 +30,7 @@ async function open(path: string) {
   await screen.findByRole("main");
 }
 
-const READY: PatchStatus = { configured: true, canOperate: true, canSchedule: false, bundled: true };
+const READY: PatchStatus = { configured: true, canSchedule: false };
 
 const SUPER = sessionView({
   permissions: ["org.view", "site.view", "device.view", "settings.manage", "audit.view", "patch.view", "patch.manage", "patch.configure"],
@@ -487,18 +487,23 @@ describe("Settings → Patching → Alert rules", () => {
     expect(await main().findByText("No alert rules")).toBeInTheDocument();
   });
 
-  it("with a connected EasyPatch server, says its console keeps them", async () => {
-    const reason = "With a connected EasyPatch server, its alert rules and notification channels are kept in EasyPatch's own console.";
-    installFakeApi(
+  it("says when the rules and channels could not be read, and reads them again", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi(
       settingsRoutes(SUPER, {
-        "GET /patching/alert-rules": fail(409, "easypatch_server_wide", reason),
-        "GET /patching/notifications": fail(409, "easypatch_server_wide", reason),
+        "GET /patching/alert-rules": fail(503, "easypatch_unavailable", "The patching engine did not answer."),
+        "GET /patching/notifications": fail(503, "easypatch_unavailable", "The patching engine did not answer."),
       }),
     );
     await open("/settings?tab=patching&view=rules");
-    expect(await main().findByText(reason)).toBeInTheDocument();
-    expect(main().getByText("Set in EasyPatch")).toBeInTheDocument();
-    expect(main().queryByRole("button", { name: /retry/i })).not.toBeInTheDocument();
+    expect(await main().findByText("The patching engine did not answer.")).toBeInTheDocument();
+    await user.click(main().getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(server.callsTo("GET /patching/alert-rules").length).toBeGreaterThan(1));
+
+    await user.click(main().getByRole("radio", { name: "Notifications" }));
+    expect(await main().findByText("The patching engine did not answer.")).toBeInTheDocument();
+    await user.click(main().getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(server.callsTo("GET /patching/notifications").length).toBeGreaterThan(1));
   });
 
   it("is only for super administrators", async () => {
