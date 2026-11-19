@@ -172,7 +172,7 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
             "test_rate_limited");
         await RunMaintenanceAsync<NotificationDeliveryTask>();
         var sent = Assert.Single(Factory.Transport.Emails);
-        Assert.Equal("[EasyPatch] Test notification", sent.Subject);
+        Assert.Equal("[EasyRMM] Test notification", sent.Subject);
         Assert.Equal(2, sent.Recipients.Count);
         Assert.Equal(SmtpPassword, sent.Password);
 
@@ -238,9 +238,9 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
         await RunMaintenanceAsync<NotificationDeliveryTask>();
         var webhook = Assert.Single(Factory.Transport.Webhooks);
         var email = Assert.Single(Factory.Transport.Emails);
-        Assert.Equal("[EasyPatch] 2 new alerts", email.Subject);
+        Assert.Equal("[EasyRMM] 2 new alerts", email.Subject);
         Assert.Contains("PC-OFF-2", email.Text, StringComparison.Ordinal);
-        Assert.Contains($"{EasyPatchApiFactory.PublicUrl}/endpoints/{first.EndpointId}", email.Html, StringComparison.Ordinal);
+        Assert.Contains($"{EasyPatchApiFactory.PublicUrl}/go/from-easypatch/endpoints/{first.EndpointId}", email.Html, StringComparison.Ordinal);
 
         // The generic webhook is signed with the channel secret: HMAC-SHA256(secret, "t.body").
         Assert.Equal(new Uri(WebhookUrl), webhook.Url);
@@ -280,7 +280,7 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
 
         await RunMaintenanceAsync<NotificationDeliveryTask>();
         Assert.Equal(2, Factory.Transport.Emails.Count);
-        Assert.Equal("[EasyPatch] Resolved: " + alertOne.Title, Factory.Transport.Emails.Last().Subject);
+        Assert.Equal("[EasyRMM] Resolved: " + alertOne.Title, Factory.Transport.Emails.Last().Subject);
 
         // Archiving the organization closes its alerts without notifications.
         var deliveriesBefore = await WithDbAsync(db => db.NotificationDeliveries.CountAsync());

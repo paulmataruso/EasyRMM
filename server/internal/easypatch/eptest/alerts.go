@@ -592,7 +592,7 @@ func (s *Server) serveChannels(w http.ResponseWriter, r *http.Request, parts []s
 			problem(w, 429, "test_rate_limited", "A test was sent to this channel less than 30 seconds ago.")
 			return
 		}
-		d := &DeliveryInfo{ID: uuid.New(), Channel: c.ID, Kind: "Test", Subject: "[EasyPatch] Test notification for " + c.Name, Status: "Pending", CreatedAt: now}
+		d := &DeliveryInfo{ID: uuid.New(), Channel: c.ID, Kind: "Test", Subject: "[EasyRMM] Test notification", Status: "Pending", CreatedAt: now}
 		s.deliveries = append(s.deliveries, d)
 		reply(w, 202, s.deliveryJSON(d))
 	default:

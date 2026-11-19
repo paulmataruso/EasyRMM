@@ -18,6 +18,8 @@ func TestLandingFor(t *testing.T) {
 		{"organizations", uuid.Nil, o, uuid.Nil, Landing{Path: "/organizations/" + o.String()}},
 		{"organizations", uuid.Nil, uuid.Nil, uuid.Nil, Landing{Path: "/patching", Notice: noticeOrganization}},
 		{"jobs", uuid.Nil, uuid.Nil, j, Landing{Path: "/patching?tab=jobs&job=" + j.String()}},
+		{"alerts", uuid.Nil, o, uuid.Nil, Landing{Path: "/patching?tab=alerts&organizationId=" + o.String()}},
+		{"alerts", uuid.Nil, uuid.Nil, uuid.Nil, Landing{Path: "/patching?tab=alerts", Notice: noticeOrganization}},
 		{"other", d, o, j, Landing{Path: "/patching"}},
 	} {
 		if got := landingFor(c.kind, c.dev, c.org, c.jb); got != c.want {

@@ -18,10 +18,10 @@ x-logging: &logging
     max-file: "5"
 
 # The patching engine's settings, shared by its services below. Its secrets
-# are not marked required (:?) here: Compose checks required variables even
-# for services whose profile is off, which would stop an install whose .env
-# predates them. easypatch-db-init refuses to run without them instead, and
-# nothing else of the engine starts until it has.
+# are not marked required (:?) here, so that an .env that predates them
+# still lets `docker compose` start, stop and back up the rest; setup.sh adds
+# them. easypatch-db-init refuses to run without them instead, and nothing
+# else of the engine starts until it has.
 x-easypatch-env: &easypatch-env
   ASPNETCORE_ENVIRONMENT: Production
   TZ: UTC

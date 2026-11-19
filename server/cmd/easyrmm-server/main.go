@@ -38,9 +38,9 @@ func run(args []string) int {
 		return 0
 	case "healthcheck":
 		return healthcheck()
-	case "serve", "migrate":
+	case "serve", "migrate", "import-easypatch":
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q (expected serve, migrate, healthcheck or version)\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command %q (expected serve, migrate, import-easypatch, healthcheck or version)\n", cmd)
 		return 2
 	}
 
@@ -60,6 +60,15 @@ func run(args []string) int {
 		}
 		if err != nil {
 			log.Error("migration failed", "error", err)
+			return 1
+		}
+		return 0
+	}
+	if cmd == "import-easypatch" {
+		// A standalone EasyPatch's database, restored as the patching
+		// engine's (deploy/scripts/import-easypatch.sh).
+		if err := app.ImportEasyPatch(ctx, cfg, log, os.Stdout); err != nil {
+			log.Error("importing EasyPatch failed", "error", err)
 			return 1
 		}
 		return 0

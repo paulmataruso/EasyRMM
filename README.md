@@ -94,7 +94,7 @@ regenerated when the console changes.
     </td>
     <td>
       <a href="easypatch/docs/images/dashboard.png"><picture><source media="(prefers-color-scheme: light)" srcset="easypatch/docs/images/dashboard-light.png"><img src="easypatch/docs/images/dashboard.png" alt="EasyPatch dashboard: compliance, known-exploited exposure, online and offline endpoints, a 30-day compliance trend and the least compliant organizations"></picture></a>
-      <br><sub><b>EasyPatch's console.</b> One click away with the EasyRMM | EasyPatch switch. <a href="easypatch/README.md#screenshots">More</a>.</sub>
+      <br><sub><b>EasyPatch's own console</b>, of its standalone releases up to 1.10.0; in EasyRMM, patching is done from EasyRMM's console. <a href="easypatch/README.md#screenshots">More</a>.</sub>
     </td>
   </tr>
 </table>
@@ -151,50 +151,49 @@ regenerated when the console changes.
   they go to; and EasyPatch's own server settings, OS lifecycle dates,
   agent packages and audit log. The devices' patches show on their own
   pages in EasyRMM.
-* **With a connected EasyPatch server**, its default policy, its tags, its
-  server settings, its OS lifecycle, and its alert rules and notification
-  channels are changed in EasyPatch's own console, and EasyRMM says so. The
-  [one-product plan](docs/architecture/one-product-plan.md)'s next step is
-  the switch-over (phase S).
-* **The EasyRMM | EasyPatch switch** under the logo moves between the two
-  consoles, landing on the same device, organization or job.
+* **The patching engine is part of every deployment.** EasyPatch's API and
+  worker run beside EasyRMM's server, on loopback, with their own database
+  in the same PostgreSQL. Its console is not served: people patch from
+  EasyRMM's, and EasyRMM's roles decide who sees and does what. EasyRMM
+  signs each call with who acts and what they may reach
+  ([ADR-0038](docs/architecture/adr/0038-statements-to-the-patching-engine.md)),
+  and the engine records it in its audit log and on its jobs.
+* **One set of organizations.** EasyRMM creates, renames and archives the
+  engine's organizations and sites to match its own
+  ([ADR-0040](docs/architecture/adr/0040-one-set-of-organizations.md)).
 * **EasyRMM installs EasyPatch's agent** through its own agent, per
   organization or per device ([ADR-0031](docs/architecture/adr/0031-easypatch-agent-install.md)).
-* **Organizations are linked** once, by an administrator. EasyRMM's roles
-  decide who sees and does what; EasyRMM records who acted in EasyPatch's
-  audit log and on its jobs.
-* **Any EasyPatch server.** EasyRMM connects to an EasyPatch server by its
-  address and an API token: one on the same machine, behind EasyRMM's edge
-  ([ADR-0035](docs/architecture/adr/0035-cohosting-easypatch.md)), or one
-  elsewhere. EasyPatch also runs on its own, without EasyRMM.
-* **One sign-in.** EasyRMM can be EasyPatch's sign-in provider, so the switch
-  never asks for a password, and each person's EasyPatch role follows their
-  EasyRMM roles
-  ([ADR-0036](docs/architecture/adr/0036-easyrmm-signs-in-to-easypatch.md)).
+  EasyPatch agents reach the engine through EasyRMM's edge, on EasyRMM's
+  name.
+* **A standalone EasyPatch moves in.** An EasyPatch 1.4 to 1.10 server is
+  imported from its backup, with its devices, agents, policies and history;
+  its agents keep reporting on its old name, which EasyRMM then answers
+  ([ADR-0045](docs/architecture/adr/0045-importing-a-standalone-easypatch.md),
+  [guide](docs/operations/import-easypatch.md)).
+* **EasyPatch is part of EasyRMM from here on.** Its standalone server,
+  console and installer (releases up to 1.10.0) are not developed further;
+  they are removed from this repository in the plan's phase R.
 
 The plan behind this, and its progress, is in
-[the integration plan](docs/architecture/easypatch-integration-plan.md).
+[the one-product plan](docs/architecture/one-product-plan.md).
 Setting it up is in [docs/operations/patching.md](docs/operations/patching.md).
 
 ## Architecture
 
 ```
-                         ┌─ easyrmm-server (Go) ── TLS edge, console, API, agent gateway
-browser, agents ──443──► │      ├──► PostgreSQL (loopback)
-                         │      ├──► MeshCentral (loopback) ◄── MeshAgent
-                         │      └──► EasyPatch API (HTTPS)
-                         │
-                         └─ EasyPatch's name: passed through, still encrypted
-                                └──► EasyPatch (.NET): Caddy, API, worker, PostgreSQL
-                                        ◄── EasyPatch agents
+browser, EasyRMM agents,       ┌─ easyrmm-server (Go): TLS edge, console, API, agent gateway
+EasyPatch agents ──443──────►  │      ├──► PostgreSQL (loopback): EasyRMM's and the engine's databases
+                               │      ├──► MeshCentral (loopback) ◄── MeshAgent
+                               │      └──► patching engine (loopback): EasyPatch's API and worker (.NET)
 ```
 
-* EasyRMM is three containers (server, PostgreSQL, MeshCentral) on Docker
-  with host networking. One public port (443), plus an optional port 80 for
-  ACME. It works with or without an existing NGINX in front.
-* EasyPatch is its own Compose stack. On the same server, EasyRMM's edge
-  passes EasyPatch's connections through by server name; EasyRMM never holds
-  EasyPatch's keys.
+* One Docker Compose deployment on host networking: EasyRMM's server,
+  PostgreSQL, MeshCentral, and the patching engine's API and worker. One
+  public port (443), plus an optional port 80 for ACME. It works with or
+  without an existing NGINX in front.
+* Only the server listens publicly. It forwards EasyPatch agents' requests
+  to the engine byte for byte, and calls the engine's API itself for
+  people, with a signed statement per request.
 
 Start with [`docs/architecture/overview.md`](docs/architecture/overview.md).
 The decisions behind the design are in

@@ -213,6 +213,21 @@ public sealed class AlertEngine(
         return match.EndpointId is { } endpoint ? $"{rule.Id:N}:{endpoint:N}" : $"{rule.Id:N}:org:{match.OrganizationId:N}";
     }
 
+    /// <summary>
+    /// EasyRMM's patching alerts, where a message's own link leads. The engine's public URL is EasyRMM's, and
+    /// EasyRMM turns the engine's ids into its own pages through /go/from-easypatch (one-product plan, phase S).
+    /// </summary>
+    public const string AlertsPath = "/patching?tab=alerts";
+
+    /// <summary>The link for one alert: its endpoint's device in EasyRMM, or its organization's patching alerts.</summary>
+    public static string AlertUrl(string baseUrl, Alert alert)
+    {
+        ArgumentNullException.ThrowIfNull(alert);
+        return alert.EndpointId is { } e
+            ? $"{baseUrl}/go/from-easypatch/endpoints/{e}"
+            : $"{baseUrl}/go/from-easypatch/alerts/{alert.OrganizationId}";
+    }
+
     public static NotificationMessage BuildMessage(NotificationKind kind, IReadOnlyList<Alert> alerts, IReadOnlyDictionary<Guid, string> orgNames, string publicUrl)
     {
         ArgumentNullException.ThrowIfNull(alerts);
@@ -221,27 +236,27 @@ public sealed class AlertEngine(
         var ordered = alerts.OrderByDescending(a => a.Severity).ThenBy(a => a.Title, StringComparer.OrdinalIgnoreCase).ToList();
         var items = ordered.Take(MaxItemsPerMessage).Select(a => new NotificationItem(
             a.Id, a.Severity, a.Title, orgNames.GetValueOrDefault(a.OrganizationId), a.Details,
-            a.EndpointId is { } e ? $"{baseUrl}/endpoints/{e}" : $"{baseUrl}/alerts?organizationId={a.OrganizationId}",
+            AlertUrl(baseUrl, a),
             kind == NotificationKind.AlertsResolved ? a.ResolvedAt ?? a.LastSeenAt : a.OpenedAt)).ToList();
         var n = alerts.Count;
         var single = n == 1 ? ordered[0] : null;
         var (subject, intro) = kind switch
         {
-            NotificationKind.AlertsOpened when single is not null => ($"[EasyPatch] {single.Severity}: {single.Title}", "A new alert was opened."),
-            NotificationKind.AlertsOpened => ($"[EasyPatch] {n} new alerts", $"{n} new alerts were opened."),
-            NotificationKind.AlertsResolved when single is not null => ($"[EasyPatch] Resolved: {single.Title}", "This alert was resolved."),
-            NotificationKind.AlertsResolved => ($"[EasyPatch] {n} alerts resolved", $"{n} alerts were resolved."),
-            NotificationKind.AlertsReminder when single is not null => ($"[EasyPatch] Still open: {single.Title}", "This alert is still open."),
-            _ => ($"[EasyPatch] {n} alerts still open", $"{n} alerts are still open and not acknowledged."),
+            NotificationKind.AlertsOpened when single is not null => ($"[EasyRMM] {single.Severity}: {single.Title}", "A new alert was opened."),
+            NotificationKind.AlertsOpened => ($"[EasyRMM] {n} new alerts", $"{n} new alerts were opened."),
+            NotificationKind.AlertsResolved when single is not null => ($"[EasyRMM] Resolved: {single.Title}", "This alert was resolved."),
+            NotificationKind.AlertsResolved => ($"[EasyRMM] {n} alerts resolved", $"{n} alerts were resolved."),
+            NotificationKind.AlertsReminder when single is not null => ($"[EasyRMM] Still open: {single.Title}", "This alert is still open."),
+            _ => ($"[EasyRMM] {n} alerts still open", $"{n} alerts are still open and not acknowledged."),
         };
-        return new NotificationMessage(kind, subject, intro, items, Math.Max(0, n - items.Count), $"{baseUrl}/alerts");
+        return new NotificationMessage(kind, subject, intro, items, Math.Max(0, n - items.Count), baseUrl + AlertsPath);
     }
 
     public static NotificationMessage TestMessage(string channelName, string publicUrl)
     {
         var baseUrl = (publicUrl ?? string.Empty).TrimEnd('/');
-        return new NotificationMessage(NotificationKind.Test, "[EasyPatch] Test notification",
-            $"This is a test of the notification channel \"{channelName}\". If you can read this, the channel works.", [], 0, $"{baseUrl}/alerts");
+        return new NotificationMessage(NotificationKind.Test, "[EasyRMM] Test notification",
+            $"This is a test of the notification channel \"{channelName}\". If you can read this, the channel works.", [], 0, baseUrl + AlertsPath);
     }
 
     private async Task<List<AlertMatch>> MatchAsync(AlertRule rule, DateTimeOffset now, CancellationToken ct)

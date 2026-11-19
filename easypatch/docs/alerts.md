@@ -93,13 +93,14 @@ Notifications are grouped. Each evaluation sends **at most one message per chann
 * reminders.
 
 A message lists up to 25 alerts, most severe first, followed by "…and N more". A single alert
-gets its own subject, for example `[EasyPatch] Warning: PC-042 has been offline for over 24
-hours`. Several alerts get a count, for example `[EasyPatch] 7 new alerts`. Each line links to
-the endpoint in the console. Messages contain host names, organization names and alert texts,
-and nothing else.
+gets its own subject, for example `[EasyRMM] Warning: PC-042 has been offline for over 24
+hours`. Several alerts get a count, for example `[EasyRMM] 7 new alerts`. Messages contain host
+names, organization names and alert texts, and nothing else.
 
-Links use the server's public URL (`EasyPatch:PublicUrl`, set from `EASYPATCH_DOMAIN` by
-`docker-compose.yml`).
+Links lead into EasyRMM, whose public URL is the engine's (`EasyPatch:PublicUrl`): each line to
+`/go/from-easypatch/endpoints/<id>` (the device's Patches tab) or, for an organization's alert,
+`/go/from-easypatch/alerts/<id>` (Patching → Alerts for that organization); the message itself to
+`/patching?tab=alerts`.
 
 ### Delivery and retries
 

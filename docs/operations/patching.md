@@ -666,6 +666,13 @@ organization.
   once). **Send a test** queues a test message (one each 30 seconds per
   channel). A channel that is off sends nothing; a type cannot change.
   Deleting a channel deletes its messages; rules stop sending to it.
+  *Messages* start `[EasyRMM]` (for example `[EasyRMM] Warning: PC-042
+  has been offline for over 24 hours`, or `[EasyRMM] 7 new alerts`) and
+  link into EasyRMM: an endpoint's alert to its device's **Patches** tab,
+  an organization's to **Patching → Alerts** for that organization, and
+  the message itself to **Patching → Alerts**. The links go through
+  `/go/from-easypatch/…`, which opens Patching with a notice when the
+  reader cannot see that device or organization.
   *Email and webhooks*: email channels send through EasyRMM's mail server,
   as monthly reports do ([Where email comes from](#reports)); without one
   they cannot send, and the page says so. Webhooks go to public addresses
@@ -869,6 +876,8 @@ nobody can act, whatever their role.
 | `patch.stop`, `patch.allow` | Patching stopped or allowed again for a device, by whom |
 | `easypatch.organization_create`, `easypatch.organization_adopt`, `easypatch.site_create`, `easypatch.site_adopt` | The bundled engine's organization or site EasyRMM created, or the existing one it took, for which EasyRMM organization or site |
 | `easypatch.organization_archive`, `easypatch.site_archive` | An engine organization or site archived because it was deleted in EasyRMM |
+| `easypatch.import` | A standalone EasyPatch imported ([Importing a standalone EasyPatch](import-easypatch.md)): how many organizations and sites were made in EasyRMM or joined EasyRMM's, and how many archived ones stayed in the engine |
+| `easypatch.organization_import`, `easypatch.site_import` | An imported organization or site linked: its name in the engine, its EasyRMM name, and whether it joined one EasyRMM had |
 | `easypatch.agent_uninstall`, `easypatch.endpoint_revoke`, `easypatch.agent_remove` | An uninstall job sent, an endpoint revoked, and a removal finished, each with the device's host name and why |
 | `idp.authorize` | A sign-in to EasyPatch through EasyRMM: the role and how many organizations it gave, or why it was refused (no second factor, no access, not signed in) |
 | `idp.client_create`, `idp.client_rotate`, `idp.client_delete` | Sign-in through EasyRMM set up, its secret replaced, or turned off |

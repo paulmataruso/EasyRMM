@@ -82,20 +82,32 @@ public sealed class NotificationRendererTests
     public void Digest_is_capped_and_sorted_by_severity()
     {
         var alerts = Enumerable.Range(1, 30).Select(i => Alert($"PC-{i:00} offline")).Append(Alert("SRV-01: 2 security updates missing", AlertSeverity.Critical)).ToList();
-        var m = AlertEngine.BuildMessage(NotificationKind.AlertsOpened, alerts, Orgs, "https://patch.example.com/");
-        Assert.Equal("[EasyPatch] 31 new alerts", m.Subject);
+        var m = AlertEngine.BuildMessage(NotificationKind.AlertsOpened, alerts, Orgs, "https://rmm.example.com/");
+        Assert.Equal("[EasyRMM] 31 new alerts", m.Subject);
         Assert.Equal(AlertEngine.MaxItemsPerMessage, m.Items.Count);
         Assert.Equal(6, m.MoreCount);
         Assert.Equal(AlertSeverity.Critical, m.Items[0].Severity);
-        Assert.StartsWith("https://patch.example.com/endpoints/", m.Items[0].Url, StringComparison.Ordinal);
-        Assert.Equal("https://patch.example.com/alerts", m.ConsoleUrl);
+        Assert.StartsWith("https://rmm.example.com/go/from-easypatch/endpoints/", m.Items[0].Url, StringComparison.Ordinal);
+        Assert.Equal("https://rmm.example.com/patching?tab=alerts", m.ConsoleUrl);
+    }
+
+    [Fact]
+    public void Links_lead_to_EasyRMMs_pages()
+    {
+        var endpoint = Guid.NewGuid();
+        var orgWide = Alert("3 endpoints not scanned");
+        orgWide.EndpointId = null;
+        var m = AlertEngine.BuildMessage(NotificationKind.AlertsOpened, [Alert("PC-01 offline", endpoint: endpoint), orgWide], Orgs, "https://rmm.example.com");
+        Assert.Contains($"https://rmm.example.com/go/from-easypatch/endpoints/{endpoint}", m.Items.Select(i => i.Url));
+        Assert.Contains($"https://rmm.example.com/go/from-easypatch/alerts/{OrgId}", m.Items.Select(i => i.Url));
+        Assert.Equal("https://rmm.example.com/patching?tab=alerts", AlertEngine.TestMessage("Ops", "https://rmm.example.com/").ConsoleUrl);
     }
 
     [Fact]
     public void Single_alert_subject_names_it()
     {
         var m = AlertEngine.BuildMessage(NotificationKind.AlertsResolved, [Alert("PC-01 offline")], Orgs, "https://x.test");
-        Assert.Equal("[EasyPatch] Resolved: PC-01 offline", m.Subject);
+        Assert.Equal("[EasyRMM] Resolved: PC-01 offline", m.Subject);
     }
 
     [Fact]

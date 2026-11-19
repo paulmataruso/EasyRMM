@@ -71,6 +71,14 @@ public sealed class PostgresFixture : IAsyncLifetime
         return ConnectionString(name);
     }
 
+    /// <summary>Creates an empty database, without EasyPatch's schema, for a test that migrates it itself.</summary>
+    public async Task<string> CreateEmptyDatabaseAsync()
+    {
+        var name = "t_" + Guid.NewGuid().ToString("N");
+        await ExecuteAsync($"CREATE DATABASE {name}");
+        return ConnectionString(name);
+    }
+
     private string ConnectionString(string database) =>
         new NpgsqlConnectionStringBuilder(container.GetConnectionString()) { Database = database, Pooling = true, MaxPoolSize = 20 }.ConnectionString;
 

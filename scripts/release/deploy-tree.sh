@@ -3,7 +3,8 @@
 # layout so docker-compose.yml's relative mounts resolve and the install
 # commands are the same as from a clone (cd deploy):
 #
-#   deploy/                 docker-compose.yml, .env.example, scripts/setup.sh
+#   deploy/                 docker-compose.yml, .env.example, scripts/setup.sh and
+#                           scripts/import-easypatch.sh
 #   docker/                 the PostgreSQL and MeshCentral start scripts it mounts
 #   docs/                   the deployment, agent, backup and upgrade guides
 #   LICENSE.md, LICENSING.md, CHANGELOG.md
@@ -26,14 +27,15 @@ mkdir -p "$dir/deploy/scripts" "$dir/deploy/easypatch" "$dir/docker/postgres/ini
   "$dir/docs/deployment" "$dir/docs/operations"
 cp "$root/LICENSE.md" "$root/LICENSING.md" "$root/CHANGELOG.md" "$dir/"
 cp "$root/deploy/docker-compose.yml" "$root/deploy/.env.example" "$dir/deploy/"
-cp "$root/deploy/scripts/setup.sh" "$dir/deploy/scripts/"
+cp "$root/deploy/scripts/setup.sh" "$root/deploy/scripts/import-easypatch.sh" "$dir/deploy/scripts/"
 # For EasyPatch on the same server (docs/deployment/easypatch-cohost.md).
 cp "$root/deploy/easypatch/Caddyfile.easyrmm" "$root/deploy/easypatch/docker-compose.easyrmm.yml" "$dir/deploy/easypatch/"
 cp "$root/docker/postgres/init/"*.sh "$dir/docker/postgres/init/"
 cp "$root/docker/postgres/easypatch-db-init.sh" "$dir/docker/postgres/"
 cp "$root/docker/meshcentral/start.sh" "$dir/docker/meshcentral/"
 cp "$root/docs/deployment/docker.md" "$root/docs/deployment/agents.md" "$root/docs/deployment/easypatch-cohost.md" "$dir/docs/deployment/"
-cp "$root/docs/operations/backup-restore.md" "$root/docs/operations/upgrading.md" "$dir/docs/operations/"
+cp "$root/docs/operations/backup-restore.md" "$root/docs/operations/upgrading.md" "$root/docs/operations/import-easypatch.md" \
+  "$dir/docs/operations/"
 
 # Everything the Compose file mounts from beside it must be in the tree.
 missing=$(sed -n 's|^ *- \(\.\./[^:]*\):.*|\1|p' "$dir/deploy/docker-compose.yml" |
@@ -44,5 +46,5 @@ if [ -n "$missing" ]; then
 fi
 find "$dir" -type d -exec chmod 0755 {} +
 find "$dir" -type f -exec chmod 0644 {} +
-chmod 0755 "$dir/deploy/scripts/setup.sh" "$dir/docker/postgres/init/"*.sh "$dir/docker/postgres/easypatch-db-init.sh" \
+chmod 0755 "$dir/deploy/scripts/setup.sh" "$dir/deploy/scripts/import-easypatch.sh" "$dir/docker/postgres/init/"*.sh "$dir/docker/postgres/easypatch-db-init.sh" \
   "$dir/docker/meshcentral/start.sh"

@@ -67,7 +67,7 @@ public static class NotificationRenderer
             sb.Append("…and ").Append(m.MoreCount.ToString(CultureInfo.InvariantCulture)).AppendLine(" more.");
         }
 
-        sb.AppendLine().Append("Open EasyPatch: ").AppendLine(m.ConsoleUrl);
+        sb.AppendLine().Append("Open in EasyRMM: ").AppendLine(m.ConsoleUrl);
         return sb.ToString();
     }
 
@@ -103,7 +103,7 @@ public static class NotificationRenderer
             sb.Append("<p>…and ").Append(m.MoreCount.ToString(CultureInfo.InvariantCulture)).Append(" more.</p>");
         }
 
-        sb.Append("<p><a href=\"").Append(E(m.ConsoleUrl)).Append("\">Open EasyPatch</a></p></body></html>");
+        sb.Append("<p><a href=\"").Append(E(m.ConsoleUrl)).Append("\">Open in EasyRMM</a></p></body></html>");
         return sb.ToString();
     }
 
@@ -132,7 +132,7 @@ public static class NotificationRenderer
             sb.Append("…and ").Append(m.MoreCount.ToString(CultureInfo.InvariantCulture)).Append(" more.\n");
         }
 
-        sb.Append('<').Append(m.ConsoleUrl).Append("|Open EasyPatch>");
+        sb.Append('<').Append(m.ConsoleUrl).Append("|Open in EasyRMM>");
         return new JsonObject { ["text"] = sb.ToString() }.ToJsonString(Json);
     }
 
@@ -173,7 +173,7 @@ public static class NotificationRenderer
             ["type"] = "AdaptiveCard",
             ["version"] = "1.4",
             ["body"] = body,
-            ["actions"] = new JsonArray { new JsonObject { ["type"] = "Action.OpenUrl", ["title"] = "Open EasyPatch", ["url"] = m.ConsoleUrl } },
+            ["actions"] = new JsonArray { new JsonObject { ["type"] = "Action.OpenUrl", ["title"] = "Open in EasyRMM", ["url"] = m.ConsoleUrl } },
         };
         var message = new JsonObject
         {

@@ -591,6 +591,8 @@ func TestEasyPatchAPI(t *testing.T) {
 	}{
 		{"endpoints", endpoint.ID.String(), landing{Path: "/devices/" + device + "?tab=patches"}},
 		{"organizations", epOrg.String(), landing{Path: "/organizations/" + acme}},
+		{"alerts", epOrg.String(), landing{Path: "/patching?tab=alerts&organizationId=" + acme}},
+		{"alerts", uuid.NewString(), landing{Path: "/patching?tab=alerts", Notice: "That EasyPatch organization is not linked to an EasyRMM organization you can see."}},
 		{"jobs", jobs.Items[0].ID, landing{Path: "/patching?tab=jobs&job=" + jobs.Items[0].ID}},
 		{"endpoints", uuid.NewString(), landing{Path: "/patching", Notice: "That EasyPatch endpoint is not linked to an EasyRMM device you can see."}},
 		{"organizations", uuid.NewString(), landing{Path: "/patching", Notice: "That EasyPatch organization is not linked to an EasyRMM organization you can see."}},

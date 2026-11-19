@@ -571,6 +571,38 @@ and a passing impeccable detector.
 * **No co-hosted installs to migrate.** No EasyRMM release was ever
   published, so no co-hosted installs (ADR-0035) exist.
 
+*Done (S0): `EASYRMM_PATCHING_AGENT_HOSTNAMES` names further names the edge
+serves: their agent paths go to the engine and anything else is sent to
+EasyRMM's Patching page; ACME requests their certificates, a manual
+certificate must cover them, the internal CA adds them, and a name EasyRMM
+or MeshCentral already uses is refused.*
+
+*Done (S1): the engine's services have no profile and `EASYRMM_PATCHING`
+is no longer a setting; `setup.sh` removes it from an existing `.env`, and a
+co-hosted EasyPatch is refused.*
+
+*Done (S2 to S4, ADR-0045): `deploy/scripts/import-easypatch.sh` takes the
+folder EasyPatch's `backup.sh` made, checks it, restores it aside, and has
+the engine's `prepare-import` refuse a newer or foreign database, migrate it
+and disable its accounts; it then swaps the databases (keeping the
+engine's), adds the Data Protection keys and the old name, and runs
+`easyrmm-server import-easypatch`, which makes the engine's organizations
+and sites EasyRMM's, joining exact names and naming case collisions
+`(2)`. Agent packages are not copied: the engine's image carries them.
+**Found:** the engine's alert messages linked to its own console's pages,
+which EasyRMM lacks; they now lead to EasyRMM's pages through
+`/go/from-easypatch/` and say EasyRMM. `make e2e-import` (in CI's bundle
+job) builds EasyPatch 1.10.0 from its release commit, gives it
+organizations, sites, a webhook and a real Linux agent through its own
+console API, backs it up as `backup.sh` does, sets EasyRMM up with a
+manual certificate that names the old server, imports, and checks the
+organizations, sites, collisions, disabled accounts and kept database; then
+that the old name sends people to EasyRMM, the agent checks in and scans
+through EasyRMM's edge, the old keys decrypt the webhook, and the engine
+takes EasyRMM's names. An EasyRMM agent linking to an imported endpoint is
+covered by the eptest integration test, not by this one; a Windows agent
+and real DNS wait for phase D.*
+
 ### A. Authentik, when chosen
 
 `./setup.sh --with-authentik` asks two more things: the sign-in name (for

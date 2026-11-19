@@ -30,10 +30,11 @@ fmt-check: ## Fail if Go code is not formatted
 		if [ -n "$$out" ]; then echo "Unformatted files:"; echo "$$out"; exit 1; fi
 
 .PHONY: vet
-vet: ## go vet (including integration- and contract-tagged files, and the agent built for Windows)
+vet: ## go vet (including integration-, contract- and bundle-tagged files, and the agent built for Windows)
 	$(GO) vet ./...
 	$(GO) vet -tags integration ./...
 	$(GO) vet -tags contract ./server/internal/easypatch/
+	$(GO) vet -tags bundle ./server/internal/easypatch/
 	GOOS=windows $(GO) vet ./agent/... ./internal/...
 
 .PHONY: lint
@@ -139,6 +140,10 @@ e2e: web build build-agents ## Browser end-to-end tests against a real server (n
 .PHONY: e2e-bundle
 e2e-bundle: ## The deployment with its patching engine, end to end: install, enroll, scan and patch a Linux machine (needs Docker, the .NET SDK and root or sudo)
 	./scripts/e2e/bundle.sh
+
+.PHONY: e2e-import
+e2e-import: ## Import a standalone EasyPatch 1.10 server, with a real agent, into the deployment (needs Docker, the .NET SDK and root or sudo)
+	./scripts/e2e/import.sh
 
 .PHONY: e2e-sign-in
 e2e-sign-in: web build ## Sign in once across EasyRMM and EasyPatch, in a browser over TLS on two domains (needs Docker and `make test-db`)

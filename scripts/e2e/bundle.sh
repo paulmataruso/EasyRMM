@@ -29,6 +29,10 @@
 # must carry agent packages). Keys, passwords and tokens are made for the run
 # and never printed; everything is removed afterwards, also on failure.
 set -euo pipefail
+# .NET's build servers (MSBuild nodes, the compiler server) outlive a build
+# and keep every file descriptor the caller passed down open, such as a lock
+# held around this test. This run starts none.
+export MSBUILDDISABLENODEREUSE=1 DOTNET_CLI_USE_MSBUILD_SERVER=0 UseSharedCompilation=false
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 project=easyrmm-e2e-bundle

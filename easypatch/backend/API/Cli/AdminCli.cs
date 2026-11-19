@@ -18,7 +18,7 @@ public static class AdminCli
 {
     public static readonly IReadOnlySet<string> Commands = new HashSet<string>(StringComparer.Ordinal)
     {
-        "migrate", "create-admin", "reset-password", "reset-mfa", "unlock", "create-api-token", "help",
+        "migrate", "prepare-import", "create-admin", "reset-password", "reset-mfa", "unlock", "create-api-token", "help",
     };
 
     public static async Task<int> RunAsync(string[] args)
@@ -52,6 +52,31 @@ public static class AdminCli
                     var db = sp.GetRequiredService<EasyPatchDbContext>();
                     var pending = await DatabaseSeeder.MigrateAsync(db, TimeProvider.System);
                     Console.WriteLine(pending.Count == 0 ? "Database schema is up to date." : $"Applied {pending.Count} migration(s): {string.Join(", ", pending)}");
+                    return 0;
+                }
+
+                case "prepare-import":
+                {
+                    // A standalone EasyPatch's database, restored for EasyRMM's patching engine (EasyRMM's
+                    // deploy/scripts/import-easypatch.sh runs this against the restored copy before it replaces the engine's).
+                    var db = sp.GetRequiredService<EasyPatchDbContext>();
+                    ImportPreparationResult r;
+                    try
+                    {
+                        r = await ImportPreparation.PrepareAsync(db, TimeProvider.System);
+                    }
+                    catch (ImportRefusedException e)
+                    {
+                        await Console.Error.WriteLineAsync(e.Message);
+                        return 3;
+                    }
+
+                    Console.WriteLine($"From EasyPatch {r.ReleaseBefore ?? "(last migration " + r.LastMigrationBefore + ")"}; " +
+                                      $"{r.Applied.Count} migration(s) applied.");
+                    Console.WriteLine($"{r.Organizations} organization(s) ({r.ArchivedOrganizations} archived besides), {r.Sites} site(s), " +
+                                      $"{r.ActiveEndpoints} active endpoint(s).");
+                    Console.WriteLine($"{r.AccountsDisabled} EasyPatch account(s) disabled: people sign in to EasyRMM." +
+                                      (r.EmailsRenamed > 0 ? $" {r.EmailsRenamed} duplicate address(es) renamed." : ""));
                     return 0;
                 }
 
@@ -159,6 +184,8 @@ public static class AdminCli
     private static void PrintHelp() => Console.WriteLine("""
         EasyPatch administration commands:
           migrate                                         Apply database migrations.
+          prepare-import                                  For EasyRMM: check a restored standalone EasyPatch database, migrate it
+                                                          and disable its accounts, before it becomes the patching engine's.
           create-admin --email <email> [--name <name>] [--password-stdin]
                                                           Create a SuperAdmin who signs in with <email>. <name> is the account
                                                           name shown in the console and the audit log (default: the part of the

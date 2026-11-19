@@ -182,6 +182,29 @@ All notable changes to this project are documented here. The format follows
   channels stay in EasyPatch's console. Audited as
   `patch.alert_acknowledge`, `patch.alert_rule_*`, `patch.channel_*` and
   `patch.notifications_update`.
+- **The edge answers an imported EasyPatch's names** (one-product plan,
+  phase S0): `EASYRMM_PATCHING_AGENT_HOSTNAMES` lists further names. On
+  them, the engine's agent paths reach the engine and everything else is
+  sent to EasyRMM's Patching page; ACME requests their certificates, a
+  manual certificate must cover them (the server refuses to start
+  otherwise), and the internal CA adds them. A name EasyRMM, MeshCentral or
+  another setting already uses is refused.
+- **Importing a standalone EasyPatch** (phases S2 and S3, ADR-0045):
+  `deploy/scripts/import-easypatch.sh --backup DIR --hostname NAME` moves an
+  EasyPatch 1.4 to 1.10 server, from the folder its `backup.sh` made, into
+  the deployment's engine. It checks the backup, restores it aside, has the
+  engine's new `prepare-import` command refuse a newer or foreign database,
+  migrate it and disable its accounts; swaps it in for the engine's database
+  (keeping the old one), adds the old server's Data Protection keys, answers
+  its agents' name, and runs `easyrmm-server import-easypatch`. That makes
+  the engine's organizations and sites EasyRMM's: an exact name joins
+  EasyRMM's, a name EasyRMM has in another case becomes `<name> (2)`, and
+  archived ones stay in the engine. Imported agents keep working, and link
+  to EasyRMM devices when EasyRMM's agent reports them with the old
+  server's address; one in another organization is left alone, with the
+  reason shown. The deployment's engine must not patch anything yet.
+  Guide: `docs/operations/import-easypatch.md`. `make e2e-import` imports a
+  real EasyPatch 1.10.0 server and agent.
 - **Organization time zones**: organizations have a time zone (default UTC;
   the browser's for a new one), which patching reports use.
 - **Stop patching for a device**: the device's Patches tab can stop
@@ -543,6 +566,13 @@ All notable changes to this project are documented here. The format follows
   while editing, on the script's page and before a run.
 
 ### Changed
+- **The patching engine is always in the deployment** (one-product plan,
+  phase S1): its services have no Compose profile and `EASYRMM_PATCHING` is
+  no longer a setting. The server refuses to start with it set to anything
+  but `bundled`; `setup.sh` removes it and `COMPOSE_PROFILES=patching` from
+  an existing `.env` and adds the engine's secrets. `EASYRMM_PATCHING_KEY` is
+  required. A co-hosted EasyPatch (`EASYRMM_EASYPATCH_HOSTNAME`) is refused:
+  import it instead.
 - **Licence: all of EasyRMM, EasyPatch included, is under FSL-1.1-ALv2**,
   licensor DHI Technical Services LLC (ADR-0037), instead of AGPL-3.0-or-later
   for EasyRMM's code. One `LICENSE.md` at the root; contributions grant DHI
@@ -678,6 +708,13 @@ All notable changes to this project are documented here. The format follows
   connects by cookie, stays blocked.
 
 ### Fixed
+- **Patching alert messages lead into EasyRMM.** The patching engine's
+  emails and webhooks linked to its own console's pages (`/endpoints/<id>`,
+  `/alerts`), which EasyRMM does not have. Each alert now opens its device's
+  **Patches** tab, or **Patching → Alerts** for its organization, and the
+  message opens **Patching → Alerts**, through `/go/from-easypatch/` (new
+  kind `alerts`). Subjects start `[EasyRMM]` instead of `[EasyPatch]`, and
+  the link reads **Open in EasyRMM**.
 - `EASYRMM_DATABASE_MAX_CONNS` past 32 bits wrapped around before it was
   checked, so a value such as `4294967298` started the server with 2
   connections instead of refusing it. It is now checked first.
