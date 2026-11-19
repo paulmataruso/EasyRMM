@@ -22,18 +22,17 @@ terms. This file adds the rules for EasyPatch's code.
 
 ## Development setup
 
-Requirements: the .NET SDK pinned in `global.json`, Node.js 24, and Docker (the integration
-tests start PostgreSQL with Testcontainers). Run these from `easypatch/`:
+Requirements: the .NET SDK pinned in `global.json` and Docker (the integration tests start
+PostgreSQL with Testcontainers). Run these from `easypatch/`:
 
 ```bash
 dotnet build EasyPatch.slnx -c Release
 dotnet test backend/Tests/EasyPatch.Tests.csproj
 dotnet test agent/EasyPatch.Agent.Tests/EasyPatch.Agent.Tests.csproj
-cd frontend && npm ci && npm run typecheck && npm test && npm run build
 ```
 
-A local server for trying changes: see *Development and lab mode* in
-[docs/installation.md](docs/installation.md#development-and-lab-mode).
+A local server for trying changes is an EasyRMM install from a clone: its Compose file builds
+the engine from `easypatch/` (see [Patching engine](../docs/deployment/docker.md#patching-engine)).
 
 ## Pull requests
 

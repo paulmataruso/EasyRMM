@@ -1,6 +1,6 @@
 # Builds, signs and publishes EasyPatch:
-#   * server and proxy images for x64 and ARM64 on GitHub Container Registry, the server image carrying this
-#     release's Windows and Linux agent packages with their release signatures;
+#   * the server image for x64 and ARM64 on GitHub Container Registry, carrying this release's Windows and Linux
+#     agent packages with their release signatures;
 #   * Windows MSIs, Linux .deb/.rpm packages and experimental macOS .pkg packages (x64, ARM64), each with a .sig
 #     release signature.
 #
@@ -48,7 +48,6 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
   DOTNET_NOLOGO: '1'
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
-  NODE_IMAGE: node:24.22.2-alpine3.24
   # Relative to easypatch/, the run steps' working directory.
   PUBLIC_KEY: keys/easypatch-release-key.pub.pem
 
@@ -137,20 +136,6 @@ jobs:
         run: |
           dotnet build backend/Tests/EasyPatch.Tests.csproj -c Release
           dotnet test backend/Tests/EasyPatch.Tests.csproj -c Release --no-build
-
-  frontend:
-    name: Web console tests
-    needs: prepare
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: Install, typecheck, test, build
-        run: |
-          docker run --rm -v "$PWD/frontend:/src" -w /src "$NODE_IMAGE" \
-            sh -c 'npm ci --no-audit --no-fund && npm run typecheck && npm test && npm run build'
 
   agent-tests:
     name: Agent tests
@@ -299,7 +284,7 @@ jobs:
 
   images:
     name: Images (${{ matrix.arch }})
-    needs: [prepare, backend, frontend, windows-agent, linux-agent]
+    needs: [prepare, backend, windows-agent, linux-agent]
     strategy:
       matrix:
         include:
@@ -350,27 +335,21 @@ jobs:
             --label "org.opencontainers.image.title=EasyPatch server" \
             --label "org.opencontainers.image.description=EasyPatch API, worker and database migrations" \
             -t "ghcr.io/${owner}/easypatch-server:${VERSION}-${ARCH}" .
-          docker build --pull -f deployment/caddy/Dockerfile "${labels[@]}" \
-            --label "org.opencontainers.image.title=EasyPatch proxy" \
-            --label "org.opencontainers.image.description=Caddy with the EasyPatch web console" \
-            -t "ghcr.io/${owner}/easypatch-proxy:${VERSION}-${ARCH}" .
       - name: The server image carries the release's agent packages, read-only
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           ARCH: ${{ matrix.arch }}
         run: scripts/check-image-agent-packages.sh "ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easypatch-server:${VERSION}-${ARCH}"
-      - name: Check images contain no secrets or source-control metadata
+      - name: Check the image contains no secrets or source-control metadata
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           ARCH: ${{ matrix.arch }}
         run: |
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
-          for image in "ghcr.io/${owner}/easypatch-server:${VERSION}-${ARCH}" "ghcr.io/${owner}/easypatch-proxy:${VERSION}-${ARCH}"; do
-            if docker run --rm --entrypoint sh "$image" -c 'find / -xdev \( -name ".env" -o -name "db_password" -o -name "*.pfx" -o -name "*.pem" -o -name ".git" \) -not -path "/proc/*" -not -path "/etc/ssl/*" -not -path "/etc/ssl1.1/*" -not -path "/usr/share/ca-certificates/*" 2>/dev/null' | grep .; then
-              echo "::error::unexpected file in $image"
-              exit 1
-            fi
-          done
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easypatch-server:${VERSION}-${ARCH}"
+          if docker run --rm --entrypoint sh "$image" -c 'find / -xdev \( -name ".env" -o -name "db_password" -o -name "*.pfx" -o -name "*.pem" -o -name ".git" \) -not -path "/proc/*" -not -path "/etc/ssl/*" -not -path "/etc/ssl1.1/*" -not -path "/usr/share/ca-certificates/*" 2>/dev/null' | grep .; then
+            echo "::error::unexpected file in $image"
+            exit 1
+          fi
       - name: Push
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -380,7 +359,6 @@ jobs:
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker push "ghcr.io/${owner}/easypatch-server:${VERSION}-${ARCH}"
-          docker push "ghcr.io/${owner}/easypatch-proxy:${VERSION}-${ARCH}"
           docker logout ghcr.io
 
   manifests:
@@ -406,19 +384,16 @@ jobs:
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
-          for name in easypatch-server easypatch-proxy; do
-            image="ghcr.io/${owner}/${name}"
-            docker buildx imagetools create \
-              --annotation "index:org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
-              --annotation "index:org.opencontainers.image.licenses=FSL-1.1-ALv2" \
-              --annotation "index:org.opencontainers.image.version=${VERSION}" \
-              --annotation "index:org.opencontainers.image.revision=${GITHUB_SHA}" \
-              -t "${image}:${VERSION}" -t "${image}:latest" \
-              "${image}:${VERSION}-amd64" "${image}:${VERSION}-arm64"
-            docker buildx imagetools inspect "${image}:${VERSION}"
-          done
-          # EasyRMM's release pins the server image by this digest.
           server="ghcr.io/${owner}/easypatch-server"
+          docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "index:org.opencontainers.image.licenses=FSL-1.1-ALv2" \
+            --annotation "index:org.opencontainers.image.version=${VERSION}" \
+            --annotation "index:org.opencontainers.image.revision=${GITHUB_SHA}" \
+            -t "${server}:${VERSION}" -t "${server}:latest" \
+            "${server}:${VERSION}-amd64" "${server}:${VERSION}-arm64"
+          docker buildx imagetools inspect "${server}:${VERSION}"
+          # EasyRMM's release pins the server image by this digest.
           digest="$(docker buildx imagetools inspect "${server}:${VERSION}" --format '{{json .Manifest}}' | jq -r .digest)"
           if ! printf '%s' "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
             echo "::error::no digest for ${server}:${VERSION}: $digest"

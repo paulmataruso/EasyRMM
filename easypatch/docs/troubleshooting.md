@@ -4,28 +4,32 @@ For agent-side problems (enrollment, connectivity, Windows Update errors on the 
 [agent-installation.md](agent-installation.md#troubleshooting) for Windows,
 [linux-agent.md](linux-agent.md#troubleshooting) for Linux and
 [macos-agent.md](macos-agent.md#troubleshooting) for the experimental macOS agent. This page
-covers the server and the console.
+covers the engine's server, which EasyRMM's deployment runs. EasyRMM's
+[patching guide](../../docs/operations/patching.md) covers EasyRMM's patching pages.
 
 ## First checks
 
-```bash
-docker compose ps                       # every service should be "running (healthy)"; migrate "exited (0)"
-docker compose logs --tail=200 api      # JSON logs, one object per line
-docker compose logs --tail=200 worker
-docker compose logs --tail=200 caddy
-docker compose logs migrate
-```
-
-The API answers `GET /health/live` (process up) and `GET /health/ready` (database reachable)
-through Caddy:
+Run these in EasyRMM's `deploy/` folder:
 
 ```bash
-curl -s https://patch.example.com/health/ready
+docker compose ps easypatch-api easypatch-worker              # both "running (healthy)"
+docker compose ps -a easypatch-db-init easypatch-migrate      # both "exited (0)"
+docker compose logs --tail=200 easypatch-api                  # JSON logs, one object per line
+docker compose logs --tail=200 easypatch-worker
+docker compose logs easypatch-db-init easypatch-migrate
 ```
 
-The worker's `/health` is internal only and reports the database and the heartbeat of each
-maintenance loop. A loop is reported as stalled if it has not completed a cycle within three
-intervals plus two minutes. `docker compose ps` shows the result as the worker's health.
+The API listens on loopback only and answers `GET /health/live` (process up) and
+`GET /health/ready` (database reachable) on the host:
+
+```bash
+curl -s http://127.0.0.1:18180/health/ready
+```
+
+The worker's `/health` (`http://127.0.0.1:18181/health`) reports the database and the
+heartbeat of each maintenance loop. A loop is reported as stalled if it has not completed a
+cycle within three intervals plus two minutes. `docker compose ps` shows the result as the
+worker's health.
 
 Every API response carries an `X-Correlation-ID` header. The same ID appears in the API log
 entries for that request, and in the body of error responses. Quote it when you report a
@@ -35,14 +39,10 @@ problem.
 
 | Symptom | Cause and fix |
 |---|---|
-| `docker compose` fails with "Set EASYPATCH_DOMAIN in .env" or "Set ACME_EMAIL in .env" | `.env` is missing or incomplete. Run `scripts/init-secrets.sh`, then edit `.env` |
-| `docker compose` fails because `secrets/db_password` does not exist | Run `scripts/init-secrets.sh` |
-| `migrate` exits non-zero with an authentication error | `secrets/db_password` changed after the database volume was created. PostgreSQL reads the password only when it initializes an empty volume. Restore the original file, or change the database user's password to match |
-| `api` or `worker` never become healthy | Read their logs. The usual causes are that the database is unreachable (check `postgres` health) or `migrate` failed. `api` and `worker` do not start until `migrate` succeeds |
-| Browser shows a certificate error, or Caddy logs ACME failures | DNS for `EASYPATCH_DOMAIN` must point at this host, and TCP 80 and 443 must be reachable from the internet. Caddy retries automatically; watch `docker compose logs -f caddy` |
-| Audit log shows a Docker address instead of the real client IP | `EASYPATCH_EDGE_SUBNET` does not match the `edge` network's subnet. The API only trusts `X-Forwarded-For` from that subnet |
-| `429 Too Many Requests` | A rate limit was hit (see [installation.md](installation.md#rate-limits-and-other-configuration)). Many agents behind one NAT address share the per-IP limits for enrollment and downloads. The per-agent limit applies per credential |
-| Disk usage grows | Check retention under **Settings → Server settings → Data retention**. Container logs rotate at 20 MB × 5 files per service |
+| `easypatch-db-init` or `easypatch-migrate` exits non-zero | Read its log. `easypatch-db-init` refuses to run while `.env` lacks the engine's database passwords: rerun EasyRMM's `deploy/scripts/setup.sh` with its usual options, which adds them |
+| `easypatch-api` or `easypatch-worker` never become healthy | Read their logs. The usual causes are that the database is unreachable (check `postgres` health) or `easypatch-migrate` failed. The API and worker do not start until `easypatch-migrate` succeeds |
+| `429 Too Many Requests` | A rate limit was hit. Many agents behind one NAT address share the per-IP limits for enrollment and downloads. The per-agent limit applies per credential |
+| Disk usage grows | Check how long the engine keeps its records: EasyRMM's **Settings → Patching → Server**, *Keep for*. Container logs rotate at 20 MB × 5 files per service |
 
 ## Signing in
 
@@ -122,11 +122,11 @@ cancelled.
 
 | Symptom | Cause and fix |
 |---|---|
-| No alerts appear | Rules are evaluated every two minutes by the worker. Check that the rule is enabled and its organization and tag scope match, and that the worker is healthy (`docker compose ps worker`). Offline endpoints only raise the offline alert |
+| No alerts appear | Rules are evaluated every two minutes by the worker. Check that the rule is enabled and its organization and tag scope match, and that the worker is healthy (`docker compose ps easypatch-worker`). Offline endpoints only raise the offline alert |
 | An alert does not resolve | It resolves after two evaluations (about four minutes) without a match. *Scan stale* clears only after a successful scan, and *Update installation failed* only when the endpoint has no failed updates left (for example after a successful retry) |
 | No email or chat message | The rule needs channels (**Settings → Alert rules**). Then check the channel's *Last delivery* and **Settings → Notifications → Recent deliveries** for the error. See [alerts.md](alerts.md#troubleshooting) for the messages |
 | Deliveries stay `Pending` | The worker sends them every 30 seconds. Retries wait up to an hour between attempts. Check the worker log for `Notification … failed` |
-| `A stored notification secret cannot be decrypted` | The worker does not see the API's Data Protection keys. It must mount the `dpkeys` volume (use the current `docker-compose.yml`). If the keys were lost, enter the SMTP password and webhook URLs again |
+| `A stored notification secret cannot be decrypted` | The worker does not see the API's Data Protection keys. It must mount `${EASYRMM_DATA_ROOT}/easypatch/keys` (use the current `deploy/docker-compose.yml`). If the keys were lost, enter the SMTP password and webhook URLs again |
 | Webhook `refused: private network addresses are not allowed` | The webhook host resolves to a private address. Turn on **Allow webhooks to private network addresses** if that is intended |
 
 ## Monthly reports
@@ -150,7 +150,7 @@ appear as *ApplicationScanFailed* events. See [application-updates.md](applicati
 | *Agent too old* | Application updates need agent 1.4.0 or newer |
 | `winget (App Installer) is not installed for all users` (`winget_not_found`) | Agents 1.7.0 and later install it themselves a few minutes after the service starts; see the next rows if that fails. Older agents: update the agent, or install App Installer from the [winget releases](https://github.com/microsoft/winget-cli/releases) for all users. Windows Server 2019 and 2022 and Windows 10 LTSC do not include it |
 | `winget_too_old` | Agents 1.7.0 and later replace it with winget 1.29.380. Older agents: update App Installer to 1.6 or newer |
-| *The agent could not install winget*: `Could not download … GitHub: … the EasyPatch server: … 503 …` | The computer cannot reach GitHub and the server is still downloading its copy; the agent tries again in 15 minutes. If the server's copy also fails (its error is shown below the agent's), the `worker` cannot reach GitHub: allow `github.com` and `release-assets.githubusercontent.com`, or copy the files to `data/agent-packages/winget/` (see [installation.md](installation.md#winget-for-agents)) |
+| *The agent could not install winget*: `Could not download … GitHub: … the EasyPatch server: … 503 …` | The computer cannot reach GitHub and the server is still downloading its copy; the agent tries again in 15 minutes. If the server's copy also fails (its error is shown below the agent's), `easypatch-worker` cannot reach GitHub: allow `github.com` and `release-assets.githubusercontent.com`, or download the three files of the [winget v1.29.380 release](https://github.com/microsoft/winget-cli/releases/tag/v1.29.380) (`Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle`, `DesktopAppInstaller_Dependencies.zip`, `e53e159d00e04f729cc2180cffd1c02e_License1.xml`) elsewhere and copy them to `${EASYRMM_DATA_ROOT}/easypatch/winget/`, readable by user 1654. The server serves a file only when its size and SHA-256 match the values built into EasyPatch |
 | *The agent could not install winget*: `… does not match the pinned release` or `… bytes instead of …` | A proxy or filter changed the download. Nothing was installed. Allow the GitHub hosts unmodified, or let the agent use the server's copy |
 | *The agent could not install winget*: `DISM could not install App Installer (exit code …)` | See the DISM log `C:\ProgramData\EasyPatch\logs\winget-setup.log` and `C:\Windows\Logs\DISM\dism.log`. They name the package that failed and why |
 | *The agent could not install winget*: `winget needs Windows 10 version 1809 or Windows Server 2019 or later` | Windows Server 2016 and older Windows 10 cannot run winget; application updates are unavailable there |
@@ -165,7 +165,7 @@ appear as *ApplicationScanFailed* events. See [application-updates.md](applicati
 
 | Symptom | Cause and fix |
 |---|---|
-| No CVEs or *Known exploited* badges anywhere | Check **Settings → Server → Vulnerability data**. *No feed has been downloaded yet*: the worker checks hourly, starting a few seconds after it starts. *Failed* with `Download failed (NameResolutionError)` or `(ConnectionError)`: the `worker` has no outbound access to the hosts listed in [installation.md](installation.md#requirements) (the `egress` network, a firewall or a proxy). Failed downloads are retried after an hour |
+| No CVEs or *Known exploited* badges anywhere | Check *Vulnerability data* under EasyRMM's **Settings → Patching → Server**. *No feed has been downloaded yet*: the worker checks hourly, starting a few seconds after it starts. *Failed* with `Download failed (NameResolutionError)` or `(ConnectionError)`: `easypatch-worker` has no outbound HTTPS access (a firewall or a proxy) to `www.cisa.gov`, `raw.githubusercontent.com` (fallback), `api.msrc.microsoft.com` and, while Debian endpoints are managed, `security-tracker.debian.org`. Failed downloads are retried after an hour |
 | Windows updates have no CVEs | The CVEs come from the update's KB numbers (MSRC data of the last 12 months) and, for the monthly cumulative update, from the computer's build number. Check that the endpoint has sent its inventory (build shown on the endpoint page) |
 | Debian updates have no CVEs | Needs agent 1.4.0 or newer (it reports the source package) and Debian 12 or 13. The Debian Security Tracker is downloaded only while such endpoints exist, so the first match can take up to an hour after they report |
 | Rocky, AlmaLinux, RHEL or Fedora updates have no CVEs | Needs agent 1.4.0 or newer. The CVEs come from the repository's advisories: CentOS Stream and repositories without `updateinfo` have none. The agent log says `Could not read the CVE references…` when reading them failed |

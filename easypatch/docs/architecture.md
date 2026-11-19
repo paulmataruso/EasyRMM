@@ -1,10 +1,11 @@
 # EasyPatch Architecture
 
-EasyPatch is a self-hosted Windows and Linux patch management platform for Managed Service
-Providers, and EasyRMM's patch management: it is part of the EasyRMM project and lives in
-`easypatch/` of the EasyRMM repository. It also runs on its own. It has two parts:
+EasyPatch is EasyRMM's patching engine for Windows and Linux: it is part of the EasyRMM project
+and lives in `easypatch/` of the EasyRMM repository. It does not run on its own any more
+(EasyRMM's ADR-0046). It has two parts:
 
-1. **The server**: a Docker Compose stack in a DMZ, reachable on TCP 443.
+1. **The server**: the API and worker, which EasyRMM's deployment runs next to EasyRMM, on
+   loopback only. EasyRMM's edge, on TCP 443, forwards the agents' requests to it.
 2. **The agent**: a Windows service (`EasyPatchAgent`) or a Linux systemd service
    (`easypatch-agent`) on each managed endpoint. It only makes
    outbound HTTPS connections, so customer networks need no VPN, inbound rules or port
@@ -20,27 +21,28 @@ administrator configured in policy.
 
 ```
                      Internet (TCP 443 only)
- ┌──────────────┐        │
- │ Windows agent├──HTTPS─┤      ┌───────────────────────── Docker host (DMZ) ─────────────────────────┐
- │ (LocalSystem)│        │      │  edge network                     data network (internal: no egress)│
- └──────────────┘        ├──────┼─► caddy ──/api,/downloads──► api ─────────────┐                      │
- ┌──────────────┐        │      │     │  (TLS, headers,              │  ▲         ▼                      │
- │ Admin browser├──HTTPS─┘      │     │   static SPA)                │  │     postgres (volume)          │
- └──────────────┘               │     └─ / (SPA files)               │  │         ▲                      │
-                                │                          worker ───┘  └─migrate─┘                      │
-                                └──────────────────────────────────────────────────────────────────────┘
+ ┌──────────────┐        │      ┌──────────────────────────── EasyRMM's host ────────────────────────────┐
+ │ Windows agent├──HTTPS─┤      │                                                                        │
+ │ (LocalSystem)│        ├──────┼─► EasyRMM's edge ──/api/v1/agents, /downloads──► api (127.0.0.1) ──┐   │
+ └──────────────┘        │      │   (TLS)                                              ▲             ▼   │
+ ┌──────────────┐        │      │                                                     │       PostgreSQL │
+ │ Admin browser├──HTTPS─┘      │   EasyRMM's server ── one signed statement ─────────┘       (EasyRMM's)│
+ └──────────────┘               │   (console, roles)     per request                           ▲  ▲      │
+                                │                                     worker ─────────────────┘  │      │
+                                │                                     migrate (one-shot) ────────┘      │
+                                └────────────────────────────────────────────────────────────────────────┘
 ```
 
-| Container | Image | Purpose |
+| Service in EasyRMM's Compose file | Image | Purpose |
 |---|---|---|
-| `caddy` | `easypatch-proxy` (Caddy plus the built SPA) | Terminates TLS with automatic ACME certificates, enforces TLS 1.2+, adds security headers, serves the React SPA and reverse-proxies `/api/*` and `/downloads/*` to the API. |
-| `api` | `easypatch-server` | ASP.NET Core 10 Web API. Handles admin auth, the admin REST API, the agent protocol and OpenAPI. |
-| `worker` | `easypatch-server` (different entrypoint) | Background processing: job expiry and lease recovery, online/offline detection, scheduled installs, the end of rollout delays, scheduled restarts, compliance snapshots, alert evaluation and notification delivery (email, webhooks), retention. The only container with outbound access (`egress` network), used for SMTP and webhooks. |
-| `postgres` | `postgres:18.6-alpine3.24` | System of record, including the durable job queue. Attached only to the internal `data` network. |
-| `migrate` | `easypatch-server` | One-shot container that applies EF Core migrations before `api` and `worker` start. |
+| `easypatch-api` | `easypatch-server` | ASP.NET Core 10 Web API on `127.0.0.1:18180`. Handles EasyRMM's calls (each signed as a statement, EasyRMM's ADR-0038), the agent protocol and OpenAPI. |
+| `easypatch-worker` | `easypatch-server` (different entrypoint) | Background processing: job expiry and lease recovery, online/offline detection, scheduled installs, the end of rollout delays, scheduled restarts, compliance snapshots, alert evaluation and notification delivery (email, webhooks), retention. Needs outbound HTTPS for update and vulnerability feeds, winget, SMTP and webhooks. |
+| `easypatch-migrate` | `easypatch-server` | One-shot container that applies EF Core migrations before `easypatch-api` and `easypatch-worker` start. |
+| `easypatch-db-init` | EasyRMM's PostgreSQL image | Creates the `easypatch` database and its roles in EasyRMM's PostgreSQL. |
 
-The SPA is served by Caddy, not by a separate frontend container. That was a deliberate
-change from the original spec: a fifth container would have added nothing.
+People never reach the engine directly: they use EasyRMM's console, and EasyRMM calls the
+engine for them. EasyRMM's [Docker deployment guide](../../docs/deployment/docker.md#patching-engine)
+describes the services and their data.
 
 ### Solution layout
 
@@ -61,7 +63,7 @@ agent/EasyPatch.Agent.Linux     systemd service host and CLI (easypatch-agent)  
 agent/EasyPatch.Agent.Tests     Agent logic tests (run on any OS using fakes)
 agent/Installer                 WiX v5 MSI project; linux-packages: .deb/.rpm metadata, systemd unit
 tools/EasyPatch.ReleaseSigner   easypatch-release: creates the release key, signs and verifies agent packages
-frontend/                       React + TypeScript + Vite + Tailwind SPA
+deployment/server               The server image's Dockerfile
 ```
 
 `EasyPatch.Contracts` is shared by the agent and the server. Both sides therefore serialize
@@ -682,38 +684,40 @@ After each check-in the agent applies the effective Windows Update settings, gro
 The report is sent when it changes and at least once a day, and includes whether MDM (Intune)
 update policies are present, because those can take precedence over the registry values.
 
-## 6. Docker deployment design
+## 6. Deployment design
 
-* **Networks.** `edge` connects Caddy and the API. `data` is internal (no egress) and connects
-  the API, worker, migrate and PostgreSQL. PostgreSQL publishes no ports. `egress` gives the
-  worker outbound connections for notifications (SMTP and webhooks), vulnerability data and
-  the winget release; nothing is published on it. The API reaches single sign-on providers
-  through `edge`.
-  The diagram above omits it.
-* **Volumes.**
-  * `pgdata`: the database.
-  * `caddy_data` and `caddy_config`: certificates.
-  * `dpkeys`: ASP.NET Data Protection keys, which protect MFA secrets, notification secrets
-    (SMTP password, webhook URLs, webhook signing keys) and single sign-on client secrets. The API creates and rotates the keys;
-    the worker mounts the volume read-only to decrypt notification secrets.
-  * `./data/agent-packages`, mounted read-only: agent MSIs offered for download.
+EasyRMM's Compose file (`deploy/docker-compose.yml` in the repository root) runs the engine;
+EasyRMM's [Docker deployment guide](../../docs/deployment/docker.md#patching-engine) is the
+reference. In short:
+
+* **Network.** The engine's services use the host network and listen on loopback only: the API
+  on `127.0.0.1:18180`, the worker's health endpoint on `127.0.0.1:18181`. EasyRMM's edge
+  forwards the agents' paths (`/api/v1/agents/`, `/downloads/agent/`, `/downloads/winget/`) to
+  the API and nothing else of it. The worker opens outbound connections for notifications (SMTP
+  and webhooks), vulnerability data and the winget release.
+* **Database.** The `easypatch` database in EasyRMM's PostgreSQL. `easypatch-db-init` creates it
+  with two roles: `easypatch_owner`, which `easypatch-migrate` uses for the migrations, and
+  `easypatch_app`, which the API and worker use.
+* **Data** (under `${EASYRMM_DATA_ROOT}/easypatch/`).
+  * `keys`: ASP.NET Data Protection keys, which protect notification secrets (SMTP password,
+    webhook URLs, webhook signing keys). The API creates and rotates the keys; the worker
+    mounts them read-only to decrypt notification secrets.
   * `winget`: the server's copy of the pinned winget release (see
     [Installing winget](#installing-winget)). The worker writes it; the API mounts it read-only.
-* **Secrets.** The database password is a Compose secret file (`secrets/db_password`, created
-  by `scripts/init-secrets.sh`). No secrets live in images or in source control.
+  * Agent packages come with the server image, release-signed (EasyRMM's ADR-0041); no
+    directory is mounted for them.
+* **Secrets.** The database passwords and the key EasyRMM signs its calls with are in EasyRMM's
+  `.env`, created by EasyRMM's `setup.sh`. No secrets live in images or in source control.
 * **Hardening.**
   * Images are pinned by version.
-  * .NET containers run as the non-root `app` user with a read-only root filesystem and
-    `no-new-privileges`.
-  * Caddy drops all capabilities except `NET_BIND_SERVICE`.
+  * The .NET containers run as the non-root `app` user with a read-only root filesystem, every
+    capability dropped and `no-new-privileges`.
 * **Health checks.**
   * API: `/health/ready` (database reachable) and `/health/live`.
   * Worker: an internal `/health` endpoint that reflects its last loop heartbeat.
-  * Postgres: `pg_isready`.
-* **Restart policy.** `unless-stopped` for everything except `migrate`.
+* **Restart policy.** `unless-stopped` for the API and worker; `easypatch-db-init` and
+  `easypatch-migrate` run once per start.
 * **Logs.** JSON to stdout, with a correlation ID on every request.
-* **Development.** `docker-compose.dev.yml` switches Caddy to its internal CA
-  (`local_certs`) and publishes HTTPS only on `127.0.0.1:8443`.
 
 ## 7. Alerts and notifications
 

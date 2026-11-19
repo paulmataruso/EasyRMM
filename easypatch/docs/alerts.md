@@ -190,7 +190,7 @@ time.
 | `Webhook to host refused: private network addresses are not allowed …` | The host resolves to a private address. Allow private addresses, or use the public URL. |
 | `Webhook to host refused: loopback, link-local …` | The address is never allowed. |
 | `host answered HTTP 403` / `404` | The webhook URL was revoked or is wrong. Edit the channel and paste a new URL. |
-| `A stored notification secret cannot be decrypted …` | The Data Protection keys (`dpkeys` volume) changed or are missing in the worker. Check that the worker mounts `dpkeys`, or enter the secret again. |
+| `A stored notification secret cannot be decrypted …` | The Data Protection keys (`${EASYRMM_DATA_ROOT}/easypatch/keys` in EasyRMM's deployment) changed or are missing in the worker. Check that the worker mounts them, or enter the secret again. |
 
 The worker logs each failed attempt (`Notification <id> to channel <name> failed …`) with the
 same sanitized message.

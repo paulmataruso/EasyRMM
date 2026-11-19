@@ -69,25 +69,13 @@ updates:
           - "MailKit"
           - "MimeKit"
 
-  - package-ecosystem: npm
-    directory: /easypatch/frontend
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      frontend-minor:
-        update-types: ["minor", "patch"]
-
-  # The .NET images stay on 10.x (LTS) and Node on 24 (LTS), like the packages above.
+  # The .NET images stay on 10.x (LTS), like the packages above.
   - package-ecosystem: docker
     directories:
       - /easypatch/deployment/server
-      - /easypatch/deployment/caddy
       - /easypatch/agent/Installer/linux-packages
     schedule:
       interval: weekly
     ignore:
       - dependency-name: "dotnet/*"
-        update-types: ["version-update:semver-major"]
-      - dependency-name: "node"
         update-types: ["version-update:semver-major"]

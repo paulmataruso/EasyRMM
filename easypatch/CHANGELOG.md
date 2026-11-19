@@ -20,8 +20,7 @@ the web console and the agents share one version number.
   key, into `/app/agent-packages`, owned by root and read-only to the server
   (`scripts/stage-agent-packages.sh`, `scripts/check-image-agent-packages.sh`). CI images carry
   Linux packages signed with a key made for the run (`scripts/build-test-agent-packages.sh`),
-  which the release key refuses. The standalone compose file still mounts `data/agent-packages/`
-  over them.
+  which the release key refuses.
 - As EasyRMM's patching engine, the administrator API accepts EasyRMM's statements
   (`X-EasyRMM-Assertion`, EasyRMM's ADR-0038) when `EasyRmm__GatewayKey` is set: each is good
   for one request for 30 seconds and acts with the role and organizations it names, through the
@@ -43,7 +42,24 @@ the web console and the agents share one version number.
   `from=easyrmm`, which starts EasyRMM's sign-in for someone not signed in.
 - `create-api-token`, an administration command that creates an API token on the server
   itself, for setting up an integration without the console:
-  `docker compose run --rm api create-api-token --name EasyRMM --role operator --expires-days 365`.
+  `create-api-token --name EasyRMM --role operator --expires-days 365`.
+
+### Removed
+
+EasyPatch is no longer a product of its own: it is EasyRMM's patching engine, which EasyRMM's
+deployment runs (EasyRMM's ADR-0046). A standalone EasyPatch server moves into EasyRMM with
+EasyRMM's import script (EasyRMM's `docs/operations/import-easypatch.md`).
+
+- **The web console** (`frontend/`), with its CI job, Dependabot entry and npm licence check.
+  People use EasyRMM's patching pages instead.
+- **The proxy image** (`easypatch-proxy`) and its Caddy configuration (`deployment/caddy/`). The
+  release workflow no longer builds or publishes it; the server image (`easypatch-server`) is
+  unchanged. EasyRMM's edge serves the agents.
+- **The standalone deployment:** `docker-compose.yml` (all but the PostgreSQL image EasyRMM's
+  contract test reads, until that test reads EasyRMM's own), `docker-compose.dev.yml`,
+  `.env.example`, `scripts/init-secrets.sh`, `scripts/backup.sh`, `scripts/restore.sh` and the
+  installation guide (`docs/installation.md`).
+- The console's screenshots in `docs/images/`. The logo and wordmarks moved to `branding/`.
 
 ### Fixed
 

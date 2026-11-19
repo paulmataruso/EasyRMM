@@ -1,14 +1,14 @@
 
 ## Install or upgrade
 
-**Server** (Docker Compose, x64 or ARM64 Linux): images `ghcr.io/paulmataruso/easypatch-server:@VERSION@` and
-`ghcr.io/paulmataruso/easypatch-proxy:@VERSION@`. New installation: [docs/installation.md](https://github.com/paulmataruso/EasyRMM/blob/easypatch-v@VERSION@/easypatch/docs/installation.md).
-Upgrade: back up, check out `easypatch-v@VERSION@`, set `EASYPATCH_VERSION=@VERSION@` in `.env`, then `docker compose pull && docker compose up -d`.
+**Server** (x64 or ARM64 Linux): image `ghcr.io/paulmataruso/easypatch-server:@VERSION@`. EasyPatch is EasyRMM's
+patching engine and runs in EasyRMM's deployment, which names the engine image it runs; it has no installation of its
+own. A standalone EasyPatch server (1.4 to 1.10) moves into EasyRMM:
+[Importing a standalone EasyPatch](https://github.com/paulmataruso/EasyRMM/blob/easypatch-v@VERSION@/docs/operations/import-easypatch.md).
 
 **Agents**: the server image carries this release's Windows and Linux packages with their `.sig` files, so the server
-offers them as soon as it runs. The standalone compose file mounts `data/agent-packages/` over them: there, copy the
-packages you need, with their `.sig` files, into that directory. Agents (Windows 1.2.0 and later, all Linux agents)
-then update themselves when the *Agent updates* policy is *Automatic*.
+offers them as soon as it runs. Agents (Windows 1.2.0 and later, all Linux agents) then update themselves when the
+*Agent updates* policy is *Automatic*.
 
 | File | For |
 |---|---|
@@ -26,7 +26,7 @@ The MSIs are not Authenticode-signed, so Windows SmartScreen may warn when one i
 > **The macOS agent is experimental: it is in development and not for production use.** It has not yet been used to
 > patch a real Mac. On Apple silicon it cannot install macOS updates (Apple allows only a volume owner or MDM to), it
 > restarts without an on-screen warning, and the `.pkg` is not signed with an Apple Developer ID or notarized. Use it
-> only on test Macs. Leave the `.pkg` files out of `data/agent-packages/` unless you are testing it.
+> only on test Macs. The server image does not carry the `.pkg` files.
 
 ## License
 

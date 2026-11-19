@@ -140,8 +140,7 @@ and an address that is not a plain `name@domain` `400 validation_failed`.
 
 Bearer credentials for scripts and integrations. Only super administrators signed in to the
 console manage them; a token cannot create, list or revoke tokens. On the server itself,
-`docker compose run --rm api create-api-token …` creates one without the console
-([installation.md](installation.md#operational-commands)).
+the server image's `create-api-token` command creates one without the console.
 
 | Method | Route | Notes |
 |---|---|---|
@@ -369,6 +368,6 @@ tab or carriage return are prefixed with `'` so spreadsheets do not evaluate the
 ### Health
 
 `GET /health/live` reports that the process is up. `GET /health/ready` reports that the
-database is reachable. Neither requires authentication. The worker has its own `/health` on
-port 8081 inside its container (database plus maintenance-loop heartbeat); it is not exposed
-through Caddy.
+database is reachable. Neither requires authentication. The worker has its own `/health`
+(database plus maintenance-loop heartbeat), on `127.0.0.1:18181` in EasyRMM's deployment.
+EasyRMM's edge forwards neither the API's health routes nor the worker's.

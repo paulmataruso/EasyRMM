@@ -1,8 +1,6 @@
 # Keep build contexts small and free of secrets and local state.
 **/bin/
 **/obj/
-**/node_modules/
-frontend/dist/
 artifacts/
 agent/
 .git/

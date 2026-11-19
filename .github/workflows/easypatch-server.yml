@@ -1,12 +1,12 @@
-# EasyPatch's server and web console: backend build and tests, console typecheck, tests and build, and the
-# container images (built and checked, not pushed).
+# EasyPatch's server, EasyRMM's patching engine: backend build and tests, and the server image (built and checked,
+# not pushed).
 #
 # Called by ci.yml (job "EasyPatch server") when its changes job finds a change to EasyPatch or its workflows
 # other than the agent, the docs and Markdown, or to EasyRMM's EasyPatch connector (server/internal/easypatch/);
 # ci.yml's concurrency group cancels superseded pull request runs. Can also be run by hand.
 #
-# EasyPatch lives in easypatch/: run steps work there (defaults below, so "$PWD/frontend" is easypatch/frontend
-# and docker compose uses easypatch/docker-compose.yml), and every path given to an action carries the prefix.
+# EasyPatch lives in easypatch/: run steps work there (defaults below), and every path given to an action carries
+# the prefix.
 name: EasyPatch server
 
 on:
@@ -20,7 +20,6 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
   DOTNET_NOLOGO: '1'
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
-  NODE_IMAGE: node:24.22.2-alpine3.24
 
 defaults:
   run:
@@ -61,24 +60,9 @@ jobs:
           dotnet list backend/Worker/EasyPatch.Worker.csproj package --vulnerable --include-transitive | tee -a vulnerable.txt
           if grep -q "has the following vulnerable packages" vulnerable.txt; then exit 1; fi
 
-  frontend:
-    name: Web console typecheck, tests and build
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-      - name: Install, typecheck, test, build
-        run: |
-          docker run --rm -v "$PWD/frontend:/src" -w /src "$NODE_IMAGE" \
-            sh -c 'npm ci --no-audit --no-fund && npm run typecheck && npm test && npm run build'
-      - name: npm audit (production dependencies)
-        run: docker run --rm -v "$PWD/frontend:/src" -w /src "$NODE_IMAGE" npm audit --omit=dev --audit-level=high
-
   images:
-    name: Container images
-    needs: [backend, frontend]
+    name: Server image
+    needs: [backend]
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -92,28 +76,14 @@ jobs:
       # made for this run, which only their own agents trust; the script checks the release key refuses them.
       - name: Agent packages signed with a test key
         run: scripts/build-test-agent-packages.sh --arch all
-      - name: Build images
-        env:
-          EASYPATCH_DOMAIN: ci.invalid
-          ACME_EMAIL: ci@ci.invalid
-        # The images are listed here, where compose has its variables, for the checks below.
-        run: |
-          mkdir -p secrets && printf 'ci-placeholder' > secrets/db_password
-          docker compose config --quiet
-          docker compose build
-          rm -f secrets/db_password
-          docker compose config --images | grep easypatch- | sort -u > "$RUNNER_TEMP/images"
-          grep -q easypatch-server "$RUNNER_TEMP/images"
-          grep -q easypatch-proxy "$RUNNER_TEMP/images"
+      - name: Build the image
+        run: docker build -f deployment/server/Dockerfile -t easypatch-server:ci .
       - name: The server image carries the staged agent packages, read-only
-        run: scripts/check-image-agent-packages.sh "$(grep easypatch-server "$RUNNER_TEMP/images")"
-      - name: Check images contain no secrets or source-control metadata
+        run: scripts/check-image-agent-packages.sh easypatch-server:ci
+      - name: Check the image contains no secrets or source-control metadata
         run: |
-          [ -s "$RUNNER_TEMP/images" ]
-          while read -r image; do
-            if docker run --rm --entrypoint sh "$image" -c 'find / -xdev \( -name ".env" -o -name "db_password" -o -name "*.pfx" -o -name ".git" \) -not -path "/proc/*" 2>/dev/null' < /dev/null | grep .; then
-              echo "unexpected file in $image" >&2
-              exit 1
-            fi
-            echo "$image: no secrets or source-control metadata"
-          done < "$RUNNER_TEMP/images"
+          if docker run --rm --entrypoint sh easypatch-server:ci -c 'find / -xdev \( -name ".env" -o -name "db_password" -o -name "*.pfx" -o -name ".git" \) -not -path "/proc/*" 2>/dev/null' < /dev/null | grep .; then
+            echo "unexpected file in easypatch-server:ci" >&2
+            exit 1
+          fi
+          echo "easypatch-server:ci: no secrets or source-control metadata"

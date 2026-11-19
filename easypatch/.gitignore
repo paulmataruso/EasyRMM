@@ -10,11 +10,6 @@ TestResults/
 *.trx
 coverage*/
 
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/*.tsbuildinfo
-
 # Local configuration and secrets — never commit
 .env
 secrets/

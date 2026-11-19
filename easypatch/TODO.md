@@ -22,19 +22,11 @@ release contains.
   only a broken or hostile agent hits it, and only for its own endpoint. Found by EasyRMM's contract tests
   (`server/internal/easypatch/contract_test.go`). Reject null lists in the agent request DTOs
   (`shared/EasyPatch.Contracts/Agent/AgentDtos.cs`) for every agent endpoint, with tests.
-- [ ] **Reverse proxy: run Caddy as a non-root user.** `deployment/caddy/Dockerfile` runs as root, as Caddy's
-  image does, to bind ports 80 and 443; `docker-compose.yml` already drops every other capability, mounts it
-  read-only and sets `no-new-privileges`. A non-root user cannot bind them with `no-new-privileges` set (it rules
-  out a file capability), so the move needs either high container ports published as 80 and 443, or the
-  sysctl `net.ipv4.ip_unprivileged_port_start`, and a one-time ownership change of existing installations'
-  `caddy_data` and `caddy_config` volumes on upgrade. Trivy's DS-0002 finding is excepted in the repository's
-  `.trivyignore.yaml` until then; remove that entry with the fix.
 
 ## Test on a real instance
 
 These need the console at a DNS name with a certificate browsers trust. Passkeys do not work at an IP
-address or behind a certificate warning, and Google refuses an IP address as a redirect URI. The DNS
-records are in [docs/installation.md](docs/installation.md#dns-records).
+address or behind a certificate warning, and Google refuses an IP address as a redirect URI.
 
 - [ ] **Passkeys and security keys:**
   - Add one under *My account → Passkeys and security keys*.
@@ -76,19 +68,14 @@ The macOS agent (since 1.9.0) is **experimental, in development and not for prod
 - **Build:** .NET 10 SDK; `TreatWarningsAsErrors` is on.
   - Backend tests: `dotnet test backend/Tests/EasyPatch.Tests.csproj` (needs Docker for Testcontainers).
   - Agent tests: `dotnet test agent/EasyPatch.Agent.Tests`.
-  - Console, from `frontend/`:
-    `docker run --rm --network none -v "$PWD:/app" -w /app node:24.22.2-alpine3.24 sh -c "npx --no-install tsc -b --noEmit && npx --no-install vitest run"`.
-    On a new machine, install the dependencies in the same image first (`npm ci`, with network). The
-    lockfile pins them, and the native bindings must be the musl ones.
 - **Release:**
-  1. Bump the version in `Directory.Build.props`, the image defaults in `docker-compose.yml`, `.env.example`,
-     `scripts/build-*.sh` and `build-agent.ps1`, the issue template (`.github/ISSUE_TEMPLATE/easypatch-bug_report.yml`
-     in the repository root), the README, and the download and build commands in `docs/installation.md`,
-     `docs/linux-agent.md` and `docs/macos-agent.md`.
+  1. Bump the version in `Directory.Build.props`, `scripts/build-*.sh` and `build-agent.ps1`, the issue
+     template (`.github/ISSUE_TEMPLATE/easypatch-bug_report.yml` in the repository root), the README, and the
+     download and build commands in `docs/linux-agent.md` and `docs/macos-agent.md`.
   2. Add a `## [x.y.z] - date` section to the CHANGELOG. `easypatch-release.yml` (in the repository root's
      `.github/workflows/`) checks that the tag, `Directory.Build.props` and the CHANGELOG agree.
   3. Push `main`, then the tag `easypatch-vX.Y.Z`. `easypatch-release.yml` builds and tests everything,
-     publishes the images to GHCR, and creates the GitHub Release with the `.msi`, `.deb`, `.rpm` and `.pkg`
+     publishes the server image to GHCR, and creates the GitHub Release with the `.msi`, `.deb`, `.rpm` and `.pkg`
      packages, their `.sig` files and `SHA256SUMS`.
 - **Release signing key:** the private key is the `EASYPATCH_RELEASE_KEY` secret of the GitHub
   `easypatch-release` environment. Signed local builds read it from `~/.easypatch/easypatch-release-key.pem`.

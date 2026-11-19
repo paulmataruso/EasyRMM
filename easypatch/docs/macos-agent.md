@@ -44,8 +44,8 @@ Read these before installing it anywhere.
 * An administrator account (`sudo`) to install it.
 * HTTPS access to the EasyPatch server, and to Apple's software update servers (or your
   organisation's caching server).
-* The server must offer a macOS package: copy `EasyPatchAgent-<version>-<arch>.pkg` and its `.sig`
-  to `data/agent-packages` (see [installation.md](installation.md#6-offer-agent-packages)).
+* The server must offer a macOS package. EasyRMM's engine image carries the Windows and Linux
+  packages only; macOS packages stay out while they are experimental (EasyRMM's ADR-0041).
 
 ## Installing
 
