@@ -273,6 +273,62 @@ func TestEasyPatchAPI(t *testing.T) {
 	wantStatus(t, admin.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "scheduledAt": "2026-01-01T00:00:00Z"}),
 		http.StatusUnprocessableEntity, "validation_failed")
 
+	// The device's Patches tab (one-product plan, C1). web-01 is a Linux
+	// endpoint: EasyPatch refuses messages and removals there.
+	var guid string
+	ep.Set(func() { guid = endpoint.Updates[0]["updateGuid"].(uuid.UUID).String() })
+	dp := "/api/v1/patching/devices/" + device
+	admin.expect(http.StatusNoContent, "POST", dp+"/exclusions", map[string]any{"updateId": guid, "reason": "breaks printing"}, nil)
+	wantStatus(t, admin.do("POST", dp+"/exclusions", map[string]any{}), http.StatusUnprocessableEntity, "validation_failed")
+	var preview struct {
+		Mode    string           `json:"mode"`
+		Items   []map[string]any `json:"items"`
+		Skipped []map[string]any `json:"skipped"`
+	}
+	admin.expect(http.StatusOK, "GET", dp+"/install-preview?updateId="+guid, nil, &preview)
+	if preview.Mode != "Selected" || len(preview.Items) != 0 || len(preview.Skipped) != 1 || preview.Skipped[0]["reason"] != "Excluded" {
+		t.Fatalf("preview of the excluded update: %+v", preview)
+	}
+	wantStatus(t, admin.do("GET", dp+"/install-preview?updateId=x", nil), http.StatusUnprocessableEntity, "validation_failed")
+	admin.expect(http.StatusNoContent, "DELETE", dp+"/exclusions/"+guid, nil, nil)
+	wantStatus(t, admin.do("DELETE", dp+"/exclusions/nope", nil), http.StatusNotFound, "not_found")
+	admin.expect(http.StatusOK, "GET", dp+"/install-preview", nil, &preview)
+	if preview.Mode != "AllEligible" || len(preview.Items) != 2 || len(preview.Skipped) != 0 {
+		t.Fatalf("preview: %+v", preview)
+	}
+	var refused struct {
+		Succeeded int `json:"succeeded"`
+		Failed    int `json:"failed"`
+		Results   []struct {
+			Message string `json:"message"`
+		} `json:"results"`
+	}
+	admin.expect(http.StatusOK, "POST", dp+"/updates/"+guid+"/remove", map[string]any{"block": true}, &refused)
+	if refused.Failed != 1 || !strings.Contains(refused.Results[0].Message, "Removing updates is only available on Windows") {
+		t.Fatalf("removal on Linux: %+v", refused)
+	}
+	wantStatus(t, admin.do("POST", dp+"/updates/nope/remove", map[string]any{}), http.StatusNotFound, "not_found")
+	var presets struct {
+		Items []struct {
+			Preset           string `json:"preset"`
+			NeedsRestartTime bool   `json:"needsRestartTime"`
+		} `json:"items"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/messages", nil, &presets)
+	if len(presets.Items) != 6 || presets.Items[5].Preset != "RestartScheduled" || !presets.Items[5].NeedsRestartTime {
+		t.Fatalf("presets: %+v", presets)
+	}
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/notify", map[string]any{"deviceIds": []string{device}, "preset": "SaveYourWork"}, &refused)
+	if refused.Failed != 1 || !strings.Contains(refused.Results[0].Message, "Messages to users are only available on Windows") {
+		t.Fatalf("message on Linux: %+v", refused)
+	}
+	wantStatus(t, admin.do("POST", "/api/v1/patching/notify", map[string]any{"deviceIds": []string{device}, "preset": "Hello"}),
+		http.StatusUnprocessableEntity, "validation_failed")
+	admin.expect(http.StatusOK, "POST", "/api/v1/patching/agent-update", map[string]any{"deviceIds": []string{device}}, &res)
+	if res.Succeeded != 1 || res.Results[0].JobID == "" {
+		t.Fatalf("agent update: %+v", res)
+	}
+
 	// Links to EasyPatch's console.
 	link := *admin
 	noFollow := *admin.http
@@ -327,6 +383,14 @@ func TestEasyPatchAPI(t *testing.T) {
 	wantStatus(t, viewer.do("POST", "/api/v1/patching/restart/plan", map[string]any{"deviceIds": []string{device}}), http.StatusForbidden, "forbidden")
 	wantStatus(t, viewer.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "confirmServers": []string{device}}),
 		http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/devices/"+device+"/exclusions", map[string]any{"updateId": guid}), http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("DELETE", "/api/v1/patching/devices/"+device+"/exclusions/"+guid, nil), http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/devices/"+device+"/updates/"+guid+"/remove", map[string]any{}), http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/notify", map[string]any{"deviceIds": []string{device}, "preset": "SaveYourWork"}),
+		http.StatusForbidden, "forbidden")
+	wantStatus(t, viewer.do("POST", "/api/v1/patching/agent-update", map[string]any{"deviceIds": []string{device}}), http.StatusForbidden, "forbidden")
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/devices/"+device+"/install-preview", nil, &preview)
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/messages", nil, &presets)
 	for _, m := range []string{"GET", "PUT", "DELETE"} {
 		wantStatus(t, viewer.do(m, "/api/v1/settings/easypatch", map[string]string{}), http.StatusForbidden, "forbidden")
 	}
@@ -388,7 +452,7 @@ func TestEasyPatchAPI(t *testing.T) {
 	for _, a := range audit.Items {
 		got = append(got, a.Action)
 	}
-	if strings.Join(got, ",") != "patch.restart,patch.retry,patch.cancel,patch.install,patch.scan" {
+	if strings.Join(got, ",") != "patch.agent_update,patch.include,patch.exclude,patch.restart,patch.retry,patch.cancel,patch.install,patch.scan" {
 		t.Fatalf("patch audit: %v", got)
 	}
 

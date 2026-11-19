@@ -498,6 +498,90 @@ type EndpointDetail struct {
 	Credentials              []Credential `json:"credentials"`
 	Notes                    *string      `json:"notes"`
 	EsuOverride              string       `json:"esuOverride"`
+	// ActiveJob is the job the endpoint is working on, if any.
+	ActiveJob *Job `json:"activeJob"`
+	// AgentCapabilities are what the agent can do (AgentCan*).
+	AgentCapabilities []string `json:"agentCapabilities"`
+	// SignedInUsers and TrayConnectedSessions count sessions at the
+	// latest check-in; nil until the agent reports them.
+	SignedInUsers         *int `json:"signedInUsers"`
+	TrayConnectedSessions *int `json:"trayConnectedSessions"`
+	// HasOwnPolicy says the endpoint has its own policy layer.
+	HasOwnPolicy bool              `json:"hasOwnPolicy"`
+	AgentUpdate  *AgentUpdateState `json:"agentUpdate"`
+	// Restart says what a pending restart is for; nil when none is.
+	Restart *RestartDetails `json:"restart"`
+	// WindowsUpdatePolicy is how the agent applied the Windows Update
+	// settings of its policy (Windows only).
+	WindowsUpdatePolicy           *WindowsUpdateReport `json:"windowsUpdatePolicy"`
+	WindowsUpdatePolicyReportedAt *time.Time           `json:"windowsUpdatePolicyReportedAt"`
+}
+
+// What EasyPatch agents can do, as they report it (agentCapabilities).
+const (
+	AgentCanNotifyUser       = "notify-user"
+	AgentCanUninstallUpdates = "uninstall-updates"
+	AgentCanTray             = "tray"
+)
+
+// AgentUpdateState says whether an endpoint's agent can update itself, and
+// to what.
+type AgentUpdateState struct {
+	// Supported: the agent is 1.2.0 or newer, built with a release key.
+	Supported bool `json:"supported"`
+	// AutomaticUpdates: the effective policy updates agents by itself.
+	AutomaticUpdates bool `json:"automaticUpdates"`
+	// AvailableVersion is what an update would install now; empty when
+	// nothing would, and then Code and Message say why.
+	AvailableVersion string `json:"availableVersion"`
+	Code             string `json:"code"`
+	Message          string `json:"message"`
+	// PackageFormat is msi, deb, rpm or pkg.
+	PackageFormat string `json:"packageFormat"`
+}
+
+// RestartDetails is what a pending restart is for.
+type RestartDetails struct {
+	Updates           []RestartUpdate `json:"updates"`
+	ServicingPackages []string        `json:"servicingPackages"`
+	// FileOperations are the first 25 of FileOperationCount.
+	FileOperations     []FileOperation `json:"fileOperations"`
+	FileOperationCount int             `json:"fileOperationCount"`
+	// DetailsSupported: the agent reports what Windows has queued
+	// (Windows agent 1.5.3 and later).
+	DetailsSupported bool `json:"detailsSupported"`
+}
+
+// RestartUpdate is an update waiting for the restart.
+type RestartUpdate struct {
+	UpdateGUID *uuid.UUID `json:"updateGuid"`
+	Title      string     `json:"title"`
+	KbNumbers  []string   `json:"kbNumbers"`
+	// Source is Installed, WindowsUpdate or Servicing.
+	Source      string     `json:"source"`
+	InstalledAt *time.Time `json:"installedAt"`
+}
+
+// FileOperation is a file Windows deletes or replaces at the restart.
+type FileOperation struct {
+	Action string `json:"action"`
+	Path   string `json:"path"`
+}
+
+// WindowsUpdateReport is how the agent applied its Windows Update settings.
+type WindowsUpdateReport struct {
+	Groups                   []WindowsUpdateGroupStatus `json:"groups"`
+	MdmUpdatePoliciesPresent bool                       `json:"mdmUpdatePoliciesPresent"`
+}
+
+// WindowsUpdateGroupStatus is one group of settings on the endpoint.
+type WindowsUpdateGroupStatus struct {
+	Group string `json:"group"`
+	// State is NotManaged, Applied, Conflict or Error.
+	State             string     `json:"state"`
+	Message           string     `json:"message"`
+	AppliedAt         *time.Time `json:"appliedAt"`
+	ConflictingValues []string   `json:"conflictingValues"`
 }
 
 // Endpoint reads one endpoint.
@@ -531,6 +615,7 @@ type Update struct {
 	UpdateGUID      uuid.UUID  `json:"updateGuid"`
 	Title           string     `json:"title"`
 	KbNumber        string     `json:"kbNumber"`
+	KbNumbers       []string   `json:"kbNumbers"`
 	Category        string     `json:"category"`
 	MsrcSeverity    string     `json:"msrcSeverity"`
 	ReleaseDate     *time.Time `json:"releaseDate"`
@@ -551,7 +636,10 @@ type Update struct {
 	DeferredUntil   *time.Time `json:"deferredUntil"`
 	CveIDs          []string   `json:"cveIds"`
 	KnownExploited  bool       `json:"knownExploited"`
-	HoldReason      string     `json:"holdReason"`
+	// KevDueDate is CISA's date for fixing an exploited vulnerability
+	// (YYYY-MM-DD).
+	KevDueDate string `json:"kevDueDate"`
+	HoldReason string `json:"holdReason"`
 }
 
 // Updates lists an endpoint's updates that are not installed, optionally in
@@ -694,8 +782,8 @@ func (c *Client) CancelJob(ctx context.Context, id uuid.UUID, onBehalfOf string)
 	return j, err
 }
 
-// Policy is what an endpoint's effective policy says about when updates
-// install.
+// Policy is an endpoint's effective policy: every value, and which layer of
+// EasyPatch's policies set it.
 type Policy struct {
 	AutoInstallEnabled         bool     `json:"autoInstallEnabled"`
 	MaintenanceDays            []int    `json:"maintenanceDays"`
@@ -707,6 +795,100 @@ type Policy struct {
 	IncludeOptional            bool     `json:"includeOptional"`
 	InstallDelayDays           int      `json:"installDelayDays"`
 	SecurityInstallDelayDays   int      `json:"securityInstallDelayDays"`
+
+	CheckInIntervalSeconds       int      `json:"checkInIntervalSeconds"`
+	InventoryIntervalMinutes     int      `json:"inventoryIntervalMinutes"`
+	JitterPercent                int      `json:"jitterPercent"`
+	ExcludedKbs                  []string `json:"excludedKbs"`
+	AcceptEulas                  bool     `json:"acceptEulas"`
+	ScanStaleAfterHours          int      `json:"scanStaleAfterHours"`
+	MaxConcurrentInstallsPerSite int      `json:"maxConcurrentInstallsPerSite"`
+	TrayIconEnabled              bool     `json:"trayIconEnabled"`
+	InstallNotificationsEnabled  bool     `json:"installNotificationsEnabled"`
+	AgentAutoUpdateEnabled       bool     `json:"agentAutoUpdateEnabled"`
+	KnownExploitedSkipsDelay     bool     `json:"knownExploitedSkipsDelay"`
+	PreDownloadHours             int      `json:"preDownloadHours"`
+
+	RestartSchedule     *RestartSchedule    `json:"restartSchedule"`
+	WindowsUpdate       *WindowsUpdate      `json:"windowsUpdate"`
+	WindowsUpdateValues []RegistryValue     `json:"windowsUpdateValues"`
+	ApplicationUpdates  *ApplicationUpdates `json:"applicationUpdates"`
+
+	// Sources names, for each value, the layer that set it: Global,
+	// Organization, Site, Tag or Endpoint. EasyPatch keys it by the value's
+	// name in PascalCase (WindowsUpdate.<Group> for those settings).
+	Sources map[string]string `json:"sources"`
+	// SourceTags names the tag of the values a tag's policy set.
+	SourceTags map[string]string `json:"sourceTags"`
+}
+
+// RestartSchedule is a recurring restart. Time is HH:mm in the policy's time
+// zone; days are 0 (Sunday) to 6.
+type RestartSchedule struct {
+	Enabled bool   `json:"enabled"`
+	Days    []int  `json:"days"`
+	Time    string `json:"time"`
+	// Condition is OnlyIfPending or Always.
+	Condition string `json:"condition"`
+	// Mode is Immediate, Countdown, PromptWithDeadline or
+	// PromptNoDeadline.
+	Mode             string `json:"mode"`
+	CountdownMinutes int    `json:"countdownMinutes"`
+	DeadlineMinutes  int    `json:"deadlineMinutes"`
+	ExpiryMinutes    int    `json:"expiryMinutes"`
+}
+
+// WindowsUpdate is the Windows Update settings EasyPatch applies; a nil
+// group is left as it is on the endpoint.
+type WindowsUpdate struct {
+	AutomaticUpdates *AutomaticUpdates `json:"automaticUpdates"`
+	FeatureUpdates   *FeatureUpdates   `json:"featureUpdates"`
+	QualityUpdates   *QualityUpdates   `json:"qualityUpdates"`
+	RestartBehavior  *RestartBehavior  `json:"restartBehavior"`
+}
+
+// AutomaticUpdates is Windows' own automatic updating.
+type AutomaticUpdates struct {
+	// Mode is Disabled, NotifyDownload, AutoDownloadNotifyInstall or
+	// AutoDownloadScheduleInstall.
+	Mode string `json:"mode"`
+	// ScheduledInstallDay is 0 for every day, 1 (Sunday) to 7.
+	ScheduledInstallDay  int `json:"scheduledInstallDay"`
+	ScheduledInstallHour int `json:"scheduledInstallHour"`
+}
+
+// FeatureUpdates defers new Windows releases, or keeps a version.
+type FeatureUpdates struct {
+	DeferDays            *int   `json:"deferDays"`
+	TargetProductVersion string `json:"targetProductVersion"`
+	TargetReleaseVersion string `json:"targetReleaseVersion"`
+}
+
+// QualityUpdates defers monthly updates.
+type QualityUpdates struct {
+	DeferDays    *int `json:"deferDays"`
+	DisablePause bool `json:"disablePause"`
+}
+
+// RestartBehavior is when Windows may restart by itself.
+type RestartBehavior struct {
+	NoAutoRestartWithSignedInUsers bool `json:"noAutoRestartWithSignedInUsers"`
+	ActiveHoursStart               *int `json:"activeHoursStart"`
+	ActiveHoursEnd                 *int `json:"activeHoursEnd"`
+}
+
+// RegistryValue is a Windows Update policy value EasyPatch sets.
+type RegistryValue struct {
+	Group string `json:"group"`
+	Path  string `json:"path"`
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// ApplicationUpdates is the policy's winget application updates.
+type ApplicationUpdates struct {
+	Enabled      bool     `json:"enabled"`
+	ApprovedApps []string `json:"approvedApps"`
 }
 
 // EffectivePolicy reads the policy that applies to an endpoint.

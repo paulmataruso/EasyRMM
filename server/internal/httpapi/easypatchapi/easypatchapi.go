@@ -65,6 +65,14 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/patching/agent-install", a.installAgent)
 	r("POST /api/v1/patching/stop", a.stopPatching)
 	r("POST /api/v1/patching/allow", a.allowPatching)
+	// A device's Patches tab (one-product plan, C1).
+	r("GET /api/v1/patching/devices/{id}/install-preview", a.installPreview)
+	r("POST /api/v1/patching/devices/{id}/exclusions", a.exclude)
+	r("DELETE /api/v1/patching/devices/{id}/exclusions/{update}", a.include)
+	r("POST /api/v1/patching/devices/{id}/updates/{update}/remove", a.removeUpdate)
+	r("GET /api/v1/patching/messages", a.messagePresets)
+	r("POST /api/v1/patching/notify", a.notify)
+	r("POST /api/v1/patching/agent-update", a.updateAgent)
 	// The product switch: for anyone signed in, it says whether to show it.
 	r("GET /api/v1/patching/switch", a.productSwitch)
 	// Where a link from EasyPatch opens the console.
@@ -436,4 +444,93 @@ func (a *API) fromEasyPatch(w http.ResponseWriter, r *http.Request) error {
 	}
 	l, err := a.svc.FromEasyPatch(r.Context(), httpapi.Caller(r), kind, id)
 	return ok(w, l, err)
+}
+
+func (a *API) installPreview(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	var updates []uuid.UUID
+	for _, v := range r.URL.Query()["updateId"] {
+		u, err := parseID(v, "updateId")
+		if err != nil {
+			return err
+		}
+		updates = append(updates, u)
+	}
+	p, err := a.svc.InstallPreview(r.Context(), httpapi.Caller(r), id, updates)
+	return ok(w, p, err)
+}
+
+func (a *API) exclude(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	var in easypatch.ExclusionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	if err := a.svc.Exclude(r.Context(), httpapi.Caller(r), id, in); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (a *API) include(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	update, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	if err := a.svc.Include(r.Context(), httpapi.Caller(r), id, update); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (a *API) removeUpdate(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	update, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	var in easypatch.RemoveInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.RemoveUpdate(r.Context(), httpapi.Caller(r), id, update, in)
+	return ok(w, res, err)
+}
+
+func (a *API) messagePresets(w http.ResponseWriter, r *http.Request) error {
+	list, err := a.svc.MessagePresets(r.Context(), httpapi.Caller(r))
+	return ok(w, map[string]any{"items": list}, err)
+}
+
+func (a *API) notify(w http.ResponseWriter, r *http.Request) error {
+	var in easypatch.NotifyInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.Notify(r.Context(), httpapi.Caller(r), in)
+	return ok(w, res, err)
+}
+
+func (a *API) updateAgent(w http.ResponseWriter, r *http.Request) error {
+	var in easypatch.ActionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.UpdateAgent(r.Context(), httpapi.Caller(r), in)
+	return ok(w, res, err)
 }

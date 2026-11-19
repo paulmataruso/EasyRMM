@@ -1,14 +1,15 @@
 import { useEffect, useId, useState } from "react";
 import { Link } from "react-router";
 import { RotateCcw } from "lucide-react";
-import { api } from "../../api/client";
+import type { UseQueryResult } from "@tanstack/react-query";
+import { api, errorMessage } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
-import type { PatchActionInput, PatchActionResult, PatchJobDetail, PatchJobView, RestartInput, RestartPlan } from "../../api/types";
+import type { PatchActionInput, PatchActionResult, PatchInstallPreview, PatchJobDetail, PatchJobView, RestartInput, RestartPlan } from "../../api/types";
 import { Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Alert, Badge, Button, ErrorState, InlineError, Input, KeyValueList, Spinner } from "../../components/ui";
-import { formatDateTime, formatRelative, plural } from "../../lib/format";
-import { canRetry, categoryLabel, EasyPatchLink, isActiveJob, jobOutcome, jobTypeLabel, PatchJobBadge, requester } from "./patchText";
+import { formatDateTime, formatRelative, formatSize, plural } from "../../lib/format";
+import { canRetry, categoryLabel, EasyPatchLink, isActiveJob, jobOutcome, jobTypeLabel, PatchJobBadge, requester, skipReasonText } from "./patchText";
 
 /** What the patching views refresh after an action. */
 export const PATCH_KEYS = ["/patching", "/audit"];
@@ -190,9 +191,72 @@ function tonight(now = new Date()): Date {
   return d;
 }
 
+/** What an install on one device would do, from its last scan (one-product plan, C1). */
+function InstallPreviewList({ q }: { q: UseQueryResult<PatchInstallPreview> }) {
+  if (q.isPending) return <Spinner label="Checking what would be installed…" />;
+  if (q.isError) {
+    return <p className="text-xs text-muted">What would be installed could not be checked ({errorMessage(q.error)}). EasyPatch checks again when it installs.</p>;
+  }
+  const p = q.data;
+  return (
+    <div className="space-y-3 text-sm">
+      {p.items.length === 0 ? (
+        <Alert tone="warn" title="Nothing would be installed">
+          {p.skipped.length > 0 ? "Every update is left out, for the reasons below." : "The last scan found no update the policy allows."}
+        </Alert>
+      ) : (
+        <div>
+          <p className="font-medium">
+            {plural(p.items.length, "update")}
+            {p.totalSizeBytes > 0 && <span className="font-normal text-muted">, {formatSize(p.totalSizeBytes)}</span>}
+            {p.rebootLikelyCount > 0 && <span className="font-normal text-muted">; {p.rebootLikelyCount.toLocaleString()} likely to need a restart</span>}
+          </p>
+          <ul className="mt-1 max-h-40 space-y-0.5 overflow-y-auto">
+            {p.items.map((u) => (
+              <li key={u.updateGuid} className="break-words">
+                {u.title}
+                <span className="text-xs text-muted">
+                  {" "}
+                  · {categoryLabel(u.category)}
+                  {u.sizeBytes ? ` · ${formatSize(u.sizeBytes)}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {p.skipped.length > 0 && (
+        <div>
+          <p className="font-medium">Left out ({p.skipped.length.toLocaleString()})</p>
+          <ul className="mt-1 max-h-32 space-y-0.5 overflow-y-auto">
+            {p.skipped.map((u) => (
+              <li key={u.updateGuid} className="break-words">
+                {u.title}
+                <span className="block text-xs text-muted">{skipReasonText(u.reason)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {p.warnings.length > 0 && (
+        <Alert tone="warn">
+          {p.warnings.map((w) => (
+            <p key={w}>{w}</p>
+          ))}
+        </Alert>
+      )}
+      <p className="text-xs text-subtle">
+        {p.lastScanAt ? <>From the scan {formatRelative(p.lastScanAt)}. </> : null}
+        The agent scans again before installing.
+      </p>
+    </div>
+  );
+}
+
 /**
  * Installs updates on devices: every eligible update, or chosen ones on one device. Where EasyPatch can schedule
- * (scheduled-installs), the install can wait for a time.
+ * (scheduled-installs), the install can wait for a time. On one device, with preview, it first shows what EasyPatch
+ * would install and leave out.
  */
 export function InstallDialog({
   open,
@@ -200,6 +264,7 @@ export function InstallDialog({
   devices,
   updates,
   canSchedule,
+  preview = false,
   onDone,
 }: {
   open: boolean;
@@ -208,9 +273,17 @@ export function InstallDialog({
   /** Chosen updates (one device only); every eligible update when absent. */
   updates?: { id: string; title: string }[];
   canSchedule: boolean;
+  /** Show what the install would do first (one device only). */
+  preview?: boolean;
   onDone?: () => void;
 }) {
   const outcome = useOutcome();
+  const previewing = open && preview && devices.length === 1;
+  const pv = useApi<PatchInstallPreview>(
+    previewing ? `/patching/devices/${devices[0]!.id}/install-preview` : null,
+    updates ? { updateId: updates.map((u) => u.id) } : undefined,
+    { staleTime: 0 },
+  );
   const [when, setWhen] = useState<"now" | "later">("now");
   const [at, setAt] = useState(() => localInput(tonight()));
   const whenId = useId();
@@ -269,7 +342,8 @@ export function InstallDialog({
         }
       >
         <div className="space-y-4">
-          {updates && (
+          {previewing && <InstallPreviewList q={pv} />}
+          {updates && !previewing && (
             <ul className="max-h-40 list-disc space-y-0.5 overflow-y-auto pl-5 text-sm">
               {updates.map((u) => (
                 <li key={u.id} className="break-words">

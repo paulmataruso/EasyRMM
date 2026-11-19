@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import type { AgentInstall, ComplianceStatus, PatchJob, PatchLink, PatchPolicy, PatchUpdateState } from "../../api/types";
+import type { AgentInstall, ComplianceStatus, PatchJob, PatchLink, PatchPolicy, PatchStatus, PatchUpdateState } from "../../api/types";
 import { ArrowUpRight } from "lucide-react";
+import { useApi } from "../../api/hooks";
 import { Badge, buttonClasses, cx, Dot, type Tone } from "../../components/ui";
 import { plural } from "../../lib/format";
 
@@ -277,10 +278,21 @@ export function easyPatchHref(t: EasyPatchTarget): string {
 }
 
 /**
+ * Whether EasyPatch has a console of its own to link to: a connected EasyPatch server does; the patching engine in
+ * EasyRMM's own deployment (ADR-0038) has none, its pages being EasyRMM's.
+ */
+export function useEasyPatchConsole(): boolean {
+  const status = useApi<PatchStatus>("/patching", undefined, { staleTime: 60_000 });
+  return !!status.data?.consoleUrl;
+}
+
+/**
  * A link to where EasyPatch's console changes something EasyRMM only shows, named for the action ("Change in
- * EasyPatch"). It opens in the same tab, so Back returns.
+ * EasyPatch"). It opens in the same tab, so Back returns. Nothing shows where EasyPatch has no console of its own.
  */
 export function EasyPatchLink({ to, children, className }: { to: EasyPatchTarget; children: ReactNode; className?: string }) {
+  const hasConsole = useEasyPatchConsole();
+  if (!hasConsole) return null;
   return (
     <a href={easyPatchHref(to)} className={cx("inline-flex items-center gap-0.5 rounded-sm font-medium text-accent hover:underline", className)}>
       {children}
@@ -297,4 +309,28 @@ export function OpenEasyPatch({ to = {} }: { to?: EasyPatchTarget }) {
       <ArrowUpRight className="size-3.5" aria-hidden />
     </a>
   );
+}
+
+/** Why an install would leave an update out, from EasyPatch's reason code. */
+const SKIP_REASONS: Record<string, string> = {
+  AlreadyInstalled: "Already installed",
+  PendingReboot: "Installed, waiting for a restart",
+  NotApplicable: "No longer offered by the update source",
+  NotSelected: "Not selected",
+  CategoryNotAllowed: "Its category is not allowed by the policy",
+  OptionalNotAllowed: "Optional, and the policy leaves optional updates out",
+  Excluded: "Excluded on this device or by the policy",
+  RequiresUserInput: "Needs someone at the computer to install",
+  EulaNotAccepted: "Has a license agreement the policy does not accept",
+  MaintenanceWindowClosed: "The maintenance window is closed",
+  Cancelled: "Cancelled",
+  ApplicationNotApproved: "The application is not approved by the policy",
+  Reoffered: "Offered again after a successful install: installed only when chosen",
+  NotInstalled: "Not installed",
+  Held: "On hold: not installed automatically",
+  WindowStarted: "Not downloaded before the window opened; the install downloads it",
+};
+
+export function skipReasonText(reason: string): string {
+  return SKIP_REASONS[reason] ?? reason;
 }

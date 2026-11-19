@@ -79,13 +79,18 @@ export function fieldError(error: unknown, name: string): string | null {
 }
 
 export type QueryValue = string | number | boolean | null | undefined;
-export type QueryParams = Record<string, QueryValue>;
+/** A list repeats its key once per value (?updateId=a&updateId=b). */
+export type QueryParams = Record<string, QueryValue | readonly string[]>;
 
 /** Builds a query string, skipping null/undefined/empty values. */
 export function buildQuery(params?: QueryParams): string {
   if (!params) return "";
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
+    if (Array.isArray(value)) {
+      for (const v of value) search.append(key, v);
+      continue;
+    }
     if (value === undefined || value === null || value === "") continue;
     search.append(key, String(value));
   }

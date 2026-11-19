@@ -7,6 +7,8 @@ import type {
   EasyPatchOrganizations,
   PatchEndpoint,
   PatchFleet,
+  PatchActionResult,
+  PatchInstallPreview,
   PatchJobDetail,
   PatchJobView,
   PatchPolicy,
@@ -31,10 +33,12 @@ const VIEWER = sessionView({
   permissions: ["org.view", "site.view", "device.view", "patch.view"],
 });
 
+/** A connected EasyPatch server, with a console of its own to link to. */
 const READY: PatchStatus = {
   configured: true,
   canOperate: true,
   canSchedule: false,
+  consoleUrl: "https://patch.example.com",
 };
 
 function endpoint(id: string, hostname: string, extra: Partial<PatchEndpoint> = {}): PatchEndpoint {
@@ -158,6 +162,8 @@ describe("patching page", () => {
     const user = userEvent.setup();
     const server = installFakeApi(
       patchingRoutes({
+        // The patching engine in EasyRMM's deployment: no console of its own.
+        "GET /patching": ok({ ...READY, consoleUrl: undefined }),
         "POST /patching/scan": ok({
           succeeded: 1,
           failed: 0,
@@ -169,7 +175,7 @@ describe("patching page", () => {
     await screen.findByRole("main");
     expect(await screen.findByRole("heading", { name: "Patching", level: 1 })).toBeInTheDocument();
     expect(await main().findByText("WEB-01")).toBeInTheDocument();
-    // Without EasyPatch's address, there is nothing to open.
+    // Without a console of EasyPatch's own, there is nothing to open.
     expect(main().queryByText("Open EasyPatch")).not.toBeInTheDocument();
     const table = within(main().getByRole("table"));
     // The status shows under the name on narrow screens and in its own column on wider ones.
@@ -581,6 +587,24 @@ const POLICY: PatchPolicy = {
   includeOptional: false,
   installDelayDays: 3,
   securityInstallDelayDays: 0,
+  checkInIntervalSeconds: 60,
+  inventoryIntervalMinutes: 1440,
+  jitterPercent: 10,
+  excludedKbs: [],
+  acceptEulas: true,
+  scanStaleAfterHours: 72,
+  maxConcurrentInstallsPerSite: 10,
+  trayIconEnabled: true,
+  installNotificationsEnabled: true,
+  agentAutoUpdateEnabled: true,
+  knownExploitedSkipsDelay: true,
+  preDownloadHours: 0,
+  restartSchedule: null,
+  windowsUpdate: null,
+  windowsUpdateValues: null,
+  applicationUpdates: null,
+  sources: { AutoInstallEnabled: "Organization", MaintenanceWindow: "Organization", AllowedCategories: "Global" },
+  sourceTags: null,
 };
 
 function update(guid: string, title: string, extra: Partial<PatchUpdate> = {}): PatchUpdate {
@@ -588,6 +612,7 @@ function update(guid: string, title: string, extra: Partial<PatchUpdate> = {}): 
     updateGuid: guid,
     title,
     kbNumber: "",
+    kbNumbers: [],
     category: "Security",
     msrcSeverity: "",
     releaseDate: T,
@@ -614,6 +639,7 @@ function update(guid: string, title: string, extra: Partial<PatchUpdate> = {}): 
     deferredUntil: null,
     cveIds: [],
     knownExploited: false,
+    kevDueDate: "",
     holdReason: "",
     ...extra,
   };
@@ -650,8 +676,37 @@ const LINKED: DevicePatching = {
     installedCount: 1,
     pendingRebootUpdateCount: 0,
     complianceEvaluatedAt: T,
+    activeJob: null,
+    agentCapabilities: ["restart", "self-update", "uninstall"],
+    signedInUsers: null,
+    trayConnectedSessions: null,
+    hasOwnPolicy: false,
+    agentUpdate: {
+      supported: true,
+      automaticUpdates: true,
+      availableVersion: "",
+      code: "agent_up_to_date",
+      message: "The agent already runs the newest package for its platform.",
+      packageFormat: "deb",
+    },
+    restart: null,
+    windowsUpdatePolicy: null,
   },
   policy: POLICY,
+};
+
+const PREVIEW: PatchInstallPreview = {
+  mode: "AllEligible",
+  items: [
+    { updateGuid: "u1", title: "openssl 3.5.7-1~deb13u3", kbNumber: "", category: "Security", sizeBytes: 1_543_210, rebootBehavior: null, state: "Missing" },
+    { updateGuid: "u2", title: "tzdata 2026c-0+deb13u1", kbNumber: "", category: "Other", sizeBytes: 1_543_210, rebootBehavior: null, state: "Failed" },
+  ],
+  skipped: [],
+  totalSizeBytes: 3_086_420,
+  rebootLikelyCount: 0,
+  warnings: [],
+  filter: { categories: ["Security", "ServicingStack"], includeOptional: false },
+  lastScanAt: T,
 };
 
 function deviceRoutes(patching: DevicePatching, extra: Record<string, FakeHandler | FakeReply> = {}) {
@@ -661,6 +716,7 @@ function deviceRoutes(patching: DevicePatching, extra: Record<string, FakeHandle
     "GET /devices/:id": ok(WEB),
     "GET /patching": ok(READY),
     "GET /patching/devices/:id": ok(patching),
+    "GET /patching/devices/:id/install-preview": ok(PREVIEW),
     "GET /patching/devices/:id/updates": ok({
       items: [
         update("u1", "openssl 3.5.7-1~deb13u3", { knownExploited: true }),
@@ -715,9 +771,7 @@ describe("device patches", () => {
     expect(main().getByText(/1 fixes a vulnerability exploited in the wild/)).toBeInTheDocument();
     // An update already being installed cannot be chosen again.
     expect(main().queryByLabelText("Select curl 8.14.1-2")).not.toBeInTheDocument();
-    // What EasyRMM only shows is changed in EasyPatch, on the matching page.
-    expect(main().getByRole("link", { name: "Change in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d1&tab=policy");
-    expect(main().getByRole("link", { name: "Exclude in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d1&tab=updates");
+    // With an EasyPatch server of its own, its console is a link away, on the matching page.
     expect(main().getByRole("link", { name: "Open in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d1&tab=updates");
     expect(main().getByRole("link", { name: "openssl 3.5.7-1~deb13u3" })).toHaveAttribute("href", "/go/to-easypatch?update=u1");
     // No restart is pending, so none is offered.
@@ -729,6 +783,10 @@ describe("device patches", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Install 2 updates on WEB-01",
     });
+    // What EasyPatch would install, from the last scan.
+    expect(await within(dialog).findByText("2 updates")).toBeInTheDocument();
+    expect(within(dialog).getByText(/The agent scans again before installing/)).toBeInTheDocument();
+    expect(server.call("GET /patching/devices/:id/install-preview").query.getAll("updateId")).toEqual(["u1", "u2"]);
     const at = within(dialog).getByLabelText("Install at");
     await user.clear(at);
     await user.type(at, "2030-01-05T02:30");
@@ -1282,5 +1340,407 @@ describe("maintenance text", () => {
         maintenanceDurationMinutes: 90,
       }),
     ).toBe("Every day at 02:00 for 90 minutes (Europe/Paris)");
+  });
+});
+
+// The device's Patches tab (one-product plan, C1): exclusions, removals, messages, agent updates and the policy.
+const WIN = device("d2", "APP-01", {
+  platform: "windows",
+  osDescription: "Windows Server 2025 Standard",
+  agent: AGENT,
+});
+
+const CU = "2026-11 Cumulative Update for Windows Server 2025 (KB5070001)";
+
+const WIN_POLICY: PatchPolicy = {
+  ...POLICY,
+  excludedKbs: ["KB5005565"],
+  restartSchedule: {
+    enabled: true,
+    days: [0],
+    time: "03:00",
+    condition: "OnlyIfPending",
+    mode: "PromptWithDeadline",
+    countdownMinutes: 15,
+    deadlineMinutes: 240,
+    expiryMinutes: 60,
+  },
+  windowsUpdate: {
+    automaticUpdates: { mode: "NotifyDownload", scheduledInstallDay: 0, scheduledInstallHour: 3 },
+    featureUpdates: { deferDays: 180, targetProductVersion: "", targetReleaseVersion: "" },
+    qualityUpdates: null,
+    restartBehavior: null,
+  },
+  applicationUpdates: { enabled: true, approvedApps: ["Mozilla.Firefox"] },
+  sources: {
+    AutoInstallEnabled: "Organization",
+    MaintenanceWindow: "Site",
+    AllowedCategories: "Global",
+    RestartSchedule: "Endpoint",
+    ApplicationUpdates: "Tag",
+    "WindowsUpdate.AutomaticUpdates": "Organization",
+  },
+  sourceTags: { ApplicationUpdates: "Workstations" },
+};
+
+const WIN_LINKED: DevicePatching = {
+  ...LINKED,
+  deviceId: "d2",
+  endpoint: {
+    ...LINKED.endpoint!,
+    summary: endpoint("e2", "app-01", {
+      platform: "Windows",
+      operatingSystem: "Windows Server 2025 Standard",
+      rebootPending: true,
+    }),
+    rebootPendingSince: T,
+    agentCapabilities: ["restart", "self-update", "uninstall", "notify-user", "tray", "uninstall-updates"],
+    signedInUsers: 2,
+    trayConnectedSessions: 1,
+    agentUpdate: {
+      supported: true,
+      automaticUpdates: false,
+      availableVersion: "1.10.1",
+      code: "",
+      message: "",
+      packageFormat: "msi",
+    },
+    restart: {
+      updates: [{ updateGuid: "k1", title: CU, kbNumbers: ["5070001"], source: "Installed", installedAt: T }],
+      servicingPackages: ["Package_for_RollupFix~31bf3856ad364e35~amd64~~26100.7171.1.3"],
+      fileOperations: [],
+      fileOperationCount: 3,
+      detailsSupported: true,
+    },
+    windowsUpdatePolicy: {
+      groups: [
+        {
+          group: "AutomaticUpdates",
+          state: "Conflict",
+          message: "A Group Policy object also sets this.",
+          appliedAt: T,
+          conflictingValues: ["AUOptions"],
+        },
+      ],
+      mdmUpdatePoliciesPresent: true,
+    },
+  },
+  policy: WIN_POLICY,
+};
+
+const PRESETS = {
+  items: [
+    {
+      preset: "SaveYourWork",
+      title: "Please save your work",
+      body: "Your IT team is about to carry out maintenance on this computer. Please save your work.",
+      needsRestartTime: false,
+    },
+    {
+      preset: "RestartScheduled",
+      title: "Restart scheduled",
+      body: "This computer will restart at {time}. Please save your work before then.",
+      needsRestartTime: true,
+    },
+  ],
+};
+
+function winRoutes(patching: DevicePatching = WIN_LINKED, extra: Record<string, FakeHandler | FakeReply> = {}) {
+  return deviceRoutes(patching, {
+    "GET /devices/:id": ok(WIN),
+    "GET /patching/devices/:id/updates": ok({
+      items: [
+        update("k1", CU, { package: null, kbNumber: "5070001", state: "PendingReboot" }),
+        update("k2", "2026-11 .NET Framework update (KB5005565)", { package: null, kbNumber: "5005565", state: "Excluded", isExcluded: true }),
+        update("k3", "Microsoft Defender Antivirus platform update", { package: null, kbNumber: "4052623" }),
+      ],
+    }),
+    "GET /patching/devices/:id/installed": ok({
+      items: [
+        update("k8", "2026-10 Cumulative Update for Windows Server 2025 (KB5066835)", { package: null, kbNumber: "5066835", state: "Installed", installedAt: T }),
+      ],
+    }),
+    "GET /patching/devices/:id/jobs": ok({ items: [], page: 1, pageSize: 50, totalCount: 0 }),
+    "GET /patching/messages": ok(PRESETS),
+    ...extra,
+  });
+}
+
+const queued = (jobId: string): PatchActionResult => ({
+  succeeded: 1,
+  failed: 0,
+  results: [{ deviceId: "d2", deviceName: "APP-01", ok: true, jobId }],
+});
+
+const refused = (message: string): PatchActionResult => ({
+  succeeded: 0,
+  failed: 1,
+  results: [{ deviceId: "d2", deviceName: "APP-01", ok: false, message }],
+});
+
+describe("device patch actions", () => {
+  it("excludes an update on the device and includes it again", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi(
+      deviceRoutes(LINKED, {
+        "GET /patching/devices/:id/updates": ok({
+          items: [
+            update("u1", "openssl 3.5.7-1~deb13u3"),
+            update("u5", "tzdata 2026c-0+deb13u1", { state: "Excluded", isExcluded: true }),
+          ],
+        }),
+        "POST /patching/devices/:id/exclusions": noContent,
+        "DELETE /patching/devices/:id/exclusions/:update": noContent,
+      }),
+    );
+    renderApp("/devices/d1?tab=patches");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("button", { name: "Exclude openssl 3.5.7-1~deb13u3…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Exclude this update on WEB-01?" });
+    // A package version is excluded, not the package.
+    expect(within(dialog).getByText(/This version only/)).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText("Reason (optional)"), "  Breaks the billing app  ");
+    await user.click(within(dialog).getByRole("button", { name: "Exclude update" }));
+    await waitFor(() => expect(server.callsTo("POST /patching/devices/:id/exclusions")).toHaveLength(1));
+    expect(server.call("POST /patching/devices/:id/exclusions").params).toEqual({ id: "d1" });
+    expect(server.call("POST /patching/devices/:id/exclusions").body).toEqual({ updateId: "u1", reason: "Breaks the billing app" });
+    expect(await screen.findByText("Excluded on WEB-01.")).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    // An excluded update can be included again; it is neither installed nor excluded twice.
+    expect(main().queryByRole("button", { name: "Exclude tzdata 2026c-0+deb13u1…" })).not.toBeInTheDocument();
+    await user.click(main().getByRole("button", { name: "Include tzdata 2026c-0+deb13u1" }));
+    await waitFor(() => expect(server.callsTo("DELETE /patching/devices/:id/exclusions/:update")).toHaveLength(1));
+    expect(server.call("DELETE /patching/devices/:id/exclusions/:update").params).toEqual({ id: "d1", update: "u5" });
+    expect(await screen.findByText("Included again on WEB-01.")).toBeInTheDocument();
+  });
+
+  it("says why an exclusion or an inclusion was refused", async () => {
+    const user = userEvent.setup();
+    installFakeApi(
+      deviceRoutes(LINKED, {
+        "GET /patching/devices/:id/updates": ok({
+          items: [update("u1", "openssl 3.5.7-1~deb13u3"), update("u5", "tzdata 2026c-0+deb13u1", { state: "Excluded", isExcluded: true })],
+        }),
+        "POST /patching/devices/:id/exclusions": fail(400, "validation_failed", "Check the highlighted fields.", {
+          reason: "Keep the reason under 500 characters.",
+        }),
+        "DELETE /patching/devices/:id/exclusions/:update": fail(502, "easypatch_unavailable", "EasyPatch: the server did not answer."),
+      }),
+    );
+    renderApp("/devices/d1?tab=patches");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("button", { name: "Exclude openssl 3.5.7-1~deb13u3…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Exclude this update on WEB-01?" });
+    await user.click(within(dialog).getByRole("button", { name: "Exclude update" }));
+    expect(await within(dialog).findByText("Keep the reason under 500 characters.")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await user.click(main().getByRole("button", { name: "Include tzdata 2026c-0+deb13u1" }));
+    expect(await screen.findByText("EasyPatch: the server did not answer.")).toBeInTheDocument();
+  });
+
+  it("shows a Windows device's users, pending restart and agent, and leaves policy exclusions to the policy", async () => {
+    installFakeApi(winRoutes());
+    renderApp("/devices/d2?tab=patches");
+    await screen.findByRole("main");
+    expect(await main().findByText("Microsoft Defender Antivirus platform update")).toBeInTheDocument();
+    // Who is signed in, and whether the EasyPatch icon can reach them.
+    expect(main().getByText("2 users signed in")).toBeInTheDocument();
+    expect(main().getByText("The EasyPatch icon is running in 1 of 2 sessions")).toBeInTheDocument();
+    // What the pending restart is for.
+    expect(main().getByText(CU, { selector: "span" })).toBeInTheDocument();
+    expect(main().getByText(/installed, takes effect at the restart/)).toBeInTheDocument();
+    expect(main().getByText("1 servicing package waiting")).toBeInTheDocument();
+    expect(main().getByText("3 files to change at the restart")).toBeInTheDocument();
+    // The agent: a newer version, which this policy leaves to a technician.
+    expect(main().getByText("1.10.1 available")).toBeInTheDocument();
+    expect(main().getByRole("button", { name: "Update agent…" })).toBeInTheDocument();
+    // The policy excludes KB5005565 everywhere: this device cannot include it on its own.
+    expect(main().getByText("By the policy's excluded KBs")).toBeInTheDocument();
+    expect(main().queryByRole("button", { name: /^Include/ })).not.toBeInTheDocument();
+    // An installed update waiting for its restart can be removed; a missing one excluded.
+    expect(main().getByRole("button", { name: `Remove ${CU}…` })).toBeInTheDocument();
+    expect(main().getByRole("button", { name: "Exclude Microsoft Defender Antivirus platform update…" })).toBeInTheDocument();
+  });
+
+  it("messages the device's users with a restart time", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi(winRoutes(WIN_LINKED, { "POST /patching/notify": ok(queued("j5")) }));
+    renderApp("/devices/d2?tab=patches");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("button", { name: "Message users…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Message the users of APP-01" });
+    expect(await within(dialog).findByRole("radio", { name: /^Please save your work/ })).toBeChecked();
+    await user.click(within(dialog).getByRole("radio", { name: /Restart scheduled/ }));
+    const at = within(dialog).getByLabelText("Restart time the message names");
+    await user.clear(at);
+    await user.type(at, "2030-01-05T18:00");
+    // The message shows the time the users will read.
+    const named = new Date("2030-01-05T18:00").toLocaleString([], { weekday: "long", hour: "numeric", minute: "2-digit" });
+    expect(within(dialog).getByText(`This computer will restart at ${named}. Please save your work before then.`)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(server.callsTo("POST /patching/notify")).toHaveLength(1));
+    expect(server.call("POST /patching/notify").body).toEqual({
+      deviceIds: ["d2"],
+      preset: "RestartScheduled",
+      restartAt: new Date("2030-01-05T18:00").toISOString(),
+    });
+    expect(await screen.findByText("Message sent to APP-01. It shows at the agent's next check-in.")).toBeInTheDocument();
+  });
+
+  it("sends a message without a time, and shows EasyPatch's refusal", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi(
+      winRoutes(WIN_LINKED, { "POST /patching/notify": ok(refused("The EasyPatch agent on APP-01 is too old to show messages.")) }),
+    );
+    renderApp("/devices/d2?tab=patches");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("button", { name: "Message users…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Message the users of APP-01" });
+    await within(dialog).findByRole("radio", { name: /^Please save your work/ });
+    expect(within(dialog).queryByLabelText("Restart time the message names")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Send message" }));
+    expect(await within(dialog).findByText("The EasyPatch agent on APP-01 is too old to show messages.")).toBeInTheDocument();
+    expect(server.call("POST /patching/notify").body).toEqual({ deviceIds: ["d2"], preset: "SaveYourWork" });
+  });
+
+  it("updates the agent, and shows EasyPatch's refusal", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi(
+      winRoutes(WIN_LINKED, {
+        "POST /patching/agent-update": ok(refused("APP-01's agent has no release key; reinstall it once to update it.")),
+      }),
+    );
+    renderApp("/devices/d2?tab=patches");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("button", { name: "Update agent…" }));
+    const dialog = await screen.findByRole("dialog", { name: "Update the EasyPatch agent on APP-01?" });
+    expect(within(dialog).getByText(/From 1.9.0 to 1.10.1/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Update agent" }));
+    expect(await within(dialog).findByText("APP-01's agent has no release key; reinstall it once to update it.")).toBeInTheDocument();
+    expect(server.call("POST /patching/agent-update").body).toEqual({ deviceIds: ["d2"] });
+
+    server.on("POST /patching/agent-update", ok(queued("j6")));
+    await user.click(within(dialog).getByRole("button", { name: "Update agent" }));
+    expect(await screen.findByText("Agent update queued on APP-01.")).toBeInTheDocument();
+  });
+
+  it("removes an installed update, with or without excluding it", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi(
+      winRoutes(WIN_LINKED, {
+        "POST /patching/devices/:id/updates/:update/remove": ok(queued("j7")),
+      }),
+    );
+    renderApp("/devices/d2?tab=patches");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("radio", { name: "Installed" }));
+    const name = "2026-10 Cumulative Update for Windows Server 2025 (KB5066835)";
+    await user.click(await main().findByRole("button", { name: `Remove ${name}…` }));
+    const dialog = await screen.findByRole("dialog", { name: "Remove this update from APP-01?" });
+    // Excluding it too is the default, so that EasyPatch does not install it again.
+    const block = within(dialog).getByRole("checkbox", { name: "Exclude it on APP-01" });
+    expect(block).toBeChecked();
+    await user.type(within(dialog).getByLabelText("Reason (optional)"), "Breaks printing");
+    await user.click(block);
+    expect(within(dialog).queryByLabelText("Reason (optional)")).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Remove update" }));
+    await waitFor(() => expect(server.callsTo("POST /patching/devices/:id/updates/:update/remove")).toHaveLength(1));
+    const call = server.call("POST /patching/devices/:id/updates/:update/remove");
+    expect(call.params).toEqual({ id: "d2", update: "k8" });
+    expect(call.body).toEqual({ block: false, reason: "" });
+    expect(await screen.findByText("Removal queued on APP-01.")).toBeInTheDocument();
+    // The jobs list opens to follow it.
+    expect(await main().findByText("No patch jobs yet")).toBeInTheDocument();
+  });
+
+  it("shows a removal EasyPatch refused in the dialog", async () => {
+    const user = userEvent.setup();
+    installFakeApi(
+      winRoutes(WIN_LINKED, {
+        "POST /patching/devices/:id/updates/:update/remove": ok(refused("EasyPatch: KB5070001 is already being removed.")),
+      }),
+    );
+    renderApp("/devices/d2?tab=patches");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("button", { name: `Remove ${CU}…` }));
+    const dialog = await screen.findByRole("dialog", { name: "Remove this update from APP-01?" });
+    await user.click(within(dialog).getByRole("button", { name: "Remove update" }));
+    expect(await within(dialog).findByText("EasyPatch: KB5070001 is already being removed.")).toBeInTheDocument();
+  });
+
+  it("shows the whole effective policy, with the layer that set each value", async () => {
+    const user = userEvent.setup();
+    installFakeApi(winRoutes());
+    renderApp("/devices/d2?tab=patches");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("button", { name: "Whole policy" }));
+    expect(await main().findByRole("radio", { name: "Policy" })).toBeChecked();
+    const installing = within(main().getByRole("heading", { name: "Installing" }).closest("section")!);
+    expect(installing.getByText("Saturday at 02:00 for 3 hours (Europe/Paris)")).toBeInTheDocument();
+    expect(installing.getByText("KB5005565")).toBeInTheDocument();
+    expect(installing.getByText("winget, for Mozilla.Firefox")).toBeInTheDocument();
+    expect(installing.getByText("Tag: Workstations")).toBeInTheDocument();
+    expect(installing.getByText("Site")).toBeInTheDocument();
+    expect(installing.getByText("Default")).toBeInTheDocument();
+    expect(
+      main().getByText("Sunday at 03:00, only when a restart is pending, ask users, restart after 4 hours at the latest (Europe/Paris)"),
+    ).toBeInTheDocument();
+    expect(main().getByText("This device")).toBeInTheDocument();
+    // Windows Update's own settings, and how the device applied them.
+    expect(main().getByText("Notify before downloading and installing")).toBeInTheDocument();
+    expect(main().getByText("Defer 180 days")).toBeInTheDocument();
+    expect(main().getByText("Conflict")).toBeInTheDocument();
+    expect(main().getByText("A Group Policy object also sets this.")).toBeInTheDocument();
+    expect(main().getByText(/Update policies from MDM, such as Intune/)).toBeInTheDocument();
+    expect(main().getByRole("link", { name: "Change in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d2&tab=policy");
+  });
+
+  it("previews an install, with what it leaves out and why", async () => {
+    const user = userEvent.setup();
+    installFakeApi(
+      winRoutes(WIN_LINKED, {
+        "GET /patching/devices/:id/install-preview": ok({
+          ...PREVIEW,
+          items: [],
+          skipped: [{ updateGuid: "k2", title: "2026-11 .NET Framework update (KB5005565)", kbNumber: "5005565", category: "Updates", reason: "Excluded" }],
+          totalSizeBytes: 0,
+          warnings: ["The maintenance window is closed; the install waits for it unless it is started by hand."],
+        }),
+      }),
+    );
+    renderApp("/devices/d2?tab=patches");
+    await screen.findByRole("main");
+    await user.click(await main().findByRole("button", { name: "Install updates…" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("Nothing would be installed")).toBeInTheDocument();
+    expect(within(dialog).getByText("2026-11 .NET Framework update (KB5005565)")).toBeInTheDocument();
+    expect(within(dialog).getByText(/The maintenance window is closed/)).toBeInTheDocument();
+    // The agent scans again before installing, so an install can still be started.
+    expect(within(dialog).getByRole("button", { name: "Install now" })).toBeEnabled();
+  });
+
+  it("hides EasyPatch links where it has no console of its own", async () => {
+    const user = userEvent.setup();
+    installFakeApi(winRoutes(WIN_LINKED, { "GET /patching": ok({ ...READY, consoleUrl: undefined }) }));
+    renderApp("/devices/d2?tab=patches");
+    await screen.findByRole("main");
+    expect(await main().findByText("Microsoft Defender Antivirus platform update")).toBeInTheDocument();
+    expect(main().queryByRole("link", { name: "Microsoft Defender Antivirus platform update" })).not.toBeInTheDocument();
+    expect(main().queryByRole("link", { name: "Open in EasyPatch" })).not.toBeInTheDocument();
+    await user.click(main().getByRole("radio", { name: "Policy" }));
+    expect(await main().findByRole("heading", { name: "Installing" })).toBeInTheDocument();
+    expect(main().queryByRole("link", { name: /EasyPatch/ })).not.toBeInTheDocument();
+  });
+
+  it("offers a viewer nothing that changes the device", async () => {
+    installFakeApi(winRoutes({ ...WIN_LINKED, canManage: false }));
+    renderApp("/devices/d2?tab=patches");
+    await screen.findByRole("main");
+    expect(await main().findByText("Microsoft Defender Antivirus platform update")).toBeInTheDocument();
+    expect(main().getByText("2 users signed in")).toBeInTheDocument();
+    for (const name of [/^Exclude/, /^Include/, /^Remove/, "Message users…", "Update agent…"]) {
+      expect(main().queryByRole("button", { name })).not.toBeInTheDocument();
+    }
   });
 });

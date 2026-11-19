@@ -2,8 +2,9 @@
 // deploy/docker-compose.yml runs it, addressed by IP, and a real Linux machine. The first account
 // is made on the first-run page; the machine runs the install command the console shows; EasyRMM
 // installs the EasyPatch agent, which enrolls through EasyRMM's address and links; a scan finds
-// the update a local package repository offers, and installing it changes the package on the
-// machine. scripts/e2e/bundle.sh starts everything and runs this.
+// the update a local package repository offers. On the device's Patches tab (C1) the update is
+// excluded and included again, the policy shows, and installing it, after the preview, changes the
+// package on the machine. scripts/e2e/bundle.sh starts everything and runs this.
 
 import { execFileSync } from "node:child_process";
 import { expect, test, type Page } from "@playwright/test";
@@ -61,6 +62,7 @@ async function api<T>(method: "GET" | "POST", path: string, data?: unknown): Pro
 
 type PatchDevice = { link: string; reason?: string; install?: { state: string; error?: string; note?: string } };
 type Update = { updateGuid: string; title: string; state: string };
+type Preview = { items: { updateGuid: string }[]; skipped: { updateGuid: string; reason: string }[] };
 type Job = { type: string; status: string; failedCount: number; errorMessage: string };
 
 test("the first account is made on the first-run page, with a second factor", async () => {
@@ -165,27 +167,60 @@ test("EasyRMM installs the EasyPatch agent, which enrolls through EasyRMM's addr
   expect(onHost("ls /usr/local/share/ca-certificates | wc -l").trim()).toBe("0");
 });
 
-test("a scan finds the repository's update, and installing it updates the machine", async () => {
+let update: Update | undefined;
+
+/** The update's state in EasyPatch, as EasyRMM's API reports it. */
+async function updateState(): Promise<string> {
+  const list = await api<{ items: Update[] }>("GET", `/api/v1/patching/devices/${deviceId}/updates`);
+  update = list.items.find((u) => u.title.includes(PACKAGE));
+  return update?.state ?? "";
+}
+
+test("a scan finds the repository's update", async () => {
   expect(onHost(`dpkg-query -W -f='\${Version}' ${PACKAGE}`)).toBe("1.0.0");
   await api("POST", "/api/v1/patching/scan", { deviceIds: [deviceId] });
+  await expect.poll(updateState, { message: `the scan reports ${PACKAGE} 1.1.0`, timeout: 300_000, intervals: [5_000] }).toBe("Missing");
+});
 
-  let update: Update | undefined;
-  await expect
-    .poll(
-      async () => {
-        const list = await api<{ items: Update[] }>("GET", `/api/v1/patching/devices/${deviceId}/updates`);
-        update = list.items.find((u) => u.title.includes(PACKAGE));
-        return update?.state ?? "";
-      },
-      { message: `the scan reports ${PACKAGE} 1.1.0`, timeout: 300_000, intervals: [5_000] },
-    )
-    .toBe("Missing");
+test("the Patches tab excludes the update, includes it again and shows the policy", async () => {
+  const page = admin;
+  const title = update!.title;
+  await page.goto(`/devices/${deviceId}?tab=patches`);
+  const main = page.getByRole("main");
+  await main.getByRole("button", { name: `Exclude ${title}…` }).click();
+  const exclude = page.getByRole("dialog", { name: /^Exclude this update on / });
+  await exclude.getByLabel("Reason (optional)").fill("Bundle test");
+  await exclude.getByRole("button", { name: "Exclude update" }).click();
+  await expect(exclude).toBeHidden();
+  await expect.poll(updateState, { message: "EasyPatch records the exclusion" }).toBe("Excluded");
+  // An install would leave it out, and say why.
+  const preview = await api<Preview>("GET", `/api/v1/patching/devices/${deviceId}/install-preview?updateId=${update!.updateGuid}`);
+  expect(preview.items).toEqual([]);
+  expect(preview.skipped).toEqual([expect.objectContaining({ updateGuid: update!.updateGuid, reason: "Excluded" })]);
 
-  const install = await api<{ succeeded: number; failed: number }>("POST", "/api/v1/patching/install", {
-    deviceIds: [deviceId],
-    updateIds: [update!.updateGuid],
-  });
-  expect(install).toMatchObject({ succeeded: 1, failed: 0 });
+  await main.getByRole("button", { name: `Include ${title}` }).click();
+  await expect(page.getByText(/^Included again on /)).toBeVisible();
+  await expect.poll(updateState, { message: "EasyPatch includes it again" }).toBe("Missing");
+
+  await main.getByRole("radio", { name: "Policy" }).click();
+  await expect(main.getByRole("heading", { name: "Installing" })).toBeVisible();
+  await expect(main.getByText("Automatic installs")).toBeVisible();
+  // The engine in EasyRMM's deployment has no console of its own, so nothing links to one.
+  await expect(main.getByRole("link", { name: /EasyPatch/ })).toHaveCount(0);
+});
+
+test("installing the update from the Patches tab, after its preview, updates the machine", async () => {
+  const page = admin;
+  const title = update!.title;
+  await page.goto(`/devices/${deviceId}?tab=patches`);
+  const main = page.getByRole("main");
+  await main.getByLabel(`Select ${title}`).check();
+  await main.getByRole("button", { name: "Install selected…" }).click();
+  const dialog = page.getByRole("dialog", { name: /^Install 1 update on / });
+  await expect(dialog.getByText("The agent scans again before installing.", { exact: false })).toBeVisible();
+  await expect(dialog.getByRole("listitem").filter({ hasText: title })).toBeVisible();
+  await dialog.getByRole("button", { name: "Install now" }).click();
+  await expect(dialog).toBeHidden();
 
   await expect
     .poll(() => onHost(`dpkg-query -W -f='\${Version}' ${PACKAGE}`), { message: `${PACKAGE} is updated on the machine`, timeout: 300_000, intervals: [5_000] })

@@ -316,6 +316,12 @@ need the store.*
    (another path) and out-of-scope statements;
 5. checks that nothing but the edge listens beyond loopback.
 
+*Done (B8, [ADR-0043](adr/0043-one-release.md)): the release workflow
+builds the engine from the same commit and pins it by digest, with a
+manifest; `make e2e-bundle` does all five and passed in CI, with every
+other check (run 44423961831, at b718db5). The release workflow itself has not run on GitHub: no tag
+has been pushed.*
+
 ### C. One console
 
 EasyPatch's pages are rebuilt in `web/` with EasyRMM's components. They call
@@ -364,6 +370,26 @@ side.
 * C5: reports.
 * C6: Settings → Patching.
 * C7: alerts and notifications.
+
+*Done (C1): the device's Patches tab does what EasyPatch's endpoint page
+did. To install: choose updates, see the install preview (what would be
+installed, its size, likely restarts, what is left out and why), exclude an
+update on the device and include it again. Installed: remove a Windows
+update, excluding it too by default. History and jobs as before. **Policy**:
+every effective value with the layer that set it, including tag names, and
+how the device applied the Windows Update settings. The summary gains the
+active job, what a pending restart is for (updates, servicing packages,
+file operations), who is signed in and whether the EasyPatch icon reaches
+them, preset messages to them, and the agent's version with **Update
+agent…**. Holds show on each update; placing them is C2. Restart prompts and
+schedules beyond **Restart…** are C3, and editing a policy is C4. Exclusions,
+removals, messages and agent updates need `patch.manage` and are Admin
+statements for the device's organization; the preview and the message list
+are ReadOnly. Links into EasyPatch's console show only where it has one
+(a connected server); the bundled engine has none. Not ported: the OS
+overview cards (the device page has its own) and the endpoint's activity
+tab (EasyRMM's audit log has what its console did). The bundle test
+excludes, includes, previews and installs through the tab.*
 
 EasyPatch's console is about 18,800 lines of TypeScript without tests. Each
 area is ported with its tests and compared against the old page.

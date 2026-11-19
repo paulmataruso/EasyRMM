@@ -120,6 +120,15 @@ const ACTIONS: Record<string, string> = {
   "patch.install": "Installed updates",
   "patch.cancel": "Cancelled patch job",
   "patch.agent_install": "Requested EasyPatch agent install",
+  "patch.restart": "Requested a restart",
+  "patch.retry": "Retried patch job",
+  "patch.stop": "Stopped patching",
+  "patch.allow": "Allowed patching again",
+  "patch.exclude": "Excluded an update",
+  "patch.include": "Included an update again",
+  "patch.remove_update": "Requested an update removal",
+  "patch.notify": "Messaged a device's users",
+  "patch.agent_update": "Requested EasyPatch agent update",
 };
 
 export function actionLabel(action: string): string {

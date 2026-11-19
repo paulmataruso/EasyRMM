@@ -82,6 +82,18 @@ All notable changes to this project are documented here. The format follows
   new `enroll --server-ca`. A connected EasyPatch server's authority now
   reaches Linux agents the same way. Linux agents from before that option
   are enrolled without it, and need the authority in the device's store.
+- **The device's Patches tab does what EasyPatch's endpoint page did**
+  (one-product plan, phase C1): exclude an update on the device and include
+  it again; remove an installed Windows update, excluding it too by
+  default; send the signed-in users one of EasyPatch's preset messages; update
+  the EasyPatch agent; see what an install would do before it starts; the
+  whole effective policy with the layer that set each value, and how Windows
+  applied its Windows Update settings; what a pending restart is for; who
+  is signed in and whether the EasyPatch icon reaches them. The actions need
+  `patch.manage` and are audited as `patch.exclude`, `patch.include`,
+  `patch.remove_update`, `patch.notify` and `patch.agent_update`. Links to
+  EasyPatch's console show only where there is one: the bundled engine has
+  none.
 - **Organization time zones**: organizations have a time zone (default UTC;
   the browser's for a new one), which patching reports use.
 - **Stop patching for a device**: the device's Patches tab can stop

@@ -234,14 +234,67 @@ be cancelled. A job that failed, was cancelled or expired, or left some
 updates uninstalled, can be run again with **Retry**; the new job opens in
 its place. EasyPatch refuses a retry while the same job is already queued.
 
-A device's **Patches** tab shows its status, the EasyPatch policy that
-applies (when automatic installs run, scan interval, categories, delays),
-updates to install, installed updates, the device's update history and its
-jobs. Choose updates to install only those.
+A device's **Patches** tab shows:
+
+* its status, the job it is working on, and a pending restart with what it
+  is for: the updates waiting for it, Windows servicing packages and the
+  files Windows will change;
+* on Windows, who is signed in and whether the EasyPatch icon is running in
+  their sessions;
+* the EasyPatch agent's version, and whether it can update itself;
+* updates to install, installed updates, the device's update history and
+  its jobs;
+* **Policy**: every value of the EasyPatch policy that applies, with the
+  layer that set it (the default policy, the organization, the site, a tag
+  or the device), and on Windows the Windows Update settings with how the
+  device applied them.
+
+Choose updates to install only those. Before an install on one device, the
+dialog shows what EasyPatch would install from the last scan, its size, how
+many updates are likely to need a restart, and which updates it leaves out
+and why (excluded, not in the policy's categories, on hold…). The agent
+scans again before installing.
 
 Scans and installs start when the device next checks in with EasyPatch
 (every minute by default). Updates that need a restart finish at the next
 restart.
+
+### Excluding and removing updates
+
+**Exclude…** on an update to install keeps it off this device: EasyPatch
+installs it neither automatically nor with every update, and it no longer
+counts against the device's status. For a Linux package, only that version
+is excluded; a newer version is a new update. **Include** undoes it. An
+update excluded by the policy's excluded KBs is marked so and cannot be
+included on one device.
+
+**Remove…** uninstalls an installed Windows update, also one waiting for
+its restart, when the device's agent can (EasyPatch agent capability
+`uninstall-updates`). The agent uses Windows Update's uninstall where the
+update allows it and DISM otherwise, and never restarts the computer: when
+Windows needs a restart to finish, the job says so. Some updates cannot be
+removed, such as servicing stack updates; the job then fails and nothing
+changes. Removing also excludes the update on the device unless you untick
+it. Linux packages are not removed this way.
+
+### Messages to users
+
+**Message users…** shows one of EasyPatch's preset messages to the people
+signed in to a Windows device, from the EasyPatch icon: updates are
+installing, updates installed, a restart is needed, save your work,
+maintenance tonight, or a restart at a time you choose. Only these messages
+can be sent. A message only names a restart time; **Restart…** restarts the
+device. EasyPatch refuses messages to Linux and macOS devices, and to agents
+without the icon.
+
+### The EasyPatch agent
+
+The agent row says whether a newer agent is available and whether the
+policy lets agents update themselves. **Update agent…** has it update now:
+at its next check-in it downloads the newest package EasyPatch holds,
+checks its release signature and installs it. An agent enrolled before
+release signing has no release key, and EasyPatch refuses to update it;
+reinstall it once.
 
 ### Restarts
 
@@ -263,20 +316,22 @@ has one way to restart a device, chosen to be safe:
 
 The dialog lists the devices that will not restart and why: no restart is
 pending, the EasyPatch agent is too old to restart the computer, or the
-device is not linked. Prompts, deadlines, messages to users and restart
-schedules are set in EasyPatch.
+device is not linked. Prompts, deadlines and restart schedules are set in
+the policy.
 
 ### Changing things in EasyPatch
 
-Policies, maintenance windows, rings, exclusions and holds are edited in
-EasyPatch. Where EasyRMM shows them, it links to the page that edits them,
-in the same tab, so the browser's Back button returns:
+Policies, maintenance windows, rings and holds are not edited in EasyRMM's
+console yet. With a connected EasyPatch server, which has a console of its
+own, EasyRMM links to the page that edits them, in the same tab, so the
+browser's Back button returns. The bundled engine has no console, so
+EasyRMM shows no such links, and its policies cannot be changed yet: they
+are EasyPatch's defaults.
 
 | In EasyRMM | Link | Opens in EasyPatch |
 |---|---|---|
-| A device's **In EasyPatch** row | Open in EasyPatch | The device's endpoint page, on the tab matching the view (updates, installed, history, jobs) |
-| A device's policy card | Change in EasyPatch | The endpoint's policy tab |
-| A device's updates to install | Exclude in EasyPatch | The endpoint's updates tab, where updates are excluded |
+| A device's **In EasyPatch** row | Open in EasyPatch | The device's endpoint page, on the tab matching the view (updates, installed, history, jobs, policy) |
+| A device's **Policy** view | Change in EasyPatch | The endpoint's policy tab |
 | An update's title | (the title) | The update's page: vulnerabilities, other devices missing it, hold |
 | A job | Open in EasyPatch | The job's page |
 | A restart of one device | More restart options in EasyPatch | The endpoint's page |
@@ -368,7 +423,7 @@ warns about them; see
 | Permission | Allows | Built-in roles |
 |---|---|---|
 | `patch.view` (with `device.view`) | Patching, a device's Patches tab | Every role |
-| `patch.manage` | Scan, install, restart, cancel, retry, install the EasyPatch agent, stop and allow patching for a device | Technician and above |
+| `patch.manage` | Scan, install, restart, cancel, retry, exclude and include updates, remove an update, message users, install and update the EasyPatch agent, stop and allow patching for a device | Technician and above |
 | `patch.configure` | Change EasyPatch's standing rules: makes someone an Admin in EasyPatch rather than ReadOnly when they sign in to EasyPatch through EasyRMM. Only organization-wide roles hold it | Organization administrator and above |
 | `settings.manage` | Settings → EasyPatch, including automatic installs of the EasyPatch agent | Super administrator |
 
@@ -383,6 +438,10 @@ nobody can act, whatever their role.
 | `patch.scan`, `patch.install` | One record per device that started, with the EasyPatch job id; installs record which updates and any scheduled time |
 | `patch.restart` | One record per device that was asked to restart, with the EasyPatch job id, the condition, any scheduled time and the servers you confirmed |
 | `patch.cancel` | The job and its device |
+| `patch.exclude`, `patch.include` | The update excluded on the device, or included again, and the reason given |
+| `patch.remove_update` | The update, the removal job, and whether it was excluded too, with the reason |
+| `patch.notify` | One record per device messaged: the message, and the restart time it names |
+| `patch.agent_update` | One record per device whose agent was asked to update, with the EasyPatch job id |
 | `patch.retry` | The job retried, the new job and the device |
 | `easypatch.connection_update`, `easypatch.connection_delete` | The server, its version, whether the token changed and can act, and whether links were forgotten |
 | `easypatch.organization_link`, `easypatch.organization_unlink` | Both organizations |

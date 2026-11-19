@@ -698,6 +698,119 @@ func TestContract(t *testing.T) {
 		}
 	})
 
+	run("the device's Patches tab", func(t *testing.T) {
+		// What one-product plan C1 relies on: the endpoint's details, its
+		// effective policy with where each value comes from, exclusions,
+		// the install preview, messages and agent updates. The simulated
+		// agent is a Linux one, which EasyPatch refuses messages and
+		// removals for.
+		detail, err := ep.Endpoint(ctx, a.endpoint)
+		if err != nil || !slices.Contains(detail.AgentCapabilities, "restart") || detail.AgentUpdate == nil || detail.HasOwnPolicy {
+			t.Fatalf("endpoint detail %+v, %v", detail, err)
+		}
+		policy, err := ep.EffectivePolicy(ctx, a.endpoint)
+		if err != nil || len(policy.Sources) == 0 || !policy.AgentAutoUpdateEnabled || !policy.KnownExploitedSkipsDelay || policy.CheckInIntervalSeconds <= 0 {
+			t.Fatalf("effective policy %+v, %v", policy, err)
+		}
+		for k, v := range policy.Sources {
+			if !slices.Contains([]string{"Global", "Organization", "Site", "Endpoint", "Tag"}, v) || k == "" {
+				t.Errorf("policy source %q: %q", k, v)
+			}
+		}
+
+		if err := ep.Exclude(ctx, a.endpoint, tzdata, "contract", "contract-exclude@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		if err := ep.Exclude(ctx, a.endpoint, tzdata, "", ""); err != nil {
+			t.Fatalf("excluding twice: %v", err)
+		}
+		find := func() Update {
+			t.Helper()
+			list, err := ep.Updates(ctx, a.endpoint, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			i := slices.IndexFunc(list, func(u Update) bool { return u.UpdateGUID == tzdata })
+			if i < 0 {
+				t.Fatalf("tzdata is not listed: %+v", list)
+			}
+			return list[i]
+		}
+		if u := find(); u.State != "Excluded" || !u.IsExcluded {
+			t.Errorf("excluded update %+v", u)
+		}
+		p, err := ep.InstallPreview(ctx, a.endpoint, nil)
+		if err != nil || p.Mode != "AllEligible" || !slices.ContainsFunc(p.Skipped, func(x PreviewSkip) bool { return x.UpdateGUID == tzdata && x.Reason == "Excluded" }) ||
+			slices.ContainsFunc(p.Items, func(x PreviewItem) bool { return x.UpdateGUID == tzdata }) || p.Filter == nil {
+			t.Errorf("preview with tzdata excluded %+v, %v", p, err)
+		}
+		p, err = ep.InstallPreview(ctx, a.endpoint, []uuid.UUID{openssl, tzdata})
+		if err != nil || p.Mode != "Selected" || len(p.Items)+len(p.Skipped) != 2 {
+			t.Errorf("preview of two updates %+v, %v", p, err)
+		}
+		if _, err := ro.InstallPreview(ctx, a.endpoint, nil); err != nil {
+			t.Errorf("read-only preview: %v", err)
+		}
+		if err := ro.Exclude(ctx, a.endpoint, openssl, "", ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("read-only exclusion: %v", err)
+		}
+		if err := ep.Include(ctx, a.endpoint, tzdata, "contract-include@example.test"); err != nil {
+			t.Fatal(err)
+		}
+		if u := find(); u.State == "Excluded" || u.IsExcluded {
+			t.Errorf("included update %+v", u)
+		}
+		if err := ep.Include(ctx, a.endpoint, tzdata, ""); err != nil {
+			t.Errorf("including an update that is not excluded: %v", err)
+		}
+
+		// Removing an update: refused on Linux, with a reason to show.
+		_, err = ep.RemoveUpdate(ctx, a.endpoint, libc, true, "contract", "")
+		var e *Error
+		if !errors.As(err, &e) || e.Status != http.StatusConflict || e.Code != "not_supported_on_linux" || !strings.Contains(e.Detail, "only available on Windows") {
+			t.Errorf("removal on Linux: %#v", err)
+		}
+
+		presets, err := ep.MessagePresets(ctx)
+		if err != nil || len(presets) != 6 || presets[5].Preset != "RestartScheduled" || !presets[5].NeedsRestartTime ||
+			!strings.Contains(presets[5].Body, "{time}") || presets[0].Preset != "UpdatesInstalling" || presets[0].Title == "" {
+			t.Errorf("message presets %+v, %v", presets, err)
+		}
+		if _, err := ro.MessagePresets(ctx); err != nil {
+			t.Errorf("read-only presets: %v", err)
+		}
+		at := time.Now().Add(time.Hour).UTC()
+		n, err := ep.BulkNotify(ctx, []uuid.UUID{a.endpoint}, Message{Preset: "RestartScheduled", RestartAt: &at}, "")
+		if err != nil || n.Failed != 1 || n.Results[0].Success || n.Results[0].ErrorCode != "not_supported_on_linux" ||
+			!strings.Contains(n.Results[0].Message, "Messages to users are only available on Windows") {
+			t.Errorf("message on Linux %+v, %v", n, err)
+		}
+		if _, err := ro.BulkNotify(ctx, []uuid.UUID{a.endpoint}, Message{Preset: "SaveYourWork"}, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("read-only message: %v", err)
+		}
+
+		// An agent update is planned against what the agent reports: the
+		// simulated one has no release key, so EasyPatch refuses with a
+		// reason (agent_upgrade_required) that the console shows.
+		u, err := ep.BulkAgentUpdate(ctx, []uuid.UUID{a.endpoint}, "contract-agent-update@example.test")
+		if err != nil || len(u.Results) != 1 {
+			t.Fatalf("agent update %+v, %v", u, err)
+		}
+		if r := u.Results[0]; (r.Success && r.JobID == nil) || (!r.Success && (r.ErrorCode == "" || r.Message == "")) {
+			t.Errorf("agent update result %+v", r)
+		} else {
+			t.Logf("agent update: success %v, %s %s", r.Success, r.ErrorCode, r.Message)
+			if r.JobID != nil {
+				if _, err := ep.CancelJob(ctx, *r.JobID, ""); err != nil {
+					t.Error(err)
+				}
+			}
+		}
+		if _, err := ro.BulkAgentUpdate(ctx, []uuid.UUID{a.endpoint}, ""); !IsStatus(err, http.StatusForbidden) {
+			t.Errorf("read-only agent update: %v", err)
+		}
+	})
+
 	run("errors", func(t *testing.T) {
 		_, err := ep.Endpoint(ctx, uuid.New())
 		var e *Error
@@ -783,6 +896,10 @@ func TestContract(t *testing.T) {
 		}
 		if _, err := engine.Endpoint(as(RoleReadOnly, org.ID), a.endpoint); err != nil {
 			t.Errorf("endpoint, its organization named: %v", err)
+		}
+		// What is not any organization's needs none named.
+		if p, err := engine.MessagePresets(as(RoleReadOnly)); err != nil || len(p) != 6 {
+			t.Errorf("message presets, no organization named: %+v, %v", p, err)
 		}
 		if _, err := engine.Endpoint(as(RoleReadOnly, uuid.New()), a.endpoint); !IsStatus(err, http.StatusNotFound) {
 			t.Errorf("endpoint, another organization named: %v", err)
@@ -1169,7 +1286,7 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		q("jobs", "GET", "/api/v1/jobs?organizationId="+fOrg.String(), "/api/v1/jobs?organizationId="+org.String()),
 		q("job", "GET", "/api/v1/jobs/"+fJob.ID.String(), "/api/v1/jobs/"+job.String()),
 		{name: "effective policy", method: "GET", fake: "/api/v1/endpoints/" + fEndpoint.String() + "/effective-policy",
-			real: "/api/v1/endpoints/" + endpoint.String() + "/effective-policy", dictionaryKeys: []string{"sources"}},
+			real: "/api/v1/endpoints/" + endpoint.String() + "/effective-policy", dictionaryKeys: []string{"sources", "sourceTags"}},
 		q("not found", "GET", "/api/v1/endpoints/"+uuid.NewString(), "/api/v1/endpoints/"+uuid.NewString()),
 		{name: "install", method: "POST", fake: "/api/v1/endpoints/" + fEndpoint.String() + "/install-updates",
 			real: "/api/v1/endpoints/" + endpoint.String() + "/install-updates", fBody: fakeInstall, rBody: install},
@@ -1198,6 +1315,18 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 			fBody: map[string]any{"name": "Contract"}, rBody: map[string]any{"name": "Contract " + suffix}},
 		{name: "invalid time zone", method: "POST", fake: "/api/v1/organizations", real: "/api/v1/organizations",
 			fBody: map[string]any{"name": "Zone", "timeZone": ""}, rBody: map[string]any{"name": "Zone " + suffix, "timeZone": ""}},
+		q("install preview", "GET", "/api/v1/endpoints/"+fEndpoint.String()+"/install-preview?mode=all",
+			"/api/v1/endpoints/"+endpoint.String()+"/install-preview?mode=all"),
+		q("message presets", "GET", "/api/v1/user-messages", "/api/v1/user-messages"),
+		{name: "message on Linux", method: "POST", fake: "/api/v1/endpoints/bulk/notify", real: "/api/v1/endpoints/bulk/notify",
+			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint}, "message": map[string]any{"preset": "SaveYourWork", "restartAt": nil}},
+			rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint}, "message": map[string]any{"preset": "SaveYourWork", "restartAt": nil}}},
+		{name: "removal on Linux", method: "POST", fake: "/api/v1/endpoints/" + fEndpoint.String() + "/updates/" + uuid.NewString() + "/uninstall",
+			real:  "/api/v1/endpoints/" + endpoint.String() + "/updates/" + uuid.NewString() + "/uninstall",
+			fBody: map[string]any{"block": false, "reason": nil}, rBody: map[string]any{"block": false, "reason": nil}},
+		{name: "agent update", method: "POST", fake: "/api/v1/endpoints/bulk/agent-update", real: "/api/v1/endpoints/bulk/agent-update",
+			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint}, "version": nil},
+			rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint}, "version": nil}},
 		{name: "enrollment token", method: "POST", fake: "/api/v1/enrollment-tokens", real: "/api/v1/enrollment-tokens",
 			fBody: map[string]any{"organizationId": fOrg, "siteId": fSite, "description": "shape", "expiresInHours": 1, "maxUses": 1, "count": 1},
 			rBody: map[string]any{"organizationId": org, "siteId": site, "description": "shape", "expiresInHours": 1, "maxUses": 1, "count": 1}},

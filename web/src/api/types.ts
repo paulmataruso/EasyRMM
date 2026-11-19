@@ -1126,9 +1126,74 @@ export interface PatchEndpointDetail {
   installedCount: number;
   pendingRebootUpdateCount: number;
   complianceEvaluatedAt: string | null;
+  /** The job the endpoint is working on, if any. */
+  activeJob: PatchJob | null;
+  /** What the agent can do: PATCH_AGENT_CAN. */
+  agentCapabilities: string[] | null;
+  /** Signed-in sessions, and those with the EasyPatch tray, at the latest check-in; null until the agent reports them. */
+  signedInUsers: number | null;
+  trayConnectedSessions: number | null;
+  /** The endpoint has its own policy layer. */
+  hasOwnPolicy: boolean;
+  agentUpdate: PatchAgentUpdate | null;
+  /** What a pending restart is for; null when none is. */
+  restart: PatchRestartDetails | null;
+  /** How the agent applied the policy's Windows Update settings (Windows only). */
+  windowsUpdatePolicy: {
+    groups: { group: string; state: string; message: string; appliedAt: string | null; conflictingValues: string[] | null }[] | null;
+    mdmUpdatePoliciesPresent: boolean;
+  } | null;
 }
 
-/** When EasyPatch installs updates on its own, from the endpoint's effective policy. */
+/** What EasyPatch agents report they can do. */
+export const PATCH_AGENT_CAN = { notifyUser: "notify-user", uninstallUpdates: "uninstall-updates", tray: "tray" } as const;
+
+/** Whether the agent can update itself, and to what. */
+export interface PatchAgentUpdate {
+  supported: boolean;
+  /** The "Agent updates" policy is Automatic. */
+  automaticUpdates: boolean;
+  /** The newer signed package an update would install; empty with a code and message saying why not. */
+  availableVersion: string;
+  code: string;
+  message: string;
+  packageFormat: string;
+}
+
+export interface PatchRestartDetails {
+  updates: { updateGuid: string | null; title: string; kbNumbers: string[] | null; source: string; installedAt: string | null }[] | null;
+  /** Pending Windows servicing packages that name no KB. */
+  servicingPackages: string[] | null;
+  /** The first 25 file operations Windows has queued. */
+  fileOperations: { action: string; path: string }[] | null;
+  fileOperationCount: number;
+  /** The agent reports what Windows has queued (Windows agent 1.5.3 and later). */
+  detailsSupported: boolean;
+}
+
+/** A recurring restart. "HH:mm" in the policy's time zone; days 0 (Sunday) to 6. */
+export interface PatchRestartSchedule {
+  enabled: boolean;
+  days: number[] | null;
+  time: string;
+  /** OnlyIfPending or Always. */
+  condition: string;
+  /** Immediate, Countdown, PromptWithDeadline or PromptNoDeadline. */
+  mode: string;
+  countdownMinutes: number;
+  deadlineMinutes: number;
+  expiryMinutes: number;
+}
+
+/** Windows Update's own settings that EasyPatch manages; a null group is not managed. */
+export interface PatchWindowsUpdate {
+  automaticUpdates: { mode: string; scheduledInstallDay: number; scheduledInstallHour: number } | null;
+  featureUpdates: { deferDays: number | null; targetProductVersion: string; targetReleaseVersion: string } | null;
+  qualityUpdates: { deferDays: number | null; disablePause: boolean } | null;
+  restartBehavior: { noAutoRestartWithSignedInUsers: boolean; activeHoursStart: number | null; activeHoursEnd: number | null } | null;
+}
+
+/** An endpoint's effective EasyPatch policy, with the layer each value comes from. */
 export interface PatchPolicy {
   autoInstallEnabled: boolean;
   /** 0 is Sunday. */
@@ -1142,6 +1207,50 @@ export interface PatchPolicy {
   includeOptional: boolean;
   installDelayDays: number;
   securityInstallDelayDays: number;
+  checkInIntervalSeconds: number;
+  inventoryIntervalMinutes: number;
+  jitterPercent: number;
+  excludedKbs: string[] | null;
+  acceptEulas: boolean;
+  scanStaleAfterHours: number;
+  maxConcurrentInstallsPerSite: number;
+  trayIconEnabled: boolean;
+  installNotificationsEnabled: boolean;
+  agentAutoUpdateEnabled: boolean;
+  knownExploitedSkipsDelay: boolean;
+  /** Hours before the maintenance window that Windows agents download updates; 0 is off. */
+  preDownloadHours: number;
+  restartSchedule: PatchRestartSchedule | null;
+  windowsUpdate: PatchWindowsUpdate | null;
+  windowsUpdateValues: { group: string; path: string; name: string; value: string }[] | null;
+  applicationUpdates: { enabled: boolean; approvedApps: string[] | null } | null;
+  /** The layer that set each value (Global, Organization, Site, Tag or Endpoint), keyed by its name; EasyPatch writes the keys in PascalCase. */
+  sources: Record<string, string> | null;
+  /** The tag whose policy set a value. */
+  sourceTags: Record<string, string> | null;
+}
+
+/** What installing on a device would do, from its last scan; the agent scans again before installing. */
+export interface PatchInstallPreview {
+  /** AllEligible or Selected. */
+  mode: string;
+  items: { updateGuid: string; title: string; kbNumber: string; category: string; sizeBytes: number | null; rebootBehavior: number | null; state: string }[];
+  /** Updates left out, with EasyPatch's reason code. */
+  skipped: { updateGuid: string; title: string; kbNumber: string; category: string; reason: string }[];
+  totalSizeBytes: number;
+  rebootLikelyCount: number;
+  warnings: string[];
+  filter: { categories: string[] | null; includeOptional: boolean } | null;
+  lastScanAt: string | null;
+}
+
+/** A message EasyPatch can show to the users of a Windows computer: there is no free text. */
+export interface PatchMessagePreset {
+  preset: string;
+  title: string;
+  /** "{time}" stands for the restart time when needsRestartTime. */
+  body: string;
+  needsRestartTime: boolean;
 }
 
 export interface DevicePatching {
@@ -1170,6 +1279,7 @@ export interface PatchUpdate {
   updateGuid: string;
   title: string;
   kbNumber: string;
+  kbNumbers: string[] | null;
   category: string;
   msrcSeverity: string;
   releaseDate: string | null;
@@ -1190,6 +1300,8 @@ export interface PatchUpdate {
   deferredUntil: string | null;
   cveIds: string[] | null;
   knownExploited: boolean;
+  /** CISA's date for fixing an exploited vulnerability (YYYY-MM-DD). */
+  kevDueDate: string;
   holdReason: string;
 }
 

@@ -107,6 +107,9 @@ type Endpoint struct {
 	CannotRestart  bool
 	Updates        []map[string]any
 	InstalledItems []map[string]any
+	// Windows makes the endpoint a Windows one, whose agent shows messages
+	// and removes updates; the others are Linux endpoints, which cannot.
+	Windows bool
 }
 
 // Job is an EasyPatch job.
@@ -372,14 +375,18 @@ func update(title, category, state string) map[string]any {
 }
 
 func (e *Endpoint) summary() map[string]any {
+	platform, os, version := "Linux", "Debian GNU/Linux 13 (trixie)", "13"
+	if e.Windows {
+		platform, os, version = "Windows", "Windows Server 2025 Standard", "10.0.26100"
+	}
 	return map[string]any{
 		"id": e.ID, "hostname": e.Hostname, "organizationId": e.Org, "organizationName": e.OrgName,
-		"siteId": e.Site, "siteName": nullable(e.SiteName), "status": e.Status, "operatingSystem": "Debian GNU/Linux 13 (trixie)",
-		"osVersion": "13", "osBuild": nil, "architecture": "X64", "agentVersion": "1.9.0", "agentOutdated": false, "isOnline": true,
+		"siteId": e.Site, "siteName": nullable(e.SiteName), "status": e.Status, "operatingSystem": os,
+		"osVersion": version, "osBuild": nil, "architecture": "X64", "agentVersion": "1.9.0", "agentOutdated": false, "isOnline": true,
 		"lastCheckInAt": "2026-11-16T14:34:13.737582+00:00", "lastScanAt": "2026-11-16T14:40:00+00:00",
 		"complianceStatus": e.Compliance, "missingRequiredCount": 1, "missingTotalCount": e.Missing, "failedCount": 1,
 		"rebootPending": e.RebootPending, "osSupportStatus": "Unknown", "currentActivity": "Idle", "lastSeenIp": "192.0.2.10",
-		"platform": "Linux", "missingDeferredCount": 0, "tags": []any{}, "knownExploitedMissingCount": 0,
+		"platform": platform, "missingDeferredCount": 0, "tags": []any{}, "knownExploitedMissingCount": 0,
 	}
 }
 
@@ -392,13 +399,32 @@ func (e *Endpoint) detail() map[string]any {
 	if e.Serial != "" {
 		serial = e.Serial
 	}
+	// As agents 1.9.0 report them: Linux agents have no tray.
+	capabilities := []string{"restart", "self-update", "uninstall"}
+	format, users := "deb", any(nil)
+	if e.Windows {
+		capabilities = append(capabilities, "notify-user", "tray", "windows-update-policy", "app-updates", "uninstall-updates", "download-updates")
+		format, users = "msi", 1
+	}
+	var restart, since any
+	if e.RebootPending {
+		since = "2026-11-16T14:40:00+00:00"
+		restart = map[string]any{"updates": []map[string]any{{"updateGuid": nil, "title": "linux-image-6.12.57+deb13-amd64",
+			"kbNumbers": []string{}, "source": "Installed", "installedAt": "2026-11-16T14:39:00+00:00"}},
+			"servicingPackages": []string{}, "fileOperations": []map[string]any{}, "fileOperationCount": 0, "detailsSupported": false}
+	}
 	return map[string]any{
 		"summary": e.summary(), "dnsDomain": nil, "serialNumber": serial, "manufacturer": "QEMU",
 		"lastScanAttemptAt": "2026-11-16T14:40:00+00:00", "lastScanError": nil, "rebootReasons": []string{},
-		"rebootPendingSince": nil, "installedCount": len(e.InstalledItems), "pendingRebootUpdateCount": 0,
+		"rebootPendingSince": since, "installedCount": len(e.InstalledItems), "pendingRebootUpdateCount": 0,
 		"complianceEvaluatedAt": "2026-11-16T14:40:01+00:00", "notes": e.Notes, "esuOverride": e.Esu,
 		"credentials": []map[string]any{{"credentialId": "c_test", "keyFingerprint": e.Fingerprint, "createdAt": "2026-11-16T14:34:05+00:00",
 			"expiresAt": "2027-11-16T14:34:05+00:00", "revokedAt": revoked, "revokedReason": nil, "lastUsedAt": nil}},
+		"activeJob": nil, "agentCapabilities": capabilities, "signedInUsers": users, "trayConnectedSessions": users, "hasOwnPolicy": false,
+		"agentUpdate": map[string]any{"supported": true, "architecture": "x64", "releaseKeyIds": []string{"easypatch-release-2026"},
+			"automaticUpdates": true, "availableVersion": nil, "code": "agent_up_to_date",
+			"message": "The agent already runs the newest package for its platform.", "packageFormat": format},
+		"restart": restart, "windowsUpdatePolicy": nil, "windowsUpdatePolicyReportedAt": nil,
 	}
 }
 
@@ -517,6 +543,8 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/agent-packages":
 		reply(w, 200, s.Packages)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/user-messages":
+		reply(w, 200, messagePresets())
 	case parts[0] == "organizations":
 		s.serveOrganizations(w, r, parts, body)
 	case parts[0] == "sites" && len(parts) >= 2:
@@ -689,11 +717,7 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *Endpoi
 		}
 		reply(w, 200, paged(list, pg, 50))
 	case r.Method == http.MethodGet && sub == "effective-policy":
-		reply(w, 200, map[string]any{"checkInIntervalSeconds": 60, "scanIntervalMinutes": 240, "inventoryIntervalMinutes": 1440,
-			"jitterPercent": 10, "allowedCategories": []string{"Security", "Critical"}, "includeOptional": false, "excludedKbs": []string{},
-			"acceptEulas": true, "autoInstallEnabled": true, "maintenanceDays": []int{6}, "maintenanceStart": "02:00",
-			"maintenanceDurationMinutes": 180, "timeZone": "Europe/Paris", "scanStaleAfterHours": 72, "maxConcurrentInstallsPerSite": 10,
-			"sources": map[string]string{"autoInstallEnabled": "Organization"}, "installDelayDays": 3, "securityInstallDelayDays": 0})
+		reply(w, 200, effectivePolicy())
 	case r.Method == http.MethodPost && sub == "install-updates":
 		if s.readOnlyCall {
 			problem(w, 403, "", "")
@@ -708,9 +732,109 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *Endpoi
 			return
 		}
 		reply(w, 202, s.newJob(e, "InstallUpdates", scheduled(body)).summary())
+	case r.Method == http.MethodGet && sub == "install-preview":
+		s.preview(w, e, r.URL.Query().Get("mode"), r.URL.Query().Get("updateGuids"))
+	case r.Method != http.MethodGet && s.readOnlyCall:
+		problem(w, 403, "", "")
+	case r.Method == http.MethodPost && sub == "exclusions":
+		guid, err := uuid.Parse(fmt.Sprint(body["updateGuid"]))
+		if reason, _ := body["reason"].(string); err != nil || guid == uuid.Nil || len([]rune(reason)) > 500 {
+			problem(w, 400, "validation_failed", "One or more fields are invalid.")
+			return
+		}
+		e.exclude(guid, true)
+		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodDelete && strings.HasPrefix(sub, "exclusions/"):
+		guid, _ := uuid.Parse(strings.TrimPrefix(sub, "exclusions/"))
+		e.exclude(guid, false)
+		w.WriteHeader(http.StatusNoContent)
+	case r.Method == http.MethodPost && strings.HasPrefix(sub, "updates/") && strings.HasSuffix(sub, "/uninstall"):
+		if !e.Windows {
+			problem(w, 409, "not_supported_on_linux", e.Hostname+" is a Linux endpoint. Removing updates is only available on Windows.")
+			return
+		}
+		reply(w, 202, s.newJob(e, "UninstallUpdate", nil).summary())
 	default:
 		problem(w, 404, "not_found", "No such route.")
 	}
+}
+
+// exclude marks an update of the endpoint excluded, or not, as EasyPatch's
+// compliance pass does: an excluded missing or failed update is Excluded,
+// and an included one is missing or failed again.
+func (e *Endpoint) exclude(guid uuid.UUID, excluded bool) {
+	for _, u := range e.Updates {
+		if u["updateGuid"] != guid {
+			continue
+		}
+		u["isExcluded"] = excluded
+		switch {
+		case excluded && (u["state"] == "Missing" || u["state"] == "Failed"):
+			u["state"], u["isRequired"] = "Excluded", false
+		case !excluded && u["state"] == "Excluded" && u["failedAttempts"] != 0:
+			u["state"], u["isRequired"] = "Failed", u["category"] == "Security"
+		case !excluded && u["state"] == "Excluded":
+			u["state"], u["isRequired"] = "Missing", u["category"] == "Security"
+		}
+	}
+}
+
+// preview answers GET /api/v1/endpoints/{id}/install-preview as EasyPatch
+// does: missing and failed updates that are not excluded are installed, the
+// others asked for are skipped with the reason's code.
+func (s *Server) preview(w http.ResponseWriter, e *Endpoint, mode, guids string) {
+	chosen := map[string]bool{}
+	for _, g := range strings.Split(guids, ",") {
+		chosen[g] = g != ""
+	}
+	selected := strings.EqualFold(mode, "selected")
+	items, skipped := []map[string]any{}, []map[string]any{}
+	size := 0
+	for _, u := range e.Updates {
+		id := fmt.Sprint(u["updateGuid"])
+		if selected && !chosen[id] {
+			continue
+		}
+		if u["isExcluded"] == true {
+			skipped = append(skipped, map[string]any{"updateGuid": u["updateGuid"], "title": u["title"], "kbNumber": u["kbNumber"],
+				"category": u["category"], "reason": "Excluded"})
+			continue
+		}
+		size += u["sizeBytes"].(int)
+		items = append(items, map[string]any{"updateGuid": u["updateGuid"], "revisionNumber": 1, "title": u["title"], "kbNumber": u["kbNumber"],
+			"category": u["category"], "sizeBytes": u["sizeBytes"], "rebootBehavior": nil, "state": u["state"]})
+	}
+	m := "AllEligible"
+	if selected {
+		m = "Selected"
+	}
+	reply(w, 200, map[string]any{"mode": m, "items": items, "skipped": skipped, "totalSizeBytes": size, "rebootLikelyCount": 0,
+		"warnings": []string{}, "filter": map[string]any{"categories": []string{"Security", "Critical"}, "includeOptional": false,
+			"excludedKbs": []string{}, "excludedUpdateGuids": []string{}, "acceptEulas": true, "approvedApplications": []string{}},
+		"lastScanAt": "2026-11-16T14:40:00+00:00"})
+}
+
+// effectivePolicy is an endpoint's effective policy as EasyPatch answers
+// it, with values set at every layer.
+func effectivePolicy() map[string]any {
+	return map[string]any{"checkInIntervalSeconds": 60, "scanIntervalMinutes": 240, "inventoryIntervalMinutes": 1440,
+		"jitterPercent": 10, "allowedCategories": []string{"Security", "Critical"}, "includeOptional": false, "excludedKbs": []string{"KB5005565"},
+		"acceptEulas": true, "autoInstallEnabled": true, "maintenanceDays": []int{6}, "maintenanceStart": "02:00",
+		"maintenanceDurationMinutes": 180, "timeZone": "Europe/Paris", "scanStaleAfterHours": 72, "maxConcurrentInstallsPerSite": 10,
+		"sources": map[string]string{"AutoInstallEnabled": "Organization", "maintenanceWindow": "Organization", "RestartSchedule": "Site",
+			"ScanIntervalMinutes": "Global", "WindowsUpdate.AutomaticUpdates": "Organization", "ApplicationUpdates": "Tag"},
+		"trayIconEnabled": true, "installNotificationsEnabled": true,
+		"restartSchedule": map[string]any{"enabled": true, "days": []int{0}, "time": "03:00", "condition": "OnlyIfPending",
+			"mode": "PromptWithDeadline", "countdownMinutes": 5, "deadlineMinutes": 240, "expiryMinutes": 120},
+		"windowsUpdate": map[string]any{
+			"automaticUpdates": map[string]any{"mode": "AutoDownloadNotifyInstall", "scheduledInstallDay": 0, "scheduledInstallHour": 3},
+			"featureUpdates":   map[string]any{"deferDays": 180, "targetProductVersion": nil, "targetReleaseVersion": nil},
+			"qualityUpdates":   nil, "restartBehavior": nil},
+		"windowsUpdateValues": []map[string]any{{"group": "AutomaticUpdates", "path": `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU`,
+			"name": "AUOptions", "value": "3"}},
+		"agentAutoUpdateEnabled": true, "installDelayDays": 3, "securityInstallDelayDays": 0,
+		"sourceTags": map[string]string{"ApplicationUpdates": "Workstations"}, "knownExploitedSkipsDelay": true,
+		"applicationUpdates": map[string]any{"enabled": true, "approvedApps": []string{"Mozilla.Firefox"}}, "preDownloadHours": 0}
 }
 
 func (s *Server) bulk(w http.ResponseWriter, kind string, body map[string]any) {
@@ -741,8 +865,13 @@ func (s *Server) bulk(w http.ResponseWriter, kind string, body map[string]any) {
 			items = append(items, map[string]any{"endpointId": id, "hostname": e.Hostname, "success": false, "jobId": nil,
 				"errorCode": "nothing_to_install", "message": e.Hostname + " has no eligible updates."})
 			failed++
+		case kind == "notify" && !e.Windows:
+			items = append(items, map[string]any{"endpointId": id, "hostname": e.Hostname, "success": false, "jobId": nil,
+				"errorCode": "not_supported_on_linux", "message": e.Hostname + " is a Linux endpoint. Messages to users are only available on Windows."})
+			failed++
 		default:
-			typ := map[string]string{"scan": "UpdateScan", "install-updates": "InstallUpdates", "restart": "Restart"}[kind]
+			typ := map[string]string{"scan": "UpdateScan", "install-updates": "InstallUpdates", "restart": "Restart", "notify": "NotifyUser",
+				"agent-update": "AgentUpdate"}[kind]
 			at := scheduled(body)
 			if restart, ok := body["restart"].(map[string]any); ok {
 				at = scheduled(restart)
@@ -803,4 +932,26 @@ func (s *Server) retry(w http.ResponseWriter, j *Job) {
 	n := s.newJob(e, j.Type, nil)
 	n.RetryOf = &j.ID
 	reply(w, 202, n.summary())
+}
+
+// messagePresets is what GET /api/v1/user-messages answers.
+func messagePresets() []map[string]any {
+	// EasyPatch's UserMessages, word for word.
+	presets := []struct{ preset, title, body string }{
+		{"UpdatesInstalling", "Updates are installing",
+			"Windows updates are being installed on this computer. You can keep working, but it may be slower for a while."},
+		{"UpdatesInstalled", "Updates installed", "Windows updates were installed on this computer. No restart is needed."},
+		{"RestartRequired", "Restart required",
+			"Windows updates were installed and this computer needs to restart to finish. Please save your work and restart when you can."},
+		{"SaveYourWork", "Please save your work",
+			"Your IT team is about to carry out maintenance on this computer. Please save your work and close your applications."},
+		{"MaintenanceTonight", "Maintenance tonight",
+			"Maintenance is scheduled for this computer tonight. Please save your work and leave the computer switched on when you finish for the day."},
+		{"RestartScheduled", "Restart scheduled", "This computer will restart at {time}. Please save your work before then."},
+	}
+	out := make([]map[string]any, 0, len(presets))
+	for _, p := range presets {
+		out = append(out, map[string]any{"preset": p.preset, "title": p.title, "body": p.body, "needsRestartTime": p.preset == "RestartScheduled"})
+	}
+	return out
 }
