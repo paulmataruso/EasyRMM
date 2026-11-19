@@ -627,6 +627,37 @@ All notable changes to this project are documented here. The format follows
   still stops the server; import such an EasyPatch instead.
   `scripts/setup.sh` removes the empty `EASYRMM_EASYPATCH_*` lines from
   `.env`.
+- **The connector to a separately run EasyPatch server** (one-product plan,
+  phase R2; ADR-0030, superseded by ADR-0046): connecting with an API token,
+  linking organizations by hand, read-only tokens and the "set in EasyPatch's
+  console" refusals. `PUT` and `DELETE /api/v1/settings/easypatch` and `PUT`
+  and `DELETE /api/v1/settings/easypatch/organizations/{id}` answer 404.
+  EasyRMM calls only the patching engine in its own deployment, with
+  statements, and creates and links every organization there itself.
+  Migration 00023 drops `easypatch_connection`; on a deployment that was
+  connected to a separate server it also drops that server's organization,
+  site and device links (their ids mean nothing to the engine), recording
+  `easypatch.connection_delete` in the audit log. Settings → EasyPatch shows
+  the engine, its organizations with **Install automatically**, and the
+  devices not linked.
+- **EasyPatch's standalone product** (phase R3): its web console
+  (`easypatch/frontend`), its proxy image and Caddy files, its standalone
+  Compose files, `.env.example`, `init-secrets.sh`, `backup.sh`,
+  `restore.sh`, installation guide and console screenshots, with the
+  console's CI jobs, Dependabot entry and npm licence check, and the proxy's
+  build, push and manifest in `easypatch-release.yml`. The engine's server
+  image is built and checked as before. The logo and wordmarks moved to
+  `easypatch/branding/`. A standalone EasyPatch up to 1.10.0 is brought in
+  with `deploy/scripts/import-easypatch.sh`, which still reads the backups
+  those releases make.
+- **EasyPatch's own accounts** (phase R4): its sign-in, sessions, passwords,
+  second factors, passkeys and security keys, single sign-on, users,
+  change-email, API token routes and Swagger UI, and the `create-admin`,
+  `reset-password`, `reset-mfa` and `unlock` commands, which now fail with a
+  message. People sign in to EasyRMM; the engine takes EasyRMM's statements
+  and its agents' signed requests. Its account tables stay, unused, so
+  upgrading needs no migration, and `prepare-import` still disables an
+  imported server's accounts.
 
 ### Security
 - The EasyPatch connection and audit forwarding do not connect to

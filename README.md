@@ -94,7 +94,7 @@ regenerated when the console changes.
     </td>
     <td>
       <a href="easypatch/docs/images/dashboard.png"><picture><source media="(prefers-color-scheme: light)" srcset="easypatch/docs/images/dashboard-light.png"><img src="easypatch/docs/images/dashboard.png" alt="EasyPatch dashboard: compliance, known-exploited exposure, online and offline endpoints, a 30-day compliance trend and the least compliant organizations"></picture></a>
-      <br><sub><b>EasyPatch's own console</b>, of its standalone releases up to 1.10.0; in EasyRMM, patching is done from EasyRMM's console. <a href="easypatch/README.md#screenshots">More</a>.</sub>
+      <br><sub><b>EasyPatch's own console</b>, of its standalone releases up to 1.10.0, which can be imported; in EasyRMM, patching is done from EasyRMM's console.</sub>
     </td>
   </tr>
 </table>

@@ -1,7 +1,8 @@
 # EasyPatch integration
 
-Status: **implemented** (Phase 8). The connector (ADR-0030): settings,
-organization and device links, patch views and actions. Installing the
+Status: **implemented** (Phase 8, then the one-product plan). Patching in
+EasyRMM's console (ADR-0030, the connector's successor): organization and
+device links, patch views and actions. Installing the
 EasyPatch agent from EasyRMM (ADR-0031): on chosen devices or automatically
 per organization. Operating both:
 [docs/operations/patching.md](../operations/patching.md).
@@ -13,8 +14,10 @@ one-product plan, its server runs in every EasyRMM deployment as the
 patching engine, on loopback, and EasyRMM's console is the only one: EasyRMM
 calls the engine with a signed statement per request
 ([ADR-0038](../architecture/adr/0038-statements-to-the-patching-engine.md)).
-The product switch and signing in to EasyPatch through EasyRMM were removed
-([ADR-0046](../architecture/adr/0046-what-one-product-retires.md)). The
+The product switch, signing in to EasyPatch through EasyRMM, and the
+connector to a separately run EasyPatch server with an API token were
+removed ([ADR-0046](../architecture/adr/0046-what-one-product-retires.md)).
+The
 plans are in [the integration plan](../architecture/easypatch-integration-plan.md)
 and [the one-product plan](../architecture/one-product-plan.md).
 
@@ -28,7 +31,7 @@ picture; what was built, and what is still wanted, is below.
 |---|---|
 | Organizations, sites, users, RBAC, general hardware/software inventory | EasyRMM |
 | Patch catalogue, per-device update state, patch policy, maintenance windows, rings, patch jobs, patch-related restarts | EasyPatch |
-| Installing and enrolling the EasyPatch agent on endpoints that have none | EasyRMM agent, with a package from the customer's EasyPatch server and a single-use enrollment token (ADR-0031) |
+| Installing and enrolling the EasyPatch agent on endpoints that have none | EasyRMM agent, with a package from the patching engine and a single-use enrollment token (ADR-0031) |
 | Updating the EasyPatch agent | EasyPatch |
 
 EasyRMM never writes `HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate`
@@ -59,34 +62,30 @@ server is imported instead
 
 ## EasyPatch changes
 
-**Not needed any more.** EasyPatch 1.9.0's API tokens (bearer tokens,
-Read only or Operator, limited to organizations, expiring, revocable,
-audited as `token:<name>`) replace the planned integration credentials, and
-every route the console needs accepts them. Devices are linked by what the
-EasyPatch agent reports about itself, checked against the endpoint's
-credential fingerprints, rather than by external ids.
+EasyRMM's credential is a statement per request, signed with the
+deployment's gateway key, naming the person, their role and the
+organizations that one call may use
+([ADR-0038](../architecture/adr/0038-statements-to-the-patching-engine.md)).
+EasyPatch 1.9.0's API tokens, which the connector used, were removed from
+the engine in one-product R2 and R4: it takes statements and its agents'
+signed requests, nothing else. Devices are linked by what the EasyPatch agent
+reports about itself, checked against the endpoint's credential
+fingerprints, rather than by external ids.
 
-**Added to EasyPatch** in `easypatch/`, not in an EasyPatch release yet
-(backward compatible; EasyRMM works with a stock 1.9.0 without them, and
-turns each on when the server lists its capability in
-`/api/v1/server-info`):
+**Added to EasyPatch** in `easypatch/`, after 1.10.0:
 
 1. `capabilities` in `/api/v1/server-info`.
 2. `scheduled-installs`: an optional `scheduledAt` on
    `POST /endpoints/{id}/install-updates` and
-   `POST /endpoints/bulk/install-updates`, up to 31 days ahead. A stock server
-   ignores the field and installs at once, so EasyRMM never sends it there.
-3. `on-behalf-of`: the `X-EasyPatch-On-Behalf-Of` header from API token
-   callers, recorded in EasyPatch's audit log and on the job.
-4. Update exclusions by API tokens (they failed with 401).
+   `POST /endpoints/bulk/install-updates`, up to 31 days ahead.
+3. Statements (ADR-0038), which name the EasyRMM user in EasyPatch's audit
+   log and on each job.
 
-They were written on an `easyrmm-integration` branch of EasyPatch before
-EasyPatch came into this repository. EasyRMM was run against a server built
-from that branch (2026-11-16). It listed both capabilities. A scheduled
-install of one update on a Linux device was held by EasyPatch until its
-time, delivered at the device's first check-in after it, and installed.
-EasyPatch recorded the job as requested by
-`token:<name> for <EasyRMM user>`.
+Scheduled installs were first written on an `easyrmm-integration` branch of
+EasyPatch before it came into this repository. EasyRMM was run against a
+server built from that branch (2026-11-16): a scheduled install of one update
+on a Linux device was held by EasyPatch until its time, delivered at the
+device's first check-in after it, and installed.
 
 **Still wanted, not built:**
 
@@ -99,9 +98,7 @@ EasyPatch recorded the job as requested by
    changes.
 3. **Idempotency** — `Idempotency-Key` on job-creating requests. EasyPatch's
    duplicate-job check (`duplicate_job`) covers repeated clicks meanwhile.
-4. **Co-hosting option** — bind-address/port overrides and forwarded-header
-   trust settings in the production compose file.
-5. **Licence permission** — resolved 2026-11-18: EasyRMM and EasyPatch are
+4. **Licence permission** — resolved 2026-11-18: EasyRMM and EasyPatch are
    under one licence, FSL-1.1-ALv2, with one licensor
    ([ADR-0037](../architecture/adr/0037-one-licence.md)).
 
@@ -111,8 +108,9 @@ EasyPatch recorded the job as requested by
    its inventory and reports its server, endpoint id, key fingerprint,
    status and version over its authenticated channel.
 2. The server links the device only when the agent is enrolled with the
-   configured server, EasyPatch has the endpoint, active, in the EasyPatch
-   organization linked to the device's organization, one of its active
+   patching engine (EasyRMM's address, or an imported server's former one),
+   the engine has the endpoint, active, in the engine's organization linked
+   to the device's organization, one of its active
    credentials has the reported fingerprint, host names match, serial
    numbers match when both are known, and no other device is linked to it.
 3. Anything else is shown to administrators with the reason; nothing is

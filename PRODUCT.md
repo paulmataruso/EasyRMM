@@ -9,9 +9,9 @@ web
 ## Stack
 
 React + TypeScript + Vite in `web/`, with Tailwind CSS 4 (semantic tokens in
-`web/src/index.css`), TanStack Query, React Router and lucide icons: the same
-stack and versions as EasyPatch's frontend (`easypatch/frontend/`), so the two
-consoles share one design system. No component kit. The production build is
+`web/src/index.css`), TanStack Query, React Router and lucide icons. Its
+design system is EasyPatch's former console's (ADR-0013), which it now holds
+alone. No component kit. The production build is
 embedded into the Go server binary and served from the same origin as the
 API. Confirmed by the project owner.
 

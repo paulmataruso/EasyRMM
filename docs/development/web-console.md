@@ -3,9 +3,9 @@
 The console lives in `web/`. It is a React 19 + TypeScript single-page app
 built with Vite and Tailwind CSS 4, using TanStack Query for server state and
 React Router for navigation. Its look is EasyPatch's design system
-([ADR-0013](../architecture/adr/0013-easypatch-design-system.md)); keep
-`web/src/index.css` in step with EasyPatch's
-[`easypatch/frontend/src/index.css`](../../easypatch/frontend/src/index.css).
+([ADR-0013](../architecture/adr/0013-easypatch-design-system.md)), which
+`web/src/index.css` now holds alone: EasyPatch's own console went in
+one-product R3.
 
 The production build is embedded in the server binary (`server/internal/webui`)
 and served from the same origin as the API, under a strict

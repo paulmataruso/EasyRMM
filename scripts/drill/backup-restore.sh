@@ -20,7 +20,9 @@
 #    - the audit chain;
 #    - the same agent, never re-enrolled, reconnecting and running a new
 #      job signed by the restored key;
-#    - MeshCentral's identity.
+#    - MeshCentral's identity;
+#    - the patching engine's organization, read from the engine, and its
+#      data-protection keys.
 #
 # Needs root (setup.sh sets the data directories' owners), Docker Compose,
 # curl, jq, openssl, and network access for the device container's
@@ -110,6 +112,23 @@ compgen -G "$data/meshcentral/data/*-cert-public.crt" >/dev/null || fail "no Mes
 (cd "$data/meshcentral/data" && sha256sum ./*-cert-public.crt) >"$state/meshcentral-identity"
 ok "MeshCentral identity recorded ($(wc -l <"$state/meshcentral-identity") certificates); MeshAgent on the device: $remote_agent"
 
+# engine_org: the patching engine's organization linked to the drill's,
+# when the engine also lists it itself.
+engine_org() {
+  call 200 GET /api/v1/settings/easypatch/organizations | jq -r --arg o "$org" \
+    '(.links[] | select(.organizationId == $o) | .easyPatchId) as $id | select([.easyPatch[]?.id] | index($id)) | $id'
+}
+ep_org=""
+for _ in $(seq 1 60); do
+  ep_org=$(engine_org)
+  [[ -n "$ep_org" ]] && break
+  sleep 3
+done
+[[ -n "$ep_org" ]] || fail "the patching engine has no organization for the drill's: $(call 200 GET /api/v1/settings/easypatch/organizations)"
+compgen -G "$data/easypatch/keys/*" >/dev/null || fail "no data-protection keys in $data/easypatch/keys"
+(cd "$data/easypatch/keys" && sha256sum ./*) >"$state/engine-keys"
+ok "patching engine: organization $ep_org, $(wc -l <"$state/engine-keys") data-protection keys recorded"
+
 # ---------------------------------------------------------------- backup
 step "Backup with the guide's commands"
 # From docs/operations/backup-restore.md, "Back up", with this drill's
@@ -118,8 +137,11 @@ cd "$work/host-a/deploy"
 ts=$(date -u +%Y%m%dT%H%M%SZ)
 compose exec -T -u postgres postgres pg_dump -p 15432 \
   --format=custom easyrmm >"$backups/db-$ts.dump" || fail "pg_dump failed"
+compose exec -T -u postgres postgres pg_dump -p 15432 \
+  --format=custom easypatch >"$backups/easypatch-db-$ts.dump" || fail "pg_dump of the engine's database failed"
 tar -C "$work/host-a/deploy" -czf "$backups/env-$ts.tgz" .env
 tar -C "$data" -czf "$backups/server-$ts.tgz" server
+tar -C "$data" -czf "$backups/easypatch-keys-$ts.tgz" easypatch/keys
 compose stop meshcentral >>"$work/compose.log" 2>&1
 tar -C "$data" -czf "$backups/meshcentral-$ts.tgz" meshcentral
 compose start meshcentral >>"$work/compose.log" 2>&1
@@ -139,11 +161,13 @@ ok "stack removed, data root and checkout deleted; the agent keeps trying"
 step "New host: the guide's restore steps"
 checkout "$work/host-b"
 cd "$work/host-b/deploy"
-# 1. Restore deploy/.env, the server directory and MeshCentral's data.
+# 1. Restore deploy/.env, the server directory, MeshCentral's data and the
+#    engine's keys.
 tar -C "$work/host-b/deploy" -xzf "$backups/env-$ts.tgz"
 mkdir -p "$data"
 tar -C "$data" -xzf "$backups/server-$ts.tgz"
 tar -C "$data" -xzf "$backups/meshcentral-$ts.tgz"
+tar -C "$data" -xzf "$backups/easypatch-keys-$ts.tgz"
 # 2. setup.sh with the same host name keeps the restored .env.
 out=$(./scripts/setup.sh --hostname "$addr" --data-root "$data")
 [[ "$out" == *"leaving it unchanged"* ]] || fail "setup.sh did not keep the restored .env: $out"
@@ -156,6 +180,9 @@ done
 # 4. The dump, as the superuser.
 compose exec -T -u postgres postgres pg_restore -p 15432 \
   --dbname=easyrmm --exit-on-error <"$backups/db-$ts.dump" || fail "pg_restore failed"
+compose run --rm easypatch-db-init >>"$work/compose.log" 2>&1 || fail "easypatch-db-init failed"
+compose exec -T -u postgres postgres pg_restore -p 15432 \
+  --dbname=easypatch --exit-on-error <"$backups/easypatch-db-$ts.dump" || fail "pg_restore of the engine's database failed"
 # 5. Everything else.
 compose up -d >>"$work/compose.log" 2>&1
 wait_ready
@@ -203,6 +230,13 @@ if [[ "$remote_agent" == true ]]; then
 fi
 (cd "$data/meshcentral/data" && sha256sum -c --quiet "$state/meshcentral-identity") || fail "MeshCentral's identity changed"
 ok "MeshCentral's identity is unchanged"
+
+conn=$(call 200 POST /api/v1/settings/easypatch/check)
+[[ $(jq -r .configured <<<"$conn") == true && $(jq -r '.lastError // ""' <<<"$conn") == "" ]] ||
+  fail "the patching engine does not answer after the restore: $conn"
+[[ $(engine_org) == "$ep_org" ]] || fail "the engine's organization is not the backup's: $(call 200 GET /api/v1/settings/easypatch/organizations)"
+(cd "$data/easypatch/keys" && sha256sum -c --quiet "$state/engine-keys") || fail "the engine's data-protection keys changed"
+ok "the patching engine has the backup's organization ($ep_org) and keys"
 
 # --------------------------------------------------------------- cleanup
 step "Clean up"

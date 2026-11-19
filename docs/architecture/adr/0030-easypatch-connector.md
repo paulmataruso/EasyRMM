@@ -1,6 +1,14 @@
 # ADR-0030: EasyPatch connector
 
-* Status: Accepted (2026-11-16).
+* Status: Partly superseded by [ADR-0046](0046-what-one-product-retires.md)
+  (2026-11-19). Accepted 2026-11-16. Removed in one-product R2: the
+  connection to a separately run EasyPatch server with an API token, its CA
+  certificate, read-only tokens, and organizations linked by hand. EasyRMM
+  calls the patching engine in its own deployment with statements
+  ([ADR-0038](0038-statements-to-the-patching-engine.md)) and links every
+  organization itself ([ADR-0040](0040-one-set-of-organizations.md)). What
+  stands: devices linked by what their EasyPatch agent reports, verified
+  against the engine, and patch views and actions behind EasyRMM's roles.
 * Builds on: ADR-0010 (EasyPatch integration through a service API), ADR-0018
   (inventory).
 * Refines: [docs/integrations/easypatch.md](../../integrations/easypatch.md),

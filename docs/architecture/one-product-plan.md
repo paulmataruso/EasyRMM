@@ -746,6 +746,46 @@ them means less code and less to attack.
 *Done when:* the repository builds one product, and a search finds no
 route, page, CI job or document for the retired parts.
 
+*Done (R0, [ADR-0046](adr/0046-what-one-product-retires.md)): what goes,
+in the order above, and what stays.*
+
+*Done (R1): the product switch, `/go/to-easypatch` and the links into
+EasyPatch's console; EasyRMM as EasyPatch's sign-in provider (its routes,
+Settings → EasyPatch → Sign-in, the `sign-in` CI job; migration 00022 drops
+its tables); co-hosting (the SNI passthrough, the PROXY protocol code,
+`deploy/easypatch/`, the co-hosting guide and the `EASYRMM_EASYPATCH_*`
+upstream settings).*
+
+*Done (R2): EasyRMM calls only the engine in its deployment. The token
+client, the connection settings (`PUT`/`DELETE /api/v1/settings/easypatch`),
+links chosen by hand (`PUT`/`DELETE …/organizations/{id}`), read-only tokens
+and the "set in EasyPatch's console" refusals are gone from the server and
+the console; migration 00023 drops `easypatch_connection`, and on a
+deployment that was connected to a separate server, that server's links,
+with an audit event. EasyRMM's tests and the contract test call the engine
+with statements; then the engine's API-token scheme and `create-api-token`
+went, so the engine takes statements and its agents' signed requests,
+nothing else.*
+
+*Done (R3): EasyPatch's console (`easypatch/frontend`), proxy image and Caddy
+files, standalone Compose files, `.env.example`, `init-secrets.sh`,
+`backup.sh`, `restore.sh`, installation guide and console screenshots, with
+the console's CI jobs, Dependabot entry and npm licence check and the
+release's proxy build, push and manifest. The logo and wordmarks moved to
+`easypatch/branding/` first. CI builds the server image directly and still
+checks its staged agent packages and that it carries no secrets. EasyRMM's
+backups now cover the engine's database and keys (`backup.sh` went).*
+
+*Done (R4): EasyPatch's integration tests call it with EasyRMM's statements;
+its role and tenant isolation tests were ported, not deleted, and only tests
+of removed features went. Then its sign-in, session, CSRF, password, MFA,
+passkey, single sign-on, user, change-email and API token routes went, with
+their services, the Swagger UI, the sign-in rate limit, the packages only
+they used and the `create-admin`, `reset-password`, `reset-mfa` and `unlock`
+commands, which now fail with a message. The account tables, entities and
+EF configuration stay: no migration, and `prepare-import` still disables an
+imported server's accounts.*
+
 ### D. A real test instance
 
 With the owner:

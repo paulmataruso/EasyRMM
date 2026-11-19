@@ -5,7 +5,8 @@ EasyPatch keeps the update catalogue, each device's update state, the
 policies and maintenance windows, and runs the scans and installs. EasyRMM
 shows all of it in its own console, behind its own roles, so nobody needs
 to sign in to EasyPatch for day-to-day patching. The design is in
-[ADR-0030](../architecture/adr/0030-easypatch-connector.md).
+[ADR-0030](../architecture/adr/0030-easypatch-connector.md) and
+[ADR-0038](../architecture/adr/0038-statements-to-the-patching-engine.md).
 
 ## Setting it up
 
@@ -15,7 +16,7 @@ and EasyRMM calls it on the same server with its own key.
 
 1. **Organizations follow EasyRMM's.** Every organization and site has its
    own in the engine, created, renamed and archived with EasyRMM's (see
-   [Organizations in the bundled engine](#organizations-in-the-bundled-engine)).
+   [Organizations in the engine](#organizations-in-the-engine)).
 2. **Devices get the EasyPatch agent.** Automatic installs are on for every
    organization: within minutes of a device's EasyRMM agent enrolling,
    EasyRMM installs the EasyPatch agent on it (see
@@ -33,10 +34,10 @@ reinstalled: see [Importing a standalone EasyPatch](import-easypatch.md).
 Settings → EasyPatch shows the engine's version and state; *Check now*
 shows whether it accepts EasyRMM's key.
 
-### Organizations in the bundled engine
+### Organizations in the engine
 
-With the bundled engine, every EasyRMM organization and site has its own in
-the engine, and EasyRMM keeps them the same
+Every EasyRMM organization and site has its own in the engine, and EasyRMM
+keeps them the same
 ([ADR-0040](../architecture/adr/0040-one-set-of-organizations.md)):
 
 * **Created** with EasyRMM's name and the organization's **time zone**
@@ -52,8 +53,8 @@ the engine, and EasyRMM keeps them the same
   1a2b3c4d)` so that the name can be used again. Endpoints stay in an
   archived organization. An agent EasyRMM did not remove itself keeps
   checking in until it is revoked in the engine.
-* **Put back** when someone archives or deletes them in the engine's own
-  console. Descriptions, notes and addresses entered there are kept.
+* **Put back** when anything but EasyRMM archives or deletes them in the
+  engine. Descriptions, notes and addresses kept there stay.
 
 This happens as soon as an organization or site changes, and the whole set
 is compared every 5 minutes. If the engine is unavailable or refuses a
@@ -66,8 +67,7 @@ and agent removals are waiting. Organizations are not linked by hand there.
 The EasyRMM agent can install the EasyPatch agent on Windows and Linux
 devices (x64 and arm64) that have none, and enroll it in the EasyPatch
 organization linked to the device's organization. The design is in
-[ADR-0031](../architecture/adr/0031-easypatch-agent-install.md). It needs
-an Operator token.
+[ADR-0031](../architecture/adr/0031-easypatch-agent-install.md).
 
 * **Chosen devices**: in **Patching**, choose devices marked *No EasyPatch
   agent* and **Install EasyPatch agent…**; or on a device's **Patches** tab,
@@ -82,13 +82,13 @@ an Operator token.
 What happens:
 
 1. At its next check-in (within a minute) the device's EasyRMM agent gets a
-   signed instruction, valid for 15 minutes. It carries EasyPatch's address,
-   the CA certificate you gave EasyRMM (if any), the newest EasyPatch agent
-   package for the device, and an enrollment token. EasyRMM creates that
-   token in EasyPatch for this one install: single use, valid for an hour,
-   for the linked EasyPatch organization and the EasyPatch site with the
-   same name as the device's EasyRMM site (no site when none has that
-   name; with the bundled engine, the site EasyRMM created for it). The token is never stored, and is revoked if the install fails.
+   signed instruction, valid for 15 minutes. It carries the engine's address
+   (EasyRMM's own), EasyRMM's certificate authority when EasyRMM made its
+   own certificate, the newest EasyPatch agent package for the device, and
+   an enrollment token. EasyRMM creates that token in the engine for this
+   one install: single use, valid for an hour, for the engine's organization
+   and site EasyRMM created for the device's. The token is never stored,
+   and is revoked if the install fails.
 2. The agent downloads the package from EasyPatch, checks its size and
    SHA-256 against EasyPatch's list, installs it (`msiexec` on Windows,
    `apt-get` or `dnf` on Linux) and enrolls it.
@@ -113,9 +113,8 @@ Requirements:
 
 * An EasyRMM agent that reports the EasyPatch agent's install state (this
   release or later). An older one waits, with a note, until it updates.
-* **Linux**: systemd, and apt-get or dnf. If EasyPatch's certificate comes
-  from a private authority (the one you gave EasyRMM, or with the bundled
-  engine and `EASYRMM_TLS_MODE=internal`, EasyRMM's own), EasyRMM gives it to
+* **Linux**: systemd, and apt-get or dnf. If EasyRMM's certificate comes
+  from its own authority (`EASYRMM_TLS_MODE=internal`), EasyRMM gives it to
   the EasyPatch agent at enrollment (`--server-ca`), which trusts it for
   EasyPatch's address only. EasyPatch agents from before that option trust
   only the device's certificate store: EasyRMM then enrolls them without it,
@@ -149,8 +148,8 @@ within a minute. Otherwise, install it by hand.
 * **Deleted in EasyRMM:** the device's EasyPatch agent is uninstalled. The
   removal is cancelled if another EasyRMM device links or reports the same
   endpoint, as after two device records are merged.
-* **Moved to another site** of its organization: with the bundled engine,
-  its endpoint moves to that site.
+* **Moved to another site** of its organization: its endpoint moves to that
+  site.
 * **Moved to another organization:** an endpoint cannot change
   organization in EasyPatch. EasyRMM has the old agent uninstall itself.
   When it is gone, automatic installs enroll it again in the new
@@ -163,8 +162,7 @@ devices merged by EasyRMM and moves made through the API.
 job and checks every 5 minutes. A failed or expired job is sent again. The
 agent is gone when EasyPatch no longer shows its endpoint as active. If it
 is not gone within 7 days, or is too old to uninstall itself, EasyRMM
-revokes the endpoint in EasyPatch, which stops serving it. Removal works
-with a connected server too, with an Operator token.
+revokes the endpoint in EasyPatch, which stops serving it.
 
 ## When a device is not linked
 
@@ -174,10 +172,10 @@ EasyRMM links a device only when everything agrees, and otherwise says why
 | Reason | What to do |
 |---|---|
 | The EasyPatch agent is not enrolled and active | Enroll it, or check it on the device: `sudo /opt/easypatch/easypatch-agent status` on Linux, `& "$env:ProgramFiles\EasyPatch Agent\EasyPatch.Agent.exe" status` on Windows |
-| The agent is enrolled with another server | The device belongs to another EasyPatch server; re-enroll it with this one |
-| The organization is not linked | Link the device's EasyRMM organization in Settings → EasyPatch. With the bundled engine, EasyRMM is still creating it: Settings → EasyPatch says why if it cannot |
-| EasyPatch has no such endpoint, or the token cannot see it | Add the endpoint's EasyPatch organization to the token |
-| The endpoint belongs to another EasyPatch organization | The device is enrolled in the wrong EasyPatch organization, or the EasyRMM organization is linked to the wrong one |
+| The agent is enrolled with another server | The device belongs to another EasyPatch server; import that server ([Importing a standalone EasyPatch](import-easypatch.md)) or re-enroll the agent with this deployment |
+| The organization has no patching organization yet | EasyRMM is still creating it, within a minute; Settings → EasyPatch says why if it cannot |
+| The engine has no such endpoint | The agent's endpoint was deleted in the engine; re-enroll the EasyPatch agent |
+| The endpoint belongs to another EasyPatch organization | The device is enrolled in another organization's; EasyRMM moves endpoints within an organization only. Re-enroll the EasyPatch agent |
 | The endpoint is revoked or decommissioned in EasyPatch | Re-enroll the EasyPatch agent |
 | The key fingerprint is not one of the endpoint's credentials | The endpoint id was copied from another machine, or its credential was revoked; re-enroll |
 | Host names or serial numbers differ | The endpoint is another machine; re-enroll the EasyPatch agent on this one |
@@ -276,9 +274,7 @@ exploitation, search by title, KB or package, and order by the most
 missing, failed or installed.
 
 EasyPatch counts updates over whole organizations or one site. Someone
-whose role covers single sites of an organization chooses one of them, and
-with a connected EasyPatch server that is not EasyRMM's own engine, an
-organization is chosen when more than one is linked.
+whose role covers single sites of an organization chooses one of them.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="../images/patching-update-light.png"><img src="../images/patching-update.png" alt="An update's page: what it fixes, the vulnerabilities with CISA's exploitation data, and Install where missing, Remove and Hold"></picture>
 
@@ -567,16 +563,13 @@ schedule's recipients. A schedule that is on needs at least one recipient.
 Reports made on a schedule are listed with the others, marked
 *Scheduled*, with whether the email was sent.
 
-**Where email comes from.** With the bundled engine, EasyRMM gives the
-engine its own mail server, the `EASYRMM_SMTP_` settings in `.env` that
+**Where email comes from.** EasyRMM gives the engine its own mail server, the `EASYRMM_SMTP_` settings in `.env` that
 also send invitations and password resets, each time EasyRMM starts
 (`EASYRMM_SMTP_TLS`: `starttls`, `implicit` or `none`; `EASYRMM_SMTP_FROM`
 may carry a name, as `EasyRMM <rmm@example.com>`). Without
 `EASYRMM_SMTP_HOST`, **Email** and schedules say that EasyRMM has no mail
 server to send reports with. EasyPatch sends reports only over STARTTLS or
-TLS, so `EASYRMM_SMTP_TLS=none` is refused for reports. With a connected
-server, reports go through the mail server set in EasyPatch's console
-(Settings → Notifications), and EasyRMM says so when it has none.
+TLS, so `EASYRMM_SMTP_TLS=none` is refused for reports.
 
 ### EasyPatch's own settings
 
@@ -623,13 +616,12 @@ organization.
   build has one entry.
 * **Agent packages**: the EasyPatch agent packages the server holds, with
   their version, system, architecture, size, SHA-256 and release
-  signature, and a download link (EasyRMM's own address with the bundled
-  engine; EasyPatch's with a connected server). EasyRMM's agent installs
+  signature, and a download link on EasyRMM's own address. EasyRMM's agent installs
   the newest package for a device ([above](#installing-the-easypatch-agent)).
 * **Audit log**: EasyPatch's own audit log, for those with `audit.view`
   and `patch.view`: what EasyRMM's users did through EasyRMM (named by
   their EasyRMM email), what was done in EasyPatch's console or with an
-  API token, and what EasyPatch did on its own, such as the rollout guard
+  API token before it was imported, and what EasyPatch did on its own, such as the rollout guard
   holding an update. Organizations and devices carry their EasyRMM names
   and link to them. Filter by organization, area and day (in your
   browser's time zone); 50 entries a page, newest first. You see the
@@ -637,7 +629,7 @@ organization.
   entries of no organization (server settings, the OS lifecycle,
   EasyPatch's own tasks) are for those who see every organization.
   EasyRMM's audit log keeps its own record of what is done here.
-* **Alert rules** (super administrators, with the bundled engine): what
+* **Alert rules** (super administrators): what
   makes EasyPatch raise an [alert](#alerts). EasyPatch comes with one rule
   of each type. A rule has a name, a type, a severity and, for some types,
   a threshold (a device offline for so many hours, from 1 to 720; a
@@ -654,7 +646,7 @@ organization.
   again those that still apply. Deleting a rule resolves its alerts. A rule
   EasyPatch has for an organization EasyRMM does not link says so and
   cannot be saved until it covers a linked one.
-* **Notifications** (super administrators, with the bundled engine): the
+* **Notifications** (super administrators): the
   channels rules send to, and the messages sent.
   *Channels*: email (up to 20 recipients) or a webhook (`https://` only;
   Slack, Microsoft Teams Workflows, or generic JSON). EasyPatch keeps a
@@ -705,29 +697,6 @@ signing key, in `signingSecret`); and
 `GET /api/v1/patching/notifications/deliveries` with `channelId`, `status`
 (`Pending`, `Sent`, `Failed`) and `page`.
 
-### With a connected EasyPatch server
-
-EasyPatch's API tokens are Operator or Read only, never SuperAdmin, and
-EasyPatch keeps its default policy, its tags and tags' policies to
-SuperAdmin. With a connected server, EasyRMM therefore:
-
-* shows the default policy, and says it is changed in EasyPatch's console;
-* lists tags and gives them to organizations, sites and devices (with a
-  token for every organization; EasyPatch refuses one for chosen
-  organizations), but does not add, change or delete them;
-* does not show tags' policies; a device's Policy view still shows the
-  values a tag sets;
-* shows EasyPatch's server settings and OS lifecycle, and says they are
-  changed in EasyPatch's console;
-* shows EasyPatch's audit log with an Operator token; EasyPatch refuses it
-  to a Read only token, and EasyRMM says so;
-* lists and acknowledges alerts with an Operator token (a Read only token
-  lists them only), but keeps alert rules, notification channels and their
-  messages to EasyPatch's console, and says so under Settings → Patching.
-
-Organizations', sites' and devices' policies are changed in EasyRMM, as with
-the bundled engine.
-
 ### Scripts that install updates
 
 Scripts in the library that install updates themselves (Windows Update,
@@ -748,13 +717,14 @@ warns about them; see
 | `patch.configure` anywhere | Settings → Patching: the default policy and tags, and EasyPatch's server settings, OS lifecycle and agent packages (changing the server settings and OS lifecycle: super administrators only) | Organization administrator and above |
 | `patch.view` (with `device.view`) | Patching → Alerts: the alerts of the devices you see; an organization's own alerts when you see it whole | Every role |
 | `patch.manage` | Acknowledge alerts: a device's where you manage its patching, an organization's own when you manage the whole organization | Technician and above |
-| `patch.configure` everywhere | Settings → Patching → Alert rules and Notifications, with the bundled engine | Super administrator |
+| `patch.configure` everywhere | Settings → Patching → Alert rules and Notifications | Super administrator |
 | `audit.view` and `patch.view` | Settings → Patching → Audit log: EasyPatch's audit log, for organizations you audit whole; with both everywhere, all of it | Organization administrator and above (a site administrator's role does not cover an organization whole) |
 | `settings.manage` | Settings → EasyPatch, including automatic installs of the EasyPatch agent | Super administrator |
 
 Both are checked at the device's site before EasyPatch is called; a job is
-shown only when its device is one you can see. With a Read only token,
-nobody can act, whatever their role.
+shown only when its device is one you can see. EasyRMM's statement to the
+engine carries the role and organizations of that one call, and the engine
+checks them again.
 
 ## Audit
 
@@ -782,25 +752,24 @@ nobody can act, whatever their role.
 | `patch.channel_test`, `patch.channel_rotate_secret` | A test sent to a channel; a webhook's new signing key made (the key is not recorded) |
 | `patch.notifications_update` | Webhooks to private networks allowed or blocked, from and to |
 | `report.export` | A patch compliance or installations CSV downloaded, with its filters and rows, as for every report |
-| `easypatch.connection_update`, `easypatch.connection_delete` | The server, its version, whether the token changed and can act, and whether links were forgotten |
-| `easypatch.organization_link`, `easypatch.organization_unlink` | Both organizations |
+| `easypatch.connection_update`, `easypatch.organization_link`, `easypatch.organization_unlink` | No longer recorded: the connector to a separate EasyPatch server went in one-product R2. Records from before stay |
+| `easypatch.connection_delete` | Recorded once more by migration 00023 on a deployment that was still connected to a separate server, whose links it dropped: the server's address and why |
 | `patch.agent_install` | One record per device an EasyPatch agent install was requested for. Automatic installs are covered by the record of turning them on |
 | `easypatch.organization_update` | **Install automatically** turned on or off, and for which organization |
 | `patch.stop`, `patch.allow` | Patching stopped or allowed again for a device, by whom |
-| `easypatch.organization_create`, `easypatch.organization_adopt`, `easypatch.site_create`, `easypatch.site_adopt` | The bundled engine's organization or site EasyRMM created, or the existing one it took, for which EasyRMM organization or site |
+| `easypatch.organization_create`, `easypatch.organization_adopt`, `easypatch.site_create`, `easypatch.site_adopt` | The engine's organization or site EasyRMM created, or the existing one it took, for which EasyRMM organization or site |
 | `easypatch.organization_archive`, `easypatch.site_archive` | An engine organization or site archived because it was deleted in EasyRMM |
 | `easypatch.import` | A standalone EasyPatch imported ([Importing a standalone EasyPatch](import-easypatch.md)): how many organizations and sites were made in EasyRMM or joined EasyRMM's, and how many archived ones stayed in the engine |
 | `easypatch.organization_import`, `easypatch.site_import` | An imported organization or site linked: its name in the engine, its EasyRMM name, and whether it joined one EasyRMM had |
 | `easypatch.agent_uninstall`, `easypatch.endpoint_revoke`, `easypatch.agent_remove` | An uninstall job sent, an endpoint revoked, and a removal finished, each with the device's host name and why |
 | `idp.authorize`, `idp.client_create`, `idp.client_rotate`, `idp.client_delete` | No longer recorded: EasyRMM stopped signing people in to EasyPatch (ADR-0046). Records from before stay in the audit log |
 
-EasyPatch records each enrollment token EasyRMM creates against the API
-token, and against the EasyRMM user who asked for the install when the
-server has the `on-behalf-of` capability.
+EasyPatch records each enrollment token EasyRMM creates against the EasyRMM
+user who asked for the install, or EasyRMM for an automatic one.
 
 ## Limits
 
-* One EasyPatch server per EasyRMM installation.
+* One patching engine per EasyRMM deployment.
 * The device list reads at most 10,000 endpoints per EasyPatch organization
   and shows at most 5,000 devices; the job list shows the newest 200 jobs
   that match its filters.
@@ -836,13 +805,9 @@ server has the `on-behalf-of` capability.
   group and version 50 and its notes 1,000; builds go from 1 to 1,000,000.
 * The EasyPatch Linux agent needs systemd: it runs apt in transient
   systemd units. EasyRMM does not install it where there is none.
-* With a connected server, EasyPatch sites are matched to EasyRMM sites by
-  name only.
 * Each minute, EasyRMM moves at most 200 endpoints to their device's site
   and handles at most 100 agent removals; the rest wait for the next
   minute.
-* EasyRMM does not connect to link-local addresses (`169.254.0.0/16`,
-  `fe80::/10`) or cloud instance metadata addresses, even when the
-  EasyPatch name resolves to one. EasyPatch on the same host or a private
-  network is fine. Through an HTTPS proxy (`HTTPS_PROXY`), the check applies
-  to the proxy's address.
+* EasyRMM calls the engine on loopback only, over plain HTTP: anything
+  else would send its statements across the network (`EASYRMM_PATCHING_URL`
+  is refused otherwise).
