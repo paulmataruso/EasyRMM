@@ -238,7 +238,7 @@ function EntryDialog({ open, entry, onClose }: { open: boolean; entry?: PatchLif
     },
   );
   const editions = editionsFor(product);
-  // Keep a product or Windows edition EasyPatch's console saved that EasyRMM does not offer.
+  // Keep a product or Windows edition saved before an import that EasyRMM does not offer.
   const other = entry && !WINDOWS.includes(entry.product) && !LINUX.includes(entry.product) ? entry.product : null;
   const unchanged = entry !== undefined && entry.product === product;
   const editionOptions = unchanged && editions.length > 0 && !editions.includes(entry.editionGroup) ? [...editions, entry.editionGroup] : editions;

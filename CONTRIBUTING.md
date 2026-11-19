@@ -76,7 +76,7 @@ frontend development and the Impeccable design workflow.
 | Frontend unit (Vitest, coverage floors) | `web/src/**/*.test.{ts,tsx}` | `make web-test` |
 | End-to-end (Playwright, real server and PostgreSQL) | `web/e2e/` | `make e2e` (after `make test-db`) |
 | Security regression (tenant isolation, permissions, agent API, gateway) | `*_integration_test.go` beside the code | part of the above |
-| EasyPatch contract (the connector against a real EasyPatch server built from `easypatch/`, and `eptest`'s answers against its answers) | `server/internal/easypatch/contract_test.go`, build tag `contract` | `make test-contract` (needs Docker) |
+| EasyPatch contract (EasyRMM's calls against the real patching engine built from `easypatch/`, and `eptest`'s answers against its answers) | `server/internal/easypatch/contract_test.go`, build tag `contract` | `make test-contract` (needs Docker) |
 
 Integration tests **fail** (they do not skip) when the test database is not
 configured, so CI cannot pass without running them.

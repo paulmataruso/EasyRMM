@@ -95,7 +95,7 @@ func (s *installScan) view() *AgentInstall {
 	return v
 }
 
-// SetSigner gives the connector the server's job key, which signs install
+// SetSigner gives the service the server's job key, which signs install
 // instructions as it signs jobs and updates. Without it nothing is sent.
 func (s *Service) SetSigner(key ed25519.PrivateKey) { s.signer = key }
 

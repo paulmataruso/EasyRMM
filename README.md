@@ -93,8 +93,8 @@ regenerated when the console changes.
       <br><sub><b>Alerts.</b> Disk, processor, memory and offline policies, acknowledged and resolved by people.</sub>
     </td>
     <td>
-      <a href="easypatch/docs/images/dashboard.png"><picture><source media="(prefers-color-scheme: light)" srcset="easypatch/docs/images/dashboard-light.png"><img src="easypatch/docs/images/dashboard.png" alt="EasyPatch dashboard: compliance, known-exploited exposure, online and offline endpoints, a 30-day compliance trend and the least compliant organizations"></picture></a>
-      <br><sub><b>EasyPatch's own console</b>, of its standalone releases up to 1.10.0, which can be imported; in EasyRMM, patching is done from EasyRMM's console.</sub>
+      <a href="docs/images/patching-overview.png"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/patching-overview-light.png"><img src="docs/images/patching-overview.png" alt="Patching overview: the share of devices up to date with a bar of the rest, a worklist of what needs attention worst first, and organizations least up to date first"></picture></a>
+      <br><sub><b>Patching overview.</b> How far each organization is up to date, and what needs attention first.</sub>
     </td>
   </tr>
 </table>
@@ -230,7 +230,7 @@ export EASYRMM_TEST_DATABASE_URL='postgres://postgres:easyrmm-test-only@127.0.0.
 make check                   # format, vet, lint, unit + integration tests, coverage floors
 make web-test                # console typecheck and unit tests
 make e2e                     # build everything, browser tests against a real server
-make test-contract           # EasyRMM's connector against a real EasyPatch built from easypatch/
+make test-contract           # EasyRMM's calls against the real patching engine built from easypatch/
 make build-agents            # Windows and Linux agents in bin/agents; serve them with EASYRMM_AGENT_DIR=bin/agents
 ```
 

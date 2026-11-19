@@ -2,8 +2,9 @@
 # not pushed).
 #
 # Called by ci.yml (job "EasyPatch server") when its changes job finds a change to EasyPatch or its workflows
-# other than the agent, the docs and Markdown, or to EasyRMM's EasyPatch connector (server/internal/easypatch/);
-# ci.yml's concurrency group cancels superseded pull request runs. Can also be run by hand.
+# other than the agent, the docs and Markdown, or to EasyRMM's client of the engine (server/internal/easypatch/);
+# ci.yml's concurrency group cancels superseded pull request runs. release.yml calls it again on the tagged commit
+# before anything is published. Can also be run by hand.
 #
 # EasyPatch lives in easypatch/: run steps work there (defaults below), and every path given to an action carries
 # the prefix.

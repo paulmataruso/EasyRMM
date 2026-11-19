@@ -3,8 +3,8 @@
 EasyRMM patches devices through [EasyPatch](../integrations/easypatch.md):
 EasyPatch keeps the update catalogue, each device's update state, the
 policies and maintenance windows, and runs the scans and installs. EasyRMM
-shows all of it in its own console, behind its own roles, so nobody needs
-to sign in to EasyPatch for day-to-day patching. The design is in
+shows all of it in its own console, behind its own roles; EasyPatch has no
+console or accounts of its own. The design is in
 [ADR-0030](../architecture/adr/0030-easypatch-connector.md) and
 [ADR-0038](../architecture/adr/0038-statements-to-the-patching-engine.md).
 

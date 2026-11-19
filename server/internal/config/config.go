@@ -101,7 +101,7 @@ type Config struct {
 	Authentik Authentik
 }
 
-// DefaultPatchingURL is where the bundled engine listens
+// DefaultPatchingURL is where the patching engine listens
 // (deploy/docker-compose.yml, easypatch-api).
 const DefaultPatchingURL = "http://127.0.0.1:18180"
 

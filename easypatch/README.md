@@ -64,9 +64,9 @@ compliance across every customer.
   endpoints, history and settings: see
   [Importing a standalone EasyPatch](../docs/operations/import-easypatch.md).
 * EasyPatch has the same license as the rest of EasyRMM ([License](#license)). It keeps its own
-  builds and releases for now. Its releases are
-  tagged `easypatch-v*` in the EasyRMM repository. Releases up to 1.10.0, and their downloads,
-  are in EasyPatch's [former repository](https://github.com/paulmataruso/EasyPatch/releases).
+  builds and version, and is released with EasyRMM: each EasyRMM release builds the engine's image
+  and its agent packages from the same commit. Releases up to 1.10.0, and their downloads, are in
+  EasyPatch's [former repository](https://github.com/paulmataruso/EasyPatch/releases).
 
 ## Features
 
@@ -237,11 +237,11 @@ Linux with Docker (`scripts/build-msi-linux.sh`, which runs WiX under Wine) or o
 `scripts/build-agent.ps1`, which can also sign them. The EasyPatch agent workflow
 (`.github/workflows/easypatch-agent.yml` at the repository root, run by `ci.yml` when the agent
 changes) builds them on Windows. `scripts/build-linux-packages.sh` builds the signed `.deb` and
-`.rpm` packages of the Linux agent (Docker). Pushing an EasyPatch version tag
-(`easypatch-v<version>`) runs `easypatch-release.yml`, which tests everything, builds and
-release-signs the agent packages, publishes the server image (x64 and ARM64) to GitHub Container Registry
-and creates the GitHub Release. How EasyPatch shares the repository and its CI with EasyRMM is in
-[docs/development/monorepo.md](../docs/development/monorepo.md).
+`.rpm` packages of the Linux agent (Docker). EasyRMM's release workflow (`release.yml`, on an
+`easyrmm-v*` tag) tests everything, builds and release-signs the agent packages, and publishes
+the server image (x64 and ARM64) carrying them to GitHub Container Registry
+([Releasing](../docs/development/releasing.md)). How EasyPatch shares the repository and its CI with
+EasyRMM is in [docs/development/monorepo.md](../docs/development/monorepo.md).
 
 ```
 shared/      Contracts shared by agent and server (DTOs, request signing, update classification)

@@ -390,8 +390,8 @@ type AuditEntry struct {
 	ID        int64     `json:"id"`
 	CreatedAt time.Time `json:"createdAt"`
 	// Actor is who acted: an EasyRMM user's name (Via "easyrmm"), an
-	// EasyPatch user or API token (Via "easypatch"), or nobody: EasyPatch
-	// itself (Via "system").
+	// EasyPatch user or API token from before an import (Via "easypatch"),
+	// or nobody: EasyPatch itself (Via "system").
 	Actor      string `json:"actor"`
 	Via        string `json:"via"`
 	Action     string `json:"action"`

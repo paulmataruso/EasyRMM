@@ -8,7 +8,7 @@ import { formatDateTime, formatNumber, formatRelative } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
 
 // Settings → Patching → Audit log (one-product plan, C6): EasyPatch's own audit log, which records what EasyRMM's users
-// did through EasyRMM, what was done in EasyPatch's console or API, and what EasyPatch did on its own (the rollout guard,
+// did through EasyRMM, what was done in EasyPatch's console or API before it was imported, and what EasyPatch did on its own (the rollout guard,
 // retention, scheduled reports). EasyRMM's audit log has its own record of the first.
 
 /** EasyPatch's areas, by the start of their actions' names. */

@@ -134,7 +134,7 @@ type definition struct {
 	perm    rbac.Permission
 	columns []Column
 	run     func(ctx context.Context, tx pgx.Tx, q Query, out emit) error
-	// patch, instead of run, reads the report from the patching connector
+	// patch, instead of run, reads the report from the patching engine
 	// and says whether it had more rows than it gave.
 	patch func(ctx context.Context, src PatchSource, c access.Caller, q Query, out emit) (bool, error)
 }

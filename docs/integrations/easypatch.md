@@ -9,7 +9,7 @@ per organization. Operating both:
 
 EasyPatch is EasyRMM's patch management component. Its code is in
 `easypatch/` of this repository ([monorepo.md](../development/monorepo.md)),
-under its own licence ([LICENSING.md](../../LICENSING.md)). Since the
+under the same licence as EasyRMM ([LICENSING.md](../../LICENSING.md)). Since the
 one-product plan, its server runs in every EasyRMM deployment as the
 patching engine, on loopback, and EasyRMM's console is the only one: EasyRMM
 calls the engine with a signed statement per request

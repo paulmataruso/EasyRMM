@@ -47,11 +47,12 @@ The macOS agent (since 1.9.0) is **experimental, in development and not for prod
   1. Bump the version in `Directory.Build.props`, `scripts/build-*.sh` and `build-agent.ps1`, the issue
      template (`.github/ISSUE_TEMPLATE/easypatch-bug_report.yml` in the repository root), the README, and the
      download and build commands in `docs/linux-agent.md` and `docs/macos-agent.md`.
-  2. Add a `## [x.y.z] - date` section to the CHANGELOG. `easypatch-release.yml` (in the repository root's
-     `.github/workflows/`) checks that the tag, `Directory.Build.props` and the CHANGELOG agree.
-  3. Push `main`, then the tag `easypatch-vX.Y.Z`. `easypatch-release.yml` builds and tests everything,
-     publishes the server image to GHCR, and creates the GitHub Release with the `.msi`, `.deb`, `.rpm` and `.pkg`
-     packages, their `.sig` files and `SHA256SUMS`.
+  2. Add a `## [x.y.z] - date` section to the CHANGELOG. EasyRMM's `release.yml` (in the repository root's
+     `.github/workflows/`) checks that `Directory.Build.props` and the CHANGELOG agree, and that the version
+     was not published from another commit.
+  3. Release EasyRMM (`docs/development/releasing.md` at the repository root): every EasyRMM release builds
+     and tests the engine, release-signs the `.msi`, `.deb` and `.rpm` packages, and publishes the server image
+     carrying them to GHCR. There are no EasyPatch tags or GitHub Releases of its own any more.
 - **Release signing key:** the private key is the `EASYPATCH_RELEASE_KEY` secret of the GitHub
   `easypatch-release` environment. Signed local builds read it from `~/.easypatch/easypatch-release-key.pem`.
   Copy it between machines only over a secure channel, and never commit it.

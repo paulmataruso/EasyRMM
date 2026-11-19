@@ -309,11 +309,11 @@ the console.
 
 ## Building from source
 
-The `.deb` and `.rpm` packages attached to EasyPatch's GitHub releases (tagged `easypatch-v*` in
-the EasyRMM repository; up to 1.10.0, in EasyPatch's
+The `.deb` and `.rpm` packages in the engine's image of each EasyRMM release (up to 1.10.0,
+attached to the releases in EasyPatch's
 [former repository](https://github.com/paulmataruso/EasyPatch/releases)) are built and signed by
-EasyPatch's release workflow; most installations should use those, and EasyRMM's engine image
-carries them. An agent you build with your own
+EasyRMM's release workflow; most installations should use those, which the engine offers to its
+agents. An agent you build with your own
 release key accepts only packages signed with that key, so it does not update to official
 releases (see [security.md](security.md#agent-release-signing)).
 

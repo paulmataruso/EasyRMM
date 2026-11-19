@@ -14,9 +14,10 @@ boundary is enforced. The decisions behind each control are in the
   and which computers belong to whom.
 * **The audit log**: the record of who did what.
 * **Secrets held by the server**: the job-signing key, MeshCentral's
-  service account, the EasyPatch API token, the audit-forwarding client
-  key and the internal certificate authority. All are sealed in the
-  database under `EASYRMM_SECRET_KEY`.
+  service account, the audit-forwarding client key and the internal
+  certificate authority, all sealed in the database under
+  `EASYRMM_SECRET_KEY`; and the key that signs EasyRMM's statements to the
+  patching engine (`EASYRMM_PATCHING_KEY`, in `.env`).
 * **Accounts**: technicians' passwords, authenticators and security keys.
 
 ## Who is guarded against
@@ -122,10 +123,10 @@ rights, and EasyRMM narrows what reaches them.
   prints a link for a super administrator that works once, for 15 minutes,
   and is stored only as a hash.
 
-**Server to integrations** ([ADR-0023](../architecture/adr/0023-audit-forwarding.md), [ADR-0030](../architecture/adr/0030-easypatch-connector.md))
-* Only Super Administrators configure EasyPatch and audit forwarding.
-* Their secrets are sealed and never shown again.
-* TLS is verified, and EasyPatch's redirects are not followed.
+**Server to integrations** ([ADR-0023](../architecture/adr/0023-audit-forwarding.md))
+* Only Super Administrators configure audit forwarding.
+* Its secrets are sealed and never shown again.
+* TLS is verified.
 * Link-local and cloud metadata addresses are refused.
 
 **The record** ([ADR-0007](../architecture/adr/0007-hash-chained-audit-log.md))

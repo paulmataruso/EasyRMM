@@ -359,11 +359,11 @@ copied to the EasyPatch server or into source control. The public key
 An agent built without it reports that it cannot update itself and must be upgraded by
 installing a newer package.
 
-* **Official releases** (the packages attached to GitHub Releases) are built and signed by the
-  `EasyPatch release` GitHub Actions workflow (`.github/workflows/easypatch-release.yml` in the
-  repository root) when a version tag (`easypatch-vX.Y.Z`) is pushed. The private key is stored as
-  an encrypted secret of the `easypatch-release` environment, which only workflow runs for
-  `easypatch-v*` tags can use. The job writes it to the runner's temporary directory, signs,
+* **Official releases** (the packages in the engine's image of each EasyRMM release) are built and
+  signed by EasyRMM's `Release` GitHub Actions workflow (`.github/workflows/release.yml` in the
+  repository root) when an EasyRMM version tag (`easyrmm-vX.Y.Z`) is pushed. The private key is
+  stored as an encrypted secret of the `easypatch-release` environment, which only workflow runs for
+  `easyrmm-v*` tags can use. The job writes it to the runner's temporary directory, signs,
   verifies the signatures against the committed public key [`keys/easypatch-release-key.pub.pem`](../keys/easypatch-release-key.pub.pem)
   and deletes the file. Agents from official releases accept only packages signed with this key.
 * **Your own builds.** The build scripts read the key from `~/.easypatch/easypatch-release-key.pem`

@@ -92,7 +92,7 @@ func NewAgentProxy(target *url.URL, secure bool, log *slog.Logger) http.Handler 
 			pr.Out.Host = pr.In.Host
 			pr.Out.Header.Del("Forwarded")
 			pr.Out.Header.Del("Cookie")
-			// Only EasyRMM's connector makes statements, on loopback.
+			// Only EasyRMM makes statements, on loopback.
 			pr.Out.Header.Del(StatementHeader)
 			// The address EasyRMM resolved: the peer, or in offload mode
 			// what its trusted proxy reported.

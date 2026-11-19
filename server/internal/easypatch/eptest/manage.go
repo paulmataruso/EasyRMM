@@ -437,7 +437,8 @@ func (s *Server) Changes() int {
 	return n
 }
 
-// ChangeSite changes a site, as someone in EasyPatch's own console would.
+// ChangeSite changes a site behind EasyRMM's back, as an imported server's
+// settings or a direct database edit would.
 func (s *Server) ChangeSite(id uuid.UUID, fn func(x *SiteInfo)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
