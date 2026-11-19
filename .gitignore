@@ -80,3 +80,5 @@ Thumbs.db
 /web/e2e-sign-in/.report/
 /web/e2e-bundle/.results/
 /web/e2e-bundle/.report/
+/web/e2e-authentik/.results/
+/web/e2e-authentik/.report/

@@ -9,6 +9,11 @@ const authenticators = new Map<string, { secret: string; step: number }>();
 
 const currentStep = () => Math.floor(Date.now() / 30_000);
 
+/** Remembers an authenticator set up elsewhere (another identity provider's enrollment, or a test's own key). */
+export function addAuthenticator(email: string, secret: string) {
+  authenticators.set(email, { secret, step: currentStep() - 1 });
+}
+
 /** A code the server will accept: never a step it has already seen (replay protection). */
 export async function nextCode(page: Page, email: string): Promise<string> {
   const a = authenticators.get(email);

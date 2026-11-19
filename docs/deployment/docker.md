@@ -194,8 +194,9 @@ setting to turn it on or off.
 
 On an existing install, rerun `setup.sh` with its usual options: it adds the
 engine's database passwords and `EASYRMM_PATCHING_KEY` to `.env` if they are
-missing, and removes `EASYRMM_PATCHING` and `COMPOSE_PROFILES=patching`,
-which no longer exist, without changing anything else there. The key signs
+missing, and removes `EASYRMM_PATCHING` and the `patching` profile from
+`COMPOSE_PROFILES`, which no longer exist, without changing anything else
+there. The key signs
 EasyRMM's calls to the engine, one short statement per request
 ([ADR-0038](../architecture/adr/0038-statements-to-the-patching-engine.md));
 treat it like the other secrets in `.env`. The engine's services are:
