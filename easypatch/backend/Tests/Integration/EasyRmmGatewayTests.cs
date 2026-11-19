@@ -1,24 +1,15 @@
 using System.Net;
+using System.Net.Http.Headers;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Api.Security;
 using EasyPatch.Core.Entities;
+using EasyPatch.Infrastructure.Services;
 using EasyPatch.Tests.Unit;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace EasyPatch.Tests.Integration;
-
-/// <summary>Signs every request it sends with a statement from "EasyRMM", made for that request.</summary>
-internal sealed class EasyRmmSigner(Func<DateTimeOffset> now, string role, object orgs, string subject, string name) : DelegatingHandler
-{
-    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        var claims = EasyRmmTestSigner.Claims(request.Method.Method, request.RequestUri!.PathAndQuery, now(), orgs, role);
-        (claims["sub"], claims["name"]) = (subject, name);
-        request.Headers.Add(EasyRmmAuthenticationHandler.HeaderName, EasyRmmTestSigner.Sign(claims));
-        return base.SendAsync(request, cancellationToken);
-    }
-}
 
 /// <summary>
 /// EasyPatch as EasyRMM's patching engine: EasyRMM's statements act with the role and organizations each call names, through
@@ -27,26 +18,17 @@ internal sealed class EasyRmmSigner(Func<DateTimeOffset> now, string role, objec
 public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
     private const string Jane = "6f1c2a52-3e0d-4b8a-9d55-0b6f1e8c2a10";
-    private AdminSession root = null!;
-
-    protected override IReadOnlyDictionary<string, string?>? Settings => new Dictionary<string, string?>
-    {
-        [EasyRmmGateway.KeySetting] = Convert.ToBase64String(EasyRmmTestSigner.Key),
-    };
+    private AdminClient root = null!;
 
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        root = await SuperAdminAsync();
+        root = SuperAdmin();
     }
 
     /// <summary>A client whose every request carries a statement, and nothing else: no cookies, no CSRF token.</summary>
-    private AdminSession EasyRmm(string role, object orgs, string subject = Jane, string name = "jane@example.com", TimeSpan? age = null)
-    {
-        var browser = new BrowserHandler();
-        var http = NewHttpClient(browser, new EasyRmmSigner(() => Clock.GetUtcNow() - (age ?? TimeSpan.Zero), role, orgs, subject, name));
-        return new AdminSession(http, browser, "easyrmm", string.Empty);
-    }
+    private AdminClient EasyRmm(string role, object orgs, string subject = Jane, string name = "jane@example.com", TimeSpan? age = null) =>
+        new(NewHttpClient(new EasyRmmSigner(() => Clock.GetUtcNow() - (age ?? TimeSpan.Zero), role, orgs, subject, name)), name);
 
     [Fact]
     public async Task A_statement_acts_with_the_role_and_organizations_it_names()
@@ -66,8 +48,8 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
         var job = await WithDbAsync(db => db.Jobs.AsNoTracking().SingleAsync(j => j.EndpointId == contosoPc.EndpointId && j.Type == Contracts.JobType.UpdateScan));
         Assert.Equal(("easyrmm:jane@example.com", (Guid?)null), (job.RequestedBy, job.RequestedByUserId));
 
-        // No user row was created for it.
-        Assert.Equal(1, await WithDbAsync(db => db.Users.CountAsync()));
+        // No user row was created for it, or for anyone else.
+        Assert.False(await WithDbAsync(db => db.Users.AnyAsync()));
 
         // Read-only: reads, never acts.
         var viewer = EasyRmm("ReadOnly", "*");
@@ -86,9 +68,6 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
         var entry = await WithDbAsync(db => db.AuditLogs.AsNoTracking().SingleAsync(a => a.Action == "settings.update"));
         Assert.Equal(("easyrmm:EasyRMM", (Guid?)null), (entry.Username, entry.UserId));
         await technician.ExpectAsync(HttpMethod.Put, "/api/v1/settings", new Core.Domain.ServerSettings(), HttpStatusCode.Forbidden);
-
-        // Never the signed-in user's own account: those routes take a session only.
-        await service.ExpectAsync(HttpMethod.Get, "/api/v1/auth/me", null, HttpStatusCode.Unauthorized);
     }
 
     [Fact]
@@ -110,10 +89,20 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
         // Signed a minute ago.
         await EasyRmm("Admin", "*", age: TimeSpan.FromMinutes(1)).ExpectAsync(HttpMethod.Post, scan, null, HttpStatusCode.Unauthorized, "unauthenticated");
 
-        // A request with a statement is judged by it alone: a valid session alongside a bad statement does not help.
-        using (var request = new HttpRequestMessage(HttpMethod.Get, new Uri("/api/v1/endpoints", UriKind.Relative)))
+        // A request with a statement is judged by it alone: a valid API token alongside a bad statement does not help.
+        var (_, secret) = await WithScopeAsync(sp => sp.GetRequiredService<ApiTokenService>().CreateAsync("Automation", UserRole.Admin, [], 30));
+        using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(scan, UriKind.Relative)))
         {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);
             request.Headers.Add(EasyRmmAuthenticationHandler.HeaderName, "not.a.statement");
+            using var response = await NewHttpClient().SendAsync(request);
+            Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        }
+
+        // Nor does a second, valid statement: a request carries exactly one.
+        using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(scan, UriKind.Relative)))
+        {
+            request.Headers.Add(EasyRmmAuthenticationHandler.HeaderName, EasyRmmTestSigner.Sign(EasyRmmTestSigner.Claims("POST", scan, Clock.GetUtcNow())));
             using var response = await root.Http.SendAsync(request);
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
@@ -125,6 +114,11 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
 /// <summary>A server that is not an EasyRMM server's engine accepts no statement, however it is signed.</summary>
 public sealed class EasyRmmGatewayOffTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
+    protected override IReadOnlyDictionary<string, string?>? Settings => new Dictionary<string, string?>
+    {
+        [EasyRmmGateway.KeySetting] = "",
+    };
+
     [Fact]
     public async Task Without_the_gateway_key_no_statement_is_accepted()
     {

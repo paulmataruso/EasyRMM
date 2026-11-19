@@ -87,7 +87,7 @@ public sealed class AgentLifecycleTests(PostgresFixture postgres) : IntegrationT
     public async Task Enroll_scan_install_all_missing_restart_and_report_compliance()
     {
         // 1-3. An administrator signs in (password + MFA), creates the customer and site, and issues an enrollment token.
-        var admin = await SuperAdminAsync();
+        var admin = SuperAdmin();
         var (org, site) = await CreateOrgAsync(admin, "Northwind Traders");
         var token = await CreateTokenAsync(admin, org.Id, site.Id, maxUses: 1);
 
@@ -219,8 +219,8 @@ public sealed class AgentLifecycleTests(PostgresFixture postgres) : IntegrationT
         // 20. Every administrative action is in the audit log; no secret appears anywhere in it.
         var audit = await admin.GetAsync<PagedResult<AuditLogDto>>("/api/v1/audit-logs?pageSize=200");
         var actions = audit.Items.Select(a => a.Action).ToHashSet();
-        Assert.Contains("auth.login", actions);
         Assert.Contains("organization.create", actions);
+        Assert.Equal(admin.Actor, audit.Items.Single(a => a.Action == "organization.create").Username);
         Assert.Contains("enrollment_token.create", actions);
         Assert.Contains("job.create", actions);
         Assert.DoesNotContain(audit.Items, a => (a.Details ?? string.Empty).Contains(token, StringComparison.Ordinal));
@@ -230,7 +230,7 @@ public sealed class AgentLifecycleTests(PostgresFixture postgres) : IntegrationT
     [Fact]
     public async Task Failed_updates_are_reported_with_the_windows_update_error()
     {
-        var admin = await SuperAdminAsync();
+        var admin = SuperAdmin();
         var (org, site) = await CreateOrgAsync(admin);
         using var agent = new TestAgent(NewHttpClient(), Clock);
         agent.Bootstrap.EnrollmentToken = await CreateTokenAsync(admin, org.Id, site.Id);
@@ -267,7 +267,7 @@ public sealed class AgentLifecycleTests(PostgresFixture postgres) : IntegrationT
     [Fact]
     public async Task Rmm_install_with_a_deployment_code_activates_after_approval()
     {
-        var admin = await SuperAdminAsync();
+        var admin = SuperAdmin();
         var (org, site) = await CreateOrgAsync(admin);
         var code = await admin.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
             new CreateDeploymentCodeRequest(org.Id, site.Id, "RMM", 30, null, null), HttpStatusCode.Created);
@@ -291,7 +291,7 @@ public sealed class AgentLifecycleTests(PostgresFixture postgres) : IntegrationT
     [Fact]
     public async Task Agent_rotates_its_key_and_unenrolls_on_uninstall()
     {
-        var admin = await SuperAdminAsync();
+        var admin = SuperAdmin();
         var (org, site) = await CreateOrgAsync(admin);
         using var agent = new TestAgent(NewHttpClient(), Clock);
         agent.Bootstrap.EnrollmentToken = await CreateTokenAsync(admin, org.Id, site.Id);
@@ -319,7 +319,7 @@ public sealed class AgentLifecycleTests(PostgresFixture postgres) : IntegrationT
     [Fact]
     public async Task An_administrator_uninstalls_the_agent_and_the_job_completes_when_the_agent_unenrolls()
     {
-        var admin = await SuperAdminAsync();
+        var admin = SuperAdmin();
         var (org, site) = await CreateOrgAsync(admin);
         using var agent = new TestAgent(NewHttpClient(), Clock);
         agent.Bootstrap.EnrollmentToken = await CreateTokenAsync(admin, org.Id, site.Id);
@@ -371,20 +371,20 @@ public sealed class AgentLifecycleTests(PostgresFixture postgres) : IntegrationT
     [Fact]
     public async Task Agents_that_cannot_remove_themselves_are_not_sent_an_uninstall()
     {
-        var root = await SuperAdminAsync();
+        var root = SuperAdmin();
         var (org, site) = await CreateOrgAsync(root);
         using var agent = await EnrollAgentAsync(root, org.Id, site.Id, "WS-OLD");
         await agent.CheckInAsync(new EasyPatch.Contracts.Agent.CheckInRequest { AgentVersion = "1.5.3", Capabilities = [EasyPatch.Contracts.Agent.AgentCapabilities.Restart] });
 
         using var response = await root.SendAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/uninstall-agent");
-        await AdminSession.EnsureAsync(response, HttpStatusCode.Conflict);
-        Assert.Equal("agent_upgrade_required", await AdminSession.ProblemCodeAsync(response));
+        await AdminClient.EnsureAsync(response, HttpStatusCode.Conflict);
+        Assert.Equal("agent_upgrade_required", await AdminClient.ProblemCodeAsync(response));
     }
 
     [Fact]
     public async Task An_update_check_a_user_asked_for_from_the_tray_is_recorded_as_such()
     {
-        var admin = await SuperAdminAsync();
+        var admin = SuperAdmin();
         var (org, site) = await CreateOrgAsync(admin);
         using var agent = new TestAgent(NewHttpClient(), Clock);
         agent.Bootstrap.EnrollmentToken = await CreateTokenAsync(admin, org.Id, site.Id);

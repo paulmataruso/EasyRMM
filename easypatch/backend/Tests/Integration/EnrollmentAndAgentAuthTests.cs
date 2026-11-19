@@ -15,14 +15,14 @@ public sealed class EnrollmentTests(PostgresFixture postgres) : IntegrationTest(
 {
     private static async Task<EnrollResponse> ReadEnrollAsync(HttpResponseMessage response)
     {
-        await AdminSession.EnsureAsync(response, HttpStatusCode.OK);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
         return (await response.Content.ReadFromJsonAsync<EnrollResponse>(TestJson.Options))!;
     }
 
     [Fact]
     public async Task Tokens_are_use_limited_expire_and_can_be_revoked_and_are_stored_hashed()
     {
-        var root = await SuperAdminAsync();
+        var root = SuperAdmin();
         var (org, site) = await CreateOrgAsync(root);
 
         var single = await CreateTokenAsync(root, org.Id, site.Id, maxUses: 1);
@@ -35,12 +35,11 @@ public sealed class EnrollmentTests(PostgresFixture postgres) : IntegrationTest(
         using (var reused = await NewAgent().EnrollAsync(single, null, "PC-2"))
         {
             Assert.Equal(HttpStatusCode.Unauthorized, reused.StatusCode);
-            Assert.Equal(AgentErrorCodes.EnrollmentInvalid, await AdminSession.ProblemCodeAsync(reused));
+            Assert.Equal(AgentErrorCodes.EnrollmentInvalid, await AdminClient.ProblemCodeAsync(reused));
         }
 
         var expiring = await CreateTokenAsync(root, org.Id, site.Id, hours: 1);
         Clock.Advance(TimeSpan.FromMinutes(61));
-        root = await LoginAsync("root", DefaultPassword, root.MfaSecret); // the session idled out meanwhile
         using (var expired = await NewAgent().EnrollAsync(expiring, null, "PC-3"))
         {
             Assert.Equal(HttpStatusCode.Unauthorized, expired.StatusCode);
@@ -63,7 +62,7 @@ public sealed class EnrollmentTests(PostgresFixture postgres) : IntegrationTest(
     [Fact]
     public async Task Tokenless_deployment_code_enrollment_waits_for_administrator_approval()
     {
-        var root = await SuperAdminAsync();
+        var root = SuperAdmin();
         var (org, site) = await CreateOrgAsync(root);
         var code = await root.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
             new CreateDeploymentCodeRequest(org.Id, site.Id, "RMM rollout", 30, null, null), HttpStatusCode.Created);
@@ -114,7 +113,7 @@ public sealed class EnrollmentTests(PostgresFixture postgres) : IntegrationTest(
     [Fact]
     public async Task Rejected_requests_never_become_endpoints()
     {
-        var root = await SuperAdminAsync();
+        var root = SuperAdmin();
         var (org, _) = await CreateOrgAsync(root);
         var code = await root.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
             new CreateDeploymentCodeRequest(org.Id, null, "RMM", 30, null, null), HttpStatusCode.Created);
@@ -136,7 +135,7 @@ public sealed class EnrollmentTests(PostgresFixture postgres) : IntegrationTest(
     [Fact]
     public async Task Deployment_codes_can_be_restricted_to_source_networks_and_revoked()
     {
-        var root = await SuperAdminAsync();
+        var root = SuperAdmin();
         var (org, _) = await CreateOrgAsync(root);
         var restricted = await root.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
             new CreateDeploymentCodeRequest(org.Id, null, "Branch only", 30, ["203.0.113.0/24"], null), HttpStatusCode.Created);
@@ -155,9 +154,9 @@ public sealed class EnrollmentTests(PostgresFixture postgres) : IntegrationTest(
 
 public sealed class AgentAuthenticationTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
-    private async Task<(AdminSession Root, SignedAgent Agent)> EnrolledAsync()
+    private async Task<(AdminClient Root, SignedAgent Agent)> EnrolledAsync()
     {
-        var root = await SuperAdminAsync();
+        var root = SuperAdmin();
         var (org, site) = await CreateOrgAsync(root);
         return (root, await EnrollAgentAsync(root, org.Id, site.Id, "SIGNED-PC"));
     }
@@ -165,7 +164,7 @@ public sealed class AgentAuthenticationTests(PostgresFixture postgres) : Integra
     private static async Task ExpectRejectedAsync(HttpResponseMessage response, string code)
     {
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
-        Assert.Equal(code, await AdminSession.ProblemCodeAsync(response));
+        Assert.Equal(code, await AdminClient.ProblemCodeAsync(response));
         response.Dispose();
     }
 
@@ -224,7 +223,7 @@ public sealed class AgentAuthenticationTests(PostgresFixture postgres) : Integra
         using (var response = await agent.PostAsync(AgentRoutes.RotateCredential,
                    new RotateCredentialRequest { PublicKey = Convert.ToBase64String(AgentKeys.ExportPublicKey(newKey)) }))
         {
-            await AdminSession.EnsureAsync(response, HttpStatusCode.OK);
+            await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
             rotated = (await response.Content.ReadFromJsonAsync<RotateCredentialResponse>(TestJson.Options))!;
         }
 
@@ -238,18 +237,17 @@ public sealed class AgentAuthenticationTests(PostgresFixture postgres) : Integra
         await ExpectRejectedAsync(await agent.PostAsync(AgentRoutes.CheckIn, new CheckInRequest { AgentVersion = "1.0.0" }), AgentErrorCodes.CredentialExpired);
         await renewed.CheckInAsync();
 
-        root = await LoginAsync("root", DefaultPassword, root.MfaSecret); // the admin session idled out meanwhile
         await root.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/revoke", new RevokeEndpointRequest("Stolen laptop"), HttpStatusCode.OK);
         using var afterRevoke = await renewed.PostAsync(AgentRoutes.CheckIn, new CheckInRequest { AgentVersion = "1.0.0" });
         Assert.Equal(HttpStatusCode.Unauthorized, afterRevoke.StatusCode);
-        Assert.Contains(await AdminSession.ProblemCodeAsync(afterRevoke), new[] { AgentErrorCodes.CredentialRevoked, AgentErrorCodes.EndpointRevoked });
+        Assert.Contains(await AdminClient.ProblemCodeAsync(afterRevoke), new[] { AgentErrorCodes.CredentialRevoked, AgentErrorCodes.EndpointRevoked });
         renewed.Dispose();
     }
 
     [Fact]
     public async Task Agents_cannot_report_for_jobs_of_other_endpoints()
     {
-        var root = await SuperAdminAsync();
+        var root = SuperAdmin();
         var (org, site) = await CreateOrgAsync(root);
         var a = await EnrollAgentAsync(root, org.Id, site.Id, "PC-A");
         var b = await EnrollAgentAsync(root, org.Id, site.Id, "PC-B");

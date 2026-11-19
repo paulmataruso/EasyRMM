@@ -14,14 +14,14 @@ namespace EasyPatch.Tests.Integration;
 /// <summary>Endpoint tags, tag policies and rollout delays (deferral, expiry and scheduled installs).</summary>
 public sealed class TagsAndRolloutTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
-    private AdminSession root = null!;
+    private AdminClient root = null!;
     private OrganizationDto org = null!;
     private SiteDto site = null!;
 
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        root = await SuperAdminAsync();
+        root = SuperAdmin();
         (org, site) = await CreateOrgAsync(root);
     }
 
@@ -54,7 +54,7 @@ public sealed class TagsAndRolloutTests(PostgresFixture postgres) : IntegrationT
             Missing = missing,
             Installed = [],
         });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.NoContent);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.NoContent);
     }
 
     private Task<TagDto> CreateTagAsync(string name, int priority = 0) =>
@@ -69,7 +69,7 @@ public sealed class TagsAndRolloutTests(PostgresFixture postgres) : IntegrationT
         await root.ExpectAsync(HttpMethod.Post, "/api/v1/tags", new TagRequest("pilot", "blue", null, 0), HttpStatusCode.Conflict, "tag_exists");
         await root.ExpectAsync(HttpMethod.Post, "/api/v1/tags", new TagRequest("x", "orange", null, 0), HttpStatusCode.BadRequest);
 
-        var admin = await CreateAndLoginAsync("admin", UserRole.Admin);
+        var admin = Admin("admin", UserRole.Admin);
         await admin.ExpectAsync(HttpMethod.Post, "/api/v1/tags", new TagRequest("Servers", "red", null, 0), HttpStatusCode.Forbidden);
         await admin.ExpectAsync(HttpMethod.Put, $"/api/v1/tags/{pilot.Id}/policy", Delays(1, 1), HttpStatusCode.Forbidden);
         await admin.ExpectAsync(HttpMethod.Put, $"/api/v1/endpoints/{agent.EndpointId}/tags", new EndpointTagsRequest([pilot.Id]), HttpStatusCode.NoContent);
@@ -82,10 +82,10 @@ public sealed class TagsAndRolloutTests(PostgresFixture postgres) : IntegrationT
 
         // Organization-restricted admins can see the tags on their endpoints but not change them.
         var otherOrg = await CreateOrgAsync(root, "Fabrikam");
-        var restricted = await CreateAndLoginAsync("restricted", UserRole.Admin, otherOrg.Org.Id);
+        var restricted = Admin("restricted", UserRole.Admin, [otherOrg.Org.Id]);
         Assert.Empty(await restricted.GetAsync<List<TagDto>>("/api/v1/tags"));
         await restricted.ExpectAsync(HttpMethod.Put, $"/api/v1/endpoints/{agent.EndpointId}/tags", new EndpointTagsRequest([]), HttpStatusCode.Forbidden);
-        var scoped = await CreateAndLoginAsync("scoped", UserRole.Admin, org.Id);
+        var scoped = Admin("scoped", UserRole.Admin, [org.Id]);
         Assert.Equal("Pilot", Assert.Single(await scoped.GetAsync<List<TagDto>>("/api/v1/tags")).Name);
 
         var bulk = await root.SendAsync<BulkEndpointTagsResult>(HttpMethod.Post, "/api/v1/endpoints/tags/bulk",
@@ -150,11 +150,11 @@ public sealed class TagsAndRolloutTests(PostgresFixture postgres) : IntegrationT
         Assert.Equal("Pilot", Assert.Single((await root.GetAsync<OrganizationDto>($"/api/v1/organizations/{org.Id}")).Tags!).Name);
 
         // Only administrators without organization restrictions assign tags; restricted ones see the tags of their organization.
-        var restricted = await CreateAndLoginAsync("restricted", UserRole.Admin, org.Id);
+        var restricted = Admin("restricted", UserRole.Admin, [org.Id]);
         await restricted.ExpectAsync(HttpMethod.Put, $"/api/v1/sites/{pilotSite.Id}/tags", new TagAssignmentRequest([]), HttpStatusCode.Forbidden);
         await restricted.ExpectAsync(HttpMethod.Put, $"/api/v1/organizations/{org.Id}/tags", new TagAssignmentRequest([]), HttpStatusCode.Forbidden);
         Assert.Equal("Pilot", Assert.Single(await restricted.GetAsync<List<TagDto>>("/api/v1/tags")).Name);
-        var outsider = await CreateAndLoginAsync("outsider", UserRole.Admin, otherOrg.Id);
+        var outsider = Admin("outsider", UserRole.Admin, [otherOrg.Id]);
         Assert.Empty(await outsider.GetAsync<List<TagDto>>("/api/v1/tags"));
 
         // Untagging puts the endpoints back on the normal delay.
@@ -205,7 +205,6 @@ public sealed class TagsAndRolloutTests(PostgresFixture postgres) : IntegrationT
 
         Clock.Advance(TimeSpan.FromDays(1).Add(TimeSpan.FromMinutes(1)));
         await RunMaintenanceAsync<DeferralExpiryTask>();
-        root = await LoginAsync("root", DefaultPassword, root.MfaSecret); // the session expired while time moved on
         detail = await root.GetAsync<EndpointDetailDto>(url);
         Assert.Equal(1, detail.Summary.MissingRequiredCount); // the security update's 3-day delay ended
         Assert.Equal(1, detail.Summary.MissingDeferredCount);

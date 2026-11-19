@@ -13,14 +13,14 @@ namespace EasyPatch.Tests.Integration;
 /// <summary>Third-party application updates (winget): policy, agent configuration, scan ingestion and install jobs.</summary>
 public sealed class ApplicationUpdateTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
-    private AdminSession root = null!;
+    private AdminClient root = null!;
     private OrganizationDto org = null!;
     private SiteDto site = null!;
 
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        root = await SuperAdminAsync();
+        root = SuperAdmin();
         (org, site) = await CreateOrgAsync(root);
     }
 
@@ -60,7 +60,7 @@ public sealed class ApplicationUpdateTests(PostgresFixture postgres) : Integrati
             Installed = installed,
             Applications = applications,
         });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.NoContent);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.NoContent);
     }
 
     private static ApplicationScanReport Checked(int count) => new() { Succeeded = true, WingetVersion = "1.9.25200", Checked = count };
@@ -150,7 +150,6 @@ public sealed class ApplicationUpdateTests(PostgresFixture postgres) : Integrati
         Task<EndpointUpdateState> StateAsync() => WithDbAsync(db =>
             db.EndpointUpdates.Where(u => u.EndpointId == agent.EndpointId && u.UpdateGuid == firefox.UpdateGuid).Select(u => u.State).FirstAsync());
         Assert.Equal(EndpointUpdateState.Missing, await StateAsync());
-        root = await LoginAsync("root", DefaultPassword, root.MfaSecret);
         var status = (await root.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{agent.EndpointId}")).Applications!;
         Assert.Contains("0x8A15000F", status.LastError, StringComparison.Ordinal);
         Assert.Equal(1, await WithDbAsync(db => db.EndpointEvents.CountAsync(e => e.EndpointId == agent.EndpointId && e.Type == "ApplicationScanFailed")));

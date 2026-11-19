@@ -14,14 +14,14 @@ namespace EasyPatch.Tests.Integration;
 /// excluding the update so EasyPatch does not install it again. The server changes nothing until a scan reports the result.</summary>
 public sealed class UpdateRemovalTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
-    private AdminSession root = null!;
+    private AdminClient root = null!;
     private OrganizationDto org = null!;
     private SiteDto site = null!;
 
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        root = await SuperAdminAsync();
+        root = SuperAdmin();
         (org, site) = await CreateOrgAsync(root);
     }
 
@@ -51,7 +51,7 @@ public sealed class UpdateRemovalTests(PostgresFixture postgres) : IntegrationTe
             Missing = missing,
             Installed = installed,
         });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.NoContent);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.NoContent);
     }
 
     private static async Task ReportAsync(SignedAgent agent, Guid jobId, long sequence, JobStatus status, IReadOnlyList<JobItemReport> items,
@@ -66,7 +66,7 @@ public sealed class UpdateRemovalTests(PostgresFixture postgres) : IntegrationTe
             Items = items,
             RebootRequired = rebootRequired,
         });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.NoContent);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.NoContent);
     }
 
     [Fact]
@@ -101,7 +101,7 @@ public sealed class UpdateRemovalTests(PostgresFixture postgres) : IntegrationTe
             delivered.UninstallUpdate);
         using (var ack = await agent.PostAsync($"api/v1/agents/jobs/{job.Id}/ack", new { }))
         {
-            await AdminSession.EnsureAsync(ack, HttpStatusCode.OK);
+            await AdminClient.EnsureAsync(ack, HttpStatusCode.OK);
         }
 
         var item = new JobItemReport { UpdateGuid = lcu.UpdateGuid, Title = lcu.Title, KbNumber = "KB5046617", Category = UpdateCategory.Cumulative, Status = JobItemStatus.Installing };

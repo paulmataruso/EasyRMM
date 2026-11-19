@@ -15,7 +15,7 @@ namespace EasyPatch.Tests.Integration;
 /// release updates. Held updates are left out of automatic and "install all" installations, but can still be selected.</summary>
 public sealed class RolloutGuardTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
-    private AdminSession root = null!;
+    private AdminClient root = null!;
     private OrganizationDto org = null!;
     private SiteDto site = null!;
     private readonly ReportedUpdate bad = JobQueueTests.SecurityUpdate("KB5050001");
@@ -24,7 +24,7 @@ public sealed class RolloutGuardTests(PostgresFixture postgres) : IntegrationTes
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        root = await SuperAdminAsync();
+        root = SuperAdmin();
         (org, site) = await CreateOrgAsync(root);
     }
 
@@ -43,7 +43,7 @@ public sealed class RolloutGuardTests(PostgresFixture postgres) : IntegrationTes
             Missing = [bad, good],
             Installed = [],
         });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.NoContent);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.NoContent);
         return agent;
     }
 
@@ -55,7 +55,7 @@ public sealed class RolloutGuardTests(PostgresFixture postgres) : IntegrationTes
     {
         using (var ack = await agent.PostAsync($"api/v1/agents/jobs/{jobId}/ack", new { }))
         {
-            await AdminSession.EnsureAsync(ack, HttpStatusCode.OK);
+            await AdminClient.EnsureAsync(ack, HttpStatusCode.OK);
         }
 
         using var response = await agent.PostAsync($"api/v1/agents/jobs/{jobId}/status", new JobStatusReport
@@ -65,7 +65,7 @@ public sealed class RolloutGuardTests(PostgresFixture postgres) : IntegrationTes
             Phase = status.ToString(),
             Items = items,
         });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.NoContent);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.NoContent);
     }
 
     private JobItemReport Item(ReportedUpdate update, JobItemStatus status, string? skipReason = null) => new()
@@ -88,7 +88,7 @@ public sealed class RolloutGuardTests(PostgresFixture postgres) : IntegrationTes
         await ReportAsync(agent, job.Id, JobStatus.Completed, [Item(bad, outcome)]);
     }
 
-    private Task<List<UpdateHoldDto>> HoldsAsync(AdminSession session, string query = "") => session.GetAsync<List<UpdateHoldDto>>("/api/v1/update-holds" + query);
+    private Task<List<UpdateHoldDto>> HoldsAsync(AdminClient session, string query = "") => session.GetAsync<List<UpdateHoldDto>>("/api/v1/update-holds" + query);
 
     [Fact]
     public async Task An_update_that_fails_on_too_many_endpoints_is_held_for_every_organization_until_released()
@@ -149,7 +149,7 @@ public sealed class RolloutGuardTests(PostgresFixture postgres) : IntegrationTes
         Assert.Equal($"{org.Name}: {bad.Title} is on hold", alerts.Single(a => a.OrganizationId == org.Id).Title);
 
         // An organization administrator cannot release a hold for every organization.
-        var admin = await CreateAndLoginAsync("admin", UserRole.Admin, org.Id);
+        var admin = Admin("admin", UserRole.Admin, [org.Id]);
         Assert.False(Assert.Single(await HoldsAsync(admin)).CanRelease);
         await admin.ExpectAsync(HttpMethod.Post, $"/api/v1/update-holds/{hold.Id}/release", null, HttpStatusCode.Forbidden, "forbidden");
 
@@ -209,9 +209,9 @@ public sealed class RolloutGuardTests(PostgresFixture postgres) : IntegrationTes
         var (other, _) = await CreateOrgAsync(root, "Fabrikam");
         var mine = await EndpointMissingBothAsync(org.Id, site.Id, "PC-MINE");
         var theirs = await EndpointMissingBothAsync(other.Id, null, "FAB-1");
-        var admin = await CreateAndLoginAsync("admin", UserRole.Admin, org.Id);
-        var outsider = await CreateAndLoginAsync("outsider", UserRole.Admin, other.Id);
-        var viewer = await CreateAndLoginAsync("viewer", UserRole.ReadOnly, org.Id);
+        var admin = Admin("admin", UserRole.Admin, [org.Id]);
+        var outsider = Admin("outsider", UserRole.Admin, [other.Id]);
+        var viewer = Admin("viewer", UserRole.ReadOnly, [org.Id]);
         var url = $"/api/v1/updates/{bad.UpdateGuid}/holds";
 
         await admin.ExpectAsync(HttpMethod.Post, url, new CreateUpdateHoldRequest(null, "x"), HttpStatusCode.Forbidden, "forbidden");
@@ -220,7 +220,7 @@ public sealed class RolloutGuardTests(PostgresFixture postgres) : IntegrationTes
         await admin.ExpectAsync(HttpMethod.Post, $"/api/v1/updates/{Guid.NewGuid()}/holds", new CreateUpdateHoldRequest(org.Id, "x"), HttpStatusCode.NotFound);
         await viewer.ExpectAsync(HttpMethod.Post, url, new CreateUpdateHoldRequest(org.Id, "x"), HttpStatusCode.Forbidden);
         var hold = await admin.SendAsync<UpdateHoldDto>(HttpMethod.Post, url, new CreateUpdateHoldRequest(org.Id, "Wait for the vendor fix"), HttpStatusCode.Created);
-        Assert.Equal((org.Id, org.Name, UpdateHoldSource.Manual, "admin", true), (hold.OrganizationId, hold.OrganizationName, hold.Source, hold.CreatedBy, hold.CanRelease));
+        Assert.Equal((org.Id, org.Name, UpdateHoldSource.Manual, admin.Actor, true), (hold.OrganizationId, hold.OrganizationName, hold.Source, hold.CreatedBy, hold.CanRelease));
         await admin.ExpectAsync(HttpMethod.Post, url, new CreateUpdateHoldRequest(org.Id, "again"), HttpStatusCode.Conflict, "already_held");
 
         // Held in its organization only.

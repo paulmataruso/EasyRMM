@@ -3,33 +3,37 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Core.Entities;
+using EasyPatch.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace EasyPatch.Tests.Integration;
 
-/// <summary>API tokens: bearer credentials for scripts and integrations with a fixed role and organization scope.</summary>
+/// <summary>
+/// API tokens: bearer credentials for scripts and integrations with a fixed role and organization scope, made on the server with
+/// <c>create-api-token</c> (EasyRMM's contract test and connector still use them).
+/// </summary>
 public sealed class ApiTokenTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
-    private AdminSession root = null!;
+    private AdminClient root = null!;
 
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        root = await SuperAdminAsync();
+        root = SuperAdmin();
     }
 
-    private Task<CreateApiTokenResponse> CreateAsync(string name, UserRole role, int days = 90, params Guid[] organizations) =>
-        root.SendAsync<CreateApiTokenResponse>(HttpMethod.Post, "/api/v1/api-tokens", new CreateApiTokenRequest(name, role, organizations, days),
-            HttpStatusCode.Created);
+    /// <summary>Makes a token as <c>create-api-token</c> does.</summary>
+    private Task<(ApiToken Token, string Secret)> CreateAsync(string name, UserRole role, int days = 90, params Guid[] organizations) =>
+        WithScopeAsync(sp => sp.GetRequiredService<ApiTokenService>().CreateAsync(name, role, organizations, days));
 
-    /// <summary>A client that sends only the bearer token: no cookies, no CSRF header.</summary>
-    private AdminSession TokenClient(string secret)
+    /// <summary>A client that sends only the bearer token.</summary>
+    private AdminClient TokenClient(string secret)
     {
-        var browser = new BrowserHandler();
-        var http = NewHttpClient(browser);
+        var http = NewHttpClient();
         http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", secret);
-        return new AdminSession(http, browser, "token", string.Empty);
+        return new AdminClient(http, "token");
     }
 
     [Fact]
@@ -40,30 +44,23 @@ public sealed class ApiTokenTests(PostgresFixture postgres) : IntegrationTest(po
         var contosoAgent = await EnrollAgentAsync(root, contoso.Id, contosoSite.Id, "CONTOSO-PC1");
         var fabrikamAgent = await EnrollAgentAsync(root, fabrikam.Id, fabrikamSite.Id, "FABRIKAM-PC1");
 
-        var created = await CreateAsync("Contoso report", UserRole.ReadOnly, 90, contoso.Id);
-        Assert.StartsWith("ept_", created.Secret, StringComparison.Ordinal);
-        Assert.Equal((created.Secret[..12], "Active", false, contoso.Id), (created.Token.Prefix, created.Token.Status, created.Token.AllOrganizations,
-            Assert.Single(created.Token.OrganizationIds)));
+        var (token, secret) = await CreateAsync("Contoso report", UserRole.ReadOnly, 90, contoso.Id);
+        Assert.StartsWith("ept_", secret, StringComparison.Ordinal);
+        Assert.Equal((secret[..12], false, contoso.Id), (token.Prefix, token.AllOrganizations, Assert.Single(token.OrganizationIds)));
 
         // Only a hash is stored, and the secret is in no audit record.
-        var stored = await WithDbAsync(db => db.ApiTokens.AsNoTracking().SingleAsync(t => t.Id == created.Token.Id));
-        Assert.NotEqual(created.Secret, stored.TokenHash);
+        var stored = await WithDbAsync(db => db.ApiTokens.AsNoTracking().SingleAsync(t => t.Id == token.Id));
+        Assert.NotEqual(secret, stored.TokenHash);
         var audit = await WithDbAsync(db => db.AuditLogs.AsNoTracking().Where(a => a.Action == "api_token.create").Select(a => a.Details).SingleAsync());
-        Assert.DoesNotContain(created.Secret, audit!, StringComparison.Ordinal);
+        Assert.DoesNotContain(secret, audit!, StringComparison.Ordinal);
 
-        var reader = TokenClient(created.Secret);
+        var reader = TokenClient(secret);
         var endpoints = await reader.GetAsync<PagedResult<EndpointSummaryDto>>("/api/v1/endpoints");
         Assert.Equal([contosoAgent.EndpointId], endpoints.Items.Select(e => e.Id));
         await reader.ExpectAsync(HttpMethod.Get, $"/api/v1/endpoints/{fabrikamAgent.EndpointId}", null, HttpStatusCode.NotFound);
         await reader.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{contosoAgent.EndpointId}/scan", null, HttpStatusCode.Forbidden, "forbidden");
 
-        // Never users, tokens, server settings, or the signed-in user's own account.
-        await reader.ExpectAsync(HttpMethod.Get, "/api/v1/users", null, HttpStatusCode.Forbidden);
-        await reader.ExpectAsync(HttpMethod.Get, "/api/v1/api-tokens", null, HttpStatusCode.Forbidden);
-        await reader.ExpectAsync(HttpMethod.Get, "/api/v1/auth/me", null, HttpStatusCode.Unauthorized);
-        await reader.ExpectAsync(HttpMethod.Get, "/api/v1/auth/sessions", null, HttpStatusCode.Unauthorized);
-
-        // An operator token for every organization runs jobs without a CSRF token, and is audited by name.
+        // An operator token for every organization runs jobs, and is audited by name.
         var automation = TokenClient((await CreateAsync("Automation", UserRole.Admin)).Secret);
         await automation.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{fabrikamAgent.EndpointId}/scan", null, HttpStatusCode.Accepted);
         var job = await WithDbAsync(db => db.Jobs.AsNoTracking().SingleAsync(j => j.EndpointId == fabrikamAgent.EndpointId && j.Type == Contracts.JobType.UpdateScan));
@@ -72,67 +69,52 @@ public sealed class ApiTokenTests(PostgresFixture postgres) : IntegrationTest(po
             new PolicyRequest(null, null, null, null, null, null, null, null, null, null, null, null, null, null), HttpStatusCode.OK);
         var entry = await WithDbAsync(db => db.AuditLogs.AsNoTracking().SingleAsync(a => a.Action == "policy.update"));
         Assert.Equal(("token:Automation", (Guid?)null), (entry.Username, entry.UserId));
-        await automation.ExpectAsync(HttpMethod.Post, "/api/v1/api-tokens", new CreateApiTokenRequest("Escalate", UserRole.Admin, null, 30),
-            HttpStatusCode.Forbidden);
+
+        // Never server settings: a token is never a super administrator.
         await automation.ExpectAsync(HttpMethod.Put, "/api/v1/settings", new Core.Domain.ServerSettings(), HttpStatusCode.Forbidden);
+        var refused = await Assert.ThrowsAsync<AppException>(() => CreateAsync("Root", UserRole.SuperAdmin));
+        Assert.Equal("invalid_role", refused.Code);
 
-        // Validation.
-        await root.ExpectAsync(HttpMethod.Post, "/api/v1/api-tokens", new CreateApiTokenRequest("Root", UserRole.SuperAdmin, null, 30),
-            HttpStatusCode.BadRequest);
-        await root.ExpectAsync(HttpMethod.Post, "/api/v1/api-tokens", new CreateApiTokenRequest("Forever", UserRole.ReadOnly, null, 366),
-            HttpStatusCode.BadRequest);
-        await root.ExpectAsync(HttpMethod.Post, "/api/v1/api-tokens", new CreateApiTokenRequest("", UserRole.ReadOnly, null, 30),
-            HttpStatusCode.BadRequest);
-        await root.ExpectAsync(HttpMethod.Post, "/api/v1/api-tokens", new CreateApiTokenRequest("automation", UserRole.ReadOnly, null, 30),
-            HttpStatusCode.Conflict, "name_taken");
-        await root.ExpectAsync(HttpMethod.Post, "/api/v1/api-tokens", new CreateApiTokenRequest("Ghost", UserRole.ReadOnly, [Guid.NewGuid()], 30),
-            HttpStatusCode.NotFound);
+        // Names are unique among active tokens, ignoring case, and organizations must exist.
+        Assert.Equal("name_taken", (await Assert.ThrowsAsync<AppException>(() => CreateAsync("automation", UserRole.ReadOnly))).Code);
+        Assert.Equal(404, (await Assert.ThrowsAsync<AppException>(() => CreateAsync("Ghost", UserRole.ReadOnly, 30, Guid.NewGuid()))).StatusCode);
 
-        var list = await root.GetAsync<List<ApiTokenDto>>("/api/v1/api-tokens");
-        Assert.Equal(["Automation", "Contoso report"], list.Select(t => t.Name));
-        Assert.All(list, t => Assert.NotNull(t.LastUsedAt));
+        // Each token records its last use.
+        Assert.All(await WithDbAsync(db => db.ApiTokens.AsNoTracking().ToListAsync()), t => Assert.NotNull(t.LastUsedAt));
     }
 
     [Fact]
     public async Task Revoked_expired_and_unknown_tokens_are_rejected()
     {
-        var created = await CreateAsync("Sync", UserRole.ReadOnly, 1);
-        var client = TokenClient(created.Secret);
+        var (token, secret) = await CreateAsync("Sync", UserRole.ReadOnly, 1);
+        var client = TokenClient(secret);
         await client.GetAsync<List<OrganizationSummaryDto>>("/api/v1/organizations");
 
-        await root.SendAsync<ApiTokenDto>(HttpMethod.Post, $"/api/v1/api-tokens/{created.Token.Id}/revoke", null, HttpStatusCode.OK);
+        await WithDbAsync(db => db.ApiTokens.Where(t => t.Id == token.Id).ExecuteUpdateAsync(s => s.SetProperty(t => t.RevokedAt, Clock.GetUtcNow())));
         await client.ExpectAsync(HttpMethod.Get, "/api/v1/organizations", null, HttpStatusCode.Unauthorized, "unauthenticated");
 
         // The name is free again once the token is revoked; a token stops working when it expires.
-        var renewed = await CreateAsync("Sync", UserRole.ReadOnly, 1);
-        var second = TokenClient(renewed.Secret);
+        var second = TokenClient((await CreateAsync("Sync", UserRole.ReadOnly, 1)).Secret);
         await second.GetAsync<List<OrganizationSummaryDto>>("/api/v1/organizations");
         Clock.Advance(TimeSpan.FromDays(1) + TimeSpan.FromSeconds(1));
         await second.ExpectAsync(HttpMethod.Get, "/api/v1/organizations", null, HttpStatusCode.Unauthorized);
-        root = await LoginAsync("root", DefaultPassword, root.MfaSecret); // the session idled out meanwhile
-        var statuses = (await root.GetAsync<List<ApiTokenDto>>("/api/v1/api-tokens")).Select(t => t.Status).Order();
-        Assert.Equal(["Expired", "Revoked"], statuses);
 
         await TokenClient("ept_" + new string('A', 43)).ExpectAsync(HttpMethod.Get, "/api/v1/organizations", null, HttpStatusCode.Unauthorized);
         await TokenClient("not-a-token").ExpectAsync(HttpMethod.Get, "/api/v1/organizations", null, HttpStatusCode.Unauthorized);
     }
 
     [Fact]
-    public async Task A_session_request_ignores_a_bearer_token()
+    public async Task A_request_with_a_statement_ignores_a_bearer_token()
     {
         var (org, site) = await CreateOrgAsync(root);
         var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-1");
-        var admin = await CreateAsync("Automation", UserRole.Admin);
-        var viewer = await CreateAndLoginAsync("viewer1", UserRole.ReadOnly);
+        var operatorToken = await CreateAsync("Automation", UserRole.Admin);
 
-        // The read-only user's session decides; the operator token does not add to it.
-        viewer.Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", admin.Secret);
+        // The read-only statement decides; the operator token does not add to it.
+        var viewer = Admin("viewer1", UserRole.ReadOnly);
+        viewer.Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", operatorToken.Secret);
         await viewer.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Forbidden);
-
-        // Session requests still need the CSRF token even with a bearer header.
-        root.Browser.SkipCsrf = true;
-        root.Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", admin.Secret);
-        await root.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Forbidden, "csrf_failed");
+        Assert.Empty(await WithDbAsync(db => db.Jobs.AsNoTracking().Where(j => j.EndpointId == agent.EndpointId).ToListAsync()));
     }
 
     [Fact]
@@ -176,7 +158,7 @@ public sealed class ApiTokenTests(PostgresFixture postgres) : IntegrationTest(po
         var included = await WithDbAsync(db => db.AuditLogs.AsNoTracking().SingleAsync(a => a.Action == "endpoint.update_included"));
         Assert.Contains("alice@example.com", included.Details!, StringComparison.Ordinal);
 
-        // A value that is not one line of printable text, or is too long, is ignored, and so is the header on a session.
+        // A value that is not one line of printable text, or is too long, is ignored, and so is the header beside a statement.
         var tab = TokenClient(secret);
         Assert.True(tab.Http.DefaultRequestHeaders.TryAddWithoutValidation("X-EasyPatch-On-Behalf-Of", "alice\tbob"));
         await tab.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/inventory-refresh", null, HttpStatusCode.Accepted);
@@ -192,7 +174,7 @@ public sealed class ApiTokenTests(PostgresFixture postgres) : IntegrationTest(po
             HttpStatusCode.NoContent);
         var exclusions = await WithDbAsync(db => db.AuditLogs.AsNoTracking().Where(a => a.Action == "endpoint.update_excluded").OrderBy(a => a.Id)
             .Select(a => new { a.Username, a.Details }).ToListAsync());
-        Assert.Equal(["token:EasyRMM", "token:EasyRMM", "root"], exclusions.Select(e => e.Username));
+        Assert.Equal(["token:EasyRMM", "token:EasyRMM", root.Actor], exclusions.Select(e => e.Username));
         Assert.All(exclusions.Skip(1), e => Assert.DoesNotContain("onBehalfOf", e.Details!, StringComparison.Ordinal));
     }
 }

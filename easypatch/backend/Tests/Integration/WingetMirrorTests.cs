@@ -132,7 +132,7 @@ public sealed class WingetMirrorTests(PostgresFixture postgres) : IntegrationTes
     [Fact]
     public async Task The_endpoint_page_shows_why_winget_could_not_be_installed()
     {
-        var root = await SuperAdminAsync();
+        var root = SuperAdmin();
         var (org, site) = await CreateOrgAsync(root);
         var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-WINGET");
         var url = $"/api/v1/endpoints/{agent.EndpointId}";

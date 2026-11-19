@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using EasyPatch.Agent.Tests.Infrastructure;
 using EasyPatch.Api.Contracts;
+using EasyPatch.Api.Security;
 using EasyPatch.Contracts;
 using EasyPatch.Contracts.Agent;
 using EasyPatch.Contracts.Security;
@@ -14,8 +15,8 @@ using EasyPatch.Core.Entities;
 using EasyPatch.Infrastructure.Data;
 using EasyPatch.Infrastructure.Maintenance;
 using EasyPatch.Infrastructure.Notifications;
-using EasyPatch.Infrastructure.Security;
 using EasyPatch.Infrastructure.Services;
+using EasyPatch.Tests.Unit;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -115,7 +116,8 @@ public sealed class EasyPatchApiFactory(string connectionString, TimeProvider cl
         builder.UseSetting("Logging:Format", "text");
         builder.UseSetting("Logging:LogLevel:Default", "Warning");
         builder.UseSetting("Logging:LogLevel:Microsoft.EntityFrameworkCore", "Warning");
-        builder.UseSetting("RateLimits:LoginPerMinute", "1000");
+        // EasyRMM's patching engine, as it is deployed: it accepts statements signed with this key. A test class can set it empty.
+        builder.UseSetting(EasyRmmGateway.KeySetting, Convert.ToBase64String(EasyRmmTestSigner.Key));
         builder.UseSetting("RateLimits:EnrollPerMinute", "1000");
         builder.UseSetting("RateLimits:AgentPerMinute", "10000");
         builder.UseSetting("RateLimits:AdminPerMinute", "10000");
@@ -180,49 +182,31 @@ public static class TestJson
     }
 }
 
-/// <summary>Cookie jar + CSRF header, like the browser SPA.</summary>
-public sealed class BrowserHandler : DelegatingHandler
+/// <summary>Signs every request it sends with a statement from "EasyRMM", made for that request (EasyRMM's ADR-0038).</summary>
+public sealed class EasyRmmSigner(Func<DateTimeOffset> now, string role, object orgs, string subject, string name) : DelegatingHandler
 {
-    public CookieContainer Cookies { get; } = new();
-
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
-        var uri = request.RequestUri!;
-        var header = Cookies.GetCookieHeader(uri);
-        if (header.Length > 0)
-        {
-            request.Headers.Add("Cookie", header);
-        }
-
-        if (request.Method != HttpMethod.Get && request.Method != HttpMethod.Head && SkipCsrf is false &&
-            Cookies.GetCookies(uri)["XSRF-TOKEN"] is { } xsrf)
-        {
-            request.Headers.Add("X-XSRF-TOKEN", xsrf.Value);
-        }
-
-        var response = await base.SendAsync(request, cancellationToken);
-        if (response.Headers.TryGetValues("Set-Cookie", out var values))
-        {
-            foreach (var value in values)
-            {
-                Cookies.SetCookies(uri, value);
-            }
-        }
-
-        return response;
+        var claims = EasyRmmTestSigner.Claims(request.Method.Method, request.RequestUri!.PathAndQuery, now(), orgs, role);
+        (claims["sub"], claims["name"]) = (subject, name);
+        request.Headers.Add(EasyRmmAuthenticationHandler.HeaderName, EasyRmmTestSigner.Sign(claims));
+        return base.SendAsync(request, cancellationToken);
     }
-
-    public bool SkipCsrf { get; set; }
 }
 
-/// <summary>An administrator browser session.</summary>
-public sealed class AdminSession(HttpClient http, BrowserHandler browser, string username, string password)
+/// <summary>
+/// An administrator acting through EasyRMM, as people use the engine: every request carries a statement with this caller's role and
+/// organizations, and nothing else (no cookies, no CSRF token).
+/// </summary>
+public sealed class AdminClient(HttpClient http, string name)
 {
     public HttpClient Http { get; } = http;
-    public BrowserHandler Browser { get; } = browser;
-    public string Username { get; } = username;
-    public string Password { get; } = password;
-    public byte[]? MfaSecret { get; set; }
+
+    /// <summary>The name the statements carry.</summary>
+    public string Name { get; } = name;
+
+    /// <summary>How EasyPatch's audit trail and jobs name this caller.</summary>
+    public string Actor => EasyRmmAuthenticationHandler.ActorPrefix + Name;
 
     public async Task<T> GetAsync<T>(string url)
     {
@@ -347,7 +331,7 @@ public sealed class SignedAgent(HttpClient http, TimeProvider clock) : IDisposab
     public async Task<CheckInResponse> CheckInAsync(CheckInRequest request)
     {
         using var response = await PostAsync(AgentRoutes.CheckIn, request);
-        await AdminSession.EnsureAsync(response, HttpStatusCode.OK);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
         return (await response.Content.ReadFromJsonAsync<CheckInResponse>(TestJson.Options))!;
     }
 
@@ -357,7 +341,6 @@ public sealed class SignedAgent(HttpClient http, TimeProvider clock) : IDisposab
 /// <summary>Base class: a fresh database and API host per test, plus helpers for admins and agents.</summary>
 public abstract class IntegrationTest(PostgresFixture postgres) : IAsyncLifetime
 {
-    protected const string DefaultPassword = "Correct-Horse-Battery-9";
     private readonly List<IDisposable> disposables = [];
 
     protected ManualTimeProvider Clock { get; } = new(DateTimeOffset.UtcNow);
@@ -436,54 +419,22 @@ public abstract class IntegrationTest(PostgresFixture postgres) : IAsyncLifetime
 
     protected Task FlushPresenceAsync() => Factory.Services.GetRequiredService<PresenceTracker>().FlushAsync();
 
-    /// <summary>Creates a user directly (as the CLI would) and signs in through the API, completing MFA enrollment.</summary>
-    protected async Task<AdminSession> CreateAndLoginAsync(string username, UserRole role, params Guid[] organizations)
+    /// <summary>
+    /// An administrator calling through EasyRMM with <paramref name="role"/>, for every organization (<paramref name="organizations"/>
+    /// null, the statement's <c>"*"</c>) or only the ones listed (none when the list is empty). Each statement is made for its request,
+    /// at the test clock's time, so the client works however far the clock moves.
+    /// </summary>
+    protected AdminClient Admin(string name, UserRole role, IReadOnlyCollection<Guid>? organizations = null)
     {
-        await WithScopeAsync(async sp =>
-        {
-            var auth = sp.GetRequiredService<AuthService>();
-            var user = await auth.CreateUserAsync(username, EmailOf(username), role, DefaultPassword);
-            if (organizations.Length > 0)
-            {
-                await auth.SetOrganizationAccessAsync(user.Id, organizations);
-            }
-
-            return user;
-        });
-        return await LoginAsync(username, DefaultPassword);
+        object orgs = organizations is null ? "*" : organizations.Select(id => id.ToString()).ToArray();
+        var subject = "user-" + name;
+        return new AdminClient(NewHttpClient(new EasyRmmSigner(() => Clock.GetUtcNow(), role.ToString(), orgs, subject, name)), name);
     }
 
-    protected Task<AdminSession> SuperAdminAsync() => CreateAndLoginAsync("root", UserRole.SuperAdmin);
+    /// <summary>A super administrator who sees every organization.</summary>
+    protected AdminClient SuperAdmin() => Admin("root", UserRole.SuperAdmin);
 
-    /// <summary>The email address <see cref="CreateAndLoginAsync"/> gives a test user (users sign in with it).</summary>
-    protected static string EmailOf(string username) => username + "@example.test";
-
-    /// <summary>Signs in with the email address of <paramref name="username"/> (see <see cref="EmailOf"/>).</summary>
-    protected async Task<AdminSession> LoginAsync(string username, string password, byte[]? mfaSecret = null)
-    {
-        var browser = new BrowserHandler();
-        var session = new AdminSession(NewHttpClient(browser), browser, username, password) { MfaSecret = mfaSecret };
-        var login = await session.SendAsync<LoginResponse>(HttpMethod.Post, "/api/v1/auth/login", new LoginRequest(EmailOf(username), password),
-            HttpStatusCode.OK);
-        if (login.MfaSetupRequired)
-        {
-            var setup = await session.SendAsync<MfaSetupResponse>(HttpMethod.Post, "/api/v1/auth/mfa/setup", null, HttpStatusCode.OK);
-            session.MfaSecret = Totp.Base32Decode(setup.Secret);
-            await session.SendAsync<RecoveryCodesResponse>(HttpMethod.Post, "/api/v1/auth/mfa/enable",
-                new MfaCodeRequest(Totp.Compute(session.MfaSecret, Totp.CurrentStep(Clock.GetUtcNow()))), HttpStatusCode.OK);
-        }
-        else if (login.MfaRequired)
-        {
-            Assert.NotNull(session.MfaSecret);
-            Clock.Advance(TimeSpan.FromSeconds(31)); // a fresh TOTP step (codes cannot be replayed)
-            await session.ExpectAsync(HttpMethod.Post, "/api/v1/auth/mfa/verify",
-                new MfaCodeRequest(Totp.Compute(session.MfaSecret!, Totp.CurrentStep(Clock.GetUtcNow()))), HttpStatusCode.NoContent);
-        }
-
-        return session;
-    }
-
-    protected static async Task<(OrganizationDto Org, SiteDto Site)> CreateOrgAsync(AdminSession admin, string name = "Contoso")
+    protected static async Task<(OrganizationDto Org, SiteDto Site)> CreateOrgAsync(AdminClient admin, string name = "Contoso")
     {
         var org = await admin.SendAsync<OrganizationDto>(HttpMethod.Post, "/api/v1/organizations",
             new OrganizationRequest(name, null, null, null, null, "UTC"), HttpStatusCode.Created);
@@ -492,7 +443,7 @@ public abstract class IntegrationTest(PostgresFixture postgres) : IAsyncLifetime
         return (org, site);
     }
 
-    protected static async Task<string> CreateTokenAsync(AdminSession admin, Guid orgId, Guid? siteId = null, int maxUses = 10, int hours = 24)
+    protected static async Task<string> CreateTokenAsync(AdminClient admin, Guid orgId, Guid? siteId = null, int maxUses = 10, int hours = 24)
     {
         var tokens = await admin.SendAsync<List<CreatedTokenDto>>(HttpMethod.Post, "/api/v1/enrollment-tokens",
             new CreateTokensRequest(orgId, siteId, "test", hours, maxUses, 1), HttpStatusCode.OK);
@@ -500,12 +451,12 @@ public abstract class IntegrationTest(PostgresFixture postgres) : IAsyncLifetime
     }
 
     /// <summary>Enrolls a signed test agent with a fresh token.</summary>
-    protected async Task<SignedAgent> EnrollAgentAsync(AdminSession admin, Guid orgId, Guid? siteId, string hostname)
+    protected async Task<SignedAgent> EnrollAgentAsync(AdminClient admin, Guid orgId, Guid? siteId, string hostname)
     {
         var token = await CreateTokenAsync(admin, orgId, siteId);
         var agent = NewAgent();
         using var response = await agent.EnrollAsync(token, null, hostname);
-        await AdminSession.EnsureAsync(response, HttpStatusCode.OK);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
         var enrolled = (await response.Content.ReadFromJsonAsync<EnrollResponse>(TestJson.Options))!;
         Assert.Equal(EnrollmentState.Active, enrolled.State);
         agent.CredentialId = enrolled.CredentialId;

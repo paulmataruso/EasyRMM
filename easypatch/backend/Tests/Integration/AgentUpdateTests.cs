@@ -17,7 +17,7 @@ public abstract class AgentUpdateTestBase(PostgresFixture postgres) : Integratio
 {
     protected static readonly ECDsa ReleaseKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
 
-    protected AdminSession Root { get; private set; } = null!;
+    protected AdminClient Root { get; private set; } = null!;
     protected OrganizationDto Org { get; private set; } = null!;
     protected SiteDto Site { get; private set; } = null!;
 
@@ -26,7 +26,7 @@ public abstract class AgentUpdateTestBase(PostgresFixture postgres) : Integratio
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        Root = await SuperAdminAsync();
+        Root = SuperAdmin();
         (Org, Site) = await CreateOrgAsync(Root);
     }
 
@@ -68,13 +68,13 @@ public abstract class AgentUpdateTestBase(PostgresFixture postgres) : Integratio
     {
         using var response = await agent.PostAsync($"api/v1/agents/jobs/{jobId}/status",
             new JobStatusReport { Sequence = sequence, Status = status, Phase = status.ToString(), ErrorCode = errorCode, ErrorMessage = errorCode });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.NoContent);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.NoContent);
     }
 
     protected static async Task AckAsync(SignedAgent agent, Guid jobId)
     {
         using var response = await agent.PostAsync($"api/v1/agents/jobs/{jobId}/ack", new { });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.OK);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
     }
 
     protected Task<List<Job>> AgentUpdateJobsAsync() =>
@@ -109,7 +109,7 @@ public sealed class AgentUpdateTests(PostgresFixture postgres) : AgentUpdateTest
 
         var job = await Root.SendAsync<JobSummaryDto>(HttpMethod.Post, url + "/agent-update", Newest, HttpStatusCode.Accepted);
         Assert.Equal(JobType.AgentUpdate, job.Type);
-        Assert.Equal("root", job.RequestedBy);
+        Assert.Equal(Root.Actor, job.RequestedBy);
         await Root.ExpectAsync(HttpMethod.Post, url + "/agent-update", Newest, HttpStatusCode.Conflict, "duplicate_job");
 
         // The agent receives the package description and the release signature, which it verifies itself.
@@ -240,7 +240,7 @@ public sealed class AgentUpdateTests(PostgresFixture postgres) : AgentUpdateTest
     {
         var agent = await UpdatableAgentAsync("PC-RO");
         Publish("1.3.0");
-        var viewer = await CreateAndLoginAsync("viewer", UserRole.ReadOnly);
+        var viewer = Admin("viewer", UserRole.ReadOnly);
 
         await viewer.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/agent-update", Newest, HttpStatusCode.Forbidden);
         await viewer.ExpectAsync(HttpMethod.Post, "/api/v1/endpoints/bulk/agent-update", new BulkAgentUpdateRequest([agent.EndpointId], null),
@@ -316,9 +316,8 @@ public sealed class AgentUpdateTests(PostgresFixture postgres) : AgentUpdateTest
         await RunMaintenanceAsync<AgentUpdateTask>();
         Assert.Equal(AgentUpdateTask.MaxFailuresPerVersion, (await AgentUpdateJobsAsync()).Count);
 
-        // An administrator can still ask for it (signing in again after the simulated 18 hours).
-        var admin = await LoginAsync(Root.Username, Root.Password, Root.MfaSecret);
-        await admin.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/agent-update", Newest, HttpStatusCode.Accepted);
+        // An administrator can still ask for it.
+        await Root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/agent-update", Newest, HttpStatusCode.Accepted);
     }
 
     [Fact]
