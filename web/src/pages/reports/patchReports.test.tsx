@@ -335,7 +335,7 @@ describe("report schedules", () => {
   it("shows a schedule that is on, read-only to those who may not change it", async () => {
     installFakeApi(
       routes(MANAGER, {
-        "GET /patching": ok({ ...BUNDLED, bundled: false, consoleUrl: "https://patch.example.com" }),
+        "GET /patching": ok({ ...BUNDLED, bundled: false }),
         "GET /patching/report-schedules": ok([
           schedule({ enabled: true, dayOfMonth: 3, recipients: ["cfo@example.com"], includeEndpointList: false, nextReportDate: "2026-12-03", canEdit: false }),
         ]),

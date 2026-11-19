@@ -35,13 +35,12 @@ const VIEWER = sessionView({
   permissions: ["org.view", "site.view", "device.view", "patch.view"],
 });
 
-/** A connected EasyPatch server, with a console of its own to link to. */
+/** A connected EasyPatch server. */
 const READY: PatchStatus = {
   configured: true,
   canOperate: true,
   canSchedule: false,
   bundled: false,
-  consoleUrl: "https://patch.example.com",
 };
 
 function endpoint(id: string, hostname: string, extra: Partial<PatchEndpoint> = {}): PatchEndpoint {
@@ -166,8 +165,6 @@ describe("patching page", () => {
     const user = userEvent.setup();
     const server = installFakeApi(
       patchingRoutes({
-        // The patching engine in EasyRMM's deployment: no console of its own.
-        "GET /patching": ok({ ...READY, consoleUrl: undefined }),
         "POST /patching/scan": ok({
           succeeded: 1,
           failed: 0,
@@ -179,7 +176,7 @@ describe("patching page", () => {
     await screen.findByRole("main");
     expect(await screen.findByRole("heading", { name: "Patching", level: 1 })).toBeInTheDocument();
     expect(await main().findByText("WEB-01")).toBeInTheDocument();
-    // Without a console of EasyPatch's own, there is nothing to open.
+    // EasyPatch has no console of its own to open (ADR-0046).
     expect(main().queryByText("Open EasyPatch")).not.toBeInTheDocument();
     const table = within(main().getByRole("table"));
     // The status shows under the name on narrow screens and in its own column on wider ones.
@@ -332,18 +329,6 @@ describe("patching page", () => {
     await screen.findByRole("main");
     expect(await main().findByText("EasyPatch is not set up")).toBeInTheDocument();
     expect(main().getByRole("link", { name: "Set up EasyPatch" })).toHaveAttribute("href", "/settings?tab=easypatch");
-  });
-
-  it("opens EasyPatch's own list of what the tab shows, in the same tab", async () => {
-    installFakeApi(patchingRoutes({ "GET /patching": ok({ ...READY, consoleUrl: "https://patch.example.com" }), "GET /patching/jobs": ok({ items: [] }) }));
-    renderApp("/patching?tab=devices");
-    await screen.findByRole("main");
-    // Role queries over the whole fleet table are slow; the link's text is enough to find it.
-    const link = (await main().findByText("Open EasyPatch")).closest("a")!;
-    expect(link).toHaveAttribute("href", "/go/to-easypatch?list=endpoints");
-    expect(link).not.toHaveAttribute("target");
-    await userEvent.setup().click(main().getByRole("tab", { name: "Jobs" }));
-    expect(main().getByText("Open EasyPatch").closest("a")).toHaveAttribute("href", "/go/to-easypatch?list=jobs");
   });
 
   it("is read-only for a viewer, and when EasyPatch's token cannot act", async () => {
@@ -630,7 +615,7 @@ describe("patching page", () => {
     renderApp("/patching?tab=jobs&active=false&job=j1");
     const dialog = await screen.findByRole("dialog", { name: "Install updates on WEB-01" });
     expect(await within(dialog).findByText("dpkg was interrupted")).toBeInTheDocument();
-    expect(within(dialog).getByRole("link", { name: "Open in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?job=j1");
+    expect(within(dialog).queryByRole("link", { name: /EasyPatch/ })).not.toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Cancel job" })).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Retry" }));
     await waitFor(() => expect(server.callsTo("POST /patching/jobs/:id/retry")).toHaveLength(1));
@@ -640,7 +625,6 @@ describe("patching page", () => {
     await waitFor(() => expect(server.callsTo("GET /patching/jobs/:id").at(-1)!.params.id).toBe("j3"));
     expect(await within(dialog).findByRole("button", { name: "Cancel job" })).toBeInTheDocument();
     expect(within(dialog).queryByRole("button", { name: "Retry" })).not.toBeInTheDocument();
-    expect(within(dialog).getByRole("link", { name: "Open in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?job=j3");
     // A queued job says when it gives up on its device, and which job it runs again.
     expect(within(dialog).getByText("Gives up at")).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "The earlier job" }));
@@ -953,9 +937,8 @@ describe("device patches", () => {
     expect(main().getByText(/1 fixes a vulnerability exploited in the wild/)).toBeInTheDocument();
     // An update already being installed cannot be chosen again.
     expect(main().queryByLabelText("Select curl 8.14.1-2")).not.toBeInTheDocument();
-    // With an EasyPatch server of its own, its console is a link away, on the matching page.
-    expect(main().getByRole("link", { name: "Open in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d1&tab=updates");
-    expect(main().getByRole("link", { name: "openssl 3.5.7-1~deb13u3" })).toHaveAttribute("href", "/go/to-easypatch?update=u1");
+    // Updates are named, not linked: there is no other console to open them in.
+    expect(main().queryByRole("link", { name: "openssl 3.5.7-1~deb13u3" })).not.toBeInTheDocument();
     // No restart is pending, but the agent can restart the computer: a restart is offered.
     expect(main().getByRole("button", { name: "Restart…" })).toBeInTheDocument();
 
@@ -1062,23 +1045,6 @@ describe("device patches", () => {
     await user.click(within(dialog).getByRole("radio", { name: /^At/ }));
     await user.click(within(dialog).getByRole("button", { name: "Schedule install" }));
     expect(await within(dialog).findByText("Choose a time within 31 days.")).toBeInTheDocument();
-  });
-
-  it("keeps the device when switching to EasyPatch, on the matching tab", async () => {
-    const user = userEvent.setup();
-    installFakeApi(
-      deviceRoutes(LINKED, {
-        "GET /patching/switch": ok({ show: true, answering: true }),
-        "GET /patching/devices/:id/jobs": ok({ items: [], page: 1, pageSize: 50, totalCount: 0 }),
-      }),
-    );
-    renderApp("/devices/d1?tab=patches");
-    const products = within(await screen.findByRole("navigation", { name: "Products" }));
-    const link = await products.findByRole("link", { name: "Open WEB-01 in EasyPatch" });
-    expect(link).toHaveAttribute("href", "/go/to-easypatch?device=d1&tab=updates");
-    await screen.findByRole("main");
-    await user.click(await main().findByRole("radio", { name: "Jobs" }));
-    expect(products.getByRole("link", { name: "Open WEB-01 in EasyPatch" })).toHaveAttribute("href", "/go/to-easypatch?device=d1&tab=jobs");
   });
 
   it("shows installed updates, history and jobs", async () => {
@@ -1405,7 +1371,6 @@ describe("EasyPatch settings", () => {
     });
     expect(await screen.findByText("Connected to EasyPatch 1.9.0")).toBeInTheDocument();
     expect(await main().findByText("Connected")).toBeInTheDocument();
-    expect(main().getByText("Open EasyPatch").closest("a")).toHaveAttribute("href", "/go/to-easypatch");
     expect(main().getByText(/Not supported by this EasyPatch/)).toBeInTheDocument();
     // The stored token is kept unless a new one is pasted.
     expect(main().getByLabelText(/^API token/)).toHaveAttribute("placeholder", "Stored");
@@ -1764,8 +1729,8 @@ describe("device patch actions", () => {
     // Who is signed in, and whether the EasyPatch icon can reach them.
     expect(main().getByText("2 users signed in")).toBeInTheDocument();
     expect(main().getByText("The EasyPatch icon is running in 1 of 2 sessions")).toBeInTheDocument();
-    // What the pending restart is for.
-    expect(main().getByText(CU, { selector: "span" })).toBeInTheDocument();
+    // What the pending restart is for, besides the update's own row.
+    expect(main().getAllByText(CU, { selector: "span" })).toHaveLength(2);
     expect(main().getByText(/installed, takes effect at the restart/)).toBeInTheDocument();
     expect(main().getByText("1 servicing package waiting")).toBeInTheDocument();
     expect(main().getByText("3 files to change at the restart")).toBeInTheDocument();
@@ -1949,9 +1914,9 @@ describe("device patch actions", () => {
     expect(within(dialog).getByRole("button", { name: "Install now" })).toBeEnabled();
   });
 
-  it("hides EasyPatch links where it has no console of its own", async () => {
+  it("links nowhere outside EasyRMM", async () => {
     const user = userEvent.setup();
-    installFakeApi(winRoutes(WIN_LINKED, { "GET /patching": ok({ ...READY, consoleUrl: undefined }) }));
+    installFakeApi(winRoutes(WIN_LINKED));
     renderApp("/devices/d2?tab=patches");
     await screen.findByRole("main");
     expect(await main().findByText("Microsoft Defender Antivirus platform update")).toBeInTheDocument();

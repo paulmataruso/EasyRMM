@@ -19,10 +19,8 @@ import {
   jobOutcome,
   jobTypeLabel,
   LinkBadge,
-  OpenEasyPatch,
   PatchJobBadge,
   requester,
-  type EasyPatchTarget,
 } from "./patchText";
 import { PatchingOverview } from "./PatchingOverview";
 import { ALERT_FILTERS, PatchAlerts } from "./PatchAlerts";
@@ -43,9 +41,6 @@ const TABS = [
 ] as const;
 
 type PatchingTab = (typeof TABS)[number]["id"];
-
-/** Where "Open EasyPatch" goes from each tab. */
-const CONSOLE: Record<PatchingTab, EasyPatchTarget> = { overview: {}, devices: { list: "endpoints" }, updates: {}, jobs: { list: "jobs" }, alerts: {} };
 
 const CLEARED = {
   q: null,
@@ -78,7 +73,6 @@ export function PatchingPage() {
       <PageHeader
         title="Patching"
         subtitle="Operating system and application updates on the devices EasyPatch patches, read from EasyPatch as you look."
-        actions={status.data?.consoleUrl && <OpenEasyPatch to={CONSOLE[tab]} />}
       />
       {notice && (
         <Alert tone="info" className="mb-4" title="Opened from EasyPatch">

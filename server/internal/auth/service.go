@@ -135,7 +135,8 @@ type Session struct {
 	UserAgent     string       `json:"userAgent"`
 	// AMR says how the session signed in (OpenID Connect amr values, RFC
 	// 8176): pwd, fed, otp, hwk, rc, mfa. AuthenticatedAt is when it became
-	// active. Both are for EasyRMM's OpenID provider (ADR-0036).
+	// active. EasyRMM's OpenID provider for EasyPatch read them; since it
+	// went (ADR-0046) they are only recorded, for a later step-up check.
 	AMR             []string   `json:"-"`
 	AuthenticatedAt *time.Time `json:"-"`
 }

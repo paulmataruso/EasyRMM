@@ -119,11 +119,8 @@ the person's other sessions.
 Each session records how it signed in, as OpenID Connect `amr` values:
 `pwd` (password), `fed` (single sign-on), `otp` (authenticator app), `hwk`
 (security key), `rc` (recovery code), and `mfa` for a passkey or a single
-sign-on provider trusted to have asked for a second factor. Signing in to
-EasyPatch through EasyRMM requires a second factor among them
-([ADR-0036](../architecture/adr/0036-easyrmm-signs-in-to-easypatch.md)).
-Sessions started before EasyRMM recorded this have none, so their person
-signs in once more before EasyPatch accepts them.
+sign-on provider trusted to have asked for a second factor. Sessions
+started before EasyRMM recorded this have none.
 
 ## Password reset
 

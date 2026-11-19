@@ -5,14 +5,12 @@ package easypatchapi
 
 import (
 	"net/http"
-	"net/url"
 	"slices"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
-	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
@@ -86,13 +84,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	a.registerReports(r)
 	a.registerSettings(r)
 	a.registerAlerts(r)
-	// The product switch: for anyone signed in, it says whether to show it.
-	r("GET /api/v1/patching/switch", a.productSwitch)
-	// Where a link from EasyPatch opens the console.
+	// Where a link in one of the engine's messages opens the console.
 	r("GET /api/v1/patching/from-easypatch/{kind}/{id}", a.fromEasyPatch)
-
-	// A browser link, not an API call: it answers with a redirect.
-	mux.Handle("GET /go/to-easypatch", httpapi.Handle(a.goToEasyPatch))
 }
 
 func ok(w http.ResponseWriter, v any, err error) error {
@@ -352,56 +345,6 @@ func (a *API) restart(w http.ResponseWriter, r *http.Request) error {
 	}
 	res, err := a.svc.Restart(r.Context(), httpapi.Caller(r), in)
 	return ok(w, res, err)
-}
-
-// goToEasyPatch redirects to the page of EasyPatch's console for an object
-// of EasyRMM's (easypatch.GoTarget): ?device=<id>[&tab=…], ?organization=,
-// ?job= (an EasyPatch job) or ?update= (an EasyPatch update), or none for
-// its home page. Someone not signed in signs in first and comes back.
-func (a *API) goToEasyPatch(w http.ResponseWriter, r *http.Request) error {
-	w.Header().Set("Cache-Control", "no-store")
-	if id := httpapi.IdentityFrom(r.Context()); id == nil || id.Session.State != auth.StateActive {
-		http.Redirect(w, r, "/login?returnTo="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
-		return nil
-	}
-	var t easypatch.GoTarget
-	var err error
-	named := 0
-	for _, p := range []struct {
-		name string
-		to   *uuid.UUID
-	}{{"device", &t.DeviceID}, {"organization", &t.OrganizationID}, {"site", &t.SiteID}, {"job", &t.JobID}, {"update", &t.UpdateID}} {
-		if *p.to, err = httpapi.QueryID(r, p.name); err != nil {
-			return err
-		}
-		if *p.to != uuid.Nil {
-			named++
-		}
-	}
-	if t.List = r.URL.Query().Get("list"); t.List != "" {
-		if !slices.Contains(easypatch.GoLists, t.List) {
-			return apperr.Invalid("list", "Choose endpoints or jobs.")
-		}
-		named++
-	}
-	if named > 1 {
-		return apperr.Invalid("device", "Name one of device, organization, site, job, update or list.")
-	}
-	t.Tab = r.URL.Query().Get("tab")
-	dest, err := a.svc.EasyPatchURL(r.Context(), httpapi.Caller(r), t)
-	if err != nil {
-		return err
-	}
-	if dest == "" { // EasyPatch is not set up
-		dest = "/patching"
-	}
-	http.Redirect(w, r, dest, http.StatusFound)
-	return nil
-}
-
-func (a *API) productSwitch(w http.ResponseWriter, r *http.Request) error {
-	sw, err := a.svc.Switch(r.Context(), httpapi.Caller(r))
-	return ok(w, sw, err)
 }
 
 func (a *API) scan(w http.ResponseWriter, r *http.Request) error {

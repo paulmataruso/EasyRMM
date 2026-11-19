@@ -168,7 +168,6 @@ export function baseRoutes(session: SessionView | null): Record<string, FakeHand
     "GET /scripts": ok({ items: [] }),
     "GET /devices/recent-connections": ok({ items: [] }),
     // The EasyRMM | EasyPatch switch: hidden unless a test sets EasyPatch up.
-    "GET /patching/switch": ok({ show: false, answering: true }),
     // Settings → EasyPatch → Sign-in: not available unless a test says so.
     "GET /settings/easypatch/sign-in": ok({
       available: false,

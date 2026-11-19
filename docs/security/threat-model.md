@@ -90,18 +90,37 @@ rights, and EasyRMM narrows what reaches them.
 * No TCP or UDP routing.
 * The agent path carries no user credentials.
 
-**EasyPatch signing in through EasyRMM** ([ADR-0036](../architecture/adr/0036-easyrmm-signs-in-to-easypatch.md))
-* Off, and every provider route a 404, until a super administrator sets
-  EasyPatch up as the one client. Its secret is kept as a hash; its
-  redirect URI is fixed, and a request naming another is never redirected.
-* Code flow with PKCE (S256), `state` and `nonce` required. Codes are
-  single use, live 60 seconds, are stored hashed and are bound to the
-  client, redirect URI, session, nonce and challenge.
-* A second factor in the session is required whatever
-  `EASYRMM_REQUIRE_MFA` says. Access comes from EasyRMM's roles and is
-  decided again when the code is redeemed.
-* ID tokens say `email_verified: false`, so no EasyPatch setting can link
-  accounts by email.
+**EasyRMM to the patching engine** ([ADR-0038](../architecture/adr/0038-statements-to-the-patching-engine.md), [ADR-0046](../architecture/adr/0046-what-one-product-retires.md))
+* The engine's API listens on loopback only. People reach patching through
+  EasyRMM's console and API; the engine has no console or sign-in of its
+  own.
+* EasyRMM checks its own permissions first, then signs one statement per
+  call: HS256 with a key only the two programs read, valid for 30 seconds,
+  for one method and request target, naming the person, the role that call
+  needs and the organizations it concerns.
+* The engine checks the signature before reading anything, refuses a
+  statement for another request, an expired one, or any when it has no key,
+  and applies its own role and organization checks to what the statement
+  says: the second of two independent checks.
+* The edge strips the statement header, cookies and `Forwarded` from what
+  it passes to the engine's agent paths, the only engine paths it serves.
+* A statement can be replayed for the same request within its 30 seconds
+  by someone who can read loopback traffic; such a person could read the
+  key too.
+
+**Authentik, when chosen** ([ADR-0044](../architecture/adr/0044-authentik-when-chosen.md))
+* Authentik listens on loopback only, with metrics, update checks,
+  analytics and error reports off. EasyRMM's edge serves its name and
+  passes it to loopback.
+* Its groups never grant roles in EasyRMM: roles are granted in EasyRMM
+  only, so whoever edits groups in Authentik cannot make anyone an
+  administrator.
+* EasyRMM's provider for it is set by the deployment and cannot be changed
+  in the console. EasyRMM reaches Authentik through its own edge on
+  loopback, verifying TLS, with no redirects followed.
+* When single sign-on is down, `easyrmm-server recover`, run on the server,
+  prints a link for a super administrator that works once, for 15 minutes,
+  and is stored only as a hash.
 
 **Server to integrations** ([ADR-0023](../architecture/adr/0023-audit-forwarding.md), [ADR-0030](../architecture/adr/0030-easypatch-connector.md))
 * Only Super Administrators configure EasyPatch and audit forwarding.

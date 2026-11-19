@@ -728,94 +728,7 @@ SuperAdmin. With a connected server, EasyRMM therefore:
 Organizations', sites' and devices' policies are changed in EasyRMM, as with
 the bundled engine.
 
-### Changing things in EasyPatch
-
-With a connected EasyPatch server, which has a console of its own, EasyRMM
-links to its pages, in the same tab, so the browser's Back button returns.
-The bundled engine has no console, so EasyRMM shows no such links.
-
-| In EasyRMM | Link | Opens in EasyPatch |
-|---|---|---|
-| A device's **In EasyPatch** row | Open in EasyPatch | The device's endpoint page, on the tab matching the view (updates, installed, history, jobs, policy) |
-| An update's title | (the title) | The update's page: vulnerabilities, other devices missing it, hold |
-| A job | Open in EasyPatch | The job's page |
-
-These links go through `/go/to-easypatch` on EasyRMM, which finds the
-device's EasyPatch endpoint from EasyRMM's own links and redirects. A
-device that is not linked opens EasyPatch's endpoint list searched by its
-name; one you may not see opens the list. EasyPatch asks you to sign in
-with its own account and checks its own permissions.
-
-### Switching to EasyPatch
-
-**EasyRMM | EasyPatch** under the logo (at the top of the menu on a phone)
-switches to EasyPatch's console, in the same tab, on the page of what you
-were looking at:
-
-| In EasyRMM | Opens in EasyPatch |
-|---|---|
-| A device (its Patches tab: to install, installed, history, jobs) | Its endpoint page, on the matching tab; its overview from the device's other tabs |
-| An organization, or one of its sites | The organization |
-| A patch job open on the Patching page | The job |
-| Patching, the device list | The endpoint list, or the job list from the Jobs tab |
-| Anything else | EasyPatch's home |
-
-It is shown once EasyPatch is set up, to super administrators and to
-people with a role over a whole organization linked to EasyPatch. A role
-over one site is not enough: EasyPatch has no sites to restrict to. When a
-call to EasyPatch failed since its last good check (every ten minutes:
-EasyPatch did not answer, or refused EasyRMM's token), a dot on
-**EasyPatch** says so; the link still works, in case it has recovered.
-
-EasyPatch's own switch, and its links into EasyRMM, open EasyRMM on the
-matching page: an endpoint opens its device's Patches tab, an organization
-the organization, a job the Patching job dialog. An endpoint or
-organization EasyRMM does not link, or that you may not see, opens
-Patching with a note saying so.
-
-### Signing in to EasyPatch through EasyRMM
-
-EasyRMM can be EasyPatch's sign-in provider: someone signed in to EasyRMM
-opens EasyPatch without another password, and their EasyPatch role follows
-their EasyRMM roles
-([ADR-0036](../architecture/adr/0036-easyrmm-signs-in-to-easypatch.md)).
-
-| EasyRMM | EasyPatch |
-|---|---|
-| Super administrator | SuperAdmin |
-| `patch.configure` over a linked organization (organization administrator) | Admin of those organizations |
-| Otherwise `patch.view` over a linked organization (technician, read-only) | ReadOnly in those organizations |
-| A role over one site only, or over no linked organization | Cannot sign in this way |
-
-EasyPatch gives one role per person, so someone who is Admin in one
-organization and may only look in another is Admin in the first and not
-listed in the second. They still see both in EasyRMM.
-
-It needs a second factor in the EasyRMM session, even when
-`EASYRMM_REQUIRE_MFA` is off: an authenticator code, a security key or
-recovery code after the password, a passkey, or single sign-on from a
-provider marked as enforcing MFA. People signed in before this version
-sign in once more first.
-
-To set it up, as a super administrator:
-
-1. Connect EasyPatch (above). Settings → EasyPatch → **Sign-in** says
-   whether this EasyPatch can sign people in through EasyRMM: it must list
-   the `easyrmm-sign-in` capability.
-2. Choose **Set up sign-in**. EasyRMM shows the issuer, a client ID and a
-   client secret. The secret is shown once.
-3. In EasyPatch, add a single sign-on provider of the kind EasyRMM and enter
-   the three.
-
-EasyPatch's server must reach EasyRMM's public address over HTTPS.
-**Replace secret…** stops the old secret at once; **Turn off** stops
-EasyRMM signing anyone in to EasyPatch. If EasyPatch's public address
-changes, turn sign-in off and set it up again: EasyRMM sends people back
-only to the address it was set up with.
-
-EasyPatch's side, the EasyRMM kind of provider, is not released yet: until
-an EasyPatch lists `easyrmm-sign-in`, the Sign-in card says EasyPatch needs
-an update, and EasyPatch asks for its own account when you switch.
+### Scripts that install updates
 
 Scripts in the library that install updates themselves (Windows Update,
 `apt upgrade`, `dnf upgrade`…) work around all of this. The script library
@@ -828,7 +741,7 @@ warns about them; see
 |---|---|---|
 | `patch.view` (with `device.view`) | Patching, a device's Patches tab | Every role |
 | `patch.manage` | Scan, install, restart, cancel, retry, exclude and include updates, remove an update, install or remove an update across devices, message users, install and update the EasyPatch agent, stop and allow patching for a device | Technician and above |
-| `patch.configure` | Change EasyPatch's standing rules: the patch policy of the organization, its sites and devices; hold an update in the organization and release its holds (in every organization, the default policy, tags and tags' policies: super administrators only); makes someone an Admin in EasyPatch rather than ReadOnly when they sign in to EasyPatch through EasyRMM. Only organization-wide roles hold it | Organization administrator and above |
+| `patch.configure` | Change EasyPatch's standing rules: the patch policy of the organization, its sites and devices; hold an update in the organization and release its holds (in every organization, the default policy, tags and tags' policies: super administrators only). Only organization-wide roles hold it | Organization administrator and above |
 | `report.view` (with `patch.view`) | The patch reports: compliance and installations for the devices you see; the compliance trend, monthly reports and report schedules of organizations you see whole | Every role |
 | `report.view` and `patch.manage` over the organization | Make, email and delete its monthly reports | Technician and above, with an organization-wide role |
 | `report.view` and `patch.configure` over the organization | Change its report schedule | Organization administrator and above |
@@ -879,8 +792,7 @@ nobody can act, whatever their role.
 | `easypatch.import` | A standalone EasyPatch imported ([Importing a standalone EasyPatch](import-easypatch.md)): how many organizations and sites were made in EasyRMM or joined EasyRMM's, and how many archived ones stayed in the engine |
 | `easypatch.organization_import`, `easypatch.site_import` | An imported organization or site linked: its name in the engine, its EasyRMM name, and whether it joined one EasyRMM had |
 | `easypatch.agent_uninstall`, `easypatch.endpoint_revoke`, `easypatch.agent_remove` | An uninstall job sent, an endpoint revoked, and a removal finished, each with the device's host name and why |
-| `idp.authorize` | A sign-in to EasyPatch through EasyRMM: the role and how many organizations it gave, or why it was refused (no second factor, no access, not signed in) |
-| `idp.client_create`, `idp.client_rotate`, `idp.client_delete` | Sign-in through EasyRMM set up, its secret replaced, or turned off |
+| `idp.authorize`, `idp.client_create`, `idp.client_rotate`, `idp.client_delete` | No longer recorded: EasyRMM stopped signing people in to EasyPatch (ADR-0046). Records from before stay in the audit log |
 
 EasyPatch records each enrollment token EasyRMM creates against the API
 token, and against the EasyRMM user who asked for the install when the

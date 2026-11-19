@@ -148,7 +148,3 @@ e2e-import: ## Import a standalone EasyPatch 1.10 server, with a real agent, int
 .PHONY: e2e-authentik
 e2e-authentik: ## The deployment with Authentik as its sign-in, end to end: invitation, second factor, refusal, recovery (needs Docker and root or sudo)
 	./scripts/e2e/authentik.sh
-
-.PHONY: e2e-sign-in
-e2e-sign-in: web build ## Sign in once across EasyRMM and EasyPatch, in a browser over TLS on two domains (needs Docker and `make test-db`)
-	EASYRMM_E2E_ADMIN_URL="$${EASYRMM_E2E_ADMIN_URL:-$(TEST_DB_URL)}" ./scripts/e2e/sign-in-across.sh

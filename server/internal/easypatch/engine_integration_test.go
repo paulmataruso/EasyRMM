@@ -73,14 +73,11 @@ func TestBundledEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !conn.Configured || !conn.Bundled || !conn.CanOperate || conn.URL != engine.URL() || conn.ServerVersion != "1.9.0" ||
-		!slices.Contains(conn.Capabilities, CapabilityScheduledInstalls) || conn.UpdatedAt != nil || ConsoleURL(conn) != "" {
+		!slices.Contains(conn.Capabilities, CapabilityScheduledInstalls) || conn.UpdatedAt != nil {
 		t.Fatalf("connection: %+v", conn)
 	}
-	if st, err := f.svc.Status(ctx, f.admin); err != nil || !st.Configured || !st.CanOperate || !st.CanSchedule || !st.Bundled || st.ConsoleURL != "" {
+	if st, err := f.svc.Status(ctx, f.admin); err != nil || !st.Configured || !st.CanOperate || !st.CanSchedule || !st.Bundled {
 		t.Fatalf("status: %+v, %v", st, err)
-	}
-	if u, err := f.svc.EasyPatchURL(ctx, f.admin, GoTarget{List: "jobs"}); err != nil || u != "" {
-		t.Fatalf("open in EasyPatch: %q, %v", u, err)
 	}
 	_, err = f.svc.UpdateConnection(ctx, f.admin.Actor, ConnectionInput{URL: f.ep.URL(), Token: f.ep.Token, CACert: f.ep.CAPEM})
 	wantErr(t, err, apperr.KindConflict, "patching_bundled")

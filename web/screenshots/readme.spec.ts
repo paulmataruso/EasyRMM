@@ -38,7 +38,6 @@ import {
   patchServerSettings,
   patchStatus,
   patchTrend,
-  productSwitch,
   recentConnections,
   remoteAccess,
   session,
@@ -150,8 +149,6 @@ function answer(method: string, path: string, q: URLSearchParams): unknown {
       return list([]);
     case "/patching":
       return patchStatus;
-    case "/patching/switch":
-      return productSwitch;
     case "/patching/devices":
       return fleet;
     case "/patching/jobs":

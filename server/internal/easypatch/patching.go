@@ -131,27 +131,6 @@ type Status struct {
 	// Bundled says patching comes from the engine in this deployment, which
 	// emails reports through EasyRMM's mail server.
 	Bundled bool `json:"bundled"`
-	// ConsoleURL is EasyPatch's own console, for people to open: its public
-	// address, else the address EasyRMM uses. "" when not configured.
-	ConsoleURL string `json:"consoleUrl,omitempty"`
-}
-
-// ConsoleURL is the address people open EasyPatch's console at, or "".
-func ConsoleURL(conn Connection) string { return consoleURL(conn) }
-
-// consoleURL is the address people open EasyPatch's console at. Only an
-// https:// address is offered: EasyPatch reports its public address itself.
-// The engine in this deployment has no console of its own: EasyRMM's is it.
-func consoleURL(conn Connection) string {
-	if conn.Bundled {
-		return ""
-	}
-	for _, raw := range []string{conn.PublicURL, conn.URL} {
-		if u, err := ParseURL(raw); err == nil {
-			return u.String()
-		}
-	}
-	return ""
 }
 
 // Status says whether patching is available, to anyone who may see it
@@ -166,9 +145,6 @@ func (s *Service) Status(ctx context.Context, c access.Caller) (Status, error) {
 	}
 	st := Status{Configured: conn.Configured, CanOperate: conn.CanOperate,
 		CanSchedule: slices.Contains(conn.Capabilities, CapabilityScheduledInstalls), Bundled: s.Bundled()}
-	if conn.Configured {
-		st.ConsoleURL = consoleURL(conn)
-	}
 	return st, nil
 }
 

@@ -17,9 +17,6 @@ import {
 import {
   categoryLabel,
   ComplianceBadge,
-  EasyPatchLink,
-  easyPatchHref,
-  PATCH_VIEW_TAB,
   INSTALLABLE,
   installText,
   isActiveJob,
@@ -31,7 +28,6 @@ import {
   PatchJobBadge,
   requester,
   UpdateStateBadge,
-  useEasyPatchConsole,
 } from "../patching/patchText";
 import { AgentUpdateDialog, ExcludeDialog, MessageDialog, RemoveUpdateDialog, SessionSummary, useInclude } from "./PatchActionDialogs";
 import { PolicyView, restartScheduleText } from "./PatchPolicyView";
@@ -354,7 +350,6 @@ function Summary({
   onMessage: () => void;
   onUpdateAgent: () => void;
 }) {
-  const hasConsole = useEasyPatchConsole();
   const e = d.endpoint;
   if (!e) {
     return (
@@ -448,19 +443,6 @@ function Summary({
     ]);
   }
   items.push(["EasyPatch agent", <AgentLine key="a" patching={d} onUpdate={onUpdateAgent} />]);
-  if (hasConsole) {
-    items.push([
-      "In EasyPatch",
-      <span key="o">
-        <span className="block">
-          {s.organizationName} / {s.siteName}
-        </span>
-        <EasyPatchLink to={{ device: d.deviceId, tab: view === "policy" ? "policy" : PATCH_VIEW_TAB[view] }} className="mt-0.5 text-xs">
-          Open in EasyPatch
-        </EasyPatchLink>
-      </span>,
-    ]);
-  }
   return (
     <Card title="Patch status">
       <KeyValueList narrow items={items} />
@@ -493,18 +475,11 @@ function PolicyCard({ patching: d, onMore }: { patching: DevicePatching; onMore:
   );
 }
 
-/** An update. Where EasyPatch has a console, its title opens it there, with its vulnerabilities and hold. */
+/** An update: its title, with its KB number or package version. */
 function UpdateTitle({ u }: { u: PatchUpdate }) {
-  const hasConsole = useEasyPatchConsole();
   return (
     <>
-      {hasConsole ? (
-        <a href={easyPatchHref({ update: u.updateGuid })} className="block rounded-sm font-medium break-words hover:text-accent" title="Open in EasyPatch">
-          {u.title}
-        </a>
-      ) : (
-        <span className="block font-medium break-words">{u.title}</span>
-      )}
+      <span className="block font-medium break-words">{u.title}</span>
       <span className="text-xs text-muted">
         {u.kbNumber && <>KB{u.kbNumber.replace(/^KB/i, "")} · </>}
         {u.package && u.package.installedVersion && (

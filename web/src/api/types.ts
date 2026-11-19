@@ -1041,8 +1041,6 @@ export interface PatchStatus {
   canSchedule: boolean;
   /** Patching comes from the engine in this deployment, which emails reports through EasyRMM's mail server. */
   bundled: boolean;
-  /** EasyPatch's own console, to open in a new tab. */
-  consoleUrl?: string;
 }
 
 export type ComplianceStatus = "Compliant" | "MissingUpdates" | "FailedUpdates" | "RebootRequired" | "ScanStale" | "NeverScanned";
@@ -1961,45 +1959,10 @@ export interface PatchActionResult {
   results: { deviceId: string; deviceName: string; ok: boolean; jobId?: string; message?: string }[];
 }
 
-/** Whether to show the EasyRMM | EasyPatch switch, and whether EasyPatch was answering. */
-export interface ProductSwitch {
-  show: boolean;
-  /** False when a call to EasyPatch failed since its last good check. */
-  answering: boolean;
-  failingSince?: string;
-}
-
 /** Where a link from EasyPatch opens the console; `notice` says why it is not the page the link named. */
 export interface EasyPatchLanding {
   path: string;
   notice?: string;
-}
-
-/** EasyPatch's registration with EasyRMM's sign-in provider (ADR-0036), without its secret. */
-export interface EasyPatchSignInClient {
-  clientId: string;
-  redirectUri: string;
-  createdAt: string;
-  createdBy?: string;
-  rotatedAt?: string;
-  rotatedBy?: string;
-}
-
-/** Settings → EasyPatch → Sign-in. */
-export interface EasyPatchSignIn {
-  /** EasyPatch is set up and can sign people in through EasyRMM; otherwise `reason` says why not. */
-  available: boolean;
-  reason?: string;
-  issuer: string;
-  /** Where EasyPatch receives sign-ins, from its current address. */
-  redirectUri?: string;
-  client: EasyPatchSignInClient | null;
-}
-
-/** A new or rotated client, with its secret: shown once. */
-export interface EasyPatchSignInSecret extends EasyPatchSignInClient {
-  issuer: string;
-  clientSecret: string;
 }
 
 /** What a restart would do to one device. */

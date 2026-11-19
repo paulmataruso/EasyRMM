@@ -8,16 +8,15 @@ per organization. Operating both:
 
 EasyPatch is EasyRMM's patch management component. Its code is in
 `easypatch/` of this repository ([monorepo.md](../development/monorepo.md)),
-under its own licence ([LICENSING.md](../../LICENSING.md)). It still runs on
-its own, and EasyRMM can use any EasyPatch server, not only one installed
-with it. EasyRMM uses EasyPatch's API for simple patching (scan, install,
-restart, retry), links into EasyPatch's console for everything else, and has
-an EasyRMM | EasyPatch switch between the two consoles. People can sign in
-to EasyPatch through EasyRMM, so the switch does not ask for a password
-([ADR-0036](../architecture/adr/0036-easyrmm-signs-in-to-easypatch.md);
-[set it up](../deployment/easypatch-cohost.md#step-4-sign-in-to-easypatch-through-easyrmm)).
-The plan is in
-[the integration plan](../architecture/easypatch-integration-plan.md).
+under its own licence ([LICENSING.md](../../LICENSING.md)). Since the
+one-product plan, its server runs in every EasyRMM deployment as the
+patching engine, on loopback, and EasyRMM's console is the only one: EasyRMM
+calls the engine with a signed statement per request
+([ADR-0038](../architecture/adr/0038-statements-to-the-patching-engine.md)).
+The product switch and signing in to EasyPatch through EasyRMM were removed
+([ADR-0046](../architecture/adr/0046-what-one-product-retires.md)). The
+plans are in [the integration plan](../architecture/easypatch-integration-plan.md)
+and [the one-product plan](../architecture/one-product-plan.md).
 
 This document first listed the EasyPatch changes the integration would need,
 written against EasyPatch 1.7.1 (ADR-0010). EasyPatch 1.9.0 changed that

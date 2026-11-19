@@ -45,7 +45,6 @@ describe("patching from the engine in this deployment", () => {
     expect(main().getByText("Signed one by one, with the person's role and organizations")).toBeInTheDocument();
     expect(main().queryByLabelText("API token")).not.toBeInTheDocument();
     expect(main().queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
-    expect(main().queryByRole("button", { name: "Open EasyPatch" })).not.toBeInTheDocument();
     expect(main().queryByRole("heading", { name: /sign-in/i })).not.toBeInTheDocument();
   });
 

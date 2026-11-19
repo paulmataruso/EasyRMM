@@ -25,8 +25,7 @@ import {
   type Tone,
 } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
-import { LinkBadge, OpenEasyPatch } from "../patching/patchText";
-import { EasyPatchSignIn } from "./EasyPatchSignIn";
+import { LinkBadge } from "../patching/patchText";
 
 const KEYS = ["/settings/easypatch", "/patching", "/audit"];
 
@@ -42,7 +41,6 @@ export function EasyPatchTab() {
         {c.bundled ? <EngineCard conn={c} className="xl:col-span-2" /> : <ServerForm conn={c} className="xl:col-span-2" />}
         <ServerStatus conn={c} />
       </div>
-      {c.configured && !c.bundled && <EasyPatchSignIn />}
       {c.configured && <OrganizationLinks bundled={c.bundled} />}
       {c.configured && <DeviceProblems />}
     </div>
@@ -218,8 +216,6 @@ function ServerStatus({ conn: c }: { conn: EasyPatchConnection }) {
       items.push(["Calls", "Signed one by one, with the person's role and organizations"]);
     } else {
       if (c.publicUrl && c.publicUrl.replace(/\/+$/, "") !== c.url) items.push(["Public address", <Mono key="p">{c.publicUrl}</Mono>]);
-      const consoleUrl = [c.publicUrl, c.url].find((u) => u?.startsWith("https://"));
-      if (consoleUrl) items.push(["Console", <OpenEasyPatch key="c" />]);
       items.push(["Token", c.canOperate ? "Operator: views, scans and installs" : "Read only: views"]);
     }
     items.push([

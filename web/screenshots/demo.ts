@@ -37,7 +37,6 @@ import type {
   PatchUpdateDevice,
   PatchUpdateView,
   Platform,
-  ProductSwitch,
   RecentConnection,
   RemoteAccessStatus,
   Report,
@@ -369,8 +368,7 @@ export function healthHistory(range: string): MetricsHistory {
 // ---------------------------------------------------------------------------------------------
 // Patching through EasyPatch
 
-export const patchStatus: PatchStatus = { configured: true, canOperate: true, canSchedule: true, bundled: false, consoleUrl: "https://patch.example.com" };
-export const productSwitch: ProductSwitch = { show: true, answering: true };
+export const patchStatus: PatchStatus = { configured: true, canOperate: true, canSchedule: true, bundled: true };
 
 type Compliance = Pick<
   PatchEndpoint,

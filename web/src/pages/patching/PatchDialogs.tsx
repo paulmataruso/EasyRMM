@@ -9,7 +9,7 @@ import { Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Alert, Badge, Button, ErrorState, Field, InlineError, Input, KeyValueList, Select, Spinner } from "../../components/ui";
 import { formatDateTime, formatRelative, formatSize, plural } from "../../lib/format";
-import { canRetry, categoryLabel, EasyPatchLink, isActiveJob, jobOutcome, jobTypeLabel, PatchJobBadge, requester, skipReasonText, triggerLabel } from "./patchText";
+import { canRetry, categoryLabel, isActiveJob, jobOutcome, jobTypeLabel, PatchJobBadge, requester, skipReasonText, triggerLabel } from "./patchText";
 
 /** What the patching views refresh after an action. */
 export const PATCH_KEYS = ["/patching", "/audit"];
@@ -784,11 +784,6 @@ export function PatchJobDialog({ jobId, onClose, onJob }: { jobId: string | null
       title={s ? `${jobTypeLabel(s.type)} on ${d.deviceName}` : "Patch job"}
       footer={
         <>
-          {jobId && (
-            <EasyPatchLink to={{ job: jobId }} className="mr-auto text-sm">
-              Open in EasyPatch
-            </EasyPatchLink>
-          )}
           {d?.canManage && s && isActiveJob(s) && !s.cancelRequested && (
             <Button variant="danger-ghost" loading={cancel.isPending} onClick={() => cancel.mutate()}>
               Cancel job

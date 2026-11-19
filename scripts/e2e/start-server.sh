@@ -11,7 +11,7 @@
 #   EASYRMM_E2E_DB         database name (default easyrmm_e2e)
 #   EASYRMM_E2E_PUBLIC_URL public address (default https://rmm.localhost)
 #   EASYRMM_E2E_INSECURE_COOKIES  true (default) for plain HTTP on loopback;
-#                          false behind a TLS proxy (scripts/e2e/sign-in-across.sh)
+#                          false behind a TLS proxy
 #
 # Remote access is enabled but no MeshCentral runs, nor a patching engine
 # (none listens on PORT+13): the console shows devices and reports remote

@@ -55,12 +55,11 @@ func TestPatchingEngineAPI(t *testing.T) {
 	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch", nil), http.StatusConflict, "patching_bundled")
 
 	var status struct {
-		Configured  bool   `json:"configured"`
-		CanSchedule bool   `json:"canSchedule"`
-		ConsoleURL  string `json:"consoleUrl"`
+		Configured  bool `json:"configured"`
+		CanSchedule bool `json:"canSchedule"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching", nil, &status)
-	if !status.Configured || !status.CanSchedule || status.ConsoleURL != "" {
+	if !status.Configured || !status.CanSchedule {
 		t.Fatalf("status: %+v", status)
 	}
 

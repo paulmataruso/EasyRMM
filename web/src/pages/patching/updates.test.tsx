@@ -23,7 +23,7 @@ const VIEWER = sessionView({
   permissions: ["org.view", "site.view", "device.view", "patch.view"],
 });
 
-const READY: PatchStatus = { configured: true, canOperate: true, canSchedule: false, bundled: false, consoleUrl: "https://patch.example.com" };
+const READY: PatchStatus = { configured: true, canOperate: true, canSchedule: false, bundled: false };
 
 function endpoint(id: string, hostname: string, extra: Partial<PatchEndpoint> = {}): PatchEndpoint {
   return {
@@ -234,8 +234,6 @@ describe("patching overview", () => {
     renderApp("/patching");
     await screen.findByRole("main");
     expect(await main().findByRole("tab", { name: "Overview", selected: true })).toBeInTheDocument();
-    // Its own console opens at EasyPatch's home.
-    expect((await main().findByText("Open EasyPatch")).closest("a")).toHaveAttribute("href", "/go/to-easypatch");
 
     // Four devices report; one is up to date.
     expect(await main().findByText("25%")).toBeInTheDocument();

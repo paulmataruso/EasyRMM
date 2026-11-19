@@ -465,20 +465,3 @@ func TestClientLocalRoute(t *testing.T) {
 		t.Fatal("no listener, no error")
 	}
 }
-
-func TestConsoleURL(t *testing.T) {
-	for _, c := range []struct {
-		conn Connection
-		want string
-	}{
-		{Connection{URL: "https://127.0.0.1:18443", PublicURL: "https://Patch.Example.com/"}, "https://patch.example.com"},
-		{Connection{URL: "https://patch.example.com"}, "https://patch.example.com"},
-		// EasyPatch reports its public address itself: only https:// is offered.
-		{Connection{URL: "https://patch.example.com", PublicURL: "javascript:alert(1)"}, "https://patch.example.com"},
-		{Connection{URL: "", PublicURL: "http://patch.example.com"}, ""},
-	} {
-		if got := consoleURL(c.conn); got != c.want {
-			t.Errorf("consoleURL(%+v) = %q, want %q", c.conn, got, c.want)
-		}
-	}
-}

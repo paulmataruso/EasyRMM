@@ -610,6 +610,15 @@ All notable changes to this project are documented here. The format follows
   now says EasyPatch has moved here, and keeps its releases up to 1.10.0.
 - The fleet-wide **Software** page. Installed software is shown on each
   device's page; `GET /api/v1/software` remains.
+- **The EasyRMM | EasyPatch switch and links into EasyPatch's console**
+  (one-product plan, phase R1; ADR-0046): `GET /api/v1/patching/switch`,
+  `/go/to-easypatch`, **Open EasyPatch** and **Open in EasyPatch**. The
+  patching engine has no console of its own. Its messages still link into
+  EasyRMM through `/go/from-easypatch`.
+- **EasyRMM as EasyPatch's sign-in provider** (ADR-0036, superseded by
+  ADR-0046): its OpenID routes, Settings → EasyPatch → **Sign-in**, the
+  `make e2e-sign-in` test and its CI job. Migration 00022 drops its tables;
+  past `idp.*` audit records stay. Sessions still record how they signed in.
 
 ### Security
 - The EasyPatch connection and audit forwarding do not connect to
