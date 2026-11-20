@@ -17,12 +17,11 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
 )
 
-// ImportEasyPatch is `easyrmm-server import-easypatch` (one-product plan,
-// phase S; ADR-0045): with a standalone EasyPatch's database restored as
-// the patching engine's, it makes the engine's organizations and sites
-// EasyRMM's and prints what it did. deploy/scripts/import-easypatch.sh runs
-// it with the server stopped, so that the reconciler does not act on the
-// engine's records before they are linked.
+// ImportEasyPatch is `easyrmm-server import-easypatch` (ADR-0045): with a
+// standalone EasyPatch's database restored as the patching engine's, it makes
+// the engine's organizations and sites EasyRMM's and prints what it did.
+// deploy/scripts/import-easypatch.sh runs it with the server stopped, so that
+// the reconciler does not act on the engine's records before they are linked.
 func ImportEasyPatch(ctx context.Context, cfg *config.Config, log *slog.Logger, out io.Writer) error {
 	migCfg, err := pgx.ParseConfig(cfg.DatabaseMigrationURL)
 	if err != nil {

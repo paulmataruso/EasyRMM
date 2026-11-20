@@ -10,7 +10,7 @@ import { useUrlState } from "../../lib/urlState";
 import { COMPLIANCE, ComplianceBadge } from "./patchText";
 
 /**
- * Patching → Overview (one-product plan, C2): how up to date the devices are, what needs attention, worst first, each
+ * Patching → Overview: how up to date the devices are, what needs attention, worst first, each
  * with the list that shows it, organizations least up to date first, and EasyPatch endpoints no EasyRMM device is
  * linked to. Counted from the patching device list as the caller may see it, so site-level roles see their sites.
  */
@@ -42,7 +42,7 @@ export function PatchingOverview() {
         t && (
           <>
             {fleet.data.errors.map((e) => (
-              <Alert key={e} tone="danger" className="mb-4" title="EasyPatch could not be read">
+              <Alert key={e} tone="danger" className="mb-4" title="The patching engine could not be read">
                 {e}
               </Alert>
             ))}
@@ -59,7 +59,7 @@ export function PatchingOverview() {
             {t.orgs.length > 1 && <Organizations orgs={t.orgs} />}
             <Unmatched fleet={fleet.data} />
             {fleet.data.truncated && <p className="mt-2 text-xs text-muted">Counted over the first {plural(t.devices, "device")}: choose an organization to count the rest.</p>}
-            <p className="mt-2 text-xs text-muted">From EasyPatch, refreshed every minute.</p>
+            <p className="mt-2 text-xs text-muted">From the patching engine, refreshed every minute.</p>
           </>
         )
       )}
@@ -169,13 +169,13 @@ function Compliance({ t, organizationId }: { t: Tally; organizationId: string })
   return (
     <Card title="Up to date">
       {t.reporting === 0 ? (
-        <p className="text-sm text-muted">EasyPatch reports on none of these devices yet.</p>
+        <p className="text-sm text-muted">The patching engine reports on none of these devices yet.</p>
       ) : (
         <>
           <p className="flex flex-wrap items-baseline gap-x-2">
             <span className="text-2xl font-semibold text-fg tabular-nums">{percent({ reporting: t.reporting, upToDate: t.status.Compliant })}%</span>
             <span className="text-sm text-muted">
-              of {plural(t.reporting, "device")} EasyPatch reports on
+              of {plural(t.reporting, "device")} the patching engine reports on
               {t.unlinked > 0 && <>, besides {t.unlinked.toLocaleString()} not patched from EasyRMM</>}
             </span>
           </p>
@@ -338,7 +338,7 @@ function Attention({ t, unmatched, activeJobs, alerts, organizationId }: {
       tone: "neutral",
       icon: icon(ServerOff),
       count: unmatched,
-      text: (n) => (n === 1 ? "EasyPatch endpoint has no EasyRMM device" : "EasyPatch endpoints have no EasyRMM device"),
+      text: (n) => (n === 1 ? "patching engine endpoint has no EasyRMM device" : "patching engine endpoints have no EasyRMM device"),
       to: "#unmatched",
       action: "Show them",
     },
@@ -359,7 +359,7 @@ function Attention({ t, unmatched, activeJobs, alerts, organizationId }: {
     <Card title="Needs attention" padded={false}>
       {rows.length === 0 ? (
         <EmptyState title="Nothing needs attention" icon={<ShieldCheck className="size-8" aria-hidden />} compact>
-          Every device EasyPatch reports on is up to date, scanned and online.
+          Every device the patching engine reports on is up to date, scanned and online.
         </EmptyState>
       ) : (
         <ul className="divide-y divide-line">
@@ -455,9 +455,9 @@ function Organizations({ orgs }: { orgs: OrgTally[] }) {
 function Unmatched({ fleet }: { fleet: PatchFleet }) {
   if (fleet.unmatched.length === 0) return null;
   return (
-    <Card id="unmatched" title={`In EasyPatch, not in EasyRMM (${fleet.unmatched.length.toLocaleString()})`} padded={false} className="mb-5 scroll-mt-4">
+    <Card id="unmatched" title={`In the patching engine, with no EasyRMM device (${fleet.unmatched.length.toLocaleString()})`} padded={false} className="mb-5 scroll-mt-4">
       <p className="max-w-3xl border-b border-line px-4 py-3 text-sm text-muted">
-        EasyPatch patches these endpoints, but no EasyRMM device is linked to them, so they show only here. Install EasyRMM's agent on each machine, in the
+        The patching engine patches these endpoints, but no EasyRMM device is linked to them, so they show only here. Install EasyRMM's agent on each machine, in the
         same organization: EasyRMM links the device to the EasyPatch agent already there when their host names match, and the device's Patches tab says why
         when it cannot.{" "}
         <Link to="/devices/add" className="font-medium text-accent hover:underline">

@@ -1,5 +1,5 @@
-// Shared UI primitives. These follow EasyPatch's component vocabulary (same classes,
-// variants and states) so the sister consoles look and behave alike.
+// Shared UI primitives: one component vocabulary (classes, variants and states) for
+// every page, so the whole console looks and behaves alike.
 import {
   forwardRef,
   useId,

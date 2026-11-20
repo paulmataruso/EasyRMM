@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// What the reconciler (one-product plan B5) changes in the
-// patching engine: its organizations and sites, and its endpoints' sites.
+// What the reconciler (ADR-0040) changes in the patching engine: its
+// organizations and sites, and its endpoints' sites.
 //
 // EasyPatch's updates replace every field they carry, so each update here
 // sends back what EasyRMM does not own (descriptions, contacts, notes,

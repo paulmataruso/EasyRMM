@@ -10,7 +10,7 @@ import { Alert, Badge, Button, Card, EmptyState, ErrorState, IconButton, Mono, S
 import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
 import { DeliveryBadge } from "./patchAlertText";
 
-// Settings → Patching → Notifications (one-product plan, C7): the channels EasyPatch sends alerts to, the messages it
+// Settings → Patching → Notifications: the channels EasyPatch sends alerts to, the messages it
 // sent, the mail server email channels use (EasyRMM's own), and whether webhooks may go to private networks.
 
 const FORMATS: Record<PatchWebhookFormat, string> = {
@@ -89,7 +89,7 @@ function Channels({ channels, mailServer }: { channels: PatchChannel[]; mailServ
       <div className="border-b border-line px-4 py-3">
         <p className="max-w-3xl text-sm text-muted">
           Where alert rules send their alerts: email, or a webhook to Slack, Microsoft Teams or a system of your own. A rule sends to the
-          channels it names; EasyPatch tries a message that fails again, a few times.
+          channels it names; the patching engine tries a message that fails again, a few times.
         </p>
       </div>
       {channels.length === 0 ? (
@@ -227,7 +227,7 @@ function SecretDialog({ secret, onClose }: { secret: { name: string; key: string
       {secret && (
         <div className="flex flex-col gap-3 text-sm">
           <p>
-            EasyPatch signs each message to this webhook with HMAC-SHA256 of its body, in the <Mono>X-EasyPatch-Signature</Mono> header. Copy the key
+            The patching engine signs each message to this webhook with HMAC-SHA256 of its body, in the <Mono>X-EasyPatch-Signature</Mono> header. Copy the key
             into the receiving system now: it is not shown again.
           </p>
           <div className="flex items-center gap-2">
@@ -359,8 +359,8 @@ function ChannelDialog({ open, channel, onClose, onSecret }: {
               placeholder="https://"
               hint={
                 channel?.webhookHost
-                  ? `Leave empty to keep the address at ${channel.webhookHost}. EasyPatch never shows it again.`
-                  : "EasyPatch keeps it encrypted and never shows it again: it is often the webhook's secret."
+                  ? `Leave empty to keep the address at ${channel.webhookHost}. It is never shown again.`
+                  : "The patching engine keeps it encrypted and never shows it again: it is often the webhook's secret."
               }
               error={show("webhookUrl")}
               required={!channel}
@@ -394,7 +394,7 @@ function Delivery({ view }: { view: PatchNotifications }) {
           <p className="max-w-3xl">
             Email channels send through EasyRMM&apos;s mail server, <Mono>{`${mail.host}:${mail.port}`}</Mono> ({SECURITY[mail.security] ?? mail.security}),
             from {mail.fromName ? `${mail.fromName} <${mail.fromAddress}>` : mail.fromAddress}. EasyRMM&apos;s <Mono className="whitespace-nowrap">EASYRMM_SMTP_</Mono> settings set it, and
-            EasyRMM gives it to EasyPatch each time it starts.
+            EasyRMM gives it to the patching engine each time it starts.
           </p>
         ) : (
           <Alert tone="warn" title="No mail server">
@@ -414,7 +414,7 @@ function Delivery({ view }: { view: PatchNotifications }) {
             Allow webhooks to private network addresses
           </label>
           <p className="max-w-3xl pl-6 text-muted">
-            Off, EasyPatch only calls webhooks at public addresses. Turn it on for a PSA or chat server on a private network. Loopback, link-local
+            Off, the patching engine only calls webhooks at public addresses. Turn it on for a PSA or chat server on a private network. Loopback, link-local
             and the subnets this server is on stay blocked: a webhook on the server&apos;s own subnet cannot be reached.
           </p>
           {set.error && <p className="pl-6 text-danger">{set.error.message}</p>}

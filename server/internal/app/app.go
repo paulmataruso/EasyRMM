@@ -184,7 +184,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
 	d.EasyPatch = easypatch.New(db, auditLog, Version, log)
-	// The patch reports read patching through it (one-product plan, C5).
+	// The patch reports read patching through it.
 	d.Reports.UsePatching(d.EasyPatch)
 	if err := usePatchingEngine(cfg, d, log); err != nil {
 		return nil, err
@@ -212,7 +212,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 
 // buildRemote assembles the MeshCentral integration.
 // usePatchingEngine gives d.EasyPatch the patching engine in this
-// deployment, on loopback (one-product plan, B3 and S; ADR-0038).
+// deployment, on loopback (ADR-0038).
 func usePatchingEngine(cfg *config.Config, d *Deps, log *slog.Logger) error {
 	p := cfg.Patching
 	signer, err := easypatch.NewSigner(p.Key)
@@ -226,15 +226,14 @@ func usePatchingEngine(cfg *config.Config, d *Deps, log *slog.Logger) error {
 	var opts []easypatch.EngineOption
 	if cfg.TLSMode == config.TLSInternal && d.PKI != nil {
 		// The engine's public address is EasyRMM's, with EasyRMM's own
-		// certificate authority: agents are given it (B7).
+		// certificate authority: agents are given it (ADR-0042).
 		opts = append(opts, easypatch.AgentCA(d.PKI.CAPEM))
 	}
-	// An imported EasyPatch's agents still use its names (phase S).
+	// An imported EasyPatch's agents keep the names they enrolled with.
 	if len(p.AgentHostnames) > 0 {
 		opts = append(opts, easypatch.AgentHostnames(p.AgentHostnames))
 	}
-	// The engine emails monthly reports through EasyRMM's mail server
-	// (one-product plan, C5).
+	// The engine emails monthly reports through EasyRMM's mail server.
 	opts = append(opts, easypatch.Mail(easypatch.MailConfig{Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, Username: cfg.SMTP.Username,
 		Password: cfg.SMTP.Password, From: cfg.SMTP.From, TLS: cfg.SMTP.TLS}))
 	if err := d.EasyPatch.UseEngine(engine, opts...); err != nil {
@@ -242,7 +241,7 @@ func usePatchingEngine(cfg *config.Config, d *Deps, log *slog.Logger) error {
 	}
 	log.Info("patching: the engine in this deployment", "url", p.URL)
 	// Organization and site changes reach the engine within seconds
-	// (one-product plan, B5; ADR-0040).
+	// (ADR-0040).
 	d.Tenancy.OnChange(d.EasyPatch.Kick)
 	return nil
 }
@@ -395,7 +394,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
 	// EasyPatch agents reach the patching engine in this deployment through
-	// EasyRMM's own addresses (one-product plan, B4).
+	// EasyRMM's own addresses (ADR-0039).
 	target, err := url.Parse(cfg.Patching.URL)
 	if err != nil {
 		return nil, fmt.Errorf("EASYRMM_PATCHING_URL: %w", err)

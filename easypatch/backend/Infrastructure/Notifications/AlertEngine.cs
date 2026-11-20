@@ -215,7 +215,7 @@ public sealed class AlertEngine(
 
     /// <summary>
     /// EasyRMM's patching alerts, where a message's own link leads. The engine's public URL is EasyRMM's, and
-    /// EasyRMM turns the engine's ids into its own pages through /go/from-easypatch (one-product plan, phase S).
+    /// EasyRMM turns the engine's ids into its own pages through /go/from-easypatch.
     /// </summary>
     public const string AlertsPath = "/patching?tab=alerts";
 

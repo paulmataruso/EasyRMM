@@ -17,9 +17,8 @@ import (
 )
 
 // TestBundledEngine: EasyRMM calls the patching engine in this deployment
-// (one-product plan, B3) with statements that carry each person's role and
-// organizations, and creates and links every organization there itself
-// (ADR-0040).
+// (ADR-0038) with statements that carry each person's role and organizations,
+// and creates and links every organization there itself (ADR-0040).
 func TestBundledEngine(t *testing.T) {
 	f := newFixture(t)
 	ctx := f.ctx

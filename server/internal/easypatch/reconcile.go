@@ -17,13 +17,13 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 )
 
-// One set of organizations (one-product plan B5, ADR-0040). With the
-// patching engine in the deployment, EasyRMM's organizations, sites and
-// devices are the only ones: the reconciler makes the engine's follow them,
-// one pass at a time, and carries on after a restart or an outage where it
-// stopped. Every step is safe to repeat. What the engine did but EasyRMM
-// did not get to record, such as an organization created just before a
-// restart, is found again by its name rather than made twice.
+// One set of organizations (ADR-0040). With the patching engine in the
+// deployment, EasyRMM's organizations, sites and devices are the only ones:
+// the reconciler makes the engine's follow them, one pass at a time, and
+// carries on after a restart or an outage where it stopped. Every step is
+// safe to repeat. What the engine did but EasyRMM did not get to record, such
+// as an organization created just before a restart, is found again by its
+// name rather than made twice.
 
 const (
 	// syncEvery is how often organizations and sites are compared in full
@@ -242,7 +242,7 @@ func (n *nameSet) want(name string, id, except uuid.UUID) (string, error) {
 
 // adoptable is an active engine record nothing is linked to, named as
 // EasyRMM would have named it: one EasyRMM created before a restart lost
-// the link, or one there was before the engine was EasyRMM's.
+// the link, or one an imported EasyPatch already had.
 func (n *nameSet) adoptable(name string, id uuid.UUID, linked map[uuid.UUID]bool) *named {
 	base, alt := fitName(name, ""), fitName(name, " ("+shortID(id)+")")
 	for _, x := range n.all {
@@ -510,8 +510,7 @@ func (s *Service) linkRecord(ctx context.Context, kind string, r rmmRecord, ep *
 			Details: map[string]any{"name": r.name, "easyPatchId": ep.id.String(), "easyPatchName": ep.name}}
 		if kind == "organization" {
 			// Automatic installs are on for organizations EasyRMM links
-			// itself (one-product plan, B5); a link already there keeps its
-			// setting.
+			// itself (ADR-0040); a link already there keeps its setting.
 			if _, err := tx.Exec(ctx, `INSERT INTO easypatch_organizations (organization_id, easypatch_id, easypatch_name, auto_install)
 				VALUES ($1, $2, $3, true)
 				ON CONFLICT (organization_id) DO UPDATE SET easypatch_id = $2, easypatch_name = $3, linked_at = now(), linked_by = NULL`,

@@ -145,7 +145,7 @@ var fixedInCompose = map[string]string{
 	"EASYRMM_DEV_INSECURE_COOKIES": "development only",
 	"EASYRMM_ARGON2_MAX_PARALLEL":  "bounds the memory password hashing takes; four suits the deployment",
 	"EASYRMM_PATCHING_URL":         "where the easypatch-api service listens (TestComposeListeners checks they agree)",
-	"EASYRMM_PATCHING":             "no longer a setting: the engine in this deployment, always (phase S)",
+	"EASYRMM_PATCHING":             "not a setting: the engine in this deployment always runs",
 	"EASYRMM_AUTHENTIK_UPSTREAM":   "where the authentik-server service listens (TestComposeListeners checks they agree)",
 }
 
@@ -261,7 +261,7 @@ func interpolate(raw string, vars map[string]string) (string, error) {
 
 // TestComposeListeners keeps every service of deploy/docker-compose.yml on
 // host networking, every listener but the server's public edge on loopback,
-// and no two listeners on one port (the one-product plan's port table):
+// and no two listeners on one port (docs/architecture/network.md):
 // with host networking a collision is a service that fails to start, or a
 // health check that reaches the wrong program.
 func TestComposeListeners(t *testing.T) {
@@ -367,8 +367,8 @@ func TestComposeListeners(t *testing.T) {
 	if engine := "http://" + url("easypatch-api"); engine != DefaultPatchingURL {
 		t.Errorf("the engine listens on %s, but EasyRMM calls %s", engine, DefaultPatchingURL)
 	}
-	// Both programs read the one key. The engine always runs (phase S): no
-	// profile leaves it out, and the mode is no longer a setting.
+	// Both programs read the one key. The engine always runs: no profile
+	// leaves it out, and EASYRMM_PATCHING is not a setting.
 	server := composeEnvironment(t, "server")
 	if got := server["EASYRMM_PATCHING_KEY"]; got != "${EASYRMM_PATCHING_KEY:-}" {
 		t.Errorf("server: EASYRMM_PATCHING_KEY is %q", got)

@@ -73,7 +73,7 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           global-json-file: easypatch/global.json
-      # The server image carries agent packages (one-product plan, B6). CI's carry Linux packages signed with a key
+      # The server image carries agent packages (ADR-0041). CI's carry Linux packages signed with a key
       # made for this run, which only their own agents trust; the script checks the release key refuses them.
       - name: Agent packages signed with a test key
         run: scripts/build-test-agent-packages.sh --arch all

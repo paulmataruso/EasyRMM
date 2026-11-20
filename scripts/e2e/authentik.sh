@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The Authentik test (make e2e-authentik; CI's "Authentik end to end" job),
-# the one-product plan's A check: a deployment set up with
-# setup.sh --with-authentik, brought up from deploy/docker-compose.yml itself
-# on host networking, with the patching engine (ADR-0044).
+# The Authentik test (make e2e-authentik; CI's "Authentik end to end" job):
+# a deployment set up with setup.sh --with-authentik, brought up from
+# deploy/docker-compose.yml itself on host networking, with the patching
+# engine (ADR-0044).
 #
 #  1. The deployment tree a release ships (scripts/release/deploy-tree.sh) is
 #     set up with setup.sh --with-authentik, for
@@ -95,7 +95,7 @@ fi
   --with-authentik --authentik-hostname "$signin_host" --admin-email "$admin_email") > "$work/setup.out" < /dev/null
 invitation=$(grep -o "https://$signin_host/if/flow/easyrmm-enrollment/?itoken=[0-9a-f-]*" "$work/setup.out" || true)
 [ -n "$invitation" ] || { echo "setup.sh printed no invitation link" >&2; exit 1; }
-# The patching engine has no profile (one-product S1): Authentik's is the
+# The patching engine has no profile, since it always runs: Authentik's is the
 # only one.
 as_root grep -qx 'COMPOSE_PROFILES=authentik' "$deploy/.env" ||
   { echo "setup.sh did not turn on the authentik profile" >&2; exit 1; }

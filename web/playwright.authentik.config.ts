@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// The Authentik test (one-product plan, A; ADR-0044). scripts/e2e/authentik.sh (make e2e-authentik)
+// The Authentik test (ADR-0044). scripts/e2e/authentik.sh (make e2e-authentik)
 // brings up deploy/docker-compose.yml set up with setup.sh --with-authentik, addressed by IP with
 // EasyRMM's own certificate authority, then runs this. Authentik's name resolves nowhere, so
 // Chromium is told it is 127.0.0.1, and accepts the edge's certificate by its public key.

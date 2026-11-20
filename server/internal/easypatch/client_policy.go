@@ -8,10 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// PolicyLayer is one level's own EasyPatch policy (one-product plan, C4): the
-// default policy, an organization's, a site's, a tag's or an endpoint's. A
-// nil value inherits from the level above. EasyPatch replaces a level's
-// policy whole when it is saved, so a value left out is inherited.
+// PolicyLayer is one level's own EasyPatch policy: the default policy, an
+// organization's, a site's, a tag's or an endpoint's. A nil value inherits
+// from the level above. EasyPatch replaces a level's policy whole when it is
+// saved, so a value left out is inherited.
 //
 // Some values override as a unit: the maintenance window (set when
 // MaintenanceDays is not nil; an empty list is no window, and its start and

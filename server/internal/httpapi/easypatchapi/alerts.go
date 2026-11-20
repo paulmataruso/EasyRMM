@@ -1,7 +1,7 @@
 package easypatchapi
 
 // Patching → Alerts, and the alert rules and notification channels under
-// Settings → Patching (one-product plan, C7).
+// Settings → Patching.
 
 import (
 	"net/http"

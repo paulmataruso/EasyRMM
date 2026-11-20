@@ -231,7 +231,7 @@ export function AppLayout() {
           <UserCircle className="size-4" aria-hidden />
           <span className="min-w-0 flex-1">
             <span className="block truncate">{session?.user.displayName}</span>
-            {/* EasyPatch shows the role here. EasyRMM roles are per organization, so only the platform-wide one is named. */}
+            {/* The role goes under the name. EasyRMM roles are per organization, so only the platform-wide one is named. */}
             <span className="block truncate text-xs text-sidebar-fg/70">{session?.isSuperAdmin ? "Super administrator" : session?.user.email}</span>
           </span>
         </NavLink>

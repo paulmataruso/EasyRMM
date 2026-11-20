@@ -18,7 +18,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
 )
 
-// Importing a standalone EasyPatch (one-product plan, phase S; ADR-0045).
+// Importing a standalone EasyPatch (ADR-0045).
 // deploy/scripts/import-easypatch.sh restores its database as the patching
 // engine's, then runs `easyrmm-server import-easypatch`, with the server
 // stopped, which calls Import: the engine's organizations and sites become

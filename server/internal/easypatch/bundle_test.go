@@ -19,10 +19,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// TestBundleGateway runs in the bundle test (scripts/e2e/bundle.sh; one-
-// product plan, B8) against the patching engine of a running deployment: on
-// loopback it accepts EasyRMM's statements and nothing else, and EasyRMM's
-// edge does not reach its API whatever a request carries.
+// TestBundleGateway runs in the bundle test (scripts/e2e/bundle.sh) against
+// the patching engine of a running deployment: on loopback it accepts
+// EasyRMM's statements and nothing else, and EasyRMM's edge does not reach
+// its API whatever a request carries.
 //
 //	EASYRMM_BUNDLE_ENGINE_URL  the engine on loopback (http://127.0.0.1:18180)
 //	EASYRMM_BUNDLE_ENGINE_KEY  EASYRMM_PATCHING_KEY from the deployment's .env

@@ -10,10 +10,9 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Patch reports (one-product plan, C5) come from the patching engine
-// rather than from EasyRMM's database. The engine already keeps to what
-// the caller may see; Run checks report.view and
-// patch.view at each row's site besides.
+// Patch reports come from the patching engine rather than from EasyRMM's
+// database. The engine already keeps to what the caller may see; Run checks
+// report.view and patch.view at each row's site besides.
 
 // PatchSource is the patching engine's client as the patch reports read it. The
 // app wires it with UsePatching; without it the patch reports are not found.
@@ -111,9 +110,9 @@ var patchComplianceReport = definition{
 		{"os", "Operating system", TypeText},
 		{"osBuild", "Build", TypeText},
 		{"osSupport", "OS support", TypeText},
-		{"online", "Online in EasyPatch", TypeBool},
+		{"online", "Patching agent online", TypeBool},
 		{"lastScan", "Last scan", TypeTime},
-		{"lastCheckIn", "Last EasyPatch check-in", TypeTime},
+		{"lastCheckIn", "Last patching check-in", TypeTime},
 	},
 	patch: func(ctx context.Context, src PatchSource, c access.Caller, q Query, out emit) (bool, error) {
 		devices, truncated, err := src.PatchDevices(ctx, c, q)

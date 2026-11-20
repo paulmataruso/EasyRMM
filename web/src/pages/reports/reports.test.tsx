@@ -68,7 +68,7 @@ function report(name: ReportName, extra: Partial<Report> = {}): Report {
       ],
       rows: [
         ["WEB-01", "Updates missing", "", 2],
-        ["PRINTER", "Not patched", "EasyPatch's agent is not on the device.", null],
+        ["PRINTER", "Not patched", "The EasyPatch agent is not on the device.", null],
       ],
     },
     "patch-installations": {

@@ -17,7 +17,7 @@ public sealed record ImportPreparationResult(
 
 /// <summary>
 /// Prepares a standalone EasyPatch's database, restored from its backup, to become the database of the patching engine in
-/// an EasyRMM deployment (EasyRMM's one-product plan, phase S). It checks that this engine knows every migration the database
+/// an EasyRMM deployment (EasyRMM's ADR-0045). It checks that this engine knows every migration the database
 /// has, brings the database to this engine's schema, and disables the standalone server's own accounts: in EasyRMM people
 /// sign in to EasyRMM, with EasyRMM's accounts and roles, and the engine's console is not served.
 /// </summary>

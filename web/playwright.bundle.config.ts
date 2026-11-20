@@ -1,6 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// The bundle test (one-product plan, B8). scripts/e2e/bundle.sh (make e2e-bundle) brings up
+// The bundle test (ADR-0043). scripts/e2e/bundle.sh (make e2e-bundle) brings up
 // deploy/docker-compose.yml with the patching engine, addressed by IP with EasyRMM's own
 // certificate authority, and a Linux machine on the host's network, then runs this. Chromium
 // accepts the server's certificate by its public key, and nothing else.

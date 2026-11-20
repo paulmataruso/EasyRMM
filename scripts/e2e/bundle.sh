@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The bundle test (make e2e-bundle; CI's "Bundle end to end" job), the
-# one-product plan's B8 check: EasyRMM with its patching engine, brought up
-# from deploy/docker-compose.yml itself on host networking, as an IP-addressed
-# install with EasyRMM's own certificate authority.
+# The bundle test (make e2e-bundle; CI's "Bundle end to end" job; ADR-0043):
+# EasyRMM with its patching engine, brought up from deploy/docker-compose.yml
+# itself on host networking, as an IP-addressed install with EasyRMM's own
+# certificate authority.
 #
 #  1. The deployment tree a release ships (scripts/release/deploy-tree.sh) is
 #     set up with setup.sh, for https://127.0.0.1, and

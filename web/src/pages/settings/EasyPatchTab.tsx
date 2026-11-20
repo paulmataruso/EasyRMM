@@ -36,7 +36,7 @@ export function EasyPatchTab() {
 /** A deployment without the patching engine: nothing can be set up from here. */
 function NoEngine() {
   return (
-    <Card title="Patching engine">
+    <Card>
       <NoPatchingEngine />
     </Card>
   );
@@ -45,7 +45,7 @@ function NoEngine() {
 /** The engine EasyRMM calls (ADR-0038): there is nothing to enter here. */
 function EngineCard({ conn, className }: { conn: EasyPatchConnection; className?: string }) {
   return (
-    <Card title="Patching engine" className={className}>
+    <Card title="In this deployment" className={className}>
       <div className="max-w-prose space-y-2 text-sm">
         <p>
           Patching runs in this deployment. EasyRMM calls the patching engine on this server and signs each call with the role and organizations of the person
@@ -183,7 +183,7 @@ function OrganizationLinks() {
             <thead>
               <tr>
                 <th>EasyRMM organization</th>
-                <th>EasyPatch organization</th>
+                <th>Patching engine organization</th>
                 <th className="hidden md:table-cell">Devices</th>
                 <th>EasyPatch agent</th>
               </tr>

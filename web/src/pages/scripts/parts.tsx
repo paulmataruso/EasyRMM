@@ -185,8 +185,8 @@ export function SelfPatchingWarning({ shell, body, scriptId, className }: { shel
   return (
     <Alert tone="warn" title="This script installs system updates itself" className={className}>
       <p>
-        Where EasyPatch patches a device, updates a script installs skip EasyPatch&apos;s policies, maintenance windows and exclusions, and
-        EasyPatch sees them only at its next scan. Install updates from{" "}
+        Where EasyRMM patches a device, updates a script installs skip its patch policy, maintenance windows and exclusions, and the
+        patching engine sees them only at the device&apos;s next scan. Install updates from{" "}
         <Link to="/patching" className="font-medium text-accent hover:underline">
           Patching
         </Link>{" "}

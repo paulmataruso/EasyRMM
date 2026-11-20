@@ -12,9 +12,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// EasyPatch's server-wide settings (one-product plan, C6): server settings,
-// vulnerability feeds, OS lifecycle entries and the audit log. The contract
-// test holds these to the real server's rules.
+// EasyPatch's server-wide settings: server settings, vulnerability feeds, OS
+// lifecycle entries and the audit log. The contract test holds these to the
+// real server's rules.
 
 // LifecycleInfo is an OS lifecycle entry.
 type LifecycleInfo struct {

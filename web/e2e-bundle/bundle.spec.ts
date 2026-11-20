@@ -1,16 +1,16 @@
-// The bundle test (one-product plan, B8): EasyRMM with its patching engine, as
+// The bundle test (ADR-0043): EasyRMM with its patching engine, as
 // deploy/docker-compose.yml runs it, addressed by IP, and a real Linux machine. The first account
 // is made on the first-run page; the machine runs the install command the console shows; EasyRMM
 // installs the EasyPatch agent, which enrolls through EasyRMM's address and links; a scan finds
-// the update a local package repository offers. On the device's Patches tab (C1) the update is
+// the update a local package repository offers. On the device's Patches tab the update is
 // excluded and included again and the policy shows; Patching lists the update across devices, and
-// its page holds it and releases the hold (C2); installing it from the Patches tab, after the
-// preview, changes the package on the machine. A value set on the organization (C4) reaches the site
-// and the device, as do a tag's policy and the device's own. Reports (C5) list the device's
+// its page holds it and releases the hold; installing it from the Patches tab, after the
+// preview, changes the package on the machine. A value set on the organization reaches the site
+// and the device, as do a tag's policy and the device's own. Reports list the device's
 // compliance and the install; a monthly PDF is made, downloaded and deleted, emailing it says
-// EasyRMM has no mail server, and a schedule is set. Under Settings → Patching (C6) a server
+// EasyRMM has no mail server, and a schedule is set. Under Settings → Patching a server
 // setting is changed, an OS lifecycle entry added, changed and deleted, the agent's .deb downloaded,
-// and EasyPatch's own audit log names the EasyRMM user who did each. Alerts (C7): an email channel
+// and EasyPatch's own audit log names the EasyRMM user who did each. Alerts: an email channel
 // is added and tested, which fails for want of a mail server; EasyPatch's own rule for unsupported
 // operating systems sends to it; moving Debian 12's end of support near makes EasyPatch raise an
 // alert for the machine, which Patching → Alerts shows and acknowledges, and the channel is sent it.
@@ -449,11 +449,11 @@ test("Settings → Patching changes a server setting and the OS lifecycle, lists
 
   // A server setting, saved in the engine and still there after a reload.
   await page.goto("/settings?tab=patching&view=server");
-  await expect(main.getByText(/^EasyPatch \d+\.\d+\.\d+\./)).toBeVisible();
+  await expect(main.getByText(/^Patching engine \d+\.\d+\.\d+\./)).toBeVisible();
   await main.getByRole("textbox", { name: "Prepared by" }).fill("Fabrikam IT");
   await main.getByRole("spinbutton", { name: "Finished jobs" }).fill("120");
   await main.getByRole("button", { name: "Save settings" }).click();
-  await expect(page.getByText("EasyPatch's settings saved.")).toBeVisible();
+  await expect(page.getByText("Patching engine settings saved.")).toBeVisible();
   await page.reload();
   await expect(main.getByRole("spinbutton", { name: "Finished jobs" })).toHaveValue("120");
   await expect(main.getByRole("textbox", { name: "Prepared by" })).toHaveValue("Fabrikam IT");
@@ -494,7 +494,7 @@ test("Settings → Patching changes a server setting and the OS lifecycle, lists
   // EasyPatch's audit log says the EasyRMM user did each, through EasyRMM.
   await page.goto("/settings?tab=patching&view=audit");
   await main.getByLabel("Area").selectOption({ label: "OS lifecycle" });
-  const engineAudit = main.getByRole("table", { name: "EasyPatch's audit log" });
+  const engineAudit = main.getByRole("table", { name: "The patching engine's audit log" });
   for (const action of ["OS lifecycle entry added", "OS lifecycle entry changed", "OS lifecycle entry deleted"]) {
     await expect(engineAudit.getByRole("row").filter({ hasText: action }).filter({ hasText: ADMIN.email })).toContainText("Through EasyRMM");
   }

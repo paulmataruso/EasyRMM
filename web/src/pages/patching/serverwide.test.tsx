@@ -7,7 +7,7 @@ import { org } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
 import { engineActionLabel } from "./EngineAudit";
 
-// EasyPatch's server-wide settings under Settings → Patching (one-product plan, C6).
+// EasyPatch's server-wide settings under Settings → Patching.
 
 const main = () => within(screen.getByRole("main"));
 
@@ -121,7 +121,7 @@ describe("Settings → Patching → Server", () => {
       }),
     );
     await open("/settings?tab=patching&view=server");
-    expect(await main().findByText(/EasyPatch 1\.10\.0\./)).toBeInTheDocument();
+    expect(await main().findByText(/Patching engine 1\.10\.0\./)).toBeInTheDocument();
     const feeds = main().getByRole("table", { name: "Vulnerability data downloads" });
     expect(within(feeds).getByText("CISA known exploited vulnerabilities")).toBeInTheDocument();
     expect(within(feeds).getByText("Every 6 hours, version 2026.11.18")).toBeInTheDocument();
@@ -161,7 +161,7 @@ describe("Settings → Patching → Server", () => {
     await user.clear(attempts);
     await user.type(attempts, "5");
     await user.click(main().getByRole("button", { name: "Save settings" }));
-    expect(await screen.findByText("EasyPatch's settings saved.")).toBeInTheDocument();
+    expect(await screen.findByText("Patching engine settings saved.")).toBeInTheDocument();
     expect(server.call("PUT /patching/settings", 1).body).toEqual({ ...SETTINGS, globalMaxConcurrentInstalls: 80, reportBrandName: "Contoso IT" });
   });
 
@@ -180,7 +180,7 @@ describe("Settings → Patching → Server", () => {
   it("shows the settings to an organization's administrator without letting them change them", async () => {
     installFakeApi(routes(ORG_ADMIN, { "GET /patching/settings": ok(settingsView({ canEdit: false, settings: { ...SETTINGS, reportBrandName: "Contoso IT" } })) }));
     await open("/settings?tab=patching&view=server");
-    expect(await main().findByText("Only super administrators change EasyPatch's server settings.")).toBeInTheDocument();
+    expect(await main().findByText("Only super administrators change the patching engine's server settings.")).toBeInTheDocument();
     expect(main().getByText("50 devices")).toBeInTheDocument();
     expect(main().getByText("30 days before")).toBeInTheDocument();
     expect(main().getByText("Contoso IT")).toBeInTheDocument();
@@ -341,15 +341,15 @@ describe("Settings → Patching → Audit log", () => {
       }),
     );
     await open("/settings?tab=patching&view=audit");
-    const table = await main().findByRole("table", { name: "EasyPatch's audit log" });
+    const table = await main().findByRole("table", { name: "The patching engine's audit log" });
     const row = (text: string) => within(table).getByText(text).closest("tr") as HTMLElement;
     expect(within(row("Policy changed")).getByText("jo")).toBeInTheDocument();
-    expect(within(row("Policy changed")).getByText("In EasyPatch")).toBeInTheDocument();
+    expect(within(row("Policy changed")).getByText("In the patching engine")).toBeInTheDocument();
     expect(within(row("Policy changed")).getByRole("link", { name: "Acme" })).toHaveAttribute("href", "/organizations/o1");
     expect(within(row("Policy changed")).getByText("192.0.2.7")).toBeInTheDocument();
     expect(within(row("Device changed")).getByText("Through EasyRMM")).toBeInTheDocument();
     expect(within(row("Device changed")).getByRole("link", { name: "WEB-01" })).toHaveAttribute("href", "/devices/d1");
-    expect(within(row("Update held")).getByText("EasyPatch, on its own")).toBeInTheDocument();
+    expect(within(row("Update held")).getByText("The patching engine, on its own")).toBeInTheDocument();
     expect(within(row("Update held")).getByText("UpdateHold h1")).toBeInTheDocument();
     expect(within(row("Update held")).getByText("not json")).toBeInTheDocument();
     expect(within(row("Policy changed")).getByText(/"field": "scanIntervalMinutes"/)).toBeInTheDocument();
@@ -373,7 +373,7 @@ describe("Settings → Patching → Audit log", () => {
     await user.type(main().getByLabelText("To"), "2026-10-01");
     expect(await main().findByText("Choose a To date on or after the From date.")).toBeInTheDocument();
     await user.click(main().getByRole("button", { name: "Clear filters" }));
-    expect(await main().findByRole("table", { name: "EasyPatch's audit log" })).toBeInTheDocument();
+    expect(await main().findByRole("table", { name: "The patching engine's audit log" })).toBeInTheDocument();
   });
 
   it("says whose entries an organization's administrator sees", async () => {

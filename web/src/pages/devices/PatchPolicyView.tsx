@@ -7,9 +7,9 @@ import { categoryLabel } from "../patching/patchText";
 import { PolicyPanel } from "../patching/PolicyEditor";
 import { TagsField } from "../patching/Tags";
 
-// A device's effective EasyPatch policy (one-product plan, C1): every value EasyPatch applies to it, and the layer
-// that set it. The device's own policy, which overrides the rest, is edited beside it with the shared policy editor
-// (C4), and its tags are set here too.
+// A device's effective EasyPatch policy: every value EasyPatch applies to it, and the layer
+// that set it. The device's own policy, which overrides the rest, is edited beside it with the shared policy editor,
+// and its tags are set here too.
 
 export const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -20,7 +20,7 @@ function sourceOf<T>(map: Record<string, T> | null | undefined, field: string): 
 }
 
 const LAYERS: Record<string, { label: string; tone: Tone; title: string }> = {
-  Global: { label: "Default", tone: "neutral", title: "EasyPatch's default policy, for every organization" },
+  Global: { label: "Default", tone: "neutral", title: "The default policy, for every organization" },
   Organization: { label: "Organization", tone: "info", title: "The organization's policy" },
   Site: { label: "Site", tone: "accent", title: "The site's policy" },
   Endpoint: { label: "This device", tone: "warn", title: "This device's own policy" },

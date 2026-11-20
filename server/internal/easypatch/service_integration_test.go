@@ -283,15 +283,15 @@ func TestOrganizationsAndLinks(t *testing.T) {
 			return r
 		}, LinkLinked, ""},
 		{"db-01", "", func() *agentproto.EasyPatchAgent { return f.enrolled(e2) }, LinkUnlinked,
-			"In EasyPatch the endpoint belongs to Globex Patch, not to Acme Patch, the organization linked to this device's."},
+			"In the patching engine the endpoint belongs to Globex Patch, not to Acme Patch, the organization linked to this device's."},
 		{"app-01", "", func() *agentproto.EasyPatchAgent { return f.enrolled(e3) }, LinkUnlinked,
-			"The key fingerprint the device reported is not one of the EasyPatch endpoint's active credentials."},
+			"The key fingerprint the device reported is not one of the endpoint's active credentials in the patching engine."},
 		{"files-01", "OTHER", func() *agentproto.EasyPatchAgent { return f.enrolled(e4) }, LinkUnlinked,
-			`Serial numbers differ: EasyPatch has "SN4", EasyRMM has "OTHER".`},
+			`Serial numbers differ: the patching engine has "SN4", EasyRMM has "OTHER".`},
 		{"printer-9", "", func() *agentproto.EasyPatchAgent { return f.enrolled(e5) }, LinkUnlinked,
-			`Host names differ: EasyPatch has "print-01", EasyRMM has "printer-9".`},
+			`Host names differ: the patching engine has "print-01", EasyRMM has "printer-9".`},
 		{"old-01", "", func() *agentproto.EasyPatchAgent { return f.enrolled(e6) }, LinkUnlinked,
-			"In EasyPatch the endpoint is decommissioned."},
+			"In the patching engine the endpoint is decommissioned."},
 		{"new-01", "", func() *agentproto.EasyPatchAgent { return &agentproto.EasyPatchAgent{Status: "NotEnrolled"} }, LinkUnlinked,
 			"The EasyPatch agent is not enrolled and active (its status is NotEnrolled)."},
 		{"broken-01", "", func() *agentproto.EasyPatchAgent {
@@ -358,7 +358,7 @@ func TestOrganizationsAndLinks(t *testing.T) {
 	clone := f.device(f.acme, f.branch, "web-01")
 	f.report(clone, "", f.enrolled(e1))
 	f.sync()
-	if l := f.link(clone); l.state != LinkUnlinked || l.reason != "web-01 is already linked to this EasyPatch endpoint." {
+	if l := f.link(clone); l.state != LinkUnlinked || l.reason != "web-01 is already linked to this patching engine endpoint." {
 		t.Errorf("clone: %+v", l)
 	}
 
@@ -565,7 +565,7 @@ func TestFleetAndViews(t *testing.T) {
 	f.svc.fleet.clear()
 	f.ep.Set(func() { f.e2.Status = "Revoked" })
 	fl, _ = f.svc.Fleet(ctx, f.admin, FleetQuery{})
-	if d := fl.Devices[0]; d.Link != LinkUnlinked || d.Reason != "EasyPatch no longer lists this endpoint as active." {
+	if d := fl.Devices[0]; d.Link != LinkUnlinked || d.Reason != "The patching engine no longer lists this endpoint as active." {
 		t.Fatalf("revoked: %+v", d)
 	}
 	f.ep.Set(func() { f.e2.Status = "Active" })
@@ -711,7 +711,7 @@ func TestActions(t *testing.T) {
 	}
 	f.ep.Set(func() { f.e1.Missing = 0 })
 	res, err = f.svc.Install(ctx, f.tech, ActionInput{DeviceIDs: []uuid.UUID{f.web}, UpdateIDs: []uuid.UUID{guid}})
-	if err != nil || res.Failed != 1 || res.Results[0].Message != "EasyPatch: web-01 has no eligible updates." {
+	if err != nil || res.Failed != 1 || res.Results[0].Message != "The patching engine refused: web-01 has no eligible updates." {
 		t.Fatalf("nothing to install: %+v, %v", res, err)
 	}
 	f.ep.Set(func() { f.e1.Missing = 2 })

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# The import test (make e2e-import; CI's "Bundle end to end" job), the
-# one-product plan's S4 check: a standalone EasyPatch 1.10 server, with a
-# real agent, imported into an EasyRMM deployment with
-# deploy/scripts/import-easypatch.sh (ADR-0045).
+# The import test (make e2e-import; CI's "Bundle end to end" job): a
+# standalone EasyPatch 1.10 server, with a real agent, imported into an
+# EasyRMM deployment with deploy/scripts/import-easypatch.sh (ADR-0045).
 #
 #  1. EasyPatch 1.10.0 is built from its release commit: its server image,
 #     and its Linux agent package, signed with a key made for the run. It

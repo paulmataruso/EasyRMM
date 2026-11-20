@@ -695,10 +695,9 @@ func TestContract(t *testing.T) {
 			t.Errorf("after the restart: %+v, %v", p, err)
 		}
 
-		// The options EasyRMM offers (one-product plan, C3): a prompt with a
-		// deadline, whether or not a restart is pending, waiting an hour for
-		// an offline computer. The endpoint says it can restart and whether
-		// it is a server.
+		// The options EasyRMM offers: a prompt with a deadline, whether or
+		// not a restart is pending, waiting an hour for an offline computer.
+		// The endpoint says it can restart and whether it is a server.
 		if d, err := engine.Endpoint(ctx, a.endpoint); err != nil || !slices.Contains(d.AgentCapabilities, AgentCanRestart) ||
 			d.OsProductType == "Server" || d.OsProductType == "DomainController" {
 			t.Errorf("endpoint for a restart that need not be pending %+v, %v", d, err)
@@ -790,11 +789,11 @@ func TestContract(t *testing.T) {
 	})
 
 	run("the device's Patches tab", func(t *testing.T) {
-		// What one-product plan C1 relies on: the endpoint's details, its
-		// effective policy with where each value comes from, exclusions,
+		// What the device's Patches tab relies on: the endpoint's details,
+		// its effective policy with where each value comes from, exclusions,
 		// the install preview, messages and agent updates. The simulated
-		// agent is a Linux one, which EasyPatch refuses messages and
-		// removals for.
+		// agent is a Linux one, which EasyPatch refuses messages and removals
+		// for.
 		detail, err := engine.Endpoint(ctx, a.endpoint)
 		if err != nil || !slices.Contains(detail.AgentCapabilities, "restart") || detail.AgentUpdate == nil || detail.HasOwnPolicy {
 			t.Fatalf("endpoint detail %+v, %v", detail, err)
@@ -903,7 +902,7 @@ func TestContract(t *testing.T) {
 	})
 
 	run("the update catalog and holds", func(t *testing.T) {
-		// What one-product plan C2 relies on: the catalog counted over an
+		// What Patching → Updates relies on: the catalog counted over an
 		// organization or a site, one update with the endpoints that report
 		// it, installing and removing it across endpoints, and holds.
 		scope := FleetScope{OrganizationID: &org.ID}
@@ -1070,9 +1069,9 @@ func TestContract(t *testing.T) {
 		}
 	})
 
-	// Policies at every level, and tags (one-product plan, C4): what EasyRMM
-	// sends round-trips, EasyPatch refuses what EasyRMM refuses, and EasyRMM's
-	// resolution of the layers is EasyPatch's.
+	// Policies at every level, and tags: what EasyRMM sends round-trips,
+	// EasyPatch refuses what EasyRMM refuses, and EasyRMM's resolution of the
+	// layers is EasyPatch's.
 	run("policies at every level, and tags", func(t *testing.T) {
 		const who = "contract-policy@example.test"
 		reader, admin := c.as(who, RoleReadOnly, org.ID), c.as(who, RoleAdmin, org.ID)
@@ -1285,9 +1284,8 @@ func TestContract(t *testing.T) {
 		}
 	})
 
-	// Reports (one-product plan, C5): the trend, installations, schedules
-	// and monthly PDFs as EasyRMM reads them, and the mail settings the
-	// bundled engine is given.
+	// Reports: the trend, installations, schedules and monthly PDFs as
+	// EasyRMM reads them, and the mail settings the bundled engine is given.
 	run("reports", func(t *testing.T) {
 		now := time.Now().UTC()
 		points, err := engine.ComplianceTrend(ctx, org.ID, now.AddDate(0, 0, -29).Format(time.DateOnly), now.Format(time.DateOnly))
@@ -1463,7 +1461,7 @@ func TestContract(t *testing.T) {
 		}
 	})
 
-	// Settings → Patching's server-wide views (one-product plan, C6).
+	// Settings → Patching's server-wide views.
 	run("server settings, OS lifecycle and the audit log", func(t *testing.T) {
 		const who = "contract-settings@example.test"
 		super := c.everywhere(who, RoleSuperAdmin)
@@ -1577,7 +1575,7 @@ func TestContract(t *testing.T) {
 		}
 	})
 
-	// Alerts, alert rules and notification channels (one-product plan, C7).
+	// Alerts, alert rules and notification channels.
 	run("alerts, alert rules and notification channels", func(t *testing.T) {
 		const who = "contract-alerts@example.test"
 		super, admin, reader := c.everywhere(who, RoleSuperAdmin), c.as(who, RoleAdmin, org.ID), c.as(who, RoleReadOnly, org.ID)
@@ -1973,8 +1971,8 @@ func TestContract(t *testing.T) {
 	})
 
 	run("organizations, sites and endpoints for the reconciler", func(t *testing.T) {
-		// What EasyRMM's reconciler relies on (one-product plan, B5), as the
-		// engine in the deployment does it.
+		// What EasyRMM's reconciler relies on (ADR-0040), as the engine in
+		// the deployment does it.
 		svc := WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "EasyRMM", Role: RoleAdmin, AllOrganizations: true})
 		scoped := WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "EasyRMM", Role: RoleAdmin, Organizations: []uuid.UUID{org.ID}})
 
@@ -2136,11 +2134,11 @@ func TestContract(t *testing.T) {
 	})
 
 	run("agents through EasyRMM's edge", func(t *testing.T) {
-		// In bundled mode the edge forwards the engine's agent paths (one-
-		// product plan, B4). Agents sign the method, the request target and
-		// the body: the engine accepting them proves all three arrive as
-		// sent. The engine records the client address EasyRMM resolved,
-		// and never sees a statement from outside.
+		// In bundled mode the edge forwards the engine's agent paths
+		// (ADR-0039). Agents sign the method, the request target and the
+		// body: the engine accepting them proves all three arrive as sent.
+		// The engine records the client address EasyRMM resolved, and never
+		// sees a statement from outside.
 		target, err := url.Parse(c.engineURL)
 		if err != nil {
 			t.Fatal(err)
@@ -2310,7 +2308,7 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		q("install preview", "GET", "/api/v1/endpoints/"+fEndpoint.String()+"/install-preview?mode=all",
 			"/api/v1/endpoints/"+endpoint.String()+"/install-preview?mode=all"),
 		q("message presets", "GET", "/api/v1/user-messages", "/api/v1/user-messages"),
-		// Server-wide settings (one-product plan, C6).
+		// Server-wide settings.
 		q("server settings", "GET", "/api/v1/settings", "/api/v1/settings"),
 		q("vulnerability feeds", "GET", "/api/v1/vulnerability-feeds", "/api/v1/vulnerability-feeds"),
 		q("lifecycle", "GET", "/api/v1/lifecycle", "/api/v1/lifecycle"),
@@ -2327,7 +2325,7 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		{name: "enrollment token", method: "POST", fake: "/api/v1/enrollment-tokens", real: "/api/v1/enrollment-tokens",
 			fBody: map[string]any{"organizationId": fOrg, "siteId": fSite, "description": "shape", "expiresInHours": 1, "maxUses": 1, "count": 1},
 			rBody: map[string]any{"organizationId": org, "siteId": site, "description": "shape", "expiresInHours": 1, "maxUses": 1, "count": 1}},
-		// The update catalog (one-product plan, C2).
+		// The update catalog.
 		q("catalog", "GET", "/api/v1/updates?organizationId="+fOrg.String(), "/api/v1/updates?organizationId="+org.String()),
 		q("catalog of a site", "GET", "/api/v1/updates?organizationId="+fOrg.String()+"&siteId="+fSite.String()+"&sort=missing&dir=desc",
 			"/api/v1/updates?organizationId="+org.String()+"&siteId="+site.String()+"&sort=missing&dir=desc"),
@@ -2339,7 +2337,7 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 		{name: "fleet install", method: "POST", fake: "/api/v1/updates/" + fUpdate.String() + "/install",
 			real:  "/api/v1/updates/" + rUpdate.String() + "/install",
 			fBody: map[string]any{"endpointIds": []uuid.UUID{fEndpoint}}, rBody: map[string]any{"endpointIds": []uuid.UUID{endpoint}}},
-		// Policies and tags (one-product plan, C4).
+		// Policies and tags.
 		q("global policy", "GET", "/api/v1/policies/global", "/api/v1/policies/global"),
 		q("no organization policy", "GET", "/api/v1/organizations/"+fOrg.String()+"/policy", "/api/v1/organizations/"+org.String()+"/policy"),
 		q("no endpoint policy", "GET", "/api/v1/endpoints/"+fEndpoint.String()+"/policy", "/api/v1/endpoints/"+endpoint.String()+"/policy"),

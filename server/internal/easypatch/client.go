@@ -75,9 +75,9 @@ type Client struct {
 }
 
 // NewEngineClient builds a client for the patching engine in this
-// deployment (one-product plan, phase B3): plain HTTP on loopback, each
-// request with a statement from signer (ADR-0038) rather than a token. The
-// configuration checked rawURL is http:// on a loopback address.
+// deployment: plain HTTP on loopback, each request with a statement from
+// signer (ADR-0038) rather than a token. The configuration checked rawURL is
+// http:// on a loopback address.
 func NewEngineClient(rawURL string, signer *Signer, version string) (*Client, error) {
 	base, err := url.Parse(rawURL)
 	if err != nil || base.Scheme != "http" || base.Host == "" {
@@ -188,10 +188,10 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	defer resp.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse+1))
 	if err != nil {
-		return &Error{Detail: "EasyPatch's answer was cut short: " + err.Error()}
+		return &Error{Detail: "The patching engine's answer was cut short: " + err.Error()}
 	}
 	if len(data) > maxResponse {
-		return &Error{Status: resp.StatusCode, Detail: "EasyPatch's answer is larger than 32 MiB"}
+		return &Error{Status: resp.StatusCode, Detail: "The patching engine's answer is larger than 32 MiB"}
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return problem(resp.StatusCode, data)
@@ -205,7 +205,7 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 		return nil
 	}
 	if err := json.Unmarshal(data, out); err != nil {
-		return &Error{Status: resp.StatusCode, Detail: "EasyPatch's answer is not what EasyRMM expects: " + err.Error()}
+		return &Error{Status: resp.StatusCode, Detail: "The patching engine's answer is not what EasyRMM expects: " + err.Error()}
 	}
 	return nil
 }
@@ -1020,7 +1020,7 @@ func (c *Client) CreateEnrollmentToken(ctx context.Context, organizationID uuid.
 		return EnrollmentToken{}, err
 	}
 	if len(out) != 1 || out[0].Token.ID == uuid.Nil || out[0].PlaintextToken == "" {
-		return EnrollmentToken{}, &Error{Status: http.StatusBadGateway, Code: "bad_response", Detail: "EasyPatch did not return one enrollment token."}
+		return EnrollmentToken{}, &Error{Status: http.StatusBadGateway, Code: "bad_response", Detail: "The patching engine did not return one enrollment token."}
 	}
 	return EnrollmentToken{ID: out[0].Token.ID, Secret: out[0].PlaintextToken}, nil
 }

@@ -15,12 +15,12 @@ import { ReportSchedules } from "../patching/ReportSchedules";
 import { ServerSettingsPanel } from "../patching/ServerSettings";
 import { TagChip, TagsManager } from "../patching/Tags";
 
-// Settings → Patching (one-product plan, C4): the default policy every organization starts from, and tags, whose
+// Settings → Patching: the default policy every organization starts from, and tags, whose
 // policies apply to devices across organizations. Both are EasyPatch's server-wide settings, so only super
 // administrators change them; others with patching see them, as they shape their own organizations' policies.
-// Report schedules (C5) are each organization's, changed by those who configure its patching. EasyPatch's server
-// settings, OS lifecycle, agent packages and audit log (C6) are server-wide too: super administrators change them.
-// Alert rules and notification channels (C7) are server-wide and send alerts about every organization, so only super
+// Report schedules are each organization's, changed by those who configure its patching. EasyPatch's server
+// settings, OS lifecycle, agent packages and audit log are server-wide too: super administrators change them.
+// Alert rules and notification channels are server-wide and send alerts about every organization, so only super
 // administrators see them.
 
 type View = "default" | "tags" | "reports" | "server" | "lifecycle" | "packages" | "rules" | "notifications" | "audit";

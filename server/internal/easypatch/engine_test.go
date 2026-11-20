@@ -100,7 +100,7 @@ func TestEngineProbe(t *testing.T) {
 		readOnly, down bool
 		want           string
 	}{
-		{"no version", "", false, false, "does not answer like EasyPatch"},
+		{"no version", "", false, false, "does not answer as expected"},
 		{"not an admin", "1.9.1", true, false, "does not let EasyRMM act as an administrator"},
 		{"down", "1.9.1", false, true, "503"},
 	} {

@@ -28,12 +28,11 @@ import (
 	"github.com/google/uuid"
 )
 
-// The import test (scripts/e2e/import.sh; one-product plan, phase S4;
-// ADR-0045): a standalone EasyPatch 1.10, built from its release tag, is
-// given data through its own console API and one real Linux agent, backed
-// up as its backup.sh does, and imported into an EasyRMM deployment.
-// TestImportSeedEasyPatch gives the old server its data;
-// TestImportedEngine checks the engine after the import.
+// The import test (scripts/e2e/import.sh; ADR-0045): a standalone EasyPatch
+// 1.10, built from its release tag, is given data through its own console API
+// and one real Linux agent, backed up as its backup.sh does, and imported
+// into an EasyRMM deployment. TestImportSeedEasyPatch gives the old server
+// its data; TestImportedEngine checks the engine after the import.
 
 // oldConsole is a signed-in session with the standalone EasyPatch's console
 // API, as its browser console has one: cookies and the anti-forgery header.

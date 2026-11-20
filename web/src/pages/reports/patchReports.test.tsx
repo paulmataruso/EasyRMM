@@ -7,7 +7,7 @@ import { org } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
 import { addresses, reportMonth } from "./PatchReports";
 
-// The patch reports (one-product plan, C5): the compliance and installations reports with the trend, monthly PDF
+// The patch reports: the compliance and installations reports with the trend, monthly PDF
 // reports, and their schedules under Settings → Patching.
 
 const location = () => screen.getByTestId("location").textContent;
@@ -33,7 +33,7 @@ const compliance: Report = {
   ],
   rows: [
     ["WEB-01", "Updates missing", ""],
-    ["NEW-01", "Not patched", "EasyPatch's agent is not on the device."],
+    ["NEW-01", "Not patched", "The EasyPatch agent is not on the device."],
   ],
   total: 2,
   truncated: false,
@@ -139,7 +139,7 @@ describe("patch reports", () => {
     const server = installFakeApi(routes());
     renderApp("/reports?report=patch-compliance");
     const table = await screen.findByRole("table", { name: "Patch compliance" });
-    expect(within(table).getByText("EasyPatch's agent is not on the device.")).toBeInTheDocument();
+    expect(within(table).getByText("The EasyPatch agent is not on the device.")).toBeInTheDocument();
     expect(screen.getAllByRole("tab").map((t) => t.textContent)).toEqual([
       "Device inventory",
       "Device health",

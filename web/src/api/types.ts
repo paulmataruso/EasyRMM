@@ -1102,8 +1102,8 @@ export interface PatchFleetDevice {
 export interface PatchFleet {
   devices: PatchFleetDevice[];
   /**
-   * EasyPatch endpoints of organizations the caller sees whole that no EasyRMM device is linked to (one-product plan,
-   * C2); only without site, group, status or name filters.
+   * EasyPatch endpoints of organizations the caller sees whole that no EasyRMM device is linked to; only without site,
+   * group, status or name filters.
    */
   unmatched: PatchUnmatchedEndpoint[];
   truncated: boolean;
@@ -1325,7 +1325,7 @@ export interface PatchPolicy {
   sourceTags: Record<string, string> | null;
 }
 
-/** The levels of an EasyPatch policy (one-product plan, C4). */
+/** The levels of an EasyPatch policy. */
 export type PolicyLevel = "default" | "organization" | "site" | "device" | "tag";
 
 type WindowsUpdateGroups = { [K in keyof PatchWindowsUpdate]: NonNullable<PatchWindowsUpdate[K]> };
@@ -1402,7 +1402,7 @@ export interface PatchTag {
   createdAt: string;
 }
 
-/** One day of compliance, added up over the organizations a report covers (one-product plan, C5). */
+/** One day of compliance, added up over the organizations a report covers. */
 export interface PatchTrendPoint {
   /** 2006-01-02 */
   date: string;
@@ -1469,7 +1469,7 @@ export interface PatchReportSchedule {
   canEdit: boolean;
 }
 
-/** EasyPatch's server settings as Settings → Patching → Server shows them (one-product plan, C6). */
+/** EasyPatch's server settings as Settings → Patching → Server shows them. */
 export interface PatchServerSettings {
   globalMaxConcurrentInstalls: number;
   jobDefaultExpiryHours: number;
@@ -1577,7 +1577,7 @@ export interface PatchAuditPage {
   everything: boolean;
 }
 
-// EasyPatch's alerts, alert rules and notification channels (one-product plan, C7).
+// EasyPatch's alerts, alert rules and notification channels.
 
 export type PatchAlertSeverity = "Critical" | "Warning" | "Info";
 export type PatchAlertStatus = "Open" | "Acknowledged" | "Resolved";

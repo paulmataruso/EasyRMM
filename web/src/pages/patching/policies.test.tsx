@@ -7,7 +7,7 @@ import { org, site } from "../../test/fixtures";
 import { renderApp, renderWithProviders } from "../../test/render";
 import { checkPolicy, fromText, PolicyPanel } from "./PolicyEditor";
 
-// Policies at every level, and tags (one-product plan, C4).
+// Policies at every level, and tags.
 
 const T = "2026-11-19T10:00:00Z";
 const main = () => within(screen.getByRole("main"));
@@ -166,7 +166,7 @@ describe("policy editor", () => {
     await user.click(await main().findByRole("tab", { name: "Patch policy" }));
     await screen.findByRole("form", { name: "Northwind Traders patch policy" });
     expect(column("Maintenance window")).toHaveTextContent("Saturday at 02:00 for 3 hours · from the default policy");
-    expect(column("Scans")).toHaveTextContent("Every 6 hours · EasyPatch's default");
+    expect(column("Scans")).toHaveTextContent("Every 6 hours · built-in default");
     expect(column("Automatic Updates")).toHaveTextContent("Notify before downloading and installing · from the default policy");
     expect(main().getByText("Also excluded above:")).toHaveTextContent("KB5005565");
     expect(main().getByText("Nothing set here: everything is inherited.")).toBeInTheDocument();
@@ -362,7 +362,7 @@ describe("policy editor", () => {
     await user.click(confirm);
     expect(await screen.findByText("This policy inherits everything again.")).toBeInTheDocument();
     expect(server.callsTo("DELETE /patching/policies/organization/:id")).toHaveLength(1);
-    expect(column("Spread")).toHaveTextContent("10% · EasyPatch's default");
+    expect(column("Spread")).toHaveTextContent("10% · built-in default");
     expect(main().queryByRole("button", { name: "Inherit everything" })).not.toBeInTheDocument();
   });
 
@@ -380,7 +380,7 @@ describe("policy editor", () => {
   it("says so when the organization is not in the patching engine yet", async () => {
     installFakeApi(
       orgRoutes(ORG_ADMIN, {
-        "GET /patching/policies/organization/:id": fail(409, "easypatch_not_linked", "This organization is not linked to EasyPatch."),
+        "GET /patching/policies/organization/:id": fail(409, "easypatch_not_linked", "This organization is not in the patching engine yet."),
       }),
     );
     await open("/organizations/o1?tab=patch-policy");
@@ -493,11 +493,11 @@ describe("Settings → Patching", () => {
     expect(await screen.findByText("Policy saved.")).toBeInTheDocument();
     expect(server.call("PUT /patching/policies/default").body).toEqual({ ...BUILT_IN, scanIntervalMinutes: 240 });
 
-    await user.click(main().getByRole("button", { name: "Restore EasyPatch's defaults" }));
-    const dialog = await screen.findByRole("dialog", { name: "Restore EasyPatch's defaults" });
+    await user.click(main().getByRole("button", { name: "Restore built-in defaults" }));
+    const dialog = await screen.findByRole("dialog", { name: "Restore built-in defaults" });
     await user.type(within(dialog).getByRole("textbox"), "Default policy");
     await user.click(within(dialog).getByRole("button", { name: "Restore defaults" }));
-    expect(await screen.findByText("The default policy is EasyPatch's again.")).toBeInTheDocument();
+    expect(await screen.findByText("The default policy has its built-in values again.")).toBeInTheDocument();
     expect(main().getByRole("spinbutton", { name: "Scans" })).toHaveValue(360);
   });
 

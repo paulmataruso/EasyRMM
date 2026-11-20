@@ -1,8 +1,7 @@
 package easypatchapi
 
-// Settings → Patching's server-wide views (one-product plan, C6): EasyPatch's
-// server settings and vulnerability feeds, OS lifecycle, agent packages and
-// audit log.
+// Settings → Patching's server-wide views: EasyPatch's server settings and
+// vulnerability feeds, OS lifecycle, agent packages and audit log.
 
 import (
 	"net/http"

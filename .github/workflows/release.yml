@@ -1,9 +1,9 @@
 # Publishes a release when an EasyRMM version tag (easyrmm-v1.2.3, or a
 # pre-release such as easyrmm-v1.2.3-rc.1) is pushed to this repository. It is
 # the only release: the patching engine (EasyPatch, under easypatch/) is
-# released with EasyRMM and never on its own (one-product plan, R5;
-# ADR-0043, ADR-0046). The version is the tag without "easyrmm-" (v1.2.3):
-# the server, the console and the agents report it, as before.
+# released with EasyRMM and never on its own (ADR-0043, ADR-0046). The
+# version is the tag without "easyrmm-" (v1.2.3): the server, the console
+# and the agents report it.
 #
 #   1. the tag and its CHANGELOG.md section are checked, and the engine's
 #      version (<Version> in easypatch/Directory.Build.props) has its section
@@ -93,7 +93,7 @@ jobs:
     needs: prepare
     uses: ./.github/workflows/frontend-tests.yml
 
-  # The patching engine, from this commit (one-product plan, B8 and R5).
+  # The patching engine, from this commit (ADR-0043).
   engine-version:
     name: Patching engine version
     needs: prepare
@@ -297,7 +297,7 @@ jobs:
       - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           global-json-file: easypatch/global.json
-      # The image carries this release's Windows and Linux agent packages (one-product plan, B6).
+      # The image carries this release's Windows and Linux agent packages (ADR-0041).
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-agent
