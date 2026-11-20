@@ -13,7 +13,7 @@ public sealed record ReconcileResult(IReadOnlyList<EndpointUpdate> Added, int Ch
 
 /// <summary>
 /// Applies a scan snapshot to an endpoint's update states. Pure logic (no I/O) so it can be unit tested.
-/// Rules (docs/architecture.md, "Update state model"):
+/// Rules (docs/architecture/patching-engine.md, "Update states"):
 /// * Installed list → Installed (the only path to Installed).
 /// * Missing with WUA RebootRequired → PendingReboot.
 /// * Missing and superseded by another reported update → Superseded.

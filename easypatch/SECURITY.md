@@ -46,8 +46,10 @@ Examples of what we especially want to hear about:
 * secrets written to logs, images or the database in plain text.
 
 The security design, threat model and known limitations are documented in
-[docs/security.md](docs/security.md). Problems already listed under *Known limitations* there
-are not new vulnerabilities, but reports that show they are worse than described are welcome.
+[the threat model](../docs/security/threat-model.md) and
+[Patching engine](../docs/architecture/patching-engine.md#known-limits). Problems already listed
+as known limits there are not new vulnerabilities, but reports that show they are worse than
+described are welcome.
 
 ## Verifying releases
 
@@ -55,4 +57,4 @@ Each release lists the SHA-256 of every file in `SHA256SUMS`. Agent packages car
 release signature made with the key in
 [`keys/easypatch-release-key.pub.pem`](keys/easypatch-release-key.pub.pem); agents verify it
 themselves before installing an update. See
-[docs/security.md](docs/security.md#agent-release-signing).
+[Agent release signing](../docs/architecture/patching-engine.md#agent-release-signing).

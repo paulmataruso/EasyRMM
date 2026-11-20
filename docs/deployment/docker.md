@@ -283,7 +283,7 @@ works this way.
 
 EasyRMM's patching pages use the engine:
 
-* **Settings → EasyPatch** shows the engine and its state; there is no
+* **Settings → Patching engine** shows the engine and its state; there is no
   address or token to enter, and it cannot be removed there. *Check now*
   shows whether the engine accepts EasyRMM's key.
 * **An EasyPatch server connected in Settings** by an earlier version is
@@ -292,7 +292,7 @@ EasyRMM's patching pages use the engine:
 * **EasyRMM keeps the engine's organizations.** Every organization and site
   has its own in the engine, created, renamed and archived with EasyRMM's
   ([ADR-0040](../architecture/adr/0040-one-set-of-organizations.md),
-  [Patching](../operations/patching.md#organizations-in-the-bundled-engine));
+  [Patching](../operations/patching.md#organizations-in-the-engine));
   there is nothing to link in Settings.
 * **Agents use EasyRMM's name.** EasyRMM's edge forwards the engine's agent
   API and package downloads (`/api/v1/agents/`, `/downloads/agent/`,

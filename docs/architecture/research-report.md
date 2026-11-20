@@ -168,8 +168,8 @@ Implications: integration must be **server-to-server through an integration
 credential** that EasyPatch does not have yet; the EasyPatch agent must not be
 redistributed inside our OSI-licensed installer (licence), so our agent
 **downloads it from the customer's own EasyPatch server** at enrolment time.
-The full list of required EasyPatch changes is in
-[`docs/integrations/easypatch.md`](../integrations/easypatch.md).
+How EasyRMM and the patching engine work together is in
+[Patching engine](patching-engine.md).
 
 ## 4. Impeccable
 

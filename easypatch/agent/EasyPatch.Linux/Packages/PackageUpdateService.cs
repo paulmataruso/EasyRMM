@@ -125,7 +125,7 @@ public sealed class PackageUpdateService : IUpdateService, IBatchUpdateService, 
     /// <summary>Linux never refuses installations until a restart.</summary>
     public Task<bool> IsRebootRequiredBeforeInstallationAsync(CancellationToken cancellationToken) => Task.FromResult(false);
 
-    /// <summary>The package managers' own histories are not reported (see docs/linux-agent.md).</summary>
+    /// <summary>The package managers' own histories are not reported (see docs/deployment/patching-agent.md).</summary>
     public Task<IReadOnlyList<HistoryEntryReport>> GetHistoryAsync(DateTimeOffset? since, int maxEntries, CancellationToken cancellationToken) =>
         Task.FromResult<IReadOnlyList<HistoryEntryReport>>([]);
 

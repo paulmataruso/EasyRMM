@@ -109,6 +109,51 @@ rights, and EasyRMM narrows what reaches them.
   by someone who can read loopback traffic; such a person could read the
   key too.
 
+**EasyPatch agent to the patching engine** ([ADR-0031](../architecture/adr/0031-easypatch-agent-install.md), [ADR-0039](../architecture/adr/0039-agents-on-easyrmms-name.md), [Patching engine](../architecture/patching-engine.md#agent-protocol))
+* EasyRMM enrolls each EasyPatch agent with a single-use token, valid for
+  an hour, made for that one install and passed to the agent off the
+  command line. The engine stores only its hash.
+* The agent makes its own ECDSA P-256 key and keeps the private half on
+  the computer: DPAPI in a folder only SYSTEM and administrators can open,
+  or root-only files on Linux, encrypted with `systemd-creds` where
+  available. Credentials expire after a year, are rotated before, and are
+  revoked with their endpoint.
+* Each request is signed over method, target, time, nonce, body hash and
+  credential; nonces are used once, and the endpoint comes from the
+  credential, never from the body.
+* EasyRMM's edge forwards only the agents' API and package downloads to
+  the engine.
+* The agent runs no commands. It installs only what its own scan found
+  from the sources the computer is configured for, upgrades of approved
+  winget applications already installed, or a signed agent package. The
+  engine cannot name a package, version, repository or installer
+  argument. Restart and message jobs carry only a mode, range-checked
+  durations or a preset message. Windows Update changes are limited to
+  listed values, never the WSUS server, and are restored when removed.
+* The tray reaches the service over a local pipe that refuses network
+  logons and session 0, and accepts only an answer to the current restart
+  request and three status requests without parameters.
+
+**EasyPatch agent packages** ([Agent release signing](../architecture/patching-engine.md#agent-release-signing))
+* An EasyPatch agent updates only to a package signed with a release key
+  built into it, newer than itself, with the signed size and SHA-256. The
+  release workflow signs; the engine relays packages and signatures and
+  cannot supply keys.
+* The agent installs winget only from files whose sizes and SHA-256 are
+  built into it.
+
+**The patching engine to the internet** ([Patching engine](../architecture/patching-engine.md#alerts-and-notifications))
+* Only the engine's worker connects out: to fixed vulnerability-feed hosts
+  over HTTPS without redirects, to GitHub for winget, to the mail server
+  and to webhooks. Feed data is parsed as data with size limits and can
+  change only what is shown and whether a rollout delay is skipped.
+* Webhooks are `https://` only, follow no redirects and use no proxy.
+  Every address connected to is checked: loopback, link-local and cloud
+  metadata, multicast and the server's own networks are always refused,
+  private ranges unless a super administrator allows them.
+* Webhook addresses, signing keys and the SMTP password are encrypted with
+  the engine's own keys and never returned.
+
 **Authentik, when chosen** ([ADR-0044](../architecture/adr/0044-authentik-when-chosen.md))
 * Authentik listens on loopback only, with metrics, update checks,
   analytics and error reports off. EasyRMM's edge serves its name and
@@ -145,4 +190,11 @@ rights, and EasyRMM narrows what reaches them.
   ([ADR-0016](../architecture/adr/0016-ip-address-access.md)).
 * Remote sessions depend on MeshCentral and MeshAgent enforcing their own
   rights, which EasyRMM narrows but does not replace.
+* A compromised patching engine can choose which signed, newer EasyPatch
+  agent release an agent updates to, and when, but nothing unsigned or
+  older.
+* The engine's nonce cache is in memory, so a deployment runs one engine
+  API instance.
+* The engine's encryption keys, like the database, are unencrypted on the
+  host; root there can read the webhook secrets.
 * What the [security review](security-review.md) did not cover.
