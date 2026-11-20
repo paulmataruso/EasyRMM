@@ -1,11 +1,11 @@
 # Patching
 
 EasyRMM patches Windows and Linux devices with its built-in patching
-engine, EasyPatch. The engine keeps the update catalogue, each device's
-update state, the policies and maintenance windows, and runs the scans and
-installs through the EasyPatch agent on each device. EasyRMM shows all of
-it in its own console, behind its own roles, and calls the engine with a
-signed statement per request
+engine, EasyPatch's server, built from `easypatch/`. The engine keeps the
+update catalogue, each device's update state, the policies and maintenance
+windows, and runs the scans and installs through the EasyPatch agent on
+each device. EasyRMM shows all of it in its own console, behind its own
+roles, and calls the engine with a signed statement per request
 ([ADR-0038](../architecture/adr/0038-statements-to-the-patching-engine.md)).
 
 * How the engine works: [Patching engine](../architecture/patching-engine.md).
@@ -30,8 +30,9 @@ EasyRMM calls it on the same server with its own key.
    EasyRMM checks with the engine that the endpoint really is this device,
    and the device appears in **Patching**.
 
-Endpoints, history and settings of another EasyPatch server can be brought
-in, with its agents kept: see [Importing an EasyPatch server](import-easypatch.md).
+Endpoints, history and settings of a standalone EasyPatch server can be
+brought in, with its agents kept: see
+[Importing a standalone EasyPatch](import-easypatch.md).
 
 **Settings → Patching engine** shows the engine's version and state;
 *Check now* shows whether it accepts EasyRMM's key.
@@ -94,8 +95,8 @@ What happens:
    one install: single use, valid for an hour, for the engine's organization
    and site EasyRMM created for the device's. The token is never stored,
    and is revoked if the install fails.
-2. The agent downloads the package from EasyPatch, checks its size and
-   SHA-256 against EasyPatch's list, installs it (`msiexec` on Windows,
+2. The agent downloads the package from the engine, checks its size and
+   SHA-256 against the engine's list, installs it (`msiexec` on Windows,
    `apt-get` or `dnf` on Linux) and enrolls it.
 3. It reports the result with its next heartbeat. The EasyPatch agent shows
    up in the next inventory, and the device links itself as above.
@@ -109,8 +110,8 @@ reporting within 30 minutes fails then.
 EasyRMM never installs a second EasyPatch agent: a device whose EasyRMM
 agent reports one, in any state and enrolled with any server, is left
 alone, and the agent checks again just before it installs. It never
-re-enrolls (`--force`) or upgrades the EasyPatch agent either; EasyPatch
-updates its own agent. It removes one only as described in
+re-enrolls (`--force`) or upgrades the EasyPatch agent either; the agent
+updates itself from the engine. EasyRMM removes one only as described in
 [Stopping patching for a device](#stopping-patching-for-a-device) and
 [Devices that move or are deleted](#devices-that-move-or-are-deleted).
 
@@ -156,18 +157,18 @@ within a minute. Otherwise, install it by hand.
 * **Moved to another site** of its organization: its endpoint moves to that
   site.
 * **Moved to another organization:** an endpoint cannot change
-  organization in EasyPatch. EasyRMM has the old agent uninstall itself.
+  organization in the engine. EasyRMM has the old agent uninstall itself.
   When it is gone, automatic installs enroll it again in the new
   organization. The device's Patches tab says so in the meantime.
 
 EasyRMM's console has no screen to move or retire a device yet; this covers
 devices merged by EasyRMM and moves made through the API.
 
-**How an agent is removed:** EasyRMM sends EasyPatch an `uninstall-agent`
+**How an agent is removed:** EasyRMM sends the engine an `uninstall-agent`
 job and checks every 5 minutes. A failed or expired job is sent again. The
-agent is gone when EasyPatch no longer shows its endpoint as active. If it
+agent is gone when the engine no longer shows its endpoint as active. If it
 is not gone within 7 days, or is too old to uninstall itself, EasyRMM
-revokes the endpoint in EasyPatch, which stops serving it.
+revokes the endpoint, and the engine stops serving it.
 
 ## When a device is not linked
 
@@ -182,8 +183,8 @@ Patches tab). The checks are in
 | The agent is enrolled with another server | The device belongs to another EasyPatch server; import that server's data (see [Setting it up](#setting-it-up)) or re-enroll the agent with this deployment |
 | The organization has no patching organization yet | EasyRMM is still creating it, within a minute; **Settings → Patching engine** says why if it cannot |
 | The engine has no such endpoint | The agent's endpoint was deleted in the engine; re-enroll the EasyPatch agent |
-| The endpoint belongs to another EasyPatch organization | The device is enrolled in another organization's; EasyRMM moves endpoints within an organization only. Re-enroll the EasyPatch agent |
-| The endpoint is revoked or decommissioned in EasyPatch | Re-enroll the EasyPatch agent |
+| The endpoint belongs to another organization in the engine | The device is enrolled in another organization's; EasyRMM moves endpoints within an organization only. Re-enroll the EasyPatch agent |
+| The endpoint is revoked or decommissioned in the engine | Re-enroll the EasyPatch agent |
 | The key fingerprint is not one of the endpoint's credentials | The endpoint id was copied from another machine, or its credential was revoked; re-enroll |
 | Host names or serial numbers differ | The endpoint is another machine; re-enroll the EasyPatch agent on this one |
 | Another device is already linked to the endpoint | Two EasyRMM devices claim one endpoint (a cloned disk, a reinstall). Retire the stale device in EasyRMM |
@@ -201,25 +202,25 @@ organization chosen carries over.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="../images/patching-overview-light.png"><img src="../images/patching-overview.png" alt="Patching overview: the share of devices up to date with a bar of the rest, a worklist of what needs attention worst first, and organizations least up to date first"></picture>
 
-The overview counts the devices you can see, as EasyPatch last reported
+The overview counts the devices you can see, as the engine last reported
 them, and refreshes every minute:
 
-* **Up to date**: the share of devices EasyPatch reports on that are up to
-  date, a bar of how the rest stand, and each status with its count, linked
-  to the device list filtered to it. Devices not patched from EasyRMM are
-  counted beside it, not in it.
+* **Up to date**: the share of devices the engine reports on that are up
+  to date, a bar of how the rest stand, and each status with its count,
+  linked to the device list filtered to it. Devices not patched from
+  EasyRMM are counted beside it, not in it.
 * **Needs attention**, worst first, only what has a count: open patching
   alerts (linked to [Alerts](#alerts); acknowledged ones are not counted),
-  devices missing updates for vulnerabilities exploited in the wild (linked
-  to those updates), devices with failed updates, devices missing required updates,
-  devices waiting for a restart, scans out of date or never run, EasyPatch
-  agents out of date or offline, devices not patched from EasyRMM,
-  EasyPatch endpoints with no EasyRMM device, and patch jobs queued or
-  running.
+  devices missing updates for vulnerabilities exploited in the wild
+  (linked to those updates), devices with failed updates, devices missing
+  required updates, devices waiting for a restart, scans out of date or
+  never run, EasyPatch agents out of date or offline, devices not patched
+  from EasyRMM, the engine's endpoints with no EasyRMM device, and patch
+  jobs queued or running.
 * **Organizations, least up to date first**, when there is more than one:
   the share up to date, devices, devices missing required updates, with
   failed updates and missing updates for exploited vulnerabilities.
-* **In EasyPatch, not in EasyRMM**: EasyPatch endpoints of linked
+* **In the patching engine, with no EasyRMM device**: endpoints of linked
   organizations that no EasyRMM device is linked to, so they show nowhere
   else. Install EasyRMM's agent on each machine in the same organization:
   EasyRMM links the device to the EasyPatch agent already there when their
@@ -232,7 +233,7 @@ them, and refreshes every minute:
 The **Devices** tab lists the devices of linked organizations and every
 device with an EasyPatch agent:
 
-* **Status** is EasyPatch's compliance: up to date, updates missing,
+* **Status** is the device's compliance: up to date, updates missing,
   updates failed, restart needed, scan out of date, never scanned. Devices
   not patched from EasyRMM show why.
 * **Missing** counts updates not yet installed (and how many are
@@ -240,8 +241,8 @@ device with an EasyPatch agent:
   the wild.
 * Filters: organization, site, device group, status, name.
 
-Choose devices to **Scan** them, **Install updates** (every update the
-device's EasyPatch policy allows) or **Restart** them (see
+Choose devices to **Scan** them, **Install updates…** (every update the
+device's patch policy allows) or **Restart…** them (see
 [Restarts](#restarts)). The jobs that carry this out are on the
 [Jobs](#jobs) tab.
 
@@ -255,18 +256,18 @@ A device's **Patches** tab shows:
 * the EasyPatch agent's version, and whether it can update itself;
 * updates to install, installed updates, the device's update history and
   its jobs;
-* **Policy**: every value of the EasyPatch policy that applies, with the
+* **Policy**: every value of the patch policy that applies, with the
   layer that set it (the default policy, the organization, the site, a tag
   or the device), and on Windows the Windows Update settings with how the
   device applied them.
 
 Choose updates to install only those. Before an install on one device, the
-dialog shows what EasyPatch would install from the last scan, its size, how
-many updates are likely to need a restart, and which updates it leaves out
-and why (excluded, not in the policy's categories, on hold…). The agent
-scans again before installing.
+dialog shows what the engine would install from the last scan, its size,
+how many updates are likely to need a restart, and which updates it leaves
+out and why (excluded, not in the policy's categories, on hold…). The
+agent scans again before installing.
 
-Scans and installs start when the device next checks in with EasyPatch
+Scans and installs start when the device next checks in with the engine
 (every minute by default). Updates that need a restart finish at the next
 restart.
 
@@ -280,7 +281,7 @@ filter by organization, site, category, the state devices are in, or
 exploitation, search by title, KB or package, and order by the most
 missing, failed or installed.
 
-EasyPatch counts updates over whole organizations or one site. Someone
+The engine counts updates over whole organizations or one site. Someone
 whose role covers single sites of an organization chooses one of them.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="../images/patching-update-light.png"><img src="../images/patching-update.png" alt="An update's page: what it fixes, the vulnerabilities with CISA's exploitation data, and Install where missing, Remove and Hold"></picture>
@@ -291,43 +292,43 @@ to need a restart, what it replaces, the vendor's page), the vulnerabilities
 it fixes with CVSS scores and exploitation (CISA's Known Exploited
 Vulnerabilities catalog, with its due date and ransomware use, or
 Microsoft's report), its holds, and the devices reporting it, filtered by
-state. Devices open their Patches tab; an EasyPatch endpoint with no EasyRMM
-device is shown as such.
+state. Devices open their Patches tab; an endpoint with no EasyRMM device
+is shown as such.
 
 * **Install** on the devices chosen, or **Install where missing…** on every
   device in view where it is missing or failed, except where it is excluded.
-  EasyPatch installs it whatever its category, also when it is on hold.
-  EasyPatch endpoints with no EasyRMM device are left out; devices where you
-  may not install are listed afterwards.
+  It is installed whatever its category, also when it is on hold.
+  Endpoints with no EasyRMM device are left out; devices where you may not
+  install are listed afterwards.
 * **Remove…** uninstalls it from every device in view where it is installed
   or waits for a restart, as **Remove…** on a device's Patches tab does, and
   excludes it there unless you untick it. Only Windows updates are removed;
-  EasyPatch refuses Linux and macOS devices, and each is listed afterwards.
+  the engine refuses Linux and macOS devices, and each is listed afterwards.
   Packages and applications are not offered for removal.
 
 ### Holds
 
 **Hold…** keeps an update out of scheduled installs and installs of every
 missing update, in one organization or, for super administrators, in every
-organization, until the hold is released. A hold needs a reason, shown with
-it in EasyRMM and in EasyPatch. Installing a held update by hand, on its
-page or on a device, still installs it. EasyPatch also holds an update
-itself when it fails on too many of the devices it was tried on (its
-rollout guard); such holds say so.
+organization, until the hold is released. A hold needs a reason, shown
+with it. Installing a held update by hand, on its page or on a device,
+still installs it. The engine also holds an update itself when it fails on
+too many of the devices it was tried on (its rollout guard); such holds
+say so.
 
 **Release hold** lifts it. Holds in an organization are placed and released
 with `patch.configure` there; holds in every organization only by super
-administrators. EasyPatch refuses a second hold in the same place.
+administrators. A second hold in the same place is refused.
 
 ### Jobs
 
-The **Jobs** tab lists EasyPatch's jobs for the devices you can see:
+The **Jobs** tab lists the patch jobs of the devices you can see:
 **Still running** by default, refreshing every few seconds while any is,
 or **All recent**. Filter by organization and type; all recent jobs also by
-status, how they started (by hand, on a schedule, or by EasyPatch itself)
-and when they were requested (the last 24 hours, 7 days or 30 days). The
-tab shows the newest 200 jobs that match and says when older ones are left
-out; narrow the filters to find them.
+status, how they started (by hand, on a schedule, or by the patching
+engine) and when they were requested (the last 24 hours, 7 days or 30
+days). The tab shows the newest 200 jobs that match and says when older
+ones are left out; narrow the filters to find them.
 
 Open a job for its updates, events and progress: when it was requested and
 by whom (or how it started), when a scheduled job starts, until when a
@@ -337,14 +338,14 @@ retry. A running job can be cancelled; until the device stops, the job says
 the cancellation was asked for. A job whose device stopped reporting says
 it ran out of time. A job that failed, was cancelled or expired, or left
 some updates uninstalled, can be run again with **Retry**; the new job
-opens in its place. EasyPatch refuses a retry while the same job is already
+opens in its place. A retry is refused while the same job is already
 queued.
 
 ### Alerts
 
 <picture><source media="(prefers-color-scheme: light)" srcset="../images/patching-alerts-light.png"><img src="../images/patching-alerts.png" alt="Patching, Alerts: open and acknowledged alerts, the most severe first, each with its device, when it opened and who acknowledged it"></picture>
 
-EasyPatch checks its alert rules every 2 minutes and opens an alert for
+The engine checks its alert rules every 2 minutes and opens an alert for
 each device, or organization, a rule matches: a device offline, an update
 that failed to install, a security update missing some days after it
 became required, a scan out of date, a restart waiting some days, EasyPatch
@@ -353,7 +354,7 @@ its end (by the [OS lifecycle](#engine-settings)), an update for an
 exploited vulnerability missing, or an update on hold. It resolves an alert
 itself once its cause is gone; when the cause comes back within an hour it
 opens the same alert again, and after that a new one.
-These are EasyPatch's alerts; EasyRMM's own alerts (disk space, a device
+These are patching alerts; EasyRMM's own alerts (disk space, a device
 offline to EasyRMM's agent) are under **Alerts** in the main menu.
 
 The **Alerts** tab lists those needing attention (open and acknowledged),
@@ -361,13 +362,13 @@ the most severe first, then the newest; show only open, acknowledged or
 resolved ones, or all of them, and filter by organization, severity, type
 of rule and words in the alert. Each alert shows its device, linked to the
 device's Patches tab, or, for an organization's own alert (agents waiting
-for approval, an update on hold), the organization; an EasyPatch endpoint
-with no EasyRMM device shows its host name. You see the alerts of the
-devices whose patching you see; an organization's own alerts, and those of
+for approval, an update on hold), the organization; an endpoint with no
+EasyRMM device shows its host name. You see the alerts of the devices
+whose patching you see; an organization's own alerts, and those of
 endpoints with no EasyRMM device, only when you see the whole
 organization. `?deviceId=` shows one device's alerts.
 
-**Acknowledge** says someone is on it: the alert stays until EasyPatch
+**Acknowledge** says someone is on it: the alert stays until the engine
 resolves it, shows who acknowledged it and when, and is no longer counted
 on the overview. Select several to acknowledge them together. You can
 acknowledge an open alert of a device you manage patching for
@@ -386,8 +387,8 @@ how many it acknowledged.
 
 ### Excluding and removing updates
 
-**Exclude…** on an update to install keeps it off this device: EasyPatch
-installs it neither automatically nor with every update, and it no longer
+**Exclude…** on an update to install keeps it off this device: it is
+installed neither automatically nor with every update, and it no longer
 counts against the device's status. For a Linux package, only that version
 is excluded; a newer version is a new update. **Include** undoes it. An
 update excluded by the policy's excluded KBs is marked so and cannot be
@@ -404,13 +405,13 @@ it. Linux packages are not removed this way.
 
 ### Messages to users
 
-**Message users…** shows one of EasyPatch's preset messages to the people
-signed in to a Windows device, from the EasyPatch icon: updates are
-installing, updates installed, a restart is needed, save your work,
-maintenance tonight, or a restart at a time you choose. Only these messages
-can be sent. A message only names a restart time; **Restart…** restarts the
-device. EasyPatch refuses messages to Linux and macOS devices, and to agents
-without the icon.
+**Message users…** shows a preset message to the people signed in to a
+Windows device, from the EasyPatch icon: updates are installing, updates
+installed, a restart is needed, save your work, maintenance tonight, or a
+restart at a time you choose. Only these messages can be sent. A message
+only names a restart time; **Restart…** restarts the device. The engine
+refuses messages to Linux and macOS devices, and to agents without the
+icon.
 
 ### The EasyPatch agent
 
@@ -418,24 +419,24 @@ The agent row says whether a newer agent is available and whether the
 policy lets agents update themselves. **Update agent…** has it update now:
 at its next check-in it downloads the newest package the engine holds,
 checks its release signature and installs it. An agent built without a
-release key cannot update itself, and EasyPatch refuses to update it;
+release key cannot update itself, and the engine refuses to update it;
 reinstall it once
 ([Updating the agent](../deployment/patching-agent.md#updating-the-agent)).
 
 ### Restarts
 
-**Restart…** is on a device's Patches tab when EasyPatch reports a pending
-restart or the device's EasyPatch agent can restart the computer, and for
-chosen devices on the Patching page. The dialog first asks EasyPatch what
-the restart would do, and lists the devices that will not restart and why:
-no restart is pending, the EasyPatch agent cannot restart the computer
-(update the agent), EasyPatch no longer lists the device's endpoint, or the
-device is not linked.
+**Restart…** is on a device's Patches tab when a restart is pending or the
+device's EasyPatch agent can restart the computer, and for chosen devices
+on the Patching page. The dialog first asks the engine what the restart
+would do, and lists the devices that will not restart and why: no restart
+is pending, the EasyPatch agent cannot restart the computer (update the
+agent), the engine no longer lists the device's endpoint, or the device is
+not linked.
 
 * **Only if a restart is pending** is ticked when any chosen device reports
   one: a device then restarts only if a restart is still pending when the
   job runs. Untick it to restart every chosen device, whatever it reports,
-  at most 100 at once; EasyRMM then reads each one from EasyPatch to tell
+  at most 100 at once; EasyRMM then reads each one from the engine to tell
   servers apart and to check that its agent can restart the computer.
 * **Signed-in users** are treated in one of four ways:
 
@@ -447,18 +448,18 @@ device is not linked.
   | Restart at once | Nothing: it restarts without warning |
 
   A computer nobody is signed in to restarts at once, whatever the choice.
-  Without EasyPatch's tray icon (Linux and macOS agents, or Windows where
-  the icon is not running) the operating system warns instead: a countdown
+  Without the EasyPatch icon (Linux and macOS agents, or Windows where the
+  icon is not running) the operating system warns instead: a countdown
   uses its own shutdown warning (on Linux, the messages of
   `shutdown -r`), a restart with a deadline waits for the deadline, and one
-  without a deadline waits for the tray icon and fails after 7 days.
+  without a deadline waits for the icon and fails after 7 days.
 * **When**: now, or at a time up to 31 days ahead. A device that is offline
   then gets from 15 minutes to 24 hours to come back (two hours by
-  default); otherwise EasyPatch drops its restart.
+  default); otherwise its restart is dropped.
 * **Servers restart only when you tick them**, by name, one by one or all
   at once.
-* EasyPatch runs one job at a time on a device, so a restart never starts
-  in the middle of an install.
+* A device runs one job at a time, so a restart never starts in the
+  middle of an install.
 
 Recurring restarts are part of the patch policy (below).
 
@@ -466,13 +467,13 @@ Recurring restarts are part of the patch policy (below).
 
 <picture><source media="(prefers-color-scheme: light)" srcset="../images/patch-policy-light.png"><img src="../images/patch-policy.png" alt="An organization's Patch policy tab: its tags, then each value with Inherit or Override and where an inherited value comes from: automatic installs and the maintenance window, what installs, application updates, restarts, the agent's schedule and Windows Update settings"></picture>
 
-A patch policy says when EasyPatch scans and installs, what it installs and
+A patch policy says when devices scan and install, what they install and
 how computers restart. It is set in layers, each overriding the ones above
 it:
 
 | Layer | Where | Who changes it |
 |---|---|---|
-| EasyPatch's defaults | Built in | Nobody |
+| Built-in defaults | Built into the engine | Nobody |
 | Default policy | Settings → **Patching** | Super administrators |
 | An organization | The organization's **Patch policy** tab | `patch.configure` in the organization |
 | A site | The site's **Patch policy** tab | `patch.configure` in its organization |
@@ -486,15 +487,15 @@ effect, each value with the layer it comes from.
 Each value of a layer is **Inherit**, shown with where it comes from (for
 example *Every 12 hours · from the organization*), or **Override**. Saving
 keeps exactly the values overridden at that layer. **Inherit everything**
-clears a layer; on the default policy, **Restore EasyPatch's defaults** puts
-EasyPatch's back. Both ask you to type the layer's name. Anyone who sees
-patching in an organization sees its policies; tags' policies need
+clears a layer; on the default policy, **Restore built-in defaults** puts
+the built-in values back. Both ask you to type the layer's name. Anyone who
+sees patching in an organization sees its policies; tags' policies need
 `patch.view` everywhere.
 
 A policy holds:
 
 * **Automatic installs**: on or off; the maintenance window (days, start and
-  length), the only time EasyPatch installs automatically; on Windows,
+  length), the only time updates install automatically; on Windows,
   downloading up to 24 hours ahead; how many days to wait before installing
   security updates (0 to 90) and others (0 to 365); and whether updates
   fixing known-exploited vulnerabilities skip the wait.
@@ -504,7 +505,7 @@ A policy holds:
 * **Application updates** (Windows): winget packages, by ID, updated in the
   maintenance window.
 * **Restarts and users**: a recurring restart, with the same choices as
-  **Restart…**; on Windows, EasyPatch's tray icon and install notifications;
+  **Restart…**; on Windows, the EasyPatch icon and install notifications;
   and EasyPatch agent updates.
 * **Agent schedule**: how often the agent checks in, scans and sends its
   inventory, the spread around those times, when a scan counts as out of
@@ -512,14 +513,14 @@ A policy holds:
   policy, an organization or a site).
 * **Windows Update settings** (Windows): Automatic Updates, feature updates,
   quality updates and pausing, and restart behaviour. Each group is
-  inherited, **left alone** (Windows keeps its own settings, even where a
-  layer above manages them) or **managed**.
+  **Inherit**, **Leave alone** (Windows keeps its own settings, even where
+  a layer above manages them) or **Manage**.
 
 Sections for Windows only are not shown for Linux and macOS devices. Times
 are in the site's time zone; on the default policy, an organization or a
 tag, in each device's site's.
 
-EasyRMM checks a policy as EasyPatch does before saving it, and refuses two
+EasyRMM checks a policy as the engine does before saving it, and refuses two
 things that would stop patching without saying so: no category to install,
 and a layer that turns automatic installs on, or changes the window, with
 no maintenance window left. A tag that turns automatic installs on sets its
@@ -551,7 +552,7 @@ convenient way to try it on a pilot group first.
   afterwards.
 * **Agreements and restarts.** Approving an application accepts its
   package agreements; the policy's *License agreements* applies to Windows
-  updates only. EasyPatch never restarts for an application update: when
+  updates only. The agent never restarts for an application update: when
   the installer needs a restart, the update fails with that reason and the
   next check after a restart confirms it. A third-party installer can still
   restart the computer by itself; approve only applications whose
@@ -565,7 +566,7 @@ cannot run winget.
 
 **Application updates or the Software tab.** Both can update applications
 with winget. The policy's application updates are how applications are kept
-up to date on a schedule: EasyPatch updates the listed packages in the
+up to date on a schedule: the listed packages are updated in the
 maintenance window, like the rest of the policy. A device's **Software** tab
 and Jobs → **Install software**
 ([ADR-0028](../architecture/adr/0028-software-deployment.md)) are one-off
@@ -587,10 +588,10 @@ the tags in use in their organizations.
 
 **Reports** in the main menu has three patch reports
 ([Reports](reports.md#patch-reports)): **Patch compliance**, each device's
-patching as EasyPatch last saw it, with the organizations' compliance trend
-over 30 or 90 days or a year; **Patch installations**, what EasyPatch's jobs
-installed, failed to install, skipped or cancelled; and **Monthly patch
-reports**, a PDF of an organization's patching over a month.
+patching as the engine last saw it, with the organizations' compliance
+trend over 30 or 90 days or a year; **Patch installations**, what patch
+jobs installed, failed to install, skipped or cancelled; and **Monthly
+patch reports**, a PDF of an organization's patching over a month.
 
 A monthly report covers an organization: its compliance, what was
 installed and what failed over the month, and, with **List each device**, a
@@ -602,19 +603,20 @@ report larger than 15 MB cannot be emailed. The list shows the newest 200
 reports; choose an organization to see its own.
 
 Settings → **Patching** → **Report schedules** sets, for each organization,
-a day of the month (1 to 28) on which EasyPatch makes the report of the
+a day of the month (1 to 28) on which the engine makes the report of the
 month before, in the organization's time zone, and emails it to the
 schedule's recipients. A schedule that is on needs at least one recipient.
 Reports made on a schedule are listed with the others, marked
 *Scheduled*, with whether the email was sent.
 
-**Where email comes from.** EasyRMM gives the engine its own mail server, the `EASYRMM_SMTP_` settings in `.env` that
-also send invitations and password resets, each time EasyRMM starts
-(`EASYRMM_SMTP_TLS`: `starttls`, `implicit` or `none`; `EASYRMM_SMTP_FROM`
-may carry a name, as `EasyRMM <rmm@example.com>`). Without
-`EASYRMM_SMTP_HOST`, **Email** and schedules say that EasyRMM has no mail
-server to send reports with. EasyPatch sends reports only over STARTTLS or
-TLS, so `EASYRMM_SMTP_TLS=none` is refused for reports.
+**Where email comes from.** EasyRMM gives the engine its own mail server,
+the `EASYRMM_SMTP_` settings in `.env` that also send invitations and
+password resets, each time EasyRMM starts (`EASYRMM_SMTP_TLS`:
+`starttls`, `implicit` or `none`; `EASYRMM_SMTP_FROM` may carry a name, as
+`EasyRMM <rmm@example.com>`). Without `EASYRMM_SMTP_HOST`, **Email** and
+schedules say that EasyRMM has no mail server to send reports with. The
+engine sends reports only over STARTTLS or TLS, so `EASYRMM_SMTP_TLS=none`
+is refused for reports.
 
 ### Engine settings
 
@@ -624,15 +626,15 @@ first four, and super administrators change them; alert rules and
 notifications are for super administrators only, as they reach every
 organization.
 
-* **Server**: EasyPatch's version and its server settings. *Vulnerability
-  data*: whether EasyPatch downloads CISA's known exploited
+* **Server**: the engine's version and its server settings.
+  *Vulnerability data*: whether the engine downloads CISA's known exploited
   vulnerabilities (every 6 hours), Microsoft's security updates and the
   Debian security tracker (daily), with each feed's last download, its
   entries and its last error; turn it off on a server without internet
-  access. *Rollout guard*: whether EasyPatch holds a Windows update for
-  every organization once it failed on at least so many devices and so
-  many percent of those that tried it, over so many days; the hold is
-  released under Patching → Updates. *Monthly reports*: the "Prepared by"
+  access. *Rollout guard*: whether a Windows update is held for every
+  organization once it failed on at least so many devices and so many
+  percent of those that tried it, over so many days; the hold is released
+  under Patching → Updates. *Monthly reports*: the "Prepared by"
   line (at most 100 characters; empty leaves it out) and how many months
   reports are kept. *Jobs*: installs at once across the server, when a job
   not started expires, when a running one fails, how long one waits for a
@@ -640,19 +642,19 @@ organization.
   and how many offers before it fails. *Agents*: when a device counts as
   offline, how long agent credentials last and how many days before they
   expire agents renew them (fewer than they last). *Keep for*: how long
-  EasyPatch keeps device events (with resolved alerts and notifications),
+  the engine keeps device events (with resolved alerts and notifications),
   its audit log (with the daily compliance records), finished jobs, scan
   results and update history; it deletes older records every 6 hours.
-  EasyRMM checks each value against EasyPatch's bounds before saving and
+  EasyRMM checks each value against the engine's bounds before saving and
   saves only what changed.
 * **OS lifecycle**: when each operating system build stops getting
   security updates, and, where there are any, when paid extended security
-  updates end. EasyPatch matches a Windows device by product (Windows 10,
+  updates end. The engine matches a Windows device by product (Windows 10,
   Windows 11, Windows Server), edition group (Home and Pro, Enterprise and
   Education, Enterprise LTSC, IoT Enterprise LTSC, Server, or Any edition
   as a fallback) and build, and a Linux device by distribution and release
   (Ubuntu's year and month, as 2404; the major version for the others). A
-  device whose build has no entry shows its support as unknown. EasyPatch
+  device whose build has no entry shows its support as unknown. The engine
   comes with entries for the current releases; add one for each new
   release (a new Fedora every six months, for instance) and check the
   dates against the vendor's lifecycle pages. Each product, edition and
@@ -666,15 +668,15 @@ organization.
 * **Audit log**: the engine's audit log, for those with `audit.view`
   and `patch.view`: what EasyRMM's users did through EasyRMM (named by
   their EasyRMM email) and what the engine did on its own, such as the
-  rollout guard holding an update. Organizations and devices carry their EasyRMM names
-  and link to them. Filter by organization, area and day (in your
-  browser's time zone); 50 entries a page, newest first. You see the
+  rollout guard holding an update. Organizations and devices carry their
+  EasyRMM names and link to them. Filter by organization, area and day (in
+  your browser's time zone); 50 entries a page, newest first. You see the
   entries of the organizations whose audit log and patching you see whole;
-  entries of no organization (server settings, the OS lifecycle,
-  EasyPatch's own tasks) are for those who see every organization.
+  entries of no organization (server settings, the OS lifecycle, the
+  engine's own tasks) are for those who see every organization.
   EasyRMM's audit log keeps its own record of what is done here.
 * **Alert rules** (super administrators): what
-  makes EasyPatch raise an [alert](#alerts). EasyPatch comes with one rule
+  makes the engine raise an [alert](#alerts). It comes with one rule
   of each type. A rule has a name, a type, a severity and, for some types,
   a threshold (a device offline for so many hours, from 1 to 720; a
   security update missing so many days after it became required, from 0
@@ -688,19 +690,20 @@ organization.
   Turn a rule off to keep it for later. Changing what a rule looks for, or
   where, or turning it off, resolves its open alerts; the next check opens
   again those that still apply. Deleting a rule resolves its alerts. A rule
-  EasyPatch has for an organization EasyRMM does not link says so and
-  cannot be saved until it covers a linked one.
+  for an organization EasyRMM does not link says so and cannot be saved
+  until it covers a linked one.
 * **Notifications** (super administrators): the
   channels rules send to, and the messages sent.
-  *Channels*: email (up to 20 recipients) or a webhook (`https://` only;
-  Slack, Microsoft Teams Workflows, or generic JSON). EasyPatch keeps a
-  webhook's address encrypted and never shows it again, only its host:
-  leave the address empty when changing a channel to keep it. A generic
-  webhook's messages are signed with HMAC-SHA256 of the body in the
-  `X-EasyPatch-Signature` header; its signing key is shown once, when the
-  channel is added, and a new one can be made (the old one stops working at
-  once). **Send a test** queues a test message (one each 30 seconds per
-  channel). A channel that is off sends nothing; a type cannot change.
+  *Notification channels*: email (up to 20 recipients) or a webhook
+  (`https://` only; Slack, Microsoft Teams Workflows, or generic JSON).
+  The engine keeps a webhook's address encrypted and never shows it again,
+  only its host: leave the address empty when changing a channel to keep
+  it. A generic webhook's messages are signed with HMAC-SHA256 of the body
+  in the `X-EasyPatch-Signature` header; its signing key is shown once,
+  when the channel is added, and a new one can be made (the old one stops
+  working at once). **Send a test** queues a test message (one each 30
+  seconds per channel). A channel that is off sends nothing; a type cannot
+  change.
   Deleting a channel deletes its messages; rules stop sending to it.
   *Messages* start `[EasyRMM]` (for example `[EasyRMM] Warning: PC-042
   has been offline for over 24 hours`, or `[EasyRMM] 7 new alerts`) and
@@ -718,11 +721,11 @@ organization.
   network, so a webhook on the server's own subnet cannot be reached; put
   it behind a router, or use a public address.
   *Messages*: each message to a channel, newest first, with its result and,
-  for one that failed, why. EasyPatch tries a failed message again, waiting
+  for one that failed, why. The engine tries a failed message again, waiting
   longer each time (1, 2, 4 minutes and so on, up to an hour), and gives up
   on a test after 3 attempts.
 
-<picture><source media="(prefers-color-scheme: light)" srcset="../images/patch-server-settings-light.png"><img src="../images/patch-server-settings.png" alt="Settings, Patching, Server: EasyPatch's vulnerability data with each feed's last download and entries, and the rollout guard's settings"></picture>
+<picture><source media="(prefers-color-scheme: light)" srcset="../images/patch-server-settings-light.png"><img src="../images/patch-server-settings.png" alt="Settings, Patching, Server: the engine's vulnerability data with each feed's last download and entries, and the rollout guard's settings"></picture>
 
 The API: `GET` and `PUT /api/v1/patching/settings` (every setting shown
 here; the answer adds `feeds`, `version`, `canEdit` and, when it cannot be
@@ -754,18 +757,18 @@ warns about them; see
 |---|---|---|
 | `patch.view` (with `device.view`) | Patching, a device's Patches tab | Every role |
 | `patch.manage` | Scan, install, restart, cancel, retry, exclude and include updates, remove an update, install or remove an update across devices, message users, install and update the EasyPatch agent, stop and allow patching for a device | Technician and above |
-| `patch.configure` | Change EasyPatch's standing rules: the patch policy of the organization, its sites and devices; hold an update in the organization and release its holds (in every organization, the default policy, tags and tags' policies: super administrators only). Only organization-wide roles hold it | Organization administrator and above |
+| `patch.configure` | Change the standing rules of patching: the patch policy of the organization, its sites and devices; hold an update in the organization and release its holds (in every organization, the default policy, tags and tags' policies: super administrators only). Only organization-wide roles hold it | Organization administrator and above |
 | `report.view` (with `patch.view`) | The patch reports: compliance and installations for the devices you see; the compliance trend, monthly reports and report schedules of organizations you see whole | Every role |
 | `report.view` and `patch.manage` over the organization | Make, email and delete its monthly reports | Technician and above, with an organization-wide role |
 | `report.view` and `patch.configure` over the organization | Change its report schedule | Organization administrator and above |
-| `patch.configure` anywhere | Settings → Patching: the default policy and tags, and EasyPatch's server settings, OS lifecycle and agent packages (changing the server settings and OS lifecycle: super administrators only) | Organization administrator and above |
+| `patch.configure` anywhere | Settings → Patching: the default policy and tags, and the engine's server settings, OS lifecycle and agent packages (changing the server settings and OS lifecycle: super administrators only) | Organization administrator and above |
 | `patch.view` (with `device.view`) | Patching → Alerts: the alerts of the devices you see; an organization's own alerts when you see it whole | Every role |
 | `patch.manage` | Acknowledge alerts: a device's where you manage its patching, an organization's own when you manage the whole organization | Technician and above |
 | `patch.configure` everywhere | Settings → Patching → Alert rules and Notifications | Super administrator |
-| `audit.view` and `patch.view` | Settings → Patching → Audit log: EasyPatch's audit log, for organizations you audit whole; with both everywhere, all of it | Organization administrator and above (a site administrator's role does not cover an organization whole) |
+| `audit.view` and `patch.view` | Settings → Patching → Audit log: the engine's audit log, for organizations you audit whole; with both everywhere, all of it | Organization administrator and above (a site administrator's role does not cover an organization whole) |
 | `settings.manage` | Settings → Patching engine, including automatic installs of the EasyPatch agent | Super administrator |
 
-Both are checked at the device's site before EasyPatch is called; a job is
+Both are checked at the device's site before the engine is called; a job is
 shown only when its device is one you can see. EasyRMM's statement to the
 engine carries the role and organizations of that one call, and the engine
 checks them again.
@@ -774,21 +777,21 @@ checks them again.
 
 | Action | Recorded |
 |---|---|
-| `patch.scan`, `patch.install` | One record per device that started, with the EasyPatch job id; installs record which updates and any scheduled time, and an install from an update's page its update id |
-| `patch.restart` | One record per device that was asked to restart, with the EasyPatch job id, how signed-in users were treated (the countdown or deadline), whether only if a restart is pending or always, how long it waits for an offline device, any scheduled time and the servers you confirmed |
+| `patch.scan`, `patch.install` | One record per device that started, with the job id; installs record which updates and any scheduled time, and an install from an update's page its update id |
+| `patch.restart` | One record per device that was asked to restart, with the job id, how signed-in users were treated (the countdown or deadline), whether only if a restart is pending or always, how long it waits for an offline device, any scheduled time and the servers you confirmed |
 | `patch.cancel` | The job and its device |
 | `patch.exclude`, `patch.include` | The update excluded on the device, or included again, and the reason given |
 | `patch.remove_update` | The update, the removal job, and whether it was excluded too, with the reason; from an update's page, one record per device |
 | `patch.hold`, `patch.release_hold` | The update, the reason and where it is held: the organization, or every organization |
 | `patch.notify` | One record per device messaged: the message, and the restart time it names |
-| `patch.agent_update` | One record per device whose agent was asked to update, with the EasyPatch job id |
+| `patch.agent_update` | One record per device whose agent was asked to update, with the job id |
 | `patch.retry` | The job retried, the new job and the device |
 | `patch.policy_update`, `patch.policy_reset` | The layer (default, organization, site, tag or device) and its name; for a change, the values changed |
 | `patch.tag_create`, `patch.tag_update`, `patch.tag_delete` | The tag's name, colour and priority; a renamed tag's old name; for a deleted one, how many devices had it and whether it had a policy |
 | `patch.tag_assign` | The organization, site or device, and the tags given and taken off |
 | `patch.report_generate`, `patch.report_download`, `patch.report_send`, `patch.report_delete` | A monthly report made (and whether it lists each device), downloaded, emailed (to how many recipients) or deleted: the organization, the month, whether it was the month so far, and the file |
 | `patch.report_schedule` | An organization's report schedule changed: on or off, the day, how many recipients, and whether it lists each device |
-| `patch.settings_update` | EasyPatch's server settings changed: each setting changed, from and to. Saving with nothing changed records nothing |
+| `patch.settings_update` | The engine's server settings changed: each setting changed, from and to. Saving with nothing changed records nothing |
 | `patch.lifecycle_create`, `patch.lifecycle_update`, `patch.lifecycle_delete` | An OS lifecycle entry added, changed or deleted: its product, edition group, build, version and dates |
 | `patch.alert_acknowledge` | Alerts acknowledged: one record per device (how many, and their titles, at most 20), and one per organization for its own alerts |
 | `patch.alert_rule_create`, `patch.alert_rule_update`, `patch.alert_rule_delete` | An alert rule added, changed or deleted: its name, type, severity, threshold, on or off, organization and tag, how many channels, reminders and whether it sends on resolve |
@@ -801,16 +804,16 @@ checks them again.
 | `patch.stop`, `patch.allow` | Patching stopped or allowed again for a device, by whom |
 | `easypatch.organization_create`, `easypatch.organization_adopt`, `easypatch.site_create`, `easypatch.site_adopt` | The engine's organization or site EasyRMM created, or the existing one it took, for which EasyRMM organization or site |
 | `easypatch.organization_archive`, `easypatch.site_archive` | An engine organization or site archived because it was deleted in EasyRMM |
-| `easypatch.import`, `easypatch.organization_import`, `easypatch.site_import` | Another EasyPatch server's data imported: how many organizations and sites were made in EasyRMM or joined EasyRMM's; each organization or site linked, with its name in the engine and in EasyRMM |
+| `easypatch.import`, `easypatch.organization_import`, `easypatch.site_import` | A standalone EasyPatch server's data imported: how many organizations and sites were made in EasyRMM or joined EasyRMM's; each organization or site linked, with its name in the engine and in EasyRMM |
 | `easypatch.agent_uninstall`, `easypatch.endpoint_revoke`, `easypatch.agent_remove` | An uninstall job sent, an endpoint revoked, and a removal finished, each with the device's host name and why |
 
-EasyPatch records each enrollment token EasyRMM creates against the EasyRMM
-user who asked for the install, or EasyRMM for an automatic one.
+The engine records each enrollment token EasyRMM creates against the
+EasyRMM user who asked for the install, or EasyRMM for an automatic one.
 
 ## Limits
 
 * One patching engine per EasyRMM deployment.
-* The device list reads at most 10,000 endpoints per EasyPatch organization
+* The device list reads at most 10,000 endpoints per engine organization
   and shows at most 5,000 devices; the job list shows the newest 200 jobs
   that match its filters.
 * A restart whether or not a restart is pending reaches at most 100 devices
@@ -820,16 +823,15 @@ user who asked for the install, or EasyRMM for an automatic one.
 * The patch installations report reads at most 5,000 rows and says so;
   narrow it by organization, site or period. Its periods go back at most a
   year, as does the compliance trend.
-* The compliance trend has a point a day: EasyPatch records each
+* The compliance trend has a point a day: the engine records each
   organization's compliance every 30 minutes and keeps the day's last
   record (by UTC date), for as long as it keeps its audit log (a year by
   default). Days before an organization had endpoints are not counted.
 * The update list shows 50 updates a page and an update's page 200 devices
   a page. Installing or removing an update across devices reaches at most
   1,000 devices at once: choose an organization or a site beyond that.
-* The overview lists at most 500 EasyPatch endpoints with no EasyRMM
-  device.
-* EasyPatch's audit log shows 50 entries a page, up to page 10,000.
+* The overview lists at most 500 endpoints with no EasyRMM device.
+* The engine's audit log shows 50 entries a page, up to page 10,000.
 * Patching → Alerts shows at most 200 alerts that match, the most severe
   first, and says when there are more; at most 200 are acknowledged at
   once. An organization's alert counts on the overview, for those who see
@@ -913,12 +915,12 @@ intervals plus two minutes is stalled. Every engine response carries an
 | Symptom | Cause and fix |
 |---|---|
 | No alerts appear | Rules are evaluated every two minutes by `easypatch-worker`. Check that the rule is on and covers the organization and tag. Offline devices raise only the offline alert |
-| An alert does not resolve | It resolves after two evaluations without a match. *Scan out of date* clears after a successful scan, *Update installation failed* when no failed update is left |
+| An alert does not resolve | It resolves after two evaluations without a match. *Scan out of date* clears after a successful scan, *Update failed to install* when no failed update is left |
 | No email or chat message | The rule needs channels. Then check the channel's last message under Settings → **Patching** → Notifications |
 | `A stored notification secret cannot be decrypted` | The worker does not see the engine's keys in `${EASYRMM_DATA_ROOT}/easypatch/keys`. If they were lost, enter the webhook addresses again |
 | Webhook refused: private network addresses | Turn on **Allow webhooks to private network addresses** if that is intended |
 | Reports are not emailed | EasyRMM has no mail server (`EASYRMM_SMTP_HOST`), or `EASYRMM_SMTP_TLS=none`: reports go only over STARTTLS or TLS. Reports over 15 MB are not emailed |
 | A scheduled report was not sent | The schedule must be on with recipients. Months that ended before it was turned on are skipped. Organizations east of UTC wait until the month has ended in UTC |
 | Names show as empty boxes in a PDF | The embedded font covers Latin, Greek and Cyrillic only |
-| No CVEs or *Known exploited* anywhere | Settings → **Patching** → Server, *Vulnerability data*: `easypatch-worker` needs outbound HTTPS to `www.cisa.gov`, `raw.githubusercontent.com`, `api.msrc.microsoft.com` and, with Debian devices, `security-tracker.debian.org`. Failed downloads are retried hourly |
+| No CVEs or *Exploited in the wild* anywhere | Settings → **Patching** → Server, *Vulnerability data*: `easypatch-worker` needs outbound HTTPS to `www.cisa.gov`, `raw.githubusercontent.com`, `api.msrc.microsoft.com` and, with Debian devices, `security-tracker.debian.org`. Failed downloads are retried hourly |
 | Some updates have no CVEs | Windows CVEs come from the KB numbers and the build in the device's inventory; Debian needs Debian 12 or 13; RHEL-family and Fedora need advisories in the repository (CentOS Stream has none); Ubuntu is not matched yet |
