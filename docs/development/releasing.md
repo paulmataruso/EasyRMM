@@ -2,10 +2,10 @@
 
 Releases are cut by pushing a version tag. `.github/workflows/release.yml`
 does the rest; nothing is published from a laptop. Each EasyRMM release
-carries the patching engine built from the same commit (one-product plan,
-B8; [ADR-0043](../architecture/adr/0043-one-release.md)), and it is the only
-release: EasyPatch is no longer released on its own (R5,
-[ADR-0046](../architecture/adr/0046-what-one-product-retires.md)).
+carries the patching engine built from the same commit
+([ADR-0043](../architecture/adr/0043-one-release.md)), and it is the only
+release: the engine is not released on its own
+([ADR-0046](../architecture/adr/0046-what-one-product-retires.md)).
 
 ## Versions
 
@@ -143,25 +143,20 @@ gh attestation verify oci://ghcr.io/paulmataruso/easyrmm-server:1.2.3 --repo pau
 gh attestation verify oci://ghcr.io/paulmataruso/easypatch-server:1.10.1 --repo paulmataruso/easyrmm
 ```
 
-## EasyPatch releases
+## The patching engine's earlier releases
 
-EasyPatch is released only as EasyRMM's patching engine, with each EasyRMM
-release (above). Its `easypatch-v*` tags, its own GitHub releases and its
-proxy image went in one-product R3 and R5.
+The engine is released only with EasyRMM (above). Before EasyPatch became
+part of EasyRMM it was released on its own, up to 1.10.0:
 
-* Releases up to 1.10.0, with their downloads, stay in EasyPatch's
+* Those releases, with their downloads, stay in EasyPatch's
   [former repository](https://github.com/paulmataruso/EasyPatch/releases);
-  a server running one is imported
+  their tags are in this repository as `easypatch-v1.10.0` and older. A
+  server running one is imported
   ([Importing a standalone EasyPatch](../operations/import-easypatch.md)).
-* The experimental macOS agent packages were published only with
-  EasyPatch's own releases. They are not in the engine's image, and an
-  EasyRMM release does not build them: `easypatch/scripts/build-macos-packages.sh`
-  builds and signs them by hand.
-* Release signing:
-  [easypatch/docs/security.md](../../easypatch/docs/security.md#agent-release-signing).
-
-## Before the first public release
-
-* Licence clearance for the EasyPatch-derived stylesheet and logo (ADR-0013).
-* The workflow has not run on GitHub yet. Pushing workflow files needs a
-  token with the `workflow` scope.
+* The experimental macOS agent packages were published only with those
+  releases. They are not in the engine's image, and an EasyRMM release does
+  not build them: `easypatch/scripts/build-macos-packages.sh` builds and
+  signs them by hand.
+* How agent packages are signed and checked:
+  [Agent release signing](../architecture/patching-engine.md#agent-release-signing)
+  and [CODE_SIGNING.md](../../CODE_SIGNING.md).

@@ -1,7 +1,7 @@
 # ADR-0044: Authentik, when chosen
 
 * Status: Accepted (2026-11-19)
-* Plan: [one product](../one-product-plan.md), phase A.
+* Plan: the one-product plan (in the repository's history), phase A.
 * Adds to: [ADR-0034](0034-oidc-single-sign-on.md) (single sign-on with
   OpenID Connect). Uses the further names of the edge from phase S0.
 

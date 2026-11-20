@@ -176,7 +176,7 @@ EasyRMM's import script (EasyRMM's `docs/operations/import-easypatch.md`).
   no longer shows it, or when `softwareupdate` says it is completed by a restart (then it is
   shown as waiting for the restart); updates that disappear without a matching
   `softwareupdate --history` entry are not reported installed, and an unreadable listing fails
-  the scan instead of reporting no updates. See [docs/macos-agent.md](docs/macos-agent.md).
+  the scan instead of reporting no updates. See [the EasyPatch agent's macOS section](../docs/deployment/patching-agent.md#macos).
 - Known limitations of the macOS agent: on Apple silicon it cannot install updates that need a
   restart (every macOS update), because Apple allows only a volume owner or MDM to; those fail
   at once with `macos_owner_required`. It gives no on-screen warning before a restart, the
@@ -234,8 +234,7 @@ agents are not sent downloads ahead of the maintenance window.
   read-only or operator, optionally limited to some organizations, expiring after at most 365
   days, revocable, with the time and address of their last use. Sent as
   `Authorization: Bearer ept_…`; only a hash is stored, the secret is shown once, and actions are
-  audited as `token:<name>`. Tokens cannot manage users, API tokens or server settings. See
-  [api.md](docs/api.md#api-tokens).
+  audited as `token:<name>`. Tokens cannot manage users, API tokens or server settings. (API tokens were retired when the engine became part of EasyRMM.)
 
 ### Changed
 

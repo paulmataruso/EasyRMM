@@ -7,7 +7,7 @@
   (ADR-0038), so nobody signs in to EasyPatch any more.
 * Refines: ADR-0006 (sessions and mandatory MFA), ADR-0030 (the EasyPatch
   connector), ADR-0034 (single sign-on).
-* Plan: [EasyPatch integration plan](../easypatch-integration-plan.md),
+* Plan: the EasyPatch integration plan (in the repository's history),
   sections 6.3 and 6.4.
 
 ## Context

@@ -33,7 +33,7 @@ jobs to deliver yet, only enrollment, health and the MeshAgent install.
   body's SHA-256. Requests outside ±5 minutes, reused nonces (kept until
   the request's timestamp plus six minutes, past which it is refused anyway)
   and bodies over 1 MiB are refused.
-  Since the Phase 9 security review, the header is checked before the body
+  Since the security review before the first release, the header is checked before the body
   is read. A request that names no enrolled device, or a device over its
   limits, is refused unread, and a body must arrive within two minutes.
   The timestamp is checked again once the body has arrived. Each device

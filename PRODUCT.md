@@ -83,9 +83,10 @@ Implemented, with the console (IMPLEMENTATION_STATUS.md has the detail):
 - patching: status, scans, installs, restarts, policies, reports and
   patching alerts, with the EasyPatch agent installed from EasyRMM.
 
-Verified on real computers: Linux end to end; Windows Server 2025 for
-install, enrollment, inventory, remote desktop, terminal and files, scripts,
-agent self-updates and patching. Not built yet: MSI, DEB and RPM packages
+Verified on real computers: Linux and Windows Server 2025 for install,
+enrollment, inventory, remote desktop, terminal and files, scripts, agent
+self-updates, and the EasyPatch agent's install and scans; installing a
+Windows update through EasyRMM not yet. Not built yet: MSI, DEB and RPM packages
 of the EasyRMM agent, email and webhook notifications for device alerts
 (patching alerts have them), a released macOS agent.
 

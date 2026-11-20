@@ -42,9 +42,10 @@ command and only ever connect out, over HTTPS.
 
 > **Status: release candidate.** [1.0.0-rc.2](https://github.com/paulmataruso/EasyRMM/releases)
 > is out for testing. On real Windows Server 2025 and Linux computers we
-> have run the install command, enrollment, inventory, remote desktop,
-> terminal and files, scripts, agent self-updates, the EasyPatch agent's
-> install and patching end to end, and an in-place upgrade from rc.1.
+> have run the install command, enrollment and approval, inventory, remote
+> desktop, terminal and files, scripts, the EasyPatch agent's install and
+> scans, and an in-place upgrade from rc.1 in which every agent updated
+> itself.
 > [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) says what works and
 > how each part was verified; [`ROADMAP.md`](ROADMAP.md) says what is left
 > before 1.0.0.

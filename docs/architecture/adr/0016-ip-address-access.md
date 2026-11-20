@@ -135,7 +135,7 @@ An IP address changes four things browsers and agents rely on:
 * The internal authority renews the server certificate with the same key,
   so what MeshCentral reads from `EASYRMM_MESH_CERT_URL` keeps its key
   across renewals.
-* **The authority has no name constraints** (Phase 9 security review). A
+* **The authority has no name constraints** (the security review before the first release). A
   computer that trusts it would accept a certificate for any site signed
   with its key, not only for EasyRMM. Constraining it to the server's
   names and addresses was considered and rejected:

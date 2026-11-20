@@ -11,7 +11,7 @@
   against the engine, and patch views and actions behind EasyRMM's roles.
 * Builds on: ADR-0010 (EasyPatch integration through a service API), ADR-0018
   (inventory).
-* Refines: [docs/integrations/easypatch.md](../../integrations/easypatch.md),
+* Refines: `docs/integrations/easypatch.md` (since replaced by [the patching engine](../patching-engine.md)),
   written against EasyPatch 1.7.1.
 
 ## Context

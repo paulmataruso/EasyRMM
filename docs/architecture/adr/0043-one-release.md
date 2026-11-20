@@ -1,7 +1,7 @@
 # ADR-0043: One release
 
 * Status: Accepted (2026-11-18)
-* Plan: [one product](../one-product-plan.md), phase B8.
+* Plan: the one-product plan (in the repository's history), phase B8.
 * Refines: [ADR-0041](0041-agent-packages-in-the-engine-image.md) (agent
   packages in the engine's image).
 

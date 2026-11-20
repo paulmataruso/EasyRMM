@@ -1,4 +1,4 @@
-# Phase 9 security review
+# Security review before the first release
 
 In November 2026, before the first release, EasyRMM's code was reviewed in
 four parts. Each part was read by a reviewer who had not written it, looking

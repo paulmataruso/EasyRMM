@@ -3,7 +3,7 @@
 * Status: Accepted (2026-11-18), the owner's decision.
 * Supersedes: [ADR-0011](0011-licensing.md) (AGPL-3.0 for EasyRMM).
 * Resolves: the licence open item of [ADR-0013](0013-easypatch-design-system.md).
-* Plan: [one product](../one-product-plan.md), phase L.
+* Plan: the one-product plan (in the repository's history), phase L.
 
 ## Context
 The repository held one project under two licences: EasyRMM's code under

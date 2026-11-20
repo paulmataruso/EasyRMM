@@ -1,7 +1,7 @@
 # ADR-0039: EasyPatch agents on EasyRMM's name
 
 * Status: Accepted (2026-11-18)
-* Plan: [one product](../one-product-plan.md), phase B4.
+* Plan: the one-product plan (in the repository's history), phase B4.
 * Refines: [ADR-0035](0035-cohosting-easypatch.md) (EasyPatch on the same
   server) and [ADR-0038](0038-statements-to-the-patching-engine.md) for the
   engine inside EasyRMM's deployment.

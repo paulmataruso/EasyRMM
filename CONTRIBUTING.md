@@ -3,11 +3,10 @@
 Thank you for helping. EasyRMM manages real computers, so the bar for
 correctness and security is high; these rules keep it that way.
 
-This repository holds the whole product, EasyPatch (its patch management,
-in `easypatch/`) included. These terms cover all of it.
-[easypatch/CONTRIBUTING.md](easypatch/CONTRIBUTING.md) adds the rules
-specific to EasyPatch's code. How the two share the repository and CI is in
-[docs/development/monorepo.md](docs/development/monorepo.md).
+This repository holds the whole product, the patching engine and the
+EasyPatch agent (`easypatch/`) included, and these terms cover all of it.
+The [development guide](docs/development/README.md) has the layout, the
+builds and tests, CI, and the rules for agent and job changes.
 
 ## Licence and contributor terms
 
@@ -34,7 +33,7 @@ change instead of a pull request.
 
 Dependencies must be under a permissive licence (MIT, BSD, ISC, Apache-2.0,
 MPL-2.0). Copyleft licences (GPL, AGPL, LGPL) cannot be accepted: CI checks
-Go modules, the consoles' npm packages and EasyPatch's NuGet packages.
+Go modules, the console's npm packages and the engine's NuGet packages.
 
 ## Ground rules
 
@@ -54,9 +53,8 @@ Go modules, the consoles' npm packages and EasyPatch's NuGet packages.
 
 ## Development environment
 
-Requirements: Go (version in `go.mod`), Node.js 22+, Docker with Compose.
-EasyPatch's (the .NET SDK and Node.js 24) are in
-[easypatch/CONTRIBUTING.md](easypatch/CONTRIBUTING.md).
+Requirements: Go (version in `go.mod`), Node.js 22+, the .NET SDK in
+`easypatch/global.json` for the patching engine, and Docker with Compose.
 
 ```bash
 make test-db            # starts a disposable PostgreSQL on 127.0.0.1:55432
@@ -64,8 +62,8 @@ export EASYRMM_TEST_DATABASE_URL='postgres://postgres:easyrmm-test-only@127.0.0.
 make check              # format check, vet, lint, unit + integration tests
 ```
 
-See [`docs/development/`](docs/development/) for the full guide, including
-frontend development and the Impeccable design workflow.
+The [development guide](docs/development/README.md) has the rest, including
+the patching engine's tests and the console's design workflow.
 
 ## Tests
 
@@ -76,7 +74,8 @@ frontend development and the Impeccable design workflow.
 | Frontend unit (Vitest, coverage floors) | `web/src/**/*.test.{ts,tsx}` | `make web-test` |
 | End-to-end (Playwright, real server and PostgreSQL) | `web/e2e/` | `make e2e` (after `make test-db`) |
 | Security regression (tenant isolation, permissions, agent API, gateway) | `*_integration_test.go` beside the code | part of the above |
-| EasyPatch contract (EasyRMM's calls against the real patching engine built from `easypatch/`, and `eptest`'s answers against its answers) | `server/internal/easypatch/contract_test.go`, build tag `contract` | `make test-contract` (needs Docker) |
+| Patching engine (.NET, with PostgreSQL in Testcontainers) | `easypatch/backend/Tests/`, `easypatch/agent/EasyPatch.Agent.Tests/` | `dotnet test` from `easypatch/` ([guide](docs/development/README.md#building-and-testing)) |
+| Contract (EasyRMM's calls against the real patching engine built from `easypatch/`, and `eptest`'s answers against its answers) | `server/internal/easypatch/contract_test.go`, build tag `contract` | `make test-contract` (needs Docker) |
 
 Integration tests **fail** (they do not skip) when the test database is not
 configured, so CI cannot pass without running them.
@@ -88,7 +87,7 @@ Compose deployment itself, which the tests above do not.
 
 ## UI changes
 
-The console shares EasyPatch's design system (ADR-0013); `DESIGN.md` records
-it. UI work follows the Impeccable workflow and the conventions in
+`DESIGN.md` records the console's design system; its tokens live in
+`web/src/index.css`. UI work follows the Impeccable workflow and the conventions in
 [`docs/development/web-console.md`](docs/development/web-console.md). The
 Impeccable detector runs in CI and blocks merges on findings.

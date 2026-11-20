@@ -16,7 +16,7 @@ secrets/
 !secrets/.gitkeep
 data/
 backups/
-# Machine-local hand-over files (release signing key, assistant notes) — never commit
+# Machine-local files (a release signing key for signed local builds) — never commit
 local/
 *.pfx
 *.pem

@@ -94,7 +94,7 @@ nothing is reinstalled on them. The design is in
    the EasyPatch agent beside it, **Patching** links the two, and the
    device's **Patches** tab shows its history. An EasyRMM agent in
    another organization than its EasyPatch agent is not linked, and
-   **Settings → EasyPatch**, under **Devices not linked**, says why. Its
+   **Settings → Patching engine**, under **Devices not linked**, says why. Its
    EasyPatch agent keeps patching in its own organization.
 
 5. **Retire the old server** once its agents have all come across: in
