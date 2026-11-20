@@ -109,6 +109,10 @@ git -C "$root" cat-file -e "$old_commit^{commit}" 2> /dev/null ||
   git -C "$root" fetch -q --depth 1 origin "$old_commit"
 mkdir -p "$work/old"
 git -C "$root" archive "$old_commit" | tar -x -C "$work/old"
+# Readable by everyone, as a checkout is: tar run as a user who is not root
+# (CI's runner) applies that user's umask, and the image would then carry
+# files its own user cannot read (appsettings.json, for one).
+chmod -R a+rX "$work/old"
 grep -q "version=\"$old_version\"" "$work/old/scripts/build-linux-packages.sh" ||
   { echo "$old_commit is not EasyPatch $old_version" >&2; exit 1; }
 caddy_image=$(sed -n 's/^FROM \(caddy:[^ ]*\)$/\1/p' "$work/old/deployment/caddy/Dockerfile")
