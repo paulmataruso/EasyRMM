@@ -106,7 +106,7 @@ function NotLinked({ patching: d, device }: { patching: DevicePatching; device: 
             : canInstall
               ? "The EasyRMM agent has not reported an EasyPatch agent on this device. EasyRMM can install it and enroll it in the patching engine."
               : "The EasyRMM agent has not reported an EasyPatch agent on this device. On Windows and Linux, someone who manages patching here can have EasyRMM install it; the EasyRMM agent reports it with its next inventory, within an hour.")}
-        {d.link === "pending" && "EasyRMM is making sure the EasyPatch endpoint the device reports is this device. This takes up to a minute."}
+        {d.link === "pending" && "EasyRMM is making sure the endpoint the device's EasyPatch agent reports is this device. This takes up to a minute."}
         {d.link === "unlinked" && (
           <>
             {d.reason}
@@ -167,7 +167,7 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
     <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
       <div className="flex min-w-0 flex-col gap-4 xl:col-span-2">
         {d.error && (
-          <Alert tone="danger" title="EasyPatch could not be read">
+          <Alert tone="danger" title="The patching engine could not be read">
             {d.error}
           </Alert>
         )}
@@ -543,7 +543,7 @@ function Available({
           </EmptyState>
         ) : (
           <EmptyState title="Not scanned yet" compact>
-            EasyPatch lists missing updates after the device's first scan. Scans run on the policy's schedule, or now with Scan now.
+            The patching engine lists missing updates after the device's first scan. Scans run on the policy's schedule, or now with Scan now.
           </EmptyState>
         )}
       </Card>
@@ -683,7 +683,7 @@ function Installed({ patching: d, device, onRemove }: { patching: DevicePatching
     return (
       <Card>
         <EmptyState title="No installed updates recorded" compact>
-          EasyPatch lists updates it has seen installed here after a scan.
+          The patching engine lists updates it has seen installed here after a scan.
         </EmptyState>
       </Card>
     );
@@ -736,7 +736,7 @@ function History({ deviceId }: { deviceId: string }) {
     return (
       <Card>
         <EmptyState title="No update history" compact>
-          The device's own record of updates installed and removed shows here once EasyPatch has read it.
+          The device's own record of updates installed and removed shows here once the patching engine has read it.
         </EmptyState>
       </Card>
     );
@@ -790,7 +790,7 @@ function Jobs({ deviceId, onOpen }: { deviceId: string; onOpen: (id: string) => 
     return (
       <Card>
         <EmptyState title="No patch jobs yet" compact>
-          Scans and installs on this device, started here or by EasyPatch's schedules, show here.
+          Scans and installs on this device, started here or by the patching engine's schedules, show here.
         </EmptyState>
       </Card>
     );

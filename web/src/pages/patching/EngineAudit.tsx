@@ -26,7 +26,7 @@ export const ENGINE_AREAS: [string, string][] = [
   ["settings.", "Server settings"],
   ["lifecycle.", "OS lifecycle"],
   ["auth.", "Sign-ins"],
-  ["user.", "EasyPatch users"],
+  ["user.", "Patching engine users"],
   ["api_token.", "API tokens"],
   ["sso.", "Single sign-on"],
 ];
@@ -101,13 +101,13 @@ function dayStart(date: string, after = false): string | null {
 }
 
 function Who({ e }: { e: PatchAuditEntry }) {
-  if (e.via === "system") return <span className="text-muted">EasyPatch, on its own</span>;
+  if (e.via === "system") return <span className="text-muted">The patching engine, on its own</span>;
   return (
     <span className="flex min-w-0 flex-col items-start gap-0.5">
       <span className="block max-w-48 truncate" title={e.actor}>
         {e.actor}
       </span>
-      <span className="text-xs text-muted">{e.via === "easyrmm" ? "Through EasyRMM" : "In EasyPatch"}</span>
+      <span className="text-xs text-muted">{e.via === "easyrmm" ? "Through EasyRMM" : "In the patching engine"}</span>
     </span>
   );
 }
@@ -137,8 +137,8 @@ export function EngineAuditPanel() {
   return (
     <div className="flex flex-col gap-3">
       <p className="max-w-3xl text-sm text-muted">
-        EasyPatch&apos;s own record: what people did through EasyRMM or in EasyPatch, and what EasyPatch did on its own, such as
-        holding a failing update. EasyRMM&apos;s audit log, under Settings → Audit log, has its own record of what was done here.
+        The patching engine&apos;s own record: what people did through EasyRMM or in the engine directly, and what the engine did on its
+        own, such as holding a failing update. EasyRMM&apos;s audit log, under Settings → Audit log, has its own record of what was done here.
       </p>
       <Toolbar>
         <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, page: null })} />
@@ -183,7 +183,7 @@ export function EngineAuditPanel() {
         <>
           <TableWrap>
             <table className="table-base">
-              <caption className="sr-only">EasyPatch&apos;s audit log</caption>
+              <caption className="sr-only">The patching engine&apos;s audit log</caption>
               <thead>
                 <tr>
                   <th scope="col">When</th>

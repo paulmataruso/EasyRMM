@@ -634,7 +634,7 @@ func (s *Service) PatchDevices(ctx context.Context, c access.Caller, q reports.Q
 		return nil, false, err
 	}
 	if len(fleet.Errors) > 0 {
-		return nil, false, apperr.Unavailable("easypatch_unavailable", "EasyPatch could not be read for the report. "+strings.Join(fleet.Errors, " "))
+		return nil, false, apperr.Unavailable("easypatch_unavailable", "The patching engine could not be read for the report. "+strings.Join(fleet.Errors, " "))
 	}
 	out := make([]reports.PatchDevice, 0, len(fleet.Devices))
 	for _, d := range fleet.Devices {
@@ -646,17 +646,17 @@ func (s *Service) PatchDevices(ctx context.Context, c access.Caller, q reports.Q
 			p.MissingRequired, p.MissingTotal, p.Failed, p.KnownExploited = e.MissingRequiredCount, e.MissingTotalCount, e.FailedCount, e.KnownExploitedCount
 			p.RestartPending, p.Online, p.LastScan, p.LastCheckIn = e.RebootPending, e.IsOnline, e.LastScanAt, e.LastCheckInAt
 		case d.Removal != nil:
-			p.NotPatched = "EasyRMM is removing EasyPatch's agent from the device."
+			p.NotPatched = "EasyRMM is removing the EasyPatch agent from the device."
 		case d.Stopped != nil:
 			p.NotPatched = "Patching was stopped for the device."
 		case d.Reason != "":
 			p.NotPatched = d.Reason
 		case d.Install != nil && d.Install.State == InstallFailed:
-			p.NotPatched = "Installing EasyPatch's agent failed: " + d.Install.Error
+			p.NotPatched = "Installing the EasyPatch agent failed: " + d.Install.Error
 		case d.Install != nil && d.Install.State != InstallSucceeded:
-			p.NotPatched = "EasyPatch's agent is being installed."
+			p.NotPatched = "The EasyPatch agent is being installed."
 		default:
-			p.NotPatched = "EasyPatch's agent is not on the device."
+			p.NotPatched = "The EasyPatch agent is not on the device."
 		}
 		out = append(out, p)
 	}

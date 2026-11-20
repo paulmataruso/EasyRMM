@@ -52,8 +52,8 @@ describe("patching from the engine in this deployment", () => {
     installFakeApi(routes(ENGINE));
     renderApp("/settings?tab=easypatch");
     await screen.findByRole("main");
-    expect(await screen.findByRole("heading", { name: "EasyPatch", level: 1 })).toBeInTheDocument();
-    expect(await main().findByRole("heading", { name: "Patching engine" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Patching engine", level: 1 })).toBeInTheDocument();
+    expect(await main().findByRole("heading", { name: "In this deployment" })).toBeInTheDocument();
     expect(main().getByText("Running")).toBeInTheDocument();
     expect(main().getByText("1.10.0")).toBeInTheDocument();
     expect(main().getByText("http://127.0.0.1:18180")).toBeInTheDocument();

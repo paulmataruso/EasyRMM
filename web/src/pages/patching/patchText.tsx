@@ -42,7 +42,7 @@ export const COMPLIANCE: Record<ComplianceStatus, { label: string; tone: Tone; h
   NeverScanned: {
     label: "Never scanned",
     tone: "neutral",
-    hint: "EasyPatch has not scanned this device yet.",
+    hint: "The device has not scanned for updates yet.",
   },
 };
 
@@ -125,7 +125,7 @@ export const JOB_TYPE_OPTIONS = Object.entries(JOB_TYPES).map(([value, label]) =
 export const JOB_TRIGGERS: Record<string, string> = {
   Manual: "By hand",
   Scheduled: "On a schedule",
-  System: "By EasyPatch",
+  System: "By the patching engine",
 };
 
 export function triggerLabel(trigger: string): string {

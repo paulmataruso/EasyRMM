@@ -74,7 +74,7 @@ const NUMBERS: Record<NumberKey, { label: string; hint?: string; min: number; ma
     text: (v) => plural(v, "day"),
   },
   retentionAuditDays: {
-    label: "EasyPatch's audit log",
+    label: "The patching engine's audit log",
     hint: "And the daily compliance records behind Reports → Patch compliance.",
     min: 30,
     max: 3650,
@@ -108,7 +108,7 @@ const SECTIONS: { title: string; intro?: string; keys: NumberKey[] }[] = [
   { title: "Agents", keys: ["offlineThresholdMinutes", "credentialLifetimeDays", "credentialRotateBeforeDays"] },
   {
     title: "Keep for",
-    intro: "EasyPatch deletes older records every 6 hours.",
+    intro: "The patching engine deletes older records every 6 hours.",
     keys: ["retentionEventsDays", "retentionAuditDays", "retentionJobsDays", "retentionScansDays", "retentionHistoryDays"],
   },
 ];
@@ -153,7 +153,7 @@ function SettingsForm({ view }: { view: PatchSettingsView }) {
   const [form, setForm] = useState<PatchServerSettings>(base);
   const save = useApiMutation((s: PatchServerSettings) => api.put<PatchSettingsView>("/patching/settings", s), {
     invalidate: ["/patching/settings"],
-    onSuccess: () => toast.success("EasyPatch's settings saved."),
+    onSuccess: () => toast.success("Patching engine settings saved."),
   });
   const dirty = canon(form) !== canon(base);
   const errors = Object.fromEntries((Object.keys(NUMBERS) as NumberKey[]).map((k) => [k, numberError(form, k)])) as Record<NumberKey, string | null>;
@@ -197,10 +197,10 @@ function SettingsForm({ view }: { view: PatchSettingsView }) {
   return (
     <form onSubmit={submit} className="flex flex-col gap-4" noValidate>
       <p className="max-w-3xl text-sm text-muted">
-        EasyPatch {view.version}. These settings are the same for every organization; patch policies set the rest, per organization,
+        Patching engine {view.version}. These settings are the same for every organization; patch policies set the rest, per organization,
         site, tag and device.
       </p>
-      {!canEdit && <Alert tone="info">Only super administrators change EasyPatch&apos;s server settings.</Alert>}
+      {!canEdit && <Alert tone="info">Only super administrators change the patching engine&apos;s server settings.</Alert>}
 
       <Card title="Vulnerability data" padded={false}>
         <SettingRow
@@ -288,7 +288,7 @@ function Feeds({ feeds, enabled }: { feeds: PatchVulnerabilityFeed[]; enabled: b
   if (feeds.length === 0) {
     return (
       <p className="px-4 py-3 text-sm text-muted">
-        {enabled ? "EasyPatch has not downloaded vulnerability data yet. Its worker starts within an hour." : "Nothing downloaded."}
+        {enabled ? "The patching engine has not downloaded vulnerability data yet. Its worker starts within an hour." : "Nothing downloaded."}
       </p>
     );
   }

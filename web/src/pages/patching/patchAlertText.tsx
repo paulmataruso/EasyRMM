@@ -17,7 +17,7 @@ export const RULE_KINDS: Record<PatchAlertRuleKind, { label: string; about: stri
   RestartPending: { label: "Restart pending", about: "The device has waited some days for a restart to finish installing." },
   EnrollmentPending: {
     label: "Enrollment waiting for approval",
-    about: "An organization has EasyPatch agents waiting for approval in EasyPatch. One alert for the organization.",
+    about: "An organization has EasyPatch agents waiting for approval in the patching engine. One alert for the organization.",
   },
   OsUnsupported: {
     label: "Operating system unsupported",
@@ -29,7 +29,7 @@ export const RULE_KINDS: Record<PatchAlertRuleKind, { label: string; about: stri
   },
   UpdateHeld: {
     label: "Update on hold",
-    about: "An update the organization's devices need is on hold, so EasyPatch does not install it. One alert for the organization.",
+    about: "An update the organization's devices need is on hold, so the patching engine does not install it. One alert for the organization.",
   },
 };
 

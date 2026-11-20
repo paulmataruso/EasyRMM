@@ -135,13 +135,13 @@ function canon(l: Layer): string {
   );
 }
 
-/** "from the organization", "from the tag Pilot", "EasyPatch's default". */
+/** "from the organization", "from the tag Pilot", "built-in default". */
 export function fromText(source: string | undefined): string {
   if (!source) return "";
   if (source === "Default policy") return "from the default policy";
   if (source === "Organization") return "from the organization";
   if (source === "Site") return "from the site";
-  if (source === "EasyPatch's defaults") return "EasyPatch's default";
+  if (source === "EasyPatch's defaults") return "built-in default";
   if (source.startsWith("Tag ")) return `from the tag ${source.slice(4)}`;
   return `from ${source}`;
 }
@@ -212,7 +212,7 @@ export function PolicyPanel({ level, id, intro }: { level: PolicyLevel; id?: str
       return (
         <EmptyState title="Not in the patching engine yet" icon={<ShieldOff className="size-8" aria-hidden />}>
           This organization has no organization of its own in the patching engine yet, so it has no patch policy. EasyRMM creates it by
-          itself, usually within a few minutes; when it cannot, a super administrator sees why under Settings → EasyPatch.
+          itself, usually within a few minutes; when it cannot, a super administrator sees why under Settings → Patching engine.
         </EmptyState>
       );
     }
@@ -269,7 +269,7 @@ function PolicyForm({ view, path, intro }: { view: PatchPolicyView; path: string
     onSuccess: (r) => {
       done(r);
       setResetting(false);
-      toast.success(top ? "The default policy is EasyPatch's again." : "This policy inherits everything again.");
+      toast.success(top ? "The default policy has its built-in values again." : "This policy inherits everything again.");
     },
   });
 
@@ -562,7 +562,7 @@ function PolicyForm({ view, path, intro }: { view: PatchPolicyView; path: string
       {windows && (
         <Card title="Windows Update settings" padded={false}>
           <p className="border-b border-line px-4 py-3 text-xs text-muted">
-            Windows Update's own settings, which EasyPatch writes on each device. A group EasyPatch does not manage is left as Windows,
+            Windows Update's own settings, which the EasyPatch agent writes on each device. A group it does not manage is left as Windows,
             group policy or MDM set it.
           </p>
           {WU_GROUPS.map(({ key, label }) => {
@@ -614,12 +614,12 @@ function PolicyForm({ view, path, intro }: { view: PatchPolicyView; path: string
               : view.updatedAt
                 ? `Last changed ${formatDateTime(view.updatedAt)}`
                 : top
-                  ? "EasyPatch's defaults, never changed."
+                  ? "Built-in defaults, never changed."
                   : "Nothing set here: everything is inherited."}
           </span>
           {(top || view.hasOwn) && (
             <Button variant="danger-ghost" icon={<RotateCcw className="size-4" aria-hidden />} onClick={() => setResetting(true)}>
-              {top ? "Restore EasyPatch's defaults" : "Inherit everything"}
+              {top ? "Restore built-in defaults" : "Inherit everything"}
             </Button>
           )}
           <Button onClick={() => setForm(clone(base))} disabled={!dirty}>
@@ -638,7 +638,7 @@ function PolicyForm({ view, path, intro }: { view: PatchPolicyView; path: string
           reset.reset();
         }}
         onConfirm={() => reset.mutate(undefined)}
-        title={top ? "Restore EasyPatch's defaults" : "Inherit everything"}
+        title={top ? "Restore built-in defaults" : "Inherit everything"}
         confirmLabel={top ? "Restore defaults" : "Inherit everything"}
         tone="danger"
         loading={reset.isPending}
@@ -647,7 +647,7 @@ function PolicyForm({ view, path, intro }: { view: PatchPolicyView; path: string
       >
         <p>
           {top
-            ? "Every value of the default policy goes back to EasyPatch's own, for every organization that does not set it. Excluded KBs are emptied."
+            ? "Every value of the default policy goes back to its built-in one, for every organization that does not set it. Excluded KBs are emptied."
             : `This removes ${view.name}'s own policy: every value comes from the levels above again, and its excluded KBs go.`}
         </p>
       </ConfirmDialog>

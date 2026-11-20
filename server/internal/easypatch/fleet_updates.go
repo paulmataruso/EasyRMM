@@ -132,7 +132,7 @@ func (s *Service) resolveScope(ctx context.Context, c access.Caller, cl *Client,
 				}
 			}
 			if epSite == nil {
-				return out, apperr.Conflict("easypatch_site_not_found", fmt.Sprintf("EasyPatch has no site named %q in this organization.", name))
+				return out, apperr.Conflict("easypatch_site_not_found", fmt.Sprintf("The patching engine has no site named %q in this organization.", name))
 			}
 		}
 		out.orgs, out.fleet = []uuid.UUID{*ep}, FleetScope{OrganizationID: ep, SiteID: epSite}
@@ -169,7 +169,7 @@ func (s *Service) resolveScope(ctx context.Context, c access.Caller, cl *Client,
 	return out, nil
 }
 
-var errOrgNotLinked = apperr.Conflict("easypatch_not_linked", "This organization is not linked to EasyPatch.")
+var errOrgNotLinked = apperr.Conflict("easypatch_not_linked", "This organization is not in the patching engine yet.")
 
 // Catalog lists updates across the devices in scope, 50 at a time.
 func (s *Service) Catalog(ctx context.Context, c access.Caller, scope UpdateScope, q CatalogQuery) (Page[FleetUpdate], error) {
@@ -482,7 +482,7 @@ func unanswered(res *ActionResult, why string) {
 	}
 }
 
-const unansweredMessage = "EasyPatch did not say what became of this device."
+const unansweredMessage = "The patching engine did not say what became of this device."
 
 // InstallUpdate installs one update on devices where it is missing or
 // failed. It installs whatever the update's category, but not where it is

@@ -120,7 +120,7 @@ export function PatchJobs({ onJob }: { onJob: (id: string) => void }) {
             </EmptyState>
           ) : (
             <EmptyState title={which === "active" ? "No patch jobs running" : "No patch jobs yet"} icon={<ListChecks className="size-8" aria-hidden />} compact>
-              Scans, installs and restarts started here, from a device, or by EasyPatch's own schedules show here.
+              Scans, installs and restarts started here, from a device, or by the patching engine's own schedules show here.
             </EmptyState>
           )}
         </Card>

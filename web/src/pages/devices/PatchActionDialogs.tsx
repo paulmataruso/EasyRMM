@@ -18,7 +18,7 @@ const MAX_REASON = 500;
 /** The one device's outcome of an action, or null when it went through. */
 function refusal(r: PatchActionResult): string | null {
   const first = r.results[0];
-  return r.failed > 0 ? first?.message || "EasyPatch did not say why." : null;
+  return r.failed > 0 ? first?.message || "The patching engine did not say why." : null;
 }
 
 /** Keeps an update off the device: EasyPatch no longer installs it there, automatically or with every update. */
@@ -159,7 +159,7 @@ export function RemoveUpdateDialog({ device, update, onClose, onDone }: { device
               <span>Exclude it on {device.name}</span>
             </label>
             <p id={blockId} className="mt-1 pl-6 text-xs text-subtle">
-              EasyPatch then does not install it again. Windows Update can still offer it if the computer also updates outside EasyPatch.
+              The patching engine then does not install it again. Windows Update can still offer it if the computer also updates outside EasyRMM.
             </p>
           </div>
           {block && (
@@ -173,7 +173,7 @@ export function RemoveUpdateDialog({ device, update, onClose, onDone }: { device
             />
           )}
           {refused && (
-            <Alert tone="danger" title="EasyPatch refused the removal">
+            <Alert tone="danger" title="The patching engine refused the removal">
               {refused}
             </Alert>
           )}
@@ -317,7 +317,7 @@ export function MessageDialog({ open, onClose, device, endpoint }: { open: boole
           </Field>
         )}
         {refused && (
-          <Alert tone="danger" title="EasyPatch did not send the message">
+          <Alert tone="danger" title="The patching engine did not send the message">
             {refused}
           </Alert>
         )}
@@ -371,7 +371,7 @@ export function AgentUpdateDialog({ open, onClose, device, endpoint }: { open: b
           signature and installs it. A package whose signature the agent does not accept is not installed.
         </p>
         {refused && (
-          <Alert tone="danger" title="EasyPatch refused the update">
+          <Alert tone="danger" title="The patching engine refused the update">
             {refused}
           </Alert>
         )}

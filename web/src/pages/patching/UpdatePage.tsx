@@ -122,7 +122,7 @@ export function UpdatePage() {
         >
           <p>
             {h.source === "Automatic"
-              ? `EasyPatch held it after it failed on ${h.failedEndpoints ?? "?"} of ${h.attemptedEndpoints ?? "?"} devices it was tried on.`
+              ? `The patching engine held it after it failed on ${h.failedEndpoints ?? "?"} of ${h.attemptedEndpoints ?? "?"} devices it was tried on.`
               : h.reason}
           </p>
           <p className="mt-1 text-xs text-muted">

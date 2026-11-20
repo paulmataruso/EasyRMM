@@ -141,7 +141,7 @@ func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, 
 		if err := notLinked(d); err != nil {
 			check.Reason = message(err)
 		} else if d.easyPatchOrg == nil {
-			check.Reason = "Its organization is not linked to EasyPatch."
+			check.Reason = "Its organization is not in the patching engine yet."
 		}
 		plan.Devices = append(plan.Devices, check)
 		if check.Reason == "" {
@@ -168,7 +168,7 @@ func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, 
 				e, ok := endpoints[*t.device.endpointID]
 				switch {
 				case !ok:
-					check.Reason = "EasyPatch no longer lists its endpoint."
+					check.Reason = "The patching engine no longer lists its endpoint."
 				case !e.RebootPending && !always:
 					check.Reason = "No restart is pending."
 				default:
@@ -195,7 +195,7 @@ func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, 
 				}
 				switch {
 				case !ok && pending.Total > len(pending.Endpoints):
-					check.Reason = "EasyPatch lists only the first 1,000 restarts pending in this organization; restart it in EasyPatch."
+					check.Reason = "The patching engine lists only the first 1,000 restarts pending in this organization; restart it whether or not one is pending."
 				case !ok:
 					check.Reason = "No restart is pending."
 				case !e.CanRestart:
@@ -215,7 +215,7 @@ func (s *Service) checkAnyRestart(ctx context.Context, cl *Client, endpointID uu
 	e, err := cl.Endpoint(ctx, endpointID)
 	switch {
 	case IsStatus(err, http.StatusNotFound):
-		check.Reason = "EasyPatch no longer lists its endpoint."
+		check.Reason = "The patching engine no longer lists its endpoint."
 	case err != nil:
 		s.noteError(err)
 		return epError(err)
@@ -286,7 +286,7 @@ func (s *Service) Restart(ctx context.Context, c access.Caller, in RestartInput)
 	if len(unconfirmed) > 0 {
 		what := "These are servers"
 		if !plan.ServersKnown {
-			what = "EasyPatch cannot say which of these are servers"
+			what = "The patching engine cannot say which of these are servers"
 		}
 		return ActionResult{}, apperr.Invalid("confirmServers", what+"; confirm restarting them: "+strings.Join(unconfirmed, ", ")+".")
 	}

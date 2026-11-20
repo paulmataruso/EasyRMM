@@ -47,7 +47,7 @@ function ResultDialog({ result, onClose }: { result: PatchActionResult | null; o
             <Link to={`/devices/${r.deviceId}?tab=patches`} className="font-medium hover:text-accent">
               {r.deviceName}
             </Link>
-            <p className="text-muted">{r.message || "EasyPatch did not say why."}</p>
+            <p className="text-muted">{r.message || "The patching engine did not say why."}</p>
           </li>
         ))}
       </ul>
@@ -104,7 +104,7 @@ export function AgentInstallDialog({ open, onClose, devices, onDone }: { open: b
       >
         <ul className="list-disc space-y-1 pl-5 text-sm text-muted">
           <li>A device that already has an EasyPatch agent is left alone, whichever server it is enrolled with.</li>
-          <li>The device joins the EasyPatch site with the same name as its EasyRMM site, or no site when there is none.</li>
+          <li>The device joins the patching engine site with the same name as its EasyRMM site, or no site when there is none.</li>
           <li>
             Linux devices need systemd and apt-get or dnf. If EasyRMM&apos;s certificate comes from a private authority, Linux devices need that
             authority in their certificate store; EasyRMM does not change it.
@@ -195,7 +195,7 @@ function tonight(now = new Date()): Date {
 function InstallPreviewList({ q }: { q: UseQueryResult<PatchInstallPreview> }) {
   if (q.isPending) return <Spinner label="Checking what would be installed…" />;
   if (q.isError) {
-    return <p className="text-xs text-muted">What would be installed could not be checked ({errorMessage(q.error)}). EasyPatch checks again when it installs.</p>;
+    return <p className="text-xs text-muted">What would be installed could not be checked ({errorMessage(q.error)}). The patching engine checks again when it installs.</p>;
   }
   const p = q.data;
   return (
@@ -318,7 +318,7 @@ export function InstallDialog({
         open={open}
         onClose={onClose}
         title={updates ? `Install ${plural(updates.length, "update")} on ${where}` : `Install updates on ${where}`}
-        description={`EasyPatch installs ${what}, downloading what it needs. Updates that need a restart finish at the next one, which the device's EasyPatch policy may schedule.`}
+        description={`The patching engine installs ${what}, downloading what it needs. Updates that need a restart finish at the next one, which the device's patch policy may schedule.`}
         footer={
           <>
             <Button onClick={onClose} disabled={install.isPending}>
@@ -380,7 +380,7 @@ export function InstallDialog({
             </fieldset>
           ) : (
             <p className="text-xs text-muted">
-              Installs start when each device next checks in with EasyPatch. This patching engine cannot install at a later time.
+              Installs start when each device next checks in with the patching engine, which cannot install at a later time.
             </p>
           )}
           <InlineError error={install.error} />
@@ -681,7 +681,7 @@ export function RestartDialog({
                     </p>
                     {mode !== "Immediate" && (
                       <p className="text-xs text-subtle">
-                        Nobody signed in: the device restarts at once. Without EasyPatch&apos;s tray icon (Linux, macOS, or Windows where it is not running),
+                        Nobody signed in: the device restarts at once. Without the EasyPatch icon (Linux, macOS, or Windows where it is not running),
                         users get the system&apos;s shutdown warning, and asking waits for the deadline, or for the icon when there is none.
                       </p>
                     )}
@@ -714,7 +714,7 @@ export function RestartDialog({
                   <Field
                     label="If a device is offline, wait for it"
                     htmlFor={expiryId}
-                    hint="If it does not come back in time, EasyPatch drops its restart."
+                    hint="If it does not come back in time, the patching engine drops its restart."
                     className="w-fit"
                   >
                     <Select id={expiryId} value={expiry} onChange={(e) => setExpiry(Number(e.target.value))} className="w-auto">
@@ -807,7 +807,7 @@ export function PatchJobDialog({ jobId, onClose, onJob }: { jobId: string | null
           <div className="space-y-4">
             <InlineError error={cancel.error ?? retry.error} />
             {s.errorMessage && (
-              <Alert tone="danger" title="EasyPatch reported an error">
+              <Alert tone="danger" title="The patching engine reported an error">
                 {s.errorMessage}
                 {s.errorCode && <span className="block text-xs text-muted">{s.errorCode}</span>}
               </Alert>
@@ -819,7 +819,7 @@ export function PatchJobDialog({ jobId, onClose, onJob }: { jobId: string | null
             )}
             {s.timedOut && (
               <Alert tone="warn" title="The job ran out of time">
-                The device stopped reporting progress, so EasyPatch gave up on it.
+                The device stopped reporting progress, so the patching engine gave up on it.
               </Alert>
             )}
             {isActiveJob(s) && s.progressPercent !== null && <JobProgress percent={s.progressPercent} />}

@@ -988,9 +988,9 @@ export const patchComplianceReport: Report = {
     { key: "os", label: "Operating system", type: "text" },
     { key: "osBuild", label: "Build", type: "text" },
     { key: "osSupport", label: "OS support", type: "text" },
-    { key: "online", label: "Online in EasyPatch", type: "bool" },
+    { key: "online", label: "Patching agent online", type: "bool" },
     { key: "lastScan", label: "Last scan", type: "time" },
-    { key: "lastCheckIn", label: "Last EasyPatch check-in", type: "time" },
+    { key: "lastCheckIn", label: "Last patching check-in", type: "time" },
   ],
   rows: fleet.devices.map((d) => {
     const e = d.endpoint!;

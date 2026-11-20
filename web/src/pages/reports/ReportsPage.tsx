@@ -62,7 +62,7 @@ export const REPORTS: ReportInfo[] = [
     name: "patch-compliance",
     label: "Patch compliance",
     description:
-      "Each device's patching as EasyPatch last saw it: updates missing and failed, restarts pending and operating system support. Devices EasyPatch does not patch say why.",
+      "Each device's patching as the patching engine last saw it: updates missing and failed, restarts pending and operating system support. Devices it does not patch say why.",
     permission: "patch.view",
     filters: ["platform", "compliance", "search"],
     search: { label: "Device", placeholder: "Name or host name" },
@@ -71,7 +71,7 @@ export const REPORTS: ReportInfo[] = [
   {
     name: "patch-installations",
     label: "Patch installations",
-    description: "Each update EasyPatch's jobs finished with over a period, newest first: installed, failed, skipped or cancelled, and why.",
+    description: "Each update the patching engine's jobs finished with over a period, newest first: installed, failed, skipped or cancelled, and why.",
     permission: "patch.view",
     filters: ["installations", "search"],
     search: { label: "Device or update", placeholder: "Device, update or KB" },

@@ -71,7 +71,7 @@ export function PatchTrendCard({ organizationId, siteChosen }: { organizationId:
           />
           <p className="mt-2 text-xs text-muted">
             {latest ? `${latest.compliant.toLocaleString()} of ${latest.totalEndpoints.toLocaleString()} machines were up to date on the last day. ` : ""}
-            EasyPatch keeps a record of each organization a day, updated every 30 minutes
+            The patching engine keeps a record of each organization a day, updated every 30 minutes
             {trend.data.organizations > 1 ? `; this adds up ${trend.data.organizations} organizations` : ""}.
             {siteChosen ? " The trend covers whole organizations, not only the chosen site." : ""}
           </p>

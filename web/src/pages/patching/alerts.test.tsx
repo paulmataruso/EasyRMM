@@ -360,7 +360,7 @@ describe("Settings → Patching → Alert rules", () => {
     const old = row("Old platform");
     expect(within(old).getByText("Off")).toBeInTheDocument();
     expect(within(old).getByText("Once support has ended")).toBeInTheDocument();
-    expect(within(old).getAllByText("An EasyPatch organization EasyRMM does not link")).toHaveLength(2);
+    expect(within(old).getAllByText("A patching engine organization EasyRMM does not link")).toHaveLength(2);
   });
 
   it("adds a rule, checking it as EasyPatch does", async () => {
@@ -447,7 +447,7 @@ describe("Settings → Patching → Alert rules", () => {
     await open("/settings?tab=patching&view=rules");
     await user.click(await main().findByRole("button", { name: "Edit Old platform" }));
     let dialog = within(await screen.findByRole("dialog", { name: "Edit alert rule" }));
-    expect(dialog.getByText(/covers an EasyPatch organization EasyRMM does not link/)).toBeInTheDocument();
+    expect(dialog.getByText(/covers a patching engine organization EasyRMM does not link/)).toBeInTheDocument();
     expect(dialog.getByRole("spinbutton", { name: /Days before support ends/ })).toHaveValue(0);
     expect(dialog.getByRole("checkbox", { name: "Check this rule" })).not.toBeChecked();
     await user.click(dialog.getByRole("button", { name: "Save rule" }));
@@ -474,7 +474,7 @@ describe("Settings → Patching → Alert rules", () => {
     await open("/settings?tab=patching&view=rules");
     await user.click(await main().findByRole("button", { name: "Delete Device offline" }));
     const dialog = await screen.findByRole("dialog", { name: "Delete rule" });
-    expect(dialog).toHaveTextContent("EasyPatch stops checking Device offline and resolves its 2 open alerts.");
+    expect(dialog).toHaveTextContent("The patching engine stops checking Device offline and resolves its 2 open alerts.");
     await user.click(within(dialog).getByRole("button", { name: "Delete rule" }));
     expect(await screen.findByText("Device offline deleted.")).toBeInTheDocument();
     expect(server.call("DELETE /patching/alert-rules/:id").path).toBe("/patching/alert-rules/r1");

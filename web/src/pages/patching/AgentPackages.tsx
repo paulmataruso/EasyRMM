@@ -41,7 +41,7 @@ export function AgentPackagesPanel() {
     <Card title="EasyPatch agent packages" padded={false}>
       <p className="max-w-3xl border-b border-line px-4 py-3 text-sm text-muted">
         The packages the patching engine holds. EasyRMM&apos;s agent installs the newest one for a device&apos;s system and
-        architecture, checking its size and SHA-256; EasyPatch&apos;s agents update to it after checking its release signature.
+        architecture, checking its size and SHA-256; EasyPatch agents update to it after checking its release signature.
       </p>
       {items.length === 0 ? (
         <EmptyState title="No agent packages" icon={<Package className="size-8" aria-hidden />}>

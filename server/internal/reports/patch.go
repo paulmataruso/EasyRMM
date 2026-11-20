@@ -110,9 +110,9 @@ var patchComplianceReport = definition{
 		{"os", "Operating system", TypeText},
 		{"osBuild", "Build", TypeText},
 		{"osSupport", "OS support", TypeText},
-		{"online", "Online in EasyPatch", TypeBool},
+		{"online", "Patching agent online", TypeBool},
 		{"lastScan", "Last scan", TypeTime},
-		{"lastCheckIn", "Last EasyPatch check-in", TypeTime},
+		{"lastCheckIn", "Last patching check-in", TypeTime},
 	},
 	patch: func(ctx context.Context, src PatchSource, c access.Caller, q Query, out emit) (bool, error) {
 		devices, truncated, err := src.PatchDevices(ctx, c, q)

@@ -449,11 +449,11 @@ test("Settings → Patching changes a server setting and the OS lifecycle, lists
 
   // A server setting, saved in the engine and still there after a reload.
   await page.goto("/settings?tab=patching&view=server");
-  await expect(main.getByText(/^EasyPatch \d+\.\d+\.\d+\./)).toBeVisible();
+  await expect(main.getByText(/^Patching engine \d+\.\d+\.\d+\./)).toBeVisible();
   await main.getByRole("textbox", { name: "Prepared by" }).fill("Fabrikam IT");
   await main.getByRole("spinbutton", { name: "Finished jobs" }).fill("120");
   await main.getByRole("button", { name: "Save settings" }).click();
-  await expect(page.getByText("EasyPatch's settings saved.")).toBeVisible();
+  await expect(page.getByText("Patching engine settings saved.")).toBeVisible();
   await page.reload();
   await expect(main.getByRole("spinbutton", { name: "Finished jobs" })).toHaveValue("120");
   await expect(main.getByRole("textbox", { name: "Prepared by" })).toHaveValue("Fabrikam IT");
@@ -494,7 +494,7 @@ test("Settings → Patching changes a server setting and the OS lifecycle, lists
   // EasyPatch's audit log says the EasyRMM user did each, through EasyRMM.
   await page.goto("/settings?tab=patching&view=audit");
   await main.getByLabel("Area").selectOption({ label: "OS lifecycle" });
-  const engineAudit = main.getByRole("table", { name: "EasyPatch's audit log" });
+  const engineAudit = main.getByRole("table", { name: "The patching engine's audit log" });
   for (const action of ["OS lifecycle entry added", "OS lifecycle entry changed", "OS lifecycle entry deleted"]) {
     await expect(engineAudit.getByRole("row").filter({ hasText: action }).filter({ hasText: ADMIN.email })).toContainText("Through EasyRMM");
   }

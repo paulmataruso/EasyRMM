@@ -170,9 +170,9 @@ func (t *installTarget) ineligible() string {
 	case !t.enrolled:
 		return "This device has no EasyRMM agent to install the EasyPatch agent with."
 	case formats(t.platform) == nil:
-		return "EasyPatch has agents for Windows and Linux only."
+		return "The EasyPatch agent is for Windows and Linux only."
 	case agentproto.EasyPatchArch(t.arch) == "":
-		return fmt.Sprintf("EasyPatch has no agent for %s processors.", t.arch)
+		return fmt.Sprintf("There is no EasyPatch agent for %s processors.", t.arch)
 	case !t.inventoried:
 		return "This device's agent has not reported its inventory yet, so EasyRMM cannot tell whether it has an EasyPatch agent. Try again in a few minutes."
 	case t.report != nil && t.report.Status != notEnrolled:
@@ -448,11 +448,11 @@ func (s *Service) instruction(ctx context.Context, deviceID, attempt uuid.UUID, 
 	pkgs, err := cl.AgentPackages(ctx)
 	if err != nil {
 		s.noteError(err)
-		return nil, nil, "EasyPatch could not list its agent packages: " + message(epError(err)), nil
+		return nil, nil, "The patching engine could not list its agent packages: " + message(epError(err)), nil
 	}
 	chosen := choosePackages(pkgs, server, t.platform, agentproto.EasyPatchArch(t.arch))
 	if len(chosen) == 0 {
-		return nil, nil, fmt.Sprintf("EasyPatch has no agent package for %s %s. Its packages are listed under Deploy → Agent packages.",
+		return nil, nil, fmt.Sprintf("The patching engine has no agent package for %s %s. Its packages are listed under Settings → Patching → Agent packages.",
 			platformName(t.platform), agentproto.EasyPatchArch(t.arch)), nil
 	}
 	site := t.easyPatchSite
@@ -460,7 +460,7 @@ func (s *Service) instruction(ctx context.Context, deviceID, attempt uuid.UUID, 
 		sites, err := cl.Sites(ctx, *t.easyPatchOrg)
 		if err != nil {
 			s.noteError(err)
-			return nil, nil, "EasyPatch could not list the organization's sites: " + message(epError(err)), nil
+			return nil, nil, "The patching engine could not list the organization's sites: " + message(epError(err)), nil
 		}
 		for _, x := range sites {
 			if strings.EqualFold(strings.TrimSpace(x.Name), strings.TrimSpace(t.siteName)) {
@@ -472,7 +472,7 @@ func (s *Service) instruction(ctx context.Context, deviceID, attempt uuid.UUID, 
 	token, err := cl.CreateEnrollmentToken(ctx, *t.easyPatchOrg, site, cut("EasyRMM install on "+t.name, 200), onBehalfOf)
 	if err != nil {
 		s.noteError(err)
-		return nil, nil, "EasyPatch did not create an enrollment token: " + message(epError(err)), nil
+		return nil, nil, "The patching engine did not create an enrollment token: " + message(epError(err)), nil
 	}
 	now := s.now()
 	p := agentproto.EasyPatchInstallPayload{
@@ -488,8 +488,8 @@ func (s *Service) instruction(ctx context.Context, deviceID, attempt uuid.UUID, 
 	// would refuse there, with a reason someone can act on.
 	pub, _ := s.signer.Public().(ed25519.PublicKey)
 	if _, err := agentproto.VerifyEasyPatchInstall(pub, signed, deviceID.String(), now); err != nil {
-		return nil, &token.ID, "EasyPatch's address, packages or enrollment token are not in a form the agent accepts: " +
-			strings.TrimPrefix(err.Error(), "agentproto: ") + ". Check EasyPatch's public address (https) and its agent packages.", nil
+		return nil, &token.ID, "The patching engine's address, packages or enrollment token are not in a form the agent accepts: " +
+			strings.TrimPrefix(err.Error(), "agentproto: ") + ". Check the patching engine's public address (https) and its agent packages.", nil
 	}
 	return &signed, &token.ID, "", nil
 }

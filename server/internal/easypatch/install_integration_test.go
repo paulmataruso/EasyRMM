@@ -146,7 +146,7 @@ func TestInstallRequests(t *testing.T) {
 	}
 	want := map[uuid.UUID]string{
 		f.has: "already has an EasyPatch agent (Active)", f.noInv: "has not reported its inventory yet",
-		f.mac: "Windows and Linux only", f.x86: "no agent for 386 processors", f.discovered: "no EasyRMM agent",
+		f.mac: "Windows and Linux only", f.x86: "no EasyPatch agent for 386 processors", f.discovered: "no EasyRMM agent",
 		f.globexDevice: "has no patching organization yet",
 	}
 	for _, r := range res.Results {
@@ -351,14 +351,14 @@ func TestInstallPreparationFails(t *testing.T) {
 		}
 		f.ep.Packages = keep
 	})
-	fails(f.lin, "EasyPatch has no agent package for Linux x64")
+	fails(f.lin, "The patching engine has no agent package for Linux x64")
 	request(f.win)
-	fails(f.win, "EasyPatch has no agent package for Windows x64")
+	fails(f.win, "The patching engine has no agent package for Windows x64")
 	f.ep.Set(func() { f.ep.Packages = packages })
 	// EasyPatch cannot be reached.
 	request(f.lin)
 	f.ep.Set(func() { f.ep.Down = true })
-	fails(f.lin, "EasyPatch could not list its agent packages")
+	fails(f.lin, "The patching engine could not list its agent packages")
 	f.ep.Set(func() { f.ep.Down = false })
 	// The device got an EasyPatch agent meanwhile.
 	request(f.win)
@@ -368,7 +368,7 @@ func TestInstallPreparationFails(t *testing.T) {
 	// The engine refuses the token.
 	request(f.win)
 	f.ep.Set(func() { f.ep.ReadOnly = true })
-	fails(f.win, "EasyPatch did not create an enrollment token")
+	fails(f.win, "The patching engine did not create an enrollment token")
 	f.ep.Set(func() { f.ep.ReadOnly = false })
 	if len(f.ep.Tokens()) != tokens {
 		t.Fatal("a token was created for a failed preparation")

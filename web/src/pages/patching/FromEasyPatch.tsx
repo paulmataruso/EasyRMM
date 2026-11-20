@@ -17,7 +17,7 @@ export function FromEasyPatchPage() {
   if (landing.isError) {
     return (
       <>
-        <PageHeader title="Link from EasyPatch" />
+        <PageHeader title="Link from the patching engine" />
         <ErrorState error={landing.error} onRetry={() => void landing.refetch()} />
       </>
     );

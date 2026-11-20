@@ -332,29 +332,29 @@ func (s *Service) verify(ctx context.Context, c *Client, conn *connRow, cd *cand
 		// An imported EasyPatch's agent (ADR-0045): its endpoint keeps its
 		// history in its own organization, so EasyRMM does not remove it to
 		// install another, as it does for a device that moved.
-		return LinkUnlinked, cut(fmt.Sprintf("In EasyPatch the endpoint belongs to %s, not to %s, the organization linked to this device's. "+
+		return LinkUnlinked, cut(fmt.Sprintf("In the patching engine the endpoint belongs to %s, not to %s, the organization linked to this device's. "+
 			"It came from the imported EasyPatch, so EasyRMM leaves its agent alone: enroll the device's EasyRMM agent in the organization that matches %s.",
 			ep.Summary.OrganizationName, cd.easyPatchOrgName, ep.Summary.OrganizationName), 500), nil
 	case ep.Summary.OrganizationID != *cd.easyPatchOrg:
 		cd.movedFrom = &ep.Summary
-		return LinkUnlinked, cut(fmt.Sprintf("In EasyPatch the endpoint belongs to %s, not to %s, the organization linked to this device's.",
+		return LinkUnlinked, cut(fmt.Sprintf("In the patching engine the endpoint belongs to %s, not to %s, the organization linked to this device's.",
 			ep.Summary.OrganizationName, cd.easyPatchOrgName), 500), nil
 	case ep.Summary.Status != "Active":
-		return LinkUnlinked, fmt.Sprintf("In EasyPatch the endpoint is %s.", strings.ToLower(ep.Summary.Status)), nil
+		return LinkUnlinked, fmt.Sprintf("In the patching engine the endpoint is %s.", strings.ToLower(ep.Summary.Status)), nil
 	}
 	if !holdsKey(ep.Credentials, rep.KeyFingerprint) {
-		return LinkUnlinked, "The key fingerprint the device reported is not one of the EasyPatch endpoint's active credentials.", nil
+		return LinkUnlinked, "The key fingerprint the device reported is not one of the endpoint's active credentials in the patching engine.", nil
 	}
 	host := cd.hostname
 	if host == "" {
 		host = cd.name
 	}
 	if shortHost(ep.Summary.Hostname) != shortHost(host) {
-		return LinkUnlinked, cut(fmt.Sprintf("Host names differ: EasyPatch has %q, EasyRMM has %q.", ep.Summary.Hostname, host), 500), nil
+		return LinkUnlinked, cut(fmt.Sprintf("Host names differ: the patching engine has %q, EasyRMM has %q.", ep.Summary.Hostname, host), 500), nil
 	}
 	a, b := strings.TrimSpace(ep.SerialNumber), strings.TrimSpace(cd.serial)
 	if a != "" && b != "" && !strings.EqualFold(a, b) {
-		return LinkUnlinked, cut(fmt.Sprintf("Serial numbers differ: EasyPatch has %q, EasyRMM has %q.", a, b), 500), nil
+		return LinkUnlinked, cut(fmt.Sprintf("Serial numbers differ: the patching engine has %q, EasyRMM has %q.", a, b), 500), nil
 	}
 	return LinkLinked, "", nil
 }
@@ -380,7 +380,7 @@ func (s *Service) saveLink(ctx context.Context, cd *candidate, endpointID *uuid.
 			err := tx.QueryRow(ctx, `SELECT d.name FROM easypatch_devices e JOIN devices d ON d.id = e.device_id
 				WHERE e.endpoint_id = $1 AND e.state = 'linked' AND e.device_id <> $2`, endpointID, cd.deviceID).Scan(&other)
 			if err == nil {
-				state, reason = LinkUnlinked, cut(fmt.Sprintf("%s is already linked to this EasyPatch endpoint.", other), 500)
+				state, reason = LinkUnlinked, cut(fmt.Sprintf("%s is already linked to this patching engine endpoint.", other), 500)
 			} else if !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}

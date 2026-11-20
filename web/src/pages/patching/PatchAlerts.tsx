@@ -112,7 +112,7 @@ export function PatchAlerts() {
             </EmptyState>
           ) : (
             <EmptyState title="Nothing needs attention" icon={<BellOff className="size-8" aria-hidden />} compact>
-              EasyPatch checks its alert rules every 2 minutes. Alerts it raises for your devices show here until their cause is gone.
+              The patching engine checks its alert rules every 2 minutes. Alerts it raises for your devices show here until their cause is gone.
             </EmptyState>
           )}
         </Card>

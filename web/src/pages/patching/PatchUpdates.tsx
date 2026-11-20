@@ -166,7 +166,7 @@ export function PatchUpdates() {
             </table>
           </TableWrap>
           <Pager page={list.data.page} total={list.data.totalCount} size={list.data.pageSize || 50} onPage={(p) => url.set({ page: p > 1 ? String(p) : null })} />
-          <p className="mt-2 text-xs text-muted">Counted from each device's last scan, as EasyPatch reports it; refreshed every minute.</p>
+          <p className="mt-2 text-xs text-muted">Counted from each device's last scan, as the patching engine reports it; refreshed every minute.</p>
         </>
       )}
     </>

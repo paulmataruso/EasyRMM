@@ -176,7 +176,7 @@ func (e *engine) row(ctx context.Context, now time.Time, force bool) *connRow {
 		cancel()
 		switch {
 		case err == nil && info.Version == "":
-			e.lastError, e.lastErrorAt = "The patching engine does not answer like EasyPatch (no version in /api/v1/server-info).", &now
+			e.lastError, e.lastErrorAt = "The patching engine does not answer as expected (no version in /api/v1/server-info).", &now
 		case err == nil && !can:
 			e.lastError, e.lastErrorAt = "The patching engine does not let EasyRMM act as an administrator.", &now
 		case err == nil:

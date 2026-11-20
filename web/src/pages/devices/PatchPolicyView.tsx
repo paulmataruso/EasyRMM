@@ -20,7 +20,7 @@ function sourceOf<T>(map: Record<string, T> | null | undefined, field: string): 
 }
 
 const LAYERS: Record<string, { label: string; tone: Tone; title: string }> = {
-  Global: { label: "Default", tone: "neutral", title: "EasyPatch's default policy, for every organization" },
+  Global: { label: "Default", tone: "neutral", title: "The default policy, for every organization" },
   Organization: { label: "Organization", tone: "info", title: "The organization's policy" },
   Site: { label: "Site", tone: "accent", title: "The site's policy" },
   Endpoint: { label: "This device", tone: "warn", title: "This device's own policy" },

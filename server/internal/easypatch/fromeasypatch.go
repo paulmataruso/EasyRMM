@@ -31,9 +31,9 @@ type Landing struct {
 
 // The notices.
 const (
-	noticeNotSetUp     = "EasyPatch is not set up in EasyRMM, so EasyRMM cannot tell which of its pages that was."
-	noticeEndpoint     = "That EasyPatch endpoint is not linked to an EasyRMM device you can see."
-	noticeOrganization = "That EasyPatch organization is not linked to an EasyRMM organization you can see."
+	noticeNotSetUp     = "The patching engine is not set up, so EasyRMM cannot tell which of its pages that was."
+	noticeEndpoint     = "That patching engine endpoint is not linked to an EasyRMM device you can see."
+	noticeOrganization = "That patching engine organization is not linked to an EasyRMM organization you can see."
 )
 
 // landingFor builds the console path for what an EasyPatch id resolved to.

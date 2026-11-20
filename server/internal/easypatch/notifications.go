@@ -217,7 +217,7 @@ func (rc ruleContext) ruleInput(in AlertRuleRequest) (AlertRuleInput, error) {
 		NotifyOnResolve: in.NotifyOnResolve, RenotifyHours: in.RenotifyHours, ChannelIDs: dedupe(in.ChannelIDs)}
 	if in.OrganizationID != nil {
 		i := slices.IndexFunc(rc.orgs, func(o reportOrg) bool { return o.id == *in.OrganizationID })
-		f.Check(i >= 0, "organizationId", "Choose an organization linked to EasyPatch.")
+		f.Check(i >= 0, "organizationId", "Choose an organization in the patching engine.")
 		if i >= 0 {
 			out.OrganizationID = &rc.orgs[i].ep
 		}
@@ -295,7 +295,7 @@ func (s *Service) UpdateAlertRule(ctx context.Context, c access.Caller, id uuid.
 	}
 	if cur.UnlinkedOrganization && in.OrganizationID == nil {
 		return AlertRuleView{}, apperr.Invalid("organizationId",
-			"This rule covers an EasyPatch organization EasyRMM does not link: choose an organization, or change the rule in EasyPatch.")
+			"This rule covers a patching engine organization EasyRMM does not link: choose an organization.")
 	}
 	input, err := rc.ruleInput(in)
 	if err != nil {
