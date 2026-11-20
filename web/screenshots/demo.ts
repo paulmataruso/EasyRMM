@@ -407,7 +407,7 @@ function endpoint(d: Device, i: number): PatchEndpoint {
     status: "Active",
     operatingSystem: d.osDescription,
     platform: d.platform === "windows" ? "Windows" : "Linux",
-    agentVersion: d.platform === "windows" ? "1.10.0" : "1.10.0",
+    agentVersion: "1.11.1",
     agentOutdated: false,
     isOnline: d.online,
     lastCheckInAt: d.lastSeenAt,
@@ -434,7 +434,7 @@ export const fleet: PatchFleet = {
       status: "Active",
       operatingSystem: "Windows 11 Pro 24H2",
       platform: "Windows",
-      agentVersion: "1.10.0",
+      agentVersion: "1.11.1",
       agentOutdated: false,
       isOnline: true,
       lastCheckInAt: ago(4),
@@ -1125,7 +1125,7 @@ export const patchServerSettings: PatchSettingsView = {
     { name: "msrc", lastAttemptAt: ago(610), lastSuccessAt: ago(610), version: "2026-Nov", itemCount: 9213 },
     { name: "debian", lastAttemptAt: ago(615), lastSuccessAt: ago(615), itemCount: 41_877 },
   ],
-  version: "1.10.0",
+  version: "1.11.1",
   canEdit: true,
 };
 
