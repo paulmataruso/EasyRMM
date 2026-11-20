@@ -23,8 +23,8 @@ approval; a dashboard; the compliance report and CSV exports; actions on
 one device where EasyRMM sends the bulk routes; and deletes where EasyRMM
 archives or cancels. The agent still carried a second way to enroll. None
 of it can be reached, yet all of it was built, tested, scanned and
-documented, and EasyRMM kept a fallback for engines older than the one it
-ships with.
+documented, and EasyRMM kept fallbacks, and a capability check, for
+engines older than the one it ships with.
 
 ## Decision
 **The engine serves what EasyRMM or its agents reach, and nothing else.**
@@ -71,10 +71,13 @@ the `Dashboard` OpenAPI tag, audit actions, alert rule and settings).
      with `PUT …/tags`.
 4. **EasyRMM's fallbacks for older engines.** The restart plan for engines
    before 1.10.0, which had no `restart-pending` list (every device treated
-   as a server, `serversKnown`), and reading the settings before saving them
-   to keep those EasyRMM did not show: EasyRMM ships with its engine, and
-   now shows every engine setting, which the contract test checks both
-   ways.
+   as a server, `serversKnown`); reading the settings before saving them
+   to keep those EasyRMM did not show; and the check for the
+   `scheduled-installs` capability before offering to install later
+   (`canSchedule`, and Settings' *Install later*), with `capabilities` in
+   the engine's `/api/v1/server-info`, which only that check read. EasyRMM
+   ships with its engine, so it always offers to install later, and now
+   shows every engine setting, which the contract test checks both ways.
 
 **What stays, because something reaches it:**
 
