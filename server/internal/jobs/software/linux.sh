@@ -1,3 +1,4 @@
+#!/bin/sh
 # EasyRMM software action (ADR-0028), run by the EasyRMM agent as root with
 # the computer's own package manager: apt-get, dnf, yum or zypper.
 # Arguments: install, upgrade or uninstall; the package; for install, an

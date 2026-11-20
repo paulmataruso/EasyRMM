@@ -59,6 +59,16 @@ switch ($code) {
     -1978335189 { Write-Output 'No newer version is available.'; exit 0 } # 0x8A15002B
     -1978335135 { Write-Output 'The package is already installed.'; exit 0 } # 0x8A150061
     -1978334967 { Write-Output 'Restart the computer to finish.'; exit 0 } # 0x8A150109
+    -1978335212 {
+        # 0x8A150014, no package found: not installed (uninstall, upgrade), or
+        # no such id in the winget source (install). As on Linux, removing
+        # what is not there succeeds and updating it fails with 3.
+        switch ($action) {
+            'uninstall' { Write-Output "$id is not installed."; exit 0 }
+            'upgrade' { Write-Output "$id is not installed, so it cannot be updated."; exit 3 }
+            default { Write-Output "The winget source has no package with the ID $id."; exit 1 }
+        }
+    }
     default {
         Write-Output ('winget failed: exit code 0x{0:X8}.' -f $code)
         exit 1

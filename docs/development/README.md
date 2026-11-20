@@ -68,6 +68,10 @@ clone: its Compose file builds the engine from `easypatch/`
 * [Drills](drills.md): the backup and restore drill and the load test. Run
   them before a release and after changing `deploy/`, the backup guide or
   anything that affects load.
+* [Hand test: software on Windows](windows-software-hand-test.md): winget
+  and Chocolatey on a real Windows computer, with test scripts to add to
+  the library. Run it before a release and after changing the Windows
+  software scripts.
 * [Releasing](releasing.md): versions, tags and the release workflow.
 
 ## Continuous integration

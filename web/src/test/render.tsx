@@ -4,7 +4,11 @@ import { render } from "@testing-library/react";
 import { MemoryRouter, useLocation } from "react-router";
 import { AuthProvider } from "../auth/AuthContext";
 import { ToastProvider } from "../components/Toast";
-import { App } from "../App";
+import { App, preloadPages } from "../App";
+
+// The console fetches each page when first shown; tests have them all at once, so a page renders as soon as it is
+// routed to.
+await preloadPages();
 
 /** Shows the router location so tests can assert redirects. */
 function LocationProbe() {

@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, type ComponentType, type ReactNode } from "react";
 import { Navigate, Route, Routes, useLocation, useSearchParams } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { keyFor } from "./api/hooks";
@@ -19,31 +19,45 @@ import {
   safeReturnTo,
   SetupPage,
 } from "./pages/auth/AuthPages";
-import { DashboardPage } from "./pages/DashboardPage";
-import { OrganizationsPage } from "./pages/organizations/OrganizationsPage";
-import { OrganizationDetailPage } from "./pages/organizations/OrganizationDetailPage";
-import { SiteDetailPage } from "./pages/organizations/SiteDetailPage";
-import { SettingsPage } from "./pages/settings/SettingsPage";
-import { UserDetailPage } from "./pages/settings/UserDetailPage";
-import { AccountPage } from "./pages/account/AccountPage";
-import { NotFoundPage } from "./pages/NotFoundPage";
-import { AddDevicesPage } from "./pages/devices/AddDevicesPage";
-import { ApprovalsPage } from "./pages/devices/ApprovalsPage";
-import { DevicesPage } from "./pages/devices/DevicesPage";
-import { DeviceDetailPage } from "./pages/devices/DeviceDetailPage";
-import { RemoteSessionPage } from "./pages/devices/RemoteSessionPage";
-import { ScriptsPage } from "./pages/scripts/ScriptsPage";
-import { ScriptDetailPage } from "./pages/scripts/ScriptDetailPage";
-import { ScriptFormPage } from "./pages/scripts/ScriptFormPage";
-import { JobsPage } from "./pages/jobs/JobsPage";
-import { AlertsPage } from "./pages/alerts/AlertsPage";
-import { FromEasyPatchPage } from "./pages/patching/FromEasyPatch";
-import { PatchingPage } from "./pages/patching/PatchingPage";
-import { UpdatePage } from "./pages/patching/UpdatePage";
-import { ReportsPage } from "./pages/reports/ReportsPage";
-import { JobDetailPage } from "./pages/jobs/JobDetailPage";
-import { RunDetailPage } from "./pages/jobs/RunDetailPage";
 import { useReloadWhenOutdated } from "./lib/consoleBuild";
+import { lazyPage, PageFrame, type LazyPage } from "./lib/lazyPage";
+
+// Pages are fetched when first shown (signing in needs none of them), so the console starts with less to load.
+const pages: LazyPage[] = [];
+function page(load: () => Promise<ComponentType>): LazyPage {
+  const lazy = lazyPage(load);
+  pages.push(lazy);
+  return lazy;
+}
+const DashboardPage = page(() => import("./pages/DashboardPage").then((m) => m.DashboardPage));
+const OrganizationsPage = page(() => import("./pages/organizations/OrganizationsPage").then((m) => m.OrganizationsPage));
+const OrganizationDetailPage = page(() => import("./pages/organizations/OrganizationDetailPage").then((m) => m.OrganizationDetailPage));
+const SiteDetailPage = page(() => import("./pages/organizations/SiteDetailPage").then((m) => m.SiteDetailPage));
+const SettingsPage = page(() => import("./pages/settings/SettingsPage").then((m) => m.SettingsPage));
+const UserDetailPage = page(() => import("./pages/settings/UserDetailPage").then((m) => m.UserDetailPage));
+const AccountPage = page(() => import("./pages/account/AccountPage").then((m) => m.AccountPage));
+const NotFoundPage = page(() => import("./pages/NotFoundPage").then((m) => m.NotFoundPage));
+const AddDevicesPage = page(() => import("./pages/devices/AddDevicesPage").then((m) => m.AddDevicesPage));
+const ApprovalsPage = page(() => import("./pages/devices/ApprovalsPage").then((m) => m.ApprovalsPage));
+const DevicesPage = page(() => import("./pages/devices/DevicesPage").then((m) => m.DevicesPage));
+const DeviceDetailPage = page(() => import("./pages/devices/DeviceDetailPage").then((m) => m.DeviceDetailPage));
+const RemoteSessionPage = page(() => import("./pages/devices/RemoteSessionPage").then((m) => m.RemoteSessionPage));
+const ScriptsPage = page(() => import("./pages/scripts/ScriptsPage").then((m) => m.ScriptsPage));
+const ScriptDetailPage = page(() => import("./pages/scripts/ScriptDetailPage").then((m) => m.ScriptDetailPage));
+const ScriptFormPage = page(() => import("./pages/scripts/ScriptFormPage").then((m) => m.ScriptFormPage));
+const JobsPage = page(() => import("./pages/jobs/JobsPage").then((m) => m.JobsPage));
+const AlertsPage = page(() => import("./pages/alerts/AlertsPage").then((m) => m.AlertsPage));
+const FromEasyPatchPage = page(() => import("./pages/patching/FromEasyPatch").then((m) => m.FromEasyPatchPage));
+const PatchingPage = page(() => import("./pages/patching/PatchingPage").then((m) => m.PatchingPage));
+const UpdatePage = page(() => import("./pages/patching/UpdatePage").then((m) => m.UpdatePage));
+const ReportsPage = page(() => import("./pages/reports/ReportsPage").then((m) => m.ReportsPage));
+const JobDetailPage = page(() => import("./pages/jobs/JobDetailPage").then((m) => m.JobDetailPage));
+const RunDetailPage = page(() => import("./pages/jobs/RunDetailPage").then((m) => m.RunDetailPage));
+
+/** Fetches every page now. Tests call it so that pages render at once. */
+export function preloadPages(): Promise<unknown> {
+  return Promise.all(pages.map((p) => p.preload()));
+}
 
 const stageRoutes: Record<Exclude<AuthStage, "loading" | "error" | "ready">, string> = {
   setup: "/setup",
@@ -121,7 +135,7 @@ export function App() {
       <Route path="/recover" element={<RecoverPage />} />
 
       {/* Remote sessions take the whole window. */}
-      <Route path="/devices/:id/remote/:kind" element={<Gate stage="ready"><RemoteSessionPage /></Gate>} />
+      <Route path="/devices/:id/remote/:kind" element={<Gate stage="ready"><PageFrame><RemoteSessionPage /></PageFrame></Gate>} />
 
       <Route element={<Gate stage="ready"><AppLayout /></Gate>}>
         <Route index element={<DashboardPage />} />

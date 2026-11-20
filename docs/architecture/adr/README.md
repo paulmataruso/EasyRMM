@@ -38,7 +38,7 @@ says by which.
 | [0024](0024-enrollment-approval.md) | Installing agents that wait for approval: one command for every computer | Accepted; refines 0015; amended by 0047 |
 | [0025](0025-remote-session-latency.md) | Remote session latency: session view tuning, compression, small socket queues | Accepted; refines 0005, 0014 |
 | [0026](0026-rdp-sessions.md) | RDP sessions: a session kind of its own, the web RDP relay for RDP grants only, sized to the window | Accepted; refines 0005, 0022 |
-| [0027](0027-agent-updates.md) | Coordinated agent updates: builds by hash, a few devices at a time, signed instructions, probation and rollback | Accepted; refines 0008, 0009 |
+| [0027](0027-agent-updates.md) | Coordinated agent updates: builds by hash, a few devices at a time, signed instructions, probation and rollback | Accepted; refines 0008, 0009; refined by 0049 |
 | [0028](0028-software-deployment.md) | Software deployment: install, update and remove through winget, Chocolatey and the Linux package manager, as jobs of EasyRMM's own scripts | Accepted; builds on 0017, 0018 |
 | [0029](0029-reports.md) | Reports: device inventory, installed software, device health and alert history, in the console and as audited CSV downloads | Accepted; builds on 0018, 0019 |
 | [0030](0030-easypatch-connector.md) | EasyPatch connector: one server through an API token, organizations linked by hand, devices linked by what their EasyPatch agent reports, patch views and actions behind EasyRMM roles | Partly superseded by 0046: the API-token connection and links chosen by hand are retired (statements, 0038; one set of organizations, 0040); device links and patch views and actions behind EasyRMM roles stand. Refines 0010 |
@@ -58,6 +58,7 @@ says by which.
 | [0046](0046-what-one-product-retires.md) | What one product retires (phase R): EasyRMM's links to a separate EasyPatch (switch, sign-in across, co-hosting), the API-token connector, EasyPatch's console, proxy, standalone install and release, and its own accounts; each test of living code moves to statements before the path it used is deleted; EasyPatch's account tables stay for imports | Accepted; extended by 0048 |
 | [0047](0047-tokens-shown-again.md) | Deployment and approval tokens can be shown again: the secret kept sealed with the encryption key and bound to the token, shown only while the token is active to those who manage it, every reveal audited, checked against its hash | Accepted; amends 0015 and 0024 |
 | [0048](0048-the-engine-keeps-what-is-reached.md) | The engine keeps what is reached: enrolling with a code and approval (routes, install scripts, alert rule, the agent's side) and the engine routes EasyRMM does not call go; older agents still enroll with a token, a code is refused with `deployment_codes_retired`, and a migration drops the two tables | Accepted; amends 0046 |
+| [0049](0049-operators-sign-windows-agents.md) | Operators sign the Windows agent with their own certificate: they sign the server's builds with their own tools and upload them; the server checks the Authenticode digest is its own build's and the signature verifies, hands the signed build out and updates agents to it; never holds the key | Accepted, not implemented yet; refines 0027 |
 
 ## Superseded
 

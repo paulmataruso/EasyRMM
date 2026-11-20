@@ -3,6 +3,7 @@
 package jobs
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,116 @@ import (
 
 	"golang.org/x/sys/windows"
 )
+
+// runSoftwareScript runs a Windows software script as the agent would, with
+// extra environment, and returns its exit code and output.
+func runSoftwareScript(t *testing.T, body string, env []string, args ...string) (int, string) {
+	t.Helper()
+	script := filepath.Join(t.TempDir(), "software.ps1")
+	if err := os.WriteFile(script, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ps := filepath.Join(os.Getenv("SystemRoot"), `System32\WindowsPowerShell\v1.0\powershell.exe`)
+	cmd := exec.Command(ps, append([]string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script}, args...)...)
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
+	var exit *exec.ExitError
+	if err != nil && !errors.As(err, &exit) {
+		t.Fatalf("powershell: %v %s", err, out)
+	}
+	return cmd.ProcessState.ExitCode(), string(out)
+}
+
+// TestWingetScriptOnWindows runs the winget script against a stand-in
+// winget.exe in App Installer's folder that exits with winget's own codes:
+// removing what is not installed succeeds, updating it fails with 3, as on
+// Linux.
+func TestWingetScriptOnWindows(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(src, []byte(`package main
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+)
+
+func main() {
+	fmt.Println("winget", os.Args[1:])
+	code, _ := strconv.ParseInt(os.Getenv("FAKE_WINGET_EXIT"), 10, 32)
+	os.Exit(int(int32(code)))
+}
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	programFiles := filepath.Join(dir, "pf")
+	app := filepath.Join(programFiles, "WindowsApps", "Microsoft.DesktopAppInstaller_1.2.3.0_x64__8wekyb3d8bbwe")
+	if err := os.MkdirAll(app, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command("go", "build", "-o", filepath.Join(app, "winget.exe"), src)
+	build.Dir = dir
+	build.Env = append(os.Environ(), "GOFLAGS=")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v %s", err, out)
+	}
+
+	// Windows sets ProgramFiles itself when a process starts, so it is set
+	// inside the script: otherwise a computer's own winget runs.
+	setProgramFiles := "$env:ProgramFiles = '" + strings.ReplaceAll(programFiles, "'", "''") + "'\n"
+
+	for _, c := range []struct {
+		action, wingetExit string
+		want               int
+		says               string
+	}{
+		{"install", "0", 0, "--scope machine"},
+		{"install", "-1978335135", 0, "already installed"},      // 0x8A150061
+		{"install", "-1978335212", 1, "has no package"},         // 0x8A150014
+		{"upgrade", "-1978335189", 0, "No newer version"},       // 0x8A15002B
+		{"upgrade", "-1978335212", 3, "cannot be updated"},      // 0x8A150014
+		{"uninstall", "-1978335212", 0, "is not installed"},     // 0x8A150014
+		{"uninstall", "-1978334967", 0, "Restart the computer"}, // 0x8A150109
+		{"uninstall", "5", 1, "exit code 0x00000005"},
+	} {
+		code, out := runSoftwareScript(t, adminOnlyScript+setProgramFiles+wingetScript,
+			[]string{"FAKE_WINGET_EXIT=" + c.wingetExit}, c.action, "Example.Package")
+		if code != c.want || !strings.Contains(out, c.says) {
+			t.Errorf("%s, winget exits %s: exit %d, want %d with %q:\n%s", c.action, c.wingetExit, code, c.want, c.says, out)
+		}
+	}
+}
+
+// TestChocolateyScriptOnWindows asks the Chocolatey script to remove and to
+// update a package that Chocolatey does not have: the first succeeds and the
+// second fails with 3, as on Linux, and choco itself never runs.
+func TestChocolateyScriptOnWindows(t *testing.T) {
+	root := os.Getenv("ChocolateyInstall")
+	if root == "" {
+		root = filepath.Join(os.Getenv("ProgramData"), "chocolatey")
+	}
+	if _, err := os.Stat(filepath.Join(root, "bin", "choco.exe")); err != nil {
+		t.Skipf("Chocolatey is not installed here: %v", err)
+	}
+	const id = "easyrmm-test-not-a-package"
+	for _, c := range []struct {
+		action string
+		want   int
+		says   string
+	}{
+		{"uninstall", 0, id + " is not installed."},
+		{"upgrade", 3, id + " is not installed, so it cannot be updated."},
+	} {
+		code, out := runSoftwareScript(t, adminOnlyScript+chocolateyScript, nil, c.action, id)
+		if code == 2 && strings.Contains(out, "accounts other than administrators") {
+			t.Skipf("this computer's Chocolatey folder is not administrators-only: %s", out)
+		}
+		if code != c.want || !strings.Contains(out, c.says) || strings.Contains(out, "+ choco") {
+			t.Errorf("%s: exit %d, want %d with %q and no choco run:\n%s", c.action, code, c.want, c.says, out)
+		}
+	}
+}
 
 // TestAdminOnlyOnWindows runs the Windows software scripts' Test-AdminOnly
 // against real files: the agent must not run, as LocalSystem, a choco.exe

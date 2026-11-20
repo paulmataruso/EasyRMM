@@ -16,6 +16,12 @@ All notable changes to this project are documented here. The format follows
 - **Messages call the engine the patching engine.** A failed EasyPatch agent
   install on a device's page, and the patching engine's alerts and events,
   no longer call the engine "EasyPatch"; the EasyPatch agent keeps its name.
+- **The console fetches each page when it is first shown.** The script the
+  browser loads first went from 618 kB to 75 kB (plus the libraries, which
+  browsers keep across upgrades). If a page cannot be fetched because
+  EasyRMM was upgraded while the console was open, the console reloads
+  once to get the new version; if it still cannot, it says so and offers
+  **Reload**.
 
 ### Removed
 
@@ -60,6 +66,15 @@ All notable changes to this project are documented here. The format follows
   request that sent `null` for a list, such as `"activeJobIds": null`, got a
   server error; it now gets `400 validation_failed` naming the list.
   EasyPatch agents never send one.
+- **Software on Windows treats a missing package as Linux does.**
+  *Uninstall* of a package that is not installed now succeeds with winget
+  and Chocolatey, as the guide says, instead of failing; *Update* of one
+  fails with exit code 3 and says it is not installed; a winget *Install* of
+  an ID the `winget` source does not have says so. Chocolatey's check uses
+  its own list of installed packages, so `choco` does not run.
+  The guide also said winget's *Install* leaves an installed package as it
+  is; winget updates it when a newer version exists, and the guide now says
+  so.
 
 ## [1.0.0-rc.2] - 2026-11-20
 

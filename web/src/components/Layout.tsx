@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
+import { PageFrame } from "../lib/lazyPage";
 import { Bell, Building2, FileBarChart, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Settings, ShieldCheck, Sun, UserCircle, X } from "lucide-react";
 import { useApi, useWaitingDevices } from "../api/hooks";
 import type { AlertSummary } from "../api/types";
@@ -276,7 +277,9 @@ export function AppLayout() {
           </header>
           <main id="main" className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6 lg:px-8">
             <div className="mx-auto max-w-[1440px]">
-              <Outlet />
+              <PageFrame>
+                <Outlet />
+              </PageFrame>
             </div>
           </main>
         </div>

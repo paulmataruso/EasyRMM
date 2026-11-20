@@ -98,3 +98,11 @@ by the Go integration tests against a real MeshCentral and agent
   dialogs that cannot be dismissed by accident.
 * Server field errors appear on their fields (`fieldError`); everything else
   goes through `InlineError`.
+* Pages are fetched when first shown, so the console starts with only the
+  sign-in pages, the layout and the libraries. Add a page to `src/App.tsx`
+  with `page(() => import("./pages/…").then((m) => m.SomePage))`, not a
+  static import. Tests fetch every page before they start
+  (`src/test/render.tsx`). If a page's file cannot be fetched (after an
+  upgrade the server no longer has the old build's files), the console
+  reloads once, and if it still cannot, says so with a **Reload** button
+  (`src/lib/lazyPage.tsx`).
