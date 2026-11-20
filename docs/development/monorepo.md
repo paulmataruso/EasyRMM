@@ -56,13 +56,9 @@ Never print or copy these files into an issue, a log or a chat.
 
 The engine runs with EasyRMM from `deploy/docker-compose.yml`
 ([Docker](../deployment/docker.md#patching-engine)); it does not run on its
-own any more. Its tests run from `easypatch/` (`dotnet test`, as CI does),
-and the contract tests below run its image against EasyRMM's client.
-
-> **Never run `docker compose` in `easypatch/` without `-p`.** A machine
-> may still run a standalone EasyPatch server whose Compose project is named
-> `easypatch`, the folder's name; an unnamed project there would take over
-> its containers and volumes.
+own any more, and `easypatch/` has no Compose file. Its tests run from
+`easypatch/` (`dotnet test`, as CI does), and the contract tests below run
+its image against EasyRMM's client.
 
 ## Continuous integration
 
@@ -84,8 +80,11 @@ was skipped because its area did not change.
 ### The contract tests
 
 `make test-contract` (CI: **EasyPatch contract**) builds the engine's server
-image from `easypatch/`, starts it with PostgreSQL on the host network with a
-fresh gateway key, and runs `server/internal/easypatch/contract_test.go`
+image from `easypatch/`, starts it with PostgreSQL (the image
+`deploy/docker-compose.yml` pins) on the host network with a gateway key
+made for the run, serving plain HTTP on loopback as in a deployment and
+HTTPS as its public address for agents, and runs
+`server/internal/easypatch/contract_test.go`
 (build tag `contract`). That test:
 
 * enrolls a simulated Debian agent, which signs its requests as EasyPatch's
@@ -99,8 +98,9 @@ fresh gateway key, and runs `server/internal/easypatch/contract_test.go`
   the same questions, and fails when `eptest` sends a field EasyPatch does
   not, or with another JSON type.
 
-It needs Docker and `openssl`, and ports 55433 and 18443 on 127.0.0.1
-(`EASYPATCH_CONTRACT_PG_PORT`, `EASYPATCH_CONTRACT_PORT`). Everything it
+It needs Docker and `openssl`, and ports 55433, 18443 and 18444 on
+127.0.0.1 (`EASYPATCH_CONTRACT_PG_PORT`, `EASYPATCH_CONTRACT_PORT`,
+`EASYPATCH_CONTRACT_ENGINE_PORT`). Everything it
 starts is removed afterwards.
 
 ## The former EasyPatch repository

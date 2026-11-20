@@ -950,7 +950,7 @@ export interface EasyPatchConnection {
   caCert: string;
   serverVersion: string;
   publicUrl: string;
-  /** Optional features the engine lists: "scheduled-installs", "on-behalf-of". */
+  /** Optional features the engine lists: "scheduled-installs". */
   capabilities: string[];
   checkedAt?: string;
   lastError?: string;

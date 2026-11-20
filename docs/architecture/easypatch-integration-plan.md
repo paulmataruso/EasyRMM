@@ -4,6 +4,10 @@
   independent review and by its author. Section 13 lists every finding and
   what changed.
 * Progress: P0 to P4 are built (see section 10). P5 is later work.
+* Superseded in part by the [one-product plan](one-product-plan.md) and
+  [ADR-0046](adr/0046-what-one-product-retires.md): EasyPatch's API tokens,
+  `create-api-token`, on-behalf-of, the connector and the product switch
+  below were removed. This plan is kept as history.
 * Scope: EasyRMM owns EasyPatch. Both live in this repository; EasyPatch is
   under `easypatch/`.
 

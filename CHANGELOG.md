@@ -276,8 +276,8 @@ All notable changes to this project are documented here. The format follows
   history, its own licence (`LICENSING.md`), build, `easypatch-v*` tags and
   release workflow. One CI run checks both and runs only what a change
   touches (`docs/development/monorepo.md`).
-- Contract tests: `make test-contract` runs EasyRMM's EasyPatch connector
-  against a real EasyPatch built from the same commit, and checks the fake
+- Contract tests: `make test-contract` makes EasyRMM's calls against the
+  real patching engine built from the same commit, and checks the fake
   EasyPatch the fast tests use against it.
 - EasyPatch on the same server (ADR-0035): with `EASYRMM_EASYPATCH_HOSTNAME`
   set, EasyRMM's edge keeps ports 80 and 443 and passes EasyPatch's name
@@ -582,6 +582,10 @@ All notable changes to this project are documented here. The format follows
   while editing, on the script's page and before a run.
 
 ### Changed
+- `make test-contract` calls the engine as EasyRMM does: plain HTTP on
+  loopback, each request with a statement signed with a gateway key made
+  for the run. It no longer makes API tokens. Agents still enroll at the
+  engine's HTTPS address.
 - **One release workflow** (one-product plan, phase R5; ADR-0046):
   `release.yml` builds the patching engine in its own jobs instead of
   calling EasyPatch's workflow. The engine's image now gets the same Trivy
@@ -666,6 +670,20 @@ All notable changes to this project are documented here. The format follows
   and its agents' signed requests. Its account tables stay, unused, so
   upgrading needs no migration, and `prepare-import` still disables an
   imported server's accounts.
+- **EasyPatch's API tokens** (phase R2). The patching engine accepts only
+  EasyRMM's statements: `Authorization: Bearer ept_…` answers `401`, even
+  with a token a standalone EasyPatch made, and the engine's
+  `create-api-token` command now fails with a message (exit status 2).
+  `X-EasyPatch-On-Behalf-Of` and the engine's `on-behalf-of` capability are
+  gone: a statement names the EasyRMM user itself. The `api_tokens` table
+  stays, unused (no migration); `prepare-import` still deletes an imported
+  database's tokens.
+- The engine's inert server settings `requireMfa`, `sessionIdleMinutes` and
+  `sessionAbsoluteHours`. A saved value is ignored and dropped at the next
+  save.
+- `easypatch/docker-compose.yml`. The contract test reads its PostgreSQL
+  image from `deploy/docker-compose.yml`, the image the engine's database
+  runs on.
 - **EasyPatch's own releases** (phase R5): `easypatch-release.yml`, its
   `easypatch-v*` tags and GitHub releases. The engine is released only with
   EasyRMM, by `release.yml`. The experimental macOS agent packages, which

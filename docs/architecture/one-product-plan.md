@@ -765,7 +765,11 @@ deployment that was connected to a separate server, that server's links,
 with an audit event. EasyRMM's tests and the contract test call the engine
 with statements; then the engine's API-token scheme and `create-api-token`
 went, so the engine takes statements and its agents' signed requests,
-nothing else.*
+nothing else. `X-EasyPatch-On-Behalf-Of` and the `on-behalf-of` capability
+went with them; the `api_tokens` table stays, unused, like the account
+tables in R4. The engine's inert `requireMfa` and session settings and
+`easypatch/docker-compose.yml` went too: the contract test takes its
+PostgreSQL image from `deploy/docker-compose.yml`.*
 
 *Done (R3): EasyPatch's console (`easypatch/frontend`), proxy image and Caddy
 files, standalone Compose files, `.env.example`, `init-secrets.sh`,
@@ -796,6 +800,14 @@ image tag anyone pulls is pushed before every check and scan of both has
 passed. The experimental
 macOS packages, published only by EasyPatch's own releases, are no longer
 built by a release.*
+
+*Done (R6, the "done when" above): a search of the repository outside the
+history (CHANGELOG, ADRs, these plans, status rows marked Removed) finds no
+route, page, CI job or document for the retired parts; what still names
+them refuses their old settings or reads an imported server's history.
+The README's screenshots were retaken without the product switch. After
+R2 to R6, the bundle and import end-to-end tests and the backup drill
+passed locally.*
 
 ### D. A real test instance
 

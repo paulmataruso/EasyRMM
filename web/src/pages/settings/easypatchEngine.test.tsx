@@ -13,7 +13,7 @@ const ENGINE: EasyPatchConnection = {
   caCert: "",
   serverVersion: "1.10.0",
   publicUrl: "https://rmm.example.com",
-  capabilities: ["scheduled-installs", "on-behalf-of"],
+  capabilities: ["scheduled-installs"],
   checkedAt: T,
 };
 
