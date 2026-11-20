@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Security.Claims;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Api.Security;
 using EasyPatch.Core.Domain;
@@ -70,22 +69,6 @@ public static class OrganizationEndpoints
             audit.Record("organization.update", "Organization", id.ToString(), id, details: request);
             await db.SaveChangesAsync(ct);
             return TypedResults.Ok(await LoadOrganizationAsync(db, id, ct));
-        }).RequireAuthorization(Policies.Operator);
-
-        orgs.MapDelete("/{id:guid}", async (Guid id, EasyPatchDbContext db, ITenantContext tenant, AuditService audit, CancellationToken ct) =>
-        {
-            tenant.EnsureAccess(id);
-            var org = await db.Organizations.FirstOrDefaultAsync(o => o.Id == id, ct) ?? throw AppException.NotFound("Organization");
-            if (await db.Endpoints.AnyAsync(e => e.OrganizationId == id, ct))
-            {
-                throw AppException.Conflict("Delete or move this organization's endpoints first, or archive the organization instead.", "has_endpoints");
-            }
-
-            await db.Jobs.Where(j => j.OrganizationId == id).ExecuteDeleteAsync(ct);
-            db.Organizations.Remove(org);
-            audit.Record("organization.delete", "Organization", id.ToString(), details: new { org.Name });
-            await db.SaveChangesAsync(ct);
-            return TypedResults.NoContent();
         }).RequireAuthorization(Policies.Operator);
 
         orgs.MapPost("/{id:guid}/archive", (Guid id, EasyPatchDbContext db, ITenantContext tenant, AuditService audit, TimeProvider clock, CancellationToken ct) =>
@@ -173,21 +156,6 @@ public static class OrganizationEndpoints
             audit.Record("site.update", "Site", id.ToString(), site.OrganizationId, details: request);
             await db.SaveChangesAsync(ct);
             return TypedResults.Ok(await SiteQuery(db, s => s.Id == id).FirstAsync(ct));
-        }).RequireAuthorization(Policies.Operator);
-
-        sites.MapDelete("/{id:guid}", async (Guid id, EasyPatchDbContext db, ITenantContext tenant, AuditService audit, CancellationToken ct) =>
-        {
-            var site = await db.Sites.FirstOrDefaultAsync(s => s.Id == id, ct) ?? throw AppException.NotFound("Site");
-            tenant.EnsureAccess(site.OrganizationId);
-            if (await db.Endpoints.AnyAsync(e => e.SiteId == id, ct))
-            {
-                throw AppException.Conflict("Move this site's endpoints to another site first, or archive the site instead.", "has_endpoints");
-            }
-
-            db.Sites.Remove(site);
-            audit.Record("site.delete", "Site", id.ToString(), site.OrganizationId, details: new { site.Name });
-            await db.SaveChangesAsync(ct);
-            return TypedResults.NoContent();
         }).RequireAuthorization(Policies.Operator);
 
         sites.MapPost("/{id:guid}/archive", (Guid id, EasyPatchDbContext db, ITenantContext tenant, AuditService audit, TimeProvider clock, CancellationToken ct) =>
@@ -426,7 +394,7 @@ public static class OrganizationEndpoints
     }
 }
 
-/// <summary>Per-organization endpoint aggregates for list and dashboard views.</summary>
+/// <summary>Per-organization endpoint aggregates for the organization list and details.</summary>
 internal static class OrganizationStats
 {
     internal sealed record Row(Guid OrganizationId, int Endpoints, int Online, int Compliant, int MissingRequired, int Failed, int Reboot,

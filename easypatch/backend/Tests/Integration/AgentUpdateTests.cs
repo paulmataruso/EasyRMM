@@ -350,34 +350,6 @@ public sealed class AgentUpdateTests(PostgresFixture postgres) : AgentUpdateTest
         Assert.Equal("1.3.0", detail.Summary.AgentVersion);
         Assert.Equal("agent_up_to_date", detail.AgentUpdate!.Code);
     }
-
-    [Fact]
-    public async Task The_windows_install_script_can_skip_the_certificate_check()
-    {
-        Publish("1.3.0");
-        var code = await Root.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
-            new CreateDeploymentCodeRequest(Org.Id, Site.Id, "Lab servers", 30, null, null), HttpStatusCode.Created);
-
-        var plain = await Root.GetAsync<InstallScriptResponse>($"/api/v1/deployment-codes/{code.Id}/install-script");
-        Assert.False(plain.SkipCertificateCheck);
-        Assert.Equal(code.OneLiner, plain.OneLiner);
-        Assert.DoesNotContain("ServerCertificateValidationCallback", plain.OneLiner, StringComparison.Ordinal);
-        Assert.Contains("$SkipCertificateCheck = $false", plain.Script, StringComparison.Ordinal);
-
-        var skip = await Root.GetAsync<InstallScriptResponse>($"/api/v1/deployment-codes/{code.Id}/install-script?skipCertificateCheck=true&requireSignature=true");
-        Assert.True(skip.SkipCertificateCheck);
-        Assert.True(skip.RequireSignature);
-        Assert.EndsWith($"/downloads/install/{code.Code}.ps1?requireSignature=true&skipCertificateCheck=true", skip.ScriptUrl, StringComparison.Ordinal);
-        Assert.Contains("ServerCertificateValidationCallback={[bool]1}", skip.OneLiner, StringComparison.Ordinal);
-        Assert.Contains(skip.ScriptUrl, skip.OneLiner, StringComparison.Ordinal);
-
-        // The URL in the one-liner serves the same script.
-        using var client = NewHttpClient();
-        var served = await client.GetStringAsync(new Uri(skip.ScriptUrl).PathAndQuery, TestContext.Current.CancellationToken);
-        Assert.Contains("$SkipCertificateCheck = $true", served, StringComparison.Ordinal);
-        Assert.Contains("$RequireSignature = $true", served, StringComparison.Ordinal);
-        Assert.Contains("SERVERCACERT=$serverCa", served, StringComparison.Ordinal);
-    }
 }
 
 /// <summary>The number of automatic agent updates running at once is limited.</summary>

@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using EasyPatch.Api.Endpoints;
 using EasyPatch.Contracts.Security;
 using EasyPatch.Infrastructure.Security;
 using Xunit;
@@ -82,27 +81,6 @@ public sealed class RequestSigningTests
         var fingerprint = AgentKeys.Fingerprint(spki);
         Assert.Matches("^[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}$", fingerprint);
         Assert.Equal(fingerprint, AgentKeys.Fingerprint(spki));
-    }
-}
-
-public sealed class CsvWriterTests
-{
-    [Theory]
-    [InlineData("=HYPERLINK(\"http://evil\")", "\"'=HYPERLINK(\"\"http://evil\"\")\"")]
-    [InlineData("+SUM(A1)", "'+SUM(A1)")]
-    [InlineData("@cmd", "'@cmd")]
-    [InlineData("-1+1", "'-1+1")]
-    [InlineData("PC-01, Floor 2", "\"PC-01, Floor 2\"")]
-    [InlineData("plain", "plain")]
-    public void Escapes_formulas_and_delimiters(string input, string expected) => Assert.Equal(expected, CsvWriter.Escape(input));
-
-    [Fact]
-    public void Numbers_and_dates_are_not_prefixed()
-    {
-        Assert.Equal("-5", CsvWriter.Escape(-5));
-        Assert.Equal("2026-11-13 12:00:00", CsvWriter.Escape(new DateTimeOffset(2026, 11, 13, 12, 0, 0, TimeSpan.Zero)));
-        Assert.Equal("Yes", CsvWriter.Escape(true));
-        Assert.Equal(string.Empty, CsvWriter.Escape(null));
     }
 }
 

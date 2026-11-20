@@ -1,8 +1,6 @@
 using EasyPatch.Api.Contracts;
 using EasyPatch.Api.Security;
-using EasyPatch.Contracts;
 using EasyPatch.Contracts.Agent;
-using EasyPatch.Core.Domain;
 using EasyPatch.Core.Entities;
 using EasyPatch.Infrastructure.Data;
 using EasyPatch.Infrastructure.Services;
@@ -12,9 +10,9 @@ using EndpointEntity = EasyPatch.Core.Entities.Endpoint;
 namespace EasyPatch.Api.Endpoints;
 
 /// <summary>"Restart all that need it" for an organization or one of its sites: the endpoints whose operating system reports a
-/// pending restart. The console lists them first; the administrator's confirmation restarts exactly that list, and only the
-/// endpoints that are still in the scope and still report a pending restart. Each restart is the explicit administrator action
-/// that EasyPatch requires; nothing restarts on its own.</summary>
+/// pending restart. EasyRMM lists them first, then restarts the ones the administrator confirms through <c>bulk/restart</c>, on
+/// condition that a restart is still pending when the agent gets the job. Each restart is the explicit administrator action that
+/// EasyPatch requires; nothing restarts on its own.</summary>
 public static class RestartPendingEndpoints
 {
     public const int MaxEndpoints = 1000;
@@ -42,56 +40,6 @@ public static class RestartPendingEndpoints
                 .ToList()));
         });
 
-        orgs.MapPost("/{id:guid}/restart-pending", async (Guid id, RestartPendingRequest request, EasyPatchDbContext db, ITenantContext tenant,
-            JobService jobs, TimeProvider clock, CancellationToken ct) =>
-        {
-            await EnsureScopeAsync(db, tenant, id, request.SiteId, ct);
-            var ids = (request.EndpointIds ?? []).Distinct().ToList();
-            if (ids.Count is 0 or > MaxEndpoints)
-            {
-                throw AppException.BadRequest($"Select between 1 and {MaxEndpoints} endpoints.", "validation_failed");
-            }
-
-            ArgumentNullException.ThrowIfNull(request.Restart);
-            // The agent checks again when the job arrives and completes without restarting if nothing is pending any more.
-            var restart = request.Restart with { Condition = RestartCondition.OnlyIfPending };
-            var now = clock.GetUtcNow();
-            var endpoints = await db.Endpoints.AsNoTracking().Where(e => ids.Contains(e.Id))
-                .Select(e => new { e.Id, e.Hostname, e.OrganizationId, e.SiteId, e.Status, e.RebootPending })
-                .ToDictionaryAsync(e => e.Id, ct);
-            var results = new List<BulkItemResult>();
-            foreach (var endpointId in ids)
-            {
-                if (!endpoints.TryGetValue(endpointId, out var e) || e.OrganizationId != id || (request.SiteId is { } site && e.SiteId != site) ||
-                    e.Status != EndpointStatus.Active)
-                {
-                    results.Add(new BulkItemResult(endpointId, null, false, null, "out_of_scope",
-                        request.SiteId is null ? "Not an active endpoint of this organization." : "Not an active endpoint of this site."));
-                    continue;
-                }
-
-                if (!e.RebootPending)
-                {
-                    results.Add(new BulkItemResult(endpointId, e.Hostname, false, null, "no_restart_pending",
-                        "No longer reports a pending restart, so it was not restarted."));
-                    continue;
-                }
-
-                try
-                {
-                    var job = await jobs.CreateAsync(EndpointEndpoints.RestartJob(endpointId, restart, now), ct);
-                    results.Add(new BulkItemResult(endpointId, e.Hostname, true, job.Id, null, null));
-                }
-                catch (AppException ex)
-                {
-                    db.ChangeTracker.Clear();
-                    var existing = ex.Extensions.TryGetValue("existingJobId", out var value) ? value as Guid? : null;
-                    results.Add(new BulkItemResult(endpointId, e.Hostname, false, existing, ex.Code, ex.Message));
-                }
-            }
-
-            return TypedResults.Ok(new BulkResultDto(results.Count(r => r.Success), results.Count(r => !r.Success), results));
-        }).RequireAuthorization(Policies.Operator);
     }
 
     private static IQueryable<EndpointEntity> Pending(EasyPatchDbContext db, Guid organizationId, Guid? siteId)

@@ -2,8 +2,6 @@ package easypatch
 
 import (
 	"context"
-	"encoding/json"
-	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -18,9 +16,8 @@ import (
 
 const settingsPath = "/api/v1/settings"
 
-// ServerSettings are the EasyPatch server settings EasyRMM shows. EasyPatch
-// has more (its own console's sign-in and sessions, and approvals of
-// deployment codes): SetServerSettings keeps those as they are.
+// ServerSettings are EasyPatch's server settings, all of which EasyRMM
+// shows (the contract test checks that EasyPatch has no others).
 type ServerSettings struct {
 	GlobalMaxConcurrentInstalls int `json:"globalMaxConcurrentInstalls"`
 	JobDefaultExpiryHours       int `json:"jobDefaultExpiryHours"`
@@ -59,28 +56,10 @@ func (c *Client) ServerSettings(ctx context.Context) (ServerSettings, error) {
 	return s, err
 }
 
-// SetServerSettings changes EasyPatch's server settings. EasyPatch replaces
-// them all, so the ones EasyRMM does not show are read first and sent back
-// as they are.
+// SetServerSettings replaces EasyPatch's server settings.
 func (c *Client) SetServerSettings(ctx context.Context, in ServerSettings) (ServerSettings, error) {
-	var current map[string]json.RawMessage
-	if err := c.do(ctx, http.MethodGet, settingsPath, nil, nil, "", &current); err != nil {
-		return ServerSettings{}, err
-	}
-	b, err := json.Marshal(in)
-	if err != nil {
-		return ServerSettings{}, err
-	}
-	var changed map[string]json.RawMessage
-	if err := json.Unmarshal(b, &changed); err != nil {
-		return ServerSettings{}, err
-	}
-	if current == nil {
-		current = map[string]json.RawMessage{}
-	}
-	maps.Copy(current, changed)
 	var out ServerSettings
-	err = c.do(ctx, http.MethodPut, settingsPath, nil, current, "", &out)
+	err := c.do(ctx, http.MethodPut, settingsPath, nil, in, "", &out)
 	return out, err
 }
 

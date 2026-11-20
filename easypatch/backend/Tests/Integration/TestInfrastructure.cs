@@ -285,15 +285,18 @@ public sealed class SignedAgent(HttpClient http, TimeProvider clock) : IDisposab
         Model = "Desktop 9000",
     };
 
-    public Task<HttpResponseMessage> EnrollAsync(string? token, string? deploymentCode, string hostname) =>
+    public Task<HttpResponseMessage> EnrollAsync(string? token, string hostname) =>
         http.PostAsJsonAsync(new Uri("/" + AgentRoutes.Enroll, UriKind.Relative), new EnrollRequest
         {
             EnrollmentToken = token,
-            DeploymentCode = deploymentCode,
             PublicKey = PublicKeyBase64,
             AgentVersion = "1.0.0",
             Device = Device(hostname),
         }, TestJson.Options);
+
+    /// <summary>An enroll request exactly as written, e.g. as an older agent sends it.</summary>
+    public Task<HttpResponseMessage> EnrollAsJsonAsync(System.Text.Json.Nodes.JsonObject body) =>
+        http.PostAsync(new Uri("/" + AgentRoutes.Enroll, UriKind.Relative), new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"));
 
     public async Task<HttpResponseMessage> PostAsync(string path, object body, string? nonce = null, DateTimeOffset? at = null, Action<HttpRequestMessage>? tamper = null)
     {
@@ -455,7 +458,7 @@ public abstract class IntegrationTest(PostgresFixture postgres) : IAsyncLifetime
     {
         var token = await CreateTokenAsync(admin, orgId, siteId);
         var agent = NewAgent();
-        using var response = await agent.EnrollAsync(token, null, hostname);
+        using var response = await agent.EnrollAsync(token, hostname);
         await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
         var enrolled = (await response.Content.ReadFromJsonAsync<EnrollResponse>(TestJson.Options))!;
         Assert.Equal(EnrollmentState.Active, enrolled.State);

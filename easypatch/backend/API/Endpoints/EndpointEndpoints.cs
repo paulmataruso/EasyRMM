@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Security.Claims;
 using System.Text.Json;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Api.Security;
@@ -7,7 +6,6 @@ using EasyPatch.Contracts;
 using EasyPatch.Contracts.Agent;
 using EasyPatch.Contracts.Json;
 using EasyPatch.Contracts.Policy;
-using EasyPatch.Core.Domain;
 using EasyPatch.Core.Entities;
 using EasyPatch.Infrastructure.Data;
 using EasyPatch.Infrastructure.Services;
@@ -28,14 +26,6 @@ public static class EndpointEndpoints
 
         g.MapGet("/", async ([AsParameters] EndpointListQuery query, EasyPatchDbContext db, ITenantContext tenant, AgentPackageService packages,
             CancellationToken ct) => TypedResults.Ok(await ListAsync(query, db, tenant, packages, ct)));
-
-        app.MapGet("/api/v1/organizations/{id:guid}/endpoints", async (Guid id, [AsParameters] EndpointListQuery query, EasyPatchDbContext db,
-                ITenantContext tenant, AgentPackageService packages, CancellationToken ct) =>
-            {
-                tenant.EnsureAccess(id);
-                return TypedResults.Ok(await ListAsync(query with { OrganizationId = id }, db, tenant, packages, ct));
-            })
-            .WithTags("Endpoints").RequireAuthorization(Policies.Viewer);
 
         g.MapGet("/{id:guid}", async (Guid id, EasyPatchDbContext db, ITenantContext tenant, AgentPackageService packages, PolicyService policies,
                 CancellationToken ct) =>
@@ -65,22 +55,6 @@ public static class EndpointEndpoints
             }
 
             return TypedResults.Ok(await LoadDetailAsync(id, db, tenant, packages, policies, ct));
-        }).RequireAuthorization(Policies.Operator);
-
-        g.MapDelete("/{id:guid}", async (Guid id, EasyPatchDbContext db, ITenantContext tenant, EnrollmentService enrollment, AuditService audit,
-            CancellationToken ct) =>
-        {
-            var endpoint = await LoadForUpdateAsync(db, tenant, id, ct);
-            if (endpoint.Status == EndpointStatus.Active)
-            {
-                await enrollment.RevokeEndpointAsync(id, "Endpoint deleted by administrator", EndpointStatus.Decommissioned, ct);
-            }
-
-            db.ChangeTracker.Clear();
-            await db.Endpoints.Where(e => e.Id == id).ExecuteDeleteAsync(ct);
-            audit.Record("endpoint.delete", "Endpoint", id.ToString(), endpoint.OrganizationId, null, new { endpoint.Hostname });
-            await db.SaveChangesAsync(ct);
-            return TypedResults.NoContent();
         }).RequireAuthorization(Policies.Operator);
 
         g.MapPost("/{id:guid}/revoke", async (Guid id, RevokeEndpointRequest? request, EasyPatchDbContext db, ITenantContext tenant,
@@ -161,19 +135,6 @@ public static class EndpointEndpoints
 
             var paged = await query.OrderByDescending(h => h.Date).ToPagedAsync(PageRequest.From(page, pageSize), ct);
             return TypedResults.Ok(new PagedResult<UpdateHistoryDto>(paged.Items.Select(Mapping.History).ToList(), paged.Page, paged.PageSize, paged.TotalCount));
-        });
-
-        g.MapGet("/{id:guid}/events", async (Guid id, EventSeverity? severity, int? page, int? pageSize, EasyPatchDbContext db, ITenantContext tenant,
-            CancellationToken ct) =>
-        {
-            await EnsureEndpointAccessAsync(db, tenant, id, ct);
-            var query = db.EndpointEvents.AsNoTracking().Where(e => e.EndpointId == id);
-            if (severity is { } sev)
-            {
-                query = query.Where(e => e.Severity == sev);
-            }
-
-            return TypedResults.Ok(await query.OrderByDescending(e => e.Id).Select(Mapping.Event).ToPagedAsync(PageRequest.From(page, pageSize), ct));
         });
 
         g.MapGet("/{id:guid}/jobs", async (Guid id, int? page, int? pageSize, EasyPatchDbContext db, ITenantContext tenant, CancellationToken ct) =>
@@ -264,20 +225,6 @@ public static class EndpointEndpoints
             return TypedResults.Accepted($"/api/v1/jobs/{job.Id}", await JobEndpoints.LoadSummaryAsync(db, job.Id, ct));
         }).RequireAuthorization(Policies.Operator);
 
-        g.MapPost("/{id:guid}/scan", async (Guid id, EasyPatchDbContext db, ITenantContext tenant, JobService jobs, CancellationToken ct) =>
-        {
-            await EnsureEndpointAccessAsync(db, tenant, id, ct);
-            var job = await jobs.CreateAsync(new CreateJobRequest(id, JobType.UpdateScan), ct);
-            return TypedResults.Accepted($"/api/v1/jobs/{job.Id}", await JobEndpoints.LoadSummaryAsync(db, job.Id, ct));
-        }).RequireAuthorization(Policies.Operator);
-
-        g.MapPost("/{id:guid}/inventory-refresh", async (Guid id, EasyPatchDbContext db, ITenantContext tenant, JobService jobs, CancellationToken ct) =>
-        {
-            await EnsureEndpointAccessAsync(db, tenant, id, ct);
-            var job = await jobs.CreateAsync(new CreateJobRequest(id, JobType.InventoryRefresh), ct);
-            return TypedResults.Accepted($"/api/v1/jobs/{job.Id}", await JobEndpoints.LoadSummaryAsync(db, job.Id, ct));
-        }).RequireAuthorization(Policies.Operator);
-
         // Rolling back an update: the agent removes only that update (Windows Update or DISM) and never restarts the computer.
         g.MapPost("/{id:guid}/updates/{updateGuid:guid}/uninstall", async (Guid id, Guid updateGuid, UninstallUpdateRequest request, EasyPatchDbContext db,
             ITenantContext tenant, UpdateRemovalService removals, CancellationToken ct) =>
@@ -336,22 +283,6 @@ public static class EndpointEndpoints
         }).RequireAuthorization(Policies.Operator);
 
         // Restarts are always an explicit administrator action (or an administrator-configured schedule).
-        g.MapPost("/{id:guid}/restart", async (Guid id, RestartRequest request, EasyPatchDbContext db, ITenantContext tenant, JobService jobs,
-            TimeProvider clock, CancellationToken ct) =>
-        {
-            await EnsureEndpointAccessAsync(db, tenant, id, ct);
-            var job = await jobs.CreateAsync(RestartJob(id, request, clock.GetUtcNow()), ct);
-            return TypedResults.Accepted($"/api/v1/jobs/{job.Id}", await JobEndpoints.LoadSummaryAsync(db, job.Id, ct));
-        }).RequireAuthorization(Policies.Operator);
-
-        g.MapPost("/{id:guid}/notify", async (Guid id, NotifyRequest request, EasyPatchDbContext db, ITenantContext tenant, JobService jobs,
-            CancellationToken ct) =>
-        {
-            await EnsureEndpointAccessAsync(db, tenant, id, ct);
-            var job = await jobs.CreateAsync(NotifyJob(id, request), ct);
-            return TypedResults.Accepted($"/api/v1/jobs/{job.Id}", await JobEndpoints.LoadSummaryAsync(db, job.Id, ct));
-        }).RequireAuthorization(Policies.Operator);
-
         g.MapPost("/bulk/restart", (BulkRestartRequest request, EasyPatchDbContext db, ITenantContext tenant, JobService jobs, TimeProvider clock,
                 CancellationToken ct) =>
             BulkAsync(new BulkEndpointsRequest(request.EndpointIds, request.Restart.Force), db, tenant, jobs,
@@ -362,15 +293,6 @@ public static class EndpointEndpoints
             BulkAsync(new BulkEndpointsRequest(request.EndpointIds, false), db, tenant, jobs, id => NotifyJob(id, request.Message), ct))
             .RequireAuthorization(Policies.Operator);
 
-        // Agent updates install only packages whose release signature the agent verifies against its built-in key.
-        g.MapPost("/{id:guid}/agent-update", async (Guid id, AgentUpdateRequest request, EasyPatchDbContext db, ITenantContext tenant, JobService jobs,
-            CancellationToken ct) =>
-        {
-            await EnsureEndpointAccessAsync(db, tenant, id, ct);
-            var job = await jobs.CreateAsync(new CreateJobRequest(id, JobType.AgentUpdate, AgentVersion: Validator.Clean(request.Version)), ct);
-            return TypedResults.Accepted($"/api/v1/jobs/{job.Id}", await JobEndpoints.LoadSummaryAsync(db, job.Id, ct));
-        }).RequireAuthorization(Policies.Operator);
-
         // Removes the EasyPatch agent package from the endpoint (nothing else). The job completes when the agent unenrolls as
         // part of the removal; the endpoint is then decommissioned.
         g.MapPost("/{id:guid}/uninstall-agent", async (Guid id, EasyPatchDbContext db, ITenantContext tenant, JobService jobs, CancellationToken ct) =>
@@ -380,6 +302,7 @@ public static class EndpointEndpoints
             return TypedResults.Accepted($"/api/v1/jobs/{job.Id}", await JobEndpoints.LoadSummaryAsync(db, job.Id, ct));
         }).RequireAuthorization(Policies.Operator);
 
+        // Agent updates install only packages whose release signature the agent verifies against its built-in key.
         g.MapPost("/bulk/agent-update", (BulkAgentUpdateRequest request, EasyPatchDbContext db, ITenantContext tenant, JobService jobs, CancellationToken ct) =>
             BulkAsync(new BulkEndpointsRequest(request.EndpointIds, false), db, tenant, jobs,
                 id => new CreateJobRequest(id, JobType.AgentUpdate, AgentVersion: Validator.Clean(request.Version)), ct))

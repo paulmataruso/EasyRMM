@@ -517,70 +517,6 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                     b.ToTable("debian_fixes", (string)null);
                 });
 
-            modelBuilder.Entity("EasyPatch.Core.Entities.DeploymentCode", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.PrimitiveCollection<List<string>>("AllowedSourceCidrs")
-                        .IsRequired()
-                        .HasColumnType("text[]")
-                        .HasColumnName("allowed_source_cidrs");
-
-                    b.Property<string>("Code")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("code");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<Guid?>("CreatedByUserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("created_by_user_id");
-
-                    b.Property<DateTimeOffset?>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("expires_at");
-
-                    b.Property<int>("MaxPendingRequests")
-                        .HasColumnType("integer")
-                        .HasColumnName("max_pending_requests");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("character varying(200)")
-                        .HasColumnName("name");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("organization_id");
-
-                    b.Property<DateTimeOffset?>("RevokedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("revoked_at");
-
-                    b.Property<Guid?>("SiteId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("site_id");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Code")
-                        .IsUnique();
-
-                    b.HasIndex("OrganizationId");
-
-                    b.HasIndex("SiteId");
-
-                    b.ToTable("deployment_codes", (string)null);
-                });
-
             modelBuilder.Entity("EasyPatch.Core.Entities.Endpoint", b =>
                 {
                     b.Property<Guid>("Id")
@@ -678,10 +614,6 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                     b.Property<DateTimeOffset>("EnrolledAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("enrolled_at");
-
-                    b.Property<Guid?>("EnrollmentRequestId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("enrollment_request_id");
 
                     b.Property<Guid?>("EnrollmentTokenId")
                         .HasColumnType("uuid")
@@ -1201,123 +1133,6 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                     b.HasIndex("UpdateGuid", "State");
 
                     b.ToTable("endpoint_updates", (string)null);
-                });
-
-            modelBuilder.Entity("EasyPatch.Core.Entities.EnrollmentRequest", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<string>("AgentVersion")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("agent_version");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<DateTimeOffset?>("DecidedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("decided_at");
-
-                    b.Property<Guid?>("DecidedByUserId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("decided_by_user_id");
-
-                    b.Property<Guid>("DeploymentCodeId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("deployment_code_id");
-
-                    b.Property<string>("DeviceJson")
-                        .IsRequired()
-                        .HasColumnType("jsonb")
-                        .HasColumnName("device_json");
-
-                    b.Property<Guid?>("EndpointId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("endpoint_id");
-
-                    b.Property<DateTimeOffset>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("expires_at");
-
-                    b.Property<string>("Hostname")
-                        .IsRequired()
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)")
-                        .HasColumnName("hostname");
-
-                    b.Property<string>("KeyFingerprint")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("key_fingerprint");
-
-                    b.Property<DateTimeOffset>("LastSeenAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_seen_at");
-
-                    b.Property<Guid>("OrganizationId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("organization_id");
-
-                    b.Property<string>("OsCaption")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)")
-                        .HasColumnName("os_caption");
-
-                    b.Property<byte[]>("PublicKey")
-                        .IsRequired()
-                        .HasColumnType("bytea")
-                        .HasColumnName("public_key");
-
-                    b.Property<string>("RejectReason")
-                        .HasMaxLength(500)
-                        .HasColumnType("character varying(500)")
-                        .HasColumnName("reject_reason");
-
-                    b.Property<string>("RequestId")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("request_id");
-
-                    b.Property<string>("SerialNumber")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)")
-                        .HasColumnName("serial_number");
-
-                    b.Property<Guid?>("SiteId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("site_id");
-
-                    b.Property<string>("SourceIp")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
-                        .HasColumnName("source_ip");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("character varying(32)")
-                        .HasColumnName("status");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("KeyFingerprint");
-
-                    b.HasIndex("RequestId")
-                        .IsUnique();
-
-                    b.HasIndex("Status");
-
-                    b.HasIndex("DeploymentCodeId", "Status");
-
-                    b.ToTable("enrollment_requests", (string)null);
                 });
 
             modelBuilder.Entity("EasyPatch.Core.Entities.EnrollmentToken", b =>
@@ -4169,20 +3984,6 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("EasyPatch.Core.Entities.DeploymentCode", b =>
-                {
-                    b.HasOne("EasyPatch.Core.Entities.Organization", null)
-                        .WithMany()
-                        .HasForeignKey("OrganizationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("EasyPatch.Core.Entities.Site", null)
-                        .WithMany()
-                        .HasForeignKey("SiteId")
-                        .OnDelete(DeleteBehavior.Cascade);
-                });
-
             modelBuilder.Entity("EasyPatch.Core.Entities.Endpoint", b =>
                 {
                     b.HasOne("EasyPatch.Core.Entities.Organization", "Organization")
@@ -4240,15 +4041,6 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                         .IsRequired();
 
                     b.Navigation("Update");
-                });
-
-            modelBuilder.Entity("EasyPatch.Core.Entities.EnrollmentRequest", b =>
-                {
-                    b.HasOne("EasyPatch.Core.Entities.DeploymentCode", null)
-                        .WithMany()
-                        .HasForeignKey("DeploymentCodeId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("EasyPatch.Core.Entities.EnrollmentToken", b =>

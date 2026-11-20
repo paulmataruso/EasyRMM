@@ -19,9 +19,6 @@ public static class Policies
     /// <summary>Active agent credential.</summary>
     public const string Agent = "Agent";
 
-    /// <summary>Pending enrollment request credential (<c>r_</c>).</summary>
-    public const string AgentPending = "AgentPending";
-
     public static IServiceCollection AddEasyPatchAuthorization(this IServiceCollection services)
     {
         services.AddAuthorizationBuilder()
@@ -31,9 +28,7 @@ public static class Policies
             .AddPolicy(SuperAdmin, p => p.AddAuthenticationSchemes(EasyRmmAuthenticationHandler.SchemeName).RequireAuthenticatedUser()
                 .RequireRole(nameof(UserRole.SuperAdmin)))
             .AddPolicy(Agent, p => p.AddAuthenticationSchemes(AgentAuthenticationHandler.SchemeName).RequireAuthenticatedUser()
-                .RequireClaim(EasyPatchClaims.AgentKind, AgentAuthenticationHandler.KindActive))
-            .AddPolicy(AgentPending, p => p.AddAuthenticationSchemes(AgentAuthenticationHandler.SchemeName).RequireAuthenticatedUser()
-                .RequireClaim(EasyPatchClaims.AgentKind, AgentAuthenticationHandler.KindPending));
+                .RequireClaim(EasyPatchClaims.AgentKind, AgentAuthenticationHandler.KindActive));
         return services;
     }
 }

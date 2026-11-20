@@ -15,10 +15,6 @@ export const RULE_KINDS: Record<PatchAlertRuleKind, { label: string; about: stri
   },
   ScanStale: { label: "Scan out of date", about: "The device has not scanned for updates as often as its policy asks." },
   RestartPending: { label: "Restart pending", about: "The device has waited some days for a restart to finish installing." },
-  EnrollmentPending: {
-    label: "Enrollment waiting for approval",
-    about: "An organization has EasyPatch agents waiting for approval in the patching engine. One alert for the organization.",
-  },
   OsUnsupported: {
     label: "Operating system unsupported",
     about: "The device's operating system no longer gets security updates, or stops soon, by Settings → Patching → OS lifecycle.",

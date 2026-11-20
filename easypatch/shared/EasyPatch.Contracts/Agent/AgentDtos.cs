@@ -6,14 +6,15 @@ namespace EasyPatch.Contracts.Agent;
 // Enrollment
 // ---------------------------------------------------------------------------------------------
 
-/// <summary>First request from a new agent. Exactly one of <see cref="EnrollmentToken"/> or
-/// <see cref="DeploymentCode"/> must be supplied.</summary>
+/// <summary>First request from a new agent, with an <see cref="EnrollmentToken"/>.</summary>
 public sealed record EnrollRequest
 {
     /// <summary>Secret, use-limited token (immediate activation).</summary>
     public string? EnrollmentToken { get; init; }
 
-    /// <summary>Non-secret deployment code (creates a pending request that an admin must approve).</summary>
+    /// <summary>Retired (ADR-0048): agents from before then could send a deployment code and wait for approval. Kept so the engine
+    /// recognises such a request and refuses it with <see cref="AgentErrorCodes.DeploymentCodesRetired"/>; null or absent from
+    /// every agent since.</summary>
     public string? DeploymentCode { get; init; }
 
     /// <summary>Base64 SubjectPublicKeyInfo of the agent's ECDSA P-256 key. The private key never leaves the device.</summary>
@@ -70,7 +71,7 @@ public sealed record EnrollResponse
 {
     public required EnrollmentState State { get; init; }
 
-    /// <summary><c>c_…</c> for an active credential, <c>r_…</c> for a pending enrollment request.</summary>
+    /// <summary>The active credential, <c>c_…</c>.</summary>
     public required string CredentialId { get; init; }
 
     public Guid? EndpointId { get; init; }
@@ -640,7 +641,9 @@ public static class AgentErrorCodes
     public const string CredentialExpired = "credential_expired";
     public const string EndpointRevoked = "endpoint_revoked";
     public const string EnrollmentInvalid = "enrollment_invalid";
-    public const string EnrollmentRejected = "enrollment_rejected";
+
+    /// <summary>The enroll request carried a deployment code (ADR-0048).</summary>
+    public const string DeploymentCodesRetired = "deployment_codes_retired";
     public const string JobNotFound = "job_not_found";
     public const string JobCancelled = "job_cancelled";
     public const string RateLimited = "rate_limited";
@@ -651,7 +654,6 @@ public static class AgentRoutes
 {
     public const string Prefix = "api/v1/agents";
     public const string Enroll = Prefix + "/enroll";
-    public const string EnrollmentStatus = Prefix + "/enrollment/status";
     public const string CheckIn = Prefix + "/check-in";
     public const string Inventory = Prefix + "/inventory";
     public const string ScanResults = Prefix + "/updates/scan-results";

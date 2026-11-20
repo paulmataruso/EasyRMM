@@ -714,7 +714,7 @@ func (s *Server) createToken(w http.ResponseWriter, body map[string]any) {
 			"token": map[string]any{"id": t.ID, "organizationId": org, "organizationName": "", "siteId": site, "siteName": nil,
 				"tokenPrefix": t.Secret[:8], "description": desc, "maxUses": t.MaxUses, "useCount": 0, "createdAt": time.Now().UTC(),
 				"expiresAt": time.Now().Add(time.Duration(hours) * time.Hour).UTC(), "lastUsedAt": nil, "revokedAt": nil, "state": "Active"},
-			"plaintextToken": t.Secret, "msiExecCommand": "msiexec /i …", "linuxEnrollCommand": "printf …", "macEnrollCommand": nil,
+			"plaintextToken": t.Secret,
 		})
 	}
 	reply(w, 200, out)

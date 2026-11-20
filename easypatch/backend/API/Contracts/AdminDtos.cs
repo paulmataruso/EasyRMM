@@ -191,10 +191,6 @@ public sealed record EndpointTagsRequest(IReadOnlyList<Guid> TagIds);
 /// <summary>The tags of an organization or site (replaces the whole set).</summary>
 public sealed record TagAssignmentRequest(IReadOnlyList<Guid> TagIds);
 
-public sealed record BulkEndpointTagsRequest(IReadOnlyList<Guid> EndpointIds, IReadOnlyList<Guid>? AddTagIds, IReadOnlyList<Guid>? RemoveTagIds);
-
-public sealed record BulkEndpointTagsResult(int Changed);
-
 /// <summary>A tag policy that applies to an endpoint, in resolution order (later entries override earlier ones).</summary>
 public sealed record TagPolicyLayerDto(TagRefDto Tag, int Priority, PolicyDto Policy);
 
@@ -423,16 +419,9 @@ public sealed record RestartPendingEndpointDto(Guid Id, string Hostname, Guid? S
 /// <summary>The endpoints of an organization (or site) that need a restart. <c>Endpoints</c> holds at most 1000 of <c>Total</c>.</summary>
 public sealed record RestartPendingDto(int Total, IReadOnlyList<RestartPendingEndpointDto> Endpoints);
 
-/// <summary>Restart the listed endpoints, which the administrator confirmed, of an organization or one of its sites. Endpoints that
-/// are not in the scope or no longer report a pending restart are skipped. The restart condition is always
-/// <see cref="RestartCondition.OnlyIfPending"/>.</summary>
-public sealed record RestartPendingRequest(Guid? SiteId, IReadOnlyList<Guid> EndpointIds, RestartRequest Restart);
-
 public sealed record BulkNotifyRequest(IReadOnlyList<Guid> EndpointIds, NotifyRequest Message);
 
 /// <param name="Version">A specific package version; the newest suitable package when omitted.</param>
-public sealed record AgentUpdateRequest(string? Version);
-
 public sealed record BulkAgentUpdateRequest(IReadOnlyList<Guid> EndpointIds, string? Version);
 
 public sealed record UserMessagePresetDto(UserMessagePreset Preset, string Title, string Body, bool NeedsRestartTime);
@@ -590,131 +579,16 @@ public sealed record EnrollmentTokenDto(
 
 public sealed record CreateTokensRequest(Guid OrganizationId, Guid? SiteId, string? Description, int ExpiresInHours, int MaxUses, int Count);
 
-/// <param name="LinuxEnrollCommand">Enrolls an installed Linux agent; the token is piped in so it never shows in the process list.</param>
-/// <param name="MacEnrollCommand">Enrolls an installed macOS agent (experimental) the same way; null when the server has no
-/// macOS (pkg) agent package.</param>
-public sealed record CreatedTokenDto(EnrollmentTokenDto Token, string PlaintextToken, string MsiExecCommand, string? LinuxEnrollCommand = null,
-    string? MacEnrollCommand = null);
-
-/// <param name="MacOneLiner"><c>curl … | sudo sh</c> command that installs the experimental macOS agent; null (like
-/// <paramref name="MacScriptUrl"/>) when the server has no macOS (pkg) agent package.</param>
-public sealed record DeploymentCodeDto(
-    Guid Id,
-    string Code,
-    string Name,
-    Guid OrganizationId,
-    string OrganizationName,
-    Guid? SiteId,
-    string? SiteName,
-    int MaxPendingRequests,
-    IReadOnlyList<string> AllowedSourceCidrs,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset? ExpiresAt,
-    DateTimeOffset? RevokedAt,
-    int PendingCount,
-    int ApprovedCount,
-    string State,
-    string OneLiner,
-    string ScriptUrl,
-    string? LinuxOneLiner = null,
-    string? LinuxScriptUrl = null,
-    string? MacOneLiner = null,
-    string? MacScriptUrl = null);
-
-public sealed record CreateDeploymentCodeRequest(Guid OrganizationId, Guid? SiteId, string Name, int? ExpiresInDays, IReadOnlyList<string>? AllowedSourceCidrs,
-    int? MaxPendingRequests);
-
-public sealed record InstallScriptResponse(string Script, string OneLiner, string ScriptUrl, string PackageFileName, string PackageVersion, string Sha256,
-    bool RequireSignature, string Platform = "Windows", bool SkipCertificateCheck = false);
-
-public sealed record EnrollmentRequestDto(
-    Guid Id,
-    string RequestId,
-    string Hostname,
-    string KeyFingerprint,
-    string? SerialNumber,
-    string? Manufacturer,
-    string? Model,
-    string? OsCaption,
-    string AgentVersion,
-    string? SourceIp,
-    EnrollmentRequestStatus Status,
-    Guid OrganizationId,
-    string OrganizationName,
-    Guid? SiteId,
-    string? SiteName,
-    string DeploymentCodeName,
-    DateTimeOffset CreatedAt,
-    DateTimeOffset LastSeenAt,
-    DateTimeOffset ExpiresAt,
-    DateTimeOffset? DecidedAt,
-    string? RejectReason,
-    Guid? EndpointId,
-    Guid? ExistingEndpointId);
-
-public sealed record ApproveRequest(Guid? OrganizationId, Guid? SiteId);
-
-public sealed record RejectRequest(string? Reason);
-
-public sealed record BulkApproveRequest(IReadOnlyList<Guid> Ids);
+public sealed record CreatedTokenDto(EnrollmentTokenDto Token, string PlaintextToken);
 
 /// <param name="ReleaseKeyId">The release key in the package's <c>.sig</c> file (null: not signed, so agents will not
 /// update to it).</param>
 public sealed record AgentPackageDto(string FileName, string Version, string Architecture, long SizeBytes, string Sha256, DateTimeOffset ModifiedAt,
     string DownloadUrl, bool IsLatest, string? ReleaseKeyId = null, string? SignatureProblem = null, string Format = "msi");
 
-public sealed record AgentVersionCountDto(string Version, int Count, bool IsLatest);
-
 // ---------------------------------------------------------------------------------------------
-// Dashboard and reports
+// Reports
 // ---------------------------------------------------------------------------------------------
-
-public sealed record DashboardSummaryDto(
-    int Organizations,
-    int Endpoints,
-    int Online,
-    int Offline,
-    int Compliant,
-    int MissingUpdates,
-    int FailedUpdates,
-    int RebootRequired,
-    int ScanStale,
-    int NeverScanned,
-    double CompliancePercent,
-    int MissingRequiredUpdates,
-    int QueuedJobs,
-    int RunningJobs,
-    int FailedJobs24h,
-    int PendingApprovals,
-    int UnsupportedOs,
-    int OutdatedAgents,
-    IReadOnlyList<OrganizationSummaryDto> LeastCompliantOrganizations,
-    int KnownExploitedEndpoints = 0);
-
-public sealed record ComplianceReportRow(
-    Guid EndpointId,
-    string Hostname,
-    string OrganizationName,
-    string? SiteName,
-    string? OperatingSystem,
-    string? OsBuild,
-    ComplianceStatus ComplianceStatus,
-    int MissingRequiredCount,
-    int MissingTotalCount,
-    int FailedCount,
-    bool RebootPending,
-    bool IsOnline,
-    OsSupportStatus OsSupportStatus,
-    DateTimeOffset? LastScanAt,
-    DateTimeOffset? LastCheckInAt,
-    string Platform = "Windows");
-
-public sealed record ComplianceReportDto(
-    int Total,
-    int Compliant,
-    double CompliancePercent,
-    IReadOnlyDictionary<ComplianceStatus, int> ByStatus,
-    IReadOnlyList<ComplianceReportRow> Rows);
 
 public sealed record ComplianceTrendPoint(DateOnly Date, int TotalEndpoints, int Compliant, int MissingUpdates, int FailedUpdates, int RebootRequired, int ScanStale,
     int NeverScanned, int Offline, int MissingRequiredUpdates, double CompliancePercent);

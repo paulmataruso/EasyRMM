@@ -18,9 +18,6 @@ public enum AlertRuleType
     /// <summary>A restart has been pending for at least <see cref="AlertRule.Threshold"/> days.</summary>
     RestartPending,
 
-    /// <summary>An organization has enrollment requests waiting for approval.</summary>
-    EnrollmentPending,
-
     /// <summary>The operating system is unsupported, or its support ends within <see cref="AlertRule.Threshold"/> days.</summary>
     OsUnsupported,
 

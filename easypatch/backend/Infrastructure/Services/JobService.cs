@@ -118,9 +118,6 @@ public sealed class JobService(
             case JobType.UpdateScan:
                 dedupeKey = "scan";
                 break;
-            case JobType.InventoryRefresh:
-                dedupeKey = "inventory";
-                break;
             case JobType.InstallUpdates or JobType.DownloadUpdates:
             {
                 var selected = (request.UpdateGuids ?? []).Distinct().ToList();

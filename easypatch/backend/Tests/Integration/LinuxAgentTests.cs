@@ -11,7 +11,7 @@ using Xunit;
 
 namespace EasyPatch.Tests.Integration;
 
-/// <summary>Linux agents: enrollment, inventory, package scans, install scripts and package-format-aware agent updates.</summary>
+/// <summary>Linux agents: enrollment, inventory, package scans and package-format-aware agent updates.</summary>
 public sealed class LinuxAgentTests(PostgresFixture postgres) : AgentUpdateTestBase(postgres)
 {
     private static readonly DeviceIdentity Debian = new()
@@ -177,32 +177,6 @@ public sealed class LinuxAgentTests(PostgresFixture postgres) : AgentUpdateTestB
 
         var packages = await Root.GetAsync<List<AgentPackageDto>>("/api/v1/agent-packages");
         Assert.Equal("deb", packages.Single(p => p.FileName == Path.GetFileName(deb)).Format);
-    }
-
-    [Fact]
-    public async Task The_linux_install_script_is_served_for_a_deployment_code()
-    {
-        var code = await Root.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
-            new CreateDeploymentCodeRequest(Org.Id, Site.Id, "Linux rollout", 30, null, null), HttpStatusCode.Created);
-        Assert.EndsWith($"/downloads/install/{code.Code}.sh", code.LinuxScriptUrl, StringComparison.Ordinal);
-        Assert.Contains("| sudo sh", code.LinuxOneLiner, StringComparison.Ordinal);
-
-        using var client = NewHttpClient();
-        using var none = await client.GetAsync($"/downloads/install/{code.Code}.sh", TestContext.Current.CancellationToken);
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, none.StatusCode);
-
-        PublishPackage("1.3.0", "deb");
-        PublishPackage("1.3.0", "rpm");
-        using var response = await client.GetAsync($"/downloads/install/{code.Code}.sh", TestContext.Current.CancellationToken);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var script = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-        Assert.StartsWith("#!/bin/sh", script, StringComparison.Ordinal);
-        Assert.Contains($"DEPLOYMENT_CODE='{code.Code}'", script, StringComparison.Ordinal);
-        Assert.Contains("EasyPatchAgent-1.3.0-x64.deb", script, StringComparison.Ordinal);
-        Assert.Contains("EasyPatchAgent-1.3.0-x64.rpm", script, StringComparison.Ordinal);
-
-        using var unknown = await client.GetAsync("/downloads/install/EPD-ZZZZZZZZZZZZZZZZ.sh", TestContext.Current.CancellationToken);
-        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
     }
 
     /// <summary>A signed deb or rpm agent package in the server's package folder.</summary>

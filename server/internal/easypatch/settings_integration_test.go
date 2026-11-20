@@ -16,8 +16,7 @@ import (
 )
 
 // Those who configure patching see the server settings; super
-// administrators change them with a SuperAdmin statement, and the settings
-// EasyRMM does not show stay as they were.
+// administrators change them with a SuperAdmin statement.
 func TestServerSettings(t *testing.T) {
 	f := newFleetFixture(t)
 	ctx := f.ctx
@@ -41,10 +40,6 @@ func TestServerSettings(t *testing.T) {
 		t.Fatalf("technician: %v", err)
 	}
 
-	// Settings EasyRMM does not show, changed in EasyPatch, are kept.
-	cur := f.engine.ServerSettings()
-	cur["enrollmentRequestExpiryDays"] = 14.0
-	f.putEngineSettings(cur)
 	in := v.Settings
 	brand := "  Contoso IT  "
 	in.ReportBrandName, in.RolloutGuardFailurePercent = &brand, 30
@@ -53,7 +48,7 @@ func TestServerSettings(t *testing.T) {
 		t.Fatalf("saved: %+v, %v", got, err)
 	}
 	saved := f.engine.ServerSettings()
-	if saved["enrollmentRequestExpiryDays"] != 14.0 || saved["reportBrandName"] != "Contoso IT" {
+	if saved["reportBrandName"] != "Contoso IT" || saved["rolloutGuardFailurePercent"] != 30.0 {
 		t.Fatalf("in EasyPatch: %+v", saved)
 	}
 	if st := f.lastStatement("PUT", "/api/v1/settings"); st.Role != RoleSuperAdmin || !st.AllOrganizations || st.Name != "ada@example.com" {
@@ -94,17 +89,6 @@ func TestServerSettings(t *testing.T) {
 	f.engine.Set(func() { f.engine.Down = true })
 	if _, err := f.svc.ServerSettings(ctx, f.admin); !isCode(err, "patching_unavailable") {
 		t.Fatalf("engine down: %v", err)
-	}
-}
-
-// putEngineSettings saves settings in the fake engine as EasyPatch's own
-// console would.
-func (f *fleetFixture) putEngineSettings(s map[string]any) {
-	f.t.Helper()
-	cl := f.svc.engine.client
-	if err := cl.do(WithStatement(f.ctx, Statement{Subject: ServiceSubject, Name: "console", Role: RoleSuperAdmin, AllOrganizations: true}),
-		"PUT", settingsPath, nil, s, "", nil); err != nil {
-		f.t.Fatal(err)
 	}
 }
 

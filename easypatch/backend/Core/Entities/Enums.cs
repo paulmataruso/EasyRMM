@@ -67,14 +67,6 @@ public enum PolicyScope
     Tag,
 }
 
-public enum EnrollmentRequestStatus
-{
-    Pending,
-    Approved,
-    Rejected,
-    Expired,
-}
-
 public enum ScanStatus
 {
     Succeeded,

@@ -1466,7 +1466,8 @@ func TestContract(t *testing.T) {
 		const who = "contract-settings@example.test"
 		super := c.everywhere(who, RoleSuperAdmin)
 
-		// Every setting EasyRMM shows is one of EasyPatch's.
+		// EasyRMM shows every one of EasyPatch's settings, and no other: it
+		// saves them all with one PUT.
 		var raw map[string]json.RawMessage
 		c.must(http.MethodGet, "/api/v1/settings", nil, http.StatusOK, &raw)
 		b, _ := json.Marshal(ServerSettings{})
@@ -1475,6 +1476,11 @@ func TestContract(t *testing.T) {
 		for k := range shown {
 			if _, ok := raw[k]; !ok {
 				t.Errorf("EasyPatch has no setting %q", k)
+			}
+		}
+		for k := range raw {
+			if _, ok := shown[k]; !ok {
+				t.Errorf("EasyRMM does not show EasyPatch's setting %q", k)
 			}
 		}
 		before, err := engine.ServerSettings(ctx)
@@ -1496,14 +1502,6 @@ func TestContract(t *testing.T) {
 		got, err := engine.SetServerSettings(super, in)
 		if err != nil || got.ReportBrandName == nil || *got.ReportBrandName != brand || got.RolloutGuardFailurePercent != in.RolloutGuardFailurePercent {
 			t.Errorf("changed: %+v, %v", got, err)
-		}
-		// What EasyRMM does not show is kept.
-		var after map[string]json.RawMessage
-		c.must(http.MethodGet, "/api/v1/settings", nil, http.StatusOK, &after)
-		for k, v := range raw {
-			if _, ok := shown[k]; !ok && string(after[k]) != string(v) {
-				t.Errorf("%s changed from %s to %s", k, v, after[k])
-			}
 		}
 		bad := before
 		bad.GlobalMaxConcurrentInstalls = 0
@@ -1593,7 +1591,7 @@ func TestContract(t *testing.T) {
 			t.Errorf("an Admin statement reads the rule types: %v", err)
 		}
 		rules, err := engine.AlertRules(super)
-		if err != nil || len(rules) < 9 {
+		if err != nil || len(rules) < 8 {
 			t.Fatalf("rules: %+v, %v", rules, err)
 		}
 		for _, r := range rules {

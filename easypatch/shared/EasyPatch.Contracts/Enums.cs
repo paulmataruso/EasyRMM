@@ -148,12 +148,11 @@ public enum UpdateSourceType
     AppleSoftwareUpdate,
 }
 
+/// <summary>The state an enroll response reports. Enrollment with a token is active at once; the states of the retired approval
+/// flow (ADR-0048) are gone.</summary>
 public enum EnrollmentState
 {
     Active,
-    PendingApproval,
-    Rejected,
-    Expired,
 }
 
 public static class JobStatusExtensions

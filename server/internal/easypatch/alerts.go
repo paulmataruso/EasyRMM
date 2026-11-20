@@ -23,7 +23,7 @@ var (
 	AlertStatuses   = []string{"unresolved", "open", "acknowledged", "resolved", "all"}
 	AlertSeverities = []string{"Critical", "Warning", "Info"}
 	AlertRuleKinds  = []string{"EndpointOffline", "InstallFailed", "SecurityUpdateMissing", "ScanStale", "RestartPending",
-		"EnrollmentPending", "OsUnsupported", "KnownExploitedMissing", "UpdateHeld"}
+		"OsUnsupported", "KnownExploitedMissing", "UpdateHeld"}
 )
 
 // maxAcknowledge is how many alerts one request acknowledges.

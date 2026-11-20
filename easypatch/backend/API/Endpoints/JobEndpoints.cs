@@ -73,13 +73,6 @@ public static class JobEndpoints
         g.MapGet("/{id:guid}", async (Guid id, EasyPatchDbContext db, ITenantContext tenant, CancellationToken ct) =>
             TypedResults.Ok(await LoadDetailAsync(db, tenant, id, ct)));
 
-        g.MapDelete("/{id:guid}", async (Guid id, EasyPatchDbContext db, ITenantContext tenant, JobService jobs, CancellationToken ct) =>
-        {
-            await EnsureAccessAsync(db, tenant, id, ct);
-            await jobs.CancelAsync(id, ct);
-            return TypedResults.Ok(await LoadDetailAsync(db, tenant, id, ct));
-        }).RequireAuthorization(Policies.Operator);
-
         g.MapPost("/{id:guid}/cancel", async (Guid id, EasyPatchDbContext db, ITenantContext tenant, JobService jobs, CancellationToken ct) =>
         {
             await EnsureAccessAsync(db, tenant, id, ct);

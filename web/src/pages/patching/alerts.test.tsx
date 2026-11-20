@@ -222,7 +222,6 @@ const TYPES: PatchAlertRuleType[] = [
   { type: "SecurityUpdateMissing", thresholdUnit: "days", thresholdMin: 0, thresholdMax: 365, thresholdDefault: 14, supportsTag: true },
   { type: "ScanStale", thresholdUnit: null, thresholdMin: null, thresholdMax: null, thresholdDefault: null, supportsTag: true },
   { type: "RestartPending", thresholdUnit: "days", thresholdMin: 1, thresholdMax: 90, thresholdDefault: 7, supportsTag: true },
-  { type: "EnrollmentPending", thresholdUnit: null, thresholdMin: null, thresholdMax: null, thresholdDefault: null, supportsTag: false },
   { type: "OsUnsupported", thresholdUnit: "days", thresholdMin: 0, thresholdMax: 365, thresholdDefault: 30, supportsTag: true },
   { type: "KnownExploitedMissing", thresholdUnit: null, thresholdMin: null, thresholdMax: null, thresholdDefault: null, supportsTag: true },
   { type: "UpdateHeld", thresholdUnit: null, thresholdMin: null, thresholdMax: null, thresholdDefault: null, supportsTag: false },

@@ -232,7 +232,7 @@ func TestAlertRules(t *testing.T) {
 	ctx := f.ctx
 
 	l, err := f.svc.AlertRules(ctx, f.admin)
-	if err != nil || len(l.Items) != 9 || len(l.Types) != 9 || len(l.Channels) != 0 || l.Items[0].Name != "Endpoint offline" ||
+	if err != nil || len(l.Items) != 8 || len(l.Types) != 8 || len(l.Channels) != 0 || l.Items[0].Name != "Endpoint offline" ||
 		l.Items[0].ChannelIDs == nil || l.Items[0].ThresholdUnit != "hours" {
 		t.Fatalf("rules: %+v, %v", l, err)
 	}

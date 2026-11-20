@@ -1587,7 +1587,6 @@ export type PatchAlertRuleKind =
   | "SecurityUpdateMissing"
   | "ScanStale"
   | "RestartPending"
-  | "EnrollmentPending"
   | "OsUnsupported"
   | "KnownExploitedMissing"
   | "UpdateHeld";

@@ -18,8 +18,6 @@ public sealed record AgentCredentialInfo(
     Guid CredentialDbId, string CredentialId, Guid EndpointId, Guid OrganizationId, byte[] PublicKey,
     DateTimeOffset ExpiresAt, DateTimeOffset? RevokedAt, EndpointStatus EndpointStatus);
 
-public sealed record PendingRequestInfo(Guid Id, string RequestId, byte[] PublicKey, EnrollmentRequestStatus Status);
-
 /// <summary>Short-lived cache of agent public keys. Revocation evicts entries immediately (single API instance);
 /// the TTL bounds staleness otherwise.</summary>
 public sealed class CredentialCache(IMemoryCache cache, IServiceScopeFactory scopes)
@@ -45,27 +43,7 @@ public sealed class CredentialCache(IMemoryCache cache, IServiceScopeFactory sco
         return info;
     }
 
-    public async Task<PendingRequestInfo?> GetPendingAsync(string requestId, CancellationToken ct)
-    {
-        var key = "req:" + requestId;
-        if (cache.TryGetValue(key, out PendingRequestInfo? cached))
-        {
-            return cached;
-        }
-
-        await using var scope = scopes.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<EasyPatchDbContext>();
-        var info = await db.EnrollmentRequests.AsNoTracking()
-            .Where(r => r.RequestId == requestId)
-            .Select(r => new PendingRequestInfo(r.Id, r.RequestId, r.PublicKey, r.Status))
-            .FirstOrDefaultAsync(ct);
-        cache.Set(key, info, Ttl);
-        return info;
-    }
-
     public void Invalidate(string credentialId) => cache.Remove("cred:" + credentialId);
-
-    public void InvalidatePending(string requestId) => cache.Remove("req:" + requestId);
 }
 
 /// <summary>Replay protection: each (credential, nonce) pair is accepted once within the signature validity window.

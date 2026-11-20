@@ -13,15 +13,20 @@ public static class AgentEndpoints
     {
         var g = app.MapGroup("/" + AgentRoutes.Prefix).WithTags("Agent protocol");
 
-        g.MapPost("/enroll", async (EnrollRequest request, EnrollmentService enrollment, HttpContext http, CancellationToken ct) =>
-                TypedResults.Ok(await enrollment.EnrollAsync(request, http.Connection.RemoteIpAddress, ct)))
+        g.MapPost("/enroll", async (EnrollRequest request, EnrollmentService enrollment, CancellationToken ct) =>
+                TypedResults.Ok(await enrollment.EnrollAsync(request, ct)))
             .AllowAnonymous()
             .RequireRateLimiting(RateLimits.Enroll);
 
-        g.MapPost("/enrollment/status", async (ClaimsPrincipal user, EnrollmentService enrollment, CancellationToken ct) =>
-                TypedResults.Ok(await enrollment.GetPendingStatusAsync(user.FindFirstValue(EasyPatchClaims.CredentialId)!, ct)))
-            .RequireAuthorization(Policies.AgentPending)
-            .RequireRateLimiting(RateLimits.Agent);
+        // Agents from before ADR-0048 poll this while an enrollment request waits for approval. The engine keeps no requests any
+        // more: "unknown credential" makes such an agent drop its request and enroll again, which is refused with
+        // deployment_codes_retired, and the agent stops. Without it the agent would fail here every minute.
+        g.MapPost("/enrollment/status", () =>
+            {
+                throw AppException.Unauthorized(AgentErrorCodes.UnknownCredential, "The engine no longer keeps enrollment requests.");
+            })
+            .AllowAnonymous()
+            .RequireRateLimiting(RateLimits.Enroll);
 
         var signed = g.MapGroup(string.Empty).RequireAuthorization(Policies.Agent).RequireRateLimiting(RateLimits.Agent);
 
