@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- **The patch policy's delay hints say what the engine does.** A delay
+  counts from when an update first appears on any device, not from its
+  release; the delay for security updates covers security updates only
+  (critical updates take the other delay), and definition updates are never
+  delayed. A device's policy shows "7 days after first seen".
+- **Messages call the engine the patching engine.** A failed EasyPatch agent
+  install on a device's page, and the patching engine's alerts and events,
+  no longer call the engine "EasyPatch"; the EasyPatch agent keeps its name.
+
 ### Fixed
 
 - **The agent stops a package manager gently.** An `rpm` query, or an
