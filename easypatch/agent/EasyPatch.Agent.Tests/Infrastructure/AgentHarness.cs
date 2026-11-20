@@ -16,7 +16,6 @@ namespace EasyPatch.Agent.Tests.Infrastructure;
 public sealed class AgentHarness : IDisposable
 {
     public const string Token = "ept_test_token_0123456789abcdef";
-    public const string DeploymentCode = "EP-DEPLOY-7Q4K";
 
     private readonly HttpClient _http;
 
@@ -31,7 +30,6 @@ public sealed class AgentHarness : IDisposable
         BootTime = new FakeBootTime(Time.GetUtcNow().AddHours(-3));
         Server = new FakeAgentServer(Time);
         Server.ValidTokens.Add(Token);
-        Server.DeploymentCodes.Add(DeploymentCode);
         Bootstrap = new InMemoryBootstrap { ServerUrl = "https://easypatch.test" };
         _http = new HttpClient(Server, disposeHandler: false) { BaseAddress = FakeAgentServer.BaseAddress };
 

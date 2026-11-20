@@ -113,7 +113,7 @@ public sealed class AgentRuntime : IUserRequestHandler, IDisposable
         var uninstall = new UninstallAgentHandler(platform, State, reporter, FlushOutboxAsync, options, _time,
             loggerFactory.CreateLogger<UninstallAgentHandler>());
         var removeUpdate = new UninstallUpdateHandler(platform, reporter, _scans, _time, loggerFactory.CreateLogger<UninstallUpdateHandler>());
-        _jobs = new JobRunner(platform, State, reporter, _scans, _inventory, install, restart, _agentUpdate, uninstall, removeUpdate, notifier, _gate, options, _time,
+        _jobs = new JobRunner(platform, State, reporter, _scans, install, restart, _agentUpdate, uninstall, removeUpdate, notifier, _gate, options, _time,
             loggerFactory.CreateLogger<JobRunner>());
         if (platform.PolicyRegistry is not null)
         {
@@ -158,7 +158,7 @@ public sealed class AgentRuntime : IUserRequestHandler, IDisposable
 
     // ================================================================== single-step operations
 
-    /// <summary>Enrolls (token or deployment code) or polls a pending approval. Idempotent once active.</summary>
+    /// <summary>Enrolls with the configured enrollment token. Idempotent once active.</summary>
     public Task<EnrollmentOutcome> EnsureEnrolledAsync(CancellationToken cancellationToken = default) =>
         _enrollment.EnsureEnrolledAsync(cancellationToken);
 
@@ -331,9 +331,7 @@ public sealed class AgentRuntime : IUserRequestHandler, IDisposable
         var status = State.Read(s => s.Status);
         if (status != AgentEnrollmentStatus.Active)
         {
-            return new UserRequestResult(false, status == AgentEnrollmentStatus.PendingApproval
-                ? "This computer is waiting for approval by your IT team."
-                : "This computer is not connected to its patching server.");
+            return new UserRequestResult(false, "This computer is not connected to its patching server.");
         }
 
         UserRequestResult result;
@@ -518,25 +516,14 @@ public sealed class AgentRuntime : IUserRequestHandler, IDisposable
             {
                 var outcome = await _enrollment.EnsureEnrolledAsync(stoppingToken);
                 PublishTrayStatus();
-                var revoked = State.Read(s => s.Status == AgentEnrollmentStatus.Revoked);
-                switch (outcome)
+                if (outcome == EnrollmentOutcome.Active)
                 {
-                    case EnrollmentOutcome.Active:
-                        return;
-                    case EnrollmentOutcome.PendingApproval:
-                        backoff.Reset();
-                        delay = Jitter.Apply(_options.PendingApprovalPollInterval, 10);
-                        break;
-                    case EnrollmentOutcome.NotConfigured:
-                        delay = revoked ? _options.RevokedRetryInterval : _options.NotConfiguredRetryInterval;
-                        break;
-                    case EnrollmentOutcome.Rejected:
-                        delay = _options.RevokedRetryInterval;
-                        break;
-                    default:
-                        delay = backoff.NextDelay(_options.NotConfiguredRetryInterval);
-                        break;
+                    return;
                 }
+
+                // Not configured: look for a token again soon. Refused, or revoked earlier: wait for a new token longer.
+                var revoked = State.Read(s => s.Status == AgentEnrollmentStatus.Revoked);
+                delay = outcome == EnrollmentOutcome.NotConfigured && !revoked ? _options.NotConfiguredRetryInterval : _options.RevokedRetryInterval;
             }
             catch (AgentTransientException ex)
             {
@@ -546,7 +533,7 @@ public sealed class AgentRuntime : IUserRequestHandler, IDisposable
             catch (AgentAuthException ex)
             {
                 delay = backoff.NextDelay(_options.NotConfiguredRetryInterval);
-                _logger.LogWarning("Enrollment status check was rejected ({Code}); retrying in {Delay}.", ex.ErrorCode, delay);
+                _logger.LogWarning("Enrollment was refused ({Code}); retrying in {Delay}.", ex.ErrorCode, delay);
             }
 
             await DelayAsync(delay, stoppingToken);
@@ -798,7 +785,7 @@ public sealed class AgentRuntime : IUserRequestHandler, IDisposable
     private void HandleFatalAuth(AgentAuthException ex)
     {
         _logger.LogError(AgentEventIds.CredentialRevoked,
-            "The server rejected this agent's credential ({Code}). Normal operation is suspended. Re-enroll the agent with a new enrollment token or deployment code.",
+            "The server rejected this agent's credential ({Code}). Normal operation is suspended. Re-enroll the agent with a new enrollment token.",
             ex.ErrorCode);
         _outbox.Clear();
         RestoreWindowsUpdatePolicy();
@@ -866,8 +853,7 @@ public sealed class AgentRuntime : IUserRequestHandler, IDisposable
         var connection = snapshot.Status switch
         {
             AgentEnrollmentStatus.Active => unreachableSince is null ? TrayConnection.Connected : TrayConnection.Unreachable,
-            AgentEnrollmentStatus.PendingApproval => TrayConnection.PendingApproval,
-            AgentEnrollmentStatus.Revoked or AgentEnrollmentStatus.Rejected => TrayConnection.Revoked,
+            AgentEnrollmentStatus.Revoked => TrayConnection.Revoked,
             _ => TrayConnection.NotEnrolled,
         };
 

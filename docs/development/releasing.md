@@ -28,7 +28,9 @@ The engine keeps EasyPatch's own version line, because EasyPatch agents
 choose updates by version: `<Version>` in `easypatch/Directory.Build.props`,
 1.10.0 and up. A version is published once. A release whose engine version
 was already published from another commit fails before anything is signed,
-so **every EasyRMM release raises `<Version>`** and moves
+so **every EasyRMM release raises `<Version>`**, sets the same version in
+`eptest.EngineVersion` (`server/internal/easypatch/eptest/eptest.go`; the
+contract test fails until they match), and moves
 `easypatch/CHANGELOG.md`'s `[Unreleased]` entries under `## [1.10.1] -
 YYYY-MM-DD`. Running a failed release again for the same commit is allowed.
 

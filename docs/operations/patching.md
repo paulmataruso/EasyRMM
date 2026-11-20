@@ -348,10 +348,10 @@ queued.
 The engine checks its alert rules every 2 minutes and opens an alert for
 each device, or organization, a rule matches: a device offline, an update
 that failed to install, a security update missing some days after it
-became required, a scan out of date, a restart waiting some days, EasyPatch
-agents waiting for approval, an operating system out of support or near
-its end (by the [OS lifecycle](#engine-settings)), an update for an
-exploited vulnerability missing, or an update on hold. It resolves an alert
+became required, a scan out of date, a restart waiting some days, an
+operating system out of support or near its end (by the
+[OS lifecycle](#engine-settings)), an update for an exploited
+vulnerability missing, or an update on hold. It resolves an alert
 itself once its cause is gone; when the cause comes back within an hour it
 opens the same alert again, and after that a new one.
 These are patching alerts; EasyRMM's own alerts (disk space, a device

@@ -55,7 +55,6 @@ public enum TrayConnection
     Unreachable,
 
     NotEnrolled,
-    PendingApproval,
 
     /// <summary>The server rejected or revoked this computer's enrollment.</summary>
     Revoked,

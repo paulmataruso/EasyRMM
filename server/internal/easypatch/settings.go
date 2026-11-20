@@ -159,8 +159,7 @@ func jsonEqual(a, b any) bool {
 	return string(x) == string(y)
 }
 
-// SetServerSettings changes EasyPatch's server settings, and keeps those
-// EasyRMM does not show as they are.
+// SetServerSettings changes EasyPatch's server settings.
 func (s *Service) SetServerSettings(ctx context.Context, c access.Caller, in ServerSettings) (SettingsView, error) {
 	cl, err := s.changeServerWide(ctx, c)
 	if err != nil {

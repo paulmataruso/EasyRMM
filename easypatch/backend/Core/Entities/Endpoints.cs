@@ -66,7 +66,6 @@ public sealed class Endpoint
     public DateTimeOffset? AgentInstalledAt { get; set; }
     public DateTimeOffset EnrolledAt { get; set; }
     public Guid? EnrollmentTokenId { get; set; }
-    public Guid? EnrollmentRequestId { get; set; }
     public DateTimeOffset? LastCheckInAt { get; set; }
     public string? LastSeenIp { get; set; }
     public bool IsOnline { get; set; }
@@ -179,53 +178,6 @@ public sealed class EnrollmentToken
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset? LastUsedAt { get; set; }
     public DateTimeOffset? RevokedAt { get; set; }
-}
-
-/// <summary>Non-secret code used by the tokenless PowerShell/RMM installer. Enrollments require admin approval.</summary>
-public sealed class DeploymentCode
-{
-    public Guid Id { get; set; }
-    public required string Code { get; set; }
-    public required string Name { get; set; }
-    public Guid OrganizationId { get; set; }
-    public Guid? SiteId { get; set; }
-    public int MaxPendingRequests { get; set; } = 500;
-
-    /// <summary>Optional CIDR allow-list (e.g. the customer's public IPs).</summary>
-    public List<string> AllowedSourceCidrs { get; set; } = [];
-    public DateTimeOffset CreatedAt { get; set; }
-    public Guid? CreatedByUserId { get; set; }
-    public DateTimeOffset? ExpiresAt { get; set; }
-    public DateTimeOffset? RevokedAt { get; set; }
-}
-
-public sealed class EnrollmentRequest
-{
-    public Guid Id { get; set; }
-
-    /// <summary>Public identifier (r_…) the pending agent signs status polls with.</summary>
-    public required string RequestId { get; set; }
-    public Guid DeploymentCodeId { get; set; }
-    public Guid OrganizationId { get; set; }
-    public Guid? SiteId { get; set; }
-    public required byte[] PublicKey { get; set; }
-    public required string KeyFingerprint { get; set; }
-    public required string Hostname { get; set; }
-
-    /// <summary>JSON of the reported <see cref="EasyPatch.Contracts.Agent.DeviceIdentity"/>.</summary>
-    public required string DeviceJson { get; set; }
-    public string? SerialNumber { get; set; }
-    public string? OsCaption { get; set; }
-    public required string AgentVersion { get; set; }
-    public string? SourceIp { get; set; }
-    public EnrollmentRequestStatus Status { get; set; }
-    public DateTimeOffset CreatedAt { get; set; }
-    public DateTimeOffset LastSeenAt { get; set; }
-    public DateTimeOffset ExpiresAt { get; set; }
-    public DateTimeOffset? DecidedAt { get; set; }
-    public Guid? DecidedByUserId { get; set; }
-    public string? RejectReason { get; set; }
-    public Guid? EndpointId { get; set; }
 }
 
 public sealed class EndpointEvent

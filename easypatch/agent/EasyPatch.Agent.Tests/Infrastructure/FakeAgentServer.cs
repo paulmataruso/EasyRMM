@@ -33,8 +33,6 @@ public sealed class FakeAgentServer : HttpMessageHandler
 
     public HashSet<string> ValidTokens { get; } = new(StringComparer.Ordinal);
 
-    public HashSet<string> DeploymentCodes { get; } = new(StringComparer.OrdinalIgnoreCase);
-
     /// <summary>Server clock relative to the agent's TimeProvider.</summary>
     public TimeSpan ClockOffset { get; set; }
 
@@ -83,7 +81,6 @@ public sealed class FakeAgentServer : HttpMessageHandler
 
     public Dictionary<string, ServerCredential> Credentials { get; } = new(StringComparer.Ordinal);
 
-    public Dictionary<string, PendingRequest> PendingRequests { get; } = new(StringComparer.Ordinal);
 
     public Dictionary<Guid, ServerJob> Jobs { get; } = [];
 
@@ -110,12 +107,6 @@ public sealed class FakeAgentServer : HttpMessageHandler
             Jobs[jobId].CancelRequested = true;
         }
     }
-
-    public void Approve(string requestId) => SetRequestState(requestId, EnrollmentState.Active);
-
-    public void Reject(string requestId) => SetRequestState(requestId, EnrollmentState.Rejected);
-
-    public void Expire(string requestId) => SetRequestState(requestId, EnrollmentState.Expired);
 
     public void Revoke(string credentialId)
     {
@@ -217,20 +208,6 @@ public sealed class FakeAgentServer : HttpMessageHandler
             });
         }
 
-        if (enroll.DeploymentCode is { } code && DeploymentCodes.Contains(code))
-        {
-            var existing = PendingRequests.Values.FirstOrDefault(p => p.Fingerprint == fingerprint);
-            var pending = existing ?? new PendingRequest($"r_{Next()}", spki, fingerprint);
-            PendingRequests[pending.Id] = pending;
-            return Json(new EnrollResponse
-            {
-                State = EnrollmentState.PendingApproval,
-                CredentialId = pending.Id,
-                KeyFingerprint = fingerprint,
-                ServerTime = Now,
-            });
-        }
-
         return Problem(HttpStatusCode.Unauthorized, AgentErrorCodes.EnrollmentInvalid, "Invalid enrollment credential.");
     }
 
@@ -240,11 +217,6 @@ public sealed class FakeAgentServer : HttpMessageHandler
         if (authError is not null)
         {
             return authError;
-        }
-
-        if (credentialId.StartsWith("r_", StringComparison.Ordinal))
-        {
-            return HandleEnrollmentStatus(credentialId);
         }
 
         var credential = Credentials[credentialId];
@@ -337,34 +309,6 @@ public sealed class FakeAgentServer : HttpMessageHandler
         return Problem(HttpStatusCode.NotFound, null, $"No route {route}.");
     }
 
-    private HttpResponseMessage HandleEnrollmentStatus(string requestId)
-    {
-        var pending = PendingRequests[requestId];
-        switch (pending.State)
-        {
-            case EnrollmentState.Active:
-                pending.Credential ??= CreateCredential(pending.PublicKey, Guid.NewGuid());
-                return Json(new EnrollResponse
-                {
-                    State = EnrollmentState.Active,
-                    CredentialId = pending.Credential.Id,
-                    EndpointId = pending.Credential.EndpointId,
-                    CredentialExpiresAt = Now.AddDays(90),
-                    Config = Config,
-                    KeyFingerprint = pending.Fingerprint,
-                    ServerTime = Now,
-                });
-            default:
-                return Json(new EnrollResponse
-                {
-                    State = pending.State,
-                    CredentialId = requestId,
-                    KeyFingerprint = pending.Fingerprint,
-                    ServerTime = Now,
-                });
-        }
-    }
-
     private HttpResponseMessage HandleCheckIn(CheckInRequest checkIn)
     {
         CheckIns.Add(checkIn);
@@ -415,30 +359,17 @@ public sealed class FakeAgentServer : HttpMessageHandler
             return Problem(HttpStatusCode.Unauthorized, AgentErrorCodes.InvalidSignature, "Missing authentication headers.");
         }
 
-        byte[] spki;
-        if (credentialId.StartsWith("r_", StringComparison.Ordinal))
+        if (!Credentials.TryGetValue(credentialId, out var credential))
         {
-            if (route != AgentRoutes.EnrollmentStatus || !PendingRequests.TryGetValue(credentialId, out var pending))
-            {
-                return Problem(HttpStatusCode.Unauthorized, AgentErrorCodes.UnknownCredential, "Unknown request.");
-            }
-
-            spki = pending.PublicKey;
+            return Problem(HttpStatusCode.Unauthorized, AgentErrorCodes.UnknownCredential, "Unknown credential.");
         }
-        else
+
+        if (credential.Revoked)
         {
-            if (!Credentials.TryGetValue(credentialId, out var credential) || route == AgentRoutes.EnrollmentStatus)
-            {
-                return Problem(HttpStatusCode.Unauthorized, AgentErrorCodes.UnknownCredential, "Unknown credential.");
-            }
-
-            if (credential.Revoked)
-            {
-                return Problem(HttpStatusCode.Unauthorized, AgentErrorCodes.CredentialRevoked, "Credential revoked.");
-            }
-
-            spki = credential.PublicKey;
+            return Problem(HttpStatusCode.Unauthorized, AgentErrorCodes.CredentialRevoked, "Credential revoked.");
         }
+
+        var spki = credential.PublicKey;
 
         var skew = DateTimeOffset.FromUnixTimeSeconds(timestamp) - Now;
         if (skew.Duration() > RequestSigner.AllowedClockSkew)
@@ -468,14 +399,6 @@ public sealed class FakeAgentServer : HttpMessageHandler
         var credential = new ServerCredential($"c_{Next()}", spki, endpointId);
         Credentials[credential.Id] = credential;
         return credential;
-    }
-
-    private void SetRequestState(string requestId, EnrollmentState state)
-    {
-        lock (_lock)
-        {
-            PendingRequests[requestId].State = state;
-        }
     }
 
     private string Next() => Interlocked.Increment(ref _counter).ToString("D4", System.Globalization.CultureInfo.InvariantCulture) +
@@ -530,15 +453,6 @@ public sealed class ServerCredential(string id, byte[] publicKey, Guid endpointI
     public byte[] PublicKey { get; } = publicKey;
     public Guid EndpointId { get; } = endpointId;
     public bool Revoked { get; set; }
-}
-
-public sealed class PendingRequest(string id, byte[] publicKey, string fingerprint)
-{
-    public string Id { get; } = id;
-    public byte[] PublicKey { get; } = publicKey;
-    public string Fingerprint { get; } = fingerprint;
-    public EnrollmentState State { get; set; } = EnrollmentState.PendingApproval;
-    public ServerCredential? Credential { get; set; }
 }
 
 public sealed class ServerJob(AgentJob job)

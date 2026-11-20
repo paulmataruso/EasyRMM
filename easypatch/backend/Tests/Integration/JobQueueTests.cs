@@ -214,25 +214,25 @@ public sealed class JobQueueTests(PostgresFixture postgres) : IntegrationTest(po
         Assert.Equal(EndpointStatus.Active, await WithDbAsync(db => db.Endpoints.Select(e => e.Status).FirstAsync()));
         Assert.False((await root.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{agent.EndpointId}")).Summary.IsOnline);
 
-        var scan = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        var scan = await ScanAsync(root, agent.EndpointId);
         Clock.Advance(TimeSpan.FromHours(30)); // a long weekend
         await RunMaintenanceAsync<JobMaintenanceTask>();
-        Assert.Equal(JobStatus.Queued, await JobStatusInDbAsync(scan.Id));
+        Assert.Equal(JobStatus.Queued, await JobStatusInDbAsync(scan));
 
         var checkIn = await agent.CheckInAsync();
-        Assert.Equal(scan.Id, Assert.Single(checkIn.Jobs).JobId);
+        Assert.Equal(scan, Assert.Single(checkIn.Jobs).JobId);
         await FlushPresenceAsync();
-        Assert.Equal(JobStatus.Delivered, await JobStatusInDbAsync(scan.Id));
+        Assert.Equal(JobStatus.Delivered, await JobStatusInDbAsync(scan));
     }
 
     [Fact]
     public async Task Queued_jobs_expire_at_their_deadline()
     {
         var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-EXPIRE");
-        var scan = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        var scan = await ScanAsync(root, agent.EndpointId);
         Clock.Advance(TimeSpan.FromHours(169));
         await RunMaintenanceAsync<JobMaintenanceTask>();
-        Assert.Equal(JobStatus.Expired, await JobStatusInDbAsync(scan.Id));
+        Assert.Equal(JobStatus.Expired, await JobStatusInDbAsync(scan));
         Assert.Empty((await agent.CheckInAsync()).Jobs);
     }
 
@@ -240,22 +240,22 @@ public sealed class JobQueueTests(PostgresFixture postgres) : IntegrationTest(po
     public async Task Unacknowledged_deliveries_are_retried_and_eventually_failed()
     {
         var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-FLAKY");
-        var scan = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        var scan = await ScanAsync(root, agent.EndpointId);
 
         // Delivered, but the agent never acknowledged it and went silent: the lease expires and the job is queued again.
         Assert.Single((await agent.CheckInAsync()).Jobs);
         Clock.Advance(TimeSpan.FromMinutes(11));
         await RunMaintenanceAsync<JobMaintenanceTask>();
-        Assert.Equal(JobStatus.Queued, await JobStatusInDbAsync(scan.Id));
+        Assert.Equal(JobStatus.Queued, await JobStatusInDbAsync(scan));
 
         // An agent that keeps losing the job (check-ins without listing it) gets it again, up to the attempt limit.
         for (var delivery = 2; delivery <= 5; delivery++)
         {
-            Assert.Equal(scan.Id, Assert.Single((await agent.CheckInAsync()).Jobs).JobId);
+            Assert.Equal(scan, Assert.Single((await agent.CheckInAsync()).Jobs).JobId);
         }
 
         Assert.Empty((await agent.CheckInAsync()).Jobs);
-        var detail = await WithDbAsync(db => db.Jobs.AsNoTracking().FirstAsync(j => j.Id == scan.Id));
+        var detail = await WithDbAsync(db => db.Jobs.AsNoTracking().FirstAsync(j => j.Id == scan));
         Assert.Equal(JobStatus.Failed, detail.Status);
         Assert.Equal(5, detail.DeliveryCount);
     }
@@ -264,24 +264,24 @@ public sealed class JobQueueTests(PostgresFixture postgres) : IntegrationTest(po
     public async Task Stalled_jobs_time_out_but_a_late_result_is_still_recorded()
     {
         var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-SLOW");
-        var scan = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        var scan = await ScanAsync(root, agent.EndpointId);
         await agent.CheckInAsync();
-        await AckAsync(agent, scan.Id);
-        await ReportAsync(agent, scan.Id, 1, JobStatus.Running);
+        await AckAsync(agent, scan);
+        await ReportAsync(agent, scan, 1, JobStatus.Running);
 
         Clock.Advance(TimeSpan.FromHours(13));
         await RunMaintenanceAsync<JobMaintenanceTask>();
-        var timedOut = await WithDbAsync(db => db.Jobs.AsNoTracking().FirstAsync(j => j.Id == scan.Id));
+        var timedOut = await WithDbAsync(db => db.Jobs.AsNoTracking().FirstAsync(j => j.Id == scan));
         Assert.Equal(JobStatus.Failed, timedOut.Status);
         Assert.True(timedOut.TimedOut);
 
         // The agent was just slow: its final report replaces the timeout instead of being discarded.
-        await ReportAsync(agent, scan.Id, 2, JobStatus.Completed);
-        Assert.Equal(JobStatus.Completed, await JobStatusInDbAsync(scan.Id));
+        await ReportAsync(agent, scan, 2, JobStatus.Completed);
+        Assert.Equal(JobStatus.Completed, await JobStatusInDbAsync(scan));
 
         // Stale and duplicate reports are ignored.
-        await ReportAsync(agent, scan.Id, 1, JobStatus.Running);
-        Assert.Equal(JobStatus.Completed, await JobStatusInDbAsync(scan.Id));
+        await ReportAsync(agent, scan, 1, JobStatus.Running);
+        Assert.Equal(JobStatus.Completed, await JobStatusInDbAsync(scan));
     }
 
     [Fact]
@@ -325,11 +325,11 @@ public sealed class JobQueueTests(PostgresFixture postgres) : IntegrationTest(po
     public async Task Cancellation_is_immediate_when_queued_and_cooperative_when_running()
     {
         var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-CANCEL");
-        var queued = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Accepted);
-        var cancelled = await root.SendAsync<JobDetailDto>(HttpMethod.Post, $"/api/v1/jobs/{queued.Id}/cancel", null, HttpStatusCode.OK);
+        var queued = await ScanAsync(root, agent.EndpointId);
+        var cancelled = await root.SendAsync<JobDetailDto>(HttpMethod.Post, $"/api/v1/jobs/{queued}/cancel", null, HttpStatusCode.OK);
         Assert.Equal(JobStatus.Cancelled, cancelled.Summary.Status);
         Assert.Empty((await agent.CheckInAsync()).Jobs);
-        await root.ExpectAsync(HttpMethod.Post, $"/api/v1/jobs/{queued.Id}/cancel", null, HttpStatusCode.Conflict, "invalid_state");
+        await root.ExpectAsync(HttpMethod.Post, $"/api/v1/jobs/{queued}/cancel", null, HttpStatusCode.Conflict, "invalid_state");
 
         await ReportScanAsync(agent, [SecurityUpdate("KB5046617"), SecurityUpdate("KB5046618")]);
         var install = await InstallAllAsync(agent.EndpointId);
@@ -338,7 +338,7 @@ public sealed class JobQueueTests(PostgresFixture postgres) : IntegrationTest(po
         await AckAsync(agent, install.Id);
         await ReportAsync(agent, install.Id, 1, JobStatus.Running);
 
-        var requested = await root.SendAsync<JobDetailDto>(HttpMethod.Delete, $"/api/v1/jobs/{install.Id}", null, HttpStatusCode.OK);
+        var requested = await root.SendAsync<JobDetailDto>(HttpMethod.Post, $"/api/v1/jobs/{install.Id}/cancel", null, HttpStatusCode.OK);
         Assert.Equal(JobStatus.Running, requested.Summary.Status);
         Assert.True(requested.Summary.CancelRequested);
 
@@ -385,11 +385,11 @@ public sealed class JobQueueTests(PostgresFixture postgres) : IntegrationTest(po
         await ReportAsync(agent, install.Id, 1, JobStatus.WaitingForReboot, rebootRequired: true);
 
         var forced = await InstallAllAsync(agent.EndpointId, force: true);
-        var scan = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        var scan = await ScanAsync(root, agent.EndpointId);
         var checkIn = await agent.CheckInAsync([install.Id]);
-        Assert.Equal(scan.Id, Assert.Single(checkIn.Jobs).JobId);
-        await AckAsync(agent, scan.Id);
-        await ReportAsync(agent, scan.Id, 1, JobStatus.Completed);
+        Assert.Equal(scan, Assert.Single(checkIn.Jobs).JobId);
+        await AckAsync(agent, scan);
+        await ReportAsync(agent, scan, 1, JobStatus.Completed);
         Assert.Empty((await agent.CheckInAsync([install.Id])).Jobs);
         Assert.Equal(JobStatus.Queued, await JobStatusInDbAsync(forced.Id));
 

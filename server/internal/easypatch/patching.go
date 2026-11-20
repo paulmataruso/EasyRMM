@@ -117,8 +117,7 @@ func (s *Service) endpoints(ctx context.Context, c *Client, organizationID uuid.
 
 // Status is what the console needs before showing patching.
 type Status struct {
-	Configured  bool `json:"configured"`
-	CanSchedule bool `json:"canSchedule"`
+	Configured bool `json:"configured"`
 }
 
 // Status says whether patching is available, to anyone who may see it
@@ -131,7 +130,7 @@ func (s *Service) Status(ctx context.Context, c access.Caller) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	return Status{Configured: conn.Configured, CanSchedule: slices.Contains(conn.Capabilities, CapabilityScheduledInstalls)}, nil
+	return Status{Configured: conn.Configured}, nil
 }
 
 // ---------------------------------------------------------------- devices
@@ -514,14 +513,13 @@ func likePattern(s string) string {
 
 // DevicePatching is a device's Patches tab.
 type DevicePatching struct {
-	DeviceID    uuid.UUID       `json:"deviceId"`
-	Link        string          `json:"link"`
-	Reason      string          `json:"reason,omitempty"`
-	CheckedAt   *time.Time      `json:"checkedAt,omitempty"`
-	CanManage   bool            `json:"canManage"`
-	CanSchedule bool            `json:"canSchedule"`
-	Endpoint    *EndpointDetail `json:"endpoint,omitempty"`
-	Policy      *Policy         `json:"policy,omitempty"`
+	DeviceID  uuid.UUID       `json:"deviceId"`
+	Link      string          `json:"link"`
+	Reason    string          `json:"reason,omitempty"`
+	CheckedAt *time.Time      `json:"checkedAt,omitempty"`
+	CanManage bool            `json:"canManage"`
+	Endpoint  *EndpointDetail `json:"endpoint,omitempty"`
+	Policy    *Policy         `json:"policy,omitempty"`
 	// Install is the device's EasyPatch agent install (ADR-0031), when one
 	// was asked for.
 	Install *AgentInstall `json:"install,omitempty"`
@@ -547,8 +545,7 @@ func (s *Service) Device(ctx context.Context, c access.Caller, id uuid.UUID) (De
 		return DevicePatching{}, errNotConfigured
 	}
 	out := DevicePatching{DeviceID: d.id, Link: d.state, Reason: d.reason, CheckedAt: d.checkedAt,
-		CanManage: c.Can(rbac.PermPatchManage, d.resource()), CanSchedule: r.can(CapabilityScheduledInstalls),
-		Install: d.install, Stopped: d.stopped, Removal: d.removal}
+		CanManage: c.Can(rbac.PermPatchManage, d.resource()), Install: d.install, Stopped: d.stopped, Removal: d.removal}
 	if d.state != LinkLinked {
 		return out, nil
 	}
@@ -862,7 +859,7 @@ type ActionInput struct {
 	// UpdateIDs installs these updates (EasyPatch update GUIDs) rather
 	// than every eligible one; one device only.
 	UpdateIDs []uuid.UUID `json:"updateIds"`
-	// ScheduledAt installs later; only when EasyPatch can schedule.
+	// ScheduledAt installs later: the jobs wait until then.
 	ScheduledAt *time.Time `json:"scheduledAt"`
 }
 
@@ -1014,7 +1011,7 @@ func (s *Service) Scan(ctx context.Context, c access.Caller, in ActionInput) (Ac
 // Install has devices install every eligible update, or chosen updates on
 // one device, now or at a scheduled time.
 func (s *Service) Install(ctx context.Context, c access.Caller, in ActionInput) (ActionResult, error) {
-	r, cl, err := s.operable(ctx)
+	_, cl, err := s.operable(ctx)
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -1026,8 +1023,6 @@ func (s *Service) Install(ctx context.Context, c access.Caller, in ActionInput) 
 	if in.ScheduledAt != nil {
 		now := s.now()
 		switch {
-		case !r.can(CapabilityScheduledInstalls):
-			f.Add("scheduledAt", "This patching engine cannot schedule installs: it does not have the scheduled-installs capability.")
 		case in.ScheduledAt.Before(now.Add(time.Minute)):
 			f.Add("scheduledAt", "Choose a time in the future.")
 		case in.ScheduledAt.After(now.Add(maxScheduleAhead)):

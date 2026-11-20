@@ -1,6 +1,6 @@
 package eptest
 
-// Policies at every level and tags, as EasyPatch 1.10.0 serves them: a level
+// Policies at every level and tags, as the engine serves them: a level
 // with no policy answers with every value null; a policy is replaced whole;
 // the global policy is always complete; tags and tag policies are for super
 // administrators, and assigning tags for administrators of every

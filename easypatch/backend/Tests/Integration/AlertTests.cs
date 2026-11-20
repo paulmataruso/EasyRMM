@@ -67,7 +67,7 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
     {
         var rules = await root.GetAsync<List<AlertRuleDto>>("/api/v1/alert-rules");
         Assert.Equal(AlertRuleCatalog.Defaults(DateTimeOffset.UnixEpoch).Count, rules.Count);
-        Assert.Equal(9, rules.Count);
+        Assert.Equal(8, rules.Count);
         Assert.Equal(AlertSeverity.Critical, rules.Single(r => r.Type == AlertRuleType.KnownExploitedMissing).Severity);
         Assert.All(rules, r => Assert.True(r.Enabled));
         Assert.All(rules, r => Assert.Empty(r.ChannelIds));
@@ -82,11 +82,11 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
         await admin.ExpectAsync(HttpMethod.Post, "/api/v1/notifications/channels", Email("Ops", "ops@example.com"), HttpStatusCode.Forbidden);
         Assert.Empty(await AlertsAsync(admin));
 
-        // Rule validation: thresholds per type, tags not allowed on enrollment rules, unknown channels.
+        // Rule validation: thresholds per type, tags not allowed on organization-wide rules, unknown channels.
         await root.ExpectAsync(HttpMethod.Post, "/api/v1/alert-rules", OfflineRule([], hours: 0), HttpStatusCode.BadRequest, "validation_failed");
         await root.ExpectAsync(HttpMethod.Post, "/api/v1/alert-rules", OfflineRule([Guid.NewGuid()]), HttpStatusCode.BadRequest);
         await root.ExpectAsync(HttpMethod.Post, "/api/v1/alert-rules",
-            new AlertRuleRequest("Enrollment", AlertRuleType.EnrollmentPending, true, AlertSeverity.Info, null, null, Guid.NewGuid(), null, false, 0),
+            new AlertRuleRequest("Held", AlertRuleType.UpdateHeld, true, AlertSeverity.Info, null, null, Guid.NewGuid(), null, false, 0),
             HttpStatusCode.BadRequest);
         var created = await root.SendAsync<AlertRuleDto>(HttpMethod.Post, "/api/v1/alert-rules", OfflineRule([], hours: 4, orgId: org.Id), HttpStatusCode.OK);
         Assert.Equal("hours", created.ThresholdUnit);
@@ -326,26 +326,5 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
         await root.SendAsync<AlertRuleDto>(HttpMethod.Put, $"/api/v1/alert-rules/{scoped.Id}",
             OfflineRule([], hours: 1, orgId: org.Id) with { Name = "Contoso offline" }, HttpStatusCode.OK);
         Assert.DoesNotContain(await AlertsAsync(root), a => a.RuleId == scoped.Id && a.OrganizationId == otherOrg.Id);
-    }
-
-    [Fact]
-    public async Task Pending_enrollment_requests_alert_per_organization()
-    {
-        await root.SendAsync<AlertRuleDto>(HttpMethod.Put, $"/api/v1/alert-rules/{OfflineRuleId}", OfflineRule([]) with { Enabled = false },
-            HttpStatusCode.OK);
-        var code = await root.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
-            new CreateDeploymentCodeRequest(org.Id, site.Id, "RMM rollout", 30, null, null), HttpStatusCode.Created);
-        foreach (var hostname in new[] { "NEW-PC-1", "NEW-PC-2" })
-        {
-            using var response = await NewAgent().EnrollAsync(null, code.Code, hostname);
-            await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
-        }
-
-        await RunMaintenanceAsync<AlertEvaluationTask>();
-        var alert = Assert.Single(await AlertsAsync(root, "?ruleType=EnrollmentPending"));
-        Assert.Null(alert.EndpointId);
-        Assert.Contains("2 computers", alert.Title, StringComparison.Ordinal);
-        Assert.Equal(AlertSeverity.Info, alert.Severity);
-        Assert.Contains(AlertRuleCatalog.Defaults(Clock.GetUtcNow()), r => r.Type == AlertRuleType.EnrollmentPending);
     }
 }

@@ -252,7 +252,6 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
         onClose={() => setInstalling(null)}
         devices={target}
         updates={installing === "all" || installing === null ? undefined : installing}
-        canSchedule={d.canSchedule}
         preview
         onDone={toJobs}
       />

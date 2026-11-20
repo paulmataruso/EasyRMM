@@ -88,16 +88,16 @@ public sealed class TagsAndRolloutTests(PostgresFixture postgres) : IntegrationT
         var scoped = Admin("scoped", UserRole.Admin, [org.Id]);
         Assert.Equal("Pilot", Assert.Single(await scoped.GetAsync<List<TagDto>>("/api/v1/tags")).Name);
 
-        var bulk = await root.SendAsync<BulkEndpointTagsResult>(HttpMethod.Post, "/api/v1/endpoints/tags/bulk",
-            new BulkEndpointTagsRequest([agent.EndpointId, other.EndpointId], [pilot.Id], null), HttpStatusCode.OK);
-        Assert.Equal(1, bulk.Changed); // the first endpoint already had the tag
-        bulk = await root.SendAsync<BulkEndpointTagsResult>(HttpMethod.Post, "/api/v1/endpoints/tags/bulk",
-            new BulkEndpointTagsRequest([agent.EndpointId, other.EndpointId], null, [pilot.Id]), HttpStatusCode.OK);
-        Assert.Equal(2, bulk.Changed);
+        await root.ExpectAsync(HttpMethod.Put, $"/api/v1/endpoints/{other.EndpointId}/tags", new EndpointTagsRequest([pilot.Id]), HttpStatusCode.NoContent);
+        Assert.Equal(2, Assert.Single(await root.GetAsync<List<TagDto>>("/api/v1/tags")).EndpointCount);
+        await root.ExpectAsync(HttpMethod.Put, $"/api/v1/endpoints/{other.EndpointId}/tags", new EndpointTagsRequest([]), HttpStatusCode.NoContent);
+        Assert.Equal(1, Assert.Single(await root.GetAsync<List<TagDto>>("/api/v1/tags")).EndpointCount);
 
+        // A tag still on an endpoint can be deleted.
         await root.ExpectAsync(HttpMethod.Delete, $"/api/v1/tags/{pilot.Id}", null, HttpStatusCode.NoContent);
         Assert.Empty(await root.GetAsync<List<TagDto>>("/api/v1/tags"));
-        Assert.Contains(await WithDbAsync(db => db.AuditLogs.Select(a => a.Action).ToListAsync()), a => a == "endpoint.tags_bulk_update");
+        Assert.Empty((await root.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{agent.EndpointId}")).Summary.Tags ?? []);
+        Assert.Contains(await WithDbAsync(db => db.AuditLogs.Select(a => a.Action).ToListAsync()), a => a == "endpoint.tags_update");
     }
 
     [Fact]

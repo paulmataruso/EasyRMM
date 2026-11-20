@@ -36,7 +36,7 @@ var (
 	ChannelTypes      = []string{"Email", "Webhook"}
 	WebhookFormats    = []string{"Generic", "Slack", "Teams"}
 	DeliveryStatuses  = []string{"Pending", "Sent", "Failed"}
-	orgAlertRuleKinds = []string{"EnrollmentPending", "UpdateHeld"}
+	orgAlertRuleKinds = []string{"UpdateHeld"}
 )
 
 // ruleThreshold is a rule type's threshold, as EasyPatch's catalog has it.

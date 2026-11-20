@@ -15,7 +15,7 @@ namespace EasyPatch.Communication;
 /// <summary>A credential ID plus the private key that signs for it. The key is owned by the caller.</summary>
 public sealed record SigningCredential(string CredentialId, ECDsa Key);
 
-/// <summary>Supplies the credential used to sign the next request (c_… once active, r_… while pending approval).</summary>
+/// <summary>Supplies the credential used to sign the next request (the active c_… credential).</summary>
 public interface ISigningCredentialProvider
 {
     /// <summary>Returns the current signing credential, or null when the agent has no identity yet.</summary>
@@ -79,13 +79,6 @@ public sealed class AgentApiClient
     {
         ArgumentNullException.ThrowIfNull(request);
         var response = await SendAsync<EnrollResponse>(AgentRoutes.Enroll, Serialize(request), signed: false, cancellationToken);
-        _clock.Observe(response.ServerTime);
-        return response;
-    }
-
-    public async Task<EnrollResponse> GetEnrollmentStatusAsync(CancellationToken cancellationToken = default)
-    {
-        var response = await SendAsync<EnrollResponse>(AgentRoutes.EnrollmentStatus, Serialize(new { }), signed: true, cancellationToken);
         _clock.Observe(response.ServerTime);
         return response;
     }
@@ -398,7 +391,7 @@ public sealed class AgentApiClient
         }
 
         if (status is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden &&
-            problem.Code is not (AgentErrorCodes.EnrollmentInvalid or AgentErrorCodes.EnrollmentRejected))
+            problem.Code is not AgentErrorCodes.EnrollmentInvalid)
         {
             var fatal = problem.Code is not null && FatalAuthCodes.Contains(problem.Code);
             return new AgentAuthException(message, status, problem.Code, fatal);

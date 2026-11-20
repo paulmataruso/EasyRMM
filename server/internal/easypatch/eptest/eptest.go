@@ -28,6 +28,10 @@ import (
 // spells it.
 const StatusCanceled = "Cancelled" //nolint:misspell // EasyPatch's enum value
 
+// EngineVersion is the version the server reports: <Version> in
+// easypatch/Directory.Build.props, the engine EasyRMM ships with.
+const EngineVersion = "1.11.1"
+
 // Server is a fake patching engine: plain HTTP on loopback, as in
 // EasyRMM's deployment. Change its state inside Set.
 type Server struct {
@@ -38,9 +42,6 @@ type Server struct {
 	// gives agents (https://patch.example.com).
 	Version   string
 	PublicURL string
-	// Capabilities is what server-info lists; nil leaves the field out, as
-	// EasyPatch 1.9.0 does.
-	Capabilities []string
 	// ReadOnly has the engine take every statement as a ReadOnly one, as
 	// when it does not let EasyRMM act as an administrator: what changes
 	// something answers 403.
@@ -56,8 +57,8 @@ type Server struct {
 	// EasyPatch saved the change: the caller cannot tell it happened.
 	LoseReply func(method, path string) bool
 
-	// Packages is what agent-packages lists; NewEngine fills in those of an
-	// EasyPatch 1.9.0 server.
+	// Packages is what agent-packages lists; NewEngine fills in the
+	// engine's own, and one older Windows package.
 	Packages []map[string]any
 
 	orgs      []*OrgInfo
@@ -128,7 +129,7 @@ type Endpoint struct {
 	// itself.
 	CannotUninstall bool
 	// RebootPending, IsServer and CannotRestart describe a pending restart
-	// as EasyPatch 1.10.0's restart-pending list shows it.
+	// as the engine's restart-pending list shows it.
 	RebootPending  bool
 	IsServer       bool
 	CannotRestart  bool
@@ -167,15 +168,16 @@ type Statement struct {
 	Organizations    []uuid.UUID
 }
 
-// newServer is a server's state, with an EasyPatch 1.9.0 server's packages.
+// newServer is a server's state, with the engine's packages.
 func newServer() *Server {
-	s := &Server{Version: "1.9.0", PublicURL: "https://patch.example.com", endpoints: map[uuid.UUID]*Endpoint{}}
+	s := &Server{Version: EngineVersion, PublicURL: "https://patch.example.com", endpoints: map[uuid.UUID]*Endpoint{}}
+	v := EngineVersion
 	for _, p := range []struct {
 		version, arch, format string
 		latest                bool
 	}{
-		{"1.9.0", "x64", "msi", true}, {"1.8.2", "x64", "msi", false}, {"1.9.0", "x64", "deb", true}, {"1.9.0", "x64", "rpm", true},
-		{"1.9.0", "arm64", "deb", true}, {"1.9.0", "arm64", "rpm", true}, {"1.9.0", "arm64", "pkg", true},
+		{v, "x64", "msi", true}, {"1.8.2", "x64", "msi", false}, {v, "x64", "deb", true}, {v, "x64", "rpm", true},
+		{v, "arm64", "deb", true}, {v, "arm64", "rpm", true}, {v, "arm64", "pkg", true},
 	} {
 		s.Packages = append(s.Packages, Package(fmt.Sprintf("EasyPatchAgent-%s-%s.%s", p.version, p.arch, p.format), p.version, p.arch, p.format, p.latest))
 	}
@@ -534,11 +536,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/"), "/")
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/server-info":
-		info := map[string]any{"version": s.Version, "publicUrl": s.PublicURL, "serverTime": time.Now().UTC()}
-		if s.Capabilities != nil {
-			info["capabilities"] = s.Capabilities
-		}
-		reply(w, 200, info)
+		reply(w, 200, map[string]any{"version": s.Version, "publicUrl": s.PublicURL, "serverTime": time.Now().UTC()})
 	case r.Method == http.MethodGet && r.URL.Path == "/api/v1/enrollment-tokens":
 		if s.readOnlyCall {
 			problem(w, 403, "", "")
@@ -714,7 +712,7 @@ func (s *Server) createToken(w http.ResponseWriter, body map[string]any) {
 			"token": map[string]any{"id": t.ID, "organizationId": org, "organizationName": "", "siteId": site, "siteName": nil,
 				"tokenPrefix": t.Secret[:8], "description": desc, "maxUses": t.MaxUses, "useCount": 0, "createdAt": time.Now().UTC(),
 				"expiresAt": time.Now().Add(time.Duration(hours) * time.Hour).UTC(), "lastUsedAt": nil, "revokedAt": nil, "state": "Active"},
-			"plaintextToken": t.Secret, "msiExecCommand": "msiexec /i …", "linuxEnrollCommand": "printf …", "macEnrollCommand": nil,
+			"plaintextToken": t.Secret,
 		})
 	}
 	reply(w, 200, out)
@@ -961,14 +959,8 @@ func (s *Server) bulk(w http.ResponseWriter, kind string, body map[string]any) {
 	reply(w, 200, map[string]any{"succeeded": succeeded, "failed": failed, "results": items})
 }
 
-// restartPending answers GET /api/v1/organizations/{id}/restart-pending as
-// EasyPatch 1.10.0 does; a server reporting an earlier version has no such
-// route.
+// restartPending answers GET /api/v1/organizations/{id}/restart-pending.
 func (s *Server) restartPending(w http.ResponseWriter, org string) {
-	if strings.HasPrefix(s.Version, "1.9.") || strings.HasPrefix(s.Version, "1.8.") {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
 	id, _ := uuid.Parse(org)
 	if s.org(id) == nil {
 		problem(w, 404, "not_found", "Organization not found.")

@@ -42,7 +42,7 @@ public static class EasyRmmTestSigner
 public sealed class EasyRmmStatementTests
 {
     private static readonly DateTimeOffset Now = new(2026, 11, 18, 12, 0, 0, TimeSpan.Zero);
-    private const string Target = "/api/v1/endpoints/0b4b5c3e-2a8f-4f7e-9f3d-6a1e2b3c4d5e/scan";
+    private const string Target = "/api/v1/endpoints/0b4b5c3e-2a8f-4f7e-9f3d-6a1e2b3c4d5e/uninstall-agent";
 
     private static EasyRmmStatement? Validate(string token, string method = "POST", string target = Target, DateTimeOffset? now = null, byte[]? key = null) =>
         EasyRmmStatement.Validate(token, key ?? EasyRmmTestSigner.Key, method, target, now ?? Now, out _);

@@ -6,9 +6,7 @@ namespace EasyPatch.Agent.Core.State;
 public enum AgentEnrollmentStatus
 {
     NotEnrolled,
-    PendingApproval,
     Active,
-    Rejected,
 
     /// <summary>The server revoked or no longer recognizes this agent's credential.</summary>
     Revoked,
@@ -46,9 +44,6 @@ public sealed class AgentState
     public string? CredentialId { get; set; }
 
     public DateTimeOffset? CredentialExpiresAt { get; set; }
-
-    /// <summary>Pending enrollment request (r_…) while waiting for administrator approval.</summary>
-    public string? PendingEnrollmentRequestId { get; set; }
 
     /// <summary>Fingerprint of the key the current credential belongs to.</summary>
     public string? KeyFingerprint { get; set; }

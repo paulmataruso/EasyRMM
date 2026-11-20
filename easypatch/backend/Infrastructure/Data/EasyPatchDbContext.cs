@@ -37,8 +37,6 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
     public DbSet<Endpoint> Endpoints => Set<Endpoint>();
     public DbSet<AgentCredential> AgentCredentials => Set<AgentCredential>();
     public DbSet<EnrollmentToken> EnrollmentTokens => Set<EnrollmentToken>();
-    public DbSet<DeploymentCode> DeploymentCodes => Set<DeploymentCode>();
-    public DbSet<EnrollmentRequest> EnrollmentRequests => Set<EnrollmentRequest>();
     public DbSet<EndpointEvent> EndpointEvents => Set<EndpointEvent>();
     public DbSet<Update> Updates => Set<Update>();
     public DbSet<EndpointUpdate> EndpointUpdates => Set<EndpointUpdate>();
@@ -77,7 +75,6 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
         configurationBuilder.Properties<OsSupportStatus>().HaveConversion<string>().HaveMaxLength(32);
         configurationBuilder.Properties<EsuOverride>().HaveConversion<string>().HaveMaxLength(32);
         configurationBuilder.Properties<PolicyScope>().HaveConversion<string>().HaveMaxLength(32);
-        configurationBuilder.Properties<EnrollmentRequestStatus>().HaveConversion<string>().HaveMaxLength(32);
         configurationBuilder.Properties<ScanStatus>().HaveConversion<string>().HaveMaxLength(32);
         configurationBuilder.Properties<EventSeverity>().HaveConversion<string>().HaveMaxLength(32);
         configurationBuilder.Properties<UpdateCategory>().HaveConversion<string>().HaveMaxLength(32);
@@ -391,34 +388,6 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
             e.HasIndex(x => x.OrganizationId);
             e.HasOne<Organization>().WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Cascade);
             e.HasOne<Site>().WithMany().HasForeignKey(x => x.SiteId).OnDelete(DeleteBehavior.Cascade);
-        });
-        b.Entity<DeploymentCode>(e =>
-        {
-            e.ToTable("deployment_codes");
-            e.Property(x => x.Code).HasMaxLength(64);
-            e.Property(x => x.Name).HasMaxLength(200);
-            e.HasIndex(x => x.Code).IsUnique();
-            e.HasIndex(x => x.OrganizationId);
-            e.HasOne<Organization>().WithMany().HasForeignKey(x => x.OrganizationId).OnDelete(DeleteBehavior.Cascade);
-            e.HasOne<Site>().WithMany().HasForeignKey(x => x.SiteId).OnDelete(DeleteBehavior.Cascade);
-        });
-        b.Entity<EnrollmentRequest>(e =>
-        {
-            e.ToTable("enrollment_requests");
-            e.Property(x => x.RequestId).HasMaxLength(64);
-            e.Property(x => x.KeyFingerprint).HasMaxLength(32);
-            e.Property(x => x.Hostname).HasMaxLength(255);
-            e.Property(x => x.SerialNumber).HasMaxLength(255);
-            e.Property(x => x.OsCaption).HasMaxLength(255);
-            e.Property(x => x.AgentVersion).HasMaxLength(64);
-            e.Property(x => x.SourceIp).HasMaxLength(64);
-            e.Property(x => x.RejectReason).HasMaxLength(500);
-            e.Property(x => x.DeviceJson).HasColumnType("jsonb");
-            e.HasIndex(x => x.RequestId).IsUnique();
-            e.HasIndex(x => new { x.DeploymentCodeId, x.Status });
-            e.HasIndex(x => x.Status);
-            e.HasIndex(x => x.KeyFingerprint);
-            e.HasOne<DeploymentCode>().WithMany().HasForeignKey(x => x.DeploymentCodeId).OnDelete(DeleteBehavior.Cascade);
         });
         b.Entity<EndpointEvent>(e =>
         {

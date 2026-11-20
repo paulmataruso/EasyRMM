@@ -33,11 +33,8 @@ const VIEWER = sessionView({
   permissions: ["org.view", "site.view", "device.view", "patch.view"],
 });
 
-/** The patching engine, without the scheduled-installs capability. */
-const READY: PatchStatus = {
-  configured: true,
-  canSchedule: false,
-};
+/** The patching engine. */
+const READY: PatchStatus = { configured: true };
 
 function endpoint(id: string, hostname: string, extra: Partial<PatchEndpoint> = {}): PatchEndpoint {
   return {
@@ -224,9 +221,8 @@ describe("patching page", () => {
     const dialog = await screen.findByRole("dialog", {
       name: "Install updates on 2 devices",
     });
-    // Without the scheduled-installs capability, installs start at once.
-    expect(within(dialog).queryByLabelText("Install at")).not.toBeInTheDocument();
-    expect(within(dialog).getByText(/the patching engine, which cannot install at a later time/)).toBeInTheDocument();
+    // Now, or at a later time.
+    expect(within(dialog).getByLabelText("Install at")).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Install now" }));
     await waitFor(() => expect(server.callsTo("POST /patching/install")).toHaveLength(1));
     expect(server.call("POST /patching/install").body).toEqual({
@@ -315,10 +311,7 @@ describe("patching page", () => {
           permissions: [...sessionView().permissions, "device.view", "patch.view"],
         }),
       ),
-      "GET /patching": ok({
-        configured: false,
-        canSchedule: false,
-      }),
+      "GET /patching": ok({ configured: false }),
     });
     renderApp("/patching?tab=devices");
     await screen.findByRole("main");
@@ -456,7 +449,6 @@ describe("patching page", () => {
     const user = userEvent.setup();
     const pending = (d: PatchFleet["devices"][number]) => ({ ...d, endpoint: { ...d.endpoint!, rebootPending: true } });
     const plan: RestartPlan = {
-      serversKnown: true,
       devices: [
         { deviceId: "d1", deviceName: "WEB-01", restart: true, server: false, online: true },
         { deviceId: "d2", deviceName: "DB-01", restart: true, server: true, online: false },
@@ -516,9 +508,8 @@ describe("patching page", () => {
         "POST /patching/restart/plan": (req) =>
           ok(
             (req.body as { condition?: string }).condition === "Always"
-              ? { serversKnown: true, devices: [{ deviceId: "d2", deviceName: "DB-01", restart: true, server: false, online: true }] }
+              ? { devices: [{ deviceId: "d2", deviceName: "DB-01", restart: true, server: false, online: true }] }
               : {
-                  serversKnown: true,
                   devices: [{ deviceId: "d1", deviceName: "WEB-01", restart: false, reason: "Its EasyPatch agent cannot restart the computer; update the agent first.", server: false, online: true }],
                 },
           ),
@@ -568,7 +559,7 @@ describe("patching page", () => {
       patchingRoutes({
         "POST /patching/restart/plan": (req) => {
           const ids = (req.body as { deviceIds: string[] }).deviceIds;
-          return ok({ serversKnown: true, devices: ids.map((id) => ({ deviceId: id, deviceName: id, restart: true, server: false, online: true })) });
+          return ok({ devices: ids.map((id) => ({ deviceId: id, deviceName: id, restart: true, server: false, online: true })) });
         },
       }),
     );
@@ -829,7 +820,6 @@ const LINKED: DevicePatching = {
   link: "linked",
   checkedAt: T,
   canManage: true,
-  canSchedule: true,
   endpoint: {
     summary: endpoint("e1", "web-01", { knownExploitedMissingCount: 1 }),
     serialNumber: "S-1",
@@ -975,7 +965,6 @@ describe("device patches", () => {
     const server = installFakeApi(
       deviceRoutes(pending, {
         "POST /patching/restart/plan": ok({
-          serversKnown: false,
           devices: [{ deviceId: "d1", deviceName: "WEB-01", restart: true, server: true, online: true }],
         }),
         "POST /patching/restart": ok({ succeeded: 1, failed: 0, results: [{ deviceId: "d1", deviceName: "WEB-01", ok: true, jobId: "j8" }] }),
@@ -988,9 +977,9 @@ describe("device patches", () => {
     expect(main().getByText("Windows Update")).toBeInTheDocument();
     await user.click(main().getByRole("button", { name: "Restart…" }));
     const dialog = await screen.findByRole("dialog", { name: "Restart WEB-01" });
-    // An engine before 1.10.0 cannot tell servers apart, so every device waits for a tick.
-    expect(await within(dialog).findByText("Tick each device to restart")).toBeInTheDocument();
-    expect(within(dialog).getByText(/older than 1\.10\.0/)).toBeInTheDocument();
+    // A server waits for its tick.
+    expect(await within(dialog).findByText("Servers restart only when you tick them")).toBeInTheDocument();
+    expect(within(dialog).getByText("A restart interrupts everyone using the server.")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Restart" })).toBeDisabled();
     expect(within(dialog).getByRole("checkbox", { name: "Only if a restart is pending" })).toBeChecked();
     await user.click(within(dialog).getByRole("checkbox", { name: "Restart WEB-01" }));
@@ -1014,7 +1003,7 @@ describe("device patches", () => {
     const pending: DevicePatching = { ...LINKED, endpoint: { ...LINKED.endpoint!, summary: { ...LINKED.endpoint!.summary, rebootPending: true } } };
     installFakeApi(
       deviceRoutes(pending, {
-        "POST /patching/restart/plan": ok({ serversKnown: true, devices: [{ deviceId: "d1", deviceName: "WEB-01", restart: true, server: false, online: true }] }),
+        "POST /patching/restart/plan": ok({ devices: [{ deviceId: "d1", deviceName: "WEB-01", restart: true, server: false, online: true }] }),
         "POST /patching/restart": fail(422, "validation_failed", "Some fields need attention.", {
           confirmServers: "These are servers; confirm restarting them: WEB-01.",
         }),
@@ -1133,7 +1122,6 @@ describe("device patches", () => {
         link: "unlinked",
         reason: 'Serial numbers differ: the patching engine has "A", EasyRMM has "B".',
         canManage: true,
-        canSchedule: false,
       }),
     );
     renderApp("/devices/d1?tab=patches");
@@ -1147,9 +1135,9 @@ describe("device patches", () => {
     let install: DevicePatching["install"];
     const server = installFakeApi(
       deviceRoutes(
-        { deviceId: "d1", link: "none", canManage: true, canSchedule: false },
+        { deviceId: "d1", link: "none", canManage: true },
         {
-          "GET /patching/devices/:id": () => ok({ deviceId: "d1", link: "none", canManage: true, canSchedule: false, install }),
+          "GET /patching/devices/:id": () => ok({ deviceId: "d1", link: "none", canManage: true, install }),
           "POST /patching/agent-install": () => {
             install = { state: "waiting", automatic: false, requestedBy: "alex@example.com", requestedAt: T, attempts: 0 };
             return ok({ succeeded: 1, failed: 0, results: [{ deviceId: "d1", deviceName: "WEB-01", ok: true }] });
@@ -1177,9 +1165,9 @@ describe("device patches", () => {
     let removal: DevicePatching["removal"];
     const server = installFakeApi(
       deviceRoutes(
-        { deviceId: "d1", link: "none", canManage: true, canSchedule: false },
+        { deviceId: "d1", link: "none", canManage: true },
         {
-          "GET /patching/devices/:id": () => ok({ deviceId: "d1", link: "none", canManage: true, canSchedule: false, stopped, removal }),
+          "GET /patching/devices/:id": () => ok({ deviceId: "d1", link: "none", canManage: true, stopped, removal }),
           "POST /patching/stop": () => {
             stopped = { at: T, by: "alex@example.com" };
             removal = { reason: "opted_out", state: "uninstalling", requestedAt: T };
@@ -1218,7 +1206,7 @@ describe("device patches", () => {
   });
 
   it("does not offer to stop or allow patching without patch.manage", async () => {
-    installFakeApi(deviceRoutes({ deviceId: "d1", link: "none", canManage: false, canSchedule: false, stopped: { at: T } }));
+    installFakeApi(deviceRoutes({ deviceId: "d1", link: "none", canManage: false, stopped: { at: T } }));
     renderApp("/devices/d1?tab=patches");
     await screen.findByRole("main");
     expect(await main().findByText(/Stopped by a removed user/)).toBeInTheDocument();
@@ -1231,7 +1219,6 @@ describe("device patches", () => {
         deviceId: "d1",
         link: "none",
         canManage: true,
-        canSchedule: false,
         install: { state: "failed", automatic: true, requestedAt: T, attempts: 3, error: "This device does not run systemd, which the EasyPatch agent needs." },
       }),
     );
@@ -1250,7 +1237,6 @@ describe("device patches", () => {
         deviceId: "d1",
         link: "none",
         canManage: false,
-        canSchedule: false,
         install: { state: "succeeded", automatic: false, requestedAt: T, attempts: 1 },
       }),
     );
@@ -1265,10 +1251,7 @@ describe("device patches", () => {
   it("has no Patches tab without the patching engine", async () => {
     installFakeApi({
       ...deviceRoutes(LINKED),
-      "GET /patching": ok({
-        configured: false,
-        canSchedule: false,
-      }),
+      "GET /patching": ok({ configured: false }),
     });
     renderApp("/devices/d1");
     await screen.findByRole("main");

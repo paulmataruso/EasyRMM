@@ -37,14 +37,6 @@ follows when these have been run there, or fixed:
 * An agent request that sends `null` for a list (for example
   `"activeJobIds": null`) gets 500 instead of 400. EasyPatch agents always
   send lists; reject null lists in the agent request types, with tests.
-* Retire what nothing can reach any more
-  ([ADR-0046](docs/architecture/adr/0046-what-one-product-retires.md)'s
-  rule): the engine's deployment codes, enrollment requests waiting for
-  approval and `/downloads/install/` scripts. EasyRMM enrolls EasyPatch
-  agents with single-use tokens and its edge does not forward those paths.
-  The engine's tests enroll through deployment codes, so they move to
-  tokens first. An imported server's codes and requests stay in its
-  history.
 
 ## After 1.0.0
 

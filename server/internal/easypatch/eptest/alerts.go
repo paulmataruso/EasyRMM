@@ -74,10 +74,10 @@ var ruleSpecs = map[string]ruleSpec{
 	"OsUnsupported":         {"days", 0, 365, 30},
 }
 
-var ruleTypes = []string{"EndpointOffline", "InstallFailed", "SecurityUpdateMissing", "ScanStale", "RestartPending", "EnrollmentPending",
+var ruleTypes = []string{"EndpointOffline", "InstallFailed", "SecurityUpdateMissing", "ScanStale", "RestartPending",
 	"OsUnsupported", "KnownExploitedMissing", "UpdateHeld"}
 
-func endpointRule(t string) bool { return t != "EnrollmentPending" && t != "UpdateHeld" }
+func endpointRule(t string) bool { return t != "UpdateHeld" }
 
 // seedRules adds EasyPatch's rules on install, once.
 func (s *Server) seedRules() {
@@ -85,20 +85,20 @@ func (s *Server) seedRules() {
 		return
 	}
 	s.rulesSeeded = true
-	for i, d := range [][3]string{
-		{"Endpoint offline", "EndpointOffline", "Warning"},
-		{"Update installation failed", "InstallFailed", "Warning"},
-		{"Security update missing", "SecurityUpdateMissing", "Critical"},
-		{"Scan stale", "ScanStale", "Warning"},
-		{"Restart pending", "RestartPending", "Info"},
-		{"Enrollment waiting for approval", "EnrollmentPending", "Info"},
-		{"Operating system unsupported", "OsUnsupported", "Warning"},
-		{"Known-exploited vulnerability unpatched", "KnownExploitedMissing", "Critical"},
-		{"Update on hold", "UpdateHeld", "Warning"},
+	// The IDs are EasyPatch's; 6 was the retired EnrollmentPending rule's.
+	for _, d := range [][4]string{
+		{"1", "Endpoint offline", "EndpointOffline", "Warning"},
+		{"2", "Update installation failed", "InstallFailed", "Warning"},
+		{"3", "Security update missing", "SecurityUpdateMissing", "Critical"},
+		{"4", "Scan stale", "ScanStale", "Warning"},
+		{"5", "Restart pending", "RestartPending", "Info"},
+		{"7", "Operating system unsupported", "OsUnsupported", "Warning"},
+		{"8", "Known-exploited vulnerability unpatched", "KnownExploitedMissing", "Critical"},
+		{"9", "Update on hold", "UpdateHeld", "Warning"},
 	} {
-		r := &RuleInfo{ID: uuid.MustParse("7c3e1a52-6f0e-4d7b-9a01-00000000000" + string(rune('1'+i))), Name: d[0], Type: d[1], Severity: d[2],
+		r := &RuleInfo{ID: uuid.MustParse("7c3e1a52-6f0e-4d7b-9a01-00000000000" + d[0]), Name: d[1], Type: d[2], Severity: d[3],
 			Enabled: true, UpdatedAt: time.Now().UTC()}
-		if spec, ok := ruleSpecs[d[1]]; ok {
+		if spec, ok := ruleSpecs[d[2]]; ok {
 			n := spec.initial
 			r.Threshold = &n
 		}

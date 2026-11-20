@@ -36,9 +36,6 @@ internal sealed record StatusSummary(StatusLevel Level, string Title, string Det
             case TrayConnection.Revoked:
                 return new(StatusLevel.Error, "This computer was removed from EasyPatch",
                     "The server no longer accepts this computer. Contact your IT team to enroll it again.");
-            case TrayConnection.PendingApproval:
-                return new(StatusLevel.Warning, "Waiting for approval",
-                    "Your IT team needs to approve this computer.");
         }
 
         if (prompt is not null)
@@ -476,7 +473,6 @@ internal sealed class StatusForm : Form
         {
             TrayConnection.Connected => "Connected",
             TrayConnection.Unreachable => $"Not reachable since {TimeText.At(s.UnreachableSince ?? DateTimeOffset.UtcNow)}",
-            TrayConnection.PendingApproval => "Waiting for approval",
             TrayConnection.Revoked => "Removed by the server",
             _ => "Not enrolled",
         });

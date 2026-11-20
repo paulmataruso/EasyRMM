@@ -86,7 +86,7 @@ func TestClient(t *testing.T) {
 	e := f.AddEndpoint(org, "web-01", "SN1", "1FBB-E2EA-533D-A960")
 
 	info, err := c.ServerInfo(ctx)
-	if err != nil || info.Version != "1.9.0" || info.PublicURL != "https://patch.example.com" || info.Capabilities != nil {
+	if err != nil || info.Version != eptest.EngineVersion || info.PublicURL != "https://patch.example.com" {
 		t.Fatalf("ServerInfo = %+v, %v", info, err)
 	}
 	if can, err := c.CanOperate(ctx); !can || err != nil {

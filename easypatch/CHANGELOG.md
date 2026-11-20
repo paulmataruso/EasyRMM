@@ -12,11 +12,47 @@ and the agents share one version number.
   another policy source changes Windows Update settings (now "the EasyPatch agent stopped
   re-applying them"), and the refusal of a webhook address on the server's own networks. Email
   without a sender name comes from "EasyRMM".
-- The agent no longer points people at "the EasyPatch console", which is gone: its tray, its
-  `enroll` output and its Linux setup hint say an administrator or the IT team approves it, and
-  install it from EasyRMM. Its tray, messages and Windows service description say "the patching
-  server" instead of "the EasyPatch server", and the DEB and RPM descriptions say EasyRMM installs
-  and enrolls it.
+- The agent no longer points people at "the EasyPatch console", which is gone: its Linux setup
+  hint says to install it from EasyRMM. Its tray, messages and Windows service description say
+  "the patching server" instead of "the EasyPatch server", and the DEB and RPM descriptions say
+  EasyRMM installs and enrolls it.
+
+### Removed
+
+What only EasyPatch's own console reached (EasyRMM's ADR-0048). EasyRMM enrolls every agent with a
+single-use enrollment token, calls the engine with statements, and forwards only the agents' API
+and package downloads.
+
+- **Deployment codes and enrollment requests.** The routes `/api/v1/deployment-codes` (list,
+  create, revoke, `install-script`) and `/api/v1/enrollment-requests` (list, approve, reject,
+  bulk approve); the install scripts `/downloads/install/{code}.sh`,
+  `/downloads/install/macos/{code}.sh` and `/downloads/install/{code}.ps1`; the request
+  credentials (`r_…`); the `EnrollmentPending` alert rule; and the server setting
+  `enrollmentRequestExpiryDays` (a saved value is ignored and dropped at the next save). The
+  migration `DeploymentCodesRetired` drops the tables `deployment_codes` and
+  `enrollment_requests` and the column `endpoints.enrollment_request_id`, and deletes
+  `EnrollmentPending` rules and alerts. An enroll request that carries a `deploymentCode` gets
+  `400 deployment_codes_retired` and uses no token; agents that send `"deploymentCode": null`, or
+  nothing, enroll with their token as before. `POST /api/v1/agents/enrollment/status` stays and
+  always answers `401 unknown_credential`, so an agent still waiting for approval enrolls again,
+  is refused and stops.
+- **Enrolling the agent with a deployment code:** `enroll --deployment-code` on Windows, Linux and
+  macOS, the MSI property `DEPLOYMENTCODE`, the `DeploymentCode` setting (registry and
+  `agent.conf`), waiting for approval and its tray, command-line and event-log (1001) messages.
+  The agent enrolls with an enrollment token only.
+- **Administrator routes EasyRMM does not call:** `GET /api/v1/agent-versions`,
+  `GET /api/v1/dashboard/summary` and `/activity`, `GET /api/v1/reports/compliance`,
+  `compliance.csv` and `installations.csv`, `GET /api/v1/organizations/{id}/endpoints`,
+  `DELETE /api/v1/endpoints/{id}`, `GET /api/v1/endpoints/{id}/events`,
+  `POST /api/v1/endpoints/{id}/scan`, `inventory-refresh`, `restart`, `notify` and
+  `agent-update` (the `bulk/` routes stay), `DELETE` of jobs, organizations and sites (cancel and
+  archive stay), `POST /api/v1/organizations/{id}/restart-pending` (the `GET` stays) and
+  `POST /api/v1/endpoints/tags/bulk` (`PUT …/tags` stays).
+- **Inventory refresh jobs.** Only `POST /api/v1/endpoints/{id}/inventory-refresh` queued them; the
+  agent now reports one as unsupported (`unsupported_job`) instead of running it, and sends its
+  inventory on its own schedule as before. The job type stays, so earlier jobs still read.
+- **`capabilities` in `/api/v1/server-info`.** Its one entry, `scheduled-installs`, told EasyRMM it
+  could schedule installs; EasyRMM ships with this engine and no longer asks.
 
 ## [1.11.1] - 2026-11-20
 

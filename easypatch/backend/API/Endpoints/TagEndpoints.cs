@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Api.Security;
 using EasyPatch.Core.Domain;
@@ -16,7 +15,6 @@ namespace EasyPatch.Api.Endpoints;
 public static class TagEndpoints
 {
     public const int MaxTagsPerEndpoint = 20;
-    public const int MaxBulkEndpoints = 1000;
 
     public static void MapTagEndpoints(this IEndpointRouteBuilder app)
     {
@@ -249,59 +247,6 @@ public static class TagEndpoints
             return TypedResults.NoContent();
         });
 
-        endpoints.MapPost("/tags/bulk", async (BulkEndpointTagsRequest request, EasyPatchDbContext db, ITenantContext tenant,
-            AuditService audit, ComplianceService compliance, TimeProvider clock, CancellationToken ct) =>
-        {
-            EnsureCanAssign(tenant);
-            var endpointIds = (request.EndpointIds ?? []).Distinct().ToList();
-            var add = (request.AddTagIds ?? []).Distinct().ToList();
-            var remove = (request.RemoveTagIds ?? []).Distinct().Where(t => !add.Contains(t)).ToList();
-            if (endpointIds.Count == 0 || (add.Count == 0 && remove.Count == 0))
-            {
-                throw AppException.BadRequest("Select endpoints and at least one tag to add or remove.", "validation_failed");
-            }
-
-            if (endpointIds.Count > MaxBulkEndpoints)
-            {
-                throw AppException.BadRequest($"At most {MaxBulkEndpoints} endpoints can be changed at once.", "validation_failed");
-            }
-
-            await EnsureTagsExistAsync(db, add.Concat(remove).ToList(), ct);
-            var existingEndpoints = await db.Endpoints.AsNoTracking().Where(e => endpointIds.Contains(e.Id)).Select(e => e.Id).ToListAsync(ct);
-            var links = await db.EndpointTags.Where(et => existingEndpoints.Contains(et.EndpointId)).ToListAsync(ct);
-            var linksByEndpoint = links.ToLookup(l => l.EndpointId);
-            var now = clock.GetUtcNow();
-            var changed = new List<Guid>();
-            foreach (var endpointId in existingEndpoints)
-            {
-                var current = linksByEndpoint[endpointId].ToList();
-                var toRemove = current.Where(l => remove.Contains(l.TagId)).ToList();
-                var toAdd = add.Where(t => current.All(l => l.TagId != t)).ToList();
-                if (current.Count - toRemove.Count + toAdd.Count > MaxTagsPerEndpoint)
-                {
-                    throw AppException.BadRequest($"An endpoint can have at most {MaxTagsPerEndpoint} tags.", "validation_failed");
-                }
-
-                if (toRemove.Count == 0 && toAdd.Count == 0)
-                {
-                    continue;
-                }
-
-                db.EndpointTags.RemoveRange(toRemove);
-                db.EndpointTags.AddRange(toAdd.Select(t => new EndpointTag { EndpointId = endpointId, TagId = t, CreatedAt = now }));
-                changed.Add(endpointId);
-            }
-
-            if (changed.Count > 0)
-            {
-                audit.Record("endpoint.tags_bulk_update", "Endpoint", null,
-                    details: new { Endpoints = changed.Count, AddTagIds = add, RemoveTagIds = remove });
-                await db.SaveChangesAsync(ct);
-                await compliance.RecomputeAsync(changed, ct);
-            }
-
-            return TypedResults.Ok(new BulkEndpointTagsResult(changed.Count));
-        });
     }
 
     internal static TagDto ToDto(Tag t, int endpointCount, bool hasPolicy, int siteCount = 0, int organizationCount = 0) =>

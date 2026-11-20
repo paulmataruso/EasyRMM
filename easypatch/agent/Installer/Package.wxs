@@ -5,10 +5,9 @@
   Public properties (all optional on upgrade; SERVERURL is required on first install):
     SERVERURL        https:// URL of the patching server (EasyRMM's address)
     ENROLLMENTTOKEN  limited-use enrollment token (hidden: never written to MSI logs)
-    DEPLOYMENTCODE   non-secret deployment code; creates an enrollment request an administrator approves
     PROXYURL         optional http(s) proxy for the agent's connection to the server
     SERVERCACERT     optional certificate authority (base64 DER) the agent trusts for its connection to the server only,
-                     for servers with a private CA (set by the install script's "Skip certificate check" option)
+                     for servers with a private CA (EasyRMM passes it when it installs the agent)
 
   The UpgradeCode below must never change: it is what lets new versions upgrade old ones.
 -->
@@ -42,7 +41,6 @@
     <Property Id="SERVERURL" Secure="yes" />
     <Property Id="PROXYURL" Secure="yes" />
     <Property Id="SERVERCACERT" Secure="yes" />
-    <Property Id="DEPLOYMENTCODE" Secure="yes" />
     <Property Id="ENROLLMENTTOKEN" Secure="yes" Hidden="yes" />
 
     <!-- The default WriteRegistryValues progress template ("Key: [1], Name: [2], Value: [3]") would put the enrollment
@@ -67,9 +65,7 @@
 
     <Launch Condition="Privileged" Message="The EasyPatch Agent must be installed by an administrator." />
     <Launch Condition="Installed OR (SERVERURL ~&lt;&lt; &quot;https://&quot;)"
-            Message="SERVERURL is required and must start with https:// (for example: msiexec /i EasyPatchAgent.msi SERVERURL=https://patch.example.com DEPLOYMENTCODE=...)." />
-    <Launch Condition="NOT (ENROLLMENTTOKEN AND DEPLOYMENTCODE)"
-            Message="Specify either ENROLLMENTTOKEN or DEPLOYMENTCODE, not both." />
+            Message="SERVERURL is required and must start with https:// (for example: msiexec /i EasyPatchAgent.msi SERVERURL=https://patch.example.com ENROLLMENTTOKEN=...)." />
     <Launch Condition="VersionNT64 AND (VersionNT &gt;= 603)"
             Message="The EasyPatch Agent requires 64-bit Windows 10 / Windows Server 2016 or later." />
 
@@ -166,10 +162,6 @@
       <!-- Consumed and deleted by the agent after enrollment; written only when supplied on this install. -->
       <Component Id="RegistryEnrollmentToken" Directory="INSTALLFOLDER" Guid="9E2D6A41-5C7B-4F83-A1E9-2B4D8C6F0A73" Bitness="always64" Condition="ENROLLMENTTOKEN">
         <RegistryValue Root="HKLM" Key="SOFTWARE\EasyPatch\Agent" Name="EnrollmentToken" Type="string" Value="[ENROLLMENTTOKEN]" KeyPath="yes" />
-      </Component>
-
-      <Component Id="RegistryDeploymentCode" Directory="INSTALLFOLDER" Guid="E7B3C9A5-2D41-4E6F-8B0A-5C9E3D1F7A84" Bitness="always64" Condition="DEPLOYMENTCODE">
-        <RegistryValue Root="HKLM" Key="SOFTWARE\EasyPatch\Agent" Name="DeploymentCode" Type="string" Value="[DEPLOYMENTCODE]" KeyPath="yes" />
       </Component>
     </ComponentGroup>
   </Fragment>

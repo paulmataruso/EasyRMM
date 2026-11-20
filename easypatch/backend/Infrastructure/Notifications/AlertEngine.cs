@@ -18,7 +18,7 @@ public sealed record AlertRunResult(int Opened, int Resolved, int Reopened, int 
 
 /// <summary>
 /// Evaluates alert rules (worker task "alerts", every 2 minutes):
-/// * an alert opens when a subject (endpoint, or organization for enrollment requests) matches an enabled rule;
+/// * an alert opens when a subject (endpoint, or organization for held updates) matches an enabled rule;
 /// * it resolves after <see cref="ResolveAfterClearEvaluations"/> consecutive evaluations without a match (no flapping);
 /// * a subject that matches again within <see cref="ReopenWindow"/> of resolving reopens the same alert without a new
 ///   notification; offline endpoints only get offline alerts;
@@ -261,23 +261,6 @@ public sealed class AlertEngine(
 
     private async Task<List<AlertMatch>> MatchAsync(AlertRule rule, DateTimeOffset now, CancellationToken ct)
     {
-        if (rule.Type == AlertRuleType.EnrollmentPending)
-        {
-            var requests = db.EnrollmentRequests.AsNoTracking()
-                .Where(r => r.Status == EnrollmentRequestStatus.Pending && r.ExpiresAt > now)
-                .Where(r => db.Organizations.Any(o => o.Id == r.OrganizationId && o.IsActive));
-            if (rule.OrganizationId is { } org)
-            {
-                requests = requests.Where(r => r.OrganizationId == org);
-            }
-
-            var counts = await requests.GroupBy(r => r.OrganizationId).Select(g => new { g.Key, Count = g.Count() }).ToListAsync(ct);
-            var names = await db.Organizations.AsNoTracking().Where(o => counts.Select(c => c.Key).Contains(o.Id)).ToDictionaryAsync(o => o.Id, o => o.Name, ct);
-            return counts.Select(c => new AlertMatch(c.Key, null,
-                $"{names.GetValueOrDefault(c.Key, "Organization")}: {Plural(c.Count, "computer")} waiting for enrollment approval",
-                "Approve or reject the requests under Pending Approvals.")).ToList();
-        }
-
         if (rule.Type == AlertRuleType.UpdateHeld)
         {
             return await UpdateHeldAsync(rule.OrganizationId, ct);

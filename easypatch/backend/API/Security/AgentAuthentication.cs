@@ -21,8 +21,7 @@ public sealed class AgentAuthenticationOptions : AuthenticationSchemeOptions
 
 /// <summary>
 /// Verifies ECDSA P-256 signed agent requests: timestamp within ±5 minutes, single-use nonce, body SHA-256, and a
-/// signature over the canonical request by the credential's registered public key. Credentials starting with
-/// <c>r_</c> are pending enrollment requests and may only poll their enrollment status.
+/// signature over the canonical request by the credential's registered public key (<c>c_…</c>).
 /// </summary>
 public sealed class AgentAuthenticationHandler(
     IOptionsMonitor<AgentAuthenticationOptions> options,
@@ -34,7 +33,6 @@ public sealed class AgentAuthenticationHandler(
 {
     public const string SchemeName = "Agent";
     public const string KindActive = "active";
-    public const string KindPending = "pending";
     private const string FailureCodeKey = "easypatch.agent_auth_failure";
 
     protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
@@ -46,7 +44,7 @@ public sealed class AgentAuthenticationHandler(
             return AuthenticateResult.NoResult();
         }
 
-        if (credentialId.Length > 64 || !(credentialId.StartsWith("c_", StringComparison.Ordinal) || credentialId.StartsWith("r_", StringComparison.Ordinal)))
+        if (credentialId.Length > 64 || !credentialId.StartsWith("c_", StringComparison.Ordinal))
         {
             return Failure(AgentErrorCodes.UnknownCredential);
         }
@@ -81,22 +79,8 @@ public sealed class AgentAuthenticationHandler(
             return Failure(AgentErrorCodes.InvalidSignature);
         }
 
-        var pending = credentialId.StartsWith("r_", StringComparison.Ordinal);
-        AgentCredentialInfo? active = null;
-        PendingRequestInfo? request = null;
-        byte[]? publicKey;
-        if (pending)
-        {
-            request = await credentials.GetPendingAsync(credentialId, Context.RequestAborted);
-            publicKey = request?.PublicKey;
-        }
-        else
-        {
-            active = await credentials.GetAsync(credentialId, Context.RequestAborted);
-            publicKey = active?.PublicKey;
-        }
-
-        if (publicKey is null)
+        var active = await credentials.GetAsync(credentialId, Context.RequestAborted);
+        if (active is null)
         {
             return Failure(AgentErrorCodes.UnknownCredential);
         }
@@ -111,7 +95,7 @@ public sealed class AgentAuthenticationHandler(
         bool valid;
         try
         {
-            using var key = AgentKeys.ImportPublicKey(publicKey);
+            using var key = AgentKeys.ImportPublicKey(active.PublicKey);
             valid = RequestSigner.Verify(key, canonical, signature);
         }
         catch (CryptographicException)
@@ -130,36 +114,30 @@ public sealed class AgentAuthenticationHandler(
             return Failure(AgentErrorCodes.ReplayedNonce);
         }
 
-        var claims = new List<Claim> { new(EasyPatchClaims.CredentialId, credentialId) };
-        if (active is not null)
+        if (active.RevokedAt is not null)
         {
-            if (active.RevokedAt is not null)
-            {
-                return Failure(AgentErrorCodes.CredentialRevoked);
-            }
-
-            if (active.EndpointStatus != EndpointStatus.Active)
-            {
-                return Failure(AgentErrorCodes.EndpointRevoked);
-            }
-
-            if (active.ExpiresAt <= now)
-            {
-                return Failure(AgentErrorCodes.CredentialExpired);
-            }
-
-            claims.Add(new Claim(EasyPatchClaims.AgentKind, KindActive));
-            claims.Add(new Claim(EasyPatchClaims.CredentialDbId, active.CredentialDbId.ToString()));
-            claims.Add(new Claim(EasyPatchClaims.EndpointId, active.EndpointId.ToString()));
-            claims.Add(new Claim(EasyPatchClaims.OrganizationId, active.OrganizationId.ToString()));
-            Context.Items[typeof(AgentCredentialInfo)] = active;
-        }
-        else
-        {
-            claims.Add(new Claim(EasyPatchClaims.AgentKind, KindPending));
-            Context.Items[typeof(PendingRequestInfo)] = request;
+            return Failure(AgentErrorCodes.CredentialRevoked);
         }
 
+        if (active.EndpointStatus != EndpointStatus.Active)
+        {
+            return Failure(AgentErrorCodes.EndpointRevoked);
+        }
+
+        if (active.ExpiresAt <= now)
+        {
+            return Failure(AgentErrorCodes.CredentialExpired);
+        }
+
+        var claims = new List<Claim>
+        {
+            new(EasyPatchClaims.CredentialId, credentialId),
+            new(EasyPatchClaims.AgentKind, KindActive),
+            new(EasyPatchClaims.CredentialDbId, active.CredentialDbId.ToString()),
+            new(EasyPatchClaims.EndpointId, active.EndpointId.ToString()),
+            new(EasyPatchClaims.OrganizationId, active.OrganizationId.ToString()),
+        };
+        Context.Items[typeof(AgentCredentialInfo)] = active;
         var identity = new ClaimsIdentity(claims, SchemeName);
         return AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName));
     }

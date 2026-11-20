@@ -954,8 +954,6 @@ export interface EasyPatchConnection {
   caCert: string;
   serverVersion: string;
   publicUrl: string;
-  /** Optional features the engine lists: "scheduled-installs". */
-  capabilities: string[];
   checkedAt?: string;
   lastError?: string;
   lastErrorAt?: string;
@@ -1030,7 +1028,6 @@ export interface EasyPatchDeviceLink {
 export interface PatchStatus {
   /** False only when the deployment has no patching engine. */
   configured: boolean;
-  canSchedule: boolean;
 }
 
 export type ComplianceStatus = "Compliant" | "MissingUpdates" | "FailedUpdates" | "RebootRequired" | "ScanStale" | "NeverScanned";
@@ -1587,7 +1584,6 @@ export type PatchAlertRuleKind =
   | "SecurityUpdateMissing"
   | "ScanStale"
   | "RestartPending"
-  | "EnrollmentPending"
   | "OsUnsupported"
   | "KnownExploitedMissing"
   | "UpdateHeld";
@@ -1792,7 +1788,6 @@ export interface DevicePatching {
   reason?: string;
   checkedAt?: string;
   canManage: boolean;
-  canSchedule: boolean;
   endpoint?: PatchEndpointDetail;
   policy?: PatchPolicy;
   /** The EasyPatch agent's install, when one was asked for. */
@@ -1957,15 +1952,13 @@ export interface RestartCheck {
   /** It would restart; otherwise `reason` says why not. */
   restart: boolean;
   reason?: string;
-  /** A server, or any device when EasyPatch cannot tell (`serversKnown`): it restarts only when confirmed by name. */
+  /** A server: it restarts only when confirmed by name. */
   server: boolean;
   online: boolean;
 }
 
 export interface RestartPlan {
   devices: RestartCheck[];
-  /** False with EasyPatch before 1.10.0, which cannot say which devices are servers. */
-  serversKnown: boolean;
 }
 
 /** How a restart treats the people signed in. */

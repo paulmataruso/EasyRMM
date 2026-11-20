@@ -3,10 +3,8 @@ using System.Net.Http.Headers;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Api.Security;
 using EasyPatch.Contracts.Agent;
-using EasyPatch.Contracts.Updates;
 using EasyPatch.Core.Entities;
 using EasyPatch.Infrastructure.Security;
-using EasyPatch.Infrastructure.Services;
 using EasyPatch.Tests.Unit;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -45,8 +43,8 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
         var endpoints = await technician.GetAsync<PagedResult<EndpointSummaryDto>>("/api/v1/endpoints");
         Assert.Equal([contosoPc.EndpointId], endpoints.Items.Select(e => e.Id));
         await technician.ExpectAsync(HttpMethod.Get, $"/api/v1/endpoints/{fabrikamPc.EndpointId}", null, HttpStatusCode.NotFound);
-        await technician.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{fabrikamPc.EndpointId}/scan", null, HttpStatusCode.NotFound);
-        await technician.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{contosoPc.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        Assert.Equal("not_found", (await BulkOneAsync(technician, "scan", new BulkEndpointsRequest([fabrikamPc.EndpointId], false))).ErrorCode);
+        await ScanAsync(technician, contosoPc.EndpointId);
         var job = await WithDbAsync(db => db.Jobs.AsNoTracking().SingleAsync(j => j.EndpointId == contosoPc.EndpointId && j.Type == Contracts.JobType.UpdateScan));
         Assert.Equal(("easyrmm:jane@example.com", (Guid?)null), (job.RequestedBy, job.RequestedByUserId));
 
@@ -56,7 +54,8 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
         // Read-only: reads, never acts.
         var viewer = EasyRmm("ReadOnly", "*");
         Assert.Equal(2, (await viewer.GetAsync<PagedResult<EndpointSummaryDto>>("/api/v1/endpoints")).Items.Count);
-        await viewer.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{contosoPc.EndpointId}/scan", null, HttpStatusCode.Forbidden, "forbidden");
+        await viewer.ExpectAsync(HttpMethod.Post, "/api/v1/endpoints/bulk/scan", new BulkEndpointsRequest([contosoPc.EndpointId], false),
+            HttpStatusCode.Forbidden, "forbidden");
 
         // A role never widens the organizations: a super administrator's call for Contoso sees Contoso only.
         var scoped = EasyRmm("SuperAdmin", new[] { contoso.Id.ToString() });
@@ -96,7 +95,7 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
         var admin = EasyRmm("Admin", new[] { contoso.Id.ToString() }, name: name);
 
         // A job, its audit entry, a hold, a monthly report and an acknowledged alert all name the person whole.
-        await admin.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{pc.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        await ScanAsync(admin, pc.EndpointId);
         var job = await WithDbAsync(db => db.Jobs.AsNoTracking().SingleAsync(j => j.EndpointId == pc.EndpointId && j.Type == Contracts.JobType.UpdateScan));
         Assert.Equal(actor, job.RequestedBy);
 
@@ -128,11 +127,11 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
     {
         var (contoso, contosoSite) = await CreateOrgAsync(root, "Contoso");
         var pc = await EnrollAgentAsync(root, contoso.Id, contosoSite.Id, "CONTOSO-PC1");
-        var scan = $"/api/v1/endpoints/{pc.EndpointId}/scan";
+        var uninstall = $"/api/v1/endpoints/{pc.EndpointId}/uninstall-agent";
 
         // Made for one request, sent with another: the same route for another endpoint.
-        var claims = EasyRmmTestSigner.Claims("POST", scan, Clock.GetUtcNow());
-        using (var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/endpoints/{Guid.NewGuid()}/scan"))
+        var claims = EasyRmmTestSigner.Claims("POST", uninstall, Clock.GetUtcNow());
+        using (var request = new HttpRequestMessage(HttpMethod.Post, $"/api/v1/endpoints/{Guid.NewGuid()}/uninstall-agent"))
         {
             request.Headers.Add(EasyRmmAuthenticationHandler.HeaderName, EasyRmmTestSigner.Sign(claims));
             using var response = await NewHttpClient().SendAsync(request);
@@ -140,7 +139,7 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
         }
 
         // Signed a minute ago.
-        await EasyRmm("Admin", "*", age: TimeSpan.FromMinutes(1)).ExpectAsync(HttpMethod.Post, scan, null, HttpStatusCode.Unauthorized, "unauthenticated");
+        await EasyRmm("Admin", "*", age: TimeSpan.FromMinutes(1)).ExpectAsync(HttpMethod.Post, uninstall, null, HttpStatusCode.Unauthorized, "unauthenticated");
 
         // A request with a statement is judged by it alone: an API token alongside a bad statement does not help, even one stored
         // in an imported database (AccessTests: no API token is accepted on its own either).
@@ -154,7 +153,7 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
             });
             await db.SaveChangesAsync();
         });
-        using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(scan, UriKind.Relative)))
+        using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(uninstall, UriKind.Relative)))
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);
             request.Headers.Add(EasyRmmAuthenticationHandler.HeaderName, "not.a.statement");
@@ -163,9 +162,9 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
         }
 
         // Nor does a second, valid statement: a request carries exactly one.
-        using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(scan, UriKind.Relative)))
+        using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(uninstall, UriKind.Relative)))
         {
-            request.Headers.Add(EasyRmmAuthenticationHandler.HeaderName, EasyRmmTestSigner.Sign(EasyRmmTestSigner.Claims("POST", scan, Clock.GetUtcNow())));
+            request.Headers.Add(EasyRmmAuthenticationHandler.HeaderName, EasyRmmTestSigner.Sign(EasyRmmTestSigner.Claims("POST", uninstall, Clock.GetUtcNow())));
             using var response = await root.Http.SendAsync(request);
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }

@@ -6,8 +6,8 @@ namespace EasyPatch.Agent.Core.Security;
 
 /// <summary>
 /// A certificate authority the agent trusts for its own connection to the EasyPatch server, and for nothing else on the
-/// computer (MSI property SERVERCACERT, recorded by the install script's <i>Skip certificate check</i> option for servers
-/// with a private CA such as Caddy's internal one; on Linux, <c>easypatch-agent enroll --server-ca</c>). A certificate the operating system trusts is accepted as always; one
+/// computer (MSI property SERVERCACERT, which EasyRMM passes when the server has a private CA such as Caddy's internal one; on
+/// Linux, <c>easypatch-agent enroll --server-ca</c>). A certificate the operating system trusts is accepted as always; one
 /// that fails only because its issuer is unknown is accepted when it chains to this authority, is valid now and is meant
 /// for server authentication. A host-name mismatch or a missing certificate is never accepted.
 /// </summary>

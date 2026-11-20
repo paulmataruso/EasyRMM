@@ -24,7 +24,7 @@ describe("links from EasyPatch", () => {
         path: "/patching",
         notice: "That patching engine endpoint is not linked to an EasyRMM device you can see.",
       }),
-      "GET /patching": ok({ configured: false, canSchedule: false }),
+      "GET /patching": ok({ configured: false }),
     });
     renderApp("/go/from-easypatch/endpoints/0b6f3c1e-1111-4222-8333-444455556666");
     expect(await screen.findByText("Opened from a patching engine link")).toBeInTheDocument();

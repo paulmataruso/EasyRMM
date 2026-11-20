@@ -14,7 +14,7 @@ using Xunit;
 
 namespace EasyPatch.Tests.Integration;
 
-/// <summary>The experimental macOS agent: enrollment, inventory, pkg agent updates, Windows-only jobs and the install script.</summary>
+/// <summary>The experimental macOS agent: enrollment, inventory, pkg agent updates and Windows-only jobs.</summary>
 public sealed class MacAgentTests(PostgresFixture postgres) : AgentUpdateTestBase(postgres)
 {
     private static readonly DeviceIdentity Mac = new()
@@ -132,7 +132,7 @@ public sealed class MacAgentTests(PostgresFixture postgres) : AgentUpdateTestBas
         detail = await Root.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{agent.EndpointId}");
         Assert.Equal("1.9.1", detail.AgentUpdate!.AvailableVersion);
 
-        await Root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/agent-update", Newest, HttpStatusCode.Accepted);
+        await UpdateAgentQueuedAsync(agent.EndpointId);
         var job = Assert.Single((await agent.CheckInAsync(MacCheckIn())).Jobs);
         Assert.Equal("EasyPatchAgent-1.9.1-arm64.pkg", job.AgentUpdate!.Package.FileName);
 
@@ -163,8 +163,8 @@ public sealed class MacAgentTests(PostgresFixture postgres) : AgentUpdateTestBas
         var agent = await EnrollMacAsync();
         await agent.CheckInAsync(MacCheckIn());
 
-        await Root.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/notify", new NotifyRequest(UserMessagePreset.SaveYourWork, null),
-            HttpStatusCode.Conflict, "not_supported_on_macos");
+        Assert.Equal("not_supported_on_macos", (await BulkOneAsync(Root, "notify",
+            new BulkNotifyRequest([agent.EndpointId], new NotifyRequest(UserMessagePreset.SaveYourWork, null)))).ErrorCode);
         await Root.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/updates/{Guid.NewGuid()}/uninstall", new UninstallUpdateRequest(),
             HttpStatusCode.Conflict, "not_supported_on_macos");
         var download = await Assert.ThrowsAsync<AppException>(() => WithScopeAsync(sp =>
@@ -172,56 +172,9 @@ public sealed class MacAgentTests(PostgresFixture postgres) : AgentUpdateTestBas
         Assert.Equal("not_supported_on_macos", download.Code);
 
         // Restarts are supported.
-        await Root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/restart",
-            new RestartRequest(RestartMode.Immediate, RestartCondition.Always, null, null, null, null, false), HttpStatusCode.Accepted);
-    }
-
-    [Fact]
-    public async Task The_macOS_install_script_is_only_offered_once_a_pkg_package_is_on_the_server()
-    {
-        var code = await Root.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
-            new CreateDeploymentCodeRequest(Org.Id, Site.Id, "Mac rollout", 30, null, null), HttpStatusCode.Created);
-        Assert.Null(code.MacOneLiner);
-        Assert.Null(code.MacScriptUrl);
-        await Root.ExpectAsync(HttpMethod.Get, $"/api/v1/deployment-codes/{code.Id}/install-script?platform=macOS", null, HttpStatusCode.Conflict,
-            "no_agent_package");
-
-        using var client = NewHttpClient();
-        using var none = await client.GetAsync($"/downloads/install/macos/{code.Code}.sh", TestContext.Current.CancellationToken);
-        Assert.Equal(HttpStatusCode.ServiceUnavailable, none.StatusCode);
-        var tokens = await Root.SendAsync<List<CreatedTokenDto>>(HttpMethod.Post, "/api/v1/enrollment-tokens",
-            new CreateTokensRequest(Org.Id, Site.Id, null, 24, 1, 1), HttpStatusCode.OK);
-        Assert.Null(Assert.Single(tokens).MacEnrollCommand);
-
-        var x64 = PublishPackage("1.9.0", AgentRelease.FormatPkg, "x64");
-        var arm64 = PublishPackage("1.9.0", AgentRelease.FormatPkg, "arm64");
-        code = (await Root.GetAsync<List<DeploymentCodeDto>>("/api/v1/deployment-codes")).Single(c => c.Id == code.Id);
-        Assert.EndsWith($"/downloads/install/macos/{code.Code}.sh", code.MacScriptUrl, StringComparison.Ordinal);
-        Assert.Equal($"curl -fsSL {code.MacScriptUrl} | sudo sh", code.MacOneLiner);
-
-        var response = await Root.GetAsync<InstallScriptResponse>($"/api/v1/deployment-codes/{code.Id}/install-script?platform=macOS");
-        Assert.Equal(AgentPlatforms.MacOS, response.Platform);
-        Assert.Equal(code.MacOneLiner, response.OneLiner);
-        Assert.Equal("EasyPatchAgent-1.9.0-arm64.pkg, EasyPatchAgent-1.9.0-x64.pkg", response.PackageFileName);
-
-        using var served = await client.GetAsync($"/downloads/install/macos/{code.Code}.sh", TestContext.Current.CancellationToken);
-        Assert.Equal(HttpStatusCode.OK, served.StatusCode);
-        Assert.Equal("no-store", served.Headers.CacheControl?.ToString());
-        var script = await served.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-        Assert.StartsWith("#!/bin/sh", script, StringComparison.Ordinal);
-        Assert.Contains($"DEPLOYMENT_CODE='{code.Code}'", script, StringComparison.Ordinal);
-        foreach (var path in new[] { x64, arm64 })
-        {
-            Assert.Contains(AgentRelease.Describe(path).Sha256.ToLowerInvariant(), script, StringComparison.Ordinal);
-        }
-
-        tokens = await Root.SendAsync<List<CreatedTokenDto>>(HttpMethod.Post, "/api/v1/enrollment-tokens",
-            new CreateTokensRequest(Org.Id, Site.Id, null, 24, 1, 1), HttpStatusCode.OK);
-        var token = Assert.Single(tokens);
-        Assert.Equal(MacInstallScriptBuilder.TokenEnrollCommand(EasyPatchApiFactory.PublicUrl, token.PlaintextToken), token.MacEnrollCommand);
-
-        using var unknown = await client.GetAsync("/downloads/install/macos/EPD-ZZZZZZZZZZZZZZZZ.sh", TestContext.Current.CancellationToken);
-        Assert.Equal(HttpStatusCode.NotFound, unknown.StatusCode);
+        var restart = await BulkOneAsync(Root, "restart", new BulkRestartRequest([agent.EndpointId],
+            new RestartRequest(RestartMode.Immediate, RestartCondition.Always, null, null, null, null, false)));
+        Assert.True(restart.Success, restart.Message);
     }
 
     /// <summary>A signed agent package of any format in the server's package folder.</summary>

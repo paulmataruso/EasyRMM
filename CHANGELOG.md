@@ -17,6 +17,21 @@ All notable changes to this project are documented here. The format follows
   install on a device's page, and the patching engine's alerts and events,
   no longer call the engine "EasyPatch"; the EasyPatch agent keeps its name.
 
+### Removed
+
+- **What only EasyPatch's own console reached**
+  ([ADR-0048](docs/architecture/adr/0048-the-engine-keeps-what-is-reached.md)).
+  The patching engine no longer keeps deployment codes, enrollment requests
+  waiting for approval or their install scripts, and a migration drops
+  their tables. The EasyPatch agent enrolls only with the single-use token
+  EasyRMM gives it; an older agent installed with a code is refused with
+  `deployment_codes_retired`. Engine routes EasyRMM never calls go too, as
+  do the "Enrollment waiting for approval" patching alert and the restart
+  dialog's fallback for engines before 1.10.0.
+- **The check for the engine's scheduled-installs capability.** EasyRMM
+  ships with its engine, so the install dialog always offers a later time,
+  and `canSchedule` and the engine's `capabilities` leave the API.
+
 ### Fixed
 
 - **The agent stops a package manager gently.** An `rpm` query, or an

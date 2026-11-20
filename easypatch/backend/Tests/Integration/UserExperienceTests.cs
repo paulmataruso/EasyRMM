@@ -51,6 +51,20 @@ public sealed class UserExperienceTests(PostgresFixture postgres) : IntegrationT
     private static RestartRequest Restart(RestartMode mode = RestartMode.PromptWithDeadline, int? deadline = 60, DateTimeOffset? at = null) =>
         new(mode, RestartCondition.Always, null, deadline, at, null, false);
 
+    /// <summary>A restart of one computer, asked for as EasyRMM asks for it: through <c>bulk/restart</c>.</summary>
+    private static Task<BulkItemResult> RestartAsync(AdminClient admin, Guid endpointId, RestartRequest request) =>
+        BulkOneAsync(admin, "restart", new BulkRestartRequest([endpointId], request));
+
+    /// <summary>A message to the signed-in users of one computer, through <c>bulk/notify</c>.</summary>
+    private static Task<BulkItemResult> NotifyAsync(AdminClient admin, Guid endpointId, NotifyRequest request) =>
+        BulkOneAsync(admin, "notify", new BulkNotifyRequest([endpointId], request));
+
+    private static Guid Queued(BulkItemResult result)
+    {
+        Assert.True(result.Success, result.Message);
+        return result.JobId!.Value;
+    }
+
     [Fact]
     public async Task Restarts_and_messages_need_a_capable_agent_and_messages_do_not_wait_for_other_jobs()
     {
@@ -58,9 +72,8 @@ public sealed class UserExperienceTests(PostgresFixture postgres) : IntegrationT
         await agent.CheckInAsync(); // a 1.0.0 agent: no capabilities
 
         var url = $"/api/v1/endpoints/{agent.EndpointId}";
-        await root.ExpectAsync(HttpMethod.Post, url + "/restart", Restart(), HttpStatusCode.Conflict, "agent_upgrade_required");
-        await root.ExpectAsync(HttpMethod.Post, url + "/notify", new NotifyRequest(UserMessagePreset.SaveYourWork, null), HttpStatusCode.Conflict,
-            "agent_upgrade_required");
+        Assert.Equal("agent_upgrade_required", (await RestartAsync(root, agent.EndpointId, Restart())).ErrorCode);
+        Assert.Equal("agent_upgrade_required", (await NotifyAsync(root, agent.EndpointId, new NotifyRequest(UserMessagePreset.SaveYourWork, null))).ErrorCode);
 
         await agent.CheckInAsync(CapableCheckIn());
         var detail = await root.GetAsync<EndpointDetailDto>(url);
@@ -69,35 +82,35 @@ public sealed class UserExperienceTests(PostgresFixture postgres) : IntegrationT
         Assert.Equal(1, detail.TrayConnectedSessions);
 
         // Invalid requests are refused.
-        await root.ExpectAsync(HttpMethod.Post, url + "/restart", Restart(deadline: 5), HttpStatusCode.BadRequest);
-        await root.ExpectAsync(HttpMethod.Post, url + "/notify", new NotifyRequest(UserMessagePreset.RestartScheduled, null), HttpStatusCode.BadRequest);
+        Assert.Equal("validation_failed", (await RestartAsync(root, agent.EndpointId, Restart(deadline: 5))).ErrorCode);
+        Assert.Equal("validation_failed", (await NotifyAsync(root, agent.EndpointId, new NotifyRequest(UserMessagePreset.RestartScheduled, null))).ErrorCode);
 
         // A running scan keeps the endpoint busy...
-        var scan = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, url + "/scan", null, HttpStatusCode.Accepted);
-        Assert.Equal(scan.Id, Assert.Single((await agent.CheckInAsync(CapableCheckIn())).Jobs).JobId);
-        await AckAsync(agent, scan.Id);
-        await ReportAsync(agent, scan.Id, 1, JobStatus.Running);
+        var scan = await ScanAsync(root, agent.EndpointId);
+        Assert.Equal(scan, Assert.Single((await agent.CheckInAsync(CapableCheckIn())).Jobs).JobId);
+        await AckAsync(agent, scan);
+        await ReportAsync(agent, scan, 1, JobStatus.Running);
 
-        var restart = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, url + "/restart", Restart(), HttpStatusCode.Accepted);
-        await root.ExpectAsync(HttpMethod.Post, url + "/restart", Restart(), HttpStatusCode.Conflict, "duplicate_job");
+        var restart = Queued(await RestartAsync(root, agent.EndpointId, Restart()));
+        var again = await RestartAsync(root, agent.EndpointId, Restart());
+        Assert.Equal(("duplicate_job", (Guid?)restart), (again.ErrorCode, again.JobId));
         var at = Clock.GetUtcNow().AddHours(3);
-        var message = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, url + "/notify", new NotifyRequest(UserMessagePreset.RestartScheduled, at),
-            HttpStatusCode.Accepted);
+        var message = Queued(await NotifyAsync(root, agent.EndpointId, new NotifyRequest(UserMessagePreset.RestartScheduled, at)));
 
         // ...but the message is delivered at once, while the restart waits.
-        var delivered = Assert.Single((await agent.CheckInAsync(CapableCheckIn([scan.Id]))).Jobs);
-        Assert.Equal(message.Id, delivered.JobId);
+        var delivered = Assert.Single((await agent.CheckInAsync(CapableCheckIn([scan]))).Jobs);
+        Assert.Equal(message, delivered.JobId);
         Assert.Equal(JobType.NotifyUser, delivered.Type);
         Assert.Equal(UserMessagePreset.RestartScheduled, delivered.Notify!.Preset);
         Assert.Equal(at, delivered.Notify.ScheduledAt);
 
-        await ReportAsync(agent, scan.Id, 2, JobStatus.Completed);
-        var next = Assert.Single((await agent.CheckInAsync(CapableCheckIn([message.Id]))).Jobs);
-        Assert.Equal(restart.Id, next.JobId);
+        await ReportAsync(agent, scan, 2, JobStatus.Completed);
+        var next = Assert.Single((await agent.CheckInAsync(CapableCheckIn([message]))).Jobs);
+        Assert.Equal(restart, next.JobId);
         Assert.Equal(RestartMode.PromptWithDeadline, next.Restart!.Mode);
         Assert.Equal(60, next.Restart.DeadlineMinutes);
 
-        var job = await WithDbAsync(db => db.Jobs.AsNoTracking().SingleAsync(j => j.Id == restart.Id));
+        var job = await WithDbAsync(db => db.Jobs.AsNoTracking().SingleAsync(j => j.Id == restart));
         Assert.Equal(JobTrigger.Manual, job.Trigger);
         Assert.True(job.ExpiresAt <= Clock.GetUtcNow().AddMinutes(121));
     }
@@ -107,17 +120,15 @@ public sealed class UserExperienceTests(PostgresFixture postgres) : IntegrationT
     {
         var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-LATER");
         await agent.CheckInAsync(CapableCheckIn());
-        var url = $"/api/v1/endpoints/{agent.EndpointId}/restart";
-        await root.ExpectAsync(HttpMethod.Post, url, Restart(at: Clock.GetUtcNow().AddDays(40)), HttpStatusCode.BadRequest);
+        Assert.Equal("validation_failed", (await RestartAsync(root, agent.EndpointId, Restart(at: Clock.GetUtcNow().AddDays(40)))).ErrorCode);
 
         var at = Clock.GetUtcNow().AddHours(2);
-        var restart = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, url, Restart(RestartMode.Countdown, null, at) with { CountdownMinutes = 10 },
-            HttpStatusCode.Accepted);
+        var restart = Queued(await RestartAsync(root, agent.EndpointId, Restart(RestartMode.Countdown, null, at) with { CountdownMinutes = 10 }));
         Assert.Empty((await agent.CheckInAsync(CapableCheckIn())).Jobs);
 
         Clock.Advance(TimeSpan.FromHours(2));
         var delivered = Assert.Single((await agent.CheckInAsync(CapableCheckIn())).Jobs);
-        Assert.Equal(restart.Id, delivered.JobId);
+        Assert.Equal(restart, delivered.JobId);
         Assert.Equal(10, delivered.Restart!.CountdownMinutes);
     }
 
@@ -272,8 +283,10 @@ public sealed class UserExperienceTests(PostgresFixture postgres) : IntegrationT
         await agent.CheckInAsync(CapableCheckIn());
         var viewer = Admin("viewer", UserRole.ReadOnly);
         var url = $"/api/v1/endpoints/{agent.EndpointId}";
-        await viewer.ExpectAsync(HttpMethod.Post, url + "/restart", Restart(), HttpStatusCode.Forbidden);
-        await viewer.ExpectAsync(HttpMethod.Post, url + "/notify", new NotifyRequest(UserMessagePreset.SaveYourWork, null), HttpStatusCode.Forbidden);
+        await viewer.ExpectAsync(HttpMethod.Post, "/api/v1/endpoints/bulk/restart", new BulkRestartRequest([agent.EndpointId], Restart()),
+            HttpStatusCode.Forbidden);
+        await viewer.ExpectAsync(HttpMethod.Post, "/api/v1/endpoints/bulk/notify",
+            new BulkNotifyRequest([agent.EndpointId], new NotifyRequest(UserMessagePreset.SaveYourWork, null)), HttpStatusCode.Forbidden);
         await viewer.ExpectAsync(HttpMethod.Put, url + "/policy",
             new PolicyRequest(null, null, null, null, null, null, null, null, null, null, null, null, null, null, TrayIconEnabled: false), HttpStatusCode.Forbidden);
         var presets = await viewer.GetAsync<List<UserMessagePresetDto>>("/api/v1/user-messages");

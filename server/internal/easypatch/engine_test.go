@@ -82,15 +82,15 @@ func TestEngineProbe(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 
-	if r := e.row(ctx, now, false); r.lastError != "" || r.version != "1.9.0" || r.capabilities == nil || r.url != srv.URL() {
+	if r := e.row(ctx, now, false); r.lastError != "" || r.version != eptest.EngineVersion || r.url != srv.URL() {
 		t.Fatalf("healthy: %+v", r)
 	}
 	// Read again only when due, or when asked.
-	srv.Set(func() { srv.Version = "1.9.1" })
-	if r := e.row(ctx, now.Add(time.Minute), false); r.version != "1.9.0" {
+	srv.Set(func() { srv.Version = "99.0.0" })
+	if r := e.row(ctx, now.Add(time.Minute), false); r.version != eptest.EngineVersion {
 		t.Errorf("read again before it was due: %+v", r)
 	}
-	if r := e.row(ctx, now.Add(engineCheckEvery), false); r.version != "1.9.1" {
+	if r := e.row(ctx, now.Add(engineCheckEvery), false); r.version != "99.0.0" {
 		t.Errorf("not read again when due: %+v", r)
 	}
 	// Each failure keeps what it last saw of a healthy engine.
@@ -101,16 +101,16 @@ func TestEngineProbe(t *testing.T) {
 		want           string
 	}{
 		{"no version", "", false, false, "does not answer as expected"},
-		{"not an admin", "1.9.1", true, false, "does not let EasyRMM act as an administrator"},
-		{"down", "1.9.1", false, true, "503"},
+		{"not an admin", "99.0.0", true, false, "does not let EasyRMM act as an administrator"},
+		{"down", "99.0.0", false, true, "503"},
 	} {
 		srv.Set(func() { srv.Version, srv.ReadOnly, srv.Down = tc.version, tc.readOnly, tc.down })
-		if r := e.row(ctx, now, true); !strings.Contains(r.lastError, tc.want) || r.lastErrorAt == nil || r.version != "1.9.1" {
+		if r := e.row(ctx, now, true); !strings.Contains(r.lastError, tc.want) || r.lastErrorAt == nil || r.version != "99.0.0" {
 			t.Errorf("%s: %+v", tc.name, r)
 		}
 	}
 	// It recovers.
-	srv.Set(func() { srv.Version, srv.ReadOnly, srv.Down = "1.9.1", false, false })
+	srv.Set(func() { srv.Version, srv.ReadOnly, srv.Down = "99.0.0", false, false })
 	if r := e.row(ctx, now, true); r.lastError != "" || r.lastErrorAt != nil {
 		t.Errorf("recovered: %+v", r)
 	}

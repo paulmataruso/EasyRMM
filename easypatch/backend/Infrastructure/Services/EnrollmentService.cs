@@ -1,8 +1,5 @@
-using System.Net;
-using System.Text.Json;
 using EasyPatch.Contracts;
 using EasyPatch.Contracts.Agent;
-using EasyPatch.Contracts.Json;
 using EasyPatch.Contracts.Security;
 using EasyPatch.Core.Entities;
 using EasyPatch.Infrastructure.Data;
@@ -14,7 +11,7 @@ namespace EasyPatch.Infrastructure.Services;
 
 public sealed record CreatedToken(EnrollmentToken Token, string PlaintextToken);
 
-/// <summary>Agent enrollment (token and approval flows), credential rotation, revocation and decommissioning.</summary>
+/// <summary>Agent enrollment with enrollment tokens, credential rotation, revocation and decommissioning.</summary>
 public sealed class EnrollmentService(
     EasyPatchDbContext db,
     SettingsService settingsService,
@@ -26,11 +23,10 @@ public sealed class EnrollmentService(
     ILogger<EnrollmentService> logger)
 {
     public const string TokenPrefix = "ept_";
-    public const string DeploymentCodePrefix = "EPD-";
     public const string Algorithm = "ECDSA_P256";
 
     // -------------------------------------------------------------------------------------------
-    // Administrator: tokens, deployment codes, approval
+    // Administrator: tokens and endpoints
     // -------------------------------------------------------------------------------------------
 
     public async Task<IReadOnlyList<CreatedToken>> CreateTokensAsync(Guid organizationId, Guid? siteId, string? description,
@@ -88,119 +84,6 @@ public sealed class EnrollmentService(
         await db.SaveChangesAsync(ct);
     }
 
-    public async Task<DeploymentCode> CreateDeploymentCodeAsync(Guid organizationId, Guid? siteId, string name, int? expiresInDays,
-        IReadOnlyList<string> allowedCidrs, int maxPending, CancellationToken ct = default)
-    {
-        await EnsureScopeAsync(organizationId, siteId, ct);
-        if (string.IsNullOrWhiteSpace(name) || name.Length > 200)
-        {
-            throw AppException.BadRequest("A name (up to 200 characters) is required.", "validation_failed");
-        }
-
-        if (expiresInDays is < 1 or > 3650)
-        {
-            throw AppException.BadRequest("Expiry must be between 1 and 3650 days.", "validation_failed");
-        }
-
-        if (maxPending is < 1 or > 10_000)
-        {
-            throw AppException.BadRequest("Max pending requests must be between 1 and 10000.", "validation_failed");
-        }
-
-        foreach (var cidr in allowedCidrs)
-        {
-            if (!IPNetwork.TryParse(cidr, out _))
-            {
-                throw AppException.BadRequest($"'{cidr}' is not a valid CIDR range.", "validation_failed");
-            }
-        }
-
-        var now = clock.GetUtcNow();
-        var code = new DeploymentCode
-        {
-            Id = Guid.CreateVersion7(now),
-            Code = SecureTokens.CreateCode(DeploymentCodePrefix, 16),
-            Name = name.Trim(),
-            OrganizationId = organizationId,
-            SiteId = siteId,
-            MaxPendingRequests = maxPending,
-            AllowedSourceCidrs = allowedCidrs.Select(c => c.Trim()).ToList(),
-            CreatedAt = now,
-            CreatedByUserId = actor.UserId,
-            ExpiresAt = expiresInDays is { } days ? now.AddDays(days) : null,
-        };
-        db.DeploymentCodes.Add(code);
-        audit.Record("deployment_code.create", "DeploymentCode", code.Id.ToString(), organizationId, null, new { name, siteId, expiresInDays });
-        await db.SaveChangesAsync(ct);
-        return code;
-    }
-
-    public async Task RevokeDeploymentCodeAsync(Guid id, CancellationToken ct = default)
-    {
-        var code = await db.DeploymentCodes.FirstOrDefaultAsync(c => c.Id == id, ct) ?? throw AppException.NotFound("Deployment code");
-        var now = clock.GetUtcNow();
-        code.RevokedAt ??= now;
-        await db.EnrollmentRequests.Where(r => r.DeploymentCodeId == id && r.Status == EnrollmentRequestStatus.Pending)
-            .ExecuteUpdateAsync(s => s.SetProperty(r => r.Status, EnrollmentRequestStatus.Rejected)
-                .SetProperty(r => r.RejectReason, "Deployment code revoked")
-                .SetProperty(r => r.DecidedAt, now), ct);
-        audit.Record("deployment_code.revoke", "DeploymentCode", code.Id.ToString(), code.OrganizationId);
-        await db.SaveChangesAsync(ct);
-    }
-
-    public async Task<Endpoint> ApproveAsync(Guid requestId, Guid? organizationId, Guid? siteId, CancellationToken ct = default)
-    {
-        var request = await db.EnrollmentRequests.FirstOrDefaultAsync(r => r.Id == requestId, ct) ?? throw AppException.NotFound("Enrollment request");
-        if (request.Status != EnrollmentRequestStatus.Pending)
-        {
-            throw AppException.Conflict($"The request is already {request.Status}.", "invalid_state");
-        }
-
-        var now = clock.GetUtcNow();
-        if (request.ExpiresAt <= now)
-        {
-            request.Status = EnrollmentRequestStatus.Expired;
-            await db.SaveChangesAsync(ct);
-            throw AppException.Conflict("The enrollment request has expired. Re-run the installer on the endpoint.", "expired");
-        }
-
-        var targetOrg = organizationId ?? request.OrganizationId;
-        var targetSite = organizationId is not null && organizationId != request.OrganizationId ? siteId : siteId ?? request.SiteId;
-        await EnsureScopeAsync(targetOrg, targetSite, ct);
-        var device = JsonSerializer.Deserialize<DeviceIdentity>(request.DeviceJson, ContractJson.Options)
-                     ?? new DeviceIdentity { Hostname = request.Hostname };
-        var settings = await settingsService.GetAsync(ct);
-        var (endpoint, _) = await CreateOrReuseEndpointAsync(targetOrg, targetSite, device, request.AgentVersion, request.PublicKey,
-            request.KeyFingerprint, settings.CredentialLifetimeDays, null, request.Id, now, ct);
-        request.Status = EnrollmentRequestStatus.Approved;
-        request.DecidedAt = now;
-        request.DecidedByUserId = actor.UserId;
-        request.EndpointId = endpoint.Id;
-        audit.Record("enrollment_request.approve", "EnrollmentRequest", request.Id.ToString(), targetOrg, endpoint.Id,
-            new { request.Hostname, request.KeyFingerprint, request.SourceIp });
-        await db.SaveChangesAsync(ct);
-        credentialCache.InvalidatePending(request.RequestId);
-        return endpoint;
-    }
-
-    public async Task RejectAsync(Guid requestId, string? reason, CancellationToken ct = default)
-    {
-        var request = await db.EnrollmentRequests.FirstOrDefaultAsync(r => r.Id == requestId, ct) ?? throw AppException.NotFound("Enrollment request");
-        if (request.Status != EnrollmentRequestStatus.Pending)
-        {
-            throw AppException.Conflict($"The request is already {request.Status}.", "invalid_state");
-        }
-
-        request.Status = EnrollmentRequestStatus.Rejected;
-        request.RejectReason = ScanIngestionService.Truncate(reason, 500);
-        request.DecidedAt = clock.GetUtcNow();
-        request.DecidedByUserId = actor.UserId;
-        audit.Record("enrollment_request.reject", "EnrollmentRequest", request.Id.ToString(), request.OrganizationId, null,
-            new { request.Hostname, reason });
-        await db.SaveChangesAsync(ct);
-        credentialCache.InvalidatePending(request.RequestId);
-    }
-
     public async Task RevokeEndpointAsync(Guid endpointId, string reason, EndpointStatus status = EndpointStatus.Revoked, CancellationToken ct = default)
     {
         var endpoint = await db.Endpoints.FirstOrDefaultAsync(e => e.Id == endpointId, ct) ?? throw AppException.NotFound("Endpoint");
@@ -243,10 +126,10 @@ public sealed class EnrollmentService(
     }
 
     // -------------------------------------------------------------------------------------------
-    // Agent: enroll, poll, rotate, unenroll
+    // Agent: enroll, rotate, unenroll
     // -------------------------------------------------------------------------------------------
 
-    public async Task<EnrollResponse> EnrollAsync(EnrollRequest request, IPAddress? sourceIp, CancellationToken ct = default)
+    public async Task<EnrollResponse> EnrollAsync(EnrollRequest request, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(request);
         var now = clock.GetUtcNow();
@@ -257,11 +140,18 @@ public sealed class EnrollmentService(
         }
 
         var fingerprint = AgentKeys.Fingerprint(spki);
-        var hasToken = !string.IsNullOrWhiteSpace(request.EnrollmentToken);
-        var hasCode = !string.IsNullOrWhiteSpace(request.DeploymentCode);
-        if (hasToken == hasCode)
+        // Agents from before ADR-0048 could enroll with a deployment code and wait for an administrator's approval. Such a request
+        // is refused with a code of its own, so the agent's log says what to do instead of "invalid".
+        if (!string.IsNullOrWhiteSpace(request.DeploymentCode))
         {
-            throw AppException.BadRequest("Provide exactly one of enrollmentToken or deploymentCode.", AgentErrorCodes.EnrollmentInvalid);
+            throw AppException.BadRequest(
+                "Deployment codes are retired. Install the agent from EasyRMM, which enrolls it with a single-use enrollment token.",
+                AgentErrorCodes.DeploymentCodesRetired);
+        }
+
+        if (string.IsNullOrWhiteSpace(request.EnrollmentToken))
+        {
+            throw AppException.BadRequest("Provide an enrollmentToken.", AgentErrorCodes.EnrollmentInvalid);
         }
 
         // Idempotency: a retry with an already-registered key returns the existing identity.
@@ -275,9 +165,7 @@ public sealed class EnrollmentService(
             return ActiveResponse(match.Endpoint, match, fingerprint, policy.ToAgentConfig(), now);
         }
 
-        return hasToken
-            ? await EnrollWithTokenAsync(request, spki, fingerprint, now, ct)
-            : await EnrollWithDeploymentCodeAsync(request, spki, fingerprint, sourceIp, now, ct);
+        return await EnrollWithTokenAsync(request, spki, fingerprint, now, ct);
     }
 
     private async Task<EnrollResponse> EnrollWithTokenAsync(EnrollRequest request, byte[] spki, string fingerprint, DateTimeOffset now, CancellationToken ct)
@@ -303,127 +191,13 @@ public sealed class EnrollmentService(
         token.LastUsedAt = now;
         var settings = await settingsService.GetAsync(ct);
         var (endpoint, credential) = await CreateOrReuseEndpointAsync(token.OrganizationId, token.SiteId, request.Device, request.AgentVersion,
-            spki, fingerprint, settings.CredentialLifetimeDays, token.Id, null, now, ct);
+            spki, fingerprint, settings.CredentialLifetimeDays, token.Id, now, ct);
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         var policy = await policies.ResolveAsync(endpoint, ct);
         logger.LogInformation("Endpoint {EndpointId} ({Hostname}) enrolled with token {Prefix}", endpoint.Id, LogText.Safe(endpoint.Hostname),
             LogText.Safe(token.TokenPrefix));
         return ActiveResponse(endpoint, credential, fingerprint, policy.ToAgentConfig(), now);
-    }
-
-    private async Task<EnrollResponse> EnrollWithDeploymentCodeAsync(EnrollRequest request, byte[] spki, string fingerprint, IPAddress? sourceIp,
-        DateTimeOffset now, CancellationToken ct)
-    {
-        var codeValue = request.DeploymentCode!.Trim().ToUpperInvariant();
-        var code = await db.DeploymentCodes.AsNoTracking().FirstOrDefaultAsync(c => c.Code == codeValue, ct);
-        if (code is null || code.RevokedAt is not null || (code.ExpiresAt is { } exp && exp <= now))
-        {
-            throw AppException.Unauthorized(AgentErrorCodes.EnrollmentInvalid, "The deployment code is invalid, expired or revoked.");
-        }
-
-        if (code.AllowedSourceCidrs.Count > 0 &&
-            (sourceIp is null || !code.AllowedSourceCidrs.Any(c => IPNetwork.TryParse(c, out var net) && net.Contains(Normalize(sourceIp)))))
-        {
-            logger.LogWarning("Deployment-code enrollment from {Ip} rejected by the source allow-list", sourceIp);
-            throw AppException.Unauthorized(AgentErrorCodes.EnrollmentInvalid, "Enrollment is not allowed from this network.");
-        }
-
-        var settings = await settingsService.GetAsync(ct);
-        var existing = await db.EnrollmentRequests.FirstOrDefaultAsync(
-            r => r.DeploymentCodeId == code.Id && r.KeyFingerprint == fingerprint && r.Status == EnrollmentRequestStatus.Pending, ct);
-        if (existing is null)
-        {
-            var pending = await db.EnrollmentRequests.CountAsync(r => r.DeploymentCodeId == code.Id && r.Status == EnrollmentRequestStatus.Pending, ct);
-            if (pending >= code.MaxPendingRequests)
-            {
-                throw new AppException(429, AgentErrorCodes.RateLimited, "Too many enrollment requests are awaiting approval for this deployment code.");
-            }
-
-            existing = new EnrollmentRequest
-            {
-                Id = Guid.CreateVersion7(now),
-                RequestId = SecureTokens.NewEnrollmentRequestId(),
-                DeploymentCodeId = code.Id,
-                OrganizationId = code.OrganizationId,
-                SiteId = code.SiteId,
-                PublicKey = spki,
-                KeyFingerprint = fingerprint,
-                Hostname = ScanIngestionService.Truncate(request.Device.Hostname, 255)!,
-                DeviceJson = JsonSerializer.Serialize(request.Device, ContractJson.Options),
-                SerialNumber = ScanIngestionService.Truncate(request.Device.SerialNumber, 255),
-                OsCaption = ScanIngestionService.Truncate(request.Device.OsCaption, 255),
-                AgentVersion = ScanIngestionService.Truncate(request.AgentVersion, 64)!,
-                SourceIp = sourceIp?.ToString(),
-                Status = EnrollmentRequestStatus.Pending,
-                CreatedAt = now,
-                LastSeenAt = now,
-                ExpiresAt = now.AddDays(settings.EnrollmentRequestExpiryDays),
-            };
-            db.EnrollmentRequests.Add(existing);
-            logger.LogInformation("Enrollment request {RequestId} from {Hostname} ({Ip}) awaits approval; key fingerprint {Fingerprint}",
-                existing.RequestId, LogText.Safe(existing.Hostname), LogText.Safe(sourceIp?.ToString()), fingerprint);
-        }
-        else
-        {
-            existing.LastSeenAt = now;
-        }
-
-        await db.SaveChangesAsync(ct);
-        return new EnrollResponse
-        {
-            State = EnrollmentState.PendingApproval,
-            CredentialId = existing.RequestId,
-            KeyFingerprint = fingerprint,
-            Message = "Enrollment is awaiting administrator approval.",
-            ServerTime = now,
-        };
-    }
-
-    /// <summary>Status poll for a pending enrollment, authenticated by the request's key.</summary>
-    public async Task<EnrollResponse> GetPendingStatusAsync(string requestId, CancellationToken ct = default)
-    {
-        var now = clock.GetUtcNow();
-        var request = await db.EnrollmentRequests.FirstOrDefaultAsync(r => r.RequestId == requestId, ct)
-                      ?? throw AppException.Unauthorized(AgentErrorCodes.UnknownCredential, "Unknown enrollment request.");
-        request.LastSeenAt = now;
-        if (request.Status == EnrollmentRequestStatus.Pending && request.ExpiresAt <= now)
-        {
-            request.Status = EnrollmentRequestStatus.Expired;
-        }
-
-        await db.SaveChangesAsync(ct);
-        switch (request.Status)
-        {
-            case EnrollmentRequestStatus.Approved when request.EndpointId is { } endpointId:
-            {
-                var endpoint = await db.Endpoints.AsNoTracking().FirstAsync(e => e.Id == endpointId, ct);
-                var credential = await db.AgentCredentials.AsNoTracking()
-                    .Where(c => c.EndpointId == endpointId && c.KeyFingerprint == request.KeyFingerprint && c.RevokedAt == null)
-                    .OrderByDescending(c => c.CreatedAt).FirstOrDefaultAsync(ct);
-                if (credential is null || endpoint.Status != EndpointStatus.Active)
-                {
-                    return Terminal(EnrollmentState.Rejected, request, "The approved endpoint has since been revoked.", now);
-                }
-
-                var policy = await policies.ResolveAsync(endpoint, ct);
-                return ActiveResponse(endpoint, credential, request.KeyFingerprint, policy.ToAgentConfig(), now);
-            }
-
-            case EnrollmentRequestStatus.Rejected:
-                return Terminal(EnrollmentState.Rejected, request, request.RejectReason ?? "Rejected by an administrator.", now);
-            case EnrollmentRequestStatus.Expired:
-                return Terminal(EnrollmentState.Expired, request, "The enrollment request expired before it was approved.", now);
-            default:
-                return new EnrollResponse
-                {
-                    State = EnrollmentState.PendingApproval,
-                    CredentialId = request.RequestId,
-                    KeyFingerprint = request.KeyFingerprint,
-                    Message = "Enrollment is awaiting administrator approval.",
-                    ServerTime = now,
-                };
-        }
     }
 
     public async Task<RotateCredentialResponse> RotateAsync(Guid endpointId, string currentCredentialId, RotateCredentialRequest request, CancellationToken ct = default)
@@ -481,7 +255,7 @@ public sealed class EnrollmentService(
     /// reinstalled on the same machine (same SMBIOS UUID and hostname). Old credentials of a reused endpoint are revoked.</summary>
     private async Task<(Endpoint Endpoint, AgentCredential Credential)> CreateOrReuseEndpointAsync(
         Guid organizationId, Guid? siteId, DeviceIdentity device, string agentVersion, byte[] spki, string fingerprint,
-        int credentialLifetimeDays, Guid? tokenId, Guid? requestId, DateTimeOffset now, CancellationToken ct)
+        int credentialLifetimeDays, Guid? tokenId, DateTimeOffset now, CancellationToken ct)
     {
         Endpoint? endpoint = null;
         var uuid = NormalizeUuid(device.SmbiosUuid);
@@ -538,7 +312,6 @@ public sealed class EnrollmentService(
         }
 
         endpoint.EnrollmentTokenId = tokenId ?? endpoint.EnrollmentTokenId;
-        endpoint.EnrollmentRequestId = requestId ?? endpoint.EnrollmentRequestId;
         var credential = NewCredential(endpoint.Id, spki, fingerprint, credentialLifetimeDays, now);
         db.AgentCredentials.Add(credential);
         return (endpoint, credential);
@@ -565,15 +338,6 @@ public sealed class EnrollmentService(
         CredentialExpiresAt = credential.ExpiresAt,
         Config = config,
         KeyFingerprint = fingerprint,
-        ServerTime = now,
-    };
-
-    private static EnrollResponse Terminal(EnrollmentState state, EnrollmentRequest request, string message, DateTimeOffset now) => new()
-    {
-        State = state,
-        CredentialId = request.RequestId,
-        KeyFingerprint = request.KeyFingerprint,
-        Message = message,
         ServerTime = now,
     };
 
@@ -617,6 +381,4 @@ public sealed class EnrollmentService(
             ? null
             : ScanIngestionService.Truncate(value, 255);
     }
-
-    private static IPAddress Normalize(IPAddress ip) => ip.IsIPv4MappedToIPv6 ? ip.MapToIPv4() : ip;
 }

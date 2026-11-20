@@ -136,7 +136,7 @@ public sealed class AgentKeyStore : IDisposable
         }
     }
 
-    /// <summary>Deletes all key material (unenroll / forced re-enrollment / expired request).</summary>
+    /// <summary>Deletes all key material (unenroll / forced re-enrollment).</summary>
     public void DeleteAll()
     {
         lock (_lock)
@@ -215,7 +215,7 @@ public sealed class AgentKeyStore : IDisposable
     }
 }
 
-/// <summary>Signs with c_… once active and with r_… while waiting for approval.</summary>
+/// <summary>Signs with the active credential (c_…).</summary>
 public sealed class StateSigningCredentialProvider : ISigningCredentialProvider
 {
     private readonly AgentStateStore _state;
@@ -229,19 +229,13 @@ public sealed class StateSigningCredentialProvider : ISigningCredentialProvider
 
     public SigningCredential? GetSigningCredential()
     {
-        var (status, credentialId, requestId) = _state.Read(s => (s.Status, s.CredentialId, s.PendingEnrollmentRequestId));
-        var id = status switch
-        {
-            AgentEnrollmentStatus.Active => credentialId,
-            AgentEnrollmentStatus.PendingApproval => requestId,
-            _ => null,
-        };
-        if (string.IsNullOrEmpty(id))
+        var (status, credentialId) = _state.Read(s => (s.Status, s.CredentialId));
+        if (status != AgentEnrollmentStatus.Active || string.IsNullOrEmpty(credentialId))
         {
             return null;
         }
 
         var key = _keys.TryGetCurrent();
-        return key is null ? null : new SigningCredential(id, key);
+        return key is null ? null : new SigningCredential(credentialId, key);
     }
 }

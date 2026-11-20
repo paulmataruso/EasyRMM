@@ -8,8 +8,8 @@ namespace EasyPatch.Unix;
 /// <summary>
 /// Bootstrap settings in <c>agent.conf</c> (<c>/etc/easypatch/agent.conf</c> on Linux, <c>/Library/EasyPatch/agent.conf</c> on macOS;
 /// <c>Key=value</c> lines; root-only, mode 0600). The installer or
-/// <c>easypatch-agent enroll</c> writes it; the enrollment token and deployment code are removed from it as soon as they
-/// have been used. Values are never logged.
+/// <c>easypatch-agent enroll</c> writes it; the enrollment token is removed from it as soon as it has been used. Values are
+/// never logged.
 /// </summary>
 public sealed class ConfFileBootstrapSource : IBootstrapConfigSource
 {
@@ -18,7 +18,7 @@ public sealed class ConfFileBootstrapSource : IBootstrapConfigSource
 
     private const UnixFileMode FileMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
     private const UnixFileMode DirectoryMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
-    private static readonly string[] SecretKeys = ["EnrollmentToken", "DeploymentCode"];
+    private static readonly string[] SecretKeys = ["EnrollmentToken"];
 
     private readonly string _path;
     private readonly ILogger _logger;
@@ -38,7 +38,7 @@ public sealed class ConfFileBootstrapSource : IBootstrapConfigSource
         }
 
         return new BootstrapConfig(values.GetValueOrDefault("ServerUrl"), values.GetValueOrDefault("EnrollmentToken"),
-            values.GetValueOrDefault("DeploymentCode"), values.GetValueOrDefault("ProxyUrl"), values.GetValueOrDefault("ServerCaCertificate"));
+            values.GetValueOrDefault("ProxyUrl"), values.GetValueOrDefault("ServerCaCertificate"));
     }
 
     public string SetupHint => $"Install it from EasyRMM, or run 'sudo easypatch-agent enroll' (settings: {_path}).";
@@ -84,7 +84,6 @@ public sealed class ConfFileBootstrapSource : IBootstrapConfigSource
 
         Add("ServerUrl", config.ServerUrl);
         Add("EnrollmentToken", config.EnrollmentToken);
-        Add("DeploymentCode", config.DeploymentCode);
         Add("ProxyUrl", config.ProxyUrl);
         Add("ServerCaCertificate", config.ServerCaCertificate);
         Add("LogLevel", logLevel);

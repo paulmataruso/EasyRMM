@@ -1,10 +1,11 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Contracts;
 using EasyPatch.Contracts.Agent;
 using EasyPatch.Contracts.Security;
-using EasyPatch.Core.Entities;
 using EasyPatch.Infrastructure.Security;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -27,12 +28,12 @@ public sealed class EnrollmentTests(PostgresFixture postgres) : IntegrationTest(
 
         var single = await CreateTokenAsync(root, org.Id, site.Id, maxUses: 1);
         Assert.StartsWith("ept_", single, StringComparison.Ordinal);
-        using (var first = await NewAgent().EnrollAsync(single, null, "PC-1"))
+        using (var first = await NewAgent().EnrollAsync(single, "PC-1"))
         {
             Assert.Equal(EnrollmentState.Active, (await ReadEnrollAsync(first)).State);
         }
 
-        using (var reused = await NewAgent().EnrollAsync(single, null, "PC-2"))
+        using (var reused = await NewAgent().EnrollAsync(single, "PC-2"))
         {
             Assert.Equal(HttpStatusCode.Unauthorized, reused.StatusCode);
             Assert.Equal(AgentErrorCodes.EnrollmentInvalid, await AdminClient.ProblemCodeAsync(reused));
@@ -40,7 +41,7 @@ public sealed class EnrollmentTests(PostgresFixture postgres) : IntegrationTest(
 
         var expiring = await CreateTokenAsync(root, org.Id, site.Id, hours: 1);
         Clock.Advance(TimeSpan.FromMinutes(61));
-        using (var expired = await NewAgent().EnrollAsync(expiring, null, "PC-3"))
+        using (var expired = await NewAgent().EnrollAsync(expiring, "PC-3"))
         {
             Assert.Equal(HttpStatusCode.Unauthorized, expired.StatusCode);
         }
@@ -48,7 +49,7 @@ public sealed class EnrollmentTests(PostgresFixture postgres) : IntegrationTest(
         var revocable = await root.SendAsync<List<CreatedTokenDto>>(HttpMethod.Post, "/api/v1/enrollment-tokens",
             new CreateTokensRequest(org.Id, site.Id, "to revoke", 24, 10, 1), HttpStatusCode.OK);
         await root.ExpectAsync(HttpMethod.Post, $"/api/v1/enrollment-tokens/{revocable[0].Token.Id}/revoke", null, HttpStatusCode.NoContent);
-        using (var revoked = await NewAgent().EnrollAsync(revocable[0].PlaintextToken, null, "PC-4"))
+        using (var revoked = await NewAgent().EnrollAsync(revocable[0].PlaintextToken, "PC-4"))
         {
             Assert.Equal(HttpStatusCode.Unauthorized, revoked.StatusCode);
         }
@@ -59,96 +60,91 @@ public sealed class EnrollmentTests(PostgresFixture postgres) : IntegrationTest(
         Assert.DoesNotContain(revocable[0].PlaintextToken, revocable[0].Token.ToString(), StringComparison.Ordinal);
     }
 
+    /// <summary>The enroll request of an agent from before ADR-0048. <paramref name="deploymentCode"/>: the
+    /// <c>deploymentCode</c> member, absent when <paramref name="sendsDeploymentCode"/> is false.</summary>
+    private static JsonObject OlderAgentEnroll(SignedAgent agent, string hostname, string? token, string? deploymentCode,
+        bool sendsDeploymentCode = true)
+    {
+        var body = new JsonObject
+        {
+            ["enrollmentToken"] = token,
+            ["publicKey"] = agent.PublicKeyBase64,
+            ["agentVersion"] = "1.8.0",
+            ["device"] = JsonSerializer.SerializeToNode(SignedAgent.Device(hostname), TestJson.Options),
+        };
+        if (sendsDeploymentCode)
+        {
+            body["deploymentCode"] = deploymentCode;
+        }
+
+        return body;
+    }
+
     [Fact]
-    public async Task Tokenless_deployment_code_enrollment_waits_for_administrator_approval()
+    public async Task Older_agents_enroll_with_a_token_whatever_they_send_as_deployment_code_when_it_is_empty()
     {
         var root = SuperAdmin();
         var (org, site) = await CreateOrgAsync(root);
-        var code = await root.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
-            new CreateDeploymentCodeRequest(org.Id, site.Id, "RMM rollout", 30, null, null), HttpStatusCode.Created);
+        var token = await CreateTokenAsync(root, org.Id, site.Id, maxUses: 3);
 
-        var agent = NewAgent();
-        var pending = await ReadEnrollAsync(await agent.EnrollAsync(null, code.Code, "RMM-PC1"));
-        Assert.Equal(EnrollmentState.PendingApproval, pending.State);
-        Assert.StartsWith("r_", pending.CredentialId, StringComparison.Ordinal);
-        Assert.Null(pending.EndpointId);
-        agent.CredentialId = pending.CredentialId;
-
-        // A pending request can only poll its status: no check-in, no reports.
-        using (var checkIn = await agent.PostAsync(AgentRoutes.CheckIn, new CheckInRequest { AgentVersion = "1.0.0" }))
+        foreach (var (hostname, sends, code) in new[] { ("OLD-PC1", true, (string?)null), ("OLD-PC2", false, null), ("OLD-PC3", true, "") })
         {
-            Assert.Equal(HttpStatusCode.Forbidden, checkIn.StatusCode);
+            var agent = NewAgent();
+            var json = OlderAgentEnroll(agent, hostname, token, code, sends);
+            Assert.Equal(sends, json.ToJsonString().Contains("\"deploymentCode\"", StringComparison.Ordinal));
+            using var response = await agent.EnrollAsJsonAsync(json);
+            var enrolled = await ReadEnrollAsync(response);
+            Assert.Equal(EnrollmentState.Active, enrolled.State);
+            Assert.StartsWith("c_", enrolled.CredentialId, StringComparison.Ordinal);
+            agent.CredentialId = enrolled.CredentialId;
+            agent.EndpointId = enrolled.EndpointId!.Value;
+            await agent.CheckInAsync();
         }
 
-        using (var poll = await agent.PostAsync(AgentRoutes.EnrollmentStatus, new { }))
-        {
-            Assert.Equal(EnrollmentState.PendingApproval, (await ReadEnrollAsync(poll)).State);
-        }
-
-        var requests = await root.GetAsync<PagedResult<EnrollmentRequestDto>>("/api/v1/enrollment-requests");
-        var request = Assert.Single(requests.Items);
-        Assert.Equal("RMM-PC1", request.Hostname);
-        Assert.Equal(pending.KeyFingerprint, request.KeyFingerprint); // admin compares this with the agent's local fingerprint
-        Assert.Equal(0, await WithDbAsync(db => db.Endpoints.CountAsync()));
-
-        await root.SendAsync<object>(HttpMethod.Post, $"/api/v1/enrollment-requests/{request.Id}/approve", new ApproveRequest(null, null), HttpStatusCode.OK);
-
-        EnrollResponse active;
-        using (var poll = await agent.PostAsync(AgentRoutes.EnrollmentStatus, new { }))
-        {
-            active = await ReadEnrollAsync(poll);
-        }
-
-        Assert.Equal(EnrollmentState.Active, active.State);
-        Assert.StartsWith("c_", active.CredentialId, StringComparison.Ordinal);
-        agent.CredentialId = active.CredentialId;
-        agent.EndpointId = active.EndpointId!.Value;
-        await agent.CheckInAsync();
-
-        var endpoint = await root.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{agent.EndpointId}");
-        Assert.Equal(site.Id, endpoint.Summary.SiteId);
-        Assert.Contains("enrollment_request.approve", await WithDbAsync(db => db.AuditLogs.Select(a => a.Action).ToListAsync()));
+        Assert.Equal(3, await WithDbAsync(db => db.Endpoints.CountAsync(e => e.SiteId == site.Id)));
     }
 
     [Fact]
-    public async Task Rejected_requests_never_become_endpoints()
+    public async Task A_deployment_code_is_refused_clearly_and_uses_no_token()
     {
         var root = SuperAdmin();
-        var (org, _) = await CreateOrgAsync(root);
-        var code = await root.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
-            new CreateDeploymentCodeRequest(org.Id, null, "RMM", 30, null, null), HttpStatusCode.Created);
+        var (org, site) = await CreateOrgAsync(root);
+        var token = await CreateTokenAsync(root, org.Id, site.Id, maxUses: 1);
         var agent = NewAgent();
-        agent.CredentialId = (await ReadEnrollAsync(await agent.EnrollAsync(null, code.Code, "UNKNOWN-PC"))).CredentialId;
 
-        var request = (await root.GetAsync<PagedResult<EnrollmentRequestDto>>("/api/v1/enrollment-requests")).Items.Single();
-        await root.ExpectAsync(HttpMethod.Post, $"/api/v1/enrollment-requests/{request.Id}/reject", new RejectRequest("Not one of ours"), HttpStatusCode.NoContent);
-        await root.ExpectAsync(HttpMethod.Post, $"/api/v1/enrollment-requests/{request.Id}/approve", new ApproveRequest(null, null), HttpStatusCode.Conflict,
-            "invalid_state");
+        // A code alone, and a code beside a valid token: both refused, the token left unused.
+        foreach (var withToken in new[] { (string?)null, token })
+        {
+            using var response = await agent.EnrollAsJsonAsync(OlderAgentEnroll(agent, "RMM-PC1", withToken, "EPD-ABCDEFGHJKMNPQRS"));
+            Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+            Assert.Equal(AgentErrorCodes.DeploymentCodesRetired, await AdminClient.ProblemCodeAsync(response));
+            Assert.Contains("enrollment token", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        }
 
-        using var poll = await agent.PostAsync(AgentRoutes.EnrollmentStatus, new { });
-        var status = await ReadEnrollAsync(poll);
-        Assert.Equal(EnrollmentState.Rejected, status.State);
-        Assert.Equal("Not one of ours", status.Message);
         Assert.Equal(0, await WithDbAsync(db => db.Endpoints.CountAsync()));
+        Assert.Equal(0, await WithDbAsync(db => db.EnrollmentTokens.Select(t => t.UseCount).SingleAsync()));
+
+        // Neither a code nor a token.
+        using var neither = await agent.EnrollAsJsonAsync(OlderAgentEnroll(agent, "RMM-PC1", null, null));
+        Assert.Equal(HttpStatusCode.BadRequest, neither.StatusCode);
+        Assert.Equal(AgentErrorCodes.EnrollmentInvalid, await AdminClient.ProblemCodeAsync(neither));
     }
 
     [Fact]
-    public async Task Deployment_codes_can_be_restricted_to_source_networks_and_revoked()
+    public async Task An_older_agent_still_waiting_for_approval_is_told_its_request_is_unknown()
     {
-        var root = SuperAdmin();
-        var (org, _) = await CreateOrgAsync(root);
-        var restricted = await root.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
-            new CreateDeploymentCodeRequest(org.Id, null, "Branch only", 30, ["203.0.113.0/24"], null), HttpStatusCode.Created);
-        using (var outside = await NewAgent().EnrollAsync(null, restricted.Code, "PC-X"))
+        // Such an agent signs with the r_ ID of its enrollment request; the engine keeps none any more.
+        var agent = NewAgent();
+        agent.CredentialId = "r_" + RequestSigner.Base64UrlEncode(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
+        using (var poll = await agent.PostAsync("api/v1/agents/enrollment/status", new { }))
         {
-            Assert.Equal(HttpStatusCode.Unauthorized, outside.StatusCode); // the test server's client address is not in 203.0.113.0/24
+            Assert.Equal(HttpStatusCode.Unauthorized, poll.StatusCode);
+            Assert.Equal(AgentErrorCodes.UnknownCredential, await AdminClient.ProblemCodeAsync(poll));
         }
 
-        var open = await root.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
-            new CreateDeploymentCodeRequest(org.Id, null, "Anywhere", 30, null, null), HttpStatusCode.Created);
-        await root.ExpectAsync(HttpMethod.Post, $"/api/v1/deployment-codes/{open.Id}/revoke", null, HttpStatusCode.NoContent);
-        using var revoked = await NewAgent().EnrollAsync(null, open.Code, "PC-Y");
-        Assert.Equal(HttpStatusCode.Unauthorized, revoked.StatusCode);
+        using var checkIn = await agent.PostAsync(AgentRoutes.CheckIn, new CheckInRequest { AgentVersion = "1.8.0" });
+        Assert.Equal(HttpStatusCode.Unauthorized, checkIn.StatusCode);
+        Assert.Equal(AgentErrorCodes.UnknownCredential, await AdminClient.ProblemCodeAsync(checkIn));
     }
 }
 
@@ -251,13 +247,13 @@ public sealed class AgentAuthenticationTests(PostgresFixture postgres) : Integra
         var (org, site) = await CreateOrgAsync(root);
         var a = await EnrollAgentAsync(root, org.Id, site.Id, "PC-A");
         var b = await EnrollAgentAsync(root, org.Id, site.Id, "PC-B");
-        var job = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{a.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        var job = await ScanAsync(root, a.EndpointId);
 
-        using var foreign = await b.PostAsync($"api/v1/agents/jobs/{job.Id}/status",
+        using var foreign = await b.PostAsync($"api/v1/agents/jobs/{job}/status",
             new JobStatusReport { Sequence = 1, Status = JobStatus.Completed });
         Assert.Equal(HttpStatusCode.NotFound, foreign.StatusCode);
-        using var foreignAck = await b.PostAsync($"api/v1/agents/jobs/{job.Id}/ack", new { });
+        using var foreignAck = await b.PostAsync($"api/v1/agents/jobs/{job}/ack", new { });
         Assert.Equal(HttpStatusCode.NotFound, foreignAck.StatusCode);
-        Assert.Equal(JobStatus.Queued, (await root.GetAsync<JobDetailDto>($"/api/v1/jobs/{job.Id}")).Summary.Status);
+        Assert.Equal(JobStatus.Queued, (await root.GetAsync<JobDetailDto>($"/api/v1/jobs/{job}")).Summary.Status);
     }
 }

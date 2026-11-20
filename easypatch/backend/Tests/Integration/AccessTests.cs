@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Contracts;
 using EasyPatch.Core.Entities;
+using EasyPatch.Infrastructure.Maintenance;
 using EasyPatch.Infrastructure.Security;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -41,9 +42,15 @@ public sealed class AccessTests(PostgresFixture postgres) : IntegrationTest(post
         {
             var http = NewHttpClient();
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", secret);
-            foreach (var (method, url) in new[] { (HttpMethod.Get, "/api/v1/organizations"), (HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan") })
+            foreach (var (method, url) in new[] { (HttpMethod.Get, "/api/v1/organizations"), (HttpMethod.Post, "/api/v1/endpoints/bulk/scan") })
             {
-                using var response = await http.SendAsync(new HttpRequestMessage(method, new Uri(url, UriKind.Relative)));
+                using var request = new HttpRequestMessage(method, new Uri(url, UriKind.Relative));
+                if (method == HttpMethod.Post)
+                {
+                    request.Content = System.Net.Http.Json.JsonContent.Create(new BulkEndpointsRequest([agent.EndpointId], false));
+                }
+
+                using var response = await http.SendAsync(request);
                 Assert.Equal((url, HttpStatusCode.Unauthorized), (url, response.StatusCode));
                 Assert.Equal("unauthenticated", await AdminClient.ProblemCodeAsync(response));
             }
@@ -72,7 +79,8 @@ public sealed class AccessTests(PostgresFixture postgres) : IntegrationTest(post
         var viewer = Admin("viewer1", UserRole.ReadOnly);
         viewer.Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await StoredApiTokenAsync("Automation", UserRole.Admin));
         await viewer.GetAsync<PagedResult<EndpointSummaryDto>>("/api/v1/endpoints");
-        await viewer.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Forbidden, "forbidden");
+        await viewer.ExpectAsync(HttpMethod.Post, "/api/v1/endpoints/bulk/scan", new BulkEndpointsRequest([agent.EndpointId], false), HttpStatusCode.Forbidden,
+            "forbidden");
         Assert.Empty(await WithDbAsync(db => db.Jobs.AsNoTracking().Where(j => j.EndpointId == agent.EndpointId).ToListAsync()));
     }
 
@@ -80,16 +88,13 @@ public sealed class AccessTests(PostgresFixture postgres) : IntegrationTest(post
     public async Task A_statement_names_who_acted_and_on_behalf_of_is_ignored()
     {
         var root = SuperAdmin();
-        var info = await root.GetAsync<ServerInfoDto>("/api/v1/server-info");
-        Assert.Equal(["scheduled-installs"], info.Capabilities);
-
         var (org, site) = await CreateOrgAsync(root);
         var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-1");
 
         // X-EasyPatch-On-Behalf-Of went with API tokens: the statement names the person, and the header changes nothing.
         var technician = Admin("alice@example.com", UserRole.Admin, [org.Id]);
         technician.Http.DefaultRequestHeaders.Add("X-EasyPatch-On-Behalf-Of", "mallory@example.com");
-        await technician.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        await ScanAsync(technician, agent.EndpointId);
         var scan = await WithDbAsync(db => db.Jobs.AsNoTracking().SingleAsync(j => j.EndpointId == agent.EndpointId));
         Assert.Equal((technician.Actor, (Guid?)null), (scan.RequestedBy, scan.RequestedByUserId));
 
@@ -173,7 +178,6 @@ public sealed class TenantIsolationTests(PostgresFixture postgres) : Integration
         await tech.ExpectAsync(HttpMethod.Get, $"/api/v1/organizations/{fabrikam.Id}", null, HttpStatusCode.NotFound);
         await tech.ExpectAsync(HttpMethod.Get, $"/api/v1/sites/{fabrikamSite.Id}", null, HttpStatusCode.NotFound);
         await tech.ExpectAsync(HttpMethod.Get, $"/api/v1/endpoints/{fabrikamAgent.EndpointId}", null, HttpStatusCode.NotFound);
-        await tech.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{fabrikamAgent.EndpointId}/scan", null, HttpStatusCode.NotFound);
         await tech.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{fabrikamAgent.EndpointId}/install-updates",
             new InstallUpdatesRequest(InstallMode.AllEligible, null, false), HttpStatusCode.NotFound);
         await tech.ExpectAsync(HttpMethod.Post, "/api/v1/enrollment-tokens", new CreateTokensRequest(fabrikam.Id, null, null, 24, 1, 1), HttpStatusCode.NotFound);
@@ -187,29 +191,27 @@ public sealed class TenantIsolationTests(PostgresFixture postgres) : Integration
 
         var jobs = await tech.GetAsync<PagedResult<JobSummaryDto>>("/api/v1/jobs");
         Assert.All(jobs.Items, j => Assert.Equal(contoso.Id, j.OrganizationId));
-        var report = await tech.GetAsync<ComplianceReportDto>("/api/v1/reports/compliance");
-        Assert.All(report.Rows, r => Assert.Equal("Contoso", r.OrganizationName));
+        await RunMaintenanceAsync<ComplianceSnapshotTask>();
+        Assert.Equal(2, Assert.Single(await root.GetAsync<List<ComplianceTrendPoint>>("/api/v1/reports/compliance/trend")).TotalEndpoints);
+        Assert.Equal(1, Assert.Single(await tech.GetAsync<List<ComplianceTrendPoint>>("/api/v1/reports/compliance/trend")).TotalEndpoints);
+        Assert.Empty(await tech.GetAsync<List<ComplianceTrendPoint>>($"/api/v1/reports/compliance/trend?organizationId={fabrikam.Id}"));
         var audit = await tech.GetAsync<PagedResult<AuditLogDto>>("/api/v1/audit-logs");
         Assert.All(audit.Items, a => Assert.Equal(contoso.Id, a.OrganizationId));
     }
 
     [Fact]
-    public async Task Deleting_a_restricted_callers_organization_never_widens_their_access()
+    public async Task A_statement_naming_only_an_organization_that_is_not_there_never_widens_access()
     {
         var root = SuperAdmin();
-        var (contoso, _) = await CreateOrgAsync(root, "Contoso");
         var (fabrikam, fabrikamSite) = await CreateOrgAsync(root, "Fabrikam");
         var fabrikamAgent = await EnrollAgentAsync(root, fabrikam.Id, fabrikamSite.Id, "FABRIKAM-PC1");
-        var tech = Admin("contoso-tech", UserRole.Admin, [contoso.Id]);
-
-        // An Admin may delete their own organization while it has no endpoints. Statements that still name it then reach nothing.
-        await tech.ExpectAsync(HttpMethod.Delete, $"/api/v1/organizations/{contoso.Id}", null, HttpStatusCode.NoContent);
+        var tech = Admin("gone-tech", UserRole.Admin, [Guid.NewGuid()]);
 
         Assert.Empty(await tech.GetAsync<List<OrganizationSummaryDto>>("/api/v1/organizations"));
         Assert.Empty((await tech.GetAsync<PagedResult<EndpointSummaryDto>>("/api/v1/endpoints")).Items);
         await tech.ExpectAsync(HttpMethod.Get, $"/api/v1/organizations/{fabrikam.Id}", null, HttpStatusCode.NotFound);
         await tech.ExpectAsync(HttpMethod.Get, $"/api/v1/endpoints/{fabrikamAgent.EndpointId}", null, HttpStatusCode.NotFound);
-        await tech.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{fabrikamAgent.EndpointId}/scan", null, HttpStatusCode.NotFound);
+        Assert.Equal("not_found", (await BulkOneAsync(tech, "scan", new BulkEndpointsRequest([fabrikamAgent.EndpointId], false))).ErrorCode);
         await tech.ExpectAsync(HttpMethod.Post, "/api/v1/organizations", new OrganizationRequest("Mine", null, null, null, null, null),
             HttpStatusCode.Forbidden);
     }

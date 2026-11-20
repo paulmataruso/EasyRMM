@@ -598,8 +598,7 @@ public sealed class ComplianceSnapshotTask(EasyPatchDbContext db, TimeProvider c
     }
 }
 
-/// <summary>Retention: deletes old events, audit records, finished jobs, scans, history, enrollment requests, alerts, notifications
-/// and reports.</summary>
+/// <summary>Retention: deletes old events, audit records, finished jobs, scans, history, alerts, notifications and reports.</summary>
 public sealed class RetentionTask(EasyPatchDbContext db, SettingsService settingsService, TimeProvider clock, ILogger<RetentionTask> logger) : IMaintenanceTask
 {
     public string Name => "retention";
@@ -615,10 +614,6 @@ public sealed class RetentionTask(EasyPatchDbContext db, SettingsService setting
         var jobRows = await db.Jobs.Where(j => j.CompletedAt != null && j.CompletedAt < now.AddDays(-s.RetentionJobsDays)).ExecuteDeleteAsync(ct);
         var scans = await db.UpdateScans.Where(x => x.ReceivedAt < now.AddDays(-s.RetentionScansDays)).ExecuteDeleteAsync(ct);
         var history = await db.UpdateHistoryEntries.Where(h => h.Date < now.AddDays(-s.RetentionHistoryDays)).ExecuteDeleteAsync(ct);
-        var requests = await db.EnrollmentRequests
-            .Where(r => r.Status == EnrollmentRequestStatus.Pending && r.ExpiresAt < now)
-            .ExecuteUpdateAsync(x => x.SetProperty(r => r.Status, EnrollmentRequestStatus.Expired), ct);
-        var oldRequests = await db.EnrollmentRequests.Where(r => r.Status != EnrollmentRequestStatus.Pending && r.CreatedAt < now.AddDays(-90)).ExecuteDeleteAsync(ct);
         var obsolete = await db.EndpointUpdates
             .Where(u => (u.State == EndpointUpdateState.NotApplicable || u.State == EndpointUpdateState.Superseded) && u.StateChangedAt < now.AddDays(-90))
             .ExecuteDeleteAsync(ct);
@@ -629,8 +624,8 @@ public sealed class RetentionTask(EasyPatchDbContext db, SettingsService setting
         var reports = await db.GeneratedReports.Where(r => r.GeneratedAt < now.AddMonths(-s.RetentionReportsMonths)).ExecuteDeleteAsync(ct);
         logger.LogInformation(
             "Retention: deleted {Events} events, {Audit} audit records, {Jobs} jobs, {Scans} scans, {History} history entries, " +
-            "{Old} old enrollment requests, {Obsolete} obsolete update states, {Snapshots} snapshots, {Alerts} resolved alerts, " +
-            "{Deliveries} notifications, {Reports} monthly reports; expired {Requests} requests",
-            events, auditRows, jobRows, scans, history, oldRequests, obsolete, snapshots, alerts, deliveries, reports, requests);
+            "{Obsolete} obsolete update states, {Snapshots} snapshots, {Alerts} resolved alerts, {Deliveries} notifications, " +
+            "{Reports} monthly reports",
+            events, auditRows, jobRows, scans, history, obsolete, snapshots, alerts, deliveries, reports);
     }
 }

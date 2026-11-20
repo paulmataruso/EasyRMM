@@ -112,7 +112,9 @@ their own rights, and EasyRMM narrows what reaches them.
 **EasyPatch agent to the patching engine** ([ADR-0031](../architecture/adr/0031-easypatch-agent-install.md), [ADR-0039](../architecture/adr/0039-agents-on-easyrmms-name.md), [Patching engine](../architecture/patching-engine.md#agent-protocol))
 * EasyRMM enrolls each EasyPatch agent with a single-use token, valid for
   an hour, made for that one install and passed to the agent off the
-  command line. The engine stores only its hash.
+  command line. The engine stores only its hash, and has no other way to
+  enroll: no codes, approvals or install scripts
+  ([ADR-0048](../architecture/adr/0048-the-engine-keeps-what-is-reached.md)).
 * The agent makes its own ECDSA P-256 key and keeps the private half on
   the computer: DPAPI in a folder only SYSTEM and administrators can open,
   or root-only files on Linux, encrypted with `systemd-creds` where

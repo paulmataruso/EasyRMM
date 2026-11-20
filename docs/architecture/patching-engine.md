@@ -154,7 +154,6 @@ statement.
 | Errors | RFC 9457 `application/problem+json` with `code` and `correlationId`; validation errors (`400 validation_failed`) add `errors`. Some carry more, such as `existingJobId` on `409 duplicate_job` |
 | Paging | `?page=&pageSize=` (at most 200), answered as `{items, page, pageSize, totalCount}` |
 | Rate limits | Enrollment 30 a minute per IP; agent routes 120 a minute per credential; downloads 60 a minute per IP; administrator routes 600 a minute per EasyRMM user and 6,000 for `service`. Over the limit: `429 rate_limited` with `Retry-After`. Configurable with `RateLimits:*` |
-| CSV | UTF-8 with a byte-order mark; text starting with `=`, `+`, `-`, `@`, tab or carriage return is prefixed with `'` |
 | Body size | At most 16 MiB (20 MiB through the edge) |
 
 ### One set of organizations
@@ -202,8 +201,8 @@ passes them to the API.
 
 | Method | Route (`/api/v1/agents`) | Auth | Purpose |
 |---|---|---|---|
-| POST | `/enroll` | Token or deployment code in the body | Registers the agent's public key. Answers `Active` (endpoint id, credential `c_…`, config) or `PendingApproval` (credential `r_…`) |
-| POST | `/enrollment/status` | Signed with `r_…` | Polls a pending enrollment; the only route an `r_…` credential may call |
+| POST | `/enroll` | Enrollment token in the body | Registers the agent's public key. Answers `Active` with the endpoint id, credential `c_…` and config. A request that carries a code, as agents up to 1.11.1 could, gets `400 deployment_codes_retired` and uses no token ([ADR-0048](adr/0048-the-engine-keeps-what-is-reached.md)) |
+| POST | `/enrollment/status` | None | Always `401 unknown_credential`. Agents up to 1.11.1 poll it while waiting for approval; the answer makes them enroll again, be refused and stop |
 | POST | `/check-in` | Signed | Heartbeat and job poll in one. Sends version, boot time, restart state and reasons, held job ids, current activity, capabilities, signed-in user and tray counts, Windows Update policy status, package architecture and format, built-in release key ids and winget status. Answers server time, config, at most one newly leased job plus up to five messages and re-deliveries, job ids to cancel, `rotateCredential`, newest agent version |
 | POST | `/inventory` | Signed | OS and hardware inventory; on Linux also distribution, kernel, package manager and key protection |
 | POST | `/updates/scan-results` | Signed | Full scan snapshot. Idempotent by `scanId` |
@@ -216,9 +215,7 @@ passes them to the API.
 Downloads, outside `/api/v1`, need no credential: `GET
 /downloads/agent/{file}` serves an agent package, and `GET
 /downloads/winget/{file}` one of the three pinned winget files (see
-[Installing winget](#installing-winget)). The engine also serves
-deployment-code install scripts under `/downloads/install/`; the edge does
-not forward them.
+[Installing winget](#installing-winget)).
 
 ### Request signing
 
@@ -226,7 +223,7 @@ After enrollment every request carries:
 
 | Header | Value |
 |---|---|
-| `X-EasyPatch-Credential` | `c_…`, or `r_…` while enrollment is pending |
+| `X-EasyPatch-Credential` | `c_…` |
 | `X-EasyPatch-Timestamp` | Unix seconds |
 | `X-EasyPatch-Nonce` | 128 random bits, base64url |
 | `X-EasyPatch-Content-SHA256` | Lowercase hex SHA-256 of the exact body |
@@ -255,8 +252,7 @@ updated.
 
 Refusals are `401` with `invalid_signature`, `clock_skew` (with
 `serverTime`), `replayed_nonce`, `unknown_credential`,
-`credential_revoked`, `credential_expired` or `endpoint_revoked`; an `r_…`
-credential on any other route gets `403 enrollment_invalid`.
+`credential_revoked`, `credential_expired` or `endpoint_revoked`.
 
 Signed requests rather than client certificates: mutual TLS would end at
 EasyRMM's edge, which would then have to vouch for the agent, and bearer
@@ -275,10 +271,7 @@ per-device keys the engine holds nothing that lets anyone act as an agent.
 * **Enrollment.** EasyRMM enrolls each agent with a single-use enrollment
   token it creates for that one install: valid for an hour, for the
   engine's organization and site that belong to the device's. The engine
-  stores only the token's SHA-256. The engine also supports deployment
-  codes, non-secret identifiers whose enrollments wait in a queue for
-  approval (capped per code, expiring after 7 days, optionally limited to
-  source networks); EasyRMM's console does not create or approve them.
+  stores only the token's SHA-256. There is no other way to enroll.
 * **Rotation.** Credentials last 365 days by default. Check-in asks the
   agent to rotate within 30 days of expiry; the agent signs the new key
   with the old one. Rotation is idempotent per key.
@@ -297,7 +290,7 @@ restart schedules and monthly reports.
 | `organizations`, `sites` | Active flag and `archived_at`; archiving is preferred to deleting |
 | `endpoints` | Identity, OS and hardware inventory, agent version and capabilities, check-in, scan and inventory times, restart state and reasons, signed-in users and trays, update source, Windows Update policy status, OS support status, denormalized compliance counters |
 | `agent_credentials` | Public id `c_…`, public key only, expiry, revocation, `replaced_by` |
-| `enrollment_tokens`, `deployment_codes`, `enrollment_requests` | Token hashes with scope, uses and expiry; deployment codes and their pending requests |
+| `enrollment_tokens` | Token hashes with scope, uses and expiry |
 | `updates` | The catalog, keyed by (`update_guid`, `revision_number`): KBs, title, classification, category, products, severity, size, restart behaviour, superseded ids; Linux package, version and source package; CVE summary |
 | `endpoint_updates` | Per-endpoint state, unique by (`endpoint_id`, `update_guid`), with requirement, deferral, error, CVEs, `known_exploited` and the KEV due date |
 | `update_scans`, `update_history_entries` | One row per scan (`agent_scan_id` unique per endpoint); Windows Update history, deduplicated |
@@ -441,7 +434,7 @@ The report includes whether MDM update policies are present.
 | Type | What the agent does |
 |---|---|
 | `UpdateScan` | Scans and reports |
-| `InventoryRefresh` | Reports inventory |
+| `InventoryRefresh` | Nothing any more: the engine no longer queues it and the agent refuses one ([ADR-0048](adr/0048-the-engine-keeps-what-is-reached.md)). The type stays so earlier jobs still show in history |
 | `InstallUpdates` | Fresh scan, filter by the payload, then download and install one update at a time (Linux: one apt or dnf transaction), then scan again |
 | `DownloadUpdates` | Downloads, ahead of a maintenance window, what the window would install (Windows) |
 | `UninstallUpdate` | Removes one installed Windows update |
@@ -654,12 +647,9 @@ administrators only. Holding and releasing are audited.
 
 ## Reports
 
-* **Compliance**: one row per active endpoint (status, missing, failed,
-  restart pending, OS support, last scan and check-in), with filters and
-  CSV export.
 * **Compliance trend**: the daily snapshots for a period.
 * **Installations**: one row per update of each install job (result, skip
-  reason, error, restart, requester), CSV up to 50,000 rows.
+  reason, error, restart, requester), paged.
 * **Monthly reports**: a PDF per organization and calendar month (UTC
   dates), built by `MonthlyReportDataBuilder` and laid out by
   `ReportPdfRenderer` with PDFsharp/MigraDoc 6.2.4 (MIT) and the embedded
@@ -684,7 +674,6 @@ sends queued notifications every 30 seconds (task `notifications`).
 | `SecurityUpdateMissing` | A required security update still missing this many days after it became required | Critical, 14 days (0 to 365) |
 | `ScanStale` | No successful scan within the policy's *scan out of date after* | Warning |
 | `RestartPending` | A restart pending longer than the threshold | Info, 7 days (1 to 90) |
-| `EnrollmentPending` | Enrollment requests waiting for approval (per organization) | Info |
 | `OsUnsupported` | The OS is out of support, or its support ends within the threshold | Warning, 30 days (0 to 365) |
 | `KnownExploitedMissing` | An allowed update fixing a known-exploited vulnerability is missing (required or still deferred) | Critical |
 | `UpdateHeld` | An update the organization's endpoints still miss is on hold (per organization) | Warning |

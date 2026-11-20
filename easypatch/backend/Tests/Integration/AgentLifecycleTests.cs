@@ -8,6 +8,7 @@ using EasyPatch.Api.Contracts;
 using EasyPatch.Contracts;
 using EasyPatch.Contracts.Updates;
 using EasyPatch.Core.Entities;
+using EasyPatch.Infrastructure.Maintenance;
 using EasyPatch.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Xunit;
@@ -199,22 +200,15 @@ public sealed class AgentLifecycleTests(PostgresFixture postgres) : IntegrationT
         var history = await admin.GetAsync<PagedResult<UpdateHistoryDto>>($"/api/v1/endpoints/{endpointId}/update-history");
         Assert.Contains(history.Items, h => h.UpdateGuid == securityUpdate.Guid && h.Result == "Succeeded");
 
-        // 19. Reports and the dashboard reflect it.
-        var compliance = await admin.GetAsync<ComplianceReportDto>("/api/v1/reports/compliance");
-        Assert.Equal(1, compliance.Total);
-        Assert.Equal(100, compliance.CompliancePercent);
+        // 19. Reports, the endpoint list and the organization reflect it.
+        await RunMaintenanceAsync<ComplianceSnapshotTask>();
+        var trend = Assert.Single(await admin.GetAsync<List<ComplianceTrendPoint>>("/api/v1/reports/compliance/trend"));
+        Assert.Equal((1, 1, 100.0), (trend.TotalEndpoints, trend.Compliant, trend.CompliancePercent));
         var installations = await admin.GetAsync<PagedResult<InstallationReportRow>>("/api/v1/reports/installations");
         Assert.Equal(3, installations.Items.Count(r => r.JobId == job.Id && r.Status == JobItemStatus.Succeeded));
-        using (var csv = await admin.SendAsync(HttpMethod.Get, "/api/v1/reports/compliance.csv"))
-        {
-            Assert.Equal(HttpStatusCode.OK, csv.StatusCode);
-            Assert.Equal("text/csv", csv.Content.Headers.ContentType?.MediaType);
-            Assert.Contains("TEST-PC", await csv.Content.ReadAsStringAsync(), StringComparison.Ordinal);
-        }
-
-        var dashboard = await admin.GetAsync<DashboardSummaryDto>("/api/v1/dashboard/summary");
-        Assert.Equal(1, dashboard.Endpoints);
-        Assert.Equal(1, dashboard.Compliant);
+        var listed = Assert.Single((await admin.GetAsync<PagedResult<EndpointSummaryDto>>("/api/v1/endpoints")).Items);
+        Assert.Equal(("TEST-PC", ComplianceStatus.Compliant), (listed.Hostname, listed.ComplianceStatus));
+        Assert.Equal(100, Assert.Single(await admin.GetAsync<List<OrganizationSummaryDto>>("/api/v1/organizations")).CompliancePercent);
 
         // 20. Every administrative action is in the audit log; no secret appears anywhere in it.
         var audit = await admin.GetAsync<PagedResult<AuditLogDto>>("/api/v1/audit-logs?pageSize=200");
@@ -265,30 +259,6 @@ public sealed class AgentLifecycleTests(PostgresFixture postgres) : IntegrationT
     }
 
     [Fact]
-    public async Task Rmm_install_with_a_deployment_code_activates_after_approval()
-    {
-        var admin = SuperAdmin();
-        var (org, site) = await CreateOrgAsync(admin);
-        var code = await admin.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
-            new CreateDeploymentCodeRequest(org.Id, site.Id, "RMM", 30, null, null), HttpStatusCode.Created);
-
-        using var agent = new TestAgent(NewHttpClient(), Clock);
-        agent.Bootstrap.DeploymentCode = code.Code;
-        Assert.Equal(EnrollmentOutcome.PendingApproval, await agent.Runtime.EnsureEnrolledAsync());
-        Assert.Null(await agent.Runtime.CheckInOnceAsync()); // nothing is sent before approval
-        Assert.Equal(EnrollmentOutcome.PendingApproval, await agent.Runtime.EnsureEnrolledAsync());
-
-        var request = (await admin.GetAsync<PagedResult<EnrollmentRequestDto>>("/api/v1/enrollment-requests")).Items.Single();
-        await admin.SendAsync<object>(HttpMethod.Post, $"/api/v1/enrollment-requests/{request.Id}/approve", new ApproveRequest(null, null), HttpStatusCode.OK);
-
-        Clock.Advance(TimeSpan.FromMinutes(2));
-        Assert.Equal(EnrollmentOutcome.Active, await agent.Runtime.EnsureEnrolledAsync());
-        Assert.NotNull(await agent.Runtime.CheckInOnceAsync());
-        var endpointId = agent.Runtime.State.Read(s => s.EndpointId)!.Value;
-        Assert.Equal(site.Id, (await admin.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{endpointId}")).Summary.SiteId);
-    }
-
-    [Fact]
     public async Task Agent_rotates_its_key_and_unenrolls_on_uninstall()
     {
         var admin = SuperAdmin();
@@ -327,7 +297,7 @@ public sealed class AgentLifecycleTests(PostgresFixture postgres) : IntegrationT
         var endpointId = agent.Runtime.State.Read(s => s.EndpointId)!.Value;
         await agent.Runtime.CheckInOnceAsync();
 
-        var scan = await admin.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{endpointId}/scan", null, HttpStatusCode.Accepted);
+        var scan = await ScanAsync(admin, endpointId);
         var job = await admin.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{endpointId}/uninstall-agent", null, HttpStatusCode.Accepted);
         Assert.Equal(JobType.UninstallAgent, job.Type);
         await admin.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{endpointId}/uninstall-agent", null, HttpStatusCode.Conflict, "duplicate_job");
@@ -353,7 +323,7 @@ public sealed class AgentLifecycleTests(PostgresFixture postgres) : IntegrationT
         Assert.Equal(JobStatus.Completed, done.Summary.Status);
         Assert.Equal(100, done.Summary.ProgressPercent);
         Assert.Equal("The agent was removed and unenrolled from the server.", done.Summary.ProgressMessage);
-        var cancelled = await admin.GetAsync<JobDetailDto>($"/api/v1/jobs/{scan.Id}");
+        var cancelled = await admin.GetAsync<JobDetailDto>($"/api/v1/jobs/{scan}");
         Assert.Equal(JobStatus.Cancelled, cancelled.Summary.Status);
         Assert.Equal("The agent was uninstalled.", cancelled.Summary.ErrorMessage);
         var detail = await admin.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{endpointId}");
