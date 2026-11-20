@@ -3,9 +3,8 @@
   "generatedAt": "2026-11-16T02:43:29.846149+00:00",
   "title": "Design System: EasyRMM",
   "upstream": {
-    "system": "EasyPatch",
-    "tokensSource": "EasyPatch frontend/src/index.css",
-    "mirror": "web/src/index.css",
+    "system": "EasyRMM",
+    "tokensSource": "web/src/index.css",
     "decision": "docs/architecture/adr/0013-easypatch-design-system.md",
     "easyrmmAdditions": [
       "kbd styling",
@@ -669,9 +668,9 @@
   ],
   "narrative": {
     "northStar": "The Sister Console",
-    "overview": "EasyRMM uses EasyPatch's design system, adopted as-is. This is the owner's binding instruction, recorded in ADR 0013 (`docs/architecture/adr/0013-easypatch-design-system.md`): a technician moving between the EasyPatch and EasyRMM consoles should not notice a change of product family. The upstream source of truth for every token is EasyPatch's `frontend/src/index.css`; `web/src/index.css` mirrors it value for value (verified by diff), and the primitives in `web/src/components/` follow EasyPatch's component vocabulary (same classes, variants, tones and states). Change a shared token in EasyPatch first, then mirror it here. Never fork a value locally.\n\nThe system is calm, dense and flat operator UI. Bordered surfaces on a dark canvas, one blue accent, four status tones with soft fills, a navy sidebar, the system UI font at a 14px base. Nothing decorative; every tile, badge and row is server data.\n\nEasyRMM adds only five things on top of the shared system, all in service of keyboard travel and toolbar alignment: `kbd` styling, a uniform `.input` min-height so toolbar inputs and selects line up with buttons, a `focus-within` row tint for j/k travel, a `narrow` variant of KeyValueList, and `hideLegend` on AssignmentEditor. Everything else is EasyPatch's.",
+    "overview": "EasyRMM has one design system, recorded in ADR 0013 (`docs/architecture/adr/0013-easypatch-design-system.md`): a technician moving between devices, scripts and patching should not notice a seam. The source of truth for every token is `web/src/index.css`, and the primitives in `web/src/components/` share one component vocabulary (same classes, variants, tones and states). Change a token there and nowhere else. Never fork a value locally.\n\nThe system is calm, dense and flat operator UI. Bordered surfaces on a dark canvas, one blue accent, four status tones with soft fills, a navy sidebar, the system UI font at a 14px base. Nothing decorative; every tile, badge and row is server data.\n\nFive details serve keyboard travel and toolbar alignment: `kbd` styling, a uniform `.input` min-height so toolbar inputs and selects line up with buttons, a `focus-within` row tint for j/k travel, a `narrow` variant of KeyValueList, and `hideLegend` on AssignmentEditor.",
     "keyCharacteristics": [
-      "EasyPatch's tokens, components and both themes, unchanged; EasyPatch `frontend/src/index.css` is upstream.",
+      "One set of tokens, components and both themes for every page; `web/src/index.css` is the source of truth.",
       "Dark theme by default, class-based (`<html class=\"dark\">`), with a light theme toggle in the header.",
       "Flat bordered surfaces; shadows are hairline (`shadow-xs`) at rest and only lift for overlays.",
       "System UI stack, 14px base, tabular figures for counts.",
@@ -684,8 +683,8 @@
         "section": "colors"
       },
       {
-        "name": "The Upstream Rule",
-        "body": "A token value changes in EasyPatch's `frontend/src/index.css` first and is mirrored here; EasyRMM does not diverge.",
+        "name": "The Single Source Rule",
+        "body": "A token value changes in `web/src/index.css` and nowhere else; no page or component keeps its own copy.",
         "section": "colors"
       },
       {
@@ -710,7 +709,7 @@
       }
     ],
     "dos": [
-      "**Do** take every token from EasyPatch's `frontend/src/index.css`; mirror changes there first.",
+      "**Do** take every token from `web/src/index.css`; change a value there, never locally.",
       "**Do** use semantic token classes (`bg-surface`, `text-muted`, `border-line`, tone `-soft` fills) so both themes hold.",
       "**Do** keep dark as the default theme and toggle with the `dark` class on `<html>`.",
       "**Do** keep cards in grids top-aligned with their own height (`items-start`).",
