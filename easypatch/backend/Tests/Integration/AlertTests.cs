@@ -82,11 +82,11 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
         await admin.ExpectAsync(HttpMethod.Post, "/api/v1/notifications/channels", Email("Ops", "ops@example.com"), HttpStatusCode.Forbidden);
         Assert.Empty(await AlertsAsync(admin));
 
-        // Rule validation: thresholds per type, tags not allowed on enrollment rules, unknown channels.
+        // Rule validation: thresholds per type, tags not allowed on organization-wide rules, unknown channels.
         await root.ExpectAsync(HttpMethod.Post, "/api/v1/alert-rules", OfflineRule([], hours: 0), HttpStatusCode.BadRequest, "validation_failed");
         await root.ExpectAsync(HttpMethod.Post, "/api/v1/alert-rules", OfflineRule([Guid.NewGuid()]), HttpStatusCode.BadRequest);
         await root.ExpectAsync(HttpMethod.Post, "/api/v1/alert-rules",
-            new AlertRuleRequest("Enrollment", AlertRuleType.EnrollmentPending, true, AlertSeverity.Info, null, null, Guid.NewGuid(), null, false, 0),
+            new AlertRuleRequest("Held", AlertRuleType.UpdateHeld, true, AlertSeverity.Info, null, null, Guid.NewGuid(), null, false, 0),
             HttpStatusCode.BadRequest);
         var created = await root.SendAsync<AlertRuleDto>(HttpMethod.Post, "/api/v1/alert-rules", OfflineRule([], hours: 4, orgId: org.Id), HttpStatusCode.OK);
         Assert.Equal("hours", created.ThresholdUnit);

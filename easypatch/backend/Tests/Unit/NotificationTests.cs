@@ -173,7 +173,7 @@ public sealed class AlertRuleCatalogTests
     {
         Assert.NotEmpty(AlertRuleCatalog.Validate(new AlertRule { Name = "x", Type = AlertRuleType.EndpointOffline, Threshold = 0 }));
         Assert.NotEmpty(AlertRuleCatalog.Validate(new AlertRule { Name = "x", Type = AlertRuleType.InstallFailed, Threshold = 3 }));
-        Assert.NotEmpty(AlertRuleCatalog.Validate(new AlertRule { Name = "x", Type = AlertRuleType.EnrollmentPending, TagId = Guid.NewGuid() }));
+        Assert.NotEmpty(AlertRuleCatalog.Validate(new AlertRule { Name = "x", Type = AlertRuleType.UpdateHeld, TagId = Guid.NewGuid() }));
         Assert.Empty(AlertRuleCatalog.Validate(new AlertRule { Name = "x", Type = AlertRuleType.SecurityUpdateMissing, Threshold = 0 }));
     }
 }

@@ -132,7 +132,7 @@ public sealed class MacAgentTests(PostgresFixture postgres) : AgentUpdateTestBas
         detail = await Root.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{agent.EndpointId}");
         Assert.Equal("1.9.1", detail.AgentUpdate!.AvailableVersion);
 
-        await Root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/agent-update", Newest, HttpStatusCode.Accepted);
+        await UpdateAgentQueuedAsync(agent.EndpointId);
         var job = Assert.Single((await agent.CheckInAsync(MacCheckIn())).Jobs);
         Assert.Equal("EasyPatchAgent-1.9.1-arm64.pkg", job.AgentUpdate!.Package.FileName);
 
@@ -163,8 +163,8 @@ public sealed class MacAgentTests(PostgresFixture postgres) : AgentUpdateTestBas
         var agent = await EnrollMacAsync();
         await agent.CheckInAsync(MacCheckIn());
 
-        await Root.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/notify", new NotifyRequest(UserMessagePreset.SaveYourWork, null),
-            HttpStatusCode.Conflict, "not_supported_on_macos");
+        Assert.Equal("not_supported_on_macos", (await BulkOneAsync(Root, "notify",
+            new BulkNotifyRequest([agent.EndpointId], new NotifyRequest(UserMessagePreset.SaveYourWork, null)))).ErrorCode);
         await Root.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/updates/{Guid.NewGuid()}/uninstall", new UninstallUpdateRequest(),
             HttpStatusCode.Conflict, "not_supported_on_macos");
         var download = await Assert.ThrowsAsync<AppException>(() => WithScopeAsync(sp =>
@@ -172,8 +172,9 @@ public sealed class MacAgentTests(PostgresFixture postgres) : AgentUpdateTestBas
         Assert.Equal("not_supported_on_macos", download.Code);
 
         // Restarts are supported.
-        await Root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/restart",
-            new RestartRequest(RestartMode.Immediate, RestartCondition.Always, null, null, null, null, false), HttpStatusCode.Accepted);
+        var restart = await BulkOneAsync(Root, "restart", new BulkRestartRequest([agent.EndpointId],
+            new RestartRequest(RestartMode.Immediate, RestartCondition.Always, null, null, null, null, false)));
+        Assert.True(restart.Success, restart.Message);
     }
 
     [Fact]

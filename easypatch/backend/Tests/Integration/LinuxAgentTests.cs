@@ -89,8 +89,8 @@ public sealed class LinuxAgentTests(PostgresFixture postgres) : AgentUpdateTestB
     public async Task Messages_to_users_are_refused_for_linux_endpoints_with_a_clear_reason()
     {
         var agent = await EnrollLinuxAsync();
-        await Root.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/notify", new NotifyRequest(UserMessagePreset.SaveYourWork, null),
-            HttpStatusCode.Conflict, "not_supported_on_linux");
+        Assert.Equal("not_supported_on_linux", (await BulkOneAsync(Root, "notify",
+            new BulkNotifyRequest([agent.EndpointId], new NotifyRequest(UserMessagePreset.SaveYourWork, null)))).ErrorCode);
     }
 
     [Fact]
@@ -167,8 +167,8 @@ public sealed class LinuxAgentTests(PostgresFixture postgres) : AgentUpdateTestB
         Assert.Equal("deb", linuxDetail.AgentUpdate!.PackageFormat);
         Assert.Equal("1.3.1", linuxDetail.AgentUpdate.AvailableVersion);
 
-        await Root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{linux.EndpointId}/agent-update", Newest, HttpStatusCode.Accepted);
-        await Root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{windows.EndpointId}/agent-update", Newest, HttpStatusCode.Accepted);
+        await UpdateAgentQueuedAsync(linux.EndpointId);
+        await UpdateAgentQueuedAsync(windows.EndpointId);
 
         var linuxJob = Assert.Single((await linux.CheckInAsync(linuxCheckIn)).Jobs);
         Assert.Equal(Path.GetFileName(deb), linuxJob.AgentUpdate!.Package.FileName);

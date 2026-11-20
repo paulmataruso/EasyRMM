@@ -80,7 +80,18 @@ public abstract class AgentUpdateTestBase(PostgresFixture postgres) : Integratio
     protected Task<List<Job>> AgentUpdateJobsAsync() =>
         WithDbAsync(db => db.Jobs.AsNoTracking().Where(j => j.Type == JobType.AgentUpdate).OrderBy(j => j.CreatedAt).ToListAsync());
 
-    protected static readonly AgentUpdateRequest Newest = new(null);
+    /// <summary>Asks for an agent update of one computer as EasyRMM asks for it, through <c>bulk/agent-update</c>; null
+    /// <paramref name="version"/> is the newest signed package.</summary>
+    protected Task<BulkItemResult> UpdateAgentAsync(Guid endpointId, string? version = null) =>
+        BulkOneAsync(Root, "agent-update", new BulkAgentUpdateRequest([endpointId], version));
+
+    /// <summary>An agent update that is expected to be queued; the job's ID.</summary>
+    protected async Task<Guid> UpdateAgentQueuedAsync(Guid endpointId, string? version = null)
+    {
+        var result = await UpdateAgentAsync(endpointId, version);
+        Assert.True(result.Success, result.Message);
+        return result.JobId!.Value;
+    }
 }
 
 /// <summary>Agent self-update: signed packages, manual and bulk updates, and the "Agent updates" policy.</summary>
@@ -107,10 +118,11 @@ public sealed class AgentUpdateTests(PostgresFixture postgres) : AgentUpdateTest
         var packages = await Root.GetAsync<List<AgentPackageDto>>("/api/v1/agent-packages");
         Assert.All(packages, p => Assert.Equal(KeyId, p.ReleaseKeyId));
 
-        var job = await Root.SendAsync<JobSummaryDto>(HttpMethod.Post, url + "/agent-update", Newest, HttpStatusCode.Accepted);
+        var job = (await Root.GetAsync<JobDetailDto>($"/api/v1/jobs/{await UpdateAgentQueuedAsync(agent.EndpointId)}")).Summary;
         Assert.Equal(JobType.AgentUpdate, job.Type);
         Assert.Equal(Root.Actor, job.RequestedBy);
-        await Root.ExpectAsync(HttpMethod.Post, url + "/agent-update", Newest, HttpStatusCode.Conflict, "duplicate_job");
+        var again = await UpdateAgentAsync(agent.EndpointId);
+        Assert.Equal(("duplicate_job", (Guid?)job.Id), (again.ErrorCode, again.JobId));
 
         // The agent receives the package description and the release signature, which it verifies itself.
         var delivered = Assert.Single((await agent.CheckInAsync(UpdatableCheckIn())).Jobs);
@@ -157,13 +169,12 @@ public sealed class AgentUpdateTests(PostgresFixture postgres) : AgentUpdateTest
         Publish("1.1.0");
         Publish("1.2.5");
         Publish("1.3.0");
-        var url = $"/api/v1/endpoints/{agent.EndpointId}/agent-update";
 
-        await Root.ExpectAsync(HttpMethod.Post, url, new AgentUpdateRequest("1.1.0"), HttpStatusCode.Conflict, "agent_up_to_date");
-        await Root.ExpectAsync(HttpMethod.Post, url, new AgentUpdateRequest("1.9.0"), HttpStatusCode.Conflict, "no_agent_package");
-        await Root.ExpectAsync(HttpMethod.Post, url, new AgentUpdateRequest("latest; rm -rf"), HttpStatusCode.Conflict, "no_agent_package");
+        Assert.Equal("agent_up_to_date", (await UpdateAgentAsync(agent.EndpointId, "1.1.0")).ErrorCode);
+        Assert.Equal("no_agent_package", (await UpdateAgentAsync(agent.EndpointId, "1.9.0")).ErrorCode);
+        Assert.Equal("no_agent_package", (await UpdateAgentAsync(agent.EndpointId, "latest; rm -rf")).ErrorCode);
 
-        await Root.SendAsync<JobSummaryDto>(HttpMethod.Post, url, new AgentUpdateRequest("1.2.5"), HttpStatusCode.Accepted);
+        await UpdateAgentQueuedAsync(agent.EndpointId, "1.2.5");
 
         var delivered = Assert.Single((await agent.CheckInAsync(UpdatableCheckIn())).Jobs);
         Assert.Equal("1.2.5", delivered.AgentUpdate!.Package.Version);
@@ -175,19 +186,18 @@ public sealed class AgentUpdateTests(PostgresFixture postgres) : AgentUpdateTest
         var old = await EnrollAgentAsync(Root, Org.Id, Site.Id, "PC-OLD");
         await old.CheckInAsync(new CheckInRequest { AgentVersion = "1.1.1", Capabilities = [AgentCapabilities.Restart, AgentCapabilities.Tray] });
         var agent = await UpdatableAgentAsync("PC-NEW");
-        var url = $"/api/v1/endpoints/{agent.EndpointId}/agent-update";
 
-        await Root.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{old.EndpointId}/agent-update", Newest, HttpStatusCode.Conflict, "agent_upgrade_required");
-        await Root.ExpectAsync(HttpMethod.Post, url, Newest, HttpStatusCode.Conflict, "no_agent_package");
+        Assert.Equal("agent_upgrade_required", (await UpdateAgentAsync(old.EndpointId)).ErrorCode);
+        Assert.Equal("no_agent_package", (await UpdateAgentAsync(agent.EndpointId)).ErrorCode);
 
         Publish("1.2.0");
-        await Root.ExpectAsync(HttpMethod.Post, url, Newest, HttpStatusCode.Conflict, "agent_up_to_date");
+        Assert.Equal("agent_up_to_date", (await UpdateAgentAsync(agent.EndpointId)).ErrorCode);
 
         Publish("1.3.0", signed: false);
-        await Root.ExpectAsync(HttpMethod.Post, url, Newest, HttpStatusCode.Conflict, "package_not_signed");
+        Assert.Equal("package_not_signed", (await UpdateAgentAsync(agent.EndpointId)).ErrorCode);
 
         Publish("1.4.0", key: OtherKey);
-        await Root.ExpectAsync(HttpMethod.Post, url, Newest, HttpStatusCode.Conflict, "release_key_not_trusted");
+        Assert.Equal("release_key_not_trusted", (await UpdateAgentAsync(agent.EndpointId)).ErrorCode);
         var detail = await Root.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{agent.EndpointId}");
         Assert.Equal("release_key_not_trusted", detail.AgentUpdate!.Code);
         Assert.Null(detail.AgentUpdate.AvailableVersion);
@@ -196,7 +206,7 @@ public sealed class AgentUpdateTests(PostgresFixture postgres) : AgentUpdateTest
         var rebuilt = Publish("1.5.0");
         await File.WriteAllBytesAsync(rebuilt, RandomNumberGenerator.GetBytes(2048), TestContext.Current.CancellationToken);
         Clock.Advance(TimeSpan.FromSeconds(61));
-        await Root.ExpectAsync(HttpMethod.Post, url, Newest, HttpStatusCode.Conflict, "package_not_signed");
+        Assert.Equal("package_not_signed", (await UpdateAgentAsync(agent.EndpointId)).ErrorCode);
         var package = (await Root.GetAsync<List<AgentPackageDto>>("/api/v1/agent-packages")).Single(p => p.Version == "1.5.0");
         Assert.Null(package.ReleaseKeyId);
         Assert.Contains("does not match its signature", package.SignatureProblem, StringComparison.Ordinal);
@@ -209,7 +219,7 @@ public sealed class AgentUpdateTests(PostgresFixture postgres) : AgentUpdateTest
     {
         var agent = await UpdatableAgentAsync("PC-CAP");
         Publish("1.3.0");
-        await Root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/agent-update", Newest, HttpStatusCode.Accepted);
+        await UpdateAgentQueuedAsync(agent.EndpointId);
 
         // e.g. someone installed a build without a release key in the meantime
         var response = await agent.CheckInAsync(new CheckInRequest { AgentVersion = "1.2.0", Capabilities = [AgentCapabilities.Restart] });
@@ -242,7 +252,6 @@ public sealed class AgentUpdateTests(PostgresFixture postgres) : AgentUpdateTest
         Publish("1.3.0");
         var viewer = Admin("viewer", UserRole.ReadOnly);
 
-        await viewer.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/agent-update", Newest, HttpStatusCode.Forbidden);
         await viewer.ExpectAsync(HttpMethod.Post, "/api/v1/endpoints/bulk/agent-update", new BulkAgentUpdateRequest([agent.EndpointId], null),
             HttpStatusCode.Forbidden);
         Assert.Empty(await AgentUpdateJobsAsync());
@@ -317,7 +326,7 @@ public sealed class AgentUpdateTests(PostgresFixture postgres) : AgentUpdateTest
         Assert.Equal(AgentUpdateTask.MaxFailuresPerVersion, (await AgentUpdateJobsAsync()).Count);
 
         // An administrator can still ask for it.
-        await Root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/agent-update", Newest, HttpStatusCode.Accepted);
+        await UpdateAgentQueuedAsync(agent.EndpointId);
     }
 
     [Fact]

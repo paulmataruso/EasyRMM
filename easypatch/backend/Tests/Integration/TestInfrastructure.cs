@@ -463,6 +463,19 @@ public abstract class IntegrationTest(PostgresFixture postgres) : IAsyncLifetime
         agent.EndpointId = enrolled.EndpointId!.Value;
         return agent;
     }
+
+    /// <summary>A job for one endpoint, asked for as EasyRMM asks for it: through a bulk route (<c>scan</c>, <c>restart</c>,
+    /// <c>notify</c> or <c>agent-update</c>). Returns that endpoint's result.</summary>
+    protected static async Task<BulkItemResult> BulkOneAsync(AdminClient admin, string action, object request) =>
+        Assert.Single((await admin.SendAsync<BulkResultDto>(HttpMethod.Post, "/api/v1/endpoints/bulk/" + action, request, HttpStatusCode.OK)).Results);
+
+    /// <summary>A scan of one endpoint, asked for through <c>bulk/scan</c>; the scan job's ID.</summary>
+    protected static async Task<Guid> ScanAsync(AdminClient admin, Guid endpointId)
+    {
+        var result = await BulkOneAsync(admin, "scan", new BulkEndpointsRequest([endpointId], false));
+        Assert.True(result.Success, result.Message);
+        return result.JobId!.Value;
+    }
 }
 
 /// <summary>Fake notification transport: records what would have been sent; can be told to fail.</summary>

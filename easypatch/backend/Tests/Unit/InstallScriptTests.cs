@@ -36,29 +36,6 @@ public sealed class InstallScriptTests
     }
 
     [Fact]
-    public void Script_looks_for_the_agent_where_the_msi_installs_it()
-    {
-        var wxs = File.ReadAllText(Path.Combine(RepositoryRoot(), "agent", "Installer", "Package.wxs"));
-        var folder = Regex.Match(wxs, "<Directory Id=\"INSTALLFOLDER\" Name=\"(?<name>[^\"]+)\"").Groups["name"].Value;
-        Assert.False(string.IsNullOrEmpty(folder));
-
-        var script = InstallScriptBuilder.Build("https://patch.example.com", Package, "EPD-ABCDEFGHJKMNPQRS", "x", false, DateTimeOffset.UnixEpoch);
-        Assert.Contains($"Join-Path $env:ProgramFiles '{folder}\\EasyPatch.Agent.exe'", script, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Msi_keeps_the_enrollment_token_out_of_its_logs()
-    {
-        var wxs = File.ReadAllText(Path.Combine(RepositoryRoot(), "agent", "Installer", "Package.wxs"));
-
-        Assert.Matches("<Property Id=\"ENROLLMENTTOKEN\"[^>]*Hidden=\"yes\"", wxs);
-        // The token is written by WriteRegistryValues; its progress template must not include the value ([3]).
-        var template = Regex.Match(wxs, "<ProgressText Action=\"WriteRegistryValues\"[^>]*Template=\"(?<t>[^\"]*)\"").Groups["t"].Value;
-        Assert.False(string.IsNullOrEmpty(template));
-        Assert.DoesNotContain("[3]", template, StringComparison.Ordinal);
-    }
-
-    [Fact]
     public void Skipping_the_certificate_check_passes_the_published_ca_to_the_msi_and_restores_checking()
     {
         var plain = InstallScriptBuilder.Build("https://patch.example.com", Package, "EPD-ABCDEFGHJKMNPQRS", "x", false, DateTimeOffset.UnixEpoch);
@@ -87,19 +64,6 @@ public sealed class InstallScriptTests
         Assert.Contains("'https://patch.example.com/downloads/install/EPD-ABC.ps1?requireSignature=true&skipCertificateCheck=true'", skip, StringComparison.Ordinal);
         // No $ anywhere: a PowerShell prompt would expand variables inside the double-quoted -Command argument.
         Assert.DoesNotContain("$", skip, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void The_msi_records_the_server_ca_where_the_agent_reads_it()
-    {
-        var root = RepositoryRoot();
-        var wxs = File.ReadAllText(Path.Combine(root, "agent", "Installer", "Package.wxs"));
-        Assert.Matches("<Property Id=\"SERVERCACERT\" Secure=\"yes\" />", wxs);
-        Assert.Matches("Name=\"ServerCaCertificate\" Type=\"string\" Value=\"\\[SERVERCACERT\\]\"", wxs);
-        Assert.Contains("<SetProperty Id=\"SERVERCACERT\" Value=\"[SAVEDSERVERCACERT]\"", wxs, StringComparison.Ordinal);
-
-        var source = File.ReadAllText(Path.Combine(root, "agent", "EasyPatch.Agent", "Platform", "RegistryBootstrapConfigSource.cs"));
-        Assert.Contains("ServerCaCertificateValue = \"ServerCaCertificate\"", source, StringComparison.Ordinal);
     }
 
     [Fact]

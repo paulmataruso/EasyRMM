@@ -251,13 +251,13 @@ public sealed class AgentAuthenticationTests(PostgresFixture postgres) : Integra
         var (org, site) = await CreateOrgAsync(root);
         var a = await EnrollAgentAsync(root, org.Id, site.Id, "PC-A");
         var b = await EnrollAgentAsync(root, org.Id, site.Id, "PC-B");
-        var job = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{a.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        var job = await ScanAsync(root, a.EndpointId);
 
-        using var foreign = await b.PostAsync($"api/v1/agents/jobs/{job.Id}/status",
+        using var foreign = await b.PostAsync($"api/v1/agents/jobs/{job}/status",
             new JobStatusReport { Sequence = 1, Status = JobStatus.Completed });
         Assert.Equal(HttpStatusCode.NotFound, foreign.StatusCode);
-        using var foreignAck = await b.PostAsync($"api/v1/agents/jobs/{job.Id}/ack", new { });
+        using var foreignAck = await b.PostAsync($"api/v1/agents/jobs/{job}/ack", new { });
         Assert.Equal(HttpStatusCode.NotFound, foreignAck.StatusCode);
-        Assert.Equal(JobStatus.Queued, (await root.GetAsync<JobDetailDto>($"/api/v1/jobs/{job.Id}")).Summary.Status);
+        Assert.Equal(JobStatus.Queued, (await root.GetAsync<JobDetailDto>($"/api/v1/jobs/{job}")).Summary.Status);
     }
 }
