@@ -90,7 +90,8 @@ version 1.11.0. Source-available under [FSL-1.1-ALv2](LICENSE.md).
     (email, Slack, Microsoft Teams, webhooks) and the engine's audit log.
 - **Organizations, users and sign-in**
   - Organizations (each with a time zone), sites and device groups; five
-    built-in roles granted per organization or site.
+    built-in roles, Super Admin for the whole server and the others per
+    organization or site.
   - Sign-in with a password and a required second factor (authenticator
     app with recovery codes, security key or passkey), or a passkey alone.
   - Single sign-on with OpenID Connect (**Settings → Single sign-on**);
@@ -144,9 +145,10 @@ version 1.11.0. Source-available under [FSL-1.1-ALv2](LICENSE.md).
   inventory history, scheduled device reports or software catalog.
 - Not yet run end to end on a real Windows machine: RDP, the winget and
   Chocolatey scripts, undoing a crashing agent update, the ARM64 agent.
-- Patching on Windows not yet run end to end through EasyRMM: the EasyPatch
-  agent's install (msiexec), removing an update, messages to users, restart
-  modes other than the countdown, policy changes.
+- No Windows update has yet been installed through EasyRMM on a real
+  machine (the test machines had none missing); nor removing an update,
+  messages to users, restart modes other than the countdown, or policy
+  changes applied on Windows.
 - The macOS EasyPatch agent is experimental and not released.
 - Single sign-on has no group-to-role mapping, SAML or just-in-time
   accounts, and has not been tried with Entra ID, Google, Okta or Keycloak.

@@ -48,8 +48,8 @@ follows when these have been run there, or fixed:
 * **Email and webhook notifications for device alerts.** Patching alerts
   have them; device alerts show in the console only.
 * **Patching**: giving or taking a tag from many devices at once, forcing a
-  restart outside the policy, open alerts on the patching overview, and
-  removing and holding an update in one step.
+  restart outside the policy, and removing and holding an update in one
+  step.
 * **The agent's WebSocket channel** ([ADR-0009](docs/architecture/adr/0009-agent-protocol.md)),
   if long polling (jobs within a second or so) stops being enough.
 * **macOS.** There is no EasyRMM agent for macOS. The EasyPatch agent's
