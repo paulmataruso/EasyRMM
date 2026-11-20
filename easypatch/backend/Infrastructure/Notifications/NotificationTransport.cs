@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using EasyPatch.Core.Entities;
+using MailKit;
 using MailKit.Net.Smtp;
 using MailKit.Security;
 using Microsoft.AspNetCore.DataProtection;
@@ -123,7 +124,7 @@ public sealed partial class NotificationTransport(IHttpClientFactory httpClients
                 await client.AuthenticateAsync(smtp.SmtpUsername, password ?? string.Empty, ct);
             }
 
-            await client.SendAsync(message, ct);
+            await client.SendAsync(new SendRequest(message), ct);
             await client.DisconnectAsync(true, ct);
         }
         catch (AuthenticationException ex)
