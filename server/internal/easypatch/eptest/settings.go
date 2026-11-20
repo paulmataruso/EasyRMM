@@ -47,17 +47,15 @@ func (a *AuditInfo) json() map[string]any {
 		"ipAddress": nullable(a.IPAddress), "correlationId": "0HTEST", "createdAt": a.CreatedAt}
 }
 
-// defaultSettings are EasyPatch 1.10.0's server settings when none were
-// saved.
+// defaultSettings are the engine's server settings when none were saved.
 func defaultSettings() map[string]any {
 	return map[string]any{
 		"globalMaxConcurrentInstalls": 50.0, "jobDefaultExpiryHours": 168.0, "runningJobTimeoutHours": 12.0, "waitingForRebootExpiryDays": 30.0,
 		"deliveryLeaseMinutes": 10.0, "maxDeliveryAttempts": 5.0, "offlineThresholdMinutes": 10.0, "credentialLifetimeDays": 365.0,
-		"credentialRotateBeforeDays": 30.0, "enrollmentRequestExpiryDays": 7.0, "requireMfa": true, "sessionIdleMinutes": 30.0,
-		"sessionAbsoluteHours": 12.0, "retentionEventsDays": 90.0, "retentionAuditDays": 365.0, "retentionJobsDays": 180.0,
-		"retentionScansDays": 90.0, "retentionHistoryDays": 730.0, "vulnerabilityFeedsEnabled": true, "retentionReportsMonths": 24.0,
-		"reportBrandName": nil, "rolloutGuardEnabled": true, "rolloutGuardMinFailedEndpoints": 3.0, "rolloutGuardFailurePercent": 20.0,
-		"rolloutGuardWindowDays": 7.0,
+		"credentialRotateBeforeDays": 30.0, "enrollmentRequestExpiryDays": 7.0, "retentionEventsDays": 90.0, "retentionAuditDays": 365.0,
+		"retentionJobsDays": 180.0, "retentionScansDays": 90.0, "retentionHistoryDays": 730.0, "vulnerabilityFeedsEnabled": true,
+		"retentionReportsMonths": 24.0, "reportBrandName": nil, "rolloutGuardEnabled": true, "rolloutGuardMinFailedEndpoints": 3.0,
+		"rolloutGuardFailurePercent": 20.0, "rolloutGuardWindowDays": 7.0,
 	}
 }
 

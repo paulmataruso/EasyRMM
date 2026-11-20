@@ -149,13 +149,12 @@ compliance across every customer.
   * tokenless deployment codes for RMM scripts. Each computer that uses one waits for an
     administrator to approve it, after the administrator compares key fingerprints.
 * **Admin access through EasyRMM**:
-  * no sign-in of its own: EasyRMM signs a short statement for each call, naming the person, the
-    role and the organizations (see [docs/security.md](docs/security.md#admin-authentication));
+  * no sign-in or API tokens of its own: EasyRMM signs a short statement for each call, naming
+    the person, the role and the organizations (see
+    [docs/security.md](docs/security.md#admin-authentication)); scripts and integrations use
+    EasyRMM's API;
   * three roles: SuperAdmin, Admin, ReadOnly, and per-organization access, checked by the
     engine for every call;
-  * API tokens for scripts and integrations, made on the server with `create-api-token`:
-    read-only or operator, optionally limited to some organizations, expiring, stored only as
-    hashes;
   * rate limits and an audit log of administrative actions.
 * **Per-device agent credentials.** Each agent generates its own ECDSA P-256 key pair; only the
   public key goes to the server. Every request is signed with a timestamp and nonce for replay
@@ -212,7 +211,7 @@ screens, EasyRMM's patching pages now do that work: see EasyRMM's
 | [compliance.md](docs/compliance.md) | Compliance statuses and rules, required updates, CVE and known-exploited data, OS support status, reports and monthly PDF reports |
 | [alerts.md](docs/alerts.md) | Alert rules, notification channels (email, Slack, Teams, signed webhooks), delivery and troubleshooting |
 | [security.md](docs/security.md) | Security model, threat model, hardening checklist, known limitations |
-| [api.md](docs/api.md) | REST API (admin and agent protocol). The live OpenAPI document is served at `/api/openapi/v1.json` to statements from EasyRMM and API tokens |
+| [api.md](docs/api.md) | REST API (admin and agent protocol). The live OpenAPI document is served at `/api/openapi/v1.json` to statements from EasyRMM |
 | [troubleshooting.md](docs/troubleshooting.md) | Diagnosing server, API access, agent and job problems |
 
 ## Development

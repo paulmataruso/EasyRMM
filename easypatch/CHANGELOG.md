@@ -26,15 +26,10 @@ and the agents share one version number.
   for one request for 30 seconds and acts with the role and organizations it names, through the
   usual role and organization checks, without a user, session or CSRF token. The audit trail
   names `easyrmm:<user>`. A key that is set but not usable stops the server at start.
-- `/api/v1/server-info` lists the server's `capabilities`, so integrations can check for the
-  features below before relying on them.
+- `/api/v1/server-info` lists the server's `capabilities`, so EasyRMM can check for the
+  feature below before relying on it.
 - Install requests, for one endpoint or in bulk, take an optional `scheduledAt` up to 31 days
   ahead (`scheduled-installs`); the jobs wait until then.
-- API token requests may name the person they act for in `X-EasyPatch-On-Behalf-Of`
-  (`on-behalf-of`); EasyPatch records it in the audit log and in the job's `requestedBy`.
-- `create-api-token`, an administration command that creates an API token on the server
-  itself: `create-api-token --name Reports --role read-only --expires-days 365`. It is now the
-  only way to make one.
 
 ### Removed
 
@@ -52,20 +47,26 @@ EasyRMM's import script (EasyRMM's `docs/operations/import-easypatch.md`).
   installation guide (`docs/installation.md`).
 - The console's screenshots in `docs/images/`. The logo and wordmarks moved to `branding/`.
 - **EasyPatch's own accounts and sign-in.** People sign in to EasyRMM, and the administrator
-  API takes only EasyRMM's statements and API tokens. Gone: the sign-in, MFA (authenticator
+  API takes only EasyRMM's statements. Gone: the sign-in, MFA (authenticator
   app and recovery codes), passkey and security key, single sign-on (OpenID Connect, including
   EasyRMM as a provider, which never shipped), session, CSRF, password, change-email and user
-  routes (`/api/v1/auth/*`, `/api/v1/sso/*`, `/api/v1/users/*`); the API token routes
-  (`/api/v1/api-tokens/*`: tokens are made with `create-api-token` and end at their expiry);
+  routes (`/api/v1/auth/*`, `/api/v1/sso/*`, `/api/v1/users/*`);
   the Swagger UI at `/api/docs` (the OpenAPI document stays at `/api/openapi/v1.json`); the
   `create-admin`, `reset-password`, `reset-mfa` and `unlock` commands, which now fail with a
-  message; the sign-in rate limit (`RateLimits:LoginPerMinute`); and the packages only they
-  used (Konscious Argon2, QRCoder, Fido2, NSec, libsodium, Microsoft IdentityModel,
-  Swashbuckle). The single sign-on guide (`docs/single-sign-on.md`) is gone.
-  The account tables stay in the schema, unused, so the upgrade needs no migration, and
-  `prepare-import` still disables the accounts of an imported standalone database. The server
-  settings `requireMfa`, `sessionIdleMinutes` and `sessionAbsoluteHours` are still accepted
-  and returned, but have no effect.
+  message; the sign-in rate limit (`RateLimits:LoginPerMinute`); the server settings
+  `requireMfa`, `sessionIdleMinutes` and `sessionAbsoluteHours` (a saved value is ignored and
+  dropped at the next save); and the packages only they used (Konscious Argon2, QRCoder,
+  Fido2, NSec, libsodium, Microsoft IdentityModel, Swashbuckle). The single sign-on guide
+  (`docs/single-sign-on.md`) is gone. The account tables stay in the schema, unused, so the
+  upgrade needs no migration, and `prepare-import` still disables the accounts of an imported
+  standalone database.
+- **API tokens.** The administrator API no longer accepts `Authorization: Bearer ept_…`: a
+  request without a statement from EasyRMM answers `401`, whatever token it carries. Scripts
+  and integrations use EasyRMM's API. Gone with them: the API token routes
+  (`/api/v1/api-tokens/*`), the `create-api-token` command (it now fails with a message),
+  `X-EasyPatch-On-Behalf-Of` (ignored) and the per-token rate limit. The `api_tokens` table
+  stays, unused, so the upgrade needs no migration; `prepare-import` deletes the tokens of an
+  imported standalone database.
 
 ### Fixed
 
@@ -74,9 +75,9 @@ EasyRMM's import script (EasyRMM's `docs/operations/import-easypatch.md`).
   organization could do this alone, by deleting their own organization while it had no
   endpoints. Access to every organization is now an explicit flag on the user, as it is on API
   tokens; with no organizations left, a restricted user sees none. The upgrade sets the flag for
-  every user whose list is empty today, so nobody's access changes. (EasyPatch's accounts were
-  then removed; see *Removed*. EasyRMM's statements name their organizations the same way.)
-- Excluding an update on an endpoint with an API token failed with `401`.
+  every user whose list is empty today, so nobody's access changes. (EasyPatch's accounts and
+  API tokens were then removed; see *Removed*. EasyRMM's statements name their organizations
+  the same way.)
 
 ## [1.10.0] - 2026-11-17
 

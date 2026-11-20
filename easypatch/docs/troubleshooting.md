@@ -47,16 +47,15 @@ problem.
 ## API access
 
 EasyPatch has no sign-in of its own: people sign in to EasyRMM, which calls the engine with a
-signed statement for each request. Scripts use API tokens.
+signed statement for each request. The engine takes no API tokens: scripts use EasyRMM's API.
 
 | Symptom | Fix |
 |---|---|
 | `easypatch-api` stops at start with `EasyRmm:GatewayKey is not base64.` or `… must be at least 32 bytes.` | `EASYRMM_PATCHING_KEY` in EasyRMM's `.env` is damaged. Put back the value from your backup of `.env`, or empty it (`EASYRMM_PATCHING_KEY=`) and rerun EasyRMM's `deploy/scripts/setup.sh` with its usual options, which fills in a new one; then `docker compose up -d` |
 | EasyRMM's patching pages fail and the API log has `Refused a statement from EasyRMM … : bad signature` | The API and EasyRMM's server do not share the key. Both read `EASYRMM_PATCHING_KEY` from EasyRMM's `.env`; after it changed, run `docker compose up -d` so both services are recreated with it |
 | The API log has `Refused a statement from EasyRMM … : expired or not yet valid` | The request reached the API more than 5 seconds after its statement expired (EasyRMM makes each good for 30 seconds), for example after a stall of the host or a jump of its clock. Retry; if it persists, check the host's time synchronization |
-| A script with an API token gets `401` | The token is wrong, expired or revoked, or the header is not exactly `Authorization: Bearer ept_…`. A request that also carries `X-EasyRMM-Assertion` is authenticated by that statement and the token is ignored |
-| A script with an API token gets `403` | The token's role does not allow the route. ReadOnly tokens cannot change anything, and no token can use the SuperAdmin routes (server settings, the global policy, tags, alert rules, notifications, the lifecycle table) |
-| An API token leaked or is no longer needed | Tokens cannot be listed or revoked through the API. Create a replacement with `create-api-token` if needed, then end the old one in the engine's database, from EasyRMM's `deploy/` folder: `docker compose exec -u postgres postgres psql -p 15432 -d easypatch -c "UPDATE api_tokens SET revoked_at = now() WHERE name = '<name>' AND revoked_at IS NULL"` |
+| A script with an API token (`Authorization: Bearer ept_…`) gets `401` with `Call through EasyRMM` | The engine no longer accepts API tokens, including those of a standalone EasyPatch. Move the script to EasyRMM's API |
+| `create-api-token` fails with `'create-api-token' was removed` | Nothing makes API tokens any more; see the row above |
 
 ## Endpoints and agents
 

@@ -18,7 +18,6 @@ changes Windows Update policy values only for settings an administrator configur
 | Asset | Where it lives | Protection |
 |---|---|---|
 | The key EasyRMM signs its statements with | `EasyRmm__GatewayKey`, from `EASYRMM_PATCHING_KEY` in EasyRMM's `.env` | Shared only by EasyRMM's server and the engine's API; at least 32 bytes |
-| API tokens | `api_tokens.token_hash` | 256-bit random value shown once. Only the SHA-256 is stored. Expiring. |
 | Agent private keys | Endpoint `C:\ProgramData\EasyPatch\agent.key` | Generated on the device and never transmitted. DPAPI (LocalMachine). Directory ACL allows only SYSTEM and Administrators. |
 | Agent public keys | `agent_credentials` | Not secret. Expire and can be revoked. |
 | Enrollment tokens | `enrollment_tokens.token_hash` | 256-bit random value shown once. Only the SHA-256 is stored. Expiring, use-limited and revocable. |
@@ -27,8 +26,8 @@ changes Windows Update policy values only for settings an administrator configur
 ## Admin authentication
 
 EasyPatch has no sign-in of its own: no passwords, sessions, second factors, passkeys or single
-sign-on. People sign in to EasyRMM, and EasyRMM's rules for that apply. The administrator API
-accepts two credentials, and a request is authenticated by exactly one of them:
+sign-on, and no API tokens. People sign in to EasyRMM, and EasyRMM's rules for that apply. The
+administrator API accepts one credential:
 
 * **Statements from EasyRMM.** Each of EasyRMM's calls to its engine carries a statement in
   `X-EasyRMM-Assertion` (EasyRMM's ADR-0038).
@@ -47,37 +46,32 @@ accepts two credentials, and a request is authenticated by exactly one of them:
   * *Checks that still apply.* EasyRMM checks its own permissions before it signs; the engine's
     role and tenant checks then apply to what the statement says. Actions are audited as
     `easyrmm:<name>`.
-* **API tokens.** For scripts and integrations, created on the server with the server image's
-  `create-api-token` command (there is no route that creates, lists or revokes tokens). A token
-  is 256 random bits with the prefix `ept_`, shown once; only its SHA-256 hash is stored, and it
-  is never logged. It is sent as `Authorization: Bearer`; a request that also carries a
-  statement is authenticated by the statement and the token is ignored. Each token has a fixed
-  role (ReadOnly or Admin, never SuperAdmin), optional organization restrictions, and an expiry
-  of at most 365 days. The API records when and from which address it was last used
-  (`api_tokens.last_used_at`, `last_used_ip`). A token ends at its expiry; to end one sooner,
-  set its `revoked_at` in the engine's database. Actions are audited as `token:<name>`.
+* **No API tokens.** A standalone EasyPatch's API tokens (`Authorization: Bearer ept_…`) are no
+  longer accepted, and nothing makes new ones: a request without a statement answers `401`
+  whatever bearer token it carries, and a request with one is judged by the statement alone.
+  `X-EasyPatch-On-Behalf-Of` is ignored. Scripts and integrations use EasyRMM's API.
 * **No cookies.** The API sets and reads no cookies, so there is no cross-site request forgery
   to defend against, and no CSRF token.
 * **Bootstrap.** No first-run web page and no first account exist. EasyRMM's setup writes the
-  shared key; `create-api-token` is the only command that makes a credential.
+  shared key; no command makes a credential.
 * **Roles.**
 
   | Role | Permissions |
   |---|---|
-  | SuperAdmin | Everything, including server settings, the global policy, tags, alert rules, notifications and the lifecycle table. Only statements carry it; a token never does |
+  | SuperAdmin | Everything, including server settings, the global policy, tags, alert rules, notifications and the lifecycle table |
   | Admin | Organizations, sites, endpoints, jobs (including restarts and user messages), policies (including Windows Update settings and restart schedules), enrollment |
   | ReadOnly | View only |
 
-  A statement or token reaches every organization only when it says so (`"orgs": "*"` in a
-  statement, a token created without `--organizations`). Otherwise it reaches the
-  organizations it lists, and when those were all deleted it reaches none of them, never all of
-  them. Every admin query goes through one tenant-scope service, and anything outside the
+  A statement reaches every organization only when it says so (`"orgs": "*"`). Otherwise it
+  reaches the organizations it lists, and when those were all deleted it reaches none of them,
+  never all of them. Every admin query goes through one tenant-scope service, and anything outside the
   caller's organizations answers `404`. Only callers that reach every organization can create
   organizations.
-* **Former accounts.** The tables of EasyPatch's former accounts (`users`,
+* **Former accounts and API tokens.** The tables of EasyPatch's former accounts (`users`,
   `user_organization_access`, `user_sessions`, `password_reset_tokens`, `webauthn_credentials`,
-  `webauthn_challenges`, `oidc_providers`, `oidc_login_states`, `external_logins`) stay in the
-  schema, but nothing reads them to authenticate. The `prepare-import` command, which readies a
+  `webauthn_challenges`, `oidc_providers`, `oidc_login_states`, `external_logins`) and API
+  tokens (`api_tokens`) stay in the schema, so the upgrade needs no migration, but nothing reads
+  them to authenticate. The `prepare-import` command, which readies a
   standalone EasyPatch database for EasyRMM, disables the accounts and deletes their sessions,
   reset links, passkeys and security keys, the single sign-on providers and links, and the
   standalone server's API tokens.
@@ -573,13 +567,13 @@ whether or not application updates are on (see
 | S1 | Attacker impersonates an agent | Per-device ECDSA keys, signed requests, nonce and timestamp checks, revocation |
 | S2 | Attacker impersonates the server to an agent | The agent uses the operating system's normal TLS validation of the server certificate (the Windows certificate store, or the system CA store on Linux). TLS validation cannot be turned off. An agent installed with a recorded CA (`SERVERCACERT` on Windows, `enroll --server-ca` on Linux) also accepts certificates from that one CA, for its EasyPatch connection only, still with name and validity checks. See [Install scripts and private CAs](#install-scripts-and-private-cas). |
 | S3 | Admin credential stuffing or brute force | The engine has no passwords or sign-in of its own; people sign in to EasyRMM, whose rules apply. The administrator API listens on loopback and EasyRMM's edge does not forward it |
-| S4 | An API token leaks (a script, a log, an integration's database) | 256-bit random secrets stored only as hashes and never logged; fixed role, never SuperAdmin; organization restrictions; expiry of at most 365 days; revocation in the database; last use time and address recorded; actions audited as `token:<name>`. A leaked Admin token can do what an Admin can in its organizations until it is revoked, so give integrations ReadOnly tokens where they only read. |
-| S5 | A forged, replayed or widened statement from EasyRMM | HMAC-SHA256 under a key of at least 32 bytes that only EasyRMM's server and the engine's API hold; each statement names one method and request target and is valid for at most 60 seconds; a statement that does not verify is refused even when the request carries a valid API token; the engine's role and tenant checks apply to the role and organizations it names. See [Admin authentication](#admin-authentication) |
+| S4 | A standalone EasyPatch's API token leaks (a script, a log, an integration's database) | The engine accepts no API tokens, whatever is in `api_tokens`, and `prepare-import` deletes an imported database's tokens. Scripts and integrations use EasyRMM's API and its credentials. |
+| S5 | A forged, replayed or widened statement from EasyRMM | HMAC-SHA256 under a key of at least 32 bytes that only EasyRMM's server and the engine's API hold; each statement names one method and request target and is valid for at most 60 seconds; a statement that does not verify is refused whatever else the request carries; the engine's role and tenant checks apply to the role and organizations it names. See [Admin authentication](#admin-authentication) |
 | T1 | A forged job or tampered payload is sent to an agent | TLS, plus the agent only accepts the job types it knows. Install payloads can only select, by GUID or category, Windows updates, Linux package upgrades or upgrades of approved, installed applications (winget) that the agent's own scan found, never arbitrary binaries or packages. Restart payloads are a mode and range-checked durations; message payloads are a preset name. Agent update payloads name a package and its release signature, which the agent verifies itself. Uninstall jobs have no payload and remove only the agent's own package. |
 | T2 | An agent submits false data for another tenant | The endpoint ID comes from the authenticated credential, never from the request body. Every write is scoped to it. |
 | T3 | SQL injection | EF Core parameterized queries. The few raw SQL statements use parameters only. Sort fields come from an allow-list. |
 | T4 | A tampered or malicious vulnerability feed | Fixed HTTPS hosts with normal certificate validation, no redirects, size limits, strict parsing (document IDs and CVE IDs are validated). Feed data only changes display order, CVE lists and, by default, whether a known-exploited update skips the rollout delay: it cannot add updates, run commands or restart computers. Super administrators can turn the downloads off. See [Vulnerability data](#vulnerability-data). |
-| R1 | Admin actions are denied after the fact | `audit_logs` records who acted (`easyrmm:<name>`, `token:<name>` or `cli`), the IP, correlation ID and details of every mutating admin action |
+| R1 | Admin actions are denied after the fact | `audit_logs` records who acted (`easyrmm:<name>` or `cli`; `token:<name>` in entries from before API tokens went), the IP, correlation ID and details of every mutating admin action |
 | I1 | Tenant data leaks between organizations | One tenant-scope service, organization-filtered queries and integration tests for isolation |
 | I2 | Secrets appear in logs | The server and agent never log tokens or keys. The MSI token property is hidden and registry values are not echoed to MSI logs (see above for limits). Structured logs leave out request bodies. |
 | I3 | Database exposure | In EasyRMM's deployment: EasyRMM's PostgreSQL on loopback only, the engine's own database and roles (`easypatch_owner` for migrations, `easypatch_app` for the API and worker), passwords in EasyRMM's `.env` |
@@ -591,7 +585,7 @@ whether or not application updates are on (see
 | E2 | A local non-admin user reads agent secrets | Windows: ProgramData ACL (SYSTEM and Administrators), DPAPI, registry ACL on bootstrap values. Linux: root-only `/etc/easypatch` and `/var/lib/easypatch`, `systemd-creds` where available, no token on the command line |
 | E3 | Cross-site request forgery or XSS | The engine serves no web pages; EasyRMM's console is EasyRMM's. The API sets and reads no cookies, so a forged cross-site request carries no credential. What EasyRMM's edge forwards from the engine is served without cookies, sandboxed and never sniffed |
 | E4 | A local user abuses the tray pipe to make the service do something | The pipe accepts only *restart now* or an offered postponement for the current restart request, and the parameterless status-window requests (check in, check for updates, read the recent log), from interactive sessions; the session comes from Windows. Check-ins and update checks are rate-limited for the whole computer and never install or restart anything. See [Tray and local pipe](#tray-and-local-pipe). |
-| D3 | A compromised admin account or server restarts many computers or weakens Windows Update settings | Requires the Operator role in a statement from EasyRMM (after EasyRMM's own sign-in) or an Admin API token; every manual restart and policy change is audited. Restarts warn signed-in users according to the chosen mode. Windows Update changes are limited to the listed values (never the WSUS server), are shown per endpoint in the console, and are restored when removed. This is a disruption risk, not code execution. |
+| D3 | A compromised admin account or server restarts many computers or weakens Windows Update settings | Requires the Operator role in a statement from EasyRMM (after EasyRMM's own sign-in); every manual restart and policy change is audited. Restarts warn signed-in users according to the chosen mode. Windows Update changes are limited to the listed values (never the WSUS server), are shown per endpoint in the console, and are restored when removed. This is a disruption risk, not code execution. |
 
 ## Server hardening checklist
 
@@ -604,7 +598,7 @@ whether or not application updates are on (see
 * CORS: none. No cross-origin access is allowed.
 * The .NET containers run as a non-root user with a read-only root filesystem, all
   capabilities dropped and `no-new-privileges`. All images are pinned to exact versions.
-* The OpenAPI document needs a statement from EasyRMM or an API token. There is no Swagger UI.
+* The OpenAPI document needs a statement from EasyRMM. There is no Swagger UI.
 * Dependency scanning: `scripts/audit-dependencies.sh` runs `dotnet list package --vulnerable`.
 
 ## Known limitations

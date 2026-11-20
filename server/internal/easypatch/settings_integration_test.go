@@ -43,7 +43,7 @@ func TestServerSettings(t *testing.T) {
 
 	// Settings EasyRMM does not show, changed in EasyPatch, are kept.
 	cur := f.engine.ServerSettings()
-	cur["requireMfa"], cur["sessionIdleMinutes"] = false, 45.0
+	cur["enrollmentRequestExpiryDays"] = 14.0
 	f.putEngineSettings(cur)
 	in := v.Settings
 	brand := "  Contoso IT  "
@@ -53,7 +53,7 @@ func TestServerSettings(t *testing.T) {
 		t.Fatalf("saved: %+v, %v", got, err)
 	}
 	saved := f.engine.ServerSettings()
-	if saved["requireMfa"] != false || saved["sessionIdleMinutes"] != 45.0 || saved["reportBrandName"] != "Contoso IT" {
+	if saved["enrollmentRequestExpiryDays"] != 14.0 || saved["reportBrandName"] != "Contoso IT" {
 		t.Fatalf("in EasyPatch: %+v", saved)
 	}
 	if st := f.lastStatement("PUT", "/api/v1/settings"); st.Role != RoleSuperAdmin || !st.AllOrganizations || st.Name != "ada@example.com" {

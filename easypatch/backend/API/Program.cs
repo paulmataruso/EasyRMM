@@ -44,9 +44,9 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<EasyPatchExceptionHandler>();
 
-builder.Services.AddAuthentication(ConsoleAuthentication.SchemeName)
-    .AddPolicyScheme(ConsoleAuthentication.SchemeName, null, o => o.ForwardDefaultSelector = ConsoleAuthentication.Select)
-    .AddScheme<ApiTokenAuthenticationOptions, ApiTokenAuthenticationHandler>(ApiTokenAuthenticationHandler.SchemeName, null)
+// The administrator API takes EasyRMM's statements and nothing else; agents sign their requests. EasyPatch has no sign-in, session,
+// cookie or API token of its own.
+builder.Services.AddAuthentication(EasyRmmAuthenticationHandler.SchemeName)
     .AddScheme<EasyRmmAuthenticationOptions, EasyRmmAuthenticationHandler>(EasyRmmAuthenticationHandler.SchemeName, null)
     .AddScheme<AgentAuthenticationOptions, AgentAuthenticationHandler>(AgentAuthenticationHandler.SchemeName, null);
 builder.Services.AddEasyPatchAuthorization();

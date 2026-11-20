@@ -3,20 +3,20 @@
 Administrator and agent routes are versioned under `/api/v1`. JSON uses camelCase, enums are
 serialized as strings, and timestamps are ISO-8601 in UTC.
 
-The live OpenAPI document is served at `/api/openapi/v1.json` to any authenticated caller (a
-statement from EasyRMM or an API token, any role).
+The live OpenAPI document is served at `/api/openapi/v1.json` to any statement from EasyRMM,
+whatever its role.
 
 ## Conventions
 
 | Topic | Rule |
 |---|---|
-| Authentication | Admin routes take a statement from EasyRMM in `X-EasyRMM-Assertion` (EasyRMM's own calls; see [security.md](security.md#admin-authentication)) or an [API token](#api-tokens) sent as `Authorization: Bearer ept_…`. A request with a statement is authenticated by it alone and any bearer token is ignored. A missing or invalid credential answers `401` with `code=unauthenticated`. Agent routes use signed requests ([security.md](security.md#agent-request-signing)). |
+| Authentication | Admin routes take a statement from EasyRMM in `X-EasyRMM-Assertion` and nothing else (see [security.md](security.md#admin-authentication)). API tokens are no longer accepted: an `Authorization` header is ignored. A missing or invalid statement answers `401` with `code=unauthenticated`. Agent routes use signed requests ([security.md](security.md#agent-request-signing)). |
 | Correlation | `X-Correlation-ID` is accepted (max 64 characters of `[A-Za-z0-9-_.]`) or generated. It is returned on every response and included in error bodies and logs. |
 | Pagination | Paged routes take `?page=1&pageSize=50` (maximum 200) and return `{ items, page, pageSize, totalCount }`. Organizations, sites, deployment codes and the per-endpoint update lists are returned as plain arrays. |
 | Sorting | `GET /endpoints` and `GET /updates` accept `?sort=<field>&dir=asc|desc`; the fields are listed below. Unknown fields fall back to the default order. |
 | Errors | RFC 9457 `application/problem+json` with the extensions `code` (machine-readable) and `correlationId`. Validation errors (`400`, `code=validation_failed`) add `errors` (field → messages). Some errors carry extra members, such as `existingJobId` on `409 duplicate_job`. |
-| Rate limits | Enrollment: 30/min per IP. Agent routes: 120/min per credential. Downloads: 60/min per IP. All other admin routes: 600/min per EasyRMM user or API token, 6000/min for EasyRMM's own work (a statement for `service`). Exceeding a limit returns `429` with `code=rate_limited` and `Retry-After`. The limits can be changed with the `RateLimits:*` settings. |
-| Roles | **Viewer** = any role (ReadOnly, Admin, SuperAdmin). **Operator** = Admin or SuperAdmin. **SuperAdmin** = SuperAdmin only. Statements and API tokens restricted to some organizations only see those organizations; anything outside them answers `404`. API tokens are ReadOnly or Admin, never SuperAdmin. |
+| Rate limits | Enrollment: 30/min per IP. Agent routes: 120/min per credential. Downloads: 60/min per IP. All other admin routes: 600/min per EasyRMM user, 6000/min for EasyRMM's own work (a statement for `service`). Exceeding a limit returns `429` with `code=rate_limited` and `Retry-After`. The limits can be changed with the `RateLimits:*` settings. |
+| Roles | **Viewer** = any role (ReadOnly, Admin, SuperAdmin). **Operator** = Admin or SuperAdmin. **SuperAdmin** = SuperAdmin only. A statement for some organizations only sees those organizations; anything outside them answers `404`. |
 
 ## Agent protocol (`/api/v1/agents`)
 
@@ -59,34 +59,14 @@ administrator approval.
 
 ## Administrator API
 
-EasyPatch has no sign-in, user or session routes: people sign in to EasyRMM, which calls these
-routes with a statement for each request.
+EasyPatch has no sign-in, user, session or API token routes: people sign in to EasyRMM, which
+calls these routes with a statement for each request. The audit log names the EasyRMM user a
+statement acts for as `easyrmm:<name>`, and so does the `requestedBy` of the jobs it creates.
 
-### API tokens
-
-Bearer credentials for scripts and integrations, created on the server with the server image's
-`create-api-token` command (`--name`, `--role operator|read-only`, `--expires-days 1-365`,
-optionally `--organizations <id,id,…>`). The token (`ept_…`) is printed once; the server keeps
-only its SHA-256 hash. A name must be unique among tokens that are not revoked. There is no
-route that creates, lists or revokes tokens: a token ends at its expiry, or sooner when its
-`revoked_at` is set in the engine's database.
-
-A token request may name the person it acts for in `X-EasyPatch-On-Behalf-Of` (one line of
-printable text, up to 254 characters; anything else is ignored), for example the signed-in user of
-an RMM that calls EasyPatch. It is informational: the token's role and organizations decide what
-the request may do. EasyPatch adds it to the request's audit records as `onBehalfOf`, and to the
-`requestedBy` of jobs it creates (`token:<name> for <person>`) when that fits in 128 characters.
-Statement requests ignore the header. Servers that support it list `on-behalf-of` in
-[`/server-info`](#dashboard-reports-audit-settings).
-
-A token acts with its role in its organizations: a ReadOnly token gets the Viewer routes, an
-Admin token also gets the Operator routes, and SuperAdmin routes answer `403`. A missing,
-unknown, expired or revoked token answers `401` with `code=unauthenticated`. Actions are audited
-with the user name `token:<name>`.
-
-```bash
-curl -H "Authorization: Bearer $EASYPATCH_TOKEN" http://127.0.0.1:18180/api/v1/endpoints
-```
+There are no API tokens. Scripts and integrations use EasyRMM's API; the engine accepts only
+EasyRMM's statements. A request with `Authorization: Bearer …` and no statement answers `401`,
+even with a token a standalone EasyPatch made (`prepare-import` deletes those from an imported
+database). `X-EasyPatch-On-Behalf-Of`, which only API token requests used, is ignored.
 
 ### Organizations, sites and policy
 
@@ -262,8 +242,8 @@ unless they are selected, and then adds a warning.
 | GET | `/reports/compliance/trend` (`organizationId, from, to`) | Viewer |
 | GET | `/reports/installations` (`from, to, organizationId, siteId, endpointId, category, result, page, pageSize`) and `/reports/installations.csv` | Viewer |
 | GET | `/audit-logs` (`userId, organizationId, action` (prefix), `from, to, page, pageSize`) | Operator. Callers restricted to some organizations only see entries for those organizations. |
-| GET/PUT | `/settings` | GET Viewer, PUT SuperAdmin. Includes the rollout guard: `rolloutGuardEnabled` (default `true`), `rolloutGuardMinFailedEndpoints` (1-1000, default 3), `rolloutGuardFailurePercent` (1-100, default 20) and `rolloutGuardWindowDays` (1-90, default 7). `requireMfa`, `sessionIdleMinutes` and `sessionAbsoluteHours` are still validated, stored and returned, but have no effect: EasyPatch has no sign-in of its own. |
-| GET | `/server-info` (version, public URL, server time, `capabilities`: optional features integrations check for — `scheduled-installs`, `on-behalf-of`) | Viewer |
+| GET/PUT | `/settings` | GET Viewer, PUT SuperAdmin. Includes the rollout guard: `rolloutGuardEnabled` (default `true`), `rolloutGuardMinFailedEndpoints` (1-1000, default 3), `rolloutGuardFailurePercent` (1-100, default 20) and `rolloutGuardWindowDays` (1-90, default 7). Unknown fields, such as the sign-in settings `requireMfa`, `sessionIdleMinutes` and `sessionAbsoluteHours` that went with EasyPatch's own sign-in, are ignored. |
+| GET | `/server-info` (version, public URL, server time, `capabilities`: optional features integrations check for — `scheduled-installs`) | Viewer |
 | GET | `/vulnerability-feeds` (state of the `kev`, `msrc` and `debian` downloads: last attempt and success, sanitized error, version, entries) | Viewer |
 | GET/POST, PUT/DELETE | `/lifecycle`, `/lifecycle/{id}` (OS lifecycle table) | GET Viewer, writes SuperAdmin |
 

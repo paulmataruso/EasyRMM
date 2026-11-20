@@ -755,13 +755,8 @@ public static class ServerCapabilities
     /// <summary>Install requests, for one endpoint or in bulk, accept <c>scheduledAt</c>: the jobs wait until then.</summary>
     public const string ScheduledInstalls = "scheduled-installs";
 
-    /// <summary>
-    /// API token requests may name the person they act for in <c>X-EasyPatch-On-Behalf-Of</c>; it is recorded in the audit log and
-    /// on the jobs they create.
-    /// </summary>
-    public const string OnBehalfOf = "on-behalf-of";
-
-    public static readonly IReadOnlyList<string> All = [ScheduledInstalls, OnBehalfOf];
+    // "on-behalf-of" (X-EasyPatch-On-Behalf-Of) went with API tokens: a statement names the EasyRMM user itself.
+    public static readonly IReadOnlyList<string> All = [ScheduledInstalls];
 }
 
 /// <summary>Monthly report schedule of an organization. <c>NextReportDate</c> is a date in the organization's time zone.</summary>

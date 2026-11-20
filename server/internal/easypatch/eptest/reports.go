@@ -273,10 +273,8 @@ func (s *Server) generateReport(w http.ResponseWriter, r *http.Request, body map
 			include = sc.IncludeEndpointList
 		}
 	}
-	by := r.Header.Get("X-EasyPatch-On-Behalf-Of")
-	if st := s.requests[len(s.requests)-1].Statement; st != nil {
-		by = st.Name
-	}
+	// serve answered 401 to a request without a valid statement.
+	by := s.requests[len(s.requests)-1].Statement.Name
 	rep := &ReportInfo{ID: uuid.New(), Org: org, PeriodStart: start.Format(time.DateOnly), PeriodEnd: end.Format(time.DateOnly), MonthToDate: toDate,
 		GeneratedAt: now, GeneratedBy: by, IncludeEndpointList: include, PDF: []byte("%PDF-1.7\n% EasyPatch monthly report\n%%EOF\n")}
 	s.reports = append(s.reports, rep)

@@ -46,7 +46,8 @@ public static class RateLimits
                 return Window(credential.Length is > 0 and <= 64 ? "cred:" + credential : IpKey(ctx), agent);
             });
 
-            // Every authenticated admin request is limited per API token or EasyRMM user; anonymous requests per IP.
+            // Every authenticated admin request is limited per EasyRMM user (EasyRMM's own work has its own allowance); anything else
+            // per IP.
             options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
             {
                 if (!ctx.Request.Path.StartsWithSegments("/api/v1") || ctx.Request.Path.StartsWithSegments("/" + AgentRoutes.Prefix))
@@ -59,8 +60,7 @@ public static class RateLimits
                     return Window("easyrmm:" + subject, subject == EasyRmmStatement.ServiceSubject ? easyRmmService : admin);
                 }
 
-                var token = ctx.User.FindFirstValue(EasyPatchClaims.ApiTokenId);
-                return Window(token is not null ? "token:" + token : IpKey(ctx), admin);
+                return Window(IpKey(ctx), admin);
             });
         });
         return services;

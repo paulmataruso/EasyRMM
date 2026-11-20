@@ -3,10 +3,10 @@ using System.Net.Http.Headers;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Api.Security;
 using EasyPatch.Core.Entities;
+using EasyPatch.Infrastructure.Security;
 using EasyPatch.Infrastructure.Services;
 using EasyPatch.Tests.Unit;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace EasyPatch.Tests.Integration;
@@ -89,8 +89,18 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
         // Signed a minute ago.
         await EasyRmm("Admin", "*", age: TimeSpan.FromMinutes(1)).ExpectAsync(HttpMethod.Post, scan, null, HttpStatusCode.Unauthorized, "unauthenticated");
 
-        // A request with a statement is judged by it alone: a valid API token alongside a bad statement does not help.
-        var (_, secret) = await WithScopeAsync(sp => sp.GetRequiredService<ApiTokenService>().CreateAsync("Automation", UserRole.Admin, [], 30));
+        // A request with a statement is judged by it alone: an API token alongside a bad statement does not help, even one stored
+        // in an imported database (AccessTests: no API token is accepted on its own either).
+        var secret = SecureTokens.Create("ept_");
+        await WithDbAsync(async db =>
+        {
+            db.ApiTokens.Add(new ApiToken
+            {
+                Name = "Automation", Prefix = secret[..12], TokenHash = SecureTokens.Hash(secret), Role = UserRole.Admin, AllOrganizations = true,
+                CreatedAt = Clock.GetUtcNow(), ExpiresAt = Clock.GetUtcNow().AddDays(30),
+            });
+            await db.SaveChangesAsync();
+        });
         using (var request = new HttpRequestMessage(HttpMethod.Post, new Uri(scan, UriKind.Relative)))
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", secret);

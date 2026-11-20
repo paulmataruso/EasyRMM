@@ -5,16 +5,15 @@ using EasyPatch.Infrastructure.Services;
 namespace EasyPatch.Api.Security;
 
 /// <summary>
-/// The claims EasyPatch's authentication handlers put on a request: a statement from EasyRMM (EasyRmmAuthenticationHandler), an API
-/// token (ApiTokenAuthenticationHandler) or an agent credential (AgentAuthenticationHandler).
+/// The claims EasyPatch's authentication handlers put on a request: a statement from EasyRMM (EasyRmmAuthenticationHandler) or an
+/// agent credential (AgentAuthenticationHandler).
 /// </summary>
 public static class EasyPatchClaims
 {
-    /// <summary>Who acted, as the audit log names it: <c>easyrmm:&lt;name&gt;</c> or <c>token:&lt;name&gt;</c>.</summary>
+    /// <summary>Who acted, as the audit log names it: <c>easyrmm:&lt;name&gt;</c>.</summary>
     public const string Username = ClaimTypes.Name;
     public const string Role = ClaimTypes.Role;
     public const string Organization = "easypatch:org";
-    public const string ApiTokenId = "easypatch:api_token";
     public const string AllOrganizations = "easypatch:all_orgs";
     /// <summary>Who a statement from EasyRMM acts for: an EasyRMM user's id, or "service" (EasyRmmAuthenticationHandler).</summary>
     public const string EasyRmmSubject = "easypatch:easyrmm_sub";

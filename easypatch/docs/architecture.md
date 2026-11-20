@@ -97,14 +97,12 @@ erDiagram
     policies }o--|| organizations : "org scope"
     policies }o--|| sites : "site scope"
     policies |o--|| endpoints : "endpoint scope"
-    api_tokens ||--o{ audit_logs : performs
     organizations ||--o{ compliance_snapshots : tracks
 ```
 
 | Table | Key columns / notes |
 |---|---|
-| `api_tokens` | API tokens for scripts and integrations: SHA-256 of the secret, display prefix, `role` (ReadOnly or Admin), `all_organizations` or `organization_ids`, expiry, last use time and address, `revoked_at`. Created with the `create-api-token` command. |
-| `users`, `user_organization_access`, `user_sessions`, `password_reset_tokens`, `webauthn_credentials`, `webauthn_challenges`, `oidc_providers`, `external_logins`, `oidc_login_states` | EasyPatch's former accounts, sessions, passkeys and single sign-on. They stay in the schema, but nothing uses them to authenticate: EasyPatch has no sign-in of its own. `prepare-import` disables the accounts of a standalone database brought into EasyRMM and empties the other tables. Audit records of that time keep their `user_id`. |
+| `users`, `user_organization_access`, `user_sessions`, `password_reset_tokens`, `webauthn_credentials`, `webauthn_challenges`, `oidc_providers`, `external_logins`, `oidc_login_states`, `api_tokens` | EasyPatch's former accounts, sessions, passkeys, single sign-on and API tokens. They stay in the schema, so the upgrade needs no migration, but nothing uses them to authenticate: EasyPatch has no sign-in or API tokens of its own. `prepare-import` disables the accounts of a standalone database brought into EasyRMM and empties the other tables. Audit records of that time keep their `user_id`. |
 | `organizations`, `sites` | `is_active` and `archived_at`. Archiving is preferred to deleting; hard delete is only allowed when no endpoints exist. |
 | `endpoints` | Identity, OS and hardware inventory, agent version and capabilities, check-in, scan and inventory timestamps, reboot state and reasons, signed-in user and tray counts, update source, Windows Update policy status reported by the agent, OS support status, and denormalized compliance counters |
 | `agent_credentials` | Public ID `c_…`, ECDSA P-256 **public key only**, expiry, revocation, `replaced_by` |
@@ -122,7 +120,7 @@ erDiagram
 | `server_settings` | A single `jsonb` row for global limits, retention periods and credential lifetimes |
 | `os_lifecycle_entries` | Editable lifecycle table (product, edition class, build, end of servicing) used for support status |
 | `endpoint_events` | Per-endpoint activity (scans, jobs, enrollment, reboot changes, online and offline transitions) |
-| `audit_logs` | Every administrative action, with who acted (`easyrmm:<name>` for a statement from EasyRMM, `token:<name>` for an API token, `cli` for a command), IP and correlation ID |
+| `audit_logs` | Every administrative action, with who acted (`easyrmm:<name>` for a statement from EasyRMM, `cli` for a command; older entries may name `token:<name>`, a former API token), IP and correlation ID |
 | `compliance_snapshots` | Daily per-organization counters for trend reporting |
 | `vulnerabilities`, `msrc_kb_cves`, `msrc_build_fixes`, `debian_fixes`, `vulnerability_feeds` | Downloaded vulnerability data (see [section 8](#8-vulnerability-data)) and the state of each download |
 

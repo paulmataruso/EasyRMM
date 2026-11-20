@@ -268,8 +268,11 @@ public sealed class EasyRmmAuthenticationHandler(
         return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName)));
     }
 
+    // Nothing else signs in: a request without a statement (an API token of a standalone EasyPatch, say) is told where to go.
     protected override Task HandleChallengeAsync(AuthenticationProperties properties) =>
-        ProblemResults.WriteAsync(Context, StatusCodes.Status401Unauthorized, "unauthenticated", "The statement from EasyRMM is not valid.");
+        ProblemResults.WriteAsync(Context, StatusCodes.Status401Unauthorized, "unauthenticated", HasAssertion(Request)
+            ? "The statement from EasyRMM is not valid."
+            : "Call through EasyRMM: the patching engine takes only EasyRMM's statements, and API tokens are no longer accepted.");
 
     protected override Task HandleForbiddenAsync(AuthenticationProperties properties) =>
         ProblemResults.WriteAsync(Context, StatusCodes.Status403Forbidden, "forbidden", "This call does not have permission to perform this action.");

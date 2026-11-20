@@ -3,7 +3,7 @@ namespace EasyPatch.Infrastructure.Services;
 /// <summary>Which organizations the current caller may access. Every admin query is filtered through this.</summary>
 public interface ITenantContext
 {
-    /// <summary>True for statements and API tokens for every organization, and for background services.</summary>
+    /// <summary>True for statements for every organization, and for background services.</summary>
     bool IsUnrestricted { get; }
 
     IReadOnlySet<Guid> AllowedOrganizationIds { get; }
@@ -28,25 +28,15 @@ public interface IActorContext
     string? Username { get; }
     string? IpAddress { get; }
     string? CorrelationId { get; }
-
-    /// <summary>
-    /// For an API token, the person an integration says it acts for (<c>X-EasyPatch-On-Behalf-Of</c>). Informational: the token's role
-    /// and organizations decide what the request may do.
-    /// </summary>
-    string? OnBehalfOf => null;
 }
 
 public static class ActorContextExtensions
 {
-    /// <summary>The actor name of requests made with an API token (<c>token:&lt;name&gt;</c>).</summary>
-    public const string ApiTokenPrefix = "token:";
-
     /// <summary>The actor name of requests EasyRMM makes to its patching engine (<c>easyrmm:&lt;name&gt;</c>).</summary>
     public const string EasyRmmPrefix = "easyrmm:";
 
-    /// <summary>True for EasyRMM or an API token (not the system, the command line or an agent).</summary>
+    /// <summary>True for EasyRMM (not the system, the command line or an agent).</summary>
     public static bool IsAdministrator(this IActorContext actor) =>
-        actor.Username?.StartsWith(ApiTokenPrefix, StringComparison.Ordinal) == true ||
         actor.Username?.StartsWith(EasyRmmPrefix, StringComparison.Ordinal) == true;
 }
 

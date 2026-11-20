@@ -1,14 +1,115 @@
 using System.Net;
+using System.Net.Http.Headers;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Contracts;
 using EasyPatch.Core.Entities;
+using EasyPatch.Infrastructure.Security;
+using Microsoft.EntityFrameworkCore;
 using Xunit;
 
 namespace EasyPatch.Tests.Integration;
 
-/// <summary>Who may call the administrator API, and with which role: EasyRMM's statements (and API tokens, ApiTokenTests).</summary>
+/// <summary>Who may call the administrator API, and with which role: EasyRMM's statements, and nothing else.</summary>
 public sealed class AccessTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
+    /// <summary>An API token as a standalone EasyPatch stored it, in an imported database: the engine accepts none.</summary>
+    private async Task<string> StoredApiTokenAsync(string name, UserRole role)
+    {
+        var secret = SecureTokens.Create("ept_");
+        var now = Clock.GetUtcNow();
+        await WithDbAsync(async db =>
+        {
+            db.ApiTokens.Add(new ApiToken
+            {
+                Name = name, Prefix = secret[..12], TokenHash = SecureTokens.Hash(secret), Role = role, AllOrganizations = true,
+                CreatedAt = now, ExpiresAt = now.AddDays(30),
+            });
+            await db.SaveChangesAsync();
+        });
+        return secret;
+    }
+
+    [Fact]
+    public async Task API_tokens_are_refused_even_one_a_standalone_EasyPatch_made()
+    {
+        var root = SuperAdmin();
+        var (org, site) = await CreateOrgAsync(root);
+        var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-1");
+        var stored = await StoredApiTokenAsync("Automation", UserRole.Admin);
+
+        foreach (var secret in new[] { stored, "ept_" + new string('A', 43), "not-a-token" })
+        {
+            var http = NewHttpClient();
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", secret);
+            foreach (var (method, url) in new[] { (HttpMethod.Get, "/api/v1/organizations"), (HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan") })
+            {
+                using var response = await http.SendAsync(new HttpRequestMessage(method, new Uri(url, UriKind.Relative)));
+                Assert.Equal((url, HttpStatusCode.Unauthorized), (url, response.StatusCode));
+                Assert.Equal("unauthenticated", await AdminClient.ProblemCodeAsync(response));
+            }
+        }
+
+        // The answer says where to go instead.
+        var bearer = NewHttpClient();
+        bearer.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", stored);
+        using (var response = await bearer.GetAsync(new Uri("/api/v1/organizations", UriKind.Relative)))
+        {
+            Assert.Contains("Call through EasyRMM", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        }
+
+        Assert.Empty(await WithDbAsync(db => db.Jobs.AsNoTracking().Where(j => j.EndpointId == agent.EndpointId).ToListAsync()));
+        Assert.All(await WithDbAsync(db => db.ApiTokens.AsNoTracking().ToListAsync()), t => Assert.Null(t.LastUsedAt));
+    }
+
+    [Fact]
+    public async Task A_statement_decides_whatever_bearer_token_comes_with_it()
+    {
+        var root = SuperAdmin();
+        var (org, site) = await CreateOrgAsync(root);
+        var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-1");
+
+        // A read-only statement with an operator token of an imported database beside it: still read-only.
+        var viewer = Admin("viewer1", UserRole.ReadOnly);
+        viewer.Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await StoredApiTokenAsync("Automation", UserRole.Admin));
+        await viewer.GetAsync<PagedResult<EndpointSummaryDto>>("/api/v1/endpoints");
+        await viewer.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Forbidden, "forbidden");
+        Assert.Empty(await WithDbAsync(db => db.Jobs.AsNoTracking().Where(j => j.EndpointId == agent.EndpointId).ToListAsync()));
+    }
+
+    [Fact]
+    public async Task A_statement_names_who_acted_and_on_behalf_of_is_ignored()
+    {
+        var root = SuperAdmin();
+        var info = await root.GetAsync<ServerInfoDto>("/api/v1/server-info");
+        Assert.Equal(["scheduled-installs"], info.Capabilities);
+
+        var (org, site) = await CreateOrgAsync(root);
+        var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-1");
+
+        // X-EasyPatch-On-Behalf-Of went with API tokens: the statement names the person, and the header changes nothing.
+        var technician = Admin("alice@example.com", UserRole.Admin, [org.Id]);
+        technician.Http.DefaultRequestHeaders.Add("X-EasyPatch-On-Behalf-Of", "mallory@example.com");
+        await technician.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        var scan = await WithDbAsync(db => db.Jobs.AsNoTracking().SingleAsync(j => j.EndpointId == agent.EndpointId));
+        Assert.Equal((technician.Actor, (Guid?)null), (scan.RequestedBy, scan.RequestedByUserId));
+
+        // Excluding an update, and including it again, work with a statement and record no user.
+        var update = Guid.NewGuid();
+        await technician.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/exclusions",
+            new ExclusionRequest(update, "Breaks the payroll app"), HttpStatusCode.NoContent);
+        var exclusion = await WithDbAsync(db => db.UpdateExclusions.AsNoTracking().SingleAsync());
+        Assert.Equal((update, (Guid?)null), (exclusion.UpdateGuid, exclusion.CreatedByUserId));
+        await technician.ExpectAsync(HttpMethod.Delete, $"/api/v1/endpoints/{agent.EndpointId}/exclusions/{update}", null, HttpStatusCode.NoContent);
+
+        var entries = await WithDbAsync(db => db.AuditLogs.AsNoTracking()
+            .Where(a => a.Action == "job.create" || a.Action == "endpoint.update_excluded" || a.Action == "endpoint.update_included")
+            .Select(a => new { a.Action, a.Username, a.Details }).ToListAsync());
+        Assert.Equal(3, entries.Count);
+        Assert.All(entries, e => Assert.Equal((e.Action, technician.Actor), (e.Action, e.Username)));
+        Assert.All(entries, e => Assert.DoesNotContain("mallory", e.Details ?? "", StringComparison.Ordinal));
+        Assert.All(entries, e => Assert.DoesNotContain("onBehalfOf", e.Details ?? "", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task Anonymous_requests_are_rejected()
     {
