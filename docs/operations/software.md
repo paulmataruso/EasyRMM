@@ -31,9 +31,10 @@ Then choose:
 
 * **Action**: *Install*, *Update* or *Uninstall*.
   * *Install* takes an optional **version** (`1.7.1-3`, `128.0`); empty
-    installs the newest. With winget and Chocolatey, installing something
-    already installed succeeds without changing it; use *Update* to move it
-    to the newest version.
+    installs the newest. Installing something already installed succeeds:
+    Chocolatey leaves it as it is (use *Update* to move it to the newest
+    version), and winget updates it if the `winget` source has a newer
+    version.
   * *Update* fails on a device that does not have the package, and succeeds
     on one that is already current.
   * *Uninstall* succeeds on a device that does not have the package.
@@ -83,7 +84,8 @@ minute or so.
 | *Failed*, exit code 2, "Chocolatey is not installed on this computer" | Install Chocolatey first, for example with its install script as a [script job](scripts-and-jobs.md) |
 | *Failed*, exit code 2, "This computer has none of the package managers EasyRMM uses" | The Linux device has none of apt-get, dnf, yum or zypper (Alpine and Arch are not supported) |
 | *Failed*, exit code 3, "*package* is not installed." | *Update* applies to installed packages. Use *Install* |
-| *Failed* with winget's "No package found matching input criteria" | The ID is wrong, or the package is not in the `winget` source. Check `winget search --exact --id <ID>` on a computer with winget |
+| *Failed*, exit code 1, "The winget source has no package with the ID *ID*." | The ID is wrong, or the package is not in the `winget` source. Check `winget search --exact --id <ID>` on a computer with winget |
+| *Succeeded*, but the program is still there after a Chocolatey *Uninstall* | Many Chocolatey packages, such as `notepadplusplus`, only point at the package that installs the program (`notepadplusplus.install`); removing the first leaves the second. Uninstall the `.install` package too |
 | *Failed* with winget's "No applicable installer found" | The package has no installer for the whole computer. Install it another way |
 | *Failed* with apt's "Unable to locate package" | The name is wrong, or its repository is not configured on the device |
 | *Timed out* | Large installers can take more than an hour; ask again with a longer timeout. The package manager may have been stopped part-way: check the device |

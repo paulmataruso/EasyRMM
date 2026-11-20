@@ -25,6 +25,18 @@ foreach ($exe in @($choco, (Join-Path $root 'choco.exe'))) {
     }
 }
 
+# Chocolatey keeps each package it installed in lib\<id>. As on Linux,
+# removing what is not there succeeds and updating it fails with 3.
+if (($action -eq 'uninstall' -or $action -eq 'upgrade') -and
+    -not (Test-Path -LiteralPath (Join-Path $root "lib\$id") -PathType Container)) {
+    if ($action -eq 'uninstall') {
+        Write-Output "$id is not installed."
+        exit 0
+    }
+    Write-Output "$id is not installed, so it cannot be updated."
+    exit 3
+}
+
 switch ($action) {
     'install' {
         $argv = @('install', $id, '-y', '--no-progress')
