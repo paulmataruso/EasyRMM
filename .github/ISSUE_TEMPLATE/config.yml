@@ -3,6 +3,6 @@ contact_links:
   - name: Report a security vulnerability
     url: https://github.com/paulmataruso/EasyRMM/security/advisories/new
     about: Report vulnerabilities in EasyRMM or EasyPatch privately, never in a public issue (SECURITY.md).
-  - name: EasyPatch documentation
-    url: https://github.com/paulmataruso/EasyRMM/tree/main/easypatch/docs
-    about: Installation, agents, policies, compliance, alerts, security and troubleshooting.
+  - name: Patching documentation
+    url: https://github.com/paulmataruso/EasyRMM/blob/main/docs/operations/patching.md
+    about: Policies, installs, restarts, compliance, alerts, the EasyPatch agent and troubleshooting.

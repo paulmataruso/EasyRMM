@@ -45,8 +45,7 @@ The macOS agent (since 1.9.0) is **experimental, in development and not for prod
   - Agent tests: `dotnet test agent/EasyPatch.Agent.Tests`.
 - **Release:**
   1. Bump the version in `Directory.Build.props`, `scripts/build-*.sh` and `build-agent.ps1`, the issue
-     template (`.github/ISSUE_TEMPLATE/easypatch-bug_report.yml` in the repository root), the README, and the
-     download and build commands in `docs/linux-agent.md` and `docs/macos-agent.md`.
+     template (`.github/ISSUE_TEMPLATE/easypatch-bug_report.yml` in the repository root) and the README.
   2. Add a `## [x.y.z] - date` section to the CHANGELOG. EasyRMM's `release.yml` (in the repository root's
      `.github/workflows/`) checks that `Directory.Build.props` and the CHANGELOG agree, and that the version
      was not published from another commit.
@@ -56,5 +55,6 @@ The macOS agent (since 1.9.0) is **experimental, in development and not for prod
 - **Release signing key:** the private key is the `EASYPATCH_RELEASE_KEY` secret of the GitHub
   `easypatch-release` environment. Signed local builds read it from `~/.easypatch/easypatch-release-key.pem`.
   Copy it between machines only over a secure channel, and never commit it.
-- **Constraints:** the security and design rules are in `docs/security.md` and `docs/architecture.md`.
+- **Constraints:** the security and design rules are in `docs/architecture/patching-engine.md` and
+  `docs/security/threat-model.md` at the repository root.
   Documentation must match what is implemented.

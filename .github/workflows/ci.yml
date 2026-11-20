@@ -73,7 +73,7 @@ jobs:
               *) easyrmm=true; return ;;
             esac
             case $1 in
-              easypatch/agent/* | easypatch/docs/* | easypatch/*.md) ;;
+              easypatch/agent/* | easypatch/*.md) ;;
               *) easypatch_server=true ;;
             esac
             case $1 in

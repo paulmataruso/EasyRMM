@@ -42,7 +42,7 @@ the engine from `easypatch/` (see [Patching engine](../docs/deployment/docker.md
   them, and the *EasyPatch contract* check, which runs EasyRMM's connector against EasyPatch's
   server, when the server changes. See
   [Continuous integration](../docs/development/monorepo.md#continuous-integration).
-* Update the documentation in `docs/` in the same pull request. Documentation must describe what
+* Update the documentation in the repository's `docs/` in the same pull request. Documentation must describe what
   the code actually does.
 * Pin new dependencies to exact versions, and prefer MIT, BSD or Apache-2.0 licensed ones.
   Dependencies under copyleft licenses (GPL, AGPL, LGPL) cannot be accepted.

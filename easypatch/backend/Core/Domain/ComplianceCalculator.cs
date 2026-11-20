@@ -6,7 +6,7 @@ public readonly record struct UpdateCounts(
     int MissingRequired, int MissingTotal, int Failed, int Installed, int PendingReboot, int MissingDeferred = 0, int KnownExploitedMissing = 0);
 
 /// <summary>
-/// Patch compliance rules (documented in docs/compliance.md):
+/// Patch compliance rules (documented in docs/architecture/patching-engine.md, "Compliance"):
 /// 1. NeverScanned — no successful scan yet.
 /// 2. ScanStale — last successful scan older than the policy's ScanStaleAfterHours.
 /// 3. FailedUpdates — at least one required update failed to install.
