@@ -65,6 +65,30 @@ test("first-run setup creates the administrator, who must enroll an authenticato
   await expect(account).toContainText("Super administrator");
 });
 
+test("a page whose file is gone after an upgrade reloads the console once, then says so", async () => {
+  const page = admin;
+  // As after an upgrade: the server no longer has the file this console was built with.
+  const alertsPage = /\/assets\/AlertsPage-[^/]+\.js$/;
+  await page.route(alertsPage, (route) => route.fulfill({ status: 404, body: "" }));
+  let loads = 0;
+  const counted = () => loads++;
+  page.on("load", counted);
+
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Alerts" }).click();
+  // The first failure loads the console again; a second one within a minute is shown instead.
+  await expect(page.getByText("This page could not be loaded")).toBeVisible();
+  expect(loads).toBe(1);
+  page.off("load", counted);
+
+  await page.unroute(alertsPage);
+  await page.getByRole("button", { name: "Reload" }).click();
+  await expect(page.getByRole("heading", { name: "Alerts" })).toBeVisible();
+
+  // The next step starts from the main menu.
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+});
+
 test("builds the customer tree: organization, site and device group", async () => {
   const page = admin;
   await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Organizations" }).click();

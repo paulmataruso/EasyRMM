@@ -16,6 +16,12 @@ All notable changes to this project are documented here. The format follows
 - **Messages call the engine the patching engine.** A failed EasyPatch agent
   install on a device's page, and the patching engine's alerts and events,
   no longer call the engine "EasyPatch"; the EasyPatch agent keeps its name.
+- **The console fetches each page when it is first shown.** The script the
+  browser loads first went from 618 kB to 75 kB (plus the libraries, which
+  browsers keep across upgrades). If a page cannot be fetched because
+  EasyRMM was upgraded while the console was open, the console reloads
+  once to get the new version; if it still cannot, it says so and offers
+  **Reload**.
 
 ### Removed
 
