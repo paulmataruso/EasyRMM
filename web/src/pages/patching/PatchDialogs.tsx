@@ -573,13 +573,9 @@ export function RestartDialog({
               {servers.length > 0 && (
                 <fieldset className="space-y-2">
                   <legend className="mb-1 text-sm font-medium">
-                    {plan.data!.serversKnown ? "Servers restart only when you tick them" : "Tick each device to restart"}
+                    Servers restart only when you tick them
                   </legend>
-                  <p className="text-xs text-muted">
-                    {plan.data!.serversKnown
-                      ? "A restart interrupts everyone using the server."
-                      : "This patching engine is older than 1.10.0 and cannot say which devices are servers, so each one waits for your tick."}
-                  </p>
+                  <p className="text-xs text-muted">A restart interrupts everyone using the server.</p>
                   <ul className="max-h-48 divide-y divide-line overflow-y-auto rounded-md border border-line">
                     {servers.length > 1 && (
                       <li className="px-3 py-2">

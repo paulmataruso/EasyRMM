@@ -16,7 +16,6 @@ func TestRestart(t *testing.T) {
 	f := newPatching(t)
 	ctx := f.ctx
 	f.ep.Set(func() {
-		f.ep.Version = "1.10.0"
 		f.e1.RebootPending = true
 		f.e2.RebootPending, f.e2.IsServer = true, true
 	})
@@ -31,7 +30,7 @@ func TestRestart(t *testing.T) {
 
 	// The plan: servers are marked; devices that cannot restart say why.
 	plan, err := f.svc.PlanRestart(ctx, f.admin, []uuid.UUID{f.web, f.db, f.app, f.lab, f.web}, "")
-	if err != nil || !plan.ServersKnown || len(plan.Devices) != 4 {
+	if err != nil || len(plan.Devices) != 4 {
 		t.Fatalf("plan: %+v, %v", plan, err)
 	}
 	checks := map[uuid.UUID]RestartCheck{}
@@ -118,21 +117,6 @@ func TestRestart(t *testing.T) {
 		last.Details["confirmedServers"] != nil {
 		t.Fatalf("scheduled restart audit: %+v", last)
 	}
-
-	// EasyPatch before 1.10.0 cannot tell servers apart: every device is
-	// confirmed, and the pending restart comes from its endpoint list.
-	f.ep.Set(func() { f.ep.Version = "1.9.0" })
-	f.svc.fleet.clear()
-	plan, err = f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.web}, "")
-	if err != nil || plan.ServersKnown || !plan.Devices[0].Restart || !plan.Devices[0].Server {
-		t.Fatalf("plan with EasyPatch 1.9.0: %+v, %v", plan, err)
-	}
-	_, err = f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: []uuid.UUID{f.web}})
-	wantField(t, err, "confirmServers", "The patching engine cannot say which of these are servers; confirm restarting them: web-01.")
-	if res, err := f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: []uuid.UUID{f.web}, ConfirmServers: []uuid.UUID{f.web}}); err != nil ||
-		res.Succeeded != 1 {
-		t.Fatalf("confirmed restart with EasyPatch 1.9.0: %+v, %v", res, err)
-	}
 }
 
 // TestRestartOptions: how a restart asks the people signed in, whether it
@@ -141,7 +125,6 @@ func TestRestartOptions(t *testing.T) {
 	f := newPatching(t)
 	ctx := f.ctx
 	f.ep.Set(func() {
-		f.ep.Version = "1.10.0"
 		f.e1.RebootPending = true
 	})
 	n := func(v int) *int { return &v }

@@ -961,14 +961,8 @@ func (s *Server) bulk(w http.ResponseWriter, kind string, body map[string]any) {
 	reply(w, 200, map[string]any{"succeeded": succeeded, "failed": failed, "results": items})
 }
 
-// restartPending answers GET /api/v1/organizations/{id}/restart-pending as
-// EasyPatch 1.10.0 does; a server reporting an earlier version has no such
-// route.
+// restartPending answers GET /api/v1/organizations/{id}/restart-pending.
 func (s *Server) restartPending(w http.ResponseWriter, org string) {
-	if strings.HasPrefix(s.Version, "1.9.") || strings.HasPrefix(s.Version, "1.8.") {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
 	id, _ := uuid.Parse(org)
 	if s.org(id) == nil {
 		problem(w, 404, "not_found", "Organization not found.")

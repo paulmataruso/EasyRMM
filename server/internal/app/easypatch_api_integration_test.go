@@ -292,19 +292,17 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Fatalf("retry: %+v", retried)
 	}
 
-	// Restart: EasyPatch 1.9.0 cannot tell servers apart, so the device
-	// must be confirmed by name.
-	ep.Set(func() { endpoint.RebootPending = true })
+	// Restart: a server must be confirmed by name.
+	ep.Set(func() { endpoint.RebootPending, endpoint.IsServer = true, true })
 	var plan struct {
-		ServersKnown bool `json:"serversKnown"`
-		Devices      []struct {
+		Devices []struct {
 			DeviceName string `json:"deviceName"`
 			Restart    bool   `json:"restart"`
 			Server     bool   `json:"server"`
 		} `json:"devices"`
 	}
 	admin.expect(http.StatusOK, "POST", "/api/v1/patching/restart/plan", map[string]any{"deviceIds": []string{device}}, &plan)
-	if plan.ServersKnown || len(plan.Devices) != 1 || !plan.Devices[0].Restart || !plan.Devices[0].Server || plan.Devices[0].DeviceName != "web-01" {
+	if len(plan.Devices) != 1 || !plan.Devices[0].Restart || !plan.Devices[0].Server || plan.Devices[0].DeviceName != "web-01" {
 		t.Fatalf("restart plan: %+v", plan)
 	}
 	r := admin.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}})

@@ -1956,15 +1956,13 @@ export interface RestartCheck {
   /** It would restart; otherwise `reason` says why not. */
   restart: boolean;
   reason?: string;
-  /** A server, or any device when EasyPatch cannot tell (`serversKnown`): it restarts only when confirmed by name. */
+  /** A server: it restarts only when confirmed by name. */
   server: boolean;
   online: boolean;
 }
 
 export interface RestartPlan {
   devices: RestartCheck[];
-  /** False with EasyPatch before 1.10.0, which cannot say which devices are servers. */
-  serversKnown: boolean;
 }
 
 /** How a restart treats the people signed in. */

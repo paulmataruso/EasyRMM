@@ -81,8 +81,8 @@ type RestartCheck struct {
 	// Restart says the device would be restarted; Reason says why not.
 	Restart bool   `json:"restart"`
 	Reason  string `json:"reason,omitempty"`
-	// Server says EasyPatch marks the device a server, or cannot tell
-	// (EasyPatch before 1.10.0): it is restarted only when confirmed.
+	// Server says EasyPatch marks the device a server: it is restarted only
+	// when confirmed.
 	Server bool `json:"server"`
 	Online bool `json:"online"`
 }
@@ -90,9 +90,6 @@ type RestartCheck struct {
 // RestartPlan is what a restart of chosen devices would do.
 type RestartPlan struct {
 	Devices []RestartCheck `json:"devices"`
-	// ServersKnown is false when EasyPatch cannot tell servers apart, so
-	// every device is treated as one.
-	ServersKnown bool `json:"serversKnown"`
 }
 
 // restartTarget is a linked device a restart could go to, and its check
@@ -124,7 +121,7 @@ func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, 
 		return RestartPlan{}, nil, apperr.Invalid("deviceIds",
 			fmt.Sprintf("Choose at most %d devices to restart whether or not a restart is pending.", maxAlwaysRestart))
 	}
-	plan := RestartPlan{Devices: []RestartCheck{}, ServersKnown: true}
+	plan := RestartPlan{Devices: []RestartCheck{}}
 	var targets []restartTarget
 	byOrg := map[uuid.UUID][]int{} // EasyPatch organization → indexes into targets
 	seen := map[uuid.UUID]bool{}
@@ -152,57 +149,33 @@ func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, 
 	for org, idx := range byOrg {
 		rctx := s.as(ctx, c, RoleReadOnly, org)
 		pending, err := cl.RestartPending(rctx, org)
-		switch {
-		case IsStatus(err, http.StatusNotFound):
-			// EasyPatch before 1.10.0: read the pending restart off its
-			// endpoint list, and treat every device as a server.
-			plan.ServersKnown = false
-			endpoints, err := s.endpoints(rctx, cl, org)
-			if err != nil {
-				s.noteError(err)
-				return RestartPlan{}, nil, epError(err)
-			}
-			for _, i := range idx {
-				t := targets[i]
-				check := &plan.Devices[t.check]
-				e, ok := endpoints[*t.device.endpointID]
-				switch {
-				case !ok:
-					check.Reason = "The patching engine no longer lists its endpoint."
-				case !e.RebootPending && !always:
-					check.Reason = "No restart is pending."
-				default:
-					check.Restart, check.Server, check.Online = true, true, e.IsOnline
-				}
-			}
-		case err != nil:
+		if err != nil {
 			s.noteError(err)
 			return RestartPlan{}, nil, epError(err)
-		default:
-			listed := map[uuid.UUID]PendingRestart{}
-			for _, e := range pending.Endpoints {
-				listed[e.ID] = e
+		}
+		listed := map[uuid.UUID]PendingRestart{}
+		for _, e := range pending.Endpoints {
+			listed[e.ID] = e
+		}
+		for _, i := range idx {
+			t := targets[i]
+			check := &plan.Devices[t.check]
+			e, ok := listed[*t.device.endpointID]
+			if !ok && always {
+				if err := s.checkAnyRestart(rctx, cl, *t.device.endpointID, check); err != nil {
+					return RestartPlan{}, nil, err
+				}
+				continue
 			}
-			for _, i := range idx {
-				t := targets[i]
-				check := &plan.Devices[t.check]
-				e, ok := listed[*t.device.endpointID]
-				if !ok && always {
-					if err := s.checkAnyRestart(rctx, cl, *t.device.endpointID, check); err != nil {
-						return RestartPlan{}, nil, err
-					}
-					continue
-				}
-				switch {
-				case !ok && pending.Total > len(pending.Endpoints):
-					check.Reason = "The patching engine lists only the first 1,000 restarts pending in this organization; restart it whether or not one is pending."
-				case !ok:
-					check.Reason = "No restart is pending."
-				case !e.CanRestart:
-					check.Reason = "Its EasyPatch agent cannot restart the computer; update the agent first."
-				default:
-					check.Restart, check.Server, check.Online = true, e.IsServer, e.IsOnline
-				}
+			switch {
+			case !ok && pending.Total > len(pending.Endpoints):
+				check.Reason = "The patching engine lists only the first 1,000 restarts pending in this organization; restart it whether or not one is pending."
+			case !ok:
+				check.Reason = "No restart is pending."
+			case !e.CanRestart:
+				check.Reason = "Its EasyPatch agent cannot restart the computer; update the agent first."
+			default:
+				check.Restart, check.Server, check.Online = true, e.IsServer, e.IsOnline
 			}
 		}
 	}
@@ -284,11 +257,7 @@ func (s *Service) Restart(ctx context.Context, c access.Caller, in RestartInput)
 		}
 	}
 	if len(unconfirmed) > 0 {
-		what := "These are servers"
-		if !plan.ServersKnown {
-			what = "The patching engine cannot say which of these are servers"
-		}
-		return ActionResult{}, apperr.Invalid("confirmServers", what+"; confirm restarting them: "+strings.Join(unconfirmed, ", ")+".")
+		return ActionResult{}, apperr.Invalid("confirmServers", "These are servers; confirm restarting them: "+strings.Join(unconfirmed, ", ")+".")
 	}
 	res := ActionResult{Results: []ActionItem{}}
 	var devices []deviceRow

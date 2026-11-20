@@ -906,7 +906,7 @@ type PendingRestarts struct {
 }
 
 // RestartPending lists an organization's endpoints whose operating system
-// reports a pending restart. EasyPatch before 1.10.0 answers 404.
+// reports a pending restart.
 func (c *Client) RestartPending(ctx context.Context, organizationID uuid.UUID) (PendingRestarts, error) {
 	var p PendingRestarts
 	err := c.do(ctx, http.MethodGet, "/api/v1/organizations/"+organizationID.String()+"/restart-pending", nil, nil, "", &p)

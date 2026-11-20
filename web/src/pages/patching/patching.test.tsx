@@ -456,7 +456,6 @@ describe("patching page", () => {
     const user = userEvent.setup();
     const pending = (d: PatchFleet["devices"][number]) => ({ ...d, endpoint: { ...d.endpoint!, rebootPending: true } });
     const plan: RestartPlan = {
-      serversKnown: true,
       devices: [
         { deviceId: "d1", deviceName: "WEB-01", restart: true, server: false, online: true },
         { deviceId: "d2", deviceName: "DB-01", restart: true, server: true, online: false },
@@ -516,9 +515,8 @@ describe("patching page", () => {
         "POST /patching/restart/plan": (req) =>
           ok(
             (req.body as { condition?: string }).condition === "Always"
-              ? { serversKnown: true, devices: [{ deviceId: "d2", deviceName: "DB-01", restart: true, server: false, online: true }] }
+              ? { devices: [{ deviceId: "d2", deviceName: "DB-01", restart: true, server: false, online: true }] }
               : {
-                  serversKnown: true,
                   devices: [{ deviceId: "d1", deviceName: "WEB-01", restart: false, reason: "Its EasyPatch agent cannot restart the computer; update the agent first.", server: false, online: true }],
                 },
           ),
@@ -568,7 +566,7 @@ describe("patching page", () => {
       patchingRoutes({
         "POST /patching/restart/plan": (req) => {
           const ids = (req.body as { deviceIds: string[] }).deviceIds;
-          return ok({ serversKnown: true, devices: ids.map((id) => ({ deviceId: id, deviceName: id, restart: true, server: false, online: true })) });
+          return ok({ devices: ids.map((id) => ({ deviceId: id, deviceName: id, restart: true, server: false, online: true })) });
         },
       }),
     );
@@ -975,7 +973,6 @@ describe("device patches", () => {
     const server = installFakeApi(
       deviceRoutes(pending, {
         "POST /patching/restart/plan": ok({
-          serversKnown: false,
           devices: [{ deviceId: "d1", deviceName: "WEB-01", restart: true, server: true, online: true }],
         }),
         "POST /patching/restart": ok({ succeeded: 1, failed: 0, results: [{ deviceId: "d1", deviceName: "WEB-01", ok: true, jobId: "j8" }] }),
@@ -988,9 +985,9 @@ describe("device patches", () => {
     expect(main().getByText("Windows Update")).toBeInTheDocument();
     await user.click(main().getByRole("button", { name: "Restart…" }));
     const dialog = await screen.findByRole("dialog", { name: "Restart WEB-01" });
-    // An engine before 1.10.0 cannot tell servers apart, so every device waits for a tick.
-    expect(await within(dialog).findByText("Tick each device to restart")).toBeInTheDocument();
-    expect(within(dialog).getByText(/older than 1\.10\.0/)).toBeInTheDocument();
+    // A server waits for its tick.
+    expect(await within(dialog).findByText("Servers restart only when you tick them")).toBeInTheDocument();
+    expect(within(dialog).getByText("A restart interrupts everyone using the server.")).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "Restart" })).toBeDisabled();
     expect(within(dialog).getByRole("checkbox", { name: "Only if a restart is pending" })).toBeChecked();
     await user.click(within(dialog).getByRole("checkbox", { name: "Restart WEB-01" }));
@@ -1014,7 +1011,7 @@ describe("device patches", () => {
     const pending: DevicePatching = { ...LINKED, endpoint: { ...LINKED.endpoint!, summary: { ...LINKED.endpoint!.summary, rebootPending: true } } };
     installFakeApi(
       deviceRoutes(pending, {
-        "POST /patching/restart/plan": ok({ serversKnown: true, devices: [{ deviceId: "d1", deviceName: "WEB-01", restart: true, server: false, online: true }] }),
+        "POST /patching/restart/plan": ok({ devices: [{ deviceId: "d1", deviceName: "WEB-01", restart: true, server: false, online: true }] }),
         "POST /patching/restart": fail(422, "validation_failed", "Some fields need attention.", {
           confirmServers: "These are servers; confirm restarting them: WEB-01.",
         }),

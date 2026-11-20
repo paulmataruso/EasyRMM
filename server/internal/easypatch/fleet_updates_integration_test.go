@@ -498,10 +498,7 @@ func TestCatalogSites(t *testing.T) {
 func TestRestartStatements(t *testing.T) {
 	f := newFleetFixture(t)
 	ctx := f.ctx
-	f.engine.Set(func() {
-		f.engine.Version = "1.10.0"
-		f.eWeb.RebootPending = true
-	})
+	f.engine.Set(func() { f.eWeb.RebootPending = true })
 	if plan, err := f.svc.PlanRestart(ctx, f.tech, []uuid.UUID{f.web}, ""); err != nil || !plan.Devices[0].Restart {
 		t.Fatalf("plan: %+v, %v", plan, err)
 	}
