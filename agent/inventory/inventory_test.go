@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
@@ -307,5 +308,33 @@ func TestSystemInterfacesAndLookPath(t *testing.T) {
 	}
 	if strings.Join(names, " ") != "ens33 br-0dd7 docker0" {
 		t.Errorf("order %v", names)
+	}
+}
+
+// A query past its deadline is asked to stop before it is killed: rpm killed
+// outright can leave its Berkeley DB database needing recovery.
+func TestQueryAskedToStopFirst(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	marker := filepath.Join(t.TempDir(), "stopped")
+	script := `trap 'touch ` + marker + `; exit 7' TERM; sleep 30 >/dev/null 2>&1 & wait`
+	if _, err := output(ctx, "/bin/sh", "-c", script); err == nil {
+		t.Error("a query past its deadline succeeded")
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("not asked to stop: %v", err)
+	}
+
+	old := stopGrace
+	stopGrace = 300 * time.Millisecond
+	t.Cleanup(func() { stopGrace = old })
+	ctx2, cancel2 := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel2()
+	start := time.Now()
+	if _, err := output(ctx2, "/bin/sh", "-c", `trap '' TERM; sleep 5`); err == nil {
+		t.Error("a query that would not stop succeeded")
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("took %v: not killed after the grace period", took)
 	}
 }

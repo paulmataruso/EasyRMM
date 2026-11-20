@@ -22,6 +22,11 @@ type windowsSystem struct{}
 
 func hide(cmd *exec.Cmd) { cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true} }
 
+// stopGently leaves Windows programs to be ended when their deadline passes:
+// Windows has no signal to ask msiexec to stop, and Windows Installer rolls
+// back an install its client did not finish.
+func stopGently(*exec.Cmd) {}
+
 func (windowsSystem) Formats() ([]string, error) { return []string{agentproto.EasyPatchMSI}, nil }
 
 func (windowsSystem) Install(ctx context.Context, p *agentproto.EasyPatchInstallPayload, _ agentproto.EasyPatchPackage, file string) error {

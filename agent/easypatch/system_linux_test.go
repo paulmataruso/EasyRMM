@@ -108,6 +108,24 @@ func TestLinuxInstall(t *testing.T) {
 	if got := calls(t, dir); got != "dnf install -y /tmp/a.rpm\ndnf install -y /tmp/a.rpm\n" {
 		t.Errorf("rpm: %q", got)
 	}
+	// An RPM database left needing recovery (RHEL 8's Berkeley DB) names the fix.
+	dir = t.TempDir()
+	damaged := "#!/bin/sh\necho 'error: rpmdb: BDB0113 Thread/process 1234/0 failed: BDB1507 Thread died in Berkeley DB library'\n" +
+		"echo 'error: db5 error(-30973) from dbenv->failchk: BDB0087 DB_RUNRECOVERY: Fatal error, run database recovery'\n" +
+		"echo 'error: cannot open Packages index using db5 - (-30973)'\necho 'Error: Error: rpmdb open failed'\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "dnf"), []byte(damaged), 0o755); err != nil { //nolint:gosec // a test script
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+"/usr/bin:/bin")
+	err = l.Install(ctx, &p, rpm, "/tmp/a.rpm")
+	if err == nil || !strings.Contains(err.Error(), "dnf could not install the EasyPatch agent (exit code 1)") ||
+		!strings.Contains(err.Error(), "run rpm --rebuilddb as root, then install again") {
+		t.Errorf("damaged RPM database: %v", err)
+	}
+	if rpmDatabaseDamaged([]byte("Error: Unable to find a match: easypatch-agent")) {
+		t.Error("an ordinary dnf failure taken for a damaged database")
+	}
+
 	t.Setenv("PATH", t.TempDir())
 	if err := l.Install(ctx, &p, rpm, "/tmp/a.rpm"); err == nil || !strings.Contains(err.Error(), "running dnf") {
 		t.Errorf("no dnf: %v", err)
