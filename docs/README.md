@@ -61,6 +61,8 @@ Everything about running, using and building EasyRMM. Start with the
 * [Development guide](development/README.md): layout, builds, tests and CI.
 * [Developing the technician console](development/web-console.md)
 * [Drills](development/drills.md): backup and restore, load and soak.
+* [Hand test: software on Windows](development/windows-software-hand-test.md):
+  winget and Chocolatey on a real computer.
 * [Releasing](development/releasing.md)
 * [Diagrams](images/diagrams/README.md): how the diagrams are drawn.
 * Outside `docs/`: [CONTRIBUTING.md](../CONTRIBUTING.md),

@@ -21,7 +21,8 @@ follows when these have been run there, or fixed:
   [ADR-0044](docs/architecture/adr/0044-authentik-when-chosen.md)).
 * Patching alerts and monthly reports through a real mail server and webhook.
 * The winget and Chocolatey software scripts on Windows
-  ([ADR-0028](docs/architecture/adr/0028-software-deployment.md)).
+  ([ADR-0028](docs/architecture/adr/0028-software-deployment.md)), with the
+  [hand test](docs/development/windows-software-hand-test.md).
 * On Windows: the rollback of an agent update that crashes, a `cmd` script's
   time-out ending its child processes, and ARM64.
 * Enrollment with approval and the EasyPatch agent's dnf install on more

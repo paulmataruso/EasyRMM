@@ -53,6 +53,15 @@ All notable changes to this project are documented here. The format follows
   They now say no passkey or security key answered and suggest reloading the
   page. Browsers report a closed prompt the same way, so it is a note, not an
   error.
+- **Software on Windows treats a missing package as Linux does.**
+  *Uninstall* of a package that is not installed now succeeds with winget
+  and Chocolatey, as the guide says, instead of failing; *Update* of one
+  fails with exit code 3 and says it is not installed; a winget *Install* of
+  an ID the `winget` source does not have says so. Chocolatey's check uses
+  its own list of installed packages, so `choco` does not run.
+  The guide also said winget's *Install* leaves an installed package as it
+  is; winget updates it when a newer version exists, and the guide now says
+  so.
 
 ## [1.0.0-rc.2] - 2026-11-20
 
