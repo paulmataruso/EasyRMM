@@ -15,14 +15,14 @@ namespace EasyPatch.Tests.Integration;
 /// <summary>Downloading updates ahead of the maintenance window (policy "download before the window", Windows agents 1.8.0+).</summary>
 public sealed class PreDownloadTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
-    private AdminSession root = null!;
+    private AdminClient root = null!;
     private OrganizationDto org = null!;
     private SiteDto site = null!;
 
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        root = await SuperAdminAsync();
+        root = SuperAdmin();
         (org, site) = await CreateOrgAsync(root);
     }
 
@@ -49,7 +49,7 @@ public sealed class PreDownloadTests(PostgresFixture postgres) : IntegrationTest
             Missing = [update],
             Installed = [],
         });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.NoContent);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.NoContent);
         return agent;
     }
 
@@ -90,7 +90,7 @@ public sealed class PreDownloadTests(PostgresFixture postgres) : IntegrationTest
         Assert.Empty((await CheckInAsync(old, false)).Jobs);
         using (var ack = await agent.PostAsync($"api/v1/agents/jobs/{job.Id}/ack", new { }))
         {
-            await AdminSession.EnsureAsync(ack, HttpStatusCode.OK);
+            await AdminClient.EnsureAsync(ack, HttpStatusCode.OK);
         }
 
         using (var report = await agent.PostAsync($"api/v1/agents/jobs/{job.Id}/status", new JobStatusReport
@@ -106,7 +106,7 @@ public sealed class PreDownloadTests(PostgresFixture postgres) : IntegrationTest
             Result = new JobResultSummary { Planned = 1, Succeeded = 1 },
         }))
         {
-            await AdminSession.EnsureAsync(report, HttpStatusCode.NoContent);
+            await AdminClient.EnsureAsync(report, HttpStatusCode.NoContent);
         }
 
         var detail = await root.GetAsync<JobDetailDto>($"/api/v1/jobs/{job.Id}");

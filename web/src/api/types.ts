@@ -139,6 +139,8 @@ export interface SessionItem {
 export interface Organization {
   id: string;
   name: string;
+  /** IANA time zone; patching's monthly reports use it. */
+  timezone: string;
   notes: string;
   siteCount: number;
   createdAt: string;
@@ -150,6 +152,7 @@ export interface Organization {
 
 export interface OrganizationInput {
   name: string;
+  timezone: string;
   notes: string;
 }
 
@@ -355,6 +358,8 @@ export interface EnrollmentToken {
   lastUsedAt: string | null;
   revokedAt: string | null;
   status: EnrollmentTokenStatus;
+  /** The secret was kept, so an active token's install commands can be shown again (ADR-0047). */
+  kept: boolean;
 }
 
 export interface EnrollmentTokenInput {
@@ -364,7 +369,7 @@ export interface EnrollmentTokenInput {
   maxUses: number | null;
 }
 
-/** A created token; the secret is in no other response. */
+/** A token with its secret: when it is created, and when it is shown again. */
 export interface NewEnrollmentToken {
   token: EnrollmentToken;
   secret: string;
@@ -388,6 +393,8 @@ export interface ApprovalToken {
   lastUsedAt: string | null;
   revokedAt: string | null;
   status: EnrollmentTokenStatus;
+  /** The secret was kept, so an active token's install commands can be shown again (ADR-0047). */
+  kept: boolean;
 }
 
 export interface ApprovalTokenInput {
@@ -396,7 +403,7 @@ export interface ApprovalTokenInput {
   maxUses: number | null;
 }
 
-/** A created approval token; the secret is in no other response. */
+/** An approval token with its secret: when it is created, and when it is shown again. */
 export interface NewApprovalToken {
   token: ApprovalToken;
   secret: string;
@@ -911,7 +918,7 @@ export interface AlertSummary {
 
 // --- Reports (ADR-0029) --------------------------------------------------------------------
 
-export type ReportName = "devices" | "software" | "health" | "alerts";
+export type ReportName = "devices" | "software" | "health" | "alerts" | "patch-compliance" | "patch-installations";
 
 export interface ReportColumn {
   key: string;
@@ -936,32 +943,22 @@ export interface Report {
 }
 
 // ---------------------------------------------------------------------------------------------
-// EasyPatch (ADR-0030)
+// EasyPatch, the patching engine in this deployment (ADR-0038, ADR-0046)
 // ---------------------------------------------------------------------------------------------
 
-/** The EasyPatch server EasyRMM patches through. The API token is never sent back. */
+/** The patching engine EasyRMM calls on this server. The deployment sets it up; Settings only shows it. */
 export interface EasyPatchConnection {
+  /** False only when the deployment has no patching engine. */
   configured: boolean;
   url: string;
   caCert: string;
   serverVersion: string;
   publicUrl: string;
-  /** Optional features the server lists: "scheduled-installs", "on-behalf-of". */
+  /** Optional features the engine lists: "scheduled-installs". */
   capabilities: string[];
-  /** The token is an Admin token; a ReadOnly one only reads. */
-  canOperate: boolean;
   checkedAt?: string;
   lastError?: string;
   lastErrorAt?: string;
-  updatedAt?: string;
-  updatedBy?: string;
-}
-
-export interface EasyPatchConnectionInput {
-  url: string;
-  /** Empty keeps the stored token, on the same server. */
-  token: string;
-  caCert: string;
 }
 
 export interface EasyPatchOrganization {
@@ -991,6 +988,32 @@ export interface EasyPatchOrganizations {
   error?: string;
 }
 
+/** How keeping the patching engine in step with EasyRMM goes (ADR-0040). */
+export interface PatchingSync {
+  /** When the last pass ended. */
+  at?: string;
+  /** What the last pass could not do; the next one tries again. */
+  problems: string[];
+  /** Deleted organizations and sites the engine has yet to archive. */
+  archiving: number;
+  /** EasyPatch agents being removed. */
+  removing: number;
+}
+
+/** Patching stopped for a device: its EasyPatch agent removed, and none installed again. */
+export interface PatchingStop {
+  at: string;
+  by?: string;
+}
+
+/** EasyRMM removing a device's EasyPatch agent. */
+export interface AgentRemoval {
+  reason: "opted_out" | "moved" | "deleted";
+  state: "pending" | "uninstalling";
+  requestedAt: string;
+  error?: string;
+}
+
 /** Whether EasyRMM patches a device: linked to its EasyPatch endpoint, refused (with a reason), being checked, or no EasyPatch agent. */
 export type PatchLink = "linked" | "unlinked" | "pending" | "none";
 
@@ -1005,11 +1028,9 @@ export interface EasyPatchDeviceLink {
 }
 
 export interface PatchStatus {
+  /** False only when the deployment has no patching engine. */
   configured: boolean;
-  canOperate: boolean;
   canSchedule: boolean;
-  /** EasyPatch's own console, to open in a new tab. */
-  consoleUrl?: string;
 }
 
 export type ComplianceStatus = "Compliant" | "MissingUpdates" | "FailedUpdates" | "RebootRequired" | "ScanStale" | "NeverScanned";
@@ -1072,13 +1093,122 @@ export interface PatchFleetDevice {
   checkedAt?: string;
   /** The EasyPatch agent's install, when one was asked for. */
   install?: AgentInstall;
+  /** Patching is stopped for the device. */
+  stopped?: PatchingStop;
+  /** EasyRMM is removing the device's EasyPatch agent. */
+  removal?: AgentRemoval;
 }
 
 export interface PatchFleet {
   devices: PatchFleetDevice[];
+  /**
+   * EasyPatch endpoints of organizations the caller sees whole that no EasyRMM device is linked to (one-product plan,
+   * C2); only without site, group, status or name filters.
+   */
+  unmatched: PatchUnmatchedEndpoint[];
   truncated: boolean;
   /** EasyPatch organizations that could not be read, with why. */
   errors: string[];
+}
+
+/** An EasyPatch endpoint with no EasyRMM device; organizationId and organizationName are EasyRMM's. */
+export type PatchUnmatchedEndpoint = PatchEndpoint;
+
+/** One update across the devices in a scope (Patching → Updates). */
+export interface PatchFleetUpdate {
+  updateGuid: string;
+  title: string;
+  kbNumber: string;
+  category: string;
+  msrcSeverity: string;
+  releaseDate: string | null;
+  sizeBytes: number | null;
+  missingCount: number;
+  failedCount: number;
+  installedCount: number;
+  /** Installed and waiting for a restart. */
+  pendingRebootCount: number;
+  excludedCount: number;
+  package: { name: string; version: string; installedVersion: string; repository: string; advisories: string[] | null } | null;
+  cveCount: number;
+  knownExploited: boolean;
+  reofferedCount: number;
+  onHold: boolean;
+}
+
+/** A CVE an update fixes; kev: in CISA's Known Exploited Vulnerabilities catalog. */
+export interface PatchVulnerability {
+  cveId: string;
+  title: string;
+  severity: string;
+  cvssBase: number | null;
+  msrcExploited: boolean;
+  kev: boolean;
+  kevDateAdded: string | null;
+  kevDueDate: string | null;
+  kevRansomware: boolean;
+  kevName: string;
+}
+
+/** An update EasyPatch does not install automatically: in one organization (EasyRMM's), or in every one. */
+export interface PatchHold {
+  id: string;
+  updateGuid: string;
+  title: string;
+  kbNumber: string;
+  organizationId: string | null;
+  organizationName: string;
+  /** Automatic: EasyPatch's rollout guard, after installs failed. */
+  source: "Automatic" | "Manual" | string;
+  reason: string;
+  failedEndpoints: number | null;
+  attemptedEndpoints: number | null;
+  createdAt: string;
+  createdBy: string;
+  releasedAt: string | null;
+  releasedBy: string;
+  canRelease: boolean;
+}
+
+export interface PatchUpdateView {
+  summary: PatchFleetUpdate;
+  description: string;
+  supportUrl: string;
+  kbNumbers: string[];
+  products: string[];
+  msClassification: string;
+  rebootLikely: boolean;
+  supersededUpdateGuids: string[];
+  vulnerabilities: PatchVulnerability[];
+  holds: PatchHold[];
+  /** May install or remove updates somewhere; each device says where. */
+  canManage: boolean;
+  /** May hold it: patch.configure in an organization, or everywhere. */
+  canHold: boolean;
+  /** The organizations it can be held in, by name. */
+  holdIn: { id: string; name: string }[];
+  /** May hold it in every organization (super administrators). */
+  canHoldEverywhere: boolean;
+}
+
+/** A device, or an EasyPatch endpoint without one (deviceId null), that reports an update. */
+export interface PatchUpdateDevice {
+  endpointId: string;
+  hostname: string;
+  deviceId: string | null;
+  deviceName: string;
+  organizationName: string;
+  siteName: string;
+  platform: string;
+  isOnline: boolean;
+  state: PatchUpdateState;
+  isRequired: boolean;
+  isExcluded: boolean;
+  failedAttempts: number;
+  errorCode: string;
+  errorMessage: string;
+  stateChangedAt: string;
+  canManage: boolean;
 }
 
 export interface PatchEndpointDetail {
@@ -1091,9 +1221,74 @@ export interface PatchEndpointDetail {
   installedCount: number;
   pendingRebootUpdateCount: number;
   complianceEvaluatedAt: string | null;
+  /** The job the endpoint is working on, if any. */
+  activeJob: PatchJob | null;
+  /** What the agent can do: PATCH_AGENT_CAN. */
+  agentCapabilities: string[] | null;
+  /** Signed-in sessions, and those with the EasyPatch tray, at the latest check-in; null until the agent reports them. */
+  signedInUsers: number | null;
+  trayConnectedSessions: number | null;
+  /** The endpoint has its own policy layer. */
+  hasOwnPolicy: boolean;
+  agentUpdate: PatchAgentUpdate | null;
+  /** What a pending restart is for; null when none is. */
+  restart: PatchRestartDetails | null;
+  /** How the agent applied the policy's Windows Update settings (Windows only). */
+  windowsUpdatePolicy: {
+    groups: { group: string; state: string; message: string; appliedAt: string | null; conflictingValues: string[] | null }[] | null;
+    mdmUpdatePoliciesPresent: boolean;
+  } | null;
 }
 
-/** When EasyPatch installs updates on its own, from the endpoint's effective policy. */
+/** What EasyPatch agents report they can do. */
+export const PATCH_AGENT_CAN = { notifyUser: "notify-user", uninstallUpdates: "uninstall-updates", tray: "tray", restart: "restart" } as const;
+
+/** Whether the agent can update itself, and to what. */
+export interface PatchAgentUpdate {
+  supported: boolean;
+  /** The "Agent updates" policy is Automatic. */
+  automaticUpdates: boolean;
+  /** The newer signed package an update would install; empty with a code and message saying why not. */
+  availableVersion: string;
+  code: string;
+  message: string;
+  packageFormat: string;
+}
+
+export interface PatchRestartDetails {
+  updates: { updateGuid: string | null; title: string; kbNumbers: string[] | null; source: string; installedAt: string | null }[] | null;
+  /** Pending Windows servicing packages that name no KB. */
+  servicingPackages: string[] | null;
+  /** The first 25 file operations Windows has queued. */
+  fileOperations: { action: string; path: string }[] | null;
+  fileOperationCount: number;
+  /** The agent reports what Windows has queued (Windows agent 1.5.3 and later). */
+  detailsSupported: boolean;
+}
+
+/** A recurring restart. "HH:mm" in the policy's time zone; days 0 (Sunday) to 6. */
+export interface PatchRestartSchedule {
+  enabled: boolean;
+  days: number[] | null;
+  time: string;
+  /** OnlyIfPending or Always. */
+  condition: string;
+  /** Immediate, Countdown, PromptWithDeadline or PromptNoDeadline. */
+  mode: string;
+  countdownMinutes: number;
+  deadlineMinutes: number;
+  expiryMinutes: number;
+}
+
+/** Windows Update's own settings that EasyPatch manages; a null group is not managed. */
+export interface PatchWindowsUpdate {
+  automaticUpdates: { mode: string; scheduledInstallDay: number; scheduledInstallHour: number } | null;
+  featureUpdates: { deferDays: number | null; targetProductVersion: string; targetReleaseVersion: string } | null;
+  qualityUpdates: { deferDays: number | null; disablePause: boolean } | null;
+  restartBehavior: { noAutoRestartWithSignedInUsers: boolean; activeHoursStart: number | null; activeHoursEnd: number | null } | null;
+}
+
+/** An endpoint's effective EasyPatch policy, with the layer each value comes from. */
 export interface PatchPolicy {
   autoInstallEnabled: boolean;
   /** 0 is Sunday. */
@@ -1107,6 +1302,488 @@ export interface PatchPolicy {
   includeOptional: boolean;
   installDelayDays: number;
   securityInstallDelayDays: number;
+  checkInIntervalSeconds: number;
+  inventoryIntervalMinutes: number;
+  jitterPercent: number;
+  excludedKbs: string[] | null;
+  acceptEulas: boolean;
+  scanStaleAfterHours: number;
+  maxConcurrentInstallsPerSite: number;
+  trayIconEnabled: boolean;
+  installNotificationsEnabled: boolean;
+  agentAutoUpdateEnabled: boolean;
+  knownExploitedSkipsDelay: boolean;
+  /** Hours before the maintenance window that Windows agents download updates; 0 is off. */
+  preDownloadHours: number;
+  restartSchedule: PatchRestartSchedule | null;
+  windowsUpdate: PatchWindowsUpdate | null;
+  windowsUpdateValues: { group: string; path: string; name: string; value: string }[] | null;
+  applicationUpdates: { enabled: boolean; approvedApps: string[] | null } | null;
+  /** The layer that set each value (Global, Organization, Site, Tag or Endpoint), keyed by its name; EasyPatch writes the keys in PascalCase. */
+  sources: Record<string, string> | null;
+  /** The tag whose policy set a value. */
+  sourceTags: Record<string, string> | null;
+}
+
+/** The levels of an EasyPatch policy (one-product plan, C4). */
+export type PolicyLevel = "default" | "organization" | "site" | "device" | "tag";
+
+type WindowsUpdateGroups = { [K in keyof PatchWindowsUpdate]: NonNullable<PatchWindowsUpdate[K]> };
+
+/** One group of Windows Update settings at one level: not managed leaves Windows alone, even when a level above manages it. */
+export interface PatchGroupSetting<T> {
+  managed: boolean;
+  value: T | null;
+}
+
+/** One level's own policy: null inherits. The window, the restart schedule, application updates and each Windows Update group are set as a whole. */
+export interface PatchPolicyLayer {
+  checkInIntervalSeconds: number | null;
+  scanIntervalMinutes: number | null;
+  inventoryIntervalMinutes: number | null;
+  jitterPercent: number | null;
+  allowedCategories: string[] | null;
+  includeOptional: boolean | null;
+  /** Added to the levels' above: a level cannot lift what it inherits. */
+  excludedKbs: string[] | null;
+  acceptEulas: boolean | null;
+  autoInstallEnabled: boolean | null;
+  /** Set means this level has a window; an empty list is no window. */
+  maintenanceDays: number[] | null;
+  maintenanceStart: string | null;
+  maintenanceDurationMinutes: number | null;
+  preDownloadHours: number | null;
+  installDelayDays: number | null;
+  securityInstallDelayDays: number | null;
+  knownExploitedSkipsDelay: boolean | null;
+  scanStaleAfterHours: number | null;
+  maxConcurrentInstallsPerSite: number | null;
+  trayIconEnabled: boolean | null;
+  installNotificationsEnabled: boolean | null;
+  agentAutoUpdateEnabled: boolean | null;
+  restartSchedule: PatchRestartSchedule | null;
+  windowsUpdate: { [K in keyof WindowsUpdateGroups]: PatchGroupSetting<WindowsUpdateGroups[K]> | null } | null;
+  applicationUpdates: { enabled: boolean; approvedApps: string[] | null } | null;
+}
+
+/** A level's policy for the editor: its own values and what it inherits, already resolved by the server. */
+export interface PatchPolicyView {
+  level: PolicyLevel;
+  name: string;
+  own: PatchPolicyLayer;
+  hasOwn: boolean;
+  updatedAt?: string;
+  /** Every value set. */
+  inherited: PatchPolicyLayer;
+  /** The level each inherited value comes from ("Default policy", "Organization", "Site", "Tag Ring 1", "EasyPatch's defaults"), keyed by its field. */
+  inheritedFrom: Record<string, string>;
+  /** The time zone of the window and the restart schedule; empty when each device's own applies. */
+  timeZone?: string;
+  /** False for a device that is not a Windows computer. */
+  windows: boolean;
+  canEdit: boolean;
+  organizationId?: string;
+}
+
+export type TagColor = "gray" | "blue" | "green" | "amber" | "red" | "purple" | "teal" | "pink";
+
+/** An EasyPatch tag. Counts are 0 for someone who does not see every organization. */
+export interface PatchTag {
+  id: string;
+  name: string;
+  color: TagColor;
+  description: string | null;
+  /** The highest priority's policy applies last and wins. */
+  priority: number;
+  endpointCount: number;
+  siteCount: number;
+  organizationCount: number;
+  hasPolicy: boolean;
+  createdAt: string;
+}
+
+/** One day of compliance, added up over the organizations a report covers (one-product plan, C5). */
+export interface PatchTrendPoint {
+  /** 2006-01-02 */
+  date: string;
+  totalEndpoints: number;
+  compliant: number;
+  missingUpdates: number;
+  failedUpdates: number;
+  rebootRequired: number;
+  scanStale: number;
+  neverScanned: number;
+  offline: number;
+  missingRequiredUpdates: number;
+  compliancePercent: number;
+}
+
+export interface PatchTrend {
+  points: PatchTrendPoint[];
+  /** The organizations the caller sees whole, which the trend adds up. */
+  organizations: number;
+}
+
+export type PatchDeliveryStatus = "Pending" | "Sending" | "Sent" | "Failed";
+
+export interface PatchMonthlyReport {
+  id: string;
+  organizationId: string;
+  organizationName: string;
+  /** The month's first day and last (today for a report of the month so far), as 2006-01-02. */
+  periodStart: string;
+  periodEnd: string;
+  monthToDate: boolean;
+  scheduled: boolean;
+  generatedAt: string;
+  generatedBy?: string;
+  fileName: string;
+  sizeBytes: number;
+  deliveryStatus?: PatchDeliveryStatus | "";
+  recipients: string[];
+  sentAt?: string | null;
+  lastError?: string;
+  canManage: boolean;
+}
+
+export interface PatchMonthlyReportList {
+  items: PatchMonthlyReport[];
+  /** There are older reports than the list holds. */
+  capped: boolean;
+  /** The organizations the caller may make reports of. */
+  canGenerate: string[];
+}
+
+export interface PatchReportSchedule {
+  organizationId: string;
+  organizationName: string;
+  enabled: boolean;
+  recipients: string[];
+  /** 1 to 28: the day the month before's report is made and emailed. */
+  dayOfMonth: number;
+  includeEndpointList: boolean;
+  /** In the organization's time zone, as 2006-01-02. */
+  nextReportDate?: string | null;
+  nextReportPeriod?: string | null;
+  timeZone: string;
+  canEdit: boolean;
+}
+
+/** EasyPatch's server settings as Settings → Patching → Server shows them (one-product plan, C6). */
+export interface PatchServerSettings {
+  globalMaxConcurrentInstalls: number;
+  jobDefaultExpiryHours: number;
+  runningJobTimeoutHours: number;
+  waitingForRebootExpiryDays: number;
+  deliveryLeaseMinutes: number;
+  maxDeliveryAttempts: number;
+  offlineThresholdMinutes: number;
+  credentialLifetimeDays: number;
+  credentialRotateBeforeDays: number;
+  retentionEventsDays: number;
+  retentionAuditDays: number;
+  retentionJobsDays: number;
+  retentionScansDays: number;
+  retentionHistoryDays: number;
+  retentionReportsMonths: number;
+  vulnerabilityFeedsEnabled: boolean;
+  /** The "Prepared by" line of monthly reports; null leaves it out. */
+  reportBrandName: string | null;
+  rolloutGuardEnabled: boolean;
+  rolloutGuardMinFailedEndpoints: number;
+  rolloutGuardFailurePercent: number;
+  rolloutGuardWindowDays: number;
+}
+
+/** A vulnerability feed EasyPatch's worker downloads: kev, msrc or debian. */
+export interface PatchVulnerabilityFeed {
+  name: string;
+  lastAttemptAt?: string | null;
+  lastSuccessAt?: string | null;
+  lastError?: string;
+  version?: string;
+  itemCount: number;
+}
+
+export interface PatchSettingsView {
+  settings: PatchServerSettings;
+  feeds: PatchVulnerabilityFeed[];
+  version: string;
+  /** Only super administrators change them. */
+  canEdit: boolean;
+}
+
+/** An operating system build's end of servicing, matched by product, edition group and build. Dates are 2006-01-02. */
+export interface PatchLifecycleInput {
+  product: string;
+  editionGroup: string;
+  buildNumber: number;
+  versionLabel: string;
+  endOfServicing: string;
+  esuEndDate: string | null;
+  notes: string | null;
+}
+
+export interface PatchLifecycleEntry extends PatchLifecycleInput {
+  id: string;
+}
+
+export interface PatchLifecycleList {
+  items: PatchLifecycleEntry[];
+  /** Only super administrators change it. */
+  canEdit: boolean;
+}
+
+/** An EasyPatch agent package, with where to download it. */
+export interface PatchAgentPackage {
+  fileName: string;
+  version: string;
+  architecture: string;
+  sizeBytes: number;
+  sha256: string;
+  isLatest: boolean;
+  /** msi, deb, rpm or pkg. */
+  format: string;
+  releaseKeyId?: string;
+  signatureProblem?: string;
+  url: string;
+}
+
+/** An entry of EasyPatch's own audit log. */
+export interface PatchAuditEntry {
+  id: number;
+  createdAt: string;
+  /** An EasyRMM user's name (via easyrmm), an EasyPatch user or API token (easypatch), or EasyPatch itself (system). */
+  actor: string;
+  via: "easyrmm" | "easypatch" | "system";
+  action: string;
+  targetType?: string;
+  targetId?: string;
+  organizationId?: string;
+  organizationName?: string;
+  deviceId?: string;
+  deviceName?: string;
+  /** JSON, as EasyPatch recorded it. */
+  details?: string;
+  ipAddress?: string;
+}
+
+export interface PatchAuditPage {
+  items: PatchAuditEntry[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+  /** Includes the entries of no organization, for those who audit everywhere. */
+  everything: boolean;
+}
+
+// EasyPatch's alerts, alert rules and notification channels (one-product plan, C7).
+
+export type PatchAlertSeverity = "Critical" | "Warning" | "Info";
+export type PatchAlertStatus = "Open" | "Acknowledged" | "Resolved";
+export type PatchAlertRuleKind =
+  | "EndpointOffline"
+  | "InstallFailed"
+  | "SecurityUpdateMissing"
+  | "ScanStale"
+  | "RestartPending"
+  | "EnrollmentPending"
+  | "OsUnsupported"
+  | "KnownExploitedMissing"
+  | "UpdateHeld";
+
+export interface PatchAlert {
+  id: string;
+  ruleId: string | null;
+  ruleName: string | null;
+  ruleType: PatchAlertRuleKind;
+  severity: PatchAlertSeverity;
+  status: PatchAlertStatus;
+  title: string;
+  details: string | null;
+  /** EasyRMM's organization. */
+  organizationId: string;
+  organizationName: string;
+  /** The EasyRMM device, when the endpoint is one; none for an organization's alert. */
+  deviceId?: string;
+  deviceName?: string;
+  /** EasyPatch's name for the endpoint, which an endpoint with no EasyRMM device has only. */
+  hostname: string | null;
+  openedAt: string;
+  lastSeenAt: string;
+  resolvedAt: string | null;
+  acknowledgedAt: string | null;
+  acknowledgedBy: string | null;
+  canAcknowledge: boolean;
+}
+
+export interface PatchAlertList {
+  items: PatchAlert[];
+  /** More match than were listed. */
+  capped: boolean;
+}
+
+/** Unresolved alerts: open leaves out the acknowledged; the severities count both. */
+export interface PatchAlertCounts {
+  open: number;
+  acknowledged: number;
+  critical: number;
+  warning: number;
+  info: number;
+  capped: boolean;
+}
+
+export interface PatchAlertRuleType {
+  type: PatchAlertRuleKind;
+  thresholdUnit: "hours" | "days" | null;
+  thresholdMin: number | null;
+  thresholdMax: number | null;
+  thresholdDefault: number | null;
+  /** Looks at devices one by one, so it can be limited to a tag. */
+  supportsTag: boolean;
+}
+
+export interface PatchAlertRuleInput {
+  name: string;
+  type: PatchAlertRuleKind;
+  enabled: boolean;
+  severity: PatchAlertSeverity;
+  threshold: number | null;
+  /** EasyRMM's organization; none covers every one. */
+  organizationId: string | null;
+  tagId: string | null;
+  channelIds: string[];
+  notifyOnResolve: boolean;
+  /** 0 never reminds. */
+  renotifyHours: number;
+}
+
+export interface PatchAlertRule extends PatchAlertRuleInput {
+  id: string;
+  thresholdUnit: string | null;
+  organizationName?: string;
+  /** Covers an EasyPatch organization EasyRMM does not link. */
+  unlinkedOrganization?: boolean;
+  tagName?: string;
+  unresolvedAlerts: number;
+  updatedAt: string;
+}
+
+export interface PatchChannelRef {
+  id: string;
+  name: string;
+  type: "Email" | "Webhook";
+  enabled: boolean;
+}
+
+export interface PatchAlertRuleList {
+  items: PatchAlertRule[];
+  types: PatchAlertRuleType[];
+  channels: PatchChannelRef[];
+}
+
+export type PatchWebhookFormat = "Generic" | "Slack" | "Teams";
+/** A message to a notification channel; the worker retries one that failed until its attempts run out. */
+export type PatchNotificationStatus = "Pending" | "Sent" | "Failed";
+
+export interface PatchChannel {
+  id: string;
+  name: string;
+  type: "Email" | "Webhook";
+  enabled: boolean;
+  emailRecipients: string[];
+  webhookFormat: PatchWebhookFormat | null;
+  /** EasyPatch never gives a webhook's address back, only its host. */
+  webhookHost: string | null;
+  hasSigningSecret: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastDelivery: { status: PatchNotificationStatus; createdAt: string; lastError: string | null } | null;
+}
+
+export interface PatchChannelInput {
+  name: string;
+  type: "Email" | "Webhook";
+  enabled: boolean;
+  emailRecipients: string[];
+  webhookFormat: PatchWebhookFormat | null;
+  /** None on a change keeps the stored address. */
+  webhookUrl: string | null;
+}
+
+export interface PatchChannelSaved {
+  channel: PatchChannel;
+  /** A generic webhook's signing key, shown this once. */
+  signingSecret: string | null;
+}
+
+export interface PatchDelivery {
+  id: string;
+  channelId: string;
+  channelName: string;
+  kind: "AlertsOpened" | "AlertsResolved" | "AlertsReminder" | "Test";
+  subject: string;
+  status: PatchNotificationStatus;
+  attempts: number;
+  lastError: string | null;
+  createdAt: string;
+  nextAttemptAt: string;
+  sentAt: string | null;
+}
+
+export interface PatchDeliveryPage {
+  items: PatchDelivery[];
+  page: number;
+  pageSize: number;
+  totalCount: number;
+}
+
+export interface PatchNotifications {
+  channels: PatchChannel[];
+  /** The mail server email channels send through: EasyRMM's, given to EasyPatch at each start. */
+  mail: { host: string; port: number; security: string; fromAddress: string; fromName: string };
+  allowPrivateNetworkWebhooks: boolean;
+}
+
+export interface PatchTagList {
+  items: PatchTag[];
+  canManage: boolean;
+}
+
+export interface PatchTagRef {
+  id: string;
+  name: string;
+  color: TagColor;
+  /** "Site" or "Organization" for a device's tag it has through them. */
+  inheritedFrom?: string;
+}
+
+export interface PatchAssignedTags {
+  tags: PatchTagRef[];
+  canAssign: boolean;
+}
+
+/** What installing on a device would do, from its last scan; the agent scans again before installing. */
+export interface PatchInstallPreview {
+  /** AllEligible or Selected. */
+  mode: string;
+  items: { updateGuid: string; title: string; kbNumber: string; category: string; sizeBytes: number | null; rebootBehavior: number | null; state: string }[];
+  /** Updates left out, with EasyPatch's reason code. */
+  skipped: { updateGuid: string; title: string; kbNumber: string; category: string; reason: string }[];
+  totalSizeBytes: number;
+  rebootLikelyCount: number;
+  warnings: string[];
+  filter: { categories: string[] | null; includeOptional: boolean } | null;
+  lastScanAt: string | null;
+}
+
+/** A message EasyPatch can show to the users of a Windows computer: there is no free text. */
+export interface PatchMessagePreset {
+  preset: string;
+  title: string;
+  /** "{time}" stands for the restart time when needsRestartTime. */
+  body: string;
+  needsRestartTime: boolean;
 }
 
 export interface DevicePatching {
@@ -1120,6 +1797,10 @@ export interface DevicePatching {
   policy?: PatchPolicy;
   /** The EasyPatch agent's install, when one was asked for. */
   install?: AgentInstall;
+  /** Patching is stopped for the device. */
+  stopped?: PatchingStop;
+  /** EasyRMM is removing the device's EasyPatch agent. */
+  removal?: AgentRemoval;
   /** Why EasyPatch could not be read just now. */
   error?: string;
 }
@@ -1131,6 +1812,7 @@ export interface PatchUpdate {
   updateGuid: string;
   title: string;
   kbNumber: string;
+  kbNumbers: string[] | null;
   category: string;
   msrcSeverity: string;
   releaseDate: string | null;
@@ -1151,6 +1833,8 @@ export interface PatchUpdate {
   deferredUntil: string | null;
   cveIds: string[] | null;
   knownExploited: boolean;
+  /** CISA's date for fixing an exploited vulnerability (YYYY-MM-DD). */
+  kevDueDate: string;
   holdReason: string;
 }
 
@@ -1223,12 +1907,24 @@ export interface PatchJobItem {
   completedAt: string | null;
 }
 
+/** The newest jobs that match, at most 200; `capped` when older ones were left out. */
+export interface PatchJobList {
+  items: PatchJobView[];
+  capped: boolean;
+}
+
 export interface PatchJobDetail {
   summary: PatchJob;
   installMode: string;
   notBefore: string | null;
   deliveredAt: string | null;
+  acknowledgedAt: string | null;
   lastProgressAt: string | null;
+  /** How many times the job was handed to the agent. */
+  deliveryCount: number;
+  /** The job this one runs again. */
+  retryOfJobId: string | null;
+  cancelRequestedAt: string | null;
   items: PatchJobItem[];
   events: { id: number; type: string; severity: string; message: string; createdAt: string }[];
   deviceId: string;
@@ -1248,48 +1944,13 @@ export interface PatchActionResult {
   results: { deviceId: string; deviceName: string; ok: boolean; jobId?: string; message?: string }[];
 }
 
-/** Whether to show the EasyRMM | EasyPatch switch, and whether EasyPatch was answering. */
-export interface ProductSwitch {
-  show: boolean;
-  /** False when a call to EasyPatch failed since its last good check. */
-  answering: boolean;
-  failingSince?: string;
-}
-
 /** Where a link from EasyPatch opens the console; `notice` says why it is not the page the link named. */
 export interface EasyPatchLanding {
   path: string;
   notice?: string;
 }
 
-/** EasyPatch's registration with EasyRMM's sign-in provider (ADR-0036), without its secret. */
-export interface EasyPatchSignInClient {
-  clientId: string;
-  redirectUri: string;
-  createdAt: string;
-  createdBy?: string;
-  rotatedAt?: string;
-  rotatedBy?: string;
-}
-
-/** Settings → EasyPatch → Sign-in. */
-export interface EasyPatchSignIn {
-  /** EasyPatch is set up and can sign people in through EasyRMM; otherwise `reason` says why not. */
-  available: boolean;
-  reason?: string;
-  issuer: string;
-  /** Where EasyPatch receives sign-ins, from its current address. */
-  redirectUri?: string;
-  client: EasyPatchSignInClient | null;
-}
-
-/** A new or rotated client, with its secret: shown once. */
-export interface EasyPatchSignInSecret extends EasyPatchSignInClient {
-  issuer: string;
-  clientSecret: string;
-}
-
-/** What EasyRMM's restart (only if a restart is pending) would do to one device. */
+/** What a restart would do to one device. */
 export interface RestartCheck {
   deviceId: string;
   deviceName: string;
@@ -1307,8 +1968,20 @@ export interface RestartPlan {
   serversKnown: boolean;
 }
 
+/** How a restart treats the people signed in. */
+export type RestartMode = "Countdown" | "PromptWithDeadline" | "PromptNoDeadline" | "Immediate";
+
 export interface RestartInput {
   deviceIds: string[];
+  mode?: RestartMode;
+  /** OnlyIfPending (the default): only if a restart is still pending when the job runs; Always: whatever the device reports. */
+  condition?: "OnlyIfPending" | "Always";
+  /** Countdown: 1 to 60 minutes. */
+  countdownMinutes?: number;
+  /** PromptWithDeadline: 15 minutes to 7 days. */
+  deadlineMinutes?: number;
+  /** How long a restart waits for an offline device: 15 minutes to 24 hours (EasyPatch's default is two hours). */
+  expiresAfterMinutes?: number;
   scheduledAt?: string;
   /** The servers the person ticked; any server not listed stops the whole request. */
   confirmServers?: string[];
@@ -1324,6 +1997,8 @@ export interface SsoProvider {
   trustEmail: boolean;
   trustMfa: boolean;
   enabled: boolean;
+  /** Set up by the deployment (Authentik in this deployment, ADR-0044): shown, but not changed or removed here. */
+  managed: boolean;
   createdAt: string;
   updatedAt: string;
 }

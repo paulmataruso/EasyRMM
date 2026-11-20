@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
@@ -81,11 +82,36 @@ func packageError(tool string, code int, out []byte, err error) error {
 	return nil
 }
 
+// Enroll enrolls the EasyPatch agent with the token on standard input. With
+// a certificate authority in the instruction (EasyRMM addressed by IP, with
+// its own authority), the agent is told to trust it for EasyPatch only
+// (--server-ca), as the MSI's SERVERCACERT does on Windows. An agent from
+// before that option refuses it as a usage error (exit code 2) before it
+// uses the token, and is enrolled again without it.
 func (l linuxSystem) Enroll(ctx context.Context, p *agentproto.EasyPatchInstallPayload) error {
 	if _, err := os.Stat(l.agent); err != nil {
 		return fmt.Errorf("the EasyPatch agent is not at %s after its package installed", l.agent)
 	}
-	code, out, err := run(ctx, p.Token, nil, l.agent, "enroll", "--server", p.ServerURL, "--token-file", "-")
+	args := []string{"enroll", "--server", p.ServerURL, "--token-file", "-"}
+	if p.CACert != "" {
+		dir, err := os.MkdirTemp("", "easyrmm-easypatch-ca-")
+		if err != nil {
+			return err
+		}
+		defer func() { _ = os.RemoveAll(dir) }()
+		ca := filepath.Join(dir, "server-ca.pem")
+		if err := os.WriteFile(ca, []byte(p.CACert), 0o600); err != nil {
+			return err
+		}
+		code, out, err := run(ctx, p.Token, nil, l.agent, append(args, "--server-ca", ca)...)
+		if err != nil {
+			return err
+		}
+		if code != 2 {
+			return enrollError(code, []byte(redact(string(out), p.Token)), p, false)
+		}
+	}
+	code, out, err := run(ctx, p.Token, nil, l.agent, args...)
 	if err != nil {
 		return err
 	}

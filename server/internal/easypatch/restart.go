@@ -16,11 +16,63 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Restarts and retries from EasyRMM (integration plan, P2). A restart is
-// always EasyRMM's one preset (restartPreset): only if a restart is still
-// pending when the job runs, after EasyPatch's default countdown, now or at a
-// chosen time. Servers are restarted only when the person confirmed each one
-// by name. Everything else about restarts stays in EasyPatch's console.
+// Restarts and retries from EasyRMM (integration plan, P2; one-product plan,
+// C3). A restart says how it treats the people signed in (a countdown, a
+// prompt with or without a deadline, or at once), whether it runs only when
+// a restart is pending when the job runs (the default) or always, when it
+// starts and how long it waits for an offline computer. Servers are
+// restarted only when the person confirmed each one by name.
+
+// maxAlwaysRestart is the most devices a restart that need not be pending
+// goes to at once: each is looked up in EasyPatch to tell servers apart.
+const maxAlwaysRestart = 100
+
+var (
+	restartModes      = []string{"Countdown", "PromptWithDeadline", "PromptNoDeadline", "Immediate"}
+	restartConditions = []string{"OnlyIfPending", "Always"}
+)
+
+// normalize checks the options as EasyPatch does, fills in the mode and
+// condition, and drops minutes the mode does not use.
+func (o *RestartOptions) normalize(now time.Time) error {
+	if o.Mode == "" {
+		o.Mode = "Countdown"
+	}
+	if o.Condition == "" {
+		o.Condition = "OnlyIfPending"
+	}
+	in := func(n *int, lo, hi int) bool { return n == nil || (*n >= lo && *n <= hi) }
+	switch {
+	case !slices.Contains(restartModes, o.Mode):
+		return apperr.Invalid("mode", "Choose how the people signed in are asked.")
+	case !slices.Contains(restartConditions, o.Condition):
+		return apperr.Invalid("condition", "Choose whether it restarts only when a restart is pending.")
+	case o.Mode == "Countdown" && !in(o.CountdownMinutes, 1, 60):
+		return apperr.Invalid("countdownMinutes", "Choose a countdown of 1 to 60 minutes.")
+	case o.Mode == "PromptWithDeadline" && !in(o.DeadlineMinutes, 15, 7*24*60):
+		return apperr.Invalid("deadlineMinutes", "Choose a deadline from 15 minutes to 7 days.")
+	case !in(o.ExpiresAfterMinutes, 15, 24*60):
+		return apperr.Invalid("expiresAfterMinutes", "Choose from 15 minutes to 24 hours.")
+	}
+	if o.Mode != "Countdown" {
+		o.CountdownMinutes = nil
+	}
+	if o.Mode != "PromptWithDeadline" {
+		o.DeadlineMinutes = nil
+	}
+	if o.ScheduledAt != nil {
+		switch {
+		case o.ScheduledAt.Before(now.Add(time.Minute)):
+			return apperr.Invalid("scheduledAt", "Choose a time in the future.")
+		case o.ScheduledAt.After(now.Add(maxScheduleAhead)):
+			return apperr.Invalid("scheduledAt", "Choose a time within 31 days.")
+		}
+		at := o.ScheduledAt.UTC()
+		o.ScheduledAt = &at
+	}
+	o.Force = false
+	return nil
+}
 
 // RestartCheck is what a restart would do to one device.
 type RestartCheck struct {
@@ -50,19 +102,27 @@ type restartTarget struct {
 	check  int
 }
 
-// PlanRestart says what a restart of the devices would do, without doing it.
-func (s *Service) PlanRestart(ctx context.Context, c access.Caller, ids []uuid.UUID) (RestartPlan, error) {
+// PlanRestart says what a restart of the devices would do, without doing it:
+// with condition Always, also on devices with no restart pending.
+func (s *Service) PlanRestart(ctx context.Context, c access.Caller, ids []uuid.UUID, condition string) (RestartPlan, error) {
+	if condition != "" && !slices.Contains(restartConditions, condition) {
+		return RestartPlan{}, apperr.Invalid("condition", "Choose whether it restarts only when a restart is pending.")
+	}
 	_, cl, err := s.operable(ctx)
 	if err != nil {
 		return RestartPlan{}, err
 	}
-	plan, _, err := s.planRestart(ctx, c, cl, ids)
+	plan, _, err := s.planRestart(ctx, c, cl, ids, condition == "Always")
 	return plan, err
 }
 
-func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, ids []uuid.UUID) (RestartPlan, []restartTarget, error) {
+func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, ids []uuid.UUID, always bool) (RestartPlan, []restartTarget, error) {
 	if len(ids) == 0 || len(ids) > MaxBulk {
 		return RestartPlan{}, nil, apperr.Invalid("deviceIds", fmt.Sprintf("Choose from 1 to %d devices.", MaxBulk))
+	}
+	if always && len(dedupe(ids)) > maxAlwaysRestart {
+		return RestartPlan{}, nil, apperr.Invalid("deviceIds",
+			fmt.Sprintf("Choose at most %d devices to restart whether or not a restart is pending.", maxAlwaysRestart))
 	}
 	plan := RestartPlan{Devices: []RestartCheck{}, ServersKnown: true}
 	var targets []restartTarget
@@ -90,15 +150,16 @@ func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, 
 		}
 	}
 	for org, idx := range byOrg {
-		pending, err := cl.RestartPending(ctx, org)
+		rctx := s.as(ctx, c, RoleReadOnly, org)
+		pending, err := cl.RestartPending(rctx, org)
 		switch {
 		case IsStatus(err, http.StatusNotFound):
 			// EasyPatch before 1.10.0: read the pending restart off its
 			// endpoint list, and treat every device as a server.
 			plan.ServersKnown = false
-			endpoints, err := s.endpoints(ctx, cl, org)
+			endpoints, err := s.endpoints(rctx, cl, org)
 			if err != nil {
-				s.noteError(ctx, err)
+				s.noteError(err)
 				return RestartPlan{}, nil, epError(err)
 			}
 			for _, i := range idx {
@@ -108,14 +169,14 @@ func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, 
 				switch {
 				case !ok:
 					check.Reason = "EasyPatch no longer lists its endpoint."
-				case !e.RebootPending:
+				case !e.RebootPending && !always:
 					check.Reason = "No restart is pending."
 				default:
 					check.Restart, check.Server, check.Online = true, true, e.IsOnline
 				}
 			}
 		case err != nil:
-			s.noteError(ctx, err)
+			s.noteError(err)
 			return RestartPlan{}, nil, epError(err)
 		default:
 			listed := map[uuid.UUID]PendingRestart{}
@@ -126,6 +187,12 @@ func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, 
 				t := targets[i]
 				check := &plan.Devices[t.check]
 				e, ok := listed[*t.device.endpointID]
+				if !ok && always {
+					if err := s.checkAnyRestart(rctx, cl, *t.device.endpointID, check); err != nil {
+						return RestartPlan{}, nil, err
+					}
+					continue
+				}
 				switch {
 				case !ok && pending.Total > len(pending.Endpoints):
 					check.Reason = "EasyPatch lists only the first 1,000 restarts pending in this organization; restart it in EasyPatch."
@@ -142,34 +209,68 @@ func (s *Service) planRestart(ctx context.Context, c access.Caller, cl *Client, 
 	return plan, targets, nil
 }
 
-// RestartInput chooses the devices of a restart.
+// checkAnyRestart decides whether a device with no restart pending can be
+// restarted anyway, and whether it is a server, from its EasyPatch endpoint.
+func (s *Service) checkAnyRestart(ctx context.Context, cl *Client, endpointID uuid.UUID, check *RestartCheck) error {
+	e, err := cl.Endpoint(ctx, endpointID)
+	switch {
+	case IsStatus(err, http.StatusNotFound):
+		check.Reason = "EasyPatch no longer lists its endpoint."
+	case err != nil:
+		s.noteError(err)
+		return epError(err)
+	case !slices.Contains(e.AgentCapabilities, AgentCanRestart):
+		check.Reason = "Its EasyPatch agent cannot restart the computer; update the agent first."
+	default:
+		check.Restart, check.Online = true, e.Summary.IsOnline
+		check.Server = e.OsProductType == "Server" || e.OsProductType == "DomainController"
+	}
+	return nil
+}
+
+// RestartInput chooses the devices of a restart, and how it restarts them.
 type RestartInput struct {
 	DeviceIDs []uuid.UUID `json:"deviceIds"`
-	// ScheduledAt restarts at that time rather than now.
-	ScheduledAt *time.Time `json:"scheduledAt"`
+	RestartOptions
 	// ConfirmServers lists the servers the person confirmed restarting.
 	ConfirmServers []uuid.UUID `json:"confirmServers"`
 }
 
-// Restart restarts the devices that have a restart pending, with EasyRMM's
-// preset. A server not confirmed in ConfirmServers stops the whole request.
+// restartModeText says how a restart treats the people signed in, for the
+// audit trail.
+func restartModeText(o RestartOptions) string {
+	switch o.Mode {
+	case "Immediate":
+		return "at once"
+	case "PromptNoDeadline":
+		return "when a signed-in user agrees"
+	case "PromptWithDeadline":
+		return fmt.Sprintf("when a signed-in user agrees, at the latest after %d minutes", deref(o.DeadlineMinutes, 240))
+	default:
+		return fmt.Sprintf("after a %d-minute countdown", deref(o.CountdownMinutes, 5))
+	}
+}
+
+func deref(n *int, def int) int {
+	if n == nil {
+		return def
+	}
+	return *n
+}
+
+// Restart restarts the devices: those that have a restart pending, or all of
+// them with condition Always. A server not confirmed in ConfirmServers stops
+// the whole request.
 func (s *Service) Restart(ctx context.Context, c access.Caller, in RestartInput) (ActionResult, error) {
 	_, cl, err := s.operable(ctx)
 	if err != nil {
 		return ActionResult{}, err
 	}
-	if in.ScheduledAt != nil {
-		now := s.now()
-		switch {
-		case in.ScheduledAt.Before(now.Add(time.Minute)):
-			return ActionResult{}, apperr.Invalid("scheduledAt", "Choose a time in the future.")
-		case in.ScheduledAt.After(now.Add(maxScheduleAhead)):
-			return ActionResult{}, apperr.Invalid("scheduledAt", "Choose a time within 31 days.")
-		}
-		at := in.ScheduledAt.UTC()
-		in.ScheduledAt = &at
+	if err := in.normalize(s.now()); err != nil {
+		return ActionResult{}, err
 	}
-	plan, targets, err := s.planRestart(ctx, c, cl, in.DeviceIDs)
+	always := in.Condition == "Always"
+	plan, targets, err := s.planRestart(ctx, c, cl, in.DeviceIDs, always)
 	if err != nil {
 		return ActionResult{}, err
 	}
@@ -201,15 +302,22 @@ func (s *Service) Restart(ctx context.Context, c access.Caller, in RestartInput)
 			devices = append(devices, t.device)
 		}
 	}
-	details := map[string]any{"condition": "only if a restart is pending"}
+	details := map[string]any{"condition": "only if a restart is pending", "mode": restartModeText(in.RestartOptions)}
+	if always {
+		details["condition"] = "always"
+	}
 	if in.ScheduledAt != nil {
 		details["scheduledAt"] = in.ScheduledAt.Format(time.RFC3339)
+	}
+	if in.ExpiresAfterMinutes != nil {
+		details["expiresAfterMinutes"] = *in.ExpiresAfterMinutes
 	}
 	if len(servers) > 0 {
 		details["confirmedServers"] = servers
 	}
+	actx := s.as(ctx, c, RoleAdmin, orgsOf(devices)...)
 	err = s.bulk(ctx, c, devices, &res, "patch.restart", details, func(ids []uuid.UUID) (BulkResult, error) {
-		return cl.BulkRestart(ctx, ids, in.ScheduledAt, c.Actor.Label)
+		return cl.BulkRestart(actx, ids, in.RestartOptions, c.Actor.Label)
 	})
 	s.fleet.clear()
 	return res, err
@@ -218,15 +326,12 @@ func (s *Service) Restart(ctx context.Context, c access.Caller, in RestartInput)
 // RetryJob runs a finished job of a device the caller may manage patching
 // of again, as a new job, which it returns.
 func (s *Service) RetryJob(ctx context.Context, c access.Caller, id uuid.UUID) (JobView, error) {
-	old, d, r, cl, err := s.job(ctx, c, id)
+	old, d, _, cl, err := s.job(ctx, c, id)
 	if err != nil {
 		return JobView{}, err
 	}
 	if !c.Can(rbac.PermPatchManage, d.resource()) {
 		return JobView{}, apperr.Forbidden()
-	}
-	if !r.canOperate {
-		return JobView{}, errReadOnly
 	}
 	j, err := cl.RetryJob(ctx, id, c.Actor.Label)
 	if err != nil {

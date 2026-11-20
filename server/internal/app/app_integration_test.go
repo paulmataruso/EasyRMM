@@ -20,6 +20,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 	"github.com/paulmataruso/easyrmm/server/internal/remote"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
@@ -136,7 +137,17 @@ func runConfig(t *testing.T, inst *testdb.Instance) *config.Config {
 		DataDir:              filepath.Join(t.TempDir(), "data"),
 		RequireMFA:           true, SessionIdle: time.Hour, SessionMaxAge: 2 * time.Hour,
 		PasswordResetTTL: 30 * time.Minute, AuditRetention: 365 * 24 * time.Hour, JobRetention: 90 * 24 * time.Hour, ArgonMaxParallel: 2,
+		Patching: testEngine(t),
 	}
+}
+
+// testEngine is a stand-in for the patching engine every deployment runs
+// with EasyRMM.
+func testEngine(t *testing.T) config.Patching {
+	t.Helper()
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	return config.Patching{URL: eptest.NewEngine(t, key).URL(), Key: key}
 }
 
 func TestRunEndToEnd(t *testing.T) {

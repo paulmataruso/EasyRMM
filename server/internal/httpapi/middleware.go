@@ -111,7 +111,7 @@ func RequestContext(base *slog.Logger) Middleware {
 				level = slog.LevelError
 			}
 			// Never log query strings: they may carry tokens.
-			log.Log(ctx, level, "http request", "method", r.Method, "path", r.URL.Path, "status", rec.status,
+			log.Log(ctx, level, "http request", "method", r.Method, "path", LogSafe(r.URL.Path), "status", rec.status,
 				"duration_ms", time.Since(start).Milliseconds(), "client_ip", ClientIP(r).String())
 		})
 	}

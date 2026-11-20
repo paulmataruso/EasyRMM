@@ -1,5 +1,8 @@
 namespace EasyPatch.Core.Entities;
 
+/// <summary>An account of a standalone EasyPatch (up to 1.10.0). Nobody signs in with one any more: people sign in to EasyRMM.
+/// The account tables stay so an imported database keeps its history, and <c>prepare-import</c> disables what it brings;
+/// sessions, passkeys, single sign-on and password resets are kept the same way, unused.</summary>
 public sealed class User
 {
     public Guid Id { get; set; }
@@ -70,8 +73,9 @@ public sealed class UserOrganizationAccess
 }
 
 /// <summary>
-/// A long-lived credential for scripts and integrations (PSA, RMM, reporting). Only a SHA-256 hash of the secret is stored; the
-/// secret is shown once when the token is created. A token acts with a fixed role (never SuperAdmin) and organization scope.
+/// An API token of a standalone EasyPatch (up to 1.10.0): a long-lived credential for scripts and integrations, stored as a SHA-256
+/// hash. The patching engine no longer accepts any (it takes only EasyRMM's statements). The table stays, as the account tables do,
+/// so the upgrade needs no migration; <c>prepare-import</c> deletes the tokens of an imported database.
 /// </summary>
 public sealed class ApiToken
 {

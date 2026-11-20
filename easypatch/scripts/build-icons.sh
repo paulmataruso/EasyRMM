@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regenerates agent/EasyPatch.Agent/EasyPatch.ico (the agent executable's icon and the Installed apps / Programs and
-# Features icon) from frontend/public/logo.svg. Run it after changing the logo. The .ico is committed, so neither the
+# Features icon) from branding/logo.svg. Run it after changing the logo. The .ico is committed, so neither the
 # Windows nor the Linux build needs these tools.
 #
 #   scripts/build-icons.sh
@@ -9,7 +9,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-logo="$repo_root/frontend/public/logo.svg"
+logo="$repo_root/branding/logo.svg"
 out_dir="$repo_root/agent/EasyPatch.Agent"
 
 docker run --rm \

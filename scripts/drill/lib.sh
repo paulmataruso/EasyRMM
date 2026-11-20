@@ -4,15 +4,18 @@
 # and a console API client that signs in like the browser.
 #
 # Settings: DRILL_ADDR (127.0.0.2), DRILL_PROJECT (easyrmm-drill), and
-# DRILL_IMAGE to use an existing image instead of building one. Ports used
-# on the host: DRILL_ADDR:80, :443 and :4443; 127.0.0.1:15432
-# (PostgreSQL), :18080, :18081 and :14430.
+# DRILL_IMAGE and DRILL_ENGINE_IMAGE to use existing images of EasyRMM's
+# server and the patching engine instead of building them. Ports used on
+# the host: DRILL_ADDR:80, :443 and :4443; 127.0.0.1:15432 (PostgreSQL),
+# :18080, :18081, :14430, :18180 and :18181 (the engine).
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 addr=${DRILL_ADDR:-127.0.0.2}
 export COMPOSE_PROJECT_NAME=${DRILL_PROJECT:-easyrmm-drill}
 image=${DRILL_IMAGE:-easyrmm-server:drill}
 build=${DRILL_IMAGE:+no}
+engine_image=${DRILL_ENGINE_IMAGE:-easyrmm-drill/easypatch-server:drill}
+engine_build=${DRILL_ENGINE_IMAGE:+no}
 url="https://$addr"
 admin_email="operator@drill.invalid"
 # Setup refuses a password containing the account's name or address.
@@ -105,10 +108,17 @@ stack_up() {
   sed -i -e "s|^EASYRMM_LISTEN_HTTP=.*|EASYRMM_LISTEN_HTTP=$addr:80|" \
     -e "s|^EASYRMM_LISTEN_HTTPS=.*|EASYRMM_LISTEN_HTTPS=$addr:443|" \
     -e "s|^EASYRMM_IMAGE=.*|EASYRMM_IMAGE=${image%%:*}|" \
-    -e "s|^EASYRMM_VERSION=.*|EASYRMM_VERSION=${image##*:}|" .env
+    -e "s|^EASYRMM_VERSION=.*|EASYRMM_VERSION=${image##*:}|" \
+    -e "s|^EASYPATCH_IMAGE=.*|EASYPATCH_IMAGE=${engine_image%:*}|" \
+    -e "s|^EASYPATCH_VERSION=.*|EASYPATCH_VERSION=${engine_image##*:}|" .env
   if [[ "$build" != no ]]; then
     compose build server >"$work/build.log" 2>&1 || fail "image build failed: $work/build.log"
     ok "server image built from the checkout"
+  fi
+  if [[ "$engine_build" != no ]]; then
+    # One image serves the engine's three services.
+    compose build easypatch-migrate >"$work/engine-build.log" 2>&1 || fail "engine image build failed: $work/engine-build.log"
+    ok "patching engine image built from the checkout"
   fi
   compose up -d >>"$work/compose.log" 2>&1
   wait_ready

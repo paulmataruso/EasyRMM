@@ -1,41 +1,99 @@
 # Changelog
 
-All notable changes to EasyPatch are listed here. Versions follow `MAJOR.MINOR.BUILD`; the server,
-the web console and the agents share one version number.
+All notable changes to EasyPatch are listed here. Versions follow `MAJOR.MINOR.BUILD`; the server
+and the agents share one version number.
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-11-20
+
+Released with EasyRMM 1.0.0-rc.2. No change to the engine or its agents: a version is published from
+one commit only, and EasyRMM's release builds the engine again.
+
+## [1.11.0] - 2026-11-20
+
+Released as EasyRMM's patching engine, with EasyRMM 1.0.0-rc.1; there is no EasyPatch release of its
+own any more.
+
 ### Added
 
-- `/api/v1/server-info` lists the server's `capabilities`, so integrations can check for the
-  features below before relying on them.
+- EasyRMM's release builds and publishes EasyPatch from the same commit (`easypatch-release.yml` is
+  also a reusable workflow, EasyRMM's ADR-0043); an `easypatch-v*` tag still releases EasyPatch
+  alone. Either way a version is published once: the server image's index records its commit, and
+  a version already published from another commit is refused before anything is signed.
+- The Linux agent's `enroll --server-ca <file>` trusts that certificate authority (PEM or DER) for
+  the connection to the server only, as the MSI's `SERVERCACERT` does on Windows, for a server
+  with a private certificate. It is kept in `agent.conf` (`ServerCaCertificate`); the system's
+  certificate store is unchanged. A certificate that is not an authority is refused.
+- The server image carries the agent packages of its own version: the release workflow stages the
+  Windows and Linux packages it signed, after checking each signature against the release public
+  key, into `/app/agent-packages`, owned by root and read-only to the server
+  (`scripts/stage-agent-packages.sh`, `scripts/check-image-agent-packages.sh`). CI images carry
+  Linux packages signed with a key made for the run (`scripts/build-test-agent-packages.sh`),
+  which the release key refuses.
+- As EasyRMM's patching engine, the administrator API accepts EasyRMM's statements
+  (`X-EasyRMM-Assertion`, EasyRMM's ADR-0038) when `EasyRmm__GatewayKey` is set: each is good
+  for one request for 30 seconds and acts with the role and organizations it names, through the
+  usual role and organization checks, without a user, session or CSRF token. The audit trail
+  names `easyrmm:<user>`. A key that is set but not usable stops the server at start.
+- `/api/v1/server-info` lists the server's `capabilities`, so EasyRMM can check for the
+  feature below before relying on it.
 - Install requests, for one endpoint or in bulk, take an optional `scheduledAt` up to 31 days
   ahead (`scheduled-installs`); the jobs wait until then.
-- API token requests may name the person they act for in `X-EasyPatch-On-Behalf-Of`
-  (`on-behalf-of`); EasyPatch records it in the audit log and in the job's `requestedBy`.
-- **Sign in through EasyRMM** ([single sign-on](docs/single-sign-on.md#easyrmm)): a provider can
-  be marked **This provider is EasyRMM** (`easyrmm-sign-in`). Its accounts are matched by issuer
-  and subject only, never by email; take their role and organizations from EasyRMM at every
-  sign-in; sign in only through EasyRMM; and have sessions of at most an hour, which the
-  console renews through EasyRMM. Owners link existing accounts under **My account → Link
-  EasyRMM**. These accounts see an **EasyRMM | EasyPatch** switch under the logo, which opens
-  EasyRMM's page for the endpoint, organization or job on screen. EasyRMM's links carry
-  `from=easyrmm`, which starts EasyRMM's sign-in for someone not signed in.
-- `create-api-token`, an administration command that creates an API token on the server
-  itself, for setting up an integration without the console:
-  `docker compose run --rm api create-api-token --name EasyRMM --role operator --expires-days 365`.
+
+### Removed
+
+EasyPatch is no longer a product of its own: it is EasyRMM's patching engine, which EasyRMM's
+deployment runs (EasyRMM's ADR-0046). A standalone EasyPatch server moves into EasyRMM with
+EasyRMM's import script (EasyRMM's `docs/operations/import-easypatch.md`).
+
+- **The web console** (`frontend/`), with its CI job, Dependabot entry and npm licence check.
+  People use EasyRMM's patching pages instead.
+- **The proxy image** (`easypatch-proxy`) and its Caddy configuration (`deployment/caddy/`). The
+  release workflow no longer builds or publishes it; the server image (`easypatch-server`) is
+  unchanged. EasyRMM's edge serves the agents.
+- **The standalone deployment:** `docker-compose.yml`, `docker-compose.dev.yml`,
+  `.env.example`, `scripts/init-secrets.sh`, `scripts/backup.sh`, `scripts/restore.sh` and the
+  installation guide (`docs/installation.md`).
+- The console's screenshots in `docs/images/`. The logo and wordmarks moved to `branding/`.
+- **EasyPatch's own accounts and sign-in.** People sign in to EasyRMM, and the administrator
+  API takes only EasyRMM's statements. Gone: the sign-in, MFA (authenticator
+  app and recovery codes), passkey and security key, single sign-on (OpenID Connect, including
+  EasyRMM as a provider, which never shipped), session, CSRF, password, change-email and user
+  routes (`/api/v1/auth/*`, `/api/v1/sso/*`, `/api/v1/users/*`);
+  the Swagger UI at `/api/docs` (the OpenAPI document stays at `/api/openapi/v1.json`); the
+  `create-admin`, `reset-password`, `reset-mfa` and `unlock` commands, which now fail with a
+  message; the sign-in rate limit (`RateLimits:LoginPerMinute`); the server settings
+  `requireMfa`, `sessionIdleMinutes` and `sessionAbsoluteHours` (a saved value is ignored and
+  dropped at the next save); and the packages only they used (Konscious Argon2, QRCoder,
+  Fido2, NSec, libsodium, Microsoft IdentityModel, Swashbuckle). The single sign-on guide
+  (`docs/single-sign-on.md`) is gone. The account tables stay in the schema, unused, so the
+  upgrade needs no migration, and `prepare-import` still disables the accounts of an imported
+  standalone database.
+- **API tokens.** The administrator API no longer accepts `Authorization: Bearer ept_…`: a
+  request without a statement from EasyRMM answers `401`, whatever token it carries. Scripts
+  and integrations use EasyRMM's API. Gone with them: the API token routes
+  (`/api/v1/api-tokens/*`), the `create-api-token` command (it now fails with a message),
+  `X-EasyPatch-On-Behalf-Of` (ignored) and the per-token rate limit. The `api_tokens` table
+  stays, unused, so the upgrade needs no migration; `prepare-import` deletes the tokens of an
+  imported standalone database.
 
 ### Fixed
+
+- A call from EasyRMM by a person whose name (their email address) was longer than about 56
+  characters failed with a server error wherever EasyPatch records who acted: the audit log, jobs,
+  update holds, monthly reports and acknowledged alerts had columns of 64 to 255 characters, while a
+  statement may name a person in up to 254. The migration `ActorNamesFitStatements` widens them all
+  to 300, which `easyrmm:` and the longest name fit; update holds no longer cut the name at 100.
 
 - **Security:** a user restricted to some organizations reached *every* organization once all of
   theirs were deleted, because an empty access list meant "all". An Admin restricted to one
   organization could do this alone, by deleting their own organization while it had no
   endpoints. Access to every organization is now an explicit flag on the user, as it is on API
   tokens; with no organizations left, a restricted user sees none. The upgrade sets the flag for
-  every user whose list is empty today, so nobody's access changes. **Check Settings → Users
-  after upgrading:** a user who already lost their organizations this way shows *All
-  organizations*; restrict them again. Users with none left show *No organizations*.
-- Excluding an update on an endpoint with an API token failed with `401`.
+  every user whose list is empty today, so nobody's access changes. (EasyPatch's accounts and
+  API tokens were then removed; see *Removed*. EasyRMM's statements name their organizations
+  the same way.)
 
 ## [1.10.0] - 2026-11-17
 
@@ -74,7 +132,7 @@ the web console and the agents share one version number.
   are encrypted with the Data Protection keys and never returned. The `api` container connects
   to the configured providers over HTTPS, and the proxy's access log replaces the callback's
   `code` and `state` parameters with `REDACTED`. Uses Microsoft IdentityModel 8.23.0 (MIT). See
-  [docs/single-sign-on.md](docs/single-sign-on.md).
+  `docs/single-sign-on.md` (removed after 1.10.0).
 - **Restart all that need it** on an organization (page header) and on each site (*Sites* tab):
   lists the endpoints that report a pending restart, marking servers, domain controllers,
   offline endpoints and agents too old to restart, and restarts the ones you confirm. The
@@ -177,7 +235,7 @@ agents are not sent downloads ahead of the maintenance window.
   days, revocable, with the time and address of their last use. Sent as
   `Authorization: Bearer ept_…`; only a hash is stored, the secret is shown once, and actions are
   audited as `token:<name>`. Tokens cannot manage users, API tokens or server settings. See
-  [api.md](docs/api.md#api-tokens-apiv1api-tokens-superadmin).
+  [api.md](docs/api.md#api-tokens).
 
 ### Changed
 

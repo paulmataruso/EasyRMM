@@ -29,6 +29,12 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0.15-alpine3.24 AS runtime
 RUN apk add --no-cache tzdata \
  && mkdir -p /app/keys /app/agent-packages /app/winget \
  && chown app:app /app/keys /app/winget
+# The agent packages of this version with their release signatures, staged into deployment/server/agent-packages/ by
+# the release workflow (scripts/stage-agent-packages.sh), or test-signed by scripts/build-test-agent-packages.sh for CI.
+# Owned by root, so the server offers them and cannot change them. A build with none staged carries none.
+RUN --mount=type=bind,source=deployment/server/agent-packages,target=/staged \
+    find /staged -maxdepth 1 -type f -name 'EasyPatchAgent-*' -exec cp {} /app/agent-packages/ \; \
+ && find /app/agent-packages -type f -exec chmod 0644 {} +
 COPY --from=build /out/api /app/api
 COPY --from=build /out/worker /app/worker
 

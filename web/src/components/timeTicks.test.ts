@@ -22,6 +22,14 @@ describe("timeTicks", () => {
     }
   });
 
+  it("names days by their weekday within two weeks, and by their month past that", () => {
+    const week = timeTicks(t1 - 7 * 24 * HOUR, t1)[0]!;
+    expect(week.label).toBe(new Date(week.at).toLocaleDateString(undefined, { weekday: "short", day: "numeric" }));
+    const year = timeTicks(t1 - 365 * 24 * HOUR, t1, 800);
+    expect(year[0]!.label).toBe(new Date(year[0]!.at).toLocaleDateString(undefined, { month: "short", day: "numeric" }));
+    expect(year.length * 76).toBeLessThanOrEqual(800 + 76);
+  });
+
   it("drops labels that would not fit side by side", () => {
     const all = timeTicks(t1 - 24 * HOUR, t1);
     expect(all.length).toBeGreaterThanOrEqual(6);

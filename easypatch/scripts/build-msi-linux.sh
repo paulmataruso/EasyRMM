@@ -14,7 +14,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-version="1.10.0"
+version="1.11.1"
 arches=("x64")
 test_flag=()
 image="easypatch-msi-builder:wix5.0.2"

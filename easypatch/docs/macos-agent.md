@@ -44,8 +44,8 @@ Read these before installing it anywhere.
 * An administrator account (`sudo`) to install it.
 * HTTPS access to the EasyPatch server, and to Apple's software update servers (or your
   organisation's caching server).
-* The server must offer a macOS package: copy `EasyPatchAgent-<version>-<arch>.pkg` and its `.sig`
-  to `data/agent-packages` (see [installation.md](installation.md#6-offer-agent-packages)).
+* The server must offer a macOS package. EasyRMM's engine image carries the Windows and Linux
+  packages only; macOS packages stay out while they are experimental (EasyRMM's ADR-0041).
 
 ## Installing
 
@@ -71,7 +71,7 @@ the command line). *Deploy → Enrollment tokens* shows the enroll command for a
 server has a macOS package:
 
 ```sh
-sudo installer -pkg EasyPatchAgent-1.10.0-arm64.pkg -target /
+sudo installer -pkg EasyPatchAgent-1.11.1-arm64.pkg -target /
 sudo easypatch-agent enroll --server https://patch.example.com --token-file /path/to/token
 ```
 
@@ -193,7 +193,7 @@ link and the package receipt.
 ## Building from source
 
 ```sh
-scripts/build-macos-packages.sh --version 1.10.0 --arch all
+scripts/build-macos-packages.sh --version 1.11.1 --arch all
 ```
 
 The script runs the agent tests, publishes the self-contained agent for osx-x64 and osx-arm64

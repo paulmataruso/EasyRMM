@@ -11,14 +11,14 @@ namespace EasyPatch.Tests.Integration;
 /// <summary>Monthly PDF reports: schedules, on-demand generation, download, email delivery and tenant isolation.</summary>
 public sealed class MonthlyReportTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
-    private AdminSession root = null!;
+    private AdminClient root = null!;
     private OrganizationDto org = null!;
     private SiteDto site = null!;
 
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        root = await SuperAdminAsync();
+        root = SuperAdmin();
         (org, site) = await CreateOrgAsync(root);
     }
 
@@ -42,12 +42,12 @@ public sealed class MonthlyReportTests(PostgresFixture postgres) : IntegrationTe
         Assert.Equal(today, report.PeriodEnd);
         Assert.Equal($"EasyPatch-contoso-{today:yyyy-MM}-to-{today.Day:00}.pdf", report.FileName);
         Assert.False(report.Scheduled);
-        Assert.Equal("root", report.GeneratedBy);
+        Assert.Equal(root.Actor, report.GeneratedBy);
         Assert.Null(report.DeliveryStatus);
 
         using (var response = await root.Http.GetAsync(new Uri($"/api/v1/monthly-reports/{report.Id}/pdf", UriKind.Relative)))
         {
-            await AdminSession.EnsureAsync(response, HttpStatusCode.OK);
+            await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
             Assert.Equal("application/pdf", response.Content.Headers.ContentType?.MediaType);
             Assert.Equal(report.FileName, response.Content.Headers.ContentDisposition?.FileNameStar ?? response.Content.Headers.ContentDisposition?.FileName);
             var pdf = await response.Content.ReadAsByteArrayAsync();
@@ -95,7 +95,6 @@ public sealed class MonthlyReportTests(PostgresFixture postgres) : IntegrationTe
         Assert.Equal(report.FileName, attachment.FileName);
         Assert.Equal("application/pdf", attachment.ContentType);
         Assert.Equal(report.Sha256, Convert.ToHexStringLower(SHA256.HashData(attachment.Content)));
-        root = await LoginAsync("root", DefaultPassword, root.MfaSecret);
         var sent = await root.GetAsync<MonthlyReportDto>($"/api/v1/monthly-reports/{report.Id}");
         Assert.Equal(DeliveryStatus.Sent, sent.DeliveryStatus);
         Assert.NotNull(sent.SentAt);
@@ -150,14 +149,12 @@ public sealed class MonthlyReportTests(PostgresFixture postgres) : IntegrationTe
         Assert.Equal(report.FileName, Assert.Single(email.Attachments).FileName);
 
         // Once per month, even after the report is deleted.
-        root = await LoginAsync("root", DefaultPassword, root.MfaSecret);
         await root.ExpectAsync(HttpMethod.Delete, $"/api/v1/monthly-reports/{report.Id}", null, HttpStatusCode.NoContent);
         Clock.Advance(TimeSpan.FromHours(1));
         await RunMaintenanceAsync<MonthlyReportTask>();
         Assert.Empty(await WithDbAsync(db => db.GeneratedReports.AsNoTracking().ToListAsync()));
         Assert.Single(Factory.Transport.Emails);
 
-        root = await LoginAsync("root", DefaultPassword, root.MfaSecret);
         var next = await root.GetAsync<ReportScheduleDto>($"/api/v1/organizations/{org.Id}/report-schedule");
         Assert.Equal(thisMonth, next.LastScheduledPeriod);
         Assert.Equal(thisMonth.AddMonths(1), next.NextReportPeriod);
@@ -174,7 +171,7 @@ public sealed class MonthlyReportTests(PostgresFixture postgres) : IntegrationTe
         var theirs = await root.SendAsync<MonthlyReportDto>(HttpMethod.Post, "/api/v1/monthly-reports",
             new GenerateReportRequest(other.Id, today.Year, today.Month), HttpStatusCode.Created);
 
-        var contosoAdmin = await CreateAndLoginAsync("contoso-admin", UserRole.Admin, org.Id);
+        var contosoAdmin = Admin("contoso-admin", UserRole.Admin, [org.Id]);
         var listed = await contosoAdmin.GetAsync<PagedResult<MonthlyReportDto>>("/api/v1/monthly-reports");
         Assert.Equal(mine.Id, Assert.Single(listed.Items).Id);
         await contosoAdmin.ExpectAsync(HttpMethod.Get, $"/api/v1/monthly-reports/{theirs.Id}/pdf", null, HttpStatusCode.NotFound);
@@ -185,11 +182,11 @@ public sealed class MonthlyReportTests(PostgresFixture postgres) : IntegrationTe
         await contosoAdmin.SendAsync<ReportScheduleDto>(HttpMethod.Put, $"/api/v1/organizations/{org.Id}/report-schedule",
             Schedule(false, "it@example.com"), HttpStatusCode.OK);
 
-        var viewer = await CreateAndLoginAsync("viewer", UserRole.ReadOnly);
+        var viewer = Admin("viewer", UserRole.ReadOnly);
         Assert.Equal(2, (await viewer.GetAsync<PagedResult<MonthlyReportDto>>("/api/v1/monthly-reports")).TotalCount);
         using (var pdf = await viewer.Http.GetAsync(new Uri($"/api/v1/monthly-reports/{mine.Id}/pdf", UriKind.Relative)))
         {
-            await AdminSession.EnsureAsync(pdf, HttpStatusCode.OK);
+            await AdminClient.EnsureAsync(pdf, HttpStatusCode.OK);
         }
 
         await viewer.ExpectAsync(HttpMethod.Post, "/api/v1/monthly-reports", new GenerateReportRequest(org.Id, today.Year, today.Month),

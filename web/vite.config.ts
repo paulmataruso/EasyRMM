@@ -41,6 +41,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
+    // Whole-page flows take one to three seconds alone; with coverage on a busy machine, five was not enough.
+    testTimeout: 15_000,
     css: false,
     coverage: {
       provider: "v8",

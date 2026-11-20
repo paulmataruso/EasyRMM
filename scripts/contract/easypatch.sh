@@ -5,22 +5,25 @@
 #
 # 1. Builds EasyPatch's server image (or uses EASYPATCH_CONTRACT_IMAGE).
 # 2. Starts PostgreSQL and the API, both on the host network and listening
-#    on 127.0.0.1 only. The API serves TLS with a certificate made for this
-#    run, as the connector only speaks https.
-# 3. Creates an operator and a read-only API token with EasyPatch's own CLI
-#    (create-api-token).
-# 4. Runs the contract tests (Go build tag "contract").
+#    on 127.0.0.1 only. The API serves plain HTTP with a gateway key, as the
+#    patching engine in EasyRMM's deployment does (ADR-0038): EasyRMM's
+#    calls, each with a statement signed with that key. It also serves TLS
+#    with a certificate made for this run, as the engine's public address,
+#    which the simulated agents enroll and check in at.
+# 3. Runs the contract tests (Go build tag "contract").
 #
 # Everything is removed afterwards. The database password, the TLS key and
-# the tokens are made for the run and are never printed.
+# the gateway key are made for the run and are never printed.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 image=${EASYPATCH_CONTRACT_IMAGE:-easyrmm-contract/easypatch-server:local}
-# The PostgreSQL image easypatch/docker-compose.yml runs.
-pg_image=$(sed -n 's/^ *image: \(postgres:[^ ]*\)$/\1/p' "$root/easypatch/docker-compose.yml" | head -n1)
+# The PostgreSQL image EasyRMM's deployment runs, the engine's database
+# with it: the first in deploy/docker-compose.yml.
+pg_image=$(sed -n 's/^ *image: \(postgres:[^ ]*\)$/\1/p' "$root/deploy/docker-compose.yml" | head -n1)
 pg_port=${EASYPATCH_CONTRACT_PG_PORT:-55433}
 api_port=${EASYPATCH_CONTRACT_PORT:-18443}
+engine_port=${EASYPATCH_CONTRACT_ENGINE_PORT:-18444}
 version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' "$root/easypatch/Directory.Build.props" | head -n1)
 name=easyrmm-contract
 work=$(mktemp -d)
@@ -37,10 +40,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-[ -n "$pg_image" ] || { echo "no postgres image in easypatch/docker-compose.yml" >&2; exit 1; }
-for port in "$pg_port" "$api_port"; do
+[ -n "$pg_image" ] || { echo "no postgres image in deploy/docker-compose.yml" >&2; exit 1; }
+for port in "$pg_port" "$api_port" "$engine_port"; do
   if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
-    echo "127.0.0.1:$port is in use; set EASYPATCH_CONTRACT_PG_PORT or EASYPATCH_CONTRACT_PORT" >&2
+    echo "127.0.0.1:$port is in use; set EASYPATCH_CONTRACT_PG_PORT, EASYPATCH_CONTRACT_PORT or EASYPATCH_CONTRACT_ENGINE_PORT" >&2
     exit 1
   fi
 done
@@ -55,6 +58,7 @@ fi
 # run as other users, so the files are world-readable inside $work (0700).
 umask 077
 head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' >"$work/db_password"
+gateway_key=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
 mkdir "$work/tls"
 openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 1 -subj "/CN=EasyRMM contract test CA" \
   -keyout "$work/tls/ca.key" -out "$work/tls/ca.pem" 2>/dev/null
@@ -89,9 +93,10 @@ easypatch() { docker run --rm --network host "${server_env[@]}" "$image" "$@"; }
 echo "Migrating the database ..."
 easypatch migrate >/dev/null
 
-echo "Starting EasyPatch $version on https://127.0.0.1:$api_port ..."
+echo "Starting EasyPatch $version on https://127.0.0.1:$api_port and http://127.0.0.1:$engine_port ..."
 docker run -d --name "$name-api" --network host "${server_env[@]}" \
-  -e ASPNETCORE_HTTP_PORTS= -e ASPNETCORE_URLS="https://127.0.0.1:$api_port" \
+  -e ASPNETCORE_HTTP_PORTS= -e ASPNETCORE_URLS="https://127.0.0.1:$api_port;http://127.0.0.1:$engine_port" \
+  -e EasyRmm__GatewayKey="$gateway_key" \
   -e Kestrel__Certificates__Default__Path=/tls/tls.pem -e Kestrel__Certificates__Default__KeyPath=/tls/tls.key \
   -v "$work/tls/tls.pem:/tls/tls.pem:ro" -v "$work/tls/tls.key:/tls/tls.key:ro" \
   "$image" >/dev/null
@@ -101,19 +106,11 @@ for _ in $(seq 90); do
 done
 curl -fsS -o /dev/null --cacert "$work/tls/ca.pem" "https://127.0.0.1:$api_port/health/ready"
 
-token() {
-  easypatch create-api-token --name "$1" --role "$2" --expires-days 1 |
-    sed -n 's/^Token (shown once, only its hash is stored): //p'
-}
-operator=$(token "EasyRMM contract" operator)
-read_only=$(token "EasyRMM contract read-only" read-only)
-[ -n "$operator" ] && [ -n "$read_only" ] || { echo "create-api-token printed no token" >&2; exit 1; }
-
 echo "Running the contract tests ..."
 cd "$root"
 EASYRMM_CONTRACT_EASYPATCH_URL="https://127.0.0.1:$api_port" \
 EASYRMM_CONTRACT_EASYPATCH_CA="$work/tls/ca.pem" \
-EASYRMM_CONTRACT_EASYPATCH_TOKEN="$operator" \
-EASYRMM_CONTRACT_EASYPATCH_READONLY_TOKEN="$read_only" \
 EASYRMM_CONTRACT_EASYPATCH_VERSION="$version" \
+EASYRMM_CONTRACT_ENGINE_URL="http://127.0.0.1:$engine_port" \
+EASYRMM_CONTRACT_ENGINE_KEY="$gateway_key" \
   ${GO:-go} test -count=1 -tags contract -run '^TestContract$' -v ./server/internal/easypatch/

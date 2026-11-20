@@ -10,20 +10,12 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
-    <PackageReference Include="Konscious.Security.Cryptography.Argon2" />
-    <PackageReference Include="QRCoder" />
     <PackageReference Include="MailKit" />
     <PackageReference Include="MimeKit" />
     <PackageReference Include="BouncyCastle.Cryptography" />
     <PackageReference Include="PDFsharp-MigraDoc" />
     <PackageReference Include="PDFsharp" />
     <PackageReference Include="System.Security.Cryptography.Pkcs" />
-    <PackageReference Include="Fido2" />
-    <PackageReference Include="Fido2.Models" />
-    <PackageReference Include="NSec.Cryptography" />
-    <PackageReference Include="libsodium" />
-    <PackageReference Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" />
-    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

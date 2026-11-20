@@ -53,7 +53,7 @@ later), SUSE (zypper), Arch, Alpine (musl), systems without systemd, and 32-bit 
 | Init system | systemd |
 | Privileges | Installation and the `enroll`, `scan` and `unenroll` commands need root. The service runs as root |
 | Network | Outbound HTTPS from the endpoint to the EasyPatch server. No inbound ports. apt and dnf use their own repository configuration and proxy settings |
-| TLS | The server certificate must be trusted by the system CA store (`/etc/ssl/certs` or `/etc/pki/tls`). Certificate validation cannot be disabled |
+| TLS | The server certificate must be trusted by the system CA store (`/etc/ssl/certs` or `/etc/pki/tls`), or chain to the authority given at enrollment with `--server-ca`, which the agent trusts for that server only (as the MSI's `SERVERCACERT` on Windows; for a server with a private certificate, such as one addressed by IP). Certificate validation cannot be disabled |
 | .NET | Not required: the agent is a self-contained executable |
 | Reboot detection on Red Hat | `dnf needs-restarting` (package `dnf-plugins-core` or `dnf-utils`); without it only a newer installed kernel is detected |
 
@@ -106,8 +106,8 @@ The proxy is used by the agent only. Proxy credentials are not supported.
 2. Install it. The service starts and waits for enrollment.
 
    ```sh
-   sudo apt-get install ./EasyPatchAgent-1.10.0-x64.deb     # Debian, Ubuntu
-   sudo dnf install ./EasyPatchAgent-1.10.0-x64.rpm         # RHEL and rebuilds, CentOS Stream, Fedora
+   sudo apt-get install ./EasyPatchAgent-1.11.1-x64.deb     # Debian, Ubuntu
+   sudo dnf install ./EasyPatchAgent-1.11.1-x64.rpm         # RHEL and rebuilds, CentOS Stream, Fedora
    ```
 
 3. Enroll with the token. The agent does not accept a token as a command-line argument, because
@@ -243,11 +243,14 @@ useless without the host key file. A TPM is not used.
 Usage: easypatch-agent <command> [options]
 
   run                       Run the agent (default; used by the easypatch-agent systemd service).
-  enroll --server <url> (--token-file <path|-> | --deployment-code <code>) [--proxy <url>] [--force] [--no-start]
+  enroll --server <url> (--token-file <path|-> | --deployment-code <code>) [--proxy <url>]
+         [--server-ca <file>] [--force] [--no-start]
                             Enroll this computer. A token enrolls immediately; a deployment code
                             creates a request an administrator must approve in the console.
                             The token is read from a file, from standard input (--token-file -)
                             or from EASYPATCH_ENROLLMENT_TOKEN; it is never accepted as an argument.
+                            --server-ca trusts that certificate authority (PEM) for the connection
+                            to the server only, for a server with a private certificate.
   status [--json]           Show enrollment and agent status.
   scan [--json]             List the package updates this computer would report (refreshes the package
                             lists; installs nothing and does not contact the server).
@@ -306,16 +309,16 @@ the console.
 
 ## Building from source
 
-The `.deb` and `.rpm` packages attached to EasyPatch's GitHub releases (tagged `easypatch-v*` in
-the EasyRMM repository; up to 1.10.0, in EasyPatch's
+The `.deb` and `.rpm` packages in the engine's image of each EasyRMM release (up to 1.10.0,
+attached to the releases in EasyPatch's
 [former repository](https://github.com/paulmataruso/EasyPatch/releases)) are built and signed by
-EasyPatch's release workflow; most installations should use those (see
-[installation.md](installation.md#6-offer-agent-packages)). An agent you build with your own
+EasyRMM's release workflow; most installations should use those, which the engine offers to its
+agents. An agent you build with your own
 release key accepts only packages signed with that key, so it does not update to official
 releases (see [security.md](security.md#agent-release-signing)).
 
 ```sh
-scripts/build-linux-packages.sh --version 1.10.0 --arch all
+scripts/build-linux-packages.sh --version 1.11.1 --arch all
 ```
 
 The script runs the agent tests, publishes the self-contained agent for linux-x64 and linux-arm64,

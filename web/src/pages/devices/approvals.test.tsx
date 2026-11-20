@@ -47,6 +47,7 @@ function approvalToken(id: string, name: string, extra: Partial<ApprovalToken> =
     lastUsedAt: "2026-11-15T09:00:00Z",
     revokedAt: null,
     status: "active",
+    kept: true,
     ...extra,
   };
 }

@@ -106,8 +106,8 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                         .HasColumnName("acknowledged_at");
 
                     b.Property<string>("AcknowledgedBy")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
                         .HasColumnName("acknowledged_by");
 
                     b.Property<int>("ClearCount")
@@ -413,8 +413,8 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                         .HasColumnName("user_id");
 
                     b.Property<string>("Username")
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
                         .HasColumnName("username");
 
                     b.HasKey("Id");
@@ -1477,8 +1477,8 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                         .HasColumnName("generated_at");
 
                     b.Property<string>("GeneratedBy")
-                        .HasMaxLength(255)
-                        .HasColumnType("character varying(255)")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
                         .HasColumnName("generated_by");
 
                     b.Property<string>("LastError")
@@ -1652,8 +1652,8 @@ namespace EasyPatch.Infrastructure.Data.Migrations
 
                     b.Property<string>("RequestedBy")
                         .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
                         .HasColumnName("requested_by");
 
                     b.Property<Guid?>("RequestedByUserId")
@@ -3569,8 +3569,8 @@ namespace EasyPatch.Infrastructure.Data.Migrations
 
                     b.Property<string>("CreatedBy")
                         .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
                         .HasColumnName("created_by");
 
                     b.Property<Guid?>("CreatedByUserId")
@@ -3596,8 +3596,8 @@ namespace EasyPatch.Infrastructure.Data.Migrations
                         .HasColumnName("released_at");
 
                     b.Property<string>("ReleasedBy")
-                        .HasMaxLength(100)
-                        .HasColumnType("character varying(100)")
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
                         .HasColumnName("released_by");
 
                     b.Property<Guid?>("ReleasedByUserId")

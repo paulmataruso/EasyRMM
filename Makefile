@@ -30,10 +30,11 @@ fmt-check: ## Fail if Go code is not formatted
 		if [ -n "$$out" ]; then echo "Unformatted files:"; echo "$$out"; exit 1; fi
 
 .PHONY: vet
-vet: ## go vet (including integration- and contract-tagged files, and the agent built for Windows)
+vet: ## go vet (including integration-, contract- and bundle-tagged files, and the agent built for Windows)
 	$(GO) vet ./...
 	$(GO) vet -tags integration ./...
 	$(GO) vet -tags contract ./server/internal/easypatch/
+	$(GO) vet -tags bundle ./server/internal/easypatch/
 	GOOS=windows $(GO) vet ./agent/... ./internal/...
 
 .PHONY: lint
@@ -89,7 +90,7 @@ test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral
 	./scripts/ci/check-coverage.sh coverage.txt
 
 .PHONY: test-contract
-test-contract: ## The EasyPatch connector against a real EasyPatch built from easypatch/ (needs Docker)
+test-contract: ## EasyRMM's calls to the patching engine against a real one built from easypatch/ (needs Docker)
 	GO=$(GO) ./scripts/contract/easypatch.sh
 
 .PHONY: check
@@ -136,6 +137,14 @@ web-test: web-deps ## Typecheck and unit-test the web console, with coverage flo
 e2e: web build build-agents ## Browser end-to-end tests against a real server (needs `make test-db`)
 	cd web && EASYRMM_E2E_ADMIN_URL="$${EASYRMM_E2E_ADMIN_URL:-$(TEST_DB_URL)}" npx playwright test
 
-.PHONY: e2e-sign-in
-e2e-sign-in: web build ## Sign in once across EasyRMM and EasyPatch, in a browser over TLS on two domains (needs Docker and `make test-db`)
-	EASYRMM_E2E_ADMIN_URL="$${EASYRMM_E2E_ADMIN_URL:-$(TEST_DB_URL)}" ./scripts/e2e/sign-in-across.sh
+.PHONY: e2e-bundle
+e2e-bundle: ## The deployment with its patching engine, end to end: install, enroll, scan and patch a Linux machine (needs Docker, the .NET SDK and root or sudo)
+	./scripts/e2e/bundle.sh
+
+.PHONY: e2e-import
+e2e-import: ## Import a standalone EasyPatch 1.10 server, with a real agent, into the deployment (needs Docker, the .NET SDK and root or sudo)
+	./scripts/e2e/import.sh
+
+.PHONY: e2e-authentik
+e2e-authentik: ## The deployment with Authentik as its sign-in, end to end: invitation, second factor, refusal, recovery (needs Docker and root or sudo)
+	./scripts/e2e/authentik.sh

@@ -12,13 +12,12 @@ misconfigurations:
       - "easypatch/agent/Installer/linux-packages/Dockerfile"
       - "easypatch/agent/Installer/macos/Dockerfile"
     statement: Build-only images, never deployed.
-  # EasyPatch's reverse proxy runs as Caddy's image does, as root, so it can
-  # bind ports 80 and 443; docker-compose.yml drops every capability but
-  # NET_BIND_SERVICE, mounts it read-only and sets no-new-privileges (which
-  # also rules out a file capability on a non-root binary). Moving it to a
-  # non-root user needs a migration of existing installations' /data and
-  # /config volumes: easypatch/TODO.md.
+  # The bundle test's Linux machine (scripts/e2e/bundle.sh, ADR-0043) runs
+  # systemd as PID 1, which must be root, so that the EasyRMM and EasyPatch
+  # agents are installed as services the way they are on a real machine. It
+  # exists only for the length of a test run, on CI's runner or a developer's
+  # machine, and is never published or deployed.
   - id: DS-0002
     paths:
-      - "easypatch/deployment/caddy/Dockerfile"
-    statement: Root only to bind 80 and 443, all other capabilities dropped; non-root move tracked in easypatch/TODO.md.
+      - "scripts/e2e/bundle-host/Dockerfile"
+    statement: Test-only machine with systemd as init (root by necessity), never published or deployed.

@@ -598,7 +598,8 @@ public sealed class ComplianceSnapshotTask(EasyPatchDbContext db, TimeProvider c
     }
 }
 
-/// <summary>Retention: deletes old events, audit records, finished jobs, scans, history and expired auth artifacts.</summary>
+/// <summary>Retention: deletes old events, audit records, finished jobs, scans, history, enrollment requests, alerts, notifications
+/// and reports.</summary>
 public sealed class RetentionTask(EasyPatchDbContext db, SettingsService settingsService, TimeProvider clock, ILogger<RetentionTask> logger) : IMaintenanceTask
 {
     public string Name => "retention";
@@ -614,8 +615,6 @@ public sealed class RetentionTask(EasyPatchDbContext db, SettingsService setting
         var jobRows = await db.Jobs.Where(j => j.CompletedAt != null && j.CompletedAt < now.AddDays(-s.RetentionJobsDays)).ExecuteDeleteAsync(ct);
         var scans = await db.UpdateScans.Where(x => x.ReceivedAt < now.AddDays(-s.RetentionScansDays)).ExecuteDeleteAsync(ct);
         var history = await db.UpdateHistoryEntries.Where(h => h.Date < now.AddDays(-s.RetentionHistoryDays)).ExecuteDeleteAsync(ct);
-        var sessions = await db.UserSessions.Where(x => x.ExpiresAt < now.AddDays(-7) || (x.RevokedAt != null && x.RevokedAt < now.AddDays(-7))).ExecuteDeleteAsync(ct);
-        var resets = await db.PasswordResetTokens.Where(x => x.ExpiresAt < now.AddDays(-7)).ExecuteDeleteAsync(ct);
         var requests = await db.EnrollmentRequests
             .Where(r => r.Status == EnrollmentRequestStatus.Pending && r.ExpiresAt < now)
             .ExecuteUpdateAsync(x => x.SetProperty(r => r.Status, EnrollmentRequestStatus.Expired), ct);
@@ -629,9 +628,9 @@ public sealed class RetentionTask(EasyPatchDbContext db, SettingsService setting
             .Where(d => d.Status != DeliveryStatus.Pending && d.CreatedAt < now.AddDays(-s.RetentionEventsDays)).ExecuteDeleteAsync(ct);
         var reports = await db.GeneratedReports.Where(r => r.GeneratedAt < now.AddMonths(-s.RetentionReportsMonths)).ExecuteDeleteAsync(ct);
         logger.LogInformation(
-            "Retention: deleted {Events} events, {Audit} audit records, {Jobs} jobs, {Scans} scans, {History} history entries, {Sessions} sessions, " +
-            "{Resets} reset tokens, {Old} old enrollment requests, {Obsolete} obsolete update states, {Snapshots} snapshots, {Alerts} resolved alerts, " +
+            "Retention: deleted {Events} events, {Audit} audit records, {Jobs} jobs, {Scans} scans, {History} history entries, " +
+            "{Old} old enrollment requests, {Obsolete} obsolete update states, {Snapshots} snapshots, {Alerts} resolved alerts, " +
             "{Deliveries} notifications, {Reports} monthly reports; expired {Requests} requests",
-            events, auditRows, jobRows, scans, history, sessions, resets, oldRequests, obsolete, snapshots, alerts, deliveries, reports, requests);
+            events, auditRows, jobRows, scans, history, oldRequests, obsolete, snapshots, alerts, deliveries, reports, requests);
     }
 }

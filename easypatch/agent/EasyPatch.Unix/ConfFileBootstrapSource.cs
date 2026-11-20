@@ -38,7 +38,7 @@ public sealed class ConfFileBootstrapSource : IBootstrapConfigSource
         }
 
         return new BootstrapConfig(values.GetValueOrDefault("ServerUrl"), values.GetValueOrDefault("EnrollmentToken"),
-            values.GetValueOrDefault("DeploymentCode"), values.GetValueOrDefault("ProxyUrl"));
+            values.GetValueOrDefault("DeploymentCode"), values.GetValueOrDefault("ProxyUrl"), values.GetValueOrDefault("ServerCaCertificate"));
     }
 
     public string SetupHint => $"Run 'sudo easypatch-agent enroll' or the install script from the EasyPatch console (settings: {_path}).";
@@ -86,6 +86,7 @@ public sealed class ConfFileBootstrapSource : IBootstrapConfigSource
         Add("EnrollmentToken", config.EnrollmentToken);
         Add("DeploymentCode", config.DeploymentCode);
         Add("ProxyUrl", config.ProxyUrl);
+        Add("ServerCaCertificate", config.ServerCaCertificate);
         Add("LogLevel", logLevel);
         WriteLines(path, lines);
     }

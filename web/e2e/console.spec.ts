@@ -6,48 +6,10 @@
 import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { totp } from "./totp";
+import { enrollAuthenticator, nextCode } from "./authenticator";
 
 const ADMIN = { name: "Alex Rivera", email: "alex@example.com", password: "harbor lantern quietly 42" };
 const TECH = { name: "Riley Chen", email: "riley@example.com", password: "copper meadow steadily 77" };
-
-/** Authenticator state per person: the secret and the last time step the server accepted. */
-const authenticators = new Map<string, { secret: string; step: number }>();
-
-const currentStep = () => Math.floor(Date.now() / 30_000);
-
-/** A code the server will accept: never a step it has already seen (replay protection). */
-async function nextCode(page: Page, email: string): Promise<string> {
-  const a = authenticators.get(email);
-  if (!a) throw new Error(`no authenticator for ${email}`);
-  let step = Math.max(currentStep(), a.step + 1);
-  // The server accepts at most one step ahead of now; wait for the clock otherwise.
-  while (step > currentStep() + 1) {
-    await page.waitForTimeout(1_000);
-    step = Math.max(currentStep(), a.step + 1);
-  }
-  a.step = step;
-  return totp(a.secret, step - currentStep());
-}
-
-/** Scans the "QR code" by reading the secret key printed under it, and confirms a code. */
-async function enrollAuthenticator(page: Page, email: string) {
-  const secret = (await page.getByText("Secret key", { exact: true }).locator("xpath=following-sibling::p[1]").innerText()).replace(/\s+/g, "");
-  expect(secret).toMatch(/^[A-Z2-7]{16,}$/);
-  await expect(page.getByRole("img", { name: "QR code for your authenticator app" })).toBeVisible();
-  authenticators.set(email, { secret, step: currentStep() - 1 });
-  await page.getByLabel(/^Verification code/).fill(await nextCode(page, email));
-  await page.getByRole("button", { name: "Turn on two-factor authentication" }).click();
-
-  // Recovery codes are shown once; leaving needs an explicit acknowledgement.
-  await expect(page.getByText("I have saved these recovery codes")).toBeVisible();
-  const codes = await page.locator("ul li.select-all").allInnerTexts();
-  expect(codes).toHaveLength(10);
-  const done = page.getByRole("button", { name: "Continue" });
-  await expect(done).toBeDisabled();
-  await page.getByLabel("I have saved these recovery codes").check();
-  await done.click();
-}
 
 async function signIn(page: Page, who: { email: string; password: string }) {
   await page.getByLabel(/^Email/).fill(who.email);

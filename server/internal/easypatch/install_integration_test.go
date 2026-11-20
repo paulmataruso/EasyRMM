@@ -3,9 +3,18 @@
 package easypatch
 
 import (
+	"bytes"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
+	"io"
+	"log/slog"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +24,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
+	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 )
@@ -137,7 +147,7 @@ func TestInstallRequests(t *testing.T) {
 	want := map[uuid.UUID]string{
 		f.has: "already has an EasyPatch agent (Active)", f.noInv: "has not reported its inventory yet",
 		f.mac: "Windows and Linux only", f.x86: "no agent for 386 processors", f.discovered: "no EasyRMM agent",
-		f.globexDevice: "not linked to an EasyPatch organization",
+		f.globexDevice: "has no patching organization yet",
 	}
 	for _, r := range res.Results {
 		if w, ok := want[r.DeviceID]; ok && (r.OK || !strings.Contains(r.Message, w)) {
@@ -192,10 +202,6 @@ func TestInstallRequests(t *testing.T) {
 	if f.beat(f.lin, &agentproto.EasyPatchInstallStatus{}) != nil {
 		t.Error("sent without a signer")
 	}
-	// A read-only token cannot install.
-	f.exec(`UPDATE easypatch_connection SET can_operate = false`)
-	_, err = f.svc.InstallAgent(ctx, f.admin, ActionInput{DeviceIDs: []uuid.UUID{f.lin}})
-	wantErr(t, err, apperr.KindConflict, "easypatch_read_only")
 }
 
 func TestInstallHeartbeats(t *testing.T) {
@@ -232,7 +238,7 @@ func TestInstallHeartbeats(t *testing.T) {
 	if row.state != InstallSent || row.attempts != 1 || row.note != "" || row.attempt == nil || row.attempt.String() != p.ID || row.token == nil {
 		t.Fatalf("sent: %+v", row)
 	}
-	if p.ServerURL != "https://patch.example.com" || p.CACert != f.ep.CAPEM || len(p.Packages) != 2 ||
+	if p.ServerURL != "https://patch.example.com" || p.CACert != "" || len(p.Packages) != 2 ||
 		p.Packages[0].FileName != "EasyPatchAgent-1.9.0-x64.deb" || p.Packages[1].Format != agentproto.EasyPatchRPM ||
 		p.Packages[0].URL != "https://patch.example.com/downloads/agent/EasyPatchAgent-1.9.0-x64.deb" ||
 		p.Packages[0].SHA256 != strings.ToLower(p.Packages[0].SHA256) || p.ExpiresAt.Sub(p.IssuedAt) != installValidFor {
@@ -243,7 +249,7 @@ func TestInstallHeartbeats(t *testing.T) {
 		tok.Description != "EasyRMM install on lin-01" {
 		t.Fatalf("token: %+v", tok)
 	}
-	if reqs := f.ep.RequestsTo("POST", "/api/v1/enrollment-tokens"); len(reqs) != 1 || reqs[0].OnBehalfOf != "ada@example.com" {
+	if reqs := f.ep.RequestsTo("POST", "/api/v1/enrollment-tokens"); len(reqs) != 1 || reqs[0].Statement.Name != "ada@example.com" {
 		t.Fatalf("token request: %+v", reqs)
 	}
 	// Sent once: the agent installing, or reporting for another attempt,
@@ -359,7 +365,7 @@ func TestInstallPreparationFails(t *testing.T) {
 	f.report(f.win, "", &agentproto.EasyPatchAgent{Status: "Active"})
 	fails(f.win, "already has an EasyPatch agent")
 	f.report(f.win, "", nil)
-	// EasyPatch refuses the token.
+	// The engine refuses the token.
 	request(f.win)
 	f.ep.Set(func() { f.ep.ReadOnly = true })
 	fails(f.win, "EasyPatch did not create an enrollment token")
@@ -369,38 +375,29 @@ func TestInstallPreparationFails(t *testing.T) {
 	}
 	// An address the agent would refuse: the token is revoked at once.
 	request(f.win)
-	f.exec(`UPDATE easypatch_connection SET public_url = 'http://patch.example.com'`)
+	f.ep.Set(func() { f.ep.PublicURL = "http://patch.example.com" })
+	if _, err := f.svc.CheckConnection(ctx); err != nil {
+		t.Fatal(err)
+	}
 	r := fails(f.win, "not in a form the agent accepts")
 	if list := f.ep.Tokens(); len(list) != tokens+1 || !list[len(list)-1].Revoked {
 		t.Fatalf("token: %+v %+v", list, r)
 	}
-	f.exec(`UPDATE easypatch_connection SET public_url = ''`)
-	// Without a public address the settings' address is used.
+	// Without a public address, never the engine's loopback one.
+	f.ep.Set(func() { f.ep.PublicURL = "" })
+	if _, err := f.svc.CheckConnection(ctx); err != nil {
+		t.Fatal(err)
+	}
 	request(f.win)
-	if p := f.beat(f.win, &agentproto.EasyPatchInstallStatus{}); p == nil || p.ServerURL != f.ep.URL() ||
-		!strings.HasPrefix(p.Packages[0].URL, f.ep.URL()+"/downloads/agent/") {
-		t.Fatalf("settings address: %+v", p)
-	}
-	// The organization was unlinked; EasyPatch removed from EasyRMM.
-	if err := f.svc.UnlinkOrganization(ctx, f.admin.Actor, f.acme); err != nil {
+	fails(f.win, "no public address for agents to enroll with")
+	f.ep.Set(func() { f.ep.PublicURL = "https://patch.example.com" })
+	if _, err := f.svc.CheckConnection(ctx); err != nil {
 		t.Fatal(err)
 	}
-	again := func(d uuid.UUID) {
-		f.exec(`UPDATE easypatch_installs SET state = 'waiting', error = '', attempt_id = NULL, sent_at = NULL WHERE device_id = $1`, d)
-	}
-	again(f.lin)
-	fails(f.lin, "not linked to an EasyPatch organization")
-	// The token became read-only.
-	again(f.lin)
-	f.exec(`UPDATE easypatch_connection SET can_operate = false`)
-	fails(f.lin, "read-only")
-	// Removing EasyPatch removes the installs.
-	if err := f.svc.DeleteConnection(ctx, f.admin.Actor); err != nil {
-		t.Fatal(err)
-	}
-	if r := f.install(f.lin); r.state != "" {
-		t.Fatalf("install kept: %+v", r)
-	}
+	// The organization has no patching organization (yet).
+	f.exec(`DELETE FROM easypatch_organizations WHERE organization_id = $1`, f.acme)
+	f.exec(`UPDATE easypatch_installs SET state = 'waiting', error = '', attempt_id = NULL, sent_at = NULL WHERE device_id = $1`, f.lin)
+	fails(f.lin, "has no patching organization yet")
 }
 
 func TestInstallSweeps(t *testing.T) {
@@ -495,24 +492,109 @@ func TestInstallSweeps(t *testing.T) {
 	if sweep() != 0 {
 		t.Fatal("swept with automatic installs off")
 	}
-	// Turning them on needs an Operator token.
-	f.exec(`UPDATE easypatch_connection SET can_operate = false`)
-	err = f.svc.SetAutoInstall(ctx, f.admin.Actor, f.acme, true)
-	wantErr(t, err, apperr.KindConflict, "easypatch_read_only")
 }
 
 func TestCAForAgent(t *testing.T) {
-	ep := eptest.New(t)
+	ca := string(testAuthority(t))
 	if caForAgent("") != "" || caForAgent("junk") != "" {
 		t.Error("no certificate")
 	}
-	if got := caForAgent(ep.CAPEM); got != ep.CAPEM {
+	if got := caForAgent(ca); got != ca {
 		t.Errorf("one certificate: %q", got)
 	}
-	// httptest's certificate is self-signed, so it is the root of any
-	// bundle it is in.
-	bundle := "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n" + ep.CAPEM
-	if got := caForAgent(bundle); got != ep.CAPEM {
+	// The authority is self-signed, so it is the root of any bundle it is
+	// in.
+	bundle := "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n" + ca
+	if got := caForAgent(bundle); got != ca {
 		t.Errorf("bundle: %q", got)
 	}
+}
+
+// TestBundledInstall: with the engine in this deployment, an install goes to
+// the organization and site EasyRMM keeps there (ADR-0040), and, when
+// EasyRMM is addressed by IP with its own certificate authority, carries
+// that authority for the EasyPatch agent to trust (one-product plan, B7).
+func TestBundledInstall(t *testing.T) {
+	f := newFixture(t)
+	engine := eptest.NewEngine(t, reconcileKey)
+	caPEM := testAuthority(t)
+	start := func(opts ...EngineOption) ed25519.PublicKey {
+		signer, err := NewSigner(reconcileKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client, err := NewEngineClient(engine.URL(), signer, "1.0.0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.svc = New(f.db, audit.New(f.db, nil), "1.0.0", slog.New(slog.NewTextHandler(io.Discard, nil)))
+		if err := f.svc.UseEngine(client, opts...); err != nil {
+			t.Fatal(err)
+		}
+		pub, priv, _ := ed25519.GenerateKey(nil)
+		f.svc.SetSigner(priv)
+		return pub
+	}
+	instruction := func(pub ed25519.PublicKey, device uuid.UUID) agentproto.EasyPatchInstallPayload {
+		t.Helper()
+		if res, err := f.svc.InstallAgent(f.ctx, f.admin, ActionInput{DeviceIDs: []uuid.UUID{device}}); err != nil || res.Succeeded != 1 {
+			t.Fatalf("install: %+v, %v", res, err)
+		}
+		s := f.svc.AgentHeartbeat(f.ctx, device, &agentproto.EasyPatchInstallStatus{})
+		if s == nil {
+			t.Fatal("no instruction")
+		}
+		p, err := agentproto.VerifyEasyPatchInstall(pub, *s, device.String(), time.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	agentDevice := func(name, platform string) uuid.UUID {
+		d := f.id(`INSERT INTO devices (organization_id, site_id, name, hostname, platform, agent_public_key, agent_arch, enrolled_at)
+			VALUES ($1, $2, $3, lower($3), $4, $5, 'amd64', now()) RETURNING id`, f.acme, f.hq, name, platform, bytes.Repeat([]byte(name[:1]), 32))
+		f.report(d, "", nil)
+		return d
+	}
+
+	pub := start(AgentCA(func() []byte { return caPEM }))
+	f.reconcile()
+	lin := agentDevice("lin-01", "linux")
+	p := instruction(pub, lin)
+	if p.CACert != string(caPEM) || p.ServerURL != "https://patch.example.com" || len(p.Packages) != 2 {
+		t.Fatalf("instruction: %+v", p)
+	}
+	var tok *eptest.Token
+	for _, x := range engine.Tokens() {
+		if x.Org == f.engineOrg(f.acme) {
+			tok = &x
+		}
+	}
+	if tok == nil || tok.Site == nil || *tok.Site != f.engineSite(f.hq) {
+		t.Fatalf("enrollment token: %+v", tok)
+	}
+
+	// Addressed by name: nothing to trust beyond the system's.
+	pub = start()
+	win := agentDevice("win-01", "windows")
+	if p := instruction(pub, win); p.CACert != "" || p.Packages[0].Format != agentproto.EasyPatchMSI {
+		t.Fatalf("by name: %+v", p)
+	}
+}
+
+// testAuthority is a certificate authority's certificate (PEM).
+func testAuthority(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "EasyRMM test authority"},
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IsCA: true, BasicConstraintsValid: true,
+		KeyUsage: x509.KeyUsageCertSign}
+	der, err := x509.CreateCertificate(rand.Reader, tpl, tpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }

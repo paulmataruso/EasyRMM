@@ -78,6 +78,16 @@ jobs:
           name: licence-inventory
           path: go-licenses.csv
           retention-days: 30
+      # The console's production npm packages ship in its bundle: permissive
+      # licences only (ADR-0037).
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Install the console's dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Check npm package licences against the allow-list
+        run: node scripts/ci/check-npm-licences.mjs web
 
   trivy:
     name: Filesystem scan (Trivy)
@@ -98,7 +108,7 @@ jobs:
           exit-code: "1"
 
   # Go (EasyRMM), C# (EasyPatch, in easypatch/) and JavaScript/TypeScript
-  # (both web consoles). C# is analysed from a real build of the whole
+  # (the web console). C# is analysed from a real build of the whole
   # EasyPatch solution, which builds on Linux, Windows projects included.
   codeql:
     name: CodeQL (${{ matrix.language }})

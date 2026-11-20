@@ -12,16 +12,17 @@ feature in it is **Complete** in [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STA
 | 5. MeshCentral integration | Container and config, control client, user/group sync, edge gateway, session launch, embedded desktop/terminal/files | Implemented and tested locally (including a real agent end to end); waiting for its first CI run on GitHub |
 | 6. Unified endpoint installation | Go agent, enrollment, MeshAgent install and correlation, MSI/EXE/PowerShell, DEB/RPM/script, updates, uninstall | In progress: Linux and Windows agents, deployment tokens and approval, MeshAgent install and correlation, install scripts, uninstall and coordinated agent updates (ADR-0027) done; the Windows agent verified on Windows Server 2025. MSI and DEB/RPM packages to do |
 | 7. Core RMM | Inventory, telemetry, monitoring, alerts, scripts, jobs, software deployment | Done: inventory, telemetry, alerts, scripts, jobs, software deployment (ADR-0028) and reports (ADR-0029); see `IMPLEMENTATION_STATUS.md`. The winget and Chocolatey scripts have not been run on Windows |
-| 8. EasyPatch | EasyPatch changes (integration credentials, external ids…), connector, native patch UI | Done: connector and patch UI (ADR-0030), installing the EasyPatch agent from EasyRMM (ADR-0031); verified on Linux (apt-get and dnf) against EasyPatch 1.9.0; the script library warns about scripts that install updates themselves. On Windows, detection and refusal verified; the installer path and patching a linked Windows endpoint not yet run |
+| 8. EasyPatch | EasyPatch changes (integration credentials, external ids…), connector, native patch UI | Done: patch UI (ADR-0030; its connector to a separately run EasyPatch server retired in one-product R2 for the engine in every deployment), installing the EasyPatch agent from EasyRMM (ADR-0031); verified on Linux (apt-get and dnf) against EasyPatch 1.9.0; the script library warns about scripts that install updates themselves. On Windows, detection and refusal verified; the installer path and patching a linked Windows endpoint not yet run |
 | 9. Production hardening | Security review, performance and soak tests, backup/restore drills, release pipeline, documentation completion | In progress: Go 1.27.4 for a standard-library vulnerability; release pipeline (not yet run on GitHub); security review done, its findings fixed or documented (`docs/security/security-review.md`); backup and restore drill passing (`scripts/drill/`), after fixing the deployment and guide bugs it found; upgrade guide, and a release bundle that deploys; load and soak drill with 2,000 simulated agents for an hour: no errors, jobs on 500 devices in about 6 s, and a nonce table that grew for an hour now pruned every minute (`docs/development/drills.md`) |
+| 10. One product | EasyPatch folded into EasyRMM: one licence, EasyPatch's engine inside EasyRMM's deployment, one console in EasyRMM's design, the Authentik install option, retiring the standalone pieces | In progress: plan in `docs/architecture/one-product-plan.md`; phase L (one licence, ADR-0037) done |
 
 ## Next steps
 
 1. Push the branch and let CI run on GitHub (needs a token with the
    `workflow` scope), then enable branch protection with "CI result" as the
    required check.
-2. Licence the EasyPatch-derived stylesheet and logo construction to
-   EasyRMM (ADR-0013).
+2. ~~Licence the EasyPatch-derived stylesheet and logo construction to
+   EasyRMM (ADR-0013).~~ Resolved by one licence (ADR-0037).
 3. Phase 6, remainder: an MSI for the Windows agent (needs Windows CI
    runners) and DEB/RPM packages.
 4. Run the winget and Chocolatey software scripts on Windows (ADR-0028).

@@ -12,30 +12,44 @@ import { jobRun } from "../src/test/fixtures";
 import {
   alerts,
   alertSummary,
+  defaultPolicyView,
+  organizationPolicy,
+  organizationTags,
+  patchTags,
   auditLog,
   byId,
   devicePatching,
   devices,
   fleet,
+  fleetUpdates,
   HEALTH_DEVICE,
   healthHistory,
   healthInventory,
   missingUpdates,
+  monthlyReports,
   NOW,
   organizations,
   PATCH_DEVICE,
+  patchComplianceReport,
+  patchAlertCounts,
+  patchAlerts,
   patchJobs,
+  patchLifecycle,
+  patchServerSettings,
   patchStatus,
-  productSwitch,
+  patchTrend,
   recentConnections,
   remoteAccess,
   session,
   sites,
   TIME_ZONE,
+  UPDATE_GUID,
+  updateDevices,
+  updateView,
   users,
 } from "./demo";
 
-const OUT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "docs", "images");
+const OUT = process.env.EASYRMM_SCREENSHOTS_OUT ?? join(dirname(fileURLToPath(import.meta.url)), "..", "..", "docs", "images");
 
 const list = <T,>(items: T[]) => ({ items });
 
@@ -62,6 +76,12 @@ function answer(method: string, path: string, q: URLSearchParams): unknown {
     if (rest === "/jobs") return { items: patchJobs.filter((j) => j.deviceId === id), page: 1, pageSize: 25, totalCount: 1 };
     return undefined;
   }
+  const orgMatch = /^\/organizations\/([^/]+)(\/sites)?$/.exec(path);
+  if (orgMatch) {
+    const [, id, sub] = orgMatch;
+    if (sub) return list(sites.filter((s) => s.organizationId === id));
+    return organizations.find((o) => o.id === id);
+  }
   switch (path) {
     case "/setup":
       return { required: false, passwordMinLength: 12 };
@@ -83,6 +103,8 @@ function answer(method: string, path: string, q: URLSearchParams): unknown {
     }
     case "/devices/recent-connections":
       return list(recentConnections);
+    case "/enrollment-requests/waiting":
+      return { waiting: 0 };
     case "/remote-access/status":
       return remoteAccess;
     case "/alerts/summary":
@@ -127,12 +149,51 @@ function answer(method: string, path: string, q: URLSearchParams): unknown {
       return list([]);
     case "/patching":
       return patchStatus;
-    case "/patching/switch":
-      return productSwitch;
     case "/patching/devices":
       return fleet;
     case "/patching/jobs":
       return list(patchJobs);
+    case "/patching/alerts":
+      return { items: patchAlerts, capped: false };
+    case "/patching/alerts/summary":
+      return patchAlertCounts;
+    case "/patching/updates":
+      return { items: fleetUpdates, page: 1, pageSize: 50, totalCount: fleetUpdates.length };
+    case `/patching/updates/${UPDATE_GUID}`:
+      return updateView;
+    case `/patching/updates/${UPDATE_GUID}/devices`:
+      return { items: updateDevices, page: 1, pageSize: 200, totalCount: updateDevices.length };
+    case "/patching/policies/organization/o-harbor":
+      return organizationPolicy;
+    case "/patching/tags/of/organization/o-harbor":
+      return { tags: organizationTags, canAssign: true };
+    case "/patching/policies/default":
+      return defaultPolicyView;
+    case "/patching/tags":
+      return { items: patchTags, canManage: true };
+    case "/reports/patch-compliance":
+      return patchComplianceReport;
+    case "/patching/reports/trend":
+      return patchTrend;
+    case "/patching/reports/monthly":
+      return monthlyReports;
+    case "/patching/settings":
+      return patchServerSettings;
+    case "/patching/lifecycle":
+      return patchLifecycle;
+    case "/patching/report-schedules":
+      return organizations.map((o, i) => ({
+        organizationId: o.id,
+        organizationName: o.name,
+        enabled: i % 2 === 0,
+        recipients: i % 2 === 0 ? ["it@example.com"] : [],
+        dayOfMonth: 2,
+        includeEndpointList: i !== 2,
+        nextReportDate: i % 2 === 0 ? "2026-12-02" : null,
+        nextReportPeriod: i % 2 === 0 ? "2026-11-01" : null,
+        timeZone: TIME_ZONE,
+        canEdit: true,
+      }));
   }
   return undefined;
 }
@@ -199,9 +260,45 @@ for (const theme of ["dark", "light"] as const) {
     });
 
     test("patching", async ({ page }) => {
-      await open(page, theme, "/patching");
+      await open(page, theme, "/patching?tab=devices");
       await expect(page.getByText("AF-FS01").first()).toBeVisible();
       await shoot(page, "patching", theme);
+    });
+
+    test("patching overview", async ({ page }) => {
+      await open(page, theme, "/patching");
+      await expect(page.getByText("HDG-FRONTDESK-2")).toBeVisible();
+      await shoot(page, "patching-overview", theme);
+    });
+
+    test("patching alerts", async ({ page }) => {
+      await open(page, theme, "/patching?tab=alerts");
+      await expect(page.getByText("AF-FS01 misses an update for an exploited vulnerability")).toBeVisible();
+      await shoot(page, "patching-alerts", theme);
+    });
+
+    test("patching update", async ({ page }) => {
+      await open(page, theme, `/patching/updates/${UPDATE_GUID}`);
+      await expect(page.getByText("CVE-2026-41001")).toBeVisible();
+      await shoot(page, "patching-update", theme);
+    });
+
+    test("patch policy", async ({ page }) => {
+      await open(page, theme, "/organizations/o-harbor?tab=patch-policy");
+      await expect(page.getByRole("heading", { name: "Windows Update settings" })).toBeVisible();
+      await shoot(page, "patch-policy", theme);
+    });
+
+    test("patch reports", async ({ page }) => {
+      await open(page, theme, "/reports?report=patch-compliance");
+      await expect(page.getByRole("group", { name: /Machines up to date/ })).toBeVisible();
+      await shoot(page, "patch-reports", theme);
+    });
+
+    test("patch server settings", async ({ page }) => {
+      await open(page, theme, "/settings?tab=patching&view=server");
+      await expect(page.getByRole("heading", { name: "Rollout guard" })).toBeVisible();
+      await shoot(page, "patch-server-settings", theme);
     });
 
     test("alerts", async ({ page }) => {

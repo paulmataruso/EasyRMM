@@ -2,12 +2,15 @@ import { useId, type ReactNode } from "react";
 import { Download } from "lucide-react";
 import { API_BASE } from "../../api/client";
 import { useApi } from "../../api/hooks";
-import type { Permission, Report, ReportColumn, ReportName, ReportValue } from "../../api/types";
+import type { PatchStatus, Permission, Report, ReportColumn, ReportName, ReportValue } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { OrganizationSelect, SearchInput, SiteSelect } from "../../components/Filters";
 import { buttonClasses, cx, EmptyState, ErrorState, Field, PageHeader, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
+import { categoryLabel, COMPLIANCE } from "../patching/patchText";
+import { UPDATE_CATEGORIES } from "../patching/PatchUpdates";
+import { MonthlyReports, PatchTrendCard } from "./PatchReports";
 
 interface ReportInfo {
   name: ReportName;
@@ -15,9 +18,14 @@ interface ReportInfo {
   description: string;
   /** What the rows show; report.view is needed as well. */
   permission: Permission;
-  filters: ("platform" | "search" | "health" | "alerts")[];
+  filters: ("platform" | "search" | "health" | "alerts" | "compliance" | "installations")[];
   search?: { label: string; placeholder: string };
+  /** The report comes from EasyPatch, so it is offered once EasyPatch is set up (one-product plan, C5). */
+  patching?: true;
 }
+
+/** The monthly PDF reports: a tab of their own, not a table report. */
+const MONTHLY = "patch-monthly";
 
 export const REPORTS: ReportInfo[] = [
   {
@@ -50,17 +58,55 @@ export const REPORTS: ReportInfo[] = [
     permission: "alert.view",
     filters: ["alerts"],
   },
+  {
+    name: "patch-compliance",
+    label: "Patch compliance",
+    description:
+      "Each device's patching as EasyPatch last saw it: updates missing and failed, restarts pending and operating system support. Devices EasyPatch does not patch say why.",
+    permission: "patch.view",
+    filters: ["platform", "compliance", "search"],
+    search: { label: "Device", placeholder: "Name or host name" },
+    patching: true,
+  },
+  {
+    name: "patch-installations",
+    label: "Patch installations",
+    description: "Each update EasyPatch's jobs finished with over a period, newest first: installed, failed, skipped or cancelled, and why.",
+    permission: "patch.view",
+    filters: ["installations", "search"],
+    search: { label: "Device or update", placeholder: "Device, update or KB" },
+    patching: true,
+  },
 ];
 
 /** The URL parameters that narrow reports; each report reads its own. */
-const PARAMS = ["organizationId", "siteId", "platform", "q", "offlineDays", "diskPercent", "days", "severity"] as const;
+const PARAMS = ["organizationId", "siteId", "platform", "q", "offlineDays", "diskPercent", "days", "severity", "compliance", "category", "result"] as const;
 
 export function ReportsPage() {
   const { can } = useAuth();
   const url = useUrlState();
-  const available = REPORTS.filter((r) => can("report.view") && can(r.permission));
+  const seesPatching = can("report.view") && can("patch.view");
+  const patching = useApi<PatchStatus>(seesPatching ? "/patching" : null, undefined, { staleTime: 60_000 });
+  const patched = patching.data?.configured === true;
+  const available = REPORTS.filter((r) => can("report.view") && can(r.permission) && (!r.patching || patched));
+  const tabs = [...available.map((r) => ({ id: r.name as string, label: r.label })), ...(patched ? [{ id: MONTHLY, label: "Monthly patch reports" }] : [])];
   const requested = url.get("report");
-  const info = available.find((r) => r.name === requested) ?? available[0];
+  const info = available.find((r) => r.name === requested) ?? (requested === MONTHLY && patched ? undefined : available[0]);
+
+  // A patch report asked for by the URL waits for patching's status rather than show another report first.
+  if (seesPatching && patching.isPending && (requested.startsWith("patch-") || requested === MONTHLY)) return <Spinner />;
+
+  if (requested === MONTHLY && patched) {
+    return (
+      <>
+        <PageHeader title="Reports" subtitle="Monthly patch reports: a PDF of each organization's patching over a month, to keep or email." />
+        <Tabs tabs={tabs} active={MONTHLY} onChange={(id) => url.set({ report: id === tabs[0]?.id ? null : id, q: null })} />
+        <div role="tabpanel" aria-labelledby={`tab-${MONTHLY}`}>
+          <MonthlyReports />
+        </div>
+      </>
+    );
+  }
 
   if (!info) {
     return (
@@ -91,14 +137,11 @@ export function ReportsPage() {
           </a>
         }
       />
-      <Tabs
-        tabs={available.map((r) => ({ id: r.name, label: r.label }))}
-        active={info.name}
-        onChange={(id) => url.set({ report: id === available[0]?.name ? null : id, q: null })}
-      />
+      <Tabs tabs={tabs} active={info.name} onChange={(id) => url.set({ report: id === tabs[0]?.id ? null : id, q: null })} />
       <div role="tabpanel" aria-labelledby={`tab-${info.name}`}>
         <p className="mb-3 max-w-3xl text-sm text-muted">{info.description}</p>
         <Filters info={info} />
+        {info.name === "patch-compliance" && <PatchTrendCard organizationId={url.get("organizationId")} siteChosen={url.get("siteId") !== ""} />}
         <ReportTable name={info.name} params={params} />
       </div>
     </>
@@ -118,8 +161,14 @@ function applies(info: ReportInfo, key: (typeof PARAMS)[number]): boolean {
     case "diskPercent":
       return info.filters.includes("health");
     case "days":
+      return info.filters.includes("alerts") || info.filters.includes("installations");
     case "severity":
       return info.filters.includes("alerts");
+    case "compliance":
+      return info.filters.includes("compliance");
+    case "category":
+    case "result":
+      return info.filters.includes("installations");
   }
 }
 
@@ -190,6 +239,51 @@ function Filters({ info }: { info: ReportInfo }) {
               ["", "Any severity"],
               ["critical", "Critical"],
               ["warning", "Warning"],
+            ]}
+          />
+        </>
+      )}
+      {info.filters.includes("compliance") && (
+        <Choice
+          label="Compliance"
+          value={url.get("compliance")}
+          onChange={(v) => url.set({ compliance: v })}
+          options={[
+            ["", "Any compliance"],
+            ...Object.entries(COMPLIANCE).map(([status, c]): [string, string] => [status, c.label]),
+            ["unlinked", "Not patched"],
+          ]}
+        />
+      )}
+      {info.filters.includes("installations") && (
+        <>
+          <Choice
+            label="Finished in"
+            value={url.get("days")}
+            onChange={(v) => url.set({ days: v })}
+            options={[
+              ["7", "The last 7 days"],
+              ["", "The last 30 days"],
+              ["90", "The last 90 days"],
+              ["365", "The last year"],
+            ]}
+          />
+          <Choice
+            label="Category"
+            value={url.get("category")}
+            onChange={(v) => url.set({ category: v })}
+            options={[["", "Any category"], ...UPDATE_CATEGORIES.map((c): [string, string] => [c, categoryLabel(c)])]}
+          />
+          <Choice
+            label="Result"
+            value={url.get("result")}
+            onChange={(v) => url.set({ result: v })}
+            options={[
+              ["", "Any result"],
+              ["Succeeded", "Installed"],
+              ["Failed", "Failed"],
+              ["Skipped", "Skipped"],
+              ["Cancelled", "Cancelled"],
             ]}
           />
         </>

@@ -220,14 +220,14 @@ public sealed partial class AgentPackageService(IOptions<EasyPatchOptions> optio
 
 /// <summary>Builds the tokenless PowerShell installer used by RMM tools. The script verifies the MSI SHA-256 (and,
 /// optionally, its Authenticode signature) before installing; the endpoint then waits for approval.
-/// <para><paramref name="skipCertificateCheck"/> is for servers whose certificate the endpoint does not trust (a private CA,
-/// such as Caddy's internal one in the lab configuration): the one-liner and the script then download without checking the
-/// certificate, and the script passes the certificate authority the proxy publishes at <c>/server-ca.crt</c> to the MSI
-/// (SERVERCACERT), so the agent trusts that authority for its own connection to EasyPatch only and keeps checking
-/// certificates afterwards.</para></summary>
+/// <para><paramref name="skipCertificateCheck"/> is for servers whose certificate the endpoint does not trust (a private CA):
+/// the one-liner and the script then download without checking the certificate, and the script passes the certificate
+/// authority found at <c>/server-ca.crt</c> to the MSI (SERVERCACERT), so the agent trusts that authority for its own
+/// connection to EasyPatch only and keeps checking certificates afterwards.</para></summary>
 public static class InstallScriptBuilder
 {
-    /// <summary>Published by the lab proxy (Caddyfile.dev): the root certificate of Caddy's internal CA.</summary>
+    /// <summary>Where the script looks for the server's certificate authority. Nothing in EasyRMM's deployment publishes one:
+    /// EasyRMM installs its agents itself and gives them its authority directly.</summary>
     public const string ServerCaPath = "/server-ca.crt";
 
     public static string Build(string publicUrl, AgentPackage package, string deploymentCode, string label, bool requireSignature, DateTimeOffset generatedAt,

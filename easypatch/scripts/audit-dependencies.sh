@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reports known-vulnerable NuGet and npm dependencies (direct and transitive). Exit code is non-zero if any are found.
+# Reports known-vulnerable NuGet dependencies (direct and transitive). Exit code is non-zero if any are found.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -10,9 +10,5 @@ echo "$report"
 if grep -q "has the following vulnerable packages" <<<"$report"; then
   status=1
 fi
-
-echo
-echo "== npm (frontend) =="
-(cd frontend && npm audit --audit-level=low) || status=1
 
 exit "$status"

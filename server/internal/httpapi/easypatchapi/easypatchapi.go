@@ -1,23 +1,22 @@
-// Package easypatchapi serves the EasyPatch connector (ADR-0030): its
-// settings, for super administrators, and the patch views and actions of
-// the console.
+// Package easypatchapi serves patching: the patching engine's state and
+// EasyRMM's links to it, for super administrators, and the patch views and
+// actions of the console.
 package easypatchapi
 
 import (
 	"net/http"
-	"net/url"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
-	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// API serves the connector.
+// API serves patching.
 type API struct{ svc *easypatch.Service }
 
 // New builds the API.
@@ -34,14 +33,11 @@ func (a *API) Register(mux *http.ServeMux) {
 		})))
 	}
 	settings("GET /api/v1/settings/easypatch", a.connection)
-	settings("PUT /api/v1/settings/easypatch", a.updateConnection)
-	settings("DELETE /api/v1/settings/easypatch", a.deleteConnection)
 	settings("POST /api/v1/settings/easypatch/check", a.checkConnection)
 	settings("GET /api/v1/settings/easypatch/organizations", a.organizations)
-	settings("PUT /api/v1/settings/easypatch/organizations/{id}", a.linkOrganization)
 	settings("PATCH /api/v1/settings/easypatch/organizations/{id}", a.updateOrganization)
-	settings("DELETE /api/v1/settings/easypatch/organizations/{id}", a.unlinkOrganization)
 	settings("GET /api/v1/settings/easypatch/devices", a.deviceLinks)
+	settings("GET /api/v1/settings/easypatch/sync", a.sync)
 
 	r := func(pattern string, h httpapi.HandlerFunc) {
 		mux.Handle(pattern, httpapi.RequireActive(httpapi.Handle(h)))
@@ -62,13 +58,30 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/patching/restart/plan", a.planRestart)
 	r("POST /api/v1/patching/restart", a.restart)
 	r("POST /api/v1/patching/agent-install", a.installAgent)
-	// The product switch: for anyone signed in, it says whether to show it.
-	r("GET /api/v1/patching/switch", a.productSwitch)
-	// Where a link from EasyPatch opens the console.
+	r("POST /api/v1/patching/stop", a.stopPatching)
+	r("POST /api/v1/patching/allow", a.allowPatching)
+	// A device's Patches tab (one-product plan, C1).
+	r("GET /api/v1/patching/devices/{id}/install-preview", a.installPreview)
+	r("POST /api/v1/patching/devices/{id}/exclusions", a.exclude)
+	r("DELETE /api/v1/patching/devices/{id}/exclusions/{update}", a.include)
+	r("POST /api/v1/patching/devices/{id}/updates/{update}/remove", a.removeUpdate)
+	r("GET /api/v1/patching/messages", a.messagePresets)
+	r("POST /api/v1/patching/notify", a.notify)
+	r("POST /api/v1/patching/agent-update", a.updateAgent)
+	// Patching → Updates (one-product plan, C2).
+	r("GET /api/v1/patching/updates", a.catalog)
+	r("GET /api/v1/patching/updates/{update}", a.update)
+	r("GET /api/v1/patching/updates/{update}/devices", a.updateDevices)
+	r("POST /api/v1/patching/updates/{update}/install", a.installUpdate)
+	r("POST /api/v1/patching/updates/{update}/remove", a.removeFromDevices)
+	r("POST /api/v1/patching/updates/{update}/holds", a.holdUpdate)
+	r("POST /api/v1/patching/updates/{update}/holds/{id}/release", a.releaseHold)
+	a.registerPolicies(r)
+	a.registerReports(r)
+	a.registerSettings(r)
+	a.registerAlerts(r)
+	// Where a link in one of the engine's messages opens the console.
 	r("GET /api/v1/patching/from-easypatch/{kind}/{id}", a.fromEasyPatch)
-
-	// A browser link, not an API call: it answers with a redirect.
-	mux.Handle("GET /go/to-easypatch", httpapi.Handle(a.goToEasyPatch))
 }
 
 func ok(w http.ResponseWriter, v any, err error) error {
@@ -84,23 +97,6 @@ func (a *API) connection(w http.ResponseWriter, r *http.Request) error {
 	return ok(w, c, err)
 }
 
-func (a *API) updateConnection(w http.ResponseWriter, r *http.Request) error {
-	var in easypatch.ConnectionInput
-	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
-		return err
-	}
-	c, err := a.svc.UpdateConnection(r.Context(), httpapi.Actor(r), in)
-	return ok(w, c, err)
-}
-
-func (a *API) deleteConnection(w http.ResponseWriter, r *http.Request) error {
-	if err := a.svc.DeleteConnection(r.Context(), httpapi.Actor(r)); err != nil {
-		return err
-	}
-	w.WriteHeader(http.StatusNoContent)
-	return nil
-}
-
 func (a *API) checkConnection(w http.ResponseWriter, r *http.Request) error {
 	c, err := a.svc.CheckConnection(r.Context())
 	return ok(w, c, err)
@@ -109,28 +105,6 @@ func (a *API) checkConnection(w http.ResponseWriter, r *http.Request) error {
 func (a *API) organizations(w http.ResponseWriter, r *http.Request) error {
 	o, err := a.svc.Organizations(r.Context())
 	return ok(w, o, err)
-}
-
-func (a *API) linkOrganization(w http.ResponseWriter, r *http.Request) error {
-	id, err := httpapi.PathID(r)
-	if err != nil {
-		return err
-	}
-	var in struct {
-		EasyPatchID string `json:"easyPatchId"`
-	}
-	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
-		return err
-	}
-	ep, err := parseID(in.EasyPatchID, "easyPatchId")
-	if err != nil {
-		return err
-	}
-	if err := a.svc.LinkOrganization(r.Context(), httpapi.Actor(r), id, ep); err != nil {
-		return err
-	}
-	w.WriteHeader(http.StatusNoContent)
-	return nil
 }
 
 func (a *API) updateOrganization(w http.ResponseWriter, r *http.Request) error {
@@ -148,18 +122,6 @@ func (a *API) updateOrganization(w http.ResponseWriter, r *http.Request) error {
 		return apperr.Invalid("autoInstall", "must be true or false")
 	}
 	if err := a.svc.SetAutoInstall(r.Context(), httpapi.Actor(r), id, *in.AutoInstall); err != nil {
-		return err
-	}
-	w.WriteHeader(http.StatusNoContent)
-	return nil
-}
-
-func (a *API) unlinkOrganization(w http.ResponseWriter, r *http.Request) error {
-	id, err := httpapi.PathID(r)
-	if err != nil {
-		return err
-	}
-	if err := a.svc.UnlinkOrganization(r.Context(), httpapi.Actor(r), id); err != nil {
 		return err
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -256,15 +218,29 @@ func (a *API) jobs(w http.ResponseWriter, r *http.Request) error {
 	if q.OrganizationID, err = httpapi.QueryID(r, "organizationId"); err != nil {
 		return err
 	}
-	switch r.URL.Query().Get("active") {
+	if q.DeviceID, err = httpapi.QueryID(r, "deviceId"); err != nil {
+		return err
+	}
+	v := r.URL.Query()
+	switch v.Get("active") {
 	case "", "false":
 	case "true":
 		q.Active = true
 	default:
 		return apperr.Invalid("active", "must be true or false")
 	}
+	q.Status, q.Type, q.Trigger = v.Get("status"), v.Get("type"), v.Get("trigger")
+	for name, t := range map[string]**time.Time{"from": &q.From, "to": &q.To} {
+		if raw := v.Get(name); raw != "" {
+			at, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				return apperr.Invalid(name, "Give a time as in 2026-11-18T09:00:00Z.")
+			}
+			*t = &at
+		}
+	}
 	list, err := a.svc.Jobs(r.Context(), httpapi.Caller(r), q)
-	return ok(w, map[string]any{"items": list}, err)
+	return ok(w, list, err)
 }
 
 func (a *API) job(w http.ResponseWriter, r *http.Request) error {
@@ -297,11 +273,13 @@ func (a *API) retryJob(w http.ResponseWriter, r *http.Request) error {
 func (a *API) planRestart(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
 		DeviceIDs []uuid.UUID `json:"deviceIds"`
+		// Condition is OnlyIfPending (the default) or Always.
+		Condition string `json:"condition"`
 	}
 	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
 		return err
 	}
-	p, err := a.svc.PlanRestart(r.Context(), httpapi.Caller(r), in.DeviceIDs)
+	p, err := a.svc.PlanRestart(r.Context(), httpapi.Caller(r), in.DeviceIDs, in.Condition)
 	return ok(w, p, err)
 }
 
@@ -312,56 +290,6 @@ func (a *API) restart(w http.ResponseWriter, r *http.Request) error {
 	}
 	res, err := a.svc.Restart(r.Context(), httpapi.Caller(r), in)
 	return ok(w, res, err)
-}
-
-// goToEasyPatch redirects to the page of EasyPatch's console for an object
-// of EasyRMM's (easypatch.GoTarget): ?device=<id>[&tab=…], ?organization=,
-// ?job= (an EasyPatch job) or ?update= (an EasyPatch update), or none for
-// its home page. Someone not signed in signs in first and comes back.
-func (a *API) goToEasyPatch(w http.ResponseWriter, r *http.Request) error {
-	w.Header().Set("Cache-Control", "no-store")
-	if id := httpapi.IdentityFrom(r.Context()); id == nil || id.Session.State != auth.StateActive {
-		http.Redirect(w, r, "/login?returnTo="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
-		return nil
-	}
-	var t easypatch.GoTarget
-	var err error
-	named := 0
-	for _, p := range []struct {
-		name string
-		to   *uuid.UUID
-	}{{"device", &t.DeviceID}, {"organization", &t.OrganizationID}, {"site", &t.SiteID}, {"job", &t.JobID}, {"update", &t.UpdateID}} {
-		if *p.to, err = httpapi.QueryID(r, p.name); err != nil {
-			return err
-		}
-		if *p.to != uuid.Nil {
-			named++
-		}
-	}
-	if t.List = r.URL.Query().Get("list"); t.List != "" {
-		if !slices.Contains(easypatch.GoLists, t.List) {
-			return apperr.Invalid("list", "Choose endpoints or jobs.")
-		}
-		named++
-	}
-	if named > 1 {
-		return apperr.Invalid("device", "Name one of device, organization, site, job, update or list.")
-	}
-	t.Tab = r.URL.Query().Get("tab")
-	dest, err := a.svc.EasyPatchURL(r.Context(), httpapi.Caller(r), t)
-	if err != nil {
-		return err
-	}
-	if dest == "" { // EasyPatch is not set up
-		dest = "/patching"
-	}
-	http.Redirect(w, r, dest, http.StatusFound)
-	return nil
-}
-
-func (a *API) productSwitch(w http.ResponseWriter, r *http.Request) error {
-	sw, err := a.svc.Switch(r.Context(), httpapi.Caller(r))
-	return ok(w, sw, err)
 }
 
 func (a *API) scan(w http.ResponseWriter, r *http.Request) error {
@@ -391,6 +319,29 @@ func (a *API) installAgent(w http.ResponseWriter, r *http.Request) error {
 	return ok(w, res, err)
 }
 
+func (a *API) stopPatching(w http.ResponseWriter, r *http.Request) error {
+	var in easypatch.ActionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.StopPatching(r.Context(), httpapi.Caller(r), in)
+	return ok(w, res, err)
+}
+
+func (a *API) allowPatching(w http.ResponseWriter, r *http.Request) error {
+	var in easypatch.ActionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.AllowPatching(r.Context(), httpapi.Caller(r), in)
+	return ok(w, res, err)
+}
+
+func (a *API) sync(w http.ResponseWriter, r *http.Request) error {
+	st, err := a.svc.Sync(r.Context())
+	return ok(w, st, err)
+}
+
 func parseID(s, field string) (uuid.UUID, error) {
 	id, err := uuid.Parse(s)
 	if err != nil || id == uuid.Nil {
@@ -410,4 +361,212 @@ func (a *API) fromEasyPatch(w http.ResponseWriter, r *http.Request) error {
 	}
 	l, err := a.svc.FromEasyPatch(r.Context(), httpapi.Caller(r), kind, id)
 	return ok(w, l, err)
+}
+
+func (a *API) installPreview(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	var updates []uuid.UUID
+	for _, v := range r.URL.Query()["updateId"] {
+		u, err := parseID(v, "updateId")
+		if err != nil {
+			return err
+		}
+		updates = append(updates, u)
+	}
+	p, err := a.svc.InstallPreview(r.Context(), httpapi.Caller(r), id, updates)
+	return ok(w, p, err)
+}
+
+func (a *API) exclude(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	var in easypatch.ExclusionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	if err := a.svc.Exclude(r.Context(), httpapi.Caller(r), id, in); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (a *API) include(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	update, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	if err := a.svc.Include(r.Context(), httpapi.Caller(r), id, update); err != nil {
+		return err
+	}
+	w.WriteHeader(http.StatusNoContent)
+	return nil
+}
+
+func (a *API) removeUpdate(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	update, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	var in easypatch.RemoveInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.RemoveUpdate(r.Context(), httpapi.Caller(r), id, update, in)
+	return ok(w, res, err)
+}
+
+func (a *API) messagePresets(w http.ResponseWriter, r *http.Request) error {
+	list, err := a.svc.MessagePresets(r.Context(), httpapi.Caller(r))
+	return ok(w, map[string]any{"items": list}, err)
+}
+
+func (a *API) notify(w http.ResponseWriter, r *http.Request) error {
+	var in easypatch.NotifyInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.Notify(r.Context(), httpapi.Caller(r), in)
+	return ok(w, res, err)
+}
+
+func (a *API) updateAgent(w http.ResponseWriter, r *http.Request) error {
+	var in easypatch.ActionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.UpdateAgent(r.Context(), httpapi.Caller(r), in)
+	return ok(w, res, err)
+}
+
+// updateScope reads the organizationId and siteId a catalog view counts in.
+func updateScope(r *http.Request) (easypatch.UpdateScope, error) {
+	var sc easypatch.UpdateScope
+	var err error
+	if sc.OrganizationID, err = httpapi.QueryID(r, "organizationId"); err != nil {
+		return sc, err
+	}
+	sc.SiteID, err = httpapi.QueryID(r, "siteId")
+	return sc, err
+}
+
+func (a *API) catalog(w http.ResponseWriter, r *http.Request) error {
+	sc, err := updateScope(r)
+	if err != nil {
+		return err
+	}
+	q := r.URL.Query()
+	in := easypatch.CatalogQuery{Category: q.Get("category"), State: q.Get("state"), Search: q.Get("q"), Sort: q.Get("sort"), Desc: q.Get("dir") != "asc"}
+	switch q.Get("knownExploited") {
+	case "true", "false":
+		v := q.Get("knownExploited") == "true"
+		in.KnownExploited = &v
+	case "":
+	default:
+		return apperr.Invalid("knownExploited", "must be true or false")
+	}
+	if in.Page, err = page(r); err != nil {
+		return err
+	}
+	p, err := a.svc.Catalog(r.Context(), httpapi.Caller(r), sc, in)
+	return ok(w, p, err)
+}
+
+func (a *API) update(w http.ResponseWriter, r *http.Request) error {
+	guid, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	sc, err := updateScope(r)
+	if err != nil {
+		return err
+	}
+	v, err := a.svc.Update(r.Context(), httpapi.Caller(r), guid, sc)
+	return ok(w, v, err)
+}
+
+func (a *API) updateDevices(w http.ResponseWriter, r *http.Request) error {
+	guid, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	sc, err := updateScope(r)
+	if err != nil {
+		return err
+	}
+	p, err := page(r)
+	if err != nil {
+		return err
+	}
+	list, err := a.svc.UpdateDevices(r.Context(), httpapi.Caller(r), guid, sc, r.URL.Query().Get("state"), p)
+	return ok(w, list, err)
+}
+
+func (a *API) installUpdate(w http.ResponseWriter, r *http.Request) error {
+	guid, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	var in easypatch.FleetActionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.InstallUpdate(r.Context(), httpapi.Caller(r), guid, in)
+	return ok(w, res, err)
+}
+
+func (a *API) removeFromDevices(w http.ResponseWriter, r *http.Request) error {
+	guid, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	var in easypatch.FleetActionInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	res, err := a.svc.RemoveUpdateFromDevices(r.Context(), httpapi.Caller(r), guid, in)
+	return ok(w, res, err)
+}
+
+func (a *API) holdUpdate(w http.ResponseWriter, r *http.Request) error {
+	guid, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	var in easypatch.HoldInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	h, err := a.svc.HoldUpdate(r.Context(), httpapi.Caller(r), guid, in)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusCreated, h)
+	return nil
+}
+
+func (a *API) releaseHold(w http.ResponseWriter, r *http.Request) error {
+	guid, err := httpapi.PathUUID(r, "update")
+	if err != nil {
+		return err
+	}
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	h, err := a.svc.ReleaseHold(r.Context(), httpapi.Caller(r), guid, id)
+	return ok(w, h, err)
 }

@@ -88,8 +88,10 @@ const ACTIONS: Record<string, string> = {
   "device.remote_link": "Connected remote access",
   "enrollment_token.create": "Created deployment token",
   "enrollment_token.revoke": "Revoked deployment token",
+  "enrollment_token.reveal": "Showed deployment token again",
   "approval_token.create": "Created approval token",
   "approval_token.revoke": "Revoked approval token",
+  "approval_token.reveal": "Showed approval token again",
   "enrollment_request.create": "Device asked for approval",
   "enrollment_request.approve": "Approved device",
   "enrollment_request.reject": "Rejected device",
@@ -120,6 +122,42 @@ const ACTIONS: Record<string, string> = {
   "patch.install": "Installed updates",
   "patch.cancel": "Cancelled patch job",
   "patch.agent_install": "Requested EasyPatch agent install",
+  "patch.restart": "Requested a restart",
+  "patch.retry": "Retried patch job",
+  "patch.stop": "Stopped patching",
+  "patch.allow": "Allowed patching again",
+  "patch.exclude": "Excluded an update",
+  "patch.include": "Included an update again",
+  "patch.remove_update": "Requested an update removal",
+  "patch.notify": "Messaged a device's users",
+  "patch.agent_update": "Requested EasyPatch agent update",
+  "patch.hold": "Held an update",
+  "patch.release_hold": "Released an update's hold",
+  "patch.policy_update": "Changed a patch policy",
+  "patch.policy_reset": "Reset a patch policy",
+  "patch.tag_create": "Added a patch tag",
+  "patch.tag_update": "Changed a patch tag",
+  "patch.tag_delete": "Deleted a patch tag",
+  "patch.tag_assign": "Changed patch tags",
+  "patch.report_generate": "Made a monthly patch report",
+  "patch.report_download": "Downloaded a monthly patch report",
+  "patch.report_send": "Emailed a monthly patch report",
+  "patch.report_delete": "Deleted a monthly patch report",
+  "patch.report_schedule": "Changed a patch report schedule",
+  "patch.settings_update": "Changed EasyPatch's server settings",
+  "patch.lifecycle_create": "Added an OS lifecycle entry",
+  "patch.lifecycle_update": "Changed an OS lifecycle entry",
+  "patch.lifecycle_delete": "Deleted an OS lifecycle entry",
+  "patch.alert_acknowledge": "Acknowledged patching alerts",
+  "patch.alert_rule_create": "Added a patching alert rule",
+  "patch.alert_rule_update": "Changed a patching alert rule",
+  "patch.alert_rule_delete": "Deleted a patching alert rule",
+  "patch.channel_create": "Added a notification channel",
+  "patch.channel_update": "Changed a notification channel",
+  "patch.channel_delete": "Deleted a notification channel",
+  "patch.channel_test": "Sent a test notification",
+  "patch.channel_rotate_secret": "Made a new webhook signing key",
+  "patch.notifications_update": "Changed patching notification settings",
 };
 
 export function actionLabel(action: string): string {
@@ -157,6 +195,10 @@ export function auditTarget(e: AuditEntry): string {
   if (name && typeof d.device === "string") return `${name} on ${d.device}`;
   if (name) return name;
   if (typeof d.script === "string" && typeof d.device === "string") return `${d.script} on ${d.device}`;
+  if (e.action === "patch.alert_acknowledge" && typeof d.alerts === "number") {
+    const n = d.alerts === 1 ? "1 alert" : `${d.alerts.toLocaleString()} alerts`;
+    return typeof d.device === "string" ? `${n} on ${d.device}` : `${n} of the organization`;
+  }
   if (typeof d.package === "string" && typeof d.device === "string") {
     const verb = typeof d.action === "string" ? SOFTWARE_VERBS[d.action] : undefined;
     return `${verb ? `${verb} ` : ""}${d.package} on ${d.device}`;
@@ -169,6 +211,11 @@ export function auditTarget(e: AuditEntry): string {
     return typeof d.easyPatchName === "string" ? `${d.organization} → ${d.easyPatchName}` : d.organization;
   }
   if (e.targetType === "easypatch") return typeof d.url === "string" ? d.url : "EasyPatch server";
+  if (e.targetType === "easypatch_settings") return "EasyPatch server settings";
+  if (e.targetType === "easypatch_notifications") return "Patching notifications";
+  if (e.targetType === "easypatch_lifecycle" && typeof d.product === "string") {
+    return typeof d.versionLabel === "string" ? `${d.product} ${d.versionLabel}` : d.product;
+  }
   if (e.actorType === "user" && e.targetType === "user" && e.targetId === e.actorId) return "Own account";
   return e.targetType ? e.targetType.replace(/_/g, " ") : "—";
 }

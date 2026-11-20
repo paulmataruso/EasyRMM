@@ -150,3 +150,70 @@ func TestLinuxEnroll(t *testing.T) {
 		t.Errorf("not executable: %v", err)
 	}
 }
+
+// TestLinuxEnrollServerCA: the instruction's certificate authority reaches
+// the EasyPatch agent as a file for --server-ca, gone afterwards; an agent
+// from before that option is enrolled again without it.
+func TestLinuxEnrollServerCA(t *testing.T) {
+	ctx := context.Background()
+	p := payload(time.Now(), agentproto.EasyPatchDeb)
+	p.CACert = "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n"
+	dir := t.TempDir()
+	agent := filepath.Join(dir, "easypatch-agent")
+	got := filepath.Join(dir, "got")
+	l := linuxSystem{agent: agent}
+	// The script records its arguments, the CA file's path and contents,
+	// and the token; withCA and without are its exit codes.
+	write := func(withCA, without string) {
+		script := "#!/bin/sh\necho \"$*\" >> " + got + "\ncode=" + without + "\nprev=\nfor a; do\n" +
+			"  if [ \"$prev\" = --server-ca ]; then echo \"$a\" >> " + got + "; cat \"$a\" >> " + got + "; code=" + withCA + "; fi\n" +
+			"  prev=$a\ndone\ncat >> " + got + "\necho >> " + got + "\nexit $code\n"
+		if err := os.WriteFile(agent, []byte(script), 0o755); err != nil { //nolint:gosec // a test script
+			t.Fatal(err)
+		}
+		_ = os.Remove(got)
+	}
+	lines := func() []string {
+		b, _ := os.ReadFile(got)
+		return strings.Split(strings.TrimRight(string(b), "\n"), "\n")
+	}
+
+	write("0", "9")
+	if err := l.Enroll(ctx, &p); err != nil {
+		t.Fatal(err)
+	}
+	seen := lines()
+	if len(seen) < 3 || !strings.HasPrefix(seen[0], "enroll --server https://patch.example.com --token-file - --server-ca /") ||
+		!strings.Contains(strings.Join(seen, "\n"), p.CACert+testToken) {
+		t.Fatalf("enroll saw %q", seen)
+	}
+	if _, err := os.Stat(seen[1]); !os.IsNotExist(err) {
+		t.Errorf("the CA file %s is left behind: %v", seen[1], err)
+	}
+
+	// An agent without the option: enrolled again, without it.
+	write("2", "0")
+	if err := l.Enroll(ctx, &p); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	for _, line := range lines() {
+		if strings.HasPrefix(line, "enroll ") {
+			calls = append(calls, line)
+		}
+	}
+	if len(calls) != 2 || !strings.Contains(calls[0], "--server-ca") || calls[1] != "enroll --server https://patch.example.com --token-file -" {
+		t.Errorf("fallback called %q", calls)
+	}
+	// It cannot reach EasyPatch: the store is the way.
+	write("2", "6")
+	if err := l.Enroll(ctx, &p); err == nil || !strings.Contains(err.Error(), "system's certificate store") {
+		t.Errorf("old agent, unreachable: %v", err)
+	}
+	// A current agent given the CA that still cannot reach EasyPatch: not
+	// a matter of the store.
+	write("6", "0")
+	if err := l.Enroll(ctx, &p); err == nil || strings.Contains(err.Error(), "certificate store") || !strings.Contains(err.Error(), "exit code 6") {
+		t.Errorf("unreachable with the CA: %v", err)
+	}
+}

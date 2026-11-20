@@ -6,8 +6,258 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0-rc.2] - 2026-11-20
+
+The second release candidate, with what the first real deployment of
+rc.1 found. Patching engine 1.11.1.
+
 ### Added
 
+- **Show a token's install commands again.** Under Devices → Add devices,
+  an active deployment or approval token has **Show install commands**,
+  which opens the same install steps as when it was created. The server
+  keeps each new token sealed with its encryption key, bound to the token;
+  only people who manage the token can show it, only while it can still add
+  devices, and each time is in the audit log (`enrollment_token.reveal`,
+  `approval_token.reveal`). Tokens created before this release keep only
+  their hash and say so (ADR-0047; migration 00024).
+
+### Fixed
+
+- A device approved in the console no longer shows twice for a few seconds.
+  Its agent installs MeshAgent, and MeshCentral reported the new node before
+  the agent's next heartbeat claimed it, so the node was listed as a
+  discovered device of its own until the two were merged. A node no device
+  claims now waits two minutes (two heartbeats) before it is recorded as
+  discovered; a MeshAgent installed by hand shows up after that wait.
+
+## [1.0.0-rc.1] - 2026-11-20
+
+The first release candidate: EasyRMM with EasyPatch folded in as its
+patching engine (EasyPatch 1.11.0), for a test on a real server before
+1.0.0.
+
+### Added
+
+- **The patching engine inside EasyRMM's deployment, for testing** (one-product
+  plan, phase B1): `scripts/setup.sh --patching bundled` runs EasyPatch's API
+  and worker from `deploy/docker-compose.yml`, on host networking and loopback
+  only (127.0.0.1:18180 and :18181), with their own database and roles in
+  EasyRMM's PostgreSQL. `easypatch-db-init` creates them, also on an existing
+  install; setup.sh adds the new secrets to an older `.env` without changing
+  what it has. A compose test keeps every service on host networking, every
+  listener but the edge on loopback, and no two on one port.
+- **EasyRMM's statements to its patching engine** (phase B2, ADR-0038): EasyRMM
+  can call the engine with a statement per request in `X-EasyRMM-Assertion`,
+  signed with `EASYRMM_PATCHING_KEY` from `.env`, naming who acts and the
+  role and organizations that one call may use, for that method and target
+  only, for 30 seconds. The engine builds its principal from the statement,
+  without user rows, sessions or CSRF tokens, and still applies its own role
+  and organization checks; its audit trail names `easyrmm:<user>`. A shared
+  test statement keeps EasyRMM's Go signer and the engine's .NET check in
+  agreement.
+- **Patching from the engine in the deployment** (phase B3): with
+  `EASYRMM_PATCHING=bundled`, the patching pages use the engine on loopback
+  instead of a server set up in Settings. Each person's call carries their
+  role and the organizations it concerns: read-only for views, Admin for
+  scans and installs. Settings → EasyPatch shows the engine and cannot
+  change it. The engine refusing EasyRMM shows as `patching_unavailable`,
+  never as a 401 or 403, and EasyPatch's field errors become EasyRMM's.
+  Switching to bundled forgets a connected server and its links, with an
+  audit record.
+- **EasyPatch agents on EasyRMM's name** (phase B4, ADR-0039): in bundled
+  mode, EasyRMM's edge forwards exactly the engine's agent API and package
+  downloads to it, before the session and CSRF layers, byte for byte so
+  agents' request signatures hold, with the client address EasyRMM
+  resolved. Statements and cookies from outside never reach the engine;
+  its answers cannot set cookies, clear site data or run script on
+  EasyRMM's origin. Paths that could reach the rest of the engine are
+  refused; requests are capped at 20 MB.
+- **One set of organizations** (phase B5, ADR-0040): with the bundled engine,
+  every EasyRMM organization and site has its own in the engine, created
+  with EasyRMM's name and time zone, renamed with it, archived under a freed
+  name when deleted, and put back when someone archives or deletes it in the
+  engine. Names that clash ignoring case get part of EasyRMM's id. A create
+  whose reply was lost is adopted, not repeated. Changes reach the engine at
+  once; the whole set is compared every 5 minutes, and again every minute
+  while the engine is unavailable. Settings → EasyPatch shows whether the
+  engine is in step and no longer links organizations by hand. A device
+  moved to another site takes its endpoint with it; one moved to another
+  organization, or deleted, has its EasyPatch agent uninstall itself, and
+  the endpoint is revoked if it has not within 7 days.
+- **Agent packages in the engine's image** (phase B6, ADR-0041): a released
+  engine image carries the EasyPatch agent's Windows and Linux packages of its
+  version with their release signatures, checked against the release public
+  key before the build and in the image after it. EasyRMM's compose file no
+  longer mounts a package directory, so there is nothing to download or copy.
+  CI images carry Linux packages signed with a key made for the run.
+- **One release** (phase B8, ADR-0043): EasyRMM's release workflow builds
+  the patching engine from the same commit (EasyPatch's tests, its agent
+  packages signed with the release key, its server image) and the release
+  bundle's `docker-compose.yml` pins that engine by digest, so upgrading the
+  bundle upgrades both. A manifest (`easyrmm-<version>-manifest.json`)
+  records both images by digest, the engine's version and its agent
+  packages. The engine keeps its own version line, and a version is
+  published only once.
+- **The bundle test** (`make e2e-bundle`, CI's *Bundle end to end*): the
+  deployment a release ships, brought up with the engine on host networking
+  and addressed by IP, then a Debian machine with systemd is set up through
+  the console: first account, install command, EasyPatch agent, a scan and
+  an update from a local package repository. It also checks that only the
+  edge listens beyond loopback, and that the engine refuses missing, forged,
+  altered, expired, replayed and out-of-scope statements.
+- **Patching on installs addressed by IP** (phase B7, ADR-0042): with the
+  bundled engine and `EASYRMM_TLS_MODE=internal`, EasyRMM gives the EasyPatch
+  agents its own certificate authority, which they trust for EasyRMM's
+  address only: the Windows MSI as `SERVERCACERT`, the Linux agent with the
+  new `enroll --server-ca`. A connected EasyPatch server's authority now
+  reaches Linux agents the same way. Linux agents from before that option
+  are enrolled without it, and need the authority in the device's store.
+- **The device's Patches tab does what EasyPatch's endpoint page did**
+  (one-product plan, phase C1): exclude an update on the device and include
+  it again; remove an installed Windows update, excluding it too by
+  default; send the signed-in users one of EasyPatch's preset messages; update
+  the EasyPatch agent; see what an install would do before it starts; the
+  whole effective policy with the layer that set each value, and how Windows
+  applied its Windows Update settings; what a pending restart is for; who
+  is signed in and whether the EasyPatch icon reaches them. The actions need
+  `patch.manage` and are audited as `patch.exclude`, `patch.include`,
+  `patch.remove_update`, `patch.notify` and `patch.agent_update`. Links to
+  EasyPatch's console show only where there is one: the bundled engine has
+  none.
+- **Patching's overview, its update list and holds** (one-product plan, phase
+  C2): Patching opens on an overview of the devices you can see (the share
+  up to date, what needs attention worst first with links to the filtered
+  lists, organizations least up to date first, and EasyPatch endpoints with
+  no EasyRMM device, with how to link them). The **Updates** tab lists every
+  update across devices with its counts, exploited ones first, filtered and
+  ordered; an update's page shows what it fixes, its holds and the devices
+  reporting it, and installs it on chosen devices or wherever it is missing,
+  removes a Windows update across devices, and holds it in an organization
+  or, for super administrators, everywhere. Holds need `patch.configure` and
+  are audited as `patch.hold` and `patch.release_hold`.
+- **Patch jobs and restarts** (one-product plan, phase C3): the **Jobs** tab
+  filters by type, and all recent jobs by status, how they started and when
+  they were requested, and says when older ones are left out; a job shows
+  when it was sent to the device and how often, when a queued job gives up,
+  the job a retry runs again, a cancellation asked for, and its progress.
+  **Restart…** offers what EasyPatch's restart did: a countdown of 1 to 60
+  minutes, asking users with a deadline of up to 7 days or without one, or
+  at once; only if a restart is pending, or always (at most 100 devices,
+  each read from EasyPatch to tell servers apart); and how long an offline
+  device gets to come back. It is on every patched device, not only those
+  reporting a pending restart. Servers still restart only when ticked.
+- **Patch policies and tags** (one-product plan, phase C4): the default
+  policy (Settings → **Patching**), an organization's and a site's (their new
+  **Patch policy** tab), a tag's and a device's own (**Set values for this
+  device** on its Policy view) are edited in EasyRMM. Each value is
+  inherited, shown with the layer it comes from, or overridden: automatic
+  installs and the maintenance window, delays, categories, excluded KBs,
+  application updates, a recurring restart, the tray icon and notifications,
+  the agent's schedule and Windows Update settings. Tags are added, changed
+  and deleted under Settings → Patching → Tags and given to organizations,
+  sites and devices with **Change tags**. Policies need `patch.configure` in
+  the organization; the default policy, tags and their policies a super
+  administrator. With a connected EasyPatch server, whose API token is never
+  SuperAdmin, the default policy and tags are read and assigned in EasyRMM
+  but changed in EasyPatch's console. Audited as `patch.policy_update`,
+  `patch.policy_reset`, `patch.tag_create`, `patch.tag_update`,
+  `patch.tag_delete` and `patch.tag_assign`. The **Change in EasyPatch** link
+  on a device's Policy view is gone.
+- **Patch reports** (one-product plan, phase C5): **Reports** gains **Patch
+  compliance** (each device's patching, with why a device is not patched,
+  its operating system's build and support, and the organizations'
+  compliance trend over 30 or 90 days or a year), **Patch installations**
+  (each update EasyPatch's jobs finished with over a period: installed,
+  failed, skipped or cancelled, why, and who asked) and **Monthly patch
+  reports**: an organization's month as a PDF, made by hand or on a
+  schedule, downloaded, emailed or deleted. Schedules are set per
+  organization under Settings → **Patching** → **Report schedules**. With
+  the bundled engine, reports are emailed through EasyRMM's own
+  `EASYRMM_SMTP_` mail server, given to the engine at each start. Making,
+  emailing and deleting need `patch.manage` over the organization, and
+  schedules `patch.configure`. Audited as `patch.report_generate`,
+  `patch.report_download`, `patch.report_send`, `patch.report_delete` and
+  `patch.report_schedule`. Charts over more than two weeks label their axis
+  by date.
+- **EasyPatch's own settings** (one-product plan, phase C6): Settings →
+  **Patching** gains **Server** (EasyPatch's version; whether it downloads
+  vulnerability data, with each feed's last download and error; the rollout
+  guard; the monthly reports' "Prepared by" line; job, agent and retention
+  settings, checked against EasyPatch's bounds), **OS lifecycle** (each
+  operating system build's end of security updates and of extended
+  updates, added, changed and deleted), **Agent packages** (the EasyPatch
+  agent packages the server holds, with their signatures and a download)
+  and **Audit log** (EasyPatch's own audit log, with EasyRMM's names for
+  organizations, devices and users; filtered by organization, area and
+  day). Those with `patch.configure` see the first three, and super
+  administrators change the server settings and OS lifecycle; the audit log
+  needs `audit.view` and `patch.view`. With a connected server, the
+  settings and OS lifecycle are changed in EasyPatch's console. Audited as
+  `patch.settings_update` and `patch.lifecycle_create`,
+  `patch.lifecycle_update` and `patch.lifecycle_delete`.
+- **Patching alerts, alert rules and notifications** (one-product plan,
+  phase C7): Patching gains an **Alerts** tab with the alerts EasyPatch's
+  rules raise for the devices you see (and an organization's own, for those
+  who see it whole), the most severe first, filtered by organization,
+  state, severity, type and words, and acknowledged one at a time or
+  together; the overview counts the open ones. Settings → **Patching**
+  gains **Alert rules** (what raises an alert, its threshold, the
+  organization and tag it covers, the channels it sends to, reminders and
+  resolve messages) and **Notifications** (email and Slack, Teams or signed
+  generic webhook channels, tested, with a generic webhook's signing key
+  shown once and renewable; EasyRMM's mail server, which email channels
+  send through; webhooks to private networks; the messages sent), for
+  super administrators with the bundled engine. With a connected server,
+  alerts are listed and acknowledged with the token, and rules and
+  channels stay in EasyPatch's console. Audited as
+  `patch.alert_acknowledge`, `patch.alert_rule_*`, `patch.channel_*` and
+  `patch.notifications_update`.
+- **The edge answers an imported EasyPatch's names** (one-product plan,
+  phase S0): `EASYRMM_PATCHING_AGENT_HOSTNAMES` lists further names. On
+  them, the engine's agent paths reach the engine and everything else is
+  sent to EasyRMM's Patching page; ACME requests their certificates, a
+  manual certificate must cover them (the server refuses to start
+  otherwise), and the internal CA adds them. A name EasyRMM, MeshCentral or
+  another setting already uses is refused.
+- **Importing a standalone EasyPatch** (phases S2 and S3, ADR-0045):
+  `deploy/scripts/import-easypatch.sh --backup DIR --hostname NAME` moves an
+  EasyPatch 1.4 to 1.10 server, from the folder its `backup.sh` made, into
+  the deployment's engine. It checks the backup, restores it aside, has the
+  engine's new `prepare-import` command refuse a newer or foreign database,
+  migrate it and disable its accounts; swaps it in for the engine's database
+  (keeping the old one), adds the old server's Data Protection keys, answers
+  its agents' name, and runs `easyrmm-server import-easypatch`. That makes
+  the engine's organizations and sites EasyRMM's: an exact name joins
+  EasyRMM's, a name EasyRMM has in another case becomes `<name> (2)`, and
+  archived ones stay in the engine. Imported agents keep working, and link
+  to EasyRMM devices when EasyRMM's agent reports them with the old
+  server's address; one in another organization is left alone, with the
+  reason shown. The deployment's engine must not patch anything yet.
+  Guide: `docs/operations/import-easypatch.md`. `make e2e-import` imports a
+  real EasyPatch 1.10.0 server and agent.
+- **Sign-in with Authentik** (one-product plan, phase A; ADR-0044):
+  `scripts/setup.sh --with-authentik` asks for Authentik's name and the
+  administrator's email, and prints an invitation link. After
+  `docker compose up -d`, the link makes the administrator's Authentik
+  account (name, password, an authenticator app or security key) and lands
+  them in EasyRMM as its super administrator, without a setup token or
+  first-run page. Authentik 2026.8.5 runs from the same compose file on
+  loopback only (its database in the same PostgreSQL), behind EasyRMM's
+  edge on its own name, with update checks, analytics and error reports
+  off. EasyRMM's provider for it is set by the deployment and shown locked
+  in Settings → Single sign-on, and its calls to Authentik go to its own
+  edge on loopback. Authentik's groups never grant roles.
+  `setup.sh --new-invitation` issues another invitation.
+- **`easyrmm-server recover`** prints a one-time sign-in link for a super
+  administrator, valid for 15 minutes, for when single sign-on is not
+  working. Audited as `auth.recovery_link`, and each use as `auth.login`.
+- **Organization time zones**: organizations have a time zone (default UTC;
+  the browser's for a new one), which patching reports use.
+- **Stop patching for a device**: the device's Patches tab can stop
+  patching. EasyRMM removes the EasyPatch agent it linked, and installs none
+  there again until patching is allowed again. Audited as `patch.stop` and
+  `patch.allow`.
 - `npm run screenshots` in `web/` makes the README's screenshots from the
   console's production build, its API answered from fictional demo data
   (`web/screenshots/`). It fails when a page asks for something the data does
@@ -57,8 +307,8 @@ All notable changes to this project are documented here. The format follows
   history, its own licence (`LICENSING.md`), build, `easypatch-v*` tags and
   release workflow. One CI run checks both and runs only what a change
   touches (`docs/development/monorepo.md`).
-- Contract tests: `make test-contract` runs EasyRMM's EasyPatch connector
-  against a real EasyPatch built from the same commit, and checks the fake
+- Contract tests: `make test-contract` makes EasyRMM's calls against the
+  real patching engine built from the same commit, and checks the fake
   EasyPatch the fast tests use against it.
 - EasyPatch on the same server (ADR-0035): with `EASYRMM_EASYPATCH_HOSTNAME`
   set, EasyRMM's edge keeps ports 80 and 443 and passes EasyPatch's name
@@ -363,6 +613,32 @@ All notable changes to this project are documented here. The format follows
   while editing, on the script's page and before a run.
 
 ### Changed
+- `make test-contract` calls the engine as EasyRMM does: plain HTTP on
+  loopback, each request with a statement signed with a gateway key made
+  for the run. It no longer makes API tokens. Agents still enroll at the
+  engine's HTTPS address.
+- **One release workflow** (one-product plan, phase R5; ADR-0046):
+  `release.yml` builds the patching engine in its own jobs instead of
+  calling EasyPatch's workflow. The engine's image now gets the same Trivy
+  scan, SBOM, build provenance and GitHub attestation as EasyRMM's, its CI
+  checks and agent tests run again on the tagged commit, and no image tag
+  anyone pulls is pushed until every check and scan of both images has
+  passed. An EasyRMM pre-release no
+  longer moves the engine's `latest` tag.
+- **The patching engine is always in the deployment** (one-product plan,
+  phase S1): its services have no Compose profile and `EASYRMM_PATCHING` is
+  no longer a setting. The server refuses to start with it set to anything
+  but `bundled`; `setup.sh` removes it and `COMPOSE_PROFILES=patching` from
+  an existing `.env` and adds the engine's secrets. `EASYRMM_PATCHING_KEY` is
+  required. A co-hosted EasyPatch (`EASYRMM_EASYPATCH_HOSTNAME`) is refused:
+  import it instead.
+- **Licence: all of EasyRMM, EasyPatch included, is under FSL-1.1-ALv2**,
+  licensor DHI Technical Services LLC (ADR-0037), instead of AGPL-3.0-or-later
+  for EasyRMM's code. One `LICENSE.md` at the root; contributions grant DHI
+  Technical Services LLC a licence (`CONTRIBUTING.md`); CI now checks the
+  licences of the consoles' npm packages and EasyPatch's NuGet packages too,
+  and Dependabot no longer proposes PDFsharp versions that are AGPL. Copies obtained under the AGPL between
+  2026-11-15 and 2026-11-18 keep it (`LICENSING.md`).
 - The README is the front page of the one project: what EasyRMM and EasyPatch
   each do, how they fit together, the architecture with EasyPatch, and
   screenshots of the console in dark and light.
@@ -377,8 +653,79 @@ All notable changes to this project are documented here. The format follows
   now says EasyPatch has moved here, and keeps its releases up to 1.10.0.
 - The fleet-wide **Software** page. Installed software is shown on each
   device's page; `GET /api/v1/software` remains.
+- **The EasyRMM | EasyPatch switch and links into EasyPatch's console**
+  (one-product plan, phase R1; ADR-0046): `GET /api/v1/patching/switch`,
+  `/go/to-easypatch`, **Open EasyPatch** and **Open in EasyPatch**. The
+  patching engine has no console of its own. Its messages still link into
+  EasyRMM through `/go/from-easypatch`.
+- **EasyRMM as EasyPatch's sign-in provider** (ADR-0036, superseded by
+  ADR-0046): its OpenID routes, Settings → EasyPatch → **Sign-in**, the
+  `make e2e-sign-in` test and its CI job. Migration 00022 drops its tables;
+  past `idp.*` audit records stay. Sessions still record how they signed in.
+- **EasyPatch on the same server behind EasyRMM's edge** (ADR-0035,
+  superseded by ADR-0046), refused since S1: the SNI passthrough, the PROXY
+  protocol code, `EASYRMM_EASYPATCH_TLS_UPSTREAM`, `…_HTTP_UPSTREAM` and
+  `…_PROXY_PROTOCOL`, `deploy/easypatch/` and
+  `docs/deployment/easypatch-cohost.md`. `EASYRMM_EASYPATCH_HOSTNAME` set
+  still stops the server; import such an EasyPatch instead.
+  `scripts/setup.sh` removes the empty `EASYRMM_EASYPATCH_*` lines from
+  `.env`.
+- **The connector to a separately run EasyPatch server** (one-product plan,
+  phase R2; ADR-0030, superseded by ADR-0046): connecting with an API token,
+  linking organizations by hand, read-only tokens and the "set in EasyPatch's
+  console" refusals. `PUT` and `DELETE /api/v1/settings/easypatch` and `PUT`
+  and `DELETE /api/v1/settings/easypatch/organizations/{id}` answer 404.
+  EasyRMM calls only the patching engine in its own deployment, with
+  statements, and creates and links every organization there itself.
+  Migration 00023 drops `easypatch_connection`; on a deployment that was
+  connected to a separate server it also drops that server's organization,
+  site and device links (their ids mean nothing to the engine), recording
+  `easypatch.connection_delete` in the audit log. Settings → EasyPatch shows
+  the engine, its organizations with **Install automatically**, and the
+  devices not linked.
+- **EasyPatch's standalone product** (phase R3): its web console
+  (`easypatch/frontend`), its proxy image and Caddy files, its standalone
+  Compose files, `.env.example`, `init-secrets.sh`, `backup.sh`,
+  `restore.sh`, installation guide and console screenshots, with the
+  console's CI jobs, Dependabot entry and npm licence check, and the proxy's
+  build, push and manifest in `easypatch-release.yml`. The engine's server
+  image is built and checked as before. The logo and wordmarks moved to
+  `easypatch/branding/`. A standalone EasyPatch up to 1.10.0 is brought in
+  with `deploy/scripts/import-easypatch.sh`, which still reads the backups
+  those releases make.
+- **EasyPatch's own accounts** (phase R4): its sign-in, sessions, passwords,
+  second factors, passkeys and security keys, single sign-on, users,
+  change-email, API token routes and Swagger UI, and the `create-admin`,
+  `reset-password`, `reset-mfa` and `unlock` commands, which now fail with a
+  message. People sign in to EasyRMM; the engine takes EasyRMM's statements
+  and its agents' signed requests. Its account tables stay, unused, so
+  upgrading needs no migration, and `prepare-import` still disables an
+  imported server's accounts.
+- **EasyPatch's API tokens** (phase R2). The patching engine accepts only
+  EasyRMM's statements: `Authorization: Bearer ept_…` answers `401`, even
+  with a token a standalone EasyPatch made, and the engine's
+  `create-api-token` command now fails with a message (exit status 2).
+  `X-EasyPatch-On-Behalf-Of` and the engine's `on-behalf-of` capability are
+  gone: a statement names the EasyRMM user itself. The `api_tokens` table
+  stays, unused (no migration); `prepare-import` still deletes an imported
+  database's tokens.
+- The engine's inert server settings `requireMfa`, `sessionIdleMinutes` and
+  `sessionAbsoluteHours`. A saved value is ignored and dropped at the next
+  save.
+- `easypatch/docker-compose.yml`. The contract test reads its PostgreSQL
+  image from `deploy/docker-compose.yml`, the image the engine's database
+  runs on.
+- **EasyPatch's own releases** (phase R5): `easypatch-release.yml`, its
+  `easypatch-v*` tags and GitHub releases. The engine is released only with
+  EasyRMM, by `release.yml`. The experimental macOS agent packages, which
+  only those releases carried, are no longer published;
+  `easypatch/scripts/build-macos-packages.sh` still builds them.
 
 ### Security
+- Text a client sends (a request's path, an agent's host name, a
+  correlation id) is logged with its line breaks escaped, in EasyRMM and the
+  patching engine, so a crafted request cannot forge a log line for a
+  reader of plain-text logs. Closes CodeQL's log-injection alerts.
 - The EasyPatch connection and audit forwarding do not connect to
   link-local or cloud instance metadata addresses, even through a name that
   resolves to one. A Super Administrator's setting could otherwise make the
@@ -491,6 +838,18 @@ All notable changes to this project are documented here. The format follows
   connects by cookie, stays blocked.
 
 ### Fixed
+- **Long names in the patching engine.** A technician whose email address
+  was longer than about 56 characters got a server error from the patching
+  engine for anything it records who did: a scan or install, a hold, a
+  monthly report, an acknowledged alert. The engine's columns now fit the
+  longest email EasyRMM allows (an engine migration widens them).
+- **Patching alert messages lead into EasyRMM.** The patching engine's
+  emails and webhooks linked to its own console's pages (`/endpoints/<id>`,
+  `/alerts`), which EasyRMM does not have. Each alert now opens its device's
+  **Patches** tab, or **Patching → Alerts** for its organization, and the
+  message opens **Patching → Alerts**, through `/go/from-easypatch/` (new
+  kind `alerts`). Subjects start `[EasyRMM]` instead of `[EasyPatch]`, and
+  the link reads **Open in EasyRMM**.
 - `EASYRMM_DATABASE_MAX_CONNS` past 32 bits wrapped around before it was
   checked, so a value such as `4294967298` started the server with 2
   connections instead of refusing it. It is now checked first.

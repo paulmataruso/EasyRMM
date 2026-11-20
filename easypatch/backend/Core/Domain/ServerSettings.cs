@@ -13,9 +13,9 @@ public sealed record ServerSettings
     public int CredentialLifetimeDays { get; init; } = 365;
     public int CredentialRotateBeforeDays { get; init; } = 30;
     public int EnrollmentRequestExpiryDays { get; init; } = 7;
-    public bool RequireMfa { get; init; } = true;
-    public int SessionIdleMinutes { get; init; } = 30;
-    public int SessionAbsoluteHours { get; init; } = 12;
+
+    // requireMfa, sessionIdleMinutes and sessionAbsoluteHours went with EasyPatch's own sign-in. A database saved before still has
+    // them in its JSON; reading it ignores them, and the next save drops them, so no migration is needed.
     public int RetentionEventsDays { get; init; } = 90;
     public int RetentionAuditDays { get; init; } = 365;
     public int RetentionJobsDays { get; init; } = 180;
@@ -62,8 +62,6 @@ public sealed record ServerSettings
         Range(nameof(CredentialLifetimeDays), CredentialLifetimeDays, 30, 3650);
         Range(nameof(CredentialRotateBeforeDays), CredentialRotateBeforeDays, 1, 180);
         Range(nameof(EnrollmentRequestExpiryDays), EnrollmentRequestExpiryDays, 1, 90);
-        Range(nameof(SessionIdleMinutes), SessionIdleMinutes, 5, 720);
-        Range(nameof(SessionAbsoluteHours), SessionAbsoluteHours, 1, 168);
         Range(nameof(RetentionEventsDays), RetentionEventsDays, 7, 3650);
         Range(nameof(RetentionAuditDays), RetentionAuditDays, 30, 3650);
         Range(nameof(RetentionJobsDays), RetentionJobsDays, 7, 3650);

@@ -6,7 +6,6 @@ import type { AlertSummary } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { plural } from "../lib/format";
 import { applyTheme, getStoredTheme, storeTheme, type Theme } from "../lib/theme";
-import { ProductSwitch } from "../nav/ProductSwitch";
 import { SectionNav } from "../nav/SectionNav";
 import { SECTION_PERMISSION, sectionFor, type SectionId } from "../nav/sections";
 import { sidebarWidth } from "../nav/width";
@@ -172,7 +171,6 @@ export function AppLayout() {
           <X className="size-5" aria-hidden />
         </button>
       </div>
-      <ProductSwitch />
       {section ? (
         <SectionNav
           key={section}

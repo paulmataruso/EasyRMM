@@ -9,9 +9,9 @@ web
 ## Stack
 
 React + TypeScript + Vite in `web/`, with Tailwind CSS 4 (semantic tokens in
-`web/src/index.css`), TanStack Query, React Router and lucide icons: the same
-stack and versions as EasyPatch's frontend (`easypatch/frontend/`), so the two
-consoles share one design system. No component kit. The production build is
+`web/src/index.css`), TanStack Query, React Router and lucide icons. Its
+design system is EasyPatch's former console's (ADR-0013), which it now holds
+alone. No component kit. The production build is
 embedded into the Go server binary and served from the same origin as the
 API. Confirmed by the project owner.
 
@@ -43,8 +43,9 @@ trail hold.
 
 ## Positioning
 
-- Self-hosted: the MSP owns its data and deployment. The platform is open
-  source (AGPL-3.0-or-later); EasyPatch is source-available (FSL-1.1-ALv2).
+- Self-hosted: the MSP owns its data and deployment. The whole product,
+  EasyPatch included, is source-available (FSL-1.1-ALv2): free for MSPs to
+  run for their own and their clients' computers.
 - Remote access is powered by the real MeshCentral server and agent, embedded
   in the console in its own browser origin; everything else (tenancy,
   inventory, monitoring, scripting, jobs, alerts, audit, enrollment) is

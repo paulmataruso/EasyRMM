@@ -200,7 +200,7 @@ describe("scripts on the device page", () => {
       ...unreportedRoutes(),
       "GET /devices/:id": ok(linux),
       "GET /job-runs": ok({ items: [] }),
-      "GET /patching": ok({ configured: true, canOperate: false, canSchedule: false }),
+      "GET /patching": ok({ configured: true, canSchedule: false }),
       "GET /scripts": ok({ items: [script("sc1", "Disk usage"), script("sc3", "Patch everything")] }),
       "GET /scripts/:id": (r) => ok(r.params.id === "sc3" ? script("sc3", "Patch everything", { body: "apt-get update\napt-get -y upgrade\n" }) : script("sc1", "Disk usage", { body: "df -h\n" })),
     });

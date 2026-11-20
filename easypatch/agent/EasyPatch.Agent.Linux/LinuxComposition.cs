@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using EasyPatch.Agent.Core;
 using EasyPatch.Agent.Core.Abstractions;
 using EasyPatch.Agent.Core.Runtime;
+using EasyPatch.Agent.Core.Security;
 using EasyPatch.Contracts.Agent;
 using EasyPatch.Linux.Packages;
 using EasyPatch.Linux.Platform;
@@ -114,8 +115,10 @@ internal static class LinuxComposition
 }
 
 /// <summary>
-/// Production HTTP stack. TLS certificates are validated against the system trust store (OpenSSL; ca-certificates) and
-/// validation cannot be disabled or configured. Redirects are not followed (a signed request must reach exactly the URL
+/// Production HTTP stack. TLS certificates are validated against the system trust store (OpenSSL; ca-certificates) and,
+/// when agent.conf names one (ServerCaCertificate, from <c>enroll --server-ca</c>), against the server's own certificate
+/// authority, for the connection to the server only (<see cref="ServerCertificateAuthority"/>). Validation cannot be
+/// disabled. Redirects are not followed (a signed request must reach exactly the URL
 /// it was signed for). The proxy is ProxyUrl from agent.conf when set, otherwise the HTTPS_PROXY / HTTP_PROXY / NO_PROXY
 /// environment variables of the service (set them in a systemd drop-in).
 /// </summary>
@@ -136,6 +139,7 @@ internal sealed class LinuxHttpClientFactory : IAgentHttpClientFactory
             throw new ArgumentException("The EasyPatch server URL must use HTTPS.", nameof(serverUrl));
         }
 
+        var bootstrap = _bootstrap.Read();
         var handler = new SocketsHttpHandler
         {
             AllowAutoRedirect = false,
@@ -145,8 +149,12 @@ internal sealed class LinuxHttpClientFactory : IAgentHttpClientFactory
             PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
             UseCookies = false,
             UseProxy = true,
-            Proxy = CreateProxy(_bootstrap.Read().ProxyUrl),
+            Proxy = CreateProxy(bootstrap.ProxyUrl),
         };
+        if (!string.IsNullOrWhiteSpace(bootstrap.ServerCaCertificate))
+        {
+            ServerCertificateAuthority.Parse(bootstrap.ServerCaCertificate).TrustFor(handler);
+        }
 
         return new HttpClient(handler, disposeHandler: true)
         {

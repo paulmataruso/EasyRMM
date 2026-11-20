@@ -85,65 +85,6 @@ public sealed class RequestSigningTests
     }
 }
 
-public sealed class TotpTests
-{
-    // RFC 6238 appendix B test secret (SHA-1).
-    private static readonly byte[] Secret = "12345678901234567890"u8.ToArray();
-
-    [Theory]
-    [InlineData(59L, "287082")]
-    [InlineData(1111111109L, "081804")]
-    [InlineData(1234567890L, "005924")]
-    [InlineData(2000000000L, "279037")]
-    public void Matches_rfc6238_vectors(long unixSeconds, string expected) =>
-        Assert.Equal(expected, Totp.Compute(Secret, Totp.CurrentStep(DateTimeOffset.FromUnixTimeSeconds(unixSeconds))));
-
-    [Fact]
-    public void Accepts_adjacent_steps_and_blocks_reuse()
-    {
-        var now = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);
-        var step = Totp.CurrentStep(now);
-        Assert.Equal(step, Totp.Verify(Secret, Totp.Compute(Secret, step), now, null));
-        Assert.Equal(step - 1, Totp.Verify(Secret, Totp.Compute(Secret, step - 1), now, null));
-        Assert.Equal(step + 1, Totp.Verify(Secret, Totp.Compute(Secret, step + 1), now, null));
-        Assert.Null(Totp.Verify(Secret, Totp.Compute(Secret, step - 2), now, null));
-        Assert.Null(Totp.Verify(Secret, Totp.Compute(Secret, step), now, lastUsedStep: step)); // replay
-        Assert.Null(Totp.Verify(Secret, "abc123", now, null));
-        Assert.Null(Totp.Verify(Secret, null, now, null));
-    }
-
-    [Fact]
-    public void Base32_round_trips()
-    {
-        var bytes = RandomNumberGenerator.GetBytes(20);
-        Assert.Equal(bytes, Totp.Base32Decode(Totp.Base32Encode(bytes)));
-    }
-}
-
-public sealed class PasswordHasherTests
-{
-    private readonly Argon2PasswordHasher hasher = new();
-
-    [Fact]
-    public void Hash_is_argon2id_phc_and_verifies()
-    {
-        var hash = hasher.Hash("Correct-Horse-Battery-9");
-        Assert.StartsWith("$argon2id$", hash, StringComparison.Ordinal);
-        Assert.NotEqual(hash, hasher.Hash("Correct-Horse-Battery-9")); // salted
-        Assert.NotEqual(PasswordVerification.Failed, hasher.Verify("Correct-Horse-Battery-9", hash));
-        Assert.Equal(PasswordVerification.Failed, hasher.Verify("correct-horse-battery-9", hash));
-        Assert.Equal(PasswordVerification.Failed, hasher.Verify("anything", "!")); // unusable hash
-    }
-
-    [Theory]
-    [InlineData("short", "admin", false)]
-    [InlineData("aaaaaaaaaaaaaaaa", "admin", false)] // too few distinct characters
-    [InlineData("admin-password-2026", "admin", false)] // contains the username
-    [InlineData("Correct-Horse-Battery-9", "admin", true)]
-    public void Policy_rejects_weak_passwords(string password, string username, bool ok) =>
-        Assert.Equal(ok, PasswordPolicy.Validate(password, username) is null);
-}
-
 public sealed class CsvWriterTests
 {
     [Theory]

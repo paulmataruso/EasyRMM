@@ -1,16 +1,33 @@
 # Publishes a release when an EasyRMM version tag (easyrmm-v1.2.3, or a
-# pre-release such as easyrmm-v1.2.3-rc.1) is pushed to this repository.
-# EasyPatch's tags (easypatch-v...) have their own workflow,
-# easypatch-release.yml. The version is the tag without "easyrmm-" (v1.2.3):
+# pre-release such as easyrmm-v1.2.3-rc.1) is pushed to this repository. It is
+# the only release: the patching engine (EasyPatch, under easypatch/) is
+# released with EasyRMM and never on its own (one-product plan, R5;
+# ADR-0043, ADR-0046). The version is the tag without "easyrmm-" (v1.2.3):
 # the server, the console and the agents report it, as before.
 #
-#   1. the tag and its CHANGELOG.md section are checked;
-#   2. every CI check runs again on the tagged commit;
-#   3. the server image is built, scanned and pushed for amd64 and arm64 with
-#      an SBOM and build provenance, tagged 1.2.3, 1.2 and latest (pre-releases
-#      get only their own tag);
-#   4. the deployment bundle and agents are built (scripts/release/bundle.sh),
-#      attested, and attached to a GitHub release with the changelog's notes.
+#   1. the tag and its CHANGELOG.md section are checked, and the engine's
+#      version (<Version> in easypatch/Directory.Build.props) has its section
+#      in easypatch/CHANGELOG.md and was not published from another commit
+#      (EasyPatch agents choose updates by version);
+#   2. every CI check runs again on the tagged commit, EasyRMM's and the
+#      engine's;
+#   3. the engine's Windows and Linux agent packages are built and signed with
+#      EasyPatch's release key;
+#   4. then the images, each built for amd64 and arm64, checked, scanned for
+#      vulnerabilities (Trivy) and pushed with an SBOM and build provenance,
+#      in this order so that no tag anyone pulls appears before every check
+#      of both images has passed: the engine, carrying those agent packages,
+#      under per-architecture tags only (1.10.1-amd64); then EasyRMM's
+#      server, tagged 1.2.3, 1.2 and latest; then the engine's version and
+#      latest (pre-releases get only their own tags);
+#   5. the deployment bundle, its manifest and the agents are built
+#      (scripts/release/bundle.sh), with the engine pinned by digest in the
+#      bundle's docker-compose.yml, attested, and attached to a GitHub release
+#      with the changelog's notes.
+#
+# The release private key is the secret EASYPATCH_RELEASE_KEY of the
+# "easypatch-release" environment, which must admit easyrmm-v* tags. It is
+# written to the runner's temporary directory for signing and deleted after.
 #
 # Pull requests and forks never publish. See docs/development/releasing.md.
 name: Release
@@ -28,6 +45,11 @@ concurrency:
 
 env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/easyrmm-server
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "1"
+  # The engine's release public key, relative to easypatch/.
+  PUBLIC_KEY: keys/easypatch-release-key.pub.pem
 
 jobs:
   prepare:
@@ -71,10 +93,341 @@ jobs:
     needs: prepare
     uses: ./.github/workflows/frontend-tests.yml
 
+  # The patching engine, from this commit (one-product plan, B8 and R5).
+  engine-version:
+    name: Patching engine version
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    defaults:
+      run:
+        working-directory: easypatch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Directory.Build.props, CHANGELOG and the public key agree
+        id: version
+        run: |
+          version="$(sed -n 's|.*<Version>\(.*\)</Version>.*|\1|p' Directory.Build.props)"
+          if ! printf '%s' "$version" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::<Version> in easypatch/Directory.Build.props is not MAJOR.MINOR.BUILD: $version"
+            exit 1
+          fi
+          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+            echo "::error::easypatch/CHANGELOG.md has no section for $version"
+            exit 1
+          fi
+          grep -q 'BEGIN PUBLIC KEY' "$PUBLIC_KEY"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # Agents choose updates by version, so one version is never two builds: an engine image of this version
+      # published from another commit (or before images recorded their commit) refuses the release. Running the
+      # release again for the same commit is allowed.
+      - name: Not published before from another commit
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easypatch-server:${VERSION}"
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin > /dev/null
+          if raw="$(docker buildx imagetools inspect --raw "$image" 2> "$RUNNER_TEMP/inspect.err")"; then
+            revision="$(printf '%s' "$raw" | jq -r '.annotations["org.opencontainers.image.revision"] // ""')"
+            if [ "$revision" != "$GITHUB_SHA" ]; then
+              echo "::error::EasyPatch $VERSION is already published (${revision:-before images recorded their commit}). Raise <Version> in easypatch/Directory.Build.props and add its CHANGELOG section."
+              exit 1
+            fi
+            echo "$image was published from this commit; publishing again."
+          elif grep -qiE 'not found|manifest unknown|denied' "$RUNNER_TEMP/inspect.err"; then
+            echo "$image is not published yet."
+          else
+            cat "$RUNNER_TEMP/inspect.err" >&2
+            exit 1
+          fi
+          docker logout ghcr.io > /dev/null
+
+  # The engine's CI checks: its tests, package licences and vulnerable
+  # packages, and an image built with test-signed packages.
+  engine:
+    name: Patching engine
+    needs: prepare
+    uses: ./.github/workflows/easypatch-server.yml
+
+  agent-tests:
+    name: EasyPatch agent tests
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: easypatch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: easypatch/global.json
+      - name: Build and test
+        run: scripts/build-agent.sh --rid all
+
+  windows-agent:
+    name: EasyPatch agent MSIs
+    needs: [engine-version, agent-tests]
+    runs-on: windows-2025
+    environment: easypatch-release
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: easypatch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: easypatch/global.json
+      - name: Build and release-sign the MSIs (x64, arm64)
+        shell: pwsh
+        env:
+          RELEASE_KEY_PEM: ${{ secrets.EASYPATCH_RELEASE_KEY }}
+          VERSION: ${{ needs.engine-version.outputs.version }}
+        run: |
+          if (-not $env:RELEASE_KEY_PEM) { throw 'The EASYPATCH_RELEASE_KEY secret of the easypatch-release environment is not set.' }
+          $key = Join-Path $env:RUNNER_TEMP 'easypatch-release-key.pem'
+          [IO.File]::WriteAllText($key, $env:RELEASE_KEY_PEM)
+          $env:RELEASE_KEY_PEM = $null
+          $env:EASYPATCH_RELEASE_KEY = $key
+          $env:EASYPATCH_RELEASE_PUBLIC_KEY = (Resolve-Path $env:PUBLIC_KEY).Path
+          try {
+            # build-installer.ps1 verifies each .sig against the public key built into the agent.
+            ./scripts/build-agent.ps1 -Version $env:VERSION -Architecture x64,arm64 -SkipTests -RequireReleaseKey
+          }
+          finally {
+            Remove-Item $key -Force -ErrorAction SilentlyContinue
+          }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-agent
+          path: |
+            easypatch/artifacts/installer/*.msi
+            easypatch/artifacts/installer/*.msi.sig
+          if-no-files-found: error
+          retention-days: 7
+
+  linux-agent:
+    name: EasyPatch agent Linux packages
+    needs: [engine-version, agent-tests]
+    runs-on: ubuntu-24.04
+    environment: easypatch-release
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: easypatch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: easypatch/global.json
+      - name: Build and release-sign the .deb and .rpm packages (x64, arm64)
+        env:
+          RELEASE_KEY_PEM: ${{ secrets.EASYPATCH_RELEASE_KEY }}
+          VERSION: ${{ needs.engine-version.outputs.version }}
+        run: |
+          if [ -z "$RELEASE_KEY_PEM" ]; then
+            echo "::error::The EASYPATCH_RELEASE_KEY secret of the easypatch-release environment is not set."
+            exit 1
+          fi
+          key="$RUNNER_TEMP/easypatch-release-key.pem"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$RELEASE_KEY_PEM" > "$key")
+          unset RELEASE_KEY_PEM
+          # build-linux-packages.sh verifies each .sig against the public key built into the agent.
+          EASYPATCH_RELEASE_KEY="$key" EASYPATCH_RELEASE_PUBLIC_KEY="$PWD/$PUBLIC_KEY" \
+            scripts/build-linux-packages.sh --version "$VERSION" --arch all --no-test
+          for package in artifacts/linux/*.deb artifacts/linux/*.rpm; do
+            if [ ! -s "$package.sig" ]; then
+              echo "::error::$package has no release signature"
+              exit 1
+            fi
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-agent
+          path: |
+            easypatch/artifacts/linux/*.deb
+            easypatch/artifacts/linux/*.rpm
+            easypatch/artifacts/linux/*.sig
+          if-no-files-found: error
+          retention-days: 7
+
+  # Each architecture on its own runner: the image carries that release's
+  # agent packages, checked, then the same scan, SBOM and provenance as
+  # EasyRMM's image (ADR-0046). Nothing is pushed until every test passed,
+  # and then only under a per-architecture tag, which nobody pulls:
+  # engine-manifest tags the version after EasyRMM's image passed its scan.
+  engine-image:
+    name: Patching engine image (${{ matrix.arch }})
+    needs: [engine-version, backend, integration, frontend, engine, windows-agent, linux-agent]
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: easypatch
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          global-json-file: easypatch/global.json
+      # The image carries this release's Windows and Linux agent packages (one-product plan, B6).
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-agent
+          path: easypatch/dist/agent
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: linux-agent
+          path: easypatch/dist/agent
+      - name: Stage the release-signed agent packages
+        env:
+          VERSION: ${{ needs.engine-version.outputs.version }}
+        run: scripts/stage-agent-packages.sh --version "$VERSION" --public-key "$PUBLIC_KEY" --formats msi,deb,rpm dist/agent
+      - name: Image name
+        id: name
+        env:
+          VERSION: ${{ needs.engine-version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: echo "tag=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easypatch-server:${VERSION}-${ARCH}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build for the checks
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: easypatch
+          file: easypatch/deployment/server/Dockerfile
+          pull: true
+          load: true
+          push: false
+          tags: easypatch-server:release
+          cache-from: type=gha,scope=easypatch-server-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=easypatch-server-${{ matrix.arch }}
+      - name: The image carries the release's agent packages, read-only
+        run: scripts/check-image-agent-packages.sh easypatch-server:release
+      - name: The image contains no secrets or source-control metadata
+        run: |
+          if docker run --rm --entrypoint sh easypatch-server:release -c 'find / -xdev \( -name ".env" -o -name "db_password" -o -name "*.pfx" -o -name "*.pem" -o -name ".git" \) -not -path "/proc/*" -not -path "/etc/ssl/*" -not -path "/etc/ssl1.1/*" -not -path "/usr/share/ca-certificates/*" 2>/dev/null' < /dev/null | grep .; then
+            echo "::error::unexpected file in the engine's image"
+            exit 1
+          fi
+      - name: Scan image (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: easypatch-server:release
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push, with an SBOM and build provenance
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: easypatch
+          file: easypatch/deployment/server/Dockerfile
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ${{ steps.name.outputs.tag }}
+          labels: |
+            org.opencontainers.image.title=EasyPatch server
+            org.opencontainers.image.description=EasyRMM's patching engine: EasyPatch API, worker and database migrations
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ needs.engine-version.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=FSL-1.1-ALv2
+            org.opencontainers.image.vendor=DHI Technical Services LLC
+          cache-from: type=gha,scope=easypatch-server-${{ matrix.arch }}
+          provenance: mode=max
+          sbom: true
+
+  engine-manifest:
+    name: Patching engine image tags
+    needs: [prepare, engine-version, engine-image, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      server-image: ${{ steps.tags.outputs.server-image }}
+    steps:
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the version, and latest unless a pre-release, for x64 and ARM64
+        id: tags
+        env:
+          VERSION: ${{ needs.engine-version.outputs.version }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+        run: |
+          server="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easypatch-server"
+          tags=(-t "${server}:${VERSION}")
+          if [ "$PRERELEASE" != true ]; then tags+=(-t "${server}:latest"); fi
+          docker buildx imagetools create \
+            --annotation "index:org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
+            --annotation "index:org.opencontainers.image.licenses=FSL-1.1-ALv2" \
+            --annotation "index:org.opencontainers.image.version=${VERSION}" \
+            --annotation "index:org.opencontainers.image.revision=${GITHUB_SHA}" \
+            "${tags[@]}" "${server}:${VERSION}-amd64" "${server}:${VERSION}-arm64"
+          docker buildx imagetools inspect "${server}:${VERSION}"
+          # EasyRMM's bundle pins the engine by this digest.
+          digest="$(docker buildx imagetools inspect "${server}:${VERSION}" --format '{{json .Manifest}}' | jq -r .digest)"
+          if ! printf '%s' "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+            echo "::error::no digest for ${server}:${VERSION}: $digest"
+            exit 1
+          fi
+          {
+            echo "name=${server}"
+            echo "digest=${digest}"
+            echo "server-image=${server}:${VERSION}@${digest}"
+          } >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.tags.outputs.name }}
+          subject-digest: ${{ steps.tags.outputs.digest }}
+          push-to-registry: true
+
+  # After the engine's images passed their checks and scan, so that a
+  # finding there leaves no EasyRMM tag pushed.
   image:
     name: Server image
-    needs: [prepare, backend, integration, frontend]
+    needs: [prepare, backend, integration, frontend, engine, agent-tests, engine-image]
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
     permissions:
       contents: read
       packages: write
@@ -144,7 +497,7 @@ jobs:
 
   publish:
     name: GitHub release
-    needs: [prepare, image]
+    needs: [prepare, image, engine-manifest, windows-agent, linux-agent]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -158,12 +511,29 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      # The engine's agent packages, for the manifest: its image carries the same files.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: windows-agent
+          path: dist/easypatch-packages
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: linux-agent
+          path: dist/easypatch-packages
       - name: Build the release files
         env:
           TAG: ${{ github.ref_name }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          EASYPATCH_IMAGE_PIN: ${{ needs.engine-manifest.outputs.server-image }}
+          EASYPATCH_PACKAGES: dist/easypatch-packages
         run: |
-          scripts/release/bundle.sh "$TAG" dist/release
+          EASYRMM_IMAGE_PIN="${IMAGE,,}:${VERSION#v}@${DIGEST}" scripts/release/bundle.sh "$TAG" dist/release
           scripts/release/notes.sh "$TAG" > dist/notes.md
+          ep_version="${EASYPATCH_IMAGE_PIN##*/easypatch-server:}"
+          # shellcheck disable=SC2016 # the backquotes are Markdown
+          printf '\n**Patching engine:** EasyPatch %s (`%s`); versions and digests in `%s`.\n' \
+            "${ep_version%@*}" "$EASYPATCH_IMAGE_PIN" "easyrmm-${VERSION}-manifest.json" >> dist/notes.md
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/release/*
@@ -173,7 +543,7 @@ jobs:
           TAG: ${{ github.ref_name }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
         run: |
-          # EasyRMM's releases are this repository's "Latest" (EasyPatch's never are); a pre-release never is.
+          # A release is this repository's "Latest"; a pre-release never is.
           flags="--latest"
           if [ "$PRERELEASE" = true ]; then flags="--prerelease --latest=false"; fi
           # shellcheck disable=SC2086 # flags is one or two words, none with spaces

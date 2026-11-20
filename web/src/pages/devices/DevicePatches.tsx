@@ -1,17 +1,22 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Download, PackagePlus, Power, Radar } from "lucide-react";
+import { Ban, CircleSlash, Download, PackageMinus, PackagePlus, Power, Radar, Undo2 } from "lucide-react";
 import { useApi, useList } from "../../api/hooks";
-import type { Device, DevicePatching, PatchHistoryEntry, PatchJob, PatchPage, PatchUpdate } from "../../api/types";
+import { PATCH_AGENT_CAN, type Device, type DevicePatching, type PatchHistoryEntry, type PatchJob, type PatchPage, type PatchUpdate } from "../../api/types";
 import { Alert, Badge, Button, Card, cx, EmptyState, ErrorState, KeyValueList, Segmented, Spinner, TableWrap } from "../../components/ui";
 import { formatDate, formatDateTime, formatRelative, formatSize, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
-import { AgentInstallDialog, InstallDialog, PatchJobDialog, RestartDialog, useScan } from "../patching/PatchDialogs";
+import {
+  AgentInstallDialog,
+  InstallDialog,
+  PatchJobDialog,
+  RestartDialog,
+  StopPatchingDialog,
+  useAllowPatching,
+  useScan,
+} from "../patching/PatchDialogs";
 import {
   categoryLabel,
   ComplianceBadge,
-  EasyPatchLink,
-  easyPatchHref,
-  PATCH_VIEW_TAB,
   INSTALLABLE,
   installText,
   isActiveJob,
@@ -19,12 +24,15 @@ import {
   jobTypeLabel,
   LinkBadge,
   maintenanceText,
+  Pager,
   PatchJobBadge,
   requester,
   UpdateStateBadge,
 } from "../patching/patchText";
+import { AgentUpdateDialog, ExcludeDialog, MessageDialog, RemoveUpdateDialog, SessionSummary, useInclude } from "./PatchActionDialogs";
+import { PolicyView, restartScheduleText } from "./PatchPolicyView";
 
-type View = "available" | "installed" | "history" | "jobs";
+type View = "available" | "installed" | "history" | "jobs" | "policy";
 
 /** A device's updates through EasyPatch (ADR-0030): what is missing and installed, history, jobs, and the actions. */
 export function PatchesPanel({ device }: { device: Device }) {
@@ -32,12 +40,43 @@ export function PatchesPanel({ device }: { device: Device }) {
   if (p.isPending) return <Spinner />;
   if (p.isError) return <ErrorState error={p.error} onRetry={() => void p.refetch()} />;
   const d = p.data;
+  if (d.stopped) return <Stopped patching={d} stopped={d.stopped} device={device} />;
   if (d.link !== "linked") return <NotLinked patching={d} device={device} />;
   return <Linked patching={d} device={device} />;
 }
 
+/** Patching stopped for the device (ADR-0040): its EasyPatch agent removed, or being removed, and none installed. */
+function Stopped({ patching: d, stopped, device }: { patching: DevicePatching; stopped: NonNullable<DevicePatching["stopped"]>; device: Device }) {
+  const allow = useAllowPatching();
+  const removal = d.removal?.reason === "opted_out" ? d.removal : undefined;
+  return (
+    <Card>
+      <EmptyState
+        title="Patching stopped"
+        icon={<CircleSlash className="size-6 text-muted" aria-hidden />}
+        action={
+          d.canManage && (
+            <Button variant="primary" loading={allow.isPending} onClick={() => allow.mutate([device.id])}>
+              Allow patching again
+            </Button>
+          )
+        }
+      >
+        Stopped by {stopped.by || "a removed user"} <span title={formatDateTime(stopped.at)}>{formatRelative(stopped.at)}</span>.{" "}
+        {!removal
+          ? "EasyRMM installs no EasyPatch agent on this device, automatically or when asked."
+          : removal.state === "pending"
+            ? "EasyRMM is about to have the EasyPatch agent uninstall itself."
+            : "The EasyPatch agent is uninstalling itself. One that has not within a week is cut off from patching instead."}
+        {removal?.error && <span className="mt-2 block text-danger">{removal.error}</span>}
+      </EmptyState>
+    </Card>
+  );
+}
+
 function NotLinked({ patching: d, device }: { patching: DevicePatching; device: Device }) {
   const [installing, setInstalling] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const title = d.link === "pending" ? "Checking this device's EasyPatch agent" : d.link === "none" ? "No EasyPatch agent" : "Not patched from EasyRMM";
   // EasyRMM's agent can install the EasyPatch agent on Windows and Linux (ADR-0031).
   const canInstall = d.link === "none" && d.canManage && device.agent !== null && (device.platform === "windows" || device.platform === "linux");
@@ -51,9 +90,13 @@ function NotLinked({ patching: d, device }: { patching: DevicePatching; device: 
         action={
           canInstall &&
           !running && (
-            <Button variant="primary" icon={<PackagePlus className="size-4" aria-hidden />} onClick={() => setInstalling(true)}>
-              {d.install?.state === "failed" ? "Try the install again…" : "Install EasyPatch agent…"}
-            </Button>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button variant="primary" icon={<PackagePlus className="size-4" aria-hidden />} onClick={() => setInstalling(true)}>
+                {d.install?.state === "failed" ? "Try the install again…" : "Install EasyPatch agent…"}
+              </Button>
+              {/* Before automatic installs reach a device that must not be patched. */}
+              <Button onClick={() => setStopping(true)}>Stop patching…</Button>
+            </div>
           )
         }
       >
@@ -61,8 +104,8 @@ function NotLinked({ patching: d, device }: { patching: DevicePatching; device: 
           (!device.agent
             ? "EasyRMM finds the EasyPatch agent through its own agent, which this device does not have."
             : canInstall
-              ? "The EasyRMM agent has not reported an EasyPatch agent on this device. EasyRMM can install it and enroll it with your EasyPatch server."
-              : "The EasyRMM agent has not reported an EasyPatch agent on this device. Install the EasyPatch agent and enroll it with your EasyPatch server; the EasyRMM agent reports it with its next inventory, within an hour.")}
+              ? "The EasyRMM agent has not reported an EasyPatch agent on this device. EasyRMM can install it and enroll it in the patching engine."
+              : "The EasyRMM agent has not reported an EasyPatch agent on this device. On Windows and Linux, someone who manages patching here can have EasyRMM install it; the EasyRMM agent reports it with its next inventory, within an hour.")}
         {d.link === "pending" && "EasyRMM is making sure the EasyPatch endpoint the device reports is this device. This takes up to a minute."}
         {d.link === "unlinked" && (
           <>
@@ -83,19 +126,42 @@ function NotLinked({ patching: d, device }: { patching: DevicePatching; device: 
         )}
       </EmptyState>
       <AgentInstallDialog open={installing} onClose={() => setInstalling(false)} devices={[{ id: device.id, name: device.name }]} />
+      <StopPatchingDialog open={stopping} onClose={() => setStopping(false)} devices={[{ id: device.id, name: device.name }]} />
     </Card>
   );
 }
 
+/** What the device's EasyPatch agent can do, as it reports it. */
+function agentCan(d: DevicePatching, what: string): boolean {
+  return (d.endpoint?.agentCapabilities ?? []).includes(what);
+}
+
+/** Updates the policy excludes everywhere by KB, which cannot be included again on one device. */
+function policyExcludes(d: DevicePatching, u: PatchUpdate): boolean {
+  const kbs = new Set((d.policy?.excludedKbs ?? []).map((k) => k.toUpperCase().replace(/^KB/, "")));
+  return [u.kbNumber, ...(u.kbNumbers ?? [])].some((k) => k && kbs.has(k.toUpperCase().replace(/^KB/, "")));
+}
+
+/** Windows updates the device's agent can remove: not a Linux package, and nothing working on it. */
+function removable(d: DevicePatching, device: Device, u: PatchUpdate): boolean {
+  return d.canManage && device.platform === "windows" && agentCan(d, PATCH_AGENT_CAN.uninstallUpdates) && !u.package && !u.activeJob;
+}
+
 function Linked({ patching: d, device }: { patching: DevicePatching; device: Device }) {
   const url = useUrlState();
-  const view = (["available", "installed", "history", "jobs"] as View[]).find((v) => v === url.get("patches")) ?? "available";
+  const view = (["available", "installed", "history", "jobs", "policy"] as View[]).find((v) => v === url.get("patches")) ?? "available";
   const [installing, setInstalling] = useState<{ id: string; title: string }[] | "all" | null>(null);
   const [jobId, setJobId] = useState<string | null>(null);
   const [restarting, setRestarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [excluding, setExcluding] = useState<PatchUpdate | null>(null);
+  const [removing, setRemoving] = useState<PatchUpdate | null>(null);
+  const [messaging, setMessaging] = useState(false);
+  const [updatingAgent, setUpdatingAgent] = useState(false);
   const { scan, dialog } = useScan();
   const e = d.endpoint;
   const target = [{ id: device.id, name: device.name }];
+  const toJobs = () => url.set({ patches: "jobs" });
 
   return (
     <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
@@ -109,7 +175,7 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
           <Segmented
             label="Updates to show"
             value={view}
-            onChange={(v) => url.set({ patches: v === "available" ? null : v })}
+            onChange={(v) => url.set({ patches: v === "available" ? null : v, policy: null })}
             options={[
               {
                 value: "available",
@@ -118,11 +184,12 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
               { value: "installed", label: "Installed" },
               { value: "history", label: "History" },
               { value: "jobs", label: "Jobs" },
+              ...(d.policy ? [{ value: "policy" as const, label: "Policy" }] : []),
             ]}
           />
           {d.canManage && (
             <div className="flex flex-wrap gap-2">
-              {e?.summary.rebootPending && (
+              {(e?.summary.rebootPending || agentCan(d, PATCH_AGENT_CAN.restart)) && (
                 <Button icon={<Power className="size-4" aria-hidden />} onClick={() => setRestarting(true)}>
                   Restart…
                 </Button>
@@ -146,14 +213,39 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
             {scan.error.message}
           </Alert>
         )}
-        {view === "available" && <Available deviceId={device.id} canManage={d.canManage} scanned={!!e?.summary.lastScanAt} onInstall={setInstalling} />}
-        {view === "installed" && <Installed deviceId={device.id} />}
+        {view === "available" && (
+          <Available
+            patching={d}
+            device={device}
+            scanned={!!e?.summary.lastScanAt}
+            onInstall={setInstalling}
+            onExclude={setExcluding}
+            onRemove={setRemoving}
+          />
+        )}
+        {view === "installed" && <Installed patching={d} device={device} onRemove={setRemoving} />}
         {view === "history" && <History deviceId={device.id} />}
         {view === "jobs" && <Jobs deviceId={device.id} onOpen={setJobId} />}
+        {view === "policy" && <PolicyView patching={d} device={device} />}
       </div>
       <div className="flex min-w-0 flex-col gap-5">
-        <Summary patching={d} view={view} />
-        {d.policy && <PolicyCard patching={d} />}
+        <Summary
+          patching={d}
+          device={device}
+          view={view}
+          onOpenJob={setJobId}
+          onMessage={() => setMessaging(true)}
+          onUpdateAgent={() => setUpdatingAgent(true)}
+        />
+        {d.policy && view !== "policy" && <PolicyCard patching={d} onMore={() => url.set({ patches: "policy" })} />}
+        {d.canManage && (
+          <Card title="Patching this device">
+            <p className="text-sm text-muted">For a device that must not be patched, stopping removes the EasyPatch agent and keeps it off.</p>
+            <Button className="mt-3" variant="danger-ghost" size="sm" onClick={() => setStopping(true)}>
+              Stop patching…
+            </Button>
+          </Card>
+        )}
       </div>
       <InstallDialog
         open={installing !== null}
@@ -161,9 +253,15 @@ function Linked({ patching: d, device }: { patching: DevicePatching; device: Dev
         devices={target}
         updates={installing === "all" || installing === null ? undefined : installing}
         canSchedule={d.canSchedule}
-        onDone={() => url.set({ patches: "jobs" })}
+        preview
+        onDone={toJobs}
       />
-      <RestartDialog open={restarting} onClose={() => setRestarting(false)} devices={target} onDone={() => url.set({ patches: "jobs" })} />
+      <RestartDialog open={restarting} onClose={() => setRestarting(false)} devices={target} pendingOnly={Boolean(e?.summary.rebootPending)} onDone={toJobs} />
+      <StopPatchingDialog open={stopping} onClose={() => setStopping(false)} devices={target} />
+      <ExcludeDialog device={device} update={excluding} onClose={() => setExcluding(null)} />
+      <RemoveUpdateDialog device={device} update={removing} onClose={() => setRemoving(null)} onDone={toJobs} />
+      {e && <MessageDialog open={messaging} onClose={() => setMessaging(false)} device={device} endpoint={e} />}
+      {e && <AgentUpdateDialog open={updatingAgent} onClose={() => setUpdatingAgent(false)} device={device} endpoint={e} />}
       <PatchJobDialog jobId={jobId} onClose={() => setJobId(null)} onJob={setJobId} />
       {dialog}
     </div>
@@ -174,7 +272,84 @@ function When({ at, never = "Never" }: { at: string | null | undefined; never?: 
   return at ? <span title={formatDateTime(at)}>{formatRelative(at)}</span> : <span className="text-muted">{never}</span>;
 }
 
-function Summary({ patching: d, view }: { patching: DevicePatching; view: View }) {
+const RESTART_SOURCES: Record<string, string> = {
+  Installed: "installed, takes effect at the restart",
+  WindowsUpdate: "Windows Update lists it as waiting",
+  Servicing: "a pending Windows servicing package",
+};
+
+/** What a pending restart is for: the updates waiting for it, and what else Windows has queued. */
+function RestartFor({ patching: d }: { patching: DevicePatching }) {
+  const e = d.endpoint!;
+  const r = e.restart;
+  const updates = r?.updates ?? [];
+  const packages = r?.servicingPackages ?? [];
+  const files = r?.fileOperationCount ?? 0;
+  return (
+    <>
+      {updates.length > 0 && (
+        <ul className="mt-1 space-y-0.5 text-xs text-muted">
+          {updates.map((u) => (
+            <li key={`${u.updateGuid ?? ""}-${u.title}`} className="break-words">
+              <span className="text-fg">{u.title}</span> · {RESTART_SOURCES[u.source] ?? u.source}
+            </li>
+          ))}
+        </ul>
+      )}
+      {packages.length > 0 && <span className="mt-1 block text-xs text-muted">{plural(packages.length, "servicing package")} waiting</span>}
+      {files > 0 && <span className="mt-1 block text-xs text-muted">{plural(files, "file")} to change at the restart</span>}
+      {e.rebootReasons && e.rebootReasons.length > 0 && <span className="mt-1 block text-xs text-muted">{e.rebootReasons.join(", ")}</span>}
+    </>
+  );
+}
+
+/** The agent's version and whether it can update itself, as EasyPatch plans it. */
+function AgentLine({ patching: d, onUpdate }: { patching: DevicePatching; onUpdate: () => void }) {
+  const e = d.endpoint!;
+  const s = e.summary;
+  const u = e.agentUpdate;
+  let hint: ReactNode = null;
+  if (!u?.supported) hint = s.agentOutdated ? <span className="text-warn">A newer version exists; this agent must be reinstalled once to get it</span> : null;
+  else if (u.availableVersion) hint = u.automaticUpdates ? `Updating itself to ${u.availableVersion}` : `${u.availableVersion} available`;
+  else if (u.code === "agent_up_to_date") hint = u.automaticUpdates ? "Up to date, updates itself" : "Up to date";
+  else hint = <span className="text-warn">{u.message || "It cannot update itself"}</span>;
+  return (
+    <span>
+      {s.agentVersion}
+      <span className="block text-xs text-muted">
+        {s.isOnline ? (
+          "Online"
+        ) : (
+          <>
+            Last seen <When at={s.lastCheckInAt} never="never" />
+          </>
+        )}
+      </span>
+      {hint && <span className="block text-xs text-muted">{hint}</span>}
+      {d.canManage && u?.supported && u.availableVersion && (
+        <Button size="sm" className="mt-2" onClick={onUpdate}>
+          Update agent…
+        </Button>
+      )}
+    </span>
+  );
+}
+
+function Summary({
+  patching: d,
+  device,
+  view,
+  onOpenJob,
+  onMessage,
+  onUpdateAgent,
+}: {
+  patching: DevicePatching;
+  device: Device;
+  view: View;
+  onOpenJob: (id: string) => void;
+  onMessage: () => void;
+  onUpdateAgent: () => void;
+}) {
   const e = d.endpoint;
   if (!e) {
     return (
@@ -224,6 +399,20 @@ function Summary({ patching: d, view }: { patching: DevicePatching; view: View }
       {e.lastScanError && <span className="block text-xs text-danger">{e.lastScanError}</span>}
     </span>,
   ]);
+  if (e.activeJob) {
+    const j = e.activeJob;
+    items.push([
+      "Working on",
+      <span key="j">
+        <button type="button" className="rounded-sm text-left font-medium hover:text-accent" onClick={() => onOpenJob(j.id)}>
+          {jobTypeLabel(j.type)}
+        </button>
+        <span className="mt-1 block">
+          <PatchJobBadge job={j} />
+        </span>
+      </span>,
+    ]);
+  }
   if (s.rebootPending) {
     items.push([
       "Restart",
@@ -235,37 +424,25 @@ function Summary({ patching: d, view }: { patching: DevicePatching; view: View }
             since <When at={e.rebootPendingSince} />
           </>
         )}
-        {e.rebootReasons && e.rebootReasons.length > 0 && <span className="block text-xs text-muted">{e.rebootReasons.join(", ")}</span>}
+        <RestartFor patching={d} />
       </span>,
     ]);
   }
-  items.push([
-    "EasyPatch agent",
-    <span key="a">
-      {s.agentVersion}
-      {s.agentOutdated && <span className="text-warn"> · out of date</span>}
-      <span className="block text-xs text-muted">
-        {s.isOnline ? (
-          "Online"
-        ) : (
-          <>
-            Last seen <When at={s.lastCheckInAt} never="never" />
-          </>
+  if (device.platform === "windows") {
+    const canMessage = d.canManage && agentCan(d, PATCH_AGENT_CAN.notifyUser);
+    items.push([
+      "Users",
+      <span key="u">
+        <SessionSummary endpoint={e} platform={device.platform} />
+        {canMessage && (
+          <Button size="sm" className="mt-2 block" onClick={onMessage}>
+            Message users…
+          </Button>
         )}
-      </span>
-    </span>,
-  ]);
-  items.push([
-    "In EasyPatch",
-    <span key="o">
-      <span className="block">
-        {s.organizationName} / {s.siteName}
-      </span>
-      <EasyPatchLink to={{ device: d.deviceId, tab: PATCH_VIEW_TAB[view] }} className="mt-0.5 text-xs">
-        Open in EasyPatch
-      </EasyPatchLink>
-    </span>,
-  ]);
+      </span>,
+    ]);
+  }
+  items.push(["EasyPatch agent", <AgentLine key="a" patching={d} onUpdate={onUpdateAgent} />]);
   return (
     <Card title="Patch status">
       <KeyValueList narrow items={items} />
@@ -273,7 +450,7 @@ function Summary({ patching: d, view }: { patching: DevicePatching; view: View }
   );
 }
 
-function PolicyCard({ patching: d }: { patching: DevicePatching }) {
+function PolicyCard({ patching: d, onMore }: { patching: DevicePatching; onMore: () => void }) {
   const p = d.policy!;
   const items: [string, ReactNode][] = [
     ["Automatic installs", maintenanceText(p)],
@@ -283,24 +460,26 @@ function PolicyCard({ patching: d }: { patching: DevicePatching }) {
   if (p.installDelayDays > 0 || p.securityInstallDelayDays > 0) {
     items.push(["Delay", `${plural(p.securityInstallDelayDays, "day")} for security updates, ${plural(p.installDelayDays, "day")} for others`]);
   }
+  if (p.restartSchedule?.enabled) items.push(["Restarts", restartScheduleText(p.restartSchedule)]);
   return (
-    <Card title="EasyPatch policy">
+    <Card
+      title="Patch policy"
+      actions={
+        <Button size="sm" variant="ghost" onClick={onMore}>
+          Whole policy
+        </Button>
+      }
+    >
       <KeyValueList narrow items={items} />
-      <p className="mt-3 border-t border-line pt-3 text-xs text-muted">
-        Policies are set in EasyPatch, for its organization, site or this endpoint.{" "}
-        <EasyPatchLink to={{ device: d.deviceId, tab: "policy" }}>Change in EasyPatch</EasyPatchLink>
-      </p>
     </Card>
   );
 }
 
-/** An update: its title opens it in EasyPatch, with its vulnerabilities, the other devices that miss it and its hold. */
+/** An update: its title, with its KB number or package version. */
 function UpdateTitle({ u }: { u: PatchUpdate }) {
   return (
     <>
-      <a href={easyPatchHref({ update: u.updateGuid })} className="block rounded-sm font-medium break-words hover:text-accent" title="Open in EasyPatch">
-        {u.title}
-      </a>
+      <span className="block font-medium break-words">{u.title}</span>
       <span className="text-xs text-muted">
         {u.kbNumber && <>KB{u.kbNumber.replace(/^KB/i, "")} · </>}
         {u.package && u.package.installedVersion && (
@@ -323,16 +502,23 @@ function UpdateTitle({ u }: { u: PatchUpdate }) {
 }
 
 function Available({
-  deviceId,
-  canManage,
+  patching: d,
+  device,
   scanned,
   onInstall,
+  onExclude,
+  onRemove,
 }: {
-  deviceId: string;
-  canManage: boolean;
+  patching: DevicePatching;
+  device: Device;
   scanned: boolean;
   onInstall: (u: { id: string; title: string }[]) => void;
+  onExclude: (u: PatchUpdate) => void;
+  onRemove: (u: PatchUpdate) => void;
 }) {
+  const deviceId = device.id;
+  const canManage = d.canManage;
+  const { include, isPending: including, variables: includingId } = useInclude(device);
   const updates = useList<PatchUpdate>(`/patching/devices/${deviceId}/updates`, undefined, {
     refetchInterval: (data) => (data?.items.some((u) => u.activeJob) ? 5_000 : 60_000),
   });
@@ -371,14 +557,10 @@ function Available({
       padded={false}
       title={chosen.length > 0 ? `${chosen.length.toLocaleString()} selected` : plural(updates.items.length, "update")}
       actions={
-        chosen.length > 0 ? (
+        chosen.length > 0 && (
           <Button size="sm" variant="primary" onClick={() => onInstall(chosen.map((u) => ({ id: u.updateGuid, title: u.title })))}>
             Install selected…
           </Button>
-        ) : (
-          <EasyPatchLink to={{ device: deviceId, tab: "updates" }} className="text-xs">
-            Exclude in EasyPatch
-          </EasyPatchLink>
         )
       }
     >
@@ -402,6 +584,11 @@ function Available({
               <th>Update</th>
               <th>State</th>
               <th className="hidden md:table-cell">Released</th>
+              {canManage && (
+                <th>
+                  <span className="sr-only">Actions</span>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -446,8 +633,38 @@ function Available({
                   {u.state === "Failed" && u.errorMessage && <span className="mt-1 block max-w-xs text-xs text-danger">{u.errorMessage}</span>}
                   {u.deferredUntil && <span className="mt-1 block text-xs text-muted">Held until {formatDate(u.deferredUntil)}</span>}
                   {u.holdReason && <span className="mt-1 block max-w-xs text-xs text-muted">{u.holdReason}</span>}
+                  {u.isExcluded && policyExcludes(d, u) && <span className="mt-1 block text-xs text-muted">By the policy's excluded KBs</span>}
                 </td>
                 <td className="hidden align-top whitespace-nowrap text-muted md:table-cell">{u.releaseDate ? formatDate(u.releaseDate) : "—"}</td>
+                {canManage && (
+                  <td className="text-right align-top whitespace-nowrap">
+                    {u.isExcluded ? (
+                      !policyExcludes(d, u) && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Include ${u.title}`}
+                          icon={<Undo2 className="size-3.5" aria-hidden />}
+                          loading={including && includingId === u.updateGuid}
+                          onClick={() => include(u.updateGuid)}
+                        >
+                          <span className="hidden sm:inline">Include</span>
+                        </Button>
+                      )
+                    ) : (u.state === "Missing" || u.state === "Failed") && !u.activeJob ? (
+                      <Button size="sm" variant="ghost" icon={<Ban className="size-3.5" aria-hidden />} aria-label={`Exclude ${u.title}…`} onClick={() => onExclude(u)}>
+                        <span className="hidden sm:inline">Exclude…</span>
+                      </Button>
+                    ) : (
+                      u.state === "PendingReboot" &&
+                      removable(d, device, u) && (
+                        <Button size="sm" variant="ghost" icon={<PackageMinus className="size-3.5" aria-hidden />} aria-label={`Remove ${u.title}…`} onClick={() => onRemove(u)}>
+                          <span className="hidden sm:inline">Remove…</span>
+                        </Button>
+                      )
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -457,8 +674,9 @@ function Available({
   );
 }
 
-function Installed({ deviceId }: { deviceId: string }) {
-  const updates = useList<PatchUpdate>(`/patching/devices/${deviceId}/installed`, undefined, { staleTime: 60_000 });
+function Installed({ patching: d, device, onRemove }: { patching: DevicePatching; device: Device; onRemove: (u: PatchUpdate) => void }) {
+  const updates = useList<PatchUpdate>(`/patching/devices/${device.id}/installed`, undefined, { staleTime: 60_000 });
+  const canRemove = updates.items.some((u) => removable(d, device, u));
   if (updates.isPending) return <Spinner />;
   if (updates.isError) return <ErrorState error={updates.error} onRetry={() => void updates.refetch()} />;
   if (updates.items.length === 0) {
@@ -477,6 +695,11 @@ function Installed({ deviceId }: { deviceId: string }) {
           <tr>
             <th>Update</th>
             <th className="hidden sm:table-cell">Installed</th>
+            {canRemove && (
+              <th>
+                <span className="sr-only">Actions</span>
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -486,6 +709,15 @@ function Installed({ deviceId }: { deviceId: string }) {
                 <UpdateTitle u={u} />
               </td>
               <td className="hidden whitespace-nowrap text-muted sm:table-cell">{u.installedAt ? formatDateTime(u.installedAt) : "—"}</td>
+              {canRemove && (
+                <td className="text-right whitespace-nowrap">
+                  {removable(d, device, u) && (
+                    <Button size="sm" variant="ghost" icon={<PackageMinus className="size-3.5" aria-hidden />} aria-label={`Remove ${u.title}…`} onClick={() => onRemove(u)}>
+                      <span className="hidden sm:inline">Remove…</span>
+                    </Button>
+                  )}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -494,25 +726,6 @@ function Installed({ deviceId }: { deviceId: string }) {
   );
 }
 
-function Pager({ page, total, size, onPage }: { page: number; total: number; size: number; onPage: (p: number) => void }) {
-  const pages = Math.max(1, Math.ceil(total / size));
-  if (pages <= 1) return null;
-  return (
-    <div className="mt-2 flex items-center justify-between text-xs text-muted">
-      <span>
-        Page {page} of {pages.toLocaleString()}
-      </span>
-      <span className="flex gap-2">
-        <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => onPage(page - 1)}>
-          Newer
-        </Button>
-        <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => onPage(page + 1)}>
-          Older
-        </Button>
-      </span>
-    </div>
-  );
-}
 
 function History({ deviceId }: { deviceId: string }) {
   const [page, setPage] = useState(1);
@@ -556,7 +769,7 @@ function History({ deviceId }: { deviceId: string }) {
           </tbody>
         </table>
       </TableWrap>
-      <Pager page={page} total={h.data.totalCount} size={h.data.pageSize || 50} onPage={setPage} />
+      <Pager page={page} total={h.data.totalCount} size={h.data.pageSize || 50} onPage={setPage} previous="Newer" next="Older" />
     </>
   );
 }
@@ -616,7 +829,7 @@ function Jobs({ deviceId, onOpen }: { deviceId: string; onOpen: (id: string) => 
           </tbody>
         </table>
       </TableWrap>
-      <Pager page={page} total={jobs.data.totalCount} size={jobs.data.pageSize || 50} onPage={setPage} />
+      <Pager page={page} total={jobs.data.totalCount} size={jobs.data.pageSize || 50} onPage={setPage} previous="Newer" next="Older" />
     </>
   );
 }

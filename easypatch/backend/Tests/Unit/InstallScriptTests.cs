@@ -90,7 +90,7 @@ public sealed class InstallScriptTests
     }
 
     [Fact]
-    public void The_msi_records_the_server_ca_where_the_agent_reads_it_and_the_lab_proxy_publishes_it()
+    public void The_msi_records_the_server_ca_where_the_agent_reads_it()
     {
         var root = RepositoryRoot();
         var wxs = File.ReadAllText(Path.Combine(root, "agent", "Installer", "Package.wxs"));
@@ -100,11 +100,6 @@ public sealed class InstallScriptTests
 
         var source = File.ReadAllText(Path.Combine(root, "agent", "EasyPatch.Agent", "Platform", "RegistryBootstrapConfigSource.cs"));
         Assert.Contains("ServerCaCertificateValue = \"ServerCaCertificate\"", source, StringComparison.Ordinal);
-
-        var caddy = File.ReadAllText(Path.Combine(root, "deployment", "caddy", "Caddyfile.dev"));
-        Assert.Contains($"handle {InstallScriptBuilder.ServerCaPath} {{", caddy, StringComparison.Ordinal);
-        Assert.Contains("rewrite * /root.crt", caddy, StringComparison.Ordinal);
-        Assert.DoesNotContain(InstallScriptBuilder.ServerCaPath, File.ReadAllText(Path.Combine(root, "deployment", "caddy", "Caddyfile")), StringComparison.Ordinal);
     }
 
     [Fact]

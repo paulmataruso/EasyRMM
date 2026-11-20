@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,8 +40,8 @@ const (
 	TokenUsedUp  TokenStatus = "used_up"
 )
 
-// Token is a deployment token as the console shows it. The secret is never
-// stored and is only returned once, by CreateToken.
+// Token is a deployment token as the console shows it. The secret is
+// returned by CreateToken and, while the token is active, by RevealToken.
 type Token struct {
 	ID               uuid.UUID   `json:"id"`
 	OrganizationID   uuid.UUID   `json:"organizationId"`
@@ -57,6 +59,8 @@ type Token struct {
 	LastUsedAt       *time.Time  `json:"lastUsedAt"`
 	RevokedAt        *time.Time  `json:"revokedAt"`
 	Status           TokenStatus `json:"status"`
+	// Kept says the secret was kept, so the token can be shown again.
+	Kept bool `json:"kept"`
 }
 
 // TokenInput describes a new token.
@@ -80,7 +84,7 @@ func (in *TokenInput) normalize() error {
 	return f.Err()
 }
 
-// NewToken is a created token and its secret, shown once.
+// NewToken is a token with its secret: a new one, or one shown again.
 type NewToken struct {
 	Token  *Token `json:"token"`
 	Secret string `json:"secret"`
@@ -96,7 +100,8 @@ type TokenQuery struct {
 
 //nolint:gosec // column names, not credentials
 const tokenColumns = `t.id, t.organization_id, o.name, t.site_id, s.name, t.device_group_id, coalesce(g.name, ''),
-	t.name, t.expires_at, t.max_uses, t.uses, coalesce(u.display_name, ''), t.created_at, t.last_used_at, t.revoked_at`
+	t.name, t.expires_at, t.max_uses, t.uses, coalesce(u.display_name, ''), t.created_at, t.last_used_at, t.revoked_at,
+	t.token_sealed IS NOT NULL`
 
 const tokenFrom = ` FROM enrollment_tokens t
 	JOIN sites s ON s.id = t.site_id
@@ -107,7 +112,7 @@ const tokenFrom = ` FROM enrollment_tokens t
 func (s *Service) scanToken(row pgx.Row) (*Token, error) {
 	var t Token
 	err := row.Scan(&t.ID, &t.OrganizationID, &t.OrganizationName, &t.SiteID, &t.SiteName, &t.DeviceGroupID, &t.DeviceGroupName,
-		&t.Name, &t.ExpiresAt, &t.MaxUses, &t.Uses, &t.CreatedByName, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt)
+		&t.Name, &t.ExpiresAt, &t.MaxUses, &t.Uses, &t.CreatedByName, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt, &t.Kept)
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +147,71 @@ func hashToken(secret string) []byte {
 	return h[:]
 }
 
+// The tables holding tokens, and their kinds as audit events name them.
+const (
+	deploymentTokens = "enrollment_tokens"
+	approvalTokens   = "approval_tokens"
+)
+
+func tokenKind(table string) string {
+	if table == approvalTokens {
+		return "approval_token"
+	}
+	return "enrollment_token"
+}
+
+// sealToken seals a new token's secret for the row it goes in, or returns
+// nil when the service keeps none.
+func (s *Service) sealToken(table string, id uuid.UUID, secret string) (*string, error) {
+	if s.tokens == nil {
+		return nil, nil
+	}
+	sealed, err := s.tokens.Seal([]byte(secret), []byte(tokenKind(table)+":"+id.String()))
+	if err != nil {
+		return nil, err
+	}
+	return &sealed, nil
+}
+
+var errNotKept = errors.New("agents: token secret not kept")
+
+// revealSecret opens an active token's kept secret and records who saw it.
+func (s *Service) revealSecret(ctx context.Context, c access.Caller, table string, id uuid.UUID, status TokenStatus, ev audit.Event) (string, error) {
+	if status != TokenActive {
+		return "", apperr.Conflict("token_inactive", "This token can no longer add devices, so there is nothing to show. Create a new one.")
+	}
+	var secret string
+	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		var sealed *string
+		var hash []byte
+		if err := tx.QueryRow(ctx, `SELECT token_sealed, token_hash FROM `+table+` WHERE id = $1`, id).Scan(&sealed, &hash); err != nil {
+			return err
+		}
+		if sealed == nil || s.tokens == nil {
+			return errNotKept
+		}
+		plain, err := s.tokens.Open(*sealed, []byte(tokenKind(table)+":"+id.String()))
+		if err != nil {
+			return fmt.Errorf("agents: opening %s %s: %w", tokenKind(table), id, err)
+		}
+		if subtle.ConstantTimeCompare(hashToken(string(plain)), hash) != 1 {
+			return fmt.Errorf("agents: %s %s: the kept secret does not match its hash", tokenKind(table), id)
+		}
+		secret = string(plain)
+		ev.Actor, ev.Action, ev.Outcome = c.Actor, tokenKind(table)+".reveal", audit.Success
+		ev.TargetType, ev.TargetID = tokenKind(table), id.String()
+		return s.audit.Write(ctx, tx, ev)
+	})
+	if errors.Is(err, errNotKept) {
+		return "", apperr.Conflict("token_not_kept",
+			"This token was created before EasyRMM kept tokens to show again. Create a new one, or use the command saved when it was created.")
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", apperr.NotFound()
+	}
+	return secret, err
+}
+
 // CreateToken creates a deployment token for a site.
 func (s *Service) CreateToken(ctx context.Context, c access.Caller, siteID uuid.UUID, in TokenInput) (*NewToken, error) {
 	var orgID uuid.UUID
@@ -173,12 +243,16 @@ func (s *Service) CreateToken(ctx context.Context, c access.Caller, siteID uuid.
 		createdBy = &c.Principal.UserID
 	}
 	expires := s.now().Add(time.Duration(in.ExpiresInDays) * 24 * time.Hour)
-	var id uuid.UUID
+	id := uuid.New()
+	sealed, err := s.sealToken(deploymentTokens, id, secret)
+	if err != nil {
+		return nil, err
+	}
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `INSERT INTO enrollment_tokens
-			(organization_id, site_id, device_group_id, name, token_hash, expires_at, max_uses, created_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
-			orgID, siteID, in.DeviceGroupID, in.Name, hash, expires, in.MaxUses, createdBy).Scan(&id); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO enrollment_tokens
+			(id, organization_id, site_id, device_group_id, name, token_hash, token_sealed, expires_at, max_uses, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			id, orgID, siteID, in.DeviceGroupID, in.Name, hash, sealed, expires, in.MaxUses, createdBy); err != nil {
 			return err
 		}
 		details := map[string]any{"name": in.Name, "expiresAt": expires.UTC().Format(time.RFC3339)}
@@ -222,6 +296,22 @@ func (s *Service) GetToken(ctx context.Context, c access.Caller, id uuid.UUID) (
 		return nil, apperr.NotFound()
 	}
 	return t, nil
+}
+
+// RevealToken returns an active deployment token with its secret again, for
+// its install commands (ADR-0047). Every time is audited.
+func (s *Service) RevealToken(ctx context.Context, c access.Caller, id uuid.UUID) (*NewToken, error) {
+	t, err := s.GetToken(ctx, c, id)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := s.revealSecret(ctx, c, deploymentTokens, id, t.Status, audit.Event{
+		OrganizationID: t.OrganizationID, SiteID: t.SiteID, Details: map[string]any{"name": t.Name},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &NewToken{Token: t, Secret: secret}, nil
 }
 
 // ListTokens returns the tokens the caller manages, newest first.

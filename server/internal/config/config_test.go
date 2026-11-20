@@ -1,9 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"encoding/base64"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +27,7 @@ func base() map[string]string {
 		"EASYRMM_DATABASE_URL":           "postgres://easyrmm_app:x@127.0.0.1:15432/easyrmm",
 		"EASYRMM_DATABASE_MIGRATION_URL": "postgres://easyrmm_owner:y@127.0.0.1:15432/easyrmm",
 		"EASYRMM_SECRET_KEY":             testKey,
+		"EASYRMM_PATCHING_KEY":           testKey,
 	}
 }
 
@@ -249,7 +252,73 @@ func TestSameSite(t *testing.T) {
 	}
 }
 
-func TestEasyPatchCoHosting(t *testing.T) {
+// TestEasyPatchCoHostingRetired: EasyPatch behind the edge (ADR-0035) is
+// gone (ADR-0046). A name for it stops the server, whatever else is set; the
+// empty setting and the old upstream settings are harmless.
+func TestEasyPatchCoHostingRetired(t *testing.T) {
+	load := func(overrides map[string]string) error {
+		m := base()
+		for k, v := range overrides {
+			m[k] = v
+		}
+		_, err := LoadFrom(env(m), noFiles)
+		return err
+	}
+	if err := load(map[string]string{
+		"EASYRMM_EASYPATCH_HOSTNAME": "", "EASYRMM_EASYPATCH_TLS_UPSTREAM": "127.0.0.1:19443",
+		"EASYRMM_EASYPATCH_HTTP_UPSTREAM": "127.0.0.1:19080", "EASYRMM_EASYPATCH_PROXY_PROTOCOL": "true",
+	}); err != nil {
+		t.Fatalf("empty: %v", err)
+	}
+	err := load(map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com"})
+	if err == nil || !strings.Contains(err.Error(), "EASYRMM_EASYPATCH_HOSTNAME is no longer a setting") ||
+		!strings.Contains(err.Error(), "import-easypatch.sh") {
+		t.Errorf("a name: %v", err)
+	}
+}
+
+func TestPatchingAgentHostnames(t *testing.T) {
+	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
+	load := func(overrides map[string]string) (*Config, error) {
+		m := base()
+		m["EASYRMM_PATCHING_KEY"] = key
+		for k, v := range overrides {
+			m[k] = v
+		}
+		return LoadFrom(env(m), noFiles)
+	}
+	c, err := load(nil)
+	if err != nil || c.Patching.AgentHostnames != nil || c.ExtraHostnames() != nil {
+		t.Fatalf("none by default: %+v %v", c, err)
+	}
+	c, err = load(map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": " Patch.Example.com. , easypatch.example.net,"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"patch.example.com", "easypatch.example.net"}; !slices.Equal(c.Patching.AgentHostnames, want) || !slices.Equal(c.ExtraHostnames(), want) {
+		t.Fatalf("names %v, extra %v", c.Patching.AgentHostnames, c.ExtraHostnames())
+	}
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"an IP address":   {map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": "192.0.2.4"}, "must list DNS names"},
+		"one label":       {map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": "patch"}, "must list DNS names"},
+		"a URL":           {map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": "https://patch.example.com"}, "must list DNS names"},
+		"the console's":   {map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": "RMM.example.com"}, "lists rmm.example.com, which EASYRMM_PUBLIC_URL already uses"},
+		"remote access's": {map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": "mesh.rmm.example.com"}, "which EASYRMM_MESH_PUBLIC_URL already uses"},
+		"twice":           {map[string]string{"EASYRMM_PATCHING_AGENT_HOSTNAMES": "patch.example.com,patch.example.com"}, "lists patch.example.com, which EASYRMM_PATCHING_AGENT_HOSTNAMES already uses"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := load(tc.env)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %v, want one containing %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestPatchingMode(t *testing.T) {
 	load := func(overrides map[string]string) (*Config, error) {
 		m := base()
 		for k, v := range overrides {
@@ -257,62 +326,58 @@ func TestEasyPatchCoHosting(t *testing.T) {
 		}
 		return LoadFrom(env(m), noFiles)
 	}
+	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
 
-	c, err := load(nil)
-	if err != nil || c.EasyPatch.Enabled() || c.EasyPatch != (EasyPatchHost{}) {
-		t.Fatalf("off by default: %+v %v", c.EasyPatch, err)
+	// The engine in this deployment, always (one-product plan, phase S):
+	// EASYRMM_PATCHING is no longer a setting, and its old "bundled" is
+	// harmless.
+	for _, mode := range []map[string]string{{"EASYRMM_PATCHING_KEY": key}, {"EASYRMM_PATCHING": "", "EASYRMM_PATCHING_KEY": key},
+		{"EASYRMM_PATCHING": "Bundled", "EASYRMM_PATCHING_KEY": key}} {
+		c, err := load(mode)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c.Patching.URL != DefaultPatchingURL || !bytes.Equal(c.Patching.Key, bytes.Repeat([]byte{7}, 32)) {
+			t.Fatalf("%v: %+v", mode, c.Patching)
+		}
 	}
-	// Settings for the upstreams mean nothing without a hostname.
-	c, err = load(map[string]string{"EASYRMM_EASYPATCH_TLS_UPSTREAM": "0.0.0.0:1"})
-	if err != nil || c.EasyPatch.Enabled() {
-		t.Fatalf("upstream without a hostname: %+v %v", c.EasyPatch, err)
+	c, err := load(map[string]string{"EASYRMM_PATCHING_KEY": key, "EASYRMM_PATCHING_URL": "http://[::1]:28180"})
+	if err != nil || c.Patching.URL != "http://[::1]:28180" {
+		t.Fatalf("another loopback address: %+v %v", c.Patching, err)
 	}
-
-	c, err = load(map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": " Patch.Example.COM. "})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := EasyPatchHost{Hostname: "patch.example.com", TLSUpstream: "127.0.0.1:19443", HTTPUpstream: "127.0.0.1:19080", ProxyProtocol: true}
-	if c.EasyPatch != want || !c.EasyPatch.Enabled() {
-		t.Fatalf("defaults: %+v", c.EasyPatch)
-	}
-
-	c, err = load(map[string]string{
-		"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com", "EASYRMM_EASYPATCH_TLS_UPSTREAM": "[::1]:8443",
-		"EASYRMM_EASYPATCH_HTTP_UPSTREAM": "", "EASYRMM_EASYPATCH_PROXY_PROTOCOL": "false",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.EasyPatch.TLSUpstream != "[::1]:8443" || c.EasyPatch.HTTPUpstream != "" || c.EasyPatch.ProxyProtocol {
-		t.Fatalf("overrides: %+v", c.EasyPatch)
+	// From a file, as the other secrets may be.
+	files := func(string) ([]byte, error) { return []byte(key + "\n"), nil }
+	m := base()
+	delete(m, "EASYRMM_PATCHING_KEY")
+	m["EASYRMM_PATCHING_KEY_FILE"] = "/run/secrets/patching_key"
+	if c, err := LoadFrom(env(m), files); err != nil || len(c.Patching.Key) != 32 {
+		t.Fatalf("key file: %+v %v", c, err)
 	}
 
+	with := func(more map[string]string) map[string]string {
+		out := map[string]string{"EASYRMM_PATCHING_KEY": key}
+		for k, v := range more {
+			out[k] = v
+		}
+		return out
+	}
 	for name, tc := range map[string]struct {
 		env  map[string]string
 		want string
 	}{
-		"IP address":           {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "192.0.2.20"}, "must be a DNS name"},
-		"single label":         {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "patch"}, "must be a DNS name"},
-		"URL, not a name":      {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "https://patch.example.com"}, "must be a DNS name"},
-		"bad label":            {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "-patch.example.com"}, "must be a DNS name"},
-		"empty label":          {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "patch..example.com"}, "must be a DNS name"},
-		"long label":           {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": strings.Repeat("a", 64) + ".example.com"}, "must be a DNS name"},
-		"too long":             {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": strings.Repeat("a.", 127) + "com"}, "must be a DNS name"},
-		"the console's name":   {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "rmm.example.com"}, "must differ from EasyRMM's own names"},
-		"remote access's name": {map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "mesh.rmm.example.com"}, "must differ from EasyRMM's own names"},
-		"behind a proxy": {map[string]string{
-			"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com", "EASYRMM_TLS_MODE": "offload", "EASYRMM_TRUSTED_PROXIES": "127.0.0.1",
-		}, "needs EasyRMM to own ports 80 and 443"},
-		"TLS upstream on the network": {map[string]string{
-			"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com", "EASYRMM_EASYPATCH_TLS_UPSTREAM": "192.0.2.20:443",
-		}, "EASYRMM_EASYPATCH_TLS_UPSTREAM must be a loopback address and port"},
-		"HTTP upstream on the network": {map[string]string{
-			"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com", "EASYRMM_EASYPATCH_HTTP_UPSTREAM": "patch.example.com:80",
-		}, "EASYRMM_EASYPATCH_HTTP_UPSTREAM must be a loopback address and port"},
-		"upstream without a port": {map[string]string{
-			"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com", "EASYRMM_EASYPATCH_TLS_UPSTREAM": "127.0.0.1",
-		}, "EASYRMM_EASYPATCH_TLS_UPSTREAM"},
+		"unknown mode":   {with(map[string]string{"EASYRMM_PATCHING": "external"}), "EASYRMM_PATCHING is no longer a setting"},
+		"the connector":  {with(map[string]string{"EASYRMM_PATCHING": "connector"}), `EASYRMM_PATCHING is no longer a setting (patching always uses the engine in this deployment); remove it, got "connector"`},
+		"no key":         {map[string]string{"EASYRMM_PATCHING_KEY": ""}, "EASYRMM_PATCHING_KEY must be at least 32 bytes"},
+		"short key":      {with(map[string]string{"EASYRMM_PATCHING_KEY": base64.StdEncoding.EncodeToString(make([]byte, 31))}), "at least 32 bytes"},
+		"key not base64": {with(map[string]string{"EASYRMM_PATCHING_KEY": "not base64!"}), "EASYRMM_PATCHING_KEY must be base64"},
+		"https":          {with(map[string]string{"EASYRMM_PATCHING_URL": "https://127.0.0.1:18180"}), "EASYRMM_PATCHING_URL must be http:// on a loopback"},
+		"on the network": {with(map[string]string{"EASYRMM_PATCHING_URL": "http://192.0.2.20:18180"}), "EASYRMM_PATCHING_URL"},
+		"a name":         {with(map[string]string{"EASYRMM_PATCHING_URL": "http://localhost:18180"}), "EASYRMM_PATCHING_URL"},
+		"no port":        {with(map[string]string{"EASYRMM_PATCHING_URL": "http://127.0.0.1"}), "EASYRMM_PATCHING_URL"},
+		"a path":         {with(map[string]string{"EASYRMM_PATCHING_URL": "http://127.0.0.1:18180/easypatch"}), "EASYRMM_PATCHING_URL"},
+		"credentials":    {with(map[string]string{"EASYRMM_PATCHING_URL": "http://a:b@127.0.0.1:18180"}), "EASYRMM_PATCHING_URL"},
+		"with co-hosting": {with(map[string]string{"EASYRMM_EASYPATCH_HOSTNAME": "patch.example.com"}),
+			"EASYRMM_EASYPATCH_HOSTNAME is no longer a setting"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := load(tc.env)

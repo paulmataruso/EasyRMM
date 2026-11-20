@@ -2,6 +2,7 @@ package app
 
 import (
 	"net"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"slices"
@@ -56,7 +57,25 @@ func internalAddresses(cfg *config.Config) (names []string, ips []net.IP) {
 			add(o.Mesh)
 		}
 	}
+	if cfg.TLSMode == config.TLSInternal {
+		for _, h := range cfg.ExtraHostnames() {
+			add(&url.URL{Host: h})
+		}
+	}
 	return names, ips
+}
+
+// hostHandlers serve the names the edge answers besides its origins
+// (config.ExtraHostnames), on any port.
+type hostHandlers map[string]http.Handler
+
+func (h hostHandlers) match(hostHeader string) (http.Handler, bool) {
+	host, _, err := net.SplitHostPort(config.HostAuthority(hostHeader))
+	if err != nil {
+		return nil, false
+	}
+	x, ok := h[host]
+	return x, ok
 }
 
 // route is where a request goes: the console (and agent API) of an origin,

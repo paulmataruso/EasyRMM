@@ -11,6 +11,8 @@ afterEach(() => {
 describe("buildQuery", () => {
   it("skips empty values and encodes the rest", () => {
     expect(buildQuery({ q: "a b", empty: "", none: null, missing: undefined, n: 0, flag: false })).toBe("?q=a+b&n=0&flag=false");
+    expect(buildQuery({ updateId: ["a", "b"], q: "x" })).toBe("?updateId=a&updateId=b&q=x");
+    expect(buildQuery({ updateId: [] })).toBe("");
     expect(buildQuery({})).toBe("");
     expect(buildQuery()).toBe("");
   });

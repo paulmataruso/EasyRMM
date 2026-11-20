@@ -43,7 +43,7 @@ public sealed class MacAgentTests(PostgresFixture postgres) : AgentUpdateTestBas
             AgentVersion = "1.9.0",
             Device = Mac,
         }, TestJson.Options, TestContext.Current.CancellationToken);
-        await AdminSession.EnsureAsync(response, HttpStatusCode.OK);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
         var enrolled = (await response.Content.ReadFromJsonAsync<EnrollResponse>(TestJson.Options, TestContext.Current.CancellationToken))!;
         agent.CredentialId = enrolled.CredentialId;
         agent.EndpointId = enrolled.EndpointId!.Value;
@@ -83,7 +83,7 @@ public sealed class MacAgentTests(PostgresFixture postgres) : AgentUpdateTestBas
 
         using (var inventory = await agent.PostAsync(AgentRoutes.Inventory, Inventory("24G325")))
         {
-            await AdminSession.EnsureAsync(inventory, HttpStatusCode.NoContent);
+            await AdminClient.EnsureAsync(inventory, HttpStatusCode.NoContent);
         }
 
         var detail = await Root.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{agent.EndpointId}");
@@ -102,7 +102,7 @@ public sealed class MacAgentTests(PostgresFixture postgres) : AgentUpdateTestBas
         // A macOS update changes the build.
         using (var inventory = await agent.PostAsync(AgentRoutes.Inventory, Inventory("24G400")))
         {
-            await AdminSession.EnsureAsync(inventory, HttpStatusCode.NoContent);
+            await AdminClient.EnsureAsync(inventory, HttpStatusCode.NoContent);
         }
 
         var events = await WithDbAsync(db => db.EndpointEvents.AsNoTracking()

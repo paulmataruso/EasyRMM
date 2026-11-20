@@ -15,14 +15,14 @@ namespace EasyPatch.Tests.Integration;
 /// <summary>Restart jobs, user messages, restart schedules, per-endpoint policy and Windows Update policy status.</summary>
 public sealed class UserExperienceTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
-    private AdminSession root = null!;
+    private AdminClient root = null!;
     private OrganizationDto org = null!;
     private SiteDto site = null!;
 
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        root = await SuperAdminAsync();
+        root = SuperAdmin();
         (org, site) = await CreateOrgAsync(root);
     }
 
@@ -39,13 +39,13 @@ public sealed class UserExperienceTests(PostgresFixture postgres) : IntegrationT
     private async Task AckAsync(SignedAgent agent, Guid jobId)
     {
         using var response = await agent.PostAsync($"api/v1/agents/jobs/{jobId}/ack", new { });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.OK);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
     }
 
     private static async Task ReportAsync(SignedAgent agent, Guid jobId, long sequence, JobStatus status)
     {
         using var response = await agent.PostAsync($"api/v1/agents/jobs/{jobId}/status", new JobStatusReport { Sequence = sequence, Status = status, Phase = status.ToString() });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.NoContent);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.NoContent);
     }
 
     private static RestartRequest Restart(RestartMode mode = RestartMode.PromptWithDeadline, int? deadline = 60, DateTimeOffset? at = null) =>
@@ -270,7 +270,7 @@ public sealed class UserExperienceTests(PostgresFixture postgres) : IntegrationT
     {
         var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-RO");
         await agent.CheckInAsync(CapableCheckIn());
-        var viewer = await CreateAndLoginAsync("viewer", UserRole.ReadOnly);
+        var viewer = Admin("viewer", UserRole.ReadOnly);
         var url = $"/api/v1/endpoints/{agent.EndpointId}";
         await viewer.ExpectAsync(HttpMethod.Post, url + "/restart", Restart(), HttpStatusCode.Forbidden);
         await viewer.ExpectAsync(HttpMethod.Post, url + "/notify", new NotifyRequest(UserMessagePreset.SaveYourWork, null), HttpStatusCode.Forbidden);

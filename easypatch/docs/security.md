@@ -1,7 +1,7 @@
 # EasyPatch Security Model and Threat Model
 
-The EasyPatch server is exposed to the internet and manages software installation on
-customer computers. Security is designed around one principle:
+EasyPatch's agent routes are reachable from the internet through EasyRMM's edge, and the engine
+manages software installation on customer computers. Security is designed around one principle:
 
 > **A compromised server must not become a remote-code-execution channel into customer networks.**
 
@@ -17,141 +17,64 @@ changes Windows Update policy values only for settings an administrator configur
 
 | Asset | Where it lives | Protection |
 |---|---|---|
-| Admin credentials | `users.password_hash` | Argon2id (m=19 MiB, t=2, p=1). Login rate limits and account lockout. |
-| MFA secrets | `users.mfa_secret_protected` | ASP.NET Data Protection; the keys are in a separate volume |
-| Passkeys and security keys | `webauthn_credentials` | Public keys only (not secret); the private keys stay on the authenticators |
-| Single sign-on client secrets | `oidc_providers.client_secret_protected` | ASP.NET Data Protection, like the SMTP password. Write-only in the API |
-| Admin sessions | Browser cookie and `user_sessions` | Random 256-bit token, only its SHA-256 is stored. `__Host-` cookie that is `Secure`, `HttpOnly` and `SameSite=Strict`. Idle and absolute expiry. Can be revoked. |
+| The key EasyRMM signs its statements with | `EasyRmm__GatewayKey`, from `EASYRMM_PATCHING_KEY` in EasyRMM's `.env` | Shared only by EasyRMM's server and the engine's API; at least 32 bytes |
 | Agent private keys | Endpoint `C:\ProgramData\EasyPatch\agent.key` | Generated on the device and never transmitted. DPAPI (LocalMachine). Directory ACL allows only SYSTEM and Administrators. |
 | Agent public keys | `agent_credentials` | Not secret. Expire and can be revoked. |
 | Enrollment tokens | `enrollment_tokens.token_hash` | 256-bit random value shown once. Only the SHA-256 is stored. Expiring, use-limited and revocable. |
-| Database | `pgdata` volume | Internal network only, password provided as a Compose secret |
+| Database | The engine's own database in EasyRMM's PostgreSQL | Loopback only; the engine's own roles, with passwords in EasyRMM's `.env` |
 
 ## Admin authentication
 
-* **Sign-in name.** Users sign in with their email address, compared without regard to case.
-  It is the only sign-in name: the username is the account's display name in the console and
-  the audit log. Addresses are stored trimmed and in lower case, and a unique index on
-  `lower(email)` keeps two accounts from sharing an address.
-* **Passwords.** 12 to 256 characters, at least 4 distinct characters, and the username must
-  not appear in the password. There are no composition rules, following NIST SP 800-63B.
-* **Rate limits and lockout.** Login, MFA verification and the password routes share a
-  limit of 20 requests per minute per IP. Five consecutive failures lock the account,
-  starting at 15 minutes and doubling with each lockout, capped at 24 hours. A locked account
-  gets the same "email or password is incorrect" answer as a wrong password, and unknown
-  addresses get it too. `unlock` (CLI) clears a lockout.
-* **Multi-factor authentication (MFA).** TOTP (RFC 6238, SHA-1, 6 digits, 30 s step, ±1 step
-  tolerance). A time step can only be used once.
-  * MFA is **required by default** (`RequireMfa` in server settings). Users without MFA can
-    only enroll MFA until they do.
-  * Users get 10 single-use recovery codes, stored hashed.
-  * A **security key or passkey** (WebAuthn, below) also counts as MFA: a user has MFA when
-    they have an authenticator app or at least one security key or passkey. While the server
-    requires MFA, the last of these cannot be removed.
-* **Security keys and passkeys (WebAuthn / FIDO2).** Verified with the MIT-licensed
-  passwordless-lib `Fido2` library (pinned), using the browser's own `navigator.credentials`
-  API; EasyPatch does no cryptography of its own here.
-  * *Two uses.* A **security key** is the second step after the password, in place of an
-    authenticator code (user verification not required). A **passkey** is a discoverable
-    credential that signs in on its own with **Sign in with a passkey**: the authenticator must
-    verify the user (PIN or biometrics), so possession plus verification count as both factors
-    and no further MFA step follows.
-  * *What is stored* (`webauthn_credentials`): the credential ID (unique across users), the
-    public key, the signature counter, the AAGUID, transports, a name, whether it is a passkey,
-    the backup flags, and when it was added and last used. The private key never leaves the
-    authenticator. Attestation is not requested (`none`).
-  * *Relying party.* The RP ID is the host name of the console's public URL
-    (`EASYPATCH_DOMAIN`), and the only accepted origin is `https://<domain>[:port]`. Browsers
-    offer WebAuthn only on a secure origin with a DNS name, so **passkeys and security keys
-    need a DNS name and a certificate the browser trusts**. When the public URL is an IP
-    address or not HTTPS, the server reports them as unavailable (`GET /api/v1/auth/webauthn`
-    gives the reason) and the console explains it instead of offering them. Changing the
-    domain later invalidates every registered passkey and security key (they are bound to
-    the RP ID).
-  * *Challenges.* Each ceremony's options, with a fresh random challenge, are kept on the
-    server (`webauthn_challenges`), bound to the session (registration, second factor) or, for
-    a passkey sign-in, to the SHA-256 of a random value in a `__Host-`, `HttpOnly`,
-    `SameSite=Strict` cookie. A challenge is deleted when it is answered, right or wrong, and
-    expires after 5 minutes. Responses are checked for the origin, the RP ID hash, user
-    presence (and verification where required), the signature, and a signature counter that
-    must increase when the authenticator keeps one (a counter that goes backwards suggests a
-    cloned key and is refused).
-  * *Adding and removing* a key needs the current password, unless the user signed in (with
-    MFA) within the last 10 minutes. Each user can register up to 20. The first second factor
-    of an account comes with recovery codes. An administrator's **Reset MFA** (and the CLI
-    `reset-mfa`) removes the user's passkeys and security keys too.
-  * *Failures* count towards the account lockout like wrong codes, and the routes share the
-    sign-in rate limit. Challenges, public keys, credential IDs and browser responses are never
-    logged or audited; the log records only the library's error code.
-  * *Passkey offer.* After signing in, a user without a passkey is offered to create one, but
-    only when passkeys work on this server and in their browser. "Not now" is stored on the
-    server (`users.passkey_prompt_dismissed_at`), and the offer returns after 30 days. A
-    security key registered only as a second factor does not count as a passkey.
-* **Single sign-on (OpenID Connect).** Optional, configured by super administrators; password
-  sign-in stays available. Details and provider setup: [single-sign-on.md](single-sign-on.md).
-  * *Flow.* Authorization code with PKCE (`S256`), `state` and `nonce`. The pending sign-in is
-    stored on the server (`oidc_login_states`: hash of `state`, nonce, PKCE verifier), used once,
-    expires after 10 minutes and is bound to the browser by the hash of a random value in a
-    `__Host-easypatch-sso` cookie (`SameSite=Lax`, because the provider's redirect back is a
-    cross-site navigation). The callback answers with redirects only, `Cache-Control: no-store`
-    and `Referrer-Policy: no-referrer`.
-  * *ID token.* Signature against the provider's JWKS (RSA and ECDSA algorithms only), issuer,
-    audience (and `azp` with several audiences), expiry and not-before (2 minutes tolerance)
-    and nonce, with the pinned Microsoft IdentityModel libraries. The discovery document must
-    name the configured issuer, and its endpoints must be HTTPS.
-  * *Linking.* Existing active users only, unless account creation is turned on. The first
-    sign-in links by email address only when the token says `email_verified: true` (or the
-    administrator ticked **Trust the provider's email claim**) and the user is not already linked
-    to another account at that provider; afterwards the link (issuer and subject,
-    `external_logins`, unique) decides. Created accounts need an allowed email domain, get the
-    configured role (Read only by default, never SuperAdmin) and have no password.
-  * *MFA.* EasyPatch's MFA still applies unless the provider is marked as enforcing MFA; such a
-    session is flagged (`user_sessions.mfa_by_provider`) and does not require EasyPatch MFA
-    enrollment.
-  * *Re-authentication.* Accounts without a password confirm changes to their sign-in methods
-    and recovery codes with a sign-in within the last 10 minutes instead of the password.
-  * *Logging.* Tokens, codes, client secrets and claims are never logged or audited; failures
-    are audited as `auth.sso_failed` with the provider and a reason code, and the sign-in page
-    shows a general message. Caddy's access log replaces the `code` and `state` query
-    parameters with `REDACTED`. The start and callback routes share the sign-in rate limit.
-  * *Outbound.* The `api` container connects to the configured providers' discovery, key set
-    and token endpoints over HTTPS (no redirects, 15-second timeout, size limits).
-* **Sessions.**
-  * Server-side and revocable, either individually or all at once.
-  * Changing your password revokes all your other sessions.
-  * Defaults: 30-minute idle timeout, 12-hour absolute lifetime.
-* **CSRF.** Session cookies use `SameSite=Strict`. In addition, every unsafe method must send
-  an `X-XSRF-TOKEN` header carrying the session ID protected with ASP.NET Data Protection
-  (purpose `EasyPatch.Csrf.v1`). The server unprotects it and compares it with the session of
-  the request. The value is delivered in a JavaScript-readable `XSRF-TOKEN` cookie.
-* **API tokens.** For scripts and integrations (**Settings → API tokens**, super administrators
-  only). A token is 256 random bits with the prefix `ept_`, shown once; only its SHA-256 hash is
-  stored, and it is never logged. It is sent as `Authorization: Bearer`, so it needs no CSRF
-  token, and a request that also has a session cookie is treated as a session request. Each
-  token has a fixed role (ReadOnly or Admin, never SuperAdmin), optional organization
-  restrictions, and an expiry of at most 365 days. It can be revoked at any time, and the
-  console shows when and from which address it was last used. Tokens cannot manage users, API
-  tokens or anything else reserved for super administrators, and cannot use the account
-  routes (MFA, password, sessions). They are not tied to the super administrator who created
-  them: disabling that user does not revoke the token. Actions are audited as `token:<name>`.
-  A token for some organizations whose organizations are all deleted can access nothing.
-* **Bootstrap and recovery.** No first-run web page exists. The first Super Administrator is
-  created with `docker compose run --rm api create-admin`. Password resets are either
-  administrator-issued one-time links (valid 60 minutes) or the `reset-password` CLI command.
+EasyPatch has no sign-in of its own: no passwords, sessions, second factors, passkeys or single
+sign-on, and no API tokens. People sign in to EasyRMM, and EasyRMM's rules for that apply. The
+administrator API accepts one credential:
+
+* **Statements from EasyRMM.** Each of EasyRMM's calls to its engine carries a statement in
+  `X-EasyRMM-Assertion` (EasyRMM's ADR-0038).
+  * *Format.* A JWT signed with HMAC-SHA256 (`typ` `easyrmm-gateway+jwt`, issuer `easyrmm`,
+    audience `easypatch`) under the key EasyRMM and the engine share (`EasyRmm__GatewayKey`,
+    base64, at least 32 bytes). Without the key the API refuses every statement; a key that is
+    set but unusable stops the API at start.
+  * *What it says.* Who the call is for (an EasyRMM user's id and name, or `service` for
+    EasyRMM's own work), the role (`ReadOnly`, `Admin` or `SuperAdmin`) and the organizations
+    (`"*"` for every one, or a list) for this one call, and the method and request target it was
+    made for. EasyRMM makes each valid for 30 seconds; the engine refuses one valid for longer
+    than 60 seconds, and tolerates 5 seconds of clock difference.
+  * *Refusals.* A request with more than one statement, or with a statement that does not verify
+    or was made for another request, is refused (`401`) whatever else it carries. The log
+    records the reason, never the statement.
+  * *Checks that still apply.* EasyRMM checks its own permissions before it signs; the engine's
+    role and tenant checks then apply to what the statement says. Actions are audited as
+    `easyrmm:<name>`.
+* **No API tokens.** A standalone EasyPatch's API tokens (`Authorization: Bearer ept_…`) are no
+  longer accepted, and nothing makes new ones: a request without a statement answers `401`
+  whatever bearer token it carries, and a request with one is judged by the statement alone.
+  `X-EasyPatch-On-Behalf-Of` is ignored. Scripts and integrations use EasyRMM's API.
+* **No cookies.** The API sets and reads no cookies, so there is no cross-site request forgery
+  to defend against, and no CSRF token.
+* **Bootstrap.** No first-run web page and no first account exist. EasyRMM's setup writes the
+  shared key; no command makes a credential.
 * **Roles.**
 
   | Role | Permissions |
   |---|---|
-  | SuperAdmin | Everything, including users, server settings and the lifecycle table |
+  | SuperAdmin | Everything, including server settings, the global policy, tags, alert rules, notifications and the lifecycle table |
   | Admin | Organizations, sites, endpoints, jobs (including restarts and user messages), policies (including Windows Update settings and restart schedules), enrollment |
   | ReadOnly | View only |
 
-  A SuperAdmin can restrict an Admin or ReadOnly user to specific organizations
-  (`user_organization_access`). Access to every organization is an explicit flag on the user
-  (`all_organizations`), as it is on API tokens: a restricted user whose organizations are all
-  deleted reaches none of them, never all of them. Every admin query goes
-  through one tenant-scope service, and anything outside the user's organizations answers
-  `404`. Only unrestricted users can create organizations.
+  A statement reaches every organization only when it says so (`"orgs": "*"`). Otherwise it
+  reaches the organizations it lists, and when those were all deleted it reaches none of them,
+  never all of them. Every admin query goes through one tenant-scope service, and anything outside the
+  caller's organizations answers `404`. Only callers that reach every organization can create
+  organizations.
+* **Former accounts and API tokens.** The tables of EasyPatch's former accounts (`users`,
+  `user_organization_access`, `user_sessions`, `password_reset_tokens`, `webauthn_credentials`,
+  `webauthn_challenges`, `oidc_providers`, `oidc_login_states`, `external_logins`) and API
+  tokens (`api_tokens`) stay in the schema, so the upgrade needs no migration, but nothing reads
+  them to authenticate. The `prepare-import` command, which readies a
+  standalone EasyPatch database for EasyRMM, disables the accounts and deletes their sessions,
+  reset links, passkeys and security keys, the single sign-on providers and links, and the
+  standalone server's API tokens.
 
 ## Agent enrollment
 
@@ -197,7 +120,7 @@ the alternatives in [agent-installation.md](agent-installation.md#protecting-the
 The Windows install script normally downloads over TLS with the computer's certificate
 validation, and its trust rests on that connection: the script carries the MSI's SHA-256.
 *Skip certificate check* (off by default, chosen per generated script) is for servers whose
-certificate the endpoint does not trust, such as the lab setup with Caddy's internal CA:
+certificate the endpoint does not trust (a private CA):
 
 * The one-liner, the script, the CA certificate and the MSI are downloaded **without
   certificate validation**. Someone who can intercept the connection during the installation can
@@ -205,8 +128,10 @@ certificate the endpoint does not trust, such as the lab setup with Caddy's inte
   same trust as a first visit to a site whose certificate warning you click through, so the
   option is for networks you trust. The MSI hash is still checked, but against the script that
   came over the same connection.
-* The script reads the CA certificate from `/server-ca.crt` (published by `Caddyfile.dev` only;
-  Caddy serves exactly `root.crt`, never the CA key) and passes it to the MSI as `SERVERCACERT`.
+* The script reads the CA certificate from `/server-ca.crt`, where a proxy in front of the server
+  may publish it, and passes it to the MSI as `SERVERCACERT`. EasyRMM's deployment publishes no
+  such file and does not serve these install scripts on its name; it gives the agents it
+  installs its own CA directly (EasyRMM's ADR-0042), with the same effect on the agent.
   The agent stores it with its other bootstrap values (`HKLM\SOFTWARE\EasyPatch\Agent`,
   SYSTEM and Administrators only) and adds it as a trust root **for its own connection to the
   server only**. Other programs on the computer are not affected, unlike importing the CA into
@@ -214,7 +139,7 @@ certificate the endpoint does not trust, such as the lab setup with Caddy's inte
 * After the installation, every connection is validated again. Certificates are accepted when
   Windows trusts them, or when they chain to the recorded CA, are valid now, are meant for
   server authentication and match the server name. Revocation is not checked for the recorded
-  CA (Caddy's internal CA publishes no revocation information). The window in which an
+  CA (private CAs usually publish no revocation information). The window in which an
   attacker on the network could interfere is therefore the installation only, not the life of
   the agent.
 * Turning certificate validation off in the agent itself is not possible. It would let anyone
@@ -267,8 +192,9 @@ hour so requests already in flight still succeed. Rotation is idempotent per pub
 immediately, the credential cache is evicted, and the agent stops calling and backs off.
 Re-enrolling requires a new token or approval.
 
-**Why signing instead of client certificates.** Mutual TLS behind Caddy would conflict with
-its automatic certificate management. Bearer tokens or HMAC keys would require the server to
+**Why signing instead of client certificates.** Mutual TLS would have to end at the
+TLS-terminating proxy in front of the server (EasyRMM's edge), which would then have to vouch
+for the client to the server. Bearer tokens or HMAC keys would require the server to
 store reusable secrets. Signing gives per-device asymmetric authentication with replay
 protection, and the server holds nothing that would let an attacker impersonate an agent.
 
@@ -427,11 +353,11 @@ copied to the EasyPatch server or into source control. The public key
 An agent built without it reports that it cannot update itself and must be upgraded by
 installing a newer package.
 
-* **Official releases** (the packages attached to GitHub Releases) are built and signed by the
-  `EasyPatch release` GitHub Actions workflow (`.github/workflows/easypatch-release.yml` in the
-  repository root) when a version tag (`easypatch-vX.Y.Z`) is pushed. The private key is stored as
-  an encrypted secret of the `easypatch-release` environment, which only workflow runs for
-  `easypatch-v*` tags can use. The job writes it to the runner's temporary directory, signs,
+* **Official releases** (the packages in the engine's image of each EasyRMM release) are built and
+  signed by EasyRMM's `Release` GitHub Actions workflow (`.github/workflows/release.yml` in the
+  repository root) when an EasyRMM version tag (`easyrmm-vX.Y.Z`) is pushed. The private key is
+  stored as an encrypted secret of the `easypatch-release` environment, which only workflow runs for
+  `easyrmm-v*` tags can use. The job writes it to the runner's temporary directory, signs,
   verifies the signatures against the committed public key [`keys/easypatch-release-key.pub.pem`](../keys/easypatch-release-key.pub.pem)
   and deletes the file. Agents from official releases accept only packages signed with this key.
 * **Your own builds.** The build scripts read the key from `~/.easypatch/easypatch-release-key.pem`
@@ -487,23 +413,22 @@ signature covers the signed file.
 
 ## Notifications and webhooks
 
-Alert notifications, the vulnerability data downloads (see [Vulnerability data](#vulnerability-data))
-and single sign-on (see [Admin authentication](#admin-authentication)) are the only features that make
-the server open outbound connections (apart from ACME in Caddy).
+Alert notifications and the vulnerability data downloads (see [Vulnerability data](#vulnerability-data))
+are the only features that make the server open outbound connections.
 Notifications are configured by super administrators only, under
 *Settings → Alert rules* and *Settings → Notifications*, and every change is audited
 (`notifications.*`, `alert_rule.*`, `alert.acknowledge`) without the secrets.
 
 * **Secrets at rest.** The SMTP password, webhook URLs (Slack and Teams URLs contain their own
   access token) and webhook signing keys are encrypted with ASP.NET Data Protection, with keys
-  on the `dpkeys` volume. The API never returns them. The SMTP password is write-only, a webhook
-  URL is shown only as its host name, and a signing key is shown once, when it is created or
-  rotated. The keys on `dpkeys` are not encrypted themselves: protect the volume and its backups
-  like the database. If the keys are lost, enter the secrets again.
-* **Outbound connections.** The `worker` container is the only one on the `egress` network,
-  for notifications and downloads. It mounts `dpkeys` read-only. PostgreSQL has no egress. The
-  API connects out only for single sign-on, to the identity providers a super administrator
-  configured, through the `edge` network.
+  in `${EASYRMM_DATA_ROOT}/easypatch/keys` in EasyRMM's deployment. The API never returns them.
+  The SMTP password is write-only, a webhook URL is shown only as its host name, and a signing
+  key is shown once, when it is created or rotated. The keys are not encrypted themselves:
+  protect the directory and its backups like the database. If the keys are lost, enter the
+  secrets again.
+* **Outbound connections.** The worker makes them, for notifications and downloads; it mounts
+  the keys read-only. The API makes no outbound connections. In EasyRMM's deployment the engine's services use the host
+  network, so the host's firewall, not a Docker network, limits where they can connect.
 * **Webhook egress guard (SSRF).**
   * A webhook URL must be `https://`, without user name or password, at most 2048 characters.
   * Requests do not follow redirects (a 3xx counts as a failure), use no proxy and send no cookies.
@@ -640,44 +565,41 @@ whether or not application updates are on (see
 | # | Threat | Mitigation |
 |---|---|---|
 | S1 | Attacker impersonates an agent | Per-device ECDSA keys, signed requests, nonce and timestamp checks, revocation |
-| S2 | Attacker impersonates the server to an agent | The agent uses the operating system's normal TLS validation of the server certificate (the Windows certificate store, or the system CA store on Linux; the public CA from Caddy's ACME). TLS validation cannot be turned off. A Windows agent installed with *Skip certificate check* also accepts certificates from the one CA recorded at installation (`SERVERCACERT`), for its EasyPatch connection only, still with name and validity checks. See [Install scripts and private CAs](#install-scripts-and-private-cas). |
-| S3 | Admin credential stuffing or brute force | Argon2id, per-IP rate limits, account lockout, mandatory MFA (authenticator app, security key or passkey) |
-| S4 | An API token leaks (a script, a log, an integration's database) | 256-bit random secrets stored only as hashes and never logged; fixed role, never SuperAdmin; organization restrictions; expiry of at most 365 days; immediate revocation; last use time and address shown; actions audited as `token:<name>`. A leaked Admin token can do what an Admin can in its organizations until it is revoked, so give integrations ReadOnly tokens where they only read. |
-| S5 | A forged, replayed or misdirected single sign-on response | PKCE `S256`; a single-use `state` bound to the browser, expiring after 10 minutes; nonce; ID token signature (provider JWKS), issuer, audience and lifetime checks; first link by verified email only, then by issuer and subject; created accounts limited to allowed domains and never SuperAdmin; EasyPatch MFA still required unless the provider is marked as enforcing it |
+| S2 | Attacker impersonates the server to an agent | The agent uses the operating system's normal TLS validation of the server certificate (the Windows certificate store, or the system CA store on Linux). TLS validation cannot be turned off. An agent installed with a recorded CA (`SERVERCACERT` on Windows, `enroll --server-ca` on Linux) also accepts certificates from that one CA, for its EasyPatch connection only, still with name and validity checks. See [Install scripts and private CAs](#install-scripts-and-private-cas). |
+| S3 | Admin credential stuffing or brute force | The engine has no passwords or sign-in of its own; people sign in to EasyRMM, whose rules apply. The administrator API listens on loopback and EasyRMM's edge does not forward it |
+| S4 | A standalone EasyPatch's API token leaks (a script, a log, an integration's database) | The engine accepts no API tokens, whatever is in `api_tokens`, and `prepare-import` deletes an imported database's tokens. Scripts and integrations use EasyRMM's API and its credentials. |
+| S5 | A forged, replayed or widened statement from EasyRMM | HMAC-SHA256 under a key of at least 32 bytes that only EasyRMM's server and the engine's API hold; each statement names one method and request target and is valid for at most 60 seconds; a statement that does not verify is refused whatever else the request carries; the engine's role and tenant checks apply to the role and organizations it names. See [Admin authentication](#admin-authentication) |
 | T1 | A forged job or tampered payload is sent to an agent | TLS, plus the agent only accepts the job types it knows. Install payloads can only select, by GUID or category, Windows updates, Linux package upgrades or upgrades of approved, installed applications (winget) that the agent's own scan found, never arbitrary binaries or packages. Restart payloads are a mode and range-checked durations; message payloads are a preset name. Agent update payloads name a package and its release signature, which the agent verifies itself. Uninstall jobs have no payload and remove only the agent's own package. |
 | T2 | An agent submits false data for another tenant | The endpoint ID comes from the authenticated credential, never from the request body. Every write is scoped to it. |
 | T3 | SQL injection | EF Core parameterized queries. The few raw SQL statements use parameters only. Sort fields come from an allow-list. |
 | T4 | A tampered or malicious vulnerability feed | Fixed HTTPS hosts with normal certificate validation, no redirects, size limits, strict parsing (document IDs and CVE IDs are validated). Feed data only changes display order, CVE lists and, by default, whether a known-exploited update skips the rollout delay: it cannot add updates, run commands or restart computers. Super administrators can turn the downloads off. See [Vulnerability data](#vulnerability-data). |
-| R1 | Admin actions are denied after the fact | `audit_logs` records the user, IP, correlation ID and details of every mutating admin action |
+| R1 | Admin actions are denied after the fact | `audit_logs` records who acted (`easyrmm:<name>` or `cli`; `token:<name>` in entries from before API tokens went), the IP, correlation ID and details of every mutating admin action |
 | I1 | Tenant data leaks between organizations | One tenant-scope service, organization-filtered queries and integration tests for isolation |
 | I2 | Secrets appear in logs | The server and agent never log tokens or keys. The MSI token property is hidden and registry values are not echoed to MSI logs (see above for limits). Structured logs leave out request bodies. |
-| I3 | Database exposure | No published port, internal Docker network, Compose secret for the password |
+| I3 | Database exposure | In EasyRMM's deployment: EasyRMM's PostgreSQL on loopback only, the engine's own database and roles (`easypatch_owner` for migrations, `easypatch_app` for the API and worker), passwords in EasyRMM's `.env` |
 | I4 | A notification channel is used to reach internal services (SSRF) or leak secrets | Super administrator only; https only; no redirects or proxy; every connected address is checked against blocked ranges (private ranges only when explicitly allowed); secrets encrypted at rest and never returned; sanitized errors. See [Notifications and webhooks](#notifications-and-webhooks). |
 | I5 | A monthly report reaches the wrong people or is read in transit | Recipients are entered per organization (no default), changes are audited, Operator role required; email only over STARTTLS or TLS (server certificate validated unless a super administrator turns that off); tenant-scoped API. See [Monthly reports](#monthly-reports). |
 | D1 | Check-in floods | Per-credential and per-IP rate limits, request size limits, jitter |
 | D2 | Enrollment queue spam | A deployment code is required, pending requests are capped and expire, per-IP rate limit |
 | E1 | Server compromise used to execute code on endpoints | The agent has no generic execution capability. Windows updates come from the sources Windows is configured for, and Linux packages from the repositories the computer is configured for. Application updates (off by default) can only upgrade an installed application to the version the winget community repository offers; a compromised server could approve more applications, but not choose versions, sources or installers. See [Application updates](#application-updates-winget). Agent updates install only packages whose release signature verifies against a public key built into the agent; the server relays packages and signatures but cannot supply keys, sign packages or downgrade an agent. See [Agent release signing](#agent-release-signing). The agent installs winget only from files matching SHA-256 values built into it; the server can relay them but not change them. See [Installing winget](#installing-winget). |
 | E2 | A local non-admin user reads agent secrets | Windows: ProgramData ACL (SYSTEM and Administrators), DPAPI, registry ACL on bootstrap values. Linux: root-only `/etc/easypatch` and `/var/lib/easypatch`, `systemd-creds` where available, no token on the command line |
-| E3 | Cross-site request forgery or XSS in the admin UI | SameSite=Strict, CSRF header check, a strict CSP from Caddy, and React escaping |
+| E3 | Cross-site request forgery or XSS | The engine serves no web pages; EasyRMM's console is EasyRMM's. The API sets and reads no cookies, so a forged cross-site request carries no credential. What EasyRMM's edge forwards from the engine is served without cookies, sandboxed and never sniffed |
 | E4 | A local user abuses the tray pipe to make the service do something | The pipe accepts only *restart now* or an offered postponement for the current restart request, and the parameterless status-window requests (check in, check for updates, read the recent log), from interactive sessions; the session comes from Windows. Check-ins and update checks are rate-limited for the whole computer and never install or restart anything. See [Tray and local pipe](#tray-and-local-pipe). |
-| D3 | A compromised admin account or server restarts many computers or weakens Windows Update settings | Requires the Operator role and MFA; every manual restart and policy change is audited. Restarts warn signed-in users according to the chosen mode. Windows Update changes are limited to the listed values (never the WSUS server), are shown per endpoint in the console, and are restored when removed. This is a disruption risk, not code execution. |
+| D3 | A compromised admin account or server restarts many computers or weakens Windows Update settings | Requires the Operator role in a statement from EasyRMM (after EasyRMM's own sign-in); every manual restart and policy change is audited. Restarts warn signed-in users according to the chosen mode. Windows Update changes are limited to the listed values (never the WSUS server), are shown per endpoint in the console, and are restored when removed. This is a disruption risk, not code execution. |
 
 ## Server hardening checklist
 
-* TLS 1.2 minimum (Caddy default; TLS 1.3 is preferred automatically). HSTS is enabled.
-* Security headers: CSP, `X-Content-Type-Options`, `X-Frame-Options: DENY`,
-  `Referrer-Policy`, `Permissions-Policy`.
-* CORS: none. The SPA is served from the same origin, so no cross-origin access is allowed.
+* The engine listens on loopback only. TLS, and the headers browsers see, are EasyRMM's edge's,
+  which forwards only the agents' paths (`/api/v1/agents/`, `/downloads/agent/`,
+  `/downloads/winget/`) and serves what it forwards without cookies, with
+  `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'; sandbox` and
+  `X-Content-Type-Options: nosniff`. The API itself sends `X-Content-Type-Options: nosniff`, and
+  `Cache-Control: no-store` on `/api`.
+* CORS: none. No cross-origin access is allowed.
 * The .NET containers run as a non-root user with a read-only root filesystem, all
-  capabilities dropped and `no-new-privileges`. Caddy keeps only `NET_BIND_SERVICE`. All
-  images are pinned to exact versions.
-* PostgreSQL has no published port and sits on an internal Docker network without egress.
-* OpenAPI and Swagger UI are only available to signed-in users (the OpenAPI document also to
-  API tokens). Swagger UI is the one page
-  served with a relaxed CSP (it needs inline scripts); the console itself has no inline
-  scripts or styles.
-* Dependency scanning: `scripts/audit-dependencies.sh` runs `dotnet list package --vulnerable`
-  and `npm audit`.
+  capabilities dropped and `no-new-privileges`. All images are pinned to exact versions.
+* The OpenAPI document needs a statement from EasyRMM. There is no Swagger UI.
+* Dependency scanning: `scripts/audit-dependencies.sh` runs `dotnet list package --vulnerable`.
 
 ## Known limitations
 
@@ -704,6 +626,6 @@ whether or not application updates are on (see
 * On Linux, root can read the agent's private key even when `systemd-creds` protects it, and on
   systemd older than 250 (Ubuntu 22.04, RHEL 8) the key is protected by file permissions only.
   A TPM is not used.
-* The Data Protection key ring (`dpkeys` volume) is stored unencrypted on the Docker host, as
-  is the database volume. Anyone with root on the host can read MFA secrets. Protect the
-  host, and encrypt backups (`scripts/backup.sh` output includes the key ring).
+* The Data Protection key ring (`${EASYRMM_DATA_ROOT}/easypatch/keys`) is stored unencrypted on
+  the Docker host, as is the database. Anyone with root on the host can read the SMTP password and the webhook secrets.
+  Protect the host, and back up and encrypt the key ring with the database.

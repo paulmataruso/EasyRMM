@@ -211,7 +211,7 @@ func (s *Service) Callback(ctx context.Context, in CallbackInput, meta auth.Requ
 	if err != nil {
 		return refuse(FailUnavailable, "", map[string]any{"error": cut(err.Error(), 300)}, err)
 	}
-	hctx := oidc.ClientContext(ctx, s.client)
+	hctx := oidc.ClientContext(ctx, s.clientFor(p.ID))
 	tok, err := cfg.Exchange(hctx, in.Code, oauth2.VerifierOption(f.Verifier))
 	if err != nil {
 		return refuse(FailProvider, "", map[string]any{"error": "code exchange: " + cut(err.Error(), 300)}, err)

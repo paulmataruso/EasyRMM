@@ -1,8 +1,17 @@
-import type { ReactNode } from "react";
+import { useId } from "react";
 import type { AgentInstall, ComplianceStatus, PatchJob, PatchLink, PatchPolicy, PatchUpdateState } from "../../api/types";
-import { ArrowUpRight } from "lucide-react";
-import { Badge, buttonClasses, cx, Dot, type Tone } from "../../components/ui";
+import { ShieldOff } from "lucide-react";
+import { Badge, Button, Dot, EmptyState, Field, Mono, Select, type Tone } from "../../components/ui";
 import { plural } from "../../lib/format";
+
+/** A deployment without the patching engine (ADR-0046): nothing in the console sets it up, so nothing here offers to. */
+export function NoPatchingEngine() {
+  return (
+    <EmptyState title="Patching is not available" icon={<ShieldOff className="size-8" aria-hidden />}>
+      The patching engine is not set up in this deployment. <Mono>deploy/scripts/setup.sh</Mono> sets it up on the server.
+    </EmptyState>
+  );
+}
 
 export const COMPLIANCE: Record<ComplianceStatus, { label: string; tone: Tone; hint: string }> = {
   Compliant: {
@@ -109,6 +118,20 @@ const JOB_TYPES: Record<string, string> = {
   UninstallAgent: "Uninstall the EasyPatch agent",
 };
 
+/** EasyPatch's job types, for filters. */
+export const JOB_TYPE_OPTIONS = Object.entries(JOB_TYPES).map(([value, label]) => ({ value, label }));
+
+/** How a job started (EasyPatch's trigger). */
+export const JOB_TRIGGERS: Record<string, string> = {
+  Manual: "By hand",
+  Scheduled: "On a schedule",
+  System: "By EasyPatch",
+};
+
+export function triggerLabel(trigger: string): string {
+  return JOB_TRIGGERS[trigger] ?? trigger;
+}
+
 export function jobTypeLabel(type: string): string {
   return JOB_TYPES[type] ?? type;
 }
@@ -138,6 +161,9 @@ const JOB_STATUS: Record<string, { label: string; tone: Tone }> = {
   Cancelled: { label: "Cancelled", tone: "neutral" },
   Expired: { label: "Expired", tone: "warn" },
 };
+
+/** EasyPatch's job statuses, for filters. */
+export const JOB_STATUS_OPTIONS = Object.entries(JOB_STATUS).map(([value, s]) => ({ value, label: s.label }));
 
 /** EasyPatch job statuses that still change. */
 const ACTIVE = new Set(["Queued", "Delivered", "Acknowledged", "Running", "WaitingForReboot"]);
@@ -178,7 +204,7 @@ export function jobOutcome(j: PatchJob): string {
   return parts.join(", ");
 }
 
-const UPDATE_STATES: Record<PatchUpdateState, { label: string; tone: Tone }> = {
+export const UPDATE_STATES: Record<PatchUpdateState, { label: string; tone: Tone }> = {
   Missing: { label: "Missing", tone: "warn" },
   Failed: { label: "Failed", tone: "danger" },
   PendingVerification: { label: "Verifying", tone: "info" },
@@ -209,23 +235,26 @@ export function categoryLabel(c: string): string {
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-/** When EasyPatch installs on its own: "Off", "Any time", or "Saturday 02:00 for 3 hours (Europe/Paris)". */
+/**
+ * When EasyPatch installs on its own: "Off", or "Saturday 02:00 for 3 hours (Europe/Paris)". EasyPatch installs automatically
+ * only inside a maintenance window, so automatic installs with no window install nothing.
+ */
 export function maintenanceText(p: PatchPolicy): string {
   if (!p.autoInstallEnabled) return "Off: updates install only when someone starts an install";
-  if (!p.maintenanceStart) return "On, at any time (no maintenance window)";
-  const days =
-    p.maintenanceDays && p.maintenanceDays.length > 0 && p.maintenanceDays.length < 7
-      ? p.maintenanceDays.map((d) => DAYS[d] ?? String(d)).join(", ")
-      : "Every day";
+  if (!p.maintenanceStart || !p.maintenanceDays || p.maintenanceDays.length === 0) {
+    return "On, but there is no maintenance window, so nothing installs automatically";
+  }
+  const days = p.maintenanceDays.length < 7 ? p.maintenanceDays.map((d) => DAYS[d] ?? String(d)).join(", ") : "Every day";
   const minutes = p.maintenanceDurationMinutes ?? 0;
   const length = minutes === 0 ? "" : minutes % 60 === 0 ? ` for ${plural(minutes / 60, "hour")}` : ` for ${plural(minutes, "minute")}`;
   return `${days} at ${p.maintenanceStart}${length} (${p.timeZone})`;
 }
 
 /**
- * Who asked for a job: an EasyPatch user, or an API token such as EasyRMM's — "token:<name>", or "token:<name> for <person>" when the
- * EasyPatch server records who the token acted for (its on-behalf-of capability). EasyRMM sends its users' email addresses, so the
- * person is what follows the last " for " when it looks like one; a token named "Patch for prod" stays a token.
+ * Who asked for a job. Jobs from before EasyPatch moved into EasyRMM, kept by an import, name an EasyPatch user or an API token,
+ * such as the one EasyRMM's former connector used — "token:<name>", or "token:<name> for <person>" when EasyPatch recorded who the
+ * token acted for (the on-behalf-of header of EasyPatch 1.10.0 and earlier). EasyRMM sent its users' email addresses, so the person is what follows the last
+ * " for " when it looks like one; a token named "Patch for prod" stays a token.
  */
 export function requester(by: string): string {
   if (!by.startsWith("token:")) return by;
@@ -236,65 +265,82 @@ export function requester(by: string): string {
   return `API token ${token}`;
 }
 
-/** What a link into EasyPatch's console is about: an EasyRMM device or organization, or an EasyPatch job or update. */
-export interface EasyPatchTarget {
-  device?: string;
-  /** A device's page in EasyPatch: updates, installed, history, jobs or policy. */
-  tab?: "updates" | "installed" | "history" | "jobs" | "policy";
-  organization?: string;
-  /** A site opens its organization: EasyPatch's sites have no page. */
-  site?: string;
-  job?: string;
-  update?: string;
-  /** One of EasyPatch's lists. */
-  list?: "endpoints" | "jobs";
-}
-
-/** The tab of EasyPatch's endpoint page that shows what each view of a device's Patches tab shows. */
-export const PATCH_VIEW_TAB: Record<string, NonNullable<EasyPatchTarget["tab"]>> = {
-  available: "updates",
-  installed: "installed",
-  history: "history",
-  jobs: "jobs",
+/** Why an install would leave an update out, from EasyPatch's reason code. */
+const SKIP_REASONS: Record<string, string> = {
+  AlreadyInstalled: "Already installed",
+  PendingReboot: "Installed, waiting for a restart",
+  NotApplicable: "No longer offered by the update source",
+  NotSelected: "Not selected",
+  CategoryNotAllowed: "Its category is not allowed by the policy",
+  OptionalNotAllowed: "Optional, and the policy leaves optional updates out",
+  Excluded: "Excluded on this device or by the policy",
+  RequiresUserInput: "Needs someone at the computer to install",
+  EulaNotAccepted: "Has a license agreement the policy does not accept",
+  MaintenanceWindowClosed: "The maintenance window is closed",
+  Cancelled: "Cancelled",
+  ApplicationNotApproved: "The application is not approved by the policy",
+  Reoffered: "Offered again after a successful install: installed only when chosen",
+  NotInstalled: "Not installed",
+  Held: "On hold: not installed automatically",
+  WindowStarted: "Not downloaded before the window opened; the install downloads it",
 };
 
-/**
- * The address of a link into EasyPatch's console. It goes through EasyRMM's own server, which finds the EasyPatch
- * page for the device or organization (or EasyPatch's list, when it is not linked) and redirects there.
- */
-export function easyPatchHref(t: EasyPatchTarget): string {
-  const q = new URLSearchParams();
-  if (t.device) {
-    q.set("device", t.device);
-    if (t.tab) q.set("tab", t.tab);
-  } else if (t.organization) q.set("organization", t.organization);
-  else if (t.site) q.set("site", t.site);
-  else if (t.job) q.set("job", t.job);
-  else if (t.update) q.set("update", t.update);
-  else if (t.list) q.set("list", t.list);
-  const query = q.toString();
-  return query ? `/go/to-easypatch?${query}` : "/go/to-easypatch";
+export function skipReasonText(reason: string): string {
+  return SKIP_REASONS[reason] ?? reason;
 }
 
-/**
- * A link to where EasyPatch's console changes something EasyRMM only shows, named for the action ("Change in
- * EasyPatch"). It opens in the same tab, so Back returns.
- */
-export function EasyPatchLink({ to, children, className }: { to: EasyPatchTarget; children: ReactNode; className?: string }) {
+/** Pages of an EasyPatch list, numbered from 1; nothing when it fits on one. */
+export function Pager({ page, total, size, onPage, previous = "Previous", next = "Next" }: {
+  page: number;
+  total: number;
+  size: number;
+  onPage: (p: number) => void;
+  previous?: string;
+  next?: string;
+}) {
+  const pages = Math.max(1, Math.ceil(total / size));
+  if (pages <= 1) return null;
   return (
-    <a href={easyPatchHref(to)} className={cx("inline-flex items-center gap-0.5 rounded-sm font-medium text-accent hover:underline", className)}>
-      {children}
-      <ArrowUpRight className="size-3.5 shrink-0" aria-hidden />
-    </a>
+    <div className="mt-2 flex items-center justify-between text-xs text-muted">
+      <span>
+        Page {page.toLocaleString()} of {pages.toLocaleString()}
+      </span>
+      <span className="flex gap-2">
+        <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => onPage(page - 1)}>
+          {previous}
+        </Button>
+        <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => onPage(page + 1)}>
+          {next}
+        </Button>
+      </span>
+    </div>
   );
 }
 
-/** EasyPatch's own console, for what EasyRMM does not show. Like the product switch, it opens in the same tab. */
-export function OpenEasyPatch({ to = {} }: { to?: EasyPatchTarget }) {
+/** A labelled select for a list's filters; the first option is usually "any". */
+export function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+  className,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  className?: string;
+}) {
+  const id = useId();
   return (
-    <a href={easyPatchHref(to)} className={buttonClasses("secondary", "sm")}>
-      Open EasyPatch
-      <ArrowUpRight className="size-3.5" aria-hidden />
-    </a>
+    <Field label={label} htmlFor={id} className={className}>
+      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </Select>
+    </Field>
   );
 }

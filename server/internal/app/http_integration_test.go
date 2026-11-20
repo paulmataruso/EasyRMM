@@ -25,6 +25,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/server/internal/app"
 	"github.com/paulmataruso/easyrmm/server/internal/config"
+	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
 )
@@ -75,6 +76,10 @@ func newHarnessWith(t *testing.T, withMail bool, adjust func(*config.Config)) *h
 		RequireMFA: true, SessionIdle: 2 * time.Hour, SessionMaxAge: 12 * time.Hour,
 		PasswordResetTTL: 30 * time.Minute, ArgonMaxParallel: 4, AuditRetention: 365 * 24 * time.Hour,
 	}
+	// Every deployment runs the patching engine with EasyRMM.
+	key := make([]byte, 32)
+	_, _ = rand.Read(key)
+	cfg.Patching = config.Patching{URL: eptest.NewEngine(t, key).URL(), Key: key}
 	if adjust != nil {
 		adjust(cfg)
 	}

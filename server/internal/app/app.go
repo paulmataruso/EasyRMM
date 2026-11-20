@@ -9,17 +9,16 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
-	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auditfwd"
@@ -38,7 +37,6 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/devicesapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/easypatchapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/enrollapi"
-	"github.com/paulmataruso/easyrmm/server/internal/httpapi/idpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/inventoryapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
@@ -46,7 +44,6 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/ssoapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/usersapi"
-	"github.com/paulmataruso/easyrmm/server/internal/idp"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
@@ -100,8 +97,6 @@ type Deps struct {
 	EasyPatch *easypatch.Service
 	// SSO is single sign-on with OpenID Connect (ADR-0034).
 	SSO *sso.Service
-	// IdP is EasyRMM as EasyPatch's OpenID provider (ADR-0036).
-	IdP *idp.Service
 	// AgentBuilds are the agent binaries the server hands out.
 	AgentBuilds *agents.Builds
 	// PKI is the internal certificate authority, for addresses no public CA
@@ -141,6 +136,10 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 		return nil, err
 	}
 	usersSvc := users.New(db, auditLog, authSvc, hasher)
+	// With Authentik, before the first-run page could offer itself (ADR-0044).
+	if err := firstAdministrator(ctx, cfg, usersSvc, log); err != nil {
+		return nil, err
+	}
 	setup, err := usersapi.NewSetup(ctx, usersSvc, cfg.DataDir, log)
 	if err != nil {
 		return nil, err
@@ -173,6 +172,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	}
 	d.Devices = devices.New(db, cfg.Mesh.Enabled)
 	d.Agents = agents.New(db, auditLog, mesh, log)
+	d.Agents.SetSealer(sealer)
 	jobKey, err := jobs.LoadKey(ctx, db, sealer)
 	if err != nil {
 		return nil, err
@@ -183,18 +183,16 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, log)
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
-	d.EasyPatch = easypatch.New(db, auditLog, sealer, Version, log)
-	if ep := cfg.EasyPatch; ep.Enabled() {
-		d.EasyPatch.SetLocalRoute(easypatch.LocalRoute{Hostname: ep.Hostname, Upstream: ep.TLSUpstream, ProxyProtocol: ep.ProxyProtocol})
+	d.EasyPatch = easypatch.New(db, auditLog, Version, log)
+	// The patch reports read patching through it (one-product plan, C5).
+	d.Reports.UsePatching(d.EasyPatch)
+	if err := usePatchingEngine(cfg, d, log); err != nil {
+		return nil, err
 	}
 	d.SSO = sso.New(db, auditLog, sealer, d.Auth, cfg.PublicURL)
-	d.IdP = idp.New(db, auditLog, sealer, cfg.PublicURL.String(), d.EasyPatch, func(ctx context.Context, userID uuid.UUID) (*easypatch.Access, error) {
-		p, err := d.Auth.LoadPrincipal(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-		return d.EasyPatch.Access(ctx, access.User(p, auth.DataScope(p), audit.SystemActor("idp")))
-	}, log)
+	if err := useAuthentik(ctx, cfg, d.SSO, d.PKI); err != nil {
+		return nil, fmt.Errorf("authentik: %w", err)
+	}
 	d.EasyPatch.SetSigner(jobKey)
 	builds, err := agents.LoadBuilds(cfg.AgentDir)
 	if err != nil {
@@ -213,6 +211,42 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 }
 
 // buildRemote assembles the MeshCentral integration.
+// usePatchingEngine gives d.EasyPatch the patching engine in this
+// deployment, on loopback (one-product plan, B3 and S; ADR-0038).
+func usePatchingEngine(cfg *config.Config, d *Deps, log *slog.Logger) error {
+	p := cfg.Patching
+	signer, err := easypatch.NewSigner(p.Key)
+	if err != nil {
+		return err
+	}
+	engine, err := easypatch.NewEngineClient(p.URL, signer, Version)
+	if err != nil {
+		return err
+	}
+	var opts []easypatch.EngineOption
+	if cfg.TLSMode == config.TLSInternal && d.PKI != nil {
+		// The engine's public address is EasyRMM's, with EasyRMM's own
+		// certificate authority: agents are given it (B7).
+		opts = append(opts, easypatch.AgentCA(d.PKI.CAPEM))
+	}
+	// An imported EasyPatch's agents still use its names (phase S).
+	if len(p.AgentHostnames) > 0 {
+		opts = append(opts, easypatch.AgentHostnames(p.AgentHostnames))
+	}
+	// The engine emails monthly reports through EasyRMM's mail server
+	// (one-product plan, C5).
+	opts = append(opts, easypatch.Mail(easypatch.MailConfig{Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, Username: cfg.SMTP.Username,
+		Password: cfg.SMTP.Password, From: cfg.SMTP.From, TLS: cfg.SMTP.TLS}))
+	if err := d.EasyPatch.UseEngine(engine, opts...); err != nil {
+		return fmt.Errorf("patching engine: %w", err)
+	}
+	log.Info("patching: the engine in this deployment", "url", p.URL)
+	// Organization and site changes reach the engine within seconds
+	// (one-product plan, B5; ADR-0040).
+	d.Tenancy.OnChange(d.EasyPatch.Kick)
+	return nil
+}
+
 func buildRemote(ctx context.Context, cfg *config.Config, d *Deps, sealer *secrets.Sealer, log *slog.Logger) error {
 	sec, err := remote.LoadSecrets(ctx, d.DB, sealer)
 	if err != nil {
@@ -229,7 +263,7 @@ func buildRemote(ctx context.Context, cfg *config.Config, d *Deps, sealer *secre
 	if err != nil {
 		return err
 	}
-	svc = remote.New(d.DB, d.Audit, client, remote.Config{MeshURL: cfg.MeshPublicURL, LoginKey: sec.LoginKey}, log)
+	svc = remote.New(d.DB, d.Audit, client, remote.Config{MeshURL: cfg.MeshPublicURL, LoginKey: sec.LoginKey, DiscoveryGrace: remote.DefaultDiscoveryGrace}, log)
 	gw, err := remote.NewGateway(svc, remote.GatewayConfig{Upstream: cfg.Mesh.InternalURL, Secure: !cfg.DevInsecureCookie}, log)
 	if err != nil {
 		return err
@@ -327,8 +361,6 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	auditfwdapi.New(d.AuditFwd).Register(mux)
 	easypatchapi.New(d.EasyPatch).Register(mux)
 	ssoapi.New(d.SSO, d.Sessions, cfg.PublicURL).Register(mux)
-	idpAPI := idpapi.New(d.IdP)
-	idpAPI.Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
 	mux.Handle("GET /api/v1/health", httpapi.Handle(func(w http.ResponseWriter, _ *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": Version})
@@ -362,13 +394,32 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	// Agents carry no browser session: their routes skip the session and
 	// CSRF layers and authenticate every request themselves.
 	agentHandler := httpapi.Chain(agentAPI.Handler(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""))
-	// The OpenID provider reads the browser's session (authorize) but skips
-	// the CSRF layer: EasyPatch's server calls the token endpoint itself.
-	idpHandler := httpapi.Chain(idpAPI.Provider(), httpapi.SecurityHeaders(!cfg.DevInsecureCookie, ""), d.Sessions.Load)
+	// EasyPatch agents reach the patching engine in this deployment through
+	// EasyRMM's own addresses (one-product plan, B4).
+	target, err := url.Parse(cfg.Patching.URL)
+	if err != nil {
+		return nil, fmt.Errorf("EASYRMM_PATCHING_URL: %w", err)
+	}
+	patchingAgents := easypatch.NewAgentProxy(target, !cfg.DevInsecureCookie, log)
+	// The names served besides the origins (config.ExtraHostnames): an
+	// imported EasyPatch's, for its agents.
+	extra := hostHandlers{}
+	agentHost := easypatch.AgentHost(patchingAgents, originString(cfg.PublicURL))
+	for _, name := range cfg.Patching.AgentHostnames {
+		extra[name] = agentHost
+	}
+	// Authentik's sign-in name (ADR-0044).
+	if a := cfg.Authentik; a.Enabled() {
+		extra[a.Hostname] = authentikProxy(a.Upstream, !cfg.DevInsecureCookie, log)
+	}
 	rt := newRouter(all)
 	hosts := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		m, ok := rt.match(r.Host)
 		if !ok {
+			if h, ok := extra.match(r.Host); ok {
+				h.ServeHTTP(w, r)
+				return
+			}
 			httpapi.WriteError(w, r, &httpapi.Error{Status: http.StatusMisdirectedRequest, Code: "unknown_host", Message: "This server does not serve that address."})
 			return
 		}
@@ -377,10 +428,12 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 		case m.mesh:
 			// Remote access: agents, and browsers holding a session grant.
 			d.Gateway.ServeHTTP(w, r)
+		case patchingAgents != nil && easypatch.AgentPath(r.URL.Path):
+			// Before the session, CSRF and console layers: an EasyPatch
+			// agent carries none of what they check.
+			patchingAgents.ServeHTTP(w, r)
 		case strings.HasPrefix(r.URL.Path, agentproto.PathPrefix):
 			agentHandler.ServeHTTP(w, r)
-		case idpapi.IsProviderPath(r.URL.Path):
-			idpHandler.ServeHTTP(w, r)
 		default:
 			app.ServeHTTP(w, r)
 		}
@@ -592,7 +645,10 @@ func Cleanup(ctx context.Context, db *database.DB) error {
 			OR idle_expires_at < now() - interval '7 days' OR revoked_at < now() - interval '7 days'`); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM password_reset_tokens WHERE expires_at < now() - interval '1 day'`)
+		if _, err := tx.Exec(ctx, `DELETE FROM password_reset_tokens WHERE expires_at < now() - interval '1 day'`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `DELETE FROM recovery_links WHERE expires_at < now() - interval '1 day'`)
 		return err
 	})
 }

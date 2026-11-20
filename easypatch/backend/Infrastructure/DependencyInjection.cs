@@ -2,7 +2,6 @@ using EasyPatch.Infrastructure.Data;
 using EasyPatch.Infrastructure.Maintenance;
 using EasyPatch.Infrastructure.Notifications;
 using EasyPatch.Infrastructure.Reports;
-using EasyPatch.Infrastructure.Security;
 using EasyPatch.Infrastructure.Services;
 using EasyPatch.Infrastructure.Vulnerabilities;
 using Microsoft.AspNetCore.DataProtection;
@@ -28,7 +27,6 @@ public static class DependencyInjection
         services.AddOptions<EasyPatchOptions>().Bind(configuration.GetSection(EasyPatchOptions.Section));
         services.AddSingleton(TimeProvider.System);
         services.AddMemoryCache();
-        services.AddSingleton<IPasswordHasher, Argon2PasswordHasher>();
 
         services.AddScoped<SettingsService>();
         services.AddScoped<PolicyService>();
@@ -40,7 +38,6 @@ public static class DependencyInjection
         services.AddScoped<JobService>();
         services.AddScoped<UpdateRemovalService>();
         services.AddScoped<UpdateHoldService>();
-        services.AddScoped<ApiTokenService>();
         services.AddScoped<EnrollmentService>();
         services.AddScoped<CheckInService>();
 

@@ -195,42 +195,29 @@ you require it.
 ## Servers with a private certificate authority
 
 The agent connects only to a server whose certificate it trusts. A server with a public
-certificate (the production setup, with ACME) needs nothing more. A server with a private CA,
-such as the lab setup with Caddy's internal CA, fails with *Could not establish trust
-relationship for the SSL/TLS secure channel* on computers that do not trust that CA. There are
-two ways to install agents on such computers:
+certificate needs nothing more. A server with a private CA fails with *Could not establish
+trust relationship for the SSL/TLS secure channel* on computers that do not trust that CA.
+There are two ways to install agents on such computers:
 
 * **Trust the CA on the computer.** Import the CA's root certificate into *Trusted Root
   Certification Authorities* of the local computer (for example by Group Policy). Every
   program on the computer then trusts that CA.
-* **Skip certificate check** in the console's install script dialog (*Deploy →
-  Deployment codes → Install script*, Windows tab). The script then:
-  1. downloads itself, the server's CA certificate and the MSI **without checking the server
-     certificate** (the MSI's SHA-256 is still checked against the value in the script);
-  2. reads the CA certificate from `https://<server>/server-ca.crt`, which the lab proxy
-     (`Caddyfile.dev`) publishes. It prints its subject and SHA-256 and passes it to the MSI as
-     `SERVERCACERT`. If the server publishes no CA certificate, the script warns and installs
-     without it;
-  3. switches certificate checking back on when it ends.
+* **Give the agent the CA** as the MSI property `SERVERCACERT`. EasyRMM does this itself when it
+  is addressed by IP (`EASYRMM_TLS_MODE=internal`): it passes its own certificate authority to
+  the MSI, or to the Linux agent with `enroll --server-ca` (EasyRMM's ADR-0042).
 
   The agent then trusts that CA **for its own connection to EasyPatch only**, not for anything
   else on the computer, and still checks every certificate: it accepts a certificate that
   Windows trusts, or one that chains to the recorded CA, is currently valid and matches the
   server name. It does not accept any other certificate.
 
-Because the downloads are not checked, someone who can intercept the connection during the
-installation could hand the computer a different script. Use *Skip certificate check* only
-on a network you trust, and compare the CA's SHA-256 that the script prints with the one the
-server host shows:
+The agent keeps the CA it was installed with. If the CA is ever replaced, reinstall the agents
+with the new one (`SERVERCACERT` on the MSI command line replaces the recorded certificate).
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml exec caddy cat /data/caddy/pki/authorities/local/root.crt \
-  | openssl x509 -outform der | sha256sum
-```
-
-Caddy's internal root certificate is valid for 10 years and survives restarts (it is kept in
-the `caddy_data` volume). If it is ever replaced, reinstall the agents with the new one
-(`SERVERCACERT` on the MSI command line replaces the recorded certificate).
+EasyPatch's own install script still has a *Skip certificate check* option, which downloads
+without checking the server certificate and passes the CA found at `https://<server>/server-ca.crt`
+to the MSI. Nothing in EasyRMM's deployment publishes that file, and EasyRMM's edge does not
+serve EasyPatch's install scripts (`/downloads/install/`) on its name.
 
 ## How the agent works
 
@@ -489,11 +476,10 @@ need them.
 
 ## Building from source
 
-The MSIs attached to EasyPatch's GitHub releases (tagged `easypatch-v*` in the EasyRMM
-repository; up to 1.10.0, in EasyPatch's
-[former repository](https://github.com/paulmataruso/EasyPatch/releases)) are built and signed by
-EasyPatch's release workflow; most installations should use those (see
-[installation.md](installation.md#6-offer-agent-packages)). An agent you build with your own
+The MSIs in the engine's image of each EasyRMM release (up to 1.10.0, attached to the releases
+in EasyPatch's [former repository](https://github.com/paulmataruso/EasyPatch/releases)) are built
+and signed by EasyRMM's release workflow; most installations should use those, which the engine
+offers to its agents. An agent you build with your own
 release key accepts only packages signed with that key, so it does not update to official
 releases (see [security.md](security.md#agent-release-signing)).
 

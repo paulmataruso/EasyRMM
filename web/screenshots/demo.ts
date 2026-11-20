@@ -5,6 +5,8 @@
 // fixed to, so "5 minutes ago" reads the same on every run.
 
 import type {
+  PatchAlert,
+  PatchAlertCounts,
   AlertEntry,
   AlertSummary,
   AuditEntry,
@@ -18,14 +20,26 @@ import type {
   PatchEndpoint,
   PatchFleet,
   PatchFleetDevice,
+  PatchFleetUpdate,
   PatchJobView,
+  PatchMonthlyReport,
+  PatchMonthlyReportList,
+  PatchLifecycleList,
+  PatchSettingsView,
   PatchPolicy,
+  PatchPolicyLayer,
+  PatchPolicyView,
   PatchStatus,
+  PatchTag,
+  PatchTagRef,
+  PatchTrend,
   PatchUpdate,
+  PatchUpdateDevice,
+  PatchUpdateView,
   Platform,
-  ProductSwitch,
   RecentConnection,
   RemoteAccessStatus,
+  Report,
   SessionView,
   Site,
   User,
@@ -41,12 +55,7 @@ const GiB = 1024 ** 3;
 /** What a build from an untagged checkout reports (Makefile: git describe). */
 const AGENT_VERSION = "8519085";
 
-export const session: SessionView = {
-  state: "active",
-  user: { id: "u-sam", email: "sam.okafor@example.com", displayName: "Sam Okafor", status: "active", mfaEnabled: true, totp: false, securityKeys: 1 },
-  csrfToken: "demo",
-  expiresAt: "2030-01-01T00:00:00Z",
-  permissions: [
+const SUPER_PERMISSIONS: SessionView["permissions"] = [
     "org.view",
     "org.manage",
     "org.create",
@@ -77,8 +86,16 @@ export const session: SessionView = {
     "audit.view",
     "report.view",
     "settings.manage",
-  ],
-  globalPermissions: [],
+  ];
+
+export const session: SessionView = {
+  state: "active",
+  user: { id: "u-sam", email: "sam.okafor@example.com", displayName: "Sam Okafor", status: "active", mfaEnabled: true, totp: false, securityKeys: 1 },
+  csrfToken: "demo",
+  expiresAt: "2030-01-01T00:00:00Z",
+  permissions: SUPER_PERMISSIONS,
+  // A super administrator holds every permission everywhere.
+  globalPermissions: SUPER_PERMISSIONS,
   isSuperAdmin: true,
   features: { remoteAccess: true },
 };
@@ -272,10 +289,10 @@ export const auditLog: AuditEntry[] = [
   }),
   audit(9115, 120, "u-priya.nair", "alert.acknowledge", { targetType: "alert", targetId: "a4", details: { name: "Memory pressure", device: "HDG-DC01" } }),
   audit(9114, 190, "u-dev.patel", "device.enroll", { targetType: "device", targetId: "d-mf-disp2", details: { device: "MF-DISPATCH-02" } }),
-  audit(9113, 260, "u-sam.okafor", "easypatch.organization_link", {
+  audit(9113, 260, "u-sam.okafor", "easypatch.organization_update", {
     targetType: "organization",
     targetId: "o-bright",
-    details: { organization: "Brightline Architects", easyPatchName: "Brightline Architects" },
+    details: { organization: "Brightline Architects", autoInstall: true },
   }),
   audit(9112, 330, "u-erin.walsh", "user.invite", { targetType: "user", targetId: "u-lucas", details: { email: "lucas.moreau@example.com" } }),
   audit(9111, 400, "u-jordan.lee", "auth.login", { targetType: "user", targetId: "u-jordan.lee" }),
@@ -349,10 +366,9 @@ export function healthHistory(range: string): MetricsHistory {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Patching through EasyPatch
+// Patching through the patching engine in the deployment
 
-export const patchStatus: PatchStatus = { configured: true, canOperate: true, canSchedule: true, consoleUrl: "https://patch.example.com" };
-export const productSwitch: ProductSwitch = { show: true, answering: true };
+export const patchStatus: PatchStatus = { configured: true, canSchedule: true };
 
 type Compliance = Pick<
   PatchEndpoint,
@@ -407,6 +423,32 @@ const linkedOrgs = new Set(["o-alder", "o-bright", "o-cedar", "o-harbor", "o-mer
 export const fleet: PatchFleet = {
   truncated: false,
   errors: [],
+  // A front-desk PC enrolled in EasyPatch before EasyRMM's agent was on it.
+  unmatched: [
+    {
+      id: "e0000000-0000-4000-8000-000000000900",
+      hostname: "HDG-FRONTDESK-2",
+      organizationId: "o-harbor",
+      organizationName: "Harbor Dental Group",
+      siteName: "Eastside clinic",
+      status: "Active",
+      operatingSystem: "Windows 11 Pro 24H2",
+      platform: "Windows",
+      agentVersion: "1.10.0",
+      agentOutdated: false,
+      isOnline: true,
+      lastCheckInAt: ago(4),
+      lastScanAt: ago(95),
+      complianceStatus: "MissingUpdates",
+      missingRequiredCount: 2,
+      missingTotalCount: 2,
+      missingDeferredCount: 0,
+      failedCount: 0,
+      rebootPending: false,
+      knownExploitedMissingCount: 0,
+      currentActivity: "",
+    },
+  ],
   devices: devices
     .filter((d) => linkedOrgs.has(d.organizationId))
     .map(
@@ -439,6 +481,49 @@ const policy: PatchPolicy = {
   includeOptional: false,
   installDelayDays: 7,
   securityInstallDelayDays: 2,
+  checkInIntervalSeconds: 60,
+  inventoryIntervalMinutes: 1440,
+  jitterPercent: 10,
+  excludedKbs: [],
+  acceptEulas: true,
+  scanStaleAfterHours: 72,
+  maxConcurrentInstallsPerSite: 10,
+  trayIconEnabled: true,
+  installNotificationsEnabled: true,
+  agentAutoUpdateEnabled: true,
+  knownExploitedSkipsDelay: true,
+  preDownloadHours: 4,
+  restartSchedule: {
+    enabled: true,
+    days: [0],
+    time: "03:00",
+    condition: "OnlyIfPending",
+    mode: "PromptWithDeadline",
+    countdownMinutes: 10,
+    deadlineMinutes: 240,
+    expiryMinutes: 120,
+  },
+  windowsUpdate: {
+    automaticUpdates: { mode: "AutoDownloadNotifyInstall", scheduledInstallDay: 0, scheduledInstallHour: 3 },
+    featureUpdates: { deferDays: 180, targetProductVersion: "", targetReleaseVersion: "" },
+    qualityUpdates: null,
+    restartBehavior: { noAutoRestartWithSignedInUsers: true, activeHoursStart: 7, activeHoursEnd: 19 },
+  },
+  windowsUpdateValues: null,
+  applicationUpdates: null,
+  sources: {
+    AutoInstallEnabled: "Organization",
+    MaintenanceWindow: "Site",
+    AllowedCategories: "Organization",
+    InstallDelayDays: "Organization",
+    SecurityInstallDelayDays: "Organization",
+    RestartSchedule: "Site",
+    PreDownloadHours: "Organization",
+    "WindowsUpdate.AutomaticUpdates": "Organization",
+    "WindowsUpdate.FeatureUpdates": "Organization",
+    "WindowsUpdate.RestartBehavior": "Site",
+  },
+  sourceTags: null,
 };
 
 export function devicePatching(id: string): DevicePatching {
@@ -460,6 +545,28 @@ export function devicePatching(id: string): DevicePatching {
       installedCount: 212,
       pendingRebootUpdateCount: 0,
       complianceEvaluatedAt: f.endpoint.lastScanAt,
+      activeJob: null,
+      agentCapabilities: ["restart", "notify-user", "tray", "windows-update-policy", "self-update", "app-updates", "uninstall", "uninstall-updates", "download-updates"],
+      signedInUsers: 2,
+      trayConnectedSessions: 2,
+      hasOwnPolicy: false,
+      agentUpdate: {
+        supported: true,
+        automaticUpdates: true,
+        availableVersion: "",
+        code: "agent_up_to_date",
+        message: "The agent already runs the newest package for its platform.",
+        packageFormat: "msi",
+      },
+      restart: null,
+      windowsUpdatePolicy: {
+        groups: [
+          { group: "AutomaticUpdates", state: "Applied", message: "", appliedAt: ago(30), conflictingValues: null },
+          { group: "FeatureUpdates", state: "Applied", message: "", appliedAt: ago(30), conflictingValues: null },
+          { group: "RestartBehavior", state: "Applied", message: "", appliedAt: ago(30), conflictingValues: null },
+        ],
+        mdmUpdatePoliciesPresent: false,
+      },
     },
     policy,
   };
@@ -470,6 +577,7 @@ function update(n: number, title: string, kb: string, category: string, severity
     updateGuid: `u0000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
     title,
     kbNumber: kb,
+    kbNumbers: kb ? [kb] : [],
     category,
     msrcSeverity: severity,
     releaseDate: days(7),
@@ -490,6 +598,7 @@ function update(n: number, title: string, kb: string, category: string, severity
     deferredUntil: null,
     cveIds: null,
     knownExploited: false,
+    kevDueDate: "",
     holdReason: "",
     ...extra,
   };
@@ -546,3 +655,604 @@ export const patchJobs: PatchJobView[] = [
     canManage: true,
   },
 ];
+
+// ---------------------------------------------------------------------------------------------
+// Updates across devices (Patching → Updates and an update's page)
+
+function fleetUpdate(n: number, title: string, kb: string, category: string, severity: string, extra: Partial<PatchFleetUpdate>): PatchFleetUpdate {
+  return {
+    updateGuid: `u0000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+    title,
+    kbNumber: kb,
+    category,
+    msrcSeverity: severity,
+    releaseDate: days(7),
+    sizeBytes: 520 * 1024 ** 2,
+    missingCount: 0,
+    failedCount: 0,
+    installedCount: 0,
+    pendingRebootCount: 0,
+    excludedCount: 0,
+    package: null,
+    cveCount: 0,
+    knownExploited: false,
+    reofferedCount: 0,
+    onHold: false,
+    ...extra,
+  };
+}
+
+/** The same invented updates as AF-FS01's, counted across the linked organizations. */
+export const fleetUpdates: PatchFleetUpdate[] = [
+  fleetUpdate(1, missingUpdates[0]!.title, "KB5099001", "Security", "Critical", {
+    sizeBytes: 612 * 1024 ** 2,
+    missingCount: 2,
+    failedCount: 1,
+    installedCount: 5,
+    pendingRebootCount: 1,
+    cveCount: 3,
+    knownExploited: true,
+  }),
+  fleetUpdate(2, missingUpdates[1]!.title, "KB5099002", "Security", "Important", { sizeBytes: 74 * 1024 ** 2, missingCount: 4, installedCount: 8, cveCount: 2 }),
+  fleetUpdate(5, "openssl 3.5.4-1~deb13u1", "", "Security", "", {
+    sizeBytes: 2 * 1024 ** 2,
+    missingCount: 1,
+    installedCount: 1,
+    cveCount: 1,
+    package: { name: "openssl", version: "3.5.4-1~deb13u1", installedVersion: "3.5.1-1", repository: "trixie-security", advisories: ["DSA-6061-1"] },
+  }),
+  fleetUpdate(3, missingUpdates[2]!.title, "KB5099003", "Definition", "", { sizeBytes: 15 * 1024 ** 2, missingCount: 3, installedCount: 10, releaseDate: days(1) }),
+  fleetUpdate(4, missingUpdates[3]!.title, "KB5099004", "ServicingStack", "", { sizeBytes: 22 * 1024 ** 2, missingCount: 2, installedCount: 11, onHold: true }),
+];
+
+export const UPDATE_GUID = fleetUpdates[0]!.updateGuid;
+
+export const updateView: PatchUpdateView = {
+  summary: fleetUpdates[0]!,
+  description:
+    "This security update fixes vulnerabilities in the print spooler, the kernel and Remote Desktop Services. It includes the quality improvements of the previous month's preview update.",
+  supportUrl: "https://support.example.com/kb/5099001",
+  kbNumbers: ["5099001"],
+  products: ["Microsoft server operating system, version 21H2"],
+  msClassification: "Security Updates",
+  rebootLikely: true,
+  supersededUpdateGuids: ["u0000000-0000-4000-8000-000000000099"],
+  vulnerabilities: [
+    {
+      cveId: "CVE-2026-41001",
+      title: "Windows Print Spooler elevation of privilege vulnerability",
+      severity: "Critical",
+      cvssBase: 8.8,
+      msrcExploited: true,
+      kev: true,
+      kevDateAdded: "2026-11-11",
+      kevDueDate: "2026-12-02",
+      kevRansomware: true,
+      kevName: "Microsoft Windows Print Spooler",
+    },
+    {
+      cveId: "CVE-2026-41017",
+      title: "Windows kernel information disclosure vulnerability",
+      severity: "Important",
+      cvssBase: 5.5,
+      msrcExploited: false,
+      kev: false,
+      kevDateAdded: null,
+      kevDueDate: null,
+      kevRansomware: false,
+      kevName: "",
+    },
+    {
+      cveId: "CVE-2026-41023",
+      title: "Remote Desktop Services denial of service vulnerability",
+      severity: "Important",
+      cvssBase: 7.5,
+      msrcExploited: false,
+      kev: false,
+      kevDateAdded: null,
+      kevDueDate: null,
+      kevRansomware: false,
+      kevName: "",
+    },
+  ],
+  holds: [],
+  canManage: true,
+  canHold: true,
+  holdIn: organizations.filter((o) => linkedOrgs.has(o.id)).map((o) => ({ id: o.id, name: o.name })),
+  canHoldEverywhere: true,
+};
+
+function updateDevice(id: string, state: PatchUpdateDevice["state"], minutes: number, extra: Partial<PatchUpdateDevice> = {}): PatchUpdateDevice {
+  const d = byId(id)!;
+  return {
+    endpointId: `e-${id}`,
+    hostname: d.hostname,
+    deviceId: d.id,
+    deviceName: d.name,
+    organizationName: d.organizationName,
+    siteName: d.siteName,
+    platform: d.platform,
+    isOnline: d.online,
+    state,
+    isRequired: true,
+    isExcluded: false,
+    failedAttempts: 0,
+    errorCode: "",
+    errorMessage: "",
+    stateChangedAt: ago(minutes),
+    canManage: true,
+    ...extra,
+  };
+}
+
+export const updateDevices: PatchUpdateDevice[] = [
+  updateDevice("d-af-fs01", "Missing", 60 * 24 * 6),
+  updateDevice("d-af-lt-01", "Installed", 60 * 30),
+  updateDevice("d-af-rec", "Installed", 60 * 29),
+  updateDevice("d-ba-cad01", "PendingReboot", 60 * 5),
+  updateDevice("d-ba-cad02", "Installed", 60 * 28),
+  updateDevice("d-cvl-circ", "Installed", 60 * 52),
+  updateDevice("d-cvl-pub3", "Failed", 60 * 26, {
+    failedAttempts: 2,
+    errorCode: "0x800f0922",
+    errorMessage: "The update could not be installed: the system reserved partition is too small.",
+  }),
+  updateDevice("d-hdg-dc01", "Missing", 60 * 24 * 6),
+  updateDevice("d-hdg-front1", "Installed", 60 * 27),
+];
+
+// Policies and tags (one-product plan, C4).
+
+const noValues: PatchPolicyLayer = {
+  checkInIntervalSeconds: null,
+  scanIntervalMinutes: null,
+  inventoryIntervalMinutes: null,
+  jitterPercent: null,
+  allowedCategories: null,
+  includeOptional: null,
+  excludedKbs: [],
+  acceptEulas: null,
+  autoInstallEnabled: null,
+  maintenanceDays: null,
+  maintenanceStart: null,
+  maintenanceDurationMinutes: null,
+  preDownloadHours: null,
+  installDelayDays: null,
+  securityInstallDelayDays: null,
+  knownExploitedSkipsDelay: null,
+  scanStaleAfterHours: null,
+  maxConcurrentInstallsPerSite: null,
+  trayIconEnabled: null,
+  installNotificationsEnabled: null,
+  agentAutoUpdateEnabled: null,
+  restartSchedule: null,
+  windowsUpdate: null,
+  applicationUpdates: null,
+};
+
+/** The default policy: automatic installs on Saturday nights, a week's grace for non-security updates. */
+export const defaultPolicy: PatchPolicyLayer = {
+  checkInIntervalSeconds: 60,
+  scanIntervalMinutes: 360,
+  inventoryIntervalMinutes: 1440,
+  jitterPercent: 10,
+  allowedCategories: ["Security", "Critical", "Cumulative", "Definition", "ServicingStack", "DotNet", "Other"],
+  includeOptional: false,
+  excludedKbs: ["KB5005565"],
+  acceptEulas: true,
+  autoInstallEnabled: true,
+  maintenanceDays: [6],
+  maintenanceStart: "22:00",
+  maintenanceDurationMinutes: 240,
+  preDownloadHours: 4,
+  installDelayDays: 7,
+  securityInstallDelayDays: 0,
+  knownExploitedSkipsDelay: true,
+  scanStaleAfterHours: 48,
+  maxConcurrentInstallsPerSite: 10,
+  trayIconEnabled: true,
+  installNotificationsEnabled: true,
+  agentAutoUpdateEnabled: true,
+  restartSchedule: null,
+  windowsUpdate: {
+    automaticUpdates: { managed: true, value: { mode: "NotifyDownload", scheduledInstallDay: 0, scheduledInstallHour: 3 } },
+    featureUpdates: { managed: true, value: { deferDays: 180, targetProductVersion: "", targetReleaseVersion: "" } },
+    qualityUpdates: null,
+    restartBehavior: null,
+  },
+  applicationUpdates: { enabled: false, approvedApps: [] },
+};
+
+function fromDefault(over: Record<string, string> = {}): Record<string, string> {
+  const from: Record<string, string> = {};
+  for (const k of Object.keys(defaultPolicy)) from[k] = "Default policy";
+  for (const g of ["automaticUpdates", "featureUpdates", "qualityUpdates", "restartBehavior"]) from[`windowsUpdate.${g}`] = "Default policy";
+  return { ...from, "windowsUpdate.qualityUpdates": "EasyPatch's defaults", "windowsUpdate.restartBehavior": "EasyPatch's defaults", ...over };
+}
+
+/**
+ * Harbor Dental Group's policy: clinics close at 19:00, so its window opens earlier, it restarts on Sunday mornings
+ * when a restart is pending, and it keeps its imaging software's browser up to date.
+ */
+export const organizationPolicy: PatchPolicyView = {
+  level: "organization",
+  name: "Harbor Dental Group",
+  own: {
+    ...noValues,
+    maintenanceDays: [0, 6],
+    maintenanceStart: "20:00",
+    maintenanceDurationMinutes: 360,
+    excludedKbs: ["KB5034441"],
+    restartSchedule: {
+      enabled: true,
+      days: [0],
+      time: "06:00",
+      condition: "OnlyIfPending",
+      mode: "PromptWithDeadline",
+      countdownMinutes: 5,
+      deadlineMinutes: 120,
+      expiryMinutes: 240,
+    },
+    applicationUpdates: { enabled: true, approvedApps: ["Google.Chrome", "Mozilla.Firefox"] },
+  },
+  hasOwn: true,
+  updatedAt: days(3),
+  inherited: defaultPolicy,
+  inheritedFrom: fromDefault(),
+  windows: true,
+  canEdit: true,
+  organizationId: "o-harbor",
+};
+
+export const patchTags: PatchTag[] = [
+  {
+    id: "t-pilot",
+    name: "Pilot ring",
+    color: "amber",
+    description: "Gets updates first, without the week's delay.",
+    priority: 50,
+    endpointCount: 4,
+    siteCount: 0,
+    organizationCount: 0,
+    hasPolicy: true,
+    createdAt: days(200),
+  },
+  {
+    id: "t-servers",
+    name: "Servers",
+    color: "teal",
+    description: "Restarts only in the window, never prompted.",
+    priority: 40,
+    endpointCount: 9,
+    siteCount: 0,
+    organizationCount: 0,
+    hasPolicy: true,
+    createdAt: days(400),
+  },
+  {
+    id: "t-clinical",
+    name: "Clinical workstations",
+    color: "blue",
+    description: null,
+    priority: 10,
+    endpointCount: 0,
+    siteCount: 0,
+    organizationCount: 1,
+    hasPolicy: false,
+    createdAt: days(90),
+  },
+];
+
+export const organizationTags: PatchTagRef[] = [{ id: "t-clinical", name: "Clinical workstations", color: "blue" }];
+
+export const defaultPolicyView: PatchPolicyView = {
+  level: "default",
+  name: "Default policy",
+  own: defaultPolicy,
+  hasOwn: true,
+  updatedAt: days(40),
+  inherited: defaultPolicy,
+  inheritedFrom: fromDefault(),
+  windows: true,
+  canEdit: true,
+};
+
+// ---------------------------------------------------------------------------------------------
+// Patch reports (one-product plan, C5)
+
+const COMPLIANCE_LABELS: Record<string, string> = {
+  Compliant: "Up to date",
+  MissingUpdates: "Updates missing",
+  FailedUpdates: "Updates failed",
+  RebootRequired: "Restart needed",
+  ScanStale: "Scan out of date",
+  NeverScanned: "Never scanned",
+};
+
+/** The compliance report as the server builds it from the fleet (reports/patch.go). */
+export const patchComplianceReport: Report = {
+  name: "patch-compliance",
+  title: "Patch compliance",
+  columns: [
+    { key: "organization", label: "Organization", type: "text" },
+    { key: "site", label: "Site", type: "text" },
+    { key: "device", label: "Device", type: "text" },
+    { key: "platform", label: "Platform", type: "text" },
+    { key: "compliance", label: "Compliance", type: "text" },
+    { key: "notPatched", label: "Not patched because", type: "text" },
+    { key: "missingRequired", label: "Required updates missing", type: "number" },
+    { key: "missingTotal", label: "Updates missing", type: "number" },
+    { key: "failed", label: "Updates failed", type: "number" },
+    { key: "knownExploited", label: "Known exploited", type: "number" },
+    { key: "restartPending", label: "Restart pending", type: "bool" },
+    { key: "os", label: "Operating system", type: "text" },
+    { key: "osBuild", label: "Build", type: "text" },
+    { key: "osSupport", label: "OS support", type: "text" },
+    { key: "online", label: "Online in EasyPatch", type: "bool" },
+    { key: "lastScan", label: "Last scan", type: "time" },
+    { key: "lastCheckIn", label: "Last EasyPatch check-in", type: "time" },
+  ],
+  rows: fleet.devices.map((d) => {
+    const e = d.endpoint!;
+    const windows = d.platform === "windows";
+    return [
+      d.organizationName,
+      d.siteName,
+      d.name,
+      windows ? "Windows" : "Linux",
+      COMPLIANCE_LABELS[e.complianceStatus] ?? e.complianceStatus,
+      "",
+      e.missingRequiredCount,
+      e.missingTotalCount,
+      e.failedCount,
+      e.knownExploitedMissingCount,
+      e.rebootPending,
+      e.operatingSystem,
+      windows ? "26100.7171" : "",
+      windows ? "Supported" : "",
+      e.isOnline,
+      e.lastScanAt ?? null,
+      e.lastCheckInAt ?? null,
+    ];
+  }),
+  total: fleet.devices.length,
+  truncated: false,
+  generatedAt: NOW.toISOString(),
+};
+
+/**
+ * Thirty days of compliance: high, a drop the day after Patch Tuesday (10 November) as the month's updates arrive,
+ * and the climb back as Saturday's maintenance windows install them.
+ */
+export const patchTrend: PatchTrend = (() => {
+  const total = fleet.devices.length + fleet.unmatched.length;
+  const shares = [
+    0.86, 0.86, 0.89, 0.89, 0.89, 0.92, 0.92, 0.94, 0.94, 0.94, 0.94, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97, 0.97,
+    0.36, 0.42, 0.47, 0.81, 0.83, 0.86, 0.89,
+  ];
+  const points = shares.map((share, i) => {
+    const d = new Date(NOW);
+    d.setUTCDate(d.getUTCDate() - (shares.length - 1 - i));
+    const compliant = Math.round(share * total);
+    const missing = total - compliant;
+    return {
+      date: d.toISOString().slice(0, 10),
+      totalEndpoints: total,
+      compliant,
+      missingUpdates: missing,
+      failedUpdates: 0,
+      rebootRequired: 0,
+      scanStale: 0,
+      neverScanned: 0,
+      offline: 0,
+      missingRequiredUpdates: missing * 2,
+      compliancePercent: Math.round((compliant / total) * 1000) / 10,
+    };
+  });
+  return { points, organizations: organizations.length };
+})();
+
+function monthlyReport(id: string, organizationId: string, periodStart: string, extra: Partial<PatchMonthlyReport> = {}): PatchMonthlyReport {
+  return {
+    id,
+    organizationId,
+    organizationName: orgName(organizationId),
+    periodStart,
+    periodEnd: periodStart.slice(0, 8) + "31",
+    monthToDate: false,
+    scheduled: true,
+    generatedAt: days(16),
+    // EasyPatch names no one for a report its schedule made.
+    generatedBy: undefined,
+    fileName: `patch-report-${organizationId}-${periodStart.slice(0, 7)}.pdf`,
+    sizeBytes: 214_000,
+    deliveryStatus: "Sent",
+    recipients: ["it@example.com"],
+    sentAt: days(16),
+    canManage: true,
+    ...extra,
+  };
+}
+
+export const monthlyReports: PatchMonthlyReportList = {
+  items: [
+    monthlyReport("mr-5", "o-harbor", "2026-11-01", {
+      monthToDate: true,
+      scheduled: false,
+      generatedAt: ago(40),
+      generatedBy: "jordan@example.com",
+      periodEnd: "2026-11-17",
+      deliveryStatus: "",
+      recipients: [],
+      sentAt: null,
+    }),
+    monthlyReport("mr-4", "o-harbor", "2026-10-01", { recipients: ["office.manager@example.com", "it@example.com"] }),
+    monthlyReport("mr-3", "o-meridian", "2026-10-01", { sizeBytes: 388_000 }),
+    monthlyReport("mr-2", "o-cedar", "2026-10-01", { deliveryStatus: "Failed", lastError: "550 5.1.1 Mailbox unavailable", sentAt: null }),
+    monthlyReport("mr-1", "o-alder", "2026-10-01", { scheduled: false, generatedBy: "jordan@example.com", deliveryStatus: "", recipients: [], sentAt: null }),
+  ],
+  capped: false,
+  canGenerate: organizations.map((o) => o.id),
+};
+
+/** Settings → Patching → Server (one-product plan, C6). */
+export const patchServerSettings: PatchSettingsView = {
+  settings: {
+    globalMaxConcurrentInstalls: 50,
+    jobDefaultExpiryHours: 168,
+    runningJobTimeoutHours: 12,
+    waitingForRebootExpiryDays: 30,
+    deliveryLeaseMinutes: 10,
+    maxDeliveryAttempts: 5,
+    offlineThresholdMinutes: 10,
+    credentialLifetimeDays: 365,
+    credentialRotateBeforeDays: 30,
+    retentionEventsDays: 90,
+    retentionAuditDays: 365,
+    retentionJobsDays: 180,
+    retentionScansDays: 90,
+    retentionHistoryDays: 730,
+    retentionReportsMonths: 24,
+    vulnerabilityFeedsEnabled: true,
+    reportBrandName: "Northwind IT Services",
+    rolloutGuardEnabled: true,
+    rolloutGuardMinFailedEndpoints: 3,
+    rolloutGuardFailurePercent: 20,
+    rolloutGuardWindowDays: 7,
+  },
+  feeds: [
+    { name: "kev", lastAttemptAt: ago(95), lastSuccessAt: ago(95), version: "2026.11.17", itemCount: 1484 },
+    { name: "msrc", lastAttemptAt: ago(610), lastSuccessAt: ago(610), version: "2026-Nov", itemCount: 9213 },
+    { name: "debian", lastAttemptAt: ago(615), lastSuccessAt: ago(615), itemCount: 41_877 },
+  ],
+  version: "1.10.0",
+  canEdit: true,
+};
+
+/** Settings → Patching → OS lifecycle. */
+export const patchLifecycle: PatchLifecycleList = {
+  items: [
+    { id: "lc-1", product: "Windows 10", editionGroup: "HomePro", buildNumber: 19045, versionLabel: "22H2", endOfServicing: "2025-10-14", esuEndDate: "2028-10-10", notes: "Commercial ESU through 2028-10-10." },
+    { id: "lc-2", product: "Windows 11", editionGroup: "HomePro", buildNumber: 26200, versionLabel: "25H2", endOfServicing: "2027-10-12", esuEndDate: null, notes: null },
+    { id: "lc-3", product: "Windows 11", editionGroup: "HomePro", buildNumber: 26100, versionLabel: "24H2", endOfServicing: "2026-10-13", esuEndDate: null, notes: null },
+    { id: "lc-4", product: "Windows Server", editionGroup: "Server", buildNumber: 26100, versionLabel: "2025", endOfServicing: "2034-10-10", esuEndDate: null, notes: null },
+    { id: "lc-5", product: "Windows Server", editionGroup: "Server", buildNumber: 17763, versionLabel: "2019", endOfServicing: "2029-01-09", esuEndDate: null, notes: null },
+    { id: "lc-6", product: "Ubuntu", editionGroup: "LTS", buildNumber: 2404, versionLabel: "24.04 LTS", endOfServicing: "2029-05-31", esuEndDate: "2034-04-30", notes: "ESU: Ubuntu Pro (ESM) until 2034-04." },
+  ],
+  canEdit: true,
+};
+
+// Patching → Alerts (one-product plan, C7): what EasyPatch's alert rules raised, the most severe first.
+const patchAlert = (n: number, a: Partial<PatchAlert> & Pick<PatchAlert, "ruleType" | "severity" | "title" | "organizationId">): PatchAlert => ({
+  id: `pa000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
+  ruleId: `pr-${a.ruleType}`,
+  ruleName: null,
+  status: "Open",
+  details: null,
+  organizationName: orgName(a.organizationId),
+  hostname: null,
+  openedAt: ago(60 * 5),
+  lastSeenAt: ago(2),
+  resolvedAt: null,
+  acknowledgedAt: null,
+  acknowledgedBy: null,
+  canAcknowledge: true,
+  ...a,
+});
+
+export const patchAlerts: PatchAlert[] = [
+  patchAlert(1, {
+    ruleType: "KnownExploitedMissing",
+    severity: "Critical",
+    title: "AF-FS01 misses an update for an exploited vulnerability",
+    details: "KB5099001 fixes CVE-2026-41001, in CISA's Known Exploited Vulnerabilities catalog.",
+    organizationId: "o-alder",
+    deviceId: "d-af-fs01",
+    deviceName: "AF-FS01",
+    hostname: "AF-FS01",
+    openedAt: days(2),
+  }),
+  patchAlert(2, {
+    ruleType: "InstallFailed",
+    severity: "Critical",
+    ruleName: "Failed installs, library",
+    title: "An update failed to install on CVL-PUBLIC-03",
+    details: "KB5099001: 0x80070005, access is denied. Failed twice.",
+    organizationId: "o-cedar",
+    deviceId: "d-cvl-pub3",
+    deviceName: "CVL-PUBLIC-03",
+    hostname: "CVL-PUBLIC-03",
+    openedAt: ago(60 * 20),
+    status: "Acknowledged",
+    acknowledgedBy: "easyrmm:alex@example.com",
+    acknowledgedAt: ago(60 * 3),
+    canAcknowledge: false,
+  }),
+  patchAlert(3, {
+    ruleType: "EndpointOffline",
+    severity: "Warning",
+    title: "CVL-PUBLIC-03 has been offline for 26 hours",
+    organizationId: "o-cedar",
+    deviceId: "d-cvl-pub3",
+    deviceName: "CVL-PUBLIC-03",
+    hostname: "CVL-PUBLIC-03",
+    openedAt: ago(60 * 2),
+  }),
+  patchAlert(4, {
+    ruleType: "OsUnsupported",
+    severity: "Warning",
+    title: "HDG-XRAY-01 runs Windows 10 22H2, out of support since 2025-10-14",
+    details: "Extended Security Updates continue until 2028-10-10.",
+    organizationId: "o-harbor",
+    deviceId: "d-hdg-xray",
+    deviceName: "HDG-XRAY-01",
+    hostname: "HDG-XRAY-01",
+    openedAt: days(9),
+  }),
+  patchAlert(5, {
+    ruleType: "ScanStale",
+    severity: "Warning",
+    title: "AF-LT-PARALEGAL2 has not scanned for 9 days",
+    organizationId: "o-alder",
+    deviceId: "d-af-lt-02",
+    deviceName: "AF-LT-PARALEGAL2",
+    hostname: "AF-LT-PARALEGAL2",
+    openedAt: days(2),
+  }),
+  patchAlert(6, {
+    ruleType: "UpdateHeld",
+    severity: "Warning",
+    title: "1 update Meridian Freight's devices need is on hold",
+    details: "KB5099004, held after it failed on 3 devices.",
+    organizationId: "o-meridian",
+    openedAt: days(1),
+    canAcknowledge: false,
+  }),
+  patchAlert(7, {
+    ruleType: "RestartPending",
+    severity: "Info",
+    title: "BA-CAD-01 has waited 8 days for a restart",
+    organizationId: "o-bright",
+    deviceId: "d-ba-cad01",
+    deviceName: "BA-CAD-01",
+    hostname: "BA-CAD-01",
+    openedAt: days(1),
+  }),
+  patchAlert(8, {
+    ruleType: "SecurityUpdateMissing",
+    severity: "Warning",
+    title: "HDG-FRONTDESK-2 misses 2 security updates required for 14 days",
+    organizationId: "o-harbor",
+    hostname: "HDG-FRONTDESK-2",
+    openedAt: days(3),
+  }),
+];
+
+export const patchAlertCounts: PatchAlertCounts = {
+  open: patchAlerts.filter((a) => a.status === "Open").length,
+  acknowledged: patchAlerts.filter((a) => a.status === "Acknowledged").length,
+  critical: patchAlerts.filter((a) => a.severity === "Critical").length,
+  warning: patchAlerts.filter((a) => a.severity === "Warning").length,
+  info: patchAlerts.filter((a) => a.severity === "Info").length,
+  capped: false,
+};

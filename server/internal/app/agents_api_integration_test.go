@@ -469,9 +469,24 @@ func TestAgentRequestLimits(t *testing.T) {
 		t.Fatalf("limited after %d requests", ok)
 	}
 	// Once limited, the body is not read: an oversized one is refused for
-	// the rate, not its size.
+	// the rate, not its size. The allowance refills a token a second, so on
+	// a slow runner one can come back between the last refusal and this
+	// request, which is then refused for its size without spending it (a
+	// token is spent only once the signature over the body is verified).
+	// Each time, ordinary requests spend what came back and it is tried
+	// again; a server that read the body first would refuse every try for
+	// its size.
 	big := bytes.Repeat([]byte("x"), agentproto.MaxBody+1)
-	wantStatus(t, h.raw("POST", agentproto.PathHeartbeat, big, sign(key, enr.DeviceID, big)), http.StatusTooManyRequests, "rate_limited")
+	r := h.raw("POST", agentproto.PathHeartbeat, big, sign(key, enr.DeviceID, big))
+	for try := 1; try < 3 && r.status == http.StatusRequestEntityTooLarge; try++ {
+		for range 400 {
+			if h.raw("POST", agentproto.PathHeartbeat, body, sign(key, enr.DeviceID, body)).status == http.StatusTooManyRequests {
+				break
+			}
+		}
+		r = h.raw("POST", agentproto.PathHeartbeat, big, sign(key, enr.DeviceID, big))
+	}
+	wantStatus(t, r, http.StatusTooManyRequests, "rate_limited")
 	if _, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: facts("lim-01")}); agentclient.Code(err) != "rate_limited" {
 		t.Fatalf("the agent's own client: %v", err)
 	}

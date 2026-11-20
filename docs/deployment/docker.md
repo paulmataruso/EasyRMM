@@ -24,9 +24,6 @@ See [network.md](../architecture/network.md) for the full port plan.
   [Without DNS](#without-dns)).
 * Inbound TCP 443, plus TCP 80 if you use Let's Encrypt HTTP-01 validation,
   and TCP 4443 for remote sessions by IP address.
-* EasyPatch can share the server: EasyRMM keeps 80 and 443 and passes
-  EasyPatch's name through to it. See
-  [easypatch-cohost.md](easypatch-cohost.md).
 * Outbound HTTPS to `github.com` the first time MeshCentral starts: it
   downloads its agent binaries (about 120 MiB) from GitHub releases.
 * Nothing else listening on 443, 4443, 80, 15432, 14430 or 18081. On a
@@ -176,6 +173,59 @@ Devices join with the EasyRMM agent, which installs MeshAgent from this
 server: see [Installing the EasyRMM agent](agents.md). The image includes the
 Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).
 
+## Sign-in with Authentik
+
+With `--with-authentik`, everyone signs in to EasyRMM through
+[Authentik](https://goauthentik.io), running in this deployment, with a
+second factor on every sign-in ([ADR-0044](../architecture/adr/0044-authentik-when-chosen.md)).
+
+```bash
+sudo ./scripts/setup.sh --hostname rmm.example.com --with-authentik
+# Sign-in name for Authentik (such as auth.example.com): auth.example.com
+# Administrator's email address: you@example.com
+sudo docker compose up -d
+```
+
+`setup.sh` prints an invitation link for the administrator. Point DNS for
+Authentik's name at the server as well. The first `docker compose up -d`
+waits for Authentik's first start, a few minutes while it sets up its
+database; then open the link. Choose a name and a password, set up an
+authenticator app or a security key, and you land in EasyRMM as its super
+administrator. There is no setup token and no first-run page.
+
+* **The invitation** is valid for 7 days and once. Authentik uses it up
+  when the link is opened; a sign-up left half-way can be finished in the
+  same browser. For another, run
+  `sudo ./scripts/setup.sh --new-invitation`, then `sudo docker compose up -d`.
+* **Other people** are invited in EasyRMM as usual (Settings → Users), and
+  sign in with an Authentik account with the same email address, which
+  Authentik's administrator makes. Roles are granted in EasyRMM only:
+  Authentik's groups never grant any.
+* **Authentik's own administrator** is `akadmin`, with the password in
+  `/srv/easyrmm/authentik/secrets/akadmin-password`. Its console is at
+  `https://auth.example.com/if/admin/`.
+* **When Authentik is down,** EasyRMM's sign-in through it fails with
+  "Sign-in is not answering". A super administrator can still get in with a
+  one-time link, valid for 15 minutes:
+
+  ```bash
+  sudo docker compose exec server easyrmm-server recover
+  # several super administrators: add --email you@example.com
+  ```
+
+  Using it is recorded in the audit log.
+
+Authentik's settings are in `.env`: `EASYRMM_AUTHENTIK_HOSTNAME`,
+`EASYRMM_AUTHENTIK_ADMIN_EMAIL`, and the secrets
+`EASYRMM_AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_SECRET_KEY` and
+`AUTHENTIK_DB_PASSWORD`. Its data is the `authentik` database in the same
+PostgreSQL, and `/srv/easyrmm/authentik/`; back both up with the rest.
+Settings → Single sign-on shows the Authentik provider as set by the
+deployment, so it is changed only through `.env`. EasyRMM's edge holds
+Authentik's name with its own certificate, so `--with-authentik` does not
+work with TLS offload. Authentik listens on loopback only:
+`127.0.0.1:18280` and `18243` (its server) and `18281` (its worker).
+
 ## Retention
 
 | Variable | Default | Meaning |
@@ -184,6 +234,78 @@ Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).
 | `EASYRMM_JOB_RETENTION` | `2160h` (90 days) | How long finished jobs and their script output are kept; at least `24h`. See [Scripts and jobs](../operations/scripts-and-jobs.md) |
 | `EASYRMM_METRICS_RETENTION` | `168h` (7 days) | How long per-minute device measurements are kept for charts; at least `24h`. See [Inventory and health](../operations/inventory.md) |
 | `EASYRMM_ALERT_RETENTION` | `2160h` (90 days) | How long resolved alerts are kept; at least `24h`. See [Alerts](../operations/alerts.md) |
+
+## Patching engine
+
+EasyPatch's patching engine runs inside this deployment
+([one-product plan](../architecture/one-product-plan.md)): `setup.sh` sets it
+up and `docker compose up -d` starts it with everything else. There is no
+setting to turn it on or off.
+
+On an existing install, rerun `setup.sh` with its usual options: it adds the
+engine's database passwords and `EASYRMM_PATCHING_KEY` to `.env` if they are
+missing, and removes `EASYRMM_PATCHING` and the `patching` profile from
+`COMPOSE_PROFILES`, which no longer exist, without changing anything else
+there. The key signs
+EasyRMM's calls to the engine, one short statement per request
+([ADR-0038](../architecture/adr/0038-statements-to-the-patching-engine.md));
+treat it like the other secrets in `.env`. The engine's services are:
+
+| Service | What it does |
+|---|---|
+| `easypatch-db-init` | Creates the `easypatch` database and its roles in EasyRMM's PostgreSQL, or brings them up to date; runs before every start, also on an existing install |
+| `easypatch-migrate` | Applies the engine's migrations as `easypatch_owner`, then exits |
+| `easypatch-api` | The engine, on `127.0.0.1:18180` only, as `easypatch_app` |
+| `easypatch-worker` | Background work, health on `127.0.0.1:18181` only. Needs outbound HTTPS to Microsoft's update and security feeds, CISA's catalogue of exploited vulnerabilities, the Debian security tracker and GitHub (winget) |
+
+To bring a standalone EasyPatch's endpoints, history and settings over, see
+[Importing a standalone EasyPatch](../operations/import-easypatch.md).
+
+The engine's data-protection keys and winget copy are under
+`${EASYRMM_DATA_ROOT}/easypatch/` (owner 1654, the image's user). Back up
+the keys with the database: they decrypt the engine's stored mail and
+webhook credentials.
+
+**The engine comes with the release.** A release bundle's
+`docker-compose.yml` names the engine built from the same commit, by digest,
+so upgrading the bundle upgrades both; the release's manifest lists both
+images ([ADR-0043](../architecture/adr/0043-one-release.md)). The engine's
+image carries the EasyPatch agent's Windows and Linux packages of its own
+version, each with its release signature, read-only. There is nothing to
+download or copy
+([ADR-0041](../architecture/adr/0041-agent-packages-in-the-engine-image.md)).
+From a clone, Compose builds the engine from this repository,
+**without agent packages**, so EasyRMM cannot install the EasyPatch agent.
+For a test install, `easypatch/scripts/build-test-agent-packages.sh` (needs
+the .NET SDK) stages Linux packages signed with a throwaway key before
+`docker compose build`. Their agents trust only that key; `make e2e-bundle`
+works this way.
+
+EasyRMM's patching pages use the engine:
+
+* **Settings → EasyPatch** shows the engine and its state; there is no
+  address or token to enter, and it cannot be removed there. *Check now*
+  shows whether the engine accepts EasyRMM's key.
+* **An EasyPatch server connected in Settings** by an earlier version is
+  forgotten, with its organization and device links, once, at the first
+  start, and the audit log records it.
+* **EasyRMM keeps the engine's organizations.** Every organization and site
+  has its own in the engine, created, renamed and archived with EasyRMM's
+  ([ADR-0040](../architecture/adr/0040-one-set-of-organizations.md),
+  [Patching](../operations/patching.md#organizations-in-the-bundled-engine));
+  there is nothing to link in Settings.
+* **Agents use EasyRMM's name.** EasyRMM's edge forwards the engine's agent
+  API and package downloads (`/api/v1/agents/`, `/downloads/agent/`,
+  `/downloads/winget/`) and nothing else of it
+  ([ADR-0039](../architecture/adr/0039-agents-on-easyrmms-name.md)).
+  EasyRMM installs the EasyPatch agent itself; EasyPatch's own install
+  one-liners (`/downloads/install/`) do not work on EasyRMM's name.
+* **Installs addressed by IP** (`EASYRMM_TLS_MODE=internal`): EasyRMM gives
+  the EasyPatch agents its own certificate authority, which they trust for
+  EasyRMM's address only: the Windows MSI as `SERVERCACERT`, the Linux
+  agent with `enroll --server-ca`
+  ([ADR-0042](../architecture/adr/0042-agents-trust-easyrmms-authority.md)).
+  Nothing is added to the device's own certificate store.
 
 ## Security posture of the containers
 
@@ -195,6 +317,10 @@ Linux agent builds in `/usr/share/easyrmm/agents` (`EASYRMM_AGENT_DIR`).
 * PostgreSQL listens on loopback only and uses SCRAM-SHA-256. The server
   connects with two roles: `easyrmm_owner` (migrations only) and
   `easyrmm_app` (runtime, data access only, subject to row-level security).
+* The patching engine runs as UID 1654 with a read-only root
+  filesystem, every capability dropped and `no-new-privileges`, on loopback
+  only. Its runtime role, `easypatch_app`, reads and writes rows in its own
+  database and can neither change the schema nor connect to EasyRMM's.
 * MeshCentral runs as UID 65532 with a read-only root filesystem, every
   capability dropped and `no-new-privileges`. It listens on
   `127.0.0.1:14430` only, with TLS offloaded to the server's edge, and trusts

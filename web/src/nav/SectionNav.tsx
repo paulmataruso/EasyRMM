@@ -22,6 +22,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  SlidersHorizontal,
   UsersRound,
 } from "lucide-react";
 import { useList, useOrganizations, usePrefetch, useSites, useWaitingDevices } from "../api/hooks";
@@ -667,6 +668,7 @@ export function settingsParts(can: (p: Permission) => boolean): { id: string; la
     { id: "agent-updates", label: "Agent updates", icon: <ArrowUpCircle className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "forwarding", label: "Audit forwarding", icon: <Send className="size-4" aria-hidden />, show: can("settings.manage") },
     { id: "easypatch", label: "EasyPatch", icon: <ShieldCheck className="size-4" aria-hidden />, show: can("settings.manage") },
+    { id: "patching", label: "Patching", icon: <SlidersHorizontal className="size-4" aria-hidden />, show: can("patch.configure") },
     { id: "sso", label: "Single sign-on", icon: <LogIn className="size-4" aria-hidden />, show: can("settings.manage") },
   ]
     .filter((p) => p.show)

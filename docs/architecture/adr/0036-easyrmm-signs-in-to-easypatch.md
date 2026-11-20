@@ -1,7 +1,10 @@
 # ADR-0036: EasyRMM is EasyPatch's sign-in provider
 
-* Status: Accepted (2026-11-17). Built on both sides (P4a to P4c) and
-  tested end to end in a browser (P4d, `make e2e-sign-in`).
+* Status: Superseded by [ADR-0046](0046-what-one-product-retires.md)
+  (2026-11-19). Accepted 2026-11-17, built on both sides (P4a to P4c) and
+  tested end to end in a browser (P4d). Removed in one-product phase R: the
+  patching engine runs in the deployment and takes EasyRMM's statements
+  (ADR-0038), so nobody signs in to EasyPatch any more.
 * Refines: ADR-0006 (sessions and mandatory MFA), ADR-0030 (the EasyPatch
   connector), ADR-0034 (single sign-on).
 * Plan: [EasyPatch integration plan](../easypatch-integration-plan.md),

@@ -3,14 +3,16 @@ import { Link, useNavigate, useParams } from "react-router";
 import { MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
 import { useApi, useApiMutation, useList, usePrefetch } from "../../api/hooks";
-import type { Organization, Site } from "../../api/types";
+import type { Organization, PatchStatus, Site } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Button, Card, EmptyState, ErrorState, KeyValueList, PageHeader, Spinner, TableWrap } from "../../components/ui";
+import { Button, Card, EmptyState, ErrorState, KeyValueList, PageHeader, Spinner, TableWrap, Tabs } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { useUrlState } from "../../lib/urlState";
+import { PolicyPanel } from "../patching/PolicyEditor";
+import { TagsField } from "../patching/Tags";
 import { OrganizationFormDialog } from "./OrganizationsPage";
 import { SiteFormDialog } from "./SiteFormDialog";
 
@@ -27,6 +29,10 @@ export function OrganizationDetailPage() {
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const addingSite = url.get("newSite") === "1";
+  // The Patch policy tab shows once EasyPatch is set up (ADR-0030).
+  const patching = useApi<PatchStatus>(can("patch.view") ? "/patching" : null, undefined, { staleTime: 60_000 });
+  const patched = patching.data?.configured === true;
+  const tab = patched && url.get("tab") === "patch-policy" ? "patch-policy" : "overview";
 
   const remove = useApiMutation(() => api.del(`/organizations/${id}`), {
     invalidate: ["/organizations", "/sites", "/audit"],
@@ -72,96 +78,116 @@ export function OrganizationDetailPage() {
         }
       />
 
-      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
-        <Card
-          title="Sites"
-          className="xl:col-span-2"
-          padded={false}
-          actions={
-            o.canManage && (
-              <Button size="sm" variant="primary" icon={<Plus className="size-3.5" aria-hidden />} onClick={() => url.set({ newSite: "1" })}>
-                Add site
-              </Button>
-            )
-          }
-        >
-          {sites.isPending ? (
-            <Spinner />
-          ) : sites.isError ? (
-            <ErrorState error={sites.error} onRetry={() => void sites.refetch()} compact />
-          ) : sites.items.length === 0 ? (
-            <EmptyState
-              title="No sites yet"
-              icon={<MapPin className="size-8" aria-hidden />}
-              action={
-                o.canManage ? (
-                  <Button variant="primary" onClick={() => url.set({ newSite: "1" })}>
-                    Add the first site
-                  </Button>
-                ) : undefined
-              }
-            >
-              A site is an office or location. Its time zone is used for schedules and reports.
-            </EmptyState>
-          ) : (
-            <TableWrap className="rounded-none border-0">
-              <div ref={tableRef}>
-                <table className="table-base">
-                  <thead>
-                    <tr>
-                      <th>Site</th>
-                      <th className="hidden sm:table-cell">Time zone</th>
-                      <th className="text-right">Device groups</th>
-                      <th className="hidden md:table-cell">Updated</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sites.items.map((s) => (
-                      <tr key={s.id} className="cursor-pointer" onClick={() => navigate(`/sites/${s.id}`)} onMouseEnter={() => warm(s.id)}>
-                        <td>
-                          <Link
-                            to={`/sites/${s.id}`}
-                            className="font-medium hover:text-accent"
-                            data-row-link
-                            data-id={s.id}
-                            onClick={(e) => e.stopPropagation()}
-                            onFocus={() => warm(s.id)}
-                          >
-                            {s.name}
-                          </Link>
-                          {s.address && <p className="max-w-52 truncate text-xs text-muted sm:max-w-md">{s.address}</p>}
-                        </td>
-                        <td className="hidden whitespace-nowrap sm:table-cell">{s.timezone}</td>
-                        <td className="text-right tabular-nums">{s.deviceGroupCount}</td>
-                        <td className="hidden whitespace-nowrap text-muted md:table-cell" title={formatDateTime(s.updatedAt)}>
-                          {formatRelative(s.updatedAt)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </TableWrap>
-          )}
-        </Card>
+      {patched && (
+        <Tabs
+          tabs={[
+            { id: "overview", label: "Overview" },
+            { id: "patch-policy", label: "Patch policy" },
+          ]}
+          active={tab}
+          onChange={(t) => url.set({ tab: t === "overview" ? null : t })}
+        />
+      )}
 
-        <Card title="Details">
-          <KeyValueList
-            narrow
-            items={[
-              ["Notes", o.notes ? <span className="whitespace-pre-wrap">{o.notes}</span> : <span className="text-muted">None</span>],
-              ["Created", formatDateTime(o.createdAt)],
-              ["Updated", formatDateTime(o.updatedAt)],
-              ["Your access", o.canManage ? "Manage" : "View only"],
-            ]}
-          />
-          {can("user.view") && (
-            <Link to={`/settings?tab=users&organizationId=${o.id}`} className="mt-4 inline-block text-xs text-accent hover:underline">
-              People with access to this organization
-            </Link>
-          )}
-        </Card>
-      </div>
+      {tab === "patch-policy" && (
+        <div role="tabpanel" aria-labelledby="tab-patch-policy">
+          <PolicyPanel level="organization" id={o.id} intro={<TagsField level="organization" id={o.id} />} />
+        </div>
+      )}
+
+      {tab === "overview" && (
+        <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
+          <Card
+            title="Sites"
+            className="xl:col-span-2"
+            padded={false}
+            actions={
+              o.canManage && (
+                <Button size="sm" variant="primary" icon={<Plus className="size-3.5" aria-hidden />} onClick={() => url.set({ newSite: "1" })}>
+                  Add site
+                </Button>
+              )
+            }
+          >
+            {sites.isPending ? (
+              <Spinner />
+            ) : sites.isError ? (
+              <ErrorState error={sites.error} onRetry={() => void sites.refetch()} compact />
+            ) : sites.items.length === 0 ? (
+              <EmptyState
+                title="No sites yet"
+                icon={<MapPin className="size-8" aria-hidden />}
+                action={
+                  o.canManage ? (
+                    <Button variant="primary" onClick={() => url.set({ newSite: "1" })}>
+                      Add the first site
+                    </Button>
+                  ) : undefined
+                }
+              >
+                A site is an office or location. Its time zone is used for schedules and reports.
+              </EmptyState>
+            ) : (
+              <TableWrap className="rounded-none border-0">
+                <div ref={tableRef}>
+                  <table className="table-base">
+                    <thead>
+                      <tr>
+                        <th>Site</th>
+                        <th className="hidden sm:table-cell">Time zone</th>
+                        <th className="text-right">Device groups</th>
+                        <th className="hidden md:table-cell">Updated</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sites.items.map((s) => (
+                        <tr key={s.id} className="cursor-pointer" onClick={() => navigate(`/sites/${s.id}`)} onMouseEnter={() => warm(s.id)}>
+                          <td>
+                            <Link
+                              to={`/sites/${s.id}`}
+                              className="font-medium hover:text-accent"
+                              data-row-link
+                              data-id={s.id}
+                              onClick={(e) => e.stopPropagation()}
+                              onFocus={() => warm(s.id)}
+                            >
+                              {s.name}
+                            </Link>
+                            {s.address && <p className="max-w-52 truncate text-xs text-muted sm:max-w-md">{s.address}</p>}
+                          </td>
+                          <td className="hidden whitespace-nowrap sm:table-cell">{s.timezone}</td>
+                          <td className="text-right tabular-nums">{s.deviceGroupCount}</td>
+                          <td className="hidden whitespace-nowrap text-muted md:table-cell" title={formatDateTime(s.updatedAt)}>
+                            {formatRelative(s.updatedAt)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </TableWrap>
+            )}
+          </Card>
+
+          <Card title="Details">
+            <KeyValueList
+              narrow
+              items={[
+                ["Time zone", o.timezone],
+                ["Notes", o.notes ? <span className="whitespace-pre-wrap">{o.notes}</span> : <span className="text-muted">None</span>],
+                ["Created", formatDateTime(o.createdAt)],
+                ["Updated", formatDateTime(o.updatedAt)],
+                ["Your access", o.canManage ? "Manage" : "View only"],
+              ]}
+            />
+            {can("user.view") && (
+              <Link to={`/settings?tab=users&organizationId=${o.id}`} className="mt-4 inline-block text-xs text-accent hover:underline">
+                People with access to this organization
+              </Link>
+            )}
+          </Card>
+        </div>
+      )}
 
       <OrganizationFormDialog open={editing} organization={o} onClose={() => setEditing(false)} onSaved={() => setEditing(false)} />
       <SiteFormDialog

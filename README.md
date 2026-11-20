@@ -15,8 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/paulmataruso/EasyRMM/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/paulmataruso/EasyRMM/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="LICENSE"><img alt="EasyRMM licence: AGPL-3.0-or-later" src="https://img.shields.io/badge/EasyRMM-AGPL--3.0--or--later-blue"></a>
-  <a href="easypatch/LICENSE.md"><img alt="EasyPatch licence: FSL-1.1-ALv2" src="https://img.shields.io/badge/EasyPatch-FSL--1.1--ALv2-blue"></a>
+  <a href="LICENSE.md"><img alt="Licence: FSL-1.1-ALv2" src="https://img.shields.io/badge/licence-FSL--1.1--ALv2-blue"></a>
   <img alt="Endpoints: Windows and Linux" src="https://img.shields.io/badge/endpoints-Windows%20%7C%20Linux-informational">
 </p>
 
@@ -85,7 +84,7 @@ regenerated when the console changes.
     </td>
     <td>
       <a href="docs/images/device-patches.png"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/device-patches-light.png"><img src="docs/images/device-patches.png" alt="A device's Patches tab: missing updates with an exploited-in-the-wild flag, Scan now and Install updates, its patch status and EasyPatch policy"></picture></a>
-      <br><sub><b>A device's updates.</b> Scan and install from EasyRMM; policy stays in EasyPatch.</sub>
+      <br><sub><b>A device's updates.</b> Scan, install and restart; the policy in effect, value by value.</sub>
     </td>
   </tr>
   <tr>
@@ -94,8 +93,8 @@ regenerated when the console changes.
       <br><sub><b>Alerts.</b> Disk, processor, memory and offline policies, acknowledged and resolved by people.</sub>
     </td>
     <td>
-      <a href="easypatch/docs/images/dashboard.png"><picture><source media="(prefers-color-scheme: light)" srcset="easypatch/docs/images/dashboard-light.png"><img src="easypatch/docs/images/dashboard.png" alt="EasyPatch dashboard: compliance, known-exploited exposure, online and offline endpoints, a 30-day compliance trend and the least compliant organizations"></picture></a>
-      <br><sub><b>EasyPatch's console.</b> One click away with the EasyRMM | EasyPatch switch. <a href="easypatch/README.md#screenshots">More</a>.</sub>
+      <a href="docs/images/patching-overview.png"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/patching-overview-light.png"><img src="docs/images/patching-overview.png" alt="Patching overview: the share of devices up to date with a bar of the rest, a worklist of what needs attention worst first, and organizations least up to date first"></picture></a>
+      <br><sub><b>Patching overview.</b> How far each organization is up to date, and what needs attention first.</sub>
     </td>
   </tr>
 </table>
@@ -143,51 +142,58 @@ regenerated when the console changes.
 
 ## How EasyRMM and EasyPatch fit together
 
-* **EasyRMM uses EasyPatch's API** for simple patching: patch status, scan,
-  install, restart and retry, on one device or many, now or scheduled. The
-  devices' patches show on their own pages in EasyRMM.
-* **Everything else is in EasyPatch's console**: policies, update rings,
-  holds and rollbacks, reports, alerts. EasyRMM links to the matching
-  EasyPatch page.
-* **The EasyRMM | EasyPatch switch** under the logo moves between the two
-  consoles, landing on the same device, organization or job.
+* **EasyRMM uses EasyPatch's API** for patching: patch status, scan,
+  install, restart and retry, on one device or many, now or scheduled;
+  holds; patch policies for organizations, sites, devices and tags; and
+  patch reports: compliance with its trend, installations, and monthly PDFs
+  made, emailed and scheduled; patching alerts, acknowledged in EasyRMM,
+  with the alert rules that raise them and the email and webhook channels
+  they go to; and EasyPatch's own server settings, OS lifecycle dates,
+  agent packages and audit log. The devices' patches show on their own
+  pages in EasyRMM.
+* **The patching engine is part of every deployment.** EasyPatch's API and
+  worker run beside EasyRMM's server, on loopback, with their own database
+  in the same PostgreSQL. Its console is not served: people patch from
+  EasyRMM's, and EasyRMM's roles decide who sees and does what. EasyRMM
+  signs each call with who acts and what they may reach
+  ([ADR-0038](docs/architecture/adr/0038-statements-to-the-patching-engine.md)),
+  and the engine records it in its audit log and on its jobs.
+* **One set of organizations.** EasyRMM creates, renames and archives the
+  engine's organizations and sites to match its own
+  ([ADR-0040](docs/architecture/adr/0040-one-set-of-organizations.md)).
 * **EasyRMM installs EasyPatch's agent** through its own agent, per
   organization or per device ([ADR-0031](docs/architecture/adr/0031-easypatch-agent-install.md)).
-* **Organizations are linked** once, by an administrator. EasyRMM's roles
-  decide who sees and does what; EasyRMM records who acted in EasyPatch's
-  audit log and on its jobs.
-* **Any EasyPatch server.** EasyRMM connects to an EasyPatch server by its
-  address and an API token: one on the same machine, behind EasyRMM's edge
-  ([ADR-0035](docs/architecture/adr/0035-cohosting-easypatch.md)), or one
-  elsewhere. EasyPatch also runs on its own, without EasyRMM.
-* **One sign-in.** EasyRMM can be EasyPatch's sign-in provider, so the switch
-  never asks for a password, and each person's EasyPatch role follows their
-  EasyRMM roles
-  ([ADR-0036](docs/architecture/adr/0036-easyrmm-signs-in-to-easypatch.md)).
+  EasyPatch agents reach the engine through EasyRMM's edge, on EasyRMM's
+  name.
+* **A standalone EasyPatch moves in.** An EasyPatch 1.4 to 1.10 server is
+  imported from its backup, with its devices, agents, policies and history;
+  its agents keep reporting on its old name, which EasyRMM then answers
+  ([ADR-0045](docs/architecture/adr/0045-importing-a-standalone-easypatch.md),
+  [guide](docs/operations/import-easypatch.md)).
+* **EasyPatch is part of EasyRMM from here on.** Its standalone server,
+  console and installer (releases up to 1.10.0) are not developed further;
+  they are removed from this repository in the plan's phase R.
 
 The plan behind this, and its progress, is in
-[the integration plan](docs/architecture/easypatch-integration-plan.md).
+[the one-product plan](docs/architecture/one-product-plan.md).
 Setting it up is in [docs/operations/patching.md](docs/operations/patching.md).
 
 ## Architecture
 
 ```
-                         ┌─ easyrmm-server (Go) ── TLS edge, console, API, agent gateway
-browser, agents ──443──► │      ├──► PostgreSQL (loopback)
-                         │      ├──► MeshCentral (loopback) ◄── MeshAgent
-                         │      └──► EasyPatch API (HTTPS)
-                         │
-                         └─ EasyPatch's name: passed through, still encrypted
-                                └──► EasyPatch (.NET): Caddy, API, worker, PostgreSQL
-                                        ◄── EasyPatch agents
+browser, EasyRMM agents,       ┌─ easyrmm-server (Go): TLS edge, console, API, agent gateway
+EasyPatch agents ──443──────►  │      ├──► PostgreSQL (loopback): EasyRMM's and the engine's databases
+                               │      ├──► MeshCentral (loopback) ◄── MeshAgent
+                               │      └──► patching engine (loopback): EasyPatch's API and worker (.NET)
 ```
 
-* EasyRMM is three containers (server, PostgreSQL, MeshCentral) on Docker
-  with host networking. One public port (443), plus an optional port 80 for
-  ACME. It works with or without an existing NGINX in front.
-* EasyPatch is its own Compose stack. On the same server, EasyRMM's edge
-  passes EasyPatch's connections through by server name; EasyRMM never holds
-  EasyPatch's keys.
+* One Docker Compose deployment on host networking: EasyRMM's server,
+  PostgreSQL, MeshCentral, and the patching engine's API and worker. One
+  public port (443), plus an optional port 80 for ACME. It works with or
+  without an existing NGINX in front.
+* Only the server listens publicly. It forwards EasyPatch agents' requests
+  to the engine byte for byte, and calls the engine's API itself for
+  people, with a signed statement per request.
 
 Start with [`docs/architecture/overview.md`](docs/architecture/overview.md).
 The decisions behind the design are in
@@ -224,7 +230,7 @@ export EASYRMM_TEST_DATABASE_URL='postgres://postgres:easyrmm-test-only@127.0.0.
 make check                   # format, vet, lint, unit + integration tests, coverage floors
 make web-test                # console typecheck and unit tests
 make e2e                     # build everything, browser tests against a real server
-make test-contract           # EasyRMM's connector against a real EasyPatch built from easypatch/
+make test-contract           # EasyRMM's calls against the real patching engine built from easypatch/
 make build-agents            # Windows and Linux agents in bin/agents; serve them with EASYRMM_AGENT_DIR=bin/agents
 ```
 
@@ -249,16 +255,16 @@ Report vulnerabilities privately, for either part. See [SECURITY.md](SECURITY.md
 
 ## Licensing
 
-One project, two licences, by directory:
+EasyRMM, EasyPatch included, is source-available under the [Functional
+Source License, Version 1.1, ALv2 Future License](LICENSE.md)
+(FSL-1.1-ALv2). Copyright 2026 DHI Technical Services LLC.
 
-| Path | Licence |
-|---|---|
-| Everything except `easypatch/` (EasyRMM) | [GNU Affero General Public License v3.0 or later](LICENSE) |
-| `easypatch/` (EasyPatch) | [Functional Source License, Version 1.1, ALv2 Future License](easypatch/LICENSE.md) (FSL-1.1-ALv2), licensor DHI Technical Services LLC |
-
-EasyRMM's code is open source. EasyPatch's code is source-available under
-FSL-1.1-ALv2. [LICENSING.md](LICENSING.md) explains how the two apply, and
-what a contribution to each is made under.
+MSPs and IT departments may run it free of charge for their own computers and
+their clients', including as part of paid managed services. Selling it, or
+offering it for others to run their own remote management or patching, is
+not permitted. Each version becomes available under the Apache License 2.0
+two years after its release. [LICENSING.md](LICENSING.md) has the details,
+the licence's history, and what a contribution is made under.
 
 MeshCentral and MeshAgent are Apache-2.0 projects by their respective
 authors. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). EasyRMM is not

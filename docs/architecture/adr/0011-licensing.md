@@ -1,6 +1,6 @@
 # ADR-0011: AGPL-3.0 for EasyRMM
 
-* Status: Accepted (2026-11-15)
+* Status: Superseded by [ADR-0037](0037-one-licence.md) (2026-11-18)
 
 ## Context
 The project must use an OSI-approved licence. It bundles Apache-2.0

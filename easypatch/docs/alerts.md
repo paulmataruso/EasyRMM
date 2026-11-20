@@ -93,13 +93,14 @@ Notifications are grouped. Each evaluation sends **at most one message per chann
 * reminders.
 
 A message lists up to 25 alerts, most severe first, followed by "…and N more". A single alert
-gets its own subject, for example `[EasyPatch] Warning: PC-042 has been offline for over 24
-hours`. Several alerts get a count, for example `[EasyPatch] 7 new alerts`. Each line links to
-the endpoint in the console. Messages contain host names, organization names and alert texts,
-and nothing else.
+gets its own subject, for example `[EasyRMM] Warning: PC-042 has been offline for over 24
+hours`. Several alerts get a count, for example `[EasyRMM] 7 new alerts`. Messages contain host
+names, organization names and alert texts, and nothing else.
 
-Links use the server's public URL (`EasyPatch:PublicUrl`, set from `EASYPATCH_DOMAIN` by
-`docker-compose.yml`).
+Links lead into EasyRMM, whose public URL is the engine's (`EasyPatch:PublicUrl`): each line to
+`/go/from-easypatch/endpoints/<id>` (the device's Patches tab) or, for an organization's alert,
+`/go/from-easypatch/alerts/<id>` (Patching → Alerts for that organization); the message itself to
+`/patching?tab=alerts`.
 
 ### Delivery and retries
 
@@ -189,7 +190,7 @@ time.
 | `Webhook to host refused: private network addresses are not allowed …` | The host resolves to a private address. Allow private addresses, or use the public URL. |
 | `Webhook to host refused: loopback, link-local …` | The address is never allowed. |
 | `host answered HTTP 403` / `404` | The webhook URL was revoked or is wrong. Edit the channel and paste a new URL. |
-| `A stored notification secret cannot be decrypted …` | The Data Protection keys (`dpkeys` volume) changed or are missing in the worker. Check that the worker mounts `dpkeys`, or enter the secret again. |
+| `A stored notification secret cannot be decrypted …` | The Data Protection keys (`${EASYRMM_DATA_ROOT}/easypatch/keys` in EasyRMM's deployment) changed or are missing in the worker. Check that the worker mounts them, or enter the secret again. |
 
 The worker logs each failed attempt (`Notification <id> to channel <name> failed …`) with the
 same sanitized message.

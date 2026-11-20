@@ -1,7 +1,7 @@
-import { useMemo, useState, type FormEvent, type ReactNode } from "react";
+import { useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router";
-import { Ban, Download, KeyRound, MonitorDown, ShieldCheck } from "lucide-react";
-import { api, fieldError } from "../../api/client";
+import { Ban, Download, KeyRound, MonitorDown, ShieldCheck, SquareTerminal } from "lucide-react";
+import { api, errorMessage, fieldError } from "../../api/client";
 import { useApi, useApiMutation, useList, useSites } from "../../api/hooks";
 import type {
   AgentBuild,
@@ -145,6 +145,12 @@ export function AddDevicesPage() {
   const approver = canGlobal("enrollment.manage");
   const mode: Mode = approver && url.get("mode") === "approval" ? "approval" : "site";
   const [created, setCreated] = useState<Created | null>(null);
+  const top = useRef<HTMLDivElement>(null);
+  // A token shown again from a list below fills the card at the top.
+  const show = (c: Created) => {
+    setCreated(c);
+    top.current?.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  };
 
   const header = (
     <PageHeader
@@ -176,7 +182,7 @@ export function AddDevicesPage() {
   return (
     <>
       {header}
-      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-5">
+      <div ref={top} className="grid scroll-mt-4 grid-cols-1 items-start gap-5 xl:grid-cols-5">
         <Card title={created ? "Install the agent" : "New deployment token"} className="xl:col-span-3">
           {created?.kind === "site" ? (
             <SiteInstallSteps created={created.value} onDone={() => setCreated(null)} />
@@ -206,9 +212,10 @@ export function AddDevicesPage() {
           <CertificateAuthorityCard />
         </div>
       </div>
-      <TokensCard<EnrollmentToken>
+      <TokensCard<EnrollmentToken, NewEnrollmentToken>
         title="Deployment tokens"
         path="/enrollment-tokens"
+        onShown={(value) => show({ kind: "site", value })}
         place={{
           header: "Site",
           cell: (t) => (
@@ -227,9 +234,10 @@ export function AddDevicesPage() {
         )}
       />
       {approver && (
-        <TokensCard<ApprovalToken>
+        <TokensCard<ApprovalToken, NewApprovalToken>
           title="Approval tokens"
           path="/approval-tokens"
+          onShown={(value) => show({ kind: "approval", value })}
           place={{
             header: "Waiting",
             cell: (t) =>
@@ -439,6 +447,7 @@ function SiteInstallSteps({ created, onDone }: { created: NewEnrollmentToken; on
       notice={
         <>
           Anyone with it can add devices to {t.siteName} until it {t.maxUses ? "expires or is used up" : "expires"}. Revoke it once the rollout is done.
+          Until then, Deployment tokens below shows it again.
         </>
       }
       details={[
@@ -465,7 +474,7 @@ function ApprovalInstallSteps({ created, onDone }: { created: NewApprovalToken; 
           <Link to="/devices/approvals" className="font-medium underline">
             Waiting for approval
           </Link>{" "}
-          until you approve it into a site. Revoke the token once the rollout is done.
+          until you approve it into a site. Revoke the token once the rollout is done. Until then, Approval tokens below shows it again.
         </>
       }
       details={[
@@ -491,7 +500,7 @@ function InstallSteps({ secret, serverUrl, notice, details, onDone }: {
   const address = addresses.find((a) => a.url === chosen) ?? current;
   return (
     <div className="flex flex-col gap-4">
-      <OneTimeNotice title="Copy the command now. The token is not shown again.">{notice}</OneTimeNotice>
+      <OneTimeNotice title="Keep this command to the people installing the agent.">{notice}</OneTimeNotice>
 
       {addresses.length > 1 && (
         <SelectField
@@ -708,14 +717,17 @@ interface TokenRow {
   uses: number;
   lastUsedAt: string | null;
   status: EnrollmentToken["status"];
+  kept: boolean;
 }
 
-function TokensCard<T extends TokenRow>({ title, path, place, revokeNote }: {
+function TokensCard<T extends TokenRow, R>({ title, path, place, revokeNote, onShown }: {
   title: string;
   path: string;
   /** The column that differs: a deployment token's site, an approval token's waiting devices. */
   place: { header: string; cell: (t: T) => ReactNode };
   revokeNote: (t: T) => ReactNode;
+  /** Receives an active token with its secret, shown again (ADR-0047). */
+  onShown: (r: R) => void;
 }) {
   const toast = useToast();
   const [all, setAll] = useState(false);
@@ -727,6 +739,10 @@ function TokensCard<T extends TokenRow>({ title, path, place, revokeNote }: {
       toast.success(`Token “${t.name}” revoked.`);
       setRevoking(null);
     },
+  });
+  const reveal = useApiMutation((t: T) => api.post<R>(`${path}/${t.id}/reveal`), {
+    invalidate: ["/audit"],
+    onSuccess: (r) => onShown(r),
   });
   const noun = title.toLowerCase();
 
@@ -774,6 +790,7 @@ function TokensCard<T extends TokenRow>({ title, path, place, revokeNote }: {
                       {t.createdByName ? `${t.createdByName}, ` : ""}
                       <span title={formatDateTime(t.createdAt)}>{formatDate(t.createdAt)}</span>
                     </p>
+                    {t.status === "active" && !t.kept && <p className="text-xs text-muted">Made before tokens could be shown again.</p>}
                   </td>
                   <td className="hidden max-w-64 md:table-cell">{place.cell(t)}</td>
                   <td className="whitespace-nowrap tabular-nums" title={t.lastUsedAt ? `Last used ${formatDateTime(t.lastUsedAt)}` : "Not used yet"}>
@@ -786,6 +803,16 @@ function TokensCard<T extends TokenRow>({ title, path, place, revokeNote }: {
                     <TokenStatusBadge status={t.status} />
                   </td>
                   <td className="text-right whitespace-nowrap">
+                    {t.status === "active" && t.kept && (
+                      <IconButton
+                        label={`Show install commands for ${t.name}`}
+                        onClick={() => reveal.mutate(t, { onError: (err) => toast.error(errorMessage(err)) })}
+                        disabled={reveal.isPending}
+                        className="hover:text-accent"
+                      >
+                        <SquareTerminal className="size-4" aria-hidden />
+                      </IconButton>
+                    )}
                     {t.status === "active" && (
                       <IconButton label={`Revoke ${t.name}`} onClick={() => setRevoking(t)} className="hover:text-danger">
                         <Ban className="size-4" aria-hidden />

@@ -3,7 +3,7 @@ namespace EasyPatch.Infrastructure.Services;
 /// <summary>Which organizations the current caller may access. Every admin query is filtered through this.</summary>
 public interface ITenantContext
 {
-    /// <summary>True for SuperAdmins, users without org restrictions, and background services.</summary>
+    /// <summary>True for statements for every organization, and for background services.</summary>
     bool IsUnrestricted { get; }
 
     IReadOnlySet<Guid> AllowedOrganizationIds { get; }
@@ -23,26 +23,30 @@ public interface ITenantContext
 /// <summary>Who is acting, for auditing.</summary>
 public interface IActorContext
 {
+    /// <summary>An EasyPatch account; always null now that EasyPatch has none (the columns it fills stay for older records).</summary>
     Guid? UserId { get; }
     string? Username { get; }
     string? IpAddress { get; }
     string? CorrelationId { get; }
-
-    /// <summary>
-    /// For an API token, the person an integration says it acts for (<c>X-EasyPatch-On-Behalf-Of</c>). Informational: the token's role
-    /// and organizations decide what the request may do.
-    /// </summary>
-    string? OnBehalfOf => null;
 }
 
 public static class ActorContextExtensions
 {
-    /// <summary>The actor name of requests made with an API token (<c>token:&lt;name&gt;</c>).</summary>
-    public const string ApiTokenPrefix = "token:";
+    /// <summary>The actor name of requests EasyRMM makes to its patching engine (<c>easyrmm:&lt;name&gt;</c>).</summary>
+    public const string EasyRmmPrefix = "easyrmm:";
 
-    /// <summary>True for a signed-in administrator or an API token (not the system or an agent).</summary>
+    /// <summary>The longest name a statement from EasyRMM may carry: an email address as long as EasyRMM allows.</summary>
+    public const int MaxStatementName = 254;
+
+    /// <summary>
+    /// The longest actor name the engine records wherever it says who acted (audit log, jobs, holds, reports, alerts): room
+    /// for <see cref="EasyRmmPrefix"/> and the longest statement name, so no call fails over the length of a person's name.
+    /// </summary>
+    public const int MaxActorName = 300;
+
+    /// <summary>True for EasyRMM (not the system, the command line or an agent).</summary>
     public static bool IsAdministrator(this IActorContext actor) =>
-        actor.UserId is not null || actor.Username?.StartsWith(ApiTokenPrefix, StringComparison.Ordinal) == true;
+        actor.Username?.StartsWith(EasyRmmPrefix, StringComparison.Ordinal) == true;
 }
 
 public sealed class SystemTenantContext : ITenantContext

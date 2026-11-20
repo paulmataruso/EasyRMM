@@ -19,14 +19,14 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
     private const string WebhookUrl = "https://hooks.example.com/easypatch/T0K3N-in-path";
     private static readonly Guid OfflineRuleId = Guid.Parse("7c3e1a52-6f0e-4d7b-9a01-000000000001");
 
-    private AdminSession root = null!;
+    private AdminClient root = null!;
     private OrganizationDto org = null!;
     private SiteDto site = null!;
 
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        root = await SuperAdminAsync();
+        root = SuperAdmin();
         (org, site) = await CreateOrgAsync(root);
     }
 
@@ -57,10 +57,9 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
     {
         Clock.Advance(by);
         await RunMaintenanceAsync<PresenceMonitorTask>();
-        root = await LoginAsync("root", DefaultPassword, root.MfaSecret);
     }
 
-    private async Task<List<AlertDto>> AlertsAsync(AdminSession session, string query = "") =>
+    private async Task<List<AlertDto>> AlertsAsync(AdminClient session, string query = "") =>
         (await session.GetAsync<PagedResult<AlertDto>>("/api/v1/alerts" + query)).Items.ToList();
 
     [Fact]
@@ -76,7 +75,7 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
         Assert.Equal(AlertSeverity.Critical, rules.Single(r => r.Type == AlertRuleType.SecurityUpdateMissing).Severity);
         Assert.Equal(Enum.GetValues<AlertRuleType>().Length, (await root.GetAsync<List<AlertRuleTypeDto>>("/api/v1/alert-rules/types")).Count);
 
-        var admin = await CreateAndLoginAsync("admin", UserRole.Admin);
+        var admin = Admin("admin", UserRole.Admin);
         await admin.ExpectAsync(HttpMethod.Get, "/api/v1/alert-rules", null, HttpStatusCode.Forbidden);
         await admin.ExpectAsync(HttpMethod.Get, "/api/v1/notifications/channels", null, HttpStatusCode.Forbidden);
         await admin.ExpectAsync(HttpMethod.Get, "/api/v1/notifications/settings", null, HttpStatusCode.Forbidden);
@@ -172,7 +171,7 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
             "test_rate_limited");
         await RunMaintenanceAsync<NotificationDeliveryTask>();
         var sent = Assert.Single(Factory.Transport.Emails);
-        Assert.Equal("[EasyPatch] Test notification", sent.Subject);
+        Assert.Equal("[EasyRMM] Test notification", sent.Subject);
         Assert.Equal(2, sent.Recipients.Count);
         Assert.Equal(SmtpPassword, sent.Password);
 
@@ -238,9 +237,9 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
         await RunMaintenanceAsync<NotificationDeliveryTask>();
         var webhook = Assert.Single(Factory.Transport.Webhooks);
         var email = Assert.Single(Factory.Transport.Emails);
-        Assert.Equal("[EasyPatch] 2 new alerts", email.Subject);
+        Assert.Equal("[EasyRMM] 2 new alerts", email.Subject);
         Assert.Contains("PC-OFF-2", email.Text, StringComparison.Ordinal);
-        Assert.Contains($"{EasyPatchApiFactory.PublicUrl}/endpoints/{first.EndpointId}", email.Html, StringComparison.Ordinal);
+        Assert.Contains($"{EasyPatchApiFactory.PublicUrl}/go/from-easypatch/endpoints/{first.EndpointId}", email.Html, StringComparison.Ordinal);
 
         // The generic webhook is signed with the channel secret: HMAC-SHA256(secret, "t.body").
         Assert.Equal(new Uri(WebhookUrl), webhook.Url);
@@ -256,7 +255,7 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
         }
 
         // Acknowledge: operators only, scoped to visible alerts.
-        var viewer = await CreateAndLoginAsync("viewer", UserRole.ReadOnly);
+        var viewer = Admin("viewer", UserRole.ReadOnly);
         Assert.Equal(2, (await AlertsAsync(viewer)).Count);
         var alertOne = alerts.Single(a => a.EndpointId == first.EndpointId);
         await viewer.ExpectAsync(HttpMethod.Post, "/api/v1/alerts/acknowledge", new AcknowledgeAlertsRequest([alertOne.Id]), HttpStatusCode.Forbidden);
@@ -280,7 +279,7 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
 
         await RunMaintenanceAsync<NotificationDeliveryTask>();
         Assert.Equal(2, Factory.Transport.Emails.Count);
-        Assert.Equal("[EasyPatch] Resolved: " + alertOne.Title, Factory.Transport.Emails.Last().Subject);
+        Assert.Equal("[EasyRMM] Resolved: " + alertOne.Title, Factory.Transport.Emails.Last().Subject);
 
         // Archiving the organization closes its alerts without notifications.
         var deliveriesBefore = await WithDbAsync(db => db.NotificationDeliveries.CountAsync());
@@ -314,7 +313,7 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
         await RunMaintenanceAsync<AlertEvaluationTask>();
         Assert.Equal(3, (await AlertsAsync(root)).Count); // the default rule matches both endpoints
 
-        var contosoAdmin = await CreateAndLoginAsync("contoso-admin", UserRole.Admin, org.Id);
+        var contosoAdmin = Admin("contoso-admin", UserRole.Admin, [org.Id]);
         var visible = Assert.Single(await AlertsAsync(contosoAdmin));
         Assert.Equal("CONTOSO-1", visible.Hostname);
         Assert.Equal(1, (await contosoAdmin.GetAsync<AlertSummaryDto>("/api/v1/alerts/summary")).Open);
@@ -339,7 +338,7 @@ public sealed class AlertTests(PostgresFixture postgres) : IntegrationTest(postg
         foreach (var hostname in new[] { "NEW-PC-1", "NEW-PC-2" })
         {
             using var response = await NewAgent().EnrollAsync(null, code.Code, hostname);
-            await AdminSession.EnsureAsync(response, HttpStatusCode.OK);
+            await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
         }
 
         await RunMaintenanceAsync<AlertEvaluationTask>();

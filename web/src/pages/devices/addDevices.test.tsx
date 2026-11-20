@@ -30,6 +30,7 @@ function token(id: string, name: string, extra: Partial<EnrollmentToken> = {}): 
     lastUsedAt: null,
     revokedAt: null,
     status: "active",
+    kept: true,
     ...extra,
   };
 }
@@ -52,7 +53,7 @@ function routes(extra: Record<string, unknown> = {}) {
 }
 
 describe("add devices", () => {
-  it("creates a deployment token and shows the install command once", async () => {
+  it("creates a deployment token and shows its install command", async () => {
     const user = userEvent.setup();
     const server = installFakeApi(
       routes({
@@ -83,7 +84,7 @@ describe("add devices", () => {
     await user.type(screen.getByLabelText("Device limit"), "25");
     await user.click(screen.getByRole("button", { name: "Create token" }));
 
-    expect(await screen.findByText("Copy the command now. The token is not shown again.")).toBeInTheDocument();
+    expect(await screen.findByText("Keep this command to the people installing the agent.")).toBeInTheDocument();
     const create = server.call("POST /sites/:id/enrollment-tokens");
     expect(create.params.id).toBe("s2");
     expect(create.body).toEqual({ name: "Warehouse scanners", deviceGroupId: "g1", expiresInDays: 30, maxUses: 25 });
@@ -232,6 +233,47 @@ describe("add devices", () => {
     await user.click(within(dialog).getByRole("button", { name: "Revoke token" }));
     expect(await screen.findByText("Token “Head office rollout” revoked.")).toBeInTheDocument();
     expect(server.call("POST /enrollment-tokens/:id/revoke").params.id).toBe("t1");
+  });
+
+  it("shows an active token's install commands again", async () => {
+    const user = userEvent.setup();
+    const kept = token("t1", "Head office rollout", { uses: 3, maxUses: 10 });
+    const old = token("t4", "Before the upgrade", { kept: false });
+    const server = installFakeApi(
+      routes({
+        "GET /enrollment-tokens": ok({ items: [kept, old] }),
+        "POST /enrollment-tokens/:id/reveal": ok({ token: kept, secret: SECRET, serverUrl: "https://rmm.example.com" }),
+      }),
+    );
+    renderApp("/devices/add");
+    const row = await screen.findByRole("row", { name: /Head office rollout/ });
+    // A token made before secrets were kept says so, and offers nothing to show.
+    const oldRow = screen.getByRole("row", { name: /Before the upgrade/ });
+    expect(within(oldRow).getByText("Made before tokens could be shown again.")).toBeInTheDocument();
+    expect(within(oldRow).queryByRole("button", { name: /Show install commands/ })).not.toBeInTheDocument();
+
+    await user.click(within(row).getByRole("button", { name: "Show install commands for Head office rollout" }));
+    expect(await screen.findByRole("heading", { name: "Install the agent" })).toBeInTheDocument();
+    expect(server.call("POST /enrollment-tokens/:id/reveal").params.id).toBe("t1");
+    expect(screen.getByText(/Until then, Deployment tokens below shows it again/)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(`-Token '${SECRET}'`))).toBeInTheDocument();
+  });
+
+  it("says why a token cannot be shown again", async () => {
+    const user = userEvent.setup();
+    installFakeApi(
+      routes({
+        "POST /enrollment-tokens/:id/reveal": {
+          status: 409,
+          body: { error: { code: "token_inactive", message: "This token can no longer add devices, so there is nothing to show. Create a new one." } },
+        },
+      }),
+    );
+    renderApp("/devices/add");
+    const row = await screen.findByRole("row", { name: /Head office rollout/ });
+    await user.click(within(row).getByRole("button", { name: "Show install commands for Head office rollout" }));
+    expect(await screen.findByText(/can no longer add devices, so there is nothing to show/)).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Install the agent" })).not.toBeInTheDocument();
   });
 
   it("is closed to roles that do not manage enrollment", async () => {

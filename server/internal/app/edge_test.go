@@ -58,6 +58,10 @@ func TestKnownHostAndHostOnly(t *testing.T) {
 			t.Errorf("knownHost(%q) = %v, want %v", host, got, want)
 		}
 	}
+	cfg.Patching.AgentHostnames = []string{"patch.old.test"}
+	if !knownHost(cfg, "Patch.Old.Test.") || knownHost(cfg, "old.test") {
+		t.Error("an imported EasyPatch's name")
+	}
 	cfg.MeshPublicURL = nil
 	if knownHost(cfg, "mesh.rmm.test") {
 		t.Error("mesh host known without a mesh URL")
@@ -342,9 +346,40 @@ func TestEdgeManualTLS(t *testing.T) {
 	}
 	stop()
 
+	// A name served besides the origins shares the certificate, which must
+	// be valid for it.
+	cfg.Patching.AgentHostnames = []string{"patch.old.test"}
+	err := (&edge{cfg: cfg, handler: okHandler(), log: discard()}).run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "not valid for patch.old.test") {
+		t.Fatalf("manual mode with a certificate that does not cover every name: %v", err)
+	}
+	cfg.Patching.AgentHostnames = nil
+
 	cfg.CertFile = filepath.Join(t.TempDir(), "missing.pem")
 	if err := (&edge{cfg: cfg, handler: okHandler(), log: discard()}).run(context.Background()); err == nil {
 		t.Fatal("manual mode without a certificate started")
+	}
+}
+
+func TestCovers(t *testing.T) {
+	certFile, keyFile, _ := writeCert(t, t.TempDir(), "*.old.test")
+	c, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := covers(&c, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := covers(&c, []string{"patch.old.test", "agents.old.test"}); err != nil {
+		t.Fatalf("a wildcard: %v", err)
+	}
+	c.Leaf = nil // parsed from the chain then
+	err = covers(&c, []string{"patch.old.test", "a.b.old.test", "other.test"})
+	if err == nil || !strings.Contains(err.Error(), "not valid for a.b.old.test, other.test") {
+		t.Fatalf("names it does not cover: %v", err)
+	}
+	if err := covers(&tls.Certificate{Certificate: [][]byte{{1, 2}}}, []string{"x.test"}); err == nil {
+		t.Fatal("a certificate that cannot be read")
 	}
 }
 

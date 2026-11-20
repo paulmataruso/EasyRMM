@@ -74,6 +74,28 @@ public sealed class ServerCertificateAuthorityTests : IDisposable
     }
 
     /// <summary>A root, an intermediate and server certificates, shaped like Caddy's internal CA.</summary>
+    [Fact]
+    public void Stored_as_base64_and_trusted_by_an_http_handler_for_its_own_certificates_only()
+    {
+        var authority = ServerCertificateAuthority.Parse(_lab.RootPem);
+        Assert.Equal(Convert.ToBase64String(_lab.Root.RawData), authority.Base64);
+        Assert.Equal(authority.Sha256, ServerCertificateAuthority.Parse(authority.Base64).Sha256);
+
+        using var handler = new SocketsHttpHandler();
+        authority.TrustFor(handler);
+        var callback = handler.SslOptions.RemoteCertificateValidationCallback;
+        Assert.NotNull(callback);
+
+        using var leaf = _lab.Issue("rmm.example.com");
+        using var chain = _lab.HandshakeChain();
+        Assert.True(callback(handler, leaf, chain, SslPolicyErrors.RemoteCertificateChainErrors));
+
+        using var foreign = _other.Issue("rmm.example.com");
+        using var foreignChain = _other.HandshakeChain();
+        Assert.False(callback(handler, foreign, foreignChain, SslPolicyErrors.RemoteCertificateChainErrors));
+        Assert.False(callback(handler, leaf, chain, SslPolicyErrors.RemoteCertificateNameMismatch));
+    }
+
     private sealed class Pki : IDisposable
     {
         private readonly ECDsa _intermediateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);

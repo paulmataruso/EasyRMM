@@ -40,7 +40,8 @@ Examples of what we especially want to hear about:
 
 * a way for the server, or anyone who controls it, to make an agent run a command or install
   anything other than updates, a signed agent package or an approved application;
-* bypasses of authentication, MFA, CSRF protection, organization access restrictions or roles;
+* bypasses of authentication (EasyRMM's statements, agent request signing),
+  organization access restrictions or roles;
 * ways to read or forge agent credentials or enrollment tokens;
 * secrets written to logs, images or the database in plain text.
 

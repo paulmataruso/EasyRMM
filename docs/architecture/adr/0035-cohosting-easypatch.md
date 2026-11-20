@@ -1,6 +1,9 @@
 # ADR-0035: EasyPatch on the same server, behind EasyRMM's edge
 
-* Status: Accepted (2026-11-17).
+* Status: Superseded by [ADR-0046](0046-what-one-product-retires.md)
+  (2026-11-19). Accepted 2026-11-17; refused since one-product S1 and
+  removed in phase R: the patching engine runs in every deployment, and a
+  co-hosted EasyPatch is imported into it (ADR-0045).
 * Refines: ADR-0003 (the Go edge on host networking), ADR-0010 and ADR-0030
   (the EasyPatch integration).
 

@@ -12,14 +12,15 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Links from EasyPatch into EasyRMM (integration plan, section 6.2).
-// EasyPatch's product switch and links name its own ids:
-// /go/from-easypatch/endpoints/:id, organizations/:id and jobs/:id. The
-// console asks where each opens; EasyRMM resolves the id against its link
-// tables and the caller's permissions.
+// Links from the patching engine into EasyRMM (integration plan, section
+// 6.2). The engine's alert messages, and the links of EasyPatch's former
+// console, name the engine's own ids: /go/from-easypatch/endpoints/:id,
+// organizations/:id, jobs/:id, and alerts/:id for an organization's
+// alerts. The console asks where each opens; EasyRMM resolves the id against
+// its link tables and the caller's permissions.
 
-// FromKinds are the EasyPatch objects a link may name.
-var FromKinds = []string{"endpoints", "organizations", "jobs"}
+// FromKinds are the engine's objects a link may name.
+var FromKinds = []string{"endpoints", "organizations", "jobs", "alerts"}
 
 // Landing is where a link from EasyPatch opens EasyRMM's console. Notice,
 // when set, says why it is not the page the link named.
@@ -46,6 +47,10 @@ func landingFor(kind string, device, org, job uuid.UUID) Landing {
 		return Landing{Path: "/organizations/" + org.String()}
 	case kind == "organizations":
 		return Landing{Path: "/patching", Notice: noticeOrganization}
+	case kind == "alerts" && org != uuid.Nil:
+		return Landing{Path: "/patching?tab=alerts&organizationId=" + org.String()}
+	case kind == "alerts":
+		return Landing{Path: "/patching?tab=alerts", Notice: noticeOrganization}
 	case kind == "jobs" && job != uuid.Nil:
 		// The Patching page opens the job; reading it checks access.
 		return Landing{Path: "/patching?tab=jobs&job=" + job.String()}
@@ -54,9 +59,10 @@ func landingFor(kind string, device, org, job uuid.UUID) Landing {
 }
 
 // FromEasyPatch resolves a link from EasyPatch: an endpoint opens its
-// device's Patches tab, an organization the organization, a job the
-// Patching job dialog. What the caller may not see, or EasyRMM does not
-// link, opens Patching with a notice.
+// device's Patches tab, an organization the organization, an organization's
+// alerts Patching's Alerts filtered to it, a job the Patching job dialog.
+// What the caller may not see, or EasyRMM does not link, opens Patching with
+// a notice.
 func (s *Service) FromEasyPatch(ctx context.Context, c access.Caller, kind string, id uuid.UUID) (Landing, error) {
 	if !c.CanAnywhere(rbac.PermPatchView) {
 		return Landing{}, apperr.Forbidden()
@@ -81,7 +87,7 @@ func (s *Service) FromEasyPatch(ctx context.Context, c access.Caller, kind strin
 		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, apperr.ErrNotFound) {
 			device, err = uuid.Nil, nil
 		}
-	case "organizations":
+	case "organizations", "alerts":
 		err = s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 			return tx.QueryRow(ctx, `SELECT organization_id FROM easypatch_organizations WHERE easypatch_id = $1`, id).Scan(&org)
 		})

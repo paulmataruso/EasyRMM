@@ -62,6 +62,35 @@ func (a *API) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/v1/auth/security-keys/finish", httpapi.RequireState(auth.StateMFAEnrollment, auth.StateActive)(h(a.finishKey)))
 	mux.Handle("POST /api/v1/auth/security-keys/{id}/remove", httpapi.RequireActive(h(a.removeKey)))
 	mux.Handle("POST /api/v1/auth/passkey-prompt", httpapi.RequireActive(h(a.answerPasskeyPrompt)))
+	// The link `easyrmm-server recover` prints (ADR-0044).
+	mux.Handle("POST /api/v1/auth/recover", h(a.recover))
+}
+
+type recoverRequest struct {
+	Token string `json:"token"`
+}
+
+// recover signs in with a one-time recovery link from the server's shell.
+func (a *API) recover(w http.ResponseWriter, r *http.Request) error {
+	var req recoverRequest
+	if err := httpapi.DecodeJSON(w, r, &req); err != nil {
+		return err
+	}
+	// Signing in replaces any existing session in this browser.
+	if old := httpapi.IdentityFrom(r.Context()); old != nil {
+		_ = a.svc.Logout(r.Context(), old.Session, old.User, httpapi.Meta(r))
+	}
+	token, sess, err := a.svc.RedeemRecoveryLink(r.Context(), strings.TrimSpace(req.Token), httpapi.Meta(r))
+	switch {
+	case errors.Is(err, auth.ErrRecoveryLinkInvalid):
+		return &httpapi.Error{Status: http.StatusBadRequest, Code: "invalid_recovery_link",
+			Message: "This link has expired or was already used. Run easyrmm-server recover on the server for a new one."}
+	case errors.Is(err, auth.ErrAccountUnavailable):
+		return &httpapi.Error{Status: http.StatusForbidden, Code: "account_unavailable", Message: "This account is disabled or locked."}
+	case err != nil:
+		return mapAuthError(err)
+	}
+	return a.respondWithToken(w, r, token, sess.ExpiresAt)
 }
 
 func mapAuthError(err error) error {

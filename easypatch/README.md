@@ -1,43 +1,36 @@
 <p align="center">
-  <img src="frontend/public/logo.svg" width="112" alt="">
+  <img src="branding/logo.svg" width="112" alt="">
 </p>
 <h1 align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="frontend/public/wordmark.svg">
-    <img src="frontend/public/wordmark-light.svg" height="72" alt="EasyPatch">
+    <source media="(prefers-color-scheme: dark)" srcset="branding/wordmark.svg">
+    <img src="branding/wordmark-light.svg" height="72" alt="EasyPatch">
   </picture>
 </h1>
 
 <p align="center">
-  <b>EasyRMM's patch management: self-hosted Windows and Linux patching for Managed Service Providers.</b>
+  <b>EasyRMM's patching engine: Windows and Linux patching for Managed Service Providers.</b>
 </p>
 
 <p align="center">
   <a href="https://github.com/paulmataruso/EasyRMM/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/paulmataruso/EasyRMM/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="LICENSE.md"><img alt="License: FSL-1.1-ALv2" src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue"></a>
+  <a href="../LICENSE.md"><img alt="License: FSL-1.1-ALv2" src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue"></a>
   <img alt="Platforms: Windows and Linux agents" src="https://img.shields.io/badge/agents-Windows%20%7C%20Linux-informational">
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#screenshots">Screenshots</a> ·
+  <a href="#part-of-easyrmm">Part of EasyRMM</a> ·
   <a href="#features">Features</a> ·
-  <a href="docs/installation.md">Installation</a> ·
-  <a href="docs/installation.md#6-offer-agent-packages">Downloads</a> ·
+  <a href="#documentation">Documentation</a> ·
+  <a href="#development">Development</a> ·
   <a href="#license">License</a>
 </p>
 
-EasyPatch is the patch management component of [EasyRMM](../README.md) and part of the EasyRMM
-project. It is also a complete program: it can be deployed by itself, and EasyRMM can use any
-EasyPatch server. A small agent reports Windows Update status, or the package upgrades available
-from apt or dnf, to a central web console. From there an administrator installs the missing
-updates on one computer, a site, or a whole customer, sees which missing updates fix actively
-exploited vulnerabilities, and tracks compliance across every customer.
-
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/images/dashboard-light.png">
-  <img src="docs/images/dashboard.png" alt="EasyPatch dashboard: compliance, known-exploited exposure, online and offline endpoints, a 30-day compliance trend and the least compliant organizations">
-</picture>
+EasyPatch is the patching engine of [EasyRMM](../README.md). A small agent reports Windows Update
+status, or the package upgrades available from apt or dnf, to the engine. Through EasyRMM's
+console an administrator installs the missing updates on one computer, a site, or a whole
+customer, sees which missing updates fix actively exploited vulnerabilities, and tracks
+compliance across every customer.
 
 ## Principles
 
@@ -61,41 +54,19 @@ exploited vulnerabilities, and tracks compliance across every customer.
 * EasyPatch's code is in `easypatch/` of the
   [EasyRMM repository](https://github.com/paulmataruso/EasyRMM). Issues and security reports
   for EasyPatch go there.
-* EasyRMM uses EasyPatch's API for simple patching (scan, install, restart, retry), links into
-  EasyPatch's console for everything else, and has an EasyRMM | EasyPatch switch between the two
-  consoles. See EasyRMM's [patching guide](../docs/operations/patching.md).
-* People can sign in to EasyPatch through EasyRMM: EasyPatch's [single sign-on
-  guide](docs/single-sign-on.md#easyrmm) explains the setup and the accounts EasyRMM manages.
-* EasyPatch keeps its own license ([License](#license)), builds and releases. Its releases are
-  tagged `easypatch-v*` in the EasyRMM repository. Releases up to 1.10.0, and their downloads,
-  are in EasyPatch's [former repository](https://github.com/paulmataruso/EasyPatch/releases).
-
-## Screenshots
-
-All screenshots show fictional demo data.
-
-<table>
-  <tr>
-    <td width="50%"><a href="docs/images/endpoint-updates.png"><img src="docs/images/endpoint-updates.png" alt="Missing updates of one endpoint, with CVE counts, known-exploited flags, rollout delays and winget application updates"></a><br><sub><b>Endpoint updates.</b> Known-exploited first, CVE counts, rollout delays, winget application updates.</sub></td>
-    <td width="50%"><a href="docs/images/updates.png"><img src="docs/images/updates.png" alt="Fleet-wide update list across all organizations, known-exploited updates first"></a><br><sub><b>Update management.</b> Every update across the fleet, known-exploited first.</sub></td>
-  </tr>
-  <tr>
-    <td><a href="docs/images/update-detail.png"><img src="docs/images/update-detail.png" alt="One cumulative update with the CVEs it fixes and its CISA KEV entry"></a><br><sub><b>Update detail.</b> The CVEs an update fixes, with CISA KEV dates.</sub></td>
-    <td><a href="docs/images/linux-updates.png"><img src="docs/images/linux-updates.png" alt="A Rocky Linux server with security package updates and advisories"></a><br><sub><b>Linux endpoints.</b> apt and dnf upgrades with advisories and CVEs.</sub></td>
-  </tr>
-  <tr>
-    <td><a href="docs/images/endpoints.png"><img src="docs/images/endpoints.png" alt="Endpoint list with compliance, tags, operating system support status and agent versions"></a><br><sub><b>Endpoints.</b> Compliance, tags, OS support status and filters.</sub></td>
-    <td><a href="docs/images/policy.png"><img src="docs/images/policy.png" alt="Organization policy with automatic installation, maintenance window and rollout delays"></a><br><sub><b>Policy.</b> Maintenance windows and rollout delays, inherited or overridden.</sub></td>
-  </tr>
-  <tr>
-    <td><a href="docs/images/job-detail.png"><img src="docs/images/job-detail.png" alt="An install job with a timeline and per-update results, one failed with its error code"></a><br><sub><b>Jobs.</b> Per-update results, verified by a scan, never assumed.</sub></td>
-    <td><a href="docs/images/alerts.png"><img src="docs/images/alerts.png" alt="Open alerts for known-exploited vulnerabilities, offline endpoints and failed installs"></a><br><sub><b>Alerts.</b> Email, Slack, Teams or signed webhooks.</sub></td>
-  </tr>
-  <tr>
-    <td><a href="docs/images/monthly-reports.png"><img src="docs/images/monthly-reports.png" alt="Monthly PDF reports per organization"></a><br><sub><b>Monthly reports.</b> One PDF per customer and month, emailed on schedule.</sub></td>
-    <td><a href="docs/images/monthly-report-pdf.png"><img src="docs/images/monthly-report-pdf.png" alt="First page of a monthly compliance report PDF"></a><br><sub><b>Report PDF.</b> Compliance trend, sites and the most widely missing updates.</sub></td>
-  </tr>
-</table>
+* Every EasyRMM deployment runs EasyPatch's server as its patching engine, on loopback only
+  ([Docker deployment](../docs/deployment/docker.md#patching-engine)). People use it through
+  EasyRMM's console and roles, and EasyRMM calls the engine for them
+  ([ADR-0038](../docs/architecture/adr/0038-statements-to-the-patching-engine.md)). Agents reach
+  it through EasyRMM's address. See EasyRMM's [patching guide](../docs/operations/patching.md).
+* EasyPatch no longer has a web console, proxy, installer or accounts of its own, and is not
+  installed by itself. A standalone EasyPatch server (releases 1.4 to 1.10) moves into EasyRMM with its
+  endpoints, history and settings: see
+  [Importing a standalone EasyPatch](../docs/operations/import-easypatch.md).
+* EasyPatch has the same license as the rest of EasyRMM ([License](#license)). It keeps its own
+  builds and version, and is released with EasyRMM: each EasyRMM release builds the engine's image
+  and its agent packages from the same commit. Releases up to 1.10.0, and their downloads, are in
+  EasyPatch's [former repository](https://github.com/paulmataruso/EasyPatch/releases).
 
 ## Features
 
@@ -107,7 +78,7 @@ All screenshots show fictional demo data.
   every endpoint in it has the tag. A **rollout delay** in policy (separate values for security
   and other updates) keeps new updates from being required or installed by schedule until they
   have been out for a given number of days, so a pilot ring can go first.
-* **Uninstall from the console.** Removing the agent from an endpoint is one confirmed action;
+* **Uninstall in one action.** Removing the agent from an endpoint is one confirmed action;
   the agent removes its own package, restores the Windows Update settings EasyPatch changed and
   unenrolls.
 * **Install all missing updates** on one endpoint or on many selected endpoints at once, or
@@ -140,8 +111,8 @@ All screenshots show fictional demo data.
   off in policy), and administrators can send preset messages. There is no free-text messaging.
 * **Windows Update policy overrides** per organization, site or endpoint: Automatic Updates
   mode, feature update deferral and target version, quality update deferral and pausing, and
-  restart behaviour with active hours. Each group is *Not configured* by default. The console
-  shows whether each endpoint applied the settings, or whether another policy source such as
+  restart behaviour with active hours. Each group is *Not configured* by default. The engine
+  reports whether each endpoint applied the settings, or whether another policy source such as
   domain Group Policy overrides them.
 * **Durable job queue** in PostgreSQL. Jobs survive endpoint disconnects and server restarts.
   The agent acknowledges each delivery, and unacknowledged jobs are delivered again. Each job
@@ -165,7 +136,8 @@ All screenshots show fictional demo data.
 * **Monthly reports per customer**: a PDF per organization and month (compliance, installed and
   failed updates, most widely missing and known-exploited updates, operating systems, optional
   endpoint list), generated on demand or emailed on a chosen day to the organization's recipients
-  over STARTTLS or TLS. See [docs/compliance.md](docs/compliance.md#monthly-reports).
+  over STARTTLS or TLS. See [docs/compliance.md](docs/compliance.md#monthly-reports) and
+  [the first page of one](docs/images/monthly-report-pdf.png) (fictional demo data).
 * **Third-party application updates (Windows, opt-in)**: upgrades approved, already installed
   applications with winget from the winget community repository, verified by checking the
   installed version afterwards. Off by default; applications are approved per package ID in
@@ -176,19 +148,14 @@ All screenshots show fictional demo data.
   * limited-use, expiring enrollment tokens;
   * tokenless deployment codes for RMM scripts. Each computer that uses one waits for an
     administrator to approve it, after the administrator compares key fingerprints.
-* **Strong admin security**:
-  * sign-in with the email address; Argon2id password hashing and mandatory MFA with recovery
-    codes, by authenticator app (TOTP) or security key;
-  * passkeys (WebAuthn) for passwordless sign-in, offered after sign-in to users without one
-    (needs a DNS name with a trusted certificate);
-  * single sign-on with OpenID Connect providers (Microsoft Entra ID, Google, Keycloak and
-    others), linking existing users by verified email address. See
-    [docs/single-sign-on.md](docs/single-sign-on.md);
-  * server-side sessions, CSRF protection, lockout and rate limits;
-  * three roles: SuperAdmin, Admin, ReadOnly;
-  * API tokens for scripts and integrations: read-only or operator, optionally limited to
-    some organizations, expiring and revocable, stored only as hashes;
-  * an audit log of administrative actions.
+* **Admin access through EasyRMM**:
+  * no sign-in or API tokens of its own: EasyRMM signs a short statement for each call, naming
+    the person, the role and the organizations (see
+    [docs/security.md](docs/security.md#admin-authentication)); scripts and integrations use
+    EasyRMM's API;
+  * three roles: SuperAdmin, Admin, ReadOnly, and per-organization access, checked by the
+    engine for every call;
+  * rate limits and an audit log of administrative actions.
 * **Per-device agent credentials.** Each agent generates its own ECDSA P-256 key pair; only the
   public key goes to the server. Every request is signed with a timestamp and nonce for replay
   protection, and keys rotate automatically. The agent contains no shared secret.
@@ -212,65 +179,30 @@ All screenshots show fictional demo data.
 ## Architecture
 
 ```
-Windows/Linux agents ─HTTPS─┐
-                            ├──► caddy (TLS, web console) ──► api ──► postgres
-Admin browsers ─────HTTPS───┘                                  worker ──┘
+Windows/Linux agents ─HTTPS─► EasyRMM's edge ─/api/v1/agents, /downloads─┐
+                                                                         ├──► api ──► postgres
+EasyRMM's server ─── loopback, one signed statement per request ─────────┘   worker ──┘
 ```
 
 | Component | Technology |
 |---|---|
 | Server API and worker | ASP.NET Core 10, EF Core 10, PostgreSQL 18 |
-| Web console | React 19, TypeScript, Vite, Tailwind CSS (served by Caddy) |
-| Reverse proxy | Caddy 2 with automatic certificates |
 | Windows agent | .NET 10 Windows service using the Windows Update Agent COM API, plus a tray icon (Windows Forms) in each user session |
 | Linux agent | .NET 10 self-contained systemd service driving apt or dnf |
 | macOS agent (experimental) | .NET 10 self-contained launchd daemon driving `softwareupdate` |
 | Installers | WiX Toolset v5 MSI; `.deb` and `.rpm` packages; macOS `.pkg` (x64 and ARM64) |
-| Deployment | Docker Compose: `caddy`, `api`, `worker`, `postgres`, plus a one-shot `migrate` |
+| Deployment | The server image (`deployment/server/Dockerfile`). EasyRMM's Compose file runs it as `easypatch-migrate`, `easypatch-api` and `easypatch-worker`, with the engine's database in EasyRMM's PostgreSQL |
 
 See [docs/architecture.md](docs/architecture.md) for the full design.
 
-## Quick start
-
-On a Linux host (x64 or ARM64) with Docker, a DNS name pointing at it, and ports 80 and 443 open:
-
-```bash
-git clone https://github.com/paulmataruso/EasyRMM.git && cd EasyRMM/easypatch
-./scripts/init-secrets.sh                 # database password secret, data directories, .env
-$EDITOR .env                              # set EASYPATCH_DOMAIN and ACME_EMAIL
-docker compose pull                       # ghcr.io/paulmataruso/easypatch-server and -proxy
-docker compose up -d
-docker compose run --rm api create-admin --email admin@example.com
-```
-
-EasyPatch lives in the `easypatch/` folder of the EasyRMM repository; run every command there.
-To run a specific release, check out its `easypatch-v*` tag first (for 1.10.0 and older, see the
-installation guide). The Compose project is called `easypatch`: on a machine that already runs an
-EasyPatch server, give a second copy another name (`docker compose -p …` or
-`COMPOSE_PROJECT_NAME`), or it takes over that server's containers. See
-[Get the deployment files](docs/installation.md#1-get-the-deployment-files).
-
-Then:
-
-1. Open `https://<EASYPATCH_DOMAIN>`, sign in with that email address and the printed temporary password, set up MFA
-   and choose a new password.
-2. Download the agent packages (MSI, `.deb`, `.rpm` and their `.sig` files) of the release you
-   run into `data/agent-packages/`: from the EasyRMM repository's releases tagged `easypatch-v*`,
-   or, up to 1.10.0, from EasyPatch's
-   [former repository](https://github.com/paulmataruso/EasyPatch/releases). See
-   [Offer agent packages](docs/installation.md#6-offer-agent-packages).
-3. Create an organization, then deploy agents with an enrollment token or a deployment code.
-
-The full guides are [docs/installation.md](docs/installation.md),
-[docs/agent-installation.md](docs/agent-installation.md) and
-[docs/linux-agent.md](docs/linux-agent.md). To build everything from source instead, see
-[Building the images from source](docs/installation.md#building-the-images-from-source).
-
 ## Documentation
+
+These guides were written when EasyPatch had its own web console. Where they name one of its
+screens, EasyRMM's patching pages now do that work: see EasyRMM's
+[patching guide](../docs/operations/patching.md).
 
 | Document | Contents |
 |---|---|
-| [installation.md](docs/installation.md) | Server installation, first sign-in, agent packages, upgrades, backup and restore, CLI commands |
 | [agent-installation.md](docs/agent-installation.md) | Windows agent requirements, MSI properties, RMM deployment, command line, logs, building the MSI |
 | [linux-agent.md](docs/linux-agent.md) | Linux agent: supported distributions, install script and token enrollment, how packages are scanned and installed, self-update, building the packages |
 | [macos-agent.md](docs/macos-agent.md) | macOS agent (experimental, not for production use): known limitations, installing, how updates are scanned and installed, uninstalling, building the package |
@@ -278,23 +210,20 @@ The full guides are [docs/installation.md](docs/installation.md),
 | [application-updates.md](docs/application-updates.md) | Third-party application updates with winget: requirements, approval, what the agent runs, restarts, limitations and trust model |
 | [compliance.md](docs/compliance.md) | Compliance statuses and rules, required updates, CVE and known-exploited data, OS support status, reports and monthly PDF reports |
 | [alerts.md](docs/alerts.md) | Alert rules, notification channels (email, Slack, Teams, signed webhooks), delivery and troubleshooting |
-| [single-sign-on.md](docs/single-sign-on.md) | Single sign-on with OpenID Connect: how accounts are linked, MFA, settings, Entra ID, Google and Keycloak setup |
 | [security.md](docs/security.md) | Security model, threat model, hardening checklist, known limitations |
-| [api.md](docs/api.md) | REST API (admin and agent protocol). The live OpenAPI document is served at `/api/docs` to signed-in administrators |
-| [troubleshooting.md](docs/troubleshooting.md) | Diagnosing server, sign-in, agent and job problems |
+| [api.md](docs/api.md) | REST API (admin and agent protocol). The live OpenAPI document is served at `/api/openapi/v1.json` to statements from EasyRMM |
+| [troubleshooting.md](docs/troubleshooting.md) | Diagnosing server, API access, agent and job problems |
 
 ## Development
 
-Requirements: the .NET SDK pinned in `global.json` (10.0.404 or a later feature band), Node.js
-24, and Docker (the integration tests start PostgreSQL with Testcontainers). Run these from
+Requirements: the .NET SDK pinned in `global.json` (10.0.404 or a later feature band) and
+Docker (the integration tests start PostgreSQL with Testcontainers). Run these from
 `easypatch/`:
 
 ```bash
 dotnet build EasyPatch.slnx -c Release
 dotnet test backend/Tests/EasyPatch.Tests.csproj                 # unit + integration tests
 dotnet test agent/EasyPatch.Agent.Tests/EasyPatch.Agent.Tests.csproj
-
-cd frontend && npm ci && npm run typecheck && npm test && npm run build
 ```
 
 The backend integration tests run against a real PostgreSQL database. They include an
@@ -307,19 +236,19 @@ Linux with Docker (`scripts/build-msi-linux.sh`, which runs WiX under Wine) or o
 `scripts/build-agent.ps1`, which can also sign them. The EasyPatch agent workflow
 (`.github/workflows/easypatch-agent.yml` at the repository root, run by `ci.yml` when the agent
 changes) builds them on Windows. `scripts/build-linux-packages.sh` builds the signed `.deb` and
-`.rpm` packages of the Linux agent (Docker). Pushing an EasyPatch version tag
-(`easypatch-v<version>`) runs `easypatch-release.yml`, which tests everything, builds and
-release-signs the agent packages, publishes the x64 and ARM64 images to GitHub Container Registry
-and creates the GitHub Release. How EasyPatch shares the repository and its CI with EasyRMM is in
-[docs/development/monorepo.md](../docs/development/monorepo.md).
+`.rpm` packages of the Linux agent (Docker). EasyRMM's release workflow (`release.yml`, on an
+`easyrmm-v*` tag) tests everything, builds and release-signs the agent packages, and publishes
+the server image (x64 and ARM64) carrying them to GitHub Container Registry
+([Releasing](../docs/development/releasing.md)). How EasyPatch shares the repository and its CI with
+EasyRMM is in [docs/development/monorepo.md](../docs/development/monorepo.md).
 
 ```
 shared/      Contracts shared by agent and server (DTOs, request signing, update classification)
 backend/     Core (domain), Infrastructure (EF Core, services), API, Worker, Tests
 agent/       Agent core, communication, Windows Update, inventory, Windows, Linux and macOS hosts, apt/dnf, softwareupdate, tests, installers
-frontend/    Web console
-deployment/  Dockerfiles and Caddy configuration
-scripts/     init-secrets, backup, restore, agent and MSI builds, agent icon, dependency audit
+deployment/  The server image's Dockerfile
+scripts/     Agent and MSI builds, agent packages for the server image, agent icon, dependency audit
+branding/    The EasyPatch logo and wordmarks (the agent's icon is made from the logo)
 keys/        The release public key built into official agent builds
 tools/       Release signing tool
 docs/        Documentation
@@ -327,7 +256,7 @@ docs/        Documentation
 
 ## Project status
 
-Version 1.10.0 (1.4.0 was the first public release). Server, console and agent logic are covered
+Version 1.11.1 (1.4.0 was the first public release). Server and agent logic are covered
 by automated tests on Linux, including an end-to-end test that drives the real agent runtime
 against the real API and PostgreSQL. Release builds are made and signed by GitHub Actions.
 
@@ -361,8 +290,9 @@ contributor terms, and the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-EasyPatch is source-available under the **Functional Source License, Version 1.1, ALv2 Future
-License** ([FSL-1.1-ALv2](LICENSE.md)). Copyright 2026 DHI Technical Services LLC.
+EasyPatch is part of EasyRMM, which is source-available under the **Functional Source License,
+Version 1.1, ALv2 Future License** ([FSL-1.1-ALv2](../LICENSE.md)). Copyright 2026 DHI Technical
+Services LLC.
 
 * You may use, copy, modify and redistribute EasyPatch for any purpose **except a Competing
   Use**: making it available to others in a commercial product or service that substitutes for
@@ -375,8 +305,6 @@ License** ([FSL-1.1-ALv2](LICENSE.md)). Copyright 2026 DHI Technical Services LL
 * For a commercial license, contact DHI Technical Services LLC at
   [paulmataruso@dhitechnical.com](mailto:paulmataruso@dhitechnical.com).
 
-This license covers `easypatch/` only. The rest of the EasyRMM repository is EasyRMM's code,
-under the GNU Affero General Public License v3.0 or later; see
-[LICENSING.md](../LICENSING.md).
+The same license covers the whole EasyRMM repository; see [LICENSING.md](../LICENSING.md).
 
 Third-party components keep their own licenses.

@@ -16,14 +16,14 @@ namespace EasyPatch.Tests.Integration;
 
 public sealed class JobQueueTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
-    private AdminSession root = null!;
+    private AdminClient root = null!;
     private OrganizationDto org = null!;
     private SiteDto site = null!;
 
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        root = await SuperAdminAsync();
+        root = SuperAdmin();
         (org, site) = await CreateOrgAsync(root);
     }
 
@@ -53,7 +53,7 @@ public sealed class JobQueueTests(PostgresFixture postgres) : IntegrationTest(po
             Missing = missing,
             Installed = installed ?? [],
         });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.NoContent);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.NoContent);
     }
 
     private async Task ReportAsync(SignedAgent agent, Guid jobId, long sequence, JobStatus status, HttpStatusCode expected = HttpStatusCode.NoContent,
@@ -67,13 +67,13 @@ public sealed class JobQueueTests(PostgresFixture postgres) : IntegrationTest(po
             Items = items ?? [],
             RebootRequired = rebootRequired,
         });
-        await AdminSession.EnsureAsync(response, expected);
+        await AdminClient.EnsureAsync(response, expected);
     }
 
     private async Task AckAsync(SignedAgent agent, Guid jobId)
     {
         using var response = await agent.PostAsync($"api/v1/agents/jobs/{jobId}/ack", new { });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.OK);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
     }
 
     private Task<JobDetailDto> JobAsync(Guid id) => root.GetAsync<JobDetailDto>($"/api/v1/jobs/{id}");
@@ -212,7 +212,6 @@ public sealed class JobQueueTests(PostgresFixture postgres) : IntegrationTest(po
         Clock.Advance(TimeSpan.FromMinutes(20));
         await RunMaintenanceAsync<PresenceMonitorTask>();
         Assert.Equal(EndpointStatus.Active, await WithDbAsync(db => db.Endpoints.Select(e => e.Status).FirstAsync()));
-        root = await LoginAsync("root", DefaultPassword, root.MfaSecret);
         Assert.False((await root.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{agent.EndpointId}")).Summary.IsOnline);
 
         var scan = await root.SendAsync<JobSummaryDto>(HttpMethod.Post, $"/api/v1/endpoints/{agent.EndpointId}/scan", null, HttpStatusCode.Accepted);

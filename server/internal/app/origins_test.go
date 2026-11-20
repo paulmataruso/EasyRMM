@@ -99,6 +99,35 @@ func TestOriginsAndRouting(t *testing.T) {
 	if strings.Join(names, ",") != "rmm.test,mesh.rmm.test" || len(ips) != 2 {
 		t.Errorf("internal mode addresses: %v %v", names, ips)
 	}
+	// The names served besides the origins share the certificate.
+	cfg.Patching.AgentHostnames = []string{"patch.old.test"}
+	names, _ = internalAddresses(cfg)
+	if strings.Join(names, ",") != "rmm.test,mesh.rmm.test,patch.old.test" {
+		t.Errorf("internal mode with an imported EasyPatch's name: %v", names)
+	}
+}
+
+func TestHostHandlers(t *testing.T) {
+	h := hostHandlers{"patch.old.test": http.NotFoundHandler()}
+	for host, want := range map[string]bool{
+		"patch.old.test": true, "PATCH.Old.Test.": true, "patch.old.test:443": true, "patch.old.test:8443": true,
+		"rmm.test": false, "old.test": false, "": false, "[::1]:443": false,
+	} {
+		if _, ok := h.match(host); ok != want {
+			t.Errorf("match(%q) = %v, want %v", host, ok, want)
+		}
+	}
+}
+
+func TestACMEHosts(t *testing.T) {
+	cfg := testConfig(t)
+	if got := strings.Join(acmeHosts(cfg), ","); got != "rmm.test,mesh.rmm.test" {
+		t.Errorf("acme hosts %s", got)
+	}
+	cfg.Patching.AgentHostnames = []string{"patch.old.test"}
+	if got := strings.Join(acmeHosts(cfg), ","); got != "rmm.test,mesh.rmm.test,patch.old.test" {
+		t.Errorf("acme hosts with an imported EasyPatch's name: %s", got)
+	}
 }
 
 // fakeConn is enough of a net.Conn for choosing a certificate.

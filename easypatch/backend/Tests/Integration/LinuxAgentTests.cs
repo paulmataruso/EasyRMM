@@ -37,7 +37,7 @@ public sealed class LinuxAgentTests(PostgresFixture postgres) : AgentUpdateTestB
             AgentVersion = "1.3.0",
             Device = Debian,
         }, TestJson.Options, TestContext.Current.CancellationToken);
-        await AdminSession.EnsureAsync(response, HttpStatusCode.OK);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.OK);
         var enrolled = (await response.Content.ReadFromJsonAsync<EnrollResponse>(TestJson.Options, TestContext.Current.CancellationToken))!;
         agent.CredentialId = enrolled.CredentialId;
         agent.EndpointId = enrolled.EndpointId!.Value;
@@ -82,7 +82,7 @@ public sealed class LinuxAgentTests(PostgresFixture postgres) : AgentUpdateTestB
             Missing = missing,
             Installed = installed ?? [],
         });
-        await AdminSession.EnsureAsync(response, HttpStatusCode.NoContent);
+        await AdminClient.EnsureAsync(response, HttpStatusCode.NoContent);
     }
 
     [Fact]
@@ -112,7 +112,7 @@ public sealed class LinuxAgentTests(PostgresFixture postgres) : AgentUpdateTestB
             KeyProtection = "systemd-creds-host",
             UpdateSource = new UpdateSourceInfo { Type = UpdateSourceType.PackageRepositories, AutomaticUpdatesMode = "Disabled (unattended-upgrades)" },
         });
-        await AdminSession.EnsureAsync(inventory, HttpStatusCode.NoContent);
+        await AdminClient.EnsureAsync(inventory, HttpStatusCode.NoContent);
 
         var detail = await Root.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{agent.EndpointId}");
 

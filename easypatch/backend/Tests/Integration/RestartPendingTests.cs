@@ -11,7 +11,7 @@ namespace EasyPatch.Tests.Integration;
 /// <summary>"Restart all that need it" for an organization or a site.</summary>
 public sealed class RestartPendingTests(PostgresFixture postgres) : IntegrationTest(postgres)
 {
-    private AdminSession root = null!;
+    private AdminClient root = null!;
     private OrganizationDto org = null!;
     private SiteDto hq = null!;
     private SiteDto branch = null!;
@@ -21,7 +21,7 @@ public sealed class RestartPendingTests(PostgresFixture postgres) : IntegrationT
     public override async ValueTask InitializeAsync()
     {
         await base.InitializeAsync();
-        root = await SuperAdminAsync();
+        root = SuperAdmin();
         (org, hq) = await CreateOrgAsync(root);
         branch = await root.SendAsync<SiteDto>(HttpMethod.Post, $"/api/v1/organizations/{org.Id}/sites", new SiteRequest("Branch", null, null, null),
             HttpStatusCode.Created);
@@ -115,11 +115,11 @@ public sealed class RestartPendingTests(PostgresFixture postgres) : IntegrationT
         await root.ExpectAsync(HttpMethod.Get, $"{Url}?siteId={otherSite.Id}", null, HttpStatusCode.NotFound);
         await root.ExpectAsync(HttpMethod.Post, Url, request with { SiteId = otherSite.Id }, HttpStatusCode.NotFound);
 
-        var viewer = await CreateAndLoginAsync("viewer", UserRole.ReadOnly);
+        var viewer = Admin("viewer", UserRole.ReadOnly);
         Assert.Equal(1, (await viewer.GetAsync<RestartPendingDto>(Url)).Total);
         await viewer.ExpectAsync(HttpMethod.Post, Url, request, HttpStatusCode.Forbidden);
 
-        var otherAdmin = await CreateAndLoginAsync("fabrikam-admin", UserRole.Admin, other.Id);
+        var otherAdmin = Admin("fabrikam-admin", UserRole.Admin, [other.Id]);
         await otherAdmin.ExpectAsync(HttpMethod.Get, Url, null, HttpStatusCode.NotFound);
         await otherAdmin.ExpectAsync(HttpMethod.Post, Url, request, HttpStatusCode.NotFound);
         await otherAdmin.ExpectAsync(HttpMethod.Post, $"/api/v1/organizations/{other.Id}/restart-pending", request, HttpStatusCode.OK);

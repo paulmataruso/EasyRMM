@@ -41,7 +41,19 @@ type Config struct {
 	LoginKey []byte
 	// Interval between full reconciliations (default 5 minutes).
 	Interval time.Duration
+	// DiscoveryGrace is how long a MeshCentral node in an EasyRMM group that
+	// no device claims waits before it is recorded as a discovered device.
+	// An EasyRMM agent that installs MeshAgent reports the node with its next
+	// heartbeat; recording the node before that would list the machine twice
+	// until the two are merged. Zero records a node at once. The server uses
+	// DefaultDiscoveryGrace.
+	DiscoveryGrace time.Duration
 }
+
+// DefaultDiscoveryGrace is two agent heartbeats: the time an EasyRMM agent
+// has to report the MeshAgent node it installed before MeshCentral's report of
+// the node is taken for a machine without one.
+const DefaultDiscoveryGrace = 2 * time.Minute
 
 // Service keeps MeshCentral in step with EasyRMM and launches sessions.
 type Service struct {
@@ -56,6 +68,10 @@ type Service struct {
 	devices chan struct{}
 
 	syncMu sync.Mutex // one reconciliation at a time
+	// Held by syncMu: nodes no device claims yet, with when a sync first saw
+	// them, and the refresh due when the first of them may be recorded.
+	unclaimed map[string]time.Time
+	recheck   *time.Timer
 
 	statusMu sync.Mutex
 	status   Status
@@ -84,6 +100,7 @@ func New(db *database.DB, auditLog *audit.Logger, mesh Mesh, cfg Config, log *sl
 	return &Service{
 		db: db, audit: auditLog, mesh: mesh, cfg: cfg, log: log, now: time.Now,
 		full: make(chan struct{}, 1), devices: make(chan struct{}, 1),
+		unclaimed: map[string]time.Time{},
 	}
 }
 
@@ -371,7 +388,15 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 			online = append(online, n.AgentConnected())
 		}
 	}
+	now := s.now()
+	var waiting map[string]time.Time
+	var soonest time.Duration
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		waiting, soonest = map[string]time.Time{}, 0
+		recorded, err := s.recordedNodes(ctx, tx, present)
+		if err != nil {
+			return err
+		}
 		// Enrolled devices (ADR-0015) keep the facts their EasyRMM agent
 		// reports; MeshCentral only says whether MeshAgent is connected. A
 		// link to a node in another site's group is refused: the node id an
@@ -396,6 +421,20 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 			site, ok := known[n.MeshID]
 			if !ok {
 				continue
+			}
+			if !recorded[n.ID] && s.cfg.DiscoveryGrace > 0 {
+				first, seen := s.unclaimed[n.ID]
+				if !seen {
+					first = now
+				}
+				if wait := first.Add(s.cfg.DiscoveryGrace).Sub(now); wait > 0 {
+					// Not yet: the agent that installed MeshAgent may claim it.
+					waiting[n.ID] = first
+					if soonest == 0 || wait < soonest {
+						soonest = wait
+					}
+					continue
+				}
 			}
 			hostname := n.OSName
 			if hostname == "" {
@@ -444,8 +483,42 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 			WHERE agent_public_key IS NOT NULL AND mesh_node_id IS NOT NULL AND NOT (mesh_node_id = ANY ($1))`, present); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM devices WHERE agent_public_key IS NULL AND mesh_node_id IS NOT NULL AND NOT (mesh_node_id = ANY ($1))`, present)
+		_, err = tx.Exec(ctx, `DELETE FROM devices WHERE agent_public_key IS NULL AND mesh_node_id IS NOT NULL AND NOT (mesh_node_id = ANY ($1))`, present)
 		return err
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	// Claimed, recorded and vanished nodes are forgotten: a node that comes
+	// back waits again.
+	s.unclaimed = waiting
+	if s.recheck != nil {
+		s.recheck.Stop()
+		s.recheck = nil
+	}
+	if soonest > 0 {
+		s.recheck = time.AfterFunc(soonest, s.DevicesChanged)
+	}
+	return nil
+}
+
+// recordedNodes reports which of the nodes a device already holds.
+func (s *Service) recordedNodes(ctx context.Context, tx pgx.Tx, nodes []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	if s.cfg.DiscoveryGrace <= 0 {
+		return out, nil
+	}
+	rows, err := tx.Query(ctx, `SELECT mesh_node_id FROM devices WHERE mesh_node_id = ANY ($1)`, nodes)
+	if err != nil {
+		return nil, fmt.Errorf("listing recorded devices: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var node string
+		if err := rows.Scan(&node); err != nil {
+			return nil, err
+		}
+		out[node] = true
+	}
+	return out, rows.Err()
 }

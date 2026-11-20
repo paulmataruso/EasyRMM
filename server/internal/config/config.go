@@ -4,6 +4,7 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
@@ -93,26 +94,30 @@ type Config struct {
 	SMTP              SMTPConfig
 	Mesh              MeshConfig
 	DevInsecureCookie bool // only for local development over plain HTTP
-	// EasyPatch is an EasyPatch server co-hosted behind EasyRMM's edge
-	// (ADR-0035); zero when there is none.
-	EasyPatch EasyPatchHost
+	// Patching is the patching engine in this deployment.
+	Patching Patching
+	// Authentik is the sign-in service in this deployment (ADR-0044); zero
+	// when there is none.
+	Authentik Authentik
 }
 
-// EasyPatchHost is an EasyPatch running on this server behind EasyRMM's
-// edge (ADR-0035). EasyRMM keeps ports 80 and 443; connections for
-// EasyPatch's hostname pass through, still encrypted, to its own TLS
-// listener on loopback, so EasyPatch keeps its certificates and headers.
-type EasyPatchHost struct {
-	// Hostname is EasyPatch's public name; "" when it is not co-hosted.
-	Hostname string
-	// TLSUpstream is EasyPatch's HTTPS listener (its Caddy), on loopback.
-	TLSUpstream string
-	// HTTPUpstream is its plain-HTTP listener, for its ACME HTTP-01
-	// challenges; "" sends them nowhere (TLS-ALPN-01 still works).
-	HTTPUpstream string
-	// ProxyProtocol sends a PROXY protocol v2 header with each connection,
-	// so EasyPatch sees the client's address instead of EasyRMM's.
-	ProxyProtocol bool
+// DefaultPatchingURL is where the patching engine listens
+// (deploy/docker-compose.yml, easypatch-api).
+const DefaultPatchingURL = "http://127.0.0.1:18180"
+
+// Patching is the patching engine in this deployment: EasyPatch's server,
+// called on loopback with statements signed by EASYRMM_PATCHING_KEY
+// (one-product plan, phases B3 and S; ADR-0038).
+type Patching struct {
+	// URL is the engine's address: http, on loopback.
+	URL string
+	// Key signs EasyRMM's statements to the engine; at least 32 bytes.
+	Key []byte
+	// AgentHostnames are further names EasyPatch agents reach the engine
+	// at: those of a standalone EasyPatch imported into this deployment,
+	// whose agents keep the address they enrolled with (one-product plan,
+	// phase S). EasyRMM's edge serves the agents' paths there.
+	AgentHostnames []string
 }
 
 // MeshConfig configures the MeshCentral remote-access integration.
@@ -281,15 +286,29 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 	}
 
 	c.Mesh.CertURL = l.orDefault("EASYRMM_MESH_CERT_URL", defaultCertURL(c))
-	c.EasyPatch = EasyPatchHost{
-		Hostname:      strings.ToLower(strings.TrimSuffix(l.str("EASYRMM_EASYPATCH_HOSTNAME", ""), ".")),
-		TLSUpstream:   l.orDefault("EASYRMM_EASYPATCH_TLS_UPSTREAM", "127.0.0.1:19443"),
-		HTTPUpstream:  l.str("EASYRMM_EASYPATCH_HTTP_UPSTREAM", "127.0.0.1:19080"),
-		ProxyProtocol: l.boolean("EASYRMM_EASYPATCH_PROXY_PROTOCOL", true),
+	// EasyPatch on this server behind the edge (ADR-0035) was retired
+	// (ADR-0046): an .env that still names it is refused, not ignored.
+	if l.str("EASYRMM_EASYPATCH_HOSTNAME", "") != "" {
+		l.errs = append(l.errs, errors.New("EASYRMM_EASYPATCH_HOSTNAME is no longer a setting: EasyPatch on this server is replaced by the patching engine in this deployment; remove it, then import that EasyPatch (deploy/scripts/import-easypatch.sh)"))
 	}
-	if !c.EasyPatch.Enabled() {
-		c.EasyPatch = EasyPatchHost{}
+	// Before the engine always ran here, EASYRMM_PATCHING chose between it
+	// ("bundled", still harmless) and an EasyPatch server set up in Settings
+	// (ADR-0046).
+	if mode := l.str("EASYRMM_PATCHING", ""); mode != "" && !strings.EqualFold(mode, "bundled") {
+		l.errs = append(l.errs, fmt.Errorf("EASYRMM_PATCHING is no longer a setting (patching always uses the engine in this deployment); remove it, got %q", mode))
 	}
+	c.Patching = Patching{URL: l.orDefault("EASYRMM_PATCHING_URL", DefaultPatchingURL)}
+	for _, h := range splitList(l.str("EASYRMM_PATCHING_AGENT_HOSTNAMES", "")) {
+		c.Patching.AgentHostnames = append(c.Patching.AgentHostnames, strings.ToLower(strings.TrimSuffix(h, ".")))
+	}
+	if raw := l.secret("EASYRMM_PATCHING_KEY"); raw != "" {
+		key, err := base64.StdEncoding.DecodeString(raw)
+		if err != nil {
+			l.errs = append(l.errs, errors.New("EASYRMM_PATCHING_KEY must be base64 (setup.sh generates it)"))
+		}
+		c.Patching.Key = key
+	}
+	c.loadAuthentik(l)
 	c.validate(l)
 	if len(l.errs) > 0 {
 		return nil, errors.Join(l.errs...)
@@ -389,40 +408,76 @@ func (c *Config) validate(l *loader) {
 		add("EASYRMM_DEV_INSECURE_COOKIES is only allowed with EASYRMM_TLS_MODE=offload")
 	}
 	c.validateMesh(add)
-	c.validateEasyPatch(add)
+	c.validatePatching(add)
+	c.validateAuthentik(add)
+	c.validateExtraHostnames(add)
 }
 
-// Enabled reports whether EasyPatch is co-hosted.
-func (e EasyPatchHost) Enabled() bool { return e.Hostname != "" }
+func (c *Config) validatePatching(add func(string, ...any)) {
+	p := c.Patching
+	if len(p.Key) < 32 {
+		add("EASYRMM_PATCHING_KEY must be at least 32 bytes, base64-encoded; run deploy/scripts/setup.sh to add it")
+	}
+	// The engine is reached on loopback only, without TLS: anything else
+	// would send statements across the network in the clear.
+	u, err := url.Parse(p.URL)
+	host := ""
+	if err == nil {
+		host = u.Hostname()
+	}
+	if ip := net.ParseIP(host); err != nil || u.Scheme != "http" || ip == nil || !ip.IsLoopback() || u.Port() == "" ||
+		(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.User != nil || u.Fragment != "" {
+		add("EASYRMM_PATCHING_URL must be http:// on a loopback address and port, such as %s, got %q", DefaultPatchingURL, p.URL)
+	}
+}
 
-func (c *Config) validateEasyPatch(add func(string, ...any)) {
-	e := c.EasyPatch
-	if !e.Enabled() {
-		return
+// extraHost is a name the edge serves besides its origins, and the
+// setting that names it.
+type extraHost struct{ name, setting string }
+
+func (c *Config) extraHosts() []extraHost {
+	var out []extraHost
+	for _, h := range c.Patching.AgentHostnames {
+		out = append(out, extraHost{h, "EASYRMM_PATCHING_AGENT_HOSTNAMES"})
 	}
-	if isIP(e.Hostname) || !validHostname(e.Hostname) {
-		add("EASYRMM_EASYPATCH_HOSTNAME must be a DNS name such as patch.example.com, got %q", e.Hostname)
+	if c.Authentik.Enabled() {
+		out = append(out, extraHost{c.Authentik.Hostname, "EASYRMM_AUTHENTIK_HOSTNAME"})
 	}
-	if c.TLSMode == TLSOffload {
-		add("EASYRMM_EASYPATCH_HOSTNAME needs EasyRMM to own ports 80 and 443 (EASYRMM_TLS_MODE acme, manual or internal); with a reverse proxy in front, route EasyPatch's name in the proxy instead")
+	return out
+}
+
+// ExtraHostnames are the names the edge serves besides its origins, with
+// TLS from the same source as theirs (ACME, the certificate file or the
+// internal certificate authority): an imported EasyPatch's names, and
+// Authentik's sign-in name.
+func (c *Config) ExtraHostnames() []string {
+	var out []string
+	for _, h := range c.extraHosts() {
+		out = append(out, h.name)
 	}
+	return out
+}
+
+// validateExtraHostnames checks that each further name is a DNS name that
+// nothing else in the deployment already answers.
+func (c *Config) validateExtraHostnames(add func(string, ...any)) {
+	taken := map[string]string{}
 	for _, o := range c.Origins() {
-		if strings.EqualFold(e.Hostname, o.Console.Hostname()) || (o.Mesh != nil && strings.EqualFold(e.Hostname, o.Mesh.Hostname())) {
-			add("EASYRMM_EASYPATCH_HOSTNAME must differ from EasyRMM's own names, got %q", e.Hostname)
-			break
+		taken[canonicalHost(o.Console.Hostname())] = "EASYRMM_PUBLIC_URL"
+		if o.Mesh != nil {
+			taken[canonicalHost(o.Mesh.Hostname())] = "EASYRMM_MESH_PUBLIC_URL"
 		}
 	}
-	// EasyPatch's ports are published on loopback only: anything else
-	// would let the network reach it around the edge.
-	upstream := func(key, addr string) {
-		host, _, err := net.SplitHostPort(addr)
-		if ip := net.ParseIP(host); err != nil || ip == nil || !ip.IsLoopback() {
-			add("%s must be a loopback address and port such as 127.0.0.1:19443, got %q", key, addr)
+	for _, h := range c.extraHosts() {
+		if isIP(h.name) || !validHostname(h.name) {
+			add("%s must list DNS names such as patch.example.com, got %q", h.setting, h.name)
+			continue
 		}
-	}
-	upstream("EASYRMM_EASYPATCH_TLS_UPSTREAM", e.TLSUpstream)
-	if e.HTTPUpstream != "" {
-		upstream("EASYRMM_EASYPATCH_HTTP_UPSTREAM", e.HTTPUpstream)
+		if other, ok := taken[h.name]; ok {
+			add("%s lists %s, which %s already uses", h.setting, h.name, other)
+			continue
+		}
+		taken[h.name] = h.setting
 	}
 }
 

@@ -1,51 +1,54 @@
 # Licensing
 
-This repository holds one project, EasyRMM, whose code is under two
-licences. One project does not mean one licence.
+EasyRMM, including EasyPatch (its patch management, in `easypatch/`), is
+source-available under one licence: the **Functional Source License, Version
+1.1, ALv2 Future License** ([FSL-1.1-ALv2](LICENSE.md)). Copyright 2026 DHI
+Technical Services LLC, the licensor. The decision is
+[ADR-0037](docs/architecture/adr/0037-one-licence.md).
 
-| Path | Code | Licence |
-|---|---|---|
-| Everything except `easypatch/` | EasyRMM's platform | [GNU Affero General Public License v3.0 or later](LICENSE) |
-| `easypatch/` | EasyPatch, EasyRMM's patch management | [Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2)](easypatch/LICENSE.md), licensor DHI Technical Services LLC |
+## What the licence allows
 
-EasyRMM's platform code is open source under AGPL-3.0-or-later. EasyPatch's
-code is source-available under FSL-1.1-ALv2.
+* You may use, copy, modify and redistribute EasyRMM for any purpose
+  **except a Competing Use**: making it available to others in a commercial
+  product or service that substitutes for EasyRMM or offers substantially
+  similar functionality.
+* The licensor's intent: MSPs and IT departments may run EasyRMM free of
+  charge to manage, support and patch their own computers and the computers
+  they manage for their clients, including as part of paid managed services.
+  Selling EasyRMM, or offering it or a product built from it for others to
+  run their own remote management or patch management, is not permitted.
+* Each version becomes available under the Apache License 2.0 two years after
+  it is released.
+* For a commercial licence, contact DHI Technical Services LLC at
+  [paulmataruso@dhitechnical.com](mailto:paulmataruso@dhitechnical.com).
 
-## How the two relate
+EasyRMM is source-available, not open source: the Competing Use restriction
+is not allowed by open-source definitions. Its code is public, and each
+version becomes open source (Apache-2.0) two years after its release.
 
-* They are separate programs. EasyPatch also runs on its own, and EasyRMM
-  can use any EasyPatch server.
-* EasyRMM talks to EasyPatch over EasyPatch's HTTP API and links to its
-  console.
-* Neither one links or includes the other's code.
-* Each builds and releases on its own:
-  * EasyRMM's tags are `easyrmm-v*`. Its images and bundle are built from the
-    repository root.
-  * EasyPatch's tags are `easypatch-v*`. Its images and packages are built from
-    `easypatch/`.
-* Being one project in one repository does not change either licence.
+## History
+
+* EasyRMM's code outside `easypatch/` was published in this repository under
+  the GNU Affero General Public License v3.0 or later from 2026-11-15 until
+  the licence change of 2026-11-18. Copies obtained in that period remain
+  available to their holders under that licence. Everything after the change
+  is under FSL-1.1-ALv2 only. No EasyRMM release was published under the
+  AGPL.
+* EasyPatch has always been under FSL-1.1-ALv2. Its releases up to 1.10.0
+  are in its former repository, <https://github.com/paulmataruso/EasyPatch>.
 
 ## Contributing
 
-* Changes under `easypatch/` are made under EasyPatch's terms, including the
-  licence grant to DHI Technical Services LLC
-  ([easypatch/CONTRIBUTING.md](easypatch/CONTRIBUTING.md)).
-* Changes anywhere else are made under EasyRMM's terms
-  ([CONTRIBUTING.md](CONTRIBUTING.md)).
-* A pull request that touches both is covered by both, each for its part.
-
-## Open item
-
-EasyRMM's console uses a stylesheet and a logo construction derived from
-EasyPatch's design system (ADR-0013). Before an EasyRMM release, the licensor
-must give that grant in writing, and this file will record it. See the
-[roadmap](ROADMAP.md).
+Contributions are made on the terms in [CONTRIBUTING.md](CONTRIBUTING.md),
+including a licence grant to DHI Technical Services LLC. They apply to the
+whole repository, `easypatch/` included.
 
 ## Third-party software
 
 Dependencies keep their own licences:
-
-* EasyRMM: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-* EasyPatch: there is no separate notices file. Its changelog names each
-  dependency's licence when the dependency is added
-  ([easypatch/CHANGELOG.md](easypatch/CHANGELOG.md)).
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). CI holds every shipped
+dependency to an allow-list of permissive licences (MIT, Apache-2.0, BSD,
+ISC, MPL-2.0, and the PostgreSQL Licence for Npgsql): Go modules, the
+consoles' npm packages and EasyPatch's NuGet packages. EasyPatch's changelog
+also names each .NET dependency's licence when it is added
+([easypatch/CHANGELOG.md](easypatch/CHANGELOG.md)).

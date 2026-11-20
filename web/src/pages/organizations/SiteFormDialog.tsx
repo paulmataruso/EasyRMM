@@ -66,11 +66,22 @@ export function SiteFormDialog({ open, onClose, onSaved, organizationId, site }:
   );
 }
 
-export function TimeZoneField({ value, onChange, error }: { value: string; onChange: (v: string) => void; error?: string | null }) {
+export function TimeZoneField({ value, onChange, error, hint }: {
+  value: string;
+  onChange: (v: string) => void;
+  error?: string | null;
+  hint?: string;
+}) {
   const zones = timeZones();
   const id = useId();
   return (
-    <Field label="Time zone" htmlFor={`${id}-input`} error={error} hint="IANA time zone, e.g. America/New_York. Used for schedules and reports." required>
+    <Field
+      label="Time zone"
+      htmlFor={`${id}-input`}
+      error={error}
+      hint={hint ?? "IANA time zone, e.g. America/New_York. Used for schedules and reports."}
+      required
+    >
       <Input
         id={`${id}-input`}
         list={`${id}-options`}

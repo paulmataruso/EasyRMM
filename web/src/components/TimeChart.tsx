@@ -25,6 +25,8 @@ interface Props<T extends { at: string }> {
   height?: number;
   /** While new data loads, the previous render stays, dimmed. */
   stale?: boolean;
+  /** Each point is a day (at local midnight): the tooltip and table show dates without times. */
+  daily?: boolean;
 }
 
 const MARGIN = { top: 10, right: 14, bottom: 24, left: 40 };
@@ -33,7 +35,19 @@ const MARGIN = { top: 10, right: 14, bottom: 24, left: 40 };
  * A line chart over time with one value axis: hairline grid, 2px lines, a legend, a crosshair that
  * snaps to the nearest point with every series' value, keyboard travel, and a data table.
  */
-export function TimeChart<T extends { at: string }>({ data, series, from, to, stepSeconds, label, format, max = 100, height = 200, stale }: Props<T>) {
+export function TimeChart<T extends { at: string }>({
+  data,
+  series,
+  from,
+  to,
+  stepSeconds,
+  label,
+  format,
+  max = 100,
+  height = 200,
+  stale,
+  daily = false,
+}: Props<T>) {
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(640);
   const [active, setActive] = useState<number | null>(null);
@@ -50,6 +64,7 @@ export function TimeChart<T extends { at: string }>({ data, series, from, to, st
 
   const t0 = new Date(from).getTime();
   const t1 = Math.max(new Date(to).getTime(), t0 + 1);
+  const when = (at: string) => (daily ? formatDay(at) : formatWhen(at, t1 - t0));
   const plotW = width - MARGIN.left - MARGIN.right;
   const plotH = height - MARGIN.top - MARGIN.bottom;
   const x = (t: number) => MARGIN.left + ((t - t0) / (t1 - t0)) * plotW;
@@ -167,7 +182,7 @@ export function TimeChart<T extends { at: string }>({ data, series, from, to, st
             className="pointer-events-none absolute top-1 z-10 min-w-36 rounded-md border border-line bg-raised px-3 py-2 text-xs shadow-md"
             style={tipLeft ? { right: width - px + 10 } : { left: px + 10 }}
           >
-            <div className="mb-1 text-muted">{formatWhen(point.at, t1 - t0)}</div>
+            <div className="mb-1 text-muted">{when(point.at)}</div>
             {series.map((s) => (
               <div key={s.key} className="flex items-center gap-2">
                 <span className="h-0.5 w-3 rounded-full" style={{ background: s.color }} aria-hidden />
@@ -181,7 +196,7 @@ export function TimeChart<T extends { at: string }>({ data, series, from, to, st
           <p className="absolute inset-x-0 top-1/2 -translate-y-1/2 text-center text-sm text-muted">No measurements in this period.</p>
         )}
         <p id={`${id}-readout`} className="sr-only" aria-live="polite">
-          {point ? `${formatWhen(point.at, t1 - t0)}: ${series.map((s) => `${s.label} ${format(s.value(point))}`).join(", ")}` : ""}
+          {point ? `${when(point.at)}: ${series.map((s) => `${s.label} ${format(s.value(point))}`).join(", ")}` : ""}
         </p>
       </div>
       {points.length > 0 && (
@@ -196,7 +211,7 @@ export function TimeChart<T extends { at: string }>({ data, series, from, to, st
                 <thead className="sticky top-0 bg-raised text-left text-muted">
                   <tr>
                     <th scope="col" className="px-3 py-1.5 font-medium">
-                      Time
+                      {daily ? "Day" : "Time"}
                     </th>
                     {series.map((s) => (
                       <th key={s.key} scope="col" className="px-3 py-1.5 text-right font-medium">
@@ -208,7 +223,7 @@ export function TimeChart<T extends { at: string }>({ data, series, from, to, st
                 <tbody className="divide-y divide-line tabular-nums">
                   {[...data].reverse().map((p) => (
                     <tr key={p.at}>
-                      <td className="px-3 py-1 text-muted">{formatWhen(p.at, t1 - t0)}</td>
+                      <td className="px-3 py-1 text-muted">{when(p.at)}</td>
                       {series.map((s) => (
                         <td key={s.key} className="px-3 py-1 text-right">
                           {format(s.value(p))}
@@ -233,8 +248,9 @@ const DAY = 24 * HOUR;
 const MIN_TICK_PX = 76;
 
 /**
- * Axis ticks on round local times: quarter hours for an hour, four hours for a day, days for a week,
- * thinned to every second or third one when the plot is too narrow for them all.
+ * Axis ticks on round local times: quarter hours for an hour, four hours for a day, days for a week or more,
+ * thinned to every second or third one (or more) when the plot is too narrow for them all. Past two weeks a
+ * day is named by its month rather than its weekday.
  */
 export function timeTicks(t0: number, t1: number, width = Infinity): { at: number; label: string }[] {
   const span = t1 - t0;
@@ -244,11 +260,19 @@ export function timeTicks(t0: number, t1: number, width = Infinity): { at: numbe
   for (let t = Math.ceil((t0 - offset) / step) * step + offset; t <= t1; t += step) {
     const d = new Date(t);
     const label =
-      step === DAY ? d.toLocaleDateString(undefined, { weekday: "short", day: "numeric" }) : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+      step !== DAY
+        ? d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })
+        : span > 14 * DAY
+          ? d.toLocaleDateString(undefined, { month: "short", day: "numeric" })
+          : d.toLocaleDateString(undefined, { weekday: "short", day: "numeric" });
     out.push({ at: t, label });
   }
   const every = Math.max(1, Math.ceil((out.length * MIN_TICK_PX) / width));
   return out.filter((_, i) => i % every === 0);
+}
+
+function formatDay(at: string): string {
+  return new Date(at).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 }
 
 function formatWhen(at: string, span: number): string {

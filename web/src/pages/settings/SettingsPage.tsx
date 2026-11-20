@@ -7,6 +7,7 @@ import { AgentUpdatesTab } from "./AgentUpdatesTab";
 import { AuditForwardingTab } from "./AuditForwardingTab";
 import { AuditTab } from "./AuditTab";
 import { EasyPatchTab } from "./EasyPatchTab";
+import { PatchingTab } from "./PatchingTab";
 import { RemoteAccessTab } from "./RemoteAccessTab";
 import { SingleSignOnTab } from "./SingleSignOnTab";
 import { UsersTab } from "./UsersTab";
@@ -17,7 +18,9 @@ const SUBTITLES: Record<string, string> = {
   remote: "The MeshCentral service behind remote desktop, terminal and files.",
   "agent-updates": "Keep every EasyRMM agent on the build this server ships, a few devices at a time.",
   forwarding: "A copy of every audit record, sent as it is written to your syslog server or SIEM.",
-  easypatch: "The EasyPatch server that patches your devices, and which of its organizations each EasyRMM organization is.",
+  easypatch: "The patching engine in this deployment, the organizations where EasyRMM installs its agent automatically, and devices it cannot match.",
+  patching:
+    "EasyPatch's default policy and tags, each organization's monthly report schedule, and EasyPatch's own settings, OS lifecycle dates, agent packages, alert rules, notifications and audit log.",
   sso: "Identity providers people can sign in through with OpenID Connect, instead of their EasyRMM password.",
 };
 
@@ -40,7 +43,7 @@ export function SettingsPage() {
       <Tabs
         className="lg:hidden"
         active={part.id}
-        onChange={(t) => url.set({ tab: t === first.id ? null : t, q: null, organizationId: null, action: null, actorId: null, invite: null, after: null })}
+        onChange={(t) => url.set({ tab: t === first.id ? null : t, q: null, organizationId: null, action: null, actorId: null, invite: null, after: null, view: null, tag: null, area: null, from: null, to: null, page: null })}
         tabs={parts.map((p) => ({ id: p.id, label: p.label }))}
       />
       {part.id === "users" && <UsersTab />}
@@ -49,6 +52,7 @@ export function SettingsPage() {
       {part.id === "agent-updates" && <AgentUpdatesTab />}
       {part.id === "forwarding" && <AuditForwardingTab />}
       {part.id === "easypatch" && <EasyPatchTab />}
+      {part.id === "patching" && <PatchingTab />}
       {part.id === "sso" && <SingleSignOnTab />}
     </>
   );

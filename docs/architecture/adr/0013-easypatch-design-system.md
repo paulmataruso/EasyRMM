@@ -48,9 +48,9 @@ product family, and one design system is cheaper to maintain than two.
   the Alpine (musl) image build; CI checks both.
 * The Content-Security-Policy is unaffected: Tailwind emits one static
   stylesheet, and no fonts or scripts load from third parties.
-* Licensing: EasyPatch is published under FSL-1.1-ALv2, and EasyRMM under
+* Licensing: EasyPatch was published under FSL-1.1-ALv2, and EasyRMM under
   AGPL-3.0-or-later (ADR-0011). The shared stylesheet values and the logo
-  construction come from EasyPatch. The copyright holder of EasyPatch must
-  license those portions to EasyRMM under the AGPL (or a compatible licence)
-  before a public release; this is an owner action, recorded in
-  `IMPLEMENTATION_STATUS.md` until done.
+  construction come from EasyPatch, so the licensor had to license those
+  portions to EasyRMM. *Resolved 2026-11-18:* both are under FSL-1.1-ALv2
+  with one licensor ([ADR-0037](0037-one-licence.md)), so no separate grant
+  is needed.

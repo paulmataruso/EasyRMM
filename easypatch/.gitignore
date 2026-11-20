@@ -10,11 +10,6 @@ TestResults/
 *.trx
 coverage*/
 
-# Frontend
-frontend/node_modules/
-frontend/dist/
-frontend/*.tsbuildinfo
-
 # Local configuration and secrets — never commit
 .env
 secrets/
@@ -33,3 +28,6 @@ appsettings.Local.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Agent packages staged for the server image (scripts/stage-agent-packages.sh); built, never committed.
+deployment/server/agent-packages/EasyPatchAgent-*

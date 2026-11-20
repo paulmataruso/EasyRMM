@@ -51,8 +51,11 @@ type Provider struct {
 	TrustEmail     bool      `json:"trustEmail"`
 	TrustMFA       bool      `json:"trustMfa"`
 	Enabled        bool      `json:"enabled"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	// Managed: the deployment sets this provider up from its configuration
+	// (ADR-0044), so it cannot be changed or deleted here.
+	Managed   bool      `json:"managed"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
 }
 
 // ProviderInput creates or changes a provider. An empty ClientSecret keeps
@@ -88,6 +91,9 @@ type Service struct {
 
 	mu    sync.Mutex
 	cache map[uuid.UUID]discovered
+	// clients reach particular providers otherwise than client does: the
+	// deployment's provider, over loopback (ADR-0044).
+	clients map[uuid.UUID]*http.Client
 }
 
 type discovered struct {
@@ -101,9 +107,10 @@ type discovered struct {
 func New(db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer, authSvc *auth.Service, public *url.URL) *Service {
 	return &Service{
 		db: db, audit: auditLog, sealer: sealer, auth: authSvc, public: public,
-		client: providerClient(),
-		now:    time.Now,
-		cache:  map[uuid.UUID]discovered{},
+		client:  providerClient(),
+		now:     time.Now,
+		cache:   map[uuid.UUID]discovered{},
+		clients: map[uuid.UUID]*http.Client{},
 	}
 }
 
@@ -143,12 +150,13 @@ type providerRow struct {
 	sealed string
 }
 
-const providerColumns = `id, name, issuer, client_id, client_secret_sealed, allowed_domains, trust_email, trust_mfa, enabled, created_at, updated_at`
+const providerColumns = `id, name, issuer, client_id, client_secret_sealed, allowed_domains, trust_email, trust_mfa, enabled, managed,
+	created_at, updated_at`
 
 func scanProvider(row pgx.Row) (*providerRow, error) {
 	var p providerRow
 	err := row.Scan(&p.ID, &p.Name, &p.Issuer, &p.ClientID, &p.sealed, &p.AllowedDomains, &p.TrustEmail, &p.TrustMFA,
-		&p.Enabled, &p.CreatedAt, &p.UpdatedAt)
+		&p.Enabled, &p.Managed, &p.CreatedAt, &p.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, apperr.NotFound()
 	}
@@ -288,9 +296,23 @@ func (s *Service) validate(in *ProviderInput, creating bool) apperr.Fields {
 // discover fetches a provider's discovery document, which also checks that
 // the issuer is what it claims to be.
 func (s *Service) discover(ctx context.Context, issuer string) (*oidc.Provider, error) {
-	ctx, cancel := context.WithTimeout(oidc.ClientContext(ctx, s.client), 15*time.Second)
+	return s.discoverWith(ctx, s.client, issuer)
+}
+
+func (s *Service) discoverWith(ctx context.Context, client *http.Client, issuer string) (*oidc.Provider, error) {
+	ctx, cancel := context.WithTimeout(oidc.ClientContext(ctx, client), 15*time.Second)
 	defer cancel()
 	return oidc.NewProvider(ctx, issuer)
+}
+
+// clientFor is how EasyRMM reaches a provider.
+func (s *Service) clientFor(id uuid.UUID) *http.Client {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if c, ok := s.clients[id]; ok {
+		return c
+	}
+	return s.client
 }
 
 // providerFor returns the discovery for a provider, cached for an hour and
@@ -302,7 +324,7 @@ func (s *Service) providerFor(ctx context.Context, p *providerRow) (*oidc.Provid
 	if ok && c.updatedAt.Equal(p.UpdatedAt) && s.now().Sub(c.fetchedAt) < discoveryTTL {
 		return c.provider, nil
 	}
-	op, err := s.discover(ctx, p.Issuer)
+	op, err := s.discoverWith(ctx, s.clientFor(p.ID), p.Issuer)
 	if err != nil {
 		return nil, err
 	}
@@ -366,6 +388,9 @@ func (s *Service) UpdateProvider(ctx context.Context, actor audit.Actor, id uuid
 	if err != nil {
 		return Provider{}, err
 	}
+	if stored.Managed {
+		return Provider{}, ErrManaged
+	}
 	if err := s.validate(&in, false).Err(); err != nil {
 		return Provider{}, err
 	}
@@ -408,10 +433,20 @@ func (s *Service) DeleteProvider(ctx context.Context, actor audit.Actor, id uuid
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		var name string
 		var linked int
-		err := tx.QueryRow(ctx, `WITH d AS (DELETE FROM identity_providers WHERE id = $1 RETURNING name)
-			SELECT d.name, (SELECT count(*) FROM user_identities WHERE provider_id = $1) FROM d`, id).Scan(&name, &linked)
-		if errors.Is(err, pgx.ErrNoRows) {
+		var managed bool
+		err := tx.QueryRow(ctx, `SELECT managed FROM identity_providers WHERE id = $1 FOR UPDATE`, id).Scan(&managed)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
 			return apperr.NotFound()
+		case err != nil:
+			return err
+		case managed:
+			return ErrManaged
+		}
+		err = tx.QueryRow(ctx, `WITH d AS (DELETE FROM identity_providers WHERE id = $1 RETURNING name)
+			SELECT d.name, (SELECT count(*) FROM user_identities WHERE provider_id = $1) FROM d`, id).Scan(&name, &linked)
+		if err != nil {
+			return err
 		}
 		if err != nil {
 			return err

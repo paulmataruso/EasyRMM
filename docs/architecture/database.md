@@ -60,7 +60,7 @@ MeshCentral's session key) are stored sealed with `EASYRMM_SECRET_KEY` in
 
 | Table / column | Notes |
 |---|---|
-| `enrollment_tokens` | Deployment tokens: site, optional device group, name, SHA-256 of the token, expiry, optional `max_uses` and the `uses` count, creator, `revoked_at`. Tenant row-level security like the tenancy tables |
+| `enrollment_tokens` | Deployment tokens: site, optional device group, name, SHA-256 of the token and the token sealed (`token_sealed`, ADR-0047; NULL for tokens made before), expiry, optional `max_uses` and the `uses` count, creator, `revoked_at`. Tenant row-level security like the tenancy tables |
 | `devices.agent_public_key` | The enrolled agent's Ed25519 public key, unique. A row with a key is an enrolled device; one without is discovered from MeshCentral only (`devices_enrolled_has_key` keeps `enrolled_at` and the key together) |
 | `devices.agent_version`, `agent_arch`, `agent_last_seen_at`, `enrolled_at`, `enrollment_token_id` | What the agent last reported, and how it enrolled. `devices_agent_seen_idx` serves the online filter |
 | `agent_nonces` | Nonces of signed agent requests until they could no longer be replayed; deleted when they expire. Platform scope only |
@@ -69,15 +69,16 @@ MeshCentral's session key) are stored sealed with `EASYRMM_SECRET_KEY` in
 other than liveness changed (`last_seen_at`, `agent_last_seen_at`,
 `remote_online`), so heartbeats do not rewrite it every minute.
 
-## EasyPatch connector (migration 00013)
+## EasyPatch links (migrations 00013 and 00023)
 
 | Table | Notes |
 |---|---|
-| `easypatch_connection` | At most one row: the EasyPatch server's https URL, its API token sealed with `EASYRMM_SECRET_KEY` (associated data `easypatch_connection.token_sealed`), an optional CA certificate, and what the last check found (version, public URL, capabilities, whether the token can act, last error). Platform scope, and the owner role for migrations |
+| `easypatch_connection` | Dropped by migration 00023 (one-product R2). It held a separately run EasyPatch server's address and its API token, sealed. The patching engine's address and key come from `.env` |
 | `easypatch_organizations` | Which EasyPatch organization patches an EasyRMM organization: one each way (`easypatch_id` is unique). Read through the organization's row-level security; written with platform scope only |
 | `easypatch_devices` | A device's link to its EasyPatch endpoint: `pending`, `linked` (with the endpoint and when) or `unlinked` (with the reason), the key fingerprint it was checked with, and when. A linked endpoint belongs to one device (partial unique index). Read through the device's row-level security; written with platform scope only |
 
-No patch data is stored: the console reads it from EasyPatch (ADR-0030).
+No patch data is stored: the console reads it from the patching engine
+(ADR-0030, ADR-0038).
 
 ## EasyPatch agent installs (migration 00014)
 

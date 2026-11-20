@@ -3,13 +3,38 @@
 Thank you for helping. EasyRMM manages real computers, so the bar for
 correctness and security is high; these rules keep it that way.
 
-This repository holds the whole project. Changes under `easypatch/`
-(EasyPatch, EasyRMM's patch management) follow
-[easypatch/CONTRIBUTING.md](easypatch/CONTRIBUTING.md) instead, including
-its contributor terms and its licence (FSL-1.1-ALv2). A pull request that
-touches both is covered by both, each for its part
-([LICENSING.md](LICENSING.md)). How the two share the repository and CI is
-in [docs/development/monorepo.md](docs/development/monorepo.md).
+This repository holds the whole product, EasyPatch (its patch management,
+in `easypatch/`) included. These terms cover all of it.
+[easypatch/CONTRIBUTING.md](easypatch/CONTRIBUTING.md) adds the rules
+specific to EasyPatch's code. How the two share the repository and CI is in
+[docs/development/monorepo.md](docs/development/monorepo.md).
+
+## Licence and contributor terms
+
+EasyRMM is licensed under the [Functional Source License, Version 1.1, ALv2
+Future License](LICENSE.md) (FSL-1.1-ALv2). The copyright holder is DHI
+Technical Services LLC ([LICENSING.md](LICENSING.md)).
+
+**By submitting a contribution (code, documentation or other material) you
+agree that:**
+
+1. you have the right to submit it, and it is your original work or you have
+   identified the parts that are not, with their licence;
+2. you grant DHI Technical Services LLC a perpetual, worldwide,
+   non-exclusive, royalty-free, irrevocable licence to use, copy, modify,
+   distribute, sublicense and sell your contribution, under the FSL, the
+   Apache License 2.0 or any other licence, including commercial licences;
+3. you grant everyone who receives EasyRMM a licence to your contribution
+   under the same terms as the rest of the version that includes it.
+
+You keep the copyright in your contribution. These terms let DHI Technical
+Services LLC keep EasyRMM under a single licence and offer commercial
+licences. If you cannot agree to them, please open an issue describing the
+change instead of a pull request.
+
+Dependencies must be under a permissive licence (MIT, BSD, ISC, Apache-2.0,
+MPL-2.0). Copyleft licences (GPL, AGPL, LGPL) cannot be accepted: CI checks
+Go modules, the consoles' npm packages and EasyPatch's NuGet packages.
 
 ## Ground rules
 
@@ -24,8 +49,8 @@ in [docs/development/monorepo.md](docs/development/monorepo.md).
 * Keep commits focused, with messages that explain *why*
   (`area: imperative summary`, e.g. `auth: rotate session token after MFA`).
 * Sign off your commits (`git commit -s`) to certify the
-  [Developer Certificate of Origin](https://developercertificate.org/).
-  Contributions outside `easypatch/` are licensed under AGPL-3.0-or-later.
+  [Developer Certificate of Origin](https://developercertificate.org/), in
+  addition to the contributor terms above.
 
 ## Development environment
 
@@ -51,7 +76,7 @@ frontend development and the Impeccable design workflow.
 | Frontend unit (Vitest, coverage floors) | `web/src/**/*.test.{ts,tsx}` | `make web-test` |
 | End-to-end (Playwright, real server and PostgreSQL) | `web/e2e/` | `make e2e` (after `make test-db`) |
 | Security regression (tenant isolation, permissions, agent API, gateway) | `*_integration_test.go` beside the code | part of the above |
-| EasyPatch contract (the connector against a real EasyPatch server built from `easypatch/`, and `eptest`'s answers against its answers) | `server/internal/easypatch/contract_test.go`, build tag `contract` | `make test-contract` (needs Docker) |
+| EasyPatch contract (EasyRMM's calls against the real patching engine built from `easypatch/`, and `eptest`'s answers against its answers) | `server/internal/easypatch/contract_test.go`, build tag `contract` | `make test-contract` (needs Docker) |
 
 Integration tests **fail** (they do not skip) when the test database is not
 configured, so CI cannot pass without running them.

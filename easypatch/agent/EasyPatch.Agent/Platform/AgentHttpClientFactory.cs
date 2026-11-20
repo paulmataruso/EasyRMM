@@ -44,10 +44,7 @@ internal sealed class AgentHttpClientFactory : IAgentHttpClientFactory
             UseProxy = true,
             Proxy = proxy,
         };
-        if (authority is not null)
-        {
-            handler.SslOptions.RemoteCertificateValidationCallback = (_, certificate, chain, errors) => authority.Validate(certificate, chain, errors);
-        }
+        authority?.TrustFor(handler);
 
         return new HttpClient(handler, disposeHandler: true)
         {

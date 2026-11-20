@@ -63,11 +63,13 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/sites/{id}/enrollment-tokens", a.create)
 	r("GET /api/v1/enrollment-tokens/{id}", a.get)
 	r("POST /api/v1/enrollment-tokens/{id}/revoke", a.revoke)
+	r("POST /api/v1/enrollment-tokens/{id}/reveal", a.reveal)
 	r("GET /api/v1/agent-downloads", a.downloads)
 	// Enrollment with approval (ADR-0024).
 	r("GET /api/v1/approval-tokens", a.listApproval)
 	r("POST /api/v1/approval-tokens", a.createApproval)
 	r("POST /api/v1/approval-tokens/{id}/revoke", a.revokeApproval)
+	r("POST /api/v1/approval-tokens/{id}/reveal", a.revealApproval)
 	r("GET /api/v1/enrollment-requests", a.listRequests)
 	r("GET /api/v1/enrollment-requests/waiting", a.waiting)
 	r("POST /api/v1/enrollment-requests/approve", a.approve)
@@ -83,8 +85,9 @@ func (a *API) listApproval(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// createdApproval is a new approval token with what the console needs to
-// show install commands. The secret is in no other response.
+// createdApproval is an approval token with its secret and what the console
+// needs to show install commands: when it is created, and when it is shown
+// again.
 type createdApproval struct {
 	*agents.NewApprovalToken
 	ServerURL string `json:"serverUrl"`
@@ -101,6 +104,20 @@ func (a *API) createApproval(w http.ResponseWriter, r *http.Request) error {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpapi.WriteJSON(w, http.StatusCreated, createdApproval{NewApprovalToken: t, ServerURL: a.server})
+	return nil
+}
+
+func (a *API) revealApproval(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	t, err := a.svc.RevealApprovalToken(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpapi.WriteJSON(w, http.StatusOK, createdApproval{NewApprovalToken: t, ServerURL: a.server})
 	return nil
 }
 
@@ -188,8 +205,8 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// created is a new token with what the console needs to show install
-// commands. The secret is in no other response.
+// created is a token with its secret and what the console needs to show
+// install commands: when it is created, and when it is shown again.
 type created struct {
 	*agents.NewToken
 	ServerURL string `json:"serverUrl"`
@@ -223,6 +240,20 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpapi.WriteJSON(w, http.StatusOK, t)
+	return nil
+}
+
+func (a *API) reveal(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	t, err := a.svc.RevealToken(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	httpapi.WriteJSON(w, http.StatusOK, created{NewToken: t, ServerURL: a.server})
 	return nil
 }
 

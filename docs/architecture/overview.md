@@ -33,7 +33,7 @@ common collisions. See [network.md](network.md) for the complete port table.
 
 | Component | Technology | Responsibility |
 |---|---|---|
-| `easyrmm-server` | Go modular monolith | TLS edge, web UI hosting, REST API, agent gateway, MeshCentral gateway and control client, job scheduler, monitoring engine, notification delivery, EasyPatch connector |
+| `easyrmm-server` | Go modular monolith | TLS edge, web UI hosting, REST API, agent gateway, MeshCentral gateway and control client, job scheduler, monitoring engine, notification delivery, the patching engine's client (ADR-0038) |
 | `web` | React + TypeScript + Vite, designed with Impeccable | The only user interface. Embedded into the server binary at build time |
 | `easyrmm-agent` | Go, single static binary per OS/arch | Enrolment, identity, inventory, telemetry, job and script execution, software management, MeshAgent and EasyPatch-agent supervision, self-update |
 | MeshAgent | Upstream binary, pinned version | Remote desktop, terminal, file transfer and RDP tunnel transport |
@@ -176,16 +176,19 @@ report data about itself and receive its own jobs, nothing else.
 
 See ADR-0010 and [docs/integrations/easypatch.md](../integrations/easypatch.md).
 EasyPatch is EasyRMM's patch management component. Its code is in
-`easypatch/` of this repository, under its own licence
-([LICENSING.md](../../LICENSING.md)), and it builds, releases and runs as its
-own server ([monorepo.md](../development/monorepo.md)). It is the source of
-truth for patch state, and EasyRMM can use any EasyPatch server.
-EasyRMM talks to it server-to-server with an EasyPatch API token (ADR-0030)
-and renders patch state natively behind EasyRMM's roles. On request, or for
-every device in an organization set to install automatically, the EasyRMM
-agent downloads the EasyPatch agent from the customer's EasyPatch server,
-checks it and enrolls it (ADR-0031). EasyPatch is never redistributed with
-EasyRMM.
+`easypatch/` of this repository, under the same licence
+([LICENSING.md](../../LICENSING.md)) ([monorepo.md](../development/monorepo.md)).
+Its server runs in every EasyRMM deployment as the patching engine, on
+loopback, with no console or accounts of its own (ADR-0046), and is released
+with EasyRMM, built from the same commit (ADR-0043). It is the source of
+truth for patch state. EasyRMM calls it with a signed statement per request
+naming the person, their role and the organizations of that call
+(ADR-0038), keeps its organizations and sites in step with EasyRMM's
+(ADR-0040), and renders patch state natively behind EasyRMM's roles. On
+request, or for every device in an organization set to install
+automatically, the EasyRMM agent downloads the EasyPatch agent from the
+engine through EasyRMM's address, checks it and enrolls it (ADR-0031,
+ADR-0039).
 
 ## 9. Deployment
 

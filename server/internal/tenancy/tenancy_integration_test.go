@@ -133,6 +133,36 @@ func TestOrganizationLifecycleAndValidation(t *testing.T) {
 	if err != nil || upd.Name != "Acme Corp" || upd.Notes != "renamed" {
 		t.Fatalf("update: %v %+v", err, upd)
 	}
+
+	// Time zones (one-product plan, B5): UTC unless chosen, kept when an
+	// update leaves it out, and IANA names only. Every change tells who
+	// listens.
+	changes := 0
+	e.svc.OnChange(func() { changes++ })
+	if w.orgA.Timezone != "UTC" {
+		t.Fatalf("default time zone: %q", w.orgA.Timezone)
+	}
+	tz, err := e.svc.UpdateOrganization(ctx, e.sys, w.orgA.ID, tenancy.OrganizationInput{Name: "Acme Corp", Timezone: " Europe/Paris ", Notes: "renamed"})
+	if err != nil || tz.Timezone != "Europe/Paris" {
+		t.Fatalf("time zone: %v %+v", err, tz)
+	}
+	if kept, err := e.svc.UpdateOrganization(ctx, e.sys, w.orgA.ID, tenancy.OrganizationInput{Name: "Acme Corp", Notes: "renamed"}); err != nil ||
+		kept.Timezone != "Europe/Paris" {
+		t.Fatalf("time zone left out: %v %+v", err, kept)
+	}
+	for _, bad := range []string{"Local", "Mars/Olympus", strings.Repeat("A", 65)} {
+		_, err := e.svc.UpdateOrganization(ctx, e.sys, w.orgA.ID, tenancy.OrganizationInput{Name: "Acme Corp", Timezone: bad})
+		wantField(t, err, "timezone", "bad time zone "+bad)
+	}
+	if made, err := e.svc.CreateOrganization(ctx, e.sys, tenancy.OrganizationInput{Name: "Zoned", Timezone: "Asia/Tokyo"}); err != nil ||
+		made.Timezone != "Asia/Tokyo" {
+		t.Fatalf("created with a time zone: %v %+v", err, made)
+	} else if err := e.svc.DeleteOrganization(ctx, e.sys, made.ID); err != nil {
+		t.Fatal(err)
+	}
+	if changes != 4 {
+		t.Fatalf("%d changes told, want 4", changes)
+	}
 	if _, err := e.svc.UpdateOrganization(ctx, e.sys, w.orgA.ID, tenancy.OrganizationInput{Name: "globex"}); err == nil {
 		t.Fatal("rename to existing name succeeded")
 	} else {
@@ -164,13 +194,20 @@ func TestOrganizationLifecycleAndValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 	actions := map[string]int{}
+	renamed := 0
 	for _, en := range entries {
 		actions[en.Action]++
-		if en.Action == "organization.update" && en.Details["previousName"] != "Acme" {
-			t.Fatalf("update audit details: %v", en.Details)
+		if en.Action == "organization.update" && en.Details["previousName"] == "Acme" {
+			renamed++
+		}
+		if en.Action == "organization.update" && en.Details["timezone"] == "Europe/Paris" && en.Details["previousName"] != nil {
+			t.Fatalf("a time zone change audited as a rename: %v", en.Details)
 		}
 	}
-	if actions["organization.create"] != 3 || actions["organization.update"] != 1 || actions["organization.delete"] != 1 {
+	if renamed != 1 {
+		t.Fatalf("%d renames audited", renamed)
+	}
+	if actions["organization.create"] != 4 || actions["organization.update"] != 3 || actions["organization.delete"] != 2 {
 		t.Fatalf("audit actions: %v", actions)
 	}
 }

@@ -393,17 +393,8 @@ public sealed class JobService(
         }
     }
 
-    /// <summary>
-    /// Who asked for a manual job: the user or API token, and for a token the person it acted for when that fits in the column (the
-    /// audit record always has it).
-    /// </summary>
-    private static string Requester(IActorContext actor)
-    {
-        var name = actor.Username ?? "unknown";
-        return actor.OnBehalfOf is { } person && name.Length + person.Length + 5 <= MaxRequestedByLength ? $"{name} for {person}" : name;
-    }
-
-    private const int MaxRequestedByLength = 128;
+    /// <summary>Who asked for a manual job: <c>easyrmm:&lt;name&gt;</c>, the EasyRMM user the statement names.</summary>
+    private static string Requester(IActorContext actor) => actor.Username ?? "unknown";
 
     private static AppException DuplicateJob(Guid existingId) =>
         AppException.Conflict("An identical job is already queued or running for this endpoint.", "duplicate_job",

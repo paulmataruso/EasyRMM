@@ -1,18 +1,22 @@
 # Backup and restore
 
-A complete backup has four parts, five with `manual` TLS. All are needed to
+A complete backup has six parts, seven with `manual` TLS. All are needed to
 restore.
 
 | Part | Where | Why |
 |---|---|---|
 | Database | PostgreSQL in the `postgres` container | Everything: tenants, devices, users, audit log |
+| The patching engine's database | `easypatch`, in the same PostgreSQL | Patching: each device's update state and history, policies, holds, jobs, alerts, reports, and the EasyPatch agents' credentials. Without it, every EasyPatch agent has to be reinstalled and patch history is lost |
+| `/srv/easyrmm/easypatch/keys` | The engine's data-protection keys | They decrypt the engine's stored mail and webhook credentials. Without them, notification channels have to be set up again |
 | `deploy/.env` | Next to `docker-compose.yml` | **The encryption key** (`EASYRMM_SECRET_KEY`) and database passwords. The database's secrets are sealed with the key: authenticator-app secrets, MeshCentral's service account, the EasyPatch and audit-forwarding credentials, the internal certificate authority agents trust and the job-signing key they pinned. Without it, authenticator apps stop working (recovery codes and security keys still do) and every agent has to be reinstalled |
 | `/srv/easyrmm/server` | Data directory | The ACME account and certificates (`acme` mode); empty in the other modes |
 | `/srv/easyrmm/tls` (`EASYRMM_TLS_DIR`) | `manual` TLS only | Your certificate and key. Back them up wherever you manage certificates, or include the directory here |
 | `/srv/easyrmm/meshcentral` | MeshCentral's data | **MeshCentral's server identity** (the keys its agents trust), its device records and the downloaded agent binaries. Without it, every remote-access agent has to be reinstalled |
 
 `/srv/easyrmm/meshcentral-config` needs no backup: the server rewrites it on
-every start from `.env` and the database.
+every start from `.env` and the database. Nor does
+`/srv/easyrmm/easypatch/winget`, the engine's copy of winget, which it
+downloads again.
 
 Store backups encrypted and off the host. The `.env` file and the database
 dump together give full control of every managed device: protect them
@@ -30,10 +34,14 @@ mkdir -p /var/backups/easyrmm && chmod 700 /var/backups/easyrmm
 # container's postgres user over its local socket, which needs no password.
 docker compose exec -T -u postgres postgres pg_dump -p 15432 \
     --format=custom easyrmm > /var/backups/easyrmm/db-$ts.dump
+# The patching engine's database, the same way.
+docker compose exec -T -u postgres postgres pg_dump -p 15432 \
+    --format=custom easypatch > /var/backups/easyrmm/easypatch-db-$ts.dump
 
-# Configuration and data directory.
+# Configuration, data directory and the engine's keys.
 tar -C /path/to/easyrmm/deploy -czf /var/backups/easyrmm/env-$ts.tgz .env
 tar -C /srv/easyrmm -czf /var/backups/easyrmm/server-$ts.tgz server
+tar -C /srv/easyrmm -czf /var/backups/easyrmm/easypatch-keys-$ts.tgz easypatch/keys
 # With manual TLS, unless your certificates are backed up elsewhere:
 # tar -C /srv/easyrmm -czf /var/backups/easyrmm/tls-$ts.tgz tls
 
@@ -54,21 +62,24 @@ checkout with the steps below, and checks:
 * TLS against the saved certificate authority;
 * the same password and authenticator;
 * the audit chain;
-* that the same agent reconnects without reinstalling and runs a job.
+* that the same agent reconnects without reinstalling and runs a job;
+* that the patching engine has the same organizations and the same keys.
 
 Its first run, on 16 November 2026, found that the guide's database
-commands failed and that a fresh deployment did not start; both are fixed.
+commands failed and that a fresh deployment did not start; both are fixed. A run on 19 November 2026, after the patching engine joined every
+deployment, backed up and restored the engine's database and keys with the
+steps above and passed.
 
 ## Restore onto a new host
 
 1. Install Docker, then clone the repository at the same release or unpack
    that release's deployment bundle ([Upgrading](upgrading.md) describes
    both). Restore `deploy/.env`, `/srv/easyrmm/server`,
-   `/srv/easyrmm/meshcentral` and, with `manual` TLS, your certificate
-   files.
+   `/srv/easyrmm/meshcentral`, `/srv/easyrmm/easypatch/keys` and, with
+   `manual` TLS, your certificate files.
    Keep the ownership `setup.sh` gives them: `65532:65532`, mode 700, for
    `server` and for the `data`, `files` and `backups` directories inside
-   `meshcentral`.
+   `meshcentral`; `1654:1654`, mode 700, for `easypatch/keys`.
 2. Create the data directories: `sudo ./scripts/setup.sh ...` with the same
    host name (it keeps the restored `.env`).
 3. Start only PostgreSQL. Its first start creates empty roles and database
@@ -86,6 +97,16 @@ commands failed and that a fresh deployment did not start; both are fixed.
    docker compose exec -T -u postgres postgres pg_restore -p 15432 \
        --dbname=easyrmm --exit-on-error \
        < /var/backups/easyrmm/db-<timestamp>.dump
+   ```
+
+   Then the patching engine's: `easypatch-db-init` creates its empty
+   database and roles from `.env`, and the dump goes in the same way:
+
+   ```bash
+   docker compose run --rm easypatch-db-init
+   docker compose exec -T -u postgres postgres pg_restore -p 15432 \
+       --dbname=easypatch --exit-on-error \
+       < /var/backups/easyrmm/easypatch-db-<timestamp>.dump
    ```
 
 5. Start the server: `docker compose up -d`. It serves the restored data.

@@ -3,21 +3,20 @@
 Administrator and agent routes are versioned under `/api/v1`. JSON uses camelCase, enums are
 serialized as strings, and timestamps are ISO-8601 in UTC.
 
-The live OpenAPI document is served at `/api/openapi/v1.json`, with Swagger UI at
-`/api/docs`. Both require a signed-in session (any role).
+The live OpenAPI document is served at `/api/openapi/v1.json` to any statement from EasyRMM,
+whatever its role.
 
 ## Conventions
 
 | Topic | Rule |
 |---|---|
-| Authentication | Admin routes use the session cookie `__Host-easypatch-session`, or an [API token](#api-tokens-apiv1api-tokens-superadmin) sent as `Authorization: Bearer ept_…`. A request with a session cookie is authenticated by the session and any bearer token is ignored. Agent routes use signed requests ([security.md](security.md#agent-request-signing)). |
-| CSRF | Unsafe admin methods (POST, PUT, PATCH, DELETE) must send `X-XSRF-TOKEN` with the value of the `XSRF-TOKEN` cookie. `POST /auth/login` and `POST /auth/password/reset` are exempt, as are requests authenticated with an API token (browsers never send one on their own). A missing or wrong header returns `403` with `code=csrf_failed`. |
+| Authentication | Admin routes take a statement from EasyRMM in `X-EasyRMM-Assertion` and nothing else (see [security.md](security.md#admin-authentication)). API tokens are no longer accepted: an `Authorization` header is ignored. A missing or invalid statement answers `401` with `code=unauthenticated`. Agent routes use signed requests ([security.md](security.md#agent-request-signing)). |
 | Correlation | `X-Correlation-ID` is accepted (max 64 characters of `[A-Za-z0-9-_.]`) or generated. It is returned on every response and included in error bodies and logs. |
-| Pagination | Paged routes take `?page=1&pageSize=50` (maximum 200) and return `{ items, page, pageSize, totalCount }`. Organizations, sites, users, tokens, deployment codes and the per-endpoint update lists are returned as plain arrays. |
+| Pagination | Paged routes take `?page=1&pageSize=50` (maximum 200) and return `{ items, page, pageSize, totalCount }`. Organizations, sites, deployment codes and the per-endpoint update lists are returned as plain arrays. |
 | Sorting | `GET /endpoints` and `GET /updates` accept `?sort=<field>&dir=asc|desc`; the fields are listed below. Unknown fields fall back to the default order. |
 | Errors | RFC 9457 `application/problem+json` with the extensions `code` (machine-readable) and `correlationId`. Validation errors (`400`, `code=validation_failed`) add `errors` (field → messages). Some errors carry extra members, such as `existingJobId` on `409 duplicate_job`. |
-| Rate limits | Login and other password/MFA operations: 20/min per IP. Enrollment: 30/min per IP. Agent routes: 120/min per credential. Downloads: 60/min per IP. All other admin routes: 600/min per user or API token. Exceeding a limit returns `429` with `code=rate_limited` and `Retry-After`. The limits can be changed with the `RateLimits:*` settings. |
-| Roles | **Viewer** = any role (ReadOnly, Admin, SuperAdmin). **Operator** = Admin or SuperAdmin. **SuperAdmin** = SuperAdmin only. Users and API tokens restricted to some organizations only see those organizations; anything outside them answers `404`. API tokens are ReadOnly or Admin, never SuperAdmin, and cannot use the `/auth` routes. |
+| Rate limits | Enrollment: 30/min per IP. Agent routes: 120/min per credential. Downloads: 60/min per IP. All other admin routes: 600/min per EasyRMM user, 6000/min for EasyRMM's own work (a statement for `service`). Exceeding a limit returns `429` with `code=rate_limited` and `Retry-After`. The limits can be changed with the `RateLimits:*` settings. |
+| Roles | **Viewer** = any role (ReadOnly, Admin, SuperAdmin). **Operator** = Admin or SuperAdmin. **SuperAdmin** = SuperAdmin only. A statement for some organizations only sees those organizations; anything outside them answers `404`. |
 
 ## Agent protocol (`/api/v1/agents`)
 
@@ -54,123 +53,25 @@ through one sequence-numbered channel.
 | GET | `/downloads/install/{deploymentCode}.sh` | The tokenless Linux install script (POSIX `sh`) for a deployment code, with the newest `.deb` and `.rpm` package for each architecture and their SHA-256. `404` for an unknown, expired or revoked code and `503` when no Linux package is available; both bodies are shell that prints the error and exits with status 1. |
 | GET | `/downloads/install/macos/{deploymentCode}.sh` | The tokenless install script (POSIX `sh`) for the experimental macOS agent, with the newest `.pkg` package for each architecture and their SHA-256. `404` for an unknown, expired or revoked code and `503` when no macOS package is available, as for Linux. |
 
-These routes are outside `/api/v1`, need no session and are limited to 60 requests per
+These routes are outside `/api/v1`, need no credential and are limited to 60 requests per
 minute per IP. The install scripts contain no secret: endpoints installed with it wait for
 administrator approval.
 
 ## Administrator API
 
-### Authentication (`/api/v1/auth`)
+EasyPatch has no sign-in, user, session or API token routes: people sign in to EasyRMM, which
+calls these routes with a statement for each request. The audit log names the EasyRMM user a
+statement acts for as `easyrmm:<name>`, and so does the `requestedBy` of the jobs it creates.
 
-| Method | Route | Notes |
-|---|---|---|
-| POST | `/login` | `{email, password}` → `{mfaRequired, mfaSetupRequired, user}`. The email address is the only sign-in name (case does not matter). Sets the session and `XSRF-TOKEN` cookies. A wrong address or password, an inactive or a locked account all answer `401 invalid_credentials`. |
-| POST | `/mfa/verify` | `{code}` (TOTP or recovery code) completes the sign-in; for a security key see `/mfa/webauthn` below |
-| POST | `/logout` | Revokes the current session |
-| GET | `/me` | Current user, role and MFA state. Also refreshes the `XSRF-TOKEN` cookie. |
-| POST | `/mfa/setup` | Returns the secret, the `otpauth` URI and a QR code as a PNG data URI |
-| POST | `/mfa/enable` | `{code}` → 10 recovery codes, shown once |
-| POST | `/mfa/disable` | `{password, code}` removes the authenticator app. While the `RequireMfa` server setting is on, refused (`409 mfa_required`) unless a security key or passkey remains. |
-| POST | `/mfa/recovery-codes` | `{password}` → a new set of recovery codes |
-| GET | `/webauthn` | Anonymous. `{available, rpId, reason, message}`: whether passkeys and security keys work here. `reason` is `ip_address`, `not_https` or `invalid_public_url` when not. |
-| POST | `/webauthn/register/options` | `{passkey, password?}` → `PublicKeyCredentialCreationOptions` JSON (binary members base64url). `passkey: true` asks for a discoverable credential with user verification. The password is needed when the account already has a second factor and the sign-in is more than 10 minutes old (`400 invalid_password`). |
-| POST | `/webauthn/register` | `{name?, credential}` (the browser's `PublicKeyCredential` as JSON) → `{credential, recoveryCodes}`. Recovery codes are returned once, for the account's first second factor. `400 webauthn_failed` when verification fails. |
-| GET | `/webauthn/credentials` | Your passkeys and security keys: `{id, name, isPasskey, isSynced, transports, createdAt, lastUsedAt}` |
-| PUT | `/webauthn/credentials/{id}` | `{name}` renames one |
-| POST | `/webauthn/credentials/{id}/remove` | `{password?}` (as for registration). The last second factor cannot be removed while MFA is required (`409 mfa_required`). |
-| POST | `/mfa/webauthn/options` | During sign-in, after the password: `PublicKeyCredentialRequestOptions` JSON for the account's keys |
-| POST | `/mfa/webauthn` | `{credential}` completes the sign-in with a security key or passkey (`401 invalid_security_key` otherwise) |
-| POST | `/passkey/options` | Anonymous. Starts a passkey sign-in: request options with an empty allow list and user verification required. Sets a short-lived `__Host-easypatch-webauthn` cookie that binds the sign-in to this browser. |
-| POST | `/passkey` | Anonymous. `{credential}` → `{mfaRequired: false, mfaSetupRequired: false, user}` and the session cookies, like `/login`. `401 invalid_passkey` when the passkey is unknown or does not verify. |
-| POST | `/passkey-prompt/dismiss` | "Not now" to the offer to create a passkey; `user.passkeyPrompt` is false for 30 days |
-
-Every WebAuthn route answers `409 webauthn_unavailable` when the console's public URL is an IP
-address or not HTTPS, and `400 webauthn_challenge_expired` when the challenge is older than 5
-minutes, was already answered, or (passkey sign-in) belongs to another browser. `/me` and the
-sign-in responses include `totpEnabled`, `securityKeyCount`, `passkeyCount`, `passkeyPrompt` and
-`hasPassword` (false for an account created by single sign-on); `mfaEnabled` is true for either
-kind of second factor. For an account without a password, `/mfa/disable`, `/mfa/recovery-codes`
-and the WebAuthn routes that take a password accept a sign-in within the last 10 minutes instead
-(otherwise `403 reauthentication_required`).
-
-### Single sign-on (OpenID Connect)
-
-Browser routes under `/api/v1/auth/sso` (anonymous, sign-in rate limit). See
-[single-sign-on.md](single-sign-on.md).
-
-| Method | Route | Notes |
-|---|---|---|
-| GET | `/providers` | Enabled providers for the sign-in page: `[{id, displayName}]` |
-| GET | `/{id}/start?returnTo=` | Redirects (302) to the provider's authorization endpoint and sets the `__Host-easypatch-sso` binding cookie. `returnTo` must be a console path. On error, redirects to `/login?sso_error=unavailable` |
-| GET | `/callback?code=&state=` | The redirect URI. Signs in and redirects to `returnTo` (the console then asks for MFA if needed), or to `/login?sso_error=` with `expired`, `denied`, `no_account`, `unavailable` or `failed` |
-
-Provider settings (`/api/v1/sso/providers`, SuperAdmin):
-
-| Method | Route | Notes |
-|---|---|---|
-| GET | `/` | `{redirectUri, providers[]}`. A provider has `clientSecretConfigured`, never the secret, and `linkedUsers` |
-| POST | `/` | `{displayName, issuer, clientId, clientSecret, scopes, enabled, trustEmailClaim, providerEnforcesMfa, autoProvision, defaultRole, allowedDomains[]}` → `201`. `defaultRole` cannot be `SuperAdmin`; `autoProvision` needs at least one domain; `scopes` must include `openid` |
-| PUT | `/{id}` | As POST. `clientSecret: null` keeps the stored secret, `""` removes it |
-| DELETE | `/{id}` | Removes the provider and its links to users |
-| POST | `/probe` | `{issuer}` → `{ok, issuer, authorizationEndpoint, tokenEndpoint, signingKeys, message}` after reading the discovery document and key set |
-| POST | `/password/change` | `{currentPassword, newPassword}`. Revokes your other sessions. |
-| POST | `/email/change` | `{currentPassword, newEmail}` → `204`. Changes your own email address, the one you sign in with (stored lower-case). `400 invalid_password`, `400 validation_failed` for an invalid address, `409 email_in_use` when another user has it. An account without a password (created by single sign-on) sends no password and needs a sign-in within the last 10 minutes (`403 reauthentication_required` otherwise). Your sessions stay signed in, and linked single sign-on accounts stay linked; the change is in the audit log (`auth.email_changed`). |
-| POST | `/password/reset` | `{token, newPassword}`. Anonymous; the token comes from an administrator-issued link. |
-| GET | `/sessions` | Your active sessions |
-| DELETE | `/sessions/{id}` | Revoke one of your sessions |
-
-Until a user has completed every sign-in step, other routes answer `403` with
-`code=mfa_required`, `mfa_setup_required` or `password_change_required`.
-
-### Users (`/api/v1/users`, SuperAdmin)
-
-`GET /`, `POST /` (`{username, email, role, password, organizationIds}`; without a password
-the response contains a one-time set-password link), `GET /{id}`, `PUT /{id}` (`email`, `role`,
-`isActive`), `POST /{id}/reset-link`,
-`POST /{id}/mfa/reset` (removes the authenticator app, passkeys, security keys and recovery
-codes), `POST /{id}/sessions/revoke`, `GET /{id}/external-logins` (linked single sign-on
-accounts), `DELETE /{id}/external-logins/{linkId}`, `PUT /{id}/organizations`
-(`{organizationIds[]}`; an empty list means all organizations). Users carry `allOrganizations`:
-when it is false they reach only `organizationIds`, and an empty list then means none (their
-organizations were deleted). An email address that another
-user has (ignoring case) answers `409 email_in_use`, a taken username `409 username_in_use`,
-and an address that is not a plain `name@domain` `400 validation_failed`.
-
-### API tokens (`/api/v1/api-tokens`, SuperAdmin)
-
-Bearer credentials for scripts and integrations. Only super administrators signed in to the
-console manage them; a token cannot create, list or revoke tokens. On the server itself,
-`docker compose run --rm api create-api-token …` creates one without the console
-([installation.md](installation.md#operational-commands)).
-
-| Method | Route | Notes |
-|---|---|---|
-| GET | `/` | Every token, active first: name, display prefix, role, organizations, expiry, last use (time and address), creator, revocation, `status` (Active, Expired, Revoked). The secret is never returned. |
-| POST | `/` | `{name, role, organizationIds[], expiresInDays}` → `201 {token, secret}`. `role` is `ReadOnly` or `Admin`; an empty `organizationIds` means every organization; `expiresInDays` is 1 to 365; `name` (up to 50 characters) must be unique among tokens that are not revoked (`409 name_taken`). The `secret` (`ept_…`) is shown once; the server keeps only its SHA-256 hash. |
-| POST | `/{id}/revoke` | Revokes the token immediately. Revoking twice is harmless. |
-
-A token request may name the person it acts for in `X-EasyPatch-On-Behalf-Of` (one line of
-printable text, up to 254 characters; anything else is ignored), for example the signed-in user of
-an RMM that calls EasyPatch. It is informational: the token's role and organizations decide what
-the request may do. EasyPatch adds it to the request's audit records as `onBehalfOf`, and to the
-`requestedBy` of jobs it creates (`token:<name> for <person>`) when that fits in 128 characters.
-Session requests ignore the header. Servers that support it list `on-behalf-of` in
-[`/server-info`](#dashboard-reports-audit-settings).
-
-A token acts with its role in its organizations, like a user with the same role and
-organization access: a ReadOnly token gets the Viewer routes, an Admin token also gets the
-Operator routes. SuperAdmin routes answer `403`, and the `/auth` routes (your account, MFA,
-sessions) answer `401`. A missing, unknown, expired or revoked token answers `401` with
-`code=unauthenticated`. Actions are audited with the user name `token:<name>`.
-
-```bash
-curl -H "Authorization: Bearer $EASYPATCH_TOKEN" https://patch.example.com/api/v1/endpoints
-```
+There are no API tokens. Scripts and integrations use EasyRMM's API; the engine accepts only
+EasyRMM's statements. A request with `Authorization: Bearer …` and no statement answers `401`,
+even with a token a standalone EasyPatch made (`prepare-import` deletes those from an imported
+database). `X-EasyPatch-On-Behalf-Of`, which only API token requests used, is ignored.
 
 ### Organizations, sites and policy
 
-Reads are Viewer; writes are Operator. Creating an organization requires a user who is not
-restricted to specific organizations.
+Reads are Viewer; writes are Operator. Creating an organization requires a caller that reaches
+every organization.
 
 | Method | Route |
 |---|---|
@@ -210,7 +111,7 @@ Invalid values return `400 validation_failed`.
 
 | Method | Route | Notes |
 |---|---|---|
-| GET | `/tags` | Viewer. Every tag (`id, name, color, description, priority, endpointCount, hasPolicy, siteCount, organizationCount`). `endpointCount` counts endpoints with the tag directly or through their site or organization. Organization-restricted users get only the tags on their endpoints, sites and organizations, with the counts 0. |
+| GET | `/tags` | Viewer. Every tag (`id, name, color, description, priority, endpointCount, hasPolicy, siteCount, organizationCount`). `endpointCount` counts endpoints with the tag directly or through their site or organization. Callers restricted to some organizations get only the tags on their endpoints, sites and organizations, with the counts 0. |
 | POST | `/tags` | SuperAdmin. `{name (1-40), color, description?, priority (0-1000)}`. `color`: `gray, blue, green, amber, red, purple, teal, pink`. `409 tag_exists` for a duplicate name (case-insensitive). |
 | PUT/DELETE | `/tags/{id}` | SuperAdmin. DELETE removes the tag from every endpoint, site and organization and deletes its policy. |
 | GET/PUT/DELETE | `/tags/{id}/policy` | SuperAdmin. A policy body as above; `maxConcurrentInstallsPerSite` cannot be set. |
@@ -223,9 +124,9 @@ Invalid values return `400 validation_failed`.
 
 | Method | Route | Notes |
 |---|---|---|
-| GET | `/alerts` | Viewer, filtered to the user's organizations. `?status=unresolved` (default) `\|open\|acknowledged\|resolved\|all`, `severity` (`Critical, Warning, Info`), `organizationId`, `endpointId`, `ruleType`, `search` (title), paging. Unresolved first, then by severity and newest. Each item: rule, type, severity, status, title, details, organization, endpoint and host name, opened/last seen/resolved/acknowledged times and who acknowledged. |
-| GET | `/alerts/summary` | Viewer. `{open, acknowledged, critical, warning, info}` over unresolved alerts the user can see (`open` excludes acknowledged ones). |
-| POST | `/alerts/acknowledge` | Operator. `{alertIds[]}` (1-500) → `{acknowledged}`. Only open alerts the user can see are acknowledged; acknowledged alerts get no reminders. |
+| GET | `/alerts` | Viewer, filtered to the caller's organizations. `?status=unresolved` (default) `\|open\|acknowledged\|resolved\|all`, `severity` (`Critical, Warning, Info`), `organizationId`, `endpointId`, `ruleType`, `search` (title), paging. Unresolved first, then by severity and newest. Each item: rule, type, severity, status, title, details, organization, endpoint and host name, opened/last seen/resolved/acknowledged times and who acknowledged. |
+| GET | `/alerts/summary` | Viewer. `{open, acknowledged, critical, warning, info}` over unresolved alerts the caller can see (`open` excludes acknowledged ones). |
+| POST | `/alerts/acknowledge` | Operator. `{alertIds[]}` (1-500) → `{acknowledged}`. Only open alerts the caller can see are acknowledged; acknowledged alerts get no reminders. |
 | GET | `/alert-rules/types` | SuperAdmin. Per rule type: threshold unit, minimum, maximum, default, and whether a tag filter is allowed. |
 | GET/POST | `/alert-rules` | SuperAdmin. `{name, type, enabled, severity, threshold?, organizationId?, tagId?, channelIds[]?, notifyOnResolve, renotifyHours (0-720)}`. Types and thresholds: `EndpointOffline` (hours, 1-720), `InstallFailed`, `SecurityUpdateMissing` (days after the update became required, 0-365), `ScanStale`, `RestartPending` (days, 1-90), `EnrollmentPending` (no tag), `OsUnsupported` (days before end of support, 0-365), `KnownExploitedMissing`, `UpdateHeld` (no tag; one alert per organization). At most 20 channels. GET items add `thresholdUnit` and `unresolvedAlerts`. |
 | PUT/DELETE | `/alert-rules/{id}` | SuperAdmin. Changing the type, threshold, organization or tag, disabling the rule or deleting it closes its unresolved alerts without notifications. |
@@ -340,9 +241,9 @@ unless they are selected, and then adds a warning.
 | GET | `/reports/compliance` (`organizationId, siteId, endpointId, os, compliance`) and `/reports/compliance.csv` | Viewer |
 | GET | `/reports/compliance/trend` (`organizationId, from, to`) | Viewer |
 | GET | `/reports/installations` (`from, to, organizationId, siteId, endpointId, category, result, page, pageSize`) and `/reports/installations.csv` | Viewer |
-| GET | `/audit-logs` (`userId, organizationId, action` (prefix), `from, to, page, pageSize`) | Operator. Users restricted to some organizations only see entries for those organizations. |
-| GET/PUT | `/settings` | GET Viewer, PUT SuperAdmin. Includes the rollout guard: `rolloutGuardEnabled` (default `true`), `rolloutGuardMinFailedEndpoints` (1-1000, default 3), `rolloutGuardFailurePercent` (1-100, default 20) and `rolloutGuardWindowDays` (1-90, default 7). |
-| GET | `/server-info` (version, public URL, server time, `capabilities`: optional features integrations check for — `scheduled-installs`, `on-behalf-of`) | Viewer |
+| GET | `/audit-logs` (`userId, organizationId, action` (prefix), `from, to, page, pageSize`) | Operator. Callers restricted to some organizations only see entries for those organizations. |
+| GET/PUT | `/settings` | GET Viewer, PUT SuperAdmin. Includes the rollout guard: `rolloutGuardEnabled` (default `true`), `rolloutGuardMinFailedEndpoints` (1-1000, default 3), `rolloutGuardFailurePercent` (1-100, default 20) and `rolloutGuardWindowDays` (1-90, default 7). Unknown fields, such as the sign-in settings `requireMfa`, `sessionIdleMinutes` and `sessionAbsoluteHours` that went with EasyPatch's own sign-in, are ignored. |
+| GET | `/server-info` (version, public URL, server time, `capabilities`: optional features integrations check for — `scheduled-installs`) | Viewer |
 | GET | `/vulnerability-feeds` (state of the `kev`, `msrc` and `debian` downloads: last attempt and success, sanitized error, version, entries) | Viewer |
 | GET/POST, PUT/DELETE | `/lifecycle`, `/lifecycle/{id}` (OS lifecycle table) | GET Viewer, writes SuperAdmin |
 
@@ -369,6 +270,6 @@ tab or carriage return are prefixed with `'` so spreadsheets do not evaluate the
 ### Health
 
 `GET /health/live` reports that the process is up. `GET /health/ready` reports that the
-database is reachable. Neither requires authentication. The worker has its own `/health` on
-port 8081 inside its container (database plus maintenance-loop heartbeat); it is not exposed
-through Caddy.
+database is reachable. Neither requires authentication. The worker has its own `/health`
+(database plus maintenance-loop heartbeat), on `127.0.0.1:18181` in EasyRMM's deployment.
+EasyRMM's edge forwards neither the API's health routes nor the worker's.
