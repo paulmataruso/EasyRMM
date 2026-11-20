@@ -60,7 +60,7 @@ public static class WebhookAddressPolicy
 
             if (ownNetworks.Any(n => InNetwork(candidate, n.Network, n.Prefix)))
             {
-                return "addresses on the EasyPatch server's own networks are not allowed";
+                return "addresses on the server's own networks are not allowed";
             }
 
             if (!allowPrivate && Private.Any(n => InNetwork(candidate, n.Network, n.Prefix)))

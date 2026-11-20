@@ -332,7 +332,7 @@ public sealed class AlertEngine(
                 var rows = await endpoints.Where(e => e.RebootPending && e.RebootPendingSince != null && e.RebootPendingSince <= cutoff)
                     .Select(e => new { e.Id, e.OrganizationId, e.Hostname, e.RebootPendingSince, e.IsOnline }).ToListAsync(ct);
                 return rows.Select(r => new AlertMatch(r.OrganizationId, r.Id, $"{r.Hostname}: restart pending for over {Plural(threshold, "day")}",
-                    $"Pending since {Format(r.RebootPendingSince)}. EasyPatch restarts endpoints only when asked or on a restart schedule.", !r.IsOnline)).ToList();
+                    $"Pending since {Format(r.RebootPendingSince)}. Devices restart only when someone asks, or on a restart schedule.", !r.IsOnline)).ToList();
             }
 
             case AlertRuleType.KnownExploitedMissing:
@@ -458,7 +458,7 @@ public sealed class AlertEngine(
                     .OrderBy(h => h.OrganizationId is null).First();
                 return held.Count == 1 ? $"{hold.CreatedBy}: {hold.Reason}" : $"{r.Title} ({hold.CreatedBy}: {hold.Reason})";
             })) + (held.Count > 3 ? $"; and {held.Count - 3} more" : string.Empty) +
-                ". EasyPatch does not install it automatically until the hold is released on the update's page.";
+                ". It is not installed automatically until the hold is released on the update's page.";
             result.Add(new AlertMatch(g.Key, null, title, details));
         }
 

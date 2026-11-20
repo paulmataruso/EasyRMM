@@ -205,13 +205,13 @@ func TestLinuxEnrollServerCA(t *testing.T) {
 	if len(calls) != 2 || !strings.Contains(calls[0], "--server-ca") || calls[1] != "enroll --server https://patch.example.com --token-file -" {
 		t.Errorf("fallback called %q", calls)
 	}
-	// It cannot reach EasyPatch: the store is the way.
+	// It cannot reach the patching engine: the store is the way.
 	write("2", "6")
 	if err := l.Enroll(ctx, &p); err == nil || !strings.Contains(err.Error(), "system's certificate store") {
 		t.Errorf("old agent, unreachable: %v", err)
 	}
-	// A current agent given the CA that still cannot reach EasyPatch: not
-	// a matter of the store.
+	// A current agent given the CA that still cannot reach the patching
+	// engine: not a matter of the store.
 	write("6", "0")
 	if err := l.Enroll(ctx, &p); err == nil || strings.Contains(err.Error(), "certificate store") || !strings.Contains(err.Error(), "exit code 6") {
 		t.Errorf("unreachable with the CA: %v", err)

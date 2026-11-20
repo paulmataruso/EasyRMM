@@ -31,8 +31,8 @@ public static class UpdateReconciler
 
     public const string ReofferedMessage =
         "Windows reported the installation as successful, but Windows Update still offers this update. This is a Windows " +
-        "Update detection problem (often seen with Windows Security platform updates such as KB5007651). EasyPatch does not " +
-        "install it again automatically; select it to install it anyway.";
+        "Update detection problem (often seen with Windows Security platform updates such as KB5007651). It is not " +
+        "installed again automatically; select it to install it anyway.";
 
     public static ReconcileResult Reconcile(
         Guid endpointId,

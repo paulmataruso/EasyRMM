@@ -238,9 +238,9 @@ func TestInstallFailures(t *testing.T) {
 		}, "does not have the SHA-256"},
 		"download": {func(f *fixture, _ *agentproto.EasyPatchInstallPayload) {
 			f.in.Download = func(context.Context, string, string, int64, io.Writer) error {
-				return errors.New("EasyPatch answered 404 Not Found")
+				return errors.New("the patching engine answered 404 Not Found")
 			}
-		}, "Downloading EasyPatchAgent-1.9.0-x64.deb from EasyPatch: EasyPatch answered 404"},
+		}, "Downloading EasyPatchAgent-1.9.0-x64.deb from the patching engine: the patching engine answered 404"},
 		"install": {func(f *fixture, _ *agentproto.EasyPatchInstallPayload) {
 			f.sys.installErr = errors.New("apt-get could not install")
 		},
@@ -322,8 +322,8 @@ func TestEnrollErrors(t *testing.T) {
 		t.Errorf("0: %v", err)
 	}
 	for code, want := range map[int]string{
-		2: "refused the enrollment's arguments", 3: "another EasyPatch server", 4: "rejected the enrollment token",
-		5: "administrator rights", 6: "could not reach EasyPatch at https://patch.example.com (exit code 6). Its enrollment token is revoked",
+		2: "refused the enrollment's arguments", 3: "enrolled with another server", 4: "rejected the enrollment token",
+		5: "administrator rights", 6: "could not reach the patching engine at https://patch.example.com (exit code 6). Its enrollment token is revoked",
 		7: "could not be stopped", 9: "failed (exit code 9): line 2 line 3 line 4",
 	} {
 		err := enrollError(code, []byte("line 1\nline 2\nline 3\nline 4\n"), &p, true)

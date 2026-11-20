@@ -314,7 +314,7 @@ public sealed class CheckInService(
                                                            previous?.Groups.FirstOrDefault(p => p.Group == g.Group)?.State != WindowsUpdatePolicyState.Conflict))
                 {
                     EndpointEvents.Add(db, endpoint, "WindowsUpdatePolicyConflict",
-                        $"Windows Update {conflict.Group} settings were changed by another policy source; EasyPatch stopped re-applying them. {conflict.Message}",
+                        $"Windows Update {conflict.Group} settings were changed by another policy source; the EasyPatch agent stopped re-applying them. {conflict.Message}",
                         now, EventSeverity.Warning);
                 }
 

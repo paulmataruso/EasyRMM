@@ -5,6 +5,14 @@ and the agents share one version number.
 
 ## [Unreleased]
 
+### Changed
+
+- Texts people read no longer call the engine EasyPatch: the alerts for a restart waiting and for an
+  update on hold, the message on an update Windows offers again after installing it, the event when
+  another policy source changes Windows Update settings (now "the EasyPatch agent stopped
+  re-applying them"), and the refusal of a webhook address on the server's own networks. Email
+  without a sender name comes from "EasyRMM".
+
 ## [1.11.1] - 2026-11-20
 
 Released with EasyRMM 1.0.0-rc.2. No change to the engine or its agents: a version is published from

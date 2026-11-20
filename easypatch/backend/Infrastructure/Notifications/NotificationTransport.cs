@@ -78,11 +78,12 @@ public sealed partial class NotificationTransport(IHttpClientFactory httpClients
         ArgumentNullException.ThrowIfNull(recipients);
         if (string.IsNullOrWhiteSpace(smtp.SmtpHost) || string.IsNullOrWhiteSpace(smtp.FromAddress))
         {
+            // The console recognises this text (web/src/pages/patching/Notifications.tsx) and says what to set instead.
             throw new NotificationException("SMTP is not configured (Settings → Notifications).");
         }
 
         var message = new MimeMessage();
-        message.From.Add(new MailboxAddress(string.IsNullOrWhiteSpace(smtp.FromName) ? "EasyPatch" : smtp.FromName, smtp.FromAddress));
+        message.From.Add(new MailboxAddress(string.IsNullOrWhiteSpace(smtp.FromName) ? "EasyRMM" : smtp.FromName, smtp.FromAddress));
         foreach (var r in recipients)
         {
             message.To.Add(MailboxAddress.Parse(r));
