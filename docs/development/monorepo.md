@@ -103,38 +103,19 @@ starts is removed afterwards.
 
 ## The former EasyPatch repository
 
-EasyPatch's former repository,
-<https://github.com/paulmataruso/EasyPatch>, keeps EasyPatch's releases up
-to 1.10.0 and their downloads (MSIs, signed agent packages). Issues and
-security reports for EasyPatch belong to this repository now.
+EasyPatch's former repository, <https://github.com/paulmataruso/EasyPatch>,
+is not archived and no longer updated. Its README says EasyPatch has moved
+here, and its description links here.
 
-It can also be a read-only mirror of `easypatch/`.
-`scripts/easypatch/mirror.sh` builds its history: on top of
-the imported head, one commit for each commit on `main` since the import that
-changed `easypatch/`, with the same author, dates and message, and an
-`EasyRMM-Commit:` trailer. The same input always gives the same commits, so
-the mirror only fast-forwards. (`git subtree split --onto` cannot do this
-here: it fails when the imported history is reachable from the commit being
-split.)
+* It keeps EasyPatch's releases up to 1.10.0 and their downloads (MSIs,
+  signed agent packages), which existing installations and links use. Do not
+  delete them.
+* New releases are published from this repository, tagged `easypatch-v*`.
+* Issues, pull requests and security reports for EasyPatch belong here.
+* A server installed from the former repository moves to a checkout of this
+  one when it next upgrades; EasyPatch's
+  [installation guide](../../easypatch/docs/installation.md#upgrading) says
+  how.
 
-`easypatch-mirror.yml` pushes it after each change on `main`. It is off until
-the variable `EASYPATCH_MIRROR_REPOSITORY` and the secret
-`EASYPATCH_MIRROR_TOKEN` (in the `easypatch-mirror` environment) are set; see
-the workflow's header. It never force-pushes.
-
-If someone commits to the former repository anyway, the mirror job fails, and
-it keeps failing: the mirror is built from this repository, so it never
-descends from those commits. To recover:
-
-1. Bring the commits in here, under `easypatch/`, in a pull request:
-
-   ```sh
-   git subtree pull --prefix=easypatch https://github.com/paulmataruso/EasyPatch.git main
-   ```
-
-2. Once that is on `main`, the owner moves the former repository's branch
-   to the mirror's head once, with a force push. Nothing is lost: the commits
-   are in this repository's history.
-
-Release tags are not mirrored: EasyPatch's new releases are published from
-this repository, tagged `easypatch-v*`.
+It is not a mirror of `easypatch/`: the owner chose a notice instead
+(2026-11-18), so nothing pushes to it.

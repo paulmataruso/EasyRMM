@@ -372,6 +372,9 @@ All notable changes to this project are documented here. The format follows
   Neither licence changes.
 
 ### Removed
+- The mirror of `easypatch/` to EasyPatch's former repository
+  (`easypatch-mirror.yml`, `scripts/easypatch/mirror.sh`). That repository
+  now says EasyPatch has moved here, and keeps its releases up to 1.10.0.
 - The fleet-wide **Software** page. Installed software is shown on each
   device's page; `GET /api/v1/software` remains.
 

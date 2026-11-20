@@ -436,11 +436,10 @@ error states.
 
 **Existing EasyPatch installs** are clones of the old repository. They
 upgrade with `git fetch --tags && git checkout vX`.
-* So the old repository **stays as a read-only mirror**. A job in the
-  EasyPatch release workflow updates it with
-  `git subtree split --prefix=easypatch` and the plain `vX` tag.
-* It is archived only when EasyPatch's installation guide no longer depends on
-  it.
+* So the old repository is not archived. *Decided 2026-11-18:* it is not a
+  mirror either. Its README says EasyPatch has moved here, it keeps its
+  releases up to 1.10.0, and EasyPatch's installation guide explains moving a
+  server to a checkout of this repository. The mirror job was removed.
 
 **Development**
 * The live EasyPatch instance still runs from the old folder.
@@ -528,7 +527,7 @@ with `IMPLEMENTATION_STATUS.md` updated.
 * CI through `ci.yml`, with one required result.
 * CodeQL for C# and JavaScript.
 * Prefixed release tags and the `easypatch-release` environment.
-* The mirror job for the old repository.
+* The mirror job for the old repository (removed 2026-11-18; see section 7).
 * `docs/development/monorepo.md`.
 
 *Done when:* a pull request here runs EasyPatch's checks, they feed "CI
@@ -665,7 +664,8 @@ EasyPatch". The co-hosting guide has the step for EasyPatch reaching EasyRMM.
    `EASYPATCH_RELEASE_KEY` secret and an `easypatch-v*` tag rule.
 3. **GHCR.** Give this repository's Actions write access to the
    `easypatch-server` and `easypatch-proxy` packages.
-4. **The old EasyPatch repository** stays as a read-only mirror.
+4. **The old EasyPatch repository** shows a "moved" notice and keeps its
+   releases (decided 2026-11-18; done).
 5. **EasyRMM super administrators become EasyPatch SuperAdmins** (6.4). This
    is the proposed default.
 
@@ -688,7 +688,7 @@ author. Every finding was checked in the code before it was accepted.
 | 10 | **Draft 1 was out of date about P1.** The integration changes and `create-api-token` were already in `easypatch/` while it was reviewed. | `easypatch/CHANGELOG.md` | Section 3 and P1 updated. |
 | 11 | **CI.** "CI result" requires `success`, so path-skipped jobs would fail it; workflow-level filters make EasyPatch's checks impossible to require; the contract job must run for either side; CodeQL covers Go only; `working-directory` does not reach `uses:` steps. | `ci.yml`, `security.yml` | One entry point and one required result that accepts `skipped`, a contract filter on both sides, and CodeQL for C# and JavaScript (7). |
 | 12 | **Releases.** Both workflows parse `v…`, `git describe` would pick up either product's tags, the `release` environment would expose the key to any `v*` job, GHCR needs the new repository's write access, and there is one "latest release". | Both `release.yml` files, `Makefile` | Prefixed tags with prefix stripping, `--match`, an `easypatch-release` environment, a GHCR owner step, and `make_latest` (7). |
-| 13 | **Existing EasyPatch installs upgrade by tags from the old repository**, so archiving it would strand them. | `easypatch/docs/installation.md` | The old repository stays as a mirror, updated by `git subtree split` on each release (7). |
+| 13 | **Existing EasyPatch installs upgrade by tags from the old repository**, so archiving it would strand them. | `easypatch/docs/installation.md` | The old repository stays, with its releases (7). Later decided: a "moved" notice rather than a mirror; moving a server is in the installation guide. |
 | 14 | **The dividing line contradicted itself.** Automatic agent install is a standing rule in EasyRMM, and EasyPatch's restart carries user messaging. | `links.go` (AutoInstall); EasyPatch `AdminDtos.cs` (restart request, `isServer`) | The rule now includes the wiring between the products. The restart is a fixed preset, with explicit confirmation for servers (4, 5). |
 | 15 | **Over-built:** carrying the theme over, a menu for two choices, a rotation schedule. **Missing:** non-goals, accessibility, EasyPatch being down, upgrade order, the licensing of copied code. | Review | The theme carry-over is cut; a two-segment nav with `aria-current` replaces the menu; rotation is manual; sections 2, 6.1, 8 and 12 added. |
 | 16 | **(Author)** An unlinked device can still land somewhere useful. | EasyPatch endpoint list keeps `search` in the URL | `/endpoints?search=<host name>` (6.2). |
