@@ -104,7 +104,14 @@ export function credentialJSON(cred: PublicKeyCredential): Json {
   };
 }
 
-/** Thrown when the person closed the browser's prompt: not an error worth showing. */
+/**
+ * What sign-in says when the browser's prompt ends without a key. Browsers report a closed prompt and a prompt
+ * that found no matching key the same way, so this covers both. Behind the second is often a password manager
+ * that did not answer (locked, or updated since the page loaded), which reloading the page fixes.
+ */
+export const NO_KEY_ANSWERED = "No passkey or security key answered. If yours wasn't offered, reload the page and try again.";
+
+/** Thrown when the browser's prompt ended without a key: closed, timed out, or no key matched. Not an error. */
 export class KeyCancelled extends Error {
   constructor() {
     super("Cancelled.");

@@ -39,11 +39,13 @@ describe("passkey sign-in", () => {
     renderApp("/organizations");
     const button = await screen.findByRole("button", { name: "Sign in with a passkey" });
 
-    // Closing the browser's prompt is not an error.
+    // A prompt that ends without a key is not an error, but says so: the browser does not tell a closed prompt
+    // from a password manager that offered nothing.
     creds.get.mockRejectedValueOnce(cancelled());
     await user.click(button);
     expect(await screen.findByRole("button", { name: "Sign in with a passkey" })).toBeEnabled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("No passkey or security key answered. If yours wasn't offered, reload the page and try again.").closest("[role=status]")).not.toBeNull();
 
     creds.get.mockResolvedValueOnce(fakeAssertion());
     await user.click(button);
@@ -121,6 +123,26 @@ describe("security key as the second factor", () => {
     await user.click(screen.getByRole("button", { name: "Verify" }));
     expect(await screen.findByRole("heading", { name: /Dashboard|Welcome|Overview/ })).toBeInTheDocument();
     expect(server.call("POST /auth/mfa/verify").body).toEqual({ code: "abcd-efgh-ijkl" });
+  });
+
+  it("says when no key answered, and clears it on another way", async () => {
+    const user = userEvent.setup();
+    stubWebAuthn().get.mockRejectedValue(cancelled());
+    installFakeApi({
+      ...baseRoutes(null),
+      "GET /auth/options": ok(keysUsableHere()),
+      "GET /auth/session": ok(halfSignedIn({ totp: true, securityKeys: 1 })),
+      "POST /auth/mfa/webauthn/begin": ok(ASSERTION_OPTIONS),
+    });
+    renderApp("/login/mfa");
+    await user.click(await screen.findByRole("button", { name: "Use security key" }));
+    expect((await screen.findByText(/^No passkey or security key answered\./)).closest("[role=status]")).not.toBeNull();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Use authenticator code" }));
+    await user.click(screen.getByRole("button", { name: "Use a security key" }));
+    expect(screen.getByRole("button", { name: "Use security key" })).toBeInTheDocument();
+    expect(screen.queryByText(/^No passkey or security key answered/)).not.toBeInTheDocument();
   });
 
   it("finishes sign-in with the key", async () => {
