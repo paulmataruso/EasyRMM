@@ -15,10 +15,15 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  # @types/node follows the Node major that CI and the server image run (24, LTS); a newer major's
+  # types would accept APIs that Node does not have. Moving Node up is a deliberate change.
   - package-ecosystem: npm
     directory: /web
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       web-minor-and-patch:
         update-types: [minor, patch]
