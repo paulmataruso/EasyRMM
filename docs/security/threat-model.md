@@ -33,8 +33,8 @@ boundary is enforced. The decisions behind each control are in the
 
 Trusted: the operator with access to the server host, its environment and
 its database, and Super Administrators, who hold every permission
-everywhere. MeshCentral and EasyPatch are trusted to enforce their own
-rights, and EasyRMM narrows what reaches them.
+everywhere. MeshCentral and the patching engine are trusted to enforce
+their own rights, and EasyRMM narrows what reaches them.
 
 ## Boundaries and their controls
 
@@ -60,8 +60,8 @@ rights, and EasyRMM narrows what reaches them.
   rate limits.
 
 **Server to agent** ([ADR-0017](../architecture/adr/0017-scripts-and-jobs.md), [ADR-0027](../architecture/adr/0027-agent-updates.md), [ADR-0031](../architecture/adr/0031-easypatch-agent-install.md))
-* Jobs, agent updates and EasyPatch installs are instructions signed with
-  the server's job key. The agent pins that key at enrollment.
+* Jobs, agent updates and EasyPatch agent installs are instructions signed
+  with the server's job key. The agent pins that key at enrollment.
 * Each instruction is bound to one device and expires.
 * Updates are checked by hash and size before they run, and rolled back
   if the new build fails.

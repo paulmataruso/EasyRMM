@@ -8,7 +8,7 @@ enforce that higher roles are strict supersets of lower ones.
 * **Platform** — Super Administrator only.
 * **Organization** — every site in one organization.
 * **Site** — one site. Site-scoped roles can read the parent organization's
-  record but never manage the organization, its users or its EasyPatch
+  record but never manage the organization, its users or its patching
   rules (`patch.configure`).
 
 ## Permissions

@@ -95,7 +95,10 @@ the address.
 ## Firewall
 
 Allow inbound TCP 443 (and 80 if using HTTP-01, and 4443 for IP access).
-Deny everything else inbound. Outbound: 443 to Let's Encrypt (ACME) and to the EasyPatch server if
-integrated; SMTP to your relay if e-mail notifications are enabled; and 443
-to `github.com` (GitHub releases) when MeshCentral first starts, to download
-its agent binaries (about 120 MiB, kept in its data directory afterwards).
+Deny everything else inbound. Outbound: 443 to Let's Encrypt (ACME); 443
+to the patching engine's update and vulnerability feeds and to GitHub
+(winget), listed in
+[Docker deployment](../deployment/docker.md#patching-engine); SMTP to your
+relay if e-mail notifications are enabled; and 443 to `github.com` (GitHub
+releases) when MeshCentral first starts, to download its agent binaries
+(about 120 MiB, kept in its data directory afterwards).
