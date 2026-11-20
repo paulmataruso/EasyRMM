@@ -329,10 +329,9 @@ func (s *Service) verify(ctx context.Context, c *Client, conn *connRow, cd *cand
 	cd.seenSite = ep.Summary.SiteID
 	switch {
 	case ep.Summary.OrganizationID != *cd.easyPatchOrg && conn.imported(rep.ServerURL):
-		// An imported EasyPatch's agent (one-product plan, phase S): its
-		// endpoint keeps its history in its own organization, so EasyRMM
-		// does not remove it to install another, as it does for a device
-		// that moved.
+		// An imported EasyPatch's agent (ADR-0045): its endpoint keeps its
+		// history in its own organization, so EasyRMM does not remove it to
+		// install another, as it does for a device that moved.
 		return LinkUnlinked, cut(fmt.Sprintf("In EasyPatch the endpoint belongs to %s, not to %s, the organization linked to this device's. "+
 			"It came from the imported EasyPatch, so EasyRMM leaves its agent alone: enroll the device's EasyRMM agent in the organization that matches %s.",
 			ep.Summary.OrganizationName, cd.easyPatchOrgName, ep.Summary.OrganizationName), 500), nil

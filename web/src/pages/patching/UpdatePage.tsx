@@ -14,7 +14,7 @@ import { FleetInstallDialog, FleetRemoveDialog, HoldDialog, ReleaseHoldDialog } 
 const SELECTABLE: PatchUpdateState[] = ["Missing", "Failed"];
 
 /**
- * One update across the devices in scope (one-product plan, C2): what it fixes, where it is missing, failed or
+ * One update across the devices in scope: what it fixes, where it is missing, failed or
  * installed, its holds, and installing, removing or holding it.
  */
 export function UpdatePage() {

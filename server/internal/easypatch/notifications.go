@@ -16,10 +16,10 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Settings → Patching → Alert rules and Notifications (one-product plan,
-// C7): what raises EasyPatch's alerts, and where it sends them. Both are
-// server-wide and the engine keeps them to its super administrators, so
-// EasyRMM's super administrators read and change them.
+// Settings → Patching → Alert rules and Notifications: what raises
+// EasyPatch's alerts, and where it sends them. Both are server-wide and the
+// engine keeps them to its super administrators, so EasyRMM's super
+// administrators read and change them.
 
 // The limits EasyPatch puts on rules and channels.
 const (

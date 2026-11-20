@@ -13,10 +13,9 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 )
 
-// The patching engine in this deployment (one-product plan, phases B3 and
-// S; ADR-0046): EasyRMM calls it on loopback with statements (ADR-0038).
-// The deployment configures it, so there is no token to paste and nothing
-// to pair.
+// The patching engine in this deployment (ADR-0046): EasyRMM calls it on
+// loopback with statements (ADR-0038). The deployment configures it, so there
+// is no token to paste and nothing to pair.
 
 // engineCheckEvery is how often the engine's version and capabilities are
 // read again.
@@ -29,10 +28,10 @@ const engineProbeTimeout = 5 * time.Second
 type engine struct {
 	client *Client
 	// agentCA, when set, gives the certificate authority of the engine's
-	// public address, for EasyPatch agents to trust (one-product plan, B7).
+	// public address, for EasyPatch agents to trust (ADR-0042).
 	agentCA func() []byte
 	// mail is EasyRMM's mail server, which the engine sends reports with;
-	// mailSynced says the engine has it (one-product plan, C5).
+	// mailSynced says the engine has it.
 	mail       *MailConfig
 	mailSynced bool
 	// importedURLs are an imported EasyPatch's addresses, which its agents
@@ -60,8 +59,8 @@ func AgentCA(ca func() []byte) EngineOption {
 
 // AgentHostnames are an imported, standalone EasyPatch's names
 // (EASYRMM_PATCHING_AGENT_HOSTNAMES), which its agents enrolled with and
-// still use: EasyRMM's edge serves them, and an agent reporting one of them
-// is the engine's (one-product plan, phase S).
+// still use (ADR-0045): EasyRMM's edge serves them, and an agent reporting
+// one of them is the engine's.
 func AgentHostnames(names []string) EngineOption {
 	return func(e *engine) {
 		for _, n := range names {

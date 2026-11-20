@@ -134,9 +134,8 @@ func TestOrganizationLifecycleAndValidation(t *testing.T) {
 		t.Fatalf("update: %v %+v", err, upd)
 	}
 
-	// Time zones (one-product plan, B5): UTC unless chosen, kept when an
-	// update leaves it out, and IANA names only. Every change tells who
-	// listens.
+	// Time zones: UTC unless chosen, kept when an update leaves it out, and
+	// IANA names only. Every change tells who listens.
 	changes := 0
 	e.svc.OnChange(func() { changes++ })
 	if w.orgA.Timezone != "UTC" {

@@ -16,8 +16,7 @@ import (
 // message names a device and the relay address the agent is to join. A
 // browser holding a grant for one device could therefore open a relay it
 // was granted and have another device's agent join it, or name another
-// session type in the address. The gateway binds the two ends (security
-// review, Phase 9):
+// session type in the address. The gateway binds the two ends:
 //
 //   - a tunnel request on the control channel must be for this server's
 //     relay, name the same device as the message, and be for a device and

@@ -11,7 +11,7 @@ import { Alert, Badge, Button, Card, EmptyState, ErrorState, IconButton, SelectF
 import { plural } from "../../lib/format";
 import { PatchSeverityBadge, RULE_KIND_ORDER, RULE_KINDS, SEVERITIES, thresholdText } from "./patchAlertText";
 
-// Settings → Patching → Alert rules (one-product plan, C7): what makes EasyPatch raise an alert, for which organizations
+// Settings → Patching → Alert rules: what makes EasyPatch raise an alert, for which organizations
 // and devices, and where it sends it. Server-wide, so only super administrators see and change them.
 
 function covers(r: PatchAlertRule): string {

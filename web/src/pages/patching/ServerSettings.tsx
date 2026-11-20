@@ -8,7 +8,7 @@ import { Alert, Badge, Button, Card, ErrorState, InlineError, Input, Spinner, Ta
 import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
 import { NumberInput } from "./PolicyEditor";
 
-// Settings → Patching → Server (one-product plan, C6): EasyPatch's own settings, the same for every organization. Super
+// Settings → Patching → Server: EasyPatch's own settings, the same for every organization. Super
 // administrators change them.
 
 type NumberKey = { [K in keyof PatchServerSettings]: PatchServerSettings[K] extends number ? K : never }[keyof PatchServerSettings];

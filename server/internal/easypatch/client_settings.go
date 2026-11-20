@@ -12,9 +12,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// EasyPatch's server-wide settings (one-product plan, C6): its server
-// settings, the vulnerability feeds it downloads, the operating systems'
-// end-of-servicing dates and its audit log.
+// EasyPatch's server-wide settings: its server settings, the vulnerability
+// feeds it downloads, the operating systems' end-of-servicing dates and its
+// audit log.
 
 const settingsPath = "/api/v1/settings"
 

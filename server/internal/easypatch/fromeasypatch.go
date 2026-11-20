@@ -12,12 +12,12 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Links from the patching engine into EasyRMM (integration plan, section
-// 6.2). The engine's alert messages, and the links of EasyPatch's former
-// console, name the engine's own ids: /go/from-easypatch/endpoints/:id,
-// organizations/:id, jobs/:id, and alerts/:id for an organization's
-// alerts. The console asks where each opens; EasyRMM resolves the id against
-// its link tables and the caller's permissions.
+// Links from the patching engine into EasyRMM. The engine's alert messages,
+// and those an imported EasyPatch sent, name the engine's own ids:
+// /go/from-easypatch/endpoints/:id, organizations/:id, jobs/:id, and
+// alerts/:id for an organization's alerts. The console asks where each opens;
+// EasyRMM resolves the id against its link tables and the caller's
+// permissions.
 
 // FromKinds are the engine's objects a link may name.
 var FromKinds = []string{"endpoints", "organizations", "jobs", "alerts"}

@@ -21,11 +21,11 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/reports"
 )
 
-// Patch reports (one-product plan, C5): the compliance trend, the
-// installations report, and monthly PDF reports with their schedules.
-// Reports need report.view besides patch.view. The trend and monthly reports
-// describe whole organizations, so they need both over the organization; the
-// installations report lists devices, so it needs them at each device's site.
+// Patch reports: the compliance trend, the installations report, and monthly
+// PDF reports with their schedules. Reports need report.view besides
+// patch.view. The trend and monthly reports describe whole organizations, so
+// they need both over the organization; the installations report lists
+// devices, so it needs them at each device's site.
 
 const (
 	// MaxInstallations is the most rows the installations report reads.

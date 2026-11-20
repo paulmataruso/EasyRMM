@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// The calls behind a device's Patches tab beyond scans and installs
-// (one-product plan, C1): exclusions, the install preview, removing an
-// update, messages to users and agent updates.
+// The calls behind a device's Patches tab beyond scans and installs:
+// exclusions, the install preview, removing an update, messages to users and
+// agent updates.
 
 // Exclude keeps an update off an endpoint: EasyPatch does not install it
 // there, and it no longer counts against the endpoint's compliance.

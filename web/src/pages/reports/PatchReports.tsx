@@ -11,7 +11,7 @@ import { Badge, Button, buttonClasses, Card, EmptyState, ErrorState, InlineError
 import { formatDateTime, formatRelative, formatSize } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
 
-// The patch reports EasyRMM takes from EasyPatch (one-product plan, C5): the compliance trend above the compliance
+// The patch reports EasyRMM takes from EasyPatch: the compliance trend above the compliance
 // report, and monthly PDF reports. The compliance and installations tables themselves are ordinary reports.
 
 const PERIODS = [

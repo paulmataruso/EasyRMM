@@ -242,10 +242,9 @@ services:
     logging: *logging
 
   # --- Patching engine (EasyPatch) --------------------------------------------
-  # EasyRMM's patching engine inside this deployment (one-product plan,
-  # phases B and S: docs/architecture/one-product-plan.md). EasyRMM's
+  # EasyRMM's patching engine inside this deployment (ADR-0038). EasyRMM's
   # patching pages use it, and EasyPatch agents reach it through EasyRMM's
-  # edge.
+  # edge (ADR-0039).
   #
   # Everything listens on loopback only: the API on 127.0.0.1:18180, the
   # worker's health endpoint on 127.0.0.1:18181. ASPNETCORE_URLS sets the
@@ -307,7 +306,7 @@ services:
       # the same one. Only the API checks statements.
       EasyRmm__GatewayKey: ${EASYRMM_PATCHING_KEY:-}
     volumes:
-      # Agent packages come with the image, release-signed (plan, B6): no
+      # Agent packages come with the image, release-signed (ADR-0041): no
       # directory here, which would hide them.
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/keys:/app/keys
       # The server's copy of winget for agents that cannot reach GitHub,
@@ -359,15 +358,15 @@ services:
     logging: *logging
 
   # --- Sign-in (Authentik) -----------------------------------------------------
-  # Authentik as this deployment's sign-in (one-product plan, phase A;
-  # ADR-0044). These services start only with the "authentik" profile, which
-  # `scripts/setup.sh --with-authentik` adds to COMPOSE_PROFILES in .env.
-  # EasyRMM's edge serves Authentik's sign-in name (EASYRMM_AUTHENTIK_HOSTNAME)
-  # and forwards it to the server on loopback; Authentik itself listens on
-  # loopback only: the server on 127.0.0.1:18280 (HTTP) and 18243 (HTTPS),
-  # the worker on 127.0.0.1:18281. Its data is the "authentik" database in
-  # the same PostgreSQL. Image: Authentik 2026.8.5 (MIT, with the enterprise
-  # directory under its own licence, which this deployment never activates).
+  # Authentik as this deployment's sign-in (ADR-0044). These services start only
+  # with the "authentik" profile, which `scripts/setup.sh --with-authentik` adds
+  # to COMPOSE_PROFILES in .env. EasyRMM's edge serves Authentik's sign-in name
+  # (EASYRMM_AUTHENTIK_HOSTNAME) and forwards it to the server on loopback;
+  # Authentik itself listens on loopback only: the server on 127.0.0.1:18280
+  # (HTTP) and 18243 (HTTPS), the worker on 127.0.0.1:18281. Its data is the
+  # "authentik" database in the same PostgreSQL. Image: Authentik 2026.8.5 (MIT,
+  # with the enterprise directory under its own licence, which this deployment
+  # never activates).
 
   # Creates Authentik's database and role, or brings them up to date: also
   # on an existing install, where PostgreSQL's init scripts never run again.

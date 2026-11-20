@@ -31,7 +31,7 @@ import {
 import { COUNTDOWNS, DEADLINES, EXPIRIES, RESTART_MODES } from "./PatchDialogs";
 import { categoryLabel } from "./patchText";
 
-// EasyPatch's policy at one level (one-product plan, C4): the default policy, an organization, a site, a tag or a
+// EasyPatch's policy at one level: the default policy, an organization, a site, a tag or a
 // device. Each level sets some values and inherits the rest from the levels above it; the most specific level that sets
 // a value wins, and excluded KBs add up. The server resolves what a level inherits and where each value comes from, and
 // checks every value again; the checks here only say so sooner.

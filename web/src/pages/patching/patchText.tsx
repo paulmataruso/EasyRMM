@@ -251,10 +251,10 @@ export function maintenanceText(p: PatchPolicy): string {
 }
 
 /**
- * Who asked for a job. Jobs from before EasyPatch moved into EasyRMM, kept by an import, name an EasyPatch user or an API token,
- * such as the one EasyRMM's former connector used — "token:<name>", or "token:<name> for <person>" when EasyPatch recorded who the
- * token acted for (the on-behalf-of header of EasyPatch 1.10.0 and earlier). EasyRMM sent its users' email addresses, so the person is what follows the last
- * " for " when it looks like one; a token named "Patch for prod" stays a token.
+ * Who asked for a job. Jobs an imported EasyPatch ran before the import name an EasyPatch user or an API token:
+ * "token:<name>", or "token:<name> for <person>" when EasyPatch recorded who the token acted for (the on-behalf-of
+ * header of EasyPatch 1.10.0 and earlier). Those people were named by their email addresses, so the person is what
+ * follows the last " for " when it looks like one; a token named "Patch for prod" stays a token.
  */
 export function requester(by: string): string {
   if (!by.startsWith("token:")) return by;

@@ -33,7 +33,7 @@ type fleetFixture struct {
 	orgAdmin               access.Caller
 }
 
-// newFleetFixture runs the connector on a patching engine with Acme's web-01
+// newFleetFixture runs the service on a patching engine with Acme's web-01
 // (HQ, Windows) and db-01 (Branch), Globex's plant-01, and an Acme endpoint
 // with no EasyRMM device.
 func newFleetFixture(t *testing.T) *fleetFixture {
@@ -494,8 +494,7 @@ func TestCatalogSites(t *testing.T) {
 }
 
 // TestRestartStatements: the engine is asked as the person restarting, as
-// ReadOnly to plan and as an Admin of the devices' organization to restart
-// (one-product plan, C3).
+// ReadOnly to plan and as an Admin of the devices' organization to restart.
 func TestRestartStatements(t *testing.T) {
 	f := newFleetFixture(t)
 	ctx := f.ctx

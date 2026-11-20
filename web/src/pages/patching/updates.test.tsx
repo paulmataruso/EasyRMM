@@ -5,7 +5,7 @@ import type { PatchEndpoint, PatchFleet, PatchFleetDevice, PatchFleetUpdate, Pat
 import { baseRoutes, fail, installFakeApi, ok, sessionView, type FakeHandler, type FakeReply } from "../../test/fakeApi";
 import { renderApp } from "../../test/render";
 
-// Patching's overview, its update list and an update's page (one-product plan, C2).
+// Patching's overview, its update list and an update's page.
 
 const T = "2026-11-18T10:00:00Z";
 const main = () => within(screen.getByRole("main"));

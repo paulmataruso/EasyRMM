@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// EasyPatch's alerts and what raises and sends them (one-product plan, C7):
+// EasyPatch's alerts and what raises and sends them:
 // alerts, alert rules, notification channels and their deliveries.
 
 // Alert is an alert EasyPatch raised. EndpointID is nil for an

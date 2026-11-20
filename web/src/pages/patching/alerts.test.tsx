@@ -20,8 +20,7 @@ import { renderApp } from "../../test/render";
 import { deliveryError } from "./Notifications";
 import { acknowledgedBy, thresholdText } from "./patchAlertText";
 
-// EasyPatch's alerts under Patching → Alerts, and its alert rules and notification channels under Settings → Patching
-// (one-product plan, C7).
+// EasyPatch's alerts under Patching → Alerts, and its alert rules and notification channels under Settings → Patching.
 
 const main = () => within(screen.getByRole("main"));
 

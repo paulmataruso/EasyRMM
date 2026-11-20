@@ -1,8 +1,8 @@
 package easypatchapi
 
 // Patch reports: the compliance trend, monthly PDF reports and their
-// schedules (one-product plan, C5). The compliance and installations
-// reports are EasyRMM reports, under /api/v1/reports.
+// schedules. The compliance and installations reports are EasyRMM reports,
+// under /api/v1/reports.
 
 import (
 	"net/http"

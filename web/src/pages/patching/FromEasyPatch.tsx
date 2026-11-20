@@ -4,7 +4,7 @@ import type { EasyPatchLanding } from "../../api/types";
 import { ErrorState, PageHeader, Spinner } from "../../components/ui";
 
 /**
- * A link from the patching engine (integration plan, 6.2): /go/from-easypatch/endpoints/:id, organizations/:id,
+ * A link from the patching engine: /go/from-easypatch/endpoints/:id, organizations/:id,
  * jobs/:id or alerts/:id (an organization's alerts), in the engine's ids, as its alert messages carry them. The
  * server says which page that is here; when nothing matches, Patching opens with a notice.
  * The console asks with its own request, so EasyRMM's session cookie (SameSite=Strict) comes along even though the

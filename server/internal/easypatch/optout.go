@@ -15,12 +15,11 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Stopping patching for a device (one-product plan B5, ADR-0040). With
-// automatic installs on by default, a device that must not be patched,
-// such as a fragile server, is opted out: EasyRMM removes its EasyPatch
-// agent and installs none, automatically or when asked, until patching is
-// allowed again. An agent someone installs on the computer by hand is left
-// alone.
+// Stopping patching for a device (ADR-0040). With automatic installs on by
+// default, a device that must not be patched, such as a fragile server, is
+// opted out: EasyRMM removes its EasyPatch agent and installs none,
+// automatically or when asked, until patching is allowed again. An agent
+// someone installs on the computer by hand is left alone.
 
 // manageDevices checks a request naming devices and reads them, each one
 // the caller may manage patching of; one the caller may not manage fails

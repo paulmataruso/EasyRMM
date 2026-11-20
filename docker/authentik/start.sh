@@ -1,9 +1,9 @@
 #!/bin/sh
-# Starts an Authentik service of deploy/docker-compose.yml (one-product plan,
-# phase A) with akadmin's first password, which setup.sh generated into a
-# file of its own (mode 0600, readable by Authentik's user only). Authentik
-# reads that password only from its environment, and only to create akadmin
-# at the first start: before that, anyone reaching Authentik could set it.
+# Starts an Authentik service of deploy/docker-compose.yml (ADR-0044) with
+# akadmin's first password, which setup.sh generated into a file of its own
+# (mode 0600, readable by Authentik's user only). Authentik reads that
+# password only from its environment, and only to create akadmin at the first
+# start: before that, anyone reaching Authentik could set it.
 #
 #   start.sh server | worker | shell -c "..."
 set -eu

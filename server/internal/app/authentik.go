@@ -20,9 +20,9 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/users"
 )
 
-// Authentik in the deployment (one-product plan, phase A; ADR-0044): the
-// first super administrator, the provider EasyRMM signs in through, and
-// Authentik's own name on EasyRMM's edge.
+// Authentik in the deployment (ADR-0044): the first super administrator, the
+// provider EasyRMM signs in through, and Authentik's own name on EasyRMM's
+// edge.
 
 // firstAdministrator creates the first super administrator from the
 // administrator's email setup.sh asked for, without a password, before the

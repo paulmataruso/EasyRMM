@@ -107,7 +107,7 @@ const DefaultPatchingURL = "http://127.0.0.1:18180"
 
 // Patching is the patching engine in this deployment: EasyPatch's server,
 // called on loopback with statements signed by EASYRMM_PATCHING_KEY
-// (one-product plan, phases B3 and S; ADR-0038).
+// (ADR-0038).
 type Patching struct {
 	// URL is the engine's address: http, on loopback.
 	URL string
@@ -115,8 +115,8 @@ type Patching struct {
 	Key []byte
 	// AgentHostnames are further names EasyPatch agents reach the engine
 	// at: those of a standalone EasyPatch imported into this deployment,
-	// whose agents keep the address they enrolled with (one-product plan,
-	// phase S). EasyRMM's edge serves the agents' paths there.
+	// whose agents keep the address they enrolled with (ADR-0045). EasyRMM's
+	// edge serves the agents' paths there.
 	AgentHostnames []string
 }
 

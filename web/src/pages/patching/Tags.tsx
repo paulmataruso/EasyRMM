@@ -23,7 +23,7 @@ import {
 } from "../../components/ui";
 import { plural } from "../../lib/format";
 
-// EasyPatch's tags (one-product plan, C4). A tag's policy applies to the devices that have the tag, directly or through
+// EasyPatch's tags. A tag's policy applies to the devices that have the tag, directly or through
 // their site or organization, over their site's policy. Tags are shared by every organization, so only someone who
 // configures patching everywhere (a super administrator) manages or assigns them; the server says who may.
 

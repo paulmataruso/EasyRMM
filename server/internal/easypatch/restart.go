@@ -16,12 +16,12 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Restarts and retries from EasyRMM (integration plan, P2; one-product plan,
-// C3). A restart says how it treats the people signed in (a countdown, a
-// prompt with or without a deadline, or at once), whether it runs only when
-// a restart is pending when the job runs (the default) or always, when it
-// starts and how long it waits for an offline computer. Servers are
-// restarted only when the person confirmed each one by name.
+// Restarts and retries from EasyRMM. A restart says how it treats the people
+// signed in (a countdown, a prompt with or without a deadline, or at once),
+// whether it runs only when a restart is pending when the job runs (the
+// default) or always, when it starts and how long it waits for an offline
+// computer. Servers are restarted only when the person confirmed each one by
+// name.
 
 // maxAlwaysRestart is the most devices a restart that need not be pending
 // goes to at once: each is looked up in EasyPatch to tell servers apart.

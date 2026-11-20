@@ -119,8 +119,8 @@ func TestInstallations(t *testing.T) {
 	}
 }
 
-// EasyRMM's reports read patching through the connector, and keep to each
-// row's site.
+// EasyRMM's reports read patching through the service, and keep to each row's
+// site.
 func TestPatchReports(t *testing.T) {
 	f := newFleetFixture(t)
 	ctx := f.ctx

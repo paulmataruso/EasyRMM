@@ -7,7 +7,7 @@ import { org } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
 import { engineActionLabel } from "./EngineAudit";
 
-// EasyPatch's server-wide settings under Settings → Patching (one-product plan, C6).
+// EasyPatch's server-wide settings under Settings → Patching.
 
 const main = () => within(screen.getByRole("main"));
 

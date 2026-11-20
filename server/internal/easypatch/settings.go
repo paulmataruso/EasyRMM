@@ -18,9 +18,9 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Settings → Patching's server-wide views (one-product plan, C6): EasyPatch's
-// server settings with its vulnerability feeds, the operating systems'
-// end-of-servicing dates, the agent packages it hosts and its audit log.
+// Settings → Patching's server-wide views: EasyPatch's server settings with
+// its vulnerability feeds, the operating systems' end-of-servicing dates, the
+// agent packages it hosts and its audit log.
 //
 // Those who configure patching anywhere (patch.configure) see the settings,
 // lifecycle and packages, which shape every organization's patching. They

@@ -28,8 +28,7 @@ func guidOf(t *testing.T, u map[string]any) uuid.UUID {
 }
 
 // TestDeviceActions: what a device's Patches tab does beyond scans, installs
-// and restarts (one-product plan, C1). web-01 is a Windows endpoint, db-01 a
-// Linux one.
+// and restarts. web-01 is a Windows endpoint, db-01 a Linux one.
 func TestDeviceActions(t *testing.T) {
 	f := newPatching(t)
 	ctx := f.ctx

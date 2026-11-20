@@ -1,12 +1,12 @@
 package easypatch
 
-// EasyPatch's policies, edited from EasyRMM at every level (one-product plan,
-// C4): the default policy (super administrators), an organization's, a
-// site's and a device's (patch.configure on the organization). Reading a
-// level needs patch.view where it applies. EasyRMM resolves what a level
-// inherits from the levels above as EasyPatch does (PolicyResolver.Resolve),
-// so the editor can show it, and checks a level as EasyPatch does before
-// saving it, with field errors EasyPatch does not give.
+// EasyPatch's policies, edited from EasyRMM at every level: the default
+// policy (super administrators), an organization's, a site's and a device's
+// (patch.configure on the organization). Reading a level needs patch.view
+// where it applies. EasyRMM resolves what a level inherits from the levels
+// above as EasyPatch does (PolicyResolver.Resolve), so the editor can show
+// it, and checks a level as EasyPatch does before saving it, with field
+// errors EasyPatch does not give.
 
 import (
 	"context"

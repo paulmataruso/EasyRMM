@@ -9,7 +9,7 @@ import { Alert, Button, cx, Field, InlineError, Input, Spinner, TextField } from
 import { plural } from "../../lib/format";
 import { PATCH_KEYS } from "../patching/PatchDialogs";
 
-// What a device's Patches tab does beyond scans, installs and restarts (one-product plan, C1): exclusions, removing an
+// What a device's Patches tab does beyond scans, installs and restarts: exclusions, removing an
 // update, messages to users and agent updates. EasyRMM checks patch.manage on the device; EasyPatch refuses what the
 // device's agent cannot do, and the refusal is shown in the dialog.
 

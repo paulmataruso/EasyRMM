@@ -15,8 +15,8 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Patching → Alerts (one-product plan, C7): the alerts EasyPatch raises,
-// as the caller may see them, and acknowledging them.
+// Patching → Alerts: the alerts EasyPatch raises, as the caller may see them,
+// and acknowledging them.
 
 // The values EasyPatch's alert filters take.
 var (

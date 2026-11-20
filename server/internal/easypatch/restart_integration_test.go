@@ -136,8 +136,7 @@ func TestRestart(t *testing.T) {
 }
 
 // TestRestartOptions: how a restart asks the people signed in, whether it
-// needs a pending restart, and how long it waits for an offline computer
-// (one-product plan, C3).
+// needs a pending restart, and how long it waits for an offline computer.
 func TestRestartOptions(t *testing.T) {
 	f := newPatching(t)
 	ctx := f.ctx

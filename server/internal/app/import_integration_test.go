@@ -15,7 +15,7 @@ import (
 )
 
 // TestImportEasyPatch runs `easyrmm-server import-easypatch` as the import
-// script does (one-product plan, phase S; ADR-0045), and prints its report.
+// script does (ADR-0045), and prints its report.
 func TestImportEasyPatch(t *testing.T) {
 	inst := testdb.New(t)
 	cfg := runConfig(t, inst)

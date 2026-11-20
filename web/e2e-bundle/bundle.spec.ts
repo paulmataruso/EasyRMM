@@ -1,16 +1,16 @@
-// The bundle test (one-product plan, B8): EasyRMM with its patching engine, as
+// The bundle test (ADR-0043): EasyRMM with its patching engine, as
 // deploy/docker-compose.yml runs it, addressed by IP, and a real Linux machine. The first account
 // is made on the first-run page; the machine runs the install command the console shows; EasyRMM
 // installs the EasyPatch agent, which enrolls through EasyRMM's address and links; a scan finds
-// the update a local package repository offers. On the device's Patches tab (C1) the update is
+// the update a local package repository offers. On the device's Patches tab the update is
 // excluded and included again and the policy shows; Patching lists the update across devices, and
-// its page holds it and releases the hold (C2); installing it from the Patches tab, after the
-// preview, changes the package on the machine. A value set on the organization (C4) reaches the site
-// and the device, as do a tag's policy and the device's own. Reports (C5) list the device's
+// its page holds it and releases the hold; installing it from the Patches tab, after the
+// preview, changes the package on the machine. A value set on the organization reaches the site
+// and the device, as do a tag's policy and the device's own. Reports list the device's
 // compliance and the install; a monthly PDF is made, downloaded and deleted, emailing it says
-// EasyRMM has no mail server, and a schedule is set. Under Settings → Patching (C6) a server
+// EasyRMM has no mail server, and a schedule is set. Under Settings → Patching a server
 // setting is changed, an OS lifecycle entry added, changed and deleted, the agent's .deb downloaded,
-// and EasyPatch's own audit log names the EasyRMM user who did each. Alerts (C7): an email channel
+// and EasyPatch's own audit log names the EasyRMM user who did each. Alerts: an email channel
 // is added and tested, which fails for want of a mail server; EasyPatch's own rule for unsupported
 // operating systems sends to it; moving Debian 12's end of support near makes EasyPatch raise an
 // alert for the machine, which Patching → Alerts shows and acknowledges, and the channel is sent it.

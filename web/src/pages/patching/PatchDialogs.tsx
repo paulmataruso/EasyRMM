@@ -191,7 +191,7 @@ function tonight(now = new Date()): Date {
   return d;
 }
 
-/** What an install on one device would do, from its last scan (one-product plan, C1). */
+/** What an install on one device would do, from its last scan. */
 function InstallPreviewList({ q }: { q: UseQueryResult<PatchInstallPreview> }) {
   if (q.isPending) return <Spinner label="Checking what would be installed…" />;
   if (q.isError) {
@@ -417,7 +417,7 @@ function minutesText(m: number): string {
 const MAX_ALWAYS = 100;
 
 /**
- * Restarts devices (one-product plan, C3): by default only those whose restart is still pending when the job runs,
+ * Restarts devices: by default only those whose restart is still pending when the job runs,
  * or all of them; after a countdown, by asking the people signed in (with or without a deadline), or at once; now or
  * at a time, waiting a while for devices that are offline. EasyRMM first asks what the restart would do; servers
  * restart only when ticked by name.

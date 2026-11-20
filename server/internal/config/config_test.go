@@ -328,7 +328,7 @@ func TestPatchingMode(t *testing.T) {
 	}
 	key := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
 
-	// The engine in this deployment, always (one-product plan, phase S):
+	// The engine in this deployment, always:
 	// EASYRMM_PATCHING is no longer a setting, and its old "bundled" is
 	// harmless.
 	for _, mode := range []map[string]string{{"EASYRMM_PATCHING_KEY": key}, {"EASYRMM_PATCHING": "", "EASYRMM_PATCHING_KEY": key},

@@ -10,7 +10,7 @@ import { Alert, Badge, Button, Card, EmptyState, ErrorState, IconButton, Mono, S
 import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
 import { DeliveryBadge } from "./patchAlertText";
 
-// Settings → Patching → Notifications (one-product plan, C7): the channels EasyPatch sends alerts to, the messages it
+// Settings → Patching → Notifications: the channels EasyPatch sends alerts to, the messages it
 // sent, the mail server email channels use (EasyRMM's own), and whether webhooks may go to private networks.
 
 const FORMATS: Record<PatchWebhookFormat, string> = {

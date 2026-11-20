@@ -1,6 +1,6 @@
-# Authentik for EasyRMM (one-product plan, phase A; ADR-0044). The authentik
-# services of deploy/docker-compose.yml mount this blueprint; Authentik's
-# worker applies it at the first start and again whenever it changes.
+# Authentik for EasyRMM (ADR-0044). The authentik services of
+# deploy/docker-compose.yml mount this blueprint; Authentik's worker applies it
+# at the first start and again whenever it changes.
 #
 # It makes:
 #   * the OpenID provider and application EasyRMM signs in with, with the

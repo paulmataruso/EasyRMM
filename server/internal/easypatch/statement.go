@@ -15,16 +15,16 @@ import (
 	"github.com/google/uuid"
 )
 
-// Statements to the patching engine (one-product plan, phase B2). When
-// EasyPatch runs inside EasyRMM's deployment, EasyRMM calls it with a short
-// statement per request in StatementHeader: a JWT, HS256 with a key both
-// programs read from the deployment, that names who acts, the role and the
-// organizations that one call may use, and the method and request target it
-// was made for. EasyPatch's EasyRmm scheme
+// Statements to the patching engine (ADR-0038). When EasyPatch runs inside
+// EasyRMM's deployment, EasyRMM calls it with a short statement per request
+// in StatementHeader: a JWT, HS256 with a key both programs read from the
+// deployment, that names who acts, the role and the organizations that one
+// call may use, and the method and request target it was made for.
+// EasyPatch's EasyRmm scheme
 // (easypatch/backend/API/Security/EasyRmmAuthentication.cs) accepts it only
-// for that request, for StatementLifetime, and still applies its own role
-// and tenant checks to what it says. EasyRMM decides who may do what before
-// it signs; a statement carries only what one call needs.
+// for that request, for StatementLifetime, and still applies its own role and
+// tenant checks to what it says. EasyRMM decides who may do what before it
+// signs; a statement carries only what one call needs.
 
 // StatementHeader carries a statement.
 const StatementHeader = "X-EasyRMM-Assertion"

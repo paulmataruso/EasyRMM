@@ -18,10 +18,9 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Patching → Updates (one-product plan, C2): EasyPatch's update catalog,
-// counted over the devices a person may see; one update's page with the
-// devices that report it; installing or removing it on many devices; and
-// holds.
+// Patching → Updates: EasyPatch's update catalog, counted over the devices a
+// person may see; one update's page with the devices that report it;
+// installing or removing it on many devices; and holds.
 //
 // EasyPatch counts per organization or site, not per device, so the
 // catalog covers whole organizations where the caller sees patching across

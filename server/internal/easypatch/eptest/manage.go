@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Organizations and sites as EasyPatch keeps them (one-product plan, B5):
+// Organizations and sites as EasyPatch keeps them (ADR-0040):
 // names unique case-sensitively, archived ones included; archiving keeps
 // the record and frees nothing; updates replace every field they carry.
 
@@ -167,7 +167,7 @@ func optional(body map[string]any, key string) *string {
 }
 
 // serveOrganizations answers /api/v1/organizations/... other than the
-// lists the connector read before B5.
+// organization lists.
 func (s *Server) serveOrganizations(w http.ResponseWriter, r *http.Request, parts []string, body map[string]any) {
 	write := r.Method != http.MethodGet
 	if write && s.readOnlyCall {

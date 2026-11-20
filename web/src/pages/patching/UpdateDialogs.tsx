@@ -8,7 +8,7 @@ import { Alert, Button, InlineError, SelectField, TextareaField, TextField } fro
 import { plural } from "../../lib/format";
 import { PATCH_KEYS, useOutcome } from "./PatchDialogs";
 
-// What Patching → Updates → an update does (one-product plan, C2): install it or remove it across devices, and hold
+// What Patching → Updates → an update does: install it or remove it across devices, and hold
 // it. EasyRMM checks patch.manage on each device, and patch.configure for holds; EasyPatch says what became of each
 // device.
 

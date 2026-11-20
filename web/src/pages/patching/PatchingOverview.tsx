@@ -10,7 +10,7 @@ import { useUrlState } from "../../lib/urlState";
 import { COMPLIANCE, ComplianceBadge } from "./patchText";
 
 /**
- * Patching → Overview (one-product plan, C2): how up to date the devices are, what needs attention, worst first, each
+ * Patching → Overview: how up to date the devices are, what needs attention, worst first, each
  * with the list that shows it, organizations least up to date first, and EasyPatch endpoints no EasyRMM device is
  * linked to. Counted from the patching device list as the caller may see it, so site-level roles see their sites.
  */

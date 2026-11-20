@@ -1,6 +1,6 @@
 package easypatchapi
 
-// Policies at every level, and tags (one-product plan, C4).
+// Policies at every level, and tags.
 
 import (
 	"net/http"

@@ -20,7 +20,7 @@ interface ReportInfo {
   permission: Permission;
   filters: ("platform" | "search" | "health" | "alerts" | "compliance" | "installations")[];
   search?: { label: string; placeholder: string };
-  /** The report comes from EasyPatch, so it is offered once EasyPatch is set up (one-product plan, C5). */
+  /** The report comes from EasyPatch, so it is offered once EasyPatch is set up. */
   patching?: true;
 }
 

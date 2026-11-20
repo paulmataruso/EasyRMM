@@ -75,9 +75,9 @@ type Client struct {
 }
 
 // NewEngineClient builds a client for the patching engine in this
-// deployment (one-product plan, phase B3): plain HTTP on loopback, each
-// request with a statement from signer (ADR-0038) rather than a token. The
-// configuration checked rawURL is http:// on a loopback address.
+// deployment: plain HTTP on loopback, each request with a statement from
+// signer (ADR-0038) rather than a token. The configuration checked rawURL is
+// http:// on a loopback address.
 func NewEngineClient(rawURL string, signer *Signer, version string) (*Client, error) {
 	base, err := url.Parse(rawURL)
 	if err != nil || base.Scheme != "http" || base.Host == "" {

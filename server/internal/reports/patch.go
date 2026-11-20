@@ -10,10 +10,9 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// Patch reports (one-product plan, C5) come from the patching engine
-// rather than from EasyRMM's database. The engine already keeps to what
-// the caller may see; Run checks report.view and
-// patch.view at each row's site besides.
+// Patch reports come from the patching engine rather than from EasyRMM's
+// database. The engine already keeps to what the caller may see; Run checks
+// report.view and patch.view at each row's site besides.
 
 // PatchSource is the patching engine's client as the patch reports read it. The
 // app wires it with UsePatching; without it the patch reports are not found.

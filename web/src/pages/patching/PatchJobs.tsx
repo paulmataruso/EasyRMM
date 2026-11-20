@@ -36,8 +36,8 @@ function since(days: string): string | undefined {
 }
 
 /**
- * Patching → Jobs: the newest EasyPatch jobs of the devices the caller may see, refreshing quickly while any runs
- * (one-product plan, C3). Running jobs by default; all recent ones filter by status, how they started and when.
+ * Patching → Jobs: the newest EasyPatch jobs of the devices the caller may see, refreshing quickly while any runs.
+ * Running jobs by default; all recent ones filter by status, how they started and when.
  */
 export function PatchJobs({ onJob }: { onJob: (id: string) => void }) {
   const url = useUrlState();

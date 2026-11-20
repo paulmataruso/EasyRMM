@@ -7,7 +7,7 @@ import { org } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
 import { addresses, reportMonth } from "./PatchReports";
 
-// The patch reports (one-product plan, C5): the compliance and installations reports with the trend, monthly PDF
+// The patch reports: the compliance and installations reports with the trend, monthly PDF
 // reports, and their schedules under Settings → Patching.
 
 const location = () => screen.getByTestId("location").textContent;

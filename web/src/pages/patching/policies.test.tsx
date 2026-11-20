@@ -7,7 +7,7 @@ import { org, site } from "../../test/fixtures";
 import { renderApp, renderWithProviders } from "../../test/render";
 import { checkPolicy, fromText, PolicyPanel } from "./PolicyEditor";
 
-// Policies at every level, and tags (one-product plan, C4).
+// Policies at every level, and tags.
 
 const T = "2026-11-19T10:00:00Z";
 const main = () => within(screen.getByRole("main"));

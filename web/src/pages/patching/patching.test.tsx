@@ -1313,7 +1313,7 @@ describe("maintenance text", () => {
   });
 });
 
-// The device's Patches tab (one-product plan, C1): exclusions, removals, messages, agent updates and the policy.
+// The device's Patches tab: exclusions, removals, messages, agent updates and the policy.
 const WIN = device("d2", "APP-01", {
   platform: "windows",
   osDescription: "Windows Server 2025 Standard",
@@ -1689,12 +1689,12 @@ describe("device patch actions", () => {
     expect(main().getByText("Conflict")).toBeInTheDocument();
     expect(main().getByText("A Group Policy object also sets this.")).toBeInTheDocument();
     expect(main().getByText(/Update policies from MDM, such as Intune/)).toBeInTheDocument();
-    // Its tags, one through its site; editing is EasyRMM's (C4), not a link into EasyPatch.
+    // Its tags, one through its site; they are edited in EasyRMM, not through a link into the engine.
     expect(await main().findByTitle("Workstations (from its site)")).toBeInTheDocument();
     expect(main().getByTitle("Pilot ring")).toBeInTheDocument();
     expect(main().queryByRole("button", { name: "Change tags" })).not.toBeInTheDocument();
     expect(main().queryByRole("link", { name: "Change in EasyPatch" })).not.toBeInTheDocument();
-    // The device's own policy, edited beside it (C4).
+    // The device's own policy, edited beside it.
     server.on("GET /patching/policies/device/:id", ok(DEVICE_POLICY));
     await user.click(main().getByRole("button", { name: "Set values for this device" }));
     expect(await main().findByRole("form", { name: "APP-01 patch policy" })).toBeInTheDocument();

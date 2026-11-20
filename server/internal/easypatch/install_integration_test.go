@@ -513,7 +513,7 @@ func TestCAForAgent(t *testing.T) {
 // TestBundledInstall: with the engine in this deployment, an install goes to
 // the organization and site EasyRMM keeps there (ADR-0040), and, when
 // EasyRMM is addressed by IP with its own certificate authority, carries
-// that authority for the EasyPatch agent to trust (one-product plan, B7).
+// that authority for the EasyPatch agent to trust (ADR-0042).
 func TestBundledInstall(t *testing.T) {
 	f := newFixture(t)
 	engine := eptest.NewEngine(t, reconcileKey)

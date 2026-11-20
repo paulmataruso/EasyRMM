@@ -242,7 +242,7 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	wantStatus(t, admin.do("GET", "/api/v1/patching/jobs?active=maybe", nil), http.StatusUnprocessableEntity, "validation_failed")
 	wantStatus(t, admin.do("GET", "/api/v1/patching/jobs?organizationId=x", nil), http.StatusUnprocessableEntity, "validation_failed")
-	// Filters (one-product plan, C3): by device, type and when it was created.
+	// Filters: by device, type and when it was created.
 	var filtered struct {
 		Items []struct {
 			Type string `json:"type"`
@@ -318,7 +318,7 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	wantStatus(t, admin.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "scheduledAt": "2026-01-01T00:00:00Z"}),
 		http.StatusUnprocessableEntity, "validation_failed")
-	// How users are asked, and whether a restart need be pending (C3).
+	// How users are asked, and whether a restart need be pending.
 	admin.expect(http.StatusOK, "POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "confirmServers": []string{device},
 		"mode": "PromptWithDeadline", "deadlineMinutes": 120, "expiresAfterMinutes": 60}, &res)
 	if res.Succeeded != 1 {
@@ -336,8 +336,8 @@ func TestEasyPatchAPI(t *testing.T) {
 	wantStatus(t, admin.do("POST", "/api/v1/patching/restart/plan", map[string]any{"deviceIds": []string{device}, "condition": "Sometimes"}),
 		http.StatusUnprocessableEntity, "validation_failed")
 
-	// The device's Patches tab (one-product plan, C1). web-01 is a Linux
-	// endpoint: EasyPatch refuses messages and removals there.
+	// The device's Patches tab. web-01 is a Linux endpoint: EasyPatch refuses
+	// messages and removals there.
 	var guid string
 	ep.Set(func() { guid = endpoint.Updates[0]["updateGuid"].(uuid.UUID).String() })
 	dp := "/api/v1/patching/devices/" + device
@@ -425,8 +425,8 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Fatalf("agent update: %+v", res)
 	}
 
-	// Patching → Updates (one-product plan, C2): the catalog, an update's
-	// page and devices, installing and removing it, and holds.
+	// Patching → Updates: the catalog, an update's page and devices,
+	// installing and removing it, and holds.
 	var catalog struct {
 		Items []struct {
 			UpdateGUID   string `json:"updateGuid"`
@@ -616,7 +616,7 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Fatalf("patch audit: %v", got)
 	}
 
-	// Policies at every level, and tags (one-product plan, C4).
+	// Policies at every level, and tags.
 	type policyView struct {
 		Name    string `json:"name"`
 		HasOwn  bool   `json:"hasOwn"`
@@ -720,7 +720,7 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Errorf("policy and tag audit: %v", got)
 	}
 
-	// Patch reports (one-product plan, C5).
+	// Patch reports.
 	now := time.Now().UTC()
 	ep.SetTrend(epOrg, eptest.TrendDay{Date: now.Format(time.DateOnly), Total: 2, Compliant: 1})
 	ep.AddInstallation(endpoint, eptest.InstallationInfo{Title: "2026-11 Cumulative Update", KB: "KB5070001", CompletedAt: now.Add(-time.Hour)})
@@ -839,7 +839,7 @@ func TestEasyPatchAPI(t *testing.T) {
 		t.Errorf("report audit: %v", got)
 	}
 
-	// Server-wide settings (one-product plan, C6), a super administrator's.
+	// Server-wide settings, a super administrator's.
 	var settings struct {
 		Settings map[string]any `json:"settings"`
 		Feeds    []any          `json:"feeds"`
@@ -913,7 +913,7 @@ func TestEasyPatchAPI(t *testing.T) {
 		}
 	}
 
-	// Alerts (one-product plan, C7), their rules and channels.
+	// Alerts, their rules and channels.
 	alertID := ep.AddAlert(eptest.AlertInfo{RuleType: "UpdateHeld", Severity: "Warning", Title: "Acme Patch: 1 update on hold", Org: epOrg})
 	var alerts struct {
 		Items []struct {

@@ -14,11 +14,11 @@
 # files carry the version (easyrmm-v1.2.3-deploy.tar.gz, agents reporting
 # v1.2.3) either way.
 #
-# The patching engine is part of the release (one-product plan, B8): the
-# bundle's docker-compose.yml names its image by digest, so a deployment
-# runs the engine built from the same commit, and upgrading the bundle
-# upgrades both. The manifest records both images, the engine's version and,
-# with EASYPATCH_PACKAGES, the EasyPatch agent packages its image carries.
+# The patching engine is part of the release (ADR-0043): the bundle's
+# docker-compose.yml names its image by digest, so a deployment runs the
+# engine built from the same commit, and upgrading the bundle upgrades both.
+# The manifest records both images, the engine's version and, with
+# EASYPATCH_PACKAGES, the EasyPatch agent packages its image carries.
 #
 # The output depends only on the commit, the Go toolchain and the pins:
 # archive entries are sorted, owned by root and dated at the commit, and gzip

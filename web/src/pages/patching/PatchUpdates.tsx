@@ -32,7 +32,7 @@ export function scopeQuery(organizationId: string, siteId: string): string {
 }
 
 /**
- * Patching → Updates (one-product plan, C2): every update the devices in scope report, counted across them; those
+ * Patching → Updates: every update the devices in scope report, counted across them; those
  * fixing vulnerabilities exploited in the wild first. EasyPatch counts whole organizations or one site, so people
  * whose role covers single sites choose one.
  */
