@@ -31,6 +31,13 @@ All notable changes to this project are documented here. The format follows
   to run `rpm --rebuilddb` as root and install again. Found on the first real
   deployment, on a RHEL 8.10 machine whose database was already damaged when
   it enrolled.
+- **Sign-in says when no passkey answered.** When the browser's passkey or
+  security key prompt ended without a key, sign-in and the second factor
+  showed nothing, so a password manager that did not open (locked, or
+  updated since the page loaded) looked like a page that ignored the click.
+  They now say no passkey or security key answered and suggest reloading the
+  page. Browsers report a closed prompt the same way, so it is a note, not an
+  error.
 
 ## [1.0.0-rc.2] - 2026-11-20
 

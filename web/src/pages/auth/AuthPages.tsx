@@ -5,7 +5,7 @@ import { api, fieldError, request } from "../../api/client";
 import { useApi } from "../../api/hooks";
 import type { AuthOptions, ConfirmTotpResult, SecurityKeyAdded, SessionView, SsoButton, TotpEnrollment } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
-import { createKey, getKey, KeyCancelled, keyAvailability, type KeyAvailability } from "../../auth/webauthn";
+import { createKey, getKey, KeyCancelled, keyAvailability, NO_KEY_ANSWERED, type KeyAvailability } from "../../auth/webauthn";
 import { CopyButton, DownloadButton, OneTimeNotice } from "../../components/Copy";
 import { AuthShell } from "../../components/Layout";
 import { Alert, Button, buttonClasses, InlineError, Spinner, TextField } from "../../components/ui";
@@ -180,6 +180,7 @@ export function LoginPage() {
   const [error, setError] = useState<unknown>(null);
   const [missing, setMissing] = useState<{ email?: string; password?: string }>({});
   const [keyBusy, setKeyBusy] = useState(false);
+  const [noKey, setNoKey] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
   const keys = keyAvailability(options.data?.webauthn);
@@ -198,6 +199,7 @@ export function LoginPage() {
     // first click, and a disabled button would swallow that click. Empty fields are named instead.
     const absent = { email: email.trim() ? undefined : "Enter your email address.", password: password ? undefined : "Enter your password." };
     setMissing(absent);
+    setNoKey(false);
     if (absent.email || absent.password) {
       (absent.email ? emailRef : passwordRef).current?.focus();
       return;
@@ -223,6 +225,7 @@ export function LoginPage() {
   async function signInWithPasskey() {
     setKeyBusy(true);
     setError(null);
+    setNoKey(false);
     setMissing({});
     try {
       const options = await request<unknown>("POST", "/auth/passkey/begin", { silentAuth: true });
@@ -232,7 +235,8 @@ export function LoginPage() {
       applySession(view);
       navigate(returnTo, { replace: true });
     } catch (err) {
-      if (!(err instanceof KeyCancelled)) setError(err);
+      if (err instanceof KeyCancelled) setNoKey(true);
+      else setError(err);
     } finally {
       setKeyBusy(false);
     }
@@ -278,6 +282,7 @@ export function LoginPage() {
             Sign in with a passkey
           </Button>
         )}
+        {noKey && !error && <NoKeyNote />}
         {(sso.data?.providers ?? []).map((p) => (
           <a
             key={p.id}
@@ -334,6 +339,7 @@ export function MfaVerifyPage() {
   const [error, setError] = useState<unknown>(null);
   const [chosen, setChosen] = useState<SecondFactor | null>(null);
   const [short, setShort] = useState(false);
+  const [noKey, setNoKey] = useState(false);
 
   const hasKeys = (session?.user.securityKeys ?? 0) > 0;
   const hasTotp = session?.user.totp ?? true;
@@ -368,12 +374,14 @@ export function MfaVerifyPage() {
   async function verifyWithKey() {
     setBusy(true);
     setError(null);
+    setNoKey(false);
     try {
       const options = await request<unknown>("POST", "/auth/mfa/webauthn/begin", { silentAuth: true });
       const credential = await getKey(options);
       finish(await request<SessionView>("POST", "/auth/mfa/webauthn/finish", { body: { credential }, silentAuth: true }));
     } catch (err) {
-      if (!(err instanceof KeyCancelled)) setError(err);
+      if (err instanceof KeyCancelled) setNoKey(true);
+      else setError(err);
     } finally {
       setBusy(false);
     }
@@ -386,7 +394,7 @@ export function MfaVerifyPage() {
         {waiting ? (
           <Spinner label="Loading sign-in options…" />
         ) : method === "key" ? (
-          <KeyStep availability={keys} busy={busy} error={error} onUse={verifyWithKey} />
+          <KeyStep availability={keys} busy={busy} error={error} noKey={noKey} onUse={verifyWithKey} />
         ) : (
           <form onSubmit={submit} className="flex flex-col gap-3.5">
             <TextField
@@ -422,6 +430,7 @@ export function MfaVerifyPage() {
                   setCode("");
                   setError(null);
                   setShort(false);
+                  setNoKey(false);
                 }}
               >
                 {FACTOR_SWITCH[m]}
@@ -444,8 +453,17 @@ export function MfaVerifyPage() {
   );
 }
 
+/** Said when the browser's prompt ended without a key: a note, not an error, since closing the prompt ends it too. */
+function NoKeyNote() {
+  return (
+    <div role="status">
+      <Alert tone="info">{NO_KEY_ANSWERED}</Alert>
+    </div>
+  );
+}
+
 /** The security-key step: one button, or why keys cannot be used on this page. */
-function KeyStep({ availability, busy, error, onUse }: { availability: KeyAvailability; busy: boolean; error: unknown; onUse: () => void }) {
+function KeyStep({ availability, busy, error, noKey, onUse }: { availability: KeyAvailability; busy: boolean; error: unknown; noKey: boolean; onUse: () => void }) {
   if (!availability.usable) {
     return (
       <Alert tone="warn">
@@ -466,6 +484,7 @@ function KeyStep({ availability, busy, error, onUse }: { availability: KeyAvaila
     <>
       <p className="text-sm text-muted">Your browser will ask you to insert or touch your key, or to confirm with your fingerprint, face or PIN.</p>
       <InlineError error={error} />
+      {noKey && !error && <NoKeyNote />}
       <Button variant="primary" icon={<KeyRound className="size-4" aria-hidden />} loading={busy} onClick={onUse} className="w-full" autoFocus>
         Use security key
       </Button>
