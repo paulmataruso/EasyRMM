@@ -6,6 +6,12 @@ moved into it. Its devices keep their agents and their history, and
 nothing is reinstalled on them. The design is in
 [ADR-0045](../architecture/adr/0045-importing-a-standalone-easypatch.md).
 
+> **Tested:** only from EasyPatch 1.10.0 with a Linux agent, by the import
+> end-to-end test (`make e2e-import`), on servers made for the test. Imports
+> from 1.4 to 1.9 are accepted but untested, as are Windows agents and a real
+> server's data. Upgrading a standalone server to 1.10.0 first, with its own
+> upgrade, is the tested path.
+
 ## What comes across
 
 | From the EasyPatch server | In EasyRMM |
