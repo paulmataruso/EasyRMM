@@ -71,7 +71,7 @@ the command line). *Deploy → Enrollment tokens* shows the enroll command for a
 server has a macOS package:
 
 ```sh
-sudo installer -pkg EasyPatchAgent-1.10.0-arm64.pkg -target /
+sudo installer -pkg EasyPatchAgent-1.11.0-arm64.pkg -target /
 sudo easypatch-agent enroll --server https://patch.example.com --token-file /path/to/token
 ```
 
@@ -193,7 +193,7 @@ link and the package receipt.
 ## Building from source
 
 ```sh
-scripts/build-macos-packages.sh --version 1.10.0 --arch all
+scripts/build-macos-packages.sh --version 1.11.0 --arch all
 ```
 
 The script runs the agent tests, publishes the self-contained agent for osx-x64 and osx-arm64

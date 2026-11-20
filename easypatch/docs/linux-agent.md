@@ -106,8 +106,8 @@ The proxy is used by the agent only. Proxy credentials are not supported.
 2. Install it. The service starts and waits for enrollment.
 
    ```sh
-   sudo apt-get install ./EasyPatchAgent-1.10.0-x64.deb     # Debian, Ubuntu
-   sudo dnf install ./EasyPatchAgent-1.10.0-x64.rpm         # RHEL and rebuilds, CentOS Stream, Fedora
+   sudo apt-get install ./EasyPatchAgent-1.11.0-x64.deb     # Debian, Ubuntu
+   sudo dnf install ./EasyPatchAgent-1.11.0-x64.rpm         # RHEL and rebuilds, CentOS Stream, Fedora
    ```
 
 3. Enroll with the token. The agent does not accept a token as a command-line argument, because
@@ -318,7 +318,7 @@ release key accepts only packages signed with that key, so it does not update to
 releases (see [security.md](security.md#agent-release-signing)).
 
 ```sh
-scripts/build-linux-packages.sh --version 1.10.0 --arch all
+scripts/build-linux-packages.sh --version 1.11.0 --arch all
 ```
 
 The script runs the agent tests, publishes the self-contained agent for linux-x64 and linux-arm64,

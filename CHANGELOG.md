@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0-rc.1] - 2026-11-20
+
+The first release candidate: EasyRMM with EasyPatch folded in as its
+patching engine (EasyPatch 1.11.0), for a test on a real server before
+1.0.0.
+
 ### Added
 
 - **The patching engine inside EasyRMM's deployment, for testing** (one-product
