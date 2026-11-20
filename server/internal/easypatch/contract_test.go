@@ -363,6 +363,11 @@ func TestContract(t *testing.T) {
 		if c.version != "" && info.Version != c.version {
 			t.Errorf("version %q, want %q", info.Version, c.version)
 		}
+		// The fake reports the version of the engine built from the same
+		// commit; a release that raises <Version> raises it too.
+		if info.Version != eptest.EngineVersion {
+			t.Errorf("the engine is %s but eptest.EngineVersion is %s: set it to the engine's <Version>", info.Version, eptest.EngineVersion)
+		}
 		if d := time.Since(info.ServerTime); d > time.Minute || d < -time.Minute {
 			t.Errorf("server time %v", info.ServerTime)
 		}
