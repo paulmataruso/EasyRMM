@@ -30,12 +30,6 @@ follows when these have been run there, or fixed:
   with a Windows agent. The import is tested only from 1.10.0 with a Linux
   agent; 1.4 to 1.9 are accepted but untested.
 
-**Fix in the patching engine**
-
-* An agent request that sends `null` for a list (for example
-  `"activeJobIds": null`) gets 500 instead of 400. EasyPatch agents always
-  send lists; reject null lists in the agent request types, with tests.
-
 ## After 1.0.0
 
 * **Packages for the EasyRMM agent**: an MSI for Windows (needs Windows CI

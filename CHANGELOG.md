@@ -56,6 +56,10 @@ All notable changes to this project are documented here. The format follows
 - **The patching engine sorts agent versions as versions.** Its endpoint
   list, sorted by agent version, put 1.10.0 before 1.9.0. It now compares the
   numbers, in the database so that paging stays right.
+- **The patching engine refuses a null list from an agent.** An agent
+  request that sent `null` for a list, such as `"activeJobIds": null`, got a
+  server error; it now gets `400 validation_failed` naming the list.
+  EasyPatch agents never send one.
 
 ## [1.0.0-rc.2] - 2026-11-20
 

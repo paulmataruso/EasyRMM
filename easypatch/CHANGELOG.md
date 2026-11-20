@@ -60,6 +60,10 @@ and package downloads.
   1.9.0. PostgreSQL now compares the numbers a version starts with, so paging stays right; a
   pre-release (1.10.0-rc.1) comes just before its release. Ascending, endpoints with no version
   come first, then those whose version does not start with a number; descending is the reverse.
+- An agent request that sent `null` for a list got 500: `"activeJobIds": null` in a check-in, or
+  `"kbNumbers": null` in one of a scan's updates. Every agent route now refuses a null list
+  anywhere in the body with `400 validation_failed`, naming each list in `errors` (at most 20). A
+  list left out still reads as empty. No agent sends null: they leave out a member that is null.
 
 ## [1.11.1] - 2026-11-20
 
