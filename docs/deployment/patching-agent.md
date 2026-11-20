@@ -64,7 +64,7 @@ none ([ADR-0031](../architecture/adr/0031-easypatch-agent-install.md)):
   without the agent, new ones included, and installs it; a failed
   automatic install is tried again an hour later, three times in all.
 
-<!-- DIAGRAM: agent-install — how EasyRMM installs the EasyPatch agent: a request in the console or the organization's Install automatically, a signed instruction to the device's EasyRMM agent, the package download from the engine through EasyRMM's edge, the hash check and install, enrollment with a single-use token, and the device link -->
+![Installing the EasyPatch agent: the EasyRMM agent receives a signed, device-bound install instruction in its heartbeat answer, downloads the package and checks its SHA-256, and installs it with a single-use token; the EasyPatch agent then enrolls with the patching engine and checks in every minute, all over HTTPS to EasyRMM's address](../images/diagrams/patching-agent-install.svg)
 
 What happens:
 

@@ -26,7 +26,7 @@ The code is in `easypatch/` of this repository. Related pages:
 * [Docker deployment](../deployment/docker.md#patching-engine): the
   engine's services and data.
 
-<!-- DIAGRAM: engine-context — EasyRMM's server and edge on the host, the engine's API and worker on loopback beside them, the shared PostgreSQL, EasyPatch agents reaching the engine only through EasyRMM's edge, and the worker's outbound connections to vulnerability feeds, GitHub, mail and webhooks -->
+![The patching engine: EasyPatch agents reach it only through EasyRMM's address; the EasyRMM server passes their routes to the engine's API on loopback and sends it a signed statement per console request; the API and the worker share the engine's PostgreSQL database, set up by a one-shot migration, and only the worker connects out, for vulnerability feeds, mail and webhooks](../images/diagrams/patching-engine.svg)
 
 ## Components
 
@@ -450,7 +450,7 @@ The report includes whether MDM update policies are present.
 | `AgentUpdate` | Installs a newer, release-signed agent package |
 | `UninstallAgent` | Removes the agent's own package |
 
-<!-- DIAGRAM: job-lifecycle — a job's statuses (Queued, Delivered, Acknowledged, Running, WaitingForReboot, Completed, Failed, Cancelled, Expired) and the events that move it between them: lease, acknowledgement, lease expiry and redelivery, agent reports, cancellation, expiry, timeout and a late genuine result -->
+![A patch job's lifecycle: queued, leased to the EasyPatch agent at its next check-in, acknowledged and run; it may wait for a restart and run again, goes back to the queue when a lease expires (at most five deliveries by default), and ends completed, failed, cancelled or expired](../images/diagrams/patch-job-lifecycle.svg)
 
 * **Durable.** Job state lives in PostgreSQL; the agent also keeps the job
   it is running in its state file and resumes it after a restart.
