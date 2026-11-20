@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0-rc.2] - 2026-11-20
+
+The second release candidate, with what the first real deployment of
+rc.1 found. Patching engine 1.11.1.
+
 ### Added
 
 - **Show a token's install commands again.** Under Devices → Add devices,

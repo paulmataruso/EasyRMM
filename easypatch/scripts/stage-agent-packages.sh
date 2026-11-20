@@ -2,7 +2,7 @@
 # Puts the agent packages of one version, each with its release signature, where the server image's build takes them
 # from (deployment/server/agent-packages/), after checking every signature against the given public key.
 #
-#   scripts/stage-agent-packages.sh --version 1.11.0 --public-key <public.pem> [--formats msi,deb,rpm]
+#   scripts/stage-agent-packages.sh --version 1.11.1 --public-key <public.pem> [--formats msi,deb,rpm]
 #                                   [--arches x64,arm64] <dir>...
 #
 # Each format must be there for each architecture, with its .sig, in exactly one of the directories. Packages staged

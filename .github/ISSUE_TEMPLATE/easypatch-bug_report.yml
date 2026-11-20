@@ -29,7 +29,7 @@ body:
     attributes:
       label: Server version
       description: The EasyPatch version Settings → EasyPatch shows in EasyRMM, or the commit if you build from source.
-      placeholder: "1.11.0"
+      placeholder: "1.11.1"
     validations:
       required: true
   - type: input
@@ -37,7 +37,7 @@ body:
     attributes:
       label: Agent version and endpoint OS
       description: If the problem involves an endpoint.
-      placeholder: "1.11.0 on Windows 11 24H2 / Ubuntu 24.04"
+      placeholder: "1.11.1 on Windows 11 24H2 / Ubuntu 24.04"
   - type: dropdown
     id: area
     attributes:

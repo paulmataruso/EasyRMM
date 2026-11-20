@@ -256,7 +256,7 @@ docs/        Documentation
 
 ## Project status
 
-Version 1.11.0 (1.4.0 was the first public release). Server and agent logic are covered
+Version 1.11.1 (1.4.0 was the first public release). Server and agent logic are covered
 by automated tests on Linux, including an end-to-end test that drives the real agent runtime
 against the real API and PostgreSQL. Release builds are made and signed by GitHub Actions.
 

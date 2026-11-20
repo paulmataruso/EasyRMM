@@ -5,6 +5,11 @@ and the agents share one version number.
 
 ## [Unreleased]
 
+## [1.11.1] - 2026-11-20
+
+Released with EasyRMM 1.0.0-rc.2. No change to the engine or its agents: a version is published from
+one commit only, and EasyRMM's release builds the engine again.
+
 ## [1.11.0] - 2026-11-20
 
 Released as EasyRMM's patching engine, with EasyRMM 1.0.0-rc.1; there is no EasyPatch release of its

@@ -3,7 +3,7 @@
 # and tests. The agents in them trust that test key only, and no released agent trusts it, so an image built this way
 # carries packages that no real agent installs as an update. It must never be published.
 #
-#   scripts/build-test-agent-packages.sh [--version 1.11.0] [--arch x64|arm64|all]
+#   scripts/build-test-agent-packages.sh [--version 1.11.1] [--arch x64|arm64|all]
 #
 # The key pair is made in a temporary directory, and the private key is deleted at the end. The public key is kept as
 # artifacts/test-release-key.pub.pem for tests that check signatures. Needs the .NET SDK and Docker
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-version="1.11.0"
+version="1.11.1"
 arch="all"
 
 while [[ $# -gt 0 ]]; do
