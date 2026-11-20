@@ -307,7 +307,8 @@ public sealed class EnrollmentService(
         await db.SaveChangesAsync(ct);
         await tx.CommitAsync(ct);
         var policy = await policies.ResolveAsync(endpoint, ct);
-        logger.LogInformation("Endpoint {EndpointId} ({Hostname}) enrolled with token {Prefix}", endpoint.Id, endpoint.Hostname, token.TokenPrefix);
+        logger.LogInformation("Endpoint {EndpointId} ({Hostname}) enrolled with token {Prefix}", endpoint.Id, LogText.Safe(endpoint.Hostname),
+            LogText.Safe(token.TokenPrefix));
         return ActiveResponse(endpoint, credential, fingerprint, policy.ToAgentConfig(), now);
     }
 
@@ -361,7 +362,7 @@ public sealed class EnrollmentService(
             };
             db.EnrollmentRequests.Add(existing);
             logger.LogInformation("Enrollment request {RequestId} from {Hostname} ({Ip}) awaits approval; key fingerprint {Fingerprint}",
-                existing.RequestId, existing.Hostname, sourceIp, fingerprint);
+                existing.RequestId, LogText.Safe(existing.Hostname), LogText.Safe(sourceIp?.ToString()), fingerprint);
         }
         else
         {

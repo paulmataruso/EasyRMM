@@ -691,6 +691,10 @@ All notable changes to this project are documented here. The format follows
   `easypatch/scripts/build-macos-packages.sh` still builds them.
 
 ### Security
+- Text a client sends (a request's path, an agent's host name, a
+  correlation id) is logged with its line breaks escaped, in EasyRMM and the
+  patching engine, so a crafted request cannot forge a log line for a
+  reader of plain-text logs. Closes CodeQL's log-injection alerts.
 - The EasyPatch connection and audit forwarding do not connect to
   link-local or cloud instance metadata addresses, even through a name that
   resolves to one. A Super Administrator's setting could otherwise make the

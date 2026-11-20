@@ -552,11 +552,13 @@ func (s *Service) Approve(ctx context.Context, c access.Caller, in ApproveInput)
 	if err := checkIDs(in.IDs); err != nil {
 		return nil, err
 	}
-	var orgID uuid.UUID
+	// The site as the database has it: its id is what the log names, not
+	// the one the client sent.
+	var siteID, orgID uuid.UUID
 	var orgName, siteName string
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT s.organization_id, o.name, s.name FROM sites s JOIN organizations o ON o.id = s.organization_id WHERE s.id = $1`,
-			in.SiteID).Scan(&orgID, &orgName, &siteName)
+		err := tx.QueryRow(ctx, `SELECT s.id, s.organization_id, o.name, s.name FROM sites s JOIN organizations o ON o.id = s.organization_id WHERE s.id = $1`,
+			in.SiteID).Scan(&siteID, &orgID, &orgName, &siteName)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.Invalid("siteId", "Choose a site.")
 		}
@@ -647,7 +649,7 @@ func (s *Service) Approve(ctx context.Context, c access.Caller, in ApproveInput)
 	}
 	out.Skipped = skipped(in.IDs, out.Decided)
 	s.waits.notify(keys...)
-	s.log.Info("devices approved", "count", len(out.Decided), "site_id", in.SiteID)
+	s.log.Info("devices approved", "count", len(out.Decided), "site_id", siteID)
 	return out, nil
 }
 

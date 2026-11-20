@@ -95,7 +95,8 @@ public sealed class EasyPatchExceptionHandler(ILogger<EasyPatchExceptionHandler>
             case OperationCanceledException when httpContext.RequestAborted.IsCancellationRequested:
                 return true;
             default:
-                logger.LogError(exception, "Unhandled exception for {Method} {Path}", httpContext.Request.Method, httpContext.Request.Path);
+                logger.LogError(exception, "Unhandled exception for {Method} {Path}", LogText.Safe(httpContext.Request.Method),
+                    LogText.Safe(httpContext.Request.Path.Value));
                 await ProblemResults.WriteAsync(httpContext, 500, "internal_error",
                     "An unexpected error occurred. Quote the correlation ID when reporting this problem.");
                 return true;
@@ -123,7 +124,7 @@ public sealed class CorrelationIdMiddleware(RequestDelegate next, ILogger<Correl
             context.Response.Headers[HeaderName] = context.TraceIdentifier;
             return Task.CompletedTask;
         });
-        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = context.TraceIdentifier }))
+        using (logger.BeginScope(new Dictionary<string, object> { ["CorrelationId"] = LogText.Safe(context.TraceIdentifier) }))
         {
             await next(context);
         }

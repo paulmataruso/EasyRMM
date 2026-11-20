@@ -114,11 +114,11 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 	// The client went away (a closed tab, a navigation) and the work stopped
 	// with it: nothing failed on the server.
 	if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
-		LoggerFrom(r.Context()).Info("request canceled by the client", "method", r.Method, "path", r.URL.Path)
+		LoggerFrom(r.Context()).Info("request canceled by the client", "method", r.Method, "path", LogSafe(r.URL.Path))
 		WriteJSON(w, StatusClientClosedRequest, nil)
 		return
 	}
-	LoggerFrom(r.Context()).Error("request failed", "error", err, "method", r.Method, "path", r.URL.Path)
+	LoggerFrom(r.Context()).Error("request failed", "error", err, "method", r.Method, "path", LogSafe(r.URL.Path))
 	WriteJSON(w, http.StatusInternalServerError, ErrorBody{Error: ErrorDetail{
 		Code: "internal_error", Message: "Something went wrong on the server. The error has been logged.",
 	}})

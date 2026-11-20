@@ -252,7 +252,7 @@ public sealed class EasyRmmAuthenticationHandler(
         {
             // The reason, never the statement: it is a credential for as long as it lives.
             Logger.LogWarning("Refused a statement from EasyRMM for {Method} {Path}: {Reason}.",
-                LogSafe(Request.Method), LogSafe(Request.Path.Value), reason);
+                LogText.Safe(Request.Method), LogText.Safe(Request.Path.Value), reason);
             return Task.FromResult(AuthenticateResult.Fail("The statement from EasyRMM is not valid for this request."));
         }
 
@@ -276,9 +276,4 @@ public sealed class EasyRmmAuthenticationHandler(
 
     protected override Task HandleForbiddenAsync(AuthenticationProperties properties) =>
         ProblemResults.WriteAsync(Context, StatusCodes.Status403Forbidden, "forbidden", "This call does not have permission to perform this action.");
-
-    // What the caller sent, with its line breaks escaped: whoever reads the log as plain text must not take a
-    // line the caller wrote for one of the server's.
-    private static string LogSafe(string? value) =>
-        (value ?? "").Replace("\r", "\\r", StringComparison.Ordinal).Replace("\n", "\\n", StringComparison.Ordinal);
 }
