@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Api.Security;
 using EasyPatch.Contracts;
@@ -404,7 +405,7 @@ public static class EndpointEndpoints
             "knownexploited" => desc ? query.OrderByDescending(e => e.KnownExploitedMissingCount).ThenBy(e => e.Hostname) : query.OrderBy(e => e.KnownExploitedMissingCount).ThenBy(e => e.Hostname),
             "lastcheckin" => desc ? query.OrderByDescending(e => e.LastCheckInAt).ThenBy(e => e.Hostname) : query.OrderBy(e => e.LastCheckInAt).ThenBy(e => e.Hostname),
             "compliance" => desc ? query.OrderByDescending(e => e.ComplianceStatus).ThenBy(e => e.Hostname) : query.OrderBy(e => e.ComplianceStatus).ThenBy(e => e.Hostname),
-            "agentversion" => desc ? query.OrderByDescending(e => e.AgentVersion).ThenBy(e => e.Hostname) : query.OrderBy(e => e.AgentVersion).ThenBy(e => e.Hostname),
+            "agentversion" => OrderByAgentVersion(query, desc).ThenBy(e => e.Hostname),
             _ => desc ? query.OrderByDescending(e => e.Hostname) : query.OrderBy(e => e.Hostname),
         };
 
@@ -425,6 +426,24 @@ public static class EndpointEndpoints
         return new PagedResult<EndpointSummaryDto>(paged.Items.Select(r => Mapping.ToSummary(r, latest, tags.GetValueOrDefault(r.Id))).ToList(),
             paged.Page, paged.PageSize, paged.TotalCount);
     }
+
+    /// <summary>A version made of dotted numbers only, with no suffix (a release, not a pre-release).</summary>
+    private const string PlainVersion = "^[0-9]+([.][0-9]+)*$";
+
+    /// <summary>
+    /// Agent versions in version order, in the database so that paging stays right: ascending, no version first, then a version that
+    /// does not start with a number (by its text), then the rest by their numbers (1.9.0 before 1.10.0), a pre-release (1.10.0-rc.1)
+    /// just before its release and pre-releases of one release by their text. Descending is the exact reverse.
+    /// </summary>
+    private static IOrderedQueryable<EndpointEntity> OrderByAgentVersion(IQueryable<EndpointEntity> query, bool desc) => desc
+        ? query.OrderByDescending(e => EasyPatchDbContext.VersionNumbers(e.AgentVersion) != null)
+            .ThenByDescending(e => EasyPatchDbContext.VersionNumbers(e.AgentVersion))
+            .ThenByDescending(e => Regex.IsMatch(e.AgentVersion ?? "", PlainVersion))
+            .ThenByDescending(e => e.AgentVersion ?? "")
+        : query.OrderBy(e => EasyPatchDbContext.VersionNumbers(e.AgentVersion) != null)
+            .ThenBy(e => EasyPatchDbContext.VersionNumbers(e.AgentVersion))
+            .ThenBy(e => Regex.IsMatch(e.AgentVersion ?? "", PlainVersion))
+            .ThenBy(e => e.AgentVersion ?? "");
 
     private static async Task<EndpointDetailDto> LoadDetailAsync(Guid id, EasyPatchDbContext db, ITenantContext tenant, AgentPackageService packages,
         PolicyService policies, CancellationToken ct)

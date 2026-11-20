@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using System.Text;
 using System.Text.Json;
 using EasyPatch.Contracts;
@@ -7,7 +8,10 @@ using EasyPatch.Core.Entities;
 using EasyPatch.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Microsoft.EntityFrameworkCore.Query.SqlExpressions;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace EasyPatch.Infrastructure.Data;
 
@@ -64,6 +68,14 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
     internal static readonly string DedupeStatusSql =
         string.Join(", ", JobTransitions.DedupeStatuses.Select(s => $"'{s}'"));
 
+    /// <summary>
+    /// For ordering by version in a query: the dotted numbers <paramref name="version"/> starts with, as numbers (PostgreSQL
+    /// <c>numeric[]</c>), so 1.9.0 (<c>{1,9,0}</c>) comes before 1.10.0 (<c>{1,10,0}</c>). A suffix is ignored (1.10.0-rc.1 is also
+    /// <c>{1,10,0}</c>); null when the text is null or does not start with a number. Only PostgreSQL evaluates it.
+    /// </summary>
+    public static decimal[]? VersionNumbers(string? version) =>
+        throw new NotSupportedException($"{nameof(VersionNumbers)} is translated to SQL; it cannot be called directly.");
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         // Store enums as readable strings.
@@ -104,8 +116,30 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
         ConfigureNotifications(modelBuilder);
         ConfigureVulnerabilities(modelBuilder);
         ConfigureReports(modelBuilder);
+        ConfigureFunctions(modelBuilder);
         Seed(modelBuilder);
         ApplySnakeCaseNames(modelBuilder);
+    }
+
+    /// <summary><see cref="VersionNumbers"/> as <c>string_to_array(substring(version, '^[0-9]+(?:[.][0-9]+)*'), '.')::numeric[]</c>: the
+    /// pattern takes only digits and the dots between them, so the cast cannot fail, and <c>numeric</c> holds a number of any length.</summary>
+    private void ConfigureFunctions(ModelBuilder b)
+    {
+        var types = this.GetService<IRelationalTypeMappingSource>();
+        var text = types.FindMapping(typeof(string))!;
+        var textArray = types.FindMapping(typeof(string[]))!;
+        var numericArray = types.FindMapping(typeof(decimal[]))!;
+        b.HasDbFunction(typeof(EasyPatchDbContext).GetMethod(nameof(VersionNumbers))!).HasTranslation(args =>
+            new SqlUnaryExpression(ExpressionType.Convert,
+                new SqlFunctionExpression("string_to_array",
+                [
+                    // substring is also null for text that does not match: "propagates nullability" would let EF Core turn
+                    // "VersionNumbers(v) IS NULL" into "v IS NULL".
+                    new SqlFunctionExpression("substring", [args[0], new SqlConstantExpression("^[0-9]+(?:[.][0-9]+)*", text)], nullable: true,
+                        argumentsPropagateNullability: [false, false], typeof(string), text),
+                    new SqlConstantExpression(".", text),
+                ], nullable: true, argumentsPropagateNullability: [true, false], typeof(string[]), textArray),
+                typeof(decimal[]), numericArray));
     }
 
     private static void ConfigureIdentity(ModelBuilder b)

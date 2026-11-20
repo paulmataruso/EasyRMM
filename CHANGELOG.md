@@ -53,6 +53,9 @@ All notable changes to this project are documented here. The format follows
   They now say no passkey or security key answered and suggest reloading the
   page. Browsers report a closed prompt the same way, so it is a note, not an
   error.
+- **The patching engine sorts agent versions as versions.** Its endpoint
+  list, sorted by agent version, put 1.10.0 before 1.9.0. It now compares the
+  numbers, in the database so that paging stays right.
 
 ## [1.0.0-rc.2] - 2026-11-20
 
