@@ -67,6 +67,10 @@ func main() {
 		t.Fatalf("go build: %v %s", err, out)
 	}
 
+	// Windows sets ProgramFiles itself when a process starts, so it is set
+	// inside the script: otherwise a computer's own winget runs.
+	setProgramFiles := "$env:ProgramFiles = '" + strings.ReplaceAll(programFiles, "'", "''") + "'\n"
+
 	for _, c := range []struct {
 		action, wingetExit string
 		want               int
@@ -81,8 +85,8 @@ func main() {
 		{"uninstall", "-1978334967", 0, "Restart the computer"}, // 0x8A150109
 		{"uninstall", "5", 1, "exit code 0x00000005"},
 	} {
-		code, out := runSoftwareScript(t, adminOnlyScript+wingetScript,
-			[]string{"ProgramFiles=" + programFiles, "FAKE_WINGET_EXIT=" + c.wingetExit}, c.action, "Example.Package")
+		code, out := runSoftwareScript(t, adminOnlyScript+setProgramFiles+wingetScript,
+			[]string{"FAKE_WINGET_EXIT=" + c.wingetExit}, c.action, "Example.Package")
 		if code != c.want || !strings.Contains(out, c.says) {
 			t.Errorf("%s, winget exits %s: exit %d, want %d with %q:\n%s", c.action, c.wingetExit, code, c.want, c.says, out)
 		}
