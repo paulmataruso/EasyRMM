@@ -9,8 +9,8 @@
     <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.15" />
     <PackageVersion Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" Version="10.0.15" />
     <!-- Notifications (SMTP). MimeKit and BouncyCastle are pinned explicitly (transitive dependencies of MailKit). -->
-    <PackageVersion Include="MailKit" Version="4.18.2" />
-    <PackageVersion Include="MimeKit" Version="4.18.2" />
+    <PackageVersion Include="MailKit" Version="5.0.0" />
+    <PackageVersion Include="MimeKit" Version="5.0.0" />
     <PackageVersion Include="BouncyCastle.Cryptography" Version="2.7.0" />
     <!-- Monthly PDF reports. 6.2.x is the last MIT-licensed line (6.5.0 and later are AGPL-3.0). PDFsharp and
          System.Security.Cryptography.Pkcs are pinned explicitly (transitive dependencies). -->
