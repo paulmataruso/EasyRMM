@@ -12,7 +12,7 @@ import { addresses, reportMonth } from "./PatchReports";
 
 const location = () => screen.getByTestId("location").textContent;
 
-const READY: PatchStatus = { configured: true, canSchedule: true };
+const READY: PatchStatus = { configured: true };
 
 /** Manages and configures patching in Acme, and reads reports; not a super administrator. */
 const MANAGER = sessionView({

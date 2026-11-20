@@ -25,7 +25,6 @@ import (
 func TestPatchingEngineAPI(t *testing.T) {
 	key := bytes.Repeat([]byte{5}, 32)
 	engine := eptest.NewEngine(t, key)
-	engine.Capabilities = []string{easypatch.CapabilityScheduledInstalls}
 	bundled := func(key []byte) func(*config.Config) {
 		return func(c *config.Config) {
 			c.Patching = config.Patching{URL: engine.URL(), Key: key}
@@ -44,18 +43,17 @@ func TestPatchingEngineAPI(t *testing.T) {
 		CACert        string `json:"caCert"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch", nil, &conn)
-	if !conn.Configured || conn.URL != engine.URL() || conn.ServerVersion != "1.9.0" || conn.LastError != "" || conn.CACert != "" {
+	if !conn.Configured || conn.URL != engine.URL() || conn.ServerVersion != eptest.EngineVersion || conn.LastError != "" || conn.CACert != "" {
 		t.Fatalf("settings: %+v", conn)
 	}
 	wantStatus(t, admin.do("PUT", "/api/v1/settings/easypatch", map[string]string{"url": "https://patch.example.com"}), http.StatusNotFound, "not_found")
 	wantStatus(t, admin.do("DELETE", "/api/v1/settings/easypatch", nil), http.StatusNotFound, "not_found")
 
 	var status struct {
-		Configured  bool `json:"configured"`
-		CanSchedule bool `json:"canSchedule"`
+		Configured bool `json:"configured"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching", nil, &status)
-	if !status.Configured || !status.CanSchedule {
+	if !status.Configured {
 		t.Fatalf("status: %+v", status)
 	}
 

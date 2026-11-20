@@ -23,7 +23,7 @@ const VIEWER = sessionView({
   permissions: ["org.view", "site.view", "device.view", "patch.view"],
 });
 
-const READY: PatchStatus = { configured: true, canSchedule: false };
+const READY: PatchStatus = { configured: true };
 
 function endpoint(id: string, hostname: string, extra: Partial<PatchEndpoint> = {}): PatchEndpoint {
   return {

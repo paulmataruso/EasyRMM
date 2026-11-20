@@ -205,7 +205,7 @@ func TestConnection(t *testing.T) {
 	// Before UseEngine, patching is not set up.
 	none := f.unconfigured()
 	c, err := none.Connection(ctx)
-	if err != nil || c.Configured || c.Capabilities == nil {
+	if err != nil || c.Configured {
 		t.Fatalf("unset: %+v, %v", c, err)
 	}
 	_, err = none.Organizations(ctx)
@@ -222,15 +222,15 @@ func TestConnection(t *testing.T) {
 
 	// The engine as Settings shows it.
 	c, err = f.svc.Connection(ctx)
-	if err != nil || !c.Configured || c.ServerVersion != "1.9.0" || c.PublicURL != enginePublicURL || c.URL != f.ep.URL() ||
-		c.CheckedAt == nil || len(c.Capabilities) != 0 || c.LastError != "" {
+	if err != nil || !c.Configured || c.ServerVersion != eptest.EngineVersion || c.PublicURL != enginePublicURL || c.URL != f.ep.URL() ||
+		c.CheckedAt == nil || c.LastError != "" {
 		t.Fatalf("engine: %+v, %v", c, err)
 	}
 
 	// Checks record what they find.
-	f.ep.Set(func() { f.ep.Capabilities = []string{CapabilityScheduledInstalls} })
+	f.ep.Set(func() { f.ep.Version = "99.0.0" })
 	c, err = f.svc.CheckConnection(ctx)
-	if err != nil || !slices.Equal(c.Capabilities, []string{CapabilityScheduledInstalls}) || c.LastError != "" {
+	if err != nil || c.ServerVersion != "99.0.0" || c.LastError != "" {
 		t.Fatalf("check: %+v, %v", c, err)
 	}
 	f.ep.Set(func() { f.ep.Down = true })
@@ -484,7 +484,7 @@ func TestFleetAndViews(t *testing.T) {
 	ctx := f.ctx
 
 	st, err := f.svc.Status(ctx, f.viewer)
-	if err != nil || !st.Configured || st.CanSchedule {
+	if err != nil || !st.Configured {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 	_, err = f.svc.Status(ctx, f.none)
@@ -574,7 +574,7 @@ func TestFleetAndViews(t *testing.T) {
 	// One device.
 	d, err := f.svc.Device(ctx, f.tech, f.web)
 	if err != nil || d.Link != LinkLinked || d.Endpoint == nil || d.Endpoint.Summary.Hostname != "web-01" || d.Endpoint.Credentials != nil ||
-		d.Policy == nil || d.Policy.MaintenanceStart != "02:00" || !d.CanManage || d.CanSchedule || d.Error != "" {
+		d.Policy == nil || d.Policy.MaintenanceStart != "02:00" || !d.CanManage || d.Error != "" {
 		t.Fatalf("device: %+v, %v", d, err)
 	}
 	if d, _ := f.svc.Device(ctx, f.viewer, f.web); d.CanManage {
@@ -719,17 +719,8 @@ func TestActions(t *testing.T) {
 		t.Fatalf("selected on a device without EasyPatch: %+v, %v", res, err)
 	}
 
-	// Scheduling needs the capability.
+	// Installs at a later time, within 31 days.
 	later := time.Now().Add(2 * time.Hour)
-	_, err = f.svc.Install(ctx, f.admin, ActionInput{DeviceIDs: []uuid.UUID{f.web}, ScheduledAt: &later})
-	wantField(t, err, "scheduledAt", "scheduled-installs")
-	f.ep.Set(func() { f.ep.Capabilities = []string{CapabilityScheduledInstalls} })
-	if _, err := f.svc.CheckConnection(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if st, _ := f.svc.Status(ctx, f.tech); !st.CanSchedule {
-		t.Fatal("cannot schedule")
-	}
 	soon, far := time.Now().Add(30*time.Second), time.Now().Add(32*24*time.Hour)
 	_, err = f.svc.Install(ctx, f.admin, ActionInput{DeviceIDs: []uuid.UUID{f.web}, ScheduledAt: &soon})
 	wantField(t, err, "scheduledAt", "in the future")

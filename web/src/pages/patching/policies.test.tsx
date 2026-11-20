@@ -18,7 +18,7 @@ async function open(path: string) {
   await screen.findByRole("main");
 }
 
-const READY: PatchStatus = { configured: true, canSchedule: false };
+const READY: PatchStatus = { configured: true };
 
 /** Configures patching in its organizations; not a super administrator. */
 const ORG_ADMIN = sessionView({

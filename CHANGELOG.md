@@ -28,6 +28,9 @@ All notable changes to this project are documented here. The format follows
   `deployment_codes_retired`. Engine routes EasyRMM never calls go too, as
   do the "Enrollment waiting for approval" patching alert and the restart
   dialog's fallback for engines before 1.10.0.
+- **The check for the engine's scheduled-installs capability.** EasyRMM
+  ships with its engine, so the install dialog always offers a later time,
+  and `canSchedule` and the engine's `capabilities` leave the API.
 
 ### Fixed
 

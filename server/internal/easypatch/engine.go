@@ -17,8 +17,7 @@ import (
 // loopback with statements (ADR-0038). The deployment configures it, so there
 // is no token to paste and nothing to pair.
 
-// engineCheckEvery is how often the engine's version and capabilities are
-// read again.
+// engineCheckEvery is how often the engine's version is read again.
 const engineCheckEvery = 5 * time.Minute
 
 // engineProbeTimeout bounds one look at the engine.
@@ -159,8 +158,7 @@ func (s *Service) UseEngine(c *Client, opts ...EngineOption) error {
 }
 
 // row is what EasyRMM knows of the engine. It reads the engine's version
-// and capabilities when they are older than engineCheckEvery, or when
-// force is set.
+// when it is older than engineCheckEvery, or when force is set.
 func (e *engine) row(ctx context.Context, now time.Time, force bool) *connRow {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -180,9 +178,6 @@ func (e *engine) row(ctx context.Context, now time.Time, force bool) *connRow {
 		case err == nil && !can:
 			e.lastError, e.lastErrorAt = "The patching engine does not let EasyRMM act as an administrator.", &now
 		case err == nil:
-			if info.Capabilities == nil {
-				info.Capabilities = []string{}
-			}
 			e.info, e.checkedAt, e.lastError, e.lastErrorAt = info, &now, "", nil
 		default:
 			e.lastError, e.lastErrorAt = cut(err.Error(), 1000), &now
@@ -193,8 +188,7 @@ func (e *engine) row(ctx context.Context, now time.Time, force bool) *connRow {
 		ca = string(e.agentCA())
 	}
 	return &connRow{url: e.client.base.String(), caCert: ca, version: e.info.Version, publicURL: e.info.PublicURL,
-		importedURLs: e.importedURLs, capabilities: append([]string{}, e.info.Capabilities...), checkedAt: e.checkedAt,
-		lastError: e.lastError, lastErrorAt: e.lastErrorAt}
+		importedURLs: e.importedURLs, checkedAt: e.checkedAt, lastError: e.lastError, lastErrorAt: e.lastErrorAt}
 }
 
 // noted records that a call to the engine failed.

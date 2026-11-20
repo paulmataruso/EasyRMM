@@ -29,7 +29,7 @@ async function open(path: string) {
   await screen.findByRole("main");
 }
 
-const READY: PatchStatus = { configured: true, canSchedule: false };
+const READY: PatchStatus = { configured: true };
 
 const SUPER = sessionView({
   permissions: ["org.view", "site.view", "device.view", "settings.manage", "audit.view", "patch.view", "patch.manage", "patch.configure"],

@@ -33,12 +33,6 @@ const (
 	PageSize = 200
 )
 
-// Capabilities a server may list in /api/v1/server-info.
-const (
-	// CapabilityScheduledInstalls: install requests accept scheduledAt.
-	CapabilityScheduledInstalls = "scheduled-installs"
-)
-
 // Error is a failed call: the engine's answer, or Status 0 when it could
 // not be reached.
 type Error struct {
@@ -264,9 +258,6 @@ type ServerInfo struct {
 	Version    string    `json:"version"`
 	PublicURL  string    `json:"publicUrl"`
 	ServerTime time.Time `json:"serverTime"`
-	// Capabilities lists optional features (Capability*). Servers without
-	// the EasyRMM integration changes send none.
-	Capabilities []string `json:"capabilities"`
 }
 
 // ServerInfo asks the server what it is.
@@ -830,8 +821,7 @@ type installRequest struct {
 }
 
 // Install has an endpoint install updates: every eligible one when guids is
-// empty, those otherwise. scheduledAt must only be set when the server
-// lists CapabilityScheduledInstalls: a server without it installs at once.
+// empty, those otherwise; at scheduledAt when it is set, at once otherwise.
 func (c *Client) Install(ctx context.Context, endpointID uuid.UUID, guids []uuid.UUID, scheduledAt *time.Time, onBehalfOf string) (Job, error) {
 	req := installRequest{Mode: "AllEligible", ScheduledAt: scheduledAt}
 	if len(guids) > 0 {

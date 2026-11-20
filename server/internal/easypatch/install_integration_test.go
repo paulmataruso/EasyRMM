@@ -239,8 +239,8 @@ func TestInstallHeartbeats(t *testing.T) {
 		t.Fatalf("sent: %+v", row)
 	}
 	if p.ServerURL != "https://patch.example.com" || p.CACert != "" || len(p.Packages) != 2 ||
-		p.Packages[0].FileName != "EasyPatchAgent-1.9.0-x64.deb" || p.Packages[1].Format != agentproto.EasyPatchRPM ||
-		p.Packages[0].URL != "https://patch.example.com/downloads/agent/EasyPatchAgent-1.9.0-x64.deb" ||
+		p.Packages[0].FileName != "EasyPatchAgent-"+eptest.EngineVersion+"-x64.deb" || p.Packages[1].Format != agentproto.EasyPatchRPM ||
+		p.Packages[0].URL != "https://patch.example.com/downloads/agent/EasyPatchAgent-"+eptest.EngineVersion+"-x64.deb" ||
 		p.Packages[0].SHA256 != strings.ToLower(p.Packages[0].SHA256) || p.ExpiresAt.Sub(p.IssuedAt) != installValidFor {
 		t.Fatalf("instruction: %+v", p)
 	}
@@ -270,7 +270,7 @@ func TestInstallHeartbeats(t *testing.T) {
 
 	// Windows: the MSI only, and no site, as EasyPatch has no Branch site.
 	w := f.beat(f.win, &agentproto.EasyPatchInstallStatus{})
-	if w == nil || len(w.Packages) != 1 || w.Packages[0].FileName != "EasyPatchAgent-1.9.0-x64.msi" {
+	if w == nil || len(w.Packages) != 1 || w.Packages[0].FileName != "EasyPatchAgent-"+eptest.EngineVersion+"-x64.msi" {
 		t.Fatalf("windows: %+v", w)
 	}
 	wrow := f.install(f.win)

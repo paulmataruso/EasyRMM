@@ -91,16 +91,6 @@ function ServerStatus({ conn: c }: { conn: EasyPatchConnection }) {
     ],
     ["Version", c.serverVersion || "—"],
     ["Calls", "Signed one by one, with the person's role and organizations"],
-    [
-      "Install later",
-      c.capabilities.includes("scheduled-installs") ? (
-        "Supported"
-      ) : (
-        <span key="c" className="text-muted">
-          Not supported by this engine: installs start at once
-        </span>
-      ),
-    ],
     ["Who acted", "The engine records the EasyRMM user"],
     ["Checked", <When key="w" at={c.checkedAt} />],
   ];

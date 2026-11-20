@@ -363,11 +363,6 @@ func TestContract(t *testing.T) {
 		if c.version != "" && info.Version != c.version {
 			t.Errorf("version %q, want %q", info.Version, c.version)
 		}
-		for _, capability := range []string{CapabilityScheduledInstalls} {
-			if !slices.Contains(info.Capabilities, capability) {
-				t.Errorf("capabilities %v lack %q", info.Capabilities, capability)
-			}
-		}
 		if d := time.Since(info.ServerTime); d > time.Minute || d < -time.Minute {
 			t.Errorf("server time %v", info.ServerTime)
 		}
@@ -2209,11 +2204,7 @@ func checkFake(t *testing.T, c *contract, org, site, endpoint, job, finished uui
 	fSite := fake.Site(fOrg, "Head office")
 	fe := fake.AddEndpoint(fOrg, "contract", "SN-contract", "fingerprint")
 	fEndpoint := fe.ID
-	fake.Set(func() {
-		fake.Version = "1.10.0"
-		fake.Capabilities = []string{CapabilityScheduledInstalls}
-		fe.RebootPending = true
-	})
+	fake.Set(func() { fe.RebootPending = true })
 	fake.AddAudit(eptest.AuditInfo{Username: "easyrmm:EasyRMM", Org: &fOrg, Endpoint: &fEndpoint, Action: "endpoint.update", TargetType: "Endpoint",
 		TargetID: fEndpoint.String(), Details: "{}", IPAddress: "192.0.2.1"})
 	// send asks base with the statement of a call made without one.

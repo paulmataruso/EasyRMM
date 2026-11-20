@@ -420,7 +420,6 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
         open={installing}
         onClose={() => setInstalling(false)}
         devices={toPatch.map((d) => ({ id: d.deviceId, name: d.name }))}
-        canSchedule={status.canSchedule}
         onDone={() => setSelected(new Set())}
       />
       <RestartDialog

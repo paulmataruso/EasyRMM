@@ -954,8 +954,6 @@ export interface EasyPatchConnection {
   caCert: string;
   serverVersion: string;
   publicUrl: string;
-  /** Optional features the engine lists: "scheduled-installs". */
-  capabilities: string[];
   checkedAt?: string;
   lastError?: string;
   lastErrorAt?: string;
@@ -1030,7 +1028,6 @@ export interface EasyPatchDeviceLink {
 export interface PatchStatus {
   /** False only when the deployment has no patching engine. */
   configured: boolean;
-  canSchedule: boolean;
 }
 
 export type ComplianceStatus = "Compliant" | "MissingUpdates" | "FailedUpdates" | "RebootRequired" | "ScanStale" | "NeverScanned";
@@ -1791,7 +1788,6 @@ export interface DevicePatching {
   reason?: string;
   checkedAt?: string;
   canManage: boolean;
-  canSchedule: boolean;
   endpoint?: PatchEndpointDetail;
   policy?: PatchPolicy;
   /** The EasyPatch agent's install, when one was asked for. */

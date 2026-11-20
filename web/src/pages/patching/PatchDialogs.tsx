@@ -254,16 +254,14 @@ function InstallPreviewList({ q }: { q: UseQueryResult<PatchInstallPreview> }) {
 }
 
 /**
- * Installs updates on devices: every eligible update, or chosen ones on one device. Where EasyPatch can schedule
- * (scheduled-installs), the install can wait for a time. On one device, with preview, it first shows what EasyPatch
- * would install and leave out.
+ * Installs updates on devices: every eligible update, or chosen ones on one device, now or at a later time. On one
+ * device, with preview, it first shows what EasyPatch would install and leave out.
  */
 export function InstallDialog({
   open,
   onClose,
   devices,
   updates,
-  canSchedule,
   preview = false,
   onDone,
 }: {
@@ -272,7 +270,6 @@ export function InstallDialog({
   devices: PatchTarget[];
   /** Chosen updates (one device only); every eligible update when absent. */
   updates?: { id: string; title: string }[];
-  canSchedule: boolean;
   /** Show what the install would do first (one device only). */
   preview?: boolean;
   onDone?: () => void;
@@ -352,37 +349,31 @@ export function InstallDialog({
               ))}
             </ul>
           )}
-          {canSchedule ? (
-            <fieldset className="space-y-2" aria-describedby={whenId}>
-              <legend className="text-xs font-medium text-muted">When</legend>
-              <label className="flex items-center gap-2 text-sm">
-                <input type="radio" name="when" checked={when === "now"} onChange={() => setWhen("now")} className="size-4 accent-accent" />
-                Now
-              </label>
-              <label className="flex flex-wrap items-center gap-2 text-sm">
-                <input type="radio" name="when" checked={when === "later"} onChange={() => setWhen("later")} className="size-4 accent-accent" />
-                At
-                <Input
-                  type="datetime-local"
-                  aria-label="Install at"
-                  value={at}
-                  min={localInput(new Date())}
-                  onChange={(e) => {
-                    setAt(e.target.value);
-                    setWhen("later");
-                  }}
-                  className="w-auto"
-                />
-              </label>
-              <p id={whenId} className="text-xs text-subtle">
-                Your time zone ({Intl.DateTimeFormat().resolvedOptions().timeZone}). Up to 31 days ahead; the device must be online then.
-              </p>
-            </fieldset>
-          ) : (
-            <p className="text-xs text-muted">
-              Installs start when each device next checks in with the patching engine, which cannot install at a later time.
+          <fieldset className="space-y-2" aria-describedby={whenId}>
+            <legend className="text-xs font-medium text-muted">When</legend>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="radio" name="when" checked={when === "now"} onChange={() => setWhen("now")} className="size-4 accent-accent" />
+              Now
+            </label>
+            <label className="flex flex-wrap items-center gap-2 text-sm">
+              <input type="radio" name="when" checked={when === "later"} onChange={() => setWhen("later")} className="size-4 accent-accent" />
+              At
+              <Input
+                type="datetime-local"
+                aria-label="Install at"
+                value={at}
+                min={localInput(new Date())}
+                onChange={(e) => {
+                  setAt(e.target.value);
+                  setWhen("later");
+                }}
+                className="w-auto"
+              />
+            </label>
+            <p id={whenId} className="text-xs text-subtle">
+              Your time zone ({Intl.DateTimeFormat().resolvedOptions().timeZone}). Up to 31 days ahead; the device must be online then.
             </p>
-          )}
+          </fieldset>
           <InlineError error={install.error} />
         </div>
       </Dialog>

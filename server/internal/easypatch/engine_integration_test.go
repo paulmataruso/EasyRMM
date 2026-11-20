@@ -24,7 +24,6 @@ func TestBundledEngine(t *testing.T) {
 	ctx := f.ctx
 	key := bytes.Repeat([]byte{9}, 32)
 	engine := eptest.NewEngine(t, key)
-	engine.Capabilities = []string{CapabilityScheduledInstalls}
 	signer, err := NewSigner(key)
 	if err != nil {
 		t.Fatal(err)
@@ -42,10 +41,10 @@ func TestBundledEngine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !conn.Configured || conn.URL != engine.URL() || conn.ServerVersion != "1.9.0" || !slices.Contains(conn.Capabilities, CapabilityScheduledInstalls) {
+	if !conn.Configured || conn.URL != engine.URL() || conn.ServerVersion != eptest.EngineVersion {
 		t.Fatalf("connection: %+v", conn)
 	}
-	if st, err := f.svc.Status(ctx, f.admin); err != nil || !st.Configured || !st.CanSchedule {
+	if st, err := f.svc.Status(ctx, f.admin); err != nil || !st.Configured {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 	if _, err := f.svc.Reconcile(ctx); err != nil {

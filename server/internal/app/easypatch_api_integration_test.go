@@ -68,13 +68,12 @@ func TestEasyPatchAPI(t *testing.T) {
 
 	// Settings shows the engine; nothing there changes it.
 	var conn struct {
-		Configured    bool     `json:"configured"`
-		ServerVersion string   `json:"serverVersion"`
-		Capabilities  []string `json:"capabilities"`
-		LastError     string   `json:"lastError"`
+		Configured    bool   `json:"configured"`
+		ServerVersion string `json:"serverVersion"`
+		LastError     string `json:"lastError"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/settings/easypatch", nil, &conn)
-	if !conn.Configured || conn.ServerVersion != "1.9.0" || conn.Capabilities == nil {
+	if !conn.Configured || conn.ServerVersion != eptest.EngineVersion {
 		t.Fatalf("settings: %+v", conn)
 	}
 	admin.expect(http.StatusOK, "POST", "/api/v1/settings/easypatch/check", nil, &conn)
@@ -145,10 +144,10 @@ func TestEasyPatchAPI(t *testing.T) {
 
 	// Patching.
 	var status struct {
-		Configured, CanSchedule bool
+		Configured bool
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching", nil, &status)
-	if !status.Configured || status.CanSchedule {
+	if !status.Configured {
 		t.Fatalf("status: %+v", status)
 	}
 	var fleet struct {
@@ -219,7 +218,8 @@ func TestEasyPatchAPI(t *testing.T) {
 	if res.Succeeded != 1 {
 		t.Fatalf("install: %+v", res)
 	}
-	wantStatus(t, admin.do("POST", "/api/v1/patching/install", map[string]any{"deviceIds": []string{device}, "scheduledAt": "2026-12-01T02:00:00Z"}),
+	// A time in the past.
+	wantStatus(t, admin.do("POST", "/api/v1/patching/install", map[string]any{"deviceIds": []string{device}, "scheduledAt": "2020-12-01T02:00:00Z"}),
 		http.StatusUnprocessableEntity, "validation_failed")
 	wantStatus(t, admin.do("POST", "/api/v1/patching/scan", map[string]any{"deviceIds": "x"}), http.StatusUnprocessableEntity, "validation_failed")
 	wantStatus(t, admin.do("POST", "/api/v1/patching/install", "x"), http.StatusBadRequest, "bad_request")

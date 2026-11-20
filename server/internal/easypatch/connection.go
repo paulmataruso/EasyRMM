@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
@@ -54,7 +53,6 @@ type Connection struct {
 	CACert        string     `json:"caCert"`
 	ServerVersion string     `json:"serverVersion"`
 	PublicURL     string     `json:"publicUrl"`
-	Capabilities  []string   `json:"capabilities"`
 	CheckedAt     *time.Time `json:"checkedAt,omitempty"`
 	LastError     string     `json:"lastError,omitempty"`
 	LastErrorAt   *time.Time `json:"lastErrorAt,omitempty"`
@@ -67,7 +65,6 @@ type connRow struct {
 	// importedURLs are an imported EasyPatch's addresses, which the engine
 	// answers for its agents (AgentHostnames).
 	importedURLs           []string
-	capabilities           []string
 	checkedAt, lastErrorAt *time.Time
 }
 
@@ -84,18 +81,10 @@ func (r *connRow) imported(serverURL string) bool {
 
 func (r *connRow) view() Connection {
 	if r == nil {
-		return Connection{Capabilities: []string{}}
+		return Connection{}
 	}
-	c := Connection{Configured: true, URL: r.url, CACert: r.caCert, ServerVersion: r.version, PublicURL: r.publicURL,
-		Capabilities: r.capabilities, CheckedAt: r.checkedAt, LastError: r.lastError, LastErrorAt: r.lastErrorAt}
-	if c.Capabilities == nil {
-		c.Capabilities = []string{}
-	}
-	return c
-}
-
-func (r *connRow) can(capability string) bool {
-	return r != nil && slices.Contains(r.capabilities, capability)
+	return Connection{Configured: true, URL: r.url, CACert: r.caCert, ServerVersion: r.version, PublicURL: r.publicURL,
+		CheckedAt: r.checkedAt, LastError: r.lastError, LastErrorAt: r.lastErrorAt}
 }
 
 // Connection returns the engine and what the last check found.

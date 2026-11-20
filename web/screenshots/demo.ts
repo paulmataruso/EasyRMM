@@ -368,7 +368,7 @@ export function healthHistory(range: string): MetricsHistory {
 // ---------------------------------------------------------------------------------------------
 // Patching through the patching engine in the deployment
 
-export const patchStatus: PatchStatus = { configured: true, canSchedule: true };
+export const patchStatus: PatchStatus = { configured: true };
 
 type Compliance = Pick<
   PatchEndpoint,
@@ -528,13 +528,12 @@ const policy: PatchPolicy = {
 
 export function devicePatching(id: string): DevicePatching {
   const f = fleet.devices.find((x) => x.deviceId === id);
-  if (!f?.endpoint) return { deviceId: id, link: "none", canManage: true, canSchedule: true };
+  if (!f?.endpoint) return { deviceId: id, link: "none", canManage: true };
   return {
     deviceId: id,
     link: "linked",
     checkedAt: ago(2),
     canManage: true,
-    canSchedule: true,
     endpoint: {
       summary: f.endpoint,
       serialNumber: "8RKQ2V3",

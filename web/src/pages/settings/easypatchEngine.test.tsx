@@ -13,7 +13,6 @@ const ENGINE: EasyPatchConnection = {
   caCert: "",
   serverVersion: "1.10.0",
   publicUrl: "https://rmm.example.com",
-  capabilities: ["scheduled-installs"],
   checkedAt: T,
 };
 
@@ -59,19 +58,11 @@ describe("patching from the engine in this deployment", () => {
     expect(main().getByText("http://127.0.0.1:18180")).toBeInTheDocument();
     expect(main().getByText("EASYRMM_PATCHING_KEY")).toBeInTheDocument();
     expect(main().getByText("Signed one by one, with the person's role and organizations")).toBeInTheDocument();
-    expect(main().getByText("Supported")).toBeInTheDocument();
     expect(main().getByText("The engine records the EasyRMM user")).toBeInTheDocument();
     expect(main().queryByRole("textbox")).not.toBeInTheDocument();
     expect(main().queryByLabelText(/token/i)).not.toBeInTheDocument();
     expect(main().queryByRole("button", { name: /^(Connect|Save|Remove)$/ })).not.toBeInTheDocument();
     expect(main().queryByRole("heading", { name: /sign-in/i })).not.toBeInTheDocument();
-  });
-
-  it("says when the engine cannot install later", async () => {
-    installFakeApi(routes({ ...ENGINE, capabilities: [] }));
-    renderApp("/settings?tab=easypatch");
-    await screen.findByRole("main");
-    expect(await main().findByText("Not supported by this engine: installs start at once")).toBeInTheDocument();
   });
 
   it("says when the engine refuses EasyRMM, and checks it again", async () => {
@@ -197,7 +188,7 @@ describe("patching from the engine in this deployment", () => {
   });
 
   it("says when the deployment has no patching engine, with nothing to connect", async () => {
-    const server = installFakeApi(routes({ configured: false, url: "", caCert: "", serverVersion: "", publicUrl: "", capabilities: [] }));
+    const server = installFakeApi(routes({ configured: false, url: "", caCert: "", serverVersion: "", publicUrl: "" }));
     renderApp("/settings?tab=easypatch");
     await screen.findByRole("main");
     expect(await main().findByText("Patching is not available")).toBeInTheDocument();
