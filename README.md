@@ -10,61 +10,105 @@
 
 <p align="center">
   <b>Self-hosted remote monitoring, management and patching for Managed Service Providers.</b><br>
-  Windows first, Linux too. With EasyPatch, its patch management, in the same repository.
+  Windows first, Linux too. One server, one console, one agent install.
 </p>
 
 <p align="center">
   <a href="https://github.com/paulmataruso/EasyRMM/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/paulmataruso/EasyRMM/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/paulmataruso/EasyRMM/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/paulmataruso/EasyRMM?include_prereleases&amp;label=release"></a>
   <a href="LICENSE.md"><img alt="Licence: FSL-1.1-ALv2" src="https://img.shields.io/badge/licence-FSL--1.1--ALv2-blue"></a>
   <img alt="Endpoints: Windows and Linux" src="https://img.shields.io/badge/endpoints-Windows%20%7C%20Linux-informational">
 </p>
 
 <p align="center">
+  <a href="#features">Features</a> ·
   <a href="#screenshots">Screenshots</a> ·
-  <a href="#what-it-does">What it does</a> ·
-  <a href="#how-easyrmm-and-easypatch-fit-together">EasyRMM and EasyPatch</a> ·
+  <a href="#quick-start">Quick start</a> ·
   <a href="#architecture">Architecture</a> ·
-  <a href="#development">Development</a> ·
+  <a href="#documentation">Documentation</a> ·
   <a href="#licensing">Licensing</a>
 </p>
 
-EasyRMM is one project with two parts, built and released separately:
-
-* **EasyRMM** is the platform: tenancy, users and roles, an endpoint agent,
-  remote access through MeshCentral, inventory, monitoring and alerts,
-  scripts, software deployment and reports.
-* **EasyPatch** ([`easypatch/`](easypatch/)) is its patch management: Windows
-  Update, apt and dnf, compliance, known-exploited vulnerabilities, policies
-  and monthly reports, with its own agent and console.
-
-You patch from EasyRMM's console; for everything else EasyPatch can do, its
-own console is one click away.
+EasyRMM looks after your clients' computers from one console that you host
+yourself: remote desktop and terminal, inventory, monitoring and alerts,
+scripts, software, reports and patching, for every organization and site you
+manage, behind roles and a tamper-evident audit log. Computers join with one
+command and only ever connect out, over HTTPS.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/images/dashboard-light.png">
   <img src="docs/images/dashboard.png" alt="EasyRMM dashboard: active alerts, organizations, sites, device groups and users, recent remote connections with Connect buttons, and the alerts that need attention">
 </picture>
 
-> **Status: pre-release, in production hardening.** EasyRMM has no tagged
-> release yet. Tested and in the console:
-> * the server, tenancy, users and roles, the audit log;
-> * remote access through MeshCentral;
-> * the agent and its install commands;
-> * inventory, alerts, scripts and jobs, software deployment, reports;
-> * patching through EasyPatch.
->
-> Linux endpoints are verified end to end. Windows endpoints are verified for
-> install, enrollment and remote access; the other Windows features are built
-> but not yet run on Windows. EasyPatch was released on its own up to v1.10.0
-> and is in use; its releases continue from this repository.
-> [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) tracks what works
-> today, and [`ROADMAP.md`](ROADMAP.md) what comes next.
+> **Status: release candidate.** [1.0.0-rc.2](https://github.com/paulmataruso/EasyRMM/releases)
+> is out for testing. On real Windows Server 2025 and Linux computers we
+> have run the install command, enrollment, inventory, remote desktop,
+> terminal and files, scripts, agent self-updates, the EasyPatch agent's
+> install and patching end to end, and an in-place upgrade from rc.1.
+> [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) says what works and
+> how each part was verified; [`ROADMAP.md`](ROADMAP.md) says what is left
+> before 1.0.0.
+
+## Features
+
+**Endpoints**
+
+* **One install command** per computer: PowerShell on Windows, a shell line
+  on Linux. It installs the EasyRMM agent and MeshAgent and enrolls the
+  computer, into a site, or to wait for your approval when one command goes
+  to many customers.
+* **Outbound only.** Computers connect to your server on 443. No VPN,
+  inbound firewall rule or port forwarding.
+* **Agent updates** rolled out a few computers at a time, signed by your
+  server, with a rollback when a new build cannot reach it.
+
+**Remote access**
+
+* **Remote desktop, RDP, terminal and files** in the console, through
+  MeshCentral, which runs inside the deployment and is never reachable on
+  its own. EasyRMM checks the permission and records each session before it
+  opens.
+
+**Monitoring and automation**
+
+* **Inventory**: hardware, operating system, network and installed software.
+* **Monitoring and alerts**: processor, memory, disk and offline policies,
+  acknowledged and resolved in the console. (Email and webhook
+  notifications so far go out for patching alerts only.)
+* **Scripts and jobs**: a script library, run on one computer or many, with
+  each one's output.
+* **Software deployment** with winget, Chocolatey, APT, DNF, YUM and Zypper.
+* **Reports** of devices, software and health, to read or download as CSV.
+
+**Patching**
+
+* **Windows Update, apt and dnf**, plus winget application updates on
+  Windows, through the EasyPatch agent, which EasyRMM installs for you. It
+  patches only: no remote shell and no command execution.
+* **Known-exploited first**: the CVEs each update fixes, and the updates for
+  vulnerabilities in CISA's Known Exploited Vulnerabilities catalog.
+* **Policies** for organizations, sites, devices and tags: maintenance
+  windows, rollout delays, restart schedules, Windows Update settings.
+* **Verified results**: an update counts as installed only when a scan
+  confirms it, and a rollout guard holds an update that fails too often.
+* **Compliance reports**, monthly PDFs per customer, emailed on a schedule.
+* **Patching alerts** by email or webhook (Slack, Microsoft Teams or any
+  `https://` address).
+
+**Security and tenancy**
+
+* **Organizations, sites and device groups**, isolated in the database by
+  row-level security, with five roles granted per organization or site.
+* **Sign-in** with a password and a second factor (authenticator app,
+  security key or passkey), or single sign-on with OpenID Connect. Authentik
+  can be installed alongside with one option.
+* **Audit log**, hash-chained so tampering shows, and forwarded to syslog if
+  you want.
 
 ## Screenshots
 
-The screenshots show fictional demo data. They are made from the console's
-production build with `npm run screenshots` in `web/`, so they can be
-regenerated when the console changes.
+The screenshots show fictional demo data, made from the console's
+production build with `npm run screenshots` in `web/`.
 
 <table>
   <tr>
@@ -79,11 +123,11 @@ regenerated when the console changes.
   </tr>
   <tr>
     <td>
-      <a href="docs/images/patching.png"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/patching-light.png"><img src="docs/images/patching.png" alt="Patching page: each device's EasyPatch status, missing and known-exploited updates, last scan and EasyPatch agent"></picture></a>
-      <br><sub><b>Patching.</b> Patch status of every device, read from EasyPatch.</sub>
+      <a href="docs/images/patching.png"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/patching-light.png"><img src="docs/images/patching.png" alt="Patching page: each device's patch status, missing and known-exploited updates, last scan and patching agent"></picture></a>
+      <br><sub><b>Patching.</b> The patch status of every device.</sub>
     </td>
     <td>
-      <a href="docs/images/device-patches.png"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/device-patches-light.png"><img src="docs/images/device-patches.png" alt="A device's Patches tab: missing updates with an exploited-in-the-wild flag, Scan now and Install updates, its patch status and EasyPatch policy"></picture></a>
+      <a href="docs/images/device-patches.png"><picture><source media="(prefers-color-scheme: light)" srcset="docs/images/device-patches-light.png"><img src="docs/images/device-patches.png" alt="A device's Patches tab: missing updates with an exploited-in-the-wild flag, Scan now and Install updates, its patch status and patch policy"></picture></a>
       <br><sub><b>A device's updates.</b> Scan, install and restart; the policy in effect, value by value.</sub>
     </td>
   </tr>
@@ -99,173 +143,81 @@ regenerated when the console changes.
   </tr>
 </table>
 
-## What it does
+## Quick start
 
-**EasyRMM**
+You need a Linux host (x86-64 or arm64) with Docker Engine 24+ and the
+Compose plugin, inbound TCP 443, and preferably two DNS names for it, such
+as `rmm.example.com` and `mesh.rmm.example.com`. Without DNS it runs on the
+host's IP address.
 
-* **One install per endpoint.** One PowerShell command on Windows, or one
-  shell command on Linux, installs our agent and MeshAgent, enrolls the
-  device and registers it. MSI, DEB and RPM packages are planned.
-* **Remote desktop, RDP, terminal and file management** from MeshCentral,
-  inside EasyRMM's console. Our own authorization and audit trail sit in
-  front of every session.
-* **Organizations, sites and device groups**, with roles granted at
-  organization or site level.
-* **Inventory and monitoring**: hardware, software, processor, memory and
-  disk history, with alert policies.
-* **Scripts and jobs**: a script library, run on one device or many, with
-  each device's output.
-* **Software deployment** with winget, Chocolatey, APT, DNF, YUM and Zypper.
-* **Reports** of devices, software and health.
+```bash
+curl -LO https://github.com/paulmataruso/EasyRMM/releases/download/easyrmm-v1.0.0-rc.2/easyrmm-v1.0.0-rc.2-deploy.tar.gz
+tar -xzf easyrmm-v1.0.0-rc.2-deploy.tar.gz
+cd easyrmm-v1.0.0-rc.2/deploy
+sudo ./scripts/setup.sh --hostname rmm.example.com --acme-email you@example.com
+sudo docker compose up -d
+```
 
-**EasyPatch** ([its own README](easypatch/README.md))
+Open `https://rmm.example.com/`, paste the one-time setup token the server
+writes to `/srv/easyrmm/server/setup-token`, and create the first
+administrator. Then add computers from **Devices → Add devices**.
 
-* **Windows Update, apt and dnf** through a patch-only agent: no remote shell
-  and no command execution.
-* **Known-exploited first**: the CVEs each update fixes, and the updates that
-  fix vulnerabilities in CISA's Known Exploited Vulnerabilities catalog.
-* **Policies** per organization, site, endpoint or tag: maintenance windows,
-  rollout delays and update rings, restart schedules, Windows Update policy
-  overrides.
-* **Verified results**: an update counts as installed only when a scan
-  confirms it. A rollout guard holds an update that fails on too many
-  endpoints.
-* **Monthly compliance reports**, one PDF per customer.
-
-**Both**
-
-* **Secure by default**: MFA on by default (authenticator app, security key
-  or passkey), single sign-on with OpenID Connect, tenant isolation, an audit
-  log, signed agent updates.
-* **Outbound-only agents.** Endpoints connect to the server over HTTPS (443).
-  No VPN, inbound firewall rule or port forwarding.
-
-## How EasyRMM and EasyPatch fit together
-
-* **EasyRMM uses EasyPatch's API** for patching: patch status, scan,
-  install, restart and retry, on one device or many, now or scheduled;
-  holds; patch policies for organizations, sites, devices and tags; and
-  patch reports: compliance with its trend, installations, and monthly PDFs
-  made, emailed and scheduled; patching alerts, acknowledged in EasyRMM,
-  with the alert rules that raise them and the email and webhook channels
-  they go to; and EasyPatch's own server settings, OS lifecycle dates,
-  agent packages and audit log. The devices' patches show on their own
-  pages in EasyRMM.
-* **The patching engine is part of every deployment.** EasyPatch's API and
-  worker run beside EasyRMM's server, on loopback, with their own database
-  in the same PostgreSQL. Its console is not served: people patch from
-  EasyRMM's, and EasyRMM's roles decide who sees and does what. EasyRMM
-  signs each call with who acts and what they may reach
-  ([ADR-0038](docs/architecture/adr/0038-statements-to-the-patching-engine.md)),
-  and the engine records it in its audit log and on its jobs.
-* **One set of organizations.** EasyRMM creates, renames and archives the
-  engine's organizations and sites to match its own
-  ([ADR-0040](docs/architecture/adr/0040-one-set-of-organizations.md)).
-* **EasyRMM installs EasyPatch's agent** through its own agent, per
-  organization or per device ([ADR-0031](docs/architecture/adr/0031-easypatch-agent-install.md)).
-  EasyPatch agents reach the engine through EasyRMM's edge, on EasyRMM's
-  name.
-* **A standalone EasyPatch moves in.** An EasyPatch 1.4 to 1.10 server is
-  imported from its backup, with its devices, agents, policies and history;
-  its agents keep reporting on its old name, which EasyRMM then answers
-  ([ADR-0045](docs/architecture/adr/0045-importing-a-standalone-easypatch.md),
-  [guide](docs/operations/import-easypatch.md)).
-* **EasyPatch is part of EasyRMM from here on.** Its standalone server,
-  console and installer (releases up to 1.10.0) are not developed further;
-  they are removed from this repository in the plan's phase R.
-
-The plan behind this, and its progress, is in
-[the one-product plan](docs/architecture/one-product-plan.md).
-Setting it up is in [docs/operations/patching.md](docs/operations/patching.md).
+The [Docker deployment guide](docs/deployment/docker.md) covers TLS modes,
+running without DNS, running behind NGINX, Authentik and backups. Check a
+release before installing it as [CODE_SIGNING.md](CODE_SIGNING.md#verifying-a-release)
+describes.
 
 ## Architecture
 
-```
-browser, EasyRMM agents,       ┌─ easyrmm-server (Go): TLS edge, console, API, agent gateway
-EasyPatch agents ──443──────►  │      ├──► PostgreSQL (loopback): EasyRMM's and the engine's databases
-                               │      ├──► MeshCentral (loopback) ◄── MeshAgent
-                               │      └──► patching engine (loopback): EasyPatch's API and worker (.NET)
-```
+![EasyRMM architecture: technicians' browsers and managed computers reach one EasyRMM server over HTTPS on port 443; the server forwards remote sessions to MeshCentral and patching to the patching engine, which run with PostgreSQL on loopback on the same Docker host](docs/images/diagrams/architecture.svg)
 
-* One Docker Compose deployment on host networking: EasyRMM's server,
-  PostgreSQL, MeshCentral, and the patching engine's API and worker. One
-  public port (443), plus an optional port 80 for ACME. It works with or
-  without an existing NGINX in front.
-* Only the server listens publicly. It forwards EasyPatch agents' requests
-  to the engine byte for byte, and calls the engine's API itself for
-  people, with a signed statement per request.
+* **One Docker Compose deployment on host networking**: EasyRMM's server,
+  MeshCentral, the patching engine's API and worker, and PostgreSQL. Only the
+  server listens publicly; everything else is on loopback.
+* **The server** is a Go modular monolith with the React console built in.
+  It is the TLS edge, the API, the agents' gateway, and the gateway in front
+  of MeshCentral that checks every remote session.
+* **The patching engine** is EasyPatch's .NET server, built from
+  [`easypatch/`](easypatch/) and released with EasyRMM. EasyRMM calls it
+  with a signed statement per request, and the EasyPatch agents reach it
+  through EasyRMM's address.
 
-Start with [`docs/architecture/overview.md`](docs/architecture/overview.md).
-The decisions behind the design are in
-[`docs/architecture/adr/`](docs/architecture/adr/), and the research behind
-them is in [`docs/architecture/research-report.md`](docs/architecture/research-report.md).
-EasyPatch's own architecture is in [`easypatch/docs/`](easypatch/docs/).
+[docs/architecture/overview.md](docs/architecture/overview.md) explains the
+design, and every decision has an ADR in
+[docs/architecture/adr/](docs/architecture/adr/).
 
-## Repository layout
+## Documentation
 
-| Path | Contents |
+| | |
 |---|---|
-| `server/` | EasyRMM's Go server (modular monolith), migrations; it serves the install scripts and writes MeshCentral's configuration |
-| `web/` | EasyRMM's console: React + TypeScript, sharing EasyPatch's design system; Playwright end-to-end tests in `web/e2e/`, the README's screenshots in `web/screenshots/` |
-| `agent/` | EasyRMM's endpoint agent (Go; Windows and Linux), including the EasyPatch agent installer |
-| `internal/agentproto/` | Wire protocol shared by the server and the agent |
-| `docker/`, `deploy/` | EasyRMM's container images and Compose deployment |
-| `easypatch/` | EasyPatch: `backend/` (.NET 10 server), `frontend/` (React console), `agent/` (Windows and Linux agents), `deployment/`, `docs/` |
-| `docs/` | Architecture and ADRs, deployment, operations, integrations, security, development |
-| `scripts/` | CI, release, end-to-end and contract-test helpers; the backup and load drills in `scripts/drill/` |
-| `tools/agentsim/` | Simulated agents for load tests |
+| **Deploy** | [Docker deployment](docs/deployment/docker.md) · [Behind NGINX](docs/deployment/nginx.md) · [Installing the agent](docs/deployment/agents.md) · [Upgrading](docs/operations/upgrading.md) · [Backup and restore](docs/operations/backup-restore.md) |
+| **Use** | [Patching](docs/operations/patching.md) · [Alerts](docs/operations/alerts.md) · [Scripts and jobs](docs/operations/scripts-and-jobs.md) · [Software](docs/operations/software.md) · [Inventory](docs/operations/inventory.md) · [Reports](docs/operations/reports.md) · [Audit forwarding](docs/operations/audit-forwarding.md) |
+| **Secure** | [Signing in](docs/security/sign-in.md) · [Single sign-on](docs/security/single-sign-on.md) · [Roles and permissions](docs/security/rbac.md) · [Threat model](docs/security/threat-model.md) |
+| **Understand** | [Architecture](docs/architecture/overview.md) · [Network and ports](docs/architecture/network.md) · [Database](docs/architecture/database.md) · [Decisions (ADRs)](docs/architecture/adr/) |
+| **Develop** | [Development guide](docs/development/README.md) · [Contributing](CONTRIBUTING.md) · [Releasing](docs/development/releasing.md) |
 
-Tests sit beside the code they test (`*_test.go`, `*_integration_test.go`,
-`*.test.tsx`, and EasyPatch's `easypatch/backend/Tests/`).
+All of it, in one list: [docs/README.md](docs/README.md).
 
-## Development
+## Security and privacy
 
-EasyRMM, from the repository root:
-
-```bash
-make test-db                 # disposable PostgreSQL 18 on 127.0.0.1:55432
-make test-mesh               # disposable MeshCentral for the remote-access tests
-make test-oidc               # disposable Dex (OpenID Connect provider) for the single sign-on tests
-export EASYRMM_TEST_DATABASE_URL='postgres://postgres:easyrmm-test-only@127.0.0.1:55432/postgres?sslmode=disable'
-make check                   # format, vet, lint, unit + integration tests, coverage floors
-make web-test                # console typecheck and unit tests
-make e2e                     # build everything, browser tests against a real server
-make test-contract           # EasyRMM's calls against the real patching engine built from easypatch/
-make build-agents            # Windows and Linux agents in bin/agents; serve them with EASYRMM_AGENT_DIR=bin/agents
-```
-
-EasyPatch, from `easypatch/`: see
-[easypatch/CONTRIBUTING.md](easypatch/CONTRIBUTING.md). When you run its
-Docker Compose stack, name the project (`docker compose -p easypatch-dev …`)
-so it cannot take over a real EasyPatch on the same machine.
-
-* [docs/development/monorepo.md](docs/development/monorepo.md): how the two
-  parts share the repository, CI, and the contract tests.
-* [docs/development/web-console.md](docs/development/web-console.md): console
-  development.
-* [docs/development/drills.md](docs/development/drills.md): the backup and
-  restore drill and the load test.
-* [docs/deployment/agents.md](docs/deployment/agents.md): joining endpoints
-  with the EasyRMM agent.
-* [CONTRIBUTING.md](CONTRIBUTING.md): the workflow.
-
-## Security
-
-Report vulnerabilities privately, for either part. See [SECURITY.md](SECURITY.md).
+Report vulnerabilities privately, as [SECURITY.md](SECURITY.md) describes.
+EasyRMM sends nothing to us: no telemetry, no licence or update checks
+([PRIVACY.md](PRIVACY.md)). What we sign, and how to check it, is in
+[CODE_SIGNING.md](CODE_SIGNING.md).
 
 ## Licensing
 
-EasyRMM, EasyPatch included, is source-available under the [Functional
-Source License, Version 1.1, ALv2 Future License](LICENSE.md)
-(FSL-1.1-ALv2). Copyright 2026 DHI Technical Services LLC.
+EasyRMM is source-available under the [Functional Source License, Version
+1.1, ALv2 Future License](LICENSE.md) (FSL-1.1-ALv2). Copyright 2026 DHI
+Technical Services LLC.
 
 MSPs and IT departments may run it free of charge for their own computers and
 their clients', including as part of paid managed services. Selling it, or
 offering it for others to run their own remote management or patching, is
 not permitted. Each version becomes available under the Apache License 2.0
-two years after its release. [LICENSING.md](LICENSING.md) has the details,
-the licence's history, and what a contribution is made under.
+two years after its release. [LICENSING.md](LICENSING.md) has the details
+and what a contribution is made under.
 
 MeshCentral and MeshAgent are Apache-2.0 projects by their respective
-authors. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). EasyRMM is not
+authors; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). EasyRMM is not
 affiliated with the MeshCentral project.

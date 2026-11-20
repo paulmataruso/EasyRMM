@@ -1,64 +1,64 @@
-# EasyRMM Architecture
+# EasyRMM architecture
 
-This document describes the target architecture. What is implemented today is
-tracked in [`IMPLEMENTATION_STATUS.md`](../../IMPLEMENTATION_STATUS.md);
-decisions are recorded as ADRs in [`adr/`](adr/).
+How EasyRMM is built and why. What works today is in
+[`IMPLEMENTATION_STATUS.md`](../../IMPLEMENTATION_STATUS.md); each decision
+has an ADR in [`adr/`](adr/).
 
 ## 1. System context
 
-```
-                         Internet / customer networks
-   Technicians (browser)                     Managed endpoints (Windows, Linux)
-          │ HTTPS 443                         │ outbound only: HTTPS/WSS 443
-          ▼                                   ▼
- ┌──────────────────────────────── Linux host (Docker, host networking) ─────────────────────┐
- │                                                                                             │
- │  easyrmm-server  :443 (TLS edge)  :80 (optional ACME HTTP-01 + redirect)                    │
- │   ├─ rmm.example.com   → web UI, /api/v1 (users), /api/agent/v1 (companion agents)          │
- │   └─ mesh.example.com  → gated reverse proxy ──► meshcentral 127.0.0.1:14430 (HTTP)         │
- │                                                                                             │
- │  postgres 127.0.0.1:15432   databases: easyrmm (RLS), meshcentral                            │
- │                                                                                             │
- └─────────────────────────────────────────────────────────────────────────────────────────────┘
-          │ HTTPS (optional, server-to-server)
-          ▼
-   EasyPatch server (separate host or IP, own TLS)
-```
+![EasyRMM architecture: technicians' browsers and managed computers reach one EasyRMM server over HTTPS on port 443; the server forwards remote sessions to MeshCentral and patching to the patching engine, which run with PostgreSQL on loopback on the same Docker host](../images/diagrams/architecture.svg)
 
-Every container uses `network_mode: host`. Only the edge listens on public
-interfaces; every other service binds to `127.0.0.1` on ports chosen to avoid
-common collisions. See [network.md](network.md) for the complete port table.
+Everything runs on one Linux host with Docker, every container with
+`network_mode: host`. Only the EasyRMM server's TLS edge listens on public
+interfaces (443; 4443 for IP access; 80 optionally, for ACME and redirects).
+MeshCentral, the patching engine and PostgreSQL listen on `127.0.0.1` only,
+on ports chosen to avoid common collisions. The console name
+(`rmm.example.com`) serves the web console, the REST API and the agents'
+API; the MeshCentral name (`mesh.rmm.example.com`) serves remote sessions
+and MeshAgent through the remote-access gateway. Managed computers only
+connect out, to 443. [network.md](network.md) has every port and name.
 
 ## 2. Components
 
 | Component | Technology | Responsibility |
 |---|---|---|
-| `easyrmm-server` | Go modular monolith | TLS edge, web UI hosting, REST API, agent gateway, MeshCentral gateway and control client, job scheduler, monitoring engine, notification delivery, the patching engine's client (ADR-0038) |
-| `web` | React + TypeScript + Vite, designed with Impeccable | The only user interface. Embedded into the server binary at build time |
-| `easyrmm-agent` | Go, single static binary per OS/arch | Enrolment, identity, inventory, telemetry, job and script execution, software management, MeshAgent and EasyPatch-agent supervision, self-update |
-| MeshAgent | Upstream binary, pinned version | Remote desktop, terminal, file transfer and RDP tunnel transport |
-| MeshCentral | Upstream container, pinned version | Remote-session relay and MeshAgent management; never exposed directly |
-| PostgreSQL | 18 | EasyRMM database (row-level security) and MeshCentral's database |
-| EasyPatch (optional) | .NET and React, in `easypatch/`; its own deployment, or any existing EasyPatch server | Patch state, policy and patch jobs |
+| `easyrmm-server` | Go modular monolith | TLS edge, web console hosting, REST API, agent gateway, MeshCentral gateway and control client, jobs, monitoring and alerts, reports, notifications, the patching engine's client (ADR-0038) |
+| `web` | React, TypeScript and Vite, designed with Impeccable | The only user interface. Built into the server binary |
+| `easyrmm-agent` | Go, one static binary per operating system and architecture | Enrollment, identity, inventory, metrics, scripts, software, MeshAgent and EasyPatch agent installation and supervision, self-update |
+| MeshAgent | MeshCentral's agent, the version the running MeshCentral serves | Remote desktop, terminal, files and the RDP tunnel |
+| MeshCentral | Upstream container, pinned version | Remote-session relay and MeshAgent management; never reachable directly. Keeps its own data in files |
+| Patching engine | .NET (`easypatch/`), its API and worker on loopback | Patch state, policies, schedules and patch jobs (ADR-0046) |
+| EasyPatch agent | .NET service, installed by the EasyRMM agent | Scans for and installs updates on the computer: Windows Update and winget on Windows, apt and dnf on Linux |
+| PostgreSQL | 18 | `easyrmm` (with row-level security), `easypatch` (the patching engine's), and `authentik` when Authentik is installed |
 
-### Server modules (`server/internal/…`)
+### Server packages (`server/internal/…`)
 
-`config`, `database` (pool, migrations, scoped transactions), `secrets`
-(sealing), `auth` (sessions, MFA, passwords), `rbac`, `audit`, `tenancy`
-(organizations, sites, device groups), `users`, `httpapi` (routing, middleware,
-JSON), `edge` (TLS, certificates, host routing), `meshcentral` (control client,
-login tokens, user/mesh sync, gateway), `enrollment` (deployment tokens),
-`devices` (inventory, identity mapping), `agentgw` (agent protocol),
-`jobs`, `scripts`, `monitoring`, `alerts`, `software`, `updates`,
-`easypatch`, `reports`, `notify`.
+| Package | What it does |
+|---|---|
+| `app` | Assembles the server: database, services, routes, the TLS edge, health and background maintenance |
+| `config` | Reads and checks the configuration from environment variables and secret files |
+| `database` | Connection pool, migrations and tenant-scoped transactions |
+| `access`, `rbac` | Who is calling and what they may do |
+| `auth`, `sso` | Passwords, second factors, sessions; OpenID Connect sign-in |
+| `users`, `tenancy` | Accounts and role assignments; organizations, sites and device groups |
+| `audit`, `auditfwd` | The hash-chained audit log; forwarding it to syslog |
+| `agents`, `devices`, `inventory` | Enrollment and agents' signed requests; the device list; what agents report |
+| `jobs` | The script library and jobs that run on devices |
+| `monitoring`, `mailer` | Alert policies and alerts; email |
+| `remote`, `meshcentral` | Remote access: MeshCentral's accounts, device groups, launch and gateway; its control client |
+| `easypatch` | The patching engine's client: statements, organizations, agent installs |
+| `reports` | Tables to read in the console and download as CSV |
+| `pki`, `secrets`, `netguard` | The server's own certificate authority; sealing secrets; keeping outbound calls off internal addresses |
+| `httpapi`, `apperr`, `webui` | Shared HTTP plumbing, errors, the embedded console |
 
 Modules communicate through Go interfaces inside one process. There are no
 internal network hops, message brokers or caches in the default deployment.
 
 ## 3. Data and tenancy
 
-Hierarchy: **Organization → Site → Device group → Device**, plus free-form
-tags and typed custom fields.
+Hierarchy: **Organization → Site → Device group → Device**. Patching adds
+tags, which organizations, sites and devices carry and which can hold a
+patch policy.
 
 Tenant isolation is enforced three times:
 
@@ -92,7 +92,9 @@ See [database.md](database.md) and ADR-0002.
 
 ## 5. MeshCentral integration
 
-See ADR-0004 and ADR-0005. Summary:
+See ADR-0004, ADR-0005, ADR-0014 and ADR-0033.
+
+![Opening a remote session: the console gets a one-minute launch token from the EasyRMM API; the access gateway redeems it for a grant cookie, passes the browser's tunnel request to MeshCentral only if the grant covers that device and session type, and lets the MeshAgent join only that recorded tunnel](../images/diagrams/remote-session.svg)
 
 * MeshCentral runs on loopback with TLS offload; our edge serves it on a
   dedicated hostname (`mesh.<domain>`) to keep it in a separate browser
@@ -127,6 +129,8 @@ or a shell line on Linux, copied from **Devices → Add devices**
 ([docs/deployment/agents.md](../deployment/agents.md)). MSI, DEB and RPM
 packages are not built yet.
 
+![Enrolling an EasyRMM agent: a deployment token creates the device at once; an approval token makes the agent wait with a device code until a super administrator approves it into a site; then the agent fetches MeshAgent through EasyRMM and starts its heartbeat](../images/diagrams/agent-enrollment.svg)
+
 1. The install script downloads `easyrmm-agent` for the machine's
    architecture and checks it against the server's `SHA256SUMS`. When the
    server uses its own certificate authority (`internal` TLS, IP access),
@@ -134,8 +138,11 @@ packages are not built yet.
    fetched over that pinned connection, to the agent. With a public
    certificate, ordinary TLS checks apply.
 2. `easyrmm-agent install` generates an Ed25519 device key, presents the
-   deployment token, and receives a device id. It installs itself as a
-   service (`EasyRMMAgent` on Windows, a systemd unit on Linux).
+   token, and receives a device id. With an approval token (ADR-0024) it
+   gets a device code instead and waits, as a service, until a super
+   administrator approves it under **Devices → Waiting for approval**. It
+   installs itself as a service (`EasyRMMAgent` on Windows, a systemd unit
+   on Linux).
 3. The agent downloads MeshAgent and its site's settings (`.msh`) from the
    EasyRMM server with signed requests. The server fetches them from the
    running MeshCentral, so MeshAgent always matches it. MeshAgent runs as a
@@ -172,23 +179,24 @@ pinned at enrollment, so a TLS-intercepting middlebox cannot inject
 commands. A compromised endpoint holds only its own device key: it can
 report data about itself and receive its own jobs, nothing else.
 
-## 8. EasyPatch
+## 8. Patching
 
-See ADR-0010 and [docs/integrations/easypatch.md](../integrations/easypatch.md).
-EasyPatch is EasyRMM's patch management component. Its code is in
-`easypatch/` of this repository, under the same licence
-([LICENSING.md](../../LICENSING.md)) ([monorepo.md](../development/monorepo.md)).
-Its server runs in every EasyRMM deployment as the patching engine, on
-loopback, with no console or accounts of its own (ADR-0046), and is released
-with EasyRMM, built from the same commit (ADR-0043). It is the source of
-truth for patch state. EasyRMM calls it with a signed statement per request
-naming the person, their role and the organizations of that call
-(ADR-0038), keeps its organizations and sites in step with EasyRMM's
-(ADR-0040), and renders patch state natively behind EasyRMM's roles. On
-request, or for every device in an organization set to install
+See ADR-0046 and [patching-engine.md](patching-engine.md); using it is
+described in [docs/operations/patching.md](../operations/patching.md).
+The patching engine is EasyPatch's server, built from `easypatch/` of this
+repository and released with EasyRMM from the same commit (ADR-0043). It
+runs in every deployment, on loopback, with no console or accounts of its
+own, and is the source of truth for patch state. EasyRMM calls it with a
+signed statement per request naming the person, their role and the
+organizations of that call (ADR-0038), keeps its organizations and sites in
+step with EasyRMM's (ADR-0040), and shows patch state in its own console
+behind its own roles.
+
+On request, or for every device in an organization set to install
 automatically, the EasyRMM agent downloads the EasyPatch agent from the
-engine through EasyRMM's address, checks it and enrolls it (ADR-0031,
-ADR-0039).
+engine through EasyRMM's address, checks it and installs it with a
+single-use token (ADR-0031, ADR-0039). The EasyPatch agent then talks to
+the engine through EasyRMM's address too.
 
 ## 9. Deployment
 

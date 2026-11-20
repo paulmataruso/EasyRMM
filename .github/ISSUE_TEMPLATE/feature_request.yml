@@ -1,11 +1,28 @@
 name: Feature request
-description: Suggest an improvement to EasyRMM (for EasyPatch, use the EasyPatch feature request)
+description: Suggest an improvement to EasyRMM.
 labels: [enhancement]
 body:
   - type: textarea
     id: problem
     attributes:
       label: What problem would this solve?
+      description: What are you trying to do, and what makes it hard today?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Devices and agents
+        - Remote access
+        - Monitoring and alerts
+        - Scripts, jobs and software
+        - Patching
+        - Reports
+        - Users, roles and sign-in
+        - Deployment
+        - Other
     validations:
       required: true
   - type: textarea
@@ -15,4 +32,4 @@ body:
   - type: textarea
     id: alternatives
     attributes:
-      label: Alternatives considered
+      label: Alternatives and workarounds

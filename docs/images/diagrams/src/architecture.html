@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EasyRMM architecture</title>
+  <!-- EasyRMM diagram profile: always dark, DESIGN.md tokens, system fonts (no web fonts). -->
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #121824; color: #e6ebf2; min-height: 100vh;
+           display: flex; align-items: center; justify-content: center; padding: 3rem 2rem; }
+    .frame { max-width: 1200px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow { font-family: ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace; font-size: 0.66rem; font-weight: 500; letter-spacing: 0.18em;
+               text-transform: uppercase; color: #9aa6b8; margin-bottom: 0.5rem; }
+    h1 { font-family: 'Instrument Serif', Georgia, 'Times New Roman', serif; font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem); font-weight: 400;
+         letter-spacing: -0.02em; line-height: 1.15; color: #e6ebf2; margin-bottom: 1.5rem; }
+    svg { width: 100%; min-width: 880px; display: block; }
+    @media print { .diagram-container { overflow-x: visible; } svg { min-width: 0; } }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Architecture · EasyRMM</p>
+    <h1>EasyRMM architecture</h1>
+    <div class="diagram-container">
+      <svg viewBox="0 0 880 448" width="880" height="448" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="architecture-title architecture-desc">
+        <title id="architecture-title">EasyRMM architecture</title>
+        <desc id="architecture-desc">Technicians&#x27; browsers and managed computers reach one EasyRMM server over HTTPS on port 443; the server forwards remote sessions to MeshCentral and patching to the patching engine, which run with PostgreSQL on loopback on the same Docker host.</desc>
+        <defs>
+<marker id="architecture-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#9aa6b8"/></marker>
+<marker id="architecture-arrow-start" markerWidth="8" markerHeight="6" refX="1" refY="3" orient="auto"><polygon points="8 0, 0 3, 8 6" fill="#9aa6b8"/></marker>
+<marker id="architecture-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4f8cff"/></marker>
+<marker id="architecture-arrow-accent-start" markerWidth="8" markerHeight="6" refX="1" refY="3" orient="auto"><polygon points="8 0, 0 3, 8 6" fill="#4f8cff"/></marker>
+<marker id="architecture-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#22d3ee"/></marker>
+<marker id="architecture-arrow-link-start" markerWidth="8" markerHeight="6" refX="1" refY="3" orient="auto"><polygon points="8 0, 0 3, 8 6" fill="#22d3ee"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#121824"/>
+<rect x="24" y="56" width="216" height="328" rx="8" fill="rgba(230,235,242,0.02)" stroke="rgba(230,235,242,0.14)" stroke-width="0.8"/>
+<rect x="36" y="50" width="52" height="12" rx="2" fill="#121824"/>
+<text x="62" y="59" fill="#8793a7" font-size="7" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.14em">OUTSIDE</text>
+<rect x="272" y="56" width="584" height="328" rx="8" fill="rgba(230,235,242,0.02)" stroke="rgba(230,235,242,0.14)" stroke-width="0.8"/>
+<rect x="284" y="50" width="228" height="12" rx="2" fill="#121824"/>
+<text x="398" y="59" fill="#8793a7" font-size="7" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.14em">ONE LINUX HOST · DOCKER, HOST NETWORKING</text>
+
+<path d="M 216,124 H 304" fill="none" stroke="#22d3ee" stroke-width="1.2" marker-end="url(#architecture-arrow-link)"/>
+<path d="M 216,280 H 304" fill="none" stroke="#22d3ee" stroke-width="1.2" marker-end="url(#architecture-arrow-link)"/>
+<path d="M 512,124 H 624" fill="none" stroke="#9aa6b8" stroke-width="1.2" marker-end="url(#architecture-arrow)"/>
+<path d="M 512,236 H 624" fill="none" stroke="#9aa6b8" stroke-width="1.2" marker-end="url(#architecture-arrow)"/>
+<path d="M 512,332 H 624" fill="none" stroke="#9aa6b8" stroke-width="1.2" marker-end="url(#architecture-arrow)"/>
+<path d="M 728,264 V 304" fill="none" stroke="#9aa6b8" stroke-width="1.2" marker-end="url(#architecture-arrow)"/>
+
+<rect x="230" y="104" width="60" height="12" rx="2" fill="#121824"/>
+<text x="260" y="113" fill="#22d3ee" font-size="8" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">HTTPS 443</text>
+<rect x="222" y="260" width="76" height="12" rx="2" fill="#121824"/>
+<text x="260" y="269" fill="#22d3ee" font-size="8" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">OUTBOUND 443</text>
+<rect x="528" y="104" width="80" height="12" rx="2" fill="#121824"/>
+<text x="568" y="113" fill="#8793a7" font-size="8" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">REMOTE ACCESS</text>
+<rect x="542" y="216" width="52" height="12" rx="2" fill="#121824"/>
+<text x="568" y="225" fill="#8793a7" font-size="8" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">PATCHING</text>
+<rect x="554" y="312" width="28" height="12" rx="2" fill="#121824"/>
+<text x="568" y="321" fill="#8793a7" font-size="8" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">SQL</text>
+<rect x="736" y="278" width="28" height="12" rx="2" fill="#121824"/>
+<text x="750" y="287" fill="#8793a7" font-size="8" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.06em">SQL</text>
+
+<rect x="40" y="96" width="176" height="56" rx="6" fill="#121824"/>
+<rect x="40" y="96" width="176" height="56" rx="6" fill="rgba(154,166,184,0.10)" stroke="#8793a7" stroke-width="1"/>
+<rect x="48" y="104" width="40" height="12" rx="2" fill="none" stroke="rgba(154,166,184,0.45)" stroke-width="0.8"/>
+<text x="68" y="113" fill="#8793a7" font-size="7" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">PEOPLE</text>
+<text x="128" y="126.5" fill="#e6ebf2" font-size="12" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Technicians</text>
+<text x="128" y="143.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">web browser</text>
+
+<rect x="40" y="216" width="176" height="128" rx="6" fill="#121824"/>
+<rect x="40" y="216" width="176" height="128" rx="6" fill="rgba(154,166,184,0.10)" stroke="#8793a7" stroke-width="1"/>
+<rect x="48" y="224" width="56" height="12" rx="2" fill="none" stroke="rgba(154,166,184,0.45)" stroke-width="0.8"/>
+<text x="76" y="233" fill="#8793a7" font-size="7" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">ENDPOINTS</text>
+<text x="128" y="252.5" fill="#e6ebf2" font-size="12" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Managed computers</text>
+<text x="128" y="269.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">Windows · Linux</text>
+<text x="128" y="284.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle"></text>
+<text x="128" y="299.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">EasyRMM agent</text>
+<text x="128" y="314.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">MeshAgent</text>
+<text x="128" y="329.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">EasyPatch agent</text>
+
+<rect x="304" y="96" width="208" height="264" rx="6" fill="#121824"/>
+<rect x="304" y="96" width="208" height="264" rx="6" fill="rgba(79,140,255,0.12)" stroke="#4f8cff" stroke-width="1.2"/>
+<rect x="312" y="104" width="40" height="12" rx="2" fill="none" stroke="rgba(79,140,255,0.50)" stroke-width="0.8"/>
+<text x="332" y="113" fill="#4f8cff" font-size="7" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">PUBLIC</text>
+<text x="408" y="200.5" fill="#e6ebf2" font-size="12" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">EasyRMM server</text>
+<text x="408" y="217.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">TLS edge on :443</text>
+<text x="408" y="232.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">console and REST API</text>
+<text x="408" y="247.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">agent gateway</text>
+<text x="408" y="262.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">remote-access gateway</text>
+<text x="408" y="277.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">patching client</text>
+
+<rect x="624" y="96" width="208" height="56" rx="6" fill="#121824"/>
+<rect x="624" y="96" width="208" height="56" rx="6" fill="#171e2c" stroke="rgba(230,235,242,0.45)" stroke-width="1"/>
+<rect x="632" y="104" width="36" height="12" rx="2" fill="none" stroke="rgba(230,235,242,0.30)" stroke-width="0.8"/>
+<text x="650" y="113" fill="#8793a7" font-size="7" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">RELAY</text>
+<text x="728" y="126.5" fill="#e6ebf2" font-size="12" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">MeshCentral</text>
+<text x="728" y="143.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">loopback :14430</text>
+
+<rect x="624" y="208" width="208" height="56" rx="6" fill="#121824"/>
+<rect x="624" y="208" width="208" height="56" rx="6" fill="#171e2c" stroke="rgba(230,235,242,0.45)" stroke-width="1"/>
+<rect x="632" y="216" width="40" height="12" rx="2" fill="none" stroke="rgba(230,235,242,0.30)" stroke-width="0.8"/>
+<text x="652" y="225" fill="#8793a7" font-size="7" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">ENGINE</text>
+<text x="728" y="238.5" fill="#e6ebf2" font-size="12" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">Patching engine</text>
+<text x="728" y="255.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">API :18180 · worker</text>
+
+<rect x="624" y="304" width="208" height="56" rx="6" fill="#121824"/>
+<rect x="624" y="304" width="208" height="56" rx="6" fill="rgba(230,235,242,0.05)" stroke="#9aa6b8" stroke-width="1"/>
+<rect x="632" y="312" width="32" height="12" rx="2" fill="none" stroke="rgba(154,166,184,0.45)" stroke-width="0.8"/>
+<text x="648" y="321" fill="#8793a7" font-size="7" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle" letter-spacing="0.08em">DATA</text>
+<text x="728" y="334.5" fill="#e6ebf2" font-size="12" font-weight="600" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif" text-anchor="middle">PostgreSQL</text>
+<text x="728" y="351.5" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" text-anchor="middle">loopback :15432</text>
+
+<line x1="32" y1="400" x2="848" y2="400" stroke="rgba(230,235,242,0.12)" stroke-width="0.8"/>
+<text x="32" y="420" fill="#8793a7" font-size="8" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace" letter-spacing="0.14em">LEGEND</text>
+<line x1="108" y1="417" x2="132" y2="417" stroke="#22d3ee" stroke-width="1.2"/>
+<text x="140" y="420" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace">HTTPS from outside</text>
+<line x1="268" y1="417" x2="292" y2="417" stroke="#9aa6b8" stroke-width="1.2"/>
+<text x="300" y="420" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace">loopback, inside the host</text>
+<rect x="471" y="411" width="16" height="12" rx="3" fill="rgba(79,140,255,0.12)" stroke="#4f8cff" stroke-width="1"/>
+<text x="499" y="420" fill="#9aa6b8" font-size="9" font-family="ui-monospace, SFMono-Regular, 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas, monospace">the only public listener</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

@@ -9,6 +9,6 @@
 /server/migrations/              @paulmataruso
 /.github/workflows/              @paulmataruso
 
-# EasyPatch (merged from easypatch/.github/CODEOWNERS). Its workflows,
+# The patching engine and the EasyPatch agent. Their workflows,
 # .github/workflows/easypatch-*.yml, are covered by the line above.
 /easypatch/                      @paulmataruso
