@@ -32,6 +32,37 @@ so **every EasyRMM release raises `<Version>`** and moves
 `easypatch/CHANGELOG.md`'s `[Unreleased]` entries under `## [1.10.1] -
 YYYY-MM-DD`. Running a failed release again for the same commit is allowed.
 
+## One-time setup
+
+Done once per repository, before the first release:
+
+1. The `easypatch-release` environment, admitting only `easyrmm-v*` tags,
+   with the release private key as its secret `EASYPATCH_RELEASE_KEY`:
+
+   ```bash
+   gh api -X PUT repos/paulmataruso/EasyRMM/environments/easypatch-release \
+     -F 'deployment_branch_policy[protected_branches]=false' \
+     -F 'deployment_branch_policy[custom_branch_policies]=true'
+   gh api -X POST repos/paulmataruso/EasyRMM/environments/easypatch-release/deployment-branch-policies \
+     -f name='easyrmm-v*' -f type=tag
+   gh secret set EASYPATCH_RELEASE_KEY --env easypatch-release --repo paulmataruso/EasyRMM \
+     < easypatch-release-key.pem
+   ```
+
+   The key must match `easypatch/keys/easypatch-release-key.pub.pem`
+   (`openssl pkey -in easypatch-release-key.pem -pubout` prints it).
+2. Write access for this repository's workflows to the engine's package.
+   `ghcr.io/paulmataruso/easypatch-server` was created by EasyPatch's former
+   repository, and a package admits only the workflows it lists. In the
+   package's settings on GitHub (Your profile → Packages →
+   easypatch-server → Package settings), under **Manage Actions access**,
+   add the repository `paulmataruso/EasyRMM` with the role **Write**. There
+   is no API for this. Without it the release fails when it first pushes the
+   engine's image, before any tag anyone pulls.
+3. Both packages public (Package settings → Danger Zone → Change
+   visibility), so that a server pulls them without signing in. Both are
+   public as of 2026-11-20.
+
 ## Cutting a release
 
 1. On `main`, with CI green, move the changelog's `[Unreleased]` entries
