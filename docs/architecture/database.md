@@ -240,7 +240,7 @@ engine's organizations, sites and endpoints follow EasyRMM's (ADR-0040).
 
 | Table / column | Notes |
 |---|---|
-| `organizations.timezone` | The time zone patching uses for the organization: its monthly reports, and the maintenance windows of devices without a site. `UTC` by default; sites have had one since migration 00001 |
+| `organizations.timezone` | The time zone the patching engine is given for the organization: its monthly reports, and the maintenance windows of the engine's endpoints that have no site (an imported endpoint can lack one; EasyRMM's devices always have a site). `UTC` by default; sites have had one since migration 00001 |
 | `easypatch_devices.easypatch_org_id`, `easypatch_site_id` | Where a linked device's endpoint is in the patching engine: the organization link it was checked against, and its site as last read or placed. A device whose site has moved no longer matches, and the reconciler moves its endpoint; one whose organization has changed has its EasyPatch agent removed (`easypatch_removals`), since the engine cannot move an endpoint between organizations |
 | `easypatch_sites` | Which of the patching engine's sites an EasyRMM site is, as `easypatch_organizations` is for organizations: one each way (`easypatch_id` is unique), with the engine's name for it and when it was linked. Read through the site's row-level security; written with platform scope only |
 | `easypatch_forgotten` | Organizations and sites EasyRMM deleted that the engine still has: kind, the engine's id and name, when, and the last error. The reconciler renames each to free its name, archives it, and removes the row. Inserted by the delete triggers below, whatever the deleting transaction's scope; read and changed with platform scope only |
