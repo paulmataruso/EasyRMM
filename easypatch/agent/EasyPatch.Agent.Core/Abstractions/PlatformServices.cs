@@ -231,24 +231,22 @@ public interface ISecretProtector
 /// <summary>Installer-provided bootstrap values (HKLM\SOFTWARE\EasyPatch\Agent on Windows, /etc/easypatch/agent.conf on Linux).</summary>
 /// <param name="ServerCaCertificate">Optional certificate authority (base64 DER) trusted for the connection to the server
 /// only; see <see cref="Security.ServerCertificateAuthority"/>.</param>
-public sealed record BootstrapConfig(string? ServerUrl, string? EnrollmentToken, string? DeploymentCode, string? ProxyUrl,
-    string? ServerCaCertificate = null)
+public sealed record BootstrapConfig(string? ServerUrl, string? EnrollmentToken, string? ProxyUrl, string? ServerCaCertificate = null)
 {
-    public static BootstrapConfig Empty { get; } = new(null, null, null, null);
+    public static BootstrapConfig Empty { get; } = new(null, null, null);
 
-    public bool HasEnrollmentCredential =>
-        !string.IsNullOrWhiteSpace(EnrollmentToken) || !string.IsNullOrWhiteSpace(DeploymentCode);
+    public bool HasEnrollmentToken => !string.IsNullOrWhiteSpace(EnrollmentToken);
 }
 
 public interface IBootstrapConfigSource
 {
     BootstrapConfig Read();
 
-    /// <summary>Removes the enrollment token and deployment code once they have been used.</summary>
+    /// <summary>Removes the enrollment token once it has been used.</summary>
     void ClearEnrollmentSecrets();
 
     /// <summary>How an administrator provides the settings (logged when they are missing).</summary>
-    string SetupHint => "Reinstall with SERVERURL and ENROLLMENTTOKEN or DEPLOYMENTCODE, or run 'EasyPatch.Agent.exe enroll'.";
+    string SetupHint => "Reinstall with SERVERURL and ENROLLMENTTOKEN, or run 'EasyPatch.Agent.exe enroll'.";
 }
 
 public interface IBootTimeProvider

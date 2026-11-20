@@ -5,9 +5,8 @@ namespace EasyPatch.Agent.Platform;
 
 /// <summary>
 /// Installer-provided bootstrap settings in <c>HKLM\SOFTWARE\EasyPatch\Agent</c> (64-bit view). The MSI writes them
-/// from SERVERURL / ENROLLMENTTOKEN / DEPLOYMENTCODE / PROXYURL / SERVERCACERT; <c>EasyPatch.Agent.exe enroll</c> writes
-/// them too.
-/// The enrollment token and deployment code are deleted as soon as enrollment completes or is rejected.
+/// from SERVERURL / ENROLLMENTTOKEN / PROXYURL / SERVERCACERT; <c>EasyPatch.Agent.exe enroll</c> writes them too.
+/// The enrollment token is deleted as soon as enrollment completes or is refused.
 /// The key is ACL-restricted to SYSTEM and Administrators (<see cref="SecureStorage"/>).
 /// </summary>
 internal sealed class RegistryBootstrapConfigSource : IBootstrapConfigSource
@@ -16,7 +15,6 @@ internal sealed class RegistryBootstrapConfigSource : IBootstrapConfigSource
 
     private const string ServerUrlValue = "ServerUrl";
     private const string EnrollmentTokenValue = "EnrollmentToken";
-    private const string DeploymentCodeValue = "DeploymentCode";
     private const string ProxyUrlValue = "ProxyUrl";
     private const string ServerCaCertificateValue = "ServerCaCertificate";
 
@@ -32,7 +30,6 @@ internal sealed class RegistryBootstrapConfigSource : IBootstrapConfigSource
         return new BootstrapConfig(
             ReadString(key, ServerUrlValue),
             ReadString(key, EnrollmentTokenValue),
-            ReadString(key, DeploymentCodeValue),
             ReadString(key, ProxyUrlValue),
             ReadString(key, ServerCaCertificateValue));
     }
@@ -42,7 +39,6 @@ internal sealed class RegistryBootstrapConfigSource : IBootstrapConfigSource
         using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
         using var key = root.OpenSubKey(KeyPath, writable: true);
         key?.DeleteValue(EnrollmentTokenValue, throwOnMissingValue: false);
-        key?.DeleteValue(DeploymentCodeValue, throwOnMissingValue: false);
     }
 
     /// <summary>Writes new bootstrap settings (CLI <c>enroll</c>). Null proxy removes a previously configured proxy; a null
@@ -53,7 +49,6 @@ internal sealed class RegistryBootstrapConfigSource : IBootstrapConfigSource
         using var key = SecureStorage.CreateOrOpenRegistryKey();
         SetOrDelete(key, ServerUrlValue, config.ServerUrl);
         SetOrDelete(key, EnrollmentTokenValue, config.EnrollmentToken);
-        SetOrDelete(key, DeploymentCodeValue, config.DeploymentCode);
         SetOrDelete(key, ProxyUrlValue, config.ProxyUrl);
         if (!string.IsNullOrWhiteSpace(config.ServerCaCertificate))
         {
@@ -71,7 +66,7 @@ internal sealed class RegistryBootstrapConfigSource : IBootstrapConfigSource
             return;
         }
 
-        foreach (var name in new[] { ServerUrlValue, EnrollmentTokenValue, DeploymentCodeValue, ProxyUrlValue, ServerCaCertificateValue })
+        foreach (var name in new[] { ServerUrlValue, EnrollmentTokenValue, ProxyUrlValue, ServerCaCertificateValue })
         {
             key.DeleteValue(name, throwOnMissingValue: false);
         }

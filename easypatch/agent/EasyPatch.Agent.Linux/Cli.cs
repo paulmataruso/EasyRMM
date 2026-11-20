@@ -42,17 +42,11 @@ internal static class Cli
 
     public static async Task<int> EnrollAsync(string[] args)
     {
-        var options = CliArguments.Parse(args, ["--server", "--token-file", "--deployment-code", "--proxy", "--server-ca"], ["--force", "--no-start"]);
+        var options = CliArguments.Parse(args, ["--server", "--token-file", "--proxy", "--server-ca"], ["--force", "--no-start"]);
         var server = options.Required("--server");
-        var code = options.Value("--deployment-code");
         var tokenFile = options.Value("--token-file");
         var force = options.Flag("--force");
         var proxy = options.Value("--proxy");
-        if (tokenFile is not null && code is not null)
-        {
-            throw new CliUsageException("Specify either --token-file or --deployment-code, not both.");
-        }
-
         var serverCa = ReadServerCa(options.Value("--server-ca"));
 
         Uri serverUrl;
@@ -72,14 +66,14 @@ internal static class Cli
             return ExitNotElevated;
         }
 
-        var token = code is null ? ReadToken(tokenFile) : null;
-        if (token is null && code is null)
+        var token = ReadToken(tokenFile);
+        if (token is null)
         {
-            throw new CliUsageException($"Specify --token-file <path|-> (or set {TokenEnvironmentVariable}) or --deployment-code <code>.");
+            throw new CliUsageException($"Specify --token-file <path|-> (or set {TokenEnvironmentVariable}).");
         }
 
         var existing = TryReadState(out _);
-        if (existing is { Status: AgentEnrollmentStatus.Active or AgentEnrollmentStatus.PendingApproval } && !force)
+        if (existing is { Status: AgentEnrollmentStatus.Active } && !force)
         {
             if (SameServer(existing.ServerUrl, serverUrl))
             {
@@ -114,7 +108,7 @@ internal static class Cli
                 await runtime.UnenrollAsync("Re-enrolled from the command line (--force).", unenrollTimeout.Token);
             }
 
-            ConfFileBootstrapSource.Write(LinuxComposition.ConfigPath, new BootstrapConfig(serverUrl.ToString(), token, code, proxy, serverCa?.Base64),
+            ConfFileBootstrapSource.Write(LinuxComposition.ConfigPath, new BootstrapConfig(serverUrl.ToString(), token, proxy, serverCa?.Base64),
                 new ConfFileBootstrapSource(LinuxComposition.ConfigPath).ReadValue("LogLevel"));
 
             EnrollmentOutcome outcome;
@@ -145,13 +139,8 @@ internal static class Cli
                     Console.WriteLine($"Enrolled with {state.ServerUrl}. Endpoint ID: {state.EndpointId}.");
                     return ExitSuccess;
 
-                case EnrollmentOutcome.PendingApproval:
-                    Console.WriteLine($"Enrollment request submitted to {state.ServerUrl} and waiting for approval.");
-                    Console.WriteLine($"An administrator must approve it on the server. Key fingerprint: {state.KeyFingerprint}");
-                    return ExitSuccess;
-
                 case EnrollmentOutcome.Rejected:
-                    Console.Error.WriteLine("error: the server rejected the enrollment request. Check the token or deployment code and try again.");
+                    Console.Error.WriteLine("error: the server refused the enrollment token. Check the token and try again.");
                     return ExitRejected;
 
                 case EnrollmentOutcome.NotConfigured:
@@ -296,7 +285,6 @@ internal static class Cli
         Line("Server", state.ServerUrl);
         Line("Endpoint ID", state.EndpointId?.ToString());
         Line("Credential", state.CredentialId is null ? null : $"{state.CredentialId} (expires {Format(state.CredentialExpiresAt)})");
-        Line("Pending request", state.PendingEnrollmentRequestId);
         Line("Key fingerprint", state.KeyFingerprint);
         Line("Enrolled", Format(state.EnrolledAt));
         Line("Last check-in", Format(state.LastCheckInAt));
@@ -410,10 +398,8 @@ internal static class Cli
             Usage: easypatch-agent <command> [options]
 
               run                       Run the agent (default; used by the easypatch-agent systemd service).
-              enroll --server <url> (--token-file <path|-> | --deployment-code <code>) [--proxy <url>]
-                     [--server-ca <file>] [--force] [--no-start]
-                                        Enroll this computer. A token enrolls immediately; a deployment code
-                                        creates a request an administrator must approve in the console.
+              enroll --server <url> --token-file <path|-> [--proxy <url>] [--server-ca <file>] [--force] [--no-start]
+                                        Enroll this computer with an enrollment token.
                                         The token is read from a file, from standard input (--token-file -)
                                         or from {TokenEnvironmentVariable}; it is never accepted as an argument.
                                         --server-ca trusts that certificate authority (PEM) for the connection

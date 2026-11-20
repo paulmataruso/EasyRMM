@@ -49,9 +49,6 @@ public sealed record AgentRuntimeOptions
 
     public TimeSpan BackoffMax { get; init; } = TimeSpan.FromMinutes(15);
 
-    /// <summary>Delay between pending-approval status polls (before jitter).</summary>
-    public TimeSpan PendingApprovalPollInterval { get; init; } = TimeSpan.FromSeconds(60);
-
     public string LogDirectory => Path.Combine(DataDirectory, "logs");
 
     /// <summary>Downloaded agent packages and their installer logs.</summary>

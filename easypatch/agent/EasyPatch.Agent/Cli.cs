@@ -39,16 +39,15 @@ internal static class Cli
 
     public static async Task<int> EnrollAsync(string[] args)
     {
-        var options = CliArguments.Parse(args, ["--server", "--token", "--deployment-code", "--proxy"], ["--force", "--no-start"]);
+        var options = CliArguments.Parse(args, ["--server", "--token", "--proxy"], ["--force", "--no-start"]);
         var server = options.Required("--server");
-        var code = options.Value("--deployment-code");
-        var token = options.Value("--token") ?? (code is null ? NullIfEmpty(Environment.GetEnvironmentVariable(TokenEnvironmentVariable)) : null);
+        var token = options.Value("--token") ?? NullIfEmpty(Environment.GetEnvironmentVariable(TokenEnvironmentVariable));
         var proxy = options.Value("--proxy");
         var force = options.Flag("--force");
 
-        if ((token is null) == (code is null))
+        if (token is null)
         {
-            throw new CliUsageException($"Specify exactly one of --token (or the {TokenEnvironmentVariable} environment variable) or --deployment-code.");
+            throw new CliUsageException($"Specify --token (or the {TokenEnvironmentVariable} environment variable).");
         }
 
         Uri serverUrl;
@@ -69,7 +68,7 @@ internal static class Cli
         }
 
         var existing = TryReadState(out _);
-        if (existing is { Status: AgentEnrollmentStatus.Active or AgentEnrollmentStatus.PendingApproval } && !force)
+        if (existing is { Status: AgentEnrollmentStatus.Active } && !force)
         {
             if (SameServer(existing.ServerUrl, serverUrl))
             {
@@ -105,7 +104,7 @@ internal static class Cli
                 await runtime.UnenrollAsync("Re-enrolled from the command line (--force).", unenrollTimeout.Token);
             }
 
-            RegistryBootstrapConfigSource.Write(new BootstrapConfig(serverUrl.ToString(), token, code, proxy));
+            RegistryBootstrapConfigSource.Write(new BootstrapConfig(serverUrl.ToString(), token, proxy));
 
             EnrollmentOutcome outcome;
             using (var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(3)))
@@ -135,13 +134,8 @@ internal static class Cli
                     Console.WriteLine($"Enrolled with {state.ServerUrl}. Endpoint ID: {state.EndpointId}.");
                     return ExitSuccess;
 
-                case EnrollmentOutcome.PendingApproval:
-                    Console.WriteLine($"Enrollment request submitted to {state.ServerUrl} and waiting for approval.");
-                    Console.WriteLine($"An administrator must approve it on the server. Key fingerprint: {state.KeyFingerprint}");
-                    return ExitSuccess;
-
                 case EnrollmentOutcome.Rejected:
-                    Console.Error.WriteLine("error: the server rejected the enrollment request. Check the token or deployment code and try again.");
+                    Console.Error.WriteLine("error: the server refused the enrollment token. Check the token and try again.");
                     return ExitRejected;
 
                 case EnrollmentOutcome.NotConfigured:
@@ -214,7 +208,6 @@ internal static class Cli
         Line("Server", state.ServerUrl);
         Line("Endpoint ID", state.EndpointId?.ToString());
         Line("Credential", state.CredentialId is null ? null : $"{state.CredentialId} (expires {Format(state.CredentialExpiresAt)})");
-        Line("Pending request", state.PendingEnrollmentRequestId);
         Line("Key fingerprint", state.KeyFingerprint);
         Line("Enrolled", Format(state.EnrolledAt));
         Line("Last check-in", Format(state.LastCheckInAt));
@@ -280,9 +273,8 @@ internal static class Cli
             Usage: EasyPatch.Agent.exe <command> [options]
 
               run                       Run the agent (default; used by the Windows service).
-              enroll --server <url> (--token <token> | --deployment-code <code>) [--proxy <url>] [--force] [--no-start]
-                                        Enroll this computer. A token enrolls immediately; a deployment code
-                                        creates a request an administrator must approve in the console.
+              enroll --server <url> --token <token> [--proxy <url>] [--force] [--no-start]
+                                        Enroll this computer with an enrollment token.
                                         The token may be passed in {TokenEnvironmentVariable} instead of --token.
               status [--json]           Show enrollment and agent status.
               unenroll [--reason <text>]

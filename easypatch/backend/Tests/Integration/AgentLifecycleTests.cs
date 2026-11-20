@@ -259,30 +259,6 @@ public sealed class AgentLifecycleTests(PostgresFixture postgres) : IntegrationT
     }
 
     [Fact]
-    public async Task Rmm_install_with_a_deployment_code_activates_after_approval()
-    {
-        var admin = SuperAdmin();
-        var (org, site) = await CreateOrgAsync(admin);
-        var code = await admin.SendAsync<DeploymentCodeDto>(HttpMethod.Post, "/api/v1/deployment-codes",
-            new CreateDeploymentCodeRequest(org.Id, site.Id, "RMM", 30, null, null), HttpStatusCode.Created);
-
-        using var agent = new TestAgent(NewHttpClient(), Clock);
-        agent.Bootstrap.DeploymentCode = code.Code;
-        Assert.Equal(EnrollmentOutcome.PendingApproval, await agent.Runtime.EnsureEnrolledAsync());
-        Assert.Null(await agent.Runtime.CheckInOnceAsync()); // nothing is sent before approval
-        Assert.Equal(EnrollmentOutcome.PendingApproval, await agent.Runtime.EnsureEnrolledAsync());
-
-        var request = (await admin.GetAsync<PagedResult<EnrollmentRequestDto>>("/api/v1/enrollment-requests")).Items.Single();
-        await admin.SendAsync<object>(HttpMethod.Post, $"/api/v1/enrollment-requests/{request.Id}/approve", new ApproveRequest(null, null), HttpStatusCode.OK);
-
-        Clock.Advance(TimeSpan.FromMinutes(2));
-        Assert.Equal(EnrollmentOutcome.Active, await agent.Runtime.EnsureEnrolledAsync());
-        Assert.NotNull(await agent.Runtime.CheckInOnceAsync());
-        var endpointId = agent.Runtime.State.Read(s => s.EndpointId)!.Value;
-        Assert.Equal(site.Id, (await admin.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{endpointId}")).Summary.SiteId);
-    }
-
-    [Fact]
     public async Task Agent_rotates_its_key_and_unenrolls_on_uninstall()
     {
         var admin = SuperAdmin();

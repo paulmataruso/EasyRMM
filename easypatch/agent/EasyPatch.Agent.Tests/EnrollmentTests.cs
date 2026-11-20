@@ -98,68 +98,6 @@ public sealed class EnrollmentTests
     }
 
     [Fact]
-    public async Task Deployment_code_waits_for_approval_then_activates()
-    {
-        using var h = new AgentHarness();
-        h.Bootstrap.DeploymentCode = AgentHarness.DeploymentCode;
-
-        Assert.Equal(EnrollmentOutcome.PendingApproval, await h.Runtime.EnsureEnrolledAsync(Ct));
-        var requestId = h.Runtime.State.Read(s => s.PendingEnrollmentRequestId);
-        Assert.StartsWith("r_", requestId, StringComparison.Ordinal);
-        Assert.Equal(AgentHarness.DeploymentCode, h.Bootstrap.DeploymentCode); // kept until approved
-
-        // Polling is signed with the pending request's key and stays pending until an administrator acts.
-        Assert.Equal(EnrollmentOutcome.PendingApproval, await h.Runtime.EnsureEnrolledAsync(Ct));
-        Assert.Null(await h.Runtime.CheckInOnceAsync(Ct)); // no check-ins while pending
-
-        h.Server.Approve(requestId!);
-        var restarted = h.Restart(); // approval can arrive across a service restart
-        Assert.Equal(EnrollmentOutcome.Active, await restarted.EnsureEnrolledAsync(Ct));
-
-        var state = restarted.State.Snapshot();
-        Assert.Equal(AgentEnrollmentStatus.Active, state.Status);
-        Assert.StartsWith("c_", state.CredentialId, StringComparison.Ordinal);
-        Assert.Null(state.PendingEnrollmentRequestId);
-        Assert.Null(h.Bootstrap.DeploymentCode);
-        Assert.Single(h.Server.EnrollRequests);
-        Assert.NotNull(await restarted.CheckInOnceAsync(Ct));
-        Assert.Equal(0, h.Server.RejectedSignatures);
-    }
-
-    [Fact]
-    public async Task Rejected_request_deletes_the_identity_and_the_deployment_code()
-    {
-        using var h = new AgentHarness();
-        h.Bootstrap.DeploymentCode = AgentHarness.DeploymentCode;
-        await h.Runtime.EnsureEnrolledAsync(Ct);
-        h.Server.Reject(h.Runtime.State.Read(s => s.PendingEnrollmentRequestId)!);
-
-        Assert.Equal(EnrollmentOutcome.Rejected, await h.Runtime.EnsureEnrolledAsync(Ct));
-
-        Assert.Equal(AgentEnrollmentStatus.Rejected, h.Runtime.State.Read(s => s.Status));
-        Assert.False(File.Exists(Path.Combine(h.DataDirectory, "agent.key")));
-        Assert.Null(h.Bootstrap.DeploymentCode);
-        Assert.Equal(EnrollmentOutcome.NotConfigured, await h.Runtime.EnsureEnrolledAsync(Ct));
-        Assert.Single(h.Server.EnrollRequests);
-    }
-
-    [Fact]
-    public async Task Expired_request_is_resubmitted_with_a_new_key()
-    {
-        using var h = new AgentHarness();
-        h.Bootstrap.DeploymentCode = AgentHarness.DeploymentCode;
-        await h.Runtime.EnsureEnrolledAsync(Ct);
-        var firstFingerprint = h.Runtime.State.Read(s => s.KeyFingerprint);
-        h.Server.Expire(h.Runtime.State.Read(s => s.PendingEnrollmentRequestId)!);
-
-        Assert.Equal(EnrollmentOutcome.Failed, await h.Runtime.EnsureEnrolledAsync(Ct));
-        Assert.Equal(EnrollmentOutcome.PendingApproval, await h.Runtime.EnsureEnrolledAsync(Ct));
-
-        Assert.Equal(2, h.Server.EnrollRequests.Count);
-        Assert.NotEqual(firstFingerprint, h.Runtime.State.Read(s => s.KeyFingerprint));
-    }
-
-    [Fact]
     public async Task Server_unreachable_during_enrollment_keeps_the_token_for_retry()
     {
         using var h = new AgentHarness();

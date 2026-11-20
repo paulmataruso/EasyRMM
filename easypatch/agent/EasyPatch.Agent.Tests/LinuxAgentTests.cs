@@ -652,7 +652,7 @@ public sealed class LinuxBootstrapTests : IDisposable
     public void Settings_are_written_root_only_and_the_used_secret_is_removed()
     {
         var path = Path.Combine(_directory.Path, "etc", "agent.conf");
-        ConfFileBootstrapSource.Write(path, new BootstrapConfig("https://patch.example.com/", "secret-token", null, null), "Debug");
+        ConfFileBootstrapSource.Write(path, new BootstrapConfig("https://patch.example.com/", "secret-token", null), "Debug");
         var source = new ConfFileBootstrapSource(path);
 
         var config = source.Read();
@@ -673,7 +673,7 @@ public sealed class LinuxBootstrapTests : IDisposable
     public void The_servers_certificate_authority_is_kept_with_the_settings_after_the_secret_is_used()
     {
         var path = Path.Combine(_directory.Path, "agent.conf");
-        ConfFileBootstrapSource.Write(path, new BootstrapConfig("https://10.0.0.5/", "secret-token", null, null, "TUlJQmZha2U="));
+        ConfFileBootstrapSource.Write(path, new BootstrapConfig("https://10.0.0.5/", "secret-token", null, "TUlJQmZha2U="));
         var source = new ConfFileBootstrapSource(path);
         Assert.Equal("TUlJQmZha2U=", source.Read().ServerCaCertificate);
 
@@ -688,13 +688,13 @@ public sealed class LinuxBootstrapTests : IDisposable
     public void A_world_readable_settings_file_is_restricted_when_read()
     {
         var path = Path.Combine(_directory.Path, "agent.conf");
-        File.WriteAllText(path, "# comment\nServerUrl = \"https://patch.example.com\"\nDeploymentCode=ABCD-1234\n");
+        File.WriteAllText(path, "# comment\nServerUrl = \"https://patch.example.com\"\nEnrollmentToken=secret-token\n");
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.OtherRead | UnixFileMode.GroupRead);
 
         var config = new ConfFileBootstrapSource(path).Read();
 
         Assert.Equal("https://patch.example.com", config.ServerUrl);
-        Assert.Equal("ABCD-1234", config.DeploymentCode);
+        Assert.Equal("secret-token", config.EnrollmentToken);
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
     }
 

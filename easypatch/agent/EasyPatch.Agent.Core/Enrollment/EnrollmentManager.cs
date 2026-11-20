@@ -4,7 +4,6 @@ using EasyPatch.Agent.Core.Runtime;
 using EasyPatch.Agent.Core.Security;
 using EasyPatch.Agent.Core.State;
 using EasyPatch.Communication;
-using EasyPatch.Contracts;
 using EasyPatch.Contracts.Agent;
 using Microsoft.Extensions.Logging;
 
@@ -15,23 +14,16 @@ public enum EnrollmentOutcome
     /// <summary>The agent has an active credential.</summary>
     Active,
 
-    /// <summary>Waiting for an administrator to approve the request (deployment-code flow).</summary>
-    PendingApproval,
-
-    /// <summary>No server URL or enrollment credential is configured.</summary>
+    /// <summary>No server URL or enrollment token is configured.</summary>
     NotConfigured,
 
-    /// <summary>The server refused or rejected enrollment; a new token or deployment code is required.</summary>
+    /// <summary>The server refused enrollment; a new enrollment token is required.</summary>
     Rejected,
-
-    /// <summary>Enrollment failed in a way that may succeed later (e.g. an expired pending request).</summary>
-    Failed,
 }
 
 /// <summary>Event IDs written to the Windows event log for enrollment milestones.</summary>
 public static class AgentEventIds
 {
-    public static readonly EventId EnrollmentPending = new(1001, "EnrollmentPending");
     public static readonly EventId EnrollmentActive = new(1002, "EnrollmentActive");
     public static readonly EventId EnrollmentRejected = new(1003, "EnrollmentRejected");
     public static readonly EventId CredentialRevoked = new(1004, "CredentialRevoked");
@@ -50,10 +42,7 @@ public static class AgentEventIds
     public static readonly EventId UpdateRemovalFailed = new(1021, "UpdateRemovalFailed");
 }
 
-/// <summary>
-/// Implements both enrollment flows: an enrollment token (immediately active) and a deployment code
-/// (pending until an administrator approves it in the console).
-/// </summary>
+/// <summary>Enrolls the agent with an enrollment token; the credential it gets is active at once.</summary>
 public sealed class EnrollmentManager
 {
     private readonly AgentStateStore _state;
@@ -89,20 +78,15 @@ public sealed class EnrollmentManager
     public async Task<EnrollmentOutcome> EnsureEnrolledAsync(CancellationToken cancellationToken)
     {
         var snapshot = _state.Snapshot();
-        switch (snapshot.Status)
+        if (snapshot.Status == AgentEnrollmentStatus.Active && !string.IsNullOrEmpty(snapshot.CredentialId))
         {
-            case AgentEnrollmentStatus.Active when !string.IsNullOrEmpty(snapshot.CredentialId):
-                if (_keys.EnsureMatches(snapshot.KeyFingerprint))
-                {
-                    return EnrollmentOutcome.Active;
-                }
+            if (_keys.EnsureMatches(snapshot.KeyFingerprint))
+            {
+                return EnrollmentOutcome.Active;
+            }
 
-                _logger.LogError("The agent's private key is missing or does not match its credential. The agent must enroll again.");
-                ResetIdentity();
-                break;
-
-            case AgentEnrollmentStatus.PendingApproval when !string.IsNullOrEmpty(snapshot.PendingEnrollmentRequestId):
-                return await PollPendingAsync(snapshot, cancellationToken);
+            _logger.LogError("The agent's private key is missing or does not match its credential. The agent must enroll again.");
+            ResetIdentity();
         }
 
         return await EnrollAsync(cancellationToken);
@@ -111,13 +95,13 @@ public sealed class EnrollmentManager
     private async Task<EnrollmentOutcome> EnrollAsync(CancellationToken cancellationToken)
     {
         var bootstrap = _platform.Bootstrap.Read();
-        if (string.IsNullOrWhiteSpace(bootstrap.ServerUrl) || !bootstrap.HasEnrollmentCredential)
+        if (string.IsNullOrWhiteSpace(bootstrap.ServerUrl) || !bootstrap.HasEnrollmentToken)
         {
             if (!_notConfiguredLogged)
             {
                 _logger.LogWarning(
                     "The agent is not enrolled and has no {Missing}. {Hint}",
-                    string.IsNullOrWhiteSpace(bootstrap.ServerUrl) ? "server URL" : "enrollment token or deployment code", _platform.Bootstrap.SetupHint);
+                    string.IsNullOrWhiteSpace(bootstrap.ServerUrl) ? "server URL" : "enrollment token", _platform.Bootstrap.SetupHint);
                 _notConfiguredLogged = true;
             }
 
@@ -125,10 +109,9 @@ public sealed class EnrollmentManager
         }
 
         _notConfiguredLogged = false;
-        var status = _state.Read(s => s.Status);
-        if (status is AgentEnrollmentStatus.Revoked or AgentEnrollmentStatus.Rejected)
+        if (_state.Read(s => s.Status) == AgentEnrollmentStatus.Revoked)
         {
-            // A new enrollment credential appeared after revocation/rejection: start over with a fresh identity.
+            // A new enrollment token appeared after revocation: start over with a fresh identity.
             ResetIdentity();
         }
 
@@ -146,11 +129,9 @@ public sealed class EnrollmentManager
         var key = _keys.GetOrCreate(); // persisted before the request so retries reuse the same identity
         var fingerprint = AgentKeyStore.Fingerprint(key);
         var device = await CollectDeviceIdentityAsync(cancellationToken);
-        var useToken = !string.IsNullOrWhiteSpace(bootstrap.EnrollmentToken);
         var request = new EnrollRequest
         {
-            EnrollmentToken = useToken ? bootstrap.EnrollmentToken!.Trim() : null,
-            DeploymentCode = useToken ? null : bootstrap.DeploymentCode!.Trim(),
+            EnrollmentToken = bootstrap.EnrollmentToken!.Trim(),
             PublicKey = AgentKeyStore.PublicKeyBase64(key),
             AgentVersion = _options.AgentVersion,
             Device = device,
@@ -162,8 +143,7 @@ public sealed class EnrollmentManager
             s.KeyFingerprint = fingerprint;
         });
 
-        _logger.LogInformation("Enrolling with {Server} using a {Method} (key fingerprint {Fingerprint}).",
-            serverUrl, useToken ? "enrollment token" : "deployment code", fingerprint);
+        _logger.LogInformation("Enrolling with {Server} using an enrollment token (key fingerprint {Fingerprint}).", serverUrl, fingerprint);
 
         EnrollResponse response;
         try
@@ -173,50 +153,16 @@ public sealed class EnrollmentManager
         catch (AgentRejectedException ex)
         {
             _logger.LogError(AgentEventIds.EnrollmentRejected,
-                "The server refused enrollment (HTTP {Status}, {Code}): {Message} Provide a new enrollment token or deployment code.",
+                "The server refused enrollment (HTTP {Status}, {Code}): {Message} Provide a new enrollment token.",
                 (int?)ex.StatusCode, ex.ErrorCode, ex.Message);
             _platform.Bootstrap.ClearEnrollmentSecrets();
             return EnrollmentOutcome.Rejected;
         }
 
-        return Apply(response, fingerprint);
+        return Activate(response, fingerprint);
     }
 
-    private async Task<EnrollmentOutcome> PollPendingAsync(AgentState snapshot, CancellationToken cancellationToken)
-    {
-        if (!_keys.EnsureMatches(snapshot.KeyFingerprint))
-        {
-            _logger.LogError("The key for the pending enrollment request is missing; submitting a new request.");
-            ResetIdentity();
-            return EnrollmentOutcome.Failed;
-        }
-
-        EnrollResponse response;
-        try
-        {
-            response = await _api.Get(snapshot.ServerUrl!).GetEnrollmentStatusAsync(cancellationToken);
-        }
-        catch (AgentAuthException ex) when (ex.IsFatal)
-        {
-            _logger.LogWarning("The server no longer knows the pending enrollment request ({Code}); a new request will be submitted.", ex.ErrorCode);
-            ResetIdentity();
-            return EnrollmentOutcome.Failed;
-        }
-        catch (AgentRejectedException ex) when (ex.ErrorCode == AgentErrorCodes.EnrollmentRejected)
-        {
-            return Apply(new EnrollResponse
-            {
-                State = EnrollmentState.Rejected,
-                CredentialId = snapshot.PendingEnrollmentRequestId!,
-                KeyFingerprint = snapshot.KeyFingerprint ?? string.Empty,
-                Message = ex.Message,
-            }, snapshot.KeyFingerprint ?? string.Empty);
-        }
-
-        return Apply(response, snapshot.KeyFingerprint ?? string.Empty);
-    }
-
-    private EnrollmentOutcome Apply(EnrollResponse response, string fingerprint)
+    private EnrollmentOutcome Activate(EnrollResponse response, string fingerprint)
     {
         if (!string.IsNullOrEmpty(response.KeyFingerprint) && !string.Equals(response.KeyFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
         {
@@ -224,69 +170,27 @@ public sealed class EnrollmentManager
         }
 
         var now = _time.GetUtcNow();
-        switch (response.State)
+        _state.Update(s =>
         {
-            case EnrollmentState.Active:
-                _state.Update(s =>
-                {
-                    s.Status = AgentEnrollmentStatus.Active;
-                    s.EndpointId = response.EndpointId;
-                    s.OrganizationId = response.OrganizationId;
-                    s.CredentialId = response.CredentialId;
-                    s.CredentialExpiresAt = response.CredentialExpiresAt;
-                    s.PendingEnrollmentRequestId = null;
-                    s.KeyFingerprint = fingerprint;
-                    s.EnrolledAt = now;
-                    s.LastAuthFailureCode = null;
-                    s.LastAuthFailureAt = null;
-                    if (response.Config is not null)
-                    {
-                        s.Config = AgentConfigLimits.Normalize(response.Config);
-                    }
-                });
-                _platform.Bootstrap.ClearEnrollmentSecrets();
-                _logger.LogInformation(AgentEventIds.EnrollmentActive,
-                    "Enrollment complete. Endpoint {EndpointId}, credential {CredentialId}, key fingerprint {Fingerprint}.",
-                    response.EndpointId, response.CredentialId, fingerprint);
-                return EnrollmentOutcome.Active;
-
-            case EnrollmentState.PendingApproval:
-                var firstTime = _state.Read(s => s.Status != AgentEnrollmentStatus.PendingApproval);
-                _state.Update(s =>
-                {
-                    s.Status = AgentEnrollmentStatus.PendingApproval;
-                    s.PendingEnrollmentRequestId = response.CredentialId;
-                    s.KeyFingerprint = fingerprint;
-                });
-                if (firstTime)
-                {
-                    _logger.LogInformation(AgentEventIds.EnrollmentPending,
-                        "Enrollment request {RequestId} is waiting for an administrator's approval on the server. Key fingerprint: {Fingerprint}",
-                        response.CredentialId, fingerprint);
-                }
-
-                return EnrollmentOutcome.PendingApproval;
-
-            case EnrollmentState.Rejected:
-                _logger.LogError(AgentEventIds.EnrollmentRejected,
-                    "An administrator rejected this agent's enrollment request. {Message} Reinstall with a new token or deployment code to try again.",
-                    response.Message ?? string.Empty);
-                _platform.Bootstrap.ClearEnrollmentSecrets();
-                _keys.DeleteAll();
-                _state.Update(s =>
-                {
-                    s.Status = AgentEnrollmentStatus.Rejected;
-                    s.PendingEnrollmentRequestId = null;
-                    s.CredentialId = null;
-                });
-                return EnrollmentOutcome.Rejected;
-
-            case EnrollmentState.Expired:
-            default:
-                _logger.LogWarning("The enrollment request expired before it was approved; a new request will be submitted.");
-                ResetIdentity();
-                return EnrollmentOutcome.Failed;
-        }
+            s.Status = AgentEnrollmentStatus.Active;
+            s.EndpointId = response.EndpointId;
+            s.OrganizationId = response.OrganizationId;
+            s.CredentialId = response.CredentialId;
+            s.CredentialExpiresAt = response.CredentialExpiresAt;
+            s.KeyFingerprint = fingerprint;
+            s.EnrolledAt = now;
+            s.LastAuthFailureCode = null;
+            s.LastAuthFailureAt = null;
+            if (response.Config is not null)
+            {
+                s.Config = AgentConfigLimits.Normalize(response.Config);
+            }
+        });
+        _platform.Bootstrap.ClearEnrollmentSecrets();
+        _logger.LogInformation(AgentEventIds.EnrollmentActive,
+            "Enrollment complete. Endpoint {EndpointId}, credential {CredentialId}, key fingerprint {Fingerprint}.",
+            response.EndpointId, response.CredentialId, fingerprint);
+        return EnrollmentOutcome.Active;
     }
 
     /// <summary>Discards the current identity (keys, credential, held jobs and queued reports).</summary>
@@ -301,7 +205,6 @@ public sealed class EnrollmentManager
             s.OrganizationId = null;
             s.CredentialId = null;
             s.CredentialExpiresAt = null;
-            s.PendingEnrollmentRequestId = null;
             s.KeyFingerprint = null;
             s.EnrolledAt = null;
             s.Jobs.Clear();

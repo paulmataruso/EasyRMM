@@ -6,7 +6,7 @@ using Xunit;
 
 namespace EasyPatch.Agent.Tests;
 
-/// <summary>The certificate authority recorded by the install script's "Skip certificate check" option (SERVERCACERT).</summary>
+/// <summary>The certificate authority of a server with a private CA, which EasyRMM passes to the MSI (SERVERCACERT).</summary>
 public sealed class ServerCertificateAuthorityTests : IDisposable
 {
     private readonly Pki _lab = new("Caddy Local Authority - 2026 ECC Root");

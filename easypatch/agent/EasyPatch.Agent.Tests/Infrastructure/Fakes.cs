@@ -64,16 +64,14 @@ public sealed class InMemoryBootstrap : IBootstrapConfigSource
 {
     public string? ServerUrl { get; set; }
     public string? EnrollmentToken { get; set; }
-    public string? DeploymentCode { get; set; }
     public int ClearCalls { get; private set; }
 
-    public BootstrapConfig Read() => new(ServerUrl, EnrollmentToken, DeploymentCode, null);
+    public BootstrapConfig Read() => new(ServerUrl, EnrollmentToken, null);
 
     public void ClearEnrollmentSecrets()
     {
         ClearCalls++;
         EnrollmentToken = null;
-        DeploymentCode = null;
     }
 }
 
