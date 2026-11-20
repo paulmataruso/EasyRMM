@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
@@ -179,8 +180,18 @@ func lookPath(name string) (string, error) {
 	return "", errors.New("not found")
 }
 
+// stopGrace is how long a query past its deadline has to stop after it is
+// asked to, before it is killed.
+var stopGrace = 10 * time.Second
+
+// output runs a query. Past its deadline it is asked to stop (SIGTERM) and
+// killed only stopGrace later: rpm killed outright can leave its Berkeley DB
+// database needing recovery (RHEL 8 and older), and dnf then fails with
+// "rpmdb open failed".
 func output(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // a fixed command found in system directories
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8"}
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
+	cmd.WaitDelay = stopGrace
 	return cmd.Output()
 }

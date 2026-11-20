@@ -349,6 +349,7 @@ func Download(ctx context.Context, url, caPEM string, limit int64, w io.Writer) 
 func run(ctx context.Context, stdin string, env []string, name string, args ...string) (int, []byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...) //nolint:gosec // fixed programs with checked arguments
 	hide(cmd)
+	stopGently(cmd)
 	if env != nil {
 		cmd.Env = append(os.Environ(), env...)
 	}
@@ -358,6 +359,10 @@ func run(ctx context.Context, stdin string, env []string, name string, args ...s
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil {
+		// It finished well; something it started still holds its output.
+		err = nil
+	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) && ctx.Err() == nil {
 		return exit.ExitCode(), out.Bytes(), nil
