@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
+	"github.com/paulmataruso/easyrmm/server/internal/audit"
+	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 )
 
 // waiter is an agent installed with an approval token.
@@ -346,5 +349,63 @@ func TestWaitingEnrollmentsEndWithTheServer(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("a waiting enrollment outlived the server")
+	}
+}
+
+// TestTokensKeptToShowAgain checks the service's side of ADR-0047: a server
+// without a sealer keeps no secrets, and a kept secret is only shown when it
+// is the token's own.
+func TestTokensKeptToShowAgain(t *testing.T) {
+	f := newFixture(t)
+	notKept := func(err error) bool {
+		e, ok := apperr.As(err)
+		return ok && e.Code == "token_not_kept"
+	}
+
+	// Without a sealer, a token keeps only its hash.
+	plain, err := f.svc.CreateToken(f.ctx, f.sys, f.hq, TokenInput{Name: "unkept", ExpiresInDays: 1})
+	if err != nil || plain.Token.Kept {
+		t.Fatalf("token without a sealer = %+v, %v", plain, err)
+	}
+	if _, err := f.svc.RevealToken(f.ctx, f.sys, plain.Token.ID); !notKept(err) {
+		t.Errorf("revealing a token without a kept secret: %v", err)
+	}
+	plainApproval, err := f.svc.CreateApprovalToken(f.ctx, f.sys, ApprovalTokenInput{Name: "unkept", ExpiresInDays: 1})
+	if err != nil || plainApproval.Token.Kept {
+		t.Fatalf("approval token without a sealer = %+v, %v", plainApproval, err)
+	}
+	if _, err := f.svc.RevealApprovalToken(f.ctx, f.sys, plainApproval.Token.ID); !notKept(err) {
+		t.Errorf("revealing an approval token without a kept secret: %v", err)
+	}
+
+	sl, err := secrets.NewSealer(secrets.Key{ID: "k1", Raw: make([]byte, 32)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc.SetSealer(sl)
+	kept, err := f.svc.CreateToken(f.ctx, f.sys, f.hq, TokenInput{Name: "kept", ExpiresInDays: 1})
+	if err != nil || !kept.Token.Kept {
+		t.Fatalf("token with a sealer = %+v, %v", kept, err)
+	}
+	shown, err := f.svc.RevealToken(f.ctx, f.sys, kept.Token.ID)
+	if err != nil || shown.Secret != kept.Secret {
+		t.Fatalf("shown again = %+v, %v", shown, err)
+	}
+	if n := f.count(`SELECT count(*) FROM audit_log WHERE action = 'enrollment_token.reveal' AND target_id = $1`, kept.Token.ID.String()); n != 1 {
+		t.Errorf("reveal audit events = %d", n)
+	}
+
+	// A secret sealed for the row, but not the token's: refused, not shown.
+	other, err := sl.Seal([]byte("ert_not-this-token"), []byte("enrollment_token:"+kept.Token.ID.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`UPDATE enrollment_tokens SET token_sealed = $2 WHERE id = $1`, kept.Token.ID, other)
+	if _, err := f.svc.RevealToken(f.ctx, f.sys, kept.Token.ID); err == nil || !strings.Contains(err.Error(), "does not match its hash") {
+		t.Errorf("revealing a secret that is not the token's: %v", err)
+	}
+	// A token removed between the check and the read.
+	if _, err := f.svc.revealSecret(f.ctx, f.sys, deploymentTokens, uuid.New(), TokenActive, audit.Event{}); !errors.Is(err, apperr.ErrNotFound) {
+		t.Errorf("revealing a token that is gone: %v", err)
 	}
 }

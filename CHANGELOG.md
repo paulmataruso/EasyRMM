@@ -6,6 +6,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Show a token's install commands again.** Under Devices → Add devices,
+  an active deployment or approval token has **Show install commands**,
+  which opens the same install steps as when it was created. The server
+  keeps each new token sealed with its encryption key, bound to the token;
+  only people who manage the token can show it, only while it can still add
+  devices, and each time is in the audit log (`enrollment_token.reveal`,
+  `approval_token.reveal`). Tokens created before this release keep only
+  their hash and say so (ADR-0047; migration 00024).
+
 ### Fixed
 
 - A device approved in the console no longer shows twice for a few seconds.

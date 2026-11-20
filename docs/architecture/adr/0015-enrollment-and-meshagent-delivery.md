@@ -19,7 +19,9 @@ jobs to deliver yet, only enrollment, health and the MeshAgent install.
   created by people with `enrollment.manage` there, carry a name, an expiry
   (at most 90 days) and an optional use limit, and can be revoked. The token
   (`ert_` + 32 random bytes, base64url) is shown once; only its SHA-256 is
-  stored. Creation, revocation and every enrollment are audited.
+  stored. Creation, revocation and every enrollment are audited. *Amended by
+  [ADR-0047](0047-tokens-shown-again.md): the secret is also kept, sealed, so
+  an active token can be shown again to those who manage it.*
 * **Enrollment** (`POST /api/agent/v1/enroll`, rate-limited per address):
   the agent sends the token, an Ed25519 public key it generated, and its
   facts (hostname, OS, architecture, version). The server checks and uses the

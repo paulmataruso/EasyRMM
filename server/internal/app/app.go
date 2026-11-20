@@ -172,6 +172,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	}
 	d.Devices = devices.New(db, cfg.Mesh.Enabled)
 	d.Agents = agents.New(db, auditLog, mesh, log)
+	d.Agents.SetSealer(sealer)
 	jobKey, err := jobs.LoadKey(ctx, db, sealer)
 	if err != nil {
 		return nil, err

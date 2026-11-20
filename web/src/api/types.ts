@@ -358,6 +358,8 @@ export interface EnrollmentToken {
   lastUsedAt: string | null;
   revokedAt: string | null;
   status: EnrollmentTokenStatus;
+  /** The secret was kept, so an active token's install commands can be shown again (ADR-0047). */
+  kept: boolean;
 }
 
 export interface EnrollmentTokenInput {
@@ -367,7 +369,7 @@ export interface EnrollmentTokenInput {
   maxUses: number | null;
 }
 
-/** A created token; the secret is in no other response. */
+/** A token with its secret: when it is created, and when it is shown again. */
 export interface NewEnrollmentToken {
   token: EnrollmentToken;
   secret: string;
@@ -391,6 +393,8 @@ export interface ApprovalToken {
   lastUsedAt: string | null;
   revokedAt: string | null;
   status: EnrollmentTokenStatus;
+  /** The secret was kept, so an active token's install commands can be shown again (ADR-0047). */
+  kept: boolean;
 }
 
 export interface ApprovalTokenInput {
@@ -399,7 +403,7 @@ export interface ApprovalTokenInput {
   maxUses: number | null;
 }
 
-/** A created approval token; the secret is in no other response. */
+/** An approval token with its secret: when it is created, and when it is shown again. */
 export interface NewApprovalToken {
   token: ApprovalToken;
   secret: string;

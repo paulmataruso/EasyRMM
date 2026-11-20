@@ -20,6 +20,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
+	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 )
 
 // HeartbeatInterval is how often agents report.
@@ -56,7 +57,14 @@ type Service struct {
 	// Agent updates (ADR-0027); nil without builds.
 	builds    *Builds
 	updateKey ed25519.PrivateKey
+	// tokens seals the secrets of new deployment and approval tokens, so
+	// they can be shown again (ADR-0047); nil keeps only their hashes.
+	tokens *secrets.Sealer
 }
+
+// SetSealer keeps new tokens' secrets, sealed with sl, so that their install
+// commands can be shown again (ADR-0047).
+func (s *Service) SetSealer(sl *secrets.Sealer) { s.tokens = sl }
 
 // New returns a Service. mesh may be nil.
 func New(db *database.DB, auditLog *audit.Logger, mesh MeshAgents, log *slog.Logger) *Service {

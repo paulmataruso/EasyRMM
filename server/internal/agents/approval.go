@@ -233,8 +233,9 @@ func requireApprover(c access.Caller) error {
 	return c.RequireGlobal(rbac.PermEnrollManage)
 }
 
-// ApprovalToken is an approval token as the console shows it. The secret
-// is only returned once, by CreateApprovalToken.
+// ApprovalToken is an approval token as the console shows it. The secret is
+// returned by CreateApprovalToken and, while the token is active, by
+// RevealApprovalToken.
 type ApprovalToken struct {
 	ID            uuid.UUID   `json:"id"`
 	Name          string      `json:"name"`
@@ -247,6 +248,8 @@ type ApprovalToken struct {
 	LastUsedAt    *time.Time  `json:"lastUsedAt"`
 	RevokedAt     *time.Time  `json:"revokedAt"`
 	Status        TokenStatus `json:"status"`
+	// Kept says the secret was kept, so the token can be shown again.
+	Kept bool `json:"kept"`
 }
 
 // ApprovalTokenInput describes a new approval token.
@@ -257,7 +260,8 @@ type ApprovalTokenInput struct {
 	MaxUses *int `json:"maxUses"`
 }
 
-// NewApprovalToken is a created approval token and its secret, shown once.
+// NewApprovalToken is an approval token with its secret: a new one, or one
+// shown again.
 type NewApprovalToken struct {
 	Token  *ApprovalToken `json:"token"`
 	Secret string         `json:"secret"`
@@ -266,12 +270,12 @@ type NewApprovalToken struct {
 //nolint:gosec // column names, not credentials
 const approvalTokenSelect = `SELECT t.id, t.name, t.expires_at, t.max_uses, t.uses,
 		(SELECT count(*) FROM enrollment_requests r WHERE r.token_id = t.id AND r.state = 'pending'),
-		coalesce(u.display_name, ''), t.created_at, t.last_used_at, t.revoked_at
+		coalesce(u.display_name, ''), t.created_at, t.last_used_at, t.revoked_at, t.token_sealed IS NOT NULL
 	FROM approval_tokens t LEFT JOIN users u ON u.id = t.created_by`
 
 func (s *Service) scanApprovalToken(row pgx.Row) (*ApprovalToken, error) {
 	var t ApprovalToken
-	if err := row.Scan(&t.ID, &t.Name, &t.ExpiresAt, &t.MaxUses, &t.Uses, &t.Waiting, &t.CreatedByName, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt); err != nil {
+	if err := row.Scan(&t.ID, &t.Name, &t.ExpiresAt, &t.MaxUses, &t.Uses, &t.Waiting, &t.CreatedByName, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt, &t.Kept); err != nil {
 		return nil, err
 	}
 	t.Status = tokenStatus(t.RevokedAt != nil, t.ExpiresAt, t.MaxUses, t.Uses, s.now())
@@ -297,10 +301,14 @@ func (s *Service) CreateApprovalToken(ctx context.Context, c access.Caller, in A
 		createdBy = &c.Principal.UserID
 	}
 	expires := s.now().Add(time.Duration(norm.ExpiresInDays) * 24 * time.Hour)
-	var id uuid.UUID
+	id := uuid.New()
+	sealed, err := s.sealToken(approvalTokens, id, secret)
+	if err != nil {
+		return nil, err
+	}
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `INSERT INTO approval_tokens (name, token_hash, expires_at, max_uses, created_by)
-			VALUES ($1, $2, $3, $4, $5) RETURNING id`, norm.Name, hash, expires, norm.MaxUses, createdBy).Scan(&id); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO approval_tokens (id, name, token_hash, token_sealed, expires_at, max_uses, created_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)`, id, norm.Name, hash, sealed, expires, norm.MaxUses, createdBy); err != nil {
 			return err
 		}
 		details := map[string]any{"name": norm.Name, "expiresAt": expires.UTC().Format(time.RFC3339)}
@@ -314,6 +322,20 @@ func (s *Service) CreateApprovalToken(ctx context.Context, c access.Caller, in A
 		return nil, err
 	}
 	t, err := s.GetApprovalToken(ctx, c, id)
+	if err != nil {
+		return nil, err
+	}
+	return &NewApprovalToken{Token: t, Secret: secret}, nil
+}
+
+// RevealApprovalToken returns an active approval token with its secret
+// again, for its install commands (ADR-0047). Every time is audited.
+func (s *Service) RevealApprovalToken(ctx context.Context, c access.Caller, id uuid.UUID) (*NewApprovalToken, error) {
+	t, err := s.GetApprovalToken(ctx, c, id)
+	if err != nil {
+		return nil, err
+	}
+	secret, err := s.revealSecret(ctx, c, approvalTokens, id, t.Status, audit.Event{Details: map[string]any{"name": t.Name}})
 	if err != nil {
 		return nil, err
 	}

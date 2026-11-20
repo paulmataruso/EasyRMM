@@ -32,11 +32,14 @@ site's page). Choose the site the computers belong to and, optionally, a
 device group; name the token after the rollout; choose when it expires (1 to
 90 days) and, optionally, how many devices may use it.
 
-The install command is shown once, right after the token is created. Copy it
-then: the server keeps only a hash of the token. Anyone holding the token can
+The install command is shown right after the token is created. While the
+token can still add devices, **Show install commands** on its row under
+**Deployment tokens** shows it again; each time is recorded in the audit log
+([ADR-0047](../architecture/adr/0047-tokens-shown-again.md)). Tokens created
+before EasyRMM 1.0.0-rc.2 cannot be shown again. Anyone holding the token can
 add computers to that site until it expires, reaches its device limit or is
-revoked, so revoke it under **Deployment tokens** once the rollout is done.
-Revoking a token does not affect computers that already enrolled with it.
+revoked, so revoke it once the rollout is done. Revoking a token does not
+affect computers that already enrolled with it.
 
 You need a role with the `enrollment.manage` permission for the site:
 Super Administrator, Organization Administrator or Site Administrator.

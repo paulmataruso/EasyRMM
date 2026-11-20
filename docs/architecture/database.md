@@ -60,7 +60,7 @@ MeshCentral's session key) are stored sealed with `EASYRMM_SECRET_KEY` in
 
 | Table / column | Notes |
 |---|---|
-| `enrollment_tokens` | Deployment tokens: site, optional device group, name, SHA-256 of the token, expiry, optional `max_uses` and the `uses` count, creator, `revoked_at`. Tenant row-level security like the tenancy tables |
+| `enrollment_tokens` | Deployment tokens: site, optional device group, name, SHA-256 of the token and the token sealed (`token_sealed`, ADR-0047; NULL for tokens made before), expiry, optional `max_uses` and the `uses` count, creator, `revoked_at`. Tenant row-level security like the tenancy tables |
 | `devices.agent_public_key` | The enrolled agent's Ed25519 public key, unique. A row with a key is an enrolled device; one without is discovered from MeshCentral only (`devices_enrolled_has_key` keeps `enrolled_at` and the key together) |
 | `devices.agent_version`, `agent_arch`, `agent_last_seen_at`, `enrolled_at`, `enrollment_token_id` | What the agent last reported, and how it enrolled. `devices_agent_seen_idx` serves the online filter |
 | `agent_nonces` | Nonces of signed agent requests until they could no longer be replayed; deleted when they expire. Platform scope only |

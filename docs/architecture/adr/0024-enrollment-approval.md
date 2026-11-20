@@ -18,7 +18,9 @@ each one belongs, looking at its name.
   uses the same `ert_` format and the same install commands, so the
   installers, the agent's command line and the console's install steps do
   not change. The server looks a token up among deployment tokens first,
-  then among approval tokens. Only a hash is kept; the secret is shown once.
+  then among approval tokens. Only a hash is kept; the secret is shown once
+  (amended by [ADR-0047](0047-tokens-shown-again.md): it is also kept,
+  sealed, and an active token can be shown again).
 * **Who decides.** A device that waits belongs to no organization yet, so
   creating approval tokens, listing waiting devices and deciding on them
   need `enrollment.manage` platform-wide (super administrators). An
