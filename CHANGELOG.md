@@ -6,6 +6,21 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **The agent stops a package manager gently.** An `rpm` query, or an
+  `apt-get` or `dnf` install of the EasyPatch agent, that ran past its
+  deadline was killed outright, which can leave the package database locked
+  or, with RHEL 8's Berkeley DB, needing recovery. It is now asked to stop
+  (SIGTERM) and killed only if it has not stopped 10 seconds (a query) or 30
+  seconds (an install) later.
+- **A damaged RPM database is named.** When `dnf` cannot install the
+  EasyPatch agent because the machine's RPM database cannot be opened
+  (`DB_RUNRECOVERY`, `rpmdb open failed`), the device's install status says
+  to run `rpm --rebuilddb` as root and install again. Found on the first real
+  deployment, on a RHEL 8.10 machine whose database was already damaged when
+  it enrolled.
+
 ## [1.0.0-rc.2] - 2026-11-20
 
 The second release candidate, with what the first real deployment of

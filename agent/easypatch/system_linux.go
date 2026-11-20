@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
@@ -77,9 +78,21 @@ func packageError(tool string, code int, out []byte, err error) error {
 		if t := tail(out); t != "" {
 			msg += ": " + t
 		}
+		if rpmDatabaseDamaged(out) {
+			msg += ". The machine's RPM database needs repair: run rpm --rebuilddb as root, then install again"
+		}
 		return errors.New(msg)
 	}
 	return nil
+}
+
+// rpmDatabaseDamaged reports dnf's or rpm's words for an RPM database that
+// cannot be opened until it is rebuilt: Berkeley DB's DB_RUNRECOVERY
+// (-30973), left by an rpm process that was killed, or the open failing.
+func rpmDatabaseDamaged(out []byte) bool {
+	s := string(out)
+	return strings.Contains(s, "DB_RUNRECOVERY") || strings.Contains(s, "(-30973)") ||
+		strings.Contains(s, "rpmdb open failed")
 }
 
 // Enroll enrolls the EasyPatch agent with the token on standard input. With
