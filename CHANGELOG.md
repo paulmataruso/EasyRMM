@@ -6,6 +6,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- A device approved in the console no longer shows twice for a few seconds.
+  Its agent installs MeshAgent, and MeshCentral reported the new node before
+  the agent's next heartbeat claimed it, so the node was listed as a
+  discovered device of its own until the two were merged. A node no device
+  claims now waits two minutes (two heartbeats) before it is recorded as
+  discovered; a MeshAgent installed by hand shows up after that wait.
+
 ## [1.0.0-rc.1] - 2026-11-20
 
 The first release candidate: EasyRMM with EasyPatch folded in as its

@@ -262,7 +262,7 @@ func buildRemote(ctx context.Context, cfg *config.Config, d *Deps, sealer *secre
 	if err != nil {
 		return err
 	}
-	svc = remote.New(d.DB, d.Audit, client, remote.Config{MeshURL: cfg.MeshPublicURL, LoginKey: sec.LoginKey}, log)
+	svc = remote.New(d.DB, d.Audit, client, remote.Config{MeshURL: cfg.MeshPublicURL, LoginKey: sec.LoginKey, DiscoveryGrace: remote.DefaultDiscoveryGrace}, log)
 	gw, err := remote.NewGateway(svc, remote.GatewayConfig{Upstream: cfg.Mesh.InternalURL, Secure: !cfg.DevInsecureCookie}, log)
 	if err != nil {
 		return err

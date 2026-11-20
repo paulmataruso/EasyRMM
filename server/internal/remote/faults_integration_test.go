@@ -5,9 +5,11 @@ package remote
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -337,5 +339,121 @@ func TestSyncKeepsEnrolledDevices(t *testing.T) {
 	}
 	if d, _ := r.dev.Get(r.ctx, tech, kept); d.RemoteOnline || !d.RemoteAgent || !d.Online {
 		t.Errorf("after MeshAgent disconnects: %+v", d)
+	}
+}
+
+// TestDiscoveryWaitsForTheEnrolledAgent checks the grace before a node no
+// device claims becomes a discovered device. An approved EasyRMM agent
+// installs MeshAgent, whose node MeshCentral reports before the agent's next
+// heartbeat claims it: recorded at once, the machine was listed twice until
+// the two were merged.
+func TestDiscoveryWaitsForTheEnrolledAgent(t *testing.T) {
+	r := newRig(t)
+	acme := r.org("Acme")
+	hq := r.site(acme.ID, "HQ")
+	_, tech := r.user("Tess Tech", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: acme.ID})
+	r.reconcile()
+	hqMesh := r.meshOfSite(hq.ID)
+
+	// Approved, its agent running, its MeshAgent not reported yet.
+	var approved uuid.UUID
+	err := r.db.InTx(r.ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(r.ctx, `INSERT INTO devices (organization_id, site_id, name, hostname, platform,
+				agent_public_key, enrolled_at, agent_last_seen_at)
+			VALUES ($1, $2, 'web-01', 'web-01', 'linux', $3, now(), now()) RETURNING id`,
+			acme.ID, hq.ID, []byte(uuid.NewString()[:32])).Scan(&approved)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &flakyMesh{Mesh: r.mesh, nodes: []meshcentral.Node{
+		{ID: "node//grace-agent", MeshID: hqMesh, Name: "web-01", Agent: meshcentral.AgentInfo{Type: 6}, Conn: 1},
+		{ID: "node//grace-manual", MeshID: hqMesh, Name: "kiosk-7", Agent: meshcentral.AgentInfo{Type: 4}, Conn: 1},
+	}}
+	cfg := r.svc.cfg
+	cfg.DiscoveryGrace = DefaultDiscoveryGrace
+	svc := New(r.db, r.audit, f, cfg, r.log)
+	clock := time.Now()
+	svc.now = func() time.Time { return clock }
+	syncNow := func() {
+		t.Helper()
+		if err := svc.SyncDevices(r.ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	names := func() string {
+		t.Helper()
+		list, err := r.dev.List(r.ctx, tech, devices.Query{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, d := range list {
+			out = append(out, fmt.Sprintf("%s(enrolled=%t remote=%t online=%t)", d.Name, d.Agent != nil, d.RemoteAgent, d.RemoteOnline))
+		}
+		return strings.Join(out, " ")
+	}
+
+	// MeshCentral reports both nodes: neither is recorded yet, and a refresh
+	// is due when the grace ends.
+	syncNow()
+	if got := names(); got != "web-01(enrolled=true remote=false online=false)" {
+		t.Errorf("devices while the nodes wait = %s", got)
+	}
+	svc.syncMu.Lock()
+	waiting, recheck := len(svc.unclaimed), svc.recheck != nil
+	svc.syncMu.Unlock()
+	if waiting != 2 || !recheck {
+		t.Errorf("waiting nodes = %d, refresh scheduled = %t", waiting, recheck)
+	}
+
+	// The agent's heartbeat claims its node (agents.link, before MeshCentral's
+	// report is recorded); the next sync completes it.
+	r.exec(`UPDATE devices SET mesh_node_id = 'node//grace-agent' WHERE id = $1`, approved)
+	clock = clock.Add(time.Minute)
+	syncNow()
+	if got := names(); got != "web-01(enrolled=true remote=true online=true)" {
+		t.Errorf("devices once the agent claimed its node = %s", got)
+	}
+
+	// Past the grace, the node nobody claimed is a discovered device; the
+	// machine with an agent is still listed once.
+	clock = clock.Add(time.Minute + time.Second)
+	syncNow()
+	if got := names(); got != "kiosk-7(enrolled=false remote=true online=true) web-01(enrolled=true remote=true online=true)" {
+		t.Errorf("devices after the grace = %s", got)
+	}
+	svc.syncMu.Lock()
+	waiting, recheck = len(svc.unclaimed), svc.recheck != nil
+	svc.syncMu.Unlock()
+	if waiting != 0 || recheck {
+		t.Errorf("after the grace: waiting nodes = %d, refresh scheduled = %t", waiting, recheck)
+	}
+
+	// A node that leaves during its grace is forgotten: when it comes back,
+	// it waits again.
+	brief := meshcentral.Node{ID: "node//grace-brief", MeshID: hqMesh, Name: "laptop", Agent: meshcentral.AgentInfo{Type: 4}, Conn: 1}
+	base := f.nodes
+	f.mu.Lock()
+	f.nodes = append(append([]meshcentral.Node{}, base...), brief)
+	f.mu.Unlock()
+	syncNow()
+	f.mu.Lock()
+	f.nodes = base
+	f.mu.Unlock()
+	clock = clock.Add(time.Minute)
+	syncNow()
+	f.mu.Lock()
+	f.nodes = append(append([]meshcentral.Node{}, base...), brief)
+	f.mu.Unlock()
+	clock = clock.Add(2 * time.Minute)
+	syncNow()
+	if got := names(); strings.Contains(got, "laptop") {
+		t.Errorf("a node back from leaving was recorded without waiting: %s", got)
+	}
+	clock = clock.Add(DefaultDiscoveryGrace)
+	syncNow()
+	if got := names(); !strings.Contains(got, "laptop(enrolled=false remote=true online=true)") {
+		t.Errorf("a node back from leaving, after its grace = %s", got)
 	}
 }
