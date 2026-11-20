@@ -3,7 +3,7 @@
   EasyPatch Agent MSI (WiX Toolset v5).
 
   Public properties (all optional on upgrade; SERVERURL is required on first install):
-    SERVERURL        https:// URL of the EasyPatch server
+    SERVERURL        https:// URL of the patching server (EasyRMM's address)
     ENROLLMENTTOKEN  limited-use enrollment token (hidden: never written to MSI logs)
     DEPLOYMENTCODE   non-secret deployment code; creates an enrollment request an administrator approves
     PROXYURL         optional http(s) proxy for the agent's connection to the server
@@ -112,7 +112,7 @@
         <ServiceInstall Id="AgentServiceInstall"
                         Name="EasyPatchAgent"
                         DisplayName="EasyPatch Agent"
-                        Description="Reports Windows Update status to the EasyPatch server, installs approved updates and carries out restarts requested by an administrator."
+                        Description="Reports Windows Update status to the patching server, installs approved updates and carries out restarts requested by an administrator."
                         Type="ownProcess"
                         Start="auto"
                         ErrorControl="normal"

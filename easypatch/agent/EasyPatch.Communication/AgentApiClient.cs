@@ -59,7 +59,7 @@ public sealed class AgentApiClient
         ArgumentException.ThrowIfNullOrEmpty(agentVersion);
         if (httpClient.BaseAddress is null)
         {
-            throw new ArgumentException("HttpClient.BaseAddress must be set to the EasyPatch server URL.", nameof(httpClient));
+            throw new ArgumentException("HttpClient.BaseAddress must be set to the patching server URL.", nameof(httpClient));
         }
 
         _http = httpClient;
@@ -370,11 +370,11 @@ public sealed class AgentApiClient
         }
         catch (HttpRequestException ex)
         {
-            throw new AgentTransientException($"Could not reach the EasyPatch server ({route}): {ex.Message}", null, null, null, ex);
+            throw new AgentTransientException($"Could not reach the patching server ({route}): {ex.Message}", null, null, null, ex);
         }
         catch (IOException ex)
         {
-            throw new AgentTransientException($"Connection to the EasyPatch server failed ({route}): {ex.Message}", null, null, null, ex);
+            throw new AgentTransientException($"Connection to the patching server failed ({route}): {ex.Message}", null, null, null, ex);
         }
 
         if (response.Headers.Date is { } date)

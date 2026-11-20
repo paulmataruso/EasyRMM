@@ -332,8 +332,8 @@ public sealed class AgentRuntime : IUserRequestHandler, IDisposable
         if (status != AgentEnrollmentStatus.Active)
         {
             return new UserRequestResult(false, status == AgentEnrollmentStatus.PendingApproval
-                ? "This computer is waiting for approval in the EasyPatch console."
-                : "This computer is not connected to an EasyPatch server.");
+                ? "This computer is waiting for approval by your IT team."
+                : "This computer is not connected to its patching server.");
         }
 
         UserRequestResult result;

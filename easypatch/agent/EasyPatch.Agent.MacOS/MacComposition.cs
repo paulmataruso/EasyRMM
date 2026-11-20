@@ -131,7 +131,7 @@ internal sealed class MacHttpClientFactory : IAgentHttpClientFactory
         ArgumentNullException.ThrowIfNull(serverUrl);
         if (serverUrl.Scheme != Uri.UriSchemeHttps)
         {
-            throw new ArgumentException("The EasyPatch server URL must use HTTPS.", nameof(serverUrl));
+            throw new ArgumentException("The patching server URL must use HTTPS.", nameof(serverUrl));
         }
 
         var handler = new SocketsHttpHandler

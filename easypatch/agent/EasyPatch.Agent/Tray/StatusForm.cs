@@ -38,7 +38,7 @@ internal sealed record StatusSummary(StatusLevel Level, string Title, string Det
                     "The server no longer accepts this computer. Contact your IT team to enroll it again.");
             case TrayConnection.PendingApproval:
                 return new(StatusLevel.Warning, "Waiting for approval",
-                    "Your IT team needs to approve this computer in the EasyPatch console.");
+                    "Your IT team needs to approve this computer.");
         }
 
         if (prompt is not null)
@@ -51,7 +51,7 @@ internal sealed record StatusSummary(StatusLevel Level, string Title, string Det
 
         if (status.Connection == TrayConnection.Unreachable)
         {
-            return new(StatusLevel.Warning, "Can't reach the EasyPatch server",
+            return new(StatusLevel.Warning, "Can't reach the patching server",
                 $"Last successful check-in: {TimeText.Ago(status.LastContactAt)}. The agent keeps trying automatically.");
         }
 
@@ -182,7 +182,7 @@ internal sealed class StatusForm : Form
         // Actions.
         var actions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Top, Margin = new Padding(0, 12, 0, 0), WrapContents = true };
         actions.Controls.AddRange([_checkIn, _checkUpdates, _restartOptions]);
-        _tips.SetToolTip(_checkIn, "Contact the EasyPatch server now. Possible every 30 seconds.");
+        _tips.SetToolTip(_checkIn, "Contact the patching server now. Possible every 30 seconds.");
         _tips.SetToolTip(_checkUpdates, "Look for missing updates now. Nothing is installed; your IT team decides when updates are installed. Possible every 5 minutes.");
         _checkIn.Click += (_, _) => Request(UserRequestKind.CheckIn);
         _checkUpdates.Click += (_, _) => Request(UserRequestKind.CheckForUpdates);
@@ -319,7 +319,7 @@ internal sealed class StatusForm : Form
             var connected = status.Connection == TrayConnection.Connected;
             ShowResult(connected
                 ? $"Checked in with the server at {TimeText.At(status.LastContactAt ?? DateTimeOffset.UtcNow)}."
-                : "Could not reach the EasyPatch server. The agent keeps trying automatically.", success: connected);
+                : "Could not reach the patching server. The agent keeps trying automatically.", success: connected);
             RequestLog();
         }
 

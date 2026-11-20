@@ -144,7 +144,7 @@ internal static class Cli
 
                 case EnrollmentOutcome.PendingApproval:
                     Console.WriteLine($"Enrollment request submitted to {state.ServerUrl} and waiting for approval.");
-                    Console.WriteLine($"Approve it in the EasyPatch console. Key fingerprint: {state.KeyFingerprint}");
+                    Console.WriteLine($"An administrator must approve it on the server. Key fingerprint: {state.KeyFingerprint}");
                     return ExitSuccess;
 
                 case EnrollmentOutcome.Rejected:

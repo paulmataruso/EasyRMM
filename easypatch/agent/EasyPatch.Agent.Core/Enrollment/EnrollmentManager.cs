@@ -261,7 +261,7 @@ public sealed class EnrollmentManager
                 if (firstTime)
                 {
                     _logger.LogInformation(AgentEventIds.EnrollmentPending,
-                        "Enrollment request {RequestId} is waiting for administrator approval in the EasyPatch console. Key fingerprint: {Fingerprint}",
+                        "Enrollment request {RequestId} is waiting for an administrator's approval on the server. Key fingerprint: {Fingerprint}",
                         response.CredentialId, fingerprint);
                 }
 

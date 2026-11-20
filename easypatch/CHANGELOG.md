@@ -12,6 +12,11 @@ and the agents share one version number.
   another policy source changes Windows Update settings (now "the EasyPatch agent stopped
   re-applying them"), and the refusal of a webhook address on the server's own networks. Email
   without a sender name comes from "EasyRMM".
+- The agent no longer points people at "the EasyPatch console", which is gone: its tray, its
+  `enroll` output and its Linux setup hint say an administrator or the IT team approves it, and
+  install it from EasyRMM. Its tray, messages and Windows service description say "the patching
+  server" instead of "the EasyPatch server", and the DEB and RPM descriptions say EasyRMM installs
+  and enrolls it.
 
 ## [1.11.1] - 2026-11-20
 
