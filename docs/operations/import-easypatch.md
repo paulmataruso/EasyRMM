@@ -25,6 +25,7 @@ nothing is reinstalled on them. The design is in
 | User accounts, API tokens, sessions, security keys, single sign-on providers | **Not imported.** The accounts are kept but disabled; people sign in to EasyRMM with EasyRMM's accounts and roles |
 | Mail server settings | **Replaced** by EasyRMM's own (**Settings → Email**) |
 | Agent packages, winget cache | **Not needed.** The engine's image carries the agent packages; the worker downloads winget again |
+| Deployment-code enrollment (`deployment_codes`, `enrollment_requests`) and its alert rule | **Dropped** when the database is brought to the engine's schema ([ADR-0048](../architecture/adr/0048-the-engine-keeps-what-is-reached.md)); the audit log keeps their history. Agents enrolled with a code keep working; one still waiting for approval stops, and is installed again from EasyRMM |
 | Archived organizations and sites | Stay archived in the engine; not created in EasyRMM |
 
 ## Before you start
@@ -111,14 +112,15 @@ nothing is reinstalled on them. The design is in
 2. Restores the dump into a new database, `easypatch_import`.
 3. Prepares it with the engine's `prepare-import` command: it refuses a
    database from a newer EasyPatch than the engine, or one that is not
-   EasyPatch's; brings it to the engine's schema; disables EasyPatch's
-   accounts (inactive, no usable password, no second factor) and deletes
-   their sessions, API tokens, security keys and single sign-on
-   settings. Two accounts whose addresses differ only in case (releases
-   before 1.10 allowed it) no longer block the 1.10 schema: the later one
-   gets an address ending in `@duplicate.invalid`. Until this step, nothing
-   in the deployment has changed; when it refuses, the script removes
-   `easypatch_import` and stops.
+   EasyPatch's; brings it to the engine's schema, which drops its
+   deployment-code tables; disables EasyPatch's accounts (inactive, no
+   usable password, no second factor) and deletes their sessions, API
+   tokens, security keys and single sign-on settings. Two accounts whose
+   addresses differ only in case (releases before 1.10 allowed it) no
+   longer block the 1.10 schema: the later one gets an address ending in
+   `@duplicate.invalid`. Until this step, nothing in the deployment has
+   changed; when it refuses, the script removes `easypatch_import` and
+   stops.
 4. Stops EasyRMM's server and the engine, renames the engine's database
    to `easypatch_before_import_<time>` (kept), and `easypatch_import` to
    `easypatch`.

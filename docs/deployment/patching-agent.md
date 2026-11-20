@@ -140,7 +140,7 @@ request after enrollment is signed with the agent's own key
 |---|---|
 | Program | `C:\Program Files\EasyPatch Agent\EasyPatch.Agent.exe` |
 | Service | `EasyPatchAgent` ("EasyPatch Agent"), LocalSystem, automatic (delayed) start, restarted 60 seconds after a failure |
-| Bootstrap settings | `HKLM\SOFTWARE\EasyPatch\Agent`: `ServerUrl`, `ProxyUrl`, `ServerCaCertificate`, and until enrollment `EnrollmentToken` or `DeploymentCode`; SYSTEM and Administrators only |
+| Bootstrap settings | `HKLM\SOFTWARE\EasyPatch\Agent`: `ServerUrl`, `ProxyUrl`, `ServerCaCertificate`, and until enrollment `EnrollmentToken`; SYSTEM and Administrators only |
 | Data | `C:\ProgramData\EasyPatch`, SYSTEM and Administrators only, inheritance off |
 | Event source | *EasyPatch Agent* in the Application log |
 
@@ -166,11 +166,9 @@ start if it cannot. In the data folder:
 | `SERVERCACERT` | An authority (base64 DER) trusted for the connection to the server only. Kept on upgrade. EasyRMM sets it when it uses its own authority |
 | `PROXYURL` | An outbound proxy such as `http://proxy.example.com:8080`. Kept on upgrade |
 | `ENROLLMENTTOKEN` | An enrollment token; hidden from Windows Installer's property listings, deleted once used. EasyRMM does not use it: it passes the token to `enroll` in the environment instead |
-| `DEPLOYMENTCODE` | A deployment code, whose enrollment waits for approval. Not used by EasyRMM |
 
-The installer refuses a first install without an `https://` `SERVERURL`,
-or with both `ENROLLMENTTOKEN` and `DEPLOYMENTCODE` (`msiexec` exit code
-1603 with the launch condition in the log).
+The installer refuses a first install without an `https://` `SERVERURL`
+(`msiexec` exit code 1603 with the launch condition in the log).
 
 ### Command line
 
@@ -178,7 +176,7 @@ From an elevated prompt:
 
 ```text
 EasyPatch.Agent.exe status [--json]
-EasyPatch.Agent.exe enroll --server <url> (--token <token> | --deployment-code <code>) [--proxy <url>] [--force] [--no-start]
+EasyPatch.Agent.exe enroll --server <url> --token <token> [--proxy <url>] [--force] [--no-start]
 EasyPatch.Agent.exe unenroll [--reason <text>]
 EasyPatch.Agent.exe version
 ```
@@ -197,11 +195,11 @@ EasyPatch.Agent.exe version
 
 | Exit code | Meaning |
 |---|---|
-| 0 | Success (for `enroll`: active, waiting for approval, or already enrolled) |
+| 0 | Success (for `enroll`: active, or already enrolled) |
 | 1 | Failure (see `logs\cli.log`) |
 | 2 | Invalid arguments or settings |
 | 3 | Enrolled with a different server (use `--force`) |
-| 4 | The server rejected the token or code |
+| 4 | The server refused the token |
 | 5 | Not elevated |
 | 6 | Server unreachable; settings were saved and the service keeps trying |
 | 7 | Another agent process could not be stopped |
@@ -216,8 +214,7 @@ restart the service; delete it to go back to `Information`.
 | Event ID | Meaning |
 |---|---|
 | 1000 | The service could not start (access lists, elevation, a second instance) |
-| 1001 | Enrollment waiting for approval (with the key fingerprint) |
-| 1002, 1003 | Enrollment complete; refused or rejected |
+| 1002, 1003 | Enrollment complete; refused |
 | 1004, 1005 | The server revoked the credential (enroll again); credential rotated |
 | 1010 | Restarting the computer for a restart job |
 | 1011, 1012 | Windows Update settings applied, changed or restored; changed by another policy source, no longer re-applied |
@@ -315,7 +312,7 @@ is useless without `/var/lib/systemd/credential.secret`; otherwise (Ubuntu
 
 ```text
 easypatch-agent run                 the service (default)
-easypatch-agent enroll --server <url> (--token-file <path|-> | --deployment-code <code>)
+easypatch-agent enroll --server <url> --token-file <path|->
                 [--proxy <url>] [--server-ca <file>] [--force] [--no-start]
 easypatch-agent status [--json]
 easypatch-agent scan [--json]       what the agent would report; installs nothing, contacts no server
