@@ -3,7 +3,7 @@
 # a .deb (Debian, Ubuntu) and an .rpm (RHEL, Rocky, AlmaLinux, Oracle Linux 8+) per architecture, in a pinned container
 # (agent/Installer/linux-packages/Dockerfile) with networking disabled.
 #
-#   scripts/build-linux-packages.sh [--version 1.11.1] [--arch x64|arm64|all] [--no-test]
+#   scripts/build-linux-packages.sh [--version 1.12.0] [--arch x64|arm64|all] [--no-test]
 #
 # Output: artifacts/linux/EasyPatchAgent-<version>-<arch>.deb and .rpm, each with .sha256. The release public key
 # (EASYPATCH_RELEASE_PUBLIC_KEY, default ~/.easypatch/easypatch-release-key.pub.pem) is built into the agent, and each
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-version="1.11.1"
+version="1.12.0"
 arches=("x64")
 run_tests=1
 image="easypatch-linux-package-builder:rpm6.0.1"

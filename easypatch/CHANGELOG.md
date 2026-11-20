@@ -5,6 +5,10 @@ and the agents share one version number.
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-21
+
+Released with EasyRMM 1.0.0-rc.3.
+
 ### Changed
 
 - Texts people read no longer call the engine EasyPatch: the alerts for a restart waiting and for an

@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0-rc.3] - 2026-11-21
+
+The third release candidate: the patching engine keeps only what EasyRMM
+reaches, the console loads faster, and fixes from the first real
+deployment. Patching engine 1.12.0.
+
 ### Changed
 
 - **The patch policy's delay hints say what the engine does.** A delay

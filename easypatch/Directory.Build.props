@@ -13,7 +13,7 @@
     <Product>EasyPatch</Product>
     <Copyright>Copyright (c) 2026 DHI Technical Services LLC. Licensed under the Functional Source License, Version 1.1, ALv2 Future License (FSL-1.1-ALv2).</Copyright>
     <!-- Single source of truth for product version; overridden by CI with -p:Version=x.y.z -->
-    <Version>1.11.1</Version>
+    <Version>1.12.0</Version>
     <!-- Allow building Windows-targeted agent projects on Linux build hosts -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <!-- CA1848/CA1873: LoggerMessage source-gen is not required for this codebase's log volume;
