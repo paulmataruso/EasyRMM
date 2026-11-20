@@ -88,9 +88,6 @@ public sealed class AccessTests(PostgresFixture postgres) : IntegrationTest(post
     public async Task A_statement_names_who_acted_and_on_behalf_of_is_ignored()
     {
         var root = SuperAdmin();
-        var info = await root.GetAsync<ServerInfoDto>("/api/v1/server-info");
-        Assert.Equal(["scheduled-installs"], info.Capabilities);
-
         var (org, site) = await CreateOrgAsync(root);
         var agent = await EnrollAgentAsync(root, org.Id, site.Id, "PC-1");
 

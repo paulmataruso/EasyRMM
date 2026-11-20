@@ -620,18 +620,7 @@ public sealed record OsLifecycleDto(Guid Id, string Product, string EditionGroup
 public sealed record OsLifecycleRequest(string Product, string EditionGroup, int BuildNumber, string VersionLabel, DateOnly EndOfServicing, DateOnly? EsuEndDate,
     string? Notes);
 
-/// <param name="Capabilities">Optional features of this server that integrations may rely on (see <see cref="ServerCapabilities"/>).</param>
-public sealed record ServerInfoDto(string Version, string PublicUrl, DateTimeOffset ServerTime, IReadOnlyList<string> Capabilities);
-
-/// <summary>Features an integration checks for in <c>/api/v1/server-info</c> before using them. A server without one ignores it.</summary>
-public static class ServerCapabilities
-{
-    /// <summary>Install requests, for one endpoint or in bulk, accept <c>scheduledAt</c>: the jobs wait until then.</summary>
-    public const string ScheduledInstalls = "scheduled-installs";
-
-    // "on-behalf-of" (X-EasyPatch-On-Behalf-Of) went with API tokens: a statement names the EasyRMM user itself.
-    public static readonly IReadOnlyList<string> All = [ScheduledInstalls];
-}
+public sealed record ServerInfoDto(string Version, string PublicUrl, DateTimeOffset ServerTime);
 
 /// <summary>Monthly report schedule of an organization. <c>NextReportDate</c> is a date in the organization's time zone.</summary>
 public sealed record ReportScheduleDto(

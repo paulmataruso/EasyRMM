@@ -51,6 +51,8 @@ and package downloads.
 - **Inventory refresh jobs.** Only `POST /api/v1/endpoints/{id}/inventory-refresh` queued them; the
   agent now reports one as unsupported (`unsupported_job`) instead of running it, and sends its
   inventory on its own schedule as before. The job type stays, so earlier jobs still read.
+- **`capabilities` in `/api/v1/server-info`.** Its one entry, `scheduled-installs`, told EasyRMM it
+  could schedule installs; EasyRMM ships with this engine and no longer asks.
 
 ## [1.11.1] - 2026-11-20
 
