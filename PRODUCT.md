@@ -10,8 +10,8 @@ web
 
 React + TypeScript + Vite in `web/`, with Tailwind CSS 4 (semantic tokens in
 `web/src/index.css`), TanStack Query, React Router and lucide icons. Its
-design system is EasyPatch's former console's (ADR-0013), which it now holds
-alone. No component kit. The production build is
+design system came from EasyPatch's former console (ADR-0013) and is now
+EasyRMM's own. No component kit. The production build is
 embedded into the Go server binary and served from the same origin as the
 API. Confirmed by the project owner.
 
@@ -33,7 +33,7 @@ administrator, site administrator, technician, read-only.
 ## Product Purpose
 
 EasyRMM is a self-hosted remote monitoring and management platform for
-Windows and Linux endpoints, with EasyPatch as its patch management. It gives an MSP one place to see the state of
+Windows and Linux endpoints, with patch management built in. It gives an MSP one place to see the state of
 every customer's devices, act on them (scripts, jobs, software, patches,
 remote access), and prove what was done (audit log, reports).
 
@@ -43,8 +43,8 @@ trail hold.
 
 ## Positioning
 
-- Self-hosted: the MSP owns its data and deployment. The whole product,
-  EasyPatch included, is source-available (FSL-1.1-ALv2): free for MSPs to
+- Self-hosted: the MSP owns its data and deployment. The whole product is
+  source-available (FSL-1.1-ALv2): free for MSPs to
   run for their own and their clients' computers.
 - Remote access is powered by the real MeshCentral server and agent, embedded
   in the console in its own browser origin; everything else (tenancy,
@@ -53,8 +53,9 @@ trail hold.
 - One endpoint install (a PowerShell one-liner on Windows, a shell one-liner
   on Linux; MSI, DEB and RPM packages later) installs and manages both the
   MeshCentral agent and the EasyRMM agent.
-- Patch management integrates with EasyPatch, the owner's separate patching
-  product, through a service API.
+- Patch management is built in: the patching engine (EasyPatch's server)
+  runs in every deployment behind EasyRMM's roles, and EasyRMM installs the
+  EasyPatch agent on the devices it patches.
 
 ## Operating Context
 
@@ -76,14 +77,17 @@ Implemented, with the console (IMPLEMENTATION_STATUS.md has the detail):
 - organizations, sites and device groups, users and roles with escalation
   protection, a tamper-evident audit log with forwarding to syslog;
 - MeshCentral remote access (desktop, terminal, files; RDP built but not yet
-  run against Windows);
+  run end to end against Windows);
 - the agent with install commands, approval and coordinated updates;
 - inventory, alerts, scripts and jobs, software deployment, reports;
-- EasyPatch patching.
+- patching: status, scans, installs, restarts, policies, reports and
+  patching alerts, with the EasyPatch agent installed from EasyRMM.
 
-Linux endpoints are verified end to end; Windows endpoints for install,
-enrollment and remote access. Not built yet: MSI, DEB and RPM packages,
-e-mail and webhook alert notifications, a macOS agent.
+Verified on real computers: Linux end to end; Windows Server 2025 for
+install, enrollment, inventory, remote desktop, terminal and files, scripts,
+agent self-updates and patching. Not built yet: MSI, DEB and RPM packages
+of the EasyRMM agent, email and webhook notifications for device alerts
+(patching alerts have them), a released macOS agent.
 
 Constraints:
 - No mock data, no placeholder buttons: the UI shows only what the server
@@ -97,12 +101,12 @@ Constraints:
 ## Brand Commitments
 
 - Name: EasyRMM.
-- Visual direction set by the owner (binding, 2026-11-15): EasyRMM matches
-  EasyPatch, its patch management component (`easypatch/`). Same
-  semantic tokens, flat dark and light themes (dark by default, switchable),
-  system font stack, navy sidebar, blue accent, the same component
-  vocabulary (cards, page headers, toolbars, badges, tables, native dialogs,
-  toasts). This replaces the earlier glassmorphism direction.
+- Visual direction set by the owner (binding, 2026-11-15), taken from
+  EasyPatch's console when EasyPatch was a product of its own: semantic
+  tokens, flat dark and light themes (dark by default, switchable), system
+  font stack, navy sidebar, blue accent, and one component vocabulary
+  (cards, page headers, toolbars, badges, tables, native dialogs, toasts).
+  It replaced an earlier glassmorphism direction.
 - Logo: the EasyPatch ring badge carrying a monitor with a pulse line, and
   the EasyPatch wordmark construction with "RMM" in the aqua-to-blue
   gradient (`web/public/logo.svg`, `wordmark.svg`, `wordmark-light.svg`).
@@ -110,9 +114,10 @@ Constraints:
 
 ## Evidence on Hand
 
-No customer testimonials, logos, benchmarks or screenshots exist yet. Do not
-fabricate any. The EasyRMM mark and wordmarks above are the only brand
-assets; they derive from EasyPatch's.
+No customer testimonials, logos or benchmarks exist yet. Do not fabricate
+any. The README's screenshots show fictional demo data made from the
+console's build (`npm run screenshots`). The EasyRMM mark and wordmarks
+above are the only brand assets; they derive from EasyPatch's.
 
 ## Product Principles
 
