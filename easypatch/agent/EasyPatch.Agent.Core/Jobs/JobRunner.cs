@@ -20,7 +20,6 @@ public sealed class JobRunner
     private readonly AgentStateStore _state;
     private readonly JobReporter _reporter;
     private readonly ScanService _scans;
-    private readonly InventoryService _inventory;
     private readonly InstallUpdatesHandler _install;
     private readonly RestartHandler _restart;
     private readonly AgentUpdateHandler _agentUpdate;
@@ -40,7 +39,6 @@ public sealed class JobRunner
         AgentStateStore state,
         JobReporter reporter,
         ScanService scans,
-        InventoryService inventory,
         InstallUpdatesHandler install,
         RestartHandler restart,
         AgentUpdateHandler agentUpdate,
@@ -56,7 +54,6 @@ public sealed class JobRunner
         _state = state;
         _reporter = reporter;
         _scans = scans;
-        _inventory = inventory;
         _install = install;
         _restart = restart;
         _agentUpdate = agentUpdate;
@@ -325,7 +322,6 @@ public sealed class JobRunner
             {
                 JobType.InstallUpdates or JobType.DownloadUpdates => await _install.ExecuteAsync(record, cancellationToken),
                 JobType.UpdateScan => await RunScanJobAsync(jobId, cancellationToken),
-                JobType.InventoryRefresh => await RunInventoryJobAsync(jobId, cancellationToken),
                 JobType.AgentUpdate => await _agentUpdate.ExecuteAsync(record, cancellationToken),
                 JobType.UninstallAgent => await _uninstall.ExecuteAsync(record, cancellationToken),
                 JobType.UninstallUpdate => await _removeUpdate.ExecuteAsync(record, cancellationToken),
@@ -383,14 +379,6 @@ public sealed class JobRunner
                 errorCode: report?.ErrorCode, errorMessage: report?.ErrorMessage ?? "The scan did not run.");
         }
 
-        return JobOutcome.Finished;
-    }
-
-    private async Task<JobOutcome> RunInventoryJobAsync(Guid jobId, CancellationToken cancellationToken)
-    {
-        _reporter.Report(jobId, JobStatus.Running, "Collecting", 10, "Collecting inventory.");
-        await _inventory.SendInventoryAsync(cancellationToken);
-        _reporter.Report(jobId, JobStatus.Completed, "Completed", 100, "Inventory collected.");
         return JobOutcome.Finished;
     }
 
@@ -452,7 +440,7 @@ public sealed class JobRunner
 
     private bool IsSupported(AgentJob job) => job.Type switch
     {
-        JobType.UpdateScan or JobType.InventoryRefresh => true,
+        JobType.UpdateScan => true,
         JobType.InstallUpdates => job.Install is not null,
         JobType.DownloadUpdates => job.Install is not null && _platform.SupportsDownloadOnly,
         JobType.Restart => job.Restart is not null && _platform.SystemRestart is not null && RestartPayload.Validate(job.Restart).Count == 0,

@@ -531,21 +531,37 @@ public sealed class InstallJobTests
     }
 
     [Fact]
-    public async Task Inventory_job_sends_inventory_with_reboot_state()
+    public async Task Inventory_carries_the_reboot_state()
     {
         using var h = new AgentHarness();
         await h.EnrollWithTokenAsync();
         h.RebootDetector.Status = new Core.Abstractions.RebootStatus(true, ["Windows Update (RebootRequired)"]);
-        var job = AgentHarness.SimpleJob(JobType.InventoryRefresh);
 
-        await h.DeliverAsync(job);
-        await h.RunJobsAndFlushAsync();
+        await h.Runtime.SendInventoryAsync(Ct);
+        Assert.True(await h.Runtime.FlushOutboxAsync(Ct));
 
         var inventory = Assert.Single(h.Server.InventoryReports);
         Assert.Equal("TEST-PC", inventory.Hostname);
         Assert.True(inventory.RebootPending);
         Assert.Equal(UpdateSourceType.WindowsUpdate, inventory.UpdateSource!.Type);
-        Assert.Equal(JobStatus.Completed, h.Server.StatusesFor(job.JobId)[^1].Status);
+    }
+
+    [Fact]
+    public async Task An_inventory_refresh_job_queued_before_an_upgrade_is_refused()
+    {
+        // The engine no longer queues them (ADR-0048); one queued before an upgrade is reported failed, never run.
+        using var h = new AgentHarness();
+        await h.EnrollWithTokenAsync();
+        var job = AgentHarness.SimpleJob(JobType.InventoryRefresh);
+        h.Server.EnqueueJob(job);
+
+        await h.Runtime.CheckInOnceAsync(Ct);
+        await h.RunJobsAndFlushAsync();
+
+        var final = Assert.Single(h.Server.StatusesFor(job.JobId));
+        Assert.Equal(JobStatus.Failed, final.Status);
+        Assert.Equal("unsupported_job", final.ErrorCode);
+        Assert.Empty(h.Server.InventoryReports);
     }
 
     [Theory]
