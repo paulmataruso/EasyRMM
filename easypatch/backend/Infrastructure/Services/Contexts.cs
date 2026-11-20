@@ -35,6 +35,15 @@ public static class ActorContextExtensions
     /// <summary>The actor name of requests EasyRMM makes to its patching engine (<c>easyrmm:&lt;name&gt;</c>).</summary>
     public const string EasyRmmPrefix = "easyrmm:";
 
+    /// <summary>The longest name a statement from EasyRMM may carry: an email address as long as EasyRMM allows.</summary>
+    public const int MaxStatementName = 254;
+
+    /// <summary>
+    /// The longest actor name the engine records wherever it says who acted (audit log, jobs, holds, reports, alerts): room
+    /// for <see cref="EasyRmmPrefix"/> and the longest statement name, so no call fails over the length of a person's name.
+    /// </summary>
+    public const int MaxActorName = 300;
+
     /// <summary>True for EasyRMM (not the system, the command line or an agent).</summary>
     public static bool IsAdministrator(this IActorContext actor) =>
         actor.Username?.StartsWith(EasyRmmPrefix, StringComparison.Ordinal) == true;

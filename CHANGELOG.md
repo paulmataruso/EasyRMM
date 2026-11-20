@@ -803,6 +803,11 @@ All notable changes to this project are documented here. The format follows
   connects by cookie, stays blocked.
 
 ### Fixed
+- **Long names in the patching engine.** A technician whose email address
+  was longer than about 56 characters got a server error from the patching
+  engine for anything it records who did: a scan or install, a hold, a
+  monthly report, an acknowledged alert. The engine's columns now fit the
+  longest email EasyRMM allows (an engine migration widens them).
 - **Patching alert messages lead into EasyRMM.** The patching engine's
   emails and webhooks linked to its own console's pages (`/endpoints/<id>`,
   `/alerts`), which EasyRMM does not have. Each alert now opens its device's

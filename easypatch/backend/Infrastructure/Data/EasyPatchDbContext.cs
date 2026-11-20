@@ -4,6 +4,7 @@ using EasyPatch.Contracts;
 using EasyPatch.Contracts.Json;
 using EasyPatch.Core.Domain;
 using EasyPatch.Core.Entities;
+using EasyPatch.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
@@ -216,7 +217,7 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
         {
             e.ToTable("audit_logs");
             e.Property(x => x.Action).HasMaxLength(128);
-            e.Property(x => x.Username).HasMaxLength(64);
+            e.Property(x => x.Username).HasMaxLength(ActorContextExtensions.MaxActorName);
             e.Property(x => x.TargetType).HasMaxLength(64);
             e.Property(x => x.TargetId).HasMaxLength(128);
             e.Property(x => x.IpAddress).HasMaxLength(64);
@@ -479,8 +480,8 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
         {
             e.ToTable("update_holds");
             e.Property(x => x.Reason).HasMaxLength(500);
-            e.Property(x => x.CreatedBy).HasMaxLength(100);
-            e.Property(x => x.ReleasedBy).HasMaxLength(100);
+            e.Property(x => x.CreatedBy).HasMaxLength(ActorContextExtensions.MaxActorName);
+            e.Property(x => x.ReleasedBy).HasMaxLength(ActorContextExtensions.MaxActorName);
             // At most one active hold per update for all organizations, and one per update and organization.
             e.HasIndex(x => x.UpdateGuid).IsUnique().HasFilter("organization_id IS NULL AND released_at IS NULL");
             e.HasIndex(x => new { x.UpdateGuid, x.OrganizationId }).IsUnique().HasFilter("organization_id IS NOT NULL AND released_at IS NULL");
@@ -518,7 +519,7 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
         b.Entity<Job>(e =>
         {
             e.ToTable("jobs");
-            e.Property(x => x.RequestedBy).HasMaxLength(128);
+            e.Property(x => x.RequestedBy).HasMaxLength(ActorContextExtensions.MaxActorName);
             e.Property(x => x.Payload).HasColumnType("jsonb");
             e.Property(x => x.Result).HasColumnType("jsonb");
             e.Property(x => x.Phase).HasMaxLength(64);
@@ -581,7 +582,7 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
             e.HasKey(x => x.Id);
             e.Property(x => x.FileName).HasMaxLength(200);
             e.Property(x => x.Sha256).HasMaxLength(64);
-            e.Property(x => x.GeneratedBy).HasMaxLength(255);
+            e.Property(x => x.GeneratedBy).HasMaxLength(ActorContextExtensions.MaxActorName);
             e.Property(x => x.LastError).HasMaxLength(1000);
             e.Property(x => x.Recipients).HasDefaultValueSql("'{}'::text[]");
             e.HasIndex(x => new { x.OrganizationId, x.PeriodStart }).IsUnique().HasFilter("scheduled").HasDatabaseName("ux_generated_reports_scheduled");
@@ -678,7 +679,7 @@ public sealed class EasyPatchDbContext(DbContextOptions<EasyPatchDbContext> opti
             e.Property(x => x.DedupeKey).HasMaxLength(128);
             e.Property(x => x.Title).HasMaxLength(300);
             e.Property(x => x.Details).HasMaxLength(2000);
-            e.Property(x => x.AcknowledgedBy).HasMaxLength(64);
+            e.Property(x => x.AcknowledgedBy).HasMaxLength(ActorContextExtensions.MaxActorName);
             // At most one unresolved alert per subject.
             e.HasIndex(x => x.DedupeKey).IsUnique().HasFilter("status <> 'Resolved'").HasDatabaseName("ix_alerts_dedupe_key_unresolved");
             e.HasIndex(x => new { x.Status, x.OrganizationId });

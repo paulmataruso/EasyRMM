@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Http.Headers;
 using EasyPatch.Api.Contracts;
 using EasyPatch.Api.Security;
+using EasyPatch.Contracts.Agent;
+using EasyPatch.Contracts.Updates;
 using EasyPatch.Core.Entities;
 using EasyPatch.Infrastructure.Security;
 using EasyPatch.Infrastructure.Services;
@@ -68,6 +70,57 @@ public sealed class EasyRmmGatewayTests(PostgresFixture postgres) : IntegrationT
         var entry = await WithDbAsync(db => db.AuditLogs.AsNoTracking().SingleAsync(a => a.Action == "settings.update"));
         Assert.Equal(("easyrmm:EasyRMM", (Guid?)null), (entry.Username, entry.UserId));
         await technician.ExpectAsync(HttpMethod.Put, "/api/v1/settings", new Core.Domain.ServerSettings(), HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
+    public async Task The_longest_name_a_statement_carries_is_recorded_whole_wherever_the_engine_says_who_acted()
+    {
+        var (contoso, contosoSite) = await CreateOrgAsync(root, "Contoso");
+        var pc = await EnrollAgentAsync(root, contoso.Id, contosoSite.Id, "CONTOSO-PC1");
+        await pc.CheckInAsync();
+        var update = JobQueueTests.SecurityUpdate("KB5060003");
+        var now = Clock.GetUtcNow();
+        using (var scan = await pc.PostAsync(AgentRoutes.ScanResults, new ScanResultReport
+        {
+            ScanId = Guid.NewGuid(), Trigger = Contracts.ScanTrigger.Scheduled, StartedAt = now.AddMinutes(-1), CompletedAt = now, Succeeded = true,
+            Source = new UpdateSourceInfo { Type = Contracts.UpdateSourceType.WindowsUpdate }, Missing = [update], Installed = [],
+        }))
+        {
+            await AdminClient.EnsureAsync(scan, HttpStatusCode.NoContent);
+        }
+
+        // An email address as long as EasyRMM allows (254 characters), the longest name a statement may carry.
+        var name = new string('j', 242) + "@example.com";
+        Assert.Equal(254, name.Length);
+        var actor = "easyrmm:" + name;
+        var admin = EasyRmm("Admin", new[] { contoso.Id.ToString() }, name: name);
+
+        // A job, its audit entry, a hold, a monthly report and an acknowledged alert all name the person whole.
+        await admin.ExpectAsync(HttpMethod.Post, $"/api/v1/endpoints/{pc.EndpointId}/scan", null, HttpStatusCode.Accepted);
+        var job = await WithDbAsync(db => db.Jobs.AsNoTracking().SingleAsync(j => j.EndpointId == pc.EndpointId && j.Type == Contracts.JobType.UpdateScan));
+        Assert.Equal(actor, job.RequestedBy);
+
+        var hold = await admin.SendAsync<UpdateHoldDto>(HttpMethod.Post, $"/api/v1/updates/{update.UpdateGuid}/holds",
+            new CreateUpdateHoldRequest(contoso.Id, "Testing"), HttpStatusCode.Created);
+        Assert.Equal(actor, await WithDbAsync(db => db.UpdateHolds.AsNoTracking().Where(h => h.Id == hold.Id).Select(h => h.CreatedBy).SingleAsync()));
+        Assert.Contains(await WithDbAsync(db => db.AuditLogs.AsNoTracking().Select(a => a.Username).ToListAsync()), u => u == actor);
+
+        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        var report = await admin.SendAsync<MonthlyReportDto>(HttpMethod.Post, "/api/v1/monthly-reports",
+            new GenerateReportRequest(contoso.Id, today.Year, today.Month), HttpStatusCode.Created);
+        Assert.Equal(actor, report.GeneratedBy);
+
+        var alert = new Alert
+        {
+            Id = Guid.NewGuid(), RuleType = AlertRuleType.EndpointOffline, OrganizationId = contoso.Id, EndpointId = pc.EndpointId,
+            DedupeKey = "long-name", Status = AlertStatus.Open, Severity = AlertSeverity.Warning, Title = "CONTOSO-PC1 is offline",
+            OpenedAt = now, LastSeenAt = now,
+        };
+        await WithDbAsync(async db => { db.Alerts.Add(alert); await db.SaveChangesAsync(); });
+        var ack = await admin.SendAsync<AcknowledgeAlertsResult>(HttpMethod.Post, "/api/v1/alerts/acknowledge",
+            new AcknowledgeAlertsRequest([alert.Id]), HttpStatusCode.OK);
+        Assert.Equal(1, ack.Acknowledged);
+        Assert.Equal(actor, await WithDbAsync(db => db.Alerts.AsNoTracking().Where(a => a.Id == alert.Id).Select(a => a.AcknowledgedBy).SingleAsync()));
     }
 
     [Fact]

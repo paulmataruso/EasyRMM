@@ -80,5 +80,6 @@ public sealed class UpdateHoldService(EasyPatchDbContext db, AuditService audit,
 
     private static AppException AlreadyHeld() => AppException.Conflict("This update is already on hold.", "already_held");
 
-    private static string Truncate(string value) => value.Length > 100 ? value[..100] : value;
+    private static string Truncate(string value) =>
+        value.Length > ActorContextExtensions.MaxActorName ? value[..ActorContextExtensions.MaxActorName] : value;
 }

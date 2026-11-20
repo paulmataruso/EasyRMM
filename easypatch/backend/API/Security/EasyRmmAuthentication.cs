@@ -138,7 +138,7 @@ public sealed record EasyRmmStatement(string Subject, string Name, UserRole Role
             var subject = Text(claims, "sub");
             var name = Text(claims, "name");
             if (subject is not { Length: > 0 and <= 128 } || subject.Any(char.IsControl) ||
-                name is not { Length: > 0 and <= 254 } || name.Any(char.IsControl) ||
+                name is not { Length: > 0 and <= ActorContextExtensions.MaxStatementName } || name.Any(char.IsControl) ||
                 Text(claims, "role") is not { } roleName || !Enum.GetNames<UserRole>().Contains(roleName, StringComparer.Ordinal) ||
                 !claims.TryGetProperty("orgs", out var orgs))
             {

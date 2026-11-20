@@ -70,6 +70,12 @@ EasyRMM's import script (EasyRMM's `docs/operations/import-easypatch.md`).
 
 ### Fixed
 
+- A call from EasyRMM by a person whose name (their email address) was longer than about 56
+  characters failed with a server error wherever EasyPatch records who acted: the audit log, jobs,
+  update holds, monthly reports and acknowledged alerts had columns of 64 to 255 characters, while a
+  statement may name a person in up to 254. The migration `ActorNamesFitStatements` widens them all
+  to 300, which `easyrmm:` and the longest name fit; update holds no longer cut the name at 100.
+
 - **Security:** a user restricted to some organizations reached *every* organization once all of
   theirs were deleted, because an empty access list meant "all". An Admin restricted to one
   organization could do this alone, by deleting their own organization while it had no
