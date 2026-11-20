@@ -169,8 +169,8 @@ export function OutputView({ title, text, truncated, emptyLabel }: { title: stri
 }
 
 /**
- * Warns that a script installs operating-system updates itself while EasyPatch patches devices
- * (docs/operations/scripts-and-jobs.md). Shown only when EasyPatch is set up and the user can see patching. Pass the body,
+ * Warns that a script installs operating-system updates itself while the patching engine patches devices
+ * (docs/operations/scripts-and-jobs.md). Shown only when the engine answers as configured and the user can see patching. Pass the body,
  * or the script's id to read it when a list gave the script without one.
  */
 export function SelfPatchingWarning({ shell, body, scriptId, className }: { shell: Shell; body?: string; scriptId?: string; className?: string }) {

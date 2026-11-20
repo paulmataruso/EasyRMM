@@ -183,7 +183,7 @@ Patches tab). The checks are in
 | The agent is enrolled with another server | The device belongs to another EasyPatch server; import that server's data (see [Setting it up](#setting-it-up)) or re-enroll the agent with this deployment |
 | The organization has no patching organization yet | EasyRMM is still creating it, within a minute; **Settings → Patching engine** says why if it cannot |
 | The engine has no such endpoint | The agent's endpoint was deleted in the engine; re-enroll the EasyPatch agent |
-| The endpoint belongs to another organization in the engine | The device is enrolled in another organization's; EasyRMM moves endpoints within an organization only. Re-enroll the EasyPatch agent |
+| The endpoint belongs to another organization in the engine | Endpoints move within an organization only. For a device that moved, EasyRMM has the old agent uninstall itself and, with automatic installs, enrolls it again in the new organization (see *Moved to another organization* above). An agent from an [imported EasyPatch](import-easypatch.md) is left alone, to keep its history: enroll the device's EasyRMM agent in the organization that matches the endpoint's |
 | The endpoint is revoked or decommissioned in the engine | Re-enroll the EasyPatch agent |
 | The key fingerprint is not one of the endpoint's credentials | The endpoint id was copied from another machine, or its credential was revoked; re-enroll |
 | Host names or serial numbers differ | The endpoint is another machine; re-enroll the EasyPatch agent on this one |
@@ -552,11 +552,13 @@ convenient way to try it on a pilot group first.
   afterwards.
 * **Agreements and restarts.** Approving an application accepts its
   package agreements; the policy's *License agreements* applies to Windows
-  updates only. The agent never restarts for an application update: when
-  the installer needs a restart, the update fails with that reason and the
-  next check after a restart confirms it. A third-party installer can still
-  restart the computer by itself; approve only applications whose
-  installers behave well.
+  updates only. The agent never restarts for an application update. When
+  the installer needs a restart and winget already lists the new version,
+  the update counts as installed and the job says a restart is needed;
+  when the new version is not listed yet, the update fails with that reason
+  and the next check after a restart confirms it. A third-party installer
+  can still restart the computer by itself; approve only applications
+  whose installers behave well.
 * **Removed from the list.** The agent stops checking it, and its updates
   become not applicable at the next scan.
 
