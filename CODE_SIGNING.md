@@ -51,7 +51,10 @@ operator; we never hold them.
   checksums above, the release key (EasyPatch agent) and the server's
   signed instructions (EasyRMM agent). The EasyPatch agent's build can
   apply an Authenticode signature when given a certificate; the EasyRMM
-  agent's build cannot yet.
+  agent's build cannot yet. Operators will be able to sign the EasyRMM
+  agent with their own certificate and upload it to their server
+  ([ADR-0049](docs/architecture/adr/0049-operators-sign-windows-agents.md),
+  not built yet).
 * **Git tags and commits** are not signed with a GPG or SSH key. Commits
   carry a `Signed-off-by` line ([CONTRIBUTING.md](CONTRIBUTING.md)), which
   is a statement, not a signature. Merge commits made on GitHub are signed

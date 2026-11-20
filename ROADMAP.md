@@ -15,8 +15,10 @@ follows when these have been run there, or fixed:
   anything. Then restarts with someone signed in, removing an update, and
   "Restart all that need it" on an organization and a site.
 * RDP sessions against a Windows device ([ADR-0026](docs/architecture/adr/0026-rdp-sessions.md)).
-* Security keys and passkeys with a physical key and a platform passkey
-  ([ADR-0032](docs/architecture/adr/0032-webauthn-passkeys.md)).
+* A physical security key and a platform passkey (Windows Hello, iCloud
+  Keychain) ([ADR-0032](docs/architecture/adr/0032-webauthn-passkeys.md)).
+  A password manager's passkey (Bitwarden) works on a real deployment, as
+  the second factor and for sign-in without a password.
 * Authentik on a real deployment (`setup.sh --with-authentik`,
   [ADR-0044](docs/architecture/adr/0044-authentik-when-chosen.md)).
 * Patching alerts and monthly reports through a real mail server and webhook.
@@ -29,6 +31,13 @@ follows when these have been run there, or fixed:
 * Importing a standalone EasyPatch on a real server with a DNS move, and
   with a Windows agent. The import is tested only from 1.10.0 with a Linux
   agent; 1.4 to 1.9 are accepted but untested.
+
+**Build**
+
+* Operators sign the Windows agent with their own code signing
+  certificate ([ADR-0049](docs/architecture/adr/0049-operators-sign-windows-agents.md)):
+  they sign the server's builds with their own tools and upload them, and
+  the server checks and hands out the signed builds.
 
 **Fix in the patching engine**
 
@@ -43,8 +52,9 @@ follows when these have been run there, or fixed:
 * **Packages for the EasyRMM agent**: an MSI for Windows (needs Windows CI
   runners) and DEB and RPM packages for Linux. Today computers install with
   the PowerShell or shell command.
-* **Authenticode signing** of the Windows agents, so Windows names a
-  publisher ([CODE_SIGNING.md](CODE_SIGNING.md)).
+* **Authenticode signing** of the Windows agents with a certificate of
+  EasyRMM's own, so Windows names a publisher without the operator signing
+  them ([CODE_SIGNING.md](CODE_SIGNING.md)). On hold.
 * **Email and webhook notifications for device alerts.** Patching alerts
   have them; device alerts show in the console only.
 * **Patching**: giving or taking a tag from many devices at once, forcing a
