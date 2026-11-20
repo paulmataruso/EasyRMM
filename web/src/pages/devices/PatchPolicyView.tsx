@@ -139,7 +139,7 @@ const APPLIED: Record<string, { label: string; tone: Tone }> = {
 };
 
 export function delayText(days: number): string {
-  return days > 0 ? `${plural(days, "day")} after release` : "None";
+  return days > 0 ? `${plural(days, "day")} after first seen` : "None";
 }
 
 export function everyText(minutes: number): string {

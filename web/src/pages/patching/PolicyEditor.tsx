@@ -55,8 +55,8 @@ const NUMBERS = {
   scanStaleAfterHours: { label: "Scan out of date after", hint: "A device whose last scan is older counts as not scanned.", min: 1, max: 720, unit: "hours", what: "hours", text: (v: number) => plural(v, "hour") },
   maxConcurrentInstallsPerSite: { label: "Installs at once, per site", hint: "How many devices of one site install at the same time.", min: 1, max: 1000, unit: "devices", what: "a limit", text: (v: number) => v.toLocaleString() },
   preDownloadHours: { label: "Download ahead", hint: "Windows agents download updates up to this many hours before the window opens; 0 is off.", min: 0, max: 24, unit: "hours", what: "hours ahead", text: (v: number) => (v > 0 ? `Up to ${plural(v, "hour")} before the window opens` : "Off") },
-  installDelayDays: { label: "Delay for other updates", hint: "Days after its release before an update installs automatically.", min: 0, max: 365, unit: "days", what: "a delay (days)", text: delayText },
-  securityInstallDelayDays: { label: "Delay for security updates", hint: "The same, for security and critical updates.", min: 0, max: 90, unit: "days", what: "a delay (days)", text: delayText },
+  installDelayDays: { label: "Delay for other updates", hint: "Days from when an update first appears on any device until it installs automatically. Definition updates are never delayed.", min: 0, max: 365, unit: "days", what: "a delay (days)", text: delayText },
+  securityInstallDelayDays: { label: "Delay for security updates", hint: "The same, for security updates (Microsoft's Security Updates, which include the monthly cumulative updates, and Linux security fixes). Critical updates use the delay for other updates.", min: 0, max: 90, unit: "days", what: "a delay (days)", text: delayText },
 } as const;
 type NumberKey = keyof typeof NUMBERS;
 
