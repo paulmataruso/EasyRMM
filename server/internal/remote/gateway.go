@@ -428,11 +428,11 @@ func (g *Gateway) checkDeviceFile(r *http.Request, session uuid.UUID, upgrade bo
 func (g *Gateway) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	log := httpapi.LoggerFrom(r.Context())
 	if !errors.Is(err, errRefused) {
-		log.Error("remote gateway: checking a request failed", "error", err, "path", httpapi.LogSafe(r.URL.Path))
+		log.Error("remote gateway: checking a request failed", "error", httpapi.LogSafe(err.Error()), "path", httpapi.LogSafe(r.URL.Path))
 		page(w, http.StatusInternalServerError, "Something went wrong", "The request could not be checked. The error has been logged.")
 		return
 	}
-	log.Warn("remote gateway: refused a request", "reason", err.Error(), "path", httpapi.LogSafe(r.URL.Path))
+	log.Warn("remote gateway: refused a request", "reason", httpapi.LogSafe(err.Error()), "path", httpapi.LogSafe(r.URL.Path))
 	page(w, http.StatusForbidden, "Not available", "This part of the remote-access service is not available through EasyRMM.")
 }
 
