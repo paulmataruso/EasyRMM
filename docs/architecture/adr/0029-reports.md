@@ -55,7 +55,7 @@ needed in a spreadsheet as often as on screen. Every role already holds
   recorded only as filters, never as where the entry is filed: otherwise
   a technician could file an entry in another organization's log, or
   file their own export where their organization's administrators do not
-  look (Phase 9 security review). An export with no rows is recorded at
+  look (the security review before the first release). An export with no rows is recorded at
   platform level.
 * **API**: `GET /api/v1/reports/{name}` (JSON: columns, rows, total,
   truncated) and `GET /api/v1/reports/{name}/csv`, with the filters as

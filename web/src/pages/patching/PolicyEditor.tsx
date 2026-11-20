@@ -31,7 +31,7 @@ import {
 import { COUNTDOWNS, DEADLINES, EXPIRIES, RESTART_MODES } from "./PatchDialogs";
 import { categoryLabel } from "./patchText";
 
-// EasyPatch's policy at one level (one-product plan, C4): the default policy, an organization, a site, a tag or a
+// EasyPatch's policy at one level: the default policy, an organization, a site, a tag or a
 // device. Each level sets some values and inherits the rest from the levels above it; the most specific level that sets
 // a value wins, and excluded KBs add up. The server resolves what a level inherits and where each value comes from, and
 // checks every value again; the checks here only say so sooner.
@@ -55,8 +55,8 @@ const NUMBERS = {
   scanStaleAfterHours: { label: "Scan out of date after", hint: "A device whose last scan is older counts as not scanned.", min: 1, max: 720, unit: "hours", what: "hours", text: (v: number) => plural(v, "hour") },
   maxConcurrentInstallsPerSite: { label: "Installs at once, per site", hint: "How many devices of one site install at the same time.", min: 1, max: 1000, unit: "devices", what: "a limit", text: (v: number) => v.toLocaleString() },
   preDownloadHours: { label: "Download ahead", hint: "Windows agents download updates up to this many hours before the window opens; 0 is off.", min: 0, max: 24, unit: "hours", what: "hours ahead", text: (v: number) => (v > 0 ? `Up to ${plural(v, "hour")} before the window opens` : "Off") },
-  installDelayDays: { label: "Delay for other updates", hint: "Days after its release before an update installs automatically.", min: 0, max: 365, unit: "days", what: "a delay (days)", text: delayText },
-  securityInstallDelayDays: { label: "Delay for security updates", hint: "The same, for security and critical updates.", min: 0, max: 90, unit: "days", what: "a delay (days)", text: delayText },
+  installDelayDays: { label: "Delay for other updates", hint: "Days from when an update first appears on any device until it installs automatically. Definition updates are never delayed.", min: 0, max: 365, unit: "days", what: "a delay (days)", text: delayText },
+  securityInstallDelayDays: { label: "Delay for security updates", hint: "The same, for security updates (Microsoft's Security Updates, which include the monthly cumulative updates, and Linux security fixes). Critical updates use the delay for other updates.", min: 0, max: 90, unit: "days", what: "a delay (days)", text: delayText },
 } as const;
 type NumberKey = keyof typeof NUMBERS;
 
@@ -135,13 +135,13 @@ function canon(l: Layer): string {
   );
 }
 
-/** "from the organization", "from the tag Pilot", "EasyPatch's default". */
+/** "from the organization", "from the tag Pilot", "built-in default". */
 export function fromText(source: string | undefined): string {
   if (!source) return "";
   if (source === "Default policy") return "from the default policy";
   if (source === "Organization") return "from the organization";
   if (source === "Site") return "from the site";
-  if (source === "EasyPatch's defaults") return "EasyPatch's default";
+  if (source === "EasyPatch's defaults") return "built-in default";
   if (source.startsWith("Tag ")) return `from the tag ${source.slice(4)}`;
   return `from ${source}`;
 }
@@ -212,7 +212,7 @@ export function PolicyPanel({ level, id, intro }: { level: PolicyLevel; id?: str
       return (
         <EmptyState title="Not in the patching engine yet" icon={<ShieldOff className="size-8" aria-hidden />}>
           This organization has no organization of its own in the patching engine yet, so it has no patch policy. EasyRMM creates it by
-          itself, usually within a few minutes; when it cannot, a super administrator sees why under Settings → EasyPatch.
+          itself, usually within a few minutes; when it cannot, a super administrator sees why under Settings → Patching engine.
         </EmptyState>
       );
     }
@@ -269,7 +269,7 @@ function PolicyForm({ view, path, intro }: { view: PatchPolicyView; path: string
     onSuccess: (r) => {
       done(r);
       setResetting(false);
-      toast.success(top ? "The default policy is EasyPatch's again." : "This policy inherits everything again.");
+      toast.success(top ? "The default policy has its built-in values again." : "This policy inherits everything again.");
     },
   });
 
@@ -562,7 +562,7 @@ function PolicyForm({ view, path, intro }: { view: PatchPolicyView; path: string
       {windows && (
         <Card title="Windows Update settings" padded={false}>
           <p className="border-b border-line px-4 py-3 text-xs text-muted">
-            Windows Update's own settings, which EasyPatch writes on each device. A group EasyPatch does not manage is left as Windows,
+            Windows Update's own settings, which the EasyPatch agent writes on each device. A group it does not manage is left as Windows,
             group policy or MDM set it.
           </p>
           {WU_GROUPS.map(({ key, label }) => {
@@ -614,12 +614,12 @@ function PolicyForm({ view, path, intro }: { view: PatchPolicyView; path: string
               : view.updatedAt
                 ? `Last changed ${formatDateTime(view.updatedAt)}`
                 : top
-                  ? "EasyPatch's defaults, never changed."
+                  ? "Built-in defaults, never changed."
                   : "Nothing set here: everything is inherited."}
           </span>
           {(top || view.hasOwn) && (
             <Button variant="danger-ghost" icon={<RotateCcw className="size-4" aria-hidden />} onClick={() => setResetting(true)}>
-              {top ? "Restore EasyPatch's defaults" : "Inherit everything"}
+              {top ? "Restore built-in defaults" : "Inherit everything"}
             </Button>
           )}
           <Button onClick={() => setForm(clone(base))} disabled={!dirty}>
@@ -638,7 +638,7 @@ function PolicyForm({ view, path, intro }: { view: PatchPolicyView; path: string
           reset.reset();
         }}
         onConfirm={() => reset.mutate(undefined)}
-        title={top ? "Restore EasyPatch's defaults" : "Inherit everything"}
+        title={top ? "Restore built-in defaults" : "Inherit everything"}
         confirmLabel={top ? "Restore defaults" : "Inherit everything"}
         tone="danger"
         loading={reset.isPending}
@@ -647,7 +647,7 @@ function PolicyForm({ view, path, intro }: { view: PatchPolicyView; path: string
       >
         <p>
           {top
-            ? "Every value of the default policy goes back to EasyPatch's own, for every organization that does not set it. Excluded KBs are emptied."
+            ? "Every value of the default policy goes back to its built-in one, for every organization that does not set it. Excluded KBs are emptied."
             : `This removes ${view.name}'s own policy: every value comes from the levels above again, and its excluded KBs go.`}
         </p>
       </ConfirmDialog>

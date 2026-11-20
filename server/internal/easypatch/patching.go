@@ -59,7 +59,7 @@ func epError(err error) error {
 	if code == "" {
 		code = "easypatch_refused"
 	}
-	return apperr.Conflict(cut(code, 64), "EasyPatch: "+e.Detail)
+	return apperr.Conflict(cut(code, 64), "The patching engine refused: "+e.Detail)
 }
 
 // message is what a user reads of an error.
@@ -365,7 +365,7 @@ func (s *Service) Fleet(ctx context.Context, c access.Caller, q FleetQuery) (Fle
 			if e, ok := fetched[*d.easyPatchOrg][*d.endpointID]; ok {
 				f.Endpoint = &e
 			} else if fetched[*d.easyPatchOrg] != nil {
-				f.Link, f.Reason = LinkUnlinked, "EasyPatch no longer lists this endpoint as active."
+				f.Link, f.Reason = LinkUnlinked, "The patching engine no longer lists this endpoint as active."
 			}
 		}
 		switch {
@@ -558,7 +558,7 @@ func (s *Service) Device(ctx context.Context, c access.Caller, id uuid.UUID) (De
 		s.noteError(err)
 		out.Error = message(epError(err))
 		if IsStatus(err, http.StatusNotFound) {
-			out.Error = "EasyPatch no longer has this endpoint; EasyRMM checks the link again shortly."
+			out.Error = "The patching engine no longer has this endpoint; EasyRMM checks the link again shortly."
 		}
 		return out, nil
 	}
@@ -1027,7 +1027,7 @@ func (s *Service) Install(ctx context.Context, c access.Caller, in ActionInput) 
 		now := s.now()
 		switch {
 		case !r.can(CapabilityScheduledInstalls):
-			f.Add("scheduledAt", "This EasyPatch server cannot schedule installs. It needs the scheduled-installs capability (the EasyRMM integration changes in EasyPatch).")
+			f.Add("scheduledAt", "This patching engine cannot schedule installs: it does not have the scheduled-installs capability.")
 		case in.ScheduledAt.Before(now.Add(time.Minute)):
 			f.Add("scheduledAt", "Choose a time in the future.")
 		case in.ScheduledAt.After(now.Add(maxScheduleAhead)):

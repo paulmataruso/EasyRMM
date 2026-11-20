@@ -9,7 +9,7 @@ namespace EasyPatch.Tests.Integration;
 
 /// <summary>
 /// A standalone EasyPatch's database, prepared to become the patching engine's in an EasyRMM deployment (EasyRMM's
-/// one-product plan, phase S): brought to this engine's schema from an older release, refused when it is newer or not
+/// ADR-0045): brought to this engine's schema from an older release, refused when it is newer or not
 /// EasyPatch's, and without usable accounts afterwards.
 /// </summary>
 public sealed class ImportPreparationTests(PostgresFixture postgres)

@@ -32,7 +32,7 @@ export function scopeQuery(organizationId: string, siteId: string): string {
 }
 
 /**
- * Patching → Updates (one-product plan, C2): every update the devices in scope report, counted across them; those
+ * Patching → Updates: every update the devices in scope report, counted across them; those
  * fixing vulnerabilities exploited in the wild first. EasyPatch counts whole organizations or one site, so people
  * whose role covers single sites choose one.
  */
@@ -166,7 +166,7 @@ export function PatchUpdates() {
             </table>
           </TableWrap>
           <Pager page={list.data.page} total={list.data.totalCount} size={list.data.pageSize || 50} onPage={(p) => url.set({ page: p > 1 ? String(p) : null })} />
-          <p className="mt-2 text-xs text-muted">Counted from each device's last scan, as EasyPatch reports it; refreshed every minute.</p>
+          <p className="mt-2 text-xs text-muted">Counted from each device's last scan, as the patching engine reports it; refreshed every minute.</p>
         </>
       )}
     </>

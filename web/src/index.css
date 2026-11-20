@@ -1,8 +1,8 @@
 @import 'tailwindcss';
 
-/* EasyRMM shares EasyPatch's design system: the same semantic tokens, type,
-   components and both themes, so the two consoles read as one product family.
-   Keep these values in step with EasyPatch's frontend/src/index.css. */
+/* EasyRMM's design system: the semantic tokens, type, components and both
+   themes every page uses, the patching pages included. This file is the source
+   of truth for each value; .impeccable/design.json describes the system. */
 
 /* Class-based dark mode: <html class="dark"> (default), toggled by the theme switch. */
 @custom-variant dark (&:where(.dark, .dark *));

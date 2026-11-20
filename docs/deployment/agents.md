@@ -73,6 +73,8 @@ Approval tokens and waiting devices belong to no organization, so they need
 approval token stops new computers from asking; computers already waiting
 can still be approved.
 
+![Enrolling an EasyRMM agent: a deployment token creates the device at once; an approval token makes the agent wait with a device code, asking again with each question held up to 25 seconds, until a super administrator approves it into a site; then the agent fetches MeshAgent through EasyRMM and starts its heartbeat](../images/diagrams/agent-enrollment.svg)
+
 ## 2. Install on Windows
 
 The Add devices page shows the command under **Windows**. Open **Windows

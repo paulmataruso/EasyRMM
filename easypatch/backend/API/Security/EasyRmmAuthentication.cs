@@ -205,7 +205,7 @@ public sealed record EasyRmmStatement(string Subject, string Name, UserRole Role
 public sealed class EasyRmmAuthenticationOptions : AuthenticationSchemeOptions;
 
 /// <summary>
-/// Authenticates EasyRMM's calls to its patching engine (the one-product plan, phase B2): a statement in <c>X-EasyRMM-Assertion</c>
+/// Authenticates EasyRMM's calls to its patching engine (EasyRMM's ADR-0038): a statement in <c>X-EasyRMM-Assertion</c>
 /// (<see cref="EasyRmmStatement"/>). EasyRMM has applied its own sign-in rules, second factor and permissions before signing; the
 /// statement carries the role and organizations that one call needs, and EasyPatch's own role and tenant checks still apply to them.
 /// The principal is built from the statement alone: no user rows and no session.

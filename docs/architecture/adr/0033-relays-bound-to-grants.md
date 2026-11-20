@@ -1,12 +1,12 @@
 # ADR-0033: Relays bound to their grants
 
 * Status: Accepted (2026-11-16). Amends ADR-0014 and ADR-0022. Follows the
-  Phase 9 security review of the remote-access gateway.
+  [security review](../../security/security-review.md) of the remote-access gateway.
 
 ## Context
 ADR-0022 checks a browser's relay connection against the EasyRMM session's
 grants, and refuses TCP and UDP routing wherever it can be asked for. The
-Phase 9 review found four ways around the grant model that ADR-0022 left
+security review found four ways around the grant model that ADR-0022 left
 open. Each was checked against MeshCentral 1.3.1 and MeshAgent in the
 integration test.
 

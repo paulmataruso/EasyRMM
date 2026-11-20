@@ -12,11 +12,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// The update catalog across endpoints, one update's endpoints, installing
-// or removing it on many endpoints, and holds, as EasyPatch's
-// /api/v1/updates and /api/v1/update-holds answer them (one-product plan,
-// C2). An update is the same on every endpoint that reports it: its GUID
-// comes from its title.
+// The update catalog across endpoints, one update's endpoints, installing or
+// removing it on many endpoints, and holds, as EasyPatch's /api/v1/updates
+// and /api/v1/update-holds answer them. An update is the same on every
+// endpoint that reports it: its GUID comes from its title.
 
 // HoldInfo is an update hold.
 type HoldInfo struct {

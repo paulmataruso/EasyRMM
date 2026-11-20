@@ -15,9 +15,9 @@ const AuthentikClientID = "easyrmm"
 const DefaultAuthentikUpstream = "127.0.0.1:18280"
 
 // Authentik is the sign-in service of this deployment, chosen with setup.sh
-// --with-authentik (one-product plan, phase A; ADR-0044). EasyRMM's edge
-// serves its sign-in name, EasyRMM signs in through it as a provider the
-// deployment manages, and the administrator's account is made from it.
+// --with-authentik (ADR-0044). EasyRMM's edge serves its sign-in name,
+// EasyRMM signs in through it as a provider the deployment manages, and the
+// administrator's account is made from it.
 type Authentik struct {
 	// Hostname is Authentik's own name, such as auth.example.com; "" when
 	// Authentik is not part of the deployment.

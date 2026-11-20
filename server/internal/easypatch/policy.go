@@ -1,12 +1,12 @@
 package easypatch
 
-// EasyPatch's policies, edited from EasyRMM at every level (one-product plan,
-// C4): the default policy (super administrators), an organization's, a
-// site's and a device's (patch.configure on the organization). Reading a
-// level needs patch.view where it applies. EasyRMM resolves what a level
-// inherits from the levels above as EasyPatch does (PolicyResolver.Resolve),
-// so the editor can show it, and checks a level as EasyPatch does before
-// saving it, with field errors EasyPatch does not give.
+// EasyPatch's policies, edited from EasyRMM at every level: the default
+// policy (super administrators), an organization's, a site's and a device's
+// (patch.configure on the organization). Reading a level needs patch.view
+// where it applies. EasyRMM resolves what a level inherits from the levels
+// above as EasyPatch does (PolicyResolver.Resolve), so the editor can show
+// it, and checks a level as EasyPatch does before saving it, with field
+// errors EasyPatch does not give.
 
 import (
 	"context"
@@ -244,7 +244,7 @@ func (s *Service) policyTarget(ctx context.Context, c access.Caller, cl *Client,
 			return policyTarget{}, err
 		}
 		if d.endpointID == nil || d.easyPatchOrg == nil {
-			return policyTarget{}, apperr.Conflict("easypatch_not_linked", "This device is not patched through EasyPatch.")
+			return policyTarget{}, apperr.Conflict("easypatch_not_linked", "This device is not patched from EasyRMM.")
 		}
 		if err := configure(d.organizationID); err != nil {
 			return policyTarget{}, err
@@ -257,7 +257,7 @@ func (s *Service) policyTarget(ctx context.Context, c access.Caller, cl *Client,
 		e, err := cl.Endpoint(s.as(ctx, c, RoleReadOnly, t.epOrg), *d.endpointID)
 		switch {
 		case IsStatus(err, http.StatusNotFound):
-			return policyTarget{}, apperr.Conflict("easypatch_endpoint_gone", "EasyPatch no longer lists this device's endpoint.")
+			return policyTarget{}, apperr.Conflict("easypatch_endpoint_gone", "The patching engine no longer lists this device's endpoint.")
 		case err != nil:
 			s.noteError(err)
 			return policyTarget{}, epError(err)

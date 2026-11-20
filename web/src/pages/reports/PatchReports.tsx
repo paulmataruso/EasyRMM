@@ -11,7 +11,7 @@ import { Badge, Button, buttonClasses, Card, EmptyState, ErrorState, InlineError
 import { formatDateTime, formatRelative, formatSize } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
 
-// The patch reports EasyRMM takes from EasyPatch (one-product plan, C5): the compliance trend above the compliance
+// The patch reports EasyRMM takes from EasyPatch: the compliance trend above the compliance
 // report, and monthly PDF reports. The compliance and installations tables themselves are ordinary reports.
 
 const PERIODS = [
@@ -71,7 +71,7 @@ export function PatchTrendCard({ organizationId, siteChosen }: { organizationId:
           />
           <p className="mt-2 text-xs text-muted">
             {latest ? `${latest.compliant.toLocaleString()} of ${latest.totalEndpoints.toLocaleString()} machines were up to date on the last day. ` : ""}
-            EasyPatch keeps a record of each organization a day, updated every 30 minutes
+            The patching engine keeps a record of each organization a day, updated every 30 minutes
             {trend.data.organizations > 1 ? `; this adds up ${trend.data.organizations} organizations` : ""}.
             {siteChosen ? " The trend covers whole organizations, not only the chosen site." : ""}
           </p>

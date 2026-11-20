@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// EasyPatch's reports (one-product plan, C5): the compliance trend, the
-// installations report, monthly PDF reports and their schedules, and the
-// mail server they are sent with.
+// EasyPatch's reports: the compliance trend, the installations report,
+// monthly PDF reports and their schedules, and the mail server they are sent
+// with.
 
 // TrendPoint is one day of an organization's compliance, as EasyPatch
 // recorded it that night.

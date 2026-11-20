@@ -13,11 +13,10 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 )
 
-// Agents on EasyRMM's name (one-product plan, B4). EasyPatch agents talk to
-// EasyRMM's own address:
-// the edge forwards exactly the paths they use to the patching engine on
-// loopback, before the session, CSRF and console layers, none of which apply
-// to an agent. Everything else of the engine stays on loopback.
+// Agents on EasyRMM's name (ADR-0039). EasyPatch agents talk to EasyRMM's own
+// address: the edge forwards exactly the paths they use to the patching
+// engine on loopback, before the session, CSRF and console layers, none of
+// which apply to an agent. Everything else of the engine stays on loopback.
 //
 // What is forwarded is served on EasyRMM's origin, where its session cookie
 // lives, so nothing the engine answers may act on that origin: cookies are

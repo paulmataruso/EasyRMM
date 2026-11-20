@@ -1,41 +1,70 @@
 name: Bug report
-description: Something in EasyRMM does not work as documented (for EasyPatch, use the EasyPatch bug report)
+description: Something in EasyRMM does not work as documented.
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        **Security vulnerabilities must not be reported here.** Use the private
-        reporting link in SECURITY.md instead.
+        **Security problems:** do not report them here. Use [Report a vulnerability](https://github.com/paulmataruso/EasyRMM/security/advisories/new) instead.
+
+        Remove host names, IP addresses, tokens and anything else you do not want to publish from logs and screenshots.
   - type: textarea
     id: what
     attributes:
       label: What happened?
-      description: What did you expect, and what happened instead?
+      description: What you did, what you expected, and what happened instead.
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
       label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Click ...
+        3. See ...
     validations:
       required: true
   - type: input
     id: version
     attributes:
       label: EasyRMM version or commit
+      description: The release you installed (EASYRMM_VERSION in the deployment's .env), or the commit if you build from source.
+      placeholder: "1.0.0-rc.2"
     validations:
       required: true
   - type: dropdown
     id: area
     attributes:
       label: Area
-      options: [Server, Web UI, Agent (Windows), Agent (Linux), Installer, Remote access, EasyPatch integration, Deployment, Documentation]
+      options:
+        - Console
+        - Server or API
+        - EasyRMM agent (Windows)
+        - EasyRMM agent (Linux)
+        - Install commands
+        - Remote access
+        - Patching (console, policies, reports)
+        - Patching engine
+        - EasyPatch agent (Windows)
+        - EasyPatch agent (Linux)
+        - Deployment, upgrade or backup
+        - Documentation
+        - Other
     validations:
       required: true
+  - type: input
+    id: endpoint
+    attributes:
+      label: Endpoint operating system and agent version
+      description: If the problem involves a managed computer.
+      placeholder: "Windows Server 2025, EasyRMM agent 1.0.0-rc.2, EasyPatch agent 1.11.1"
   - type: textarea
     id: logs
     attributes:
-      label: Relevant logs
-      description: Remove hostnames, tokens and any personal data first.
+      label: Relevant log lines
+      description: |
+        Server, from the deployment's deploy/ folder: docker compose logs server (patching engine: easypatch-api, easypatch-worker).
+        EasyRMM agent: %ProgramData%\EasyRMM\Agent\logs\agent.log on Windows; journalctl -u easyrmm-agent on Linux.
+        EasyPatch agent: C:\ProgramData\EasyPatch\logs\agent.log on Windows; journalctl -u easypatch-agent on Linux.
       render: text

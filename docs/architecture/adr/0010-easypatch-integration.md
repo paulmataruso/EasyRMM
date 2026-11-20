@@ -20,5 +20,5 @@ EasyPatch agent, **downloading it from the customer's EasyPatch server**
 EasyRMM device id. EasyPatch stays the single source of truth for patch state
 and patch jobs; EasyRMM never writes Windows Update policy or runs its own
 patch engine. (c) and (d) are rejected (duplication; schema coupling).
-Required EasyPatch changes are documented in `docs/integrations/easypatch.md`
+Required EasyPatch changes are documented in `docs/integrations/easypatch.md` (since replaced by [the patching engine](../patching-engine.md))
 and implemented in the EasyPatch repository before the integration ships.

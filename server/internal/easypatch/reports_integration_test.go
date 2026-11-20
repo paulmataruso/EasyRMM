@@ -119,8 +119,8 @@ func TestInstallations(t *testing.T) {
 	}
 }
 
-// EasyRMM's reports read patching through the connector, and keep to each
-// row's site.
+// EasyRMM's reports read patching through the service, and keep to each row's
+// site.
 func TestPatchReports(t *testing.T) {
 	f := newFleetFixture(t)
 	ctx := f.ctx
@@ -150,7 +150,7 @@ func TestPatchReports(t *testing.T) {
 	if r := rows["DB-01"]; r[4] != "Updates missing" || r[6] != 1 || r[7] != 2 || r[13] != "" {
 		t.Fatalf("DB-01: %v", r)
 	}
-	if r := rows["NEW-01"]; r[4] != "Not patched" || r[5] != "EasyPatch's agent is not on the device." || r[6] != nil {
+	if r := rows["NEW-01"]; r[4] != "Not patched" || r[5] != "The EasyPatch agent is not on the device." || r[6] != nil {
 		t.Fatalf("NEW-01: %v", r)
 	}
 	if rep, err := svc.Run(ctx, f.siteTech, "patch-compliance", reports.Query{}, reports.PreviewRows); err != nil || rep.Total != 2 {

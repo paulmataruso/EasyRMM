@@ -12,9 +12,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// EasyPatch's alerts and notifications (one-product plan, C7): alerts, the
-// rules that raise them, notification channels and their deliveries. The
-// contract test holds these to the real server's rules.
+// EasyPatch's alerts and notifications: alerts, the rules that raise them,
+// notification channels and their deliveries. The contract test holds these
+// to the real server's rules.
 
 // AlertInfo is an alert. Endpoint is nil for an organization's alert;
 // Status is Open, Acknowledged or Resolved.

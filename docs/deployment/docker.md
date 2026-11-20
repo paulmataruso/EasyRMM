@@ -9,6 +9,9 @@ listen on loopback; only the server's TLS edge listens publicly.
 | `postgres` | `127.0.0.1:15432` | `/srv/easyrmm/postgres` |
 | `server` | `:443`, `:80` (optional), `127.0.0.1:18081` (health) | `/srv/easyrmm/server` |
 | `meshcentral` | `127.0.0.1:14430` | `/srv/easyrmm/meshcentral` (its data), `/srv/easyrmm/meshcentral-config` (configuration written by the server) |
+| `easypatch-api` | `127.0.0.1:18180` | `/srv/easyrmm/easypatch/keys`, `/srv/easyrmm/easypatch/winget`; its database `easypatch` in `postgres` |
+| `easypatch-worker` | `127.0.0.1:18181` (health) | The same, keys read-only |
+| `easypatch-db-init`, `easypatch-migrate` | Nothing; they run once at each start and exit | |
 
 See [network.md](../architecture/network.md) for the full port plan.
 
@@ -26,7 +29,7 @@ See [network.md](../architecture/network.md) for the full port plan.
   and TCP 4443 for remote sessions by IP address.
 * Outbound HTTPS to `github.com` the first time MeshCentral starts: it
   downloads its agent binaries (about 120 MiB) from GitHub releases.
-* Nothing else listening on 443, 4443, 80, 15432, 14430 or 18081. On a
+* Nothing else listening on 443, 4443, 80, 15432, 14430, 18081, 18180 or 18181. On a
   host with several addresses, `EASYRMM_LISTEN_HTTPS` and
   `EASYRMM_LISTEN_HTTP` in `.env` can name one, such as `203.0.113.10:443`
   and `203.0.113.10:80`; remote sessions by IP address then use port 4443
@@ -237,8 +240,8 @@ work with TLS offload. Authentik listens on loopback only:
 
 ## Patching engine
 
-EasyPatch's patching engine runs inside this deployment
-([one-product plan](../architecture/one-product-plan.md)): `setup.sh` sets it
+The patching engine runs inside this deployment
+([how it works](../architecture/patching-engine.md)): `setup.sh` sets it
 up and `docker compose up -d` starts it with everything else. There is no
 setting to turn it on or off.
 
@@ -283,16 +286,13 @@ works this way.
 
 EasyRMM's patching pages use the engine:
 
-* **Settings → EasyPatch** shows the engine and its state; there is no
+* **Settings → Patching engine** shows the engine and its state; there is no
   address or token to enter, and it cannot be removed there. *Check now*
   shows whether the engine accepts EasyRMM's key.
-* **An EasyPatch server connected in Settings** by an earlier version is
-  forgotten, with its organization and device links, once, at the first
-  start, and the audit log records it.
 * **EasyRMM keeps the engine's organizations.** Every organization and site
   has its own in the engine, created, renamed and archived with EasyRMM's
   ([ADR-0040](../architecture/adr/0040-one-set-of-organizations.md),
-  [Patching](../operations/patching.md#organizations-in-the-bundled-engine));
+  [Patching](../operations/patching.md#organizations-in-the-engine));
   there is nothing to link in Settings.
 * **Agents use EasyRMM's name.** EasyRMM's edge forwards the engine's agent
   API and package downloads (`/api/v1/agents/`, `/downloads/agent/`,

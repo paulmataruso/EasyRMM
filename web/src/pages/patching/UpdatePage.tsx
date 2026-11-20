@@ -14,7 +14,7 @@ import { FleetInstallDialog, FleetRemoveDialog, HoldDialog, ReleaseHoldDialog } 
 const SELECTABLE: PatchUpdateState[] = ["Missing", "Failed"];
 
 /**
- * One update across the devices in scope (one-product plan, C2): what it fixes, where it is missing, failed or
+ * One update across the devices in scope: what it fixes, where it is missing, failed or
  * installed, its holds, and installing, removing or holding it.
  */
 export function UpdatePage() {
@@ -122,7 +122,7 @@ export function UpdatePage() {
         >
           <p>
             {h.source === "Automatic"
-              ? `EasyPatch held it after it failed on ${h.failedEndpoints ?? "?"} of ${h.attemptedEndpoints ?? "?"} devices it was tried on.`
+              ? `The patching engine held it after it failed on ${h.failedEndpoints ?? "?"} of ${h.attemptedEndpoints ?? "?"} devices it was tried on.`
               : h.reason}
           </p>
           <p className="mt-1 text-xs text-muted">

@@ -1,7 +1,7 @@
 # ADR-0038: EasyRMM's statements to its patching engine
 
 * Status: Accepted (2026-11-18)
-* Plan: [one product](../one-product-plan.md), phase B2.
+* Plan: the one-product plan (in the repository's history), phase B2.
 * Refines: [ADR-0030](0030-easypatch-connector.md) (the connector) for the
   engine inside EasyRMM's deployment.
 

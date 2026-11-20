@@ -1,9 +1,9 @@
 # Reports
 
 **Reports** in the main menu answers fleet-wide questions from what EasyRMM
-already knows: inventory, installed software, health measurements and
-alerts, and, with EasyPatch set up, patching. Each report is a table to
-read in the console or download as CSV for a spreadsheet. The design is in
+already knows: inventory, installed software, health measurements, alerts
+and patching. Each report is a table to read in the console or download as
+CSV for a spreadsheet. The design is in
 [ADR-0029](../architecture/adr/0029-reports.md).
 
 | Report | One row per | Answers |
@@ -78,22 +78,22 @@ keys yet.
 
 <picture><source media="(prefers-color-scheme: light)" srcset="../images/patch-reports-light.png"><img src="../images/patch-reports.png" alt="Reports, Patch compliance: the organizations' compliance trend over 30 days, dipping after Patch Tuesday and recovering, above each device's compliance, missing and failed updates"></picture>
 
-The patch reports read EasyPatch when they are opened, so they need it set
-up ([Patching](patching.md)); without it, they are not listed.
+The patch reports read the patching engine when they are opened
+([Patching](patching.md)).
 
 * **Patch compliance** is the device list on Patching as a report, with
-  the operating system's build and support status from EasyPatch's
-  lifecycle data. A device EasyPatch does not patch says why: its agent is
+  the operating system's build and support status from the engine's OS
+  lifecycle data. A device the engine does not patch says why: its agent is
   not installed, failed to install or is being removed, or patching was
   stopped. Above the table, the **Compliance trend** adds up, day by day,
   the organizations in view you see whole; choosing a site does not narrow
   it.
-* **Patch installations** lists each update EasyPatch's install jobs
-  finished with, newest first: when, on which device, the update and its
-  KB, its category, the result with EasyPatch's reason for a failure or a
-  skip, whether it needed a restart, and who asked for the job. It reads at
-  most 5,000 rows and says so.
-* **Monthly patch reports** lists the PDFs EasyPatch made of organizations'
+* **Patch installations** lists each update the install jobs finished
+  with, newest first: when, on which device, the update and its KB, its
+  category, the result with the engine's reason for a failure or a skip,
+  whether it needed a restart, and who asked for the job. It reads at most
+  5,000 rows and says so.
+* **Monthly patch reports** lists the PDFs the engine made of organizations'
   months, by hand or on a schedule, with whether each was emailed. Making,
   emailing and deleting one needs `patch.manage` over the organization;
   schedules, under Settings → Patching → Report schedules, need

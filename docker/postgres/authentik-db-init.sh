@@ -1,10 +1,10 @@
 #!/bin/sh
 # Creates Authentik's database and role in EasyRMM's PostgreSQL, or brings
-# them up to date (one-product plan, phase A). The authentik-db-init service
-# runs it before every start of Authentik. Like easypatch-db-init.sh, it also
-# runs on an existing install, where PostgreSQL's init scripts never run
-# again, and running it again changes nothing but the password, which it
-# sets from .env each time.
+# them up to date (ADR-0044). The authentik-db-init service runs it before
+# every start of Authentik. Like easypatch-db-init.sh, it also runs on an
+# existing install, where PostgreSQL's init scripts never run again, and
+# running it again changes nothing but the password, which it sets from .env
+# each time.
 #
 #   authentik  owns the database: Authentik applies its own migrations
 #

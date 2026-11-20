@@ -17,8 +17,8 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 )
 
-// TestPatchingEngineAPI starts EasyRMM with the engine in its deployment (one-
-// product plan, B3 and B5): Settings shows the engine and cannot change it,
+// TestPatchingEngineAPI starts EasyRMM with the engine in its deployment
+// (ADR-0038, ADR-0040): Settings shows the engine and cannot change it,
 // organizations reach the engine as they change, and the engine refusing
 // EasyRMM reaches the console as the engine being unavailable, never as a
 // 401 or 403.
@@ -98,7 +98,7 @@ func TestPatchingEngineAPI(t *testing.T) {
 		http.StatusNotFound, "not_found")
 
 	// Addressed by IP, with EasyRMM's own authority: EasyPatch agents are
-	// given it to trust (B7).
+	// given it to trust (ADR-0042).
 	internal := newHarnessWith(t, false, func(c *config.Config) {
 		bundled(key)(c)
 		c.TLSMode = config.TLSInternal
@@ -126,10 +126,10 @@ func TestPatchingEngineAPI(t *testing.T) {
 }
 
 // TestPatchingAgentsThroughTheEdge: in bundled mode, EasyPatch agents reach
-// the engine on EasyRMM's own address (one-product plan, B4). Their paths go
-// to the engine before EasyRMM's session and CSRF layers, nothing else
-// does, and no statement from outside reaches it. Without the bundle,
-// EasyRMM serves nothing under those paths.
+// the engine on EasyRMM's own address (ADR-0039). Their paths go to the
+// engine before EasyRMM's session and CSRF layers, nothing else does, and no
+// statement from outside reaches it. Without the bundle, EasyRMM serves
+// nothing under those paths.
 func TestPatchingAgentsThroughTheEdge(t *testing.T) {
 	var mu sync.Mutex
 	var got []*http.Request
@@ -201,9 +201,9 @@ func TestPatchingAgentsThroughTheEdge(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// An imported EasyPatch's name (one-product plan, phase S): its agents'
-	// paths reach the engine; a person is sent to EasyRMM's patching pages;
-	// a name EasyRMM does not serve is still refused.
+	// An imported EasyPatch's name (ADR-0045): its agents' paths reach the
+	// engine; a person is sent to EasyRMM's patching pages; a name EasyRMM
+	// does not serve is still refused.
 	imported := newHarnessWith(t, false, func(c *config.Config) {
 		c.Patching = config.Patching{URL: engine.URL, Key: bytes.Repeat([]byte{7}, 32),
 			AgentHostnames: []string{"patch.old.test"}}

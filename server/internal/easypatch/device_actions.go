@@ -15,12 +15,12 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
-// A device's Patches tab beyond scans, installs and restarts (one-product
-// plan, C1): exclusions, the install preview, removing an update, messages
-// to users and agent updates. Each is checked against EasyRMM's permissions
-// on the device first and then sent with a statement naming the caller, the
-// role the call needs and the device's organization only (ADR-0038).
-// Acting needs patch.manage on the device: none of these edit a policy.
+// A device's Patches tab beyond scans, installs and restarts: exclusions, the
+// install preview, removing an update, messages to users and agent updates.
+// Each is checked against EasyRMM's permissions on the device first and then
+// sent with a statement naming the caller, the role the call needs and the
+// device's organization only (ADR-0038). Acting needs patch.manage on the
+// device: none of these edit a policy.
 
 // maxReason is the longest reason EasyPatch keeps.
 const maxReason = 500

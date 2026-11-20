@@ -1,4 +1,4 @@
-// Scripts that patch the system themselves (docs/integrations/easypatch.md). Where EasyPatch patches devices, a
+// Scripts that patch the system themselves (docs/operations/scripts-and-jobs.md). Where EasyPatch patches devices, a
 // script that installs operating-system updates, upgrades every package or turns on automatic updates works around
 // EasyPatch's policies and maintenance windows. The console warns; nothing is refused.
 //

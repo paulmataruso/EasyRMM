@@ -169,8 +169,8 @@ export function OutputView({ title, text, truncated, emptyLabel }: { title: stri
 }
 
 /**
- * Warns that a script installs operating-system updates itself while EasyPatch patches devices
- * (docs/integrations/easypatch.md). Shown only when EasyPatch is set up and the user can see patching. Pass the body,
+ * Warns that a script installs operating-system updates itself while the patching engine patches devices
+ * (docs/operations/scripts-and-jobs.md). Shown only when the engine answers as configured and the user can see patching. Pass the body,
  * or the script's id to read it when a list gave the script without one.
  */
 export function SelfPatchingWarning({ shell, body, scriptId, className }: { shell: Shell; body?: string; scriptId?: string; className?: string }) {
@@ -185,8 +185,8 @@ export function SelfPatchingWarning({ shell, body, scriptId, className }: { shel
   return (
     <Alert tone="warn" title="This script installs system updates itself" className={className}>
       <p>
-        Where EasyPatch patches a device, updates a script installs skip EasyPatch&apos;s policies, maintenance windows and exclusions, and
-        EasyPatch sees them only at its next scan. Install updates from{" "}
+        Where EasyRMM patches a device, updates a script installs skip its patch policy, maintenance windows and exclusions, and the
+        patching engine sees them only at the device&apos;s next scan. Install updates from{" "}
         <Link to="/patching" className="font-medium text-accent hover:underline">
           Patching
         </Link>{" "}

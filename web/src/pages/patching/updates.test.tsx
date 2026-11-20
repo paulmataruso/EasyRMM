@@ -5,7 +5,7 @@ import type { PatchEndpoint, PatchFleet, PatchFleetDevice, PatchFleetUpdate, Pat
 import { baseRoutes, fail, installFakeApi, ok, sessionView, type FakeHandler, type FakeReply } from "../../test/fakeApi";
 import { renderApp } from "../../test/render";
 
-// Patching's overview, its update list and an update's page (one-product plan, C2).
+// Patching's overview, its update list and an update's page.
 
 const T = "2026-11-18T10:00:00Z";
 const main = () => within(screen.getByRole("main"));
@@ -237,7 +237,7 @@ describe("patching overview", () => {
 
     // Four devices report; one is up to date.
     expect(await main().findByText("25%")).toBeInTheDocument();
-    expect(main().getByText(/of 4 devices EasyPatch reports on, besides 1 not patched from EasyRMM/)).toBeInTheDocument();
+    expect(main().getByText(/of 4 devices the patching engine reports on, besides 1 not patched from EasyRMM/)).toBeInTheDocument();
     expect(main().getByRole("img", { name: /Up to date: 1, Updates missing: 1, Updates failed: 1, Not scanned recently: 1/ })).toBeInTheDocument();
 
     const attention = within(main().getByRole("heading", { name: "Needs attention" }).closest("section")!);
@@ -252,7 +252,7 @@ describe("patching overview", () => {
       expect.stringContaining("1device runs an out-of-date EasyPatch agent"),
       expect.stringContaining("1device's EasyPatch agent is offline"),
       expect.stringContaining("1device is not patched from EasyRMM"),
-      expect.stringContaining("1EasyPatch endpoint has no EasyRMM device"),
+      expect.stringContaining("1patching engine endpoint has no EasyRMM device"),
       expect.stringContaining("2patch jobs are queued or running"),
     ]);
     expect(attention.getByRole("link", { name: "Show the updates" })).toHaveAttribute("href", "/patching?tab=updates&exploited=true");
@@ -268,7 +268,7 @@ describe("patching overview", () => {
     expect(orgs.getByRole("meter", { name: "Northwind Traders: devices up to date" })).toHaveAttribute("aria-valuenow", "50");
 
     // Endpoints with no EasyRMM device, and what to do about them.
-    const unmatched = within(main().getByRole("heading", { name: /In EasyPatch, not in EasyRMM \(1\)/ }).closest("section")!);
+    const unmatched = within(main().getByRole("heading", { name: /In the patching engine, with no EasyRMM device \(1\)/ }).closest("section")!);
     expect(unmatched.getByText("FRONTDESK-2")).toBeInTheDocument();
     expect(unmatched.getByRole("link", { name: "Add a device" })).toHaveAttribute("href", "/devices/add");
   });
@@ -639,7 +639,7 @@ describe("update page", () => {
     expect(main().getByText("Breaks the line-of-business app")).toBeInTheDocument();
     expect(main().getByText(/Held by Alex Rivera/)).toBeInTheDocument();
     expect(main().getByText("On hold in every organization")).toBeInTheDocument();
-    expect(main().getByText("EasyPatch held it after it failed on 3 of 4 devices it was tried on.")).toBeInTheDocument();
+    expect(main().getByText("The patching engine held it after it failed on 3 of 4 devices it was tried on.")).toBeInTheDocument();
     // Only the hold this person may release offers it.
     expect(main().getAllByRole("button", { name: "Release hold" })).toHaveLength(1);
     await user.click(main().getByRole("button", { name: "Release hold" }));

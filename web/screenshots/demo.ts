@@ -407,7 +407,7 @@ function endpoint(d: Device, i: number): PatchEndpoint {
     status: "Active",
     operatingSystem: d.osDescription,
     platform: d.platform === "windows" ? "Windows" : "Linux",
-    agentVersion: d.platform === "windows" ? "1.10.0" : "1.10.0",
+    agentVersion: "1.11.1",
     agentOutdated: false,
     isOnline: d.online,
     lastCheckInAt: d.lastSeenAt,
@@ -434,7 +434,7 @@ export const fleet: PatchFleet = {
       status: "Active",
       operatingSystem: "Windows 11 Pro 24H2",
       platform: "Windows",
-      agentVersion: "1.10.0",
+      agentVersion: "1.11.1",
       agentOutdated: false,
       isOnline: true,
       lastCheckInAt: ago(4),
@@ -801,7 +801,7 @@ export const updateDevices: PatchUpdateDevice[] = [
   updateDevice("d-hdg-front1", "Installed", 60 * 27),
 ];
 
-// Policies and tags (one-product plan, C4).
+// Policies and tags.
 
 const noValues: PatchPolicyLayer = {
   checkInIntervalSeconds: null,
@@ -958,7 +958,7 @@ export const defaultPolicyView: PatchPolicyView = {
 };
 
 // ---------------------------------------------------------------------------------------------
-// Patch reports (one-product plan, C5)
+// Patch reports
 
 const COMPLIANCE_LABELS: Record<string, string> = {
   Compliant: "Up to date",
@@ -988,9 +988,9 @@ export const patchComplianceReport: Report = {
     { key: "os", label: "Operating system", type: "text" },
     { key: "osBuild", label: "Build", type: "text" },
     { key: "osSupport", label: "OS support", type: "text" },
-    { key: "online", label: "Online in EasyPatch", type: "bool" },
+    { key: "online", label: "Patching agent online", type: "bool" },
     { key: "lastScan", label: "Last scan", type: "time" },
-    { key: "lastCheckIn", label: "Last EasyPatch check-in", type: "time" },
+    { key: "lastCheckIn", label: "Last patching check-in", type: "time" },
   ],
   rows: fleet.devices.map((d) => {
     const e = d.endpoint!;
@@ -1095,7 +1095,7 @@ export const monthlyReports: PatchMonthlyReportList = {
   canGenerate: organizations.map((o) => o.id),
 };
 
-/** Settings → Patching → Server (one-product plan, C6). */
+/** Settings → Patching → Server. */
 export const patchServerSettings: PatchSettingsView = {
   settings: {
     globalMaxConcurrentInstalls: 50,
@@ -1125,7 +1125,7 @@ export const patchServerSettings: PatchSettingsView = {
     { name: "msrc", lastAttemptAt: ago(610), lastSuccessAt: ago(610), version: "2026-Nov", itemCount: 9213 },
     { name: "debian", lastAttemptAt: ago(615), lastSuccessAt: ago(615), itemCount: 41_877 },
   ],
-  version: "1.10.0",
+  version: "1.11.1",
   canEdit: true,
 };
 
@@ -1142,7 +1142,7 @@ export const patchLifecycle: PatchLifecycleList = {
   canEdit: true,
 };
 
-// Patching → Alerts (one-product plan, C7): what EasyPatch's alert rules raised, the most severe first.
+// Patching → Alerts: what EasyPatch's alert rules raised, the most severe first.
 const patchAlert = (n: number, a: Partial<PatchAlert> & Pick<PatchAlert, "ruleType" | "severity" | "title" | "organizationId">): PatchAlert => ({
   id: `pa000000-0000-4000-8000-${String(n).padStart(12, "0")}`,
   ruleId: `pr-${a.ruleType}`,

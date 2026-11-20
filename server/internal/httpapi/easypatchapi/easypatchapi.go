@@ -60,7 +60,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/patching/agent-install", a.installAgent)
 	r("POST /api/v1/patching/stop", a.stopPatching)
 	r("POST /api/v1/patching/allow", a.allowPatching)
-	// A device's Patches tab (one-product plan, C1).
+	// A device's Patches tab.
 	r("GET /api/v1/patching/devices/{id}/install-preview", a.installPreview)
 	r("POST /api/v1/patching/devices/{id}/exclusions", a.exclude)
 	r("DELETE /api/v1/patching/devices/{id}/exclusions/{update}", a.include)
@@ -68,7 +68,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/patching/messages", a.messagePresets)
 	r("POST /api/v1/patching/notify", a.notify)
 	r("POST /api/v1/patching/agent-update", a.updateAgent)
-	// Patching → Updates (one-product plan, C2).
+	// Patching → Updates.
 	r("GET /api/v1/patching/updates", a.catalog)
 	r("GET /api/v1/patching/updates/{update}", a.update)
 	r("GET /api/v1/patching/updates/{update}/devices", a.updateDevices)

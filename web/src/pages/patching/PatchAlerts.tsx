@@ -25,7 +25,7 @@ const SHOW = [
 ];
 
 /**
- * Patching → Alerts (one-product plan, C7): the alerts EasyPatch raises by its rules, for the devices whose patching the
+ * Patching → Alerts: the alerts EasyPatch raises by its rules, for the devices whose patching the
  * caller sees, and an organization's own alerts for those who see all of it. Open and acknowledged ones by default, the
  * most severe first; acknowledging says someone is on it, and EasyPatch resolves an alert itself once its cause is gone.
  */
@@ -112,7 +112,7 @@ export function PatchAlerts() {
             </EmptyState>
           ) : (
             <EmptyState title="Nothing needs attention" icon={<BellOff className="size-8" aria-hidden />} compact>
-              EasyPatch checks its alert rules every 2 minutes. Alerts it raises for your devices show here until their cause is gone.
+              The patching engine checks its alert rules every 2 minutes. Alerts it raises for your devices show here until their cause is gone.
             </EmptyState>
           )}
         </Card>

@@ -228,7 +228,7 @@ func (i *Installer) install(ctx context.Context, p *agentproto.EasyPatchInstallP
 	}
 	pkg, ok := choose(p.Packages, formats)
 	if !ok {
-		return fmt.Errorf("EasyPatch offered no package this device installs (it installs %s)", strings.Join(formats, " or "))
+		return fmt.Errorf("the patching engine offered no package this device installs (it installs %s)", strings.Join(formats, " or "))
 	}
 	dir := filepath.Join(i.Dir, "easypatch")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -286,17 +286,17 @@ func (i *Installer) fetch(ctx context.Context, p *agentproto.EasyPatchInstallPay
 		err = cerr
 	}
 	if err != nil {
-		return fmt.Errorf("downloading %s from EasyPatch: %w", pkg.FileName, err)
+		return fmt.Errorf("downloading %s from the patching engine: %w", pkg.FileName, err)
 	}
 	st, err := os.Stat(tmp)
 	if err != nil {
 		return err
 	}
 	if st.Size() != pkg.Size {
-		return fmt.Errorf("%s is %d bytes, not the %d EasyPatch listed", pkg.FileName, st.Size(), pkg.Size)
+		return fmt.Errorf("%s is %d bytes, not the %d the patching engine listed", pkg.FileName, st.Size(), pkg.Size)
 	}
 	if sum := hex.EncodeToString(h.Sum(nil)); sum != pkg.SHA256 {
-		return fmt.Errorf("%s does not have the SHA-256 EasyPatch listed", pkg.FileName)
+		return fmt.Errorf("%s does not have the SHA-256 the patching engine listed", pkg.FileName)
 	}
 	return os.Rename(tmp, file)
 }
@@ -319,7 +319,7 @@ func Download(ctx context.Context, url, caPEM string, limit int64, w io.Writer) 
 	defer tr.CloseIdleConnections()
 	c := &http.Client{Transport: tr, CheckRedirect: func(r *http.Request, via []*http.Request) error {
 		if r.URL.Scheme != "https" || len(via) >= 5 {
-			return errors.New("EasyPatch redirected the download somewhere EasyRMM does not follow")
+			return errors.New("the patching engine redirected the download somewhere EasyRMM does not follow")
 		}
 		return nil
 	}}
@@ -333,11 +333,11 @@ func Download(ctx context.Context, url, caPEM string, limit int64, w io.Writer) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("EasyPatch answered %s", resp.Status)
+		return fmt.Errorf("the patching engine answered %s", resp.Status)
 	}
 	n, err := io.Copy(w, io.LimitReader(resp.Body, limit+1))
 	if err == nil && n > limit {
-		err = fmt.Errorf("the package is larger than the %d bytes EasyPatch listed", limit)
+		err = fmt.Errorf("the package is larger than the %d bytes the patching engine listed", limit)
 	}
 	return err
 }
@@ -396,17 +396,17 @@ func enrollError(code int, out []byte, p *agentproto.EasyPatchInstallPayload, st
 	case 2:
 		return errors.New("the EasyPatch agent refused the enrollment's arguments (exit code 2)")
 	case 3:
-		return errors.New("the EasyPatch agent is enrolled with another EasyPatch server; EasyRMM does not move it")
+		return errors.New("the EasyPatch agent is enrolled with another server; EasyRMM does not move it")
 	case 4:
-		return errors.New("EasyPatch rejected the enrollment token (exit code 4); it may have expired. Install again for a new one")
+		return errors.New("the patching engine rejected the enrollment token (exit code 4); it may have expired. Install again for a new one")
 	case 5:
 		return errors.New("the EasyPatch agent's enrollment needs administrator rights, which the EasyRMM agent does not have here (exit code 5)")
 	case 6:
-		msg := "the EasyPatch agent could not reach EasyPatch at " + p.ServerURL + " (exit code 6)"
+		msg := "the EasyPatch agent could not reach the patching engine at " + p.ServerURL + " (exit code 6)"
 		if storeOnly && p.CACert != "" {
-			msg += ". This EasyPatch agent is too old to be given EasyPatch's certificate authority (--server-ca) and trusts only the system's certificate store: add the authority there, or offer a newer EasyPatch agent package; EasyRMM does not change the store"
+			msg += ". This EasyPatch agent is too old to be given the server's certificate authority (--server-ca) and trusts only the system's certificate store: add the authority there, or offer a newer EasyPatch agent package; EasyRMM does not change the store"
 		}
-		return errors.New(msg + ". Its enrollment token is revoked: install again once the device can reach EasyPatch")
+		return errors.New(msg + ". Its enrollment token is revoked: install again once the device can reach the server")
 	case 7:
 		return errors.New("another EasyPatch agent process could not be stopped (exit code 7)")
 	}

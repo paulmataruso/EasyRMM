@@ -18,7 +18,7 @@
     EASYPATCH_SIGN_TIMESTAMP_URL     RFC 3161 timestamp server (default http://timestamp.digicert.com)
     EASYPATCH_SIGNTOOL               full path to signtool.exe (default: found in PATH or the Windows 10/11 SDK)
 
-  Agent self-update (see docs/security.md, "Agent release signing"):
+  Agent self-update (see docs/architecture/patching-engine.md, "Agent release signing"):
     EASYPATCH_RELEASE_PUBLIC_KEY     public key built into the agent (default ~\.easypatch\easypatch-release-key.pub.pem)
     EASYPATCH_RELEASE_KEY            private key that signs the MSI (default ~\.easypatch\easypatch-release-key.pem)
     EASYPATCH_RELEASE_KEY_PASSWORD   password, if the private key is encrypted

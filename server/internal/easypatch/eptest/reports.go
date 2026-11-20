@@ -12,10 +12,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// EasyPatch's reports (one-product plan, C5): the compliance trend, the
-// installations report, monthly reports and their schedules, and the mail
-// settings reports are sent with. The contract test holds these to the
-// real server's rules.
+// EasyPatch's reports: the compliance trend, the installations report,
+// monthly reports and their schedules, and the mail settings reports are sent
+// with. The contract test holds these to the real server's rules.
 
 // TrendDay is one day of an organization's compliance.
 type TrendDay struct {

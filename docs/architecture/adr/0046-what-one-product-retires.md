@@ -2,7 +2,7 @@
 
 * Status: Accepted (2026-11-19). Carried out in phase R, in steps (R1 to R5
   below), each one a commit that passes the whole of CI.
-* Plan: [one product](../one-product-plan.md), phase R.
+* Plan: the one-product plan (in the repository's history), phase R.
 * Supersedes: [ADR-0030](0030-easypatch-connector.md) (the API-token
   connector), [ADR-0035](0035-cohosting-easypatch.md) (EasyPatch on the same
   server) and [ADR-0036](0036-easyrmm-signs-in-to-easypatch.md) (EasyRMM signs

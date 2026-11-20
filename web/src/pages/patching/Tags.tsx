@@ -23,11 +23,11 @@ import {
 } from "../../components/ui";
 import { plural } from "../../lib/format";
 
-// EasyPatch's tags (one-product plan, C4). A tag's policy applies to the devices that have the tag, directly or through
+// EasyPatch's tags. A tag's policy applies to the devices that have the tag, directly or through
 // their site or organization, over their site's policy. Tags are shared by every organization, so only someone who
 // configures patching everywhere (a super administrator) manages or assigns them; the server says who may.
 
-// As EasyPatch's console colours them (its components are upstream of EasyRMM's).
+// A tag's colour, as the patching engine stores it, in the console's own palette.
 const COLOR_CLASSES: Record<TagColor, string> = {
   gray: "bg-neutral-soft text-muted",
   blue: "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300",

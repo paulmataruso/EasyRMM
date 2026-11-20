@@ -1,7 +1,7 @@
 # ADR-0042: EasyPatch agents trust EasyRMM's own authority
 
 * Status: Accepted (2026-11-18)
-* Plan: [one product](../one-product-plan.md), phase B7.
+* Plan: the one-product plan (in the repository's history), phase B7.
 * Refines: [ADR-0031](0031-easypatch-agent-install.md) (EasyRMM installs the
   EasyPatch agent) and [ADR-0039](0039-agents-on-easyrmms-name.md)
   (EasyPatch agents reach the engine on EasyRMM's address).

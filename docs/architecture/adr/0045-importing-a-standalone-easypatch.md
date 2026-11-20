@@ -1,7 +1,7 @@
 # ADR-0045: Importing a standalone EasyPatch
 
 * Status: Accepted (2026-11-19)
-* Plan: [one product](../one-product-plan.md), phase S.
+* Plan: the one-product plan (in the repository's history), phase S.
 * Replaces: [ADR-0035](0035-cohosting-easypatch.md) (EasyPatch
   beside EasyRMM on one server) as the way an existing EasyPatch server
   joins EasyRMM. Builds on [ADR-0040](0040-one-set-of-organizations.md)

@@ -41,11 +41,11 @@ and deleting scripts is audited with the body's SHA-256.
 
 ### Scripts that install updates
 
-Where EasyPatch patches devices ([Patching](patching.md)), updates should
-come from EasyPatch. Updates a script installs skip EasyPatch's policies,
-maintenance windows and exclusions, and EasyPatch sees them only at its next
-scan. Once EasyPatch is set up, people who can see patching get a warning
-naming each line that does one of these:
+Where the patching engine patches devices ([Patching](patching.md)),
+updates should come from it. Updates a script installs skip the patch
+policy, its maintenance window and exclusions, and the engine sees them only
+at the next scan. People who can see patching get a warning naming each
+line that does one of these:
 
 | Shell | Lines that warn |
 |---|---|

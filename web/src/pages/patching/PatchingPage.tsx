@@ -71,10 +71,10 @@ export function PatchingPage() {
     <>
       <PageHeader
         title="Patching"
-        subtitle="Operating system and application updates on the devices EasyPatch patches, read from EasyPatch as you look."
+        subtitle="Operating system and application updates on the devices EasyRMM patches, read from the patching engine as you look."
       />
       {notice && (
-        <Alert tone="info" className="mb-4" title="Opened from EasyPatch">
+        <Alert tone="info" className="mb-4" title="Opened from a patching engine link">
           {notice}
         </Alert>
       )}
@@ -186,7 +186,7 @@ function Fleet({ status }: { status: PatchStatus }) {
       ) : (
         <>
           {fleet.data.errors.map((e) => (
-            <Alert key={e} tone="danger" className="mb-4" title="EasyPatch could not be read">
+            <Alert key={e} tone="danger" className="mb-4" title="The patching engine could not be read">
               {e}
             </Alert>
           ))}
@@ -438,8 +438,8 @@ function FleetTable({ devices, status }: { devices: PatchFleetDevice[]; status: 
       />
       {dialog}
       <p className="mt-2 text-xs text-muted">
-        From EasyPatch, refreshed every minute. Scans and installs start when each device next checks in with EasyPatch; the EasyPatch agent installs at its
-        next check-in with EasyRMM.
+        From the patching engine, refreshed every minute. Scans and installs start when each device next checks in with the patching engine; the EasyPatch
+        agent installs at its next check-in with EasyRMM.
       </p>
     </>
   );

@@ -20,9 +20,9 @@ AutoReqProv:    no
 Requires:       glibc, libgcc, libstdc++, openssl-libs, ca-certificates, systemd
 
 %description
-Reports missing package updates to an EasyPatch server and installs the updates an administrator approves, with dnf.
-Runs as the easypatch-agent systemd service. Enroll with "easypatch-agent enroll" or the install script from the
-EasyPatch console.
+Reports missing package updates to EasyRMM's patching engine and installs the updates an administrator approves,
+with dnf. Runs as the easypatch-agent systemd service. EasyRMM installs and enrolls it; "easypatch-agent enroll"
+enrolls it by hand.
 
 %install
 mkdir -p %{buildroot}/opt/easypatch %{buildroot}/usr/sbin %{buildroot}/usr/lib/systemd/system %{buildroot}/etc/easypatch

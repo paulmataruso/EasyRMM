@@ -22,13 +22,13 @@ describe("links from EasyPatch", () => {
       ...baseRoutes(sessionView()),
       "GET /patching/from-easypatch/:kind/:id": ok({
         path: "/patching",
-        notice: "That EasyPatch endpoint is not linked to an EasyRMM device you can see.",
+        notice: "That patching engine endpoint is not linked to an EasyRMM device you can see.",
       }),
       "GET /patching": ok({ configured: false, canSchedule: false }),
     });
     renderApp("/go/from-easypatch/endpoints/0b6f3c1e-1111-4222-8333-444455556666");
-    expect(await screen.findByText("Opened from EasyPatch")).toBeInTheDocument();
-    expect(screen.getByText("That EasyPatch endpoint is not linked to an EasyRMM device you can see.")).toBeInTheDocument();
+    expect(await screen.findByText("Opened from a patching engine link")).toBeInTheDocument();
+    expect(screen.getByText("That patching engine endpoint is not linked to an EasyRMM device you can see.")).toBeInTheDocument();
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/patching$/);
   });
 
@@ -38,7 +38,7 @@ describe("links from EasyPatch", () => {
       "GET /patching/from-easypatch/:kind/:id": fail(404, "not_found", "The requested item does not exist or you do not have access to it."),
     });
     renderApp("/go/from-easypatch/updates/x");
-    expect(await screen.findByRole("heading", { name: "Link from EasyPatch" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Link from the patching engine" })).toBeInTheDocument();
     expect(await screen.findByText(/does not exist or you do not have access/)).toBeInTheDocument();
   });
 

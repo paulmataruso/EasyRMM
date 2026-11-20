@@ -1,8 +1,15 @@
-# Architecture Decision Records
+# Architecture decision records
 
 Each ADR records one significant decision: its context, the options
-considered, the decision, and its consequences. ADRs are immutable once
-accepted; a later ADR supersedes an earlier one instead of editing it.
+considered, the decision and its consequences. A decision is not rewritten
+once accepted (only links and names are kept current); a later ADR refines,
+amends or supersedes it, and the status column says which. For how the parts fit together today, start with
+the [architecture overview](../overview.md).
+
+## In force
+
+Some of these are refined or partly superseded by later ones; the status
+says by which.
 
 | # | Title | Status |
 |---|---|---|
@@ -15,8 +22,7 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 | [0007](0007-hash-chained-audit-log.md) | Append-only, hash-chained audit log | Accepted |
 | [0008](0008-unified-endpoint-installer.md) | Unified endpoint installer bundling MeshAgent | Accepted; MeshAgent sourcing superseded by 0015 |
 | [0009](0009-agent-protocol.md) | Agent protocol: device keys, WebSocket with HTTPS polling fallback | Accepted; refined by 0017 |
-| [0010](0010-easypatch-integration.md) | EasyPatch integration through a service API | Accepted |
-| [0011](0011-licensing.md) | AGPL-3.0 for EasyRMM | Superseded by 0037 |
+| [0010](0010-easypatch-integration.md) | EasyPatch integration through a service API | Accepted; its separate EasyPatch server replaced by the engine in every deployment (0043, 0046) |
 | [0012](0012-frontend-stack-and-impeccable.md) | React/TypeScript frontend designed with Impeccable | Accepted; styling superseded by 0013 |
 | [0013](0013-easypatch-design-system.md) | The console shares EasyPatch's design system | Accepted |
 | [0014](0014-remote-access-gateway-and-device-discovery.md) | Remote-access gateway rules and device discovery | Accepted |
@@ -40,8 +46,6 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 | [0032](0032-webauthn-passkeys.md) | Security keys and passkeys (WebAuthn) as a second factor beside or instead of the authenticator app, and passkey sign-in with user verification; the relying party is the public URL's host, so IP-only deployments go without | Accepted; refines 0006 |
 | [0033](0033-relays-bound-to-grants.md) | Tunnel requests and the agent's end of a relay bound to the session's grants; device messages beyond the session types dropped; the agent path held to what MeshCentral's agent port serves; downloads need a files grant | Accepted; amends 0014, 0022 |
 | [0034](0034-oidc-single-sign-on.md) | Single sign-on with OpenID Connect: providers set up by super administrators, code flow with PKCE bound to a sealed cookie, identities linked to invited accounts by provider and subject (first time by a verified email in an allowed domain), EasyRMM's second factor unless the provider is declared to enforce MFA | Accepted; refines 0006, 0032 |
-| [0035](0035-cohosting-easypatch.md) | EasyPatch on the same server: EasyRMM's edge keeps 80 and 443, passes EasyPatch's name through by SNI, still encrypted, to its Caddy on loopback with a PROXY protocol v2 header naming the client, forwards its HTTP-01 challenges, and its connector reaches it over loopback | Superseded by 0046 |
-| [0036](0036-easyrmm-signs-in-to-easypatch.md) | EasyRMM is EasyPatch's OpenID provider: one client set up by a super administrator, code flow with PKCE, single-use hashed codes, ES256 ID tokens carrying `amr` and the `easypatch` access claim with `email_verified: false`, a second factor required, one bounce through the console for the SameSite=Strict cookie | Superseded by 0046 |
 | [0037](0037-one-licence.md) | One licence: FSL-1.1-ALv2 for the whole repository, DHI Technical Services LLC as licensor, contributions licensed to it, permissive dependencies only | Accepted; supersedes 0011 |
 | [0038](0038-statements-to-the-patching-engine.md) | EasyRMM calls its patching engine with a statement per request: HS256 with a key from the deployment, naming who acts, the role and organizations that one call may use, and the method and target it is for, valid 30 seconds; the engine builds a stateless principal and still applies its own checks | Accepted; refines 0030 |
 | [0039](0039-agents-on-easyrmms-name.md) | EasyPatch agents on EasyRMM's name: in bundled mode the edge forwards exactly `/api/v1/agents/`, `/downloads/agent/` and `/downloads/winget/` to the engine, first, byte for byte, with the address EasyRMM resolved, without statements or cookies, and sandboxes every answer on EasyRMM's origin | Accepted; refines 0035, 0038 |
@@ -53,3 +57,13 @@ accepted; a later ADR supersedes an earlier one instead of editing it.
 | [0045](0045-importing-a-standalone-easypatch.md) | Importing a standalone EasyPatch (1.4 to 1.10): its backup restored aside, checked and migrated by the engine's `prepare-import` (accounts disabled), swapped in for a deployment's engine that patches nothing yet, its keys added and its agents' names answered; EasyRMM adopts its organizations and sites, joining exact names and naming case collisions `(2)` | Accepted; replaces 0035 for joining EasyRMM; refines 0040 |
 | [0046](0046-what-one-product-retires.md) | What one product retires (phase R): EasyRMM's links to a separate EasyPatch (switch, sign-in across, co-hosting), the API-token connector, EasyPatch's console, proxy, standalone install and release, and its own accounts; each test of living code moves to statements before the path it used is deleted; EasyPatch's account tables stay for imports | Accepted |
 | [0047](0047-tokens-shown-again.md) | Deployment and approval tokens can be shown again: the secret kept sealed with the encryption key and bound to the token, shown only while the token is active to those who manage it, every reveal audited, checked against its hash | Accepted; amends 0015 and 0024 |
+
+## Superseded
+
+Kept as the record of what was decided and why it changed.
+
+| # | Title | Status |
+|---|---|---|
+| [0011](0011-licensing.md) | AGPL-3.0 for EasyRMM | Superseded by 0037 |
+| [0035](0035-cohosting-easypatch.md) | EasyPatch on the same server: EasyRMM's edge keeps 80 and 443, passes EasyPatch's name through by SNI, still encrypted, to its Caddy on loopback with a PROXY protocol v2 header naming the client, forwards its HTTP-01 challenges, and its connector reaches it over loopback | Superseded by 0046 |
+| [0036](0036-easyrmm-signs-in-to-easypatch.md) | EasyRMM is EasyPatch's OpenID provider: one client set up by a super administrator, code flow with PKCE, single-use hashed codes, ES256 ID tokens carrying `amr` and the `easypatch` access claim with `email_verified: false`, a second factor required, one bounce through the console for the SameSite=Strict cookie | Superseded by 0046 |

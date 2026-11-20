@@ -1,4 +1,4 @@
-# Phase 9 security review
+# Security review before the first release
 
 In November 2026, before the first release, EasyRMM's code was reviewed in
 four parts. Each part was read by a reviewer who had not written it, looking
@@ -70,12 +70,12 @@ It found three low findings:
 
 ## What this review did not cover
 
-* **Windows behaviour of the fixes.** The Windows checks (state folder,
-  package-manager programs, cmd arguments) have tests that run on a Windows
-  CI runner, and those workflows have not run yet. The gateway changes were
-  checked with a Linux MeshAgent, not a Windows one.
+* **The gateway changes with a Windows MeshAgent.** They were checked with
+  a Linux one. The Windows fixes (state folder, package-manager programs,
+  cmd arguments) are tested on a Windows CI runner.
 * **MeshCentral and MeshAgent themselves**, beyond the behaviour EasyRMM
   depends on. Report their vulnerabilities to those projects
   ([SECURITY.md](../../SECURITY.md)).
-* **EasyPatch's own server and agent.**
+* **The patching engine and the EasyPatch agent** (`easypatch/`), which
+  were a separate product when the review was done.
 * No outside penetration test has been done.

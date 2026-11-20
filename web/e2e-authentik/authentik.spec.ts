@@ -1,4 +1,4 @@
-// The Authentik test (one-product plan, A; ADR-0044), run by scripts/e2e/authentik.sh against a
+// The Authentik test (ADR-0044), run by scripts/e2e/authentik.sh against a
 // deployment set up with setup.sh --with-authentik and the patching engine:
 //
 //   1. the fresh install has no first-run page, only sign-in with Authentik;

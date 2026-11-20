@@ -394,11 +394,11 @@ func exec(t *testing.T, h *harness, sql string, args ...any) {
 	}
 }
 
-// TestAgentRequestLimits covers what one device may send (Phase 9 security
-// review): a request naming no enrolled device is refused before its body
-// is read, and an enrolled device that sends far more than an agent does
-// is refused with 429, without its body being read either. Requests that
-// name the device but are not signed by it do not use up its allowance.
+// TestAgentRequestLimits covers what one device may send: a request naming no
+// enrolled device is refused before its body is read, and an enrolled device
+// that sends far more than an agent does is refused with 429, without its
+// body being read either. Requests that name the device but are not signed by
+// it do not use up its allowance.
 func TestAgentRequestLimits(t *testing.T) {
 	h := newHarness(t, false)
 	admin, _ := setUp(t, h)

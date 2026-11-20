@@ -1,7 +1,7 @@
 # ADR-0041: Agent packages in the engine's image
 
 * Status: Accepted (2026-11-18)
-* Plan: [one product](../one-product-plan.md), phase B6.
+* Plan: the one-product plan (in the repository's history), phase B6.
 * Refines: [ADR-0031](0031-easypatch-agent-install.md) (EasyRMM installs the
   EasyPatch agent from the packages the engine offers).
 

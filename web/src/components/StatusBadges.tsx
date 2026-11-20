@@ -113,10 +113,10 @@ const ACTIONS: Record<string, string> = {
   "alert.resolve": "Resolved alert",
   "audit_forwarding.update": "Changed audit forwarding",
   "audit_forwarding.test": "Tested audit forwarding",
-  "easypatch.connection_update": "Changed EasyPatch server",
-  "easypatch.connection_delete": "Removed EasyPatch server",
-  "easypatch.organization_link": "Linked organization to EasyPatch",
-  "easypatch.organization_unlink": "Unlinked organization from EasyPatch",
+  "easypatch.connection_update": "Changed the patching engine connection",
+  "easypatch.connection_delete": "Removed the patching engine connection",
+  "easypatch.organization_link": "Linked organization to the patching engine",
+  "easypatch.organization_unlink": "Unlinked organization from the patching engine",
   "easypatch.organization_update": "Changed automatic EasyPatch agent installs",
   "patch.scan": "Scanned for updates",
   "patch.install": "Installed updates",
@@ -144,7 +144,7 @@ const ACTIONS: Record<string, string> = {
   "patch.report_send": "Emailed a monthly patch report",
   "patch.report_delete": "Deleted a monthly patch report",
   "patch.report_schedule": "Changed a patch report schedule",
-  "patch.settings_update": "Changed EasyPatch's server settings",
+  "patch.settings_update": "Changed the patching engine's server settings",
   "patch.lifecycle_create": "Added an OS lifecycle entry",
   "patch.lifecycle_update": "Changed an OS lifecycle entry",
   "patch.lifecycle_delete": "Deleted an OS lifecycle entry",
@@ -183,7 +183,7 @@ export const ACTION_GROUPS: [string, string][] = [
   ["user", "Users"],
   ["audit_forwarding", "Audit forwarding"],
   ["patch", "Patching"],
-  ["easypatch", "EasyPatch settings"],
+  ["easypatch", "Patching engine settings"],
   ["sso", "Single sign-on settings"],
   ["setup", "Setup"],
 ];
@@ -210,8 +210,8 @@ export function auditTarget(e: AuditEntry): string {
   if (e.action.startsWith("easypatch.organization_") && typeof d.organization === "string") {
     return typeof d.easyPatchName === "string" ? `${d.organization} → ${d.easyPatchName}` : d.organization;
   }
-  if (e.targetType === "easypatch") return typeof d.url === "string" ? d.url : "EasyPatch server";
-  if (e.targetType === "easypatch_settings") return "EasyPatch server settings";
+  if (e.targetType === "easypatch") return typeof d.url === "string" ? d.url : "Patching engine";
+  if (e.targetType === "easypatch_settings") return "Patching engine server settings";
   if (e.targetType === "easypatch_notifications") return "Patching notifications";
   if (e.targetType === "easypatch_lifecycle" && typeof d.product === "string") {
     return typeof d.versionLabel === "string" ? `${d.product} ${d.versionLabel}` : d.product;

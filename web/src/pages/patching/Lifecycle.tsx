@@ -7,7 +7,7 @@ import { ConfirmDialog, Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, Card, EmptyState, ErrorState, Field, IconButton, InlineError, Select, SelectField, Spinner, TableWrap, TextareaField, TextField } from "../../components/ui";
 
-// Settings → Patching → OS lifecycle (one-product plan, C6): when each operating system build stops getting security
+// Settings → Patching → OS lifecycle: when each operating system build stops getting security
 // updates. EasyPatch matches a device's product, edition group and build to an entry to say whether its operating system
 // is still supported; super administrators keep the dates.
 

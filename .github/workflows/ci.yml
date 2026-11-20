@@ -73,7 +73,7 @@ jobs:
               *) easyrmm=true; return ;;
             esac
             case $1 in
-              easypatch/agent/* | easypatch/docs/* | easypatch/*.md) ;;
+              easypatch/agent/* | easypatch/*.md) ;;
               *) easypatch_server=true ;;
             esac
             case $1 in
@@ -185,8 +185,8 @@ jobs:
   # EasyRMM with its patching engine, brought up from deploy/docker-compose.yml
   # on host networking and addressed by IP, end to end with a Linux machine:
   # first account, install command, EasyPatch agent, scan and update, then the
-  # engine's refusals (scripts/e2e/bundle.sh; one-product plan, B8). Both
-  # images are built from this commit.
+  # engine's refusals (scripts/e2e/bundle.sh; ADR-0043). Both images are built
+  # from this commit.
   bundle:
     name: Bundle end to end
     needs: changes
@@ -244,7 +244,7 @@ jobs:
   # administrator's invitation, a second factor, an organization and patching,
   # the used invitation, a refused stranger, the second factor again, and
   # easyrmm-server recover with Authentik stopped (scripts/e2e/authentik.sh;
-  # one-product plan, A; ADR-0044). Both images are built from this commit.
+  # ADR-0044). Both images are built from this commit.
   authentik:
     name: Authentik end to end
     needs: changes

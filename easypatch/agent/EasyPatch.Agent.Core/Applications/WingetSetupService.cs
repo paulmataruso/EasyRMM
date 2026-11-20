@@ -26,7 +26,7 @@ public interface IWingetProvisioner
 /// <summary>Somewhere the winget release files can be downloaded from.</summary>
 public interface IWingetFileSource
 {
-    /// <summary>Used in messages: "GitHub", "the EasyPatch server".</summary>
+    /// <summary>Used in messages: "GitHub", "the patching server".</summary>
     string Name { get; }
 
     /// <summary>Writes the file to <paramref name="destination"/>; never more than <see cref="WingetFile.Size"/> bytes.</summary>
@@ -43,7 +43,7 @@ public sealed record WingetRelease(string Version, IReadOnlyList<WingetFile> Fil
 /// <summary>
 /// Makes sure the computer has a machine-wide winget, so application updates work without preparation. When there is
 /// none (or it is older than <see cref="WingetApplicationUpdateService.MinimumVersion"/>), it downloads the pinned
-/// release (<see cref="WingetDistribution"/>) from GitHub, or from the EasyPatch server when GitHub fails, checks the size
+/// release (<see cref="WingetDistribution"/>) from GitHub, or from the patching server when GitHub fails, checks the size
 /// and SHA-256 of every file, and provisions App Installer for all users. Nothing is installed from a file that does
 /// not match. Failed attempts are retried after 30 minutes, 2 hours, 6 hours, then daily; a working winget is checked
 /// again daily.
@@ -71,7 +71,7 @@ public sealed partial class WingetSetupService
     private readonly ILogger _logger;
     private bool _serverPreparing;
 
-    /// <param name="sources">Tried in order for each file (GitHub first, then the EasyPatch server).</param>
+    /// <param name="sources">Tried in order for each file (GitHub first, then the patching server).</param>
     /// <param name="workDirectory">Emptied before and deleted after each attempt.</param>
     /// <param name="busy">True while a job runs; the installation step waits for it (downloads do not).</param>
     /// <param name="freeSpace">Free bytes on the volume of a directory (null when unknown).</param>
@@ -476,7 +476,7 @@ public sealed class HttpWingetFileSource(HttpClient http, string baseUrl, string
 /// <summary>Downloads the release files from the EasyPatch server's copy (used when GitHub cannot be reached).</summary>
 public sealed class ServerWingetFileSource(Func<AgentApiClient?> client, TimeSpan timeout) : IWingetFileSource
 {
-    public string Name => "the EasyPatch server";
+    public string Name => "the patching server";
 
     public Task DownloadAsync(WingetFile file, Stream destination, CancellationToken cancellationToken)
     {

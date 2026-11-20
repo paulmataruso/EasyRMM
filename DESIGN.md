@@ -1,6 +1,6 @@
 ---
 name: EasyRMM
-description: Technician console for EasyRMM, built on EasyPatch's design system adopted as-is.
+description: Technician console for EasyRMM; its design system came from EasyPatch's console and is now EasyRMM's own.
 colors:
   # Dark theme (default, <html class="dark">)
   canvas: "#0b0f17"
@@ -235,16 +235,16 @@ components:
 
 ## Overview
 
-**Creative North Star: "The Sister Console"**
+**Creative North Star: "The Quiet Operator Console"**
 
-EasyRMM uses EasyPatch's design system, adopted as-is. This is the owner's binding instruction, recorded in ADR 0013 (`docs/architecture/adr/0013-easypatch-design-system.md`): a technician moving between the EasyPatch and EasyRMM consoles should not notice a change of product family. The upstream source of truth for every token is EasyPatch's `frontend/src/index.css`; `web/src/index.css` mirrors it value for value (verified by diff), and the primitives in `web/src/components/` follow EasyPatch's component vocabulary (same classes, variants, tones and states). Change a shared token in EasyPatch first, then mirror it here. Never fork a value locally.
+EasyRMM's design system came from EasyPatch's console, adopted as-is (ADR 0013, `docs/architecture/adr/0013-easypatch-design-system.md`). That console is retired: patching lives in EasyRMM's console, and the system is EasyRMM's own. `web/src/index.css` is the single source of truth for every token, and the primitives in `web/src/components/` keep the component vocabulary they came with (classes, variants, tones and states). Change a token there and nowhere else.
 
 The system is calm, dense and flat operator UI. Bordered surfaces on a dark canvas, one blue accent, four status tones with soft fills, a navy sidebar, the system UI font at a 14px base. Nothing decorative; every tile, badge and row is server data.
 
-EasyRMM's additions on top of the shared system are each marked "(EasyRMM addition)" below. The first five serve keyboard travel and toolbar alignment: `kbd` styling, a uniform `.input` min-height so toolbar inputs and selects line up with buttons, a `focus-within` row tint for j/k travel, a `narrow` variant of KeyValueList, and `hideLegend` on AssignmentEditor. Everything else is EasyPatch's.
+What EasyRMM added to the system it started from is marked "(EasyRMM addition)" below. The first five serve keyboard travel and toolbar alignment: `kbd` styling, a uniform `.input` min-height so toolbar inputs and selects line up with buttons, a `focus-within` row tint for j/k travel, a `narrow` variant of KeyValueList, and `hideLegend` on AssignmentEditor.
 
 **Key Characteristics:**
-- EasyPatch's tokens, components and both themes, unchanged; EasyPatch `frontend/src/index.css` is upstream.
+- One set of tokens, components and both themes, defined in `web/src/index.css`.
 - Dark theme by default, class-based (`<html class="dark">`), with a light theme toggle in the header.
 - Flat bordered surfaces; shadows are hairline (`shadow-xs`) at rest and only lift for overlays.
 - System UI stack, 14px base, tabular figures for counts.
@@ -272,19 +272,19 @@ One restrained blue accent over cool slate neutrals, with four semantic status t
 - **Navy Sidebar** (sidebar, sidebar-fg, sidebar-active): the sidebar is dark in both themes; active and hovered items sit on sidebar-active with white text.
 
 ### Chart series (EasyRMM addition)
-- **Series 1 / 2 / 3** (series-1, series-2, series-3): blue, orange and aqua lines in charts, in that order only, each its own step per theme. The three pass a colour-vision-deficiency check against each other on both surfaces (ΔE ≥ 9 for every pair). Light aqua is under 3:1 on white, so every chart keeps a legend and a data table. Series colours mark lines and legend keys, never text, and never status: a value running out wears warn or danger, not a series colour. EasyPatch has no charts, so these tokens have no upstream to mirror.
+- **Series 1 / 2 / 3** (series-1, series-2, series-3): blue, orange and aqua lines in charts, in that order only, each its own step per theme. The three pass a colour-vision-deficiency check against each other on both surfaces (ΔE ≥ 9 for every pair). Light aqua is under 3:1 on white, so every chart keeps a legend and a data table. Series colours mark lines and legend keys, never text, and never status: a value running out wears warn or danger, not a series colour. 
 
 ### Named Rules
 **The Semantic Token Rule.** Components reference semantic tokens only (`surface`, `line`, `muted`, `danger-soft`), so both themes stay consistent. The only literal colors in shipped components are white text on the navy sidebar and on the danger button (with `#1a0606` danger-button text in dark).
 
-**The Upstream Rule.** A token value changes in EasyPatch's `frontend/src/index.css` first and is mirrored here; EasyRMM does not diverge.
+**The Single Source Rule.** A token value changes in `web/src/index.css` and nowhere else; components never carry a literal copy of it.
 
 ## Typography
 
 **Body Font:** system UI stack (ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica Neue, Arial, sans-serif)
 **Mono Font:** ui-monospace, SFMono-Regular, Cascadia Mono, Segoe UI Mono, Menlo, Consolas, monospace
 
-**Character:** The native UI face of the operator's own OS, set small and dense. No web fonts (the strict CSP forbids runtime font loading, and the sister console uses none).
+**Character:** The native UI face of the operator's own OS, set small and dense. No web fonts (the strict content security policy forbids loading fonts at run time).
 
 ### Hierarchy
 - **Headline** (600, 20px): page title (`PageHeader` h1), truncated on one line, with a 14px muted subtitle and an optional 12px breadcrumb above.
@@ -426,7 +426,7 @@ Role assignment rows (role, organization, site) under a "Roles" legend; `hideLeg
 ## Do's and Don'ts
 
 ### Do:
-- **Do** take every token from EasyPatch's `frontend/src/index.css`; mirror changes there first.
+- **Do** take every token from `web/src/index.css`, and change tokens only there.
 - **Do** use semantic token classes (`bg-surface`, `text-muted`, `border-line`, tone `-soft` fills) so both themes hold.
 - **Do** keep dark as the default theme and toggle with the `dark` class on `<html>`.
 - **Do** keep cards in grids top-aligned with their own height (`items-start`).

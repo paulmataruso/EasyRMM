@@ -1,11 +1,11 @@
 package easypatch
 
-// EasyPatch's tags, from EasyRMM (one-product plan, C4). Tags are shared by
-// every organization, and a tag's policy can change any of them, so EasyPatch
-// lets only administrators without organization restrictions manage or
-// assign them; in EasyRMM that is whoever may configure patching everywhere
-// (super administrators). Anyone who sees patching sees the tags in use in
-// their organizations.
+// EasyPatch's tags, from EasyRMM. Tags are shared by every organization, and
+// a tag's policy can change any of them, so EasyPatch lets only
+// administrators without organization restrictions manage or assign them; in
+// EasyRMM that is whoever may configure patching everywhere (super
+// administrators). Anyone who sees patching sees the tags in use in their
+// organizations.
 
 import (
 	"context"

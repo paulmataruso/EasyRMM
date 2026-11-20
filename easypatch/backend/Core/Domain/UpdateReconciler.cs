@@ -13,7 +13,7 @@ public sealed record ReconcileResult(IReadOnlyList<EndpointUpdate> Added, int Ch
 
 /// <summary>
 /// Applies a scan snapshot to an endpoint's update states. Pure logic (no I/O) so it can be unit tested.
-/// Rules (docs/architecture.md, "Update state model"):
+/// Rules (docs/architecture/patching-engine.md, "Update states"):
 /// * Installed list → Installed (the only path to Installed).
 /// * Missing with WUA RebootRequired → PendingReboot.
 /// * Missing and superseded by another reported update → Superseded.
@@ -31,8 +31,8 @@ public static class UpdateReconciler
 
     public const string ReofferedMessage =
         "Windows reported the installation as successful, but Windows Update still offers this update. This is a Windows " +
-        "Update detection problem (often seen with Windows Security platform updates such as KB5007651). EasyPatch does not " +
-        "install it again automatically; select it to install it anyway.";
+        "Update detection problem (often seen with Windows Security platform updates such as KB5007651). It is not " +
+        "installed again automatically; select it to install it anyway.";
 
     public static ReconcileResult Reconcile(
         Guid endpointId,

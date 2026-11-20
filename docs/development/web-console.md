@@ -2,10 +2,10 @@
 
 The console lives in `web/`. It is a React 19 + TypeScript single-page app
 built with Vite and Tailwind CSS 4, using TanStack Query for server state and
-React Router for navigation. Its look is EasyPatch's design system
-([ADR-0013](../architecture/adr/0013-easypatch-design-system.md)), which
-`web/src/index.css` now holds alone: EasyPatch's own console went in
-one-product R3.
+React Router for navigation. Its design system is in [DESIGN.md](../../DESIGN.md),
+and its tokens live in `web/src/index.css`, the single source
+([ADR-0013](../architecture/adr/0013-easypatch-design-system.md) records
+where the system came from).
 
 The production build is embedded in the server binary (`server/internal/webui`)
 and served from the same origin as the API, under a strict
@@ -75,7 +75,7 @@ by the Go integration tests against a real MeshCentral and agent
 
 `npm run build`, then `npm run screenshots`, in `web/`, writes
 `docs/images/*.png`: each page in dark (`name.png`) and light
-(`name-light.png`), 1440 × 900 at 1.5×, like EasyPatch's own.
+(`name-light.png`), 1440 × 900 at 1.5×.
 
 * `playwright.screenshots.config.ts` serves the production build with
   `vite preview`; no server runs.

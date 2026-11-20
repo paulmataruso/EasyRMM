@@ -2,7 +2,7 @@
 // a Super Administrator configures (EasyPatch, audit forwarding) away from
 // addresses no integration lives at: link-local addresses, where cloud
 // providers serve each instance its metadata and credentials, and the
-// providers' other metadata addresses (Phase 9 security review).
+// providers' other metadata addresses.
 //
 // The check runs on the address actually dialed, after name resolution, so
 // a name that resolves to such an address is refused too. Loopback and

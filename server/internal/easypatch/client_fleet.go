@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 )
 
-// The calls behind Patching → Updates (one-product plan, C2): EasyPatch's
-// update catalog across endpoints, one update's page with the endpoints
-// that report it, installing or removing it on many endpoints, and holds.
+// The calls behind Patching → Updates: EasyPatch's update catalog across
+// endpoints, one update's page with the endpoints that report it, installing
+// or removing it on many endpoints, and holds.
 
 // UpdateCategories are EasyPatch's update categories.
 var UpdateCategories = []string{"Security", "Critical", "Cumulative", "Definition", "ServicingStack", "DotNet", "Feature", "Driver", "Other", "Application"}

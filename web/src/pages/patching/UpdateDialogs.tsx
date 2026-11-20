@@ -8,7 +8,7 @@ import { Alert, Button, InlineError, SelectField, TextareaField, TextField } fro
 import { plural } from "../../lib/format";
 import { PATCH_KEYS, useOutcome } from "./PatchDialogs";
 
-// What Patching → Updates → an update does (one-product plan, C2): install it or remove it across devices, and hold
+// What Patching → Updates → an update does: install it or remove it across devices, and hold
 // it. EasyRMM checks patch.manage on each device, and patch.configure for holds; EasyPatch says what became of each
 // device.
 
@@ -64,7 +64,7 @@ export function FleetInstallDialog({ open, onClose, view, scope, deviceIds, miss
         open={open}
         onClose={onClose}
         title={some ? `Install on ${plural(deviceIds.length, "device")}?` : `Install wherever it is missing?`}
-        description="EasyPatch installs it, downloading what it needs. Updates that need a restart finish at the next one, which the device's EasyPatch policy may schedule."
+        description="The patching engine installs it, downloading what it needs. Updates that need a restart finish at the next one, which the device's patch policy may schedule."
         footer={
           <>
             <Button onClick={onClose} disabled={install.isPending}>
@@ -80,8 +80,8 @@ export function FleetInstallDialog({ open, onClose, view, scope, deviceIds, miss
           <p className="font-medium break-words">{view.summary.title}</p>
           {!some && (
             <p className="text-muted">
-              On the {plural(missing, "device")} in this view where it is missing or failed, except where it is excluded. EasyPatch endpoints with no
-              EasyRMM device are left out; devices where you may not install updates are listed afterwards.
+              On the {plural(missing, "device")} in this view where it is missing or failed, except where it is excluded. Patching engine endpoints with
+              no EasyRMM device are left out; devices where you may not install updates are listed afterwards.
             </p>
           )}
           {view.holds.length > 0 && (
@@ -156,7 +156,7 @@ export function FleetRemoveDialog({ open, onClose, view, scope, installed, onDon
           <p className="text-muted">
             On every device in this view where it is installed or waits for a restart. The agent uses Windows Update’s own uninstall where the update
             supports it, and otherwise has DISM remove its package. It never restarts the computer. Windows does not let some updates be removed; those
-            jobs fail and nothing changes. EasyPatch removes updates from Windows only: other devices are listed afterwards.
+            jobs fail and nothing changes. The patching engine removes updates from Windows only: other devices are listed afterwards.
           </p>
           <div>
             <label className="flex items-start gap-2">
@@ -164,7 +164,7 @@ export function FleetRemoveDialog({ open, onClose, view, scope, installed, onDon
               <span>Exclude it on these devices</span>
             </label>
             <p id={blockId} className="mt-1 pl-6 text-xs text-subtle">
-              EasyPatch then does not install it there again. To keep it off devices it is not on yet, hold it.
+              The patching engine then does not install it there again. To keep it off devices it is not on yet, hold it.
             </p>
           </div>
           {block && (
@@ -268,7 +268,7 @@ export function HoldDialog({ open, onClose, view, organizationId }: {
               onChange={(e) => setReason(e.target.value)}
               maxLength={MAX_REASON}
               placeholder="Breaks the line-of-business app; waiting for the vendor"
-              hint="Shown with the hold, in EasyRMM and in EasyPatch."
+              hint="Shown with the hold, wherever it is listed."
               error={fieldError(hold.error, "reason")}
             />
           </>

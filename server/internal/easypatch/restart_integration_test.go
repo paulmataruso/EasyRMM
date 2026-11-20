@@ -128,7 +128,7 @@ func TestRestart(t *testing.T) {
 		t.Fatalf("plan with EasyPatch 1.9.0: %+v, %v", plan, err)
 	}
 	_, err = f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: []uuid.UUID{f.web}})
-	wantField(t, err, "confirmServers", "EasyPatch cannot say which of these are servers; confirm restarting them: web-01.")
+	wantField(t, err, "confirmServers", "The patching engine cannot say which of these are servers; confirm restarting them: web-01.")
 	if res, err := f.svc.Restart(ctx, f.tech, RestartInput{DeviceIDs: []uuid.UUID{f.web}, ConfirmServers: []uuid.UUID{f.web}}); err != nil ||
 		res.Succeeded != 1 {
 		t.Fatalf("confirmed restart with EasyPatch 1.9.0: %+v, %v", res, err)
@@ -136,8 +136,7 @@ func TestRestart(t *testing.T) {
 }
 
 // TestRestartOptions: how a restart asks the people signed in, whether it
-// needs a pending restart, and how long it waits for an offline computer
-// (one-product plan, C3).
+// needs a pending restart, and how long it waits for an offline computer.
 func TestRestartOptions(t *testing.T) {
 	f := newPatching(t)
 	ctx := f.ctx

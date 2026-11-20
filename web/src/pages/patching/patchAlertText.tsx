@@ -3,7 +3,7 @@ import type { PatchAlert, PatchAlertRuleKind, PatchAlertSeverity, PatchNotificat
 import { Badge } from "../../components/ui";
 import { formatRelative } from "../../lib/format";
 
-// EasyPatch's alerts in EasyRMM's words (one-product plan, C7): what each type of rule looks for, its threshold, and the
+// EasyPatch's alerts in EasyRMM's words: what each type of rule looks for, its threshold, and the
 // badges for severity, state and a message's delivery.
 
 export const RULE_KINDS: Record<PatchAlertRuleKind, { label: string; about: string }> = {
@@ -17,7 +17,7 @@ export const RULE_KINDS: Record<PatchAlertRuleKind, { label: string; about: stri
   RestartPending: { label: "Restart pending", about: "The device has waited some days for a restart to finish installing." },
   EnrollmentPending: {
     label: "Enrollment waiting for approval",
-    about: "An organization has EasyPatch agents waiting for approval in EasyPatch. One alert for the organization.",
+    about: "An organization has EasyPatch agents waiting for approval in the patching engine. One alert for the organization.",
   },
   OsUnsupported: {
     label: "Operating system unsupported",
@@ -29,7 +29,7 @@ export const RULE_KINDS: Record<PatchAlertRuleKind, { label: string; about: stri
   },
   UpdateHeld: {
     label: "Update on hold",
-    about: "An update the organization's devices need is on hold, so EasyPatch does not install it. One alert for the organization.",
+    about: "An update the organization's devices need is on hold, so the patching engine does not install it. One alert for the organization.",
   },
 };
 

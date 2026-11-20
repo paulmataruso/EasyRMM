@@ -24,9 +24,8 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 )
 
-// The reconciler (one-product plan B5, ADR-0040): each case on the
-// patching engine as eptest serves it, which the contract test holds to
-// the real engine's rules.
+// The reconciler (ADR-0040): each case on the patching engine as eptest
+// serves it, which the contract test holds to the real engine's rules.
 
 var reconcileKey = bytes.Repeat([]byte{7}, 32)
 
@@ -60,7 +59,7 @@ func (f *fixture) reconcile() ReconcileResult {
 	return res
 }
 
-// later moves the connector's clock on.
+// later moves the service's clock on.
 func (f *fixture) later(d time.Duration) {
 	at := f.svc.now().Add(d)
 	f.svc.now = func() time.Time { return at }
@@ -381,9 +380,9 @@ func TestReconcileMoves(t *testing.T) {
 }
 
 // TestReconcileImportedNames: the agents of an imported EasyPatch report
-// its old address (one-product plan, phase S). They link like the engine's
-// own, and one in another organization than its device's is left alone:
-// removing it to install another would lose its history.
+// its old address (ADR-0045). They link like the engine's own, and one in
+// another organization than its device's is left alone: removing it to
+// install another would lose its history.
 func TestReconcileImportedNames(t *testing.T) {
 	f := newFixture(t)
 	engine := eptest.NewEngine(t, reconcileKey)

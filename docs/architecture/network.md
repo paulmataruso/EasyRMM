@@ -11,6 +11,8 @@ All containers use `network_mode: host`. Defaults below are configurable.
 | 14430/tcp | `127.0.0.1` | MeshCentral | No | MeshCentral HTTP with TLS offloaded to the edge |
 | 18080/tcp | `127.0.0.1` | easyrmm-server | No | Only in `offload` mode, behind an upstream NGINX |
 | 18081/tcp | `127.0.0.1` | easyrmm-server | No | Liveness (`/healthz`) and readiness (`/readyz`) probes used by the container health check |
+| 18180/tcp | `127.0.0.1` | patching engine API | No | The patching engine (ADR-0046). EasyRMM's server sends it statements and the EasyPatch agents' requests |
+| 18181/tcp | `127.0.0.1` | patching engine worker | No | The worker's health check |
 | 18280/tcp, 18243/tcp | `127.0.0.1` | authentik-server | No | Only with `setup.sh --with-authentik`: EasyRMM's edge serves Authentik's name and forwards it to 18280 (ADR-0044). Metrics are off |
 | 18281/tcp | `127.0.0.1` | authentik-worker | No | Only with `--with-authentik`: the worker's health check |
 
@@ -26,7 +28,7 @@ MeshCentral features that would open more ports are disabled: HTTP redirect
 |---|---|
 | `rmm.example.com` | Web UI, API, EasyRMM agent API (`/api/agent/`) and installers |
 | `mesh.rmm.example.com` (configurable) | MeshCentral agents and embedded remote sessions (separate browser origin, ADR-0004) |
-| An imported EasyPatch's names (optional) | `EASYRMM_PATCHING_AGENT_HOSTNAMES`: its agents keep the address they enrolled with. EasyRMM's edge serves them with TLS like its own names, sends the EasyPatch agents' paths to the patching engine, and sends anything else to the console's patching pages |
+| A former EasyPatch server's names (optional, after [an import](../operations/import-easypatch.md)) | `EASYRMM_PATCHING_AGENT_HOSTNAMES`: its agents keep the address they enrolled with. EasyRMM's edge serves them with TLS like its own names, sends the EasyPatch agents' paths to the patching engine, and sends anything else to the console's patching pages |
 | `auth.example.com` (optional) | Authentik, with `setup.sh --with-authentik` (`EASYRMM_AUTHENTIK_HOSTNAME`): EasyRMM's edge serves it with TLS like its own names and forwards it to Authentik on loopback. EasyRMM's own calls to it (discovery, keys, tokens) go to its edge on loopback, so the server need not reach its public address (ADR-0044) |
 
 All resolve to the same address. A wildcard record works too.
@@ -93,7 +95,10 @@ the address.
 ## Firewall
 
 Allow inbound TCP 443 (and 80 if using HTTP-01, and 4443 for IP access).
-Deny everything else inbound. Outbound: 443 to Let's Encrypt (ACME) and to the EasyPatch server if
-integrated; SMTP to your relay if e-mail notifications are enabled; and 443
-to `github.com` (GitHub releases) when MeshCentral first starts, to download
-its agent binaries (about 120 MiB, kept in its data directory afterwards).
+Deny everything else inbound. Outbound: 443 to Let's Encrypt (ACME); 443
+to the patching engine's update and vulnerability feeds and to GitHub
+(winget), listed in
+[Docker deployment](../deployment/docker.md#patching-engine); SMTP to your
+relay if e-mail notifications are enabled; and 443 to `github.com` (GitHub
+releases) when MeshCentral first starts, to download its agent binaries
+(about 120 MiB, kept in its data directory afterwards).

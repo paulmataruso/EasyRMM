@@ -28,8 +28,7 @@ func guidOf(t *testing.T, u map[string]any) uuid.UUID {
 }
 
 // TestDeviceActions: what a device's Patches tab does beyond scans, installs
-// and restarts (one-product plan, C1). web-01 is a Windows endpoint, db-01 a
-// Linux one.
+// and restarts. web-01 is a Windows endpoint, db-01 a Linux one.
 func TestDeviceActions(t *testing.T) {
 	f := newPatching(t)
 	ctx := f.ctx
@@ -123,7 +122,7 @@ func TestDeviceActions(t *testing.T) {
 	wantField(t, err, "reason", "500")
 	res, err := f.svc.RemoveUpdate(ctx, f.admin, f.db, openssl, RemoveInput{Block: true})
 	if err != nil || res.Failed != 1 || res.Results[0].OK ||
-		res.Results[0].Message != "EasyPatch: db-01 is a Linux endpoint. Removing updates is only available on Windows." {
+		res.Results[0].Message != "The patching engine refused: db-01 is a Linux endpoint. Removing updates is only available on Windows." {
 		t.Fatalf("removal on Linux: %+v, %v", res, err)
 	}
 	res, err = f.svc.RemoveUpdate(ctx, f.tech, f.web, openssl, RemoveInput{Block: true, Reason: "breaks printing"})

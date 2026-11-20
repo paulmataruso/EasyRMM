@@ -11,11 +11,11 @@ import { Alert, Badge, Button, Card, EmptyState, ErrorState, IconButton, SelectF
 import { plural } from "../../lib/format";
 import { PatchSeverityBadge, RULE_KIND_ORDER, RULE_KINDS, SEVERITIES, thresholdText } from "./patchAlertText";
 
-// Settings → Patching → Alert rules (one-product plan, C7): what makes EasyPatch raise an alert, for which organizations
+// Settings → Patching → Alert rules: what makes EasyPatch raise an alert, for which organizations
 // and devices, and where it sends it. Server-wide, so only super administrators see and change them.
 
 function covers(r: PatchAlertRule): string {
-  if (r.unlinkedOrganization) return "An EasyPatch organization EasyRMM does not link";
+  if (r.unlinkedOrganization) return "A patching engine organization EasyRMM does not link";
   const where = r.organizationName ?? "Every organization";
   return r.tagName ? `${where}, devices tagged ${r.tagName}` : where;
 }
@@ -49,13 +49,13 @@ export function AlertRulesPanel() {
     >
       <div className="border-b border-line px-4 py-3">
         <p className="max-w-3xl text-sm text-muted">
-          EasyPatch checks these rules every 2 minutes and opens an alert for each device, or organization, that matches; it resolves the
+          The patching engine checks these rules every 2 minutes and opens an alert for each device, or organization, that matches; it resolves the
           alert once the cause is gone. Alerts show under Patching → Alerts, and each rule&apos;s channels send them on.
         </p>
       </div>
       {items.length === 0 ? (
         <EmptyState title="No alert rules" icon={<BellPlus className="size-8" aria-hidden />}>
-          Without rules, EasyPatch raises no alerts.
+          Without rules, the patching engine raises no alerts.
         </EmptyState>
       ) : (
         <TableWrap className="rounded-none border-0">
@@ -155,7 +155,7 @@ export function AlertRulesPanel() {
       >
         {deleting && (
           <p>
-            EasyPatch stops checking {deleting.name}
+            The patching engine stops checking {deleting.name}
             {deleting.unresolvedAlerts > 0 ? ` and resolves its ${plural(deleting.unresolvedAlerts, "open alert")}` : ""}. Turning it off instead keeps it
             for later.
           </p>
@@ -253,7 +253,7 @@ function RuleDialog({ open, rule, list, onClose }: { open: boolean; rule?: Patch
       <form id="alert-rule-form" onSubmit={submit} className="grid gap-3.5 sm:grid-cols-2" noValidate>
         {rule?.unlinkedOrganization && (
           <Alert tone="warn" className="sm:col-span-2">
-            This rule covers an EasyPatch organization EasyRMM does not link. Choose the organization it should cover, or change it in EasyPatch.
+            This rule covers a patching engine organization EasyRMM does not link. Choose the organization it should cover.
           </Alert>
         )}
         <TextField label="Name" value={name} maxLength={100} onChange={(e) => setName(e.target.value)} error={show("name")} required className="sm:col-span-2" />

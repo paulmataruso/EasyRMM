@@ -17,7 +17,7 @@ import (
 )
 
 // TestImport: a standalone EasyPatch's organizations and sites, restored
-// as the engine's, become EasyRMM's (one-product plan, phase S; ADR-0045).
+// as the engine's, become EasyRMM's (ADR-0045).
 func TestImport(t *testing.T) {
 	f := newFixture(t)
 	engine := eptest.NewEngine(t, reconcileKey)

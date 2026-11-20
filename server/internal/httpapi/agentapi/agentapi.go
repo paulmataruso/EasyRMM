@@ -66,12 +66,12 @@ type API struct {
 	polls       map[uuid.UUID]int
 }
 
-// What one device may send (Phase 9 security review). An agent sends a
-// heartbeat a minute, keeps one job poll open, a start and a result for
-// each job, and an inventory when it changes (collected hourly); a device
-// that sends far more is refused with 429 and backs off. Limits are spent
-// only once a request's signature is verified, so requests naming someone
-// else's device cannot use up its allowance.
+// What one device may send. An agent sends a heartbeat a minute, keeps one
+// job poll open, a start and a result for each job, and an inventory when it
+// changes (collected hourly); a device that sends far more is refused with
+// 429 and backs off. Limits are spent only once a request's signature is
+// verified, so requests naming someone else's device cannot use up its
+// allowance.
 const (
 	requestEvery   = time.Second
 	requestBurst   = 120

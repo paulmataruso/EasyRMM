@@ -5,6 +5,19 @@ and the agents share one version number.
 
 ## [Unreleased]
 
+### Changed
+
+- Texts people read no longer call the engine EasyPatch: the alerts for a restart waiting and for an
+  update on hold, the message on an update Windows offers again after installing it, the event when
+  another policy source changes Windows Update settings (now "the EasyPatch agent stopped
+  re-applying them"), and the refusal of a webhook address on the server's own networks. Email
+  without a sender name comes from "EasyRMM".
+- The agent no longer points people at "the EasyPatch console", which is gone: its tray, its
+  `enroll` output and its Linux setup hint say an administrator or the IT team approves it, and
+  install it from EasyRMM. Its tray, messages and Windows service description say "the patching
+  server" instead of "the EasyPatch server", and the DEB and RPM descriptions say EasyRMM installs
+  and enrolls it.
+
 ## [1.11.1] - 2026-11-20
 
 Released with EasyRMM 1.0.0-rc.2. No change to the engine or its agents: a version is published from
@@ -176,7 +189,7 @@ EasyRMM's import script (EasyRMM's `docs/operations/import-easypatch.md`).
   no longer shows it, or when `softwareupdate` says it is completed by a restart (then it is
   shown as waiting for the restart); updates that disappear without a matching
   `softwareupdate --history` entry are not reported installed, and an unreadable listing fails
-  the scan instead of reporting no updates. See [docs/macos-agent.md](docs/macos-agent.md).
+  the scan instead of reporting no updates. See [the EasyPatch agent's macOS section](../docs/deployment/patching-agent.md#macos).
 - Known limitations of the macOS agent: on Apple silicon it cannot install updates that need a
   restart (every macOS update), because Apple allows only a volume owner or MDM to; those fail
   at once with `macos_owner_required`. It gives no on-screen warning before a restart, the
@@ -234,8 +247,7 @@ agents are not sent downloads ahead of the maintenance window.
   read-only or operator, optionally limited to some organizations, expiring after at most 365
   days, revocable, with the time and address of their last use. Sent as
   `Authorization: Bearer ept_…`; only a hash is stored, the secret is shown once, and actions are
-  audited as `token:<name>`. Tokens cannot manage users, API tokens or server settings. See
-  [api.md](docs/api.md#api-tokens).
+  audited as `token:<name>`. Tokens cannot manage users, API tokens or server settings. (API tokens were retired when the engine became part of EasyRMM.)
 
 ### Changed
 

@@ -1,9 +1,10 @@
 # Licensing
 
-EasyRMM, including EasyPatch (its patch management, in `easypatch/`), is
-source-available under one licence: the **Functional Source License, Version
-1.1, ALv2 Future License** ([FSL-1.1-ALv2](LICENSE.md)). Copyright 2026 DHI
-Technical Services LLC, the licensor. The decision is
+EasyRMM, including its patching engine and the EasyPatch agent
+(`easypatch/`), is source-available under one licence: the **Functional
+Source License, Version 1.1, ALv2 Future License**
+([FSL-1.1-ALv2](LICENSE.md)). Copyright 2026 DHI Technical Services LLC,
+the licensor. The decision is
 [ADR-0037](docs/architecture/adr/0037-one-licence.md).
 
 ## What the licence allows
@@ -26,7 +27,7 @@ EasyRMM is source-available, not open source: the Competing Use restriction
 is not allowed by open-source definitions. Its code is public, and each
 version becomes open source (Apache-2.0) two years after its release.
 
-## History
+## Earlier licences
 
 * EasyRMM's code outside `easypatch/` was published in this repository under
   the GNU Affero General Public License v3.0 or later from 2026-11-15 until
@@ -34,8 +35,9 @@ version becomes open source (Apache-2.0) two years after its release.
   available to their holders under that licence. Everything after the change
   is under FSL-1.1-ALv2 only. No EasyRMM release was published under the
   AGPL.
-* EasyPatch has always been under FSL-1.1-ALv2. Its releases up to 1.10.0
-  are in its former repository, <https://github.com/paulmataruso/EasyPatch>.
+* The patching engine and the EasyPatch agent have always been under
+  FSL-1.1-ALv2. EasyPatch's own releases, up to 1.10.0, are in its former
+  repository, <https://github.com/paulmataruso/EasyPatch>.
 
 ## Contributing
 
@@ -49,6 +51,6 @@ Dependencies keep their own licences:
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). CI holds every shipped
 dependency to an allow-list of permissive licences (MIT, Apache-2.0, BSD,
 ISC, MPL-2.0, and the PostgreSQL Licence for Npgsql): Go modules, the
-consoles' npm packages and EasyPatch's NuGet packages. EasyPatch's changelog
-also names each .NET dependency's licence when it is added
+console's npm packages and the engine's NuGet packages. The engine's
+changelog also names each .NET dependency's licence when it is added
 ([easypatch/CHANGELOG.md](easypatch/CHANGELOG.md)).

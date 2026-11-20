@@ -1,7 +1,7 @@
 # ADR-0040: One set of organizations
 
 * Status: Accepted (2026-11-18)
-* Plan: [one product](../one-product-plan.md), phase B5.
+* Plan: the one-product plan (in the repository's history), phase B5.
 * Refines: [ADR-0030](0030-easypatch-connector.md) (links chosen in
   Settings) and [ADR-0031](0031-easypatch-agent-install.md)
   (automatic installs) for the engine inside EasyRMM's deployment.

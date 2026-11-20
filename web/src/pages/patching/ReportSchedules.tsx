@@ -8,7 +8,7 @@ import { useToast } from "../../components/Toast";
 import { Badge, Button, Card, EmptyState, ErrorState, InlineError, SelectField, Spinner, TableWrap, TextareaField } from "../../components/ui";
 import { addresses } from "../reports/PatchReports";
 
-// Settings → Patching → Report schedules (one-product plan, C5): on a day of each month, EasyPatch makes each
+// Settings → Patching → Report schedules: on a day of each month, EasyPatch makes each
 // organization's report of the month before and emails it.
 
 /** "5 December 2026", from 2006-01-02, as the organization's own date. */

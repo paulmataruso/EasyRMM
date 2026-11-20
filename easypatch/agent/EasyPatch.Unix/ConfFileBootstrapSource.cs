@@ -41,7 +41,7 @@ public sealed class ConfFileBootstrapSource : IBootstrapConfigSource
             values.GetValueOrDefault("DeploymentCode"), values.GetValueOrDefault("ProxyUrl"), values.GetValueOrDefault("ServerCaCertificate"));
     }
 
-    public string SetupHint => $"Run 'sudo easypatch-agent enroll' or the install script from the EasyPatch console (settings: {_path}).";
+    public string SetupHint => $"Install it from EasyRMM, or run 'sudo easypatch-agent enroll' (settings: {_path}).";
 
     public string? ReadValue(string key) => ReadValues(_path).GetValueOrDefault(key);
 
