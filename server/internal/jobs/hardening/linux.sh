@@ -89,6 +89,8 @@ SSH_DROPIN=/etc/ssh/sshd_config.d/00-easyrmm-hardening.conf
 FW_DIR=/etc/easyrmm-hardening
 FW_FILE=$FW_DIR/firewall.nft
 FW_UNIT=easyrmm-firewall.service
+FW_UNIT_FILE=/etc/systemd/system/$FW_UNIT
+F2B_FILE=/etc/fail2ban/jail.d/easyrmm-hardening.local
 SYSCTL_FILE=/etc/sysctl.d/60-easyrmm-hardening.conf
 AUDIT_FILE=/etc/audit/rules.d/60-easyrmm-hardening.rules
 SUDO_FILE=/etc/sudoers.d/easyrmm-hardening
@@ -2267,6 +2269,7 @@ TX_STACK=
 TX_SAVED=
 TX_N=0
 TX_HAD=no
+PKG_REFRESHED=no
 PKG_ERR=
 
 now_utc() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
@@ -2411,6 +2414,18 @@ put_copy() {
 	rm -f "$2.easyrmm-new"
 	return 1
 }
+# put_file PATH MODE CONTENT: writes a file of EasyRMM's own, owned by root,
+# whole or not at all.
+put_file() {
+	rm -f "$1.easyrmm-new"
+	if (umask 077 && printf '%s' "$3" >"$1.easyrmm-new") && chown root:root "$1.easyrmm-new" &&
+		chmod "$2" "$1.easyrmm-new" && mv -f "$1.easyrmm-new" "$1"; then
+		relabel "$1"
+		return 0
+	fi
+	rm -f "$1.easyrmm-new"
+	return 1
+}
 # replace_with PATH: puts PATH.easyrmm-new in PATH's place, with PATH's mode
 # and owner.
 replace_with() {
@@ -2438,6 +2453,8 @@ rec_file() {
 	fi
 }
 after_file() { rec_set file "$1" 5 "$(sha "$1")"; }
+# write_own PATH MODE CONTENT: one of EasyRMM's own files, recorded.
+write_own() { rec_file "$1" && put_file "$1" "$2" "$3" && after_file "$1"; }
 # write_edit PATH: PATH.easyrmm-new, made by the caller, replaces a file
 # EasyRMM does not own, recorded.
 write_edit() {
@@ -2446,7 +2463,22 @@ write_edit() {
 	return 1
 }
 
+# make_dir PATH: a directory apply needs, created and recorded if missing.
+make_dir() {
+	[ -d "$1" ] && return 0
+	intent && mkdir -m 0755 "$1" || return 1
+	tx_push "rmdir $1"
+	rec_has dir "$1" || rec_add "dir$tab$1"
+	relabel "$1"
+}
 
+# add_top_line PATH TEXT: TEXT as PATH's first line, recorded so that undo
+# removes that line only.
+add_top_line() {
+	intent && tx_save "$1" || return 1
+	rec_has line "$1" || rec_add "line$tab$1$tab$2"
+	{ printf '%s\n' "$2" && cat "$1"; } >"$1.easyrmm-new" && replace_with "$1"
+}
 
 # narrow_mode PATH MODE: PATH's mode set to MODE, recorded (of the file a
 # symbolic link points to, as chmod does).
@@ -2505,16 +2537,32 @@ after_unit() {
 	au_s=$(unit_states "$1")
 	rec_set unit "$1" 5 "${au_s% *}" && rec_set unit "$1" 6 "${au_s#* }"
 }
+# turn_on UNIT: started now and at boot, recorded.
+turn_on() {
+	rec_unit "$1" || return 1
+	unit_put "$1" enabled active
+	after_unit "$1"
+	unit_active "$1" && unit_enabled "$1"
+}
+daemon_reload() { [ "$SYSTEMD_UP" = no ] || t 120 systemctl daemon-reload >/dev/null 2>&1; }
 
 # Packages. pkg_names lists those installed, one a line, by name and
 # architecture (name:arch on Debian and Ubuntu, name.arch elsewhere), so
 # that a package an installation upgraded is not taken for one it added;
 # an imported signing key, which has no architecture, by its full name.
+# pkg_names rc lists those removed with their configuration files left
+# (Debian and Ubuntu only).
 pkg_names() {
 	case $FAMILY in
-	debian) dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' 2>/dev/null | awk '$1 == "ii" { print $2 }' ;;
-	*) rpm -qa --qf '%{NAME}%|ARCH?{.%{ARCH}}:{-%{VERSION}-%{RELEASE}}|\n' 2>/dev/null ;;
+	debian) dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' 2>/dev/null | awk -v s="${1:-ii}" '$1 == s { print $2 }' ;;
+	*) [ $# -gt 0 ] || rpm -qa --qf '%{NAME}%|ARCH?{.%{ARCH}}:{-%{VERSION}-%{RELEASE}}|\n' 2>/dev/null ;;
 	esac | sort -u
+}
+pkg_installed() {
+	case $FAMILY in
+	debian) [ "$(dpkg-query -W -f='${db:Status-Abbrev}' "$1" 2>/dev/null)" = 'ii ' ] ;;
+	*) rpm -q "$1" >/dev/null 2>&1 ;;
+	esac
 }
 # pkg_why: why the last installation or removal failed, for a reason (""
 # or ": ...").
@@ -2532,6 +2580,50 @@ pkg_failed() {
 		[ -n "$PKG_ERR" ] || PKG_ERR=$(tail -n 1 "$TX_DIR/pkg.log" | cut -c1-160)
 		;;
 	esac
+}
+# pkg_install PACKAGE...: installs them, refreshing the package lists first,
+# and records every package that installation added: NAME=rc for one whose
+# configuration files were left from an earlier removal, which undo keeps.
+pkg_install() {
+	intent || return 1
+	PKG_ERR=
+	pkg_names >"$TX_DIR/before" && pkg_names rc >"$TX_DIR/rc" || return 1
+	rec_add "pending$tab$*"
+	pi_rc=0
+	if [ "$PKG_REFRESHED" = no ]; then
+		case $FAMILY in
+		debian) t 600 apt-get -q -o DPkg::Lock::Timeout=300 update ;;
+		*) t 600 dnf -q -y makecache ;;
+		esac >"$TX_DIR/pkg.log" 2>&1 || pi_rc=1
+		PKG_REFRESHED=yes
+	fi
+	# Without recommended packages: fail2ban's and AIDE's would bring a mail
+	# server, a new service listening. The limit is generous: stopping a
+	# package manager half way leaves packages half configured (aide-common
+	# alone sets up some 150 configuration files).
+	if [ "$pi_rc" -eq 0 ]; then
+		case $FAMILY in
+		debian)
+			t 1500 env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout=300 --no-install-recommends \
+				-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "$@"
+			;;
+		*) t 1500 dnf -q -y --setopt=install_weak_deps=False install "$@" ;;
+		esac >>"$TX_DIR/pkg.log" 2>&1 || pi_rc=$?
+	fi
+	pkg_names >"$TX_DIR/after"
+	pi_new=$(comm -13 "$TX_DIR/before" "$TX_DIR/after" | awk -v rc="$TX_DIR/rc" '
+		BEGIN { while ((getline l < rc) > 0) c[l] = 1 }
+		{ printf "%s%s%s", (NR > 1 ? " " : ""), $0, ($0 in c ? "=rc" : "") }')
+	awk -F "$tab" -v p="pending$tab$*" '$0 == p && !d { d = 1; next } { print }' "$MANIFEST" >"$MANIFEST.new" &&
+		mv -f "$MANIFEST.new" "$MANIFEST"
+	if [ -n "$pi_new" ]; then
+		rec_add "pkg$tab$pi_new"
+		tx_push "pkg_remove_alone $pi_new"
+	fi
+	[ "$pi_rc" -eq 0 ] || {
+		pkg_failed "$pi_rc" 25
+		return 1
+	}
 }
 # pkg_removable PACKAGE...: whether removing them would remove nothing else
 # (simulated: apt-get -s, rpm -e --test). Names without =rc. Returns 1 when
@@ -2812,6 +2904,329 @@ undo_records() {
 # around undo_records: what a module needs reloaded once its files are back.
 # A module without one needs nothing.
 
+# ssh
+
+# ssh_unit: the SSH server's unit: ssh on Debian and Ubuntu, sshd elsewhere.
+ssh_unit() {
+	for su_u in ssh.service sshd.service; do
+		if unit_exists "$su_u"; then
+			printf '%s' "$su_u"
+			return 0
+		fi
+	done
+}
+# ssh_test: sshd -t, with /run/sshd made first where sshd needs it; prints
+# what it found wrong.
+ssh_test() {
+	[ "$FAMILY" != debian ] || [ -e /run/sshd ] || [ ! -d /run ] || mkdir -m 0755 /run/sshd 2>/dev/null
+	st_out=$(t 30 sshd -t 2>&1) && return 0
+	if [ ! -e /run/sshd ] && [ -d /run ] && text_has "$st_out" '/run/sshd'; then
+		mkdir -m 0755 /run/sshd 2>/dev/null && st_out=$(t 30 sshd -t 2>&1) && return 0
+	fi
+	printf '%s' "$st_out" | head -n 2 | tr '\n' ' '
+	return 1
+}
+# ssh_reload: reloads sshd if it runs; with socket activation, or stopped,
+# the configuration applies when it next starts.
+ssh_reload() {
+	sr_u=$(ssh_unit)
+	if [ -n "$sr_u" ] && unit_active "$sr_u"; then
+		t 60 systemctl reload "$sr_u" >/dev/null 2>&1 || return 1
+		did "Reloaded $sr_u"
+	else
+		did 'sshd was not running: the configuration applies when it next starts (with socket activation, at the next connection)'
+	fi
+}
+
+apply_ssh() {
+	as_want=$(printf '%s\n' "$M_TODO" | grep -v '^include$')
+	[ -n "$as_want" ] || return 0
+	# The drop-in's settings: those already in it, then those added now; a
+	# keyword given again keeps its new value.
+	as_old=
+	[ ! -f "$SSH_DROPIN" ] || as_old=$(grep -v '^[[:space:]]*#' "$SSH_DROPIN")
+	as_lines=$(printf '%s\n%s\n' "$as_old" "$as_want" |
+		awk 'NF { k = tolower($1); if (!(k in v)) o[++n] = k; v[k] = $0 } END { for (i = 1; i <= n; i++) print v[o[i]] }')
+	if ! make_dir /etc/ssh/sshd_config.d ||
+		! write_own "$SSH_DROPIN" 0600 "# EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.$nl# sshd keeps the first value it reads; this file sorts before the distribution's own.$nl$as_lines$nl"; then
+		abort "$SSH_DROPIN could not be written"
+		return
+	fi
+	did "Wrote $SSH_DROPIN: $(printf '%s\n' "$as_want" | tr '\n' ';' | sed -e 's/;$//' -e 's/;/; /g')"
+	if text_has "$M_TODO" -x include; then
+		if ! add_top_line /etc/ssh/sshd_config "Include $SSH_DROPIN"; then
+			abort '/etc/ssh/sshd_config could not be changed'
+			return
+		fi
+		did "Added 'Include $SSH_DROPIN' at the top of /etc/ssh/sshd_config"
+	fi
+	if ! as_err=$(ssh_test); then
+		abort "sshd -t found the new configuration invalid: $as_err"
+		return
+	fi
+	if ! ssh_reload; then
+		abort "$(ssh_unit) could not be reloaded" ssh_reload
+	fi
+}
+undo_ssh_after() {
+	have sshd || return 0
+	if ! ua_err=$(ssh_test); then
+		abort "sshd -t found the configuration without EasyRMM's files invalid: $ua_err"
+		return
+	fi
+	ssh_reload || abort "$(ssh_unit) could not be reloaded" ssh_reload
+}
+
+# firewall
+
+# fw_ruleset TCP UDP: the rules file, for the ports (one a line) to let in.
+fw_ruleset() {
+	fr_t=$(printf '%s\n' "$1" | grep . | tr '\n' ',' | sed -e 's/,$//' -e 's/,/, /g')
+	fr_u=$(printf '%s\n' "$2" | grep . | tr '\n' ',' | sed -e 's/,$//' -e 's/,/, /g')
+	printf '# EasyRMM hardening (ADR-0051): the firewall, loaded at boot by %s.\n' "$FW_UNIT"
+	printf '# Written by EasyRMM and removed by its undo. It creates or replaces this table only.\n'
+	printf 'table inet easyrmm\ndelete table inet easyrmm\n'
+	printf 'table inet easyrmm {\n\tchain input {\n\t\ttype filter hook input priority filter; policy accept;\n'
+	printf '\t\tct state established,related accept\n\t\tiifname "lo" accept\n'
+	[ -z "$fr_t" ] || printf '\t\ttcp dport { %s } accept\n' "$fr_t"
+	[ -z "$fr_u" ] || printf '\t\tudp dport { %s } accept\n' "$fr_u"
+	printf '\t\tmeta l4proto tcp ct state new drop\n\t\tmeta l4proto udp drop\n\t}\n}\n'
+}
+fw_unit() {
+	printf '# EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.\n'
+	printf '[Unit]\nDescription=EasyRMM hardening: firewall table inet easyrmm\n'
+	printf 'DefaultDependencies=no\nWants=network-pre.target\nBefore=network-pre.target shutdown.target\nConflicts=shutdown.target\n\n'
+	printf '[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=%s -f %s\n\n' "$(command -v nft)" "$FW_FILE"
+	printf '[Install]\nWantedBy=sysinit.target\n'
+}
+
+apply_firewall() {
+	if [ "$SYSTEMD_UP" = no ]; then
+		refuse 'systemd is not running, so the firewall could not be kept across restarts.'
+		return
+	fi
+	if ! have nft; then
+		if ! pkg_install nftables; then
+			abort "nftables could not be installed$(pkg_why)"
+			return
+		fi
+		did 'Installed nftables'
+	fi
+	# Read again now that nft is here: another firewall may drop already.
+	af_else=$(fw_elsewhere)
+	if text_has "$af_else" '^UNREADABLE$'; then
+		refuse 'nft could not read the rules loaded now, so whether another ruleset drops what it does not allow is unknown.'
+		return
+	fi
+	if [ -n "$af_else" ]; then
+		tx_rollback
+		M_DONE=
+		M_OUTCOME=skipped
+		M_WHY="EasyRMM leaves this computer's firewall alone: $(printf '%s\n' "$af_else" | tr '\n' ';' | sed -e 's/;$//' -e 's/;/; /g')."
+		return
+	fi
+	if have sshd && [ -z "$(sshd_ports)" ]; then
+		refuse 'sshd is installed, but the ports it listens on could not be read.'
+		return
+	fi
+	# The ports the check found, and those the table lets in already: a
+	# later apply never closes a port.
+	af_tcp=$M_TCP
+	af_udp=$M_UDP
+	if [ -f "$FW_FILE" ]; then
+		af_old=$(cat "$FW_FILE")
+		af_tcp=$(printf '%s\n%s\n' "$af_tcp" "$(fw_table_ports "$af_old" tcp)" | grep . | sort -t- -k1,1n -k2,2n -u)
+		af_udp=$(printf '%s\n%s\n' "$af_udp" "$(fw_table_ports "$af_old" udp)" | grep . | sort -t- -k1,1n -k2,2n -u)
+	fi
+	if ! make_dir "$FW_DIR" || ! write_own "$FW_FILE" 0600 "$(fw_ruleset "$af_tcp" "$af_udp")$nl"; then
+		abort "$FW_FILE could not be written"
+		return
+	fi
+	if ! af_err=$(t 30 nft -c -f "$FW_FILE" 2>&1); then
+		abort "nft refused the rules: $(printf '%s' "$af_err" | head -n 2 | tr '\n' ' ')"
+		return
+	fi
+	# Loaded and checked before the unit that loads it at boot is enabled.
+	if af_prev=$(t 30 nft list table inet easyrmm 2>/dev/null); then
+		printf 'table inet easyrmm\ndelete table inet easyrmm\n%s\n' "$af_prev" >"$TX_DIR/table.nft"
+		tx_push "nft -f $TX_DIR/table.nft"
+	else
+		tx_push 'nft delete table inet easyrmm'
+	fi
+	rec_has table inet-easyrmm || rec_add "table${tab}inet-easyrmm$tab?"
+	if ! af_err=$(t 30 nft -f "$FW_FILE" 2>&1); then
+		abort "nft could not load the rules: $(printf '%s' "$af_err" | head -n 2 | tr '\n' ' ')"
+		return
+	fi
+	rec_set table inet-easyrmm 3 "$(fw_table_sha)"
+	af_live=$(t 30 nft -n list table inet easyrmm 2>/dev/null)
+	for af_p in $(sshd_ports); do
+		if ! fw_table_allows "$af_live" tcp "$af_p"; then
+			abort "the loaded table does not let in sshd's port $af_p"
+			return
+		fi
+	done
+	did "Loaded table inet easyrmm: new TCP connections and UDP packets are dropped except to TCP $(printf '%s\n' "$af_tcp" | grep . | tr '\n' ' ')and UDP $(printf '%s\n' "$af_udp" | grep . | tr '\n' ' ' | sed 's/ $//')"
+	tx_push daemon_reload
+	if ! write_own "$FW_UNIT_FILE" 0644 "$(fw_unit)$nl"; then
+		abort "$FW_UNIT_FILE could not be written"
+		return
+	fi
+	daemon_reload
+	if ! turn_on "$FW_UNIT"; then
+		abort "$FW_UNIT could not be enabled and started"
+		return
+	fi
+	did "Enabled $FW_UNIT, which loads $FW_FILE at boot"
+}
+undo_firewall_after() { daemon_reload; }
+
+# fail2ban
+
+# f2b_known DUMP KEY: the sshd jail's KEY in fail2ban-client -d's dump.
+f2b_known() {
+	printf '%s\n' "$1" | sed -n "s/^\\['set', 'sshd', '$2', '\\{0,1\\}\\([^']*\\)'\\{0,1\\}\\]\$/\\1/p" | tail -n 1
+}
+# f2b_ignored DUMP: the addresses and ranges the sshd jail never bans, as
+# words (the dump has one addignoreip command for each, or one for all).
+f2b_ignored() {
+	printf '%s\n' "$1" | sed -n "s/^\\['set', 'sshd', 'addignoreip', //p" | tr -d "[]',"
+}
+# f2b_seconds TIME: fail2ban's time (600, 10m, 1h, 1d, 1w) in seconds, or
+# nothing when it is another form; -1 (banned for ever) stays -1.
+f2b_seconds() {
+	printf '%s\n' "$1" | awk '
+	/^-1$/ { print -1; exit }
+	/^[0-9]+(s|m|h|d|w)?$/ {
+		n = $0 + 0; u = substr($0, length($0))
+		if (u == "m") n *= 60; else if (u == "h") n *= 3600; else if (u == "d") n *= 86400; else if (u == "w") n *= 604800
+		print n }'
+}
+# f2b_actions: the ban action and the one for all ports, for the firewall in
+# use; nftables's needs nft.
+f2b_actions() {
+	if grep -Eqs '^[[:space:]]*ENABLED[[:space:]]*=[[:space:]]*yes' /etc/ufw/ufw.conf; then
+		printf 'ufw ufw'
+	elif unit_active firewalld.service; then
+		printf 'firewallcmd-rich-rules firewallcmd-rich-rules'
+	elif nf_tables_present || ! grep -qsx filter /proc/net/ip_tables_names; then
+		printf 'nftables-multiport nftables-allports'
+	else
+		printf 'iptables-multiport iptables-allports'
+	fi
+}
+
+apply_fail2ban() {
+	af_pk=
+	if ! have fail2ban-client; then
+		if [ "$FAMILY" = rhel ] && ! epel_enabled; then
+			if [ "$OS_ID" = rhel ]; then
+				refuse 'On Red Hat Enterprise Linux itself EPEL is added by hand (it needs the CodeReady Builder repository); EasyRMM adds it on Rocky Linux and AlmaLinux only.'
+				return
+			fi
+			af_pk=epel-release
+		fi
+		case $FAMILY in
+		debian) af_pk="$af_pk fail2ban" ;;
+		*) af_pk="$af_pk fail2ban-server" ;;
+		esac
+	fi
+	af_backend=
+	if [ ! -e /var/log/auth.log ] && [ ! -e /var/log/secure ]; then
+		af_backend=systemd
+		pkg_installed python3-systemd || af_pk="$af_pk python3-systemd"
+	fi
+	# shellcheck disable=SC2046 # two words
+	set -- $(f2b_actions)
+	af_ban=$1
+	af_all=$2
+	case $af_ban in nftables-*) have nft || af_pk="$af_pk nftables" ;; esac
+	# Recorded before an installation, which on Debian starts the service.
+	if ! rec_unit fail2ban.service; then
+		abort 'the record could not be written'
+		return
+	fi
+	if [ -n "$af_pk" ]; then
+		case $af_pk in *epel-release*)
+			if ! pkg_install epel-release; then
+				abort "EPEL could not be added$(pkg_why)"
+				return
+			fi
+			did 'Added the EPEL repository (epel-release); the patching engine now updates its packages too'
+			af_pk=${af_pk#*epel-release}
+			;;
+		esac
+		# shellcheck disable=SC2086 # package names, one word each
+		if ! pkg_install $af_pk; then
+			abort "$(printf '%s' "$af_pk" | sed 's/^ *//') could not be installed$(pkg_why)"
+			return
+		fi
+		did "Installed$af_pk"
+	fi
+	sshd_effective
+	af_ports=$(sshd_ports | tr '\n' ',' | sed 's/,$//')
+	af_head="# EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.${nl}[sshd]${nl}enabled = true${nl}port = ${af_ports:-ssh}$nl"
+	af_tail="banaction = $af_ban${nl}banaction_allports = $af_all$nl"
+	[ -z "$af_backend" ] || af_tail="backend = $af_backend$nl$af_tail"
+	# Those an earlier apply wrote stay never banned: a later apply never
+	# bans more.
+	af_ignore='127.0.0.1/8 ::1'
+	[ ! -f "$F2B_FILE" ] || af_ignore="$af_ignore $(sed -n 's/^ignoreip = //p' "$F2B_FILE")"
+	# The jail on without EasyRMM's values first, to read what the rest of
+	# the configuration gives it.
+	if ! write_own "$F2B_FILE" 0644 "$af_head$af_tail"; then
+		abort "$F2B_FILE could not be written"
+		return
+	fi
+	# Each value as strict as the one configured, or stricter.
+	af_dump=$(t 60 fail2ban-client -d 2>/dev/null)
+	af_max=$(f2b_known "$af_dump" maxretry)
+	case $af_max in '' | *[!0-9]*) af_max=5 ;; *) [ "$af_max" -ge 1 ] && [ "$af_max" -le 5 ] || af_max=5 ;; esac
+	af_find=$(f2b_seconds "$(f2b_known "$af_dump" findtime)")
+	case $af_find in '' | -*) af_find=600 ;; *) [ "$af_find" -ge 600 ] || af_find=600 ;; esac
+	af_time=$(f2b_seconds "$(f2b_known "$af_dump" bantime)")
+	case $af_time in -1) ;; '' | -*) af_time=3600 ;; *) [ "$af_time" -ge 3600 ] || af_time=3600 ;; esac
+	# Never banned: loopback, what the configuration already leaves alone,
+	# the ranges given now and those an earlier apply wrote.
+	af_ignore="$af_ignore $(f2b_ignored "$af_dump")"
+	[ -z "$OPT_TRUSTED" ] || af_ignore="$af_ignore $(printf '%s' "$OPT_TRUSTED" | tr ',' ' ')"
+	# shellcheck disable=SC2086 # addresses and ranges, one word each
+	af_ignore=$(printf '%s\n' $af_ignore | awk '!s[$0]++' | tr '\n' ' ' | sed 's/ $//')
+	af_conf="${af_head}maxretry = $af_max${nl}findtime = $af_find${nl}bantime = $af_time${nl}bantime.increment = true$nl"
+	af_conf="${af_conf}ignoreip = $af_ignore$nl$af_tail"
+	if ! write_own "$F2B_FILE" 0644 "$af_conf"; then
+		abort "$F2B_FILE could not be written"
+		return
+	fi
+	if ! af_err=$(t 120 fail2ban-client -t 2>&1); then
+		abort "fail2ban's configuration test failed: $(printf '%s\n' "$af_err" | grep -i error | head -n 2 | tr '\n' ' ')"
+		return
+	fi
+	did "Wrote $F2B_FILE: jail sshd on port ${af_ports:-ssh}, $af_max failures in $af_find seconds bans for $af_time seconds, longer for repeat offenders; never banned: $af_ignore; banned with $af_ban"
+	unit_put fail2ban.service enabled -
+	if unit_active fail2ban.service; then
+		t 120 systemctl reload fail2ban.service >/dev/null 2>&1 || t 120 systemctl restart fail2ban.service >/dev/null 2>&1
+	else
+		t 120 systemctl start fail2ban.service >/dev/null 2>&1
+	fi
+	after_unit fail2ban.service
+	# The jail, once fail2ban has read its logs.
+	af_n=0
+	until t 20 fail2ban-client status sshd >/dev/null 2>&1; do
+		af_n=$((af_n + 1))
+		if [ "$af_n" -gt 60 ]; then
+			abort 'the sshd jail did not start (journalctl -u fail2ban says why)' 'unit_active fail2ban.service && t 120 systemctl restart fail2ban.service'
+			return
+		fi
+		sleep 2
+	done
+	did 'fail2ban runs and starts at boot; the sshd jail is running'
+}
+undo_fail2ban_after() {
+	! unit_active fail2ban.service || t 120 systemctl reload fail2ban.service >/dev/null 2>&1 || t 120 systemctl restart fail2ban.service >/dev/null 2>&1
+	return 0
+}
+
 # permissions
 
 apply_permissions() {
@@ -2984,9 +3399,12 @@ apply_module() {
 				M_WHY="$TX_DIR could not be written."
 			else
 				case $1 in
+				ssh) apply_ssh ;;
+				firewall) apply_firewall ;;
+				fail2ban) apply_fail2ban ;;
 				permissions) apply_permissions ;;
 				services) apply_services ;;
-				ssh | firewall | fail2ban | kernel | audit | kernel-modules | usb-storage | sudo | time | shared-memory | mac | integrity) refuse 'Apply of this module is not built yet.' ;;
+				kernel | audit | kernel-modules | usb-storage | sudo | time | shared-memory | mac | integrity) refuse 'Apply of this module is not built yet.' ;;
 				esac
 			fi
 		fi
@@ -3041,6 +3459,9 @@ undo_module() {
 	else
 		undo_records
 		case $1 in
+		ssh) undo_ssh_after ;;
+		firewall) undo_firewall_after ;;
+		fail2ban) undo_fail2ban_after ;;
 		services) undo_services_after ;;
 		esac
 		if [ -z "$M_OUTCOME" ]; then

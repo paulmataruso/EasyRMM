@@ -192,7 +192,14 @@ log collection feature will).
   and its rebuilds it is only in EPEL: the module adds EPEL only with the
   option `epel` (adding a repository is the customer's decision, and it
   widens what the patching engine updates); without it the module is *not
-  applicable*. Package lists are refreshed first.
+  applicable*. Package lists are refreshed first. *Amended 2026-11-21:*
+  EPEL is added (`epel-release`) on Rocky Linux and AlmaLinux only. On
+  RHEL itself `epel-release` is not in the distribution's repositories
+  and EPEL also needs the CodeReady Builder repository from the
+  subscription, so apply refuses there and says that EPEL is added by
+  hand. Packages are installed without the packages they only recommend:
+  fail2ban's and AIDE's would bring a mail server, a new service
+  listening.
 * **The jail**: sshd, 5 failures in 10 minutes, banned for an hour, longer
   for repeat offenders; loopback and the ranges the operator lists are
   never banned. The log source is the journal (`backend = systemd`) where
@@ -244,7 +251,15 @@ or Kubernetes installed later.
   Packages it installed are removed only if removing them would remove
   nothing else (simulated first with `apt-get -s` or `dnf --assumeno`), and
   auditd is kept, running, while another EasyRMM rules file (log
-  collection's) is in `/etc/audit/rules.d/`.
+  collection's) is in `/etc/audit/rules.d/`. *Amended 2026-11-21:* on
+  RHEL and Fedora the simulation is `rpm -e --test` and the removal
+  `rpm -e`, because `dnf remove` also removes dependencies it judges
+  unused, which this rule forbids. On Debian and Ubuntu the packages are
+  purged, so that their configuration files go too, except a package
+  whose configuration files were left from an earlier removal, which is
+  only removed. A package an installation upgraded as a dependency stays
+  upgraded: it was there before. A removal the package manager fails
+  leaves the packages, and the result gives its reason.
   A successful undo consumes the record; the next apply takes fresh
   copies, so a later undo never brings back a file older than the
   administrator's last edit. Applying a module twice changes nothing the

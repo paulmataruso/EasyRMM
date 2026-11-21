@@ -379,7 +379,12 @@ func scriptApplyUndo(t *testing.T, c *scriptContainer) {
 				!slices.Contains(m.Done, "/etc/passwd: mode 0666 to 0644") || !slices.Contains(m.Done, "/etc/group: mode 0666 to 0644") {
 				t.Errorf("permissions: %+v", m)
 			}
-		case slices.Contains([]string{"firewall", "integrity", "kernel"}, m.Module):
+		case m.Module == "firewall":
+			// No systemd in the container to load the rules at boot.
+			if m.Outcome != HardeningRefused || !strings.Contains(m.OutcomeReason, "systemd is not running") {
+				t.Errorf("firewall: %+v", m)
+			}
+		case slices.Contains([]string{"integrity", "kernel"}, m.Module):
 			// Their apply is not built yet.
 			if m.Outcome != HardeningRefused || !strings.Contains(m.OutcomeReason, "not built yet") {
 				t.Errorf("%s: %+v", m.Module, m)
