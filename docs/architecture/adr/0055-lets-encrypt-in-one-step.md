@@ -7,7 +7,9 @@
   [ADR-0014](0014-remote-access-gateway-and-device-discovery.md)
   (MeshCentral's name, and how it reads the certificate its agents see),
   [ADR-0016](0016-ip-address-access.md) (IP access and the internal
-  certificate authority), [ADR-0027](0027-agent-updates.md) (signed
+  certificate authority), [ADR-0009](0009-agent-protocol.md) (protocol
+  levels, as amended by pull request #52),
+  [ADR-0027](0027-agent-updates.md) (signed
   instructions in the heartbeat, probation and rollback),
   [ADR-0031](0031-easypatch-agent-install.md) and
   [ADR-0042](0042-agents-trust-easyrmms-authority.md) (EasyPatch agents
@@ -215,14 +217,22 @@ September 2026) is the library this ADR uses. As read in its source:
   only once staging succeeds (`ACMEIssuer.Issue` in `acmeissuer.go`).
 * Renewals by its maintenance loop make one attempt per check, every
   `RenewCheckInterval` (10 minutes by default, `maintain.go`), with a
-  backoff held in memory.
+  backoff held in memory. ARI is refreshed only in that loop and when a
+  name is first managed (`manageOne`).
+* `ObtainCertSync` and `RenewCertSync` make one attempt, without the
+  retry loop; with no attempt count in their context they never use
+  `TestCA`.
 * Every attempt, whoever starts it, first emits `cert_obtaining` to
   `OnEvent`, under the name's storage lock; an error from the handler
   cancels the attempt (`config.go`). Nothing in it knows of a hold.
-* With an empty email it reuses the address of an account in storage,
-  and the interactive calls may prompt on standard input
-  (`ACMEIssuer.setEmail` in `account.go`); `AccountKeyPEM` names the
-  account to use.
+* Those two calls are its only exported one-attempt calls, and both are
+  interactive: they reach `ACMEIssuer.setEmail` with prompts allowed
+  (`PreCheck` in `acmeissuer.go`). With an empty email, `setEmail` takes
+  the address of the most recently written account stored under that
+  CA's account keys (`mostRecentAccountEmail` in `account.go`); when
+  there is none, it prints a prompt, reads standard input, and on end of
+  input silently sets the package-wide `DefaultACME.Agreed` to true.
+  `AccountKeyPEM` names the account to use for the order itself.
 * DNS-01's propagation check asks the resolvers in `resolv.conf` and,
   when it has none, Google's and Cloudflare's public resolvers; it waits
   at most 2 minutes by default (`dnsutil.go`, `solvers.go`).
@@ -280,11 +290,20 @@ CertMagic replaces `autocert` for the names above:
   address: Let's Encrypt sends nothing to it any more, and would only pass
   it to ISRG's mailing list. Expiry is watched by EasyRMM (below).
   `setup.sh` stops requiring `--acme-email` and stops copying
-  `--admin-email` into it; an address already in `.env` is kept. The
-  account EasyRMM registered or imported is always named
-  (`AccountKeyPEM`), with its own address or none, so CertMagic never
-  borrows another account's address, and the server never reads standard
-  input.
+  `--admin-email` into it; an address already in `.env` is kept.
+* **The account is chosen explicitly, and standard input is never
+  read.** The account EasyRMM registered or imported is named for each
+  order (`AccountKeyPEM`), with its own address or none. Since the calls
+  EasyRMM uses are interactive (above), a precondition holds before any
+  of them runs: that account (its registration and key) is saved under
+  CertMagic's account keys for the CA in use (`acme/<CA>/users/<address
+  or "default">/`, in `tls_storage`), and it is the only account stored
+  for that CA, so `mostRecentAccountEmail` finds it and the prompt is
+  never reached. The staging configuration of the trial order keeps its
+  own account the same way. Registration, the import and the start of the
+  certificate service establish it, and the service refuses to make an
+  attempt when it does not hold. A test proves standard input is never
+  read and `DefaultACME.Agreed` never changes.
 * **The Subscriber Agreement** is accepted by the operator: at install by
   choosing `acme` (setup.sh prints the link), in the console by **Agree
   and get certificates** (5b2).
@@ -324,15 +343,24 @@ every attempt and CertMagic carries it out:
 
 * **`tls_certificates` holds, per name**, the next attempt allowed, the
   failed validations in the last hour, the time it started failing, the
-  last error, the certificate's serial, validity and ARI window, and the
-  time of its last swap (for MeshCentral's name, below).
+  last error, the certificate's serial, validity and ARI window, and, for
+  MeshCentral's name, the time of MeshCentral's last read of `certUrl`
+  (below).
 * **The scheduler** runs every minute in one server at a time (an
   advisory lock), takes the names that need a certificate or a renewal
   (CertMagic answers whether one is needed: ARI's window, or a third of
   the lifetime left) and whose next attempt has come, and makes one
-  attempt for each through CertMagic's one-attempt calls. `ManageAsync`'s
-  retry loop is not used, and `TestCA` is set to the CA itself, so that
-  nothing CertMagic retries ever goes to staging.
+  attempt for each: `ObtainCertSync` for a name without a certificate
+  (then `CacheManagedCertificate`, which puts it under the maintenance
+  loop), `RenewCertSync` for a renewal. `ManageAsync`'s retry loop is not
+  used, and `TestCA` is set to the CA itself as a second guard, so that
+  nothing ever goes to staging but the trial order.
+* **CertMagic's maintenance loop keeps running**: it is where ARI is
+  refreshed, and where a certificate another server renewed is loaded.
+  Its own renewal attempts are cancelled by the gate below, and each
+  cancellation is logged and recorded as a failure in its in-memory
+  backoff (`maintain.go`). That is noise in the log, and harmless, since
+  EasyRMM decides when attempts happen.
 * **Every attempt passes one gate**: the `cert_obtaining` handler, under
   the name's storage lock, cancels any attempt the scheduler did not
   start (CertMagic's maintenance loop among them), any attempt whose time
@@ -392,7 +420,7 @@ start of ARI's window, or two thirds of the lifetime) to expiry.
 * **A warning** when a name has had no certificate for an hour (waiting
   for DNS or failing; `.env` names and added names alike), when a renewal
   has failed for a quarter of *W* or 24 hours, whichever comes first, and
-  when an added name fails its reachability check (5b3).
+  when an added name's reachability fails (5b3).
 * **Critical** when less than a quarter of *W* is left (about 7 days of a
   90-day certificate, 4 of a 45-day one), or a renewal fails after the CA
   moved its ARI window earlier, as it does before revoking.
@@ -427,11 +455,21 @@ only through MeshCentral's reads of `certUrl`, so:
   (today `internal` mode answers it with the authority before looking).
   One function chooses a name's certificate, the loopback rule calls it
   with MeshCentral's name, and both change in the same atomic swap.
-* **Swaps of that certificate are at least 5 minutes apart**, whatever
-  causes them: a renewal, a move, the fallback at expiry, **Retry now**,
-  `tls reset`, another server's `NOTIFY`. The edge enforces it: a newer
-  certificate for that name waits until 5 minutes after the last swap,
-  whose time is stored, so a restart does not reset it. The wait never
+* **A swap waits until 3 minutes after MeshCentral's last read.**
+  MeshCentral throttles its reads, not EasyRMM's swaps: a read within
+  2 minutes of the previous one returns at once, and a held agent is
+  released only by a read that finds a changed certificate
+  (`updateProxyCertificates` in `meshcentral.js`, `meshagent.js`). A swap
+  shortly after a read would leave agents that reconnect held until
+  another mismatched agent happens to connect after the throttle ends,
+  which in a small fleet can take hours. So the edge records each of
+  MeshCentral's reads (the loopback handshake without a server name that
+  `fromThisHost` identifies), stores its time in `tls_certificates` so a
+  restart does not forget it, and applies a new certificate for that name
+  only once 3 minutes have passed since the last read, whatever causes
+  the change: a renewal, a move, the fallback at expiry, **Retry now**,
+  `tls reset`, another server's `NOTIFY`. The first agent that sees the
+  new certificate then makes MeshCentral read it at once. The wait never
   serves a certificate past its expiry. The console also refuses a second
   move of that name within 10 minutes.
 * **An IP-only install's MeshAgents** use the IP address, whose
@@ -492,16 +530,26 @@ only when a move asks for it.
   to the agent's trust (the authority's, when the move needs it), and
   each chain to verify (the exact chain a source will serve, leaf
   included, with its purpose: the move's target, or the name's fallback),
-  an ID and a 10-minute validity. The agent refuses one for another
+  an ID and a 10-minute validity. It may also name a host the device's
+  EasyPatch agent uses (the host of its `ServerURL`, which need not be the
+  EasyRMM agent's origin) with chains to verify for that host against the
+  system's roots alone. The agent refuses an instruction for another
   device, an expired one, one with unknown fields or a bad signature.
 * **The agent verifies each chain** for the origin's host name with the
   trust it would have: the system's roots, through the platform's own
   verifier on Windows (so a root update turned off by Group Policy shows)
   and the distribution's bundle on Linux, plus its CA file and the
-  instruction's certificates. It also verifies each chain against the
-  system's roots alone, which is what the computer's EasyPatch agent
-  trusts (the same store on Windows, the same bundle on Linux). It
+  instruction's certificates. It verifies the chains named for the
+  EasyPatch agent's host against the system's roots alone, which is what
+  that agent trusts besides any authority its install carried. It
   reports pass or fail per chain, with the error, in its next heartbeat.
+* **For the EasyPatch agent this is a stand-in, flagged as one on
+  Linux.** On Windows both agents use the system's store. On Linux, Go
+  reads the distribution's bundle file, while .NET reads OpenSSL's
+  certificate directory; they usually hold the same roots but need not.
+  The page marks a Linux device's EasyPatch result as checked by the
+  EasyRMM agent, and the bundle test checks the EasyPatch agent itself
+  after each move.
 * **It widens its trust only when the target chain verifies**: from then
   on it trusts the system's roots and its CA file together for that
   origin, kept in its state (`state.Config`), which later builds read.
@@ -514,15 +562,35 @@ only when a move asks for it.
   restored server serves what its agents trusted at that time.
 * **Checked again whenever it could change**: when a name's served or
   fallback chain changes (a renewal, another intermediate, the authority
-  issuing again), and when a device's build changes (an update or a
-  rollback, which the heartbeat reports), the devices using that name are
-  asked again. The page and each device's page show the results.
+  issuing again), when a device's build changes (an update or a
+  rollback, which the heartbeat reports), and at a device's first
+  heartbeat on a name whose source is not `.env`'s (a new install), the
+  device is asked to verify both the chain served and the fallback's.
+  The page and each device's page show the results; a device that fails
+  the fallback's is shown as **unprotected**: it would be cut off if the
+  name fell back at expiry or by `tls reset`, and the expiry alert lists
+  it.
 * **New installs through a name whose source is not `.env`'s** (a moved
-  name, an added name) trust both the name's current source and its
-  fallback from the start: the system's roots and the authority. That is
-  one private authority, owned by this server, added only where the name
-  will fall back to it.
+  name, an added name) trust the name's current source and its fallback
+  from the start:
+  * fallback to the authority (`internal` mode, added names): the
+    system's roots and the authority, one private authority owned by
+    this server, added only where the name falls back to it;
+  * fallback to the operator's files (`manual` mode): the system's roots
+    and the files' issuing root when the file holds it (a self-signed
+    certificate at the end of its chain). When it does not and the chain
+    does not verify against public roots, such devices show as
+    unprotected, on the page and in the alert, until the operator adds
+    the root to the file or the computers trust it.
 * **Older agents** report nothing, which counts as "not verified".
+* **Protocol** (ADR-0009, as amended by pull request #52, open; 5b1
+  depends on it). The agent reports in its heartbeat that it understands
+  trust instructions, and the server sends `trust` only to an agent that
+  reported it, as ADR-0009 requires of every new instruction. The
+  per-chain results are a request field added after level 2, which the
+  agent sends only to a server of level 2 or higher. Nothing goes in the
+  answer's feature list: the agent behaves the same whichever server it
+  talks to.
 * **A device cut off anyway** (one that failed and was not seen within
   the 30 days, or whose computer's roots changed) is offered
   **Reinstall through a remote session** on its page: a terminal through
@@ -552,9 +620,16 @@ and goes:
    names an account this server does not hold fails with the record to
    add. Afterwards the page offers, as optional hardening, a CAA record
    naming this account and the challenge used.
-2. **The certificate is held, not served**, and every device whose agent
-   uses the name (the origin of its signed requests) gets a trust
-   instruction with the target chain.
+2. **The certificate is held, not served**, and every device that uses
+   the name gets a trust instruction with the target chain: devices whose
+   EasyRMM agent's origin (that of its signed requests) is the name, and
+   devices whose EasyPatch agent's `ServerURL` host is the name (the
+   engine's public URL, `EASYRMM_PUBLIC_URL`: `install.go` in
+   `server/internal/easypatch`, `EasyPatch__PublicUrl` in the compose
+   file; or an imported EasyPatch's names). A name whose patching agents
+   EasyRMM cannot ask is refused: an imported EasyPatch's name while the
+   engine lists agents on it, seen in the last 30 days, that are not
+   linked to a device with an EasyRMM agent (`links.go`, ADR-0045).
 3. **The move waits** until every device seen in the last 30 days has
    verified it, for EasyRMM's agent and, when the device has one, for
    its EasyPatch agent (below). The page lists, per device, passed,
@@ -563,7 +638,8 @@ and goes:
    30 days do not block; they are listed. The operator can cancel.
 4. **Then the edge swaps the name's source atomically**, with no restart:
    connections already open keep going, new handshakes get the new
-   certificate (for MeshCentral's name, with the 5-minute spacing above).
+   certificate (for MeshCentral's name, once 3 minutes have passed since
+   MeshCentral's last read, above).
 
 **Moving back** is the same, with the fallback source's chain as the
 target. For the operator's own files signed by a private CA, agents
@@ -572,10 +648,11 @@ the move back is refused until they are reinstalled with it; for the
 authority, the instruction adds the authority's certificate.
 
 **EasyPatch agents** trust the system's store plus any authority they
-were given. The EasyRMM agent's verification against the system's roots
-stands for them (above), and the bundle test checks the EasyPatch agent
-itself. ADR-0042 is widened: install instructions carry the internal
-authority whenever the deployment has one, not only in `internal` mode,
+were given. The EasyRMM agent on the same computer verifies for them
+against the system's roots alone (above, with Linux flagged), and the
+bundle test checks the EasyPatch agent itself. ADR-0042 is widened:
+install instructions carry the internal authority whenever the
+deployment has one, not only in `internal` mode,
 and EasyRMM records per device whether the instruction it sent carried
 it. A move to the authority is refused while a device seen in the last 30
 days has an EasyPatch agent whose instruction did not carry it (devices
@@ -626,13 +703,19 @@ The case the feature is built around, and the owner's "one step".
   or TLS-ALPN-01, or, for DNS-01, once a token served here was fetched
   through the name, by the server through the host's resolver or, on
   split-horizon networks, by the operator's browser from the page.
-* **Reachability is checked every day**, the same fetch again. Every
-  console page loaded through the name by a signed-in person counts as a
-  browser confirmation, and the page shows how old the last one is. When
-  the server's fetch fails, or the only confirmation is a browser's older
-  than 30 days, the name is dropped at once from install commands and
-  email links, a warning opens, and after 7 more days without success the
-  name stops being trusted.
+* **Reachability is checked every day**, the same fetch again, and
+  every console page loaded through the name by a signed-in person counts
+  as a browser confirmation; the page shows the age of each. A recent
+  browser confirmation counts as success: on networks where the server
+  cannot reach its own public address (no hairpin NAT, split horizon),
+  the server's fetch always fails, and browsers are the only proof.
+  * The name is **reachable** while the server's fetch or a browser
+    confirmation succeeded within the last 7 days, the grace period.
+  * When the day's fetch fails and no browser confirmed it that day, a
+    warning opens, naming both.
+  * Only when both have failed for the whole grace period is the name
+    dropped from install commands and email links, and it stops being
+    trusted.
 * **Once trusted**, each component is told as follows:
 
 | Component | What changes | How it is told |
@@ -641,8 +724,8 @@ The case the feature is built around, and the owner's "one step".
 | CSRF origin check (`httpapi.NewSessions`) and the CSP's `frame-src` | The pair is accepted | Read from the current origins |
 | MeshCentral's `allowedFramingOrigins` and `allowedOrigin` (`MeshServerConfig`) | The console name is added to the first, the remote-access name to the second | `config.json` rewritten once; MeshCentral restarts, ending open remote sessions |
 | Remote sessions | Launched from the name, they open on its remote-access name, whose `control.ashx` MeshCentral now accepts | As for every origin (ADR-0016), with `allowedOrigin` above |
-| Install commands (`agentapi.New`, `enrollapi`) | The name's command comes first, for new devices, while its last reachability check passed | Rendered again |
-| Links in email (`auth.Config.PublicURL`) | The name while it is trusted and its last reachability check passed; otherwise `EASYRMM_PUBLIC_URL` | Chosen when each email is sent |
+| Install commands (`agentapi.New`, `enrollapi`) | The name's command comes first, for new devices, while the name is reachable (above) | Rendered again |
+| Links in email (`auth.Config.PublicURL`) | The name while it is trusted and reachable; otherwise `EASYRMM_PUBLIC_URL` | Chosen when each email is sent |
 | Authenticator issuer (`auth.Config.Issuer`) | `EasyRMM (<name>)` for new enrolments; existing entries keep their label and keep working | Read when enrolling |
 | WebAuthn's relying party (`configureWebAuthn`) | The name: security keys and passkeys become available there. An IP install has none registered, so none is lost | Reconfigured |
 | The IP console | Links browsers to the name, as it links to the public URL for security keys today | Read from the current origins |
@@ -659,9 +742,9 @@ The case the feature is built around, and the owner's "one step".
 * **When a name stops being trusted** (its certificate expires with
   renewal failing, reachability's grace ends, **Remove name**, `tls
   reset`), the console, links, framing and allowed origins (a
-  MeshCentral restart again) and WebAuthn go back to the IP address, but the name keeps
-  routing the agent API, served with the authority's second certificate,
-  so that agents enrolled through it keep working.
+  MeshCentral restart again) and WebAuthn go back to the IP address,
+  but the name keeps routing the agent API, served with the authority's
+  second certificate, so that agents enrolled through it keep working.
 * **Remove name** is refused while a device seen in the last 30 days
   uses the name. Before it, and in the warnings of expiry and
   reachability, the page lists the people whose only second factor is a
@@ -694,9 +777,14 @@ networks, a VPN):
   `Resolvers` so, never falling back to public resolvers, and waits up to
   5 minutes, which the page shows while it waits.
 * **The RFC 2136 server's address** is typed by a super administrator,
-  so the plan's rule for the platform's own destinations applies, checked
-  on the address dialled: private addresses and loopback are allowed,
-  cloud metadata never.
+  so the plan's rule for the platform's own destinations applies:
+  private addresses and loopback are allowed, cloud metadata never.
+  `libdns/rfc2136` dials the server it is given itself, with no hook for
+  checking the address dialled, so EasyRMM resolves a name once, checks
+  the address, and hands the library that address, pinned, on port 53
+  only. Errors from saving and testing are fixed reasons (refused, timed
+  out, not authorized, zone not found), never the library's text, so the
+  test cannot be used to probe ports or hosts.
 * **Credentials** are sealed with `EASYRMM_SECRET_KEY`, bound to their
   row, tested when saved (a TXT record created and removed), never shown
   again, and replaced or removed; the audit log names the provider and
@@ -737,9 +825,19 @@ it. 5b2 builds it.
   (ADR-0034), which may have no factor of its own and no password (an
   administrator Authentik created): a fresh sign-in at the provider,
   requested with `prompt=login` and `max_age=0`, whose ID token's
-  `auth_time` must be later than the start of the step-up. An account
-  signed in through a provider not so trusted has a factor of its own,
-  as sign-in requires, and uses it.
+  `auth_time` must be later than the start of the step-up. The sign-in
+  is bound to the account and to this step-up, so that a stolen session
+  and the attacker's own account at the same provider do not pass:
+  * the ID token's issuer and subject (`iss` and `sub`) must be the
+    provider identity linked to the session's user;
+  * its `state` and `nonce` are created for this step-up and this
+    session, and accepted once;
+  * the provider must still be marked as trusted to enforce MFA when the
+    token arrives;
+  * any mismatch is a failed step-up, audited and counted as below.
+
+  An account signed in through a provider not so trusted has a factor of
+  its own, as sign-in requires, and uses it.
 * **Audited**: each step-up and each failed one (`auth.step_up`, with
   the method). Failures count against the session as a wrong password
   does in `reauthenticate`, which ends it after `MaxMFAFailures`.
@@ -769,8 +867,8 @@ to the source `.env` gives it, cancels pending moves and stops trusting
 names added in the console, keeping stored certificates and the account;
 names that devices seen in the last 30 days use keep their agent route
 (5b3). Then `docker compose restart server` (an unchanged container is
-not recreated by `up -d`). The spacing of MeshCentral's certificate
-swaps holds across the restart, since the last swap's time is stored. It
+not recreated by `up -d`). The wait after MeshCentral's last read holds
+across the restart, since that read's time is stored. It
 is for the case where a choice made in the console locks the operator out
 of it, and comes with 5b2, which makes the first such choice; the guide
 describes it. TLS never stops the server from starting.
@@ -790,7 +888,8 @@ describes it. TLS never stops the server from starting.
   install upgraded to it serves the same certificates.
 * **5b1. Agent trust**, released first: the trust instruction, the
   agent's verification and widening, `device_tls_trust`, the re-checks,
-  and **Reinstall through a remote session**. It changes no name.
+  and **Reinstall through a remote session**. It changes no name. It
+  needs ADR-0009's protocol levels (pull request #52).
 * **5b2. Sources and moves**: per-name sources, challenges in `internal`
   and `manual` modes, account registration and the staging trial, the
   move and its waiting on devices, moving back, ADR-0042's widening and
@@ -840,34 +939,48 @@ BIND run in containers on **host networking only**, never on a bridge:
   is generated again at each start, so one Pebble runs for a whole job.
 * **BIND** listens on `127.0.0.1:53` (systemd-resolved's stub is on
   `127.0.0.53`) and is authoritative for the test zone, `example.com`,
-  with a view per source so that the host and the test machines each get
-  the address at which they reach the edge.
+  with one answer for every name: the runner's own primary address,
+  at which the edge listens and which the checks accept as this server's
+  own. Views per source cannot work here: every container runs on the
+  host's network (`--network host` in `scripts/e2e/bundle.sh`, the Linux
+  machine included) and asks through the stub, so BIND sees every query
+  come from `127.0.0.1`.
 * **The host's resolver** sends the test zone to BIND: a dummy link with
   `resolvectl dns` set to `127.0.0.1` and `resolvectl domain` set to
-  `~example.com`. The server's container reads the host's resolver
-  (host networking) and the machines reach it through their network's
-  forwarder. The job's first assertion is that the server's container
-  resolves `rmm.example.com` to BIND's answer, so that a resolver that
-  bypassed the stub fails at once instead of reaching the real
-  `example.com`.
+  `~example.com`; Pebble asks BIND directly. The job's first assertions
+  are that the server's container and the Linux machine resolve
+  `rmm.example.com` to BIND's answer, so that a resolver that bypassed
+  the stub fails at once instead of reaching the real `example.com`.
 
 The tests:
 
 * **Unit**: the seal's binding and the re-seal at start; certificate
   choice per source in each of the four modes, the loopback rule
-  included; MeshCentral's 5-minute spacing (any cause, across a
-  restart, never past expiry); thresholds computed from the lifetime;
+  included; MeshCentral's read rule (a read at T makes a swap at T + 1
+  minute wait until T + 3 minutes, whatever its cause, across a restart,
+  never past expiry); thresholds computed from the lifetime;
   the scheduler, the gate (an attempt not due, during a hold, over the
   budget, not started by the scheduler) and **Retry now**'s refusal; an
-  issuer with no email, another account's address in storage and
-  standard input closed uses the named account and never prompts; CAA
+  order and a renewal with no email, with standard input a pipe the test
+  holds open, use the named account, read nothing from the pipe and
+  leave `DefaultACME.Agreed` unchanged, and with no account stored for
+  the CA the attempt is refused before CertMagic is called; the step-up
+  through a provider refused for another subject, a reused `state` or
+  `nonce`, an old `auth_time`, or a provider no longer trusted for MFA;
+  RFC 2136's address pinned and its errors fixed; CAA
   tree walking with `accounturi` and `validationmethods`; the checks'
   address policy, redirects refused; the trust rules that keep a move
-  waiting; the step-up cases.
+  waiting (devices chosen by their agent's origin and by their EasyPatch
+  agent's `ServerURL` host; an imported name with unlinked patching
+  agents refused; a `manual` fallback without its root showing devices
+  unprotected); the step-up cases.
 * **Agent**: a trust instruction forged, for another device, expired or
   with unknown fields is refused; a chain that does not verify leaves the
   trust unchanged; one that verifies widens it, and the widening survives
-  an update and a probation rollback.
+  an update and a probation rollback; chains named for the EasyPatch
+  agent's host are checked against the system's roots alone; the
+  capability is reported, and the results are sent only to a server of
+  level 2 or higher.
 * **PostgreSQL integration**: the storage against CertMagic's contract;
   two servers on one database order once and both serve the result,
   including after one missed the `NOTIFY` (groundwork); a lock is lost
@@ -888,9 +1001,9 @@ The tests:
   * **Renewal with a short-lived certificate**: 600-second certificates,
     with CertMagic's `RenewCheckInterval` and the scheduler's interval
     set to 10 seconds by test-only settings. A new serial is served for
-    every name; MeshCentral logs that it loaded the new certificate, its
-    swaps at least 5 minutes apart; MeshAgent reconnects and a session
-    opens again.
+    every name; MeshCentral logs that it loaded the new certificate, each
+    swap of its name at least 3 minutes after its last read (the edge's
+    log); MeshAgent reconnects and a session opens again.
   * **The failure alert**: validation of the console's name made to fail
     (BIND answers another address). The warning opens a quarter of the
     renewal window after the first failure, with "failing" as its reason;
@@ -908,9 +1021,12 @@ The tests:
     release: a move to Let's Encrypt waits ("not reported") until that
     agent is updated, then completes; MeshCentral's name moved from the
     authority to Let's Encrypt and back, with a remote session opened
-    after each move; the EasyPatch agent keeps working after each; a move
-    back refused for an EasyPatch agent installed without the authority
-    goes through after **Reinstall patching agents**; `tls reset`.
+    after each move; a move of the console's name waits on the device's
+    check for its EasyPatch agent's host, and the EasyPatch agent keeps
+    working after each move; a move back refused for an EasyPatch agent
+    installed without the authority goes through after **Reinstall
+    patching agents**; an agent installed after a move reports the
+    fallback's chain at its first heartbeat; `tls reset`.
   * 5b3: the IP install at `https://127.0.0.1` adds a name; the agent on
     the IP address keeps working and the IP's certificate is unchanged; a
     remote session opens from the name, on its remote-access name; a
@@ -950,14 +1066,20 @@ The tests:
   the ACME directory leaves the backup guide.
 * An agent's trust widens only on its own device, only for a move, and
   only after it verified the chain itself. New installs through a moved
-  or added name trust the system's roots and the authority.
+  or added name trust the system's roots and the name's fallback (the
+  authority, or the files' root when the file holds it); a device that
+  cannot verify the fallback is shown as unprotected.
+* A move waits on every device that uses the name, through either of its
+  agents; a name whose patching agents EasyRMM cannot ask is not moved.
+* An added name stays trusted while the server or a browser reaches it;
+  on networks without hairpin NAT, browsers are the proof.
 * EasyPatch install instructions carry the authority whenever there is
   one, amending ADR-0042's condition.
 * MeshCentral is told every origin it serves (`allowedOrigin`), which
   appears to fix sessions from IP-access origins of a DNS install today.
 * MeshCentral restarts when an added name is trusted or stops being
   trusted, ending open remote sessions; certificate changes alone never
-  restart it, and they are at least 5 minutes apart.
+  restart it, and they wait until MeshCentral can read them at once.
 * A move can wait on devices that have not reported; the page shows
   which, and the operator can update, reinstall or cancel.
 * Single sign-on and the engine's address stay on an IP install's address

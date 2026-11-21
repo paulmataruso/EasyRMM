@@ -399,16 +399,17 @@ but the primary one need.
   `easyrmm-server tls check`. Settings → **Certificates** shows each name;
   alerts as fractions of each certificate's lifetime, and after an hour
   without a certificate, on every console origin and through F2's sender
-  behind one interface. MeshCentral's certificate changes at most once
-  every 5 minutes, and its loopback read gets what agents get.
+  behind one interface. MeshCentral's certificate changes only 3 minutes
+  after MeshCentral last read it, and that read gets what agents get.
 * **5b1. Agent trust**, released first: a trust instruction signed with
   the job key carries the chain a source will serve; the agent verifies
   it on the device and widens its trust (system roots and its CA file)
-  only for a move, only on that device, only if it verified.
+  only for a move, only on that device, only if it verified. Needs
+  ADR-0009's protocol levels (pull request #52).
 * **5b2. Sources and moves.** A DNS name served by the authority or the
   operator's files moves to Let's Encrypt and back without a restart,
-  once every device seen in 30 days verified the chain (EasyRMM's agent,
-  and the EasyPatch agent through the system's roots). Account
+  once every device seen in 30 days that uses the name, through its
+  EasyRMM agent or its EasyPatch agent, verified the chain. Account
   registration, CAA `accounturi`, a trial order against staging, then
   **Agree and get certificates**. ADR-0042's instructions carry the
   authority whenever there is one. Step-up authentication, defined there
