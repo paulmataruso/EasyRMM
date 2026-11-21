@@ -53,7 +53,17 @@ read-only with every capability dropped and `no-new-privileges`:
   a busy machine, and the worker was marked unhealthy before it was ready.
 * `authentik-setup` runs once after each start, when the worker is healthy
   (`docker/authentik/setup.py`, through `ak shell`). It waits for EasyRMM's
-  blueprint, then sets what blueprints cannot: people may not change their
+  blueprint, then compares what the blueprint makes of `.env` as it is now
+  (the provider's redirect URI and client secret, the enrollment flow's
+  redirect and the application's launch URL) with what Authentik holds. If
+  they differ, it applies the blueprint again and fails unless they then
+  match; if not, it applies nothing. It also fails if the blueprint reads
+  anything else from outside its file (`!Env`, `!File`), which the
+  comparison would miss (amended 2026-11-21: the worker applies a blueprint
+  only when its file changes, so a changed `EASYRMM_PUBLIC_URL` never
+  reached Authentik; applying at every start would hold up sign-ins for a
+  minute or more at each `docker compose up -d`). It
+  then sets what blueprints cannot: people may not change their
   email address or username, and avatars are initials, so no browser asks
   Gravatar about anyone. Then it creates the pending invitation, if any.
 
@@ -79,7 +89,8 @@ Authentik gets its own name because its sub-path mode has open bugs in
 
 ### The blueprint
 `docker/authentik/blueprints/easyrmm.yaml` is applied by the worker at the
-first start and whenever it changes. It makes:
+first start and whenever it changes, and by `authentik-setup` when `.env`
+changes what it makes. It makes:
 
 * **EasyRMM's OpenID provider and application** (slug `easyrmm`):
   * confidential client `easyrmm`, with the secret from `.env`, for the
@@ -232,7 +243,15 @@ names the right issuer. Then Playwright:
    and is refused by EasyRMM (`no_account`), with no account added;
 6. signs in again in a new browser, and is asked for the second factor;
 7. stops Authentik, gets the edge's 502, then signs in with
-   `easyrmm-server recover`'s link, once.
+   `easyrmm-server recover`'s link, once;
+8. changes `EASYRMM_PUBLIC_URL` in `.env` to `https://rmm.easyrmm.test`,
+   and `EASYRMM_AUTHENTIK_CLIENT_SECRET` to a new one, and runs
+   `docker compose up -d`: `authentik-setup` applies the blueprint again,
+   Authentik's redirect URI, enrollment redirect and launch URL are at the
+   new URL, the provider has the new secret, and the administrator signs in
+   there;
+9. runs `docker compose up -d` again with `.env` unchanged: `authentik-setup`
+   applies nothing (8 and 9 added 2026-11-21).
 
 It passed all seven steps locally on 2026-11-19 (the browser story in about
 2 minutes); it has not run on GitHub yet. It goes through Authentik's pages

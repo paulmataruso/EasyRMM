@@ -42,7 +42,9 @@ https://rmm.example.com/api/v1/auth/sso/callback
 It is `EASYRMM_PUBLIC_URL` plus `/api/v1/auth/sso/callback`. Single sign-on
 works at the public URL only. From an IP address, the sign-in buttons go
 there. If you change `EASYRMM_PUBLIC_URL`, update the redirect URI at every
-provider.
+provider you added. The Authentik that `setup.sh --with-authentik` set up
+is updated by `sudo docker compose up -d` after you edit `.env`; see
+[Sign-in with Authentik](../deployment/docker.md#sign-in-with-authentik).
 
 At the provider, register a **web application** (a confidential client
 with a secret) that uses the authorization code flow and this redirect URI.

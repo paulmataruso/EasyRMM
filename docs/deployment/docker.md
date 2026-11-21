@@ -224,10 +224,26 @@ Authentik's settings are in `.env`: `EASYRMM_AUTHENTIK_HOSTNAME`,
 `AUTHENTIK_DB_PASSWORD`. Its data is the `authentik` database in the same
 PostgreSQL, and `/srv/easyrmm/authentik/`; back both up with the rest.
 Settings → Single sign-on shows the Authentik provider as set by the
-deployment, so it is changed only through `.env`. EasyRMM's edge holds
-Authentik's name with its own certificate, so `--with-authentik` does not
-work with TLS offload. Authentik listens on loopback only:
+deployment, so it is changed only through `.env` (below). EasyRMM's edge
+holds Authentik's name with its own certificate, so `--with-authentik` does
+not work with TLS offload. Authentik listens on loopback only:
 `127.0.0.1:18280` and `18243` (its server) and `18281` (its worker).
+
+**Changing `EASYRMM_PUBLIC_URL`.** Edit it in `.env`, then run
+`sudo docker compose up -d` (not `docker compose restart`, which keeps the
+old settings). The `authentik-setup` service then runs again with the new
+`.env`: it finds that Authentik still uses the old URL for EasyRMM's
+redirect URI, for where an invitation's sign-up goes on to, and for the
+application's link, applies EasyRMM's blueprint again, and checks that
+Authentik then uses the new one. A changed
+`EASYRMM_AUTHENTIK_CLIENT_SECRET` is taken the same way. Authentik's worker
+does not do this by itself: it applies the blueprint again only when the
+file changes. Applying takes a minute or more; signing in at the new URL
+works once `authentik-setup` has finished:
+`sudo docker compose ps -a authentik-setup` shows `Exited (0)`. If the
+check fails, it stops with an error instead; see
+`sudo docker compose logs authentik-setup`. When `.env` changed nothing
+Authentik holds, `authentik-setup` applies nothing.
 
 ## Retention
 
