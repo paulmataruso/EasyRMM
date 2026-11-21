@@ -25,21 +25,6 @@ import (
 // Where the script is mounted, read-only, in each container.
 const scriptPath = "/opt/easyrmm/linux.sh"
 
-// What a container's kernel, clock and devices make not applicable there.
-var containerNotApplicable = []string{"kernel-modules", "usb-storage", "time", "audit", "mac", "shared-memory"}
-
-// scriptModule is the result's report of one module.
-func scriptModule(t *testing.T, r *hardeningResult, name string) HardeningModuleResult {
-	t.Helper()
-	for _, m := range r.Modules {
-		if m.Module == name {
-			return m
-		}
-	}
-	t.Fatalf("no %s in the result", name)
-	return HardeningModuleResult{}
-}
-
 // TestCheckInContainers runs `linux.sh check` in a container of each
 // distribution in EASYRMM_TEST_HARDENING_IMAGES (pinned in the Makefile),
 // with no network, as root, with the script mounted read-only. Containers
@@ -97,7 +82,7 @@ func scriptPlatforms(t *testing.T, c *scriptContainer) {
 		{"ID=\"centos\"\nID_LIKE=\"rhel fedora\"\nVERSION_ID=\"7\"", HardeningPlatform{ID: "centos", VersionID: "7", Family: "rhel", Support: "unsupported"}},
 		{"ID=\"ol\"\nID_LIKE=\"fedora\"\nVERSION_ID=\"9.4\"", HardeningPlatform{ID: "ol", VersionID: "9.4", Family: "rhel", Support: "unsupported"}},
 		{"ID=fedora\nVERSION_ID=43", HardeningPlatform{ID: "fedora", VersionID: "43", Family: "fedora", Support: "full"}},
-		{"ID=fedora\nVERSION_ID=45", HardeningPlatform{ID: "fedora", VersionID: "45", Family: "fedora", Support: "check_only"}},
+		{"ID=fedora\nVERSION_ID=46", HardeningPlatform{ID: "fedora", VersionID: "46", Family: "fedora", Support: "check_only"}},
 		{"ID=fedora\nVERSION_ID=42", HardeningPlatform{ID: "fedora", VersionID: "42", Family: "fedora", Support: "unsupported"}},
 		{"ID=\"amzn\"\nID_LIKE=\"fedora\"\nVERSION_ID=\"2023\"", HardeningPlatform{ID: "amzn", VersionID: "2023", Family: "fedora", Support: "unsupported"}},
 		{"ID=linuxmint\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"22\"", HardeningPlatform{ID: "linuxmint", VersionID: "22", Family: "debian", Support: "unsupported"}},
@@ -323,67 +308,6 @@ func scriptJournal(t *testing.T, c *scriptContainer) {
 	}
 }
 
-// parseScriptResult reads the result as the server does, and checks what
-// the server's parser leaves to the script: empty values left out, the
-// container's kind, a reason where the state needs one, and the modules in
-// the script's order.
-func parseScriptResult(t *testing.T, stdout string, wantModules []string) *hardeningResult {
-	t.Helper()
-	r, err := parseHardeningResult(stdout, Hardening{Mode: HardeningCheck, Modules: wantModules})
-	if err != nil {
-		t.Fatalf("the server would refuse the result: %v\n%s", err, stdout)
-	}
-	raw := strings.TrimPrefix(lastLine(stdout), HardeningResultPrefix)
-	for _, empty := range []string{`:""`, `:[]`, `:{}`} {
-		if strings.Contains(raw, empty) {
-			t.Errorf("the result has an empty value (%s): %s", empty, raw)
-		}
-	}
-	if !slices.Contains([]string{"none", "lxc", "docker", "podman", "other"}, r.Platform.Container) {
-		t.Errorf("platform %+v", r.Platform)
-	}
-	var got []string
-	for _, m := range r.Modules {
-		got = append(got, m.Module)
-		switch m.State {
-		case HardeningNotApplicable, HardeningManagedElsewhere, HardeningNotSupported, HardeningFailed, HardeningHalfApplied:
-			if m.Reason == "" {
-				t.Errorf("%s is %s without a reason", m.Module, m.State)
-			}
-		case HardeningPartly:
-			if len(m.Missing) == 0 {
-				t.Errorf("%s is partly in place with nothing missing", m.Module)
-			}
-		}
-	}
-	if !slices.Equal(got, wantModules) {
-		t.Errorf("modules %q, want %q", got, wantModules)
-	}
-	return r
-}
-
-func lastLine(s string) string {
-	s = strings.TrimRight(s, "\n")
-	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
-		return s[i+1:]
-	}
-	return s
-}
-
-// The platforms the script reports full support for, by os-release ID: an
-// independent copy of the script's table, for the images tested here.
-var fullSupport = map[string][]string{
-	"debian": {"12", "13"}, "ubuntu": {"22.04", "24.04", "26.04"},
-	"rocky": {"8", "9", "10"}, "almalinux": {"8", "9", "10"}, "rhel": {"8", "9", "10"},
-	"fedora": {"43", "44"},
-}
-
-var families = map[string]string{
-	"debian": "debian", "ubuntu": "debian",
-	"rocky": "rhel", "almalinux": "rhel", "rhel": "rhel",
-	"fedora": "fedora",
-}
-
 type scriptContainer struct {
 	name  string
 	cache map[string]bool
@@ -468,12 +392,11 @@ func (c *scriptContainer) platform(t *testing.T, p HardeningPlatform) {
 		osr[k] = v
 	}
 	id, version := osr["ID"], osr["VERSION_ID"]
-	major, _, _ := strings.Cut(version, ".")
 	want := HardeningPlatform{ID: id, VersionID: version, Family: families[id], Container: "docker", Support: "full"}
 	if want.Family == "" {
 		t.Fatalf("no expectations for %s in this test", id)
 	}
-	if !slices.Contains(fullSupport[id], version) && !slices.Contains(fullSupport[id], major) {
+	if !fullySupported(id, version) {
 		t.Fatalf("%s %s is not a fully supported release; pick one for the test", id, version)
 	}
 	if p != want {

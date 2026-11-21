@@ -8,6 +8,13 @@ boots each image, runs scripts, writes a file and reads it back, reaches
 the guest's sshd through a forwarded port, restarts the machine and runs a
 script again.
 
+The hardening script's machine test
+(`server/internal/jobs/hardening_vm_test.go`) runs `check all` on each
+image. Its result must be one the server accepts, for the machine's own
+release with full support. No module may fail, and no module that a
+container rules out may be not applicable. Nothing under `/etc`,
+`/usr/local` or the script's own state may change.
+
 ## Running them
 
 You need `qemu-system-x86_64` and `qemu-img`, `xorriso` for Rocky Linux 8
@@ -92,6 +99,7 @@ CD-ROM (`SeedISO`) for Rocky Linux 8's 23.4. CI's image cache is keyed on
 
 The **Machines** jobs in `ci.yml` run `make test-vm` once per image, in
 parallel, on GitHub's Ubuntu runners with KVM. They run when the harness,
-`go.mod` or the `Makefile` change, and on the merge queue and manual runs.
+the hardening script or its server side, `go.mod` or the `Makefile`
+change, and on the merge queue and manual runs.
 Images are kept between runs with `actions/cache`; a failed job uploads
 the serial console log.

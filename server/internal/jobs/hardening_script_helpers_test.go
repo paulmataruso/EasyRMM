@@ -1,0 +1,95 @@
+//go:build integration || vm
+
+package jobs
+
+import (
+	"slices"
+	"strings"
+	"testing"
+)
+
+// What the container and machine tests of the hardening script share.
+
+// What a container's kernel, clock and devices make not applicable there.
+var containerNotApplicable = []string{"kernel-modules", "usb-storage", "time", "audit", "mac", "shared-memory"}
+
+// The family the script reports for each os-release ID tested.
+var families = map[string]string{
+	"debian": "debian", "ubuntu": "debian",
+	"rocky": "rhel", "almalinux": "rhel", "rhel": "rhel",
+	"fedora": "fedora",
+}
+
+// The platforms the script reports full support for, by os-release ID: an
+// independent copy of the script's table, for the images and machines tested here.
+var fullSupport = map[string][]string{
+	"debian": {"12", "13"}, "ubuntu": {"22.04", "24.04", "26.04"},
+	"rocky": {"8", "9", "10"}, "almalinux": {"8", "9", "10"}, "rhel": {"8", "9", "10"},
+	"fedora": {"43", "44", "45"},
+}
+
+// fullySupported reports whether the table above lists a release, whole
+// (Ubuntu's 24.04) or by its major version (Rocky Linux 9.6 is 9).
+func fullySupported(id, version string) bool {
+	major, _, _ := strings.Cut(version, ".")
+	return slices.Contains(fullSupport[id], version) || slices.Contains(fullSupport[id], major)
+}
+
+// scriptModule is the result's report of one module.
+func scriptModule(t *testing.T, r *hardeningResult, name string) HardeningModuleResult {
+	t.Helper()
+	for _, m := range r.Modules {
+		if m.Module == name {
+			return m
+		}
+	}
+	t.Fatalf("no %s in the result", name)
+	return HardeningModuleResult{}
+}
+
+// parseScriptResult reads the result as the server does, and checks what
+// the server's parser leaves to the script: empty values left out, the
+// container's kind, a reason where the state needs one, and the modules in
+// the script's order.
+func parseScriptResult(t *testing.T, stdout string, wantModules []string) *hardeningResult {
+	t.Helper()
+	r, err := parseHardeningResult(stdout, Hardening{Mode: HardeningCheck, Modules: wantModules})
+	if err != nil {
+		t.Fatalf("the server would refuse the result: %v\n%s", err, stdout)
+	}
+	raw := strings.TrimPrefix(lastLine(stdout), HardeningResultPrefix)
+	for _, empty := range []string{`:""`, `:[]`, `:{}`} {
+		if strings.Contains(raw, empty) {
+			t.Errorf("the result has an empty value (%s): %s", empty, raw)
+		}
+	}
+	if !slices.Contains([]string{"none", "lxc", "docker", "podman", "other"}, r.Platform.Container) {
+		t.Errorf("platform %+v", r.Platform)
+	}
+	var got []string
+	for _, m := range r.Modules {
+		got = append(got, m.Module)
+		switch m.State {
+		case HardeningNotApplicable, HardeningManagedElsewhere, HardeningNotSupported, HardeningFailed, HardeningHalfApplied:
+			if m.Reason == "" {
+				t.Errorf("%s is %s without a reason", m.Module, m.State)
+			}
+		case HardeningPartly:
+			if len(m.Missing) == 0 {
+				t.Errorf("%s is partly in place with nothing missing", m.Module)
+			}
+		}
+	}
+	if !slices.Equal(got, wantModules) {
+		t.Errorf("modules %q, want %q", got, wantModules)
+	}
+	return r
+}
+
+func lastLine(s string) string {
+	s = strings.TrimRight(s, "\n")
+	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
+		return s[i+1:]
+	}
+	return s
+}

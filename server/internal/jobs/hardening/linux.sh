@@ -81,7 +81,7 @@ ubuntu 22.04 24.04 26.04
 rocky 8 9 10
 almalinux 8 9 10
 rhel 8 9 10
-fedora 43 44
+fedora 43 44 45
 '
 # Releases out of their standard support, which check reports on but apply
 # and undo refuse. Newer releases of the distributions above are check only

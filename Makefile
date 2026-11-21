@@ -26,7 +26,7 @@ TEST_OIDC_DIR ?= $(or $(TMPDIR),/tmp)/easyrmm-testoidc
 # with vm-tagged tests, how many machines boot at once, and how long the
 # whole run may take (without KVM each boot takes minutes).
 VM_CACHE ?= /var/tmp/easyrmm-vmtest
-VM_PACKAGES ?= ./internal/vmtest/
+VM_PACKAGES ?= ./internal/vmtest/ ./server/internal/jobs/
 VM_PARALLEL ?= 2
 VM_TEST_TIMEOUT ?= 3h
 
