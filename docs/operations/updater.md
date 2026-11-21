@@ -71,8 +71,9 @@ Run as root:
 journal: `journalctl -t easyrmm-updater` for attempts run by hand,
 `journalctl -u easyrmm-updater` for the timer's.
 
-Automatic upgrades skip a version that failed or was rolled back until a
-newer one appears. Asked for by name, it is tried again.
+An upgrade without a version, automatic or by hand, skips a version that
+failed or was rolled back until a newer one appears. Asked for by name, it
+is tried again.
 
 ## An upgrade
 
@@ -153,10 +154,27 @@ are kept. Each is a directory named by its time and version, for example
 
 | Entry | What |
 |---|---|
-| `data/` | The whole data root, with owners and modes (reflinks where the filesystem has them), less the updater's own `updater/` and failed data roots |
+| `data/` | The whole data root, with owners and modes (reflinks where the filesystem has them), less the updater's own `updater/` and failed data roots. PostgreSQL's whole cluster is in it, copied stopped: EasyRMM's database, the engine's and, with `--with-authentik`, Authentik's |
 | `tree/deploy/`, `tree/docker/` | The deployment directory, `.env` with it, and the files Compose mounts |
 | `updater.conf` | The updater's configuration |
 | `backup.json` | The version, the deployment directory, the data root and the time. Written last: a backup without it is incomplete |
+
+Every copy, into a backup and back out of one, is then checked against
+what it copied, entry by entry: type, mode, owner, a file's size and a
+link's target. A copy that differs fails the upgrade or the restore.
+
+That covers every volume in `deploy/docker-compose.yml` that holds state.
+With Authentik that is its database, with its users, their second factors
+and the key pair that signs EasyRMM's ID tokens, and its `authentik/data`,
+`authentik/secrets` and `authentik/invitations` directories; a rollback
+restores all of them with the rest. The one volume outside a backup is
+`EASYRMM_TLS_DIR` in `manual` TLS mode: your own certificate and key,
+mounted read-only, which an upgrade never changes. Back them up where you
+manage certificates ([Backup and restore](backup-restore.md)).
+
+These backups are for rolling an upgrade back on the same host, not a
+replacement for [Backup and restore](backup-restore.md): they stay on the
+host, and only the last two are kept.
 
 A backup holds `.env`, and with it the key that encrypts the database's
 secrets. Keep `backup_dir` on the host's own disks, root's alone.
@@ -167,6 +185,7 @@ To put one back by hand, for example when the updater cannot:
 cd /path/to/deploy && sudo docker compose stop     # every service
 sudo mv /srv/easyrmm /srv/easyrmm.broken           # the data root
 sudo cp -a /var/backups/easyrmm-updater/<backup>/data /srv/easyrmm
+sudo mv /srv/easyrmm.broken/updater /srv/easyrmm/  # the updater's status
 sudo cp -a /var/backups/easyrmm-updater/<backup>/tree/. /path/to/easyrmm-<version>/
 cd /path/to/easyrmm-<version>/deploy && sudo docker compose up -d
 ```
@@ -202,8 +221,8 @@ with a certificate that:
 
 Then the bundle must match the manifest's SHA-256, and the images the
 deployment runs must be exactly the manifest's, by digest.
-[Edge builds and the release manifest](../architecture/edge-manifest.md)
-has the details. Releases come from their GitHub release, edge builds from
+`docs/architecture/edge-manifest.md`, with edge publishing, has the
+details. Releases come from their GitHub release, edge builds from
 `ghcr.io/paulmataruso/easyrmm-deploy`.
 
 ## Removing it

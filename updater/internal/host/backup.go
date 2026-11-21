@@ -6,11 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -26,7 +28,17 @@ import (
 //
 // Copies are made with cp -a, with reflinks where the filesystem has them,
 // into directories that do not exist yet: links in what is copied are
-// copied as links, and nothing is written through one.
+// copied as links, and nothing is written through one. Each copy is then
+// checked against its source (verifyCopy), both ways: a backup and a
+// restore alike.
+//
+// The data root holds every volume of deploy/docker-compose.yml that holds
+// state: PostgreSQL's whole cluster (EasyRMM's, the engine's and, when
+// installed, Authentik's databases, copied stopped), the server's,
+// MeshCentral's, the engine's and Authentik's directories. The other
+// volumes are the deployment's own docker/ files, in the tree, and
+// EASYRMM_TLS_DIR, the operator's certificates in manual TLS mode, mounted
+// read-only and not changed by an upgrade (TestBackupCoversEveryVolume).
 
 // KeepBackups is how many backups are kept.
 const KeepBackups = 2
@@ -70,7 +82,90 @@ func copyTree(ctx context.Context, src, dst string) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("copying %s to %s: %w: %s", src, dst, err, lastLines(string(out), 3))
 	}
+	return verifyCopy(src, dst)
+}
+
+// treeEntry is what verifyCopy compares of each entry: its type and
+// permissions, its owner, a regular file's size and a link's target.
+type treeEntry struct {
+	mode     fs.FileMode
+	uid, gid uint32
+	size     int64
+	link     string
+}
+
+func (e treeEntry) String() string {
+	s := fmt.Sprintf("%v %d:%d", e.mode, e.uid, e.gid)
+	if e.mode.IsRegular() {
+		s += fmt.Sprintf(" %d bytes", e.size)
+	}
+	if e.link != "" {
+		s += " -> " + e.link
+	}
+	return s
+}
+
+// verifyCopy checks that dst holds exactly what src holds, entry by entry.
+// cp -a fails on what it cannot copy; this also catches what changed while
+// it copied, or a copy cut short.
+func verifyCopy(src, dst string) error {
+	want, err := listTree(src)
+	if err != nil {
+		return err
+	}
+	got, err := listTree(dst)
+	if err != nil {
+		return err
+	}
+	for _, name := range slices.Sorted(maps.Keys(want)) {
+		g, ok := got[name]
+		switch {
+		case !ok:
+			return fmt.Errorf("the copy of %s lacks %s", src, name)
+		case g != want[name]:
+			return fmt.Errorf("the copy of %s differs at %s: %s, not %s", src, name, g, want[name])
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(got)) {
+		if _, ok := want[name]; !ok {
+			return fmt.Errorf("the copy of %s has %s, which it does not", src, name)
+		}
+	}
 	return nil
+}
+
+// listTree lists every entry under root, root itself as ".", without
+// following links.
+func listTree(root string) (map[string]treeEntry, error) {
+	entries := map[string]treeEntry{}
+	err := filepath.WalkDir(root, func(path string, _ fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		fi, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		e := treeEntry{mode: fi.Mode()}
+		if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+			e.uid, e.gid = st.Uid, st.Gid
+		}
+		switch {
+		case fi.Mode().IsRegular():
+			e.size = fi.Size()
+		case fi.Mode()&fs.ModeSymlink != 0:
+			if e.link, err = os.Readlink(path); err != nil {
+				return err
+			}
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		entries[rel] = e
+		return nil
+	})
+	return entries, err
 }
 
 // takeBackup copies the stopped deployment into a new backup directory.
