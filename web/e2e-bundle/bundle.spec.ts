@@ -687,7 +687,7 @@ test("Settings → Notifications sets the mail server; its test message, an invi
   const tested = (await mailTo(ADMIN.email)).find((m) => m.Subject === "EasyRMM test message")!;
   expect(tested.From).toMatchObject({ Address: FROM, Name: "Fabrikam IT" });
 
-  await main.getByRole("button", { name: "Save" }).click();
+  await main.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText(`Saved. EasyRMM sends mail through ${smtpHost}.`)).toBeVisible();
   await expect(main.getByText("No mail server")).toBeHidden();
   expect(await resetOffered()).toBe(true);
@@ -734,8 +734,8 @@ test("Settings → Notifications sets the mail server; its test message, an invi
 
   // Removed: no mail server again, for EasyRMM and for the engine.
   await page.goto("/settings?tab=notifications");
-  await main.getByRole("button", { name: "Remove" }).click();
-  await page.getByRole("dialog", { name: "Remove the mail server?" }).getByRole("button", { name: "Remove" }).click();
+  await main.getByRole("button", { name: "Remove", exact: true }).click();
+  await page.getByRole("dialog", { name: "Remove the mail server?" }).getByRole("button", { name: "Remove", exact: true }).click();
   await expect(page.getByText("The mail server is removed.")).toBeVisible();
   expect(await resetOffered()).toBe(false);
   await expect
