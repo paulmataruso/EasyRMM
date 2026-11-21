@@ -378,45 +378,32 @@ request directory's attacks; the updater updating itself from the second
 release with one; then the owner's instance on edge.
 
 ### 5. Let's Encrypt in one step
-**What exists**: `acme` mode with `autocert` for the names in `.env`
-(console, MeshCentral, the patching agents' names, Authentik), HTTP-01 and
-TLS-ALPN-01, renewed in the process; names are read at start.
+5a and 5b are decided in
+[ADR-0055](adr/0055-lets-encrypt-in-one-step.md) (proposed). In short:
+every DNS name the edge serves (console, MeshCentral, Authentik, an
+imported EasyPatch's) gets its own Let's Encrypt certificate; IP addresses
+keep the internal authority, and there are no wildcards.
 
-* **5a. CertMagic, status and alerts.** CertMagic (Apache 2.0) instead of
-  autocert for the same names: issued as soon as the server starts, not
-  at the first connection; renewed with ACME Renewal Information; a
-  managed list instead of `HostWhitelist`, never on-demand issuance; no
-  OCSP stapling (Let's Encrypt ended OCSP in 2025); certificates kept in
-  PostgreSQL behind an advisory lock, so several servers share them.
-  `--acme-email` becomes optional. Settings →
-  **Certificates** shows each name, issuer, expiry, next renewal and last
-  error; an alert when a renewal fails or less than 14 days are left,
-  sent through F2 (Let's Encrypt no longer emails about expiry). The ACME
-  directory and its CA root become a supported setting, so a private ACME
-  CA works (and Pebble in tests). The guide's recovery when the server
-  will not start: `docker compose run --rm server tls reset`.
-* **5b. Names from the console.** The page is built around the install that
-  needs it: one on an IP address getting a name. It shows the DNS records
-  to create with the server's public address, runs checks shown as ticks,
-  each failure with its fix (the name resolves; ports 80 and 443 answer;
-  a resolving address that is not this host's is a warning, not a
-  failure, since cloud and NAT hosts only see their private address; a
-  trial order against Let's Encrypt's staging service, the real test, so
-  that a mistake does not use up the real service's limits), then **Get
-  certificates**, then "renews automatically; next renewal on …". In
-  offload mode the page says the proxy owns TLS. Adding a name needs
-  step-up authentication, and a name is trusted only once this server
-  holds a certificate for it obtained through HTTP-01 or TLS-ALPN-01 (proof
-  that the name reaches this server) or, for DNS-01 names, once a token
-  served here was fetched through the name. Only then does it become an
-  origin of the console, a single sign-on redirect URI, the authenticator
-  issuer, part of the install commands (rendered again), MeshCentral's
-  configuration and the engine's and Authentik's addresses; the ADR lists
-  every component and how each is told. A name whose renewal keeps failing
-  is flagged, and stops being trusted when its certificate expires. TLS mode and trusted proxies stay in `.env`. DNS-01 with RFC
-  2136 (a key scoped to `_acme-challenge`, or a CNAME to it) and
-  Cloudflare; the guide recommends delegating `_acme-challenge` over
-  handing EasyRMM a whole zone's token.
+* **5a. CertMagic, status and alerts.** CertMagic instead of `autocert`:
+  issued at start from a managed list, renewed by ARI with Let's Encrypt's
+  retry schedule, no OCSP; keys and certificates sealed in PostgreSQL and
+  shared by several servers; `autocert`'s cache imported, so the upgrade
+  orders nothing; no email unless set; a private ACME CA with its roots
+  (`EASYRMM_ACME_CA_FILE`). Settings → **Certificates** shows each name;
+  alerts after 24 hours of failure or with 14 days left (critical at 7),
+  in the console and through F2's sender behind one interface.
+* **5b. Names and sources from the console.** Built around an IP install
+  getting a name: the records to create, checks as ticks, a trial order
+  against Let's Encrypt's staging service, then **Agree and get
+  certificates**. A DNS name served by the authority or the operator's
+  files moves to Let's Encrypt and back without a restart, once the
+  agent trusts both (system roots and the authority for DNS names) and
+  the move is refused while a device would lose trust. DNS-01 through RFC
+  2136 or Cloudflare, delegation recommended. Step-up authentication; `tls
+  reset`. The added name becomes a console origin, the install commands'
+  first address, the email links' and the authenticator's name, and
+  WebAuthn's relying party; single sign-on, Authentik's address and the
+  engine's stay on the IP address until 5c.
 * **5c. Moving to a new name** (changing the console's name, or moving
   agents from an IP address to a name) is an ADR of its own: each
   computer runs three agents that hold the address (EasyRMM's, MeshAgent's
@@ -425,16 +412,18 @@ TLS-ALPN-01, renewed in the process; names are read at start.
   the new address and that address, trusting the roots it already
   trusts; step-up authentication and a notice to every super
   administrator; a view of the devices still on the old name; old names
-  kept registered and served until a cut-off. WebAuthn keys stay valid
-  through Related Origin Requests (`/.well-known/webauthn`). 5a and 5b
-  ship without it.
+  kept registered and served until a cut-off; single sign-on's redirect
+  URIs, Authentik's address and the engine's public URL move with the
+  console's name. WebAuthn keys stay valid through Related Origin
+  Requests (`/.well-known/webauthn`). 5a and 5b ship without it.
 
-**Tests**: Pebble for HTTP-01 and TLS-ALPN-01, and for DNS-01 through RFC
-2136 against a real BIND on host networking; renewal and the failure
-alert; two servers sharing certificates; `tls reset`; MeshCentral
-restarted with the new configuration and agents reconnecting; Cloudflare
-on a real account on `main` only, or marked unverified; the staging trial
-by hand; then the owner's real name.
+**Tests**: as [ADR-0055](adr/0055-lets-encrypt-in-one-step.md#testing)
+lists them: Pebble and BIND on host networking for every challenge,
+renewal with a short-lived certificate, the failure alert, two servers,
+the upgrade from `autocert` and moves between sources with real agents in
+the bundle test; a second Pebble as a flagged stand-in for staging in CI;
+Cloudflare on a real account on `main` only, or marked unverified; a real
+Let's Encrypt staging run by hand, then the owner's real name.
 
 ### 6. Packages for the agent: DEB, RPM, MSI
 * **The package never replaces an enrolled agent's binary.** It installs
