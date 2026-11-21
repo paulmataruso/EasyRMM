@@ -1873,7 +1873,17 @@ has H1 (#49) and H3 (#55) merged, and **H2, ADR-0051's apply and undo, is
 being built now** on `feat/linux-hardening-h2`; step 4's updater 4a is
 open as pull request #70; **step 5, Windows hardening (ADR-0054), is not
 started**: the ADR is proposed and no W1 code is on `main`. Its W1, W2
-and W3 are placed below by their dependencies:
+and W3 are placed below by their dependencies.
+
+**ADR-0053's slices 1 and 2 are built now, beside steps 3 to 9**
+(decided in review, 2026-11-21): Microsoft turns password sign-in to
+Exchange Online off by default at the end of December 2026, and an MSP
+whose mail is Microsoft 365 then needs slice 2's sign-in with an
+application, a relay, or basic authentication turned back on. Slice 1,
+the mailer, is being built on `feat/notifications-mailer`; slice 2
+follows it. Slices 3 to 7 stay at step 10.
+
+The placement of W1, W2 and W3:
 
 * **W1 needs** step 3's job kind, permission and console (H1 and H3,
   merged), CI's Windows runners, the decision on Windows machines under
