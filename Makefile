@@ -44,17 +44,19 @@ fmt-check: ## Fail if Go code is not formatted
 		if [ -n "$$out" ]; then echo "Unformatted files:"; echo "$$out"; exit 1; fi
 
 .PHONY: vet
-vet: ## go vet (including integration-, contract-, bundle- and vm-tagged files, and the agent built for Windows)
+vet: ## go vet (including integration-, contract-, bundle-, vm- and updatertest-tagged files, and the agent built for Windows)
 	$(GO) vet ./...
 	$(GO) vet -tags integration ./...
 	$(GO) vet -tags contract ./server/internal/easypatch/
 	$(GO) vet -tags bundle ./server/internal/easypatch/
 	$(GO) vet -tags vm $(VM_PACKAGES)
+	$(GO) vet -tags updatertest ./updater/...
 	GOOS=windows $(GO) vet ./agent/... ./internal/...
 
 .PHONY: lint
-lint: ## golangci-lint, also over the agent built for Windows
+lint: ## golangci-lint, also over the agent built for Windows and the updater's test build
 	golangci-lint run ./...
+	golangci-lint run --build-tags updatertest ./updater/...
 	GOOS=windows golangci-lint run ./agent/... ./internal/...
 
 .PHONY: test-unit
@@ -139,6 +141,12 @@ build-agents: ## Build the Windows and Linux agents into bin/agents (serve them 
 .PHONY: build
 build: ## Build the server binary into bin/
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags "-s -w" -o bin/easyrmm-server ./server/cmd/easyrmm-server
+
+.PHONY: updater
+updater: ## Build the host updater for this machine into deploy/updater, where setup.sh installs it from (a clone's install)
+	@v=$$(git describe --tags --match 'easyrmm-v*' --always --dirty 2>/dev/null || echo dev); v=$${v#easyrmm-}; \
+	CGO_ENABLED=0 GOOS=linux $(GO) build -trimpath -ldflags "-s -w -X main.Version=$$v" \
+		-o deploy/updater/easyrmm-updater-linux-$$($(GO) env GOARCH) ./updater/cmd/easyrmm-updater
 
 # --- Web console --------------------------------------------------------------
 
