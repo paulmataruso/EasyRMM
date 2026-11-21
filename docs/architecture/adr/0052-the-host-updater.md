@@ -481,17 +481,27 @@ now the same way, the trusted root fetched through TUF. The upgrade runs
 as a machine test
 (`make test-vm-updater`, internal/vmtest): a Debian 12 machine with
 Docker, installed from a bundle with `setup.sh`, upgraded to a second
-bundle, the confirmed upgrade rolled back, then an upgrade to a third
-bundle that fails at the held start and is rolled back. That third
+bundle, the confirmed upgrade rolled back; `setup.sh` run again while the
+updater's lock is held, which installs nothing; the updater killed
+(SIGKILL to its whole unit) while the second bundle's server starts held,
+then the machine restarted, and the timer's run after the boot restoring
+the first version; an upgrade to a third bundle that fails at the held
+start and is rolled back; then a fifth bundle whose `upgradeFrom` names
+the fourth, refused by hand with nothing restarted, and installed by two
+automatic runs, the fourth first; and what tidying left. The third
 bundle's server fails its health check, not a held port: a server that
-cannot bind restarts until the 20-minute limit. The machine runs without
-Authentik. It has run on an emulated machine only (no KVM on the host):
-two runs failed at the install, PostgreSQL's and the engine's first starts
-outlasting their health checks, before the test's bundles gave every
-service an hour there; the third passed the install, the upgrade and the
-rollback after the confirm, but for the test's own expectation of the
-rollback's result, since corrected, and its time limit ended the third
-upgrade before it finished. Not
+cannot bind restarts until the 20-minute limit. It has run on an emulated
+machine only (no KVM on the host). On the code as reviewed, it passed
+whole on 21 November 2026 without Authentik, in 3 hours 28 minutes (run
+8). The two runs before it with Authentik failed at the test's own
+install, before the updater ran: once the engine's migration crashed
+(exit 139, a segmentation fault) on the emulated processor, once
+Authentik's worker did not turn healthy within the hour the test's
+bundles give every service there. Run 7, without Authentik, was stopped
+at its first error, the test's own: it took a container Compose had not
+needed to recreate for one not running the new version; the test now
+compares configuration hashes. Authentik's data through a backup and a
+restore is covered by the integration test above. Not
 built yet: the CI job, verification against a real release,
 links and named pipes planted through a backup and a restore, requests
 (4b), and the updater updating itself across releases.
