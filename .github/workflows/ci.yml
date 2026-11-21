@@ -701,10 +701,16 @@ jobs:
           done
 
   # Moves edge to this build once it is verified, only ever to a higher
-  # version: an older run, run again, leaves it.
+  # version: an older run, run again, leaves it. One run at a time, so that
+  # no other run moves edge between the check and the move. GitHub keeps
+  # one run waiting: a later one cancels the one that waited, which would
+  # most often have been older anyway.
   edge-tag:
     name: Move edge
     needs: [version, docker, publish, edge-test]
+    concurrency:
+      group: edge-tag
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
