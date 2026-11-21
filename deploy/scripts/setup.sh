@@ -22,6 +22,11 @@
 # or takes them from --authentik-hostname and --admin-email, and prints the
 # administrator's invitation link. --new-invitation prints another.
 #
+# --upgrade, run in a new release's deploy/ directory with the deployment's
+# .env copied in, takes every setting from that .env (no other options, and
+# nothing is asked), sets the release's server version, lists settings the
+# release adds, and gives the data directories their owners (ADR-0052).
+#
 # An existing .env is never overwritten (its secrets protect existing data):
 # setup.sh only adds secrets that later versions need and it lacks, and
 # removes settings that no longer exist.
@@ -45,6 +50,8 @@ with_authentik=false
 authentik_hostname=""
 admin_email=""
 new_invitation=false
+upgrade=false
+nargs=$#
 
 usage() {
   # The comment block at the top of this file.
@@ -68,12 +75,15 @@ while [[ $# -gt 0 ]]; do
     --authentik-hostname) with_authentik=true; authentik_hostname="${2:-}"; shift 2 ;;
     --admin-email) admin_email="${2:-}"; shift 2 ;;
     --new-invitation) new_invitation=true; shift ;;
+    --upgrade) upgrade=true; shift ;;
     -h|--help) usage 0 ;;
     *) echo "unknown option: $1" >&2; usage 2 ;;
   esac
 done
 
 die() { echo "error: $*" >&2; exit 1; }
+# env_value KEY: KEY's value in .env (the last, if it is there twice).
+env_value() { sed -n "s/^$1=//p" .env | tail -n 1; }
 
 # --- Authentik (--with-authentik, --new-invitation; ADR-0044) -----------------
 # Authentik as everyone's sign-in. Its services are in docker-compose.yml
@@ -180,7 +190,9 @@ authentik_files() {
     openssl rand -base64 30 | tr '+/' '-_' | authentik_put "$pw"
     echo "Authentik's own administrator is akadmin; its password is in ${pw} (mode 600)."
   fi
-  if ! authentik_issued "$data_root"; then
+  if [[ "$upgrade" == true ]]; then
+    authentik_link=""
+  elif ! authentik_issued "$data_root"; then
     authentik_invite "$data_root/authentik/invitations" "$authentik_hostname" "$admin_email"
   else
     authentik_link=""
@@ -213,9 +225,9 @@ new_invitation_only() {
   [[ $(id -u) -eq 0 ]] || die "--new-invitation needs root (sudo)"
   [[ -e .env ]] || die "no .env here: run setup.sh --with-authentik first"
   local host email root
-  host=$(sed -n 's/^EASYRMM_AUTHENTIK_HOSTNAME=//p' .env | tail -n 1)
-  email=$(sed -n 's/^EASYRMM_AUTHENTIK_ADMIN_EMAIL=//p' .env | tail -n 1)
-  root=$(sed -n 's/^EASYRMM_DATA_ROOT=//p' .env | tail -n 1)
+  host=$(env_value EASYRMM_AUTHENTIK_HOSTNAME)
+  email=$(env_value EASYRMM_AUTHENTIK_ADMIN_EMAIL)
+  root=$(env_value EASYRMM_DATA_ROOT)
   [[ -n "$host" && -n "$email" ]] || die "Authentik is not set up in .env: run setup.sh --with-authentik"
   [[ -d "${root:-/srv/easyrmm}/authentik/invitations" ]] || die "${root:-/srv/easyrmm}/authentik/invitations is missing: run setup.sh --with-authentik"
   authentik_invite "${root:-/srv/easyrmm}/authentik/invitations" "$host" "$email"
@@ -225,6 +237,46 @@ new_invitation_only() {
 if [[ "$new_invitation" == true ]]; then
   new_invitation_only
   exit 0
+fi
+
+# --upgrade: the options the deployment was installed with, read back from
+# the .env that install wrote.
+if [[ "$upgrade" == true ]]; then
+  [[ $nargs -eq 1 ]] || die "--upgrade takes no other options: every setting comes from .env"
+  [[ $(id -u) -eq 0 ]] || die "--upgrade needs root (sudo)"
+  [[ -e .env ]] || die "--upgrade needs the deployment's .env here: copy it from the release you are upgrading from"
+  url=$(env_value EASYRMM_PUBLIC_URL)
+  url=${url#https://}
+  url=${url%%/*}
+  if [[ "$url" == \[* ]]; then
+    hostname=${url#[}
+    hostname=${hostname%%]*}
+  else
+    hostname=${url%%:*}
+  fi
+  [[ -n "$hostname" ]] || die ".env has no EASYRMM_PUBLIC_URL to take the host name from"
+  url=$(env_value EASYRMM_MESH_PUBLIC_URL)
+  url=${url#https://}
+  url=${url%%/*}
+  mesh_hostname=${url%%:*}
+  tls_mode=$(env_value EASYRMM_TLS_MODE)
+  acme_email=$(env_value EASYRMM_ACME_EMAIL)
+  trusted_proxies=$(env_value EASYRMM_TRUSTED_PROXIES)
+  cert_file=$(env_value EASYRMM_TLS_CERT_FILE)
+  key_file=$(env_value EASYRMM_TLS_KEY_FILE)
+  data_root=$(env_value EASYRMM_DATA_ROOT)
+  data_root=${data_root:-/srv/easyrmm}
+  [[ "$(env_value EASYRMM_IP_ACCESS)" != false ]] || ip_access=false
+  ip_addresses=$(env_value EASYRMM_IP_ADDRESSES)
+  case ",$(env_value COMPOSE_PROFILES)," in
+    *,authentik,*)
+      with_authentik=true
+      authentik_hostname=$(env_value EASYRMM_AUTHENTIK_HOSTNAME)
+      admin_email=$(env_value EASYRMM_AUTHENTIK_ADMIN_EMAIL)
+      [[ -n "$authentik_hostname" && -n "$admin_email" ]] ||
+        die "COMPOSE_PROFILES has authentik, but .env lacks EASYRMM_AUTHENTIK_HOSTNAME or EASYRMM_AUTHENTIK_ADMIN_EMAIL"
+      ;;
+  esac
 fi
 
 valid_host='^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$'
@@ -362,6 +414,20 @@ if [[ "$with_authentik" == true ]]; then
   authentik_env
 fi
 
+if [[ "$upgrade" == true ]]; then
+  # A release's bundle names its server image in .env.example; a clone's
+  # says latest, and the version is the operator's to set.
+  version=$(sed -n 's/^EASYRMM_VERSION=//p' .env.example | tail -n 1)
+  if [[ -n "$version" && "$version" != latest ]]; then
+    set_setting EASYRMM_VERSION "$version"
+    echo "EASYRMM_VERSION=${version}: this release's server image."
+  else
+    echo "EASYRMM_VERSION stays $(env_value EASYRMM_VERSION): set it to the release you checked out."
+  fi
+  added=$(comm -13 <(grep -o '^[A-Z0-9_]*=' .env | sort -u) <(grep -o '^[A-Z0-9_]*=' .env.example | sort -u) | tr -d = | paste -sd ' ' -)
+  [[ -z "$added" ]] || echo "Settings in .env.example that .env lacks (copy any you need): ${added}"
+fi
+
 if [[ $(id -u) -ne 0 ]]; then
   echo "Not running as root: create these directories yourself:" >&2
   echo "  ${data_root}/server (owner 65532:65532, mode 700)" >&2
@@ -393,7 +459,14 @@ done
 echo "Data directories ready under ${data_root}."
 if [[ "$with_authentik" == true ]]; then
   authentik_files
-  authentik_next
+  if [[ "$upgrade" != true ]]; then
+    authentik_next
+    exit 0
+  fi
+fi
+if [[ "$upgrade" == true ]]; then
+  echo
+  echo "Ready. Next: sudo docker compose pull && sudo docker compose up -d"
   exit 0
 fi
 echo

@@ -43,19 +43,24 @@ cd easyrmm-v1.2.3/deploy
 Then, in `deploy/`:
 
 ```bash
-# Settings this release adds; copy any you need into .env.
-comm -13 <(grep -o '^[A-Z0-9_]*=' .env | sort) <(grep -o '^[A-Z0-9_]*=' .env.example | sort)
-
-# Run this release's image.
-sudo sed -i 's/^EASYRMM_VERSION=.*/EASYRMM_VERSION=1.2.3/' .env
-
-# setup.sh with the options you installed with. It keeps .env, and gives
-# the data directories the owners this release expects.
-sudo ./scripts/setup.sh --hostname rmm.example.com ...
-
+sudo ./scripts/setup.sh --upgrade
 sudo docker compose pull
 sudo docker compose up -d
 ```
+
+`setup.sh --upgrade` takes every setting from `.env`, so the options you
+installed with are not given again and nothing is asked. It keeps `.env`'s
+values and secrets, adds secrets the release needs, gives the data
+directories, under `.env`'s data root, the owners the release expects, and
+issues no Authentik invitation. From a bundle it sets `EASYRMM_VERSION` to
+the release's server image; from a clone it leaves it, so set it to the
+release you checked out:
+
+```bash
+sudo sed -i 's/^EASYRMM_VERSION=.*/EASYRMM_VERSION=1.2.3/' .env
+```
+
+It lists settings `.env.example` has that `.env` lacks; copy any you need.
 
 The Compose project is named `easyrmm` whatever the directory, so
 `up -d` replaces the running containers. A bundle's `docker-compose.yml`
