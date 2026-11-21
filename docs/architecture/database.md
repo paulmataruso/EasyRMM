@@ -355,6 +355,21 @@ so **a new `SECURITY DEFINER` function must end its `search_path` with
 creates temporary tables, and the install scripts no longer grant it.
 Warnings a migration raises reach the server's log with their hints.
 
+## Disk health (migration 00031)
+
+What agents read from each disk every 30 minutes, judged by the server's
+rules, and disk health alerts with one alert per disk (ADR-0065). There is
+no migration 00030 in this release's line; it is taken by another change.
+
+| Table, column or function | Notes |
+|---|---|
+| `device_disk_health` | The latest reading of each disk a device reported, keyed by device and `disk_key`. The reading's own `state` (`healthy`, `warning`, `failing`, `unknown`, `unsupported`, `unavailable`), `reason` code and `detail`, when the agent read it and when the server received it; `protocol`, `route`, the judged `facts` and ATA `attributes` (JSON arrays) from the latest reading that read the disk (`facts_at`), so a sleeping disk keeps its last values; `judged_level`, `judged_reason`, `judged_detail` and `judged_at` from the last reading that read the drive's verdict, which later readings that could not tell do not overwrite; `missing_since`, set by a report that leaves the disk out and cleared by one that lists it. `unstable`: the identity comes from the name, for want of a serial. Read through the device's row-level security; written at platform scope by the agent API and the evaluator. Goes with its device |
+| `device_disk_health_samples` | One row per disk and reading: the state, whether the verdict was read (`judged`), temperature and the drive's limit, wear, reallocated, media error, pending, uncorrectable and drive error counts, and power-on hours. BRIN index on the time. Readings older than `EASYRMM_METRICS_RETENTION` are thinned hourly to one `daily` row per disk and UTC day (the day's worst state, highest temperature, last counts and wear), kept for `EASYRMM_HARDWARE_RETENTION` (730 days by default). Samples outlive a disk's row when it is gone, until their retention; they go with their device |
+| `easyrmm_disk_key(name, model, serial)` | A disk's identity: the first 16 bytes of the SHA-256 of `disk\nmodel\nserial`, in hex, or of `name\nname` without a serial. The agent API and the evaluator, which matches a missing disk against the inventory, use this one definition |
+| `easyrmm_disk_state(missing_since, state, judged_level, judged_at)` | What the console shows for a disk: `unknown` when missing; the latest reading's `unsupported` or `unavailable`; the last judged `failing` or `warning`, however old; `healthy` when judged so within 2 hours; else `unknown`. The Devices list sums it per device |
+| `alert_policies.check_name` | The disk health check (`failing`, `errors`, `pending`, `wear`, `temperature`) of a `disk_health` policy, NULL for the other kinds. `failing` takes no threshold, `temperature` may take none (each drive's own limit), the others need one; a `disk_health` policy watches at least 30 minutes. The migration adds five shared policies, only *Disk failing* enabled; a name already taken at platform level is tried once with " (disk health)" appended |
+| `alerts.check_name`, `subject`, `subject_label`, `detail` | The check, the disk's identity, its name for people (never the serial) and what holds. `subject` is `''` for the other kinds; the partial unique index `alerts_active_key` is now on (policy, device, subject), so each disk has its own alert and the other kinds still have one per policy and device. Resolution `subject_gone`: the disk was missing for 14 days and the device's later inventory does not list it |
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

@@ -49,6 +49,9 @@ floors=(
   "server/internal/httpapi/jobsapi         90"
   "server/internal/httpapi/inventoryapi    90"
   "server/internal/httpapi/alertsapi       90"
+  # Disk health: what agents read, judged by the server's rules (ADR-0065).
+  "server/internal/hardware                90"
+  "server/internal/httpapi/hardwareapi     90"
   # Audit forwarding: every tenant's records leave the server through it.
   "server/internal/auditfwd                88"
   "server/internal/httpapi/auditfwdapi     90"

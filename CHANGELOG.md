@@ -138,6 +138,32 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- **Disk health** (ADR-0065, slice 1). The EasyRMM agent reads each disk's
+  own health record every 30 minutes, NVMe's health log and ATA's SMART
+  with a fixed list of read-only commands, on Windows and Linux, and sends
+  it in a report of its own (`POST /api/agent/v1/hardware`, one in 10
+  minutes per device with bursts of 6). The server judges every reading
+  with one set of rules: *Healthy*, *Warning*, *Failing*, *Unknown*,
+  *Unavailable* or *Unsupported*, each with a reason; a disk is never
+  shown healthy because something could not be read. A device's
+  **Hardware** tab shows each disk's health and firmware, and a disk's
+  panel its facts, ATA attributes, last 30 days and open alerts;
+  **Devices** gains a *Disk health* column and filter. Disks behind a
+  hardware RAID controller, SAS and USB disks show *Unavailable* until
+  later slices read them. See [Disk health](docs/operations/disk-health.md).
+  - **Disk health alerts**, one per disk: a `disk_health` policy watches
+    one check, *failing*, *errors*, *pending*, *wear* or *temperature*,
+    and resolves after two readings in a row clear it. Five shared
+    policies come with it, only **Disk failing** turned on. A disk that
+    disappears keeps its alerts; they resolve on their own (*Disk gone*,
+    `subject_gone`) 14 days later once the device's inventory no longer
+    lists it. See [Disk health policies](docs/operations/alerts.md#disk-health-policies).
+  - **History**: every reading for `EASYRMM_METRICS_RETENTION`, then one
+    row per disk and day for `EASYRMM_HARDWARE_RETENTION` (new; `17520h`,
+    730 days, by default, at least the metrics retention). About 0.2 MiB
+    per disk in the database and its backups.
+  - **Each disk's firmware revision** is in the inventory. Every device
+    uploads its inventory once after its agent is updated.
 - **`setup.sh --upgrade`** prepares an upgrade with the deployment's own
   settings, all read from `.env`: the options it was installed with are not
   given again and nothing is asked. It sets the release's server version
@@ -209,6 +235,17 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- **Upgrading adds five shared alert policies** for disk health, only
+  **Disk failing** turned on. **Where a shared policy already has one of
+  their names** (case aside), the new one is added as *… (disk health)*,
+  for example *Disk failing (disk health)*; where both names are taken, no
+  policy for that check is added. Check the **Policies** tab after the
+  upgrade if you named policies that way.
+- **An alert can be about one part of a device.** Alerts gain `checkName`,
+  `subject`, `subjectLabel` and `detail` in the API, and a device can have
+  one active alert per policy and disk. Changing a policy's check resolves
+  its alerts as a changed condition (`policy_changed`), as changing its
+  kind, threshold or minutes does.
 - **CI and releases build the server image once.** Both platforms, amd64
   and arm64, are scanned and their agents checked against a release's
   build, byte for byte; the amd64 image runs the tests; and the build is

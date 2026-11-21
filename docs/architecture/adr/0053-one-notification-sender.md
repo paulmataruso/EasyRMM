@@ -769,8 +769,9 @@ never taken from a value.
 * **Filters**, each dimension in one of two modes, ***any*** or ***list***:
   organizations (platform rules only), sites, device groups, kind of
   device (servers, workstations), severity (warning, critical) and
-  condition (offline, processor, memory, disk, *agent removed without a
-  request*).
+  condition (offline, processor, memory, disk, disk health with its check
+  as a second choice, *any* or a list of checks (ADR-0065), *agent
+  removed without a request*).
   * Lists are rows with composite foreign keys that cascade: sites as
     `(organization_id, site_id)` to `sites`, device groups as
     `(site_id, device_group_id)` to `device_groups`, as `device_groups`
@@ -810,7 +811,8 @@ never taken from a value.
   resolves its alerts and the next evaluation opens new ones with new IDs.
   The payload's `id` is the **incident's**: the alert's own ID, carried
   over to an alert that opens on the same policy and device, **with the
-  same kind**, within 5 minutes of a `policy_changed` resolution, or, after
+  same kind, check and subject** (ADR-0065: one alert per disk), within 5
+  minutes of a `policy_changed` resolution, or, after
   a restart, before ADR-0052's start delay for that policy has passed,
   whichever is later. The planner holds `policy_changed` resolutions that
   long; when a successor opens, neither is sent, and the incident goes on:
@@ -878,8 +880,9 @@ never taken from a value.
   a count would never be ticketed.
 * **For PSA tools**: `id` is stable from opened through reminders and
   acknowledgement to resolved, and across a policy change as above; `key`
-  is the same for every alert of one condition on one device, so a tool
-  can tell a recurrence; site events have the outage's ID.
+  is the same for every alert of one condition on one device and subject
+  (a disk, ADR-0065; empty for the other kinds), so a tool can tell a
+  recurrence; site events have the outage's ID.
 * **Sources**: a rule is about device alerts or about notices. Patching
   alerts keep the engine's rules (below).
 
