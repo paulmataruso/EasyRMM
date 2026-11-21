@@ -6,6 +6,12 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0-rc.4] - 2026-11-21
+
+The fourth release candidate: devices can be removed from the console with
+their agents, and operators can sign the Windows agent with their own
+certificate. Patching engine 1.12.1.
+
 ### Added
 
 - **Removing a device.** **Remove** on a device's page (Site

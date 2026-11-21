@@ -40,7 +40,7 @@ command and only ever connect out, over HTTPS.
   <img src="docs/images/dashboard.png" alt="EasyRMM dashboard: active alerts, organizations, sites, device groups and users, recent remote connections with Connect buttons, and the alerts that need attention">
 </picture>
 
-> **Status: release candidate.** [1.0.0-rc.3](https://github.com/paulmataruso/EasyRMM/releases)
+> **Status: release candidate.** [1.0.0-rc.4](https://github.com/paulmataruso/EasyRMM/releases)
 > is out for testing. On real Windows Server 2025 and Linux computers we
 > have run the install command and enrollment (with approval, on Linux),
 > inventory, remote desktop, terminal and files, scripts, the EasyPatch
@@ -152,9 +152,9 @@ as `rmm.example.com` and `mesh.rmm.example.com`. Without DNS it runs on the
 host's IP address.
 
 ```bash
-curl -LO https://github.com/paulmataruso/EasyRMM/releases/download/easyrmm-v1.0.0-rc.3/easyrmm-v1.0.0-rc.3-deploy.tar.gz
-tar -xzf easyrmm-v1.0.0-rc.3-deploy.tar.gz
-cd easyrmm-v1.0.0-rc.3/deploy
+curl -LO https://github.com/paulmataruso/EasyRMM/releases/download/easyrmm-v1.0.0-rc.4/easyrmm-v1.0.0-rc.4-deploy.tar.gz
+tar -xzf easyrmm-v1.0.0-rc.4-deploy.tar.gz
+cd easyrmm-v1.0.0-rc.4/deploy
 sudo ./scripts/setup.sh --hostname rmm.example.com --acme-email you@example.com
 sudo docker compose up -d
 ```

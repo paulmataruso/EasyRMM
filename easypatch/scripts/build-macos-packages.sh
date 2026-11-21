@@ -3,7 +3,7 @@
 # packages it as a .pkg per architecture (macOS 14 or later, x64 = Intel, arm64 = Apple silicon), in a pinned container
 # (agent/Installer/macos/Dockerfile) with networking disabled.
 #
-#   scripts/build-macos-packages.sh [--version 1.12.0] [--arch x64|arm64|all] [--no-test]
+#   scripts/build-macos-packages.sh [--version 1.12.1] [--arch x64|arm64|all] [--no-test]
 #
 # Output: artifacts/macos/EasyPatchAgent-<version>-<arch>.pkg, each with .sha256. The release public key
 # (EASYPATCH_RELEASE_PUBLIC_KEY, default ~/.easypatch/easypatch-release-key.pub.pem) is built into the agent, and each
@@ -12,7 +12,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-version="1.12.0"
+version="1.12.1"
 arches=("x64")
 run_tests=1
 image="easypatch-macos-package-builder:xar1.8.0.498"

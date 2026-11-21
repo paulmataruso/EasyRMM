@@ -30,7 +30,7 @@ body:
     attributes:
       label: EasyRMM version or commit
       description: The release you installed (EASYRMM_VERSION in the deployment's .env), or the commit if you build from source.
-      placeholder: "1.0.0-rc.3"
+      placeholder: "1.0.0-rc.4"
     validations:
       required: true
   - type: dropdown
@@ -58,7 +58,7 @@ body:
     attributes:
       label: Endpoint operating system and agent version
       description: If the problem involves a managed computer.
-      placeholder: "Windows Server 2025, EasyRMM agent 1.0.0-rc.3, EasyPatch agent 1.12.0"
+      placeholder: "Windows Server 2025, EasyRMM agent 1.0.0-rc.4, EasyPatch agent 1.12.1"
   - type: textarea
     id: logs
     attributes:
