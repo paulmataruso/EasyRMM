@@ -343,7 +343,7 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 	p := r.Platform
 	switch {
 	case r.Version != 1:
-		return fail(fmt.Sprintf("result version %d is not 1", r.Version))
+		return fail("the result's version is not 1")
 	case r.Mode != h.Mode:
 		return fail("the result is for another mode")
 	case !slices.Contains([]string{"debian", "rhel", "fedora", "other"}, p.Family),
@@ -355,7 +355,9 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 	for _, m := range r.Modules {
 		switch {
 		case !slices.Contains(h.Modules, m.Module):
-			return fail(fmt.Sprintf("the job did not ask for module %q", truncateRunes(m.Module, 40)))
+			// Nothing the output holds is quoted: the error is shown to
+			// people without job.view_sensitive (ADR-0063).
+			return fail("the result names a module the job did not ask for")
 		case seen[m.Module]:
 			return fail("module " + m.Module + " is reported twice")
 		case !slices.Contains(hardeningStates, m.State):

@@ -32,7 +32,7 @@ func TestSoftwareJobs(t *testing.T) {
 	}
 	want := Software{Action: ActionInstall, Manager: ManagerSystem, Package: "jq", Version: "1.7.1-3"}
 	if job.Kind != KindSoftware || job.Software == nil || *job.Software != want || job.ScriptID != nil || job.ScriptName != "Install jq 1.7.1-3" ||
-		job.Shell != agentproto.ShellSh || job.Body != linuxScript || !slices.Equal(job.Args, []string{"install", "jq", "1.7.1-3"}) ||
+		job.Shell != agentproto.ShellSh || job.Body != linuxScript || job.ArgCount != 3 ||
 		job.TimeoutSeconds != DefaultSoftwareTimeout || job.Total != 1 {
 		t.Errorf("job %+v", job)
 	}

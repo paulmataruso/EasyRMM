@@ -177,7 +177,7 @@ function RunForm({ onClose, script: fixedScript, device, preset }: { onClose: ()
             spellCheck={false}
             autoCapitalize="off"
             className="[&_textarea]:font-mono [&_textarea]:text-xs"
-            hint="One per line, passed exactly as typed. Arguments are kept with the job and shown to everyone who can see it, so never use them for passwords."
+            hint="One per line, passed exactly as typed. Arguments are kept with the job, and people who may see job arguments can read them, each read recorded. Never use them for passwords."
           />
           <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
             <TimeoutField

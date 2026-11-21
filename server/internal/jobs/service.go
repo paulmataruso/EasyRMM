@@ -85,17 +85,21 @@ type Service struct {
 	audit     *audit.Logger
 	key       ed25519.PrivateKey
 	retention time.Duration
-	log       *slog.Logger
-	now       func() time.Time
-	hub       *hub
+	// outputRetention is how long a run's output is kept after it arrived
+	// (ADR-0063); the run stays for retention.
+	outputRetention time.Duration
+	log             *slog.Logger
+	now             func() time.Time
+	hub             *hub
 	// pollWait is how long a poll without work is held; tests shorten it.
 	pollWait time.Duration
 }
 
 // New returns a Service. key signs jobs; retention is how long finished jobs
-// are kept.
-func New(db *database.DB, auditLog *audit.Logger, key ed25519.PrivateKey, retention time.Duration, log *slog.Logger) *Service {
-	return &Service{db: db, audit: auditLog, key: key, retention: retention, log: log, now: time.Now, hub: newHub(), pollWait: agentproto.PollWait}
+// are kept, outputRetention how long their runs' output is.
+func New(db *database.DB, auditLog *audit.Logger, key ed25519.PrivateKey, retention, outputRetention time.Duration, log *slog.Logger) *Service {
+	return &Service{db: db, audit: auditLog, key: key, retention: retention, outputRetention: outputRetention, log: log,
+		now: time.Now, hub: newHub(), pollWait: agentproto.PollWait}
 }
 
 // PublicKey is the job-signing public key in the form agents pin.
@@ -107,8 +111,8 @@ func (s *Service) PublicKey() string {
 // waiting for them.
 func (s *Service) Close() { s.hub.close() }
 
-// Run expires and marks lost runs, and removes jobs past retention, until
-// ctx ends.
+// Run expires and marks lost runs, and removes output and jobs past
+// retention, until ctx ends.
 func (s *Service) Run(ctx context.Context) {
 	tick := time.NewTicker(SweepInterval)
 	defer tick.Stop()
@@ -118,12 +122,15 @@ func (s *Service) Run(ctx context.Context) {
 			s.log.Error("jobs: sweeping runs failed", "error", err)
 		}
 		if time.Since(lastPurge) >= time.Hour {
-			if n, err := s.Purge(ctx); err != nil && ctx.Err() == nil {
+			if p, err := s.Purge(ctx); err != nil && ctx.Err() == nil {
 				s.log.Error("jobs: retention failed", "error", err)
 			} else if err == nil {
 				lastPurge = time.Now()
-				if n > 0 {
-					s.log.Info("jobs: removed jobs past retention", "count", n, "retention", s.retention.String())
+				if p.Outputs > 0 {
+					s.log.Info("jobs: removed output past retention", "count", p.Outputs, "retention", s.outputRetention.String())
+				}
+				if p.Jobs > 0 {
+					s.log.Info("jobs: removed jobs past retention", "count", p.Jobs, "retention", s.retention.String())
 				}
 			}
 		}
@@ -162,17 +169,32 @@ func (s *Service) Sweep(ctx context.Context) (Swept, error) {
 	return out, err
 }
 
-// Purge removes jobs older than the retention whose runs have all finished.
-func (s *Service) Purge(ctx context.Context) (int64, error) {
-	var n int64
+// Purged counts what a purge removed.
+type Purged struct {
+	// Outputs is how many runs had their output emptied.
+	Outputs int64
+	// Jobs is how many jobs were removed with their runs.
+	Jobs int64
+}
+
+// Purge empties output that arrived longer ago than the output retention,
+// and removes jobs older than the retention whose runs have all finished.
+func (s *Service) Purge(ctx context.Context) (Purged, error) {
+	var p Purged
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `DELETE FROM jobs j WHERE j.created_at < now() - make_interval(secs => $1)
+		tag, err := tx.Exec(ctx, `UPDATE job_runs SET `+emptyOutput+`
+			WHERE output_stored_at < now() - make_interval(secs => $1)`, s.outputRetention.Seconds())
+		if err != nil {
+			return err
+		}
+		p.Outputs = tag.RowsAffected()
+		tag, err = tx.Exec(ctx, `DELETE FROM jobs j WHERE j.created_at < now() - make_interval(secs => $1)
 			AND NOT EXISTS (SELECT 1 FROM job_runs r WHERE r.job_id = j.id AND r.status IN ('queued', 'sent', 'running'))`,
 			s.retention.Seconds())
-		n = tag.RowsAffected()
+		p.Jobs = tag.RowsAffected()
 		return err
 	})
-	return n, err
+	return p, err
 }
 
 // hub wakes the polls of devices that have new work on this instance.

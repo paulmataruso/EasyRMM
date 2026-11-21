@@ -4,7 +4,8 @@ EasyRMM installs, updates and removes software on devices with the EasyRMM
 agent by driving each device's package manager. Each request is a job, like
 running a script ([Scripts and jobs](scripts-and-jobs.md)): it waits for
 offline devices, reports each device's status, exit code and output, and
-can be stopped. The design is in
+can be stopped. The output, like a script's, needs `job.view_sensitive`
+([Who sees output and arguments](scripts-and-jobs.md#who-sees-output-and-arguments)). The design is in
 [ADR-0028](../architecture/adr/0028-software-deployment.md).
 
 | Package manager | Runs on | The package is named by |

@@ -17,6 +17,7 @@ export type Permission =
   | "script.run"
   | "job.view"
   | "job.manage"
+  | "job.view_sensitive"
   | "software.view"
   | "software.manage"
   | "patch.view"
@@ -700,7 +701,6 @@ export interface Job {
   scriptName: string;
   shell: Shell;
   sha256: string;
-  args: string[];
   timeoutSeconds: number;
   /** When devices that have not picked the job up stop being waited for. */
   expiresAt: string;
@@ -713,6 +713,10 @@ export interface Job {
   /** Only in the response for one job. */
   body?: string;
   runs?: JobRun[];
+  /** Only in the response for one job. The values come from GET /jobs/{id}/arguments (ADR-0063). */
+  argCount?: number;
+  /** Whether the caller may read the values: they hold job.view_sensitive where one of the runs they see is. */
+  canViewArguments?: boolean;
   canCancel: boolean;
 }
 
@@ -735,14 +739,34 @@ export interface JobRun {
   finishedAt: string | null;
   exitCode: number | null;
   error: string;
+  cancelRequested: boolean;
+  /** The job is only in the response for one run. */
+  job?: Job;
+  /**
+   * Only in the response for one run: whether the caller holds job.view_sensitive at its site. The output itself comes
+   * from GET /job-runs/{id}/output, each read audited (ADR-0063).
+   */
+  canViewOutput?: boolean;
+  /** Only in the response for one run: whether the caller may remove its output (job.view_sensitive and job.manage at its site). */
+  canRemoveOutput?: boolean;
+  /** Only with canViewOutput: the size of each stream, and when the output was removed. */
+  stdoutBytes?: number;
+  stderrBytes?: number;
+  outputRemovedAt?: string | null;
+  canCancel: boolean;
+}
+
+/** What a run printed (GET /job-runs/{id}/output). */
+export interface JobRunOutput {
+  stdout: string;
+  stderr: string;
   stdoutTruncated: boolean;
   stderrTruncated: boolean;
-  cancelRequested: boolean;
-  /** Output and the job are only in the response for one run. */
-  stdout?: string;
-  stderr?: string;
-  job?: Job;
-  canCancel: boolean;
+}
+
+/** A job's argument values (GET /jobs/{id}/arguments). */
+export interface JobArguments {
+  args: string[];
 }
 
 export type JobKind = "script" | "software" | "hardening";

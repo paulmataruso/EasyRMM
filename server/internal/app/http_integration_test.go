@@ -40,6 +40,26 @@ type harness struct {
 	db      *testdb.Instance
 	cfg     *config.Config
 	deps    *app.Deps
+	// logs is everything the server logged, at every level.
+	logs *lockedBuffer
+}
+
+// lockedBuffer is a buffer the server's goroutines can log into.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
 }
 
 type sentMail struct{ to, subject, body string }
@@ -83,8 +103,8 @@ func newHarnessWith(t *testing.T, withMail bool, adjust func(*config.Config)) *h
 	if adjust != nil {
 		adjust(cfg)
 	}
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := &harness{t: t, dataDir: cfg.DataDir, db: inst, cfg: cfg}
+	h := &harness{t: t, dataDir: cfg.DataDir, db: inst, cfg: cfg, logs: &lockedBuffer{}}
+	log := slog.New(slog.NewTextHandler(h.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	var mailer interface {
 		Send(context.Context, string, string, string) error
 	}
