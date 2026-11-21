@@ -437,6 +437,13 @@ on a real account on `main` only, or marked unverified; the staging trial
 by hand; then the owner's real name.
 
 ### 6. Packages for the agent: DEB, RPM, MSI
+Proposed in [ADR-0056](adr/0056-packages-for-the-agent.md), revised after
+review. Its slice 0, a fix for today's Windows agent, shipped in PR #61;
+the packages are not built yet. What follows is what the plan asked for; where the
+ADR decides otherwise, its section
+[Departures from the plan](adr/0056-packages-for-the-agent.md#departures-from-the-plan)
+says so.
+
 * **The package never replaces an enrolled agent's binary.** It installs
   the agent; on first install it runs `easyrmm-agent install`, which
   copies the agent to the place the agent owns, as the install command
