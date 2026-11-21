@@ -1,8 +1,9 @@
 # ADR-0051: Hardening Linux computers
 
 * Status: Accepted (2026-11-21), revised twice after review the same day.
-  Check is implemented (H1); apply and undo (H2) and the console (H3) are
-  not yet.
+  Check (H1) and the console for it (H3: a device's **Hardening** tab,
+  and the column and filter in **Devices**) are implemented; apply and
+  undo (H2) are not yet.
 * Builds on: [ADR-0017](0017-scripts-and-jobs.md) (scripts and jobs) and
   [ADR-0028](0028-software-deployment.md) (a fixed script compiled into
   the server, its input as arguments).

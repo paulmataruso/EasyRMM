@@ -43,9 +43,6 @@ All notable changes to this project are documented here. The format follows
   directories under `.env`'s data root (rerunning `setup.sh` without
   `--data-root` used the default one), and issues no Authentik invitation.
   The upgrade guide now uses it (ADR-0052).
-
-### Added
-
 - **Hardening checks for Linux computers** (ADR-0051, its first part). A
   technician can have the agent on a Linux device check 14 areas: SSH,
   the firewall, fail2ban, kernel settings, audit rules, file permissions,
@@ -57,9 +54,24 @@ All notable changes to this project are documented here. The format follows
   something else, or half applied, and what applying it would change.
   Each device's latest findings are kept (`GET
   /api/v1/devices/{id}/hardening`); the console lists hardening jobs and
-  shows what each checked. Applying and undoing, and a device's
-  **Hardening** tab, come next. The job table now takes job bodies up to
-  512 KiB, for the script; library scripts keep their 64 KiB limit.
+  shows what each checked. Applying and undoing come next. The job table
+  now takes job bodies up to 512 KiB, for the script; library scripts keep
+  their 64 KiB limit.
+- **A device's Hardening tab, and hardening across the fleet** (ADR-0051,
+  H3). Linux devices with the agent have a **Hardening** tab: each
+  module's latest state, what is missing, what applying it would change,
+  and for the firewall the ports it would leave open; when the last check
+  ran, by which job, on which distribution and release, and how far
+  EasyRMM's hardening supports it, with *check only* explained. **Run
+  check…** chooses the modules, the recommended ones preselected and the
+  others with their risk beside them, and needs `script.run`; the
+  findings need only `device.view`. **Devices** gains a **Hardening**
+  column (*9 of 10 in place*) and a filter (needs attention, in place, not
+  checked), also on the API (`GET /api/v1/devices?hardening=`), and devices
+  in the API carry a summary of their hardening. Job runs can be listed by
+  kind (`GET /api/v1/job-runs?kind=hardening`). The audit log names
+  hardening jobs *Hardening job*. See
+  [Hardening Linux computers](docs/operations/hardening.md).
 
 ### Fixed
 

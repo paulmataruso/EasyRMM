@@ -10,6 +10,8 @@ import { Alert, buttonClasses, EmptyState, ErrorState, Field, PageHeader, Select
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { useUrlState } from "../../lib/urlState";
+import { HardeningCell } from "./hardeningParts";
+import { FILTERS } from "./hardeningText";
 import { platformName } from "./platform";
 
 /** The server's cap on one list response (devices.MaxList). */
@@ -25,9 +27,16 @@ export function DevicesPage() {
   const organizationId = url.get("organizationId");
   const siteId = url.get("siteId");
   const status = url.get("status");
-  const filtered = Boolean(search || organizationId || siteId || status);
+  const hardening = url.get("hardening");
+  const filtered = Boolean(search || organizationId || siteId || status || hardening);
 
-  const params = { q: search || undefined, organizationId: organizationId || undefined, siteId: siteId || undefined, status: status || undefined };
+  const params = {
+    q: search || undefined,
+    organizationId: organizationId || undefined,
+    siteId: siteId || undefined,
+    status: status || undefined,
+    hardening: hardening || undefined,
+  };
   const list = useList<Device>("/devices", params, { refetchInterval: 30_000, keepPrevious: true });
   const canEnroll = can("enrollment.manage");
   const addLink = (
@@ -38,6 +47,8 @@ export function DevicesPage() {
   );
 
   useRowKeys(tableRef, (link) => link.dataset.id && prefetch(`/devices/${link.dataset.id}`));
+  // Hardening covers Linux (ADR-0051): its column shows when the list has a Linux device.
+  const linux = list.items.some((d) => d.platform === "linux");
 
   return (
     <>
@@ -52,6 +63,7 @@ export function DevicesPage() {
         <OrganizationSelect value={organizationId} onChange={(v) => url.set({ organizationId: v, siteId: null })} />
         <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v })} />
         <StatusSelect value={status} onChange={(v) => url.set({ status: v })} />
+        <HardeningSelect value={hardening} onChange={(v) => url.set({ hardening: v })} />
       </Toolbar>
 
       {list.isPending ? (
@@ -81,6 +93,7 @@ export function DevicesPage() {
                     <th className="hidden md:table-cell">Organization / site</th>
                     <th className="hidden lg:table-cell">Operating system</th>
                     <th className="hidden sm:table-cell">Last seen</th>
+                    {linux && <th className="hidden lg:table-cell">Hardening</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -114,6 +127,11 @@ export function DevicesPage() {
                       <td className="hidden whitespace-nowrap text-muted sm:table-cell" title={formatDateTime(d.lastSeenAt)}>
                         {d.online ? "Now" : formatRelative(d.lastSeenAt)}
                       </td>
+                      {linux && (
+                        <td className="hidden whitespace-nowrap lg:table-cell">
+                          <HardeningCell device={d} />
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -147,6 +165,23 @@ export function RemoteAccessWarning() {
         View details
       </Link>
     </Alert>
+  );
+}
+
+/** Linux devices by what their hardening checks found (ADR-0051), so drift across a fleet shows. */
+function HardeningSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const id = useId();
+  return (
+    <Field label="Hardening" htmlFor={id} className="min-w-40">
+      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Any hardening</option>
+        {FILTERS.map((f) => (
+          <option key={f.value} value={f.value}>
+            {f.label}
+          </option>
+        ))}
+      </Select>
+    </Field>
   );
 }
 
