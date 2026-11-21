@@ -223,7 +223,8 @@ run_job() {
   done
   status=$(jq -r '.runs[0].status' <<<"$j")
   [[ "$status" == succeeded ]] || fail "job $job ended $status: $j"
-  out=$(call 200 GET "/api/v1/job-runs/$(jq -r '.runs[0].id' <<<"$j")" | jq -r '.stdout // ""')
+  # Output has an endpoint of its own, each read audited (ADR-0063).
+  out=$(call 200 GET "/api/v1/job-runs/$(jq -r '.runs[0].id' <<<"$j")/output" | jq -r .stdout)
   [[ "$out" == *"drill-$1"* ]] || fail "job $job printed $out"
   ok "job ran on the agent and printed drill-$1"
 }

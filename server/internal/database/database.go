@@ -176,8 +176,16 @@ func Migrate(ctx context.Context, ownerDSN string, log *slog.Logger) error {
 	return MigrateWithConfig(ctx, cfg, log)
 }
 
-// MigrateWithConfig is Migrate for an already parsed configuration.
+// MigrateWithConfig is Migrate for an already parsed configuration. A
+// warning a migration raises, with its hint, goes to the log: some name a
+// statement for the operator to run by hand.
 func MigrateWithConfig(ctx context.Context, cfg *pgx.ConnConfig, log *slog.Logger) error {
+	cfg = cfg.Copy()
+	cfg.OnNotice = func(_ *pgconn.PgConn, n *pgconn.Notice) {
+		if n.Severity == "WARNING" {
+			log.Warn("database migration: "+n.Message, "hint", n.Hint)
+		}
+	}
 	sqlDB := stdlib.OpenDB(*cfg)
 	defer sqlDB.Close()
 	return migrateSQL(ctx, sqlDB, log)

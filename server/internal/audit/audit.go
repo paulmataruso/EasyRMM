@@ -126,23 +126,44 @@ func (l *Logger) Write(ctx context.Context, tx pgx.Tx, e Event) error {
 	if len(raw) > maxDetails {
 		raw, _ = json.Marshal(map[string]any{"truncated": true, "size": len(raw)})
 	}
-	var ip *string
-	if e.Actor.SourceIP.IsValid() {
-		s := e.Actor.SourceIP.Unmap().String()
-		ip = &s
-	}
-	// PostgreSQL stores microseconds; truncate so the hashed value matches
-	// what is read back.
-	at := l.now().UTC().Truncate(time.Microsecond)
+	st := l.Stamp(e.Actor)
 	_, err = tx.Exec(ctx, `SELECT easyrmm_audit_append($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::inet, $13, $14::jsonb)`,
-		at, string(e.Actor.Type), nullUUID(e.Actor.ID), truncate(e.Actor.Label, maxLabel),
+		st.At, st.ActorType, st.ActorID, st.ActorLabel,
 		nullUUID(e.OrganizationID), nullUUID(e.SiteID), nullUUID(e.DeviceID),
 		e.Action, truncate(e.TargetType, 64), truncate(e.TargetID, 128), string(e.Outcome),
-		ip, truncate(e.Actor.UserAgent, maxUserAgent), string(raw))
+		st.SourceIP, st.UserAgent, string(raw))
 	if err != nil {
 		return fmt.Errorf("audit: appending %s: %w", e.Action, err)
 	}
 	return nil
+}
+
+// Stamp is who acts and when, as a record stores them. A database function
+// that appends its own record, so that a read and its record cannot be
+// separated (ADR-0063), takes these values.
+type Stamp struct {
+	At         time.Time
+	ActorType  string
+	ActorID    *uuid.UUID
+	ActorLabel string
+	SourceIP   *string
+	UserAgent  string
+}
+
+// Stamp returns the actor and the current time as Write records them.
+func (l *Logger) Stamp(a Actor) Stamp {
+	var ip *string
+	if a.SourceIP.IsValid() {
+		s := a.SourceIP.Unmap().String()
+		ip = &s
+	}
+	return Stamp{
+		// PostgreSQL stores microseconds; truncate so the hashed value
+		// matches what is read back.
+		At:        l.now().UTC().Truncate(time.Microsecond),
+		ActorType: string(a.Type), ActorID: nullUUID(a.ID), ActorLabel: truncate(a.Label, maxLabel),
+		SourceIP: ip, UserAgent: truncate(a.UserAgent, maxUserAgent),
+	}
 }
 
 // Record appends an event in its own transaction. Use it for events that are

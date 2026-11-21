@@ -549,7 +549,9 @@ sensitive, never fewer:
   store, forwarding), not the computer's own logs, which hold the values
   as for any process (Consequences; ADR-0017's guidance gains: do not
   pass secrets as arguments). `job.view` shows the run with its
-  arguments. A job's processes are known by more than their ID, which
+  arguments (amended by
+  [ADR-0063](0063-who-sees-job-output-and-arguments.md): the argument values
+  need `job.view_sensitive`, each read audited). A job's processes are known by more than their ID, which
   Windows and Linux reuse:
   * **Windows**: after slice 0 every run's process starts inside its job
     object; the agent asks the job object to report every process that

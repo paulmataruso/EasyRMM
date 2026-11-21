@@ -60,36 +60,40 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID) (*agentproto.Poll
 			UPDATE job_runs r SET status = 'sent', sent_at = now(), deliveries = r.deliveries + 1
 			FROM due, jobs j
 			WHERE r.id = due.id AND j.id = r.job_id
-			RETURNING r.id, r.job_id, r.expires_at, j.shell, j.body, j.args, j.timeout_seconds`,
+			RETURNING r.id, r.job_id, r.expires_at, j.shell, j.body, j.timeout_seconds`,
 			device, RedeliverAfter.Seconds(), agentproto.MaxPollJobs)
 		if err != nil {
 			return err
 		}
-		var payloads []agentproto.JobPayload
+		var (
+			payloads []agentproto.JobPayload
+			runIDs   []uuid.UUID
+		)
 		for rows.Next() {
 			var (
 				p              agentproto.JobPayload
 				runID, jobID   uuid.UUID
 				expires        time.Time
-				args           []string
 				timeoutSeconds int
 			)
-			if err := rows.Scan(&runID, &jobID, &expires, &p.Shell, &p.Script, &args, &timeoutSeconds); err != nil {
+			if err := rows.Scan(&runID, &jobID, &expires, &p.Shell, &p.Script, &timeoutSeconds); err != nil {
 				rows.Close()
 				return err
 			}
-			if args == nil {
-				args = []string{}
-			}
 			p.V, p.RunID, p.JobID, p.DeviceID = agentproto.JobPayloadVersion, runID.String(), jobID.String(), device.String()
-			p.Args, p.TimeoutSeconds, p.IssuedAt, p.ExpiresAt = args, timeoutSeconds, now, expires.UTC()
-			payloads = append(payloads, p)
+			p.TimeoutSeconds, p.IssuedAt, p.ExpiresAt = timeoutSeconds, now, expires.UTC()
+			payloads, runIDs = append(payloads, p), append(runIDs, runID)
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
 			return err
 		}
+		args, err := deliveryArgs(ctx, tx, device, runIDs)
+		if err != nil {
+			return err
+		}
 		for _, p := range payloads {
+			p.Args = args[p.RunID]
 			signed, err := agentproto.SignJob(s.key, p)
 			if err != nil {
 				return err
@@ -117,6 +121,40 @@ func (s *Service) claim(ctx context.Context, device uuid.UUID) (*agentproto.Poll
 		return nil, fmt.Errorf("jobs: claiming runs: %w", err)
 	}
 	return resp, nil
+}
+
+// deliveryArgs reads the arguments of the runs just delivered, by run.
+// The server's database role cannot select them; a function that answers
+// only under the system scope reads them (ADR-0063). Every run must have
+// its arguments, or the job would run without them.
+func deliveryArgs(ctx context.Context, tx pgx.Tx, device uuid.UUID, runs []uuid.UUID) (map[string][]string, error) {
+	out := make(map[string][]string, len(runs))
+	if len(runs) == 0 {
+		return out, nil
+	}
+	rows, err := tx.Query(ctx, `SELECT run_id, run_args FROM easyrmm_job_delivery_args($1, $2)`, device, runs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		var args []string
+		if err := rows.Scan(&id, &args); err != nil {
+			return nil, err
+		}
+		if args == nil {
+			args = []string{}
+		}
+		out[id.String()] = args
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) != len(runs) {
+		return nil, fmt.Errorf("jobs: arguments found for %d of %d runs", len(out), len(runs))
+	}
+	return out, nil
 }
 
 // Start lets the agent run a delivered run, unless it was canceled, has
@@ -175,7 +213,9 @@ func (s *Service) Start(ctx context.Context, device, run uuid.UUID) (*agentproto
 
 // Result records how a run ended. The first result wins; a repeat (the
 // agent did not see the first answer) is acknowledged and ignored. A late
-// result replaces "lost".
+// result replaces "lost". Output is stored with the time it arrived, from
+// which its retention counts, and never on a run whose output was removed:
+// there the status and exit code are recorded without it (ADR-0063).
 func (s *Service) Result(ctx context.Context, device, run uuid.UUID, in agentproto.ResultRequest) error {
 	switch in.Status {
 	case StatusSucceeded, StatusFailed, StatusTimedOut, StatusCanceled:
@@ -196,9 +236,12 @@ func (s *Service) Result(ctx context.Context, device, run uuid.UUID, in agentpro
 	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		var job uuid.UUID
 		var ran time.Time
-		err := tx.QueryRow(ctx, `UPDATE job_runs SET status = $3, exit_code = $4, stdout = $5, stderr = $6,
-				stdout_truncated = $7, stderr_truncated = $8, error = $9,
-				started_at = coalesce(started_at, $10), finished_at = now()
+		err := tx.QueryRow(ctx, `UPDATE job_runs SET status = $3, exit_code = $4,
+				stdout = CASE WHEN output_removed_at IS NULL THEN $5 ELSE '' END,
+				stderr = CASE WHEN output_removed_at IS NULL THEN $6 ELSE '' END,
+				stdout_truncated = output_removed_at IS NULL AND $7, stderr_truncated = output_removed_at IS NULL AND $8,
+				output_stored_at = CASE WHEN output_removed_at IS NULL AND ($5 <> '' OR $6 <> '') THEN now() END,
+				error = $9, started_at = coalesce(started_at, $10), finished_at = now()
 			WHERE id = $1 AND device_id = $2 AND status IN ('sent', 'running', 'lost')
 			RETURNING job_id, coalesce(started_at, finished_at)`,
 			run, device, in.Status, in.ExitCode, stdout, stderr, in.StdoutTruncated || cutOut, in.StderrTruncated || cutErr, msg, started).

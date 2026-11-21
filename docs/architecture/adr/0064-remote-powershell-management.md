@@ -27,10 +27,10 @@
   (the job key ring), [ADR-0058](0058-signed-settings-that-reach-the-agent.md)
   (capabilities), [ADR-0059](0059-the-agents-websocket-channel.md)
   (wakes) and [ADR-0060](0060-collecting-logs.md) (its slice 0, and
-  script block logging). ADR-0063 (who sees a job's output and
-  arguments) is proposed on a branch of its own and not merged, so it is
-  cited without a link; this ADR builds on its permission, endpoints and
-  output retention.
+  script block logging).
+  [ADR-0063](0063-who-sees-job-output-and-arguments.md) (who sees a job's
+  output and arguments) is accepted and built; this ADR builds on its
+  permission, endpoints and output retention.
 * Requirements: feature 6, "Remote PowerShell Management", of the
   owner's requirements of 2026-11-21. Every bullet is placed in
   [The requirements](#the-requirements). The
