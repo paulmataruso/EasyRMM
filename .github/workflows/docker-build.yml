@@ -1,42 +1,75 @@
-# Builds the server image, scans it, and smoke-tests the Compose deployment
-# exactly as an operator would run it (host networking, setup script,
-# PostgreSQL init, migrations, health check). Images are pushed only for
-# pushes to main in this repository, never for pull requests.
+# Builds the server image once, for linux/amd64 and linux/arm64, into an OCI
+# image layout; scans it; and smoke-tests the Compose deployment exactly as
+# an operator would run it (host networking, setup script, PostgreSQL init,
+# migrations, health check). Nothing is pushed here: ci.yml's end-to-end
+# jobs run the same image, and for a push to main its last job pushes this
+# layout unchanged once every other job passed (ADR-0052).
 name: Docker build
 
 on:
   workflow_call:
+    inputs:
+      version:
+        description: The version the image reports (scripts/release/version.sh)
+        required: true
+        type: string
+    outputs:
+      digest:
+        description: The image index's digest, as pushed from the layout
+        value: ${{ jobs.build.outputs.digest }}
   workflow_dispatch:
+    inputs:
+      version:
+        description: The version the image reports
+        required: true
+        default: v0.0.0-dispatch
+        type: string
 
 permissions:
   contents: read
-
-env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/easyrmm-server
 
 jobs:
   build:
     name: Build and scan image
     runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.layout.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # Both platforms, with BuildKit's SBOM and provenance, as they will be
+      # pushed: the tests below and in ci.yml run the amd64 image from this
+      # layout, and nothing builds the image again.
       - name: Build image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/server/Dockerfile
-          load: true
-          push: false
-          tags: easyrmm-server:ci
-          build-args: VERSION=ci-${{ github.sha }}
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=easyrmm-server.oci.tar
+          build-args: VERSION=${{ inputs.version }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - name: Image runs and reports its version
+          provenance: mode=max
+          sbom: true
+      - name: Load the amd64 image for the checks
+        id: layout
         run: |
-          docker run --rm easyrmm-server:ci version | grep -q "ci-${GITHUB_SHA}"
+          digest=$(tar -xOf easyrmm-server.oci.tar index.json | jq -r '.manifests[0].digest')
+          if ! printf '%s' "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+            echo "::error::no image index in the layout: $digest"
+            exit 1
+          fi
+          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar linux/amd64 easyrmm-server:ci
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Image runs and reports its version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          docker run --rm easyrmm-server:ci version | grep -qF "$VERSION"
       - name: Scan image (Trivy)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -45,13 +78,14 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      - name: Save image for the smoke test
-        run: docker save easyrmm-server:ci | gzip > easyrmm-server-ci.tar.gz
+      # For the smoke test, ci.yml's end-to-end jobs and its publish job.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: easyrmm-server-image
-          path: easyrmm-server-ci.tar.gz
+          path: easyrmm-server.oci.tar
           retention-days: 3
+          # Its layers are compressed already.
+          compression-level: 0
 
   compose-smoke:
     name: Compose deployment smoke test
@@ -65,7 +99,7 @@ jobs:
         with:
           name: easyrmm-server-image
       - name: Load image
-        run: gunzip -c easyrmm-server-ci.tar.gz | docker load
+        run: scripts/ci/load-oci-image.sh easyrmm-server.oci.tar linux/amd64 easyrmm-server:ci
       - name: Prepare host (setup script, manual TLS with a test certificate)
         working-directory: deploy
         run: |
@@ -134,50 +168,3 @@ jobs:
         if: always()
         working-directory: deploy
         run: sudo docker compose down -v || true
-
-  publish:
-    name: Publish image
-    needs: [build, compose-smoke]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_owner == 'paulmataruso'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ env.IMAGE }}
-          tags: |
-            type=edge,branch=main
-            type=sha,format=long
-      - id: push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: docker/server/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=edge-${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          provenance: mode=max
-          sbom: true
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
