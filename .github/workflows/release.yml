@@ -1,11 +1,13 @@
 # Publishes a release when an EasyRMM version tag (easyrmm-v1.2.3, or a
-# pre-release such as easyrmm-v1.2.3-rc.1) is pushed to this repository. It is
+# release candidate, easyrmm-v1.2.3-rc.1; no other suffix) on a commit on
+# main is pushed to this repository (ADR-0052). It is
 # the only release: the patching engine (EasyPatch, under easypatch/) is
 # released with EasyRMM and never on its own (ADR-0043, ADR-0046). The
 # version is the tag without "easyrmm-" (v1.2.3): the server, the console
 # and the agents report it.
 #
-#   1. the tag and its CHANGELOG.md section are checked, and the engine's
+#   1. the tag's form, that its commit is on main, and its CHANGELOG.md
+#      section are checked, and the engine's
 #      version (<Version> in easypatch/Directory.Build.props) has its section
 #      in easypatch/CHANGELOG.md and was not published from another commit
 #      (EasyPatch agents choose updates by version);
@@ -34,7 +36,7 @@ name: Release
 
 on:
   push:
-    tags: ["easyrmm-v[0-9]+.[0-9]+.[0-9]+", "easyrmm-v[0-9]+.[0-9]+.[0-9]+-*"]
+    tags: ["easyrmm-v[0-9]+.[0-9]+.[0-9]+", "easyrmm-v[0-9]+.[0-9]+.[0-9]+-rc.[0-9]+"]
 
 permissions:
   contents: read
@@ -60,15 +62,24 @@ jobs:
       prerelease: ${{ steps.tag.outputs.prerelease }}
       version: ${{ steps.tag.outputs.version }}
     steps:
+      # Every branch's history (without file contents until needed), for
+      # the check that the tag's commit is on main.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+      # Only these two forms, so that versions sort for the updater; only
+      # commits on main, which changes reach by pull request with CI passed.
       - id: tag
         env:
           TAG: ${{ github.ref_name }}
         run: |
-          if ! printf '%s' "$TAG" | grep -Eqx 'easyrmm-v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'; then
+          if ! printf '%s' "$TAG" | grep -Eqx 'easyrmm-v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?'; then
             echo "::error::$TAG is not a release tag (easyrmm-v1.2.3 or easyrmm-v1.2.3-rc.1)"; exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$TAG is on $GITHUB_SHA, which is not on main"; exit 1
           fi
           version=${TAG#easyrmm-}
           echo "version=$version" >> "$GITHUB_OUTPUT"
