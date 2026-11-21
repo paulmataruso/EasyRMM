@@ -142,8 +142,19 @@ const (
 	MaxHeartbeatSeconds = 600
 )
 
+// Protocol is the level of the agent protocol this server speaks (ADR-0009,
+// "Evolving the protocol"). At level 2 the server ignores request fields it
+// does not know. A server whose heartbeat answer has no level is level 1 and
+// refuses them with 400, so an agent sends a request field added after
+// level 2 only while its last heartbeat answer came from a server of level 2
+// or higher.
+const Protocol = 2
+
 // HeartbeatResponse carries the server's current instructions.
 type HeartbeatResponse struct {
+	// Protocol is the server's protocol level: Protocol, or 0 from a server
+	// older than levels (level 1).
+	Protocol         int           `json:"protocol,omitempty"`
 	HeartbeatSeconds int           `json:"heartbeatSeconds"`
 	MeshAgent        MeshAgentInfo `json:"meshAgent"`
 	// JobKey is the server's job-signing public key, as in EnrollResponse.

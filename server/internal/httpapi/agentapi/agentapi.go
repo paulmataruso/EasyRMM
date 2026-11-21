@@ -340,13 +340,17 @@ func (e *eofReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// decode parses a JSON body strictly.
+// decode parses a JSON body. Fields this server does not know are ignored
+// (ADR-0009, "Evolving the protocol"): an agent newer than its server, as
+// after a rollback (ADR-0052), may send fields a later release added, and
+// refusing them would cut it off. Each body is decoded into a fixed type and,
+// but for enrollment, signed by an enrolled device; malformed JSON and values
+// of the wrong type are still refused.
 func decode(r *http.Request, body []byte, dst any) error {
 	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		return &httpapi.Error{Status: http.StatusUnsupportedMediaType, Code: "unsupported_media_type", Message: "Send the request body as application/json."}
 	}
 	dec := json.NewDecoder(bytes.NewReader(body))
-	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		return httpapi.BadRequest("The request body is not valid JSON for this endpoint.")
 	}
