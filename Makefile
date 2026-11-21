@@ -115,6 +115,10 @@ test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral
 		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
 
+.PHONY: test-updater-published
+test-updater-published: ## The host updater against the edge build ghcr.io's edge tag names now: verified against Sigstore's public-good instance, checked as an upgrade's first step, its server image pulled by digest (needs Docker and the internet)
+	EASYRMM_TEST_PUBLISHED=1 $(GO) test -tags integration -count=1 -v -run '^TestPublishedEdge' ./updater/internal/host/
+
 .PHONY: test-contract
 test-contract: ## EasyRMM's calls to the patching engine against a real one built from easypatch/ (needs Docker)
 	GO=$(GO) ./scripts/contract/easypatch.sh

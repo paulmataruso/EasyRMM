@@ -412,7 +412,13 @@ against sigstore-go's virtual Sigstore, each certificate field refused
 in turn; integration tests run the rollback's SQL against the migrated
 schema, and take a real PostgreSQL cluster holding EasyRMM's, the
 engine's and Authentik's databases, with Authentik's directories, through
-a backup, a change and a restore. The upgrade runs as a machine test
+a backup, a change and a restore. Against real artifacts, an integration
+test takes the first edge build main's CI published, kept byte for byte
+with Sigstore's public-good trusted root, through an upgrade's check,
+and refuses seven changes to it before anything stops;
+`make test-updater-published` takes the build ghcr.io's `edge` tag names
+now the same way, the trusted root fetched through TUF. The upgrade runs
+as a machine test
 (`make test-vm-updater`, internal/vmtest): a Debian 12 machine with
 Docker, installed from a bundle with `setup.sh`, upgraded to a second
 bundle, the confirmed upgrade rolled back, then an upgrade to a third
@@ -426,7 +432,7 @@ service an hour there; the third passed the install, the upgrade and the
 rollback after the confirm, but for the test's own expectation of the
 rollback's result, since corrected, and its time limit ended the third
 upgrade before it finished. Not
-built yet: the CI job, verification against real published artifacts,
+built yet: the CI job, verification against a real release,
 links and named pipes planted through a backup and a restore, requests
 (4b), and the updater updating itself across releases.
 
