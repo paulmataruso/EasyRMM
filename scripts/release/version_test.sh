@@ -9,7 +9,7 @@
 #   c1  easyrmm-v1.0.0-rc.1
 #   c2  easyrmm-v1.0.0-rc.2 (annotated), easypatch-v1.10.0, easyrmm-v1.0.0-beta.1,
 #       easyrmm-v01.0.0, easyrmm-v1.0.0-rc.0, easyrmm-v1.0.0-rc.02, v9.0.0   (only rc.2 is a release)
-#   c3  easyrmm-v1.0.0-rc.9, easyrmm-v1.0.0-rc.10
+#   c3  easyrmm-v1.0.0-rc.9, easyrmm-v1.0.0-rc.10, easyrmm-v1.0.0-rc.012 (not a release; it would rank above)
 #   c4  easyrmm-v1.0.0-rc.11, easyrmm-v1.0.0
 #   c5                                    after a release
 #   c6  easyrmm-v1.9.0, easyrmm-v1.10.0
@@ -73,6 +73,7 @@ done
 c3=$(commit c3)
 git tag easyrmm-v1.0.0-rc.9
 git tag easyrmm-v1.0.0-rc.10
+git tag easyrmm-v1.0.0-rc.012
 git checkout -q -b side
 commit side > /dev/null
 git tag easyrmm-v9.9.9
@@ -89,7 +90,7 @@ git tag easyrmm-v1.10.0
 refuse 2 "no release tag" release "$c0"
 expect easyrmm-v1.0.0-rc.1 release "$c1"
 expect easyrmm-v1.0.0-rc.2 release "$c2"           # annotated; other forms ignored
-expect easyrmm-v1.0.0-rc.10 release "$c3"          # rc.10 above rc.9, on one commit
+expect easyrmm-v1.0.0-rc.10 release "$c3"          # rc.10 above rc.9, on one commit; rc.012 ignored
 expect easyrmm-v1.0.0 release "$c4"                # the release above its rc.11, on one commit
 expect easyrmm-v1.0.0 release "$c5"
 expect easyrmm-v1.10.0 release "$c6"               # 1.10 above 1.9
