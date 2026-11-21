@@ -383,9 +383,9 @@ release with one; then the owner's instance on edge.
 review). In short: every DNS name the edge serves (console, MeshCentral,
 Authentik, an imported EasyPatch's) gets its own Let's Encrypt
 certificate; IP addresses keep the internal authority, and there are no
-wildcards. A fix comes first: MeshCentral is told every origin EasyRMM
-serves for it (`allowedOrigin`), which sessions on any MeshCentral origin
-but the primary one need.
+wildcards. MeshCentral's `allowedOrigin`, which sessions on any
+MeshCentral origin but the primary one need, is fixed separately (branch
+`fix/mesh-allowed-origin`); 5b3 adds an added name to that list.
 
 * **5a. CertMagic, status and alerts.** CertMagic instead of `autocert`:
   issued at start from a managed list, renewed by ARI, no OCSP. EasyRMM
@@ -633,7 +633,7 @@ and recorded in drills.md: a CI runner (4 CPUs) cannot hold them.
 | 4 | Updater 4a with the edge channel | The test instance follows `main` from then on |
 | 5 | F2 and device alert notifications (7) | Needed by 4b, 5 and 3's alerts |
 | 6 | Updater 4b: the console | Needs F2 |
-| 7 | Let's Encrypt 5a, then 5b1 to 5b4 | Needs F2 for its alerts; the `allowedOrigin` fix it starts with is a hole in shipped code, so it may go with step 2 |
+| 7 | Let's Encrypt 5a, then 5b1 to 5b4 | Needs F2 for its alerts |
 | 8 | Packages (6): DEB, RPM, MSI | How MSPs onboard computers; nothing depends on 3 |
 | 9 | F0; the wake-only WebSocket; F1; the transport setting (8) | F1's first key is the transport |
 | 10 | Log collection (3), in its slices | The largest; needs F1 and F2 |

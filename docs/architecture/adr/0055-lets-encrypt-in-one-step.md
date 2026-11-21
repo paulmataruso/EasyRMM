@@ -118,10 +118,16 @@ user".
   and `allowedFramingOrigins`, but no `allowedOrigin` (`Render` in
   `server/internal/meshcentral/config.go`, `MeshServerConfig` in
   `server/internal/app/app.go`), and the remote gateway passes the header
-  through unchanged (`server/internal/remote/gateway.go`). Read that way,
-  a session launched from another MeshCentral origin, such as an
-  IP-access origin of a DNS install (ADR-0016), would be refused today.
-  This is from reading the source; it has not been run.
+  through unchanged (`server/internal/remote/gateway.go`). So a session
+  launched from another MeshCentral origin, such as an IP-access origin
+  of a DNS install (ADR-0016), is refused today: running MeshCentral
+  1.3.1's own `CheckWebServerOriginName` in the pinned image refused an
+  IP-access origin and accepted it once an `allowedOrigin` list included
+  it. **This is fixed separately**, before this ADR's slices, on branch
+  `fix/mesh-allowed-origin`: `Render` writes `allowedOrigin` with the host
+  name of every MeshCentral origin. IPv6 addresses are written in
+  brackets, because MeshCentral compares the list with Node's
+  `URL.hostname`, which returns `[2001:db8::1]` for one.
 * **Signed instructions.** The heartbeat's answer carries instructions
   signed with the job key, each under a context of its own, for one
   device, with a short validity (`HeartbeatResponse` in
@@ -474,14 +480,10 @@ only through MeshCentral's reads of `certUrl`, so:
   move of that name within 10 minutes.
 * **An IP-only install's MeshAgents** use the IP address, whose
   certificate 5b never changes (5b3).
-* **Every MeshCentral origin is an allowed origin.** EasyRMM writes
-  `allowedOrigin` on MeshCentral's default domain: the host names of every
-  MeshCentral origin it serves (`.env`'s, IP access's and, from 5b3, an
-  added name's), rewritten whenever that set changes, as
-  `allowedFramingOrigins` is. Since IP-access origins appear to need it
-  already (above), it ships first, on its own, as a fix (below, Slices),
-  with a test that opens a session from an IP-access origin of a DNS
-  install.
+* **An added remote-access name joins `allowedOrigin`** (5b3): the
+  list the separate fix writes (above) gains the name while it is
+  trusted and loses it when it stops being trusted, rewritten with
+  `allowedFramingOrigins`.
 
 ### Checks (5a for `.env` names; 5b for names from the console)
 The same checks run on the Certificates page and in `easyrmm-server tls
@@ -874,10 +876,6 @@ of it, and comes with 5b2, which makes the first such choice; the guide
 describes it. TLS never stops the server from starting.
 
 ### Slices
-* **A fix first, on its own: `allowedOrigin`** for every MeshCentral
-  origin (above, MeshCentral's name), with a session opened from an
-  IP-access origin of a DNS install in the bundle test. It is not about
-  certificates, but 5b3 depends on it.
 * **5a. CertMagic, status and alerts.** For the names in `.env`:
   CertMagic with ARI and the managed list, EasyRMM's scheduler and gate
   with the hold, PostgreSQL storage, `autocert`'s import, optional email
@@ -896,7 +894,8 @@ describes it. TLS never stops the server from starting.
   **Reinstall patching agents**, step-up authentication, `tls reset`.
 * **5b3. An IP install's name**: the added pair, the authority's second
   certificate, reachability, the components' table (the remote-access
-  name in `allowedOrigin` among them), **Remove name**.
+  name added to `allowedOrigin` among them, which needs the separate fix
+  merged), **Remove name**.
 * **5b4. DNS-01**: the providers, delegation, propagation, credentials.
   It adds a challenge to 5b2's moves and 5b3's names, so either can ship
   first.
@@ -915,8 +914,7 @@ describes it. TLS never stops the server from starting.
 * **Agents' trust, verified on each device and widened per device**, and
   ADR-0042's condition changed: without that, a move would cut agents
   off.
-* **5b is four slices**, agent trust first, and a fix to MeshCentral's
-  allowed origins comes before them.
+* **5b is four slices**, agent trust first.
 * **Step-up authentication is defined here** for 5b, ADR-0057 and
   ADR-0061.
 * **`tls reset`** comes with 5b2, which makes the choices it undoes.
@@ -993,11 +991,9 @@ The tests:
   CNAME delegation, with an HMAC-MD5 key refused.
 * **The bundle test** gains a parallel job with Pebble, on the release
   bundle and real agents:
-  * 5a: an install by name in `acme` mode, with IP access on, issues at
-    start; the Linux machine (Pebble's root in its store) enrolls through
-    the name, its MeshAgent connects, and a remote session opens from the
-    name and another from the IP-access origin (the `allowedOrigin`
-    fix).
+  * 5a: an install by name in `acme` mode issues at start; the Linux
+    machine (Pebble's root in its store) enrolls through the name, its
+    MeshAgent connects and a remote session opens.
   * **Renewal with a short-lived certificate**: 600-second certificates,
     with CertMagic's `RenewCheckInterval` and the scheduler's interval
     set to 10 seconds by test-only settings. A new serial is served for
@@ -1075,8 +1071,6 @@ The tests:
   on networks without hairpin NAT, browsers are the proof.
 * EasyPatch install instructions carry the authority whenever there is
   one, amending ADR-0042's condition.
-* MeshCentral is told every origin it serves (`allowedOrigin`), which
-  appears to fix sessions from IP-access origins of a DNS install today.
 * MeshCentral restarts when an added name is trusted or stops being
   trusted, ending open remote sessions; certificate changes alone never
   restart it, and they wait until MeshCentral can read them at once.
