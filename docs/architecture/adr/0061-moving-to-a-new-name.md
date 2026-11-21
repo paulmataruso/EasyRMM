@@ -219,9 +219,12 @@ The fix this ADR needs first writes that list.
   security: one row per move, with the pairs it moves from and to, who
   started it and how (console or host), when each step was taken and by
   whom, any override with its list, and how it ended (finished, or moved
-  back). The **primary** pair is the target of the last move not moved
-  back, or `.env`'s when there has been none. Every server on the
-  database reloads it on `NOTIFY`, as ADR-0055's certificates do.
+  back). Beside the rows it keeps the **initial pair**, written once,
+  from `.env`, at the first start of a server with this ADR. The
+  **primary** pair is the target of the last move not moved back, or the
+  initial pair when there has been none, so a `.env` that changes on its
+  own never changes the primary. Every server on the database reloads it
+  on `NOTIFY`, as ADR-0055's certificates do.
 * **The move generation**, `moveGeneration`, a number kept beside it,
   changes with every step 1 or 2, a **Move back**'s included, and never
   goes backwards, even across a restore: each new value is the larger of
@@ -682,18 +685,29 @@ pair an install starts with.
   process and are not used for this. A server compares its `.env` only
   with its own record, so servers whose `.env`s differ never undo each
   other's moves; the page warns while they differ.
-* **What a restore does with it**: the table comes back with the database
-  and the ID with the data directory, both parts of a backup
-  (`docs/operations/backup-restore.md`), so a restored server compares
-  `.env` with the pair it had then. A restore that keeps a newer `.env`
-  than the backup therefore starts a move to it, which is what agents
-  already on that pair need. A server whose data directory has no ID (a
-  new host, a lost directory) makes a new one, records its `.env` and
-  starts nothing; if that pair is not the primary, the banner below
-  offers the move.
+* **A restore never starts a move by itself.** The table comes back with
+  the database and the ID with the data directory, both parts of a backup
+  (`docs/operations/backup-restore.md`), so a restored server could not
+  tell a `.env` kept from after the backup from one just edited. Each
+  record therefore carries an epoch (the larger of the time in
+  milliseconds and the last epoch plus one), which the server also writes,
+  after the record commits, to `<data root>/server-run/env-epoch`, a
+  directory of its own that is never backed up or restored, like
+  `meshcentral-config`. A server acts on a changed `.env` only when that
+  file's epoch is not newer than its record in the database, which shows
+  the database still holds its latest record (a crash between the two
+  writes leaves the file older, and counts as continuous). When the file
+  is missing (a new host, a lost directory, the first start of this
+  version) or newer than the record (the database was restored from
+  before it), the server is treated as having no record: it records its
+  `.env` pair and starts nothing, and when that pair is not the primary
+  it opens an alert and shows the banner offering **Move to the pair in
+  `.env`**, which needs step-up. Meanwhile the server serves both the
+  primary and what `.env` names, so agents on either keep working.
 * **A changed `.env` starts a move**: when a server's `.env` names another
-  pair than it recorded, and that pair is not the primary, a move to it
-  starts at step 1, recorded as started on the host. Its old pair is the
+  pair than it recorded, its record is continuous (above), and that pair
+  is not the primary, a move to it starts at step 1, recorded as started
+  on the host. Its old pair is the
   primary at that moment, whatever `.env` named before, and MeshCentral
   keeps its name until step 2, as in any move. Today that edit strands
   every agent; with this it moves them. The edit is root's on the host,
@@ -782,9 +796,12 @@ pair an install starts with.
   version with this ADR, from a backup that predates the new name, agents
   that moved fall back within an hour, their EasyPatch agents with them,
   and MeshAgents follow MeshCentral's name; onto a version from before
-  this ADR, uninstall and enroll again, as above. The restore guide says
-  so, and says to restore a backup from after the move's last step 1 or
-  2.
+  this ADR, uninstall and enroll again, as above. A `.env` newer than the
+  backup, kept across the restore, starts no move: the console offers
+  **Move to the pair in `.env`** ("Names in `.env`"). The restore guide
+  says all of this, says to restore a backup from after the move's last
+  step 1 or 2, and lists `<data root>/server-run` with the directories
+  that need no backup.
 * **A job key rotation** (ADR-0057) is independent: each device follows each
   by its own statements, and the move is signed with the key from the
   device's report. The guide advises finishing one before starting the
@@ -844,10 +861,11 @@ pair an install starts with.
   of its agents.
 * A banner for super administrators while a move is in progress, and until
   `.env` names the primary.
-* A banner, with the alert, when a server's `.env` named a third pair
-  during a move: the pair, the server, and once the move ends **Move to
-  the pair in `.env`** (step-up), until a move to it is taken or `.env`
-  is edited again.
+* A banner, with the alert, when a server's `.env` names a pair that was
+  not acted on (a third pair during a move, or a pair found with no
+  record, after a restore or on a new host): the pair, the server, and,
+  once no move is in progress, **Move to the pair in `.env`** (step-up),
+  until a move to it is taken or `.env` is edited again.
 * Authentik's last apply (`names-status.json`) on the move's page and in
   Settings → Single sign-on, with the error when it failed.
 
@@ -871,7 +889,7 @@ pair an install starts with.
 | `name_move.start` | Step 1, from the console (**Move to the pair in `.env`** included) or `.env` | From and to; devices able, waiting and unable to move; console or host; with **Start anyway**, the list |
 | `name_move.step` | Steps 2 to 5 | The step; with an override, what it overrode |
 | `name_move.back` | Moved back, from the console, `.env` or `tls reset` | The step it had reached |
-| `name_move.env_refuse` | `.env` names a third pair during a move; the pair is dropped, not queued | The move's pairs, the refused pair, the server |
+| `name_move.env_refuse` | `.env` names a pair not acted on: a third pair during a move (dropped, not queued), or a pair found with no record, after a restore or on a new host | The pair, the primary, the move's pairs if any, the server, which case |
 | `name_move.keys_remove` | Keys under an old relying party ID removed | The name, how many, whose |
 | `sso.provider_confirm` | A provider's sign-in first completes at a name | The provider and the name |
 | `device.address_refuse` | An agent reports a confirmation that does not verify | The address, which agent, and the reason (recorded as the agent) |
@@ -968,9 +986,15 @@ any other.
     edited to yet another pair; edited back to the primary, the banner
     clears; a held start does nothing;
   * the per-server record surviving a stop and start (the `server-id`
-    file and `server_env_pairs`); a data directory without the file
-    records `.env` and starts nothing; a database restored from before a
-    `.env` change, with that `.env` kept, starts the move to it;
+    file, `server_env_pairs` and the `server-run` epoch); a database
+    restored from before a `.env` change, with that `.env` kept (the
+    epoch file newer than the record), starts nothing: it records the
+    pair, opens the alert and shows the banner, serves both pairs, and
+    moves only after **Move to the pair in `.env`** with step-up; a
+    missing epoch file behaves the same; an epoch file older than the
+    record (a crash between the two writes) counts as continuous, and a
+    `.env` edited then starts its move; the initial pair stays the
+    primary until a move;
   * `tls reset` during a move and after one; a new name that stops being
     trusted;
   * link matching across names; WebAuthn credentials under two relying
@@ -1111,7 +1135,8 @@ Each merges, is verified on its own, and leaves nothing unused.
    adding a name, the signed instruction for both agents and the build
    that parses it, which first reports `move.easyrmm` and
    `move.easypatch`, the failure reports, `.env` per server
-   (`server-id`, `server_env_pairs`, the refused pair's banner), the
+   (`server-id`, `server_env_pairs`, the `server-run` epoch and its
+   mount, the initial pair, the banner for a pair not acted on), the
    precedence over ADR-0055, link matching and install instructions from
    EasyRMM's names, the install commands' list on the page, the engine's
    `PublicUrl` no longer read, the refusal of new keys during a move on a
@@ -1157,8 +1182,9 @@ Slices 1 to 6 complete the IP-to-name case.
   removed, and then on no computer, enrolled or not: the old name serves
   no scripts. Group Policy, Intune and packaged commands must be replaced
   before step 5; the page lists them.
-* A `.env` naming a third pair during a move is dropped, not queued; the
-  operator acts on it after the move.
+* A `.env` naming a third pair during a move is dropped, not queued, and
+  a restore never starts a move: in both cases the operator acts on the
+  pair from the console, with step-up.
 * The EasyPatch agent gains a command, and its older builds stay on the old
   name until updated. `authentik-setup` becomes a long-running service,
   and Authentik's containers never read a file the server can write.
