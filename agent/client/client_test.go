@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
@@ -26,8 +27,18 @@ type fakeServer struct {
 	t    *testing.T
 	pub  ed25519.PublicKey
 	mesh []byte
-	// short makes the MeshAgent download end early.
-	short bool
+	// job signs MeshAgent's downloads, as the server's job key does.
+	job ed25519.PrivateKey
+	// short makes the MeshAgent download and the settings end early; huge
+	// sends more than agentproto.MaxMeshAgentBytes; tamper changes the
+	// settings after signing them.
+	short, huge, tamper bool
+}
+
+// signDownload signs a download as the server does.
+func (f *fakeServer) signDownload(w http.ResponseWriter, r *http.Request, body []byte) {
+	a, _ := agentproto.Parse(r.Header.Get("Authorization"))
+	w.Header().Set(agentproto.HeaderDownloadSignature, agentproto.SignDownload(f.job, a, r.RequestURI, sha256.Sum256(body)))
 }
 
 func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -62,11 +73,24 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			return
 		}
+		if f.huge {
+			_, _ = io.CopyN(w, zeros{}, agentproto.MaxMeshAgentBytes+1)
+			return
+		}
+		f.signDownload(w, r, f.mesh)
 		if f.short {
 			w.Header().Set("Content-Length", strconv.Itoa(len(f.mesh)+10))
 		}
 		_, _ = w.Write(f.mesh)
 	case agentproto.PathMeshSettings:
+		f.signDownload(w, r, []byte("MeshID=0x1"))
+		if f.short {
+			w.Header().Set("Content-Length", "100")
+		}
+		if f.tamper {
+			_, _ = io.WriteString(w, "MeshID=0x2")
+			return
+		}
 		_, _ = io.WriteString(w, "MeshID=0x1")
 	case agentproto.PathJobsPoll:
 		_, _ = io.WriteString(w, `{"jobs":[],"cancel":["r9"]}`)
@@ -94,9 +118,18 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// zeros reads as an endless run of zero bytes.
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
 func newPair(t *testing.T) (*Client, *fakeServer) {
 	t.Helper()
-	f := &fakeServer{t: t, mesh: bytes.Repeat([]byte{0x7f}, 4096)}
+	_, job, _ := ed25519.GenerateKey(rand.Reader)
+	f := &fakeServer{t: t, mesh: bytes.Repeat([]byte{0x7f}, 4096), job: job}
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
 	c, err := New(Options{Server: srv.URL, Version: "9.9"})
@@ -128,19 +161,39 @@ func TestEnrollAndSignedRequests(t *testing.T) {
 	if err != nil || hb.HeartbeatSeconds != 30 {
 		t.Fatalf("heartbeat = %+v, %v", hb, err)
 	}
+	// MeshAgent's downloads carry the job key's signature over what they hold.
+	jobPub := f.job.Public().(ed25519.PublicKey)
+	otherPub, _, _ := ed25519.GenerateKey(rand.Reader)
 	var buf bytes.Buffer
-	if err := c.MeshAgent(ctx, "linux", "arm64", &buf); err != nil || buf.Len() != 4096 {
-		t.Errorf("MeshAgent = %d bytes, %v", buf.Len(), err)
+	signed, err := c.MeshAgent(ctx, "linux", "arm64", &buf)
+	if err != nil || buf.Len() != 4096 || signed.SHA256 != sha256.Sum256(f.mesh) || signed.Verify(jobPub) != nil {
+		t.Errorf("MeshAgent = %d bytes, %+v, %v", buf.Len(), signed, err)
 	}
-	if err := c.MeshAgent(ctx, "plan9", "arm64", &buf); err == nil || Code(err) != "" {
+	if err := signed.Verify(otherPub); !errors.Is(err, agentproto.ErrDownloadSignature) {
+		t.Errorf("MeshAgent verified with another key: %v", err)
+	}
+	if _, err := c.MeshAgent(ctx, "plan9", "arm64", &buf); err == nil || Code(err) != "" {
 		t.Errorf("MeshAgent for an unknown platform: %v", err)
 	}
 	f.short = true
-	if err := c.MeshAgent(ctx, "linux", "arm64", io.Discard); err == nil {
+	if _, err := c.MeshAgent(ctx, "linux", "arm64", io.Discard); err == nil {
 		t.Error("a truncated download was accepted")
 	}
-	if b, err := c.MeshSettings(ctx); err != nil || string(b) != "MeshID=0x1" {
-		t.Errorf("settings = %q, %v", b, err)
+	f.short, f.huge = false, true
+	if _, err := c.MeshAgent(ctx, "linux", "arm64", io.Discard); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Errorf("an oversized download: %v", err)
+	}
+	b, signed, err := c.MeshSettings(ctx)
+	if err != nil || string(b) != "MeshID=0x1" || signed.Verify(jobPub) != nil {
+		t.Errorf("settings = %q, %+v, %v", b, signed, err)
+	}
+	f.short = true
+	if _, _, err := c.MeshSettings(ctx); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Errorf("settings cut short: %v", err)
+	}
+	f.short, f.tamper = false, true
+	if b, signed, err := c.MeshSettings(ctx); err != nil || string(b) != "MeshID=0x2" || !errors.Is(signed.Verify(jobPub), agentproto.ErrDownloadSignature) {
+		t.Errorf("settings changed after signing = %q, %v, %v", b, signed.Verify(jobPub), err)
 	}
 	if h, err := c.Inventory(ctx, []byte(`{"os":{}}`)); err != nil || h != "9" {
 		t.Errorf("inventory = %q, %v", h, err)
@@ -320,7 +373,7 @@ func TestUnreachableServer(t *testing.T) {
 	if _, err := c.Heartbeat(ctx, agentproto.HeartbeatRequest{}); err == nil {
 		t.Error("heartbeat to a closed server succeeded")
 	}
-	if _, err := c.MeshSettings(ctx); err == nil {
+	if _, _, err := c.MeshSettings(ctx); err == nil {
 		t.Error("settings from a closed server")
 	}
 	if err := c.Result(ctx, "r1", agentproto.ResultRequest{}); err == nil {

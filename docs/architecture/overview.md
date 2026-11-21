@@ -117,9 +117,12 @@ See ADR-0004, ADR-0005, ADR-0014 and ADR-0033.
   host-only cookie and redirects to MeshCentral with a one-minute,
   single-use GCM login token for the technician's MeshCentral user,
   `gotonode`, `viewmode` and `hide=63`.
-* Certificate renewals are written to `meshcentral-data/proxy-cert.pem`, which
-  MeshCentral reads through `certUrl: file:///…`, so agents keep validating
-  the server across Let's Encrypt renewals.
+* MeshCentral learns the edge's certificate from `certUrl`
+  (`EASYRMM_MESH_CERT_URL`, by default `https://127.0.0.1:443`, where the
+  edge answers with the MeshCentral name's certificate). It reads the
+  certificate again when an agent reports a different one, at most every
+  two minutes, so agents keep validating the server across renewals
+  (ADR-0014; [Docker deployment](../deployment/docker.md)).
 
 ## 6. Endpoint: one installation
 

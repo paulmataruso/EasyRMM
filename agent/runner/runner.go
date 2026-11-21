@@ -6,8 +6,10 @@ package runner
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"math/rand/v2"
@@ -77,6 +79,10 @@ type Runner struct {
 	Log   *slog.Logger
 	// OnJobKey receives the server's job-signing key from each heartbeat.
 	OnJobKey func(key string)
+	// Key returns the pinned job-signing key, nil while none is pinned.
+	// MeshAgent and its settings are installed only when the server signed
+	// them with it.
+	Key func() ed25519.PublicKey
 	// Metrics measures the device for each heartbeat; nil sends none.
 	Metrics func(ctx context.Context) agentproto.Metrics
 	// Inventory collects the device's inventory (ADR-0018); nil never
@@ -201,10 +207,7 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	}
 	r.status.LastHeartbeat = time.Now().UTC()
 	r.status.LastError, r.status.LastErrorAt = "", time.Time{}
-	next := jitter(time.Duration(resp.HeartbeatSeconds) * time.Second)
-	if next <= 0 {
-		next = jitter(time.Minute)
-	}
+	next := jitter(heartbeatInterval(resp.HeartbeatSeconds))
 	if resp.Uninstall != nil {
 		// The device is being removed: nothing else is done (ADR-0050).
 		r.save()
@@ -293,14 +296,40 @@ func (r *Runner) failed(err error) time.Duration {
 	return jitter(min(wait, r.MaxRetry))
 }
 
+// installMesh installs MeshAgent, which runs as SYSTEM or root: its binary
+// and settings are used only if the server signed them with the pinned job
+// key (agentproto.SignDownload).
 func (r *Runner) installMesh(ctx context.Context) error {
-	settings, err := r.Client.MeshSettings(ctx)
+	key := r.Key()
+	if key == nil {
+		return errors.New("no server key is pinned yet to check MeshAgent with")
+	}
+	settings, signed, err := r.Client.MeshSettings(ctx)
 	if err != nil {
 		return err
 	}
+	if err := signed.Verify(key); err != nil {
+		return fmt.Errorf("MeshAgent's settings: %w", err)
+	}
 	return r.Mesh.Install(ctx, func(w io.Writer) error {
-		return r.Client.MeshAgent(ctx, runtime.GOOS, runtime.GOARCH, w)
+		signed, err := r.Client.MeshAgent(ctx, runtime.GOOS, runtime.GOARCH, w)
+		if err != nil {
+			return err
+		}
+		if err := signed.Verify(key); err != nil {
+			return fmt.Errorf("MeshAgent: %w", err)
+		}
+		return nil
 	}, settings)
+}
+
+// heartbeatInterval is the server's heartbeat interval, kept within
+// agentproto's bounds so that no answer can silence the agent.
+func heartbeatInterval(seconds int) time.Duration {
+	if seconds <= 0 {
+		return time.Minute
+	}
+	return time.Duration(min(max(seconds, agentproto.MinHeartbeatSeconds), agentproto.MaxHeartbeatSeconds)) * time.Second
 }
 
 func (r *Runner) save() {

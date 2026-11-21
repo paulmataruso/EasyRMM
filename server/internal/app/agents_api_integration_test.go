@@ -227,10 +227,10 @@ func TestAgentEnrollmentAPI(t *testing.T) {
 		t.Errorf("after a hostname change: %q / %q", dev.Name, dev.Hostname)
 	}
 	// MeshAgent is not offered without remote access.
-	if err := ac.MeshAgent(ctx, "linux", "amd64", &bytes.Buffer{}); agentclient.Code(err) != "meshagent_unavailable" {
+	if _, err := ac.MeshAgent(ctx, "linux", "amd64", &bytes.Buffer{}); agentclient.Code(err) != "meshagent_unavailable" {
 		t.Errorf("MeshAgent download = %v", err)
 	}
-	if _, err := ac.MeshSettings(ctx); agentclient.Code(err) != "meshagent_unavailable" {
+	if _, _, err := ac.MeshSettings(ctx); agentclient.Code(err) != "meshagent_unavailable" {
 		t.Errorf("MeshAgent settings = %v", err)
 	}
 

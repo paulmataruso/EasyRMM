@@ -4,6 +4,7 @@ package agents
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
@@ -35,6 +36,12 @@ type fakeMesh struct {
 	binErr   error
 	setErr   error
 	linked   int
+	// bin is MeshAgent's binary ("ELF" when empty); length overrides the
+	// length MeshCentral states; huge sends more than any MeshAgent is.
+	bin     string
+	length  int64
+	huge    bool
+	fetches int
 }
 
 func (f *fakeMesh) Group(_ context.Context, site uuid.UUID) (string, error) {
@@ -42,10 +49,23 @@ func (f *fakeMesh) Group(_ context.Context, site uuid.UUID) (string, error) {
 }
 
 func (f *fakeMesh) Binary(context.Context, int) (*meshcentral.Download, error) {
+	f.fetches++
 	if f.binErr != nil {
 		return nil, f.binErr
 	}
-	return &meshcentral.Download{Body: io.NopCloser(strings.NewReader("ELF")), Length: 3}, nil
+	if f.huge {
+		return &meshcentral.Download{Body: io.NopCloser(io.LimitReader(zeros{}, agentproto.MaxMeshAgentBytes+1)), Length: -1}, nil
+	}
+	bin := cmp.Or(f.bin, "ELF")
+	return &meshcentral.Download{Body: io.NopCloser(strings.NewReader(bin)), Length: cmp.Or(f.length, int64(len(bin)))}, nil
+}
+
+// zeros reads as an endless run of zero bytes.
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }
 
 func (f *fakeMesh) Settings(_ context.Context, mesh string) ([]byte, error) {
@@ -303,22 +323,43 @@ func TestMeshAgentDelivery(t *testing.T) {
 	if err != nil || string(b) != "MeshID=mesh//group" {
 		t.Errorf("settings = %q, %v", b, err)
 	}
-	dl, err := f.svc.MeshAgentBinary(f.ctx, "linux", "amd64")
-	if err != nil || dl.Length != 3 {
-		t.Fatalf("binary = %+v, %v", dl, err)
+	// The server keeps each platform's MeshAgent for MeshAgentCacheFor, so
+	// that it can sign it whole and a fleet installing at once costs
+	// MeshCentral one download.
+	clock := time.Now()
+	f.svc.now = func() time.Time { return clock }
+	bin, err := f.svc.MeshAgentBinary(f.ctx, "linux", "amd64")
+	if err != nil || string(bin) != "ELF" || f.mesh.fetches != 1 {
+		t.Fatalf("binary = %q, %v, %d fetches", bin, err, f.mesh.fetches)
 	}
-	_ = dl.Body.Close()
+	f.mesh.bin = "ELF2"
+	if bin, err := f.svc.MeshAgentBinary(f.ctx, "linux", "amd64"); err != nil || string(bin) != "ELF" || f.mesh.fetches != 1 {
+		t.Errorf("kept binary = %q, %v, %d fetches", bin, err, f.mesh.fetches)
+	}
+	if bin, err := f.svc.MeshAgentBinary(f.ctx, "linux", "arm64"); err != nil || string(bin) != "ELF2" || f.mesh.fetches != 2 {
+		t.Errorf("another platform's binary = %q, %v, %d fetches", bin, err, f.mesh.fetches)
+	}
+	clock = clock.Add(MeshAgentCacheFor)
+	if bin, err := f.svc.MeshAgentBinary(f.ctx, "linux", "amd64"); err != nil || string(bin) != "ELF2" || f.mesh.fetches != 3 {
+		t.Errorf("binary after the cache's time = %q, %v, %d fetches", bin, err, f.mesh.fetches)
+	}
 	if _, err := f.svc.MeshAgentBinary(f.ctx, "plan9", "amd64"); err == nil {
 		t.Error("binary for an unknown platform")
 	}
-	f.mesh.binErr = meshcentral.ErrNoFile
-	if _, err := f.svc.MeshAgentBinary(f.ctx, "linux", "amd64"); !errors.Is(err, ErrMeshUnavailable) {
-		t.Errorf("missing binary: %v", err)
+	for name, prepare := range map[string]func(){
+		"missing binary":         func() { f.mesh.binErr = meshcentral.ErrNoFile },
+		"MeshCentral down":       func() { f.mesh.binErr = errors.New("down") },
+		"a download cut short":   func() { f.mesh.length = 10 },
+		"a binary far too large": func() { f.mesh.huge = true },
+	} {
+		clock = clock.Add(MeshAgentCacheFor)
+		f.mesh.binErr, f.mesh.length, f.mesh.huge = nil, 0, false
+		prepare()
+		if _, err := f.svc.MeshAgentBinary(f.ctx, "linux", "amd64"); !errors.Is(err, ErrMeshUnavailable) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 	f.mesh.binErr, f.mesh.setErr = errors.New("down"), errors.New("down")
-	if _, err := f.svc.MeshAgentBinary(f.ctx, "linux", "amd64"); !errors.Is(err, ErrMeshUnavailable) {
-		t.Errorf("MeshCentral down (binary): %v", err)
-	}
 	if _, err := f.svc.MeshAgentSettings(f.ctx, dev); !errors.Is(err, ErrMeshUnavailable) {
 		t.Errorf("MeshCentral down (settings): %v", err)
 	}

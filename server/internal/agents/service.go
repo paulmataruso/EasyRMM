@@ -63,6 +63,8 @@ type Service struct {
 	tokens *secrets.Sealer
 	// removed is called once a device was deleted (ADR-0050); nil for none.
 	removed func()
+	// meshBins keeps the MeshAgent binaries fetched from MeshCentral.
+	meshBins meshCache
 }
 
 // OnRemoved has f called after a device is deleted, such as to have the

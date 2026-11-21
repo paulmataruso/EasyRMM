@@ -437,8 +437,24 @@ func (a *API) signedFor(limit int64, extra *auth.KeyedLimiter, retired bool, h s
 		if d.Retired && !retired {
 			return errUnknownDevice
 		}
+		r = r.WithContext(context.WithValue(r.Context(), signedCallKey{}, signedCall{req: p, target: target}))
 		return h(w, r, d, body)
 	}
+}
+
+// signedCall is a verified request, for answers signed back to it.
+type signedCall struct {
+	req    *agents.SignedRequest
+	target string
+}
+
+type signedCallKey struct{}
+
+// signDownload signs an answer the agent will run (MeshAgent and its
+// settings) back to the signed request it answers.
+func (a *API) signDownload(w http.ResponseWriter, r *http.Request, body []byte) {
+	c, _ := r.Context().Value(signedCallKey{}).(signedCall)
+	w.Header().Set(agentproto.HeaderDownloadSignature, a.svc.SignDownload(c.req, c.target, body))
 }
 
 // enterPoll counts an open job poll for a device, unless it has maxPolls
@@ -582,17 +598,14 @@ func (a *API) result(w http.ResponseWriter, r *http.Request, d *agents.Device, b
 
 func (a *API) meshAgent(w http.ResponseWriter, r *http.Request, _ *agents.Device, _ []byte) error {
 	q := r.URL.Query()
-	dl, err := a.svc.MeshAgentBinary(r.Context(), q.Get("os"), q.Get("arch"))
+	b, err := a.svc.MeshAgentBinary(r.Context(), q.Get("os"), q.Get("arch"))
 	if err != nil {
 		return mapError(err)
 	}
-	defer func() { _ = dl.Body.Close() }()
+	a.signDownload(w, r, b)
 	w.Header().Set("Content-Type", "application/octet-stream")
-	if dl.Length >= 0 {
-		w.Header().Set("Content-Length", strconv.FormatInt(dl.Length, 10))
-	}
-	w.WriteHeader(http.StatusOK)
-	if _, err := io.Copy(w, dl.Body); err != nil {
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+	if _, err := w.Write(b); err != nil { //nolint:gosec // MeshCentral's MeshAgent binary, served as application/octet-stream with nosniff
 		a.log.Warn("agentapi: sending MeshAgent failed", "error", err)
 	}
 	return nil
@@ -603,6 +616,7 @@ func (a *API) meshSettings(w http.ResponseWriter, r *http.Request, d *agents.Dev
 	if err != nil {
 		return mapError(err)
 	}
+	a.signDownload(w, r, b)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write(b) //nolint:gosec // MeshCentral's settings file, served as text/plain with nosniff
 	return nil
