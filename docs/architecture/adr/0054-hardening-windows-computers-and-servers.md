@@ -1,14 +1,17 @@
 # ADR-0054: Hardening Windows computers and servers
 
-* Status: Proposed (2026-11-21). Not implemented.
+* Status: Proposed (2026-11-21), revised after its independent review the
+  same day. Not implemented.
 * Builds on: [ADR-0051](0051-hardening-linux-computers.md) (the `hardening`
   job, its modes, results, permission and console),
   [ADR-0017](0017-scripts-and-jobs.md) (scripts and jobs),
   [ADR-0028](0028-software-deployment.md) (a fixed script compiled into the
   server, its input as arguments) and [ADR-0020](0020-windows-agent.md)
   (the Windows agent).
-* Shares with log collection's ADR (ADR-0060, proposed): who sets Windows
-  audit policy, and how both read what Group Policy owns.
+* Shares with log collection's ADR (ADR-0060, proposed): Windows audit
+  policy, which log collection sets from one table that this ADR's check
+  compares against, and the reader of who owns a setting (*policy
+  ownership*), built once, in this ADR's W1, for both.
 
 ## Context
 Most computers an MSP manages run Windows. The owner asked for automatic
@@ -32,41 +35,48 @@ ISO and CIS").
   directly on" one, or "represent or claim a particular level of
   compliance or consistency with" one. Putting them in a product needs the
   CIS SecureSuite Product Vendor Membership, "the only licensing rights to
-  integrate" them (from $6,000 a year below $250,000 of revenue to $80,000
-  above $500 million), and "CIS Benchmarks Certification must be awarded
-  ... in advance of any sale, distribution, or marketing", every year, per
-  tool and type of certification. CIS-CAT Pro may not be built into a
-  product. CIS's marks in advertising are for members only.
+  integrate" them. CIS's product vendor page lists "Annual membership fees
+  based on enrolling organization's annual revenue", from $6,000 below
+  $250,000 to $80,000 above $500 million ("Pricing in USD. Subject to
+  change."), and asks other uses to contact it. "CIS Benchmarks
+  Certification must be awarded ... in advance of any sale, distribution,
+  or marketing", every year, per tool and type of certification.
+  "Incorporating CIS-CAT Pro or other CIS tools into a product or software
+  is not permitted under the CIS SecureSuite Membership". CIS's marks in
+  advertising are for members only.
 * **Wazuh's security configuration assessment.** Wazuh 4.14.10 (released
   2026-11-09) checks Windows with eight policies (Windows 10 and 11
   Enterprise, Server 2012 to 2025), each "Based on" a CIS Benchmark older
   than CIS's current one (Windows 11 Enterprise 3.0.0, Server 2022 2.0.0,
-  Server 2025 1.0.0). The policies are under the GPL version 2 (Wazuh's
-  engine is AGPL-3.0), and reproduce CIS's recommendation numbers, titles,
-  rationale and remediation text word for word. **What Wazuh calls
-  frameworks are labels on those CIS checks**: in 4.14.10 the checks carry
-  `cis`, `cis_csc_v7` and `cis_csc_v8` (the CIS Controls), `pci_dss_v4.0`
-  and `v3.2.1`, `soc_2`, `iso_27001-2013`, `cmmc_v2.0`, `hipaa` and
-  `nist_sp_800-53`. Wazuh's development branch moves to ISO 27001:2022
-  numbering and adds NIS2, NIST SP 800-171, FedRAMP, GDPR and MITRE ATT&CK.
-  The labels are coarse: on that branch the Windows 11 policy's 482 checks
-  share 57 distinct sets, and "Enforce password history" is labelled
-  AC-2, IA-2, IA-5, AC-11, AC-7 and AU-6. Wazuh's own documentation calls
-  its mappings "indicative" and says they "do not by themselves certify
-  compliance". EasyRMM can use none of this: the content is GPL and CIS's,
-  and [ADR-0037](0037-one-licence.md) allows only permissive dependencies.
+  Server 2025 1.0.0). In 4.14.10 the policies, like all of Wazuh, are under
+  the GPL version 2; on Wazuh's main branch the engine (`src/engine`) has
+  since been put under the AGPL version 3 or later. The policies reproduce
+  CIS's recommendation numbers, titles, rationale and remediation text word
+  for word. **What Wazuh calls frameworks are labels on those CIS checks**:
+  in 4.14.10 the checks carry `cis`, `cis_csc_v7` and `cis_csc_v8` (the CIS
+  Controls), `pci_dss_v4.0` and `v3.2.1`, `soc_2`, `iso_27001-2013`,
+  `cmmc_v2.0`, `hipaa` and `nist_sp_800-53`. Wazuh's development branch
+  moves to ISO 27001:2022 numbering and adds NIS2, NIST SP 800-171,
+  FedRAMP, GDPR and MITRE ATT&CK. The labels are coarse: on that branch the
+  Windows 11 policy's 482 checks share 57 distinct sets, and "Enforce
+  password history" is labelled AC-2, IA-2, IA-5, AC-11, AC-7 and AU-6.
+  Wazuh's own documentation calls its mappings "indicative" and says they
+  "do not by themselves certify compliance". EasyRMM can use none of this:
+  the content is GPL and CIS's, and [ADR-0037](0037-one-licence.md) allows
+  only permissive dependencies.
 * **DISA STIGs.** Current releases: Windows 11 V2R11, Windows 10 V3R6,
   Server 2025 V1R4, Server 2022 V2R11, Server 2019 V3R9, Server 2016 V2R10,
-  and the Microsoft Defender Antivirus (V2R8) and Windows Defender Firewall
-  (V2R2) STIGs. They are free to download, written by DISA, a United
-  States government agency, and "Copyright protection under this title is
-  not available for any work of the United States Government" (17 U.S.C.
-  105). Every rule has a stable ID (`WN25-SO-000310`) and names Control
-  Correlation Identifiers (CCIs), which DISA's CCI list maps to NIST SP
-  800-53 Rev. 5. Member server and domain controller rules are marked in
-  the ID (`WN25-MS-…`, `WN25-DC-…`). They are strict and written for the
-  US Department of Defense: three failed sign-ins lock an account,
-  passwords expire, certificates must come from the department's own PKI.
+  and the Microsoft Defender Antivirus (V2R10) and Windows Defender
+  Firewall (V2R2) STIGs. They are free to download, written by DISA, a
+  United States government agency, and "Copyright protection under this
+  title is not available for any work of the United States Government"
+  (17 U.S.C. 105). Every rule has a stable ID (`WN25-SO-000310`) and names
+  Control Correlation Identifiers (CCIs), which DISA's CCI list maps to
+  NIST SP 800-53 Rev. 5 and, beside it, Rev. 4. Member server and domain
+  controller rules are marked in the ID (`WN25-MS-…`, `WN25-DC-…`). They
+  are strict and written for the US Department of Defense: three failed
+  sign-ins lock an account, passwords expire, certificates must come from
+  the department's own PKI.
 * **Microsoft's security baselines**, in the Security Compliance Toolkit:
   Windows 11 26H2 (v2, October 2026), 25H2 and 24H2, Windows Server 2025
   (v2602, February 2026) and 2022, Windows 10 22H2, and older ones. Each is
@@ -76,20 +86,37 @@ ISO and CIS").
   controllers. Microsoft says other organizations' recommendations
   "closely mirror Microsoft's recommendations" but are not the same, and,
   of its Intune baselines, that they are not CIS or NIST compliant,
-  "strictly speaking". The packages carry no licence file; the toolkit's
-  tools come with "standalone use terms", inside the LGPO download, which
-  we have not read. On Windows Server 2025, OSConfig applies the same
-  baseline and corrects drift every four hours.
+  "strictly speaking". The baseline packages carry no licence file. The
+  toolkit's standalone use terms, inside the LGPO download, allow its
+  tools to be used "to develop and test your programs, and solely for use
+  on Windows", and say you will not "share, publish, distribute, or lend
+  the software". On Windows Server 2025, OSConfig applies the same baseline
+  and corrects drift.
+* **The Australian Signals Directorate** publishes *Hardening Microsoft
+  Windows 11 workstations*, which the review reports is under CC BY 4.0;
+  that would make it the one permissively licensed government guide
+  besides the STIGs. cyber.gov.au could not be fetched while this was
+  written (every request timed out), so neither its licence nor its
+  contents were read, and nothing here relies on it (see Open questions).
 * **Frameworks are not benchmarks.** NIST SP 800-53 Rev. 5 (release 5.2.0,
-  August 2025), NIST SP 800-171 Rev. 3 (May 2024), ISO/IEC 27001:2022
-  Annex A, the CIS Controls (v8.1) and the Essential Eight say what an
-  organization must achieve, not which registry value to set. SP 800-53's
-  CM-6 names STIGs among the "common secure configurations" an
-  organization chooses; SP 800-171's 03.04.02 does the same. NIST's
-  National Checklist Program tells federal civilian agencies to look for a
-  checklist from a "Governmental Authority" first (DISA's STIGs are
-  there), a "Software Vendor" next and a "Third Party" (CIS among them)
-  last.
+  August 2025), NIST SP 800-171 Rev. 3 (May 2024) and Rev. 2 (February
+  2020), ISO/IEC 27001:2022 Annex A, the CIS Controls (v8.1) and the
+  Essential Eight say what an organization must achieve, not which
+  registry value to set. SP 800-53's CM-6 names STIGs among the "common
+  secure configurations" an organization chooses; SP 800-171's 03.04.02
+  does the same. NIST's National Checklist Program tells federal civilian
+  agencies to look for a checklist from a "Governmental Authority" first
+  (DISA's STIGs are there), a "Software Vendor" next and a "Third Party"
+  (CIS among them) last.
+* **SP 800-171 Rev. 2 is the one defence contractors are held to.** The
+  CMMC rule says "The security requirements in CMMC Level 2 are identical
+  to the requirements in NIST SP 800-171 R2" (32 CFR 170.14), and the
+  Department of Defense's class deviation 2024-O0013 requires contractors
+  under DFARS 252.204-7012 "to comply with ... (SP) 800-171 Revision 2,
+  instead of the version of NIST SP 800-171 in effect at the time the
+  solicitation is issued". Rev. 2's Appendix D maps each requirement to SP
+  800-53 controls: "The security controls in Tables D-1 through D-14 are
+  taken from NIST Special Publication 800-53, Revision 4."
 
 ### What the computers are like
 * **Windows' defaults moved a lot.** SMBv1 has not been installed by
@@ -107,49 +134,61 @@ ISO and CIS").
   Policy, which Windows applies again every 90 minutes (every 5 on domain
   controllers) and security settings every 16 hours even when nothing
   changed. Intune and other MDMs set the same settings through the Policy
-  CSP. Group Policy can also set PowerShell's execution policy, which then
-  overrides `-ExecutionPolicy Bypass` "in all scopes", and App Control or
-  AppLocker can put PowerShell in Constrained Language Mode. A change made
-  underneath any of these is reverted, fights the owner, or does not run.
+  CSP; Defender for Endpoint can apply Intune's Defender and firewall
+  policies to computers not enrolled in Intune; Configuration Manager's
+  baselines, PowerShell DSC and Azure's machine configuration can each put
+  a value back on a schedule. Group Policy can also set PowerShell's
+  execution policy, which then overrides `-ExecutionPolicy Bypass` "in all
+  scopes", and App Control or AppLocker can put PowerShell in Constrained
+  Language Mode. A change made underneath any of these is reverted, fights
+  the owner, or does not run.
 * **MSPs' customers depend on what benchmarks turn off**: multifunction
   printers scanning to SMB shares, NAS boxes opened as guest, line-of-
   business software that speaks NTLM or TLS 1.0, technicians typing an
   administrator's password into a user's UAC prompt during remote support,
-  local administrator accounts used over the network. EasyRMM's own agent
-  is unsigned unless the operator signs it
+  local administrator accounts (the built-in one included) used over the
+  network, servers whose firewall someone turned off and whose services
+  listen on ports chosen at each start. EasyRMM's own agent is unsigned
+  unless the operator signs it
   ([ADR-0049](0049-operators-sign-windows-agents.md)), and Defender
   features that block files "that don't yet have a positive reputation"
-  could block its updates.
+  could block its updates, signed or not.
+* **Windows Server does not step aside for another antivirus.** On
+  Windows Server 2016 and later, "Microsoft Defender Antivirus doesn't
+  enter passive mode automatically when you install a non-Microsoft
+  antivirus product"; on Windows 10 and 11 it does ("Disabled mode
+  (happens automatically)").
 
 ## Decision
 
 ### Basis: Microsoft's values, DISA's rule IDs, no CIS
 * **Values come from Microsoft's security baseline** for the Windows
   version and profile the computer has (workstation or server, joined to a
-  domain or not, domain controller), except where this ADR loosens one for
-  safety, which the module says. Microsoft is the vendor, publishes a
+  domain or not, domain controller), except where this ADR differs from it
+  for safety, which the module says. Microsoft is the vendor, publishes a
   baseline for each release (Server 2025's is from February 2026, Windows
   11 26H2's from October 2026), writes for ordinary organizations rather
   than one department, and covers the domain controller and standalone
   profiles an MSP meets. A setting's value is a fact, not text: nothing
-  from the packages is copied.
+  from the packages is copied or shipped.
 * **Each setting is cited by the DISA STIG rule that covers it**, by ID and
   STIG release (`Windows Server 2025 STIG V1R4, WN25-SO-000310`), in the
   script's comments and in the console, for the Windows version the
-  computer runs. Settings no STIG covers (LSA protection, LLMNR, NLA) name
-  Microsoft's baseline instead. The IDs are public, stable and tied to
-  NIST SP 800-53 through the CCIs, which gives the framework reporting
-  below. EasyRMM uses the IDs and its own words, never the STIGs' text: no
-  distribution statement could be found in the files (the Windows 11
-  overview sends those without a common access card to
-  `public.cyber.mil`).
+  computer runs, **with whether EasyRMM's value meets the rule, differs
+  from it on purpose, or is not set** (see What each module cites).
+  Settings no STIG covers (LSA protection, LLMNR, NLA) name Microsoft's
+  baseline instead. The IDs are public, stable and tied to NIST SP 800-53
+  through the CCIs, which gives the framework reporting below. EasyRMM uses
+  the IDs and its own words, never the STIGs' text: no distribution
+  statement could be found in the files (the Windows 11 overview sends
+  those without a common access card to `public.cyber.mil`).
 * **No CIS numbers, titles or text, and no claim about CIS**, unless the
   owner buys the Product Vendor Membership and has the feature certified
   before it is sold, distributed or marketed (see Open questions). Nothing
   from Wazuh either.
 * **No claim of compliance with anything.** The check reports what is in
   place on the computer. The console never says "compliant", "CIS Level
-  1" or "STIG compliant", and EasyRMM's documentation says why.
+  1", "STIG compliant" or "CMMC", and EasyRMM's documentation says why.
 * **Keeping current.** A test fails when a STIG ID the script cites is
   not in the STIG release it names; the IDs come from DISA's files, kept in
   the repository as test data (a list of IDs per release, a United States
@@ -158,75 +197,90 @@ ISO and CIS").
 
 ### Frameworks: related controls, never compliance
 For each module the console shows the controls its settings relate to,
-built only from published mappings, at the level of a base control (AC-7,
-not AC-7 a):
+built only from published mappings, from the STIG rules the module meets
+or differs from on purpose (for a report-only module, the rules it
+reports):
 
-* **NIST SP 800-53 Rev. 5**: the controls the CCIs of the cited STIG rules
-  name in DISA's CCI list (version 2025-01-23, whose references are to
-  "NIST SP 800-53 Revision 5"), with their titles from NIST's own catalogue
-  (release 5.2.0), a United States government work.
+* **NIST SP 800-53 Rev. 5**: the controls the CCIs of those rules name in
+  DISA's CCI list (version 2025-01-23, whose references are to "NIST SP
+  800-53 Revision 5"), shown as base controls (AC-7, not AC-7 a), with
+  their titles from NIST's own catalogue (release 5.2.0), a United States
+  government work.
+* **NIST SP 800-171 Rev. 2**, the version CMMC Level 2 and DFARS
+  252.204-7012 use: the requirements whose row in Rev. 2's Appendix D
+  lists a control or enhancement that the same CCIs name in their SP
+  800-53 Rev. 4 references; requirements that share a row share its
+  controls. Appendix D's own caveat goes with it: "The mapping tables are
+  included for informational purposes and do not impart additional
+  security requirements". The rows are kept in the repository as data
+  taken from the appendix's tables.
 * **NIST SP 800-171 Rev. 3**: the requirements whose "Source Control" in
-  NIST's publication is one of those controls (03.04.02 Configuration
-  Settings lists CM-06, for example). SP 800-171 Rev. 3 is "derived from
-  the controls in NIST Special Publication (SP) 800-53".
+  NIST's publication is a control or enhancement the CCIs name in their
+  Rev. 5 references (03.04.02 Configuration Settings lists CM-06, for
+  example). SP 800-171 Rev. 3 is "derived from the controls in NIST
+  Special Publication (SP) 800-53".
 * **ISO/IEC 27001:2022 Annex A**: the Annex A controls NIST's crosswalk
   ("800-53-Rev5-to-ISO 27001-2022", version 1.0.0, posted 2023-11-13 in
-  NIST's OLIR catalogue) gives for those controls, as numbers only: the
-  crosswalk has no titles, and ISO's text is copyrighted and could not be
-  read. NIST's own caveat goes with it: organizations "should not assume
+  NIST's OLIR catalogue) gives for those base controls, as numbers only:
+  the crosswalk has no titles, and ISO's text is copyrighted and could not
+  be read. NIST's own caveat goes with it: organizations "should not assume
   security requirement and control equivalency based solely on the
   mapping tables".
+* **CMMC** is not mapped beyond that: its Level 2 requirements are SP
+  800-171 Rev. 2's, which are shown. EasyRMM says nothing about an
+  assessment.
 * **Not mapped**: the CIS Controls (CC BY-NC-ND 4.0 under the same
   non-member terms, which forbid claiming consistency with them); the
   Essential Eight (the Australian Signals Directorate's site could not be
-  read while this was written: revisit, see Open questions); PCI DSS,
-  HIPAA, SOC 2, GDPR, NIS2, CMMC and FedRAMP (no published mapping from
-  settings that EasyRMM may use; PCI DSS's standard is behind a licence
-  agreement). PCI DSS v4.0 requirement 2.2.1 asks for configuration
-  standards "consistent with industry-accepted system hardening standards
-  or vendor hardening recommendations"; an MSP can point its standard at
-  Microsoft's baseline and the STIG IDs EasyRMM shows, but EasyRMM does not
-  map requirements.
+  read while this was written: see Open questions); PCI DSS, HIPAA, SOC 2,
+  GDPR, NIS2 and FedRAMP (no published mapping from STIG rules or SP
+  800-53 controls to them was found that EasyRMM may use; PCI DSS's
+  standard is behind a licence agreement). PCI DSS v4.0 requirement 2.2.1
+  asks for configuration standards "consistent with industry-accepted
+  system hardening standards or vendor hardening recommendations"; an MSP
+  can point its standard at Microsoft's baseline and the STIG IDs EasyRMM
+  shows, but EasyRMM does not map requirements.
 * **Wording.** The panel is headed *Related controls*, and says: "Which
   controls these settings relate to, from DISA's and NIST's published
   mappings. It is not an assessment and not a statement of compliance."
   The tables are generated from DISA's and NIST's files by a tool in the
   repository and checked in CI, not written by hand.
 
-Generated from the STIG IDs in the module table below (Windows 11 and
-Server 2025), as W3 will show them:
+Generated from the rules in What each module cites (Windows 11, Server
+2025, and the Defender Antivirus and Firewall STIGs), as W3 will show them:
 
-| Module | NIST SP 800-53 Rev. 5 | ISO/IEC 27001:2022 Annex A (NIST's crosswalk) |
-|---|---|---|
-| `accounts` | AC-7, CM-6, IA-5, IA-8 | A.5.16, A.5.17, A.8.5, A.8.9 |
-| `firewall` | AC-4, AU-5, AU-12, CM-6, CM-7, SC-7 | A.5.14, A.8.9, A.8.15, A.8.16, A.8.19, A.8.20, A.8.22, A.8.23 |
-| `defender` | CM-6, CM-7, SC-18, SI-3 | A.8.7, A.8.9, A.8.19 |
-| `asr` | SC-18 | none |
-| `smb` | CM-7, IA-5 | A.5.16, A.5.17, A.8.19 |
-| `smb-signing` | CM-6, SC-8 | A.5.10, A.5.14, A.5.33, A.8.9, A.8.20, A.8.26 |
-| `ntlm` | CM-6, IA-5 | A.5.16, A.5.17, A.8.9 |
-| `wdigest`, `powershell`, `autoplay`, `printing`, `features` | CM-7 | A.8.19 |
-| `name-resolution` | SC-5 | none |
-| `rdp` | AC-17, IA-11, SC-11 | A.5.14, A.6.7 |
-| `uac` | CM-11, IA-11, SC-3, SC-11 | A.8.19 |
-| `anonymous` | AC-6, CM-6, SC-4 | A.5.15, A.8.2, A.8.9, A.8.18 |
-| `winrm` | IA-11, MA-4, SC-11 | none |
-| `audit` | AC-6, AU-3, AU-4, AU-12, CM-5 | A.5.15, A.5.28, A.8.2, A.8.4, A.8.6, A.8.9, A.8.15, A.8.18, A.8.19, A.8.31, A.8.32 |
-| `device-guard` | CM-6 | A.8.9 |
-| `bitlocker` | IA-8, SC-28 | A.5.10, A.5.16, A.5.33 |
-| `laps` | IA-5 | A.5.16, A.5.17 |
-| `lsa-protection`, `tls` | none (no STIG rule) | none |
+| Module | SP 800-53 Rev. 5 | SP 800-171 Rev. 2 | SP 800-171 Rev. 3 | ISO/IEC 27001:2022 Annex A (NIST's crosswalk) |
+|---|---|---|---|---|
+| `accounts` | AC-7, CM-6, IA-5, IA-8 | 3.1.8, 3.4.1, 3.4.2, 3.5.7, 3.5.8, 3.5.9, 3.5.10 | 03.01.08, 03.04.02, 03.05.07 | A.5.16, A.5.17, A.8.5, A.8.9 |
+| `firewall` | AC-4, AU-5, AU-12, CM-6, CM-7, SC-5, SC-7 | 3.1.3, 3.3.1, 3.3.2, 3.3.4, 3.4.1, 3.4.2, 3.4.6 | 03.01.03, 03.03.03, 03.03.04, 03.04.02, 03.04.06 | A.5.14, A.8.9, A.8.15, A.8.16, A.8.19, A.8.20, A.8.22, A.8.23 |
+| `defender` | CM-6, CM-7, SC-18, SI-3 | 3.4.1, 3.4.2, 3.4.6, 3.14.1, 3.14.2, 3.14.3, 3.14.4, 3.14.5 | 03.04.02, 03.04.06, 03.14.02 | A.8.7, A.8.9, A.8.19 |
+| `asr` | SC-18 | none | none | none |
+| `smb` | CM-7, IA-5 | 3.4.6, 3.5.7, 3.5.8, 3.5.9, 3.5.10 | 03.04.06, 03.05.07 | A.5.16, A.5.17, A.8.19 |
+| `smb-signing` | CM-6, SC-8 | 3.4.1, 3.4.2, 3.13.8 | 03.04.02, 03.13.08 | A.5.10, A.5.14, A.5.33, A.8.9, A.8.20, A.8.26 |
+| `ntlm` | CM-6, IA-5 | 3.4.1, 3.4.2, 3.5.7, 3.5.8, 3.5.9, 3.5.10 | 03.04.02, 03.05.07 | A.5.16, A.5.17, A.8.9 |
+| `wdigest`, `powershell`, `printing`, `features` | CM-7 | 3.4.6 | 03.04.06 | A.8.19 |
+| `autoplay` | CM-7 | 3.4.7 | none | A.8.19 |
+| `name-resolution` | SC-5 | none | none | none |
+| `rdp` | AC-17, IA-11, SC-11 | 3.1.13 | 03.05.01 | A.5.14, A.6.7 |
+| `uac` | CM-11, IA-11, SC-3, SC-11 | none | 03.05.01 | A.8.19 |
+| `anonymous` | AC-6, CM-6, SC-4 | 3.1.7, 3.4.1, 3.4.2, 3.13.4 | 03.01.07, 03.04.02, 03.13.04 | A.5.15, A.8.2, A.8.9, A.8.18 |
+| `winrm` | IA-11, MA-4, SC-11 | 3.7.5 | 03.05.01, 03.07.05 | none |
+| `audit` | AC-2, AC-6, AC-17, AU-3, AU-4, AU-9, AU-12, CM-5, MA-3, SI-11 | 3.1.7, 3.1.12, 3.3.1, 3.3.2, 3.3.8 | 03.01.07, 03.03.02, 03.03.03, 03.03.08 | A.5.14, A.5.15, A.5.16, A.5.18, A.5.28, A.5.33, A.6.7, A.8.2, A.8.4, A.8.6, A.8.9, A.8.15, A.8.18, A.8.19, A.8.31, A.8.32 |
+| `device-guard` | CM-6 | 3.4.1, 3.4.2 | 03.04.02 | A.8.9 |
+| `bitlocker` | IA-8, SC-28 | 3.13.16 | 03.08.05, 03.13.08 | A.5.10, A.5.16, A.5.33 |
+| `laps` | IA-5 | 3.5.7, 3.5.8, 3.5.9, 3.5.10 | 03.05.07 | A.5.16, A.5.17 |
+| `lsa-protection`, `tls` | none (no STIG rule) | none | none | none |
 
 The table shows how coarse these mappings are (the audit module reaches
-A.8.32 through CM-5), which is why the console shows them as related, and
-why EasyRMM does not add mappings of its own.
+A.8.32 through CM-5, and one minimum password length reaches four Rev. 2
+requirements that share a row), which is why the console shows them as
+related, and why EasyRMM does not add mappings of its own.
 
 **Linux, as a follow-up.** ADR-0051's script already cites the Red Hat
 Enterprise Linux 9 STIG by rule ID, so the same panel can be built for
-Linux modules from those IDs' CCIs. That is a follow-up to ADR-0051 for
-whoever amends it, not part of this ADR, which does not change ADR-0051;
-the same amendment should drop ADR-0051's mention of naming CIS
-recommendations, for the licence reasons above.
+Linux modules from those IDs' CCIs. That is a follow-up to ADR-0051, not
+part of this ADR; ADR-0051 carries an amendment note giving the licence
+reason above for its not naming CIS recommendations.
 
 ### The job
 * **The same job kind**, `hardening`, with the same three modes (check,
@@ -240,11 +294,12 @@ recommendations, for the licence reasons above.
   carries and which the agent already runs jobs with
   (`powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy
   Bypass -File`, as LocalSystem, inside a job object). No PowerShell 7, no
-  modules from the PowerShell Gallery, no `Add-Type` (it compiles C# at run
-  time and is refused in Constrained Language Mode). Language-neutral
-  throughout: accounts and groups by SID (Administrators `S-1-5-32-544`,
-  the Guest account by its RID, 501), audit subcategories by GUID, never by
-  their translated names.
+  modules installed from the PowerShell Gallery, no `Add-Type` (it
+  compiles C# at run time and is refused in Constrained Language Mode).
+  Language-neutral throughout: accounts and groups by SID (Administrators
+  `S-1-5-32-544`, the Guest account by its RID, 501, the built-in
+  Administrator by 500), audit subcategories by GUID, event fields by their
+  XML names, never by their translated names.
 * **Module names are per platform.** A request names the modules of one
   platform; the server refuses a Windows module for a Linux device and the
   other way round, and the console sends a mixed selection as one job per
@@ -255,10 +310,19 @@ recommendations, for the licence reasons above.
   server, standalone server or domain controller; joined to a domain, to
   Entra ID, or neither; enrolled in MDM or not), a `managed` list per
   module (each setting another owner holds, with the owner and its value),
-  and `restart` (a change waits for a restart). The format stays
-  `EASYRMM-HARDENING-RESULT-V1`: the script and the server ship together.
+  `restart` (a change waits for a restart), `step` for modules that work
+  in two steps (what the first step started, and when), and each change
+  with its time, which log collection reads (see Audit policy). The format
+  stays `EASYRMM-HARDENING-RESULT-V1`: the script and the server ship
+  together.
 * **Only tighter**, as on Linux: a value stricter than EasyRMM's is left
   (UAC that asks for credentials stays; a lockout threshold of 3 stays 3).
+* **One change at a time on a device.** ADR-0017 lets the agent run four
+  scripts at once. A hardening apply or undo runs alone: the server does
+  not send one while another hardening, software or patch job for that
+  device is queued or running, and holds those until it ends, so that a
+  feature removal and an update never run together. ADR-0051's jobs get
+  the same when it is next amended.
 
 ### Before anything changes
 The script first checks, and stops with every module *not supported* and
@@ -269,7 +333,14 @@ the reason if:
   or set what it needs, and must not try to get around the computer's own
   control.
 * For apply and undo, the platform is check only or not supported (see
-  Platforms).
+  Platforms), or an owner holds the computer's settings in a way EasyRMM
+  cannot read yet (see Managed elsewhere).
+
+Modules that add or remove a Windows feature (`smb`, `powershell`,
+`features`) are refused, and the others go on, while Windows reports a
+restart pending in any of the places Configuration Manager reads for it:
+a pending file rename (`PendingFileRenameOperations`), Windows Update's
+`RebootRequired` key, or component-based servicing's pending restart key.
 
 If Group Policy sets PowerShell's execution policy to `AllSigned`, the
 script does not start at all: Group Policy "overrides the execution
@@ -290,56 +361,111 @@ would win against it and leave the computer different from what its
 administrator set; either way the record of the value before would be
 wrong.
 
-**The owners, and how each is found:**
+**Words shared with log collection.** ADR-0060 uses the same: *in place*,
+*managed elsewhere* naming the owner and its policy (*set by Group Policy*
+with the policy's name, *set by MDM*, *set by OSConfig*, and here also
+*set by Defender for Endpoint* and *protected by Tamper Protection*), and
+*managed elsewhere (owner unknown)* for a value EasyRMM set that a later
+check finds set back twice: it has an owner no reader sees, and is left
+from then on. A value no owner holds is changed and its value before
+recorded for undo, by both features.
 
-* **Group Policy, from the domain or the local Group Policy object.**
-  Read from the computer's **resultant set of policy** in WMI
-  (`root\rsop\computer`): registry-based policy (the
-  `RSOP_RegistryPolicySetting` class: key, value name, value, and the
-  winning policy, precedence 1) and the security settings Windows records
-  when Group Policy applies security policy; `gpresult /scope computer /x`
-  as a cross-check, and the source of the policy's name. **This is the same
-  reading, under the same name, *policy ownership*, as log collection's
-  "Group Policy wins" (ADR-0060)**, with the same labels: *set by Group
-  Policy* with the policy's name. The code exists twice (in the agent's
-  collector and in this script), so both are tested against the same
-  domain machines and the same Group Policy objects (see Testing), and a
-  change to one is made to the other. Whether Windows records the
-  resultant set of policy on a computer in a workgroup, where only local
-  Group Policy applies, is settled in W1; if it does not, the local Group
-  Policy object's `Registry.pol` is read instead.
-* **MDM** (Intune and others through the Policy CSP). Microsoft does not
-  document where Windows keeps what an MDM set; the candidate is the
-  PolicyManager store that Microsoft's MDM diagnostics tool dumps. W1
-  settles it on a real Intune-enrolled Windows 11. **Until then, a
-  computer enrolled in MDM gets check only.** Group Policy wins over MDM
-  unless the MDM set `MDMWinsOverGP`, and the script reads that too.
-* **OSConfig** (Windows Server 2025): a security baseline applied through
-  OSConfig is corrected every four hours by default. Its settings are
-  *set by OSConfig*.
+**Policy ownership: one reader, built here.** The code that finds who owns
+a setting is written once, in W1, as a PowerShell script in a Go package
+of its own (`internal/winpolicy`, beside `internal/agentproto`). The
+server includes it in the hardening script; the agent carries the same file
+for *Configure logging*, which builds no reader of its own (ADR-0060). It
+returns, per registry value, security setting and audit subcategory, the
+owner and, where there is one, the policy's name. Both features are tested
+against the same domain machines and Group Policy objects (see Testing).
+What it reads, owner by owner:
+
+* **Group Policy, from the domain or the local Group Policy object**: the
+  computer's **resultant set of policy** in WMI (`root\rsop\computer`):
+  registry-based policy (the `RSOP_RegistryPolicySetting` class: key, value
+  name, value, and the winning policy, precedence 1) and the security
+  settings Windows records when Group Policy applies security policy.
+  `gpresult /scope computer /x` is a cross-check, the source of the
+  policy's name, and the source of advanced audit policy, which Group
+  Policy applies through an extension of its own rather than as registry
+  policy (W1 confirms this against a domain policy). Whether Windows
+  records the resultant set of policy on a computer in a workgroup, where
+  only local Group Policy applies, is settled in W1; if it does not, the
+  local Group Policy object's `Registry.pol` is read instead.
+  * **Its record turned off.** Group Policy's *Turn off Resultant Set of
+    Policy logging* (`RSoPLogging` 0) stops Windows recording what it
+    applied, so the reader cannot tell who owns what. The reader detects
+    the value, and the computer gets check only, with the reason. W1 tests
+    whether `gpresult` still reports anything then; nothing is assumed.
+  * **Group Policy Preferences.** Registry items set through preferences
+    are applied by a different extension. Microsoft documents how
+    registry-based policy appears in the resultant set of policy, not how
+    preference items do. W1 finds how to read them, on the test domain
+    with a Group Policy object that sets registry preference items; until
+    that reading is proven, a computer whose Group Policy carries registry
+    preference items gets check only.
+* **MDM** (Intune and others through the Policy CSP): the **MDM Bridge WMI
+  provider** (`root\cimv2\mdm\dmmap`), whose `MDM_Policy_Result01_*`
+  classes are the Policy CSP's `Result` node, which "Provides a read-only
+  path to policies enforced on the device". It must be read as Local
+  System, the agent's account. Group Policy wins over MDM unless the MDM
+  set `MDMWinsOverGP`, and the reader reads that too. Microsoft's class
+  reference gives "None supported" as the minimum server, so an
+  MDM-enrolled server is check only. W1 proves the reader on an
+  Intune-enrolled Windows 11 (see Open questions); until then, a computer
+  enrolled in MDM gets check only.
+* **Microsoft Defender for Endpoint's security settings management**,
+  which applies Intune's antivirus, attack surface reduction, EDR and
+  firewall policies to computers not enrolled in Intune. Microsoft
+  documents a troubleshooting registry key
+  (`HKLM\SOFTWARE\Microsoft\SenseCM\EnrollmentStatus`), but not the value
+  that means enrolled. W1 settles it on a real device; until then, on a
+  computer onboarded to Defender for Endpoint, `defender`, `asr` and
+  `firewall` are check only.
+* **Configuration Manager**: its configuration baselines can be deployed
+  with "Remediate noncompliant rules when supported", which "Automatically
+  remediates any rules that are noncompliant for Windows Management
+  Instrumentation (WMI), the registry, scripts". W1 finds how to detect
+  the client and read which values its remediating baselines cover; until
+  then, a computer with the Configuration Manager client gets check only.
+* **PowerShell DSC**, built into Windows PowerShell 5.1:
+  `Get-DscLocalConfigurationManager` shows the configuration mode, and in
+  `ApplyAndAutoCorrect`, when the computer drifts, DSC "re-applies the
+  current configuration" (checked every 15 minutes by default). W1 reads
+  the applied configuration's resources; until then, a computer in
+  `ApplyAndAutoCorrect` with a configuration gets check only.
+* **Azure machine configuration**: on an Azure Arc server the
+  `GCArcService` service "Audits and enforces Azure machine configuration
+  policies on the machine" (on Azure virtual machines an extension does),
+  and an `ApplyAndAutoCorrect` assignment corrects drift, checked every 15
+  minutes. No documented local way to read the assignments was found, so
+  a computer running it gets check only until W1 finds one.
+* **OSConfig** (Windows Server 2025): a baseline applied through OSConfig
+  with drift control is corrected "through a refresh task" (every four
+  hours by default, according to Microsoft's announcement). Microsoft
+  documents no way to see such a baseline without the OSConfig module, but
+  that module must be on the computer for a baseline to be applied there
+  ("Before you can apply a security baseline for the first time, you need
+  to install the OSConfig module"). So where the module is installed, the
+  reader asks it (`Get-OSConfigDesiredConfiguration`), using the
+  computer's own copy, which EasyRMM never installs; where it is not, no
+  baseline was applied through it on that computer. W1 tests both on a
+  Server 2025 guest.
 * **Microsoft Defender's own guards**: Tamper Protection blocks changes to
   real-time protection, behaviour monitoring, cloud protection and more
   ("changes made through a management tool, including Group Policy, might
   appear to succeed, but tamper protection blocks the changes"), and
   settings made with `Set-MpPreference` "have the lowest precedence. Any
   policy-based method overwrites them". Settings Tamper Protection locks
-  are *protected by Tamper Protection* when they differ; Defender settings
-  from any policy are *set by Group Policy* or *set by MDM*. EasyRMM never
+  are *protected by Tamper Protection* when they differ. EasyRMM never
   turns Tamper Protection off.
-* **Another antivirus or firewall.** Where Microsoft Defender Antivirus is
-  passive or off because another product is the antivirus, `defender` and
-  `asr` are *not applicable*, naming the product where Windows reports it.
-  A firewall product registered with Windows Security Center makes
-  `firewall` *managed elsewhere*.
+* **Another antivirus or firewall** (see Microsoft Defender and Firewall
+  below). On workstations Windows Security Center names them; Microsoft
+  says Security Center is not supported on server versions of Windows, so
+  on servers they are found by their services and drivers.
 * **Remote Desktop's own record**: the Terminal Services WMI provider
   reports, for NLA, the security layer and the encryption level, whether
   Group Policy sets each.
-* **EasyRMM's log collection** for audit policy: see Audit policy below.
-
-Unlike log collection, which also leaves alone a value "something else
-already set differently (a script, an image)", hardening's apply changes
-such a value: that is what the operator asked for, and the value before is
-recorded for undo. Only values an owner keeps setting are left.
 
 ### How settings are written
 * **Registry values** (administrative template policies and Windows' own
@@ -354,29 +480,36 @@ recorded for undo. Only values an owner keeps setting are left.
   module's settings, read back after. Tests prove the values survive Group
   Policy's 16-hourly re-application on a domain member where no policy
   sets them.
-* **Microsoft Defender**: `Set-MpPreference` for single settings;
-  attack surface reduction rules one at a time with `Add-MpPreference` and
-  `Remove-MpPreference`, since `Set-MpPreference` replaces the whole list.
-* **Windows Defender Firewall**: the NetSecurity cmdlets; EasyRMM's rules
-  in a rule group of their own.
+* **Microsoft Defender**: `Set-MpPreference` for single settings; attack
+  surface reduction rules one at a time with `Add-MpPreference` and
+  `Remove-MpPreference`, since `Set-MpPreference` replaces the whole list;
+  attack surface reduction exclusions with
+  `Add-MpPreference -AttackSurfaceReductionOnlyExclusions`, exclusions
+  that "apply to all ASR rules" (PowerShell sets no per-rule exclusions;
+  Group Policy, Intune and the Defender portal do). These are local
+  preferences, not the policy registry values the Defender STIG's checks
+  read; see What each module cites.
+* **Windows Defender Firewall**: the NetSecurity cmdlets, on the local
+  store; EasyRMM's rules in a rule group of their own, by port, never by
+  program.
 * **Windows features**: `Disable-WindowsOptionalFeature` on Windows 10
   and 11 and `Uninstall-WindowsFeature` on servers, never with `-Remove`,
   so the payload stays and undo can add a feature back without
-  installation media.
+  installation media; never while a restart is pending.
 * **Services**: start type and state, recorded first.
 * **Remote Desktop**: the Terminal Services WMI provider
   (`Win32_TSGeneralSetting`).
-* **Not used**: LGPO.exe (its terms have not been read, and it would be a
-  second program to ship), Microsoft's `Baseline-LocalInstall.ps1` (it
-  applies a whole baseline, including the settings this ADR leaves out),
-  PowerShell DSC, and the OSConfig module from the PowerShell Gallery.
+* **Not used**: LGPO.exe, whose terms forbid sharing or distributing it,
+  so not shipping it is a requirement, not a choice; Microsoft's
+  `Baseline-LocalInstall.ps1` (it applies a whole baseline with LGPO,
+  including the settings this ADR leaves out); PowerShell DSC; and the
+  OSConfig module, which EasyRMM never installs (the reader only asks a
+  copy already there).
 
 ### The modules
 *Recommended* ones are preselected; the others must be chosen one by one,
-with what they can break stated beside them. The STIG IDs are those of
-Windows 11 V2R11 and Server 2025 V1R4, and of the Defender Antivirus
-(`WNDF-AV`) and Firewall (`WNFWA`) STIGs; the script cites each Windows
-version's own.
+with what they can break stated beside them. What each module's settings
+cite, and whether they meet the rule, is in the next section.
 
 | Module | What it does | Recommended |
 |---|---|---|
@@ -384,25 +517,25 @@ version's own.
 | `firewall` | See **Firewall** below | Yes |
 | `defender` | See **Microsoft Defender** below | Yes |
 | `asr` | See **Attack surface reduction** below | Yes |
-| `smb` | SMBv1 off: the server's SMB1 protocol, the client's SMB1 driver, and the optional feature removed where installed (a restart); passwords never sent unencrypted to third-party SMB servers. Refused while a client is connected to this computer over SMB1. Breaks: scanners, NAS boxes and old systems that speak only SMB1. STIG WN11-00-000160, -000165, -000170, WN11-SO-000110; WN25-00-000380, -000390, -000400, WN25-SO-000180 | Yes |
-| `smb-signing` | SMB signing required by the client and the server; guest access to SMB shares off. Already the default on Windows 11 24H2 Enterprise, Pro and Education, and outbound on Server 2025. Breaks: multifunction printers that scan to a share and NAS boxes that cannot sign, shares opened as guest (common in small offices); large copies are slower. STIG WN11-SO-000100, -000120, WN11-CC-000040; WN25-SO-000160, -000170, -000190, -000200, WN25-CC-000070 | No |
+| `smb` | SMBv1 off: the server's SMB1 protocol, the client's SMB1 driver, and the optional feature removed where installed (a restart); passwords never sent unencrypted to third-party SMB servers. Where the server still speaks SMB1, **in two steps**: the first apply turns on Windows' SMB1 access audit (`Set-SmbServerConfiguration -AuditSmb1Access $true`; "Each time a client attempts to use SMBv1 to connect to a server, an entry that has an event ID of 3000 appears" in the `Microsoft-Windows-SMBServer/Audit` log), records it for undo, and stops; a later apply turns SMB1 off only when the audit has been on for 30 days, its log reaches back to then and holds no event 3000, and this computer has no SMB1 connection open to another (the audit covers the server side only). Breaks: scanners, NAS boxes and old systems that speak only SMB1, including ones this computer opens shares on | Yes |
+| `smb-signing` | SMB signing required by the client and the server; guest access to SMB shares off. Already the default on Windows 11 24H2 Enterprise, Pro and Education, and outbound on Server 2025. Breaks: multifunction printers that scan to a share and NAS boxes that cannot sign, shares opened as guest (common in small offices); large copies are slower | No |
 | `ntlm` | See **NTLM** below | Yes, except on domain controllers |
-| `wdigest` | WDigest does not keep passwords in memory (`UseLogonCredential` 0, which is also Windows' behaviour when the value is absent). Breaks nothing current. STIG WN11-CC-000038 | Yes |
+| `wdigest` | WDigest does not keep passwords in memory (`UseLogonCredential` 0, which is also Windows' behaviour when the value is absent). Breaks nothing current | Yes |
 | `lsa-protection` | See **LSA protection** below | Yes on Windows 11 22H2 and later; no elsewhere |
-| `name-resolution` | LLMNR off; NetBIOS ignores name release requests except from WINS servers. NetBIOS over TCP/IP stays on and its node type is left (Microsoft's baseline sets P-node, which stops NetBIOS names resolving by broadcast where there is no WINS server). Breaks: on networks without DNS for local devices, names only LLMNR found (`\\NAS`). STIG WN11-CC-000035, WN25-CC-000060; LLMNR from the baseline | Yes on computers in a domain; no in workgroups |
-| `powershell` | Windows PowerShell 2.0 removed where it is still installed (Windows 10, Server 2016 to 2022, Windows 11 before August 2025's update). Script block logging is reported, and set by log collection (see Audit policy). Not transcription, which writes every script's text, secrets included, to files. Breaks: tools that start `powershell -Version 2`. STIG WN11-00-000155, WN25-00-000410 | Yes |
+| `name-resolution` | LLMNR off; NetBIOS ignores name release requests except from WINS servers. NetBIOS over TCP/IP stays on and its node type is left (Microsoft's baseline sets P-node, which stops NetBIOS names resolving by broadcast where there is no WINS server). Breaks: on networks without DNS for local devices, names only LLMNR found (`\\NAS`) | Yes on computers in a domain; no in workgroups |
+| `powershell` | Windows PowerShell 2.0 removed where it is still installed (Windows 10, Server 2016 to 2022, Windows 11 before August 2025's update), never while a restart is pending. Script block logging is reported against log collection's table (see Audit policy). Not transcription, which writes every script's text, secrets included, to files. Breaks: tools that start `powershell -Version 2` | Yes |
 | `rdp` | See **Remote Desktop** below | Yes, once W2 proves EasyRMM's RDP sessions work with NLA |
-| `uac` | See **User Account Control** below | Yes, once W2 proves remote support still answers the prompt |
-| `autoplay` | AutoPlay off for all drives and for devices that are not volumes, no AutoRun commands. Breaks: CDs and USB drives no longer start anything by themselves. STIG WN11-CC-000180, -000185, -000190; WN25-CC-000210, -000220, -000230 | Yes |
-| `anonymous` | No anonymous enumeration of accounts or shares, no anonymous SID and name translation, anonymous users not in Everyone, anonymous access to named pipes and shares restricted, remote calls to the account database only for administrators (as the STIGs ask). Mostly Windows' defaults. Breaks: very old systems and devices that list shares without signing in. STIG WN11-SO-000140, -000145, -000150, -000160, -000165, -000167; WN25-SO-000210, -000220, -000230, -000240, -000250, WN25-MS-000060 | Yes |
-| `winrm` | WinRM's client and service: no Basic authentication, no unencrypted traffic, no Digest (client), no stored RunAs credentials (service). These are Windows' defaults; where Basic or unencrypted traffic is on (someone turned it on, often for Ansible or a monitoring tool) it is left and reported, unless the option `winrm-basic-off` is given. WinRM is never stopped and its listeners never removed. STIG WN11-CC-000330, -000335, -000345, -000350, -000355, -000360; WN25-CC-000470, -000480, -000490, -000500, -000510, -000520 | Yes |
-| `printing` | Only administrators install print drivers (the baseline's setting), drivers are never downloaded over HTTP, no printing over HTTP; on domain controllers the Print Spooler stopped and disabled (Microsoft: "domain controllers and Active Directory admin systems need to have the Print spooler service disabled"). On other servers, only with the option `spooler-off`, and refused where the server shares a printer, has the Print Server role or is a Remote Desktop session host. Never on workstations. Breaks: users adding a printer whose driver is not installed yet. STIG WN11-CC-000100, -000110; WN25-CC-000150, -000160 | Yes |
-| `features` | Removes, where installed, the Telnet and TFTP clients, Simple TCP/IP Services and the Peer Name Resolution Protocol (payload kept). An FTP server or Fax server is reported, never removed: it may be there on purpose (the STIG allows FTP where "required by the organization"). Breaks: someone using the Telnet client to test ports. STIG WN11-00-000110, -000115, -000120; WN25-00-000320 to -000370 | Yes |
+| `uac` | See **User Account Control** below; not applicable on Server Core | Yes, once W2 proves remote support still answers the prompt |
+| `autoplay` | AutoPlay off for all drives and for devices that are not volumes, no AutoRun commands. Breaks: CDs and USB drives no longer start anything by themselves | Yes |
+| `anonymous` | No anonymous enumeration of accounts or shares, no anonymous SID and name translation, anonymous users not in Everyone, anonymous access to named pipes and shares restricted; remote calls to the account database only for administrators on workstations, member servers and standalone servers (the Server 2025 STIG's rule is for those; on domain controllers it is left). Mostly Windows' defaults. Breaks: very old systems and devices that list shares without signing in | Yes |
+| `winrm` | WinRM's client and service: no Basic authentication, no unencrypted traffic, no Digest (client), no stored RunAs credentials (service). These are Windows' defaults; where Basic or unencrypted traffic is on (someone turned it on, often for Ansible or a monitoring tool) it is left and reported, unless the option `winrm-basic-off` is given. WinRM is never stopped and its listeners never removed | Yes |
+| `printing` | Only administrators install print drivers (the baseline's setting), drivers are never downloaded over HTTP, no printing over HTTP; on domain controllers the Print Spooler stopped and disabled (Microsoft: "domain controllers and Active Directory admin systems need to have the Print spooler service disabled"); on other servers only with the option `spooler-off`. On any server, domain controllers included, the spooler is left, and the result says why, where the server shares a printer, has the Print Server role or is a Remote Desktop session host. Never on workstations. Breaks: users adding a printer whose driver is not installed yet | Yes |
+| `features` | Removes, where installed, the Telnet and TFTP clients, Simple TCP/IP Services and the Peer Name Resolution Protocol (payload kept), never while a restart is pending. An FTP server or Fax server is reported, never removed: it may be there on purpose (the STIG allows FTP where "required by the organization"). Breaks: someone using the Telnet client to test ports | Yes |
 | `tls` | Schannel: SSL 2.0 and 3.0 and TLS 1.0 and 1.1 off for clients and servers (a restart). Microsoft's own pages disagree on whether TLS 1.0 and 1.1 are already off on Server 2025 and Windows 11 24H2; the check reads what is in effect. Breaks: older SQL Server clients and drivers, older .NET programs, devices and line-of-business software that speak only TLS 1.0 | No |
 | `audit` | Report only: see **Audit policy** below | (report) |
-| `device-guard` | Report only: whether virtualization-based security, memory integrity (HVCI) and Credential Guard are running. Turning them on needs hardware and firmware support and a restart, cannot be undone remotely when locked in UEFI, and Credential Guard is not recommended on domain controllers. STIG WN11-CC-000070, -000075, -000080; WN25-CC-000110, WN25-MS-000140 | (report) |
-| `bitlocker` | Report only: whether the system volume is protected, how, and whether a recovery password exists. Turning BitLocker on before its recovery key is kept somewhere can lose data; escrowing keys is a feature of its own. STIG WN11-00-000030, -000031, -000032; WN25-00-000250 | (report) |
-| `laps` | Report only: whether Windows LAPS manages the local administrator's password. Setting it up needs a directory (Active Directory or Entra ID) and a policy. Windows LAPS came with April 2023's updates to Windows 10 and 11 and Server 2019 and 2022, and is in Server 2025; Microsoft does not list Server 2016. STIG WN11-SO-000280, WN25-00-000020 (the local administrator's password age) | (report) |
+| `device-guard` | Report only: whether virtualization-based security, memory integrity (HVCI) and Credential Guard are running. Turning them on needs hardware and firmware support and a restart, cannot be undone remotely when locked in UEFI, and Credential Guard is not recommended on domain controllers | (report) |
+| `bitlocker` | Report only: whether the system volume is protected; by which protectors (TPM only, TPM and PIN, and others), so whether a PIN is asked before Windows starts, and the minimum PIN length policy sets (the Windows 11 STIG's rules ask for a PIN of at least six digits); whether a recovery password exists. Turning BitLocker on before its recovery key is kept somewhere can lose data; escrowing keys is a feature of its own | (report) |
+| `laps` | Report only: whether Windows LAPS manages the local administrator's password. Setting it up needs a directory (Active Directory or Entra ID) and a policy. Windows LAPS came with April 2023's updates to Windows 10 and 11 and Server 2019 and 2022, and is in Server 2025; Microsoft does not list Server 2016 | (report) |
 
 Not offered: a maximum password age (NIST SP 800-63B, as in ADR-0051);
 renaming the Administrator or Guest account (scripts and tools use the
@@ -426,6 +559,56 @@ turning NetBIOS over TCP/IP off; logon banners (the STIGs' text is the
 DoD's); and the Microsoft Edge and Microsoft 365 Apps baselines (separate
 products).
 
+### What each module cites
+The IDs are those of Windows 11 V2R11 (`WN11`), Server 2025 V1R4
+(`WN25`), Defender Antivirus V2R10 (`WNDF-AV`) and Firewall V2R2
+(`WNFWA`); the script cites each Windows version's own. **Meets**: the
+module sets the value the rule asks for, on the computers the module
+applies to. **Differs on purpose**: the module sets a value the rule's
+check calls a finding, looser or, for one rule, stricter, for the reason in
+the module's section. **Not set**: the module leaves the setting, reports
+it, and names the option that sets it where there is one. The console
+shows the same three, per setting.
+
+**Where the value is written matters to scanners.** The Firewall STIG's
+checks accept the local value when no policy sets one, and EasyRMM's
+registry settings are written where Group Policy would write them. The
+Defender STIG's checks read only the policy values under
+`HKLM\Software\Policies\Microsoft\Windows Defender`, while EasyRMM writes
+Defender's settings and attack surface reduction rules as local
+preferences (How settings are written). Defender applies them, but a
+scanner that follows those checks reports them missing; the console says so
+beside each Defender setting.
+
+| Module | Meets | Differs on purpose | Not set |
+|---|---|---|---|
+| `accounts` | WN11-AC-000005, -000015, -000020, -000035, -000040, -000045, WN11-SO-000010, -000015; WN25-AC-000010, -000030, -000040, -000080, -000090, WN25-SO-000010, -000020 | WN11-AC-000010, WN25-AC-000020: 10 failed sign-ins, not 3 | WN11-AC-000025, WN25-AC-000050 (maximum password age); WN11-AC-000030, WN25-AC-000060 (minimum password age: without expiry it only stops a user correcting a new password the same day); WN11-SO-000020, WN25-SO-000030 (renaming Administrator) |
+| `firewall` | WN11-00-000135, WN25-00-000280; WNFWA-000001 to -000005, -000009, -000010, -000012, -000013, -000017, -000018, -000020, -000021, -000027, -000028 | none | WNFWA-000011, -000019, -000029 (logging allowed connections, except during a server's first step); WNFWA-000024, -000025 (local rules not merged with policy); WNFWA-000100 (inbound only from management hosts) |
+| `defender` | WN11-00-000045, WN25-00-000110, WN25-CC-000300; WNDF-AV-000001, -000010, -000021, -000022, and -000039 on Windows 10 and 11 | WN11-CC-000210: SmartScreen warns and users may go on (`smartscreen-block` gives the rule's *Block*) | WNDF-AV-000073 (cloud protection level High: `cloud-block-high`); WNDF-AV-000052 (local exclusions not merged with policy, which would void EasyRMM's own: see Attack surface reduction); the Defender STIG's other rules (scans, remediation actions, the visibility of exclusions and more) are outside the module |
+| `asr` | WNDF-AV-000044, -000051 (blocked); -000047, -000049 (audited, as the rules ask); -000048 where the Configuration Manager client is installed (audited) | WNDF-AV-000048 elsewhere: blocked, where the rule's check accepts only audit; WNDF-AV-000032 to -000038, -000043, -000045, -000046, -000050: audited, not blocked (`asr-block` blocks them one by one) | WNDF-AV-000048 on Server 2016 and 2019, where Microsoft does not support the rule |
+| `smb` | WN11-00-000160, -000165, -000170, WN11-SO-000110; WN25-00-000380, -000390, -000400, WN25-SO-000180 | none | none |
+| `smb-signing` | WN11-SO-000100, -000120, WN11-CC-000040; WN25-SO-000160, -000170, -000190, -000200, WN25-CC-000070 | none | All of these while the module is not chosen |
+| `ntlm` | WN11-SO-000180, -000195, -000205, -000215, -000220; WN25-SO-000270, -000310, -000330, -000340 | none | none |
+| `wdigest` | WN11-CC-000038 | none | none |
+| `lsa-protection` | No STIG rule; Microsoft's baselines | none | none |
+| `name-resolution` | WN11-CC-000035, WN25-CC-000060; LLMNR from Microsoft's baselines | none | The NetBIOS node type (baselines only) |
+| `powershell` | WN11-00-000155, WN25-00-000410 | none | WN11-CC-000327, WN25-CC-000530 (transcription); WN11-CC-000326, WN25-CC-000460 (script block logging, set by log collection: see Audit policy) |
+| `rdp` | WN11-CC-000270, -000285, -000290; WN25-CC-000340, -000370, -000380; NLA from Microsoft's baselines | none | WN11-CC-000275, WN25-CC-000350 (drive redirection); WN11-CC-000280, WN25-CC-000360 (always prompt for a password); WN11-CC-000155 (Remote Assistance) |
+| `uac` | WN11-SO-000250, -000260, -000265, -000275, WN11-CC-000315; WN25-SO-000400, -000420, -000430, -000450, WN25-CC-000430; WN11-SO-000270 and WN25-SO-000440 (UAC on) where UAC is on, or with `uac-enable`. Server Core is not applicable | none | WN11-SO-000245, WN25-SO-000380 (Admin Approval Mode for the built-in Administrator: `uac-builtin-admin`); WN11-SO-000255, WN25-SO-000410 (standard users' elevation denied: `deny-user-elevation`); WN11-CC-000037, WN25-MS-000020 (local administrators' tokens filtered over the network) |
+| `autoplay` | WN11-CC-000180, -000185, -000190; WN25-CC-000210, -000220, -000230 | none | none |
+| `anonymous` | WN11-SO-000140, -000145, -000150, -000160, -000165, -000167; WN25-SO-000210, -000220, -000230, -000240, -000250; WN25-MS-000060 except on domain controllers | none | none |
+| `winrm` | WN11-CC-000330, -000335, -000345, -000350, -000355, -000360; WN25-CC-000470, -000480, -000490, -000500, -000510, -000520 | none | WN11-CC-000330, -000335, -000345, -000350 and WN25-CC-000470, -000480, -000500, -000510 where someone turned Basic authentication or unencrypted traffic on (`winrm-basic-off`) |
+| `printing` | WN11-CC-000100, -000110; WN25-CC-000150, -000160 | none | none |
+| `features` | WN11-00-000110, -000115, -000120; WN25-00-000340, -000350, -000360, -000370 | none | WN25-00-000320 (Fax Server), WN25-00-000330 (FTP server): reported, never removed |
+| `tls` | No STIG rule | none | none |
+
+The report-only modules report: `audit` WN11-SO-000030, WN11-CC-000066,
+the WN11-AU rules (with WN11-AU-000500, -000505, -000510, the log sizes),
+WN25-SO-000050, WN25-CC-000090, -000270, -000280, -000290 and the WN25-AU
+rules; `device-guard` WN11-CC-000070, -000075, -000080, WN25-CC-000110,
+WN25-MS-000140; `bitlocker` WN11-00-000030, -000031, -000032,
+WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
+
 ### Accounts
 * **Local password policy**: at least 14 characters, complexity on, 24
   passwords remembered, no reversible encryption. Existing passwords keep
@@ -437,6 +620,15 @@ products).
   included, with a few wrong guesses; 15 minutes is the STIGs' minimum.
   Whether the built-in Administrator can be locked out is left as Windows
   has it, and reported.
+* **No lockout on exposed computers** unless the option `lockout-exposed`
+  is given; the password settings still apply. Exposed means that the
+  Security log, as far back as it reaches up to 7 days, shows an account
+  with 10 or more failed sign-ins (event 4625) within 15 minutes, which the
+  new policy would have locked, or failed sign-ins from addresses outside
+  private ranges (Remote Desktop reachable from the internet). There,
+  password spraying would lock the MSP's own accounts out, the ones its
+  Remote Desktop sessions ([ADR-0026](0026-rdp-sessions.md)) use included.
+  The result names the accounts and addresses and how far the log reached.
 * **The Guest account disabled**, blank passwords usable only at the
   console.
 * **Never touched**: any other account. The module never disables,
@@ -446,81 +638,147 @@ products).
   *managed elsewhere*. On domain members it governs local accounts only.
 * Breaks: creating a local account with a short password; ten wrong
   passwords lock a local account, the MSP's included, for 15 minutes.
-* STIG WN11-AC-000005, -000010, -000015, -000020, -000035, -000040,
-  -000045, WN11-SO-000010, -000015; WN25-AC-000010, -000020, -000030,
-  -000040, -000080, -000090, WN25-SO-000010, -000020.
 
 ### Firewall
 * **Windows Defender Firewall on** for the domain, private and public
-  profiles, with inbound connections blocked unless a rule allows them, and
-  dropped packets logged (the Firewall STIG's log settings). EasyRMM never
-  blocks outbound traffic: the EasyRMM agent, MeshAgent and the EasyPatch
-  agent only connect out.
-* **Before a profile is turned on or set to block**, EasyRMM's rule group
-  gets allow rules, for every profile, for every TCP and UDP port something
-  listens on outside loopback when the job runs (with the program, where
-  Windows reports it), Remote Desktop's port where Remote Desktop is
-  enabled, WinRM's listener ports where WinRM listens, and ports and
-  ranges the operator adds (`allow-tcp`, `allow-udp`). The check lists them
-  before apply, and lists services that start automatically but are not
-  running, whose ports cannot be known (as on Linux, *ports unknown*).
+  profiles, with inbound connections blocked unless a rule allows them,
+  and dropped packets logged to a log of at least 16 MB (the Firewall
+  STIG's settings). EasyRMM never blocks outbound traffic: the EasyRMM
+  agent, MeshAgent and the EasyPatch agent only connect out.
+* **Only the profiles it changes.** A profile already on and blocking
+  inbound connections (often the public one, on a laptop in a hotel) is
+  left exactly as it is, and no allow rule is added to it. Rules are added
+  only to the profiles the module turns on or sets to block.
+* **What a changed profile allows**, by protocol and local port only,
+  never by program (a program's path changes with its version): every TCP
+  and UDP port something listens on outside loopback when the job runs;
+  Remote Desktop's port where Remote Desktop is enabled; WinRM's listener
+  ports where WinRM listens; ICMPv4 and ICMPv6 echo requests, so uptime
+  monitors keep working (as on Linux, ADR-0051); RPC's endpoint mapper and
+  the ports it hands out at each start, by the firewall's own `RPCEPMap`
+  and `RPC` keywords; and ports and ranges the operator adds (`allow-tcp`,
+  `allow-udp`). The check lists them before apply, and lists services that
+  start automatically but are not running, whose ports cannot be known (as
+  on Linux, *ports unknown*).
+* **Ports that move.** A listening port is a snapshot, and some services
+  listen on ports chosen at start or set elsewhere. The script keeps a list
+  of them, found by their services: SQL Server named instances ("A named
+  instance uses Dynamic ports"; the SQL Server Browser on UDP 1434), the
+  FTP server's passive ports, Veeam's data movers (in version 13, port
+  6162 with the range 2500 to 3300 as a fallback), failover clustering and
+  Hyper-V Replica. While one is installed, no profile is set to block: the
+  check names the service and the ports it can see; the operator adds the
+  ports and gives `ports-checked`.
+* **Local rules must count.** The module reads each profile's effective
+  `AllowLocalFirewallRules` (the active store, which includes policy).
+  Where Group Policy set it off, "The firewall rules defined by the local
+  administrator are ignored, and only firewall rules from GPOs are
+  applied", so EasyRMM's allow rules would not count: that profile is never
+  set to block, and the module is *managed elsewhere*.
 * **Existing rules are never changed**, enabled or disabled, and local
   rules are never stopped from merging with policy rules (the STIG asks it
   for the public profile; without policy rules, local rules are the only
   rules).
-* **Managed elsewhere**: a firewall policy from Group Policy or MDM; a
-  firewall product registered with Windows Security Center.
+* **A server whose profile is off** (often turned off to make something
+  work) is reported, not changed, unless the option `firewall-server` is
+  given. With it, in **two steps**: the first turns the profile on with
+  inbound connections still allowed and allowed connections logged
+  (`LogAllowed`, the log at its largest, 32,767 KB), so nothing is blocked
+  except by block rules already in Windows, which the check lists first;
+  the second, a later apply at least 14 days after, reads the log, allows
+  every local port that received a connection as well as the ports above,
+  and only then blocks. It is refused when the log no longer reaches back
+  to the first step, and says how far it reaches; the operator adds what
+  is missing and gives `ports-checked`. Fourteen days sees weekly jobs; a
+  monthly one may not appear, which the result says. On workstations one
+  step is enough: they listen on little.
+* **Managed elsewhere**: a firewall policy from Group Policy, MDM or
+  Defender for Endpoint; on workstations, a firewall product registered
+  with Windows Security Center; on servers, a firewall product found by its
+  services or by another vendor's Windows Filtering Platform providers
+  (from what `netsh wfp show state` writes; W1 confirms what it lists).
 * On most computers the firewall is already on and blocking; the module
   matters where someone turned it off, typically on servers.
-* STIG WN11-00-000135, WN25-00-000280; WNFWA-000001 to -000004, -000012,
-  -000020, and the logging rules WNFWA-000009, -000010, -000017, -000018,
-  -000027, -000028.
 
 ### Microsoft Defender
-* **Only where Microsoft Defender Antivirus is the active antivirus**;
-  passive or off, the module is *not applicable*.
-* Real-time protection and behaviour monitoring on, cloud-delivered
-  protection on, potentially unwanted applications blocked, SmartScreen
-  for Explorer on, and network protection in block mode on Windows 10 and
-  11.
+* **Only where Microsoft Defender Antivirus is the active antivirus**:
+  Windows reports its running mode as *Normal*. Microsoft lists Normal,
+  Passive mode, EDR Block Mode and SxS Passive Mode, spelled differently on
+  different pages, so the script matches them loosely; in any mode but
+  Normal the module is *not applicable*.
+* **Servers.** Since a server keeps Defender running beside another
+  antivirus, on a server the module is also *not applicable* where
+  real-time protection is off, where a file system filter in the
+  anti-virus range of altitudes (320000 to 329999, filters "that detect and
+  disinfect viruses during file I/O") other than Defender's own is loaded,
+  or where a service of a known antivirus product is installed; the check
+  names what it found. **EasyRMM never turns real-time protection on on a
+  server** unless the option `defender-server-realtime` is given: two
+  engines on one server is what Microsoft's passive mode exists to avoid.
+* Real-time protection and behaviour monitoring on (on servers, see
+  above), cloud-delivered protection on, potentially unwanted applications
+  blocked, SmartScreen for Explorer on, and network protection in block
+  mode on Windows 10 and 11.
+* **SmartScreen warns; users may go on.** Microsoft's "Warn and prevent
+  bypass" (the STIG's *Block*) "Stops users from ignoring warning messages
+  about malicious files downloaded from the Internet", and a file without
+  a reputation gets that warning: an unsigned EasyRMM agent installer
+  ([ADR-0049](0049-operators-sign-windows-agents.md)), one signed with a
+  certificate SmartScreen has not seen yet, and many MSP tools. It is the
+  option `smartscreen-block`, refused while this deployment's agent
+  packages are unsigned, which the server knows. W2 tests an
+  operator-signed installer under it.
 * **The cloud protection level stays at Windows' default.** The STIG asks
-  for High, which blocks unknown files more readily, and an unsigned
-  EasyRMM agent update is an unknown file. It is offered as the option
+  for High, which blocks unknown files more readily, and a new EasyRMM
+  agent build is an unknown file. It is offered as the option
   `cloud-block-high`, with that stated.
-* No exclusions are added or removed.
+* No exclusions are added or removed, except the attack surface reduction
+  exclusions below.
 * Breaks: installers bundling unwanted software; websites with a bad
+  reputation; with `smartscreen-block`, downloaded programs without a
   reputation.
-* STIG WN11-00-000045, WN11-CC-000210; WN25-00-000110, WN25-CC-000300;
-  WNDF-AV-000001, -000010, -000021, -000022, -000039.
 
 ### Attack surface reduction
 * **Requires** Microsoft Defender Antivirus active, with real-time
-  protection on. For Server 2016, Microsoft's support table requires
-  onboarding with Defender for Endpoint's "modern unified solution"; there
-  the module is *not supported* until a test shows the rules taking effect
-  without it.
+  protection on. For Server 2016, "Supported ASR rules in Windows Server
+  2016 and Windows Server 2012 R2 require onboarding using the modern
+  unified solution package"; there the module is *not supported* until a
+  test shows the rules taking effect without it. Microsoft also reports "a
+  known issue with the applicability of attack surface reduction on Server
+  OS versions which is marked as compliant without any actual
+  enforcement", so on servers W2 shows each rule acting, in audit and in
+  block, rather than trusting the setting.
 * **Blocked**: Microsoft's three "standard protection" rules, which
   "Microsoft recommends enabling ... in Block mode without the need for
   extensive testing": abuse of exploited vulnerable signed drivers,
   credential stealing from LSASS, and persistence through WMI event
   subscription. The last stays in audit where the Configuration Manager
   client is installed, as Microsoft advises ("The Configuration Manager
-  client relies heavily on WMI").
-* **Audit**: every other rule Microsoft's baseline for this version blocks.
-  The operator can block them one by one with the option `asr-block`,
-  after reading their audit events, except:
+  client relies heavily on WMI"), and is not set on Server 2016 and 2019:
+  Microsoft supports it from "Windows Server 1903 (SAC) or later".
+* **Audit**: every other rule Microsoft's baseline for this version
+  blocks, and the prevalence rule below, which the STIG asks to audit. The
+  operator can block them one by one with the option `asr-block`, after
+  reading their audit events, except:
   * *Block process creations originating from PSExec and WMI commands*
     (MSP tools and Configuration Manager use both), never blocked;
   * the two rules that judge files by reputation (*Block executable files
     from running unless they meet a prevalence, age, or trusted list
     criterion* and *Use advanced protection against ransomware*, which
-    "blocks files *that don't yet have a positive reputation*"), refused
-    while any of EasyRMM's agents on the computer (the EasyRMM agent,
-    MeshAgent, the EasyPatch agent) lacks an Authenticode signature
-    Windows trusts.
-* *Block Webshell creation for Servers* is for Exchange servers and is
-  never set. Rules are set one at a time, never replacing the list.
-* STIG WNDF-AV-000032 to -000038 and -000043 to -000051.
+    "blocks files that don't yet have a positive reputation"). A new agent
+    build has none, signed or not. They are blocked only together with
+    attack surface reduction exclusions for the three agents' program and
+    state folders and the folder where the EasyRMM agent stages software
+    ([ADR-0028](0028-software-deployment.md); W2 establishes the list), and
+    are refused where Group Policy or Defender for Endpoint turned off the
+    merging of local exclusions ("local ASR rule exclusions don't apply"
+    then). The exclusions apply to every rule, as PowerShell allows no
+    other kind, and undo removes them. W2 tests an agent update and a
+    software job under them.
+* *Block Webshell creation for Servers* "blocks web shell script creation
+  on Windows servers running Microsoft Exchange" and is never set, though
+  Server 2025's baseline blocks it. Rules are set one at a time, never
+  replacing the list.
 
 ### NTLM
 * LAN Manager authentication level 5 (send NTLMv2 only, refuse LM and
@@ -529,14 +787,26 @@ products).
   session; on servers, incoming NTLM audited where Microsoft's server
   baseline audits it (audit only, never blocked).
 * **On domain controllers** (which need the option `domain-controller`
-  anyway, see Who), refused while the Security log shows a sign-in with
-  NTLM V1 or LM (event 4624, "Package Name (NTLM only)") in the last 30
-  days: the domain controller would refuse those devices.
+  anyway, see Who) the level would refuse every device that still signs in
+  with NTLMv1 or LM, and the domain controller's own Security log cannot
+  show which those are: the member a user signs in to logs event 4624,
+  whose `LmPackageName` field is "NTLM V1", "NTLM V2" or "LM", while the
+  domain controller logs 4776, which names no version. So the guard uses
+  Windows' **enhanced NTLM auditing** (Microsoft's KB5064479; on domain
+  controllers, events 4030 to 4033 in `Microsoft-Windows-NTLM/Operational`,
+  which carry the "NTLM Version"; on Windows Server 2025, and on 2022 and
+  2019 from 13 October 2026):
+  * The first apply on a domain controller turns on *Log Enhanced
+    Domain-wide NTLM Logs*, recorded for undo, and stops.
+  * A later apply goes on only when those events cover at least 30 days
+    and show no NTLMv1 or LM sign-in, read from the events' XML fields,
+    never their translated text. Where log collection (ADR-0060) collects
+    members' 4624 events, they are read too, by `LmPackageName`.
+  * On a Server 2016 domain controller, which has no enhanced auditing,
+    the module is refused.
 * Breaks: devices and software that speak only LM or NTLMv1 (old NAS
   boxes, copiers, line-of-business programs). Windows 11 24H2 and Server
   2025 have removed NTLMv1 already.
-* STIG WN11-SO-000180, -000195, -000205, -000215, -000220; WN25-SO-000270,
-  -000310, -000330, -000340.
 
 ### LSA protection
 * **LSASS runs as a protected process.** Where Windows honours the value
@@ -545,18 +815,29 @@ products).
   remotely. Elsewhere the value is 1, which on a computer with Secure Boot
   is kept in a UEFI variable that only Microsoft's opt-out tool, an EFI
   program booted on the computer, removes: offered only with the option
-  `lsa-uefi-lock`, stated as "undo needs someone at the computer". Server 2025 joins the first
-  group when a test shows value 2 taking effect there.
-* **Refused** when Windows' CodeIntegrity log shows, in the last 30 days,
-  that an LSA plug-in or driver would not load (events 3065 and 3066, which
-  Windows 11 22H2 and later log by default in audit mode): smart card
-  drivers, password filters and other unsigned plug-ins stop working.
-  Refused too where those events cannot be logged (Smart App Control on,
-  or audit mode off), unless the option `lsa-unaudited` is given.
+  `lsa-uefi-lock`, stated as "undo needs someone at the computer". Server
+  2025 joins the first group when a test shows value 2 taking effect there.
+* **Judged since the last start, in audit mode.** Plug-ins and drivers
+  that would not load under protection show as CodeIntegrity events 3065
+  and 3066 when LSASS loads them, if LSA's audit mode is on: by default on
+  Windows 11 22H2 and later, elsewhere with `AuditLevel` 8 under
+  `Image File Execution Options\LSASS.exe`, which takes effect at a
+  restart. LSASS loads them at start, so a server up for longer than any
+  fixed window would show nothing; the guard needs audit mode to have been
+  on at the last start and the log to reach back to it, and judges by the
+  events since then. Where audit mode was not on at the last start, the
+  first apply sets `AuditLevel` 8 (recorded for undo) and stops, *waiting
+  for a restart*; a later apply, after one, judges.
+* **Refused** when there is a 3065 or 3066 since the last start: smart
+  card drivers, password filters and other unsigned plug-ins would stop
+  working. Refused too where those events cannot be logged ("Audit events
+  aren't generated if Smart App Control is enabled", nor "when a kernel
+  debugger is attached and enabled"), unless the option `lsa-unaudited` is
+  given.
 * **Takes effect at the next restart.** The check reports *waiting for a
   restart* until Windows logs that LSASS started as a protected process
-  (WinInit event 12).
-* No STIG rule; Microsoft's baselines set it.
+  (WinInit event 12). Undo before that restart removes the value; W2
+  shows, for `lsa-uefi-lock` too, that no UEFI variable is left.
 
 ### Remote Desktop
 * **Only where Remote Desktop is enabled**; otherwise *not applicable*.
@@ -571,15 +852,32 @@ products).
   through MeshCentral's web client, which sends the credentials typed in.
   A complete session has not been run yet; W2 runs one against a device
   with NLA required before this module is recommended.
-* STIG WN11-CC-000270, -000285, -000290; WN25-CC-000340, -000370, -000380.
-  NLA has no STIG rule.
+* Breaks: passwords saved in Remote Desktop clients on this computer are
+  no longer used. With NLA, an account whose password has expired or must
+  be changed at the next sign-in cannot start a session (Microsoft's
+  workaround is to change the password first from a session of another
+  account), and domain accounts cannot sign in while the computer cannot
+  reach a domain controller (local administrators still can).
 
 ### User Account Control
-* UAC on (if it was off: a restart), administrators asked for consent on
-  the secure desktop (stricter settings left), Admin Approval Mode for the
-  built-in Administrator, installer detection, elevation only for UIAccess
+* **Not applicable on Server Core**: "UAC requirements are not applicable
+  for Server Core installations".
+* Administrators asked for consent on the secure desktop (stricter
+  settings left), installer detection, elevation only for UIAccess
   programs in secure locations, write failures virtualized, and Windows
   Installer never "always install with elevated privileges".
+* **UAC turned off** (`EnableLUA` 0) is turned on only with the option
+  `uac-enable`: it needs a restart, and everything that ran with UAC off
+  then runs differently.
+* **Admin Approval Mode for the built-in Administrator**
+  (`FilterAdministratorToken`) only with the option `uac-builtin-admin`.
+  It gives the built-in Administrator a filtered token like other local
+  administrators, so admin shares, WMI, PsExec and WinRM used with that
+  account stop getting full rights. Even with the option it is refused
+  while the Security log, or the events log collection has collected from
+  this computer, shows a network sign-in (event 4624, logon type 3) by the
+  built-in Administrator (RID 500) in the last 30 days, and refused when
+  neither reaches back 30 days.
 * **Not set**: automatically denying elevation to standard users (the
   STIGs ask for it). It stops a technician typing an administrator's
   password into a user's prompt during remote support; offered as the
@@ -588,32 +886,52 @@ products).
   full rights over the network, which some MSP tools need) is reported,
   never changed.
 * The agent and its jobs run as LocalSystem and are not affected.
-* Breaks: the built-in Administrator now gets prompts. Whether
-  MeshCentral's remote desktop can answer a prompt on the secure desktop
-  is tested in W2 before the module is recommended.
-* STIG WN11-SO-000245, -000250, -000260, -000265, -000270, -000275,
-  WN11-CC-000315; WN25-SO-000380, -000400, -000420, -000430, -000440,
-  -000450, WN25-CC-000430.
+* Breaks: prompts on the secure desktop. Whether MeshCentral's remote
+  desktop can answer a prompt there is tested in W2 before the module is
+  recommended.
 
 ### Audit policy
 **Log collection owns Windows audit policy.** Its *Configure logging*
-(ADR-0060, proposed) sets the advanced audit subcategories, command lines
-in process creation events, PowerShell script block logging and the
-minimum sizes of the logs, from the agent, on by default, leaving what
-Group Policy sets. Hardening does not set any of these, so the two never
-fight over a value or over whose undo puts it back:
+(`logs.configure`, ADR-0060, proposed) sets the advanced audit
+subcategories, `SCENoApplyLegacyAuditPolicy` (subcategories override
+categories), command lines in process creation events, PowerShell script
+block logging and the event logs' sizes, from the agent, leaving what an
+owner holds; domain controllers only when chosen
+(`logs.configure.domainControllers`). Hardening sets none of these, so
+the two never fight over a value or over whose undo puts it back.
 
-* The `audit` module is **report only**. Its check compares the effective
-  audit policy (subcategories by GUID, whether subcategories override
-  categories), the command line setting and the log sizes with Microsoft's
-  baseline and the STIGs' minimums, and names *Configure logging* as the
-  way to set them (or Group Policy, where Group Policy owns them).
+* **One table.** ADR-0060's *Windows audit policy* table is the target,
+  and this ADR keeps no table of its own. It adopts the audit subcategories
+  of Microsoft's baselines for Windows 11 and Server 2025, including those
+  the first draft of either ADR left out (Group Membership, Removable
+  Storage, File Share, Detailed File Share, Sensitive Privilege Use, Other
+  System Events, Authorization Policy Change, Other Policy Change, and on
+  domain controllers Directory Service Access and Changes), and sets
+  `SCENoApplyLegacyAuditPolicy` and a Security log of at least the STIGs'
+  minimum. The table is kept once in the repository as data, beside the
+  ownership reader, and read by the agent's configuring and by this
+  script, so that a computer log collection has configured shows `audit`
+  in place.
+* The `audit` module is **report only**. It compares the effective
+  audit policy (subcategories by GUID), `SCENoApplyLegacyAuditPolicy`, the
+  command line setting and the log sizes with that table, and shows each
+  as *in place*, *managed elsewhere* (with the owner), or missing, naming
+  *Configure logging* (`logs.configure`) as the way to set it.
+* **What the baselines set and log collection does not is information,
+  not a gap.** A subcategory ADR-0060 marks *baseline, not set by default*
+  (one that would fill the Security log too fast on a kind of computer) is
+  shown as such, with the reason, and does not keep the module from being
+  in place.
 * The `powershell` module reports script block logging the same way.
-* Until log collection ships, these stay reported, not set.
-* STIG WN11-SO-000030, WN11-CC-000066, WN11-CC-000326, WN11-AU-000005 to
-  -000589, WN11-AU-000500, -000505, -000510; WN25-SO-000050,
-  WN25-CC-000090, -000460, -000270, -000280, -000290, and WN25-AU's
-  subcategory rules.
+* **EasyRMM's own changes are not alerts.** Hardening's apply and undo of
+  `defender` change settings that log collection's *Protection turned off*
+  detection watches (Defender events 5001, 5010, 5012); an undo that
+  turns real-time protection off again on a server where
+  `defender-server-realtime` turned it on is the obvious case. The job's
+  result lists each change with its time, and log collection shows a match
+  explained by a hardening job on that device, within its run, with its
+  cause and opens no alert (ADR-0060).
+* Until log collection ships, these values stay reported, not set.
 
 ### Backups, undo and interruptions
 As in ADR-0051, with Windows' places and tools:
@@ -626,16 +944,27 @@ As in ADR-0051, with Windows' places and tools:
   hardening in place, and the guide says so.
 * **What is recorded**, per module, in a manifest with a format version:
   each registry value before (absent, or its type and data) and after;
-  each security policy value before; Defender's settings and each attack
-  surface reduction rule's action before; each firewall profile's state
-  before and the names of EasyRMM's rules; each feature's and service's
-  state before.
+  each security policy value before; Defender's settings, each attack
+  surface reduction rule's action and the exclusions EasyRMM added; each
+  firewall profile's settings before, as the local store held them, and
+  the names of EasyRMM's rules; each feature's and service's state before;
+  what the first of two steps turned on (the SMB1 audit, enhanced NTLM
+  logging, LSA's audit level, a server profile's logging), and when.
 * **Undo** puts each one back if it is still as apply left it; anything
   changed since (by an administrator, a policy, Windows) is left and the
   result says so. Features come back from their kept payload; EasyRMM's
-  firewall rules are removed. A successful undo consumes the record; the
-  next apply takes a fresh one. Applying twice changes nothing the second
-  time.
+  firewall rules and exclusions are removed. A successful undo consumes
+  the record; the next apply takes a fresh one. Applying twice changes
+  nothing the second time.
+* **Firewall settings that were not configured** in the local store
+  (Windows' defaults) are put back as not configured, never written as an
+  explicit *Block* or *Allow*. Microsoft documents `NotConfigured` as
+  "Valid only when configuring a Group Policy Object", so W2 settles which
+  call does this for the local store, and tests it.
+* **Undo before a restart.** Changes that wait for a restart are undone
+  before it as well as after: a feature waiting to be removed is enabled
+  again, UAC's value is written back, `RunAsPPL` and `AuditLevel` are
+  removed. W2 tests each, before and after the restart.
 * **Interruptions.** Each module writes its intent before changing
   anything and marks it done after; a later check reports a module left
   half-applied, and undo reverses what was recorded.
@@ -647,27 +976,38 @@ As in ADR-0051, with Windows' places and tools:
   agent is gone.
 
 ### Lock-out guards
-* **Remote Desktop and WinRM stay reachable.** The firewall allows their
-  ports, and every listening port, before it blocks anything; NLA waits for
-  the RDP test; WinRM is never stopped and its listeners never removed.
+* **Remote Desktop and WinRM stay reachable.** The firewall changes only
+  the profiles that need it, allows every listening port, RDP, WinRM, RPC
+  and echo before it blocks anything, does not block while a service whose
+  ports move is installed or while local rules would be ignored, and
+  turns a server's profile on only with an option and in two steps; NLA
+  waits for the RDP test; WinRM is never stopped and its listeners never
+  removed.
 * **The agents are never cut off.** The EasyRMM agent, MeshAgent and the
   EasyPatch agent connect out, and EasyRMM never blocks outbound traffic;
   their services are never stopped or changed; Defender's High cloud
-  protection level is only set when the operator chooses it, and the
-  reputation-based attack surface reduction rules are never blocked while
-  an agent is unsigned.
+  protection level and SmartScreen's *Block* are only set when the
+  operator chooses them, the latter never while the agent packages are
+  unsigned; the reputation-based attack surface reduction rules are only
+  blocked with exclusions for the agents' folders.
 * **The MSP's accounts are never disabled**, renamed or denied a sign-in
   right; lockout (10 attempts, 15 minutes) is the one way an account can
-  be blocked, and it ends by itself.
+  be blocked, it ends by itself, and it is not set on computers exposed to
+  spraying without an option. The built-in Administrator keeps its full
+  rights over the network unless the operator chooses otherwise and 30
+  days of events show it unused there.
 * **Restarts are reported, never performed.** Modules whose change waits
   for one (`lsa-protection`, `tls`, `smb` where it removes the feature,
-  `uac` where UAC was off) report *waiting for a restart*, and the device
-  shows *restart needed* until a check sees the change in effect. The
-  operator restarts when it suits.
+  `powershell` and `features` where they do, `uac` with `uac-enable`)
+  report *waiting for a restart*, and the device shows *restart needed*
+  until a check sees the change in effect. The operator restarts when it
+  suits. Feature changes are refused while a restart is pending, and undo
+  works before the restart.
 * **Each module checks itself**: after writing, it reads every value back;
   if one is not as intended, the module is put back and reported failed,
   and the others go on.
-* **Domain controllers** need an explicit choice (see Who).
+* **One change at a time** on a device (see The job), and **domain
+  controllers** need an explicit choice (see Who).
 * If access is lost anyway, MeshCentral's terminal (connecting out) still
   reaches the computer, and **Undo** works through the agent or on the
   computer itself.
@@ -676,18 +1016,27 @@ As in ADR-0051, with Windows' places and tools:
 * **Apply and undo** on the versions this script has been tested on,
   listed in the guide by build: Windows 11 Pro, Enterprise and Education
   in a version Microsoft still services for that edition (24H2 Enterprise
-  until 2027-10-13, 25H2, 26H2), on x64 and ARM64; Windows Server 2025,
+  until 2027-10-13, 25H2, 26H2); Windows 11 26H1, the release for new
+  devices with new processors ("not designed to be offered or installed on
+  existing devices"; serviced to March 2029 for Enterprise, March 2028 for
+  Home and Pro), once a 26H1 computer has been tested; Windows Server 2025,
   2022 and 2019, Desktop Experience and Server Core; Windows Server 2016
   until its extended support ends (13 January 2027 on its lifecycle page;
   Microsoft's FAQ gives a different date in one place). A newer build is
   *not supported on this version* until tested, as on Linux.
+* **ARM64** waits for the agent's ARM64 build to have run on a real
+  Windows ARM64 computer, which IMPLEMENTATION_STATUS.md lists as not yet
+  verified, as well as for the `windows-11-arm` runner's results.
 * **Check only**: Windows 10 22H2 (support ended 14 October 2025; paid
   Extended Security Updates run to October 2028, see Open questions),
   Windows 11 versions out of service for their edition (23H2 Enterprise
   since 2026-11-11, 24H2 Home and Pro since 2026-10-14), Home editions
-  (outside the baselines and STIGs), computers enrolled in MDM until W1
-  settles MDM detection, Azure Virtual Desktop's multi-session Windows
-  until tested, and Server 2016 after 13 January 2027.
+  (outside the baselines and STIGs), Azure Virtual Desktop's multi-session
+  Windows until tested, Server 2016 after 13 January 2027, and computers
+  whose settings an owner holds that EasyRMM cannot read yet (Group Policy
+  with its record turned off or with registry preference items, MDM, a
+  Configuration Manager client, DSC correcting drift, Azure machine
+  configuration), each until its reader is proven (see Managed elsewhere).
 * **Domain controllers** with the option `domain-controller`.
 * Older Windows does not run the agent.
 
@@ -708,111 +1057,204 @@ As in ADR-0051, with Windows' places and tools:
   /api/v1/devices/{id}/hardening`, as in ADR-0051; `canHarden` and
   `canCheckHardening` cover Windows devices.
 * **Options** the server accepts for Windows: `allow-tcp` and `allow-udp`
-  (ports and ranges), `domain-controller`, `cloud-block-high`, `asr-block`
-  (rule GUIDs from a fixed list), `lsa-uefi-lock`, `lsa-unaudited`,
-  `deny-user-elevation`, `winrm-basic-off`, `spooler-off`.
+  (ports and ranges), `ports-checked`, `firewall-server`,
+  `domain-controller`, `defender-server-realtime`, `smartscreen-block`,
+  `cloud-block-high`, `asr-block` (rule GUIDs from a fixed list),
+  `lsa-uefi-lock`, `lsa-unaudited`, `lockout-exposed`, `uac-enable`,
+  `uac-builtin-admin`, `deny-user-elevation`, `winrm-basic-off`,
+  `spooler-off`.
+* **The script's hash is published** in each release's notes and in the
+  guide, beside the copy and hash each job keeps. An EDR or a managed
+  detection service may take a script that runs as LocalSystem and changes
+  LSA, Defender and the firewall for an attack and isolate the computer;
+  the guide tells MSPs to allow the script by its hash before the first
+  apply.
 
 ## Testing
 * **Static checks**: PSScriptAnalyzer on the script, and Windows
   PowerShell 5.1 parsing it, in CI; the STIG ID test above; a test that
-  fails when a module, mode and Windows role has no case; the size limits.
-* **CI's Windows runners**, the main test, from the first module on. For
-  this public repository GitHub provides `windows-2025` and `windows-2022`
-  (x64) and `windows-11-arm` (Windows 11 Enterprise on ARM64), each with 4
-  CPUs and 16 GB. The script runs as LocalSystem, as the agent's service
-  would run it, through a scheduled task. For each module: check, apply,
-  check, apply again (no change), undo, check, with every recorded value as
-  before. The existing *Agent tests on Windows* job keeps its tests; the
-  hardening tests are `OnWindows` Go tests like the software scripts', in
-  a matrix over the three images. What runners cannot show: restarts,
-  domains and Group Policy from a domain, traffic from outside, MDM.
-* **Windows machines under KVM**, extending `internal/vmtest` (the
-  harness built for ADR-0051's tests on CI's Linux runners, on the Linux
-  hardening branch) to Windows guests, for what runners cannot show:
+  fails when a module, mode and Windows role has no case; the size limits;
+  the related-controls tables regenerated and compared.
+* **CI's Windows runners**, from the first module on. For this public
+  repository GitHub provides `windows-2025` and `windows-2022` (x64) and
+  `windows-11-arm` (Windows 11 Enterprise on ARM64), each with 4 CPUs and
+  16 GB. The hardening tests are `OnWindows` Go tests like the software
+  scripts', in a matrix over those three labels; the existing *Agent tests
+  on Windows* job keeps its tests and its `windows-latest`. The script runs
+  as LocalSystem, as the agent's service would run it, through a scheduled
+  task. For each module: check, apply, check, apply again (no change),
+  undo, check, with every recorded value as before.
+* **What runners cannot show**: restarts; domains and Group Policy from a
+  domain; traffic from outside; MDM; and whatever the runner images change
+  themselves. `Configure-WindowsDefender.ps1` "Disables Windows Defender"
+  (real-time protection off, `C:\` and `D:\` excluded),
+  `Configure-BaseImage.ps1` sets UAC's `ConsentPromptBehaviorAdmin` to 0,
+  and `Configure-System.ps1` stops and disables Windows Update. So on
+  runners `defender` and `asr` run in check mode only, and must report
+  what the image turned off; their apply and undo, UAC's prompts and the
+  removal of features are tested on machines with Defender active and
+  Windows' services as shipped.
+* **Windows machines under KVM**, extending `internal/vmtest` (ADR-0051's
+  harness, now on `main`, which drives Linux guests over a virtio-serial
+  port) to Windows guests:
   * Microsoft's evaluation media (Windows Server 2016 to 2025, 180 days;
-    Windows 11 Enterprise, 90 days, ISO only), installed unattended once
-    into a cached disk image; devices Windows has drivers for out of the
-    box (an AHCI disk, an e1000e network card, a 16550 serial port), so no
-    virtio drivers; Windows 11 with OVMF's Secure Boot and a software TPM
-    (`swtpm`), as it requires.
+    Windows 11 Enterprise, 90 days, ISO only), installed unattended;
+    devices Windows has drivers for out of the box (an AHCI disk, an e1000e
+    network card, a 16550 serial port), so no virtio drivers; Windows 11
+    with OVMF's Secure Boot and a software TPM (`swtpm`), as it requires.
+  * **Never cached where a pull request can restore it.** GitHub lets a
+    pull request's run "restore caches created in the base branch,
+    including base branches of forked repositories", so a cached Windows
+    image would reach anyone who opens a pull request, and the evaluation
+    media's terms have not been read. The images are built in each run, by
+    jobs that run on pushes to `main` and on a schedule, never for pull
+    requests; or the guests run on a self-hosted runner the owner provides
+    (see Open questions). Building in each run also keeps them out of the
+    cache's 10 GB per repository (the default) and away from the end of
+    the evaluation periods.
   * Driven over the serial port through a small runner service built from
     this repository and baked into the image (Windows has no serial shell
     of its own), so that a firewall cannot cut the harness off.
-  * Scenarios: restarts (values persist, LSA protection active after one,
-    features removed); a domain of a Server 2025 domain controller, a
-    member server and a Windows 11 member on QEMU's socket networking, with
-    Group Policy objects setting some of the same values (policy
-    ownership, shared with log collection's tests; Group Policy's refresh
-    does not fight apply; the domain controller option; the NTLMv1 guard);
-    a port forwarded from outside reaching a listening service before and
-    after `firewall`; a German-language image (SIDs and GUIDs, not names);
-    Server Core; Server 2016 and 2019, which have no runner.
   * Whether this works is decided in W1, and the ADR is amended if not:
     GitHub says nested virtualization is "not officially supported" (KVM on
     its Linux runners is documented, and H1 relies on it); Windows guests
-    on 4 CPUs are slow; whether the evaluation media can be downloaded
-    without a form, and whether their terms allow automated testing, has
-    not been checked; Windows 11's evaluation asks for a Microsoft account;
+    on 4 CPUs are slow, and building their images in each run slower;
+    whether the evaluation media can be downloaded without a form, and
+    whether their terms allow automated testing, has not been checked;
+    Windows 11's evaluation asks for a Microsoft account;
     virtualization-based security inside a nested guest probably cannot
-    run. The fallback is a
-    self-hosted runner the owner provides, or the same scenarios run by
-    hand on the owner's machines and recorded.
+    run. The fallback is a self-hosted runner the owner provides, or the
+    same scenarios run by hand on the owner's machines and recorded.
+* **Scenarios, one or more per guard**, as in ADR-0051:
+  * Restarts: values persist, LSA protection active after one, features
+    removed; undo before the restart (a feature waiting for removal, UAC,
+    `RunAsPPL` with and without `lsa-uefi-lock`); a pending restart
+    refusing feature changes.
+  * Firewall: a port forwarded from outside reaching a listening service
+    before and after; a public profile already blocking, left without a
+    rule; WMI from a second guest after blocking (RPC); echo from outside;
+    a SQL Server Express named instance (ports move: refused); a Group
+    Policy object turning local rules off (refused); a server with its
+    firewall off, in two steps, and with the log rolled over (refused).
+  * Defender and attack surface reduction: a guest with Defender active;
+    an unsigned agent, and one signed with a certificate made for the
+    test, installed and updated under SmartScreen's *Block* and under the
+    reputation rules with the exclusions; a software job under them;
+    Tamper Protection on, its settings reported.
+  * SMB1: a client on the host forcing SMB1 against a guest with SMB1 on
+    (event 3000: refused).
+  * NTLM: a Server 2019 or 2022 domain controller with enhanced NTLM
+    auditing and a Windows 10 or Server 2019 member set to send NTLMv1
+    (refused); a Server 2016 domain controller (refused).
+  * LSA: an unsigned password filter built in the repository (event 3066:
+    refused); audit mode off at the last start (the `AuditLevel` step).
+  * A printer shared from a domain controller (the spooler left).
+  * Remote Desktop: the RDP Security Layer (refused); NLA through
+    MeshCentral's web client.
+  * UAC: the built-in Administrator signing in over the network from a
+    second guest (`uac-builtin-admin` refused); Server Core (not
+    applicable); a prompt on the secure desktop answered through
+    MeshCentral.
+  * Lockout: ten failed sign-ins to one account within 15 minutes
+    (refused without `lockout-exposed`). QEMU's user networking gives
+    only private addresses, so failed sign-ins from a public address are
+    tested with a recorded Security log, a stand-in that its result names.
+  * Owners: a domain of a Server 2025 domain controller, a member server
+    and a Windows 11 member on QEMU's socket networking, with Group Policy
+    objects setting some of the same values, audit policy among them
+    (policy ownership, shared with log collection's tests; Group Policy's
+    refresh does not fight apply; the domain controller option), one with
+    registry preference items, one turning the resultant set of policy's
+    logging off; a DSC configuration in `ApplyAndAutoCorrect`; an OSConfig
+    baseline on Server 2025, its module installed in the guest for the
+    test; a value set back twice by a scheduled task (owner unknown).
+  * A German-language image (SIDs, GUIDs and XML fields, not names);
+    Server Core; Server 2016 and 2019, which have no runner.
+  * Not possible in these machines, so on real ones only (below): MDM,
+    Defender for Endpoint, a Configuration Manager client (it needs a
+    site; any test with only its traces is a stand-in, and its result says
+    so), Azure machine configuration, a third-party antivirus or firewall
+    on a server.
 * **Before it is called complete** it is run on real computers: a real
-  domain with a domain controller and member servers, a Windows 11 enrolled
-  in Intune, and computers with a third-party antivirus.
+  domain with a domain controller and member servers; a Windows 11
+  enrolled in Intune; computers with a third-party antivirus and firewall,
+  servers among them; and the script under a common EDR, to see whether it
+  is taken for an attack (see Open questions).
 
 ## Slices
-* **W1, check.** The script's skeleton (platform, role, language mode,
-  policy ownership, MDM, OSConfig, Tamper Protection and antivirus
-  detection, the manifest, the JSON result) and `check` for every module;
-  on the server, the Windows platform, module names, options and result
-  fields, and the related-controls tables with the tool that generates
-  them; the static checks and the runner matrix in check mode; the KVM
-  decision, proved with one Server image and the domain scenario, or
-  recorded with why not.
-* **W2, apply and undo**, module by module, each with its runner tests
-  and, where it needs a restart, a domain or outside traffic, its machine
-  test (or recorded hand test) before the next: report-only and low-risk
+* **W1, check.** The script's skeleton (platform, role, language mode, the
+  manifest, the JSON result); the ownership reader in `internal/winpolicy`
+  (Group Policy with its audit policy, preferences, its record turned off,
+  MDM, Defender for Endpoint, Configuration Manager, DSC, Azure machine
+  configuration, OSConfig, Tamper Protection, other antivirus and
+  firewalls) and ADR-0060's audit table as data beside it, for log
+  collection to reuse; `check` for every module; on the server, the
+  Windows platform, module names, options and result fields, and the
+  related-controls tables with the tool that generates them; the static
+  checks and the runner matrix in check mode; the KVM decision, proved
+  with one Server image and the domain scenario, or recorded with why not;
+  the MDM reader on a real Intune-enrolled Windows 11.
+* **W2, apply and undo**, module by module, each with its runner tests and,
+  where it needs a restart, a domain, Defender active or outside traffic,
+  its machine test (or recorded hand test) before the next. Low-risk
   modules first (`autoplay`, `wdigest`, `anonymous`, `winrm`, `features`,
   `powershell`, `accounts`, `printing`), then `defender`, `asr`,
   `name-resolution`, `smb`, `ntlm`, `uac`, `firewall`, `rdp`,
-  `smb-signing`, `lsa-protection`, `tls`. The undo copy of the script.
+  `smb-signing`, `lsa-protection`, `tls`; the report-only modules have no
+  apply. With them: the undo copy of the script; one change at a time on
+  the server; each change and its time in the result, for log collection.
 * **W3, the console.** Linux hardening's H3 (a device's **Hardening** tab,
   the fleet column and filter, apply and undo from **Jobs**) with Windows'
   modules: their risks and options, the owner of each setting managed
-  elsewhere, *restart needed*, and the *Related controls* panel; mixed
+  elsewhere, whether each setting meets its rule, *restart needed*, the
+  two-step modules' state, and the *Related controls* panel; mixed
   selections sent as one job per platform.
 
 ## Consequences
 * An operator can check a fleet of Windows computers in one job, see per
-  module what is in place, who else owns what, and which controls it
-  relates to, apply what is missing, and undo it module by module.
-* Choosing safety over strictness leaves Windows looser than the STIGs:
-  lockout after 10 attempts, no password expiry, the default cloud
-  protection level, most attack surface reduction rules in audit,
-  standard users still offered elevation, SMB signing and TLS 1.0 removal
-  left to the operator, no deny-sign-in rights, the spooler off only on
-  domain controllers. The check is not an audit against a benchmark.
+  module what is in place, who else owns what, which rules each setting
+  meets and which controls it relates to, apply what is missing, and undo
+  it module by module.
+* Choosing safety over strictness leaves Windows looser than the STIGs,
+  and the console says where: lockout after 10 attempts, and none on
+  exposed computers without an option; no password expiry; SmartScreen
+  that warns; the default cloud protection level; most attack surface
+  reduction rules in audit; standard users still offered elevation; the
+  built-in Administrator unfiltered over the network; SMB signing and TLS
+  1.0 removal left to the operator; no deny-sign-in rights; the spooler
+  off only on domain controllers; a server's firewall and Defender left
+  off without an option. A scanner following the Defender STIG's checks
+  also reports Defender's settings missing, since they are not written as
+  policy. The check is not an audit against a benchmark.
+* Several modules take two applies, days apart (SMB1, a server's
+  firewall, NTLM on domain controllers, LSA protection without audit
+  mode): slower, but each change is judged on what the computer did.
 * Computers whose settings come from Group Policy, Intune or OSConfig are
   mostly reported, not changed: an MSP that manages a domain by Group
   Policy keeps doing so, and EasyRMM shows where its policy differs.
-* EasyRMM says nothing about CIS. MSPs who are asked for "CIS Level 1" get
-  Microsoft's values with DISA's rule IDs, unless the owner decides to buy
-  CIS's membership and certification.
+  Computers with an owner EasyRMM cannot read yet (Configuration Manager,
+  Azure machine configuration, DSC correcting drift, Group Policy
+  preferences or its record turned off, MDM until W1) get check only.
+* EasyRMM says nothing about CIS or CMMC. MSPs who are asked for "CIS
+  Level 1" get Microsoft's values with DISA's rule IDs, unless the owner
+  decides to buy CIS's membership and certification; those asked about
+  CMMC see SP 800-171 Rev. 2's numbers as related requirements, not an
+  assessment.
 * Script block logging and process command lines (set by log collection)
   record secrets that scripts and command lines contain, in logs that
   administrators can read; log collection redacts what it collects, not
   what stays on the computer.
 * Where Group Policy allows only signed scripts or App Control constrains
-  PowerShell, nothing runs, as for every PowerShell job today.
+  PowerShell, nothing runs, as for every PowerShell job today. An EDR may
+  stop the script unless the MSP allows it by its hash.
 * The script follows Windows releases, Microsoft's baselines and DISA's
   STIG releases; each new build is tested before apply is allowed on it.
 
 ## Open questions for the owner
 * **CIS.** Buy the CIS SecureSuite Product Vendor Membership (from $6,000
-  a year at the lowest revenue band) and have the feature certified every
-  year before it is sold, distributed or marketed, so that EasyRMM can name
-  CIS recommendations? This ADR assumes no.
+  a year at the lowest revenue band, "Subject to change") and have the
+  feature certified every year before it is sold, distributed or marketed,
+  so that EasyRMM can name CIS recommendations? This ADR assumes no.
 * **Windows 10 and Server 2016 with Extended Security Updates**: check
   only, as proposed, or apply and undo where the computer still receives
   security updates?
@@ -825,16 +1267,32 @@ As in ADR-0051, with Windows' places and tools:
 * **Signing EasyRMM's PowerShell scripts** for computers whose Group
   Policy allows only signed scripts: it depends on code signing, which is
   on hold; is it wanted when that resumes?
-* **The Essential Eight**: should EasyRMM relate modules to it for
-  Australian customers? Its pages could not be read while this was
-  written.
+* **ASD's guide and the Essential Eight**: cyber.gov.au cannot be fetched
+  from here. Will the owner download *Hardening Microsoft Windows 11
+  workstations* and the Essential Eight's pages by hand, so that their
+  licence can be read and the modules related to them for Australian
+  customers?
+* **An Intune tenant** for W1's MDM reader and the real-computer tests
+  (and, if licensed, Defender for Endpoint, to settle its security
+  settings management)?
+* **The test domain**: besides the Server 2025 domain controller, a
+  Server 2016 to 2022 domain controller and a member that still sends
+  NTLMv1, for the NTLM guard; in the KVM machines or on the owner's?
+* **A self-hosted runner** for the Windows guests, since their images may
+  not be cached where pull requests can restore them and building them on
+  GitHub's runners in each run may prove too slow?
+* **Which EDR or managed detection service** to run the script under
+  before it is called complete: the one MSPs using EasyRMM most often run?
+* **Check only for computers with Configuration Manager, DSC or Azure
+  machine configuration** until their readers exist: acceptable, or should
+  those readers come first?
 * **Order**: this plan puts the work after the updater's edge channel;
   sooner, straight after Linux hardening?
 
 ## References
 CIS:
 * Terms of use for non-member CIS products: https://www.cisecurity.org/terms-of-use-for-non-member-cis-products
-* Product Vendor Membership: https://www.cisecurity.org/cis-securesuite/pricing-and-categories/product-vendor/
+* Product Vendor Membership, its fees and CIS tools in products: https://www.cisecurity.org/cis-securesuite/pricing-and-categories/product-vendor/
 * Remediation certification: https://www.cisecurity.org/cis-securesuite/pricing-and-categories/product-vendor/cis-benchmarks-remediation-certification/
 * Logos and trademark use: https://www.cisecurity.org/cis-logos-and-trademark-use-policy
 * Benchmarks FAQ: https://www.cisecurity.org/cis-benchmarks/cis-benchmarks-faq
@@ -843,18 +1301,18 @@ CIS:
 
 Wazuh:
 * Windows policies: https://github.com/wazuh/wazuh/tree/main/ruleset/sca/windows
-* Licence: https://github.com/wazuh/wazuh/blob/main/LICENSE
+* Licence in 4.14.10 and on main: https://github.com/wazuh/wazuh/blob/v4.14.10/LICENSE, https://github.com/wazuh/wazuh/blob/main/LICENSE
 * 4.14.10: https://github.com/wazuh/wazuh/releases/tag/v4.14.10
 * Compliance: https://documentation.wazuh.com/current/compliance/index.html
 * Available policies: https://documentation.wazuh.com/current/user-manual/capabilities/sec-config-assessment/available-sca-policies.html
 
 DISA and copyright:
-* STIGs (each zip holds the overview and XCCDF): https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_11_V2R11_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_10_V3R6_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_Server_2025_V1R4_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_Server_2022_V2R11_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_Server_2019_V3R9_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_Server_2016_V2R10_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Defender_Antivirus_V2R8_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_Defender_Firewall_V2R2_STIG.zip
+* STIGs (each zip holds the overview and XCCDF): https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_11_V2R11_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_10_V3R6_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_Server_2025_V1R4_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_Server_2022_V2R11_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_Server_2019_V3R9_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_Server_2016_V2R10_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Defender_Antivirus_V2R10_STIG.zip, https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_Defender_Firewall_V2R2_STIG.zip
 * CCI list: https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_CCI_List.zip
 * 17 U.S.C. 105: https://www.copyright.gov/title17/92chap1.html
 
 Microsoft baselines and tools:
-* Security Compliance Toolkit: https://www.microsoft.com/en-us/download/details.aspx?id=55319
+* Security Compliance Toolkit (the LGPO download carries the standalone use terms): https://www.microsoft.com/en-us/download/details.aspx?id=55319
 * The toolkit: https://learn.microsoft.com/en-us/windows/security/operating-system-security/device-management/windows-security-configuration-framework/security-compliance-toolkit-10
 * Baseline versions: https://learn.microsoft.com/en-us/windows/security/operating-system-security/device-management/windows-security-configuration-framework/get-support-for-security-baselines
 * Windows 11 26H2 baseline: https://techcommunity.microsoft.com/blog/microsoft-security-baselines/windows-11-version-26h2-security-baseline/4560382
@@ -863,35 +1321,53 @@ Microsoft baselines and tools:
 * Baselines, CIS and NIST: https://learn.microsoft.com/en-us/intune/device-security/security-baselines/overview
 * OSConfig: https://learn.microsoft.com/en-us/windows-server/security/osconfig/osconfig-how-to-configure-security-baselines, https://learn.microsoft.com/en-us/windows-server/security/osconfig/osconfig-overview, https://techcommunity.microsoft.com/blog/itopstalkblog/using-osconfig-to-manage-windows-server-2025-security-baselines/4415824
 
+Owners of settings:
+* RSoP registry settings: https://learn.microsoft.com/en-us/previous-versions/windows/desktop/policy/rsop-registrypolicysetting
+* RSoP security settings: https://learn.microsoft.com/en-us/previous-versions/aa375070(v=vs.85)
+* Turning RSoP logging off: https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-grouppolicy
+* gpresult: https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/gpresult
+* MDM Bridge WMI provider and the Policy CSP: https://learn.microsoft.com/en-us/windows/client-management/using-powershell-scripting-with-the-wmi-bridge-provider, https://learn.microsoft.com/en-us/windows/win32/dmwmibridgeprov/mdm-policy-result01-defender02, https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-configuration-service-provider
+* Defender for Endpoint security settings management: https://learn.microsoft.com/en-us/intune/intune-service/protect/mde-security-integration, https://learn.microsoft.com/en-us/defender-endpoint/troubleshoot-security-config-mgt
+* Configuration Manager baselines: https://learn.microsoft.com/en-us/intune/configmgr/compliance/deploy-use/deploy-configuration-baselines
+* DSC's Local Configuration Manager: https://learn.microsoft.com/en-us/powershell/dsc/managing-nodes/metaconfig?view=dsc-1.1
+* Azure machine configuration: https://learn.microsoft.com/en-us/azure/governance/machine-configuration/concepts/remediation-options, https://learn.microsoft.com/en-us/azure/azure-arc/servers/agent-overview
+* Security Center on servers: https://learn.microsoft.com/en-us/troubleshoot/outlook/security/outlook-trust-center-shows-antivirus-status-as-unavailable
+* Tamper Protection: https://learn.microsoft.com/en-us/defender-endpoint/tamper-protection-overview, https://learn.microsoft.com/en-us/defender-endpoint/tamper-protection-windows-configure
+
 Windows behaviour:
 * SMB signing: https://learn.microsoft.com/en-us/windows-server/storage/file-server/smb-signing
-* SMBv1: https://learn.microsoft.com/en-us/windows-server/storage/file-server/troubleshoot/smbv1-not-installed-by-default-in-windows
+* SMBv1 and its audit: https://learn.microsoft.com/en-us/windows-server/storage/file-server/troubleshoot/smbv1-not-installed-by-default-in-windows, https://learn.microsoft.com/en-us/windows-server/storage/file-server/troubleshoot/detect-enable-and-disable-smbv1-v2-v3
 * LSA protection: https://learn.microsoft.com/en-us/windows-server/security/credentials-protection-and-management/configuring-additional-lsa-protection
 * Credential Guard: https://learn.microsoft.com/en-us/windows/security/identity-protection/credential-guard/
 * Removed features (PowerShell 2.0): https://learn.microsoft.com/en-us/windows/whats-new/removed-features
 * Deprecated features (NTLMv1): https://learn.microsoft.com/en-us/windows/whats-new/deprecated-features
+* Enhanced NTLM auditing: https://support.microsoft.com/en-us/help/5064479
+* Events 4624 and 4776: https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4624, https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4776
 * TLS 1.0 and 1.1: https://learn.microsoft.com/en-us/windows/win32/secauthn/tls-10-11-deprecation-in-windows, https://learn.microsoft.com/en-us/windows/win32/secauthn/protocols-in-tls-ssl--schannel-ssp-, https://learn.microsoft.com/en-us/windows-server/get-started/removed-deprecated-features-windows-server
 * Print Spooler on domain controllers: https://learn.microsoft.com/en-us/defender-for-identity/security-posture-assessments/identity-infrastructure
 * Windows LAPS: https://learn.microsoft.com/en-us/windows-server/identity/laps/laps-overview
 * BitLocker: https://learn.microsoft.com/en-us/windows/security/operating-system-security/data-protection/bitlocker/
-* Event 4624: https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/auditing/event-4624
+* Pending restarts: https://learn.microsoft.com/en-us/intune/configmgr/core/clients/manage/manage-clients
 * Execution policies: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1
 * Language modes: https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_language_modes?view=powershell-5.1
 * App Control and scripts: https://learn.microsoft.com/en-us/windows/security/application-security/application-control/app-control-for-business/design/script-enforcement
 * Security policy refresh: https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/security-policy-settings
-* RSoP registry settings: https://learn.microsoft.com/en-us/previous-versions/windows/desktop/policy/rsop-registrypolicysetting
-* RSoP security settings: https://learn.microsoft.com/en-us/previous-versions/aa375070(v=vs.85)
-* gpresult: https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/gpresult
-* ASR rules: https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-overview, https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-reference, https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-configure
-* Tamper Protection: https://learn.microsoft.com/en-us/defender-endpoint/tamper-protection-overview, https://learn.microsoft.com/en-us/defender-endpoint/tamper-protection-windows-configure
-* NLA: https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/remotepc/remote-desktop-allow-access
+* Defender beside other antivirus, and its running modes: https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-antivirus-compatibility, https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-antivirus-windows
+* Minifilter altitudes: https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/load-order-groups-and-altitudes-for-minifilter-drivers
+* SmartScreen: https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/available-settings, https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-smartscreen
+* ASR rules and exclusions: https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-overview, https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-reference, https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-configure
+* Firewall cmdlets: https://learn.microsoft.com/en-us/powershell/module/netsecurity/new-netfirewallrule, https://learn.microsoft.com/en-us/powershell/module/netsecurity/set-netfirewallprofile
+* Windows Filtering Platform's state: https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netsh-wfp
+* SQL Server's ports: https://learn.microsoft.com/en-us/sql/sql-server/install/configure-the-windows-firewall-to-allow-sql-server-access
+* Veeam's ports: https://helpcenter.veeam.com/docs/vbr/userguide/used_ports.html?ver=13
+* NLA: https://learn.microsoft.com/en-us/windows-server/remote/remote-desktop-services/remotepc/remote-desktop-allow-access, https://learn.microsoft.com/en-us/troubleshoot/windows-server/identity/error-password-change-expired-password, https://learn.microsoft.com/en-us/troubleshoot/azure/virtual-machines/windows/cannot-connect-rdp-azure-vm
 * Win32_TSGeneralSetting: https://learn.microsoft.com/en-us/windows/win32/termserv/win32-tsgeneralsetting
-* MDM diagnostics: https://learn.microsoft.com/en-us/windows/client-management/mdm-collect-logs
 
 Lifecycle:
 * Windows 10: https://learn.microsoft.com/en-us/lifecycle/products/windows-10-enterprise-and-education
 * Extended Security Updates: https://learn.microsoft.com/en-us/lifecycle/faq/extended-security-updates
 * Windows 11: https://learn.microsoft.com/en-us/lifecycle/products/windows-11-enterprise-and-education, https://learn.microsoft.com/en-us/lifecycle/products/windows-11-home-and-pro
+* Windows 11 26H1: https://support.microsoft.com/en-us/servicing/os/windows/2026/02/windows-11-version-26h1
 * Windows Server: https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2016, https://learn.microsoft.com/en-us/lifecycle/products/windows-server-2025
 
 Frameworks:
@@ -899,12 +1375,17 @@ Frameworks:
 * Its catalogue (5.2.0): https://github.com/usnistgov/oscal-content/blob/main/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json
 * 800-53 to ISO/IEC 27001:2022: https://csrc.nist.gov/projects/olir/informative-reference-catalog/details?referenceId=155, https://csrc.nist.gov/csrc/media/Projects/olir/documents/submissions/sp800-53r5-to-iso-27001-mapping-2022-OLIR-2023-10-12-UPDATED.xlsx
 * NIST SP 800-171 Rev. 3: https://csrc.nist.gov/pubs/sp/800/171/r3/final, https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171r3.pdf
+* NIST SP 800-171 Rev. 2 and its Appendix D: https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171r2.pdf
+* CMMC (32 CFR part 170): https://www.ecfr.gov/current/title-32/part-170
+* DFARS class deviation 2024-O0013: https://www.acq.osd.mil/dpap/policy/policyvault/USA000814-24-DPC.pdf
 * National Checklist Program: https://ncp.nist.gov/repository
 * PCI DSS v4.0 (SAQ D): https://listings.pcisecuritystandards.org/documents/PCI-DSS-v4-0-SAQ-D-Merchant.pdf
+* Australian Signals Directorate (could not be fetched): https://www.cyber.gov.au
 
 Test infrastructure:
 * GitHub-hosted runners: https://docs.github.com/en/actions/reference/runners/github-hosted-runners
-* Runner images: https://github.com/actions/runner-images/tree/main/images/windows
+* Runner images and what they change: https://github.com/actions/runner-images/tree/main/images/windows, https://github.com/actions/runner-images/blob/main/images/windows/scripts/build/Configure-WindowsDefender.ps1, https://github.com/actions/runner-images/blob/main/images/windows/scripts/build/Configure-BaseImage.ps1, https://github.com/actions/runner-images/blob/main/images/windows/scripts/build/Configure-System.ps1
+* Caches and pull requests: https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching
 * Nested virtualization: https://docs.github.com/en/actions/concepts/runners/github-hosted-runners
 * KVM on Linux runners: https://github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available/
 * Evaluation media: https://www.microsoft.com/en-us/evalcenter/evaluate-windows-11-enterprise, https://www.microsoft.com/en-us/evalcenter/evaluate-windows-server-2025, https://www.microsoft.com/en-us/evalcenter/evaluate-windows-server-2016

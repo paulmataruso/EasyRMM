@@ -308,6 +308,15 @@ later ADR.
   the published STIG. CIS Benchmark numbers are not given, since they could
   not be checked against the benchmark itself. No benchmark text is copied,
   and EasyRMM does not claim compliance with any benchmark.
+  *Amended 2026-11-21:* CIS numbers are also left out for a licence reason
+  found in [ADR-0054](0054-hardening-windows-computers-and-servers.md):
+  CIS's terms for non-members forbid exploiting its benchmarks for any
+  purpose, deriving works from them or claiming consistency with them,
+  and putting them in a product needs a paid Product Vendor Membership and
+  certification before sale, so none are added unless the owner buys
+  both. ADR-0054's *Related controls* panel (NIST SP 800-53, SP 800-171
+  and ISO/IEC 27001:2022, from the STIG rules' CCIs) can be built for
+  these modules from the RHEL 9 STIG IDs already cited, as a follow-up.
 * **Upstream.** No code or text is taken from ultimate-sys-hardening, so
   no notice is owed. If any is taken later, its MIT notice goes in
   THIRD_PARTY_NOTICES.md. Features of its commercial tiers are not

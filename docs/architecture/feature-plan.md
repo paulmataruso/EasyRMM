@@ -5,8 +5,8 @@
   feasibility and order), ADR-0051 one; Draft 2 was checked against all
   four by a fourth reviewer, who found 37 of 60 findings fully answered
   and some new problems; this draft answers the rest. Feature 9 was added
-  the same day, after those reviews; its ADR (ADR-0054) is proposed and
-  not yet reviewed.
+  the same day, after those reviews; its ADR (ADR-0054) is proposed, had
+  one independent review, and was revised after it.
 * Scope: the work the owner asked for on 2026-11-20 and 2026-11-21:
   1. Operators sign the Windows agent (ADR-0049).
   2. Hardening Linux computers (ADR-0051).
@@ -525,55 +525,75 @@ NGINX in offload mode (refusing the upgrade, to prove the fallback); a
 and recorded in drills.md: a CI runner (4 CPUs) cannot hold them.
 
 ### 9. Hardening Windows computers and servers (ADR-0054)
-The ADR is proposed and needs its review. It reuses feature 2's job kind,
-modes, results, permission and console; the agent does not change.
+The ADR is proposed, had one independent review and was revised after it.
+It reuses feature 2's job kind, modes, results, permission and console;
+the agent does not change.
 
 * **Basis**: values from Microsoft's security baselines for the
   computer's version and role; each setting cited by its DISA STIG rule
-  ID; no CIS numbers, titles or claims (CIS's terms forbid it without a
-  paid Product Vendor Membership and certification before sale), nothing
-  from Wazuh (GPL, and CIS's text). Per module, *Related controls*: NIST
-  SP 800-53 Rev. 5 through DISA's CCI list, SP 800-171 Rev. 3 through its
-  source controls, ISO/IEC 27001:2022 Annex A through NIST's crosswalk,
-  never called compliance. The same for Linux is a follow-up to ADR-0051.
+  ID, with whether EasyRMM's value meets the rule, differs from it on
+  purpose, or is not set; no CIS numbers, titles or claims (CIS's terms
+  forbid it without a paid Product Vendor Membership and certification
+  before sale), nothing from Wazuh (GPL, and CIS's text). Per module,
+  *Related controls*: NIST SP 800-53 Rev. 5 through DISA's CCI list, SP
+  800-171 Rev. 2 (what CMMC Level 2 and DFARS use) through its Appendix D
+  and Rev. 3 through its source controls, ISO/IEC 27001:2022 Annex A
+  through NIST's crosswalk, never called compliance. The same for Linux is
+  a follow-up to ADR-0051.
 * **Script**: `windows.ps1`, Windows PowerShell 5.1, run as LocalSystem by
   the existing PowerShell jobs; registry, `secedit`, Defender's cmdlets,
   NetSecurity, Windows features without removing their payload, and the
-  Terminal Services WMI provider; no LGPO.exe. It stops in Constrained
-  Language Mode; under a Group Policy of `AllSigned` it cannot start, like
-  every PowerShell job today.
-* **Managed elsewhere**: settings that Group Policy (read from the
-  resultant set of policy, the same *policy ownership* as log collection),
-  MDM, OSConfig or Tamper Protection own are reported, never written; MDM
-  computers are check only until W1 settles how MDM's settings are read.
-* **23 modules**: `accounts` (lockout after 10, never password expiry),
-  `firewall` (keeps every listening port, RDP's and WinRM's open first),
-  `defender`, `asr` (Microsoft's three standard rules blocked, the rest in
-  audit), `smb`, `ntlm`, `wdigest`, `lsa-protection`, `name-resolution`,
-  `powershell`, `rdp`, `uac`, `autoplay`, `anonymous`, `winrm`, `printing`,
-  `features`, and, not recommended, `smb-signing` and `tls`; report only:
-  `audit` (log collection sets audit policy, so the two never fight),
-  `device-guard`, `bitlocker`, `laps`.
+  Terminal Services WMI provider; no LGPO.exe, whose terms forbid
+  distributing it. It stops in Constrained Language Mode; under a Group
+  Policy of `AllSigned` it cannot start, like every PowerShell job today.
+  Its hash is published, for EDRs to allow.
+* **Managed elsewhere**: one ownership reader (`internal/winpolicy`),
+  built in W1 and reused by log collection, reads Group Policy (with its
+  preferences and audit policy), MDM through the MDM Bridge, Defender for
+  Endpoint, Configuration Manager, DSC, Azure machine configuration,
+  OSConfig and Tamper Protection; what an owner holds is reported, never
+  written, and a computer whose owner cannot be read yet is check only.
+* **23 modules**: `accounts` (lockout after 10, none on exposed computers
+  without an option, never password expiry), `firewall` (only the
+  profiles it changes, every listening port, RDP, WinRM, RPC and echo open
+  first; a server's firewall only with an option and in two steps),
+  `defender` (never real-time protection on a server without an option;
+  SmartScreen warns), `asr` (Microsoft's three standard rules blocked, the
+  rest in audit), `smb`, `ntlm`, `wdigest`, `lsa-protection`,
+  `name-resolution`, `powershell`, `rdp`, `uac`, `autoplay`, `anonymous`,
+  `winrm`, `printing`, `features`, and, not recommended, `smb-signing` and
+  `tls`; report only: `audit` (against log collection's one audit table;
+  log collection sets it, so the two never fight), `device-guard`,
+  `bitlocker`, `laps`.
 * **Guards**: RDP, WinRM and the agents stay reachable; the MSP's accounts
-  are never disabled; restarts are reported, never performed; domain
-  controllers need an explicit option; undo works without the agent.
+  are never disabled; SMB1, NTLM on domain controllers, LSA protection
+  and a server's firewall are judged on what the computer did, two
+  applies apart; restarts are reported, never performed, and undo works
+  before them; one hardening apply or undo at a time on a device, never
+  beside a patch or software job; domain controllers need an explicit
+  option; undo works without the agent.
 * **Platforms**: apply and undo on Windows 11 Pro, Enterprise and
-  Education versions still in service, Server 2019 to 2025 (also Server
-  Core) and Server 2016 until January 2027; check only on Windows 10,
-  Home editions and versions out of service.
-* **Slices**: **W1** check (with the runner matrix and the decision on
-  Windows machines under KVM); **W2** apply and undo, module by module;
-  **W3** the console, H3's with Windows' modules and the related controls.
+  Education versions still in service (26H1 once tested; ARM64 once the
+  agent's ARM64 build is verified), Server 2019 to 2025 (also Server Core)
+  and Server 2016 until January 2027; check only on Windows 10, Home
+  editions and versions out of service.
+* **Slices**: **W1** check, with the ownership reader, the runner matrix
+  and the decision on Windows machines under KVM; **W2** apply and undo,
+  module by module; **W3** the console, H3's with Windows' modules and
+  the related controls.
 
 **Tests**: PSScriptAnalyzer and a test that every cited STIG ID exists in
 its release; CI's `windows-2025`, `windows-2022` and `windows-11-arm`
-runners for check, apply, apply again and undo of every module, run as
-LocalSystem; Windows machines under KVM (evaluation media, in-box devices,
-a serial runner) for restarts, a domain with Group Policy, traffic from
-outside, a non-English image and Server 2016 and 2019, or, if W1 finds
-that cannot work on CI, a self-hosted runner or recorded hand tests; then
-a real domain, an Intune-enrolled Windows 11 and a computer with another
-antivirus.
+runners for check, apply, apply again and undo, run as LocalSystem, except
+`defender` and `asr`, only checked there since the runner images turn
+Defender off; Windows machines under KVM (evaluation media, in-box devices,
+a serial runner, images built in each run on `main` and on a schedule,
+never cached where pull requests can restore them) for restarts, a domain
+with Group Policy, traffic from outside, Defender active, a non-English
+image, Server 2016 and 2019, and one scenario or more per guard, or, if
+W1 finds that cannot work on CI, a self-hosted runner or recorded hand
+tests; then a real domain, an Intune-enrolled Windows 11, computers with
+another antivirus and firewall, and a common EDR.
 
 ## Test harnesses to build
 
@@ -583,12 +603,16 @@ antivirus.
   PostgreSQL that the `windows-2025` image carries, with a Windows agent
   enrolling (log collection, the MSI, signed agents). If that cannot be
   made to work, a self-hosted Windows machine; until one exists, Windows
-  paths are marked unverified. Windows jobs pin `windows-2025`.
+  paths are marked unverified. This harness pins `windows-2025`, whose
+  PostgreSQL it uses; Windows hardening's tests run on `windows-2025`,
+  `windows-2022` and `windows-11-arm`, and the existing *Agent tests on
+  Windows* keep `windows-latest`.
 * **Windows machines under KVM** (Windows hardening, 9): the same harness
   with Windows guests from Microsoft's evaluation media, devices Windows
-  has drivers for, a runner on the serial port, and a small domain; W1
-  decides whether CI can run them, else a self-hosted runner or recorded
-  hand tests.
+  has drivers for, a runner on the serial port, and a small domain; the
+  images built in each run by jobs on `main` and on a schedule, never
+  cached where a pull request's run can restore them; W1 decides whether
+  CI can run them, else a self-hosted runner or recorded hand tests.
 * **Coverage on Windows**: the Windows job writes a coverage profile with
   floors of its own for Windows-only code.
 * **The bundle test split** into parallel jobs reusing images built once.
@@ -601,13 +625,13 @@ antivirus.
 | 2 | The fixes the reviews found | Holes in shipped code |
 | 3 | Hardening (2), H1 with the machine harness | Asked for first; ADR revised |
 | 4 | Updater 4a with the edge channel | The test instance follows `main` from then on |
-| 5 | Windows hardening (9): its ADR's review, then W1, W2, W3 | Most managed computers run Windows; reuses step 3's job, permission and console (H3) while that work is fresh; W1 needs only CI's Windows runners |
+| 5 | Windows hardening (9): its ADR, revised after review, then W1, W2, W3 | Most managed computers run Windows; reuses step 3's job, permission and console (H3) while that work is fresh; W1 needs CI's Windows runners, the KVM decision with its domain, and a real Intune-enrolled Windows 11; it builds the ownership reader step 11 reuses |
 | 6 | F2 and device alert notifications (7) | Needed by 4b, 5 and 3's alerts |
 | 7 | Updater 4b: the console | Needs F2 |
 | 8 | Let's Encrypt 5a, then 5b | Needs F2 for its alerts |
 | 9 | Packages (6): DEB, RPM, MSI | How MSPs onboard computers; nothing depends on 3 |
 | 10 | F0; the wake-only WebSocket; F1; the transport setting (8) | F1's first key is the transport |
-| 11 | Log collection (3), in its slices | The largest; needs F1 and F2; it sets the Windows audit policy that step 5 only reports |
+| 11 | Log collection (3), in its slices | The largest; needs F1 and F2; it sets the Windows audit policy that step 5 only reports, with step 5's ownership reader |
 | 12 | Moving to a new name (5c), its ADR first | Needs F0 |
 
 Each step ends with CI green, a merge, and the test instance on the new
@@ -615,8 +639,11 @@ code.
 
 ## Risks
 
-* **Hardening locks someone out or breaks a service**: the revised ADR's
-  guards, machines for every guard, undo without the agent.
+* **Hardening locks someone out or breaks a service**: the revised ADRs'
+  guards, a scenario for every guard (ADR-0051's and ADR-0054's lists,
+  with those only real computers can show run on real computers before
+  the feature is called complete, and any stand-in named as one), undo
+  without the agent.
 * **Windows hardening breaks remote support or line-of-business software**
   (scanners on SMB, NTLM-only devices, technicians elevating in a user's
   session): risky modules are not recommended and state what they break,
@@ -624,8 +651,9 @@ code.
   settings someone else owns are left alone, and undo works without the
   agent.
 * **Windows hardening and log collection fight over audit policy**: log
-  collection sets it, hardening only reports it, and both read Group
-  Policy's ownership the same way.
+  collection sets it from one table, hardening only reports against that
+  table, and both use the one ownership reader; log collection raises no
+  alert for the changes a hardening job made.
 * **Logs take EasyRMM down**: a database of its own, quotas, a size cap and
   a disk floor that stop ingest before the disk fills.
 * **The updater is root on the host**: it takes nothing but a version from

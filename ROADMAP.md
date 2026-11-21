@@ -59,11 +59,11 @@ before its code.
   lockout, Microsoft Defender and attack surface reduction, SMBv1, NTLM,
   LSA protection, Remote Desktop and UAC, with values from Microsoft's
   security baselines and each setting cited by its DISA STIG rule. Each
-  module shows the NIST SP 800-53 and ISO/IEC 27001:2022 controls it
-  relates to, from published mappings, without claiming compliance.
-  Settings that Group Policy, Intune or OSConfig manage are reported and
-  left alone; Remote Desktop, WinRM and EasyRMM's agents are never cut
-  off, and restarts are left to the operator.
+  module shows the NIST SP 800-53, SP 800-171 and ISO/IEC 27001:2022
+  controls it relates to, from published mappings, without claiming
+  compliance. Settings that Group Policy, Intune, OSConfig or other tools
+  manage are reported and left alone; Remote Desktop, WinRM and EasyRMM's
+  agents are never cut off, and restarts are left to the operator.
 * **Upgrading EasyRMM from the console.** Today an upgrade is
   [run on the server](docs/operations/upgrading.md). A small updater on
   the host (not the server, which never gets the Docker socket) checks a
