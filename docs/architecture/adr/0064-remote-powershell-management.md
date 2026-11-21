@@ -33,9 +33,9 @@
   output retention.
 * Requirements: feature 6, "Remote PowerShell Management", of the
   owner's requirements of 2026-11-21. Every bullet is placed in
-  [The requirements](#the-requirements). The plan for the twelve MSP
-  features (`feature-plan-msp.md`, on its own branch, not merged) lists
-  this as feature 6. This ADR differs from it in four places, each
+  [The requirements](#the-requirements). The
+  [plan for the twelve MSP features](../feature-plan-msp.md) lists this
+  as feature 6. This ADR differs from it in four places, each
   argued where it is decided: a `pwsh` script may fall back to Windows
   PowerShell 5.1 when its author allows it; Store installs are seen and
   reported, not invisible; the version is read from the program's file,
