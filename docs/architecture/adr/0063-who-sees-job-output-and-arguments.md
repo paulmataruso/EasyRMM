@@ -1,6 +1,6 @@
 # ADR-0063: Who sees a job's output and arguments
 
-* Status: Accepted (2026-11-21); implemented (PR #N). Revised the same
+* Status: Accepted (2026-11-21); implemented (PR #81). Revised the same
   day after an independent review.
 * Amends: [ADR-0017](0017-scripts-and-jobs.md): who reads a run's output
   and a job's arguments, how long output is kept, and the guidance on

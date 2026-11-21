@@ -3,7 +3,7 @@
 * **Status: planned; nothing built.** Draft 2 (2026-11-21), revised
   after an independent review. No ADR for any of the twelve or the
   keystore exists yet: each gets its own, reviewed before it is built.
-  ADR-0063 (F0, below) is accepted and built (PR #N). This page was
+  ADR-0063 (F0, below) is accepted and built (PR #81). This page was
   written from four surveys of `main` at `6f9fe99` (read only; nothing
   was run), the owner's requirements and the decisions below.
 * **Scope**: the owner's requirements of 2026-11-21,
@@ -77,7 +77,7 @@ ADR, and reused by the others. None of them exists today.
 
 ### F0. Job output and arguments hidden from roles that should not see them
 [ADR-0063](adr/0063-who-sees-job-output-and-arguments.md) is accepted
-and built (PR #N). It fixes shipped code, so it comes before every
+and built (PR #81). It fixes shipped code, so it comes before every
 feature here. The hole below is what it closed.
 
 * **The hole.** `job_runs` keeps the first and last 128 KiB of each
