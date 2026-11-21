@@ -43,9 +43,6 @@ All notable changes to this project are documented here. The format follows
   directories under `.env`'s data root (rerunning `setup.sh` without
   `--data-root` used the default one), and issues no Authentik invitation.
   The upgrade guide now uses it (ADR-0052).
-
-### Added
-
 - **Hardening checks for Linux computers** (ADR-0051, its first part). A
   technician can have the agent on a Linux device check 14 areas: SSH,
   the firewall, fail2ban, kernel settings, audit rules, file permissions,
