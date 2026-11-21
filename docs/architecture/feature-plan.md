@@ -178,78 +178,18 @@ set up its Teams channel once.
   notifications through EasyRMM and the channels' migration.
 
 ### F3. The updater on the host
-The server runs in a read-only container without the Docker socket, and
-nothing EasyRMM installs runs on the host. Upgrades need something on the
-host that can run `docker compose`.
-
-* **`easyrmm-updater`**: a Go program and systemd unit installed by
-  `setup.sh` (existing installs get it at their next manual upgrade, which
-  runs the new `setup.sh`; the guide covers installs from a Git clone).
-  It runs as root.
-* **What it trusts.** Its configuration, `/etc/easyrmm/updater.conf`, is
-  root's, written by `setup.sh`: the channel, whether it upgrades on its
-  own and when. The server never sets these. Each channel accepts only its
-  own builds: *stable* full releases, *pre-release* release candidates as
-  well, *edge* edge builds as well. A version outside the channel is
-  refused.
-* **What the server can ask.** The server writes a request (a version, or
-  *roll back*) into a directory it can write to. The updater opens it
-  without following links, accepts only a regular file under 1 KiB whose
-  version matches a strict pattern, refuses any version at or below the
-  running one (except its own rollback), and runs one attempt at a time,
-  at most one an hour. It writes progress and results into a directory
-  only root can write, mounted read-only into the server. The server gets
-  a user ID of its own, apart from MeshCentral's.
-* **Verification** before anything changes: the release's files against
-  `SHA256SUMS` and their Sigstore attestation, with sigstore-go using
-  TUF (its embedded root only as the starting point, the rest cached and
-  refreshed), checking the issuer, this repository's numeric ID and the
-  exact workflow identity: the release workflow at the tag
-  `easyrmm-v<version>`; for edge builds, and only on the edge channel,
-  `docker-build.yml` at `refs/heads/main`, run by a push. Images are pulled by the digests in the
-  verified manifest. The updater updates itself only from a verified
-  release.
-* **Backup**: the server is put in maintenance (agents told to come back
-  later, the console read-only) and every store is saved: each database
-  the release's manifest lists (EasyRMM's, the engine's, Authentik's when
-  it runs, later the logs database), `.env`, the ACME cache, the engine's
-  keys, `tls/`, and MeshCentral's data with MeshCentral stopped. Backups
-  are root's only; the last three are kept.
-* **Upgrade**: the verified bundle unpacked beside the current one; the
-  new `setup.sh` run with the settings recorded at install (new keys
-  added, directories made); `docker compose up -d`; healthy within 10
-  minutes (the new version reporting, the engine answering). The new
-  server holds agent updates, its own and the engine's, until the updater
-  confirms, so no agent moves to a version that might be rolled back. A
-  server from before the updater, which has no maintenance mode, is
-  stopped for the backup instead.
-* **Rollback during the upgrade** (before the updater confirms): the
-  previous bundle and images, the stores restored; nothing is lost, since
-  the server was in maintenance. Collectors tell audit records apart by
-  their ID, so before the restore the updater records, in its own state,
-  the highest audit ID and the chain's head; after it, the ID sequence and
-  the chain move past them, and the rollback itself is the next record.
-  Refused across a job key rotation's cut-over (F0).
-* **Rollback after a confirmed upgrade** restores no data: it runs the
-  previous release's code on the current databases. That works only if the
-  previous server accepts the newer schema, so migrations follow
-  expand-then-contract (a release adds; only a later one removes what the
-  earlier stopped using), and each release's manifest says whether the
-  release before it can run on its schema. **Roll back** is offered for 24
-  hours only when it can.
-* **Seeing it**: `easyrmm-updater status` on the host; the console keeps
-  polling through the restart and shows the step; the guide has manual
-  recovery.
-* **Edge channel for test instances**: CI already publishes `edge` and
-  `sha-<commit>` server images with attestations (`docker-build.yml`).
-  That publishing waits for the whole CI to pass, and a bundle with its
-  manifest is published beside it. Edge builds have versions that sort:
-  the next release's version with `-edge.<run>` (for example
-  `1.0.0-rc.5-edge.412`), recorded in the attested manifest. Edge bundles use the last release's
-  engine image by its digest: the engine cannot be rebuilt outside a
-  release (its packages need the release key), so engine changes reach
-  test instances only with a release. Migrations, once merged, are never
-  edited, since edge instances have run them.
+Decided in [ADR-0052](adr/0052-the-host-updater.md), revised after review.
+In short: `easyrmm-updater` on the host, run by systemd as root, verifies a
+build's manifest against its Sigstore attestation (this repository's
+release workflow at the release's tag, or, on the edge channel only, the
+last job of `main`'s CI), stops the deployment, copies the whole data root,
+runs the new `setup.sh --upgrade`, starts the new version held (answering
+only its health check), and confirms, or restores the copy and starts the
+previous version. A rollback after a confirmed upgrade restores that copy
+too, for 24 hours, and says what it loses. The server can only ask, through
+a file the updater validates, and reads the updater's status read-only.
+Edge builds are published only after the whole of CI passes, with versions
+that sort (`v1.0.0-rc.4.edge.<run>.<attempt>`).
 
 ## The features
 
@@ -370,38 +310,29 @@ of a real install command's token; an upgrade from a release without the
 logs database, and a rollback of it; a load test with `tools/agentsim`.
 
 ### 4. Upgrading EasyRMM from the console
-In two parts.
+In two parts, both in [ADR-0052](adr/0052-the-host-updater.md).
 
 * **4a. The updater (F3) and the edge channel**, early, so that the owner's
   test instance follows `main`: `easyrmm-updater upgrade <version>` and
   `rollback` on the host; automatic upgrades on the edge channel for test
-  instances. The console shows a banner when an upgrade fails or rolled
-  back (email follows with F2).
+  instances; the server's `hold` and its offline rule; `setup.sh
+  --upgrade`; `main`'s publishing at the end of CI; `main` and release
+  tags protected. The console shows a banner when an upgrade fails or was
+  rolled back (email follows with F2).
 * **4b. The console**, after F2: Settings → **Updates** with the running
   version, the channel, the newest release (only if a super
   administrator allows checking: off by default, PRIVACY.md updated; the
   server asks GitHub once a day), its release notes, **Upgrade now** or
   at a time (the server writes the request then), pre-checks (running jobs, patch windows, open remote
-  sessions), progress, and **Roll back**. Super administrators only;
-  every step audited.
+  sessions), progress through the downtime, and **Roll back** with what it
+  loses. Super administrators only; every step audited.
 
-**Tests**:
-* Verification against real published files: the latest release and an
-  edge build accepted; tampered copies, another workflow's identity and
-  a lower version refused.
-* On the runner itself (a throwaway machine with systemd and root, where
-  the bundle test already runs Compose): install the latest release from
-  its bundle, install the pull request's updater, upgrade to the newest
-  attested edge build (which has the server's half: maintenance, the hold
-  on agent updates) with verification on, check it; then again with a
-  real cause of failure (an object that makes the new build's migration
-  fail) and check the rollback, the stores, the audit IDs and chain. A job
-  of its own with a 60-minute limit. Run locally, the test removes its
-  service and files on exit.
-* The updater installed on an existing deployment; the symlink, downgrade
-  and wrong-channel attacks on the request directory; from the second
-  release with the updater on, the updater updating itself.
-* Then the owner's instance on edge.
+**Tests**: as [ADR-0052](adr/0052-the-host-updater.md#testing) lists them:
+verification against real published builds; the whole upgrade, a failed
+one and both rollbacks on every pull request that changes them; the
+previous edge build upgraded on `main` before the `edge` tag moves; the
+request directory's attacks; the updater updating itself from the second
+release with one; then the owner's instance on edge.
 
 ### 5. Let's Encrypt in one step
 **What exists**: `acme` mode with `autocert` for the names in `.env`
