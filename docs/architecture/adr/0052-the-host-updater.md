@@ -85,7 +85,8 @@ What exists, and what it means here:
 ### Channels and versions
 * **stable** takes full releases; **pre-release** also release
   candidates; **edge** also builds of `main`. A version outside the
-  configured channel is refused, whoever asks.
+  configured channel is refused, whoever asks, except a required upgrade
+  stop ("Required upgrade stops", below).
 * **Release tags** are only `easyrmm-vX.Y.Z` and `easyrmm-vX.Y.Z-rc.N`,
   and only on commits on `main`; `release.yml` refuses the rest.
 * **Edge versions sort** and name one build. `R` is the highest release
@@ -268,18 +269,28 @@ none.*
   4 and every later version name the release that carries its slice 1,
   which is cut before slice 4 merges.
 * **The updater has the check from its first release**: it is being built
-  now, and no updater without it ships. At step 1 it compares the running
-  version, read from the running server, with `upgradeFrom` in this
-  ADR's order: below it, the upgrade is refused before anything changes,
-  naming the release to install first. On any channel, edge included,
-  the updater may install that release as the stop, even where the
-  channel would otherwise refuse it (a release candidate on the stable
-  channel), and automatic upgrades install it first, as a version of its
-  own.
+  now, and no updater without it ships. At step 1 it compares
+  `upgradeFrom`, in this ADR's order, with the lower of the running
+  server's version, read from the running server, and its own: an image
+  swapped by hand can put the server above the updater. Below it, the
+  upgrade is refused before anything changes, naming the version to
+  install first.
+* **Which version is the stop**: the lowest version on the deployment's
+  own channel that is at or above `upgradeFrom` and below the target.
+  Only when the channel has none does the updater cross channels, to the
+  lowest release at or above `upgradeFrom`; that is the one exception to
+  the channel rule above. A stable deployment so goes to a full release
+  that carries the stop's change when one exists, not to its release
+  candidate. Automatic upgrades install the stop first, as a version of
+  its own.
 * **No refusal by the manifest's form.** The updater refuses no manifest
   for a schema version: an older updater must always be able to install
   the release that carries its successor. Fields it does not know are
-  ignored, as the agents' protocol does (ADR-0009).
+  ignored. A field an updater must honour is introduced only together
+  with an `upgradeFrom` naming the first release whose updater honours
+  it, and that release does not use the field itself. That is why the
+  updater compares `upgradeFrom` with the lower of the running server's
+  version and its own (above).
 * **`setup.sh --upgrade` refuses the same jump** with the same message:
   the backstop for upgrades by hand. It takes the installed version from
   the running server; from the updater, which passes the version it read
@@ -296,8 +307,14 @@ none.*
   from the releases reachable from their commit, so they follow.
 * **Tests**, one per refusal: the updater refusing a release and an edge
   build whose `upgradeFrom` is above the running version, and accepting
-  them from the stop; the stop installed on a channel that would
-  otherwise refuse it; `setup.sh --upgrade` by hand refusing with the
+  them from the stop; a server swapped by hand above the updater's own
+  version, compared by the updater's; the stop chosen on the
+  deployment's own channel (a stable deployment taking the full release
+  that carries the change, not its release candidate, when both exist),
+  and from another channel only when its own has none; an updater older
+  than a must-honour field's `upgradeFrom` installing that release
+  first, then the release that uses the field; `setup.sh --upgrade` by
+  hand refusing with the
   running server below the stop, with the server stopped and the old
   `.env`'s `EASYRMM_VERSION` below it, and with no version to be had;
   `release.yml` refusing a tag above the stop on a commit without it.
