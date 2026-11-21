@@ -27,7 +27,7 @@ set -eu
 
 tag=${1:?usage: bundle.sh easyrmm-vX.Y.Z [out-dir]}
 version=${tag#easyrmm-}
-if ! printf '%s' "$version" | grep -Eqx 'v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?'; then
+if ! printf '%s' "$version" | grep -Eqx 'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?'; then
   echo "bundle: \"$tag\" is not a release tag like easyrmm-v1.2.3 or easyrmm-v1.2.3-rc.1" >&2
   exit 1
 fi

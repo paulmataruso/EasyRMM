@@ -27,6 +27,12 @@ All notable changes to this project are documented here. The format follows
 - **The agent bounds the server's heartbeat interval** to between 10
   seconds and 10 minutes, so that an answer changed on the way cannot
   silence it.
+- **Releases come only from `main`, in two forms.** The release workflow
+  published any tag `easyrmm-vX.Y.Z-<anything>` on any commit. It now
+  accepts only `easyrmm-vX.Y.Z` and `easyrmm-vX.Y.Z-rc.N` (no leading zeros),
+  only on commits on `main`. `.github/rulesets/` holds the rulesets that
+  protect `main` (pull requests with CI passed) and limit release tags to
+  administrators, with how to apply them (ADR-0052).
 
 ### Fixed
 

@@ -9,8 +9,10 @@ release: the engine is not released on its own
 
 ## Versions
 
-Semantic versioning, tags `easyrmm-v1.2.3`. A pre-release adds a suffix,
-`easyrmm-v1.2.3-rc.1`. The `easyrmm-` prefix keeps EasyRMM's tags apart from
+Semantic versioning, tags `easyrmm-v1.2.3`. A release candidate adds
+`-rc.N`, `easyrmm-v1.2.3-rc.1`; no other suffix is a release, so that the
+updater can sort every version (ADR-0052). Tag only commits on `main`: the
+release workflow refuses any other tag. The `easyrmm-` prefix keeps EasyRMM's tags apart from
 EasyPatch's old ones (`easypatch-v1.10.0`), which this repository also holds
 and which nothing releases any more.
 
@@ -64,6 +66,23 @@ Done once per repository, before the first release:
 3. Both packages public (Package settings → Danger Zone → Change
    visibility), so that a server pulls them without signing in. Both are
    public as of 2026-11-20.
+4. The two rulesets in `.github/rulesets/` (ADR-0052: what the release
+   workflow attests must come from `main` and from administrators' tags):
+   - `main.json`: `main` changes only by pull request, with the **CI
+     result** check from GitHub Actions passed; no force-push or deletion.
+   - `release-tags.json`: only the repository's administrators create, move
+     or delete `easyrmm-v*` tags.
+
+   ```bash
+   for f in .github/rulesets/main.json .github/rulesets/release-tags.json; do
+     gh api -X POST repos/paulmataruso/EasyRMM/rulesets --input "$f"
+   done
+   gh api repos/paulmataruso/EasyRMM/rulesets --jq '.[] | "\(.id) \(.name) \(.enforcement)"'
+   ```
+
+   To change one later, edit its file here, then run `gh api -X PUT
+   repos/paulmataruso/EasyRMM/rulesets/<id> --input <file>`. Nothing reads
+   these files except that command.
 
 ## Cutting a release
 
