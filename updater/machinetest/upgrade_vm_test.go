@@ -798,17 +798,17 @@ docker ps --filter label=com.docker.compose.project=easyrmm --format 'runs {{.La
 	if lines[0] != v {
 		m.t.Errorf("the server reports %q, not %s", lines[0], v)
 	}
-	want := map[string]string{}
+	hashes := map[string]string{}
 	services := map[string]bool{}
 	for _, l := range lines[1:] {
 		f := strings.Fields(l)
 		switch {
 		case len(f) == 3 && f[0] == "want":
-			want[f[1]] = f[2]
+			hashes[f[1]] = f[2]
 		case len(f) >= 4 && f[0] == "runs":
 			services[f[1]] = true
-			if f[2] != want[f[1]] || f[3] != "Up" {
-				m.t.Errorf("%s: %s does not run %s's configuration (hash %s, not %s): %s", v, f[1], v, f[2], want[f[1]], l)
+			if f[2] != hashes[f[1]] || f[3] != "Up" {
+				m.t.Errorf("%s: %s does not run %s's configuration (hash %s, not %s): %s", v, f[1], v, f[2], hashes[f[1]], l)
 			}
 		default:
 			m.t.Errorf("%s: %q", v, l)
