@@ -167,4 +167,17 @@ func TestParseHardeningResult(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
+	// The error is shown to people who may not read the output, so it
+	// quotes nothing from it (ADR-0063).
+	for _, out := range []string{
+		with(func(m map[string]any) {
+			m["modules"] = []any{ssh, fw, map[string]any{"module": "marker-7f3a", "state": "in_place"}}
+		}),
+		with(func(m map[string]any) { m["version"] = 7317 }),
+	} {
+		_, err := parseHardeningResult(out, job)
+		if err == nil || strings.Contains(err.Error(), "marker-7f3a") || strings.Contains(err.Error(), "7317") {
+			t.Errorf("error %v", err)
+		}
+	}
 }

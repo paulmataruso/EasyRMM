@@ -114,6 +114,9 @@ const ACTIONS: Record<string, string> = {
   "agent_updates.signed_remove": "Removed a signed Windows agent build",
   "report.export": "Downloaded report",
   "job.cancel": "Stopped script run",
+  "job_run.output_view": "Viewed job output",
+  "job.arguments_view": "Viewed job arguments",
+  "job_run.output_remove": "Removed job output",
   "alert_policy.create": "Added alert policy",
   "alert_policy.update": "Changed alert policy",
   "alert_policy.delete": "Deleted alert policy",
@@ -189,6 +192,7 @@ export const ACTION_GROUPS: [string, string][] = [
   ["enrollment_request", "Device approvals"],
   ["script", "Scripts"],
   ["job", "Jobs"],
+  ["job_run", "Job output"],
   ["agent_updates", "Agent updates"],
   ["report", "Reports"],
   ["alert_policy", "Alert policies"],
@@ -209,6 +213,7 @@ export function auditTarget(e: AuditEntry): string {
   if (name && typeof d.device === "string") return `${name} on ${d.device}`;
   if (name) return name;
   if (typeof d.script === "string" && typeof d.device === "string") return `${d.script} on ${d.device}`;
+  if (typeof d.script === "string" && e.targetType === "job") return d.script;
   if (e.action === "patch.alert_acknowledge" && typeof d.alerts === "number") {
     const n = d.alerts === 1 ? "1 alert" : `${d.alerts.toLocaleString()} alerts`;
     return typeof d.device === "string" ? `${n} on ${d.device}` : `${n} of the organization`;

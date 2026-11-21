@@ -33,9 +33,12 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/jobs/hardening", a.createHardeningJob)
 	r("GET /api/v1/devices/{id}/hardening", a.deviceHardening)
 	r("GET /api/v1/jobs/{id}", a.getJob)
+	r("GET /api/v1/jobs/{id}/arguments", a.jobArguments)
 	r("POST /api/v1/jobs/{id}/cancel", a.cancelJob)
 	r("GET /api/v1/job-runs", a.listRuns)
 	r("GET /api/v1/job-runs/{id}", a.getRun)
+	r("GET /api/v1/job-runs/{id}/output", a.runOutput)
+	r("DELETE /api/v1/job-runs/{id}/output", a.removeRunOutput)
 	r("POST /api/v1/job-runs/{id}/cancel", a.cancelRun)
 }
 
@@ -212,6 +215,21 @@ func (a *API) getJob(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// jobArguments returns a job's argument values, each read audited
+// (ADR-0063).
+func (a *API) jobArguments(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	args, err := a.svc.ReadArguments(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, args)
+	return nil
+}
+
 func (a *API) cancelJob(w http.ResponseWriter, r *http.Request) error {
 	id, err := httpapi.PathID(r)
 	if err != nil {
@@ -244,6 +262,35 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	run, err := a.svc.GetRun(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, run)
+	return nil
+}
+
+// runOutput returns what a run printed, each read audited (ADR-0063).
+func (a *API) runOutput(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	out, err := a.svc.ReadOutput(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// removeRunOutput empties a finished run's output at once and returns the
+// run.
+func (a *API) removeRunOutput(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	run, err := a.svc.RemoveOutput(r.Context(), httpapi.Caller(r), id)
 	if err != nil {
 		return err
 	}

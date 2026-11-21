@@ -1,6 +1,7 @@
 // The technician console, end to end, against a real server and database: first-run setup,
 // mandatory two-factor enrollment, tenancy, invitations, scoped access, device enrollment, a
-// hardening check through the device's agent, and the audit trail.
+// hardening check through the device's agent, who sees a script's output and arguments, and the
+// audit trail.
 // The suite is one ordered story because each step builds on the server state of the last.
 
 import { readFileSync } from "node:fs";
@@ -10,6 +11,7 @@ import { enrollAuthenticator, nextCode } from "./authenticator";
 
 const ADMIN = { name: "Alex Rivera", email: "alex@example.com", password: "harbor lantern quietly 42" };
 const TECH = { name: "Riley Chen", email: "riley@example.com", password: "copper meadow steadily 77" };
+const READER = { name: "Sam Ortiz", email: "sam@example.com", password: "willow harbor gently 58" };
 
 async function signIn(page: Page, who: { email: string; password: string }) {
   await page.getByLabel(/^Email/).fill(who.email);
@@ -367,6 +369,125 @@ test("a hardening check runs through the device's agent; its findings show on th
   await expect(page.getByText("No devices match these filters")).toBeVisible();
   await page.getByLabel("Hardening").selectOption({ label: "Any hardening" });
   await expect(row).toBeVisible();
+});
+
+/** A secret a script is given and prints back: only those who may see job output and arguments ever receive it. */
+const MARKER = `e2e-secret-${Date.now().toString(36)}`;
+
+/** Accepts an invitation, sets the password, signs in and enrolls an authenticator. */
+async function acceptInvitation(page: Page, link: string, who: { email: string; password: string }) {
+  await page.goto(`/welcome${new URL(link).hash}`);
+  await page.getByLabel(/^New password/).fill(who.password);
+  await page.getByLabel(/^Confirm new password/).fill(who.password);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await expect(page.getByText("Your password is set. Sign in with it now.")).toBeVisible();
+  await signIn(page, who);
+  await enrollAuthenticator(page, who.email);
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+}
+
+test("a script's output and arguments reach only those who may see them, and every read is recorded", async ({ browser }) => {
+  // Two more people sign in, each with a second factor.
+  test.slow();
+  const page = admin;
+  // A Read-Only user of the device's organization: they see jobs and runs, not what they printed or were given.
+  await page.goto("/settings");
+  await page.getByRole("button", { name: "Invite user" }).click();
+  const invite = page.getByRole("dialog", { name: "Invite user" });
+  await invite.getByLabel(/^Email/).fill(READER.email);
+  await invite.getByLabel(/^Name/).fill(READER.name);
+  await invite.getByLabel("Role").selectOption({ label: "Read-Only" });
+  await invite.getByLabel("Organization").selectOption({ label: "Contoso Dental Group" });
+  await invite.getByRole("button", { name: "Send invitation" }).click();
+  const notice = page.getByRole("dialog", { name: "Send this invitation link" });
+  const readerLink = (await notice.locator("pre").innerText()).trim();
+  await notice.getByRole("button", { name: "Done" }).click();
+
+  // A script that prints the argument it is given.
+  await page.goto("/scripts/new");
+  await page.getByLabel(/^Name/).fill("Print the token");
+  await page.getByLabel("Shell").selectOption({ label: "Bash" });
+  await page.getByLabel(/^Body/).fill('echo "token=$1"\n');
+  await page.getByRole("button", { name: "Add script" }).click();
+  await expect(page.getByRole("heading", { name: "Print the token" })).toBeVisible();
+
+  // The technician signs in again and runs it on the device, with the secret as its argument.
+  const techContext = await browser.newContext();
+  const tech = await techContext.newPage();
+  await tech.goto(`/devices/${agent.deviceId}`);
+  await signIn(tech, TECH);
+  await tech.getByLabel(/^Verification code/).fill(await nextCode(tech, TECH.email));
+  await tech.getByRole("button", { name: "Verify" }).click();
+  await expect(tech.getByRole("heading", { name: "dt-reception-01" })).toBeVisible();
+  await tech.getByRole("button", { name: "Run script" }).click();
+  const run = tech.getByRole("dialog", { name: "Run a script" });
+  await run.getByLabel(/^Script/).selectOption({ label: "Print the token" });
+  await run.getByLabel("Arguments").fill(MARKER);
+  await run.getByRole("button", { name: "Run", exact: true }).click();
+  await expect(tech).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+  const jobPath = new URL(tech.url()).pathname;
+
+  // The device's agent receives the argument (read for it by a database function only the agent's poll may use) and
+  // prints it back.
+  const [job] = await agent.poll();
+  expect(job?.args).toEqual([MARKER]);
+  expect(await agent.start(job!.runId)).toBe(true);
+  await agent.succeeded(job!.runId, `token=${MARKER}\n`);
+  const runPath = `${jobPath}/runs/${job!.runId}`;
+
+  // The Read-Only user opens the job and the run: both say hidden, and nothing their browser receives holds the secret.
+  const readerContext = await browser.newContext();
+  const reader = await readerContext.newPage();
+  const answers: Promise<string>[] = [];
+  reader.on("response", (r) => {
+    if (new URL(r.url()).pathname.startsWith("/api/")) answers.push(r.text().catch(() => ""));
+  });
+  await acceptInvitation(reader, readerLink, READER);
+  await reader.goto(jobPath);
+  await expect(reader.getByRole("heading", { name: "Print the token" })).toBeVisible();
+  await expect(reader.getByText("1 argument. Hidden: needs permission to see job arguments")).toBeVisible();
+  await reader.getByRole("table").getByRole("link", { name: "dt-reception-01" }).click();
+  await expect(reader).toHaveURL(new RegExp(`${runPath}$`));
+  await expect(reader.getByText("Hidden: needs permission to see job output")).toBeVisible();
+  await expect(reader.getByText("Succeeded").first()).toBeVisible();
+  // Asking the API directly is refused, and the refusal is recorded. (The body is read, so the browser finishes the
+  // response and the listener above gets it.)
+  const status = (path: string) => reader.evaluate(async (p) => { const r = await fetch(p); await r.text(); return r.status; }, path);
+  expect(await status(`/api/v1/job-runs/${job!.runId}/output`)).toBe(403);
+  expect(await status(`/api/v1/jobs/${job!.jobId}/arguments`)).toBe(403);
+  reader.removeAllListeners("response");
+  const received = await Promise.all(answers);
+  expect(received.length).toBeGreaterThan(5);
+  expect(received.filter((body) => body.includes(MARKER))).toEqual([]);
+  await readerContext.close();
+
+  // The technician holds job.view_sensitive at the site: the job's page shows the argument, the run's page the output.
+  await expect(tech.getByText(MARKER)).toBeVisible();
+  await tech.getByRole("table").getByRole("link", { name: "dt-reception-01" }).click();
+  await expect(tech.getByText(`token=${MARKER}`)).toBeVisible();
+  await expect(tech.getByText("Opening a run’s output is recorded in the audit log.")).toBeVisible();
+  // Once the secret is used, the technician removes it.
+  await tech.getByRole("button", { name: "Remove output" }).click();
+  const remove = tech.getByRole("dialog", { name: "Remove this run's output?" });
+  await expect(remove).toContainText("Backups made before keep it.");
+  await remove.getByRole("button", { name: "Remove output" }).click();
+  await expect(tech.getByText(/by retention or by someone who could read it/)).toBeVisible();
+  await expect(tech.getByText(`token=${MARKER}`)).toHaveCount(0);
+  await techContext.close();
+
+  // The site's administrators see who read what, and who was refused.
+  await page.goto("/settings?tab=audit");
+  await page.getByLabel("Area").selectOption({ label: "Job output" });
+  const viewed = page.getByRole("row", { name: /Viewed job output/ });
+  await expect(viewed.filter({ hasText: TECH.email })).toHaveCount(1);
+  await expect(viewed.filter({ hasText: READER.email })).toContainText("Denied");
+  await expect(viewed.first()).toContainText("Print the token on dt-reception-01");
+  await expect(page.getByRole("row", { name: /Removed job output/ }).filter({ hasText: TECH.email })).toHaveCount(1);
+  await page.getByLabel("Area").selectOption({ label: "Jobs" });
+  const args = page.getByRole("row", { name: /Viewed job arguments/ });
+  await expect(args.filter({ hasText: TECH.email })).toHaveCount(1);
+  await expect(args.filter({ hasText: READER.email })).toContainText("Denied");
+  await expect(page.getByText(MARKER)).toHaveCount(0);
 });
 
 test("a deep link survives sign-in and the second factor", async () => {
