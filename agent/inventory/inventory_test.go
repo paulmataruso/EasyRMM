@@ -128,10 +128,12 @@ func TestCollect(t *testing.T) {
 	if inv.OS != (agentproto.OSInfo{Name: "Ubuntu 24.04.3 LTS", ID: "ubuntu", Version: "24.04", Kernel: "6.8.0-45-generic", Timezone: "Europe/Berlin"}) {
 		t.Errorf("os %+v", inv.OS)
 	}
+	// No controller, VPD page or revision in this tree: each firmware is
+	// not exposed (TestStorage reads them).
 	wantDisks := []agentproto.Disk{
-		{Name: "nvme0n1", Serial: "S4EWNX0R123456", SizeBytes: 2000409264 * 512, Kind: "nvme"},
-		{Name: "sda", Model: "ST500DM002-1BD14", SizeBytes: 976773168 * 512, Kind: "hdd"},
-		{Name: "sdb", SizeBytes: 512000, Kind: "ssd", Removable: true},
+		{Name: "nvme0n1", Serial: "S4EWNX0R123456", SizeBytes: 2000409264 * 512, Kind: "nvme", Firmware: firmwareNotExposed()},
+		{Name: "sda", Model: "ST500DM002-1BD14", SizeBytes: 976773168 * 512, Kind: "hdd", Firmware: firmwareNotExposed()},
+		{Name: "sdb", SizeBytes: 512000, Kind: "ssd", Removable: true, Firmware: firmwareNotExposed()},
 	}
 	if !reflect.DeepEqual(inv.Disks, wantDisks) {
 		t.Errorf("disks %+v", inv.Disks)
