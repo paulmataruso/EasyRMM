@@ -2,8 +2,9 @@
 # docs/architecture/edge-manifest.md#retention) with
 # scripts/release/edge-retention.sh: easyrmm-deploy versions, and
 # easyrmm-server images with their platform manifests and attestations.
-# Releases, and whatever edge names, are kept. Run it by hand to list what it
-# would delete (dry run, the default) or to delete now.
+# Releases, whatever edge names, and the server image any kept
+# easyrmm-deploy version names are kept. Run it by hand to list exactly what
+# it would delete (dry run, the default) or to delete now.
 name: Edge retention
 
 on:
@@ -37,6 +38,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Install oras
+        run: |
+          scripts/ci/install-oras.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # For oras, which reads Docker's credentials.
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
