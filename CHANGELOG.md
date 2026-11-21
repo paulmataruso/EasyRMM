@@ -46,6 +46,12 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **The release's agents are the same files the server hands out.** The
+  release bundle built them with the commit stamped in and the server's image
+  without, so their bytes differed, and a Windows agent an operator signed
+  from the release's file would not have matched the server's own build
+  (ADR-0049). Both now build with `-buildvcs=false`; built from a clone, the
+  two are identical for Linux and Windows.
 - `deploy/.env.example` lists `EASYRMM_ACME_DIRECTORY`, which the Compose
   file already passed to the server.
 
