@@ -1,7 +1,7 @@
 # ADR-0056: Packages for the agent: DEB, RPM and MSI
 
 * Status: Proposed (2026-11-21). Slice 0 implemented (PR #61, merged
-  2026-11-21; two of its tests are still to be built, see
+  2026-11-21, with the two tests it lacked added in PR #68, see
   [below](#the-state-folder-is-protected-before-anything-reads-it)); the
   rest not implemented.
 * Revised after an independent review (2026-11-21), and again after a
@@ -443,9 +443,13 @@ the merged code, with the two tests it does not have yet marked as such.
   that access list, and their state was written by the agent as SYSTEM or
   by an elevated administrator, whose files Administrators own
   (`trusted` in `system_windows.go`); what scripts left is not
-  judged. *Not yet tested:* a test that updates an agent enrolled by the
-  release before PR #61 to it and checks that it keeps running as the
-  same device; until it exists this is argued from the code, not shown.
+  judged. Tested (PR #68, `update_windows_test.go`, in CI's Windows job
+  only): the agent of `main` just before PR #61, built from source,
+  installs as the real service, enrolls, runs a job and updates to the
+  current build through ADR-0027's update path; nothing is set aside,
+  both folders keep their owner and access list, `device.key` and the
+  device ID are unchanged, and the new build heartbeats as the same
+  device and reports the run left in its journal.
 * **Tested on CI's Windows runner, as merged** (`main_windows_test.go`,
   `host_windows_test.go`, `acl_test.go`). The tests plant state as a
   standard user would leave it, made owned by `BUILTIN\Users` with the
@@ -460,7 +464,8 @@ the merged code, with the two tests it does not have yet marked as such.
   after the folders above are protected, entries' lists ignored, the
   exact list required) each failed the predicted tests on CI's Windows
   runner before the merge.
-* **Still to be built: the standard-user test.** A standard user made for the run,
+* **The standard-user test** (PR #68, `standarduser_windows_test.go`, in
+  CI's Windows job only). A real local standard user made for the run,
   before the agent is installed, creates `%ProgramData%\EasyRMM\Agent\` and
   leaves in it an `agent.json` and a `device.key` naming a listener of the
   test, with the listener's own authority as `caFile` and a job key of the
@@ -472,11 +477,13 @@ the merged code, with the two tests it does not have yet marked as such.
   completes no connection; nothing is written through the junction; the
   folder is set aside, the agent behaves as on a clean computer, and the
   user can change nothing in the new folder. With the check removed, the
-  first run reaches the listener, so the test is known to catch it. And
-  an enrolled folder with a leftover run folder in `jobs\work` holding a
-  junction, a hard link and a file of another owner still passes: the
-  agent keeps its key and runs as the same device, `jobs\work` is gone,
-  and the junction's target is untouched.
+  first run reaches the listener and the junction is written through,
+  so the test is known to catch it (shown on CI before #68 merged). An
+  enrolled folder with a leftover run folder in `jobs\work` holding a
+  junction, a hard link and a file of another owner is covered by
+  `TestLeftoversInWork` (above), with owners set through the restore
+  privilege rather than by a real user: it still passes, `jobs\work` is
+  gone, and the junction's target is untouched.
 
 ### The enrollment file
 * **Where.** `/etc/easyrmm-agent/install.conf` on Linux, in a folder the
@@ -1209,9 +1216,9 @@ IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
    check, `install` and the service checking first. A fix for today's
    agent, shipped on its own in PR #61 (merged 2026-11-21) before slice
    1. Verified by unit tests and the Windows tests on CI's runner listed
-   [above](#the-state-folder-is-protected-before-anything-reads-it); the
-   standard-user test and the update of an agent enrolled before it are
-   still to be built.
+   [above](#the-state-folder-is-protected-before-anything-reads-it),
+   with the standard-user test and the update of an agent enrolled before
+   it added in PR #68.
 1. **The enrollment file and an agent that waits**: `install.conf` and
    the environment, the checks on both platforms, deletion, waiting, the
    errors and the unit's ordering, `install --package` with its record and

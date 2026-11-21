@@ -24,6 +24,14 @@
 #     without an EasyRMM account is refused, that signing in again asks for
 #     the second factor, and that easyrmm-server recover signs in with
 #     Authentik stopped.
+#  4. EASYRMM_PUBLIC_URL is changed in .env to https://rmm.easyrmm.test (also
+#     told to the browser as 127.0.0.1), with a new
+#     EASYRMM_AUTHENTIK_CLIENT_SECRET, and docker compose up -d run, as
+#     docs/deployment/docker.md says: authentik-setup applies EasyRMM's
+#     blueprint again, Authentik's provider, enrollment redirect and launch
+#     URL move to the new URL, the provider takes the new secret, and the
+#     administrator signs in there. docker compose up -d run again, with
+#     .env unchanged, applies nothing.
 #
 # Needs Docker, curl, openssl, ss, Playwright's Chromium (npx playwright
 # install chromium in web/), root or sudo, and ports 80, 443 and 4443 free.
@@ -36,6 +44,7 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/../.." && pwd)
 project=easyrmm-e2e-authentik
 public=https://127.0.0.1
+moved=https://rmm.easyrmm.test
 signin_host=auth.easyrmm.test
 admin_email=admin@easyrmm.test
 server_image=${EASYRMM_AUTHENTIK_SERVER_IMAGE:-$project/easyrmm-server:local}
@@ -197,7 +206,8 @@ spki_signin=$(spki_of -servername "$signin_host")
 # The browser test runs commands in the deployment through this.
 cat > "$work/ctl" << EOF
 #!/bin/sh
-# Runs docker compose or setup.sh in the test's deployment, as root.
+# Runs docker compose or setup.sh in the test's deployment, as root, or sets
+# EASYRMM_PUBLIC_URL or a new EASYRMM_AUTHENTIK_CLIENT_SECRET in its .env.
 set -eu
 cd "$deploy"
 sudo=""
@@ -205,13 +215,20 @@ sudo=""
 case "\${1:-}" in
   compose) shift; exec \$sudo docker compose -p "$project" "\$@" ;;
   setup) shift; exec \$sudo ./scripts/setup.sh "\$@" ;;
-  *) echo "usage: ctl compose|setup ..." >&2; exit 2 ;;
+  public-url) exec \$sudo sed -i "s|^EASYRMM_PUBLIC_URL=.*|EASYRMM_PUBLIC_URL=$moved|" .env ;;
+  client-secret)
+    \$sudo grep -q "^EASYRMM_AUTHENTIK_CLIENT_SECRET=." .env
+    secret=\$(openssl rand -hex 32)
+    exec \$sudo sed -i "s|^EASYRMM_AUTHENTIK_CLIENT_SECRET=.*|EASYRMM_AUTHENTIK_CLIENT_SECRET=\$secret|" .env ;;
+  *) echo "usage: ctl compose|setup ...|public-url|client-secret" >&2; exit 2 ;;
 esac
 EOF
 chmod 0755 "$work/ctl"
 
 echo "Running the story in a browser ..."
-(cd "$root/web" && EASYRMM_AUTHENTIK_URL=$public EASYRMM_AUTHENTIK_SIGNIN_HOST=$signin_host EASYRMM_AUTHENTIK_SPKI=$spki \
-  EASYRMM_AUTHENTIK_INVITATION=$invitation EASYRMM_AUTHENTIK_ADMIN_EMAIL=$admin_email EASYRMM_AUTHENTIK_CTL=$work/ctl \
-  npx playwright test -c playwright.authentik.config.ts)
+# The edge keeps its key when EASYRMM_PUBLIC_URL changes (pki.Authority), so
+# the moved name's certificate has the same public key as these.
+(cd "$root/web" && EASYRMM_AUTHENTIK_URL=$public EASYRMM_AUTHENTIK_MOVED_URL=$moved EASYRMM_AUTHENTIK_SIGNIN_HOST=$signin_host \
+  EASYRMM_AUTHENTIK_SPKI=$spki EASYRMM_AUTHENTIK_INVITATION=$invitation EASYRMM_AUTHENTIK_ADMIN_EMAIL=$admin_email \
+  EASYRMM_AUTHENTIK_CTL=$work/ctl npx playwright test -c playwright.authentik.config.ts)
 echo "The Authentik test passed."

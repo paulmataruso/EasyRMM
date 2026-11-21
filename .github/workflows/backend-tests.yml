@@ -74,6 +74,28 @@ jobs:
         run: go test -count=1 -v ./agent/... ./internal/agentproto/...
       - name: Windows software scripts
         run: go test -count=1 -v -run 'OnWindows' ./server/internal/jobs/
+      # ADR-0056, slice 0. These tests change the computer (a local user,
+      # the agent's folders and service), so they run only here, on a runner
+      # made for the job. The update starts from main as it was before the
+      # state check: the first parent of PR #61's merge, built from source.
+      - name: Build the agent from before the state check, and this one
+        shell: bash
+        env:
+          MERGE: 80c18670b87287abd271b3255bec98850716c706 # PR #61
+        run: |
+          git fetch --no-tags --depth=2 origin "$MERGE"
+          before=$(git rev-parse "$MERGE^1")
+          git worktree add --detach "$RUNNER_TEMP/before" "$before"
+          go build -C "$RUNNER_TEMP/before" -trimpath -ldflags "-X main.Version=0.0.0-before-state-check" \
+            -o "$RUNNER_TEMP/easyrmm-agent-before.exe" ./agent/cmd/easyrmm-agent
+          go build -trimpath -ldflags "-X main.Version=0.0.0-state-check" \
+            -o "$RUNNER_TEMP/easyrmm-agent-after.exe" ./agent/cmd/easyrmm-agent
+      - name: State check against a standard user, and an update to it
+        env:
+          EASYRMM_TEST_MACHINE: "1"
+          EASYRMM_TEST_AGENT_BEFORE: ${{ runner.temp }}\easyrmm-agent-before.exe
+          EASYRMM_TEST_AGENT_AFTER: ${{ runner.temp }}\easyrmm-agent-after.exe
+        run: go test -count=1 -v -run '^(TestStandardUserPlantsState|TestUpdateFromBeforeTheStateCheck)$' ./agent/cmd/easyrmm-agent/
       - name: Build the Windows agents
         run: |
           go build -trimpath -o easyrmm-agent-windows-amd64.exe ./agent/cmd/easyrmm-agent
