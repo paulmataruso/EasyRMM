@@ -27,8 +27,11 @@ concurrency:
 jobs:
   retention:
     name: Delete edge builds older than 30 days
-    # The packages are this repository's; a fork has none of them.
-    if: github.repository == 'paulmataruso/EasyRMM'
+    # The packages are this repository's; a fork has none of them. Only
+    # main's copy of this workflow and script may delete them: one run by
+    # hand from another branch would run that branch's (the schedule always
+    # runs main's).
+    if: github.repository == 'paulmataruso/EasyRMM' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

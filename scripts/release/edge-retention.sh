@@ -14,11 +14,17 @@
 #   GitHub attestations stored under the tag sha256-<digest> of those
 #   images, or of images no longer there, with theirs.
 #
-# Kept whatever their age: the server image that any kept easyrmm-deploy
-# version's manifest names (easyrmm-deploy:edge's among them, even when
-# easyrmm-server:edge names another), with its manifests and attestations;
-# every manifest that a kept tagged version names; release images, edge,
-# and every other untagged version.
+# Kept whatever their age: every easyrmm-server image that any kept
+# easyrmm-deploy version's manifest names, as easyrmm.image or among its
+# images (easyrmm-deploy:edge's among them, even when easyrmm-server:edge
+# names another), with its manifests and attestations; every manifest that
+# a kept tagged version names; release images, edge, and every other
+# untagged version.
+#
+# GitHub answers 404 both for a package that does not exist and for one this
+# token may not read. Without easyrmm-deploy's versions nothing would be
+# known to name a server image, so while easyrmm-server has edge builds a
+# 404 for easyrmm-deploy stops it.
 #
 # Children go before the index that names them, so a run that stops part
 # way leaves the index to name them for the next. With --dry-run it prints
@@ -43,13 +49,13 @@ digest_re='^sha256:[0-9a-f]{64}$'
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
-# versions <package>: every version, as one JSON array; an empty one while
-# the package does not exist.
+# versions <package>: every version, as one JSON array; null when GitHub
+# answers 404.
 versions() {
   if gh api --paginate "$api/$1/versions?per_page=100" 2> "$work/err" > "$work/pages"; then
     jq -s 'add // []' "$work/pages"
   elif grep -q 'HTTP 404' "$work/err"; then
-    echo '[]'
+    echo null
   else
     cat "$work/err" >&2
     return 1
@@ -80,23 +86,29 @@ children() {
   oras manifest fetch "$registry/easyrmm-server@$1" | jq -r '.manifests[]?.digest'
 }
 
-# deploy_image <digest>: the server image's digest that the manifest in
-# easyrmm-deploy@digest names.
-deploy_image() {
-  local layer image
+# deploy_images <digest>: the digests of the easyrmm-server images that the
+# manifest in easyrmm-deploy@digest names, as easyrmm.image or among its
+# images; each must be named by digest.
+deploy_images() {
+  local layer images image
   layer=$(oras manifest fetch "$registry/easyrmm-deploy@$1" | jq -r '[.layers[]
     | select(.mediaType == "application/vnd.easyrmm.deploy.manifest.v1+json")]
     | if length == 1 then .[0].digest else error("\(length) manifest layers") end')
-  image=$(oras blob fetch --output - "$registry/easyrmm-deploy@$layer" | jq -r .easyrmm.image)
-  if ! grep -Eq "$digest_re" <<< "${image##*@}"; then
-    echo "edge-retention: easyrmm-deploy@$1 names the server image \"$image\", not one by digest" >&2
-    return 1
-  fi
-  echo "${image##*@}"
+  images=$(oras blob fetch --output - "$registry/easyrmm-deploy@$layer" | jq -r --arg repo "$registry/easyrmm-server" '
+    .easyrmm.image, (.images[] | select(sub("@.*$"; "") | sub(":[^:/]*$"; "") == $repo))')
+  for image in $images; do
+    if ! grep -Eq "$digest_re" <<< "${image##*@}"; then
+      echo "edge-retention: easyrmm-deploy@$1 names the server image \"$image\", not one by digest" >&2
+      return 1
+    fi
+    echo "${image##*@}"
+  done
 }
 
 # --- easyrmm-deploy ---------------------------------------------------------------
 deploy=$(versions easyrmm-deploy)
+deploy_found=true
+if [ "$deploy" = null ]; then deploy_found=false deploy='[]'; fi
 old_deploy=$(jq -c --arg cutoff "$cutoff" --arg edge "^v$edge\$" '[.[] | select(.created_at < $cutoff and
   (.metadata.container.tags | length > 0 and all(test($edge))))]' <<< "$deploy")
 
@@ -104,12 +116,18 @@ old_deploy=$(jq -c --arg cutoff "$cutoff" --arg edge "^v$edge\$" '[.[] | select(
 # read before anything is deleted.
 declare -A named=()
 while IFS= read -r digest; do
-  image=$(deploy_image "$digest")
-  named[$image]=1
+  images=$(deploy_images "$digest")
+  for image in $images; do named[$image]=1; done
 done < <(jq -r --argjson old "$old_deploy" '.[] | .name as $name | select(all($old[]; .name != $name)) | $name' <<< "$deploy")
 
 # --- easyrmm-server ---------------------------------------------------------------
 server=$(versions easyrmm-server)
+if [ "$server" = null ]; then server='[]'; fi
+if [ "$deploy_found" = false ] &&
+  jq -e --arg edge "^$edge\$" 'any(.[].metadata.container.tags[]; test($edge))' <<< "$server" > /dev/null; then
+  echo "edge-retention: easyrmm-deploy answers 404 (no such package, or none this token may read), but easyrmm-server has edge builds; deleting nothing" >&2
+  exit 1
+fi
 keep=$(printf '%s\n' "${!named[@]}" | jq -R 'select(length > 0)' | jq -s -c .)
 roots=$(jq -c --arg cutoff "$cutoff" --arg edge "^($edge|sha-[0-9a-f]{40})\$" --argjson keep "$keep" '[.[]
   | .name as $name | select(.created_at < $cutoff and all($keep[]; . != $name) and

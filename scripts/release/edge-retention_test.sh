@@ -6,7 +6,8 @@
 # easyrmm-deploy (each names a server image)
 #   d1 old edge version, names s1       deleted
 #   d2 old, edge, names s12             kept
-#   d3 new edge version, names s14      kept
+#   d3 new edge version, names s14      kept; among its images also s16, and s10
+#                                      in another repository
 #   d4 old, untagged, names s15         kept
 #   d5 old release, names s3            kept
 #   d6 old edge version, names s4       deleted
@@ -29,7 +30,11 @@
 #   s13 s12's attestations, old        kept, with RC13
 #   s14 old edge version               kept: d3, kept, names it; with C14
 #   s15 old, untagged                  kept: d4 names it; so is C15, which s4 names too
+#   s16 old edge version               kept: among d3's images; with C16
 #   K   old, tagged, named by s10      kept
+#
+# Then: a 404 for easyrmm-deploy stops it while easyrmm-server has an edge
+# version, and not with only a release.
 set -eu
 
 script=$(cd "$(dirname "$0")" && pwd)/edge-retention.sh
@@ -98,15 +103,20 @@ index() {
     manifests: [.[] | {mediaType: "application/vnd.oci.image.manifest.v1+json", digest: .}]}' \
     > "$f/raw/$(hex "$parent").json"
 }
-# names <deploy version> <server image>: the deploy version's manifest names the image.
+# names <deploy version> <server image> [image...]: the deploy version's
+# manifest names the server image, as easyrmm.image and among its images,
+# with PostgreSQL's and any others given.
 names() {
-  jq -n --arg b "$(d "bundle-$1")" --arg m "$(d "manifest-$1")" --arg s "$(d "sigstore-$1")" '{
+  deploy=$1 image="ghcr.io/o/easyrmm-server:x@$(d "$2")"
+  shift 2
+  jq -n --arg b "$(d "bundle-$deploy")" --arg m "$(d "manifest-$deploy")" --arg s "$(d "sigstore-$deploy")" '{
     artifactType: "application/vnd.easyrmm.deploy.v1",
     layers: [{mediaType: "application/vnd.easyrmm.deploy.bundle.v1.tar+gzip", digest: $b},
       {mediaType: "application/vnd.easyrmm.deploy.manifest.v1+json", digest: $m},
-      {mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json", digest: $s}]}' > "$f/raw/$(hex "$1").json"
-  jq -n --arg image "ghcr.io/o/easyrmm-server:x@$(d "$2")" '{schemaVersion: 2, easyrmm: {image: $image}}' \
-    > "$f/blob/$(hex "manifest-$1").json"
+      {mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json", digest: $s}]}' > "$f/raw/$(hex "$deploy").json"
+  jq -n --arg image "$image" --arg postgres "docker.io/library/postgres:17@$(d postgres)" --args \
+    '{schemaVersion: 2, easyrmm: {image: $image}, images: ([$image, $postgres] + $ARGS.positional)}' "$@" \
+    > "$f/blob/$(hex "manifest-$deploy").json"
 }
 
 {
@@ -119,7 +129,7 @@ names() {
 } | jq -s . > "$f/easyrmm-deploy.json"
 names d1 s1
 names d2 s12
-names d3 s14
+names d3 s14 "ghcr.io/o/easyrmm-server@$(d s16)" "ghcr.io/o/easypatch-server:1@$(d s10)"
 names d4 s15
 names d5 s3
 names d6 s4
@@ -160,6 +170,8 @@ names d6 s4
     v 129 "$(d K)" "$old" keepme
     v 130 "$(d s15)" "$old"
     v 131 "$(d C15)" "$old"
+    v 132 "$(d s16)" "$old" 1.0.0-rc.4.edge.141.1
+    v 133 "$(d C16)" "$old"
   } | jq -s .
 } > "$f/easyrmm-server.json"
 
@@ -175,6 +187,7 @@ index s12 C12
 index s13 RC13
 index s14 C14
 index s15 C15
+index s16 C16
 
 # run <expected status> [args...]: runs the script on the fixtures, logging deletions.
 run() {
@@ -196,7 +209,7 @@ want="1 6 106 105 115 114 122 116 102 103 104 101 112 111 120 119 "
 for kept in X C15; do
   grep -qF "Keeping easyrmm-server@$(d $kept): a kept image names it" "$work/out" || fail "$kept not reported kept: $(cat "$work/out")"
 done
-for kept in s12 s14 s15; do
+for kept in s12 s14 s15 s16; do
   grep -qF "Keeping easyrmm-server@$(d $kept): a kept easyrmm-deploy version names it" "$work/out" ||
     fail "$kept not reported kept: $(cat "$work/out")"
 done
@@ -230,13 +243,30 @@ run 1 o
 [ -z "$(deleted)" ] || fail "deleted $(deleted) when a kept deploy version names its image by tag only"
 grep -qF 'not one by digest' "$work/err" || fail "no reason given: $(cat "$work/err")"
 cp "$work/manifest-d2.json" "$f/blob/$(hex manifest-d2).json"
+cp "$f/blob/$(hex manifest-d3).json" "$work/manifest-d3.json"
+jq '.images += ["ghcr.io/o/easyrmm-server:1.0.0-rc.4.edge.141.1"]' "$work/manifest-d3.json" > "$f/blob/$(hex manifest-d3).json"
+run 1 o
+[ -z "$(deleted)" ] || fail "deleted $(deleted) when a kept deploy version names a server image by tag only"
+grep -qF 'not one by digest' "$work/err" || fail "no reason given: $(cat "$work/err")"
+cp "$work/manifest-d3.json" "$f/blob/$(hex manifest-d3).json"
 export GH_FAIL=1
 run 1 o
 unset GH_FAIL
 [ -z "$(deleted)" ] || fail "deleted $(deleted) after gh failed"
 
-# --- No packages yet, and arguments -----------------------------------------------------
+# --- easyrmm-deploy answers 404 -------------------------------------------------------------
+# Stopped by one edge version alone (s4 has no sha- tag); a release alone goes on.
 mv "$f/easyrmm-deploy.json" "$f/easyrmm-server.json" "$work"
+{ v 109 "$(d s3)" "$old" 1.0.0-rc.4; v 111 "$(d s4)" "$old" 1.0.0-rc.4.edge.99.1; } | jq -s . > "$f/easyrmm-server.json"
+run 1 o
+[ -z "$(deleted)" ] || fail "deleted $(deleted) with easyrmm-deploy answering 404"
+grep -qF 'easyrmm-deploy answers 404' "$work/err" || fail "no reason given: $(cat "$work/err")"
+v 109 "$(d s3)" "$old" 1.0.0-rc.4 | jq -s . > "$f/easyrmm-server.json"
+run 0 o
+[ -z "$(deleted)" ] || fail "deleted $(deleted) with easyrmm-deploy answering 404 and only a release"
+
+# --- No packages yet, and arguments -----------------------------------------------------
+rm "$f/easyrmm-server.json"
 run 0 o
 [ -z "$(deleted)" ] || fail "deleted $(deleted) with no packages"
 run 2
