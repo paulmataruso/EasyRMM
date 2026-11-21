@@ -84,7 +84,8 @@ test("a page whose file is gone after an upgrade reloads the console once, then 
 
   await page.unroute(alertsPage);
   await page.getByRole("button", { name: "Reload" }).click();
-  await expect(page.getByRole("heading", { name: "Alerts" })).toBeVisible();
+  // The page's own heading: the menu's Alerts section has one too, once its tree loads.
+  await expect(page.getByRole("heading", { name: "Alerts", level: 1 })).toBeVisible();
 
   // The next step starts from the main menu.
   await page.goto("/");
