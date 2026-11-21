@@ -16,7 +16,10 @@
   and the Docker deployment ([docker.md](../../deployment/docker.md)).
 * Part of [the feature plan](../feature-plan.md): F3 and feature 4.
 * Amended 2026-11-21: "Rollback guards", decided in review for
-  [ADR-0057](0057-rotating-the-job-key.md) and ADR-0061.
+  [ADR-0057](0057-rotating-the-job-key.md) and
+  [ADR-0061](0061-moving-to-a-new-name.md).
+* Amended 2026-11-21: "Required upgrade stops", decided in review for
+  [ADR-0061](0061-moving-to-a-new-name.md).
 
 ## Context
 An upgrade is run by hand on the server
@@ -94,7 +97,8 @@ What exists, and what it means here:
 ### Channels and versions
 * **stable** takes full releases; **pre-release** also release
   candidates; **edge** also builds of `main`. A version outside the
-  configured channel is refused, whoever asks.
+  configured channel is refused, whoever asks, except a required upgrade
+  stop ("Required upgrade stops", below).
 * **Release tags** are only `easyrmm-vX.Y.Z` and `easyrmm-vX.Y.Z-rc.N`,
   and only on commits on `main`; `release.yml` refuses the rest.
 * **Edge versions sort** and name one build. `R` is the highest release
@@ -432,6 +436,72 @@ Off unless `setup.sh --auto-upgrade` (or the configuration) turns them on,
 in the hours configured. Meant for test instances on the edge channel:
 each build of `main` that passed everything arrives within the hour.
 Production installs upgrade when someone chooses to.
+
+### Required upgrade stops (amended 2026-11-21)
+*Decided in review for ADR-0061, whose slice 4 acts on a record that its
+slice 1 begins to keep; a deployment that jumped over slice 1 would have
+none.*
+
+* **`upgradeFrom`**: the manifest (above) gains the version a deployment
+  must already run before it installs this one. It always names a
+  release, a release candidate or a full release, never an edge build:
+  the scheduled workflow deletes edge artifacts after 30 days and never
+  deletes releases, so the stop stays installable. Edge manifests carry
+  it too. It is one line in the repository that
+  `scripts/release/bundle.sh` and edge publishing write into the manifest
+  and the bundle's `setup.sh` reads; it only ever rises. ADR-0061's slice
+  4 and every later version name the release that carries its slice 1,
+  which is cut before slice 4 merges.
+* **The updater has the check from its first release**: it is being built
+  now, and no updater without it ships. At step 1 it compares
+  `upgradeFrom`, in this ADR's order, with the lower of the running
+  server's version, read from the running server, and its own: an image
+  swapped by hand can put the server above the updater. Below it, the
+  upgrade is refused before anything changes, naming the version to
+  install first.
+* **Which version is the stop**: the lowest version on the deployment's
+  own channel that is at or above `upgradeFrom` and below the target.
+  Only when the channel has none does the updater cross channels, to the
+  lowest release at or above `upgradeFrom`; that is the one exception to
+  the channel rule above. A stable deployment so goes to a full release
+  that carries the stop's change when one exists, not to its release
+  candidate. Automatic upgrades install the stop first, as a version of
+  its own.
+* **No refusal by the manifest's form.** The updater refuses no manifest
+  for a schema version: an older updater must always be able to install
+  the release that carries its successor. Fields it does not know are
+  ignored. A field an updater must honour is introduced only together
+  with an `upgradeFrom` naming the first release whose updater honours
+  it, and that release does not use the field itself. That is why the
+  updater compares `upgradeFrom` with the lower of the running server's
+  version and its own (above).
+* **`setup.sh --upgrade` refuses the same jump** with the same message:
+  the backstop for upgrades by hand. It takes the installed version from
+  the running server; from the updater, which passes the version it read
+  at step 1, since step 5 runs it with the services stopped; or, by hand
+  with the server stopped, from the old `.env`'s `EASYRMM_VERSION`, read
+  before `setup.sh` rewrites it. When it can learn none of them, it
+  refuses and says to start the installed version first. A fresh install
+  is never refused.
+* **Release order**: `release.yml` refuses a tag above a stop whose commit
+  does not contain the stop's commit (`git merge-base --is-ancestor`).
+  The check relies on a version above the stop carrying the stop's
+  change, which version order alone does not guarantee, since a higher
+  tag could be put on an older commit of `main`. Edge versions are made
+  from the releases reachable from their commit, so they follow.
+* **Tests**, one per refusal: the updater refusing a release and an edge
+  build whose `upgradeFrom` is above the running version, and accepting
+  them from the stop; a server swapped by hand above the updater's own
+  version, compared by the updater's; the stop chosen on the
+  deployment's own channel (a stable deployment taking the full release
+  that carries the change, not its release candidate, when both exist),
+  and from another channel only when its own has none; an updater older
+  than a must-honour field's `upgradeFrom` installing that release
+  first, then the release that uses the field; `setup.sh --upgrade` by
+  hand refusing with the
+  running server below the stop, with the server stopped and the old
+  `.env`'s `EASYRMM_VERSION` below it, and with no version to be had;
+  `release.yml` refusing a tag above the stop on a commit without it.
 
 ## Testing
 * **Verification** against real published artifacts: the latest release
