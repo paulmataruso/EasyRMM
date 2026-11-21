@@ -153,11 +153,13 @@ func TestHoldWhileRunning(t *testing.T) {
 	h := NewHold(dir, log)
 	h.interval = 10 * time.Millisecond
 	get := serve(t, h)
-	clock := time.Date(2026, 11, 21, 9, 0, 0, 0, time.UTC)
+	// NewHold took its start from the real clock; the fake one runs on from
+	// there, so the test holds on any date.
+	start, _ := h.ServingSince()
+	clock := start.Add(time.Minute)
 	h.mu.Lock()
 	h.now = func() time.Time { return clock }
 	h.mu.Unlock()
-	start, _ := h.ServingSince()
 	run(t, h)
 	wantServed(t, get)
 
