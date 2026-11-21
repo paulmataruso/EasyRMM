@@ -9,9 +9,9 @@ by module, what is in place, what is missing, and what applying the module
 would change. The design is in
 [ADR-0051](../architecture/adr/0051-hardening-linux-computers.md).
 
-Applying and undoing modules come next (ADR-0051's second part). Until
-then, EasyRMM changes nothing on a computer for hardening; the findings tell
-you what to change.
+Applying and undoing modules work through the API (ADR-0051's second
+part; see [Applying and undoing](#applying-and-undoing)). The console starts
+checks only, for now.
 
 ## Who can do what
 
@@ -21,10 +21,9 @@ you what to change.
 | Run a check | `script.run`: Technicians and above, as for any script |
 | Open the job a finding came from | `job.view` as well |
 | Read the run's raw output | `job.view_sensitive` as well: Technicians and above ([Who sees output and arguments](scripts-and-jobs.md#who-sees-output-and-arguments)) |
+| Apply or undo modules (through the API, for now) | `device.harden`: Site Administrators and above |
 
-See [Roles and permissions](../security/rbac.md). Applying and undoing will
-need a permission of their own, `device.harden`, held by Site
-Administrators and above.
+See [Roles and permissions](../security/rbac.md).
 
 ## Running a check
 
@@ -116,6 +115,79 @@ The filter is part of the page's address, so a link to `/devices?hardening=atten
 opens the list of devices to look at; the API takes the same parameter on
 `GET /api/v1/devices`.
 
+## Applying and undoing
+
+The console starts checks only, for now. Apply and undo run through the
+API: `POST /api/v1/jobs/hardening` with `"mode": "apply"` or `"undo"`, the
+devices, the modules and `waitHours`, as for a check, and `device.harden` on
+every device. Each is a job like a check's, recorded in the audit log as
+*Hardening job* with its mode, modules and options. It ends by checking the
+modules again, so the tab shows what they are now; each module's latest
+finding also carries what the apply or undo did (`outcome`, `done`) and
+whether EasyRMM's record of applying it is on the computer (`recorded`).
+
+**Apply** changes only what the check found missing, and only to make it
+stricter: a value already stricter than EasyRMM's stays. A second apply
+changes nothing. It refuses what would lock you out or stop the computer
+from starting, and says why: password sign-in off where no account that may
+sign in has an SSH key, say, or USB storage off where a mounted filesystem is
+on a USB disk. It leaves alone a firewall the computer already has. A module
+that fails part way is put back as it was. Packages a module needs
+(nftables, fail2ban, auditd, AIDE, chrony or systemd-timesyncd) come from
+the computer's own repositories, without recommended packages. AIDE's first
+database is built after the job ends, in `easyrmm-aide-init.service`; the
+next check says whether it finished.
+
+Apply's options:
+
+| Option | Module | Does |
+|---|---|---|
+| `allowTcp`, `allowUdp` | firewall | Ports and ranges (`"8080"`, `"9000-9100"`) left open besides those in use |
+| `trusted` | fail2ban | Addresses and ranges never banned, besides those fail2ban already trusts |
+| `rootPasswordOff` | SSH | Turns root's password sign-in off even where root signed in with a password lately |
+| `passwordOff` | SSH | Turns password sign-in off |
+| `epel` | fail2ban | On Rocky Linux and AlmaLinux, adds the EPEL repository fail2ban comes from; refused on Red Hat Enterprise Linux, where EPEL is added by hand |
+
+**Undo** reverses what apply recorded. Before changing anything, each module
+records on the computer, in `/var/lib/easyrmm-hardening/`, the files,
+modes, kernel values, services, packages and rules it changes. Undo puts back
+each one that is still as apply left it, leaves what someone changed since,
+and says what it left and why. It removes the packages apply installed when
+that removes nothing else; a package an installation upgraded stays
+upgraded. It rebuilds the initramfs after taking out usb-storage's file,
+and after taking out kernel-modules' file when a rebuild since apply
+(usb-storage's, or a kernel update's) took that file in. A successful undo
+removes the record, so a second one finds nothing to undo. Undo takes no
+options. Without the agent, undo runs on the computer itself, as root:
+`sh /var/lib/easyrmm-hardening/easyrmm-hardening.sh undo all`.
+
+When the audit module installs auditd, it writes
+`/var/lib/easyrmm/auditd-installed`, with the packages that installation
+added. Undo removes auditd only while that file is there and no rules file
+is left in `/etc/audit/rules.d/` but those the package shipped, unchanged;
+the file goes with it. A rules file of anyone else's (log collection's among
+them) keeps auditd installed and running, and the file stays, so that
+whoever removes the last of those rules files can remove auditd. An auditd
+that was installed before apply gets no such file and is never removed.
+
+What each module's apply or undo did:
+
+| Outcome | Means |
+|---|---|
+| Applied | It changed what **Done** lists |
+| Unchanged | Everything was in place already |
+| Refused | It changed nothing, and says why |
+| Skipped | The module does not apply here, or something else manages it |
+| Failed | It could not finish, and put back what it had changed |
+| Undone | Everything apply recorded is as it was before |
+| Partly undone | **Done** lists what was put back, and what was left and why |
+| Nothing to undo | EasyRMM has no record of applying the module on the computer |
+
+A job stopped, or out of its 30 minutes, in the middle of a module leaves it
+*Half applied*: applying it again finishes it, and undo reverses it.
+Installing packages on a slow computer takes a while, so apply fewer
+modules at a time there.
+
 ## Troubleshooting
 
 | What you see | What to check |
@@ -125,3 +197,5 @@ opens the list of devices to look at; the API takes the same parameter on
 | A run *Failed*: "The script finished, but its output does not end with a result." | The script stopped before its last line: the run's output shows where (it needs `job.view_sensitive`) |
 | A run *Timed out* | The check took more than 30 minutes, which a computer under heavy load can. Run it again, or check fewer modules |
 | A module *Not applicable* in a container | The host owns what it hardens. Check the host |
+| A module *Half applied* | An apply or undo was stopped part way. Apply the module again to finish it, or undo it |
+| An undo *Partly undone* | Something changed since apply; **Done** says what was left and why. Put those back by hand if you need to |

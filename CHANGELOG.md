@@ -177,6 +177,28 @@ All notable changes to this project are documented here. The format follows
   major version and Authentik. A release also publishes the Sigstore
   bundle of its attestation beside the manifest, so that verifying needs
   no GitHub API.
+- **Applying and undoing hardening on Linux computers** (ADR-0051, its
+  second part). A Site Administrator or above (the new `device.harden`
+  permission) can apply each of the 14 areas through the API
+  (`POST /api/v1/jobs/hardening`, modes `apply` and `undo`); Technicians
+  keep checking. Apply changes only what the check found missing, and only
+  to make it stricter, then checks again: a second apply changes nothing.
+  Before changing anything, each area records on the computer (in
+  `/var/lib/easyrmm-hardening/`) the files, modes, kernel values,
+  services, packages and rules it changes; undo puts back what is still as
+  apply left it, says what it left and why, and removes the record. Undo
+  removes auditd, where apply installed it, only when no other rules file
+  needs it; `/var/lib/easyrmm/auditd-installed` remembers that EasyRMM
+  installed it, for log collection to share. An area that fails part way
+  is put back as it was; a job that is killed leaves the area half
+  applied, which a later apply finishes and undo reverses. Undo also runs
+  on the computer without the agent:
+  `sh /var/lib/easyrmm-hardening/easyrmm-hardening.sh undo all`. Each
+  device's latest result now carries, per area, what apply or undo did and
+  whether a record is kept. The console's job page names the mode, and the
+  device's **Hardening** tab shows the state each leaves; starting them
+  from the console comes next. See
+  [Hardening Linux computers](docs/operations/hardening.md).
 - **Hardening checks for Linux computers** (ADR-0051, its first part). A
   technician can have the agent on a Linux device check 14 areas: SSH,
   the firewall, fail2ban, kernel settings, audit rules, file permissions,

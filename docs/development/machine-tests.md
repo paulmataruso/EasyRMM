@@ -9,11 +9,58 @@ the guest's sshd through a forwarded port, restarts the machine and runs a
 script again.
 
 The hardening script's machine test
-(`server/internal/jobs/hardening_vm_test.go`) runs `check all` on each
-image. Its result must be one the server accepts, for the machine's own
-release with full support. No module may fail, and no module that a
-container rules out may be not applicable. Nothing under `/etc`,
-`/usr/local` or the script's own state may change.
+(`server/internal/jobs/hardening_vm_test.go`, `TestHardeningOnMachines`)
+drives the script the server embeds, as root, on each image, and reads
+every result as the server does:
+
+1. `check all`. The result must be for the machine's own release with full
+   support; no module may fail, and no module that a container rules out
+   may be not applicable. Nothing under `/etc`, `/usr/local` or the
+   script's own state may change.
+2. Each module on its own: apply, then apply again, which must change
+   nothing. What each reports, before and after, must match its case in
+   `machineCases` (`hardening_cases_test.go`), one per module, mode and
+   distribution family; a unit test fails when one is missing. SSH is
+   applied with `root-password-off` and `password-off`; the test turns
+   password sign-in on first (cloud-init turns it off), so that
+   `password-off` is refused, because no account has a key. fail2ban is
+   applied on Rocky Linux and AlmaLinux with `epel`.
+3. After AIDE's baseline has finished: wrong sign-ins over the forwarded
+   SSH port until fail2ban bans `10.0.2.2`, the address the machine sees,
+   and the ban cuts that address off (within two minutes: fail2ban lists a
+   ban before its action has run). Then fail2ban is applied again with
+   `10.0.2.2` trusted, the ban is lifted, and as many wrong sign-ins must
+   reach sshd; fail2ban must log that it ignored them and not ban the
+   address. Emulated, fail2ban reads sshd's log minutes late, so the test
+   waits for it, and trusts the address before lifting the ban. Where
+   sshd has penalties of its own for failed sign-ins (OpenSSH 9.8 and
+   later), the test turns them off first, so that only fail2ban cuts the
+   address off.
+4. A restart: every module checks as it did after apply.
+5. Undo of each module, last first, and `undo all` again, which finds
+   nothing to undo. Before audit's undo, a rules file of another's in
+   `/etc/audit/rules.d` must keep auditd installed and running, and keep
+   `/var/lib/easyrmm/auditd-installed` where apply installed auditd (and
+   wrote it); with that file gone, audit is applied again and undone,
+   which removes auditd by that marker alone. Where auditd was installed
+   before apply, no marker is ever written and auditd stays.
+6. A restart, then every file, link and directory under `/etc` and
+   `/usr/local` with its mode, owner and content, the kernel parameters
+   the script sets, units' states, packages, the nftables ruleset, the
+   audit rules, `/dev/shm`'s options, SELinux's mode, whether an
+   initramfs carries EasyRMM's files, and what `/var/lib/easyrmm` and the
+   script's state hold must be as they were before apply.
+   The only differences allowed are the dynamic linker's cache and system
+   accounts and groups that packages created (Debian and RHEL keep them
+   when the package is removed); the test logs those. Debian 13's
+   `apt-listchanges.timer` turns itself off after its service's first run,
+   within the hour, so the test runs that service before the first
+   listing.
+
+Packages come from each distribution's mirrors, through QEMU's user
+networking: the machine needs the internet, and a mirror that is down
+fails the test. ADR-0051's local package repository baked into each
+image is not built yet.
 
 ## Running them
 
@@ -48,8 +95,13 @@ boot took 4½ minutes (Debian 13) to 18 minutes (Rocky Linux 9, whose
 kdump builds its initramfs on first boot), and a restart 3 to 10
 minutes. Emulated, slow services can outlast systemd's 90-second start
 timeout: Ubuntu 24.04 has come up "degraded" with polkit and udisks2
-failed, which the smoke test reports as a failure. To use KVM as a
-normal user, add yourself to the `kvm` group.
+failed, which the smoke test reports as a failure. Rocky Linux 9's dracut
+has taken longer than the 20 minutes the hardening script gives a rebuild
+of the initramfs, so usb-storage's apply failed there and was put back, as
+it should be when a rebuild does not finish. On a host loaded with other
+machines and builds, Debian 13's aide-common took 23 minutes to
+configure and some 20 to purge, against the script's 25-minute limits. To
+use KVM as a normal user, add yourself to the `kvm` group.
 
 When a test fails, its output ends with the last lines of the machine's
 serial console, QEMU's own messages and the requests the machine made for

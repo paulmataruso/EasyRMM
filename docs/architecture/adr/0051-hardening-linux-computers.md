@@ -1,9 +1,9 @@
 # ADR-0051: Hardening Linux computers
 
 * Status: Accepted (2026-11-21), revised twice after review the same day.
-  Check (H1) and the console for it (H3: a device's **Hardening** tab,
-  and the column and filter in **Devices**) are implemented; apply and
-  undo (H2) are not yet.
+  Check (H1), apply and undo (H2), and the console for check (H3: a
+  device's **Hardening** tab, and the column and filter in **Devices**)
+  are implemented; the console does not yet start apply or undo.
 * Builds on: [ADR-0017](0017-scripts-and-jobs.md) (scripts and jobs) and
   [ADR-0028](0028-software-deployment.md) (a fixed script compiled into
   the server, its input as arguments).
@@ -390,6 +390,10 @@ later ADR.
   reports.
 * **Packages** that modules install come from a local package repository
   baked into each test image, as the bundle test's host image does.
+  *Amended 2026-11-21:* that repository is not built yet. Until it is, the
+  machine test installs from each distribution's own mirrors through
+  QEMU's user networking: it needs the internet, and a mirror that is down
+  fails it.
 * **Static checks**: `shellcheck -s sh` on the script in CI, and a test that
   fails when a module, mode and distribution family has no case.
 * Before it is called complete it is run on a real server.
