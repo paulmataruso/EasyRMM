@@ -222,13 +222,18 @@ they could stop it.
 
 ### 3. Collecting logs
 Proposed in [ADR-0060](adr/0060-collecting-logs.md), revised after its
-independent review and two checks, not accepted yet. In short:
+independent review and four checks, not accepted yet. In short:
 
-* **How jobs start changes first** (slice 0, amending ADR-0017): job
-  arguments leave the command line, so that process auditing does not
-  record them; Windows jobs start inside their job object; Linux jobs get
-  a login UID of their own, which an audit rule records. Then the volumes
-  are **measured** on real computers (slice 1) before the store is built.
+* **Windows jobs start inside their job object first** (slice 0,
+  amending ADR-0017); otherwise jobs start exactly as today, arguments
+  on the command line, so exit codes and binding do not change. EasyRMM's
+  copy of a job's events has its argument values replaced; the
+  computer's own Security log holds them once command lines in process
+  events are on, an organization setting, on by default, which the
+  console explains (ADR-0017's guidance: no secrets as arguments). Linux
+  jobs get a login UID of their own, which an audit rule records (slice
+  4). Then the volumes are **measured** on real computers (slice 1)
+  before the store is built.
 * **The collector** (`easyrmm-agent collect`) is a process of its own
   without the device's key, network access, privileges or rights to change
   anything: on Linux its own unit (an unnamed user in the journal's group
@@ -241,7 +246,7 @@ independent review and two checks, not accepted yet. In short:
   from positions written with the events into a capped disk spool; a
   source whose share is full pauses, since the computer's own log holds
   its events. It redacts EasyRMM's tokens; the agent seals its batches
-  (marking EasyRMM's own jobs, removing their argument values) and uploads
+  (marking EasyRMM's own jobs, replacing their argument values) and uploads
   them signed, paced to a bandwidth limit per site, in two streams so
   that Security and Defender come first; the server stores each exactly
   once and signs its answers.
@@ -279,7 +284,7 @@ independent review and two checks, not accepted yet. In short:
   **Detections**: alert policies of a new kind, `log`, carrying no event
   content, sent through F2; EasyRMM's own changes open none.
 
-**Slices**: job arguments off the command line; measuring; the store and
+**Slices**: Windows jobs inside their job object; measuring; the store and
 Linux sign-ins with the device's tab; Windows Security; configuring
 logging; the other sources; forwarding; organizations' retention and
 quotas; detections; the **Logs** page; organizations' own destinations.
