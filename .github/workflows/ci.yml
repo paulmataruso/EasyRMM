@@ -145,6 +145,7 @@ jobs:
         run: |
           scripts/release/version_test.sh
           scripts/release/manifest_test.sh
+          scripts/release/edge-retention_test.sh
       - name: This run's version
         id: version
         run: |
