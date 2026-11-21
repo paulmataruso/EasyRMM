@@ -2,16 +2,18 @@ import { defineConfig, devices } from "@playwright/test";
 
 // The Authentik test (ADR-0044). scripts/e2e/authentik.sh (make e2e-authentik)
 // brings up deploy/docker-compose.yml set up with setup.sh --with-authentik, addressed by IP with
-// EasyRMM's own certificate authority, then runs this. Authentik's name resolves nowhere, so
-// Chromium is told it is 127.0.0.1, and accepts the edge's certificate by its public key.
+// EasyRMM's own certificate authority, then runs this. Authentik's name, and the name the test
+// later moves EasyRMM's public URL to, resolve nowhere, so Chromium is told they are 127.0.0.1, and
+// accepts the edge's certificate by its public key.
 
 const spki = process.env.EASYRMM_AUTHENTIK_SPKI;
-const signIn = process.env.EASYRMM_AUTHENTIK_SIGNIN_HOST;
+const names = [process.env.EASYRMM_AUTHENTIK_SIGNIN_HOST, process.env.EASYRMM_AUTHENTIK_MOVED_URL && new URL(process.env.EASYRMM_AUTHENTIK_MOVED_URL).host];
 const ci = Boolean(process.env.CI);
 
 const args: string[] = [];
 if (spki) args.push(`--ignore-certificate-errors-spki-list=${spki}`);
-if (signIn) args.push(`--host-resolver-rules=MAP ${signIn} 127.0.0.1`);
+const rules = names.filter((n): n is string => Boolean(n)).map((n) => `MAP ${n} 127.0.0.1`);
+if (rules.length > 0) args.push(`--host-resolver-rules=${rules.join(", ")}`);
 
 export default defineConfig({
   testDir: "./e2e-authentik",

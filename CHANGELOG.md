@@ -162,6 +162,18 @@ All notable changes to this project are documented here. The format follows
   MeshCentral origin it serves into MeshCentral's `allowedOrigin`; when
   they change, the next start rewrites the list and MeshCentral restarts
   with it (ADR-0016, amended).
+- **Changing `EASYRMM_PUBLIC_URL` moves the bundled Authentik with it.**
+  After the URL was changed in `.env` and `docker compose up -d` run,
+  Authentik's worker did not apply EasyRMM's blueprint again, since it does
+  so only when the file changes, and the URL comes from `.env`. The
+  provider kept the old redirect URI, so signing in at the new URL failed
+  at Authentik, and an invitation's sign-up and the application's link
+  still went to the old one. At every start, `authentik-setup` now compares
+  what the blueprint takes from `.env` (the URL and the client secret) with
+  what Authentik holds, applies the blueprint again when they differ, and
+  stops with an error unless they then match. When nothing changed, nothing
+  is applied. The Authentik end-to-end test changes the URL and signs in at
+  the new one.
 - **Backups keep Authentik.** With `setup.sh --with-authentik`, Authentik
   keeps everyone's sign-in in its own database, `authentik`, in the same
   PostgreSQL, and `akadmin`'s password and its files in
