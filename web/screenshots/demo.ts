@@ -173,6 +173,7 @@ function device(id: string, name: string, siteId: string, os: string, platform: 
     canRunScripts: true,
     canUpdateAgent: true,
     canManageSoftware: true,
+    canCheckHardening: true,
     canRemove: true,
   });
 }

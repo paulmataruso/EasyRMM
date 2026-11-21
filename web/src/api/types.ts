@@ -296,6 +296,8 @@ export interface Device {
   canUpdateAgent: boolean;
   /** The caller may install and remove software here (software.manage), on Windows or Linux with the agent (ADR-0028). */
   canManageSoftware: boolean;
+  /** The caller may check the device's hardening (script.run), on Linux with the agent (ADR-0051). */
+  canCheckHardening: boolean;
   /** The caller may remove the device (device.retire; ADR-0050). */
   canRemove: boolean;
   /** The removal under way, while the device waits for its agent to uninstall itself (ADR-0050). */
@@ -676,11 +678,13 @@ export type RunStatus = "queued" | "sent" | "running" | "succeeded" | "failed" |
 
 export interface Job {
   id: string;
-  /** A library script, or a software action run with one of EasyRMM's own scripts (ADR-0028). */
+  /** A library script, or a software action or hardening run with one of EasyRMM's own scripts (ADR-0028, ADR-0051). */
   kind: JobKind;
-  /** The software action; null for script jobs. */
+  /** The software action; null for other jobs. */
   software: SoftwareAction | null;
-  /** Null once the script is deleted (the job keeps its own copy), and for software actions. */
+  /** What a hardening job does; null for other jobs. */
+  hardening: HardeningJob | null;
+  /** Null once the script is deleted (the job keeps its own copy), and for EasyRMM's own scripts. */
   scriptId: string | null;
   scriptName: string;
   shell: Shell;
@@ -730,7 +734,26 @@ export interface JobRun {
   canCancel: boolean;
 }
 
-export type JobKind = "script" | "software";
+export type JobKind = "script" | "software" | "hardening";
+
+/** A hardening job (ADR-0051). Only checks so far: they report and change nothing. */
+export interface HardeningJob {
+  mode: "check";
+  /** In the order the script runs them. */
+  modules: string[];
+  options: HardeningOptions;
+}
+
+export interface HardeningOptions {
+  /** Ports and ranges the firewall leaves open besides those in use. */
+  allowTcp?: string[];
+  allowUdp?: string[];
+  /** Addresses and ranges fail2ban never bans. */
+  trusted?: string[];
+  rootPasswordOff?: boolean;
+  passwordOff?: boolean;
+  epel?: boolean;
+}
 
 export type SoftwareVerb = "install" | "upgrade" | "uninstall";
 
