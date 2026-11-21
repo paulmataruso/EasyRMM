@@ -4,7 +4,10 @@
 * Revised 2026-11-21 after an independent review: what a longer interval
   does to monitoring and to online, a server rolled back, protocol levels
   in place of a fallback, what ADR-0057 must provide, technicians and the
-  transport, storage, and tests.
+  transport, storage, and tests. Revised again after its second check:
+  documents carry only the keys the agent reported, a heartbeat without
+  the report changes nothing, samples are spaced, and writes are limited
+  per caller.
 * Refines: [ADR-0015](0015-enrollment-and-meshagent-delivery.md) (a
   heartbeat every 60 seconds, l. 46–47; online within three minutes,
   l. 76) and [ADR-0019](0019-monitoring-and-alerts.md) (measurements once a
@@ -42,8 +45,13 @@ Operators can set nothing that reaches an agent. What exists:
   (`heartbeatInterval`, `agentproto.MinHeartbeatSeconds` and
   `MaxHeartbeatSeconds`) is one of the plan's fixes, not released yet
   (CHANGELOG, Unreleased).
-* **Monitoring expects a measurement a minute.** Each heartbeat stores one
-  metric sample (`RecordMetrics` in `server/internal/inventory/service.go`).
+* **Monitoring expects a measurement a minute.** Every heartbeat that
+  carries metrics stores one sample, however soon after the last
+  (`heartbeat` in `server/internal/httpapi/agentapi/agentapi.go` calls
+  `RecordMetrics` in `server/internal/inventory/service.go`); the agent
+  measures processor use since its previous measurement (`cpuPercent` in
+  `agent/metrics/metrics.go`) and spaces heartbeats at the interval give
+  or take a tenth (`jitter` in `agent/runner/runner.go`).
   A processor, memory or disk policy opens an alert only with at least
   `max(1, (minutes+1)/2)` samples in its window (`decide` in
   `server/internal/monitoring/evaluate.go`), as ADR-0019 says. With the
@@ -105,7 +113,8 @@ default, a customer's, a site's, one computer's.
   may be set at, whether a higher scope may enforce it, the permission
   that sets it at each scope, and a title and one line for technicians.
   There are no free-form keys.
-* **Every key in the catalogue reaches the agent.** Server-wide settings
+* **Every key in the catalogue reaches the agents whose version knows
+  it.** Server-wide settings
   that agents never see (agent updates, audit forwarding, the patching
   engine, the platform's limits below) stay where they are.
 * **The agent has its own catalogue**: the keys its version understands,
@@ -113,8 +122,9 @@ default, a customer's, a site's, one computer's.
   agent did before the key existed**. An agent that never received a
   document, or whose server has no settings, behaves exactly as its
   previous release did. **A key the agent knows that a document omits**
-  (a server rolled back to a release without it, or one that retired it)
-  takes the built-in default, never a value from an earlier document.
+  (a server rolled back to a release without it, one that retired it, or
+  one whose value this agent's schema for the key does not allow) takes
+  the built-in default, never a value from an earlier document.
 
 ### Scopes, inheritance and enforcement
 * **Four scopes**: platform, organization, site, device. Device groups and
@@ -172,15 +182,19 @@ never reach an agent:
   server's own maximum by default. It arrives with ADR-0059's first
   slice, which uses it.
 
-And for everyone:
+And for everyone (the console API has no general limiter today, only
+sign-in's and a few account actions', `server/internal/auth/ratelimit.go`):
 
-* **Writes are rate-limited per scope**: at most 30 a minute on one
-  organization, site or device, then 429 `rate_limited`, so a script
-  cannot keep a fleet re-reading its settings.
-* **Wakes are spread** (ADR-0059): a change that reaches more than 100
-  devices, at any scope, a large site's included, wakes them at most 100
-  a second per server and over at least a minute; a smaller change wakes
-  at once.
+* **Writes are rate-limited twice**: per caller, the signed-in user (and
+  each API token, if tokens are added), across every scope, at most 60 a
+  minute; and per scope target, at most 30 a minute on one organization,
+  site or device. Beyond either, 429 `rate_limited`, so a script spread
+  over many sites cannot keep a fleet re-reading its settings either.
+* **Every wake goes through one queue per server** (ADR-0059): at most
+  100 `checkin` wakes a second, a device queued again before its wake
+  went out woken once. A change that reaches more than 100 devices, at
+  any scope, a large site's included, is also spread over at least a
+  minute; a single device's change, with the queue empty, wakes at once.
 
 ### Storage
 * **`agent_settings`**: one row per key and scope target, with the key,
@@ -197,7 +211,8 @@ And for everyone:
   reads.
 * **`agent_device_state`**: one row per enrolled device, deleted with it,
   with its organization and site for row-level security: the capabilities
-  its agent last reported; the last document's version and hash and when
+  its agent last reported, with the build that reported them
+  (`facts.agentSha256`); the last document's version and hash and when
   it was issued; the version the agent last reported applying, its hash,
   when, and the problems it reported; and how many heartbeats it has sent
   since the current version was issued without reporting it applied. Not
@@ -213,32 +228,51 @@ And for everyone:
   column, and for the function's new form, in the slice that adds them.
 
 ### The document the agent receives
-* **The device's effective settings, every key the server knows, as one
-  signed document** in the heartbeat answer (`settings`): the payload
+* **The device's effective settings, for every key both sides know, as
+  one signed document** in the heartbeat answer (`settings`): the payload
   `{"v": 1, "deviceId", "version", "issuedAt", "settings": {key: value}}`
   as base64 with an Ed25519 signature by the job key over
   `EASYRMM-SETTINGS-SIG-V1\n` + the payload, the same form as jobs,
   updates and uninstalls. The whole document is signed, so turning
   something off is as protected as turning it on.
-* **Only to agents that take it.** The agent states its capabilities in
-  its signed heartbeat (`capabilities`, `settings.v1` among them). The
-  server issues documents only to a device whose last report lists
-  `settings.v1`, as ADR-0009 (amended, PR #52) requires of a new signed
-  instruction. Older agents report nothing and get nothing: no 64 KiB in
-  every answer for ever. The console says on their device *This agent's
-  version does not take settings: update the agent*, and Settings → Agent
+* **Only to agents that take it, with only what they understand.** The
+  agent states its capabilities in its signed heartbeat: `capabilities`,
+  with `accepts`, the signed messages it takes (`settings.v1`; ADR-0059's
+  `channel.v1`), and `settings`, each key of its catalogue with the
+  version of that key's schema (a key's schema version rises whenever the
+  values it accepts change). The server issues documents only to a device
+  whose last report lists `settings.v1`, and puts in them only keys that
+  report lists, with values valid under the reported schema version, as
+  ADR-0009 (amended, PR #52) requires of a signed instruction: nothing in
+  one is unknown to the agent. A key the agent does not know, or whose
+  effective value its schema version does not allow, is left out, so the
+  agent uses its built-in default for it (below), and the console says
+  *Not supported by this agent's version: it uses its default; update the
+  agent*. Older agents report nothing and get nothing: no 64 KiB in every
+  answer for ever. The console says on their device *This agent's version
+  does not take settings: update the agent*, and Settings → Agent
   settings counts them and links to them.
 * **Sent only when needed.** The heartbeat reports the version the agent
   holds (`settings.version`, 0 for none); the answer carries a document
   only when the server's is newer. A device whose settings have not
   changed receives nothing more than it does today.
-* **Issued lazily, under a lock.** At each heartbeat from a device that
-  takes documents, the server computes the device's effective settings
-  (one indexed query over at most four rows per key) and their hash. It
-  reads the device's `agent_device_state` row `FOR UPDATE`, and when the
-  hash differs it issues a new version and records it in the same
-  transaction, so two heartbeats at once (a wake's and the regular one)
-  cannot issue one version with two contents. A change for an
+* **A heartbeat without the report changes nothing.** Under ADR-0009 the
+  first heartbeat of every agent process carries no field added after
+  level 2, so it has no `capabilities` and no `settings`. Such a heartbeat
+  leaves the device's last report as it was, gets no document (the server
+  does not know what the agent holds) and counts toward nothing, *Not
+  applied* included. When its answer is of level 2 or higher, the agent
+  sends its next heartbeat within 10 seconds, with the report. The last
+  report holds while the heartbeat's facts name the build that sent it
+  (`agentSha256`); after a change of build without a report, the device
+  counts as one whose agent reports nothing until it reports.
+* **Issued lazily, under a lock.** At each heartbeat that carries the
+  report, the server computes the device's effective settings for the
+  keys its agent reported (one indexed query over at most four rows per
+  key) and their hash. It reads the device's `agent_device_state` row
+  `FOR UPDATE`, and when the hash differs it issues a new version and
+  records it in the same transaction, so two heartbeats at once (a wake's
+  and the regular one) cannot issue one version with two contents. A change for an
   organization writes nothing per device: each picks it up at its next
   heartbeat, or at once when it holds ADR-0059's live connection (a
   `checkin` wake, spread as above).
@@ -264,9 +298,10 @@ And for everyone:
 * **The agent refuses** a document with a version outside the range or
   lower than the one it applied, one with the same version and other
   content (the same document again changes nothing), one for another
-  device, one with an unknown top-level field (only the `settings` object
-  is open) and one whose signature does not verify. It keeps its settings
-  and reports the refusal.
+  device, one with a field it does not know at any level, a key its
+  catalogue lacks included (ADR-0009: signed instructions stay strict),
+  and one whose signature does not verify. It keeps its settings and
+  reports the refusal.
 * **No expiry.** A setting is state; the version, not the time, keeps an
   old one from coming back.
 
@@ -286,8 +321,8 @@ And for everyone:
   its saved settings before its first heartbeat; a server it cannot reach
   changes nothing.
 * **Acknowledgement in the next heartbeat**: `settings: {"version",
-  "problems"}`, the version applied and, per key, `unknown`, `invalid` or
-  `clamped` (below), or `refused` with the reason; with `capabilities` and
+  "problems"}`, the version applied and, per key, `invalid` or `clamped`
+  (below), or `refused` with the reason; with `capabilities` and
   `heartbeatSeconds`, the interval it uses (below). After applying a new
   document the agent sends its next heartbeat within 10 seconds, so the
   console shows the result promptly.
@@ -295,24 +330,29 @@ And for everyone:
   problems. The console compares the device's effective settings now with
   what its agent applied: *Applied*, or *Waiting for the device*, with its
   last check-in (a change not yet issued counts as waiting).
-* **Not applied.** A device whose agent has sent three heartbeats since
-  the current version was issued without reporting it applied is flagged
+* **Not applied.** A device whose agent has sent three heartbeats with
+  the report since the current version was issued, without reporting it
+  applied, is flagged
   *Not applied*: on its Settings tab, with the version and the agent's
   report; by a filter in Devices; and in a count on Settings → Agent
   settings.
 
 ### Unknown and invalid
-* **An unknown key** (a newer server's) is ignored and reported as
-  `unknown`; the console says *Not supported by this agent's version;
-  update the agent*.
-* **An invalid value** for a known key (the wrong type, a value of an
+* **A key the agent does not know is never sent**: the server sends only
+  the keys the agent reported (above). One that arrives all the same means
+  a bug, and the whole document is refused (above).
+* **A value the agent's schema does not allow is never sent either**: the
+  server checks it against the schema version the agent reported and
+  leaves the key out instead. As a guard against a bug on either side, an
+  **invalid value** for a known key (the wrong type, a value of an
   enumeration the agent does not know) is not applied: the agent keeps
   the value it had, from its previous document or its built-in default,
-  and reports `invalid`. **An integer out of bounds** is brought within
+  and reports `invalid`; **an integer out of bounds** is brought within
   the agent's own bounds and reported as `clamped`. The rest of the
-  document applies.
-* The server checks every write against its catalogue, so an invalid value
-  reaches an agent only across versions: a value a newer server allows.
+  document applies, and the server logs either report as a warning.
+* The server checks every write against its catalogue, and every document
+  against the agent's report, so the console can say before anything is
+  sent which keys a device's agent cannot take.
 
 ### Mixed versions
 Every new field follows ADR-0009 (amended, PR #52); there is no fallback
@@ -324,8 +364,9 @@ of this ADR's own, and no 400 is read as "not supported".
 * **The new request fields** (`capabilities`, `settings`,
   `heartbeatSeconds`; ADR-0059's `transport`) were added after level 2, so
   the agent sends them only while its last heartbeat answer was of level
-  2 or higher, and none before its first answer in a process. A server of
-  level 1 never sees them; one of level 2 without settings ignores them.
+  2 or higher, and none before its first answer in a process; a heartbeat
+  without them changes nothing on the server (above). A server of level 1
+  never sees them; one of level 2 without settings ignores them.
 * **A server rolled back to a release without delivery** (ADR-0052)
   issues no document, counts online over its fixed three minutes and
   answers `heartbeatSeconds` as it always did. The agent keeps the
@@ -383,23 +424,40 @@ today; for the transport, no live connection.
   document uses the shorter of the two (above).
 * **The server keeps the interval each agent uses.** The agent reports it
   in its signed heartbeat (`heartbeatSeconds`); for an agent that reports
-  none, the server keeps the interval it answered. An agent that refused a
-  document, or could not save it, reports the interval it kept, so the
-  server never assumes an interval the agent does not use. Kept in
-  `devices.agent_heartbeat_seconds`.
+  none (an older build, or one whose build changed since its last report),
+  the server keeps the interval it answered, and a heartbeat that merely
+  lacks the report (the first of a process) leaves the kept interval as
+  it was. An agent that refused a document, or could not save it, reports
+  the interval it kept, so the server never assumes an interval the agent
+  does not use. Kept in `devices.agent_heartbeat_seconds`.
 * **Online is three missed heartbeats of that interval.** Each heartbeat
   sets `agent_online_until` to now plus three times the kept interval. The
   device list, its filter, reports and monitoring read it
   (`agent_online_until > now()`, or MeshAgent connected, as today) in
   place of their three copies of the fixed window. At 60 seconds nothing
   changes.
+* **One measurement per interval, spaced.** This ADR and ADR-0059 add
+  heartbeats between the regular ones (after a document is applied, after
+  a `hello`, on a `checkin` wake, to classify a failed connection, the
+  second of a process). Two rules keep them out of monitoring, so that a
+  device that has just come back still cannot trip a policy on two
+  samples taken seconds apart (ADR-0019):
+  * the agent sends `metrics` only with its regular heartbeats, so
+    processor use is measured over an interval, not over the seconds
+    since an extra one;
+  * the server stores a sample only when at least 0.8 of the kept
+    interval has passed since the device's last stored sample; the
+    device's latest measurements (`device_metrics`) still follow every
+    heartbeat that carries them.
 * **Metric policies expect the device's own measurements**: a window of N
   minutes expects `N × 60 / interval` of them, at least one, and opens an
-  alert with at least half of them (rounded up); a window, and the
-  5-minute one an alert resolves over, is never shorter than one
-  interval, so a 5-minute disk policy on a 5-minute device judges its
-  latest measurement. At 60 seconds this is today's rule. A change of
-  interval can delay an alert by one window, never open one early.
+  alert with at least half of them (rounded up). A window, and the
+  5-minute one an alert resolves over, is never shorter than 1.2
+  intervals, so the jitter (a tenth either way) never leaves it empty and
+  a 5-minute disk policy on a 5-minute device judges its latest
+  measurement. At 60 seconds this is today's rule, but for a 1-minute
+  window, which becomes 72 seconds. A change of interval can delay an
+  alert by one window, never open one early.
 * **Its effect is said where it is set.** The key's line in the console:
   *Measurements arrive with each heartbeat. At 5 minutes, a 15-minute
   processor alert judges 3 measurements instead of 15, and a device counts
@@ -465,15 +523,18 @@ answer changed on the way.
 * **Unit** (`internal/agentproto`, also on CI's Windows runner): signing
   and verifying; refused: another device, a lower version, a version
   outside 1 to 2^53 − 1, the same version with other content, an unknown
-  top-level field, a forged signature; unknown keys ignored, invalid
-  values kept, integers clamped, a known key omitted taking its default.
+  field at any level or a key the agent's catalogue lacks, a forged
+  signature; invalid values kept, integers clamped, a known key omitted
+  taking its default.
 * **The agent** (on Linux, and its tests on CI's Windows runner): apply,
   save and act; a restart applies the saved settings before reaching the
   server; settings saved for another device ID are not applied; a server
   it cannot reach changes nothing; refusals keep the settings and are
   reported; the new fields only after an answer of level 2 or higher, and
-  none to a server that states no level; the interval is the shorter of
-  the document's and the answer's, never below 30 seconds.
+  none to a server that states no level; the second heartbeat of a
+  process within 10 seconds of a level-2 answer; `metrics` only in
+  regular heartbeats; the interval is the shorter of the document's and
+  the answer's, never below 30 seconds.
 * **Windows end to end** through the Windows harness the plan builds (the
   server built for Windows with the runner's PostgreSQL, a Windows agent
   enrolling; "Test harnesses to build"): a document applied, saved and
@@ -484,20 +545,28 @@ answer changed on the way.
   at each scope, the 409, earlier values kept and back in effect;
   row-level security per scope and role; the permission at each scope
   (with ADR-0059's first slice, a technician setting the transport on a
-  device but not at its site, and no other key anywhere); device rows refused for a device without the
-  agent; the platform's minimum and earlier values raised to it; writes
-  rate-limited per scope; the audit rows; versions rising, including after
-  the stored versions are set back as a restore would, from the agent's
-  report; a report above 2^53 − 1 ignored; two heartbeats at once issuing
-  one version; documents only to devices that reported `settings.v1`; a
-  change for an organization issued lazily to each device; *Not applied*
-  after three heartbeats; `agent_heartbeat_seconds` and
-  `agent_online_until` at 60 and 300 seconds, from the agent's report and
-  for agents that report none; `updated_at` unmoved by both columns; the
-  device list, its filter, reports and monitoring agreeing on online;
-  **every policy kind at 300 seconds**: Offline (no alert before three
-  intervals, one after), and processor, memory and disk opening on the
-  measurements expected at that interval and resolving.
+  device but not at its site, and no other key anywhere); device rows
+  refused for a device without the agent; the platform's minimum and
+  earlier values raised to it; writes rate-limited per scope and per
+  caller, a caller spread over 100 sites included; the audit rows;
+  versions rising, including after the stored versions are set back as a
+  restore would, from the agent's report; a report above 2^53 − 1
+  ignored; two heartbeats at once issuing one version; documents only to
+  devices that reported `settings.v1`, with only the keys and values their
+  report allows; a heartbeat without the report leaving the last report,
+  the kept interval and *Not applied* as they were, and a change of build
+  ending the last report; a change for an organization issued lazily to
+  each device; *Not applied* after three reporting heartbeats;
+  `agent_heartbeat_seconds` and `agent_online_until` at 60 and 300
+  seconds, from the agent's report and for agents that report none;
+  `updated_at` unmoved by both columns; the device list, its filter,
+  reports and monitoring agreeing on online; **every policy kind at 300
+  seconds**: Offline (no alert before three intervals, one after), and
+  processor, memory and disk opening on the measurements expected at that
+  interval and resolving, with heartbeats jittered a tenth either way;
+  samples stored no closer than 0.8 of the interval; a device back from
+  an outage at 300 seconds, its heartbeats 10 seconds apart, raising no
+  metric alert.
 * **HTTP API**: every route and every error above.
 * **Console**: unit tests of the tab, the editors, the filter and the
   policy page's list.
@@ -527,11 +596,12 @@ Each merges, is verified on its own, and leaves nothing unused.
 1. **Settings on the server, and the interval for every agent**: the
    catalogue with `agent.heartbeat_seconds`, `agent_settings`, precedence
    and enforcement, `device.configure`, the platform's minimum interval,
-   the rate limit, the audit and the API; and the interval's server side:
+   the rate limits, the audit and the API; and the interval's server side:
    the effective interval in `heartbeatSeconds`, `agent_heartbeat_seconds`
    and `agent_online_until` (from the answered interval, since no agent
    reports one yet), the function redefined, the backfill and the index,
-   everything that reads online and expects measurements, and the alert
+   everything that reads online and expects measurements, samples spaced
+   at 0.8 of the interval and windows of at least 1.2, and the alert
    policy page's list of devices that wait longer, so the effect is never
    silent. Every agent, rc.4's included, follows the key from this slice.
    ADR-0015 and ADR-0019 gain their *Refined by* lines. Verified by unit,
@@ -541,7 +611,8 @@ Each merges, is verified on its own, and leaves nothing unused.
    ADR-0057.
 2. **Delivery**: the signed document, versions, capabilities,
    `agent_device_state`, the agent's verify, save, apply and acknowledge,
-   the interval it reports and the shorter of the two, *Not applied*.
+   the interval it reports and the shorter of the two, `metrics` only in
+   regular heartbeats, *Not applied*.
    Verified by unit, agent and integration tests, in the bundle with the
    current and the previous release's agents and against the previous
    release's server, and on Windows as above.

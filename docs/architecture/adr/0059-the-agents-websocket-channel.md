@@ -4,7 +4,12 @@
 * Revised 2026-11-21 after an independent review: features the server
   lists, what *Automatic* counts as a failure, several servers before the
   held poll is dropped, presence confirmed by the heartbeat, descriptors
-  and NGINX, the hold, what ADR-0057 must provide, and tests.
+  and NGINX, the hold, what ADR-0057 must provide, and tests. Revised
+  again after its second check: a new connection replaces a confirmed one
+  only once confirmed itself, times compared on the agent's clock, a
+  clone guard that fires, crashes told apart by the server's instance,
+  404 as "not supported", and message types sent only to agents that
+  list them.
 * Refines: [ADR-0009](0009-agent-protocol.md) (its WebSocket, "authenticated
   by a signed challenge", as the primary channel) and
   [ADR-0017](0017-scripts-and-jobs.md) (job delivery: the signed poll stays
@@ -80,6 +85,10 @@ first, "the WebSocket channel later". What exists:
   every other request 503 with the code `held` and `Retry-After: 60`
   (`server/internal/updater/hold.go` on its branch). It gates requests; a
   connection hijacked before the hold outlives it unless closed.
+* **A crashed server is back in seconds**: Compose restarts it
+  (`restart: unless-stopped` on the server in
+  `deploy/docker-compose.yml`), without a hold and without a `closing`
+  to anyone.
 * **Descriptors per device, before any channel**: MeshAgent's WebSocket
   into the edge and the gateway's own to MeshCentral (`agentRoutes` and
   the proxy in `server/internal/remote/gateway.go`), the agent's HTTPS
@@ -162,13 +171,29 @@ fallback of its own, and no 400 is read as "not supported".
   * `poll.noWait` (from slice 3): the poll takes `noWait`, and heartbeat
     answers carry `jobsWaiting`. A live agent stops holding long polls
     only while its connection's `hello` listed it.
+* **The server names its instance**: heartbeat answers and `hello` carry
+  `instance`, the ID the instance draws at every start (`server_instances`,
+  below), so the agent can tell a server that restarted from one that is
+  still serving (*Automatic's fallback*).
+* **404 means "not supported here"** (ADR-0009): an upgrade answered 404
+  counts as nothing, and the agent does not connect again until a
+  heartbeat made after the 404 lists `channel`.
 * **The agent's new fields** (`transport` in the heartbeat, `noWait` in
   the poll) were added after level 2, so it sends them only while its last
   heartbeat answer was of level 2 or higher; a level-2 server without the
   feature ignores them and holds the poll as today.
-* **No signed instruction is new here.** The transport reaches the agent
-  in ADR-0058's document, which goes only to agents that report taking
-  it.
+* **The channel's messages go only to agents that list them**, like any
+  signed instruction (ADR-0009). The agent lists `channel.v1` in its
+  signed report's `accepts` (ADR-0058's `capabilities`): the four types
+  below, with `v` 1 and the values of `what` and `reason` this ADR names.
+  A later type or value comes with a capability of its own (`channel.v2`,
+  or one named for it), and the server sends it only to agents that list
+  it. So the agent connects only once a heartbeat that carried its
+  report, the second of its process at the earliest (ADR-0058), was
+  answered listing `channel`; the server refuses an upgrade from a device
+  whose last report lists no `channel.v1` with 404.
+* **The transport** reaches the agent in ADR-0058's document, which goes
+  only to agents that report taking it.
 
 ### The connection
 * **`GET /api/agent/v1/connect`**, an HTTP/1.1 upgrade to a WebSocket with
@@ -219,17 +244,38 @@ while the real agent's own attempt is refused as `replayed`. So:
   `checkin` limit, below), so a real connection is confirmed within
   seconds.
 * **Only a confirmed connection is live.** The console shows *Live* only
-  for an `agent_connections` row that the device's last heartbeat
-  confirmed; `jobsWaiting` (slice 3) is computed for the same.
-* **A contradicted connection is closed.** A connection that a heartbeat
-  signed more than 30 seconds after it was accepted does not name (another
-  `connId`, or none) gets `closing` (`replaced`) and is closed, so the
-  real agent's next attempt succeeds.
+  for an `agent_connections` row that the device's heartbeat confirmed;
+  `jobsWaiting` (slice 3) is computed for the same.
+* **A new connection is pending until confirmed.** It gets its `hello`
+  and ticks but no wakes; the device's confirmed connection, if it has
+  one, keeps carrying them and is not replaced. Only when a heartbeat
+  names the new one does it become the device's connection, and the old
+  one is replaced (`closing`, `replaced`). The agent checks in at once
+  after a `hello`, so a real connection waits seconds for its first
+  wake; a wake due meanwhile reaches it through `jobsWaiting` or the
+  heartbeat itself. An upgrade replayed by something on the path, even
+  within its five minutes, therefore evicts no one: the real agent's next
+  heartbeat names its own connection and the replayed one is closed
+  (next point).
+* **A contradicted connection is closed.** A heartbeat contradicts a
+  connection when it does not name it (it names another `connId`, or
+  none) although it was signed more than 60 seconds after the
+  connection's upgrade request was. Both times are the agent's own, from
+  the two signed requests, so a clock off by up to the five minutes the
+  server allows (`Fresh` in `internal/agentproto`, checked in
+  `signed.go`), or a heartbeat delayed on the way, cannot make a real
+  connection look contradicted; the 60 seconds cover the agent's wait for
+  the `101` and the `hello`. A pending connection that is contradicted is
+  closed at once. A confirmed one is sent nothing for up to 35 seconds,
+  then `closing` (`replaced`): if it pinged meanwhile, a live agent holds
+  it while the device's heartbeat says otherwise, which is the clone
+  guard's business (below); if not, it was dead. A connection no
+  heartbeat confirms within two of the device's intervals is closed too.
 * **`replayed` is a warning sign.** An upgrade answered 401 `replayed`
   means someone else used the agent's request: the agent logs it and
   reports it in its heartbeat, the device shows it, and under *Automatic*
   it is a failure (below).
-* **The clone guard counts only replacements of confirmed connections**
+* **The clone guard counts only conflicts between confirmed connections**
   (below).
 
 ### Messages
@@ -239,11 +285,12 @@ while the real agent's own attempt is refused as `replayed`. So:
   payload. The payload has `v` (1), `type`, `deviceId`, `connId` (16
   random bytes the server issues), `seq` (1, 2, 3…), `sentAt`, and the
   type's fields.
-* **Types**, all from the server:
+* **Types** (`channel.v1`), all from the server:
   * `hello`, first: the nonce of the agent's own upgrade request, which
-    binds the connection to it, and the server's `features`. It is sent
-    at once after the `101`, before the server writes anything for the
-    connection (its `agent_connections` row, the replacement count): a
+    binds the connection to it, the server's `features` and its
+    `instance`. It is sent at once after the `101`, before the server
+    writes anything for the connection (its `agent_connections` row, the
+    clone guard's count): a
     slow database can delay the upgrade's answer, which costs what any
     signed request costs (reading the device, writing its nonce), but
     never a `hello` after it;
@@ -258,7 +305,9 @@ while the real agent's own attempt is refused as `replayed`. So:
   breaks the sequence (a gap, a repeat), or exceeds 16 KiB, and when no
   `hello` arrives within 10 seconds of the `101`. Nothing on the way can
   inject, replay or reorder a message; it can only end the connection,
-  which the agent notices.
+  which the agent notices. A verified message of a type, `v` or value
+  the agent did not list is a server's bug, not the network's: the agent
+  closes the connection, reports it, and counts nothing.
 * **The agent sends no messages**, only WebSocket pings. The server closes
   a connection that sends one.
 * **Cost**: one Ed25519 signature per message. 10,000 connections ticking
@@ -305,22 +354,44 @@ while the real agent's own attempt is refused as `replayed`. So:
   `Retry-After`, at most 30 minutes, since the header is not signed. A
   `429` or `503` without one of those codes is treated like any other
   refusal.
+* **After a `404`**: no attempt until a heartbeat made after it lists
+  `channel` (*Features the server lists*). Something on the path that
+  answers 404 to every upgrade therefore gets one attempt per heartbeat,
+  counted as nothing; the device meanwhile works as with regular
+  check-ins.
 * **While it is not connected** the agent works as today (below).
 
 ### Server limits
-* **One connection per device.** A new one replaces the old, which gets
-  `closing` (`replaced`).
-* **The clone guard.** A replacement counts only when the replaced
-  connection was confirmed by a heartbeat and is still alive: the server
-  keeps it, sending it nothing more, for up to 35 seconds after accepting
-  the new one, and counts the replacement only if it pings in that time.
-  A half-open connection, which can last 75 seconds after a network
-  change, sends nothing and counts nothing. The count is kept in the
-  database (ADR-0058's `agent_device_state`), so it holds across server
-  instances and restarts. More than six counted in 10 minutes refuse that
-  device's upgrades for 10 minutes (409 `connection_conflict`), and the
-  device shows that its identity seems to be in use on more than one
-  computer (a cloned machine); its polls and heartbeats are unaffected.
+* **One connection per device**, and at most one pending beside it. A
+  confirmed connection is replaced only by one a heartbeat confirmed
+  (*Presence confirmed by the heartbeat*); a newer pending one replaces an
+  older pending one.
+* **The clone guard.** One agent's heartbeats name its connections in
+  order: each new `connId` after the last, never an older one again,
+  since it holds one connection at a time and sends one heartbeat at a
+  time. Two computers with one identity each hold a connection and each
+  heartbeat, so the device's heartbeats keep going back and forth. A
+  **conflict** is either of:
+  * heartbeats within one of the device's intervals that confirm two
+    different connections, the later naming the older of the two (an
+    agent never goes back);
+  * a confirmed connection that pings after a heartbeat contradicted it
+    (above): by naming another connection that heartbeat confirms, which
+    replaces it, or another already confirmed, or none. A half-open
+    connection, which can last 75 seconds after a network change, never
+    pings, so one agent reconnecting counts nothing.
+
+  Nothing about a pending connection counts, so a replayed upgrade or an
+  agent reconnecting after a network change is never a conflict. The
+  conflicts are counted in the database (ADR-0058's
+  `agent_device_state`), so the count holds across server instances and
+  restarts. **Three in 30 minutes** refuse that device's upgrades for 30
+  minutes (409 `connection_conflict`), and the device shows that its
+  identity seems to be in use on more than one computer (a cloned
+  machine); its polls and heartbeats are unaffected. Two clones take the
+  connection from each other at most five minutes apart (the wait after
+  `replaced`), each time a conflict, so they are flagged within about
+  fifteen minutes, usually sooner.
 * **Per device**: an upgrade at most every 10 seconds after a burst of
   six, besides the limits on every signed request (ADR-0015).
 * **Per server**: at most 200 verified upgrades a second, so a fleet
@@ -333,16 +404,20 @@ while the real agent's own attempt is refused as `replayed`. So:
   largest fleet the drills measure. Beyond it, 503 `channel_full` with a
   random `Retry-After` of 15 to 30 minutes; those agents work as with
   regular check-ins meanwhile.
-* **File descriptors, measured.** A live device costs the server one
-  descriptor more than the four or so it already holds. The server reads
-  its soft `RLIMIT_NOFILE` (raised by Go to the hard limit) and counts the
+* **File descriptors, measured, on Linux.** A live device costs the
+  server one descriptor more than the four or so it already holds. On
+  Linux, where the deployment runs, the server reads its soft
+  `RLIMIT_NOFILE` (raised by Go to the hard limit) and counts the
   descriptors it has open (`/proc/self/fd`, every 5 seconds, plus the
   connections accepted since), and refuses upgrades with 503
   `channel_full` while fewer than the larger of 4,096 and a quarter of the
   limit remain, whatever the maximum says. Compose keeps setting no
   `ulimits`, so the hard limit the container gets is not lowered. The
   server logs when this gate closes and opens; Settings → Agent settings
-  shows the descriptors open against the limit.
+  shows the descriptors open against the limit. The server built for
+  Windows, which only the Windows test harness runs, has neither
+  `RLIMIT_NOFILE` nor `/proc`: there the configured maximum is the only
+  bound, and the console says the descriptors are not measured.
 * **NGINX in offload mode** holds about six descriptors per device with a
   live connection: MeshAgent's WebSocket, the agent's HTTPS requests in
   flight and its live connection, each as a client and an upstream
@@ -372,10 +447,11 @@ while the real agent's own attempt is refused as `replayed`. So:
 * **`checkin`**: a heartbeat now, at most one every 10 seconds; the next
   regular heartbeat counts from it. Sent when something the heartbeat
   answer carries becomes due: a settings change (ADR-0058), a removal, an
-  EasyPatch install, an update asked for one device. A change that
+  EasyPatch install, an update asked for one device. **Every `checkin`
+  wake goes through one queue per server**, at most 100 a second, a
+  device queued again before its wake went out woken once; a change that
   reaches more than 100 devices (the platform's, an organization's, a
-  large site's) is spread: at most 100 wakes a second per server, over at
-  least a minute.
+  large site's) is also spread over at least a minute.
 * **`jobs`**: a poll now. Sent when a run is queued or canceled, from
   slice 3, when a live agent stops holding long polls; before, the long
   poll is still waiting and the server wakes it itself. A `jobs` wake
@@ -452,25 +528,36 @@ From slice 3:
 
 ### Automatic's fallback
 * **What fails.** An attempt fails when the upgrade is refused with
-  anything but `101` (the server's own "later" answers below apart), no
-  `101` comes within 30 seconds or no verified `hello` within 10 seconds
-  after it, a message does not verify, or the upgrade is answered
-  `replayed`. A connection fails when it ends without a signed `closing`,
-  whatever its age, the agent's own close after 75 silent seconds
-  included. Ends the agent causes for its own reasons (a sleep it
-  detected, a change of transport, the service stopping) do not fail.
-* **Only while HTTPS works, checked at the moment.** Each failure is
-  classified by a signed HTTPS request made at once: a heartbeat, at most
-  one every 10 seconds (one in the last 10 seconds serves). It counts only
-  if that heartbeat succeeds; a dial or TLS error while HTTPS fails too
-  (the server down, the network out) counts for nothing.
+  anything but `101` (but for the server's own "later" answers below and
+  a `404`, which means "not supported here" and counts nothing), no `101`
+  comes within 30 seconds or no verified `hello` within 10 seconds after
+  it, a message does not verify, or the upgrade is answered `replayed`. A
+  connection fails when it ends without a signed `closing`, whatever its
+  age, the agent's own close after 75 silent seconds included. Ends the
+  agent causes for its own reasons (a sleep it detected, a change of
+  transport, the service stopping, a message of a type it did not list)
+  do not fail.
+* **Counted only against a server still serving.** Each failure is
+  classified by a signed heartbeat made after it: at once, or, when the
+  agent made one in the last 10 seconds, as soon as those 10 seconds have
+  passed. A heartbeat made before the failure never classifies it. The
+  failure counts only if that heartbeat succeeds and its answer names
+  the same `instance` as the server the agent was dealing with: the
+  `hello`'s, for a connection that ended; the last heartbeat answer's
+  before the attempt, for an attempt that failed. A heartbeat that fails
+  (the server down, the network out) or names another instance (the
+  server restarted, after a crash as after a stop: Compose brings a
+  crashed server back within seconds) counts nothing.
+* **Several instances behind one name**: a heartbeat may reach another
+  instance than the connection did, and then counts nothing, so
+  *Automatic* falls back more slowly there, never because of a restart.
 * **Nothing counts across a restart or a hold.** After a `closing`
   (`restart`), and after any answer `held`, nothing counts until the first
-  heartbeat that succeeds after it. A stopped server, an upgrade's backup
-  of minutes (ADR-0052), a held start and the rush of reconnections after
-  it never move the fleet to regular check-ins. A crash without
-  `closing` leaves HTTPS failing too, which counts nothing; when the
-  server is back, `hello` goes out before any write.
+  heartbeat that succeeds after it. With the instance check, a stopped
+  or crashed server, an upgrade's backup of minutes (ADR-0052), a held
+  start and the rush of reconnections after any of them never move the
+  fleet to regular check-ins; when the server is back, `hello` goes out
+  before any write.
 * **"Later" answers.** A `429` or `503` with the server's code
   (`rate_limited`, `channel_busy`, `channel_full`, `held`) means "later":
   not a failure, its `Retry-After` honoured up to 30 minutes. A middlebox
@@ -490,7 +577,8 @@ From slice 3:
 * **The agent reports its state** in each heartbeat (`transport`): the
   choice it applies, whether it is live, since when and the `connId`,
   whether it fell back and when it tries again, its failures, its last
-  error (at most 300 characters) and the last `replayed`.
+  error (at most 300 characters), the last `replayed` and the last
+  message it refused as unlisted.
 
 ### Several servers
 From slice 2, before a live device stops holding its long poll (slice 3),
@@ -505,9 +593,11 @@ instance reaches a device whose poll another holds at once.
   instance wakes its own matching connections, spread as above.
 * **Each instance listens** on one connection outside the pool, and wakes
   its long polls from it as well. The in-process hub stays, fed by it.
-* **One connection per device across instances**: an instance that
-  accepts a connection notifies `replaced:<device>:<connId>`, and the
-  instance holding the older one applies the clone guard to it;
+* **One connection per device across instances**: an instance on which a
+  heartbeat confirms a connection, or contradicts one, notifies
+  `confirmed:<device>:<connId>` or `contradicted:<device>:<connId>`, and
+  the instance holding the connection concerned applies the rules above,
+  the clone guard's included;
   `removed:<device>` closes a removed device's connection wherever it is.
 * **A notification lost** while an instance reconnects its listener
   delays a job until the device's next long poll (25 seconds) or, for a
@@ -535,8 +625,9 @@ instance reaches a device whose poll another holds at once.
   confirmed it, last wake and why), written after `hello`, on
   confirmation, disconnect and wake; `server_instances`, where each
   instance records itself every 30 seconds under an ID it draws anew at
-  every start. An instance deletes its own rows when it stops; the rows
-  of an instance silent for two minutes are deleted by any instance. A
+  every start, the `instance` its answers carry. An instance deletes its
+  own rows when it stops; the rows of an instance silent for two minutes
+  are deleted by any instance. A
   crashed instance's rows show no one as live meanwhile, since *Live*
   needs the device's heartbeat to confirm the connection. Both are
   platform tables, read by the device API after the device itself was
@@ -580,15 +671,20 @@ its own review) must provide, and slice 1 does not start until it does:
   device's, another connection's, a `hello` for another nonce, oversized;
   keepalive timeouts; backoff and jitter within their bounds;
   `Retry-After` capped; the fallback: each failure classified by a
-  heartbeat (HTTPS up, HTTPS down), nothing counted after `closing`
-  (`restart`) or `held` until a heartbeat succeeds, "later" with and
-  without the server's codes and three in a row as one failure, every end
-  counted whatever its age, the agent's own ends not counted, three in 30
-  minutes, the hourly retry, *Live connection* never falling back;
-  changes of transport; sleep detected from the wall and monotonic clocks,
-  both injected; connecting only while `channel` is listed; `noWait` only
-  when `hello` lists `poll.noWait`; the long poll in flight left to
-  finish; a wake during a `noWait` poll making another.
+  heartbeat made after it (HTTPS up, HTTPS down, the same instance,
+  another instance), never by one made before, the next one waiting out
+  its 10 seconds; nothing counted after `closing` (`restart`) or `held`
+  until a heartbeat succeeds; a `404` counting nothing and stopping
+  attempts until a later heartbeat lists `channel`; "later" with and
+  without the server's codes and three in a row as one failure; every end
+  counted whatever its age, the agent's own ends not counted; a verified
+  message of an unlisted type closing the connection and counting
+  nothing; three in 30 minutes, the hourly retry, *Live connection* never
+  falling back; changes of transport; sleep detected from the wall and
+  monotonic clocks, both injected; connecting only after a heartbeat with
+  the agent's report was answered listing `channel`; `noWait` only when
+  `hello` lists `poll.noWait`; the long poll in flight left to finish; a
+  wake during a `noWait` poll making another.
 * **On CI's Windows runner**: the agent's channel tests, part of
   `go test ./agent/...`. **Windows end to end** through the Windows
   harness the plan builds (the server built for Windows with the runner's
@@ -601,13 +697,21 @@ its own review) must provide, and slice 1 does not start until it does:
   removal and an EasyPatch install, spread above 100 devices; a removal
   closes the connection, and a canceled one lets it reconnect; a hold
   closes every connection with `restart`; `hello` sent with the database
-  slowed on purpose; a connection never confirmed is never *Live*, and one
-  a heartbeat contradicts is closed; replacements and their guard (a
-  half-open connection not counted, a live one counted, the count across
-  two instances); the per-server budget untouched by unverified upgrades;
-  every limit, the descriptor gate with a lowered `RLIMIT_NOFILE`, the
-  per-organization cap; a restarted instance's stale rows showing no one
-  live. From slice 2: two server instances on one database, a job queued
+  slowed on purpose; `checkin` wakes merged per device in the queue; a
+  connection never confirmed is never *Live* and gets no wakes; a pending
+  connection never replacing a confirmed one, and one a heartbeat
+  contradicts closed; the contradiction judged on the agent's clock, with
+  that clock four minutes ahead and behind and a heartbeat delayed a
+  minute on the way, never closing a real connection; the clone guard:
+  two simulated agents with one identity flagged within 15 minutes, one
+  agent reconnecting after network changes and half-open connections
+  never flagged, a replayed upgrade never counted, the count across two
+  instances; the per-server budget untouched by unverified upgrades;
+  upgrades refused with 404 for a device whose report lists no
+  `channel.v1`, and no type sent that the report does not list; every
+  limit, the descriptor gate with a lowered `RLIMIT_NOFILE` (on Linux),
+  the per-organization cap; a restarted instance's stale rows showing no
+  one live. From slice 2: two server instances on one database, a job queued
   on one reaching a long poll held on the other at once, one connection
   per device across both. From slice 3: a run queued wakes a live agent's
   poll at once; a job queued while the connection is cut is delivered by
@@ -642,15 +746,23 @@ its own review) must provide, and slice 1 does not start until it does:
     them and holds every frame (no `hello`: fallback); it holds every
     frame after `hello` (the agent's idle closes: fallback); it injects a
     wake (the connection closed); it cuts connections at 30 seconds
-    (fallback); it replays an upgrade it held back (never *Live*; closed
-    after the device's heartbeat; the real agent connects next);
+    (fallback); it replays an upgrade it held back while the real agent
+    is live (the replayed connection gets no wakes and is closed at the
+    device's next heartbeat; the real one is untouched and nothing is
+    counted) and while it is not (never *Live*; closed after the device's
+    heartbeat; the real agent connects next); it answers 404 to upgrades
+    (nothing counted; one attempt per heartbeat);
   * **NGINX in offload mode** as the guide sets it up, carrying more
     connections than NGINX's default `worker_connections` (1,000, from
     `agentsim`): live; without the `Upgrade` headers: fallback;
   * **a server restart, and an upgrade's hold, with agents on
     *Automatic***: each gets `closing`, all reconnect within a minute,
     spread, and none falls back; a job queued during the restart runs
-    once.
+    once;
+  * **three crashes in 30 minutes**: the server killed and brought back
+    by Compose's restart policy three times, with agents on *Automatic*:
+    no `closing`, every end classified against the new instance, and none
+    falls back.
 * **Load**:
   * On CI, 5,000 signed connections opened from a separate process
     (`tools/agentsim` with connections only; devices written to the
@@ -679,15 +791,17 @@ its own review) must provide, and slice 1 does not start until it does:
 After ADR-0057 and ADR-0058's three slices. Each merges and is verified on
 its own:
 
-1. **The channel, beside the long poll.** The route, the signed messages
-   and `features`, the limits (per device, per server after
-   verification, per organization, descriptors), shutdown and the hold,
-   removal, `agent_connections` and `server_instances`; the agent's client
-   with its keepalives, the sleep check, reconnection and the fallback;
-   confirmation by the heartbeat and the clone guard; `agent.transport`,
-   *Regular check-ins* by default, technicians on one device; `checkin`
-   wakes, spread; the agent's report; the device's *Connection* and *Last
-   wake*; `agentsim -transport`; the NGINX guide's sizing. The long poll
+1. **The channel, beside the long poll.** The route, the signed messages,
+   `features` and `instance`, `channel.v1` in the agent's report, the
+   limits (per device, per server after verification, per organization,
+   descriptors on Linux), shutdown and the hold, removal,
+   `agent_connections` and `server_instances`; the agent's client with its
+   keepalives, the sleep check, reconnection and the fallback;
+   confirmation by the heartbeat, pending connections and the clone
+   guard; `agent.transport`, *Regular check-ins* by default, technicians on
+   one device; `checkin` wakes through the queue; the agent's report; the
+   device's *Connection* and *Last wake*; `agentsim -transport`; the
+   NGINX guide's sizing. The long poll
    is untouched. Verified by unit, integration and bundle tests, the CI
    load test, and on Windows as above.
 2. **Several servers**: wakes and long polls through `LISTEN` and
@@ -712,9 +826,10 @@ its own:
   online stays based on it (ADR-0058): a dropped connection alone never
   makes a device offline. The plan's 10-minute heartbeat for *Live
   connection* is not needed.
-* Restarts, upgrades and holds do not move a fleet on *Automatic* to
-  regular check-ins; boxes that cut or hold connections do, within
-  minutes.
+* Restarts, crashes, upgrades and holds do not move a fleet on
+  *Automatic* to regular check-ins; boxes that cut or hold connections
+  do, within minutes. A replayed upgrade evicts no one, and two computers
+  with one identity are flagged within about fifteen minutes.
 * Each live device holds a connection and a file descriptor on a server,
   and about six in NGINX in offload mode; how many a server takes is a
   setting, 10,000 by default, and its descriptors bound it at run time.
