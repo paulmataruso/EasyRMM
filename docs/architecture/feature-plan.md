@@ -24,6 +24,8 @@ requests and its own changelog entries.
 
 * **Trust.** The host updater no longer trusts anything the server
   writes beyond a version number, and never writes where the server can.
+  One exception, decided in review: its rollback guards (ADR-0052) read a
+  few integers from the database, which can only refuse a rollback.
   Agents do not pin TLS keys, so everything new that reaches an agent
   (settings, a new address, WebSocket messages) is signed, not just sent
   over TLS. Moving agents to a new name became an ADR of its own. The job
@@ -94,12 +96,37 @@ and this plan's own pull request for ADR-0019):
 ### F0. Rotating the job key
 Every signed instruction (jobs, updates, uninstalls, and since the fixes
 above MeshAgent's downloads) rests on one job key that cannot be rotated
-(ADR-0017, Consequences). Before the new kinds of instruction this plan
-adds (settings, a new address) depend on it: a new key is signed by the current one and announced in the
-heartbeat; agents that verify the hand-over accept both for a transition
-period, then only the new one. A rollback of EasyRMM (F3) is refused
-across a rotation's cut-over. Tested with real agents through a rotation
-and with an agent that was offline across it.
+(ADR-0017, Consequences), and the new kinds of instruction this plan adds
+(settings, a new address) would rest on it too. Proposed in
+[ADR-0057](adr/0057-rotating-the-job-key.md), revised after its review and
+a second check. In
+short: the keys become a ring with generations that only increase; agents
+report the keys they trust in their signed heartbeats and job polls (by
+ADR-0009's rule), and the server signs each device's instructions with the
+newest of them. A rotation hands each agent the new key in a statement
+signed by a key it trusts. A super administrator finishes a planned
+rotation after at least 24 hours (ADR-0052's rollback window), confirming
+a newer backup; a rotation for a compromise is cut over at once, and a
+device on a compromised key is moved to it before any later key. Agents
+offline across the overlap follow when they come back, since the server
+keeps an old key while any device needs it. After a compromise a device
+counts as moved only on its own signed report, which proves only an agent
+nobody tampered with; devices that cannot be moved are re-pinned with
+`easyrmm-agent trust-key`, a command with no secret, or reinstalled; a
+device left on a key a restore lost moves with the next rotation. A
+leaked backup set also gives the TLS identities, MeshCentral's keys, the
+patching engine's notification credentials and, with Authentik, its
+signing key pair and secrets, which the incident page replaces;
+EasyRMM's own authority is replaced in two phases, both authorities
+first, so no agent is cut off. The updater refuses a rollback
+whose backup lacks a key agents were cut over to, and one while a server
+on another host shares the database (ADR-0052's rollback guards, shared
+with 5c); they ship with the second slice or before, and the second
+slice also waits for ADR-0055's step-up. Tested with real agents on the
+host's network through a rotation, one offline across it, one from before
+the change, and restores across it. The first slice (agents that can
+follow, and flags for keys and instructions the server never issued) can
+ship before the rest of step 9.
 
 ### F1. Signed settings that reach the agent
 Proposed in [ADR-0058](adr/0058-signed-settings-that-reach-the-agent.md),
@@ -222,8 +249,10 @@ last job of `main`'s CI), stops the deployment, copies the whole data root,
 runs the new `setup.sh --upgrade`, starts the new version held (answering
 only its health check), and confirms, or restores the copy and starts the
 previous version. A rollback after a confirmed upgrade restores that copy
-too, for 24 hours, and says what it loses. The server can only ask, through
-a file the updater validates, and reads the updater's status read-only.
+too, for 24 hours, and says what it loses; it is refused across a job key
+cut-over or a name move (ADR-0052's rollback guards, shared by F0 and 5c),
+unless the host overrides it. The server can only ask, through a file the
+updater validates, and reads the updater's status read-only.
 Edge builds are published only after the whole of CI passes, with versions
 that sort (`v1.0.0-rc.4.edge.<run>.<attempt>`).
 
@@ -632,6 +661,14 @@ code.
 * **The updater is root on the host**: it takes nothing but a version from
   the server, writes nowhere the server can, and installs only what it
   verified.
+* **A key rotation strands agents, or leaves a leaked key trusted** (F0):
+  devices move only on their own signed reports, a device on a compromised
+  key is moved to the newest cut-over key before anything else, the
+  updater refuses a rollback across a cut-over, a server from before the
+  ring can neither start on its database nor be running during a
+  rotation, a device left on a key a restore lost moves with the next
+  rotation, and `trust-key` or a reinstall covers the devices that cannot
+  follow.
 * **A stolen administrator session redirects agents**: moving names needs
   signatures over the agent's own nonce, step-up authentication, and a
   notice to every super administrator.
