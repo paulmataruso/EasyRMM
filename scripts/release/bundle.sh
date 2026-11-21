@@ -120,8 +120,12 @@ fi
 } > "$out/$name-manifest.json"
 
 # --- Agents -------------------------------------------------------------------
+# Built exactly as docker/server/Dockerfile builds the agents the server hands
+# out (-buildvcs=false: no commit stamped in), so that the release's files are
+# the same bytes: an operator signs the release's Windows agent and the server
+# accepts it only if it matches its own build (ADR-0049).
 build() { # os arch suffix [GOARM]
-  CGO_ENABLED=0 GOOS=$1 GOARCH=$2 GOARM=${4:-} "$go" -C "$root" build -trimpath \
+  CGO_ENABLED=0 GOOS=$1 GOARCH=$2 GOARM=${4:-} "$go" -C "$root" build -trimpath -buildvcs=false \
     -ldflags "-s -w -X main.Version=$version" \
     -o "$out/easyrmm-agent-$1-$2$3" ./agent/cmd/easyrmm-agent
 }
