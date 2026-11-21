@@ -743,9 +743,9 @@ Said plainly here and in the guide:
       one record; refusals stop being recorded at 20 per user in 10
       minutes; another user is counted apart; with the audit clock moved
       10 minutes on, a refusal is recorded again.
-    * **Retention and removal**, with the purge's clock moved: output
-      emptied after the output retention counted from when it arrived,
-      the run kept; a lost run, then the purge and *Remove output*
+    * **Retention and removal**, with the stored times moved back as the
+      owner: output emptied after the output retention counted from when
+      it arrived, not from when the run finished, the run kept; a lost run, then the purge and *Remove output*
       (nothing to remove), then its late result, which is stored and later
       purged; a run whose output was removed takes no output from a result
       (the state set as the owner, since today's statuses cannot reach
