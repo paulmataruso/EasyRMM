@@ -43,10 +43,11 @@
 # A module with an intent and no done mark was interrupted (a timeout or a
 # cancel killed the job): check reports it as half_applied.
 #
-# Benchmarks: comments name the recommendation a setting follows, by number
-# only. "CIS" is the CIS Ubuntu Linux 24.04 LTS Benchmark v1.0.0, "STIG" the
-# DISA Red Hat Enterprise Linux 9 STIG. EasyRMM claims compliance with
-# neither, and where ADR-0051 is looser on purpose the comment says so.
+# Benchmarks: comments name the DISA Red Hat Enterprise Linux 9 STIG rule a
+# setting follows, by its ID, where one exists; each ID was checked against
+# the published STIG. CIS Benchmark numbers are not given: they could not be
+# checked here. EasyRMM claims compliance with neither, and where ADR-0051 is
+# looser than a benchmark on purpose the comment says so.
 
 set -u
 # Not set -e: a check that cannot read something reports that and goes on,
@@ -583,8 +584,8 @@ finish_module() {
 # ---------------------------------------------------------------------------
 # ssh
 
-# Weak algorithms, removed where the system has no crypto policy of its own
-# (CIS 5.1.6 ciphers, 5.1.12 key exchanges, 5.1.15 MACs). hmac-sha1 stays:
+# Weak algorithms, removed where the system has no crypto policy of its own:
+# ciphers, key exchanges and MACs. hmac-sha1 stays:
 # it is not broken as a MAC and old clients still need it.
 WEAK_CIPHERS='-cbc($|@)|^arcfour'
 WEAK_KEX='sha1'
@@ -757,8 +758,8 @@ check_ssh() {
 	fi
 	cs_changes=no
 
-	# PermitRootLogin prohibit-password (CIS 5.1.20; the CIS value is no,
-	# which ADR-0051 leaves to the administrator: keys stay usable for root).
+	# PermitRootLogin prohibit-password. Benchmarks ask for no, which
+	# ADR-0051 leaves to the administrator: keys stay usable for root.
 	cs_prl=$(sshd_val permitrootlogin)
 	cs_root_after=$cs_prl
 	case $cs_prl in
@@ -779,7 +780,7 @@ check_ssh() {
 		;;
 	esac
 
-	# PermitEmptyPasswords no (CIS 5.1.19).
+	# PermitEmptyPasswords no.
 	cs_v=$(sshd_val permitemptypasswords)
 	if [ "$cs_v" = no ]; then in_place; else
 		missing "PermitEmptyPasswords no (now $cs_v)"
@@ -787,7 +788,7 @@ check_ssh() {
 		cs_changes=yes
 	fi
 
-	# LoginGraceTime 30 or less, never 0, which is no limit (CIS 5.1.13).
+	# LoginGraceTime 30 or less, never 0, which is no limit.
 	cs_v=$(sshd_val logingracetime)
 	case $cs_v in '' | *[!0-9]*) cs_n=0 ;; *) cs_n=$cs_v ;; esac
 	if [ "$cs_n" -ge 1 ] && [ "$cs_n" -le 30 ]; then in_place; else
@@ -796,7 +797,7 @@ check_ssh() {
 		cs_changes=yes
 	fi
 
-	# X11Forwarding no (CIS 5.1.8 covers it with DisableForwarding).
+	# X11Forwarding no.
 	cs_v=$(sshd_val x11forwarding)
 	if [ "$cs_v" = no ]; then in_place; else
 		missing "X11Forwarding no (now $cs_v)"
@@ -805,7 +806,7 @@ check_ssh() {
 	fi
 
 	# Dead connections closed: ClientAliveInterval 300 and ClientAliveCountMax
-	# 3, or shorter; 0 turns either off (CIS 5.1.7).
+	# 3, or shorter; 0 turns either off.
 	cs_v=$(sshd_val clientaliveinterval)
 	case $cs_v in '' | *[!0-9]*) cs_n=0 ;; *) cs_n=$cs_v ;; esac
 	if [ "$cs_n" -ge 1 ] && [ "$cs_n" -le 300 ]; then in_place; else
@@ -1352,14 +1353,12 @@ fs.protected_symlinks 1 ge K
 fs.protected_fifos 1 ge K
 fs.protected_regular 1 ge K
 '
-# Benchmarks: accept_redirects CIS 3.3.5; send_redirects CIS 3.3.2;
-# accept_source_route CIS 3.3.8; log_martians CIS 3.3.9; tcp_syncookies CIS
-# 3.3.10; rp_filter CIS 3.3.7 (which wants 1: ADR-0051 sets the loose 2, so
-# that asymmetric routes and VPNs keep working); ptrace_scope CIS 1.5.2 and
+# Benchmarks: rp_filter is usually asked to be strict (1); ADR-0051 sets the
+# loose 2, so that asymmetric routes and VPNs keep working. ptrace_scope
 # STIG RHEL-09-213080; dmesg_restrict STIG RHEL-09-213010; kptr_restrict
 # RHEL-09-213025; unprivileged_bpf_disabled RHEL-09-213075;
 # protected_hardlinks RHEL-09-213030; protected_symlinks RHEL-09-213035.
-# protected_fifos and protected_regular have neither and follow the
+# protected_fifos and protected_regular have no STIG rule and follow the
 # kernel's own hardening advice. kptr_restrict stays 1, not 2, which
 # blinds root's perf and bpftrace; ptrace_scope 1, not 3, which cannot be
 # undone until a restart; unprivileged_bpf_disabled 1, which locks it until a
@@ -1423,10 +1422,7 @@ check_kernel() {
 # audit
 
 # The rules apply loads, by what they watch, with a pattern that finds an
-# equivalent rule in auditctl -l, whoever loaded it. Benchmarks: CIS 6.2.3.8
-# accounts, 6.2.3.1 sudoers, 6.2.3.4 time, 6.2.3.19 kernel modules, 6.2.3.10
-# mounts, 6.2.3.2 commands run as another user; SSH and PAM configuration
-# have no CIS rule of their own.
+# equivalent rule in auditctl -l, whoever loaded it.
 AUDIT_RULES='
 the account files (/etc/passwd, /etc/group, /etc/shadow, /etc/gshadow)|(-w |path=)/etc/(passwd|group|g?shadow)( |$)
 sudoers (/etc/sudoers, /etc/sudoers.d)|(-w |path=|dir=)/etc/sudoers(\.d/?)?( |$)
@@ -1505,19 +1501,17 @@ perm_max() {
 }
 
 check_permissions() {
-	# CIS 7.1.1, 7.1.3, 7.1.5, 7.1.7.
 	perm_max /etc/passwd 0644
 	perm_max /etc/group 0644
 	perm_max /etc/shadow 0640
 	perm_max /etc/gshadow 0640
-	# CIS 5.1.1.
 	perm_max /etc/ssh/sshd_config 0600
-	# CIS 2.4.1.2 to 2.4.1.7. cron.allow and at.allow are never created.
+	# cron.allow and at.allow are never created.
 	perm_max /etc/crontab 0600
 	for cp_d in /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly /etc/cron.d; do
 		perm_max "$cp_d" 0700
 	done
-	# The boot loader's configuration (CIS 1.4.2). update-grub writes it
+	# The boot loader's configuration. update-grub writes it
 	# again on kernel updates: a later check reports the drift.
 	cp_efi=no
 	if [ "$FAMILY" = rhel ] && [ "$OS_MAJOR" = 8 ] && [ -d /sys/firmware/efi ]; then
@@ -1554,7 +1548,7 @@ check_permissions() {
 # services
 
 # Plaintext and legacy network services, with their systemd units and their
-# names in xinetd and inetd (CIS 2.1.x and 2.2.x). ypbind, which NIS sign-in
+# names in xinetd and inetd. ypbind, which NIS sign-in
 # needs, is not one of them; snmpd, cups, NFS and rpcbind are left alone.
 LEGACY_SERVICES='
 telnet|telnet.socket telnetd.service inetutils-telnetd.service|telnet
@@ -1658,9 +1652,7 @@ kept_from_loading() {
 }
 module_loaded() { grep -q "^$1 " /proc/modules 2>/dev/null; }
 
-# Benchmarks: dccp CIS 3.2.1, tipc 3.2.2, rds 3.2.3, sctp 3.2.4; cramfs
-# 1.1.1.1, freevxfs 1.1.1.2, hfs 1.1.1.3, hfsplus 1.1.1.4, jffs2 1.1.1.5.
-# squashfs (snaps, AppImages) and udf (ISO images) are left alone.
+# Rarely used network protocols and filesystems. squashfs (snaps, AppImages) and udf (ISO images) are left alone.
 KERNEL_MODULES='dccp sctp rds tipc cramfs freevxfs hfs hfsplus jffs2'
 
 check_kernel_modules() {
@@ -1714,7 +1706,6 @@ check_usb_storage() {
 		return
 	fi
 	modprobe_config
-	# CIS 1.1.1.9.
 	if kept_from_loading usb_storage || kept_from_loading usb-storage; then
 		in_place
 		return
@@ -1811,12 +1802,12 @@ check_sudo() {
 	done
 	set +f
 	IFS=$cu_oifs
-	# Commands run in a pseudo-terminal (CIS 5.2.2).
+	# Commands run in a pseudo-terminal.
 	if [ "$cu_pty" = yes ]; then in_place; else
 		missing 'sudo runs commands in a pseudo-terminal (use_pty)'
 		change 'Defaults use_pty'
 	fi
-	# Commands logged to a file of their own (CIS 5.2.3), with a logrotate
+	# Commands logged to a file of their own, with a logrotate
 	# entry for it.
 	if [ -n "$cu_logfile" ]; then
 		in_place
@@ -1849,7 +1840,7 @@ check_sudo() {
 # ---------------------------------------------------------------------------
 # time
 
-# The time services that may already be there, as units (CIS 2.3.1.1).
+# The time services that may already be there, as units.
 TIME_UNITS='chronyd.service chrony.service systemd-timesyncd.service ntpd.service ntp.service ntpsec.service openntpd.service ptp4l.service'
 
 check_time() {
@@ -1899,7 +1890,7 @@ check_shared_memory() {
 		not_applicable "In a container ($CONTAINER) /dev/shm is set up by the host's container runtime."
 		return
 	fi
-	# CIS 1.1.2.2.2 to 1.1.2.2.4: in effect now, and in /etc/fstab for the
+	# nodev, nosuid and noexec: in effect now, and in /etc/fstab for the
 	# next boot.
 	cm_live=$(awk '$2 == "/dev/shm" { o = $4 } END { print o }' /proc/self/mounts)
 	cm_tab=$(awk '$1 !~ /^#/ && $2 == "/dev/shm" { o = $4 } END { print o }' /etc/fstab 2>/dev/null)
@@ -1946,7 +1937,7 @@ check_mac() {
 		return
 	fi
 	if [ -d /sys/fs/selinux ] || [ -f /etc/selinux/config ]; then
-		# SELinux enforcing (CIS for RHEL 1.3.1.5; STIG). Never from disabled,
+		# SELinux enforcing. Never from disabled,
 		# which needs a relabel and a restart.
 		cm_mode=disabled
 		if [ -r /sys/fs/selinux/enforce ]; then
@@ -2009,7 +2000,7 @@ check_mac() {
 		return
 	fi
 	if [ "$(cat /sys/module/apparmor/parameters/enabled 2>/dev/null)" = Y ]; then
-		# AppArmor (CIS 1.3.1.2 to 1.3.1.4): profiles in complain mode are
+		# AppArmor: profiles in complain mode are
 		# listed, not enforced; enforcing them all at once would turn on
 		# experimental ones.
 		in_place
@@ -2040,7 +2031,7 @@ check_mac() {
 # integrity
 
 check_integrity() {
-	# AIDE installed, a baseline, a daily check (CIS 6.3.1, 6.3.2).
+	# AIDE installed, a baseline, a daily check.
 	if ! have aide; then
 		missing 'AIDE installed'
 		missing 'An AIDE baseline'
