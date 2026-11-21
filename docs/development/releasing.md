@@ -21,6 +21,11 @@ and which nothing releases any more.
 | `easyrmm-v1.2.3` | `1.2.3`, `1.2`, `latest` | its version (`1.10.1`), `latest` | Release, marked Latest |
 | `easyrmm-v1.2.3-rc.1` | `1.2.3-rc.1` only | its version only | Pre-release |
 
+A release published out of order (`easyrmm-v1.1.5` after `easyrmm-v1.2.0`)
+gets `1.1` only if no published `1.1.x` ranks above it, and neither
+`latest` nor GitHub's Latest: those stay with the highest release
+published (`scripts/release/release-tags.sh`).
+
 The server, the console and the agents carry the tag without its prefix as
 their version, `v1.2.3` (`easyrmm-server version`, `easyrmm-agent version`).
 
@@ -121,10 +126,11 @@ Done once per repository, before the first release:
       amd64 one reports the version, scans both with Trivy (high and
       critical fixable findings fail the release) and checks both images'
       agents against `scripts/release/agents.sh`'s, in a job that may write
-      nothing; then another job, with no scanner and no build cache, pushes
-      that build unchanged to `ghcr.io/paulmataruso/easyrmm-server`, by the
-      digest the first recorded, with an SBOM, build provenance and a
-      GitHub attestation;
+      nothing and reads no build cache; then another job, with no scanner,
+      whose tools come from the tag's checkout before it downloads anything,
+      takes that layout by the artifact ID and digest the first recorded
+      and pushes it unchanged to `ghcr.io/paulmataruso/easyrmm-server`,
+      with an SBOM, build provenance and a GitHub attestation;
    6. builds the engine's image on each architecture carrying those
       packages, checks it carries them read-only and holds no secrets, scans
       it with Trivy the same way, and pushes it to
@@ -182,8 +188,11 @@ fields and layout in
   release's GitHub release exists, these jobs are skipped and nothing is
   published.
 * **Publishing**, only for a push to `main` in this repository and after
-  every other job, first checks that the manifest names this version,
-  commit and image, then pushes the server image (`easyrmm-server:<version
+  every other job, installs its tools from the commit before it downloads
+  anything; takes the image and the bundle by the artifact IDs their jobs
+  recorded, outside its workspace, and only as the layout of the tested
+  digest and the files whose SHA-256s the edge bundle job gave; checks
+  that the manifest names this version, commit and image; then pushes the server image (`easyrmm-server:<version
   without v>` and `sha-<commit>`) with a GitHub attestation, attests the
   manifest, and pushes `easyrmm-deploy:<version>`: the bundle, the
   manifest and the manifest's Sigstore bundle (`oras`). Then **Edge build

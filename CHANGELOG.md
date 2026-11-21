@@ -118,6 +118,10 @@ All notable changes to this project are documented here. The format follows
   release: an operator-signed release agent matches either (ADR-0049).
 - **Releases check their files before attesting**: the bundle against its
   manifest, and the attached agents against the pushed image.
+- **A release published out of order leaves `latest` where it is.**
+  `easyrmm-v1.1.5` after `easyrmm-v1.2.0` tags the server image `1.1.5`
+  and `1.1`, not `latest`, and is not GitHub's Latest release. A version's
+  server image is pushed once; a release run again pushes nothing more.
 
 ### Fixed
 
