@@ -191,7 +191,7 @@ set up its Teams channel once.
 * **Monthly report emails** move to EasyRMM too; the plan did not name
   them, and they go through the engine's SMTP client.
 * **Organizations' rules** use a platform channel only once a super
-  administrator shares it with that organization (the owner's decision).
+  administrator shares it with that organization (decided in review).
 * **The server's own networks**, whatever their kind, need approval as
   private ranges do; the server's own addresses and the deployment's names
   are always refused. The engine refused its networks outright, which on
@@ -551,7 +551,7 @@ Real delivery to Slack and Teams is checked by hand and recorded.
 * **The offline test stops both agents**: a device is online while
   MeshAgent is connected, so stopping the EasyRMM agent alone raises
   nothing.
-* **PSA tools also get `alerts.acknowledged`** (the owner's decision), and
+* **PSA tools also get `alerts.acknowledged`** (decided in review), and
   an incident ID that survives a policy change.
 
 ### 8. The agent's WebSocket channel

@@ -2,9 +2,10 @@
 
 * Status: Proposed (2026-11-21). Not implemented.
 * Revised after two independent reviews and a check of the second
-  revision (2026-11-21), with the owner's decisions on sharing platform
+  revision (2026-11-21). Decisions made in review on sharing platform
   channels, `alerts.acknowledged`, `.env`'s mail server, the old signature
-  headers and quotas counted in messages.
+  headers and quotas counted in messages are listed under
+  [Open questions](#open-questions) for the owner to confirm or overturn.
 * Builds on: [ADR-0019](0019-monitoring-and-alerts.md) (monitoring and
   alerts), [ADR-0023](0023-audit-forwarding.md) (audit forwarding and the
   address rule of the platform's integrations),
@@ -236,7 +237,7 @@ What exists, and what it means here:
 * **Owner**: the platform (super administrators) or one organization (its
   administrators). It never changes. An organization's channels and rules
   go with it.
-* **Sharing** (the owner's decision): an organization's rules use its own
+* **Sharing** (decided in review): an organization's rules use its own
   channels, and a platform channel only once a super administrator has
   shared that channel with that organization
   (`notification_channel_shares`). Nothing is shared by default. Sharing
@@ -531,7 +532,7 @@ channels now, its syslog destinations with log forwarding later.
   `X-EasyPatch-Event`, with the same values, until a super administrator
   turns them off on that channel; the switch can only be turned off, and
   new channels never send them. The headers' removal is announced in one
-  release's CHANGELOG and done in the next (the owner's decision; no
+  release's CHANGELOG and done in the next (decided in review; no
   release is fixed now).
 * **The body** keeps every field of the engine's generic body, with its
   meaning: `event`, `deliveryId`, `sentAt`, `subject`, `summary`,
@@ -543,7 +544,7 @@ channels now, its syslog destinations with log forwarding later.
   `openedAt`, `acknowledgedAt`, `resolvedAt` and `resolution`; `site` with
   the outage's ID for site events; `notice` for notices.
 * **Events**: `alerts.opened`, `alerts.reminder`, `alerts.resolved` (the
-  engine's names), `alerts.acknowledged` (the owner's decision, for PSA
+  engine's names), `alerts.acknowledged` (decided in review, for PSA
   tools: generic webhooks only), `sites.offline`, `sites.online`,
   `notices.opened`, `notices.acknowledged`, `notices.resolved` and `test`.
 * **Resolutions**: `cleared`, `manual`, `not_covered`, `policy_off`,
@@ -578,7 +579,7 @@ channels now, its syslog destinations with log forwarding later.
   (`mail_server`). It applies at once, without a restart, to
   notifications, invitations and password resets; `ResetAvailable`
   follows it.
-* **`EASYRMM_SMTP_*` wins** (the owner's decision): when
+* **`EASYRMM_SMTP_*` wins** (decided in review): when
   `EASYRMM_SMTP_HOST` is set, the deployment's mail server is used, however
   it signs in, and the console shows it read-only, says that it comes from
   `.env`, and still sends test messages. Removing it from `.env` hands the
@@ -1648,3 +1649,24 @@ nothing to apply to.
   one bundle; pending deliveries become outbox items with their IDs, each
   item waits only for its own channels, and a channel that cannot be
   decrypted moves turned off rather than blocking the rest.
+
+## Open questions
+
+For the owner; each has a default, and nothing in the slices waits on an
+answer except the defaults it names.
+
+1. **Quota defaults** per organization: 600 messages an hour, 20 channels,
+   50 rules, 20 tests an hour, and at most 2,000 unsent deliveries.
+2. **Mail rate defaults** for the whole server: 30 messages a minute and
+   9,000 a day, which super administrators set to match their relay.
+3. **The fleet-wide hold's thresholds**: half of the devices online at the
+   window's start, at least 20, silent within 5 minutes.
+4. **Decisions made in review**, each of which the owner may overturn:
+   * organizations' rules use a platform channel only once a super
+     administrator has shared it with that organization;
+   * generic webhooks also get `alerts.acknowledged`, for PSA tools;
+   * a mail server set in `.env` wins over the console, which shows it
+     read-only;
+   * the old signature headers are removed one release after their
+     removal is announced;
+   * quotas are counted in messages, one per email recipient.
