@@ -1,20 +1,23 @@
 # ADR-0063: Who sees a job's output and arguments
 
-* Status: Proposed (2026-11-21). Not implemented.
+* Status: Accepted (2026-11-21); implemented (PR #N). Revised the same
+  day after an independent review.
 * Amends: [ADR-0017](0017-scripts-and-jobs.md): who reads a run's output
   and a job's arguments, how long output is kept, and the guidance on
-  secrets. It gains an *Amended by ADR-0063* line when this is
-  implemented.
+  secrets; it has an *Amended by ADR-0063* line. Also the line of
+  [ADR-0060](0060-collecting-logs.md) that says `job.view` shows a run
+  with its arguments, which has a note.
 * Builds on: [ADR-0007](0007-hash-chained-audit-log.md) (the audit log),
   [ADR-0023](0023-audit-forwarding.md) (forwarding it),
   [ADR-0028](0028-software-deployment.md) and
   [ADR-0051](0051-hardening-linux-computers.md) (EasyRMM's own kinds of
   job), [ADR-0047](0047-tokens-shown-again.md) (a read and its audit
-  record in one transaction), [ADR-0060](0060-collecting-logs.md)
-  (`log.view` and `log.view_sensitive`; job arguments in collected logs),
-  and three proposed ADRs: [ADR-0053](0053-one-notification-sender.md)
-  (notifications), [ADR-0054](0054-hardening-windows-computers-and-servers.md)
-  (retention per kind of job) and
+  record in one transaction), and four proposed ADRs:
+  [ADR-0060](0060-collecting-logs.md) (`log.view` and
+  `log.view_sensitive`; job arguments in collected logs),
+  [ADR-0053](0053-one-notification-sender.md) (notifications),
+  [ADR-0054](0054-hardening-windows-computers-and-servers.md) (retention
+  per kind of job) and
   [ADR-0058](0058-signed-settings-that-reach-the-agent.md) (settings per
   organization).
 
@@ -199,27 +202,35 @@ the run's error and in the server's log.
 ### The API
 *Decided in review.*
 
-* **Output and argument values leave the run and job responses, for
+* **Output and argument values leave the run and job answers, for
   everyone**, and come only from endpoints of their own. Runs and jobs are
   fetched for reasons the reader does not see: polling, prefetching on
   hover, asking again on focus (Context). So fetching a run is not reading
   its output, and auditing those requests would record hovers.
-* **Fields left out, not emptied.** In every run and job response
-  (`GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`, `GET /api/v1/job-runs`,
-  `GET /api/v1/job-runs/{id}`, and the jobs and runs that creating and
-  canceling return):
-  * `stdout`, `stderr` and `args` are gone, for everyone;
-  * `stdoutBytes`, `stderrBytes`, `stdoutTruncated`, `stderrTruncated` and
-    `outputRemovedAt` are there only for a caller who holds
-    `job.view_sensitive` at the run's site. The console then says
-    "Nothing was written" or "Removed" without reading the output;
-  * every run gains `canViewOutput`, and every job `argCount` and
-    `canViewArguments`, for everyone, as `canCancel` is today.
+* **Fields left out, not emptied.**
+  * `stdout`, `stderr`, `stdoutTruncated`, `stderrTruncated` and `args`
+    are gone from every run and job answer: the lists
+    (`GET /api/v1/jobs`, `GET /api/v1/job-runs`), one job or one run, and
+    the jobs and runs that creating, canceling and removing output return.
+    The Go types no longer have them, so no answer built from them can
+    carry them.
+  * **New fields are on the answers for one run or one job only**, never
+    in a list, where nothing would read them:
+    * one run (`GET /api/v1/job-runs/{id}`, and the run that canceling it
+      or removing its output returns): `canViewOutput`, for everyone; and
+      `stdoutBytes`, `stderrBytes` and `outputRemovedAt` only for a caller
+      who holds `job.view_sensitive` at the run's site, so that the console
+      says "Nothing was written" or when the output was removed without
+      reading it;
+    * one job (`GET /api/v1/jobs/{id}`, and the job that creating or
+      canceling one returns): `argCount` and `canViewArguments`, for
+      everyone, as `canCancel` is.
+  * Whether a stream was cut comes with the output, from its endpoint.
 * **`GET /api/v1/job-runs/{id}/output`** returns `stdout`, `stderr`,
   `stdoutTruncated` and `stderrTruncated`:
-  * `404` when the caller cannot see the run, as today, with no record;
+  * `404` when the caller cannot see the run, as before, with no record;
   * `403` when they can see it but do not hold `job.view_sensitive` at
-    its site, recorded as denied;
+    its site, recorded as denied within a bound (Auditing reads);
   * `409 run_open` while the run has not finished, and
     `409 output_removed` once its output was removed, with no record;
   * `200` otherwise, recorded (Auditing reads). A run that printed
@@ -228,51 +239,119 @@ the run's error and in the server's log.
   answers: `404`; `403` recorded as denied; `200` recorded. A job without
   arguments answers an empty list and records nothing. Jobs of every kind
   answer; the console asks only for library scripts' jobs with arguments.
-* **`DELETE /api/v1/job-runs/{id}/output`** removes a finished run's
-  output at once (Retention).
+* **`DELETE /api/v1/job-runs/{id}/output`** empties a finished run's
+  output at once (Retention) and answers the run: `404` when the caller
+  cannot see the run; `403` unless they hold both `job.view_sensitive` and
+  `job.manage` at its site; `409 run_open`, `409 output_removed`, or
+  `409 no_output` for a run that printed nothing. A refused removal is not
+  recorded: it shows nothing.
 * **One transaction.** The output or the arguments are read, and the
-  record written, in one transaction, as ADR-0047's reveal does. If the
-  record cannot be written, nothing is returned. Answers are
-  `Cache-Control: no-store`, as every JSON answer already is
+  record written, in one transaction, as ADR-0047's reveal does (In the
+  database). If the record cannot be written, nothing is returned.
+  Answers are `Cache-Control: no-store`, as every JSON answer already is
   (`httpapi.WriteJSON`).
 * **Downloads** are not built (the console has *Copy* only). When they
   are, they use the output endpoint with `?download=stdout` or
   `?download=stderr`, with the same checks and a record that says it was
   a download.
 
+### In the database
+*Decided in review.*
+
+The server's own checks are not the only guard: PostgreSQL refuses the
+server's role the columns themselves, so that a query added later, for an
+export, a report or a notification, cannot read them by mistake.
+
+* **Column privileges.** Migration 00028 revokes `SELECT` on `job_runs`
+  and `jobs` from `easyrmm_app` and grants it back column by column: every
+  column but `job_runs.stdout`, `job_runs.stderr` and `jobs.args`. A query
+  that names them, selects `*`, uses the whole row or returns them is
+  refused (`42501`). A column added to either table later needs its own
+  grant; [database.md](../database.md) says so.
+* **Writing is unchanged.** `INSERT` and `UPDATE` keep their table
+  privileges: creating a job writes its arguments, a result writes the
+  output, and the purge and *Remove output* empty it. None of them reads
+  it back: their `WHERE` and `RETURNING` clauses name granted columns only.
+  The sizes and the number of arguments are stored generated columns
+  (`stdout_bytes`, `stderr_bytes`, `arg_count`), computed by PostgreSQL
+  from what is written, so the server reads them without reading the
+  values.
+* **Reads go through two `SECURITY DEFINER` functions**, owned by
+  `easyrmm_owner` with a fixed `search_path`: `easyrmm_job_run_output` and
+  `easyrmm_job_arguments`. The server passes the run or the job, the
+  caller's `job.view` and `job.view_sensitive` scopes as it resolved them
+  from the caller's roles, and who asks. The function checks the scopes
+  against the runs' organizations and sites, appends the audit record with
+  `easyrmm_audit_append` and returns the values, in the request's
+  transaction: if the record cannot be written, the transaction fails and
+  nothing is returned. Row-level security applies inside, since
+  `easyrmm_owner` is subject to it too, so a run outside the request's
+  scope is not found. The output read locks the run (`FOR SHARE`), so a
+  removal cannot empty it between the checks and the read.
+* **The agent's poll** reads the arguments of the runs it delivers through
+  a third function, `easyrmm_job_delivery_args(device, runs)`, which
+  answers only at platform scope, and only for that device's runs being
+  delivered (`sent`). It is not audited: the device is the one that runs
+  them.
+* **What it does not stop**: a compromised server process. It holds the
+  owner's credentials, to run migrations, so it can read anything. The
+  privileges guard against mistakes in the server's own code, not against
+  its compromise.
+
 ### The console
 *Decided in review.*
 
 * **A run's page.**
-  * With `canViewOutput`, once the run has finished and has output, the
-    page asks for the output once and shows it as today, with a line under
-    it: "Opening output is recorded in the audit log." It does not ask
-    while the run is open, when rows elsewhere are hovered or focused,
-    when the window regains focus, or when the run is refreshed. The
-    output leaves the console's cache when the page is left.
+  * With `canViewOutput`, once the run has finished and its sizes say it
+    has output, the page asks for the output once and shows it as before,
+    with a line under it: "Opening a run's output is recorded in the
+    audit log." The query has a key of its own (`["job-output", run]`),
+    outside the `/job-runs` prefix that refreshing or canceling a run
+    invalidates. It is never asked again when the window regains focus
+    (`refetchOnWindowFocus: false`), never goes stale
+    (`staleTime: Infinity`), and leaves the cache as soon as the page
+    closes (`gcTime: 0`). Hovering or focusing a run's row on a job's page
+    prefetches the run, which carries no output.
   * Without it, the Output card says **"Hidden: needs permission to see
     job output (`job.view_sensitive`)"**, never "Nothing was written", and
     the page asks for nothing.
-  * Removed output says when it was removed; the audit log says by whom,
-    when a person removed it.
-  * **Remove output**, offered with `job.manage` and `canViewOutput`, asks
-    to confirm: "The output is emptied for everyone. Backups made before
-    keep it."
+  * With both sizes zero, it says "Nothing was written to standard output"
+    (and error) without asking.
+  * Removed output says when it was removed, "by retention or by someone
+    who could read it"; the audit log says by whom, when a person removed
+    it.
+  * **Remove output**, offered with `canViewOutput` and `job.manage`, asks
+    to confirm: "The output is emptied for everyone, and the audit log
+    records that you removed it. Backups made before keep it." Every
+    built-in role that holds `job.view_sensitive` at a site holds
+    `job.manage` there too; the server checks both.
 * **A job's page.**
   * With `canViewArguments`, a library script's job with arguments asks
-    for them once and shows them as today.
-  * Without it, Arguments says "3 arguments. **Hidden: needs permission
+    for them once, with the same options and a key of its own
+    (`["job-arguments", job]`), and shows them as before. The details and
+    *Run again* share the one request.
+  * Without it, Arguments says "2 arguments. **Hidden: needs permission
     to see job arguments (`job.view_sensitive`)**".
   * **Run again** presets the arguments it fetched. Where they are hidden
     it is not offered for a job that has arguments, since running it
     without them would run something else. No built-in role holds
     `script.run` without `job.view_sensitive`, so this does not happen
-    today.
+    with today's roles.
 * The console decides from `canViewOutput` and `canViewArguments`, not
   from the user's permission list, because the permission may hold in
   some sites only.
-* The audit log's pages name the new records "Viewed job output",
-  "Viewed job arguments" and "Removed job output".
+* **The run-script dialog** no longer says that arguments are shown to
+  everyone who can see the job: "Arguments are kept with the job, and
+  people who may see job arguments can read them, each read recorded.
+  Never use them for passwords."
+* **The audit log's pages** name the new records "Viewed job output",
+  "Viewed job arguments" and "Removed job output", and gain the area
+  *Job output* (`job_run`): the server matches action prefixes at the dot,
+  so *Jobs* (`job`) does not include `job_run.*`.
+* **A page that fails to render** shows "This page stopped working" with
+  **Reload**, from a boundary around the whole console
+  (`AppErrorBoundary` in `web/src/main.tsx`), instead of a blank window. A
+  tab loaded before the upgrade does not have it (Upgrading).
 
 ### Exports, reports, notifications and forwarding
 *Decided in review.*
@@ -283,8 +362,8 @@ rule for each is set here so that later work keeps it:
 * **CSV exports and reports.** The six reports read no job table
   (`server/internal/reports`; the patch reports come from the engine). No
   export carries output or argument values. An export of jobs, if one is
-  added, has the fields of the run and job responses for a caller without
-  the permission. Output in bulk is a decision of its own (The
+  added, has the fields of the list answers, and cannot read more: the
+  database refuses the columns to the server's role (In the database). Output in bulk is a decision of its own (The
   permission).
 * **Mail.** EasyRMM sends account mail only (`server/internal/mailer`).
 * **Notifications and webhooks.** None are built, and ADR-0053 (proposed)
@@ -314,11 +393,11 @@ rule for each is set here so that later work keeps it:
   * `job.arguments_view`, once for each organization in which the caller
     holds the permission for some of the job's runs, under the site when
     those runs share one (as `report.export` is recorded), with the job,
-    the script's name and the number of arguments;
+    the script's name, the kind and the number of arguments;
   * `job_run.output_remove`, under the run's organization, site and
     device, with the sizes removed;
   * a refused read (`403`) is recorded with the outcome `denied`, as a
-    refused remote session is.
+    refused remote session is, within a bound (below).
 
   Site Administrators and above see them (`audit.view`), and they are
   forwarded like every record. None holds output or argument values.
@@ -328,11 +407,34 @@ rule for each is set here so that later work keeps it:
   per page of a script job with arguments. That is about as many records
   as `device.script_run` writes, one per device per job. A record per
   list, per poll or per hover would bury these and record no reading.
-* **Not merged.** Opening the same run twice writes two records. Merging
-  them would need state per user and run, and a second look is a look.
+* **Reads are not merged.** Opening the same run twice writes two
+  records: a second look is a look.
+* **Refusals are bounded.** A caller without the permission could ask
+  again and again, and each record takes the audit log's chain lock
+  (ADR-0007), which every record in the deployment waits for. So a
+  refusal is recorded at most once per caller, action, target and
+  organization in 10 minutes, and at most 20 times per caller in 10
+  minutes across both reads. Every refusal still answers `403`.
+  * **No table of its own.** The audit log is the state:
+    `easyrmm_job_refusal` looks for the caller's denied records of the
+    last 10 minutes before it appends.
+  * **More than one server process.** The look and the append run under
+    a transaction advisory lock per caller
+    (`pg_advisory_xact_lock(63, …)`), so two requests from one caller, on
+    any server process, take turns. Under PostgreSQL's default
+    `READ COMMITTED`, each statement sees what committed before it, so the
+    second sees the first's record. A refusal that is skipped takes no
+    chain lock.
+  * **Written synchronously**, in the request's transaction, like every
+    audit record: if it cannot be written, the request answers an error,
+    not `403`.
+  * **Where a refused `job.arguments_view` is recorded**: as a successful
+    one would be, once for each organization of the job's runs the caller
+    can see, under the site when those runs share one. A caller who sees
+    none of the job's runs gets `404` and no record.
 
 ### Retention
-*Decided in review.*
+*Decided in review. The 30-day default is pending owner question 1.*
 
 * **Jobs and runs keep `EASYRMM_JOB_RETENTION`** (default 90 days). Their
   history, who ran what where and how it ended, is what Read-Only and the
@@ -344,10 +446,29 @@ rule for each is set here so that later work keeps it:
   retention settings. 30 days is ADR-0060's default for logs. The default
   follows a shorter job retention so that no deployment fails to start
   after the upgrade.
-  * The hourly purge empties `stdout` and `stderr` of each run that
-    finished longer ago than that, and sets `output_removed_at`: one new
-    column, with an index for the purge. The run, its status and exit code
-    stay until the job goes.
+  * **Counted from when the output arrived**, `job_runs.output_stored_at`,
+    which is set exactly while a run has output
+    (`job_runs_output_stored`). Output kept before the upgrade counts from
+    when its run finished.
+  * The hourly purge empties `stdout` and `stderr` of each run whose output
+    arrived longer ago than that, clears `output_stored_at` and sets
+    `output_removed_at`, using a partial index on `output_stored_at`. The
+    run, its status and exit code stay until the job goes. The purge is
+    not audited, since it is the deployment's rule and not a person's
+    read; the server's log says how many runs it emptied.
+  * **`output_removed_at` marks only runs that had output.** The purge
+    touches only runs with output, and *Remove output* answers
+    `409 no_output` for a run that printed nothing. The two times are never
+    both set (`job_runs_output_removed`).
+  * **Late results.** A run marked *No result* still accepts a result that
+    arrives later, as before. It had no output, so nothing of it was
+    removed; the output that arrives is kept for the output retention from
+    then, and purged like any other. **A result never stores output on a
+    run whose output was removed**: it records the status and exit code
+    and leaves the output empty. Today that cannot arise, since output
+    arrives only with the result that ends a run and an ended run takes no
+    second result. The rule is kept in the result's SQL and in the table's
+    constraints so that a later change cannot bring removed output back.
   * Emptying removes the output from the table. The old row versions go
     at PostgreSQL's next vacuum, and backups made before keep the output
     as long as the backups are kept.
@@ -365,10 +486,10 @@ rule for each is set here so that later work keeps it:
   deployment's value, never lengthen it.
 * **Not per kind now.** ADR-0054's daily checks (7 days) and the planned
   registry and event log viewers (minutes or hours) need retention per
-  kind. The purge already works per run, on when it finished; per kind,
-  it gains the job's kind in its condition and a time per kind. That is
-  built with the first kind that needs it, not before: a table holding
-  one value for every kind would be code that nothing uses.
+  kind. The purge already works per run, on when its output arrived; per
+  kind, it gains the job's kind in its condition and a time per kind.
+  That is built with the first kind that needs it, not before: a table
+  holding one value for every kind would be code that nothing uses.
 
 ### Arguments
 *Decided in review.*
@@ -438,22 +559,32 @@ rule for each is set here so that later work keeps it:
   role. From the first request after the upgrade, every Technician and
   above holds the permission and no Read-Only user does. There are no
   custom roles to migrate.
-* **API tokens.** EasyRMM has none, so there is nothing to migrate. A
-  script that reads `stdout`, `stderr` or `args` from the console's API
+* **API clients.** EasyRMM has no API tokens, and `/api/v1` has no written
+  compatibility policy: the console, served by the same server, is its
+  only client in this repository. A script that read `stdout`, `stderr`,
+  `stdoutTruncated`, `stderrTruncated` or `args` from run and job answers
   moves to the new endpoints. In this repository that is
-  `scripts/drill/backup-restore.sh`, which reads a run's output.
-* **The database.** One migration adds `job_runs.output_removed_at` and
-  its index. Existing output stays until the first purge after the
-  upgrade empties what finished more than 30 days before (or the value
-  set). The CHANGELOG says so in the release that brings it.
+  `scripts/drill/backup-restore.sh`, which now reads its run's output from
+  `/output`.
+* **The database.** Migration 00028 adds the sizes, `output_stored_at`,
+  `output_removed_at` and `arg_count`, the two constraints, the purge's
+  index, the column privileges and the four functions. Output kept before
+  counts from when its run finished, so the first purge after the upgrade
+  empties output whose run finished more than 30 days before (or the value
+  set). The CHANGELOG says so. Down gives the server's role its table
+  privileges back and drops what up added.
 * **Secrets printed before.** Reads before the upgrade left no record. The
   CHANGELOG and the guide say: treat a secret that a job printed, or that
   was passed as an argument, within the job retention before the upgrade
   as seen by every Read-Only user of its site, and change it. For
   BitLocker: add a new recovery password, then remove the old one.
-* **A console page loaded before the upgrade** says "Nothing was written"
-  for every run until it is reloaded, since the run no longer carries
-  output.
+* **A console tab loaded before the upgrade** runs the old code: on a
+  job's page it reads `args`, which is gone, and goes blank; on a run's
+  page it says "Nothing was written". Reloading loads the new console, and
+  the old one reloads by itself at its next page change once it has seen
+  the server's new build (`web/src/lib/consoleBuild.ts`). The new console
+  has the boundary with **Reload** (The console), so a later change of
+  this kind shows that instead of a blank window.
 
 ### The documentation
 *Decided in review.*
@@ -463,10 +594,10 @@ Written with the implementation, and saying only what is built:
 * `docs/operations/scripts-and-jobs.md`:
   * a section *Who sees output and arguments*: `job.view_sensitive`, what
     Read-Only sees instead, every read audited, *Remove output*, and the
-    two retention settings;
+    retention settings;
   * **never print secrets** (passwords, tokens, keys, recovery
     passwords) in output: everyone who holds `job.view_sensitive` in the
-    site can read them for the output retention, backups keep them, and
+    site can read them until the output is removed, backups keep them, and
     they pass through the agent's journal. If a script must print one,
     remove the run's output once it is used, and change the secret if
     others could have read it;
@@ -474,9 +605,9 @@ Written with the implementation, and saying only what is built:
     own, with its own permission and every read audited. It is planned,
     not built. Until then, a recovery key retrieved by a script is in
     that run's output: remove it after use;
-  * in *Running a script*: arguments are shown to people with
+  * in *Running a script*: arguments are read by people with
     `job.view_sensitive`, every read audited; still never pass passwords
-    or keys as arguments;
+    or keys as arguments; *Run again* needs the arguments;
   * in *Retention*: both settings;
   * in *What happens on the device*: the journal on Windows as well as
     Linux, and who can read it.
@@ -487,15 +618,18 @@ Written with the implementation, and saying only what is built:
   that points at the run's output): output needs `job.view_sensitive`.
 * `docs/deployment/docker.md` (the retention table) and
   `deploy/docker-compose.yml` (passing `EASYRMM_JOB_OUTPUT_RETENTION`).
-* `docs/architecture/database.md`: `job_runs.output_removed_at` and the
-  purge.
+* `docs/architecture/database.md`: the new columns, privileges and
+  functions, and that a column added to `job_runs` or `jobs` needs its own
+  grant.
 * `docs/security/threat-model.md`, under *Known limits*: output and
   arguments are plain text in the database and its backups, and holders
   of `job.view_sensitive` can read them, with a record.
 * `PRIVACY.md`: who sees script output, and for how long it is kept.
 * `CHANGELOG.md`: who sees output now, the new setting and the first
-  purge, and the advice on secrets printed before.
-* ADR-0017's *Amended by ADR-0063* line.
+  purge, the advice on secrets printed before, and tabs left open across
+  the upgrade.
+* ADR-0017's *Amended by ADR-0063* line, and a note at ADR-0060's line
+  that `job.view` shows a run with its arguments.
 
 ### What this does not fix
 *Decided in review.*
@@ -511,10 +645,11 @@ Said plainly here and in the guide:
   operator can read the database. Their reads through the console are
   audited like anyone's, but they can change what the server does.
 * **The database and its backups** hold output for the output retention,
-  and arguments for the job retention, in plain text. The backup guide
-  keeps `.env`, which opens every sealed value, next to the dump
-  ([Back up](../../operations/backup-restore.md#back-up)), so a leaked
-  backup set would open sealed output too.
+  and arguments for the job retention, in plain text, so a dump alone
+  holds them. Sealing them would not have protected a leaked backup set
+  either: the backup guide keeps `.env`, which opens every sealed value,
+  next to the dump
+  ([Back up](../../operations/backup-restore.md#back-up)).
 * **The computer** holds output in the agent's journal until it is
   reported, arguments on its command lines and in its logs, and whatever
   the script itself left behind.
@@ -546,7 +681,8 @@ Said plainly here and in the guide:
   it to show it, and the backup set holds the key, so it would protect
   only a dump taken without `.env`, at the cost of a column type change
   and resealing when keys rotate. A shorter retention does more for less.
-* **Redacting BitLocker recovery passwords from output now.** The pattern
+* **Redacting BitLocker recovery passwords from output now** (pending
+  owner question 2). The pattern
   is distinctive (eight groups of six digits, each a multiple of 11). But
   redacting it removes the only way in the console to read a key for a
   locked-out user before the keystore exists, and it covers neither LUKS
@@ -563,14 +699,18 @@ Said plainly here and in the guide:
 * Read-Only users no longer see output or argument values. Technicians
   and above see them at their sites, and each read is recorded where the
   site's administrators see it.
-* The API changes shape: `stdout`, `stderr` and `args` leave the run and
-  job responses, and two read endpoints and one delete are added. The
-  console is the only client; the backup-restore drill moves to the new
-  endpoint.
+* The API changes shape: `stdout`, `stderr`, the truncation flags and
+  `args` leave the run and job answers, the answers for one run and one
+  job gain a few fields, and two read endpoints and one delete are added.
+  The console is the only client; the backup-restore drill moves to the
+  new endpoint.
+* The server's database role can no longer select output or arguments;
+  a column added to `job_runs` or `jobs` needs its own grant.
 * Output is kept 30 days by default, not 90, and the first purge after
   the upgrade empties older output. Job history keeps 90 days.
 * The audit log gains a record for each run page a holder opens, and for
-  each page of a script job with arguments.
+  each page of a script job with arguments; refusals add at most 20 a
+  user in 10 minutes.
 * The raw output of software and hardening runs needs the permission too.
   Their actions, modules and findings do not.
 * The rule for later work: what a computer prints or a person types as an
@@ -582,99 +722,117 @@ Said plainly here and in the guide:
 
 ## Testing
 * **Integration tests** in Go against real PostgreSQL through `testdb`
-  (`make test-db`), without mocks: the jobs service in
-  `server/internal/jobs`, and the HTTP API in `server/internal/app`, as
-  `jobs_api_integration_test.go` is now.
-  * **Every role on every path.** The callers: Read-Only at an
-    organization and at a site; Technician at an organization, at a site,
-    and at another site of the same organization; Site Administrator;
-    Organization Administrator; Super Administrator; a user who is
-    Read-Only in one organization and Technician in another; a user with
-    no role. The jobs: a library script job with arguments across two
-    organizations, a software job and a hardening job, with runs open,
-    finished, and with output removed. Each caller calls each path:
-    `GET /api/v1/jobs`, `GET /api/v1/jobs/{id}`,
-    `GET /api/v1/jobs/{id}/arguments`, `POST /api/v1/jobs`,
-    `POST /api/v1/jobs/software`, `POST /api/v1/jobs/hardening`,
-    `POST /api/v1/jobs/{id}/cancel`, `GET /api/v1/job-runs`,
-    `GET /api/v1/job-runs/{id}`, `GET /api/v1/job-runs/{id}/output`,
-    `DELETE /api/v1/job-runs/{id}/output`,
-    `POST /api/v1/job-runs/{id}/cancel` and
-    `GET /api/v1/devices/{id}/hardening`.
-  * **Fields left out.** Answers are decoded as maps. `stdout`, `stderr`
-    and `args` are never keys. The size, truncation and removal keys are
-    there exactly for holders at the run's site. `canViewOutput`,
-    `canViewArguments` and `argCount` are right for each caller and run.
-  * **A marker.** The output and an argument carry a random marker. It
-    appears in the output and arguments endpoints' answers to holders,
-    and nowhere else: in no other answer to any caller, and in no answer
-    at all to a caller without the permission.
-  * **Answers and records.** `200` with one success record per read, under
-    the run's organization, site and device, and for arguments one per
-    organization (a super administrator reading the two-organization
-    job's arguments makes two); `403` with one denied record; `404` and
-    `409` with none. No record's details hold the marker. The site's
-    administrators see the records through `GET /api/v1/audit`; the
-    other organization's do not. With appends made to fail (a trigger the
-    test adds as the owner), the endpoint answers an error and returns no
-    output.
-  * **Removing output**: by a Technician of the site; refused for
-    Read-Only (`403`), for another site's Technician (`404`) and for an
-    open run (`409`); recorded once. Afterwards the endpoint answers
-    `409 output_removed` and the run carries `outputRemovedAt`.
-  * **Retention**, with the service's clock moved: output emptied after
-    the output retention, the run kept; the job removed after the job
-    retention; nothing emptied while a run is open. The configuration's
-    default, the shorter default under a short job retention, and its
-    refusals (`server/internal/config`).
-  * **The hardening error** for a result naming a module the job did not
-    ask for quotes nothing from the output, in the run's error or in the
-    server's log captured by the test.
-* **Every export and notification path**, with the marker in output and
-  arguments:
-  * the six reports and their CSV downloads, for a Read-Only user and a
-    Technician, contain no marker;
-  * audit forwarding, with the forwarding tests' loopback collector over
-    TCP: the new records arrive, and no message contains the marker;
-  * the server's log, captured through the whole test, contains no
-    marker;
-  * a guard test fails if any package other than `server/internal/jobs`
-    names `job_runs.stdout`, `job_runs.stderr` or `jobs.args` in its SQL,
-    so that a later export or notification cannot read them without
-    changing these tests. ADR-0053's sender, when it is built, adds the
-    marker to its own tests.
+  (`make test-db`), without mocks.
+  * **The jobs service**
+    (`server/internal/jobs/output_integration_test.go`):
+    * **Every kind of caller**: Super Administrator; Organization
+      Administrator; Site Administrator; Technician at the organization,
+      at the run's site, and at another site of it; Read-Only at the
+      organization and at the site; a user who is Read-Only in one
+      organization and Technician in another; another organization's
+      administrator; a user with no role. One library script job with two
+      arguments, across two organizations, its output and arguments
+      carrying markers. For each caller: the run's and the job's answers,
+      decoded as maps (`canViewOutput`, the size and removal keys exactly
+      for holders, `argCount`, `canViewArguments`, no marker, no run of a
+      job carrying output fields); the output read; the arguments read; and
+      the records each writes, with their organizations and sites (a
+      super administrator reading the two-organization job's arguments
+      makes two). Empty output and an open run too.
+    * **Refusals bounded**: ten concurrent refused reads by one user make
+      one record; refusals stop being recorded at 20 per user in 10
+      minutes; another user is counted apart; with the audit clock moved
+      10 minutes on, a refusal is recorded again.
+    * **Retention and removal**, with the purge's clock moved: output
+      emptied after the output retention counted from when it arrived,
+      the run kept; a lost run, then the purge and *Remove output*
+      (nothing to remove), then its late result, which is stored and later
+      purged; a run whose output was removed takes no output from a result
+      (the state set as the owner, since today's statuses cannot reach
+      it); *Remove output*'s permissions and its `409`s, with one record;
+      a second result ignored.
+    * **The database refuses the server's role**: `42501` for selecting
+      `stdout`, `stderr`, `*`, `args`, a whole row, or `RETURNING stdout`,
+      and for calling the helper functions directly; the only columns of
+      the two tables it lacks are those three; the delivery function
+      answers only at platform scope; with appends made to fail (a trigger
+      the test adds as the owner), the reads answer an error and return
+      nothing, refusals included.
+  * **The migration**
+    (`server/internal/database/job_output_migration_integration_test.go`):
+    00028 down and up over runs kept before: the backfill, the sizes, the
+    argument count, the constraints, and the privileges taken and given
+    back.
+  * **The HTTP API**
+    (`server/internal/app/job_output_api_integration_test.go`), with
+    devices enrolled and reporting through the agent API: sites in two
+    organizations; a Technician of one site, a Read-Only user of the
+    organization, the site's administrator, another organization's
+    administrator and a super administrator; output and an argument
+    carrying random markers.
+    * Each caller asks for the job list, the run lists, the run, the job,
+      the output and the arguments; `401` without a session; `404`,
+      `409 run_open`, `409 no_output` and `409 output_removed`; removal
+      refused for Read-Only (`403`) and for the other organization
+      (`404`).
+    * The site's administrator sees the records through
+      `GET /api/v1/audit`, the Read-Only user's denied one included; the
+      other organization's administrator does not.
+    * Every report and its CSV download answer for Read-Only and the
+      Technician.
+    * Audit forwarding over TCP to a loopback collector, driven by the
+      test, delivers the three new actions.
+    * No marker in any other answer, in the forwarded messages, in the
+      server's log captured at debug level for the whole test, or in the
+      audit records; no `stdout`, `stderr` or `args` key in any other
+      answer.
+  * The jobs, hardening, software and enrolled-agent tests that read
+    output or arguments read them through the new functions and endpoints.
+* **No guard test on SQL.** The draft planned a test failing when a
+  package other than `server/internal/jobs` names the columns. The
+  database now refuses them to the server's role, and the Go types for
+  runs and jobs have no such fields, so it is not built. ADR-0053's
+  sender, when it is built, adds the marker to its own tests.
 * **Unit tests**: `rbac_test.go` (Technicians and above hold the
-  permission, Read-Only does not, the roles stay a chain of supersets),
-  and the handlers in `server/internal/httpapi/jobsapi`.
+  permission, Read-Only does not, the roles stay a chain of supersets);
+  the hardening refusal quotes nothing from the output; the
+  configuration's default, the shorter default under a short job
+  retention, and its refusals; the Compose file passes the setting.
+* **Coverage.** `server/internal/httpapi/jobsapi` has no tests of its own:
+  its handlers are covered by the API tests in `server/internal/app`,
+  because the integration run measures with `-coverpkg=./...`
+  (`make test-integration`; floors in `scripts/ci/check-coverage.sh`).
 * **Page tests** (`web/src/pages/jobs/jobs.test.tsx`), recording the
   requests the test server receives:
-  * Read-Only: the run's and the job's pages say "Hidden: needs
-    permission …", never "Nothing was written", and no request goes to
-    `/output` or `/arguments`;
-  * a Technician: one request to `/output` once the run has finished, and
-    none while it runs, when rows on the job's page are hovered or
-    focused, when the window regains focus, or when the run is refreshed;
-    the output and *Copy* as today; one request to `/arguments` for a
-    script job with arguments and none for one without; *Run again*
-    presets the arguments it fetched, and is not offered where they are
-    hidden;
-  * removed output, by retention and by *Remove output* with its dialog;
-  * the audit log's names for the three new records.
+  * Read-Only: the job's and the run's pages say "Hidden: needs
+    permission …", hovering a run's row asks for the run only, and no
+    request goes to `/output` or `/arguments`;
+  * a Technician: one request to `/output` for a finished run, none while
+    it is open or when it printed nothing, and none again when the window
+    regains focus and the run is asked again; one request to `/arguments`,
+    none again when the job refreshes, shared with *Run again*, which
+    presets the fetched values and is not offered where they are hidden;
+  * *Remove output* with its dialog, after which the page says the output
+    was removed and holds no marker; not offered without `job.manage`;
+  * the audit log's names for the three records, and the *Job output*
+    area;
+  * the error boundary (`web/src/components/ErrorBoundary.test.tsx`).
 * **The browser end-to-end test** (`make e2e`, `web/e2e/console.spec.ts`)
   against a real server, with the simulated agent in `web/e2e/agent.ts`.
-  The administrator invites a Read-Only user, as the test already invites
-  a technician. The technician runs a script with an argument, and the
-  simulated agent reports output carrying the marker. The Read-Only user
-  opens the job and the run: both say hidden, and no response their
-  browser receives contains the marker. The technician opens the run and
-  sees the marker; the audit log shows "Viewed job output" by the
-  technician, under the run's site. The technician removes the output,
-  and the page says it was removed.
+  The administrator invites a Read-Only user and adds a script that prints
+  its argument. The technician signs in again and runs it with a marker as
+  its argument; the simulated agent receives the argument from its poll
+  and reports output carrying it. The Read-Only user opens the job and the
+  run: both say hidden, asking the two endpoints directly answers `403`,
+  and no response their browser receives contains the marker. The
+  technician sees the argument and the output, and removes the output,
+  after which the page says it was removed. The audit log shows the
+  technician's reads and removal and the Read-Only user's refusals.
 * **The backup-restore drill** reads its run's output through the new
-  endpoint.
+  endpoint. Changed and checked with shellcheck; not run for this change,
+  since it needs a whole deployment.
 * The agent does not change, so no agent test or test on a real computer
-  is needed. The coverage floors in `scripts/ci/check-coverage.sh` hold
-  for the packages touched.
+  is needed. The coverage floors hold for the packages touched.
 
 ## Owner questions
 1. **30 days.** Output is kept 30 days by default; today it is kept 90,
