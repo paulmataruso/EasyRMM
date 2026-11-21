@@ -646,8 +646,10 @@ jobs:
 
   # Relative links and anchors in every Markdown file, for every change: a
   # moved or renamed file breaks links in documents the change never touched.
+  # And the workflows' jobs: none may be skipped by a job it never needed,
+  # as the edge publish once was (check-job-conditions.py).
   docs:
-    name: Documentation links
+    name: Documentation links and workflow conditions
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -655,6 +657,10 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -I scripts/ci/check-md-links.py .
+      - name: Workflow job conditions
+        run: |
+          scripts/ci/check-job-conditions_test.sh
+          python3 -I scripts/ci/check-job-conditions.py .github/workflows/*.yml
 
   result:
     name: CI result
@@ -698,9 +704,16 @@ jobs:
   publish:
     name: Publish the edge build
     needs: [version, docker, contract-release, bundle-release, edge-bundle, result]
+    # !cancelled() and the needs named one by one: without a status check
+    # GitHub skips a job when any job before it, needed or not, was skipped,
+    # and result needs the jobs a push skips when it changes nothing of
+    # theirs (scripts/ci/check-job-conditions.py).
     if: >-
+      !cancelled() &&
       github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM' &&
-      needs.result.result == 'success'
+      needs.result.result == 'success' && needs.version.result == 'success' && needs.docker.result == 'success' &&
+      needs.contract-release.result == 'success' && needs.bundle-release.result == 'success' &&
+      needs.edge-bundle.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -879,7 +892,11 @@ jobs:
   edge-test:
     name: Edge build verified
     needs: [version, docker, publish]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM'
+    # As publish's: the needs named, since jobs before them may be skipped.
+    if: >-
+      !cancelled() &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM' &&
+      needs.version.result == 'success' && needs.docker.result == 'success' && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -965,7 +982,12 @@ jobs:
   edge-tag:
     name: Move edge
     needs: [version, docker, publish, edge-test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM'
+    # As publish's: the needs named, since jobs before them may be skipped.
+    if: >-
+      !cancelled() &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM' &&
+      needs.version.result == 'success' && needs.docker.result == 'success' && needs.publish.result == 'success' &&
+      needs.edge-test.result == 'success'
     concurrency:
       group: edge-tag
       cancel-in-progress: false
