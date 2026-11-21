@@ -17,6 +17,9 @@ on:
       digest:
         description: The image index's digest, as pushed from the layout
         value: ${{ jobs.build.outputs.digest }}
+      artifact-id:
+        description: The ID of the artifact easyrmm-server-image, the layout
+        value: ${{ jobs.build.outputs.artifact-id }}
   workflow_dispatch:
     inputs:
       version:
@@ -34,6 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       digest: ${{ steps.layout.outputs.digest }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -63,13 +67,29 @@ jobs:
         id: layout
         run: |
           digest=$(tar -xOf easyrmm-server.oci.tar index.json | jq -r '.manifests[0].digest')
-          if ! printf '%s' "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+          if ! [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "::error::no image index in the layout: $digest"
             exit 1
           fi
           scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$digest" linux/amd64 easyrmm-server:ci
           scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$digest" linux/arm64 easyrmm-server:ci-arm64
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      # For the smoke test, ci.yml's end-to-end jobs and its publish job.
+      # This order matters: the layout's digest (above) and this artifact's
+      # ID are this job's outputs, fixed before the checks and the scanner
+      # run. Any step here can reach the artifact service's token; one that
+      # replaced the artifact would give it another ID, which the jobs that
+      # trust it refuse (they download by ID), and another layout, whose
+      # digest they check.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        with:
+          name: easyrmm-server-image
+          path: easyrmm-server.oci.tar
+          retention-days: 3
+          # Its layers are compressed already.
+          compression-level: 0
+          if-no-files-found: error
       - name: Image runs and reports its version
         env:
           VERSION: ${{ inputs.version }}
@@ -103,14 +123,6 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-      # For the smoke test, ci.yml's end-to-end jobs and its publish job.
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: easyrmm-server-image
-          path: easyrmm-server.oci.tar
-          retention-days: 3
-          # Its layers are compressed already.
-          compression-level: 0
 
   compose-smoke:
     name: Compose deployment smoke test
