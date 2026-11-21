@@ -467,3 +467,13 @@ func TestProbe(t *testing.T) {
 		t.Error("probed a missing build")
 	}
 }
+
+// TestMarkerName: the agent checks its state folder by name before reading
+// it (state.layout); the marker is checked as update.json, and its
+// temporary copy as update.json.tmp.
+func TestMarkerName(t *testing.T) {
+	u := &Updater{Dir: "state"}
+	if markerName != "update.json" || u.markerPath() != filepath.Join("state", "update.json") {
+		t.Errorf("marker = %s: rename it in state.layout too", u.markerPath())
+	}
+}

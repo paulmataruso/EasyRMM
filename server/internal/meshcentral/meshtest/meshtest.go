@@ -17,6 +17,14 @@ const (
 	URLVar = "EASYRMM_TEST_MESH_URL"
 )
 
+// IPOrigins are the MeshCentral origins the test MeshCentral serves besides
+// its public one, as a server with IP access serves one per address
+// (ADR-0016); meshtestenv configures them, and its certificate names their
+// addresses. The addresses are for documentation (RFC 5737, RFC 3849):
+// tests reach the gateway on loopback and only name them in Host and
+// Origin.
+var IPOrigins = []string{"https://192.0.2.10:4443", "https://[2001:db8::10]:4443"}
+
 // Env is a running test MeshCentral.
 type Env struct {
 	// URL is its loopback HTTP address.

@@ -18,6 +18,7 @@ import { HealthCard, PerformanceCard, useDeviceInventory } from "./DeviceHealth"
 import { DeviceAlertsCard } from "../alerts/DeviceAlertsCard";
 import { SoftwarePanel } from "./DeviceSoftware";
 import { PatchesPanel } from "./DevicePatches";
+import { HardeningPanel } from "./DeviceHardening";
 import { platformName } from "./platform";
 import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
 import { AgentLine } from "./agentUpdate";
@@ -62,6 +63,8 @@ export function DeviceDetailPage() {
     { id: "hardware", label: "Hardware", hidden: !hasAgent },
     { id: "software", label: "Software", hidden: !hasAgent || !can("software.view") },
     { id: "patches", label: "Patches", hidden: !hasAgent || patching.data?.configured !== true },
+    // Hardening covers Linux (ADR-0051); viewing its findings needs only device.view.
+    { id: "hardening", label: "Hardening", hidden: !hasAgent || d.platform !== "linux" },
   ];
   const requested = url.get("tab");
   const tab = tabs.some((t) => t.id === requested && !t.hidden) ? requested : "overview";
@@ -153,6 +156,12 @@ export function DeviceDetailPage() {
       {tab === "patches" && (
         <div role="tabpanel" aria-labelledby="tab-patches">
           <PatchesPanel device={d} />
+        </div>
+      )}
+
+      {tab === "hardening" && (
+        <div role="tabpanel" aria-labelledby="tab-hardening">
+          <HardeningPanel device={d} />
         </div>
       )}
 

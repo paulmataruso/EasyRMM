@@ -63,6 +63,9 @@ floors=(
   # second factor.
   "server/internal/sso                     85"
   "server/internal/httpapi/ssoapi          90"
+  # The updater's hold: it decides whether the server answers anything
+  # (ADR-0052).
+  "server/internal/updater                 95"
   # Outbound connections a Super Administrator configures: no cloud
   # metadata or link-local addresses.
   "server/internal/netguard                95"

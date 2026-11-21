@@ -162,6 +162,43 @@ if (($template -split ';')[0] -ne $expectedPlatform) {
 }
 Write-Host "    Platform $template"
 
+# One value from the package's tables: the first column of the first row the query returns, or $null.
+function Get-MsiValue([string]$Path, [string]$Query) {
+    $msiInstaller = New-Object -ComObject WindowsInstaller.Installer
+    $database = $msiInstaller.GetType().InvokeMember('OpenDatabase', 'InvokeMethod', $null, $msiInstaller,
+        [object[]]@([string]$Path, [int]0))
+    $view = $database.GetType().InvokeMember('OpenView', 'InvokeMethod', $null, $database, [object[]]@([string]$Query))
+    try {
+        [void]$view.GetType().InvokeMember('Execute', 'InvokeMethod', $null, $view, $null)
+        $record = $view.GetType().InvokeMember('Fetch', 'InvokeMethod', $null, $view, $null)
+        if ($null -eq $record) { return $null }
+        $value = [string]$record.GetType().InvokeMember('StringData', 'GetProperty', $null, $record, [object[]]@([int]1))
+        [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($record)
+        return $value
+    }
+    finally {
+        [void]$view.GetType().InvokeMember('Close', 'InvokeMethod', $null, $view, $null)
+        foreach ($comObject in @($view, $database, $msiInstaller)) {
+            [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($comObject)
+        }
+    }
+}
+
+# The enrollment token must never reach an MSI log, whichever way the package is built (scripts/build-msi-linux.sh
+# checks the same): ENROLLMENTTOKEN is a hidden property, and WriteRegistryValues' progress text, which by default
+# logs each registry value, leaves the value out.
+$hidden = Get-MsiValue $builtMsi 'SELECT `Value` FROM `Property` WHERE `Property` = ''MsiHiddenProperties'''
+if (-not $hidden -or (($hidden -split ';') -notcontains 'ENROLLMENTTOKEN')) {
+    throw "MsiHiddenProperties is '$hidden' and does not list ENROLLMENTTOKEN: the enrollment token would be written to MSI logs."
+}
+$progress = Get-MsiValue $builtMsi 'SELECT `Template` FROM `ActionText` WHERE `Action` = ''WriteRegistryValues'''
+if ($progress -ne 'Key: [1], Name: [2]') {
+    throw "WriteRegistryValues' progress text is '$progress', not 'Key: [1], Name: [2]': the enrollment token would be written to MSI logs."
+}
+$icon = Get-MsiValue $builtMsi 'SELECT `Value` FROM `Property` WHERE `Property` = ''ARPPRODUCTICON'''
+if ($icon -ne 'EasyPatch.ico') { throw "ARPPRODUCTICON is '$icon', not EasyPatch.ico." }
+Write-Host "    Enrollment token hidden from MSI logs; icon $icon"
+
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $msi = Join-Path $OutputDirectory $msiName
 Copy-Item $builtMsi $msi -Force

@@ -29,7 +29,37 @@ func TestDecideOffline(t *testing.T) {
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
 			c.f.kind, c.f.minutes = KindOffline, 15
-			got, v := decide(c.f, now)
+			got, v := decide(c.f, now, time.Time{})
+			if got != c.want || !sameFloat(v, c.v) {
+				t.Fatalf("decide = %v %v, want %v %v", got, deref(v), c.want, deref(c.v))
+			}
+		})
+	}
+}
+
+// TestDecideOfflineAfterStart: a device counts as seen no earlier than the
+// floor, AgentGrace after the server began serving agents (ADR-0052).
+func TestDecideOfflineAfterStart(t *testing.T) {
+	now := time.Date(2026, 11, 21, 12, 0, 0, 0, time.UTC)
+	alert := ptr(uuid.New())
+	ago := func(m float64) time.Time { return now.Add(-time.Duration(m * float64(time.Minute))) }
+	cases := map[string]struct {
+		f     facts
+		floor time.Time
+		want  action
+		v     *float64
+	}{
+		"just started":                    {facts{seen: ptr(ago(120))}, ago(-AgentGrace.Minutes()), actNone, nil},
+		"a moment short of the minutes":   {facts{seen: ptr(ago(120))}, ago(14.9), actNone, nil},
+		"the policy's minutes from floor": {facts{seen: ptr(ago(120))}, ago(15), actOpen, ptr(120.0)},
+		"an open alert stays open":        {facts{alertID: alert, seen: ptr(ago(120))}, ago(-AgentGrace.Minutes()), actUpdate, ptr(120.0)},
+		"back online after the start":     {facts{alertID: alert, online: true, seen: ptr(ago(0))}, ago(-AgentGrace.Minutes()), actResolve, nil},
+		"the floor long past":             {facts{seen: ptr(ago(16))}, ago(600), actOpen, ptr(16.0)},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			c.f.kind, c.f.minutes = KindOffline, 15
+			got, v := decide(c.f, now, c.floor)
 			if got != c.want || !sameFloat(v, c.v) {
 				t.Fatalf("decide = %v %v, want %v %v", got, deref(v), c.want, deref(c.v))
 			}
@@ -62,14 +92,14 @@ func TestDecideMeasurements(t *testing.T) {
 			if name != "no threshold" {
 				c.f.threshold = ptr(90)
 			}
-			got, v := decide(c.f, now)
+			got, v := decide(c.f, now, now)
 			if got != c.want || !sameFloat(v, c.v) {
 				t.Fatalf("decide = %v %v, want %v %v", got, deref(v), c.want, deref(c.v))
 			}
 		})
 	}
 	// A one-minute policy needs one measurement.
-	if got, _ := decide(facts{kind: KindDisk, threshold: ptr(90), minutes: 1, n: 1, lo: ptr(92.0), last: ptr(92.0)}, now); got != actOpen {
+	if got, _ := decide(facts{kind: KindDisk, threshold: ptr(90), minutes: 1, n: 1, lo: ptr(92.0), last: ptr(92.0)}, now, now); got != actOpen {
 		t.Fatalf("one-minute policy = %v", got)
 	}
 }

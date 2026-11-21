@@ -16,7 +16,7 @@ restore.
 `/srv/easyrmm/meshcentral-config` needs no backup: the server rewrites it on
 every start from `.env` and the database. Nor does
 `/srv/easyrmm/easypatch/winget`, the engine's copy of winget, which it
-downloads again.
+downloads again, or `/srv/easyrmm/updater`, the updater's status.
 
 Store backups encrypted and off the host. The `.env` file and the database
 dump together give full control of every managed device: protect them

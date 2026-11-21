@@ -230,7 +230,7 @@ func (a *API) listRuns(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	items, err := a.svc.ListRuns(r.Context(), httpapi.Caller(r), jobs.RunQuery{DeviceID: device})
+	items, err := a.svc.ListRuns(r.Context(), httpapi.Caller(r), jobs.RunQuery{DeviceID: device, Kind: r.URL.Query().Get("kind")})
 	if err != nil {
 		return err
 	}

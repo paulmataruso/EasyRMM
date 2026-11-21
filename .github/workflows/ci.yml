@@ -8,6 +8,14 @@
 # .github/workflows/easypatch-*.yml) skips EasyRMM's checks, and a change
 # only to EasyRMM skips EasyPatch's. This workflow always runs, so "CI
 # result" always reports. Security runs for every change; it scans both.
+#
+# Every run is a version (ADR-0052; docs/architecture/edge-manifest.md): the
+# server image is built once, as that version, and the end-to-end jobs run
+# that image. The contract and bundle tests also run against the last
+# release's patching engine, which edge builds run, and the edge bundle and
+# its manifest are built and checked. For a push to main in this repository,
+# and only then, the last jobs publish the build once every other job
+# passed, verify it as the updater will, and move "edge" to it.
 name: CI
 
 on:
@@ -118,6 +126,102 @@ jobs:
             echo "machines=$machines"
           } | tee -a "$GITHUB_OUTPUT"
 
+  # This run's version (scripts/release/version.sh), and the patching engine
+  # of the last release (R), which edge builds run: the image R's release
+  # manifest names, once that manifest's attestation verifies as the updater
+  # verifies a release's (ADR-0052: release.yml at R's tag, pushed, on a
+  # GitHub-hosted runner, of this repository and of the tag's commit) and the
+  # manifest is R's, of that commit. Until R's GitHub release exists, nothing
+  # runs against its engine and nothing is published. Later jobs take the
+  # version from here, so re-running failed jobs keeps the image already
+  # built.
+  version:
+    name: Edge version
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      attestations: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+      engine-image: ${{ steps.engine.outputs.image }}
+      engine-version: ${{ steps.engine.outputs.version }}
+      release-manifest-id: ${{ steps.release-manifest.outputs.artifact-id }}
+      release-manifest-sha256: ${{ steps.engine.outputs.manifest-sha256 }}
+    steps:
+      # Every tag, for R; file contents only as needed.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+      - name: Release scripts' tests
+        run: |
+          scripts/release/version_test.sh
+          scripts/release/manifest_test.sh
+          scripts/release/release-tags_test.sh
+          scripts/release/edge-retention_test.sh
+          scripts/ci/check-download_test.sh
+      - name: This run's version
+        id: version
+        run: |
+          release=$(scripts/release/version.sh release)
+          version=$(scripts/release/version.sh edge "$GITHUB_RUN_NUMBER" "$GITHUB_RUN_ATTEMPT")
+          echo "The last release is $release; this build is $version."
+          { echo "release=$release"; echo "version=$version"; } >> "$GITHUB_OUTPUT"
+      - name: The last release's engine, from its attested manifest
+        id: engine
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE: ${{ steps.version.outputs.release }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          if ! gh release view "$RELEASE" --repo "$GITHUB_REPOSITORY" --json tagName > /dev/null 2> "$RUNNER_TEMP/view.err"; then
+            if grep -q 'release not found' "$RUNNER_TEMP/view.err"; then
+              echo "::warning::$RELEASE has no GitHub release yet: nothing runs against its engine, and this build is not published."
+              exit 0
+            fi
+            cat "$RUNNER_TEMP/view.err" >&2
+            exit 1
+          fi
+          manifest="$RUNNER_TEMP/release/$RELEASE-manifest.json"
+          gh release download "$RELEASE" --repo "$GITHUB_REPOSITORY" --pattern "${manifest##*/}" --dir "$RUNNER_TEMP/release"
+          commit=$(git rev-parse "refs/tags/$RELEASE^{commit}")
+          workflow="https://github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml@refs/tags/$RELEASE"
+          gh attestation verify "$manifest" --repo "$GITHUB_REPOSITORY" \
+            --cert-identity "$workflow" --cert-oidc-issuer https://token.actions.githubusercontent.com \
+            --source-ref "refs/tags/$RELEASE" --source-digest "$commit" --deny-self-hosted-runners \
+            --format json > "$RUNNER_TEMP/verified.json"
+          jq -e --arg id "$REPOSITORY_ID" --arg workflow "$workflow" 'length > 0 and all(.[];
+            .verificationResult.signature.certificate | .sourceRepositoryIdentifier == $id and
+              .buildConfigURI == $workflow and .buildTrigger == "push" and .runnerEnvironment == "github-hosted")' \
+            "$RUNNER_TEMP/verified.json" > /dev/null
+          if ! jq -e --arg commit "$commit" --arg version "${RELEASE#easyrmm-}" \
+            '.commit == $commit and .easyrmm.version == $version' "$manifest" > /dev/null; then
+            echo "::error::$RELEASE's manifest is not of $commit and ${RELEASE#easyrmm-}"
+            exit 1
+          fi
+          version=$(jq -r '.easypatch.version' "$manifest")
+          image=$(jq -r '.easypatch.image' "$manifest")
+          if ! printf '%s' "$version" | grep -Eqx '[0-9]+\.[0-9]+\.[0-9]+' ||
+            ! printf '%s' "$image" | grep -Eqx "ghcr\\.io/[a-z0-9-]+/easypatch-server:$version@sha256:[0-9a-f]{64}"; then
+            echo "::error::$RELEASE's manifest names the engine \"$image\", version \"$version\""
+            exit 1
+          fi
+          echo "$RELEASE's engine: EasyPatch $version, $image"
+          sha=$(sha256sum < "$manifest" | cut -c1-64)
+          { echo "image=$image"; echo "version=$version"; echo "manifest-sha256=$sha"; } >> "$GITHUB_OUTPUT"
+      # Edge bundle and manifest takes it by this ID and SHA-256.
+      - if: steps.engine.outputs.image != ''
+        id: release-manifest
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-manifest
+          path: ${{ runner.temp }}/release/${{ steps.version.outputs.release }}-manifest.json
+          retention-days: 3
+          if-no-files-found: error
+
   backend:
     name: Backend
     needs: changes
@@ -136,18 +240,15 @@ jobs:
     if: needs.changes.outputs.easyrmm == 'true'
     uses: ./.github/workflows/frontend-tests.yml
 
+  # Builds the server image once, as this run's version; only publish,
+  # below, pushes it.
   docker:
     name: Docker
-    needs: changes
+    needs: [changes, version]
     if: needs.changes.outputs.easyrmm == 'true'
     uses: ./.github/workflows/docker-build.yml
-    # Publishing runs only for pushes to main in this repository (see the
-    # workflow); pull requests build, scan and smoke-test the image only.
-    permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
+    with:
+      version: ${{ needs.version.outputs.version }}
 
   # EasyPatch's checks need only contents: read; they build images but do not
   # push them (release.yml publishes them, with EasyRMM's release).
@@ -189,18 +290,48 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
+      # The backend job, which runs it with the other unit tests, is skipped
+      # when only easypatch/ changed, as when a release raises <Version>.
+      - name: The fake engine reports the engine's version (TestEngineVersion)
+        run: go test -count=1 -run '^TestEngineVersion$' ./server/internal/easypatch/
       - name: EasyRMM against the engine built from this commit
+        run: make test-contract
+
+  # The same against the last release's engine, which edge builds run with
+  # this commit's server (ADR-0052), whenever EasyRMM changes.
+  contract-release:
+    name: EasyPatch contract, last release's engine
+    needs: [changes, version]
+    if: needs.changes.outputs.easyrmm == 'true' && needs.version.outputs.engine-image != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: EasyRMM against the engine of ${{ needs.version.outputs.release }}
+        env:
+          EASYPATCH_CONTRACT_IMAGE: ${{ needs.version.outputs.engine-image }}
+          EASYPATCH_CONTRACT_VERSION: ${{ needs.version.outputs.engine-version }}
         run: make test-contract
 
   # EasyRMM with its patching engine, brought up from deploy/docker-compose.yml
   # on host networking and addressed by IP, end to end with a Linux machine:
   # first account, install command, EasyPatch agent, scan and update, then the
-  # engine's refusals (scripts/e2e/bundle.sh; ADR-0043). Both images are built
-  # from this commit.
+  # engine's refusals (scripts/e2e/bundle.sh; ADR-0043). The engine is built
+  # from this commit; the server is the Docker job's image when EasyRMM
+  # changed (the test builds one from this commit otherwise).
   bundle:
     name: Bundle end to end
-    needs: changes
-    if: needs.changes.outputs.easyrmm == 'true' || needs.changes.outputs.easypatch_server == 'true' || needs.changes.outputs.easypatch_agent == 'true'
+    needs: [changes, docker]
+    if: >-
+      !cancelled() && needs.changes.result == 'success' &&
+      (needs.docker.result == 'success' || needs.changes.outputs.easyrmm != 'true') &&
+      (needs.changes.outputs.easyrmm == 'true' || needs.changes.outputs.easypatch_server == 'true' ||
+      needs.changes.outputs.easypatch_agent == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     steps:
@@ -227,14 +358,25 @@ jobs:
       - name: Install Chromium for Playwright
         working-directory: web
         run: npx playwright install --with-deps chromium
+      - if: needs.docker.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: easyrmm-server-image
+      - name: Load the server image CI built
+        if: needs.docker.result == 'success'
+        env:
+          DIGEST: ${{ needs.docker.outputs.digest }}
+        run: |
+          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$DIGEST" linux/amd64 easyrmm-server:ci
+          rm easyrmm-server.oci.tar
+          echo "EASYRMM_BUNDLE_SERVER_IMAGE=easyrmm-server:ci" >> "$GITHUB_ENV"
       - name: Install, enroll, scan and patch through the bundle
         run: make e2e-bundle
       # With the bundle test's images (ADR-0045).
       - name: Import a standalone EasyPatch 1.10 with a real agent
         env:
-          EASYRMM_IMPORT_SERVER_IMAGE: easyrmm-e2e-bundle/easyrmm-server:local
           EASYRMM_IMPORT_ENGINE_IMAGE: easyrmm-e2e-bundle/easypatch-server:local
-        run: make e2e-import
+        run: EASYRMM_IMPORT_SERVER_IMAGE="${EASYRMM_BUNDLE_SERVER_IMAGE:-easyrmm-e2e-bundle/easyrmm-server:local}" make e2e-import
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -249,16 +391,72 @@ jobs:
           # upload-artifact leaves out unless told otherwise.
           include-hidden-files: true
 
+  # The bundle test with the Docker job's server image and the last
+  # release's engine: the pair an edge build is (ADR-0052).
+  bundle-release:
+    name: Bundle end to end, last release's engine
+    needs: [changes, version, docker]
+    if: needs.docker.result == 'success' && needs.version.outputs.engine-image != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci --no-audit --no-fund --ignore-scripts
+      - name: Install Chromium for Playwright
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: easyrmm-server-image
+      - name: Load the server image CI built
+        env:
+          DIGEST: ${{ needs.docker.outputs.digest }}
+        run: |
+          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$DIGEST" linux/amd64 easyrmm-server:ci
+          rm easyrmm-server.oci.tar
+      - name: Install, enroll, scan and patch with the engine of ${{ needs.version.outputs.release }}
+        env:
+          EASYRMM_BUNDLE_SERVER_IMAGE: easyrmm-server:ci
+          EASYRMM_BUNDLE_ENGINE_IMAGE: ${{ needs.version.outputs.engine-image }}
+        run: make e2e-bundle
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle-release-report
+          path: |
+            web/e2e-bundle/.report
+            web/e2e-bundle/.results
+          retention-days: 7
+          if-no-files-found: ignore
+          include-hidden-files: true
+
   # EasyRMM set up with setup.sh --with-authentik and the patching engine,
   # brought up from deploy/docker-compose.yml on host networking: the
   # administrator's invitation, a second factor, an organization and patching,
   # the used invitation, a refused stranger, the second factor again, and
   # easyrmm-server recover with Authentik stopped (scripts/e2e/authentik.sh;
-  # ADR-0044). Both images are built from this commit.
+  # ADR-0044). The engine is built from this commit; the server is the Docker
+  # job's image when EasyRMM changed (the test builds one otherwise).
   authentik:
     name: Authentik end to end
-    needs: changes
-    if: needs.changes.outputs.easyrmm == 'true' || needs.changes.outputs.easypatch_server == 'true'
+    needs: [changes, docker]
+    if: >-
+      !cancelled() && needs.changes.result == 'success' &&
+      (needs.docker.result == 'success' || needs.changes.outputs.easyrmm != 'true') &&
+      (needs.changes.outputs.easyrmm == 'true' || needs.changes.outputs.easypatch_server == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -276,6 +474,18 @@ jobs:
       - name: Install Chromium for Playwright
         working-directory: web
         run: npx playwright install --with-deps chromium
+      - if: needs.docker.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: easyrmm-server-image
+      - name: Load the server image CI built
+        if: needs.docker.result == 'success'
+        env:
+          DIGEST: ${{ needs.docker.outputs.digest }}
+        run: |
+          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$DIGEST" linux/amd64 easyrmm-server:ci
+          rm easyrmm-server.oci.tar
+          echo "EASYRMM_AUTHENTIK_SERVER_IMAGE=easyrmm-server:ci" >> "$GITHUB_ENV"
       - name: Invite, sign in with a second factor, refuse and recover through Authentik
         run: make e2e-authentik
       - name: Upload Playwright report
@@ -291,6 +501,77 @@ jobs:
           # The report and results directories start with a dot, which
           # upload-artifact leaves out unless told otherwise.
           include-hidden-files: true
+
+  # The edge build's bundle and manifest, whenever the Docker job built the
+  # server image: pinned to that image by the digest its OCI layout gives it
+  # (pushing keeps it) and to the last release's engine, then checked as the
+  # updater will check them; and bundle.sh's agents checked against the
+  # image's, as a release's are. Only publish, below, pushes them, after
+  # checking they are the files whose SHA-256s this job gives. What it is
+  # built from is downloaded by the artifact IDs the jobs that made it
+  # recorded, outside the workspace, and checked.
+  edge-bundle:
+    name: Edge bundle and manifest
+    needs: [version, docker]
+    if: needs.docker.result == 'success' && needs.version.outputs.engine-image != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      bundle-sha256: ${{ steps.bundle.outputs.bundle-sha256 }}
+      manifest-sha256: ${{ steps.bundle.outputs.manifest-sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          # The agents checked here are built from nothing any other job of
+          # the run could have written.
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.version.outputs.release-manifest-id }}
+          path: ${{ runner.temp }}/release
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.docker.outputs.artifact-id }}
+          path: ${{ runner.temp }}/image
+      - name: Load the server image CI built
+        env:
+          RELEASE: ${{ needs.version.outputs.release }}
+          MANIFEST_SHA256: ${{ needs.version.outputs.release-manifest-sha256 }}
+          DIGEST: ${{ needs.docker.outputs.digest }}
+        run: |
+          scripts/ci/check-download.sh "$RUNNER_TEMP/release" "$RELEASE-manifest.json=$MANIFEST_SHA256"
+          scripts/ci/check-download.sh "$RUNNER_TEMP/image" easyrmm-server.oci.tar
+          scripts/ci/load-oci-image.sh "$RUNNER_TEMP/image/easyrmm-server.oci.tar" "$DIGEST" linux/amd64 easyrmm-server:ci
+          rm "$RUNNER_TEMP/image/easyrmm-server.oci.tar"
+      - name: Build and check the bundle and its manifest
+        id: bundle
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          RELEASE: ${{ needs.version.outputs.release }}
+          DIGEST: ${{ needs.docker.outputs.digest }}
+          EASYPATCH_IMAGE_PIN: ${{ needs.version.outputs.engine-image }}
+        run: |
+          EASYRMM_IMAGE_PIN="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-server:${VERSION#v}@$DIGEST" \
+            EASYPATCH_PACKAGES="$RUNNER_TEMP/release/$RELEASE-manifest.json" scripts/release/bundle.sh "$VERSION" dist/edge
+          scripts/release/check-bundle.sh dist/edge "$VERSION"
+          scripts/release/check-agents.sh easyrmm-server:ci dist/edge
+          bundle=$(sha256sum < "dist/edge/easyrmm-$VERSION-deploy.tar.gz" | cut -c1-64)
+          manifest=$(sha256sum < "dist/edge/easyrmm-$VERSION-manifest.json" | cut -c1-64)
+          { echo "bundle-sha256=$bundle"; echo "manifest-sha256=$manifest"; } >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
+        with:
+          name: edge-bundle
+          path: |
+            dist/edge/easyrmm-${{ needs.version.outputs.version }}-deploy.tar.gz
+            dist/edge/easyrmm-${{ needs.version.outputs.version }}-manifest.json
+          retention-days: 7
+          if-no-files-found: error
 
   # Each distribution's cloud image, pinned by its vendor's digest, boots
   # under QEMU with KVM and is driven over a virtio-serial channel, not its
@@ -365,8 +646,10 @@ jobs:
 
   # Relative links and anchors in every Markdown file, for every change: a
   # moved or renamed file breaks links in documents the change never touched.
+  # And the workflows' jobs: none may be skipped by a job it never needed,
+  # as the edge publish once was (check-job-conditions.py).
   docs:
-    name: Documentation links
+    name: Documentation links and workflow conditions
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -374,21 +657,418 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -I scripts/ci/check-md-links.py .
+      - name: Workflow job conditions
+        run: |
+          scripts/ci/check-job-conditions_test.sh
+          python3 -I scripts/ci/check-job-conditions.py .github/workflows/*.yml
 
   result:
     name: CI result
     if: always()
-    needs: [changes, backend, integration, frontend, docker, easypatch-server, easypatch-agent, contract, bundle, authentik, machines, security, docs]
+    needs: [changes, version, backend, integration, frontend, docker, easypatch-server, easypatch-agent, contract,
+      contract-release, bundle, bundle-release, authentik, edge-bundle, machines, security, docs]
     runs-on: ubuntu-latest
     steps:
       - name: Require every job to succeed or to have been skipped
         env:
           NEEDS: ${{ toJSON(needs) }}
-        # Every gated job needs only the changes job, so a skipped job is one
-        # whose area did not change. The changes job itself must succeed:
-        # when it fails, the jobs after it are skipped too. Failed and
-        # cancelled jobs always fail.
+        # A gated job is skipped when its area did not change, when the last
+        # release's engine is not published yet (the jobs that use it), or
+        # when a job it needs did not succeed, which fails this check by
+        # itself. The changes and version jobs must succeed: when either
+        # fails, the jobs after it are skipped too. Failed and cancelled jobs
+        # always fail.
         run: |
           echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
           echo "$NEEDS" | jq -e \
-            'to_entries | all(.value.result == "success" or (.key != "changes" and .value.result == "skipped"))' > /dev/null
+            'to_entries | all(.value.result == "success" or
+              (.value.result == "skipped" and (.key | IN("changes", "version") | not)))' > /dev/null
+
+  # Publishes this build of main (ADR-0052; docs/architecture/edge-manifest.md)
+  # once every other job passed: the server image the tests ran, pushed
+  # unchanged from its OCI layout, then the edge bundle, its manifest and
+  # the manifest's attestation as ghcr.io/<owner>/easyrmm-deploy:<version>.
+  # Only for a push to main in this repository: no pull request or fork
+  # reaches this job or its permissions.
+  #
+  # Its tools come from the commit's checkout before anything is
+  # downloaded; the image and the bundle are downloaded by the artifact IDs
+  # the jobs that made them recorded, outside the workspace, and used only
+  # once they are the layout of the tested digest and the files whose
+  # SHA-256s Edge bundle and manifest gave.
+  #
+  # A version is published once. Re-running failed jobs keeps the version and
+  # the image, and a run again finds them published and goes on; but the
+  # Docker job run again builds another image under the same version, which
+  # this refuses. Then re-run all jobs: a new attempt is a new version.
+  publish:
+    name: Publish the edge build
+    needs: [version, docker, contract-release, bundle-release, edge-bundle, result]
+    # !cancelled() and the needs named one by one: without a status check
+    # GitHub skips a job when any job before it, needed or not, was skipped,
+    # and result needs the jobs a push skips when it changes nothing of
+    # theirs (scripts/ci/check-job-conditions.py).
+    if: >-
+      !cancelled() &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM' &&
+      needs.result.result == 'success' && needs.version.result == 'success' && needs.docker.result == 'success' &&
+      needs.contract-release.result == 'success' && needs.bundle-release.result == 'success' &&
+      needs.edge-bundle.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      deploy-digest: ${{ steps.existing.outputs.digest || steps.deploy.outputs.digest }}
+    # bash with -o pipefail: a command that fails in a pipeline fails the step.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install oras
+        run: |
+          scripts/ci/install-oras.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.docker.outputs.artifact-id }}
+          path: ${{ runner.temp }}/image
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.edge-bundle.outputs.artifact-id }}
+          path: ${{ runner.temp }}/edge
+      - name: The downloads are the ones recorded
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          DIGEST: ${{ needs.docker.outputs.digest }}
+          BUNDLE_SHA256: ${{ needs.edge-bundle.outputs.bundle-sha256 }}
+          MANIFEST_SHA256: ${{ needs.edge-bundle.outputs.manifest-sha256 }}
+        run: |
+          scripts/ci/check-download.sh "$RUNNER_TEMP/edge" \
+            "easyrmm-$VERSION-deploy.tar.gz=$BUNDLE_SHA256" "easyrmm-$VERSION-manifest.json=$MANIFEST_SHA256"
+          scripts/ci/check-download.sh "$RUNNER_TEMP/image" easyrmm-server.oci.tar
+          scripts/ci/check-oci-layout.sh "$RUNNER_TEMP/image/easyrmm-server.oci.tar" "$DIGEST" "$RUNNER_TEMP/layout"
+      # Before anything is pushed or attested: the manifest names this
+      # version, this commit and the image the tests ran, as easyrmm.image
+      # and as the only easyrmm-server image among its images, and the
+      # bundle is the one it names.
+      - name: The manifest and bundle are this build's
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          DIGEST: ${{ needs.docker.outputs.digest }}
+        run: |
+          repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-server"
+          image="$repo:${VERSION#v}@$DIGEST"
+          if ! jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" --arg repo "$repo" --arg image "$image" '
+            .schemaVersion == 2 and .version == $version and .commit == $commit and
+            .easyrmm.version == $version and .easyrmm.image == $image and
+            [.images[] | select(sub("@.*$"; "") | sub(":[^:/]*$"; "") == $repo)] == [$image]' \
+            "$RUNNER_TEMP/edge/easyrmm-$VERSION-manifest.json" > /dev/null; then
+            echo "::error::the manifest is not of $VERSION, $GITHUB_SHA and $image, the one easyrmm-server image it names"
+            exit 1
+          fi
+          scripts/release/check-bundle.sh "$RUNNER_TEMP/edge" "$VERSION"
+      # The layout the Docker job built: amd64 and arm64, both scanned and
+      # their agents checked, the amd64 one run by the tests; with BuildKit's
+      # SBOM and provenance, by version and by commit.
+      - name: Push the server image
+        id: image
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          DIGEST: ${{ needs.docker.outputs.digest }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-server"
+          if pushed=$(oras resolve "$image:${VERSION#v}" 2> "$RUNNER_TEMP/resolve.err"); then
+            if [ "$pushed" != "$DIGEST" ]; then
+              echo "::error::$image:${VERSION#v} is $pushed already, not this run's $DIGEST: re-run all jobs (a new attempt is a new version)"
+              exit 1
+            fi
+          elif [ "$(< "$RUNNER_TEMP/resolve.err")" != "Error response from registry: failed to resolve digest: $image:${VERSION#v}: not found" ]; then
+            cat "$RUNNER_TEMP/resolve.err" >&2
+            exit 1
+          fi
+          oras cp --from-oci-layout "$RUNNER_TEMP/layout@$DIGEST" "$image:${VERSION#v},sha-$GITHUB_SHA"
+          pushed=$(oras resolve "$image:${VERSION#v}")
+          if [ "$pushed" != "$DIGEST" ]; then
+            echo "::error::$image:${VERSION#v} is $pushed, not the tested $DIGEST"
+            exit 1
+          fi
+          echo "name=$image" >> "$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ needs.docker.outputs.digest }}
+          push-to-registry: true
+      # Published already by this run, the same bundle and manifest (a run
+      # again of failed jobs): kept, with its Sigstore bundle. Anything else
+      # under this version is refused. Not published: oras's answer for a
+      # missing tag, exactly. Before easyrmm-deploy's first version ghcr.io
+      # answers for the package as for one the token may not read, denied;
+      # that counts only while GitHub's API answers that it has no such
+      # package.
+      - name: Is this version published already?
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          deploy="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-deploy"
+          if oras manifest fetch --output "$RUNNER_TEMP/existing.json" "$deploy:$VERSION" 2> "$RUNNER_TEMP/fetch.err"; then
+            bundle="sha256:$(sha256sum < "$RUNNER_TEMP/edge/easyrmm-$VERSION-deploy.tar.gz" | cut -c1-64)"
+            manifest="sha256:$(sha256sum < "$RUNNER_TEMP/edge/easyrmm-$VERSION-manifest.json" | cut -c1-64)"
+            if ! jq -e --arg commit "$GITHUB_SHA" --arg bundle "$bundle" --arg manifest "$manifest" '
+              .annotations["org.opencontainers.image.revision"] == $commit and
+              [.layers[0:2][] | .digest] == [$bundle, $manifest]' "$RUNNER_TEMP/existing.json" > /dev/null; then
+              echo "::error::$deploy:$VERSION is published already, of another commit or with another bundle or manifest: re-run all jobs (a new attempt is a new version)"
+              exit 1
+            fi
+            digest="sha256:$(sha256sum < "$RUNNER_TEMP/existing.json" | cut -c1-64)"
+            echo "::notice::$deploy:$VERSION is published already, with this bundle and manifest: kept."
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          elif [ "$(< "$RUNNER_TEMP/fetch.err")" = "Error response from registry: failed to fetch the content of \"$deploy:$VERSION\": $deploy:$VERSION: not found" ]; then
+            echo "$deploy:$VERSION is not published yet."
+          elif [ "$(< "$RUNNER_TEMP/fetch.err")" = "Error response from registry: denied: requested access to the resource is denied" ] &&
+            ! gh api "/users/${GITHUB_REPOSITORY_OWNER,,}/packages/container/easyrmm-deploy" > /dev/null 2> "$RUNNER_TEMP/api.err" &&
+            [ "$(< "$RUNNER_TEMP/api.err")" = "gh: Package not found. (HTTP 404)" ]; then
+            echo "easyrmm-deploy has no versions yet: $VERSION is its first."
+          else
+            cat "$RUNNER_TEMP/fetch.err" >&2
+            if [ -s "$RUNNER_TEMP/api.err" ]; then cat "$RUNNER_TEMP/api.err" >&2; fi
+            exit 1
+          fi
+      - name: Attest the manifest
+        id: attest
+        if: steps.existing.outputs.digest == ''
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/edge/easyrmm-${{ needs.version.outputs.version }}-manifest.json
+      - name: Push the bundle, its manifest and the manifest's Sigstore bundle
+        id: deploy
+        if: steps.existing.outputs.digest == ''
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          SIGSTORE_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          cd "$RUNNER_TEMP/edge"
+          manifest="easyrmm-$VERSION-manifest.json"
+          sigstore="application/vnd.dev.sigstore.bundle.v0.3+json"
+          if [ "$(wc -l < "$SIGSTORE_BUNDLE")" -ne 1 ] || ! jq -e --arg t "$sigstore" '.mediaType == $t' "$SIGSTORE_BUNDLE" > /dev/null; then
+            echo "::error::the attestation is not one Sigstore bundle of $sigstore"
+            exit 1
+          fi
+          cp "$SIGSTORE_BUNDLE" "$manifest.sigstore.json"
+          deploy="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-deploy"
+          oras push "$deploy:$VERSION" --artifact-type application/vnd.easyrmm.deploy.v1 \
+            --annotation "org.opencontainers.image.version=$VERSION" \
+            --annotation "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --annotation "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            "easyrmm-$VERSION-deploy.tar.gz:application/vnd.easyrmm.deploy.bundle.v1.tar+gzip" \
+            "$manifest:application/vnd.easyrmm.deploy.manifest.v1+json" \
+            "$manifest.sigstore.json:$sigstore"
+          digest=$(oras resolve "$deploy:$VERSION")
+          if ! [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::$deploy:$VERSION resolves to \"$digest\", not a digest"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+  # The published build as the updater will take it (ADR-0052, Verification):
+  # pulled by the digest Move edge tags, which its version names too, the
+  # manifest's attestation verified with Sigstore's public good instance for
+  # this workflow on main and this commit, the bundle against the manifest,
+  # and every image it names. The upgrade from the previous edge build
+  # (ADR-0052, Testing) joins this job with the updater.
+  edge-test:
+    name: Edge build verified
+    needs: [version, docker, publish]
+    # As publish's: the needs named, since jobs before them may be skipped.
+    if: >-
+      !cancelled() &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM' &&
+      needs.version.result == 'success' && needs.docker.result == 'success' && needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    # bash with -o pipefail: a command that fails in a pipeline fails the step.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install oras
+        run: |
+          scripts/ci/install-oras.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull and verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          DIGEST: ${{ needs.docker.outputs.digest }}
+          DEPLOY_DIGEST: ${{ needs.publish.outputs.deploy-digest }}
+          REPOSITORY_ID: ${{ github.repository_id }}
+        run: |
+          deploy="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-deploy"
+          server="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-server"
+          manifest="easyrmm-$VERSION-manifest.json"
+          workflow="https://github.com/$GITHUB_REPOSITORY/.github/workflows/ci.yml@refs/heads/main"
+          deploy_tagged=$(oras resolve "$deploy:$VERSION")
+          server_tagged=$(oras resolve "$server:${VERSION#v}")
+          if [ "$deploy_tagged" != "$DEPLOY_DIGEST" ] || [ "$server_tagged" != "$DIGEST" ]; then
+            echo "::error::$deploy:$VERSION is $deploy_tagged and $server:${VERSION#v} $server_tagged, not what publish pushed ($DEPLOY_DIGEST, $DIGEST)"
+            exit 1
+          fi
+          oras manifest fetch "$deploy@$DEPLOY_DIGEST" | jq -e --arg v "$VERSION" --arg commit "$GITHUB_SHA" '
+            .artifactType == "application/vnd.easyrmm.deploy.v1" and
+            .annotations["org.opencontainers.image.version"] == $v and
+            .annotations["org.opencontainers.image.revision"] == $commit and
+            [.layers[] | [.mediaType, .annotations["org.opencontainers.image.title"]]] == [
+              ["application/vnd.easyrmm.deploy.bundle.v1.tar+gzip", "easyrmm-\($v)-deploy.tar.gz"],
+              ["application/vnd.easyrmm.deploy.manifest.v1+json", "easyrmm-\($v)-manifest.json"],
+              ["application/vnd.dev.sigstore.bundle.v0.3+json", "easyrmm-\($v)-manifest.json.sigstore.json"]]' > /dev/null
+          mkdir pulled
+          (cd pulled && oras pull "$deploy@$DEPLOY_DIGEST")
+          commit=$(jq -r .commit "pulled/$manifest")
+          if [ "$commit" != "$GITHUB_SHA" ] || ! jq -e --arg d "$DIGEST" '.easyrmm.image | endswith("@" + $d)' "pulled/$manifest" > /dev/null; then
+            echo "::error::the published manifest is not of $GITHUB_SHA and $DIGEST"
+            exit 1
+          fi
+          gh attestation verify "pulled/$manifest" --bundle "pulled/$manifest.sigstore.json" --repo "$GITHUB_REPOSITORY" \
+            --cert-identity "$workflow" --cert-oidc-issuer https://token.actions.githubusercontent.com \
+            --source-ref refs/heads/main --source-digest "$commit" --deny-self-hosted-runners \
+            --format json > "$RUNNER_TEMP/verified.json"
+          jq -e --arg id "$REPOSITORY_ID" --arg workflow "$workflow" 'length > 0 and all(.[];
+            .verificationResult.signature.certificate | .sourceRepositoryIdentifier == $id and
+              .buildConfigURI == $workflow and .buildTrigger == "push" and .runnerEnvironment == "github-hosted")' \
+            "$RUNNER_TEMP/verified.json" > /dev/null
+          scripts/release/check-bundle.sh pulled "$VERSION"
+          jq -r '.images[]' "pulled/$manifest" | while IFS= read -r image; do
+            docker buildx imagetools inspect "$image" > /dev/null
+            echo "$image is published"
+          done
+
+  # Moves edge to this build once it is verified, each tag only ever to a
+  # higher version: an older run, run again, leaves them. The server image's
+  # tag first, then the bundle's, which the updater follows. The two can
+  # name different builds: between the two tags, for good if the second
+  # fails, and when easyrmm-server:edge names a higher version already (a
+  # later run that stopped before the bundle's tag). Nothing depends on
+  # their agreeing: the updater takes the server image by the digest the
+  # bundle's manifest names, and retention keeps every image a kept
+  # easyrmm-deploy version names. A run again whose bundle is edge already
+  # tags its image easyrmm-server:edge, under the same rule. One run at a
+  # time, so that no other run moves edge between the check and the move.
+  # GitHub keeps one run waiting: a later one cancels the one that waited,
+  # which would most often have been older anyway.
+  edge-tag:
+    name: Move edge
+    needs: [version, docker, publish, edge-test]
+    # As publish's: the needs named, since jobs before them may be skipped.
+    if: >-
+      !cancelled() &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM' &&
+      needs.version.result == 'success' && needs.docker.result == 'success' && needs.publish.result == 'success' &&
+      needs.edge-test.result == 'success'
+    concurrency:
+      group: edge-tag
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    # bash with -o pipefail: a command that fails in a pipeline fails the step.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install oras
+        run: |
+          scripts/ci/install-oras.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the server image and then the bundle edge
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          DEPLOY_DIGEST: ${{ needs.publish.outputs.deploy-digest }}
+          IMAGE_DIGEST: ${{ needs.docker.outputs.digest }}
+        run: |
+          deploy="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-deploy"
+          server="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-server"
+          # Tags this build's image easyrmm-server:edge, unless the image
+          # there reports a higher version (its version label; an image
+          # without a version, as the builds before edge versions, is moved).
+          tag_server() {
+            local tagged config labelled status
+            if tagged=$(oras resolve "$server:edge" 2> "$RUNNER_TEMP/resolve.err"); then
+              [ "$tagged" != "$IMAGE_DIGEST" ] || return 0
+              oras manifest fetch --platform linux/amd64 --output "$RUNNER_TEMP/tagged.json" "$server@$tagged"
+              config=$(jq -r .config.digest "$RUNNER_TEMP/tagged.json")
+              labelled=$(oras blob fetch --output - "$server@$config" | jq -r '.config.Labels["org.opencontainers.image.version"] // ""')
+              status=0
+              scripts/release/version.sh newer "$labelled" "$VERSION" 2> "$RUNNER_TEMP/newer.err" || status=$?
+              if [ "$status" -eq 0 ]; then
+                echo "::notice::easyrmm-server:edge stays at $labelled, which ranks above $VERSION."
+                return 0
+              elif [ "$status" -ne 1 ] &&
+                [ "$(< "$RUNNER_TEMP/newer.err")" != "version: \"$labelled\" is not a version like v1.2.3 or v1.2.3-rc.1" ]; then
+                cat "$RUNNER_TEMP/newer.err" >&2
+                return "$status"
+              fi
+            elif [ "$(< "$RUNNER_TEMP/resolve.err")" != "Error response from registry: failed to resolve digest: $server:edge: not found" ]; then
+              cat "$RUNNER_TEMP/resolve.err" >&2
+              return 1
+            fi
+            oras tag "$server@$IMAGE_DIGEST" edge
+          }
+          if oras manifest fetch --output "$RUNNER_TEMP/edge.json" "$deploy:edge" 2> "$RUNNER_TEMP/fetch.err"; then
+            current=$(jq -r '.annotations["org.opencontainers.image.version"] // ""' "$RUNNER_TEMP/edge.json")
+            status=0
+            scripts/release/version.sh newer "$VERSION" "$current" || status=$?
+            if [ "$status" -eq 1 ]; then
+              edge_digest="sha256:$(sha256sum < "$RUNNER_TEMP/edge.json" | cut -c1-64)"
+              if [ "$edge_digest" = "$DEPLOY_DIGEST" ]; then
+                tag_server
+                echo "edge is $VERSION already."
+              else
+                echo "::notice::edge stays at $current, which ranks above or equal to $VERSION."
+              fi
+              exit 0
+            elif [ "$status" -ne 0 ]; then
+              exit "$status"
+            fi
+          elif [ "$(< "$RUNNER_TEMP/fetch.err")" = "Error response from registry: failed to fetch the content of \"$deploy:edge\": $deploy:edge: not found" ]; then
+            echo "Nothing is tagged edge yet."
+          else
+            cat "$RUNNER_TEMP/fetch.err" >&2
+            exit 1
+          fi
+          tag_server
+          oras tag "$deploy@$DEPLOY_DIGEST" edge
+          echo "edge is $VERSION."

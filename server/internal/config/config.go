@@ -90,7 +90,11 @@ type Config struct {
 	ArgonMaxParallel int
 	WebDir           string // optional override of the embedded UI
 	// AgentDir holds the EasyRMM agent builds the server hands out.
-	AgentDir          string
+	AgentDir string
+	// UpdaterStatusDir is the updater's status directory, mounted read-only
+	// (ADR-0052): while its hold file exists the server answers its health
+	// check and nothing else.
+	UpdaterStatusDir  string
 	SMTP              SMTPConfig
 	Mesh              MeshConfig
 	DevInsecureCookie bool // only for local development over plain HTTP
@@ -100,6 +104,10 @@ type Config struct {
 	// when there is none.
 	Authentik Authentik
 }
+
+// DefaultUpdaterStatusDir is where deploy/docker-compose.yml mounts the
+// updater's status directory.
+const DefaultUpdaterStatusDir = "/run/easyrmm-updater"
 
 // DefaultPatchingURL is where the patching engine listens
 // (deploy/docker-compose.yml, easypatch-api).
@@ -187,6 +195,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		ArgonMaxParallel:  l.integer("EASYRMM_ARGON2_MAX_PARALLEL", 4),
 		WebDir:            l.str("EASYRMM_WEB_DIR", ""),
 		AgentDir:          l.str("EASYRMM_AGENT_DIR", "/usr/share/easyrmm/agents"),
+		UpdaterStatusDir:  l.orDefault("EASYRMM_UPDATER_STATUS_DIR", DefaultUpdaterStatusDir),
 		DevInsecureCookie: l.boolean("EASYRMM_DEV_INSECURE_COOKIES", false),
 		SMTP: SMTPConfig{
 			Host:     l.str("EASYRMM_SMTP_HOST", ""),
@@ -343,6 +352,9 @@ func (c *Config) validate(l *loader) {
 	}
 	if c.ListenHealth != "" {
 		requireLoopback(add, "EASYRMM_LISTEN_HEALTH", c.ListenHealth)
+	}
+	if !filepath.IsAbs(c.UpdaterStatusDir) {
+		add("EASYRMM_UPDATER_STATUS_DIR must be an absolute path")
 	}
 	if c.DatabaseURL == "" {
 		add("EASYRMM_DATABASE_URL is required")

@@ -29,6 +29,8 @@ Everything about running, using and building EasyRMM. Start with the
 * [Alerts](operations/alerts.md)
 * [Scripts and jobs](operations/scripts-and-jobs.md)
 * [Installing, updating and removing software](operations/software.md)
+* [Hardening Linux computers](operations/hardening.md): checks, each
+  device's findings, and drift across the fleet.
 * [Reports](operations/reports.md)
 * [Forwarding the audit log](operations/audit-forwarding.md)
 

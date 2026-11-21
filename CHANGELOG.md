@@ -8,6 +8,34 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **The Windows agent checks its state folder before reading it.** Any
+  user may create folders under ProgramData, and the agent protected
+  `%ProgramData%\EasyRMM\Agent` only when it saved an enrollment. A
+  standard user could have prepared that folder before the agent was
+  installed, or after it was removed, and had the install and the service,
+  which runs as SYSTEM, use what they left there. Now, before any command
+  reads or writes its state, and before the service opens its log, the
+  agent checks:
+  - that every folder from ProgramData down is a plain folder that the
+    system or an administrator made;
+  - that no one but the system, administrators and TrustedInstaller may
+    change the state folder or what it holds;
+  - that each file it reads or writes there is a plain file with a single
+    link, owned by the system or an administrator, that no one else may
+    change. This covers the enrollment, key, status, job journal, log,
+    update marker and EasyPatch downloads.
+
+  A folder that fails is moved aside, as `<name>.untrusted-<time>`, and made
+  anew. A file that fails is moved aside, and the configuration and the key
+  go together. A state folder whose access list differs from the agent's
+  own, but lets no one else change anything, such as one with entries in
+  another order, an extra entry for administrators, or one that lets users
+  read, keeps its enrollment: the agent sets its own list back and logs a
+  warning. The agent never reads what it moved aside: it carries on as
+  not enrolled, and an install enrolls anew. The scripts' working folders,
+  which the check leaves out, are emptied when the agent starts. On
+  Windows, `easyrmm-agent status` now needs an administrator. Linux is
+  unchanged: only root reaches its state folder there.
 - **`setup.sh` writes nothing through a link Authentik's containers plant.**
   As root, it wrote the administrator's invitation in
   `authentik/invitations/`, which the `authentik-setup` container can write,
@@ -43,9 +71,38 @@ All notable changes to this project are documented here. The format follows
   directories under `.env`'s data root (rerunning `setup.sh` without
   `--data-root` used the default one), and issues no Authentik invitation.
   The upgrade guide now uses it (ADR-0052).
-
-### Added
-
+- **The server can be held by the updater** (ADR-0052's server side; the
+  updater itself is not built yet). `setup.sh` makes
+  `${EASYRMM_DATA_ROOT}/updater/status`, root's with mode 755, which the
+  server and the engine's worker mount read-only at
+  `/run/easyrmm-updater`. While a file
+  named `hold` exists there, the server answers its health check and
+  nothing else: the console, the API, agents, the engine's agents and
+  Authentik's and MeshCentral's names get `503` with `Retry-After`; ACME's
+  challenges are still answered. The server reads it before it opens its
+  listeners and looks again every second; its health check passes while
+  held and says so.
+- **Restarts and upgrades raise no offline alerts.** Offline policies
+  count every device as seen no earlier than 5 minutes after the server
+  began serving agents (its start, or the end of a hold), the longest
+  agents wait between attempts. The rule only delays openings: an offline
+  alert already open stays open, and resolves only when its device checks
+  in.
+- **Edge builds.** Every build of `main` that passes CI is published as a
+  version: `v1.0.0-rc.4.edge.412.1` after a release candidate,
+  `v1.0.1-edge.415.1` after a release. The server image the tests ran is
+  pushed unchanged as `easyrmm-server:<version>`, and the bundle, its
+  manifest and the manifest's Sigstore bundle as the OCI artifact
+  `ghcr.io/paulmataruso/easyrmm-deploy:<version>`; `edge` moves to the
+  newest once it verifies. An edge build runs the last release's patching
+  engine, so CI also runs the contract and bundle tests against it. Edge
+  builds older than 30 days are deleted (ADR-0052;
+  `docs/architecture/edge-manifest.md`).
+- **The release manifest names everything a deployment runs**: schema
+  version 2 adds the bundle's SHA-256, every image by digest, PostgreSQL's
+  major version and Authentik. A release also publishes the Sigstore
+  bundle of its attestation beside the manifest, so that verifying needs
+  no GitHub API.
 - **Hardening checks for Linux computers** (ADR-0051, its first part). A
   technician can have the agent on a Linux device check 14 areas: SSH,
   the firewall, fail2ban, kernel settings, audit rules, file permissions,
@@ -57,18 +114,66 @@ All notable changes to this project are documented here. The format follows
   something else, or half applied, and what applying it would change.
   Each device's latest findings are kept (`GET
   /api/v1/devices/{id}/hardening`); the console lists hardening jobs and
-  shows what each checked. Applying and undoing, and a device's
-  **Hardening** tab, come next. The job table now takes job bodies up to
-  512 KiB, for the script; library scripts keep their 64 KiB limit.
+  shows what each checked. Applying and undoing come next. The job table
+  now takes job bodies up to 512 KiB, for the script; library scripts keep
+  their 64 KiB limit.
+- **A device's Hardening tab, and hardening across the fleet** (ADR-0051,
+  H3). Linux devices with the agent have a **Hardening** tab: each
+  module's latest state, what is missing, what applying it would change,
+  and for the firewall the ports it would leave open; when the last check
+  ran, by which job, on which distribution and release, and how far
+  EasyRMM's hardening supports it, with *check only* explained. **Run
+  check…** chooses the modules, the recommended ones preselected and the
+  others with their risk beside them, and needs `script.run`; the
+  findings need only `device.view`. **Devices** gains a **Hardening**
+  column (*9 of 10 in place*) and a filter (needs attention, in place, not
+  checked), also on the API (`GET /api/v1/devices?hardening=`), and devices
+  in the API carry a summary of their hardening. Job runs can be listed by
+  kind (`GET /api/v1/job-runs?kind=hardening`). The audit log names
+  hardening jobs *Hardening job*. See
+  [Hardening Linux computers](docs/operations/hardening.md).
+
+### Changed
+
+- **CI and releases build the server image once.** Both platforms, amd64
+  and arm64, are scanned and their agents checked against a release's
+  build, byte for byte; the amd64 image runs the tests; and the build is
+  pushed unchanged. CI no longer rebuilds and pushes it on every push to
+  `main` before the other checks finish, and a release no longer pushes a
+  build other than the one it scanned.
+- **The server image's agents are cross-compiled on the build machine**,
+  so the arm64 image hands out the same files as the amd64 one and as a
+  release: an operator-signed release agent matches either (ADR-0049).
+- **Releases check their files before attesting**: the bundle against its
+  manifest, and the attached agents against the pushed image.
+- **A release published out of order leaves `latest` where it is.**
+  `easyrmm-v1.1.5` after `easyrmm-v1.2.0` tags the server image `1.1.5`
+  and `1.1`, not `latest`, and is not GitHub's Latest release. A version's
+  server image is pushed once; a release run again pushes nothing more.
 
 ### Fixed
 
+- **Remote sessions work from every address the server answers on.**
+  MeshCentral accepted a session's control connection only from a page on
+  its own name, so it closed every session started from a console reached
+  at another address (`invalidorigin`): the IP addresses of a DNS install,
+  and an IP-only install's addresses other than its public one, such as a
+  private address behind NAT. EasyRMM now writes the host of every
+  MeshCentral origin it serves into MeshCentral's `allowedOrigin`; when
+  they change, the next start rewrites the list and MeshCentral restarts
+  with it (ADR-0016, amended).
 - **The release's agents are the same files the server hands out.** The
   release bundle built them with the commit stamped in and the server's image
   without, so their bytes differed, and a Windows agent an operator signed
   from the release's file would not have matched the server's own build
   (ADR-0049). Both now build with `-buildvcs=false`; built from a clone, the
   two are identical for Linux and Windows.
+- **Agents keep working when a server is rolled back.** The server now ignores
+  request fields it does not know, instead of refusing the request, and says
+  in each heartbeat answer which protocol level it speaks (2). Agents will
+  send fields added by later releases only to servers of level 2 or higher,
+  so an agent that updated before a rollback is never cut off (ADR-0009,
+  "Evolving the protocol"). Malformed requests are still refused.
 - `deploy/.env.example` lists `EASYRMM_ACME_DIRECTORY`, which the Compose
   file already passed to the server.
 - Taking the database down past migration 12 removed no software jobs:

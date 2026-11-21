@@ -151,4 +151,94 @@ func TestHardeningAPI(t *testing.T) {
 		t.Errorf("hardening jobs %+v", list.Items)
 	}
 	wantStatus(t, viewer.do("GET", "/api/v1/devices/00000000-0000-0000-0000-000000000000/hardening", nil), http.StatusNotFound, "")
+
+	// The device's own hardening runs, for its Hardening tab.
+	var runs struct {
+		Items []struct {
+			ID     string `json:"id"`
+			JobID  string `json:"jobId"`
+			Status string `json:"status"`
+		} `json:"items"`
+	}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/job-runs?deviceId="+device+"&kind=hardening", nil, &runs)
+	if len(runs.Items) != 1 || runs.Items[0].ID != p.RunID || runs.Items[0].JobID != job.ID || runs.Items[0].Status != "succeeded" {
+		t.Errorf("hardening runs %+v", runs.Items)
+	}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/job-runs?deviceId="+device+"&kind=software", nil, &runs)
+	if len(runs.Items) != 0 {
+		t.Errorf("software runs %+v", runs.Items)
+	}
+	wantStatus(t, viewer.do("GET", "/api/v1/job-runs?deviceId="+device+"&kind=patch", nil), http.StatusUnprocessableEntity, "validation_failed")
+
+	// The fleet: each device's summary, and the filters. A second Linux
+	// device is not checked yet; a Windows device never counts as such.
+	if _, err := h.agentClient().Enroll(ctx, token.Secret, newKey(t).Public().(ed25519.PublicKey), facts("srv-02")); err != nil {
+		t.Fatal(err)
+	}
+	win := facts("ws-01")
+	win.Platform, win.OS = "windows", "Windows 11 Pro"
+	if _, err := h.agentClient().Enroll(ctx, token.Secret, newKey(t).Public().(ed25519.PublicKey), win); err != nil {
+		t.Fatal(err)
+	}
+	type summary struct {
+		Name      string `json:"name"`
+		Hardening *struct {
+			CheckedAt time.Time      `json:"checkedAt"`
+			States    map[string]int `json:"states"`
+		} `json:"hardening"`
+	}
+	var one summary
+	viewer.expect(http.StatusOK, "GET", "/api/v1/devices/"+device, nil, &one)
+	if one.Hardening == nil || one.Hardening.CheckedAt.IsZero() || len(one.Hardening.States) != 2 ||
+		one.Hardening.States["in_place"] != 1 || one.Hardening.States["partly"] != 1 {
+		t.Errorf("summary %+v", one.Hardening)
+	}
+	names := func(filter string) []string {
+		t.Helper()
+		var devs struct{ Items []summary }
+		viewer.expect(http.StatusOK, "GET", "/api/v1/devices?hardening="+filter, nil, &devs)
+		out := []string{}
+		for _, d := range devs.Items {
+			out = append(out, d.Name)
+			if (d.Hardening != nil) != (d.Name == "srv-01") {
+				t.Errorf("%s: hardening %+v", d.Name, d.Hardening)
+			}
+		}
+		return out
+	}
+	for filter, want := range map[string][]string{"": {"srv-01", "srv-02", "ws-01"}, "attention": {"srv-01"}, "in_place": {}, "unchecked": {"srv-02"}} {
+		if got := names(filter); !slices.Equal(got, want) {
+			t.Errorf("hardening=%s: %q", filter, got)
+		}
+	}
+	wantStatus(t, viewer.do("GET", "/api/v1/devices?hardening=drifted", nil), http.StatusUnprocessableEntity, "validation_failed")
+
+	// Once the kernel module is in place too, nothing needs attention.
+	tech.expect(http.StatusCreated, "POST", path, map[string]any{"deviceIds": []string{device}, "mode": "check", "modules": []string{"kernel"}}, &job)
+	poll, err = ac.Poll(ctx)
+	if err != nil || len(poll.Jobs) != 1 {
+		t.Fatalf("poll %+v %v", poll, err)
+	}
+	if p, err = agentproto.VerifyJob(jobKey, poll.Jobs[0], device, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := ac.Start(ctx, p.RunID); err != nil || !st.Proceed {
+		t.Fatalf("start %+v %v", st, err)
+	}
+	out = "EASYRMM-HARDENING-RESULT-V1 " +
+		`{"version":1,"mode":"check","platform":{"id":"debian","versionId":"12","family":"debian","container":"none","support":"full"},` +
+		`"modules":[{"module":"kernel","state":"in_place"}]}` + "\n"
+	if err := ac.Result(ctx, p.RunID, agentproto.ResultRequest{Status: agentproto.RunSucceeded, ExitCode: new(int), Stdout: out, StartedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	for filter, want := range map[string][]string{"attention": {}, "in_place": {"srv-01"}, "unchecked": {"srv-02"}} {
+		if got := names(filter); !slices.Equal(got, want) {
+			t.Errorf("after the second check, hardening=%s: %q", filter, got)
+		}
+	}
+	one = summary{}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/devices/"+device, nil, &one)
+	if one.Hardening == nil || len(one.Hardening.States) != 1 || one.Hardening.States["in_place"] != 2 {
+		t.Errorf("summary after the second check %+v", one.Hardening)
+	}
 }

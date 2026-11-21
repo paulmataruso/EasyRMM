@@ -28,6 +28,8 @@ requests and its own changelog entries.
 
 * **Trust.** The host updater no longer trusts anything the server
   writes beyond a version number, and never writes where the server can.
+  One exception, decided in review: its rollback guards (ADR-0052) read a
+  few integers from the database, which can only refuse a rollback.
   Agents do not pin TLS keys, so everything new that reaches an agent
   (settings, a new address, WebSocket messages) is signed, not just sent
   over TLS. Moving agents to a new name became an ADR of its own. The job
@@ -98,40 +100,61 @@ and this plan's own pull request for ADR-0019):
 ### F0. Rotating the job key
 Every signed instruction (jobs, updates, uninstalls, and since the fixes
 above MeshAgent's downloads) rests on one job key that cannot be rotated
-(ADR-0017, Consequences). Before the new kinds of instruction this plan
-adds (settings, a new address) depend on it: a new key is signed by the current one and announced in the
-heartbeat; agents that verify the hand-over accept both for a transition
-period, then only the new one. A rollback of EasyRMM (F3) is refused
-across a rotation's cut-over. Tested with real agents through a rotation
-and with an agent that was offline across it.
+(ADR-0017, Consequences), and the new kinds of instruction this plan adds
+(settings, a new address) would rest on it too. Proposed in
+[ADR-0057](adr/0057-rotating-the-job-key.md), revised after its review and
+a second check. In
+short: the keys become a ring with generations that only increase; agents
+report the keys they trust in their signed heartbeats and job polls (by
+ADR-0009's rule), and the server signs each device's instructions with the
+newest of them. A rotation hands each agent the new key in a statement
+signed by a key it trusts. A super administrator finishes a planned
+rotation after at least 24 hours (ADR-0052's rollback window), confirming
+a newer backup; a rotation for a compromise is cut over at once, and a
+device on a compromised key is moved to it before any later key. Agents
+offline across the overlap follow when they come back, since the server
+keeps an old key while any device needs it. After a compromise a device
+counts as moved only on its own signed report, which proves only an agent
+nobody tampered with; devices that cannot be moved are re-pinned with
+`easyrmm-agent trust-key`, a command with no secret, or reinstalled; a
+device left on a key a restore lost moves with the next rotation. A
+leaked backup set also gives the TLS identities, MeshCentral's keys, the
+patching engine's notification credentials and, with Authentik, its
+signing key pair and secrets, which the incident page replaces;
+EasyRMM's own authority is replaced in two phases, both authorities
+first, so no agent is cut off. The updater refuses a rollback
+whose backup lacks a key agents were cut over to, and one while a server
+on another host shares the database (ADR-0052's rollback guards, shared
+with 5c); they ship with the second slice or before, and the second
+slice also waits for ADR-0055's step-up. Tested with real agents on the
+host's network through a rotation, one offline across it, one from before
+the change, and restores across it. The first slice (agents that can
+follow, and flags for keys and instructions the server never issued) can
+ship before the rest of step 10.
 
 ### F1. Signed settings that reach the agent
-Features 3 and 8 need settings an operator sets for the platform, an
-organization, a site or one device.
-
-* **Scopes**: platform, organization, site, device, with the nearest scope
-  winning, unless a higher scope **enforces** the value ("set by your
-  MSP"). Device groups later, if asked for.
-* **Keys** are a fixed list, each with a schema, a default, the scopes it
-  may be set at and the permission that sets it (`agent.transport`: Site
-  Administrators and above; log collection's keys: see feature 3).
-* **Delivery**: the heartbeat answer carries the device's effective
-  settings as one document signed with the job key under its own context,
-  with the device's ID, a hash and a version that only increases (the
-  time of the change in milliseconds, at least one more than the last, so
-  that a database restored from a backup still issues higher versions).
-  The agent refuses a document for another device or with a lower version,
-  and clamps every value to its schema. Turning something *off* is as
-  sensitive as turning it on (collection off is a way to hide), so the
-  whole document is signed, not just some keys.
-* **Console**: on a device, each setting's effective value and where it
-  comes from; editors at each scope.
-* **Tests**: precedence and enforcement (integration), a forged and a
-  replayed document refused (agent), an agent from the previous release
-  ignoring the new field (bundle test with the previous release's real
-  agent).
+Proposed in [ADR-0058](adr/0058-signed-settings-that-reach-the-agent.md),
+not reviewed yet. In short: a fixed catalogue of keys, each with a schema,
+a default, its scopes and its permission (`device.configure`, new, for
+Site Administrators and above, for the first keys); set at the platform,
+an organization, a site or a device, the nearest winning unless a higher
+scope enforces. The heartbeat answer carries the device's effective
+settings, all keys, as one document signed with the job key, only when
+the agent's version is behind; versions only increase (the time, the last
+issued and the agent's own report), so a restored database or a replay
+cannot roll them back. The agent saves what it applied, keeps it across
+restarts and outages, ignores unknown keys, keeps its value for invalid
+ones, and reports what it applied in its next heartbeat; the console shows
+*Applied* or *Waiting for the device*. First keys:
+`agent.heartbeat_seconds` (30 seconds to 5 minutes; online becomes three
+missed heartbeats of the device's own interval) and `agent.transport`
+(feature 8). Slices: the server and its API; delivery and the agent; the
+console, with a Settings tab on each device.
 
 ### F2. One notification sender
+Decided in [ADR-0053](adr/0053-one-notification-sender.md), with feature 7,
+revised after review; its departures from what follows are listed below.
+
 Patching sends its own email and webhooks from the engine (Settings →
 Patching → Notifications); device alerts need a sender too. An MSP should
 set up its Teams channel once.
@@ -181,6 +204,46 @@ set up its Teams channel once.
   device alert rules (feature 7); Slack and Teams; patching's
   notifications through EasyRMM and the channels' migration.
 
+**Where ADR-0053 departs from this**:
+
+* **"Moved over by a migration"** becomes an export and a move at start:
+  the engine's database is separate and its secrets are sealed with its
+  own keys. The channels keep their IDs, so the engine's rules need no
+  rewrite; a channel the engine cannot decrypt moves turned off. The
+  engine's channel table and export route stay, because imports
+  (ADR-0045) still bring channels.
+* **Monthly report emails** move to EasyRMM too; the plan did not name
+  them, and they go through the engine's SMTP client.
+* **Organizations' rules** use a platform channel only once a super
+  administrator shares it with that organization (decided in review).
+* **The server's own networks**, whatever their kind, need approval as
+  private ranges do; the server's own addresses and the deployment's names
+  are always refused. The engine refused its networks outright, which on
+  host networking is the customer's LAN.
+* **Delivery is at least once**, with a stable delivery ID; queueing is
+  exactly once, and order is kept per alert, notice and site outage.
+  Permanent answers fail at once, and one message holds its channel for an
+  hour at most, then only messages about the same alerts, notices and
+  outages.
+* **Limits**: quotas per organization counted in messages (one per email
+  recipient), fair share between organizations, the mail server's own
+  rate a minute and a day with account mail first, and at most one unsent
+  digest per channel read by people.
+* **Several recipients** each get their own copy, so no recipient sees
+  another.
+* **The certificate authority** for the mail server comes with slice 6,
+  once the engine (which cannot trust one) no longer sends email.
+* **Signing in to Microsoft 365** with an application's credentials
+  (`XOAUTH2`, the client credentials grant) is a slice of its own, the
+  second: Exchange Online turns SMTP password sign-in off by default for
+  existing tenants at the end of December 2026, and the mailer signs in
+  with a password only. It works from `.env` and `setup.sh` too, the
+  secret or certificate key in a file under `secrets/`, so that mail works
+  at install. A relay remains the alternative; Google can be added later.
+  Slack and Teams, then patching, come before restarts and *Uninstalled*,
+  so that patching's email, which the engine cannot send with an
+  application, waits as briefly as it can.
+
 ### F3. The updater on the host
 Decided in [ADR-0052](adr/0052-the-host-updater.md), revised after review.
 In short: `easyrmm-updater` on the host, run by systemd as root, verifies a
@@ -190,8 +253,10 @@ last job of `main`'s CI), stops the deployment, copies the whole data root,
 runs the new `setup.sh --upgrade`, starts the new version held (answering
 only its health check), and confirms, or restores the copy and starts the
 previous version. A rollback after a confirmed upgrade restores that copy
-too, for 24 hours, and says what it loses. The server can only ask, through
-a file the updater validates, and reads the updater's status read-only.
+too, for 24 hours, and says what it loses; it is refused across a job key
+cut-over or a name move (ADR-0052's rollback guards, shared by F0 and 5c),
+unless the host overrides it. The server can only ask, through a file the
+updater validates, and reads the updater's status read-only.
 Edge builds are published only after the whole of CI passes, with versions
 that sort (`v1.0.0-rc.4.edge.<run>.<attempt>`).
 
@@ -339,45 +404,55 @@ request directory's attacks; the updater updating itself from the second
 release with one; then the owner's instance on edge.
 
 ### 5. Let's Encrypt in one step
-**What exists**: `acme` mode with `autocert` for the names in `.env`
-(console, MeshCentral, the patching agents' names, Authentik), HTTP-01 and
-TLS-ALPN-01, renewed in the process; names are read at start.
+5a and 5b are decided in
+[ADR-0055](adr/0055-lets-encrypt-in-one-step.md) (proposed, revised after
+review). In short: every DNS name the edge serves (console, MeshCentral,
+Authentik, an imported EasyPatch's) gets its own Let's Encrypt
+certificate; IP addresses keep the internal authority, and there are no
+wildcards. MeshCentral's `allowedOrigin`, which sessions on any
+MeshCentral origin but the primary one need, is fixed separately (branch
+`fix/mesh-allowed-origin`); 5b3 adds an added name to that list.
 
-* **5a. CertMagic, status and alerts.** CertMagic (Apache 2.0) instead of
-  autocert for the same names: issued as soon as the server starts, not
-  at the first connection; renewed with ACME Renewal Information; a
-  managed list instead of `HostWhitelist`, never on-demand issuance; no
-  OCSP stapling (Let's Encrypt ended OCSP in 2025); certificates kept in
-  PostgreSQL behind an advisory lock, so several servers share them.
-  `--acme-email` becomes optional. Settings →
-  **Certificates** shows each name, issuer, expiry, next renewal and last
-  error; an alert when a renewal fails or less than 14 days are left,
-  sent through F2 (Let's Encrypt no longer emails about expiry). The ACME
-  directory and its CA root become a supported setting, so a private ACME
-  CA works (and Pebble in tests). The guide's recovery when the server
-  will not start: `docker compose run --rm server tls reset`.
-* **5b. Names from the console.** The page is built around the install that
-  needs it: one on an IP address getting a name. It shows the DNS records
-  to create with the server's public address, runs checks shown as ticks,
-  each failure with its fix (the name resolves; ports 80 and 443 answer;
-  a resolving address that is not this host's is a warning, not a
-  failure, since cloud and NAT hosts only see their private address; a
-  trial order against Let's Encrypt's staging service, the real test, so
-  that a mistake does not use up the real service's limits), then **Get
-  certificates**, then "renews automatically; next renewal on …". In
-  offload mode the page says the proxy owns TLS. Adding a name needs
-  step-up authentication, and a name is trusted only once this server
-  holds a certificate for it obtained through HTTP-01 or TLS-ALPN-01 (proof
-  that the name reaches this server) or, for DNS-01 names, once a token
-  served here was fetched through the name. Only then does it become an
-  origin of the console, a single sign-on redirect URI, the authenticator
-  issuer, part of the install commands (rendered again), MeshCentral's
-  configuration and the engine's and Authentik's addresses; the ADR lists
-  every component and how each is told. A name whose renewal keeps failing
-  is flagged, and stops being trusted when its certificate expires. TLS mode and trusted proxies stay in `.env`. DNS-01 with RFC
-  2136 (a key scoped to `_acme-challenge`, or a CNAME to it) and
-  Cloudflare; the guide recommends delegating `_acme-challenge` over
-  handing EasyRMM a whole zone's token.
+* **5a. CertMagic, status and alerts.** CertMagic instead of `autocert`:
+  issued at start from a managed list, renewed by ARI, no OCSP. EasyRMM
+  schedules and gates every attempt (Let's Encrypt's retry schedule,
+  persisted, a failure budget per name and hour, nothing during the
+  updater's hold); CertMagic's own retries are not used. Keys and
+  certificates sealed in PostgreSQL; `autocert`'s account and ECDSA
+  certificates imported, so the upgrade orders nothing and registers no
+  account; no email unless set; a private ACME CA with its roots
+  (`EASYRMM_ACME_CA_FILE`). Checks for every name, on the page and in
+  `easyrmm-server tls check`. Settings → **Certificates** shows each name;
+  alerts as fractions of each certificate's lifetime, and after an hour
+  without a certificate, on every console origin and through F2's sender
+  behind one interface. MeshCentral reads its certificate from a
+  loopback listener of its own, which serves what agents get; a new one
+  is applied 3 minutes after MeshCentral's last read, and within 15
+  minutes of being ready.
+* **5b1. Agent trust**, released first: a trust instruction signed with
+  the job key carries the chain a source will serve; the agent verifies
+  it on the device and widens its trust (system roots and its CA file)
+  only for a move, only on that device, only if it verified. Needs
+  ADR-0009's protocol levels (pull request #52).
+* **5b2. Sources and moves.** A DNS name served by the authority or the
+  operator's files moves to Let's Encrypt and back without a restart,
+  once every device seen in 30 days that uses the name, through its
+  EasyRMM agent or its EasyPatch agent, verified the chain. Account
+  registration, CAA `accounturi`, a trial order against staging, then
+  **Agree and get certificates**. ADR-0042's instructions carry the
+  authority whenever there is one. Step-up authentication, defined there
+  for this plan; `tls reset`.
+* **5b3. An IP install's name**: the records to create, checks as ticks,
+  **Agree and get certificates**. The added name becomes a console origin
+  (never internal), the install commands' first address and the email
+  links' while it is reachable (checked daily), the authenticator's name,
+  WebAuthn's relying party, and an allowed origin in MeshCentral; when it
+  stops being trusted, agents enrolled through it keep working. Single
+  sign-on, Authentik's address and the engine's stay on the IP address
+  until 5c.
+* **5b4. DNS-01** through RFC 2136 (HMAC-SHA256 or stronger) or
+  Cloudflare, delegation recommended, propagation checked at the zone's
+  own servers.
 * **5c. Moving to a new name** (changing the console's name, or moving
   agents from an IP address to a name) is an ADR of its own: each
   computer runs three agents that hold the address (EasyRMM's, MeshAgent's
@@ -386,16 +461,20 @@ TLS-ALPN-01, renewed in the process; names are read at start.
   the new address and that address, trusting the roots it already
   trusts; step-up authentication and a notice to every super
   administrator; a view of the devices still on the old name; old names
-  kept registered and served until a cut-off. WebAuthn keys stay valid
-  through Related Origin Requests (`/.well-known/webauthn`). 5a and 5b
-  ship without it.
+  kept registered and served until a cut-off; single sign-on's redirect
+  URIs, Authentik's address and the engine's public URL move with the
+  console's name. WebAuthn keys stay valid through Related Origin
+  Requests (`/.well-known/webauthn`). 5a and 5b ship without it.
 
-**Tests**: Pebble for HTTP-01 and TLS-ALPN-01, and for DNS-01 through RFC
-2136 against a real BIND on host networking; renewal and the failure
-alert; two servers sharing certificates; `tls reset`; MeshCentral
-restarted with the new configuration and agents reconnecting; Cloudflare
-on a real account on `main` only, or marked unverified; the staging trial
-by hand; then the owner's real name.
+**Tests**: as [ADR-0055](adr/0055-lets-encrypt-in-one-step.md#testing)
+lists them: Pebble and BIND on host networking for every challenge,
+renewal with a 10-minute certificate, the failure alert, restarts that
+repeat no attempt, the upgrade from `autocert` and moves between sources
+with real agents in the bundle test; the Windows runner for the agent's
+trust, or marked unverified; a second Pebble as a flagged stand-in for
+staging in CI; Cloudflare against Let's Encrypt's staging with a real
+zone on `main` only, or marked unverified; a real Let's Encrypt staging
+run by hand, then the owner's real name.
 
 ### 6. Packages for the agent: DEB, RPM, MSI
 * **The package never replaces an enrolled agent's binary.** It installs
@@ -444,7 +523,8 @@ with ICE validation, then installed, upgraded and removed there; removal
 from the console of a packaged agent.
 
 ### 7. Email and webhook notifications for device alerts
-On F2.
+On F2. Decided in the same [ADR-0053](adr/0053-one-notification-sender.md);
+its departures from what follows are listed below.
 
 * **Rules**: which alerts reach which channels, by organization (or the
   platform), site, kind of device (server or workstation, from its
@@ -481,49 +561,68 @@ resolve arrives. The bundle test is split into parallel jobs that reuse
 images built once, so these waits do not lengthen the critical path.
 Real delivery to Slack and Teams is checked by hand and recorded.
 
+**Where ADR-0053 departs from this**:
+
+* **No tag filter**: EasyRMM's devices have no tags (the engine's
+  endpoints do). Rules filter by device group until devices have tags.
+* **Kind of device** comes from a new agent fact (`InstallationType` on
+  Windows), with the operating system's description as the fallback and
+  an override at the site.
+* **Generic webhooks get every alert**, in deliveries of at most 100, not
+  25 and a count: a PSA tool cannot ticket an alert hidden in a count.
+  People's channels keep 25 and a count.
+* **The grace delays the alert itself**, not only its notice, and only
+  after a shutdown; a stopped service gets none.
+* **`Evaluate` gains no `RETURNING`**: triggers write a journal of every
+  alert change in the same transaction, wherever it is made, and a planner
+  queues the notifications in a transaction of its own. A failure in
+  notifications can then never stop alerting.
+* **A local uninstall** marks the device *Uninstalled* and raises a
+  notice of its own, *agent removed without a request*, rather than going
+  quiet; a removal report that answers no instruction the server issued
+  does the same instead of deleting the device, and every instruction
+  sent is recorded under its own ID, so that neither cancelling nor asking
+  again forgets it (amending ADR-0050).
+* **ADR-0052's offline rule** delays openings only, as pull request #51
+  amends and builds it; as first written it would have resolved every
+  open offline alert at each restart. A fleet-wide hold covers an EasyRMM
+  that runs but that no agent can reach: while most devices are silent,
+  organizations' rules send no offline openings and platform rules do.
+* **The offline test stops both agents**: a device is online while
+  MeshAgent is connected, so stopping the EasyRMM agent alone raises
+  nothing.
+* **PSA tools also get `alerts.acknowledged`** (decided in review), and
+  an incident ID that survives a policy change.
+
 ### 8. The agent's WebSocket channel
-On F0 and F1.
-
-* **`GET /api/agent/v1/connect`**: the upgrade request is signed like
-  every agent request today (single-use nonce), which authenticates the
-  connection; there is no separate challenge that the agent would sign
-  (it could be made into a signing oracle).
-* **Every message is signed**: Ed25519 over a context of its own, a
-  connection ID the server issues, a sequence number, the type and the
-  body's hash. The sequence, kept in memory, stops replays; what is saved
-  is the nonce's database write per message, not the signature.
-  Connections cannot be bound to TLS (offload, NGINX), and the ADR does
-  not claim they are.
-* **What goes over it**: server to agent: *wake* (a job is waiting),
-  signed instructions as soon as they exist, settings changes, pings;
-  agent to server: heartbeats. Large uploads (job results, inventory,
-  logs) stay signed HTTPS requests with their limits.
-* **Limits and lifetime**: one connection per device; per-message rate and
-  size limits; reconnect at least every 12 hours; closed at once when the
-  device is removed or retired; pings every 30 seconds both ways; the
-  server's file descriptor limit raised.
-* **Several servers**: wakes and instructions through PostgreSQL
-  `LISTEN/NOTIFY`, which long polling gains too.
-* **The setting** (F1 key `agent.transport`, Site Administrators and
-  above): **Automatic (recommended)**; **Live connection**; **Regular
-  check-ins** (for networks that block live connections), each with one
-  line on what it changes. Automatic falls back after three failed
-  connections in 10 minutes (a connection that dies within a minute
-  counts: TLS inspection does that) and tries again hourly. *Live
-  connection* keeps an HTTPS heartbeat every 10 minutes, so a device whose
-  connection fails can still receive the setting that would fix it.
-  Devices shows the transport in use and has a filter for those that
-  fell back.
-* **Slices**: wake-only WebSocket beside polling; then F1 with this one
-  key; then the setting and the fallback.
-
-**Tests**: unit (framing, signatures, sequence, fallback), integration (a
-job and an instruction reach a connected agent at once; NOTIFY across two
-server instances; a forged and a replayed message refused; removal closes
-the socket), the bundle test with agents on each transport and through
-NGINX in offload mode (refusing the upgrade, to prove the fallback); a
-500-agent run on CI. 2,000 and 10,000 agents are run on the owner's host
-and recorded in drills.md: a CI runner (4 CPUs) cannot hold them.
+Proposed in [ADR-0059](adr/0059-the-agents-websocket-channel.md), not
+reviewed yet; on F0 and F1. In short: **wake-only**. `GET
+/api/agent/v1/connect` is authenticated by the agent's signed upgrade
+request (no URL token, no challenge to sign); the server sends only signed
+`hello`, `tick` (every 30 seconds; the agent pings every 30 seconds too),
+`wake` (*jobs*: poll now; *checkin*: heartbeat now) and `closing`, bound to
+the connection and a sequence. Jobs, instructions and settings still come
+only in answers to signed HTTPS requests, so a lost wake or connection
+delays a job but never loses one; a live agent stops holding long polls
+and polls on connect, on a wake and when a heartbeat says `jobsWaiting`,
+and holds them again the moment the connection ends. Full delivery over
+the connection, and heartbeats over it, are not planned: reconsidered
+only if the 10,000-agent drill shows the HTTPS requests left limit a
+server. Per device in its Settings tab (F1's `agent.transport`):
+**Automatic (recommended)**, the default; **Live connection**, never
+falling back; **Regular check-ins**; inheritable from the site,
+organization and platform, enforceable by the platform or an
+organization. Automatic falls back after three failures in 10 minutes
+that happen while HTTPS works, and retries hourly. Limits: one connection
+per device, upgrades per device and per second, 10,000 connections per
+server by default, `nofile` raised, a memory gate in CI. Slices: the
+channel beside the long poll (*Regular check-ins* by default); the live
+connection replacing the held poll, *Automatic* by default; several
+servers through `LISTEN/NOTIFY`. Tests: unit and Windows runner,
+integration, the bundle with real agents through an idle-killing proxy,
+an inspecting proxy, NGINX and a server restart, 5,000 connections and
+500 agents on CI, 2,000 and 10,000 agents on a drill host (never the
+host of the owner's instance, which `soak.sh` would have to stop).
 
 ### 9. Hardening Windows computers and servers (ADR-0054)
 The ADR is proposed, had one independent review and was revised after it
@@ -643,9 +742,9 @@ another antivirus and firewall, and a common EDR.
 | 5 | Windows hardening (9): its ADR, revised after review, then W1, W2, W3 | Most managed computers run Windows; reuses step 3's job, permission and console (H3) while that work is fresh; W1 needs CI's Windows runners, the KVM decision with its domain, and a real Intune-enrolled Windows 11; it builds the ownership reader step 11 reuses |
 | 6 | F2 and device alert notifications (7) | Needed by 4b, 5 and 3's alerts |
 | 7 | Updater 4b: the console | Needs F2 |
-| 8 | Let's Encrypt 5a, then 5b | Needs F2 for its alerts |
+| 8 | Let's Encrypt 5a, then 5b1 to 5b4 | Needs F2 for its alerts |
 | 9 | Packages (6): DEB, RPM, MSI | How MSPs onboard computers; nothing depends on 3 |
-| 10 | F0; the wake-only WebSocket; F1; the transport setting (8) | F1's first key is the transport |
+| 10 | F0; F1 (ADR-0058); the WebSocket (8, ADR-0059) | The agent learns from a signed setting whether to connect, so F1 comes first (proposed by ADR-0058) |
 | 11 | Log collection (3), in its slices | The largest; needs F1 and F2; it sets the Windows audit policy that step 5 only reports, with step 5's ownership reader |
 | 12 | Moving to a new name (5c), its ADR first | Needs F0 |
 
@@ -674,12 +773,29 @@ code.
 * **The updater is root on the host**: it takes nothing but a version from
   the server, writes nowhere the server can, and installs only what it
   verified.
+* **A key rotation strands agents, or leaves a leaked key trusted** (F0):
+  devices move only on their own signed reports, a device on a compromised
+  key is moved to the newest cut-over key before anything else, the
+  updater refuses a rollback across a cut-over, a server from before the
+  ring can neither start on its database nor be running during a
+  rotation, a device left on a key a restore lost moves with the next
+  rotation, and `trust-key` or a reinstall covers the devices that cannot
+  follow.
 * **A stolen administrator session redirects agents**: moving names needs
   signatures over the agent's own nonce, step-up authentication, and a
   notice to every super administrator.
-* **Middleboxes break WebSockets**: automatic fallback, and an HTTPS
-  heartbeat kept on forced connections.
+* **Middleboxes break WebSockets**: automatic fallback, the HTTPS
+  heartbeat kept on every transport, and jobs only ever delivered by the
+  signed poll (ADR-0059).
 * **Packages fight self-update**: the package never replaces the running
   agent.
+* **Organizations' webhooks reach into a network**: every connection
+  checked and none shared between channels; private ranges and the
+  server's own networks only once approved for that channel; the server
+  itself never (ADR-0053).
+* **Notifications storm, go missing or stop alerting**: site outages,
+  digests, fair share and the restart grace keep a power cut to a few
+  messages; a failing channel raises a notice; planning runs apart from
+  `Evaluate`, so a failure in it never stops alerts (ADR-0053).
 * **Windows is unverified in CI** until the Windows end-to-end harness
   exists: every Windows path says so until then.

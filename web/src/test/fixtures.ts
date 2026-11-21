@@ -76,6 +76,7 @@ export function device(id: string, name: string, extra: Partial<Device> = {}): D
     canCheckHardening: false,
     canRemove: false,
     removal: null,
+    hardening: null,
     ...extra,
   };
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"net"
 	"net/http"
@@ -15,7 +16,9 @@ import (
 
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
+	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
+	"github.com/paulmataruso/easyrmm/server/internal/remote"
 )
 
 func mustURL(s string) *url.URL {
@@ -105,6 +108,61 @@ func TestOriginsAndRouting(t *testing.T) {
 	if strings.Join(names, ",") != "rmm.test,mesh.rmm.test,patch.old.test" {
 		t.Errorf("internal mode with an imported EasyPatch's name: %v", names)
 	}
+}
+
+// MeshCentral accepts a session's control connection from every MeshCentral
+// origin the server serves, and only from those (allowedOrigin, ADR-0016).
+func TestMeshConfigAllowsEveryMeshOrigin(t *testing.T) {
+	sec := &remote.Secrets{LoginKey: make([]byte, meshcentral.KeySize), SessionKey: strings.Repeat("s", 64)}
+	allowed := func(t *testing.T, cfg *config.Config) string {
+		t.Helper()
+		cfg.Mesh.InternalURL, cfg.Mesh.CertURL = mustURL("http://127.0.0.1:14430"), "https://127.0.0.1:443"
+		out, err := MeshServerConfig(cfg, sec).Render()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc struct {
+			Domains map[string]struct {
+				AllowedOrigin []string `json:"allowedOrigin"`
+			} `json:"domains"`
+		}
+		if err := json.Unmarshal(out, &doc); err != nil {
+			t.Fatal(err)
+		}
+		return strings.Join(doc.Domains[""].AllowedOrigin, " ")
+	}
+
+	t.Run("DNS install with IP access", func(t *testing.T) {
+		if got := allowed(t, ipAccessConfig(t)); got != "mesh.rmm.test 203.0.113.10 [2001:db8::10]" {
+			t.Errorf("allowedOrigin = %q", got)
+		}
+	})
+	t.Run("IP-only install", func(t *testing.T) {
+		cfg := testConfig(t)
+		cfg.PublicURL, cfg.MeshPublicURL = mustURL("https://203.0.113.10"), mustURL("https://203.0.113.10:4443")
+		cfg.TLSMode, cfg.IPAccess = config.TLSInternal, true
+		// The public address, and the private one behind NAT.
+		cfg.IPAddresses = []netip.Addr{netip.MustParseAddr("203.0.113.10"), netip.MustParseAddr("192.0.2.10")}
+		if got := allowed(t, cfg); got != "203.0.113.10 192.0.2.10" {
+			t.Errorf("allowedOrigin = %q", got)
+		}
+	})
+	t.Run("IPv6-only install", func(t *testing.T) {
+		cfg := testConfig(t)
+		cfg.PublicURL, cfg.MeshPublicURL = mustURL("https://[2001:db8::1]"), mustURL("https://[2001:db8::1]:4443")
+		cfg.TLSMode, cfg.IPAccess = config.TLSInternal, true
+		cfg.IPAddresses = []netip.Addr{netip.MustParseAddr("2001:db8::1"), netip.MustParseAddr("2001:db8::20")}
+		if got := allowed(t, cfg); got != "[2001:db8::1] [2001:db8::20]" {
+			t.Errorf("allowedOrigin = %q", got)
+		}
+	})
+	t.Run("IP access off", func(t *testing.T) {
+		cfg := ipAccessConfig(t)
+		cfg.IPAccess = false
+		if got := allowed(t, cfg); got != "mesh.rmm.test" {
+			t.Errorf("allowedOrigin = %q", got)
+		}
+	})
 }
 
 func TestHostHandlers(t *testing.T) {
@@ -224,7 +282,7 @@ func TestEdgeInternalTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("host=" + r.Host)) })
-	stop := runEdge(t, &edge{cfg: cfg, handler: h, log: discard(), pki: ca})
+	stop := runEdge(t, &edge{cfg: cfg, handler: h, hold: notHeld(t), log: discard(), pki: ca})
 	defer stop()
 
 	block, _ := pem.Decode(ca.CAPEM())
@@ -246,7 +304,7 @@ func TestEdgeInternalTLS(t *testing.T) {
 	}
 
 	// An internal mode edge without its authority refuses to start.
-	e := &edge{cfg: cfg, handler: h, log: discard()}
+	e := &edge{cfg: cfg, handler: h, hold: notHeld(t), log: discard()}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := e.run(ctx); err == nil {

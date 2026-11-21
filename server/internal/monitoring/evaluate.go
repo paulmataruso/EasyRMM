@@ -50,13 +50,14 @@ func (s *Service) Evaluate(ctx context.Context) (Result, error) {
 			return err
 		}
 		r.Resolved += n
-		list, err := loadFacts(ctx, tx, now)
+		floor := s.seenFloor(now)
+		list, err := loadFacts(ctx, tx, now, floor)
 		if err != nil {
 			return err
 		}
 		var opens, updates, resolves changes
 		for _, f := range list {
-			act, v := decide(f, now)
+			act, v := decide(f, now, floor)
 			switch act {
 			case actOpen:
 				opens.add(f.policyID, f.deviceID, v)
@@ -168,8 +169,9 @@ type facts struct {
 
 // loadFacts reads, for every enabled policy and covered device, what the
 // decision needs. Pairs with no alert whose condition plainly does not hold
-// are left out.
-func loadFacts(ctx context.Context, tx pgx.Tx, now time.Time) ([]facts, error) {
+// are left out, offline ones also until the policy's minutes have passed
+// since floor (see decide).
+func loadFacts(ctx context.Context, tx pgx.Tx, now, floor time.Time) ([]facts, error) {
 	rows, err := tx.Query(ctx, `SELECT * FROM (
 			SELECT p.id AS policy_id, d.id AS device_id, p.kind, p.threshold, p.minutes, a.id AS alert_id,
 				d.remote_online OR coalesce(d.agent_last_seen_at > $1::timestamptz - make_interval(secs => $2), false) AS online,
@@ -194,9 +196,10 @@ func loadFacts(ctx context.Context, tx pgx.Tx, now time.Time) ([]facts, error) {
 			WHERE p.enabled
 		) f
 		WHERE alert_id IS NOT NULL
-		   OR (kind = 'offline' AND NOT online AND seen <= $1::timestamptz - make_interval(mins => minutes))
+		   OR (kind = 'offline' AND NOT online AND seen <= $1::timestamptz - make_interval(mins => minutes)
+			AND $4::timestamptz <= $1::timestamptz - make_interval(mins => minutes))
 		   OR (kind <> 'offline' AND lo >= threshold)`,
-		now, devices.AgentOnlineWindow.Seconds(), ResolveWindow)
+		now, devices.AgentOnlineWindow.Seconds(), ResolveWindow, floor)
 	if err != nil {
 		return nil, err
 	}
@@ -223,21 +226,28 @@ const (
 )
 
 // decide turns facts into what to do with the pair, and the value to record
-// (nil keeps the alert's latest value).
-func decide(f facts, now time.Time) (action, *float64) {
+// (nil keeps the alert's latest value). An offline policy opens an alert
+// only when the device also counts as unseen from floor, the earliest it
+// could have checked in since the server began serving agents (ADR-0052);
+// an alert already open stays open while the device has not checked in,
+// and records how long ago it last did.
+func decide(f facts, now, floor time.Time) (action, *float64) {
 	if f.kind == KindOffline {
-		met := !f.online && f.seen != nil && now.Sub(*f.seen) >= time.Duration(f.minutes)*time.Minute
+		limit := time.Duration(f.minutes) * time.Minute
+		met := !f.online && f.seen != nil && now.Sub(*f.seen) >= limit
 		switch {
-		case met:
-			v := math.Floor(now.Sub(*f.seen).Minutes())
-			if f.alertID == nil {
-				return actOpen, &v
-			}
-			return actUpdate, &v
-		case f.alertID != nil:
+		case !met && f.alertID != nil:
 			return actResolve, nil
+		case !met:
+			return actNone, nil
+		case f.alertID == nil && now.Sub(floor) < limit:
+			return actNone, nil
 		}
-		return actNone, nil
+		v := math.Floor(now.Sub(*f.seen).Minutes())
+		if f.alertID == nil {
+			return actOpen, &v
+		}
+		return actUpdate, &v
 	}
 	if f.threshold == nil {
 		return actNone, nil

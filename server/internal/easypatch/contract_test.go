@@ -76,7 +76,7 @@ func newContract(t *testing.T) *contract {
 	}
 	caFile := os.Getenv("EASYRMM_CONTRACT_EASYPATCH_CA")
 	key, err := base64.StdEncoding.DecodeString(os.Getenv("EASYRMM_CONTRACT_ENGINE_KEY"))
-	if c.url == "" || caFile == "" || c.engineURL == "" || err != nil || len(key) < MinStatementKey {
+	if c.url == "" || c.version == "" || caFile == "" || c.engineURL == "" || err != nil || len(key) < MinStatementKey {
 		t.Fatal("the contract tests need a real EasyPatch server: run them with make test-contract")
 	}
 	c.engineKey = key
@@ -360,13 +360,11 @@ func TestContract(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if c.version != "" && info.Version != c.version {
+		// The engine built from this commit, or a release's (ADR-0052:
+		// edge builds run the last release's). That the fake reports the
+		// version of the one built from this commit is TestEngineVersion's.
+		if info.Version != c.version {
 			t.Errorf("version %q, want %q", info.Version, c.version)
-		}
-		// The fake reports the version of the engine built from the same
-		// commit; a release that raises <Version> raises it too.
-		if info.Version != eptest.EngineVersion {
-			t.Errorf("the engine is %s but eptest.EngineVersion is %s: set it to the engine's <Version>", info.Version, eptest.EngineVersion)
 		}
 		if d := time.Since(info.ServerTime); d > time.Minute || d < -time.Minute {
 			t.Errorf("server time %v", info.ServerTime)

@@ -56,6 +56,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/sso"
 	"github.com/paulmataruso/easyrmm/server/internal/tenancy"
+	"github.com/paulmataruso/easyrmm/server/internal/updater"
 	"github.com/paulmataruso/easyrmm/server/internal/users"
 	"github.com/paulmataruso/easyrmm/server/internal/webui"
 )
@@ -287,9 +288,15 @@ func MeshServerConfig(cfg *config.Config, sec *remote.Secrets) meshcentral.Serve
 	if p := cfg.MeshPublicURL.Port(); p != "" {
 		port, _ = strconv.Atoi(p)
 	}
-	var framing []string
+	// Written on every start from the origins served then: a change in them
+	// (IP access, the addresses) changes the file, and MeshCentral's start
+	// script then restarts MeshCentral.
+	var framing, mesh []string
 	for _, o := range cfg.Origins() {
 		framing = append(framing, originString(o.Console))
+		if o.Mesh != nil {
+			mesh = append(mesh, originString(o.Mesh))
+		}
 	}
 	return meshcentral.ServerConfig{
 		Hostname:       cfg.MeshPublicURL.Hostname(),
@@ -297,6 +304,7 @@ func MeshServerConfig(cfg *config.Config, sec *remote.Secrets) meshcentral.Serve
 		PublicPort:     port,
 		TrustedProxy:   cfg.Mesh.InternalURL.Hostname(),
 		FramingOrigins: framing,
+		MeshOrigins:    mesh,
 		CertURL:        cfg.Mesh.CertURL,
 		LoginKey:       sec.LoginKey,
 		SessionKey:     sec.SessionKey,
@@ -504,10 +512,15 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	// Read before the listeners open, then followed (ADR-0052). Offline
+	// policies count from when the server began serving agents.
+	hold := updater.NewHold(cfg.UpdaterStatusDir, log)
+	deps.Monitoring.FollowServing(hold.ServingSince)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var wg sync.WaitGroup
+	wg.Go(func() { hold.Run(ctx) })
 	var tasks []func(context.Context) error
 	if deps.Remote != nil {
 		if err := writeMeshConfig(cfg, deps.MeshSecrets, log); err != nil {
@@ -536,9 +549,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { maintain(ctx, db, cfg.AuditRetention, log, tasks...) })
 	healthErr := make(chan error, 1)
 	if cfg.ListenHealth != "" {
-		wg.Go(func() { healthErr <- serveHealth(ctx, cfg.ListenHealth, db, log) })
+		wg.Go(func() { healthErr <- serveHealth(ctx, cfg.ListenHealth, db, hold, log) })
 	}
-	e := &edge{cfg: cfg, handler: h, log: log, pki: deps.PKI}
+	e := &edge{cfg: cfg, handler: h, hold: hold, log: log, pki: deps.PKI}
 	runErr := e.run(ctx)
 	cancel()
 	wg.Wait()
@@ -578,8 +591,10 @@ func waitFor(ctx context.Context, log *slog.Logger, what string, fn func(context
 }
 
 // serveHealth serves probes on a loopback address:
-// /healthz (process is up) and /readyz (database reachable).
-func serveHealth(ctx context.Context, addr string, db *database.DB, log *slog.Logger) error {
+// /healthz (process is up) and /readyz (database reachable). They answer
+// while the updater holds the server, so that Compose finds it healthy;
+// /readyz then says it is held.
+func serveHealth(ctx context.Context, addr string, db *database.DB, hold *updater.Hold, log *slog.Logger) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))
@@ -589,6 +604,10 @@ func serveHealth(ctx context.Context, addr string, db *database.DB, log *slog.Lo
 		defer cancel()
 		if err := db.Ping(c); err != nil {
 			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if hold.Held() {
+			_, _ = w.Write([]byte("ready, held by the updater\n"))
 			return
 		}
 		_, _ = w.Write([]byte("ready\n"))

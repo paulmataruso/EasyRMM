@@ -14,14 +14,17 @@
 // is added and tested, which fails for want of a mail server; EasyPatch's own rule for unsupported
 // operating systems sends to it; moving Debian 12's end of support near makes EasyPatch raise an
 // alert for the machine, which Patching → Alerts shows and acknowledges, and the channel is sent it.
-// scripts/e2e/bundle.sh starts everything and runs this.
+// Signed in on the server's second address, the administrator opens a terminal session, which runs
+// on that address's MeshCentral origin. scripts/e2e/bundle.sh starts everything and runs this.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { enrollAuthenticator } from "../e2e/authenticator";
+import { enrollAuthenticator, nextCode } from "../e2e/authenticator";
 
 const host = process.env.EASYRMM_BUNDLE_HOST ?? "";
+/** Another of the server's addresses, beside the public URL's (IP access, ADR-0016). */
+const secondURL = process.env.EASYRMM_BUNDLE_SECOND_URL ?? "";
 const hostname = process.env.EASYRMM_BUNDLE_HOSTNAME ?? "";
 const setupToken = process.env.EASYRMM_BUNDLE_SETUP_TOKEN ?? "";
 const ADMIN = { name: "Morgan Patel", email: "morgan@example.com", password: "orchard signal calmly 58" };
@@ -635,6 +638,61 @@ test("an alert rule raises an alert for the machine, which Patching → Alerts a
     "patch.channel_create",
   ]);
   expect(audit.items[3]!.deviceId).toBe(deviceId);
+});
+
+/** MeshCentral's answer on a session's control connection: the user's details, or closing it and why. */
+function controlAnswer(payload: string | Buffer): string | null {
+  if (typeof payload !== "string" || !payload.startsWith("{")) return null;
+  const m = JSON.parse(payload) as { action?: string; cause?: string };
+  if (m.action === "userinfo") return "userinfo";
+  return m.action === "close" ? `close: ${m.cause ?? ""}` : null;
+}
+
+test("a terminal session from the server's second address runs on that address's MeshCentral origin", async ({ browser }) => {
+  // The server answers on each of its addresses (ADR-0016): here 127.0.0.2 too, besides the public 127.0.0.1. A
+  // session started on 127.0.0.2 runs on https://127.0.0.2:4443, which MeshCentral must accept as an origin besides
+  // its own name; until 2026-11-21 it closed the session's control connection ("invalidorigin").
+  expect(secondURL, "EASYRMM_BUNDLE_SECOND_URL").not.toBe("");
+  await expect
+    .poll(
+      async () => {
+        const d = await api<{ remoteAgent: boolean; remoteOnline: boolean }>("GET", `/api/v1/devices/${deviceId}`);
+        return d.remoteAgent && d.remoteOnline;
+      },
+      { message: "MeshAgent on the machine is connected", timeout: 180_000, intervals: [3_000] },
+    )
+    .toBe(true);
+
+  const context = await browser.newContext({ baseURL: secondURL });
+  try {
+    const page = await context.newPage();
+    const answers: string[] = [];
+    page.on("websocket", (ws) => {
+      if (!new URL(ws.url()).pathname.endsWith("/control.ashx")) return;
+      ws.on("framereceived", ({ payload }) => {
+        const answer = controlAnswer(payload);
+        if (answer) answers.push(answer);
+      });
+    });
+    // The administrator signs in on the second address: its console is an origin of its own.
+    await page.goto("/login");
+    await page.getByLabel(/^Email/).fill(ADMIN.email);
+    await page.getByLabel(/^Password/).fill(ADMIN.password);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await page.getByLabel(/^Verification code/).fill(await nextCode(page, ADMIN.email));
+    await page.getByRole("button", { name: "Verify" }).click();
+    await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+
+    await page.goto(`/devices/${deviceId}/remote/terminal`);
+    const frame = page.locator("iframe");
+    await expect(frame).toHaveAttribute("src", /^https:/);
+    expect(new URL((await frame.getAttribute("src")) ?? "").host, "the session's origin").toBe(`${new URL(secondURL).hostname}:4443`);
+    await expect
+      .poll(() => answers[0], { message: "MeshCentral's answer on the session's control connection", timeout: 60_000 })
+      .toBe("userinfo");
+  } finally {
+    await context.close();
+  }
 });
 
 /** The HTTP status EasyRMM's API answers a GET with, from the administrator's page. */
