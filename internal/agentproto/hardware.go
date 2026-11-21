@@ -60,7 +60,7 @@ const (
 	ReasonStorageDriver = "storage_driver"
 	// The device itself refused the query as not supported (unsupported).
 	ReasonDeviceRefused = "device_refused"
-	// SAS, Fibre Channel, iSCSI or another SCSI disk: its own health pages
+	// SAS, FC, iSCSI or another SCSI disk: its own health pages
 	// are not read yet (unavailable).
 	ReasonProtocolNotRead = "protocol_not_read"
 	// A disk behind a USB bridge: not read until a later slice

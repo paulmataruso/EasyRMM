@@ -39,7 +39,7 @@ accordingly.
 The database dump grows with what the database keeps. At the defaults, the
 largest shares are the measurements kept for charts, about 1 GiB for 1,000
 devices ([Inventory and health](inventory.md#retention-and-size)), and disk
-health history, about 0.4 GiB for 1,000 devices with two disks each
+health history, about 0.6 GiB for 1,000 devices with two disks each
 ([Disk health](disk-health.md#history-and-retention)). The dump is
 compressed, so it is usually smaller than the database.
 

@@ -162,8 +162,9 @@ disappears.
   Those are kept for `EASYRMM_HARDWARE_RETENTION` (default `17520h`, 730
   days; at least `EASYRMM_METRICS_RETENTION`, or the server refuses to
   start). Disks wear over years, and two years shows the trend.
-* **Size**: about 0.2 MiB per disk at the defaults; 1,000 devices with two
-  disks each take about 0.4 GiB of database space, and the
+* **Size**: about 0.3 MiB per disk at the defaults (about 300 bytes a
+  reading with its index: 336 readings for the week and 730 days); 1,000
+  devices with two disks each take about 0.6 GiB of database space, and the
   [backups](backup-restore.md) grow by the same.
 * Removing a device removes its disks' readings and history.
 

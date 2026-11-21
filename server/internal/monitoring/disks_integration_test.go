@@ -111,6 +111,16 @@ func TestDiskFailingAlerts(t *testing.T) {
 	if r := f.evaluate(); r.Opened != 0 || r.Resolved != 0 {
 		t.Fatalf("again: %+v", r)
 	}
+	// Acknowledging one leaves the other as it was.
+	if _, err := f.svc.Acknowledge(f.ctx, f.super, n.ID); err != nil {
+		t.Fatal(err)
+	}
+	if a := f.diskAlert(dev, "Disk failing", s.SubjectLabel); a == nil || a.Status != "open" {
+		t.Fatalf("the other disk's alert %+v", a)
+	}
+	if a := f.diskAlert(dev, "Disk failing", n.SubjectLabel); a == nil || a.Status != "acknowledged" {
+		t.Fatalf("acknowledged %+v", a)
+	}
 
 	// A reading that cannot tell changes nothing; one clear reading is not
 	// enough; two are.
@@ -329,6 +339,15 @@ func TestDiskGone(t *testing.T) {
 	if r := f.evaluate(); r.Opened != 0 || r.Resolved != 0 || f.diskAlert(dev, "Disk failing", label) == nil {
 		t.Fatalf("missing: %+v", r)
 	}
+	// Resolved by hand, a missing disk's alert stays resolved: its last
+	// reading was failing, but nothing opens on a missing disk.
+	sda := f.diskAlert(dev, "Disk failing", "sda · Example SSD 500GB")
+	if _, err := f.svc.Resolve(f.ctx, f.super, sda.ID); err != nil {
+		t.Fatal(err)
+	}
+	if r := f.evaluate(); r.Opened != 0 || f.diskAlert(dev, "Disk failing", sda.SubjectLabel) != nil {
+		t.Fatalf("after resolving a missing disk's alert by hand: %+v", r)
+	}
 	// 13 days, and an inventory without either disk since: nothing yet.
 	f.exec(`UPDATE device_disk_health SET missing_since = now() - interval '13 days' WHERE missing_since IS NOT NULL`)
 	inventory("now()")
@@ -357,8 +376,8 @@ func TestDiskGone(t *testing.T) {
 	if n := f.count(`SELECT count(*) FROM device_disk_health_samples WHERE device_id = $1 AND disk_key = $2`, dev, a.Subject); n == 0 {
 		t.Error("the gone disk's history went with it")
 	}
-	if f.diskAlert(dev, "Disk failing", "sda · Example SSD 500GB") == nil {
-		t.Error("sda's alert resolved")
+	if got, _ := f.svc.GetAlert(f.ctx, f.super, sda.ID); got.Resolution != "manual" {
+		t.Errorf("sda's alert %+v", got)
 	}
 }
 

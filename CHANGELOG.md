@@ -160,7 +160,7 @@ All notable changes to this project are documented here. The format follows
     lists it. See [Disk health policies](docs/operations/alerts.md#disk-health-policies).
   - **History**: every reading for `EASYRMM_METRICS_RETENTION`, then one
     row per disk and day for `EASYRMM_HARDWARE_RETENTION` (new; `17520h`,
-    730 days, by default, at least the metrics retention). About 0.2 MiB
+    730 days, by default, at least the metrics retention). About 0.3 MiB
     per disk in the database and its backups.
   - **Each disk's firmware revision** is in the inventory. Every device
     uploads its inventory once after its agent is updated.
