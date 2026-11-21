@@ -467,3 +467,39 @@ func TestWorkerPausesForUpdates(t *testing.T) {
 		t.Errorf("runs %v", ran)
 	}
 }
+
+// TestClearWork deletes what runs left in their working folders, and a link
+// there, not what it points to; the journal stays.
+func TestClearWork(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	w := &Worker{Dir: dir}
+	run := filepath.Join(w.workRoot(), "run-x")
+	if err := os.MkdirAll(run, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(w.journal().dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	kept := filepath.Join(outside, "kept")
+	if err := os.WriteFile(kept, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(run, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.ClearWork(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(w.workRoot()); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("working folders kept: %v", err)
+	}
+	if _, err := os.Stat(kept); err != nil {
+		t.Errorf("the link's target went: %v", err)
+	}
+	if _, err := os.Stat(w.journal().dir); err != nil {
+		t.Errorf("the journal went: %v", err)
+	}
+	if err := w.ClearWork(); err != nil {
+		t.Errorf("clearing nothing: %v", err)
+	}
+}

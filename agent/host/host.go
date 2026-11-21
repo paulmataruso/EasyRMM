@@ -79,6 +79,17 @@ func (p Paths) Units() string { return p.unix("etc/systemd/system") }
 // keeps it.
 func (p Paths) Logs() string { return filepath.Join(p.State(), "logs") }
 
+// CheckState makes the state folder safe to read, before anything in it is
+// read or written. On Windows, where any user may create folders under
+// ProgramData, it moves aside what the agent cannot trust (see checkState);
+// elsewhere only root reaches the folder, and it does nothing. entries are
+// what the agent reads and writes in the folder: groups of names relative
+// to it, the last element of each possibly a pattern. It returns where it
+// moved what it set aside.
+func (p Paths) CheckState(entries [][]string) (aside []string, err error) {
+	return checkState(p.State(), p.programData(), entries)
+}
+
 // Facts describes this machine.
 func Facts(version string) agentproto.Facts {
 	name, _ := os.Hostname()

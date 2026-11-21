@@ -49,7 +49,7 @@ func (e *env) launchRemoval(ctx context.Context, file string) (bool, error) {
 }
 
 // removalFile is where the agent saves the instruction it acts on.
-func (e *env) removalFile() string { return filepath.Join(e.store.Dir, removal.File) }
+func (e *env) removalFile() string { return filepath.Join(e.store.Dir(), removal.File) }
 
 // removeOnRequest uninstalls the agent on the server's instruction, saved
 // at file: the service first, then MeshAgent, then a report to the server,

@@ -8,6 +8,29 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **The Windows agent checks its state folder before reading it.** Any
+  user may create folders under ProgramData, and the agent protected
+  `%ProgramData%\EasyRMM\Agent` only when it saved an enrollment. A
+  standard user could have prepared that folder before the agent was
+  installed, or after it was removed, and had the install and the service,
+  which runs as SYSTEM, use what they left there. Now, before any command
+  reads or writes its state, and before the service opens its log, the
+  agent checks:
+  - that every folder from ProgramData down is a plain folder that the
+    system or an administrator made;
+  - that the state folder has only its own access list;
+  - that each file it reads or writes there is a plain file with a single
+    link, owned by the system or an administrator. This covers the
+    enrollment, key, status, job journal, log, update marker and EasyPatch
+    downloads.
+
+  A folder that fails is moved aside, as `<name>.untrusted-<time>`, and made
+  anew. A file that fails is moved aside, and the configuration and the key
+  go together. The agent never reads what it moved aside: it carries on as
+  not enrolled, and an install enrolls anew. The scripts' working folders,
+  which the check leaves out, are emptied when the agent starts. On
+  Windows, `easyrmm-agent status` now needs an administrator. Linux is
+  unchanged: only root reaches its state folder there.
 - **`setup.sh` writes nothing through a link Authentik's containers plant.**
   As root, it wrote the administrator's invitation in
   `authentik/invitations/`, which the `authentik-setup` container can write,

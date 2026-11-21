@@ -34,6 +34,10 @@ func Protect(dir string) error {
 	return os.Chmod(dir, 0o700) //nolint:gosec // a directory, owner only
 }
 
+// checkState does nothing: only root reaches the state folder, and Load
+// checks the key's mode.
+func checkState(string, string, [][]string) ([]string, error) { return nil, nil }
+
 // RemoveExecutable deletes an installed program. later is true when it can
 // only be deleted at the next restart, which happens on Windows only.
 func RemoveExecutable(path string) (later bool, err error) {

@@ -71,8 +71,12 @@ their own rights, and EasyRMM narrows what reaches them.
 
 **On the managed computer** ([ADR-0020](../architecture/adr/0020-windows-agent.md), [ADR-0028](../architecture/adr/0028-software-deployment.md))
 * The agent's state (key, configuration, job journal) can be changed only
-  by SYSTEM or administrators on Windows, and by root on Linux. A folder
-  someone else owns is replaced.
+  by SYSTEM or administrators on Windows, and by root on Linux.
+* On Windows, where any user may create folders under ProgramData, the
+  agent checks its state folder before any command reads it and before
+  the service opens its log. It moves aside a folder, or a file it reads
+  or writes there, that someone else made, that others could change, or
+  that is a link. It never reads what it moved aside.
 * Package managers' programs are run only if only administrators can
   change them.
 * cmd arguments that could break out of their quotes are refused.

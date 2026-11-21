@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -132,37 +133,206 @@ func protect(dir, shared string) error {
 	p := shared
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
 		p = filepath.Join(p, part)
-		if err := trustedFolder(p); err != nil {
+		if _, err := trustedFolder(p, false); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
+// checkState makes dir, the agent's state folder below shared (ProgramData),
+// safe to read before anything in it is read or written:
+//   - every folder from shared down to dir is made a protected folder that
+//     only administrators made, as Protect does;
+//   - dir must also have the protected access list already: whoever another
+//     list let in may still hold the folder open, to add files later;
+//   - a folder that fails is moved aside, with all it holds, and made anew;
+//   - in a folder that passes, the entries named must be plain files with a
+//     single link, or plain folders, that a trusted account owns. An entry
+//     that fails moves aside with the rest of its group, into a folder
+//     beside dir, and is not read.
+//
+// Entries are checked in order, so a folder must come before the entries
+// in it. Nothing else in dir is checked: the agent reads nothing else.
+func checkState(dir, shared string, entries [][]string) ([]string, error) {
+	dir, shared = filepath.Clean(dir), filepath.Clean(shared)
+	rel, err := filepath.Rel(shared, dir)
+	if err != nil || rel == "." || !filepath.IsLocal(rel) {
+		return nil, fmt.Errorf("the agent's state folder %s is not below %s", dir, shared)
+	}
+	// ProgramData is always there; a test's root needs one made.
+	if err := os.MkdirAll(shared, 0o755); err != nil { //nolint:gosec // ProgramData, or a test's
+		return nil, err
+	}
+	var aside []string
+	p := shared
+	parts := strings.Split(rel, string(filepath.Separator))
+	for i, part := range parts {
+		p = filepath.Join(p, part)
+		// What was below a folder moved aside went with it, and is made anew.
+		moved, err := trustedFolder(p, i == len(parts)-1)
+		if moved != "" {
+			aside = append(aside, moved)
+		}
+		if err != nil {
+			return aside, err
+		}
+	}
+	moved, err := trustedEntries(dir, entries)
+	return append(aside, moved...), err
+}
+
 // trustedFolder makes p a protected folder that only administrators made,
-// creating it, or replacing one that someone else made.
-func trustedFolder(p string) error {
+// creating it, or replacing one that someone else made. strict replaces a
+// folder without the protected access list too, rather than protecting it.
+// It returns where it moved a folder it replaced.
+func trustedFolder(p string, strict bool) (aside string, err error) {
 	fi, err := os.Lstat(p) //nolint:gosec // below ProgramData, from the system's environment
 	if errors.Is(err, fs.ErrNotExist) {
-		return mkdirProtected(p)
+		return "", mkdirProtected(p)
 	}
 	if err != nil {
-		return err
+		return "", err
 	}
 	if plainFolder(fi) {
 		ok, err := trustedOwner(p)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if ok {
-			return setProtected(p)
+			// Setting an access list rewrites the lists of everything below,
+			// so a folder that has the protected one keeps it as it is.
+			protected, err := protectedACL(p)
+			switch {
+			case err != nil:
+				return "", err
+			case protected:
+				return "", nil
+			case !strict:
+				return "", setProtected(p)
+			}
 		}
 	}
-	aside := fmt.Sprintf("%s.untrusted-%d", p, time.Now().UnixNano())
+	aside = fmt.Sprintf("%s.untrusted-%d", p, time.Now().UnixNano())
 	if err := os.Rename(p, aside); err != nil { //nolint:gosec // below ProgramData, from the system's environment
-		return fmt.Errorf("%s was not made by an administrator, so the agent will not use it, and moving it aside failed: %w; delete it and try again", p, err)
+		return "", fmt.Errorf("%s was not made by an administrator, or others could change it, so the agent will not use it, and moving it aside failed: %w; delete it and try again", p, err)
 	}
-	return mkdirProtected(p)
+	return aside, mkdirProtected(p)
+}
+
+// trustedEntries checks the entries of dir that entries name (checkState),
+// and moves aside each group with an entry that fails.
+func trustedEntries(dir string, entries [][]string) ([]string, error) {
+	var aside []string
+	away := "" // the folder beside dir that what fails moves to
+	for _, group := range entries {
+		var found []string
+		ok := true
+		for _, name := range group {
+			matches, err := match(dir, name)
+			if err != nil {
+				return aside, err
+			}
+			for _, m := range matches {
+				good, err := trustedEntry(m)
+				if errors.Is(err, fs.ErrNotExist) {
+					continue
+				}
+				if err != nil {
+					return aside, err
+				}
+				found, ok = append(found, m), ok && good
+			}
+		}
+		if ok {
+			continue
+		}
+		if away == "" {
+			away = fmt.Sprintf("%s.untrusted-%d", dir, time.Now().UnixNano())
+			if err := mkdirProtected(away); err != nil {
+				return aside, err
+			}
+		}
+		for _, m := range found {
+			rel, err := filepath.Rel(dir, m)
+			if err != nil {
+				return aside, err
+			}
+			to := filepath.Join(away, rel)
+			if err := os.MkdirAll(filepath.Dir(to), 0o700); err != nil {
+				return aside, err
+			}
+			if err := os.Rename(m, to); err != nil {
+				return aside, fmt.Errorf("the agent cannot trust %s, and moving it aside failed: %w; delete it and try again", m, err)
+			}
+			aside = append(aside, to)
+		}
+	}
+	return aside, nil
+}
+
+// match lists what name, relative to dir, names. Only its last element may
+// be a pattern; its folder is read as it is, so it must have been checked.
+func match(dir, name string) ([]string, error) {
+	folder, pattern := filepath.Split(filepath.Join(dir, name))
+	folder = filepath.Clean(folder)
+	if !strings.ContainsAny(pattern, `*?[`) {
+		return []string{filepath.Join(folder, pattern)}, nil
+	}
+	list, err := os.ReadDir(folder)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range list {
+		if ok, err := filepath.Match(pattern, e.Name()); err != nil {
+			return nil, err
+		} else if ok {
+			out = append(out, filepath.Join(folder, e.Name()))
+		}
+	}
+	return out, nil
+}
+
+// trustedEntry reports whether p is a plain file with a single link, or a
+// plain folder, that a trusted account owns. It looks at p itself, never
+// through a link. What it may not look at is not trusted: only its owner
+// can have kept the system and administrators out.
+func trustedEntry(p string) (bool, error) {
+	name, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return false, err
+	}
+	h, err := windows.CreateFile(name, windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
+		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return false, nil
+	}
+	if err != nil {
+		return false, &fs.PathError{Op: "open", Path: p, Err: err}
+	}
+	defer func() { _ = windows.CloseHandle(h) }()
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		return false, &fs.PathError{Op: "stat", Path: p, Err: err}
+	}
+	folder := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || !folder && info.NumberOfLinks != 1 {
+		return false, nil
+	}
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
+	if err != nil {
+		return false, &fs.PathError{Op: "read the owner of", Path: p, Err: err}
+	}
+	owner, _, err := sd.Owner()
+	if err != nil || owner == nil {
+		return false, err
+	}
+	return trusted(owner), nil
 }
 
 // plainFolder reports whether fi is a folder and not a link, junction or
@@ -175,9 +345,7 @@ func plainFolder(fi fs.FileInfo) bool {
 	return ok && d.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0
 }
 
-// trustedOwner reports whether p's owner is the system, the Administrators
-// group (which owns what an elevated administrator creates),
-// TrustedInstaller, or the account the agent runs as.
+// trustedOwner reports whether p's owner is trusted.
 func trustedOwner(p string) (bool, error) {
 	sd, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION)
 	if err != nil {
@@ -187,24 +355,88 @@ func trustedOwner(p string) (bool, error) {
 	if err != nil || owner == nil {
 		return false, err
 	}
-	var trusted []*windows.SID
+	return trusted(owner), nil
+}
+
+// trusted reports whether owner is the system, the Administrators group,
+// TrustedInstaller, or the account the agent runs as. What an elevated
+// administrator creates, files and folders alike, belongs to the
+// Administrators group: Windows makes it the default owner of an elevated
+// administrator's token. (The "Default owner for objects created by members
+// of the Administrators group" policy that could make it the administrator's
+// own account is ignored since Windows Vista, KB 947721.) What the agent's
+// service creates belongs to the system or to the Administrators group.
+func trusted(owner *windows.SID) bool {
+	var sids []*windows.SID
 	for _, t := range []windows.WELL_KNOWN_SID_TYPE{windows.WinLocalSystemSid, windows.WinBuiltinAdministratorsSid} {
 		if sid, err := windows.CreateWellKnownSid(t); err == nil {
-			trusted = append(trusted, sid)
+			sids = append(sids, sid)
 		}
 	}
 	if sid, err := windows.StringToSid(trustedInstaller); err == nil {
-		trusted = append(trusted, sid)
+		sids = append(sids, sid)
 	}
 	if u, err := windows.GetCurrentProcessToken().GetTokenUser(); err == nil {
-		trusted = append(trusted, u.User.Sid)
+		sids = append(sids, u.User.Sid)
 	}
-	for _, sid := range trusted {
+	for _, sid := range sids {
 		if owner.Equals(sid) {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
+}
+
+// protectedACL reports whether p's access list is the protected one,
+// exactly: not inherited, full control for SYSTEM and Administrators, and
+// nothing for anyone else.
+func protectedACL(p string) (bool, error) {
+	got, err := windows.GetNamedSecurityInfo(p, windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return false, err
+	}
+	want, err := windows.SecurityDescriptorFromString(protectedDACL)
+	if err != nil {
+		return false, err
+	}
+	control, _, err := got.Control()
+	if err != nil || control&windows.SE_DACL_PROTECTED == 0 {
+		return false, err
+	}
+	a, err := aces(got)
+	if err != nil {
+		return false, err
+	}
+	b, err := aces(want)
+	return err == nil && slices.Equal(a, b), err
+}
+
+// aces describes the entries of sd's access list, in a stable order, or
+// returns nil for an access list that has other entries than allowing ones.
+// A missing access list (everyone may do everything) has none.
+func aces(sd *windows.SECURITY_DESCRIPTOR) ([]string, error) {
+	dacl, _, err := sd.DACL()
+	if errors.Is(err, windows.ERROR_OBJECT_NOT_FOUND) {
+		return nil, nil
+	}
+	if err != nil || dacl == nil {
+		return nil, err
+	}
+	out := []string{}
+	for i := range uint32(dacl.AceCount) {
+		var ace *windows.ACCESS_ALLOWED_ACE
+		if err := windows.GetAce(dacl, i, &ace); err != nil {
+			return nil, err
+		}
+		if ace.Header.AceType != windows.ACCESS_ALLOWED_ACE_TYPE {
+			return nil, nil
+		}
+		// An allowing entry's SID starts at SidStart.
+		sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
+		out = append(out, fmt.Sprintf("%s %#x %#x", sid, ace.Header.AceFlags, ace.Mask))
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 // mkdirProtected creates a folder with the protected access list from the
