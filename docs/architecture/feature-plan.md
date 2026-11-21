@@ -558,7 +558,9 @@ results, permission and console; the agent does not change.
   OSConfig and Tamper Protection, and returns for each value an owner and
   its policy, none, or *cannot tell* with a reason; what an owner holds is
   reported, never written, and *cannot tell* is check only in both
-  features. A daily check reports owners that appear after apply.
+  features, though undo of an earlier apply still runs. A daily check
+  (a signed check-only job, one per device at most) reports owners that
+  appear after apply.
 * **23 modules**: `accounts` (lockout after 10, none on exposed computers
   without an option, never password expiry), `firewall` (only the
   profiles it changes, every listening port, RDP, WinRM, RPC and echo open
@@ -566,7 +568,8 @@ results, permission and console; the agent does not change.
   `defender` (never real-time protection on a server without an option;
   SmartScreen warns), `asr` (Microsoft's three standard rules blocked, the
   rest in audit; the two reputation rules blocked only with per-rule
-  exclusions for the agents' files), `smb`, `ntlm`, `wdigest`,
+  exclusions for the agents' files, once the agents have restarted by
+  themselves), `smb`, `ntlm`, `wdigest`,
   `lsa-protection`, `name-resolution`, `powershell`, `rdp`, `uac`,
   `autoplay`, `anonymous`,
   `winrm`, `printing`, `features`, and, not recommended, `smb-signing` and
@@ -577,7 +580,9 @@ results, permission and console; the agent does not change.
   are never disabled; SMB1, NTLM on domain controllers, LSA protection,
   a server's firewall and the built-in Administrator's filtering are
   judged on what the computer did, two applies apart, from an hourly
-  harvest of the logs so that busy logs that wrap still count; restarts
+  harvest of the logs so that busy logs that wrap still count, a gap
+  wherever the logging was off; its folder checked before every run, as
+  the agent checks its own (pull request #61); restarts
   are reported, never performed, and undo works before them; one
   hardening apply or undo at a time on a device, never
   beside a patch or software job; domain controllers need an explicit
