@@ -100,7 +100,9 @@ func runWith(args []string, e env) int {
 
 // newUpdater is the updater for the host.
 func newUpdater(conf *host.Config, log *slog.Logger) *host.Updater {
+	self, _ := release.ParseVersion(Version) // a clone's build has none
 	return &host.Updater{
+		Self:     self,
 		Config:   conf,
 		StateDir: host.DefaultStateDir,
 		Docker:   host.Docker{R: host.ExecRunner{}},

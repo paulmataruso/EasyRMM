@@ -19,7 +19,8 @@ const MaxManifestBytes = 1 << 20
 // Authentik is part of the release. Only a manifest whose attestation
 // verified is trusted (Verifier.Verify); ParseManifest alone checks its
 // form. Fields the updater does not use (the engine's version and agent
-// packages, Authentik's version) are allowed and not read.
+// packages, Authentik's version, and any a later manifest adds) are
+// allowed and not read.
 type Manifest struct {
 	Version Version
 	Commit  string
@@ -37,10 +38,18 @@ type Manifest struct {
 	// AllImages is every image the bundle's docker-compose.yml names, in
 	// every profile: sorted, each once.
 	AllImages []string
+	// UpgradeFrom is the lowest version a deployment must already run to
+	// install this one, a release or a release candidate below it, or zero
+	// (ADR-0052, "Required upgrade stops").
+	UpgradeFrom Version
 }
 
 // SchemaVersion is the manifest's form the updater reads. Manifests of
-// releases up to v1.0.0-rc.4 have none, and lack what it needs.
+// releases up to v1.0.0-rc.4 have none, and lack what it needs. A later
+// one is read as this one: it may add fields, which are ignored, and the
+// fields read here keep their meaning, so that an updater can always
+// install the release that carries its successor (ADR-0052, "Required
+// upgrade stops").
 const SchemaVersion = 2
 
 type manifestJSON struct {
@@ -69,7 +78,8 @@ type manifestJSON struct {
 		Included *bool  `json:"included"`
 		Image    string `json:"image"`
 	} `json:"authentik"`
-	Images []string `json:"images"`
+	Images      []string `json:"images"`
+	UpgradeFrom string   `json:"upgradeFrom"`
 }
 
 var (
@@ -80,10 +90,11 @@ var (
 	imageRE = regexp.MustCompile(`^([a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]{1,5})?(?:/[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*)+|[a-z0-9]+(?:[._-][a-z0-9]+)*):([A-Za-z0-9_][A-Za-z0-9._-]{0,127})@sha256:[0-9a-f]{64}$`)
 )
 
-// ParseManifest reads a manifest and checks its form: schemaVersion 2,
-// every field the updater uses present and well formed, every image by tag
-// and digest and listed in "images", and the server's image tagged with
-// the manifest's version. It does not make the manifest trusted.
+// ParseManifest reads a manifest and checks its form: schemaVersion 2 or
+// later, every field the updater uses present and well formed, every image
+// by tag and digest and listed in "images", the server's image tagged with
+// the manifest's version, and upgradeFrom, when present, a release or
+// release candidate below it. It does not make the manifest trusted.
 func ParseManifest(data []byte) (*Manifest, error) {
 	if len(data) > MaxManifestBytes {
 		return nil, fmt.Errorf("the manifest is %d bytes, more than %d", len(data), MaxManifestBytes)
@@ -96,8 +107,8 @@ func ParseManifest(data []byte) (*Manifest, error) {
 	if dec.More() {
 		return nil, fmt.Errorf("the manifest has data after its JSON object")
 	}
-	if j.SchemaVersion != SchemaVersion {
-		return nil, fmt.Errorf("the manifest's schemaVersion is %d, not %d: releases up to v1.0.0-rc.4 are upgraded by hand", j.SchemaVersion, SchemaVersion)
+	if j.SchemaVersion < SchemaVersion {
+		return nil, fmt.Errorf("the manifest's schemaVersion is %d, below %d: releases up to v1.0.0-rc.4 are upgraded by hand", j.SchemaVersion, SchemaVersion)
 	}
 	v, err := ParseVersion(j.Version)
 	if err != nil {
@@ -161,6 +172,18 @@ func ParseManifest(data []byte) (*Manifest, error) {
 	}
 	if tag := imageRE.FindStringSubmatch(m.Server)[2]; tag != v.ImageTag() {
 		return nil, fmt.Errorf("the manifest's server image is tagged %q, want %q for %s", tag, v.ImageTag(), v)
+	}
+	if j.UpgradeFrom != "" {
+		stop, err := ParseVersion(j.UpgradeFrom)
+		switch {
+		case err != nil:
+			return nil, fmt.Errorf("the manifest's upgradeFrom: %w", err)
+		case stop.Kind() == KindEdge:
+			return nil, fmt.Errorf("the manifest's upgradeFrom %s is an edge build, not a release", stop)
+		case stop.Compare(v) >= 0:
+			return nil, fmt.Errorf("the manifest's upgradeFrom %s is not below its version %s", stop, v)
+		}
+		m.UpgradeFrom = stop
 	}
 	return m, nil
 }

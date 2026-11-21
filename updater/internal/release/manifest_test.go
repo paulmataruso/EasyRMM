@@ -52,6 +52,34 @@ func TestParseManifest(t *testing.T) {
 	}
 }
 
+// A required upgrade stop: a release or a release candidate below the
+// manifest's version; a manifest without one has none.
+func TestParseManifestUpgradeFrom(t *testing.T) {
+	for _, stop := range []string{"v1.2.0", "v1.2.3-rc.2", ""} {
+		mf := releasetest.NewManifest("v1.2.3", testCommit)
+		mf.UpgradeFrom = stop
+		m, err := release.ParseManifest(mf.JSON())
+		if err != nil {
+			t.Fatalf("%q: %v", stop, err)
+		}
+		if m.UpgradeFrom.String() != stop {
+			t.Errorf("UpgradeFrom = %q, want %q", m.UpgradeFrom, stop)
+		}
+	}
+}
+
+// A later manifest's form is read as this one's: what it adds is ignored
+// (ADR-0052, "Required upgrade stops").
+func TestParseManifestLaterSchema(t *testing.T) {
+	f := manifestFields(t, "v1.2.3")
+	f["schemaVersion"] = release.SchemaVersion + 1
+	f["somethingNew"] = map[string]any{"a": 1}
+	m, err := release.ParseManifest(encode(t, f))
+	if err != nil || m.Version.String() != "v1.2.3" {
+		t.Fatalf("%v %+v", err, m)
+	}
+}
+
 func TestParseManifestWithoutAuthentik(t *testing.T) {
 	mf := releasetest.NewManifest("v1.2.3", testCommit)
 	mf.Authentik = ""
@@ -118,7 +146,10 @@ func TestParseManifestRefuses(t *testing.T) {
 	for name, change := range map[string]func(map[string]any){
 		"no schema version":           set("schemaVersion", nil),
 		"schema version 1":            set("schemaVersion", 1),
-		"schema version 3":            set("schemaVersion", 3),
+		"upgradeFrom an edge build":   set("upgradeFrom", "v1.2.2-edge.400.1"),
+		"upgradeFrom itself":          set("upgradeFrom", "v1.2.3"),
+		"upgradeFrom above it":        set("upgradeFrom", "v1.3.0"),
+		"upgradeFrom of another form": set("upgradeFrom", "1.2.0"),
 		"no version":                  set("version", nil),
 		"a version of another form":   set("version", "edge-1df9b49"),
 		"easyrmm.version differs":     set("easyrmm.version", "v1.2.4"),

@@ -82,7 +82,8 @@ is tried again.
    manifest's SHA-256. The host needs room for a copy of the data root and
    2 GiB for the new images, and PostgreSQL's major version must be the
    one the data root holds. A release that changes it says so, and is
-   upgraded by hand.
+   upgraded by hand. The deployment must run the version's required
+   upgrade stop, if it has one ([below](#required-upgrade-stops)).
 2. **Pull** the new images by digest while the running version serves.
 3. **Stop** every service. The downtime starts.
 4. **Back up** the data root, the deployment directory (with `.env`) and
@@ -130,6 +131,37 @@ restores the backup:
 Nothing agents, the console or the engine's worker would write was written
 by the failed version: it was held, and its worker had not started. The
 restore contacts no agent.
+
+### Required upgrade stops
+
+A version's manifest may name, in `upgradeFrom`, the lowest version a
+deployment must already run before it installs this one: always a release
+or a release candidate, never an edge build. The updater compares it with
+the lower of two versions: the running server's, and its own, which came
+with the bundle the deployment was last set up from (a server image
+changed by hand can be ahead of that). Below it, the version is refused at
+step 1, before anything stops, and the refusal names the version to
+install first:
+
+```text
+v1.4.0 installs only over v1.2.0 or later, and v1.1.0 runs: install v1.2.0 first (easyrmm-updater upgrade v1.2.0)
+```
+
+A refusal for a stop does not mark the version failed: once the stop is
+installed, it is taken. The version to install first is the lowest one
+your channel offers at or above `upgradeFrom` and below the version that
+needs it; on the stable channel, a full release rather than the release
+candidate named, when there is one. Only when your channel offers none is
+it another channel's, such as a release candidate on the stable channel,
+which `easyrmm-updater upgrade` then takes by name. A stop's own stop is
+followed the same way.
+
+Automatic upgrades install the stop first, as a version of its own; the
+next run, by the stop's own updater, goes on. They never go down to a stop
+below the running server: when the server's image was changed by hand
+past a stop its bundle never installed, the updater says so and the
+deployment is upgraded by hand ([Upgrading](upgrading.md)). `check` names
+the stop the newest version needs.
 
 ## Rolling back after an upgrade
 

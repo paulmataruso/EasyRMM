@@ -21,6 +21,8 @@ type Manifest struct {
 	// digest; Authentik "" leaves it out.
 	Engine, Postgres, MeshCentral, Authentik string
 	PostgresMajor                            int
+	// UpgradeFrom is the required upgrade stop, "" for none.
+	UpgradeFrom string
 }
 
 // NewManifest is a manifest of version for commit, with images that exist
@@ -52,7 +54,7 @@ func (m Manifest) Fields() map[string]any {
 	}
 	slices.Sort(images)
 	images = slices.Compact(images)
-	return map[string]any{
+	f := map[string]any{
 		"schemaVersion": release.SchemaVersion,
 		"version":       m.Version,
 		"commit":        m.Commit,
@@ -64,6 +66,10 @@ func (m Manifest) Fields() map[string]any {
 		"authentik":     authentik,
 		"images":        images,
 	}
+	if m.UpgradeFrom != "" {
+		f["upgradeFrom"] = m.UpgradeFrom
+	}
+	return f
 }
 
 // JSON is the manifest encoded.

@@ -27,6 +27,9 @@ type CheckReport struct {
 	// Failed is set when the newest version failed or was rolled back
 	// before, so that automatic upgrades skip it.
 	Failed bool
+	// Stop is the required upgrade stop the newest version's manifest
+	// names, when the running version is below it.
+	Stop release.Version
 }
 
 // Check lists what the channel offers and verifies the newest version's
@@ -56,7 +59,10 @@ func (u *Updater) Check(ctx context.Context) (*CheckReport, error) {
 		return r, nil
 	}
 	r.Newest, r.Failed = newest, st.HasFailed(newest.String())
-	r.Manifest, r.VerifyErr = u.verified(ctx, newest)
+	r.Manifest, r.VerifyErr = u.verified(ctx, newest, r.Channel)
+	if r.Manifest != nil && needsStop(u.floor(r.Running), r.Manifest.UpgradeFrom) {
+		r.Stop = u.stopError(ctx, r.Running, choice{target: newest, channel: r.Channel}, r.Manifest).Stop
+	}
 	return r, nil
 }
 
@@ -82,6 +88,8 @@ func (r *CheckReport) Write(w io.Writer) {
 	case r.Running.IsZero():
 	case r.Newest.Compare(r.Running) > 0 && r.Failed:
 		fmt.Fprintf(w, "          newer than the running version, but it failed or was rolled back before: automatic upgrades skip it until a newer one appears\n")
+	case !r.Stop.IsZero():
+		fmt.Fprintf(w, "          newer than the running version, which must first upgrade to %s, a required upgrade stop: easyrmm-updater upgrade %s\n", r.Stop, r.Stop)
 	case r.Newest.Compare(r.Running) > 0:
 		fmt.Fprintf(w, "          newer than the running version: easyrmm-updater upgrade %s\n", r.Newest)
 	default:

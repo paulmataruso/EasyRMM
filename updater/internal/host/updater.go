@@ -54,6 +54,10 @@ type Updater struct {
 	Install  Install
 	Log      *slog.Logger
 	Now      func() time.Time
+	// Self is the updater's own version, zero for a build that has none
+	// (a clone's): with the bundle it came in, it is what the deployment
+	// was last set up from.
+	Self release.Version
 }
 
 // Request is an upgrade asked for.
@@ -183,43 +187,234 @@ func (u *Updater) save(st *State, d *deployment) error {
 	return statusDirOf(d.dataRoot).Write(s)
 }
 
-// choose decides what an upgrade request goes to, or returns zero when
-// there is nothing to do.
-func (u *Updater) choose(ctx context.Context, req Request, st *State, running release.Version) (release.Version, error) {
-	target := req.Version
+// choice is what an upgrade goes to, and the channel it is verified for:
+// the configured one, or, for a required upgrade stop that channel does
+// not take, the pre-release channel, which takes every release.
+type choice struct {
+	target  release.Version
+	channel release.Channel
+}
+
+// choose decides what an upgrade request goes to, or returns a zero target
+// when there is nothing to do.
+func (u *Updater) choose(ctx context.Context, req Request, st *State, running release.Version) (choice, error) {
+	c, err := u.chooseTarget(ctx, req, st, running)
+	if err != nil || c.target.IsZero() || !req.Automatic {
+		return c, err
+	}
+	// An automatic upgrade installs the required upgrade stops first, the
+	// lowest first, each as a version of its own: the next run, by the
+	// stop's own updater, goes on (ADR-0052, "Required upgrade stops").
+	stops, err := u.stopsBefore(ctx, running, c)
+	if err != nil {
+		// The attempt's check meets it again, and records it.
+		u.Log.Warn("could not follow the required upgrade stops", "for", c.target, "error", err)
+		return c, nil
+	}
+	if len(stops) == 0 {
+		return c, nil
+	}
+	stop := stops[len(stops)-1]
+	switch {
+	case stop.target.Compare(running) <= 0:
+		// Never down, nor the running version again.
+		return choice{}, u.stopError(ctx, running, c, nil)
+	case st.HasFailed(stop.target.String()):
+		u.Log.Info("the required upgrade stop failed or was rolled back before: waiting for an operator", "stop", stop.target, "for", c.target)
+		return choice{}, nil
+	}
+	u.Log.Info("installing the required upgrade stop first", "stop", stop.target, "for", c.target)
+	return stop, nil
+}
+
+func (u *Updater) chooseTarget(ctx context.Context, req Request, st *State, running release.Version) (choice, error) {
+	target, channel := req.Version, u.Config.Channel
 	if target.IsZero() {
 		offered, err := u.Source.Versions(ctx)
 		if err != nil {
-			return release.Version{}, err
+			return choice{}, err
 		}
 		newest, ok := u.Config.Channel.Newest(offered)
 		if !ok {
 			u.Log.Info("the channel offers no version", "channel", u.Config.Channel)
-			return release.Version{}, nil
+			return choice{}, nil
 		}
 		if st.HasFailed(newest.String()) {
 			u.Log.Info("the newest version failed or was rolled back before: waiting for a newer one, or for an operator to ask for it by name", "version", newest)
-			return release.Version{}, nil
+			return choice{}, nil
 		}
 		target = newest
 	} else if !u.Config.Channel.Admits(target.Kind()) {
-		return release.Version{}, fmt.Errorf("%s is a %s, which the %s channel does not take", target, target.Kind(), u.Config.Channel)
+		// Asked for by name, a required upgrade stop is taken on any
+		// channel (a release candidate on the stable one).
+		stop, err := u.isStop(ctx, running, target)
+		if err != nil {
+			return choice{}, err
+		}
+		if stop == "" {
+			return choice{}, fmt.Errorf("%s is a %s, which the %s channel does not take", target, target.Kind(), u.Config.Channel)
+		}
+		channel = stop
 	}
 	switch {
 	case running.IsZero() && req.Automatic:
-		return release.Version{}, errors.New("the running version is not one the updater knows: upgrade by hand, or ask for a version by name")
+		return choice{}, errors.New("the running version is not one the updater knows: upgrade by hand, or ask for a version by name")
 	case running.IsZero():
 		u.Log.Warn("the running version is not one the updater knows; upgrading as asked", "to", target)
 	case target.Compare(running) == 0:
 		u.Log.Info("already running the version", "version", running)
-		return release.Version{}, nil
+		return choice{}, nil
 	case target.Compare(running) < 0 && !req.Version.IsZero():
-		return release.Version{}, fmt.Errorf("%s is older than the running %s: versions never go down (a rollback restores the previous version)", target, running)
+		return choice{}, fmt.Errorf("%s is older than the running %s: versions never go down (a rollback restores the previous version)", target, running)
 	case target.Compare(running) < 0:
 		u.Log.Info("the channel offers nothing newer than the running version", "running", running, "newest", target)
-		return release.Version{}, nil
+		return choice{}, nil
 	}
-	return target, nil
+	return choice{target: target, channel: channel}, nil
+}
+
+// maxStops bounds the chain of required upgrade stops followed.
+const maxStops = 8
+
+// floor is the version a manifest's upgradeFrom is compared with: the
+// lower of the running server's and the updater's own, which came with the
+// bundle the deployment was last set up from, since an image changed by
+// hand can put the server above it. The updater's own counts only when it
+// is a version (a clone's build is not); floor is zero when the server's
+// version is not known.
+func (u *Updater) floor(running release.Version) release.Version {
+	if running.IsZero() || u.Self.IsZero() || running.Compare(u.Self) <= 0 {
+		return running
+	}
+	return u.Self
+}
+
+// needsStop reports whether a deployment whose floor is floor must install
+// a stop before a version whose manifest names upgradeFrom.
+func needsStop(floor, upgradeFrom release.Version) bool {
+	return !upgradeFrom.IsZero() && (floor.IsZero() || floor.Compare(upgradeFrom) < 0)
+}
+
+// stopsBefore lists the required upgrade stops on the way to c (ADR-0052,
+// "Required upgrade stops"), the lowest last, each with the channel it is
+// verified for; none when the deployment may install c.target. When c's
+// verified manifest names an upgradeFrom above the floor, the stop is the
+// lowest version the deployment's channel offers at or above it and below
+// c.target; another channel's only when that channel offers none; the
+// release named when no channel offers one. Then the same for the stop.
+func (u *Updater) stopsBefore(ctx context.Context, running release.Version, c choice) ([]choice, error) {
+	floor := u.floor(running)
+	var offered []release.Version
+	var stops []choice
+	for {
+		m, err := u.verified(ctx, c.target, c.channel)
+		if err != nil {
+			return nil, err
+		}
+		if !needsStop(floor, m.UpgradeFrom) {
+			return stops, nil
+		}
+		if len(stops) == maxStops {
+			return nil, fmt.Errorf("%s has more than %d required upgrade stops above %s", stops[0].target, maxStops, floor)
+		}
+		if offered == nil {
+			if offered, err = u.Source.Versions(ctx); err != nil {
+				return nil, err
+			}
+		}
+		c = u.pickStop(offered, m.UpgradeFrom, c.target)
+		stops = append(stops, c)
+	}
+}
+
+// pickStop is the stop for a version below below whose manifest names
+// from: see stopsBefore. Each is below below, so a chain of stops ends.
+func (u *Updater) pickStop(offered []release.Version, from, below release.Version) choice {
+	for _, ch := range []release.Channel{u.Config.Channel, release.ChannelPreRelease} {
+		var lowest release.Version
+		for _, v := range offered {
+			if ch.Admits(v.Kind()) && v.Compare(from) >= 0 && v.Compare(below) < 0 && (lowest.IsZero() || v.Compare(lowest) < 0) {
+				lowest = v
+			}
+		}
+		if !lowest.IsZero() {
+			return choice{target: lowest, channel: ch}
+		}
+	}
+	return choice{target: from, channel: release.ChannelPreRelease}
+}
+
+// isStop returns the channel v is verified for when v is a required upgrade
+// stop on the way from running to the newest version the channel offers,
+// and "" when it is not one.
+func (u *Updater) isStop(ctx context.Context, running, v release.Version) (release.Channel, error) {
+	offered, err := u.Source.Versions(ctx)
+	if err != nil {
+		return "", err
+	}
+	newest, ok := u.Config.Channel.Newest(offered)
+	if !ok {
+		return "", nil
+	}
+	stops, err := u.stopsBefore(ctx, running, choice{target: newest, channel: u.Config.Channel})
+	if err != nil {
+		return "", err
+	}
+	for _, s := range stops {
+		if s.target.Compare(v) == 0 {
+			return s.channel, nil
+		}
+	}
+	return "", nil
+}
+
+// stopError refuses c, whose verified manifest is m (nil: to be verified),
+// naming the lowest stop to install first, or the release m names when the
+// stops cannot be followed.
+func (u *Updater) stopError(ctx context.Context, running release.Version, c choice, m *release.Manifest) *StopError {
+	e := &StopError{Version: c.target, Server: running, Floor: u.floor(running)}
+	if m != nil {
+		e.UpgradeFrom, e.Stop = m.UpgradeFrom, m.UpgradeFrom
+	}
+	if stops, err := u.stopsBefore(ctx, running, c); err == nil && len(stops) > 0 {
+		e.Stop = stops[len(stops)-1].target
+		if m == nil {
+			e.UpgradeFrom = stops[0].target
+			if first, err := u.verified(ctx, c.target, c.channel); err == nil {
+				e.UpgradeFrom = first.UpgradeFrom
+			}
+		}
+	}
+	return e
+}
+
+// StopError refuses a version whose required upgrade stop the deployment
+// has not installed. It is not counted as the version failing: once the
+// stop is installed, the version is taken.
+type StopError struct {
+	// Version is refused: its manifest names UpgradeFrom, above Floor
+	// (the lower of Server, the running server's version, and the
+	// updater's own). Stop is the version to install first.
+	Version, UpgradeFrom, Stop, Server, Floor release.Version
+}
+
+func (e *StopError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s installs only over %s or later, and ", e.Version, e.UpgradeFrom)
+	switch {
+	case e.Floor.IsZero():
+		b.WriteString("the running version is not one the updater knows")
+	case e.Floor.Compare(e.Server) < 0:
+		fmt.Fprintf(&b, "this deployment was set up from %s's bundle, though its server runs %s (an image changed by hand)", e.Floor, e.Server)
+	default:
+		fmt.Fprintf(&b, "%s runs", e.Floor)
+	}
+	if !e.Server.IsZero() && e.Stop.Compare(e.Server) <= 0 {
+		fmt.Fprintf(&b, "; the required upgrade stop, %s, is not above the running server, and the updater never goes down: upgrade by hand (docs/operations/upgrading.md)", e.Stop)
+	} else {
+		fmt.Fprintf(&b, ": install %s first (easyrmm-updater upgrade %s)", e.Stop, e.Stop)
+	}
+	return b.String()
 }
 
 // Upgrade upgrades the deployment (ADR-0052): check, pull, stop, back up,
@@ -253,14 +448,14 @@ func (u *Updater) Upgrade(ctx context.Context, req Request) error {
 		return err
 	}
 	running := u.runningVersion(ctx, d, st)
-	target, err := u.choose(ctx, req, st, running)
-	if err != nil || target.IsZero() {
+	c, err := u.choose(ctx, req, st, running)
+	if err != nil || c.target.IsZero() {
 		return err
 	}
-	if _, err := u.begin(st, d, "upgrade", req.By, running.String(), target.String()); err != nil {
+	if _, err := u.begin(st, d, "upgrade", req.By, running.String(), c.target.String()); err != nil {
 		return err
 	}
-	up := &upgrade{u: u, st: st, d: d, running: running, target: target}
+	up := &upgrade{u: u, st: st, d: d, running: running, target: c.target, channel: c.channel}
 	if err := up.run(ctx); err != nil {
 		return err
 	}
@@ -274,6 +469,8 @@ type upgrade struct {
 	d       *deployment
 	running release.Version
 	target  release.Version
+	// channel is the one target is verified for.
+	channel release.Channel
 
 	manifest  *release.Manifest
 	newRoot   string // the new bundle's directory, once unpacked
@@ -301,7 +498,8 @@ func (up *upgrade) run(ctx context.Context) error {
 	// or one that failed once the deployment stopped, is not, so that
 	// automatic upgrades do not take the server down every hour.
 	var transient *transientError
-	if !errors.As(err, &transient) {
+	var stop *StopError
+	if !errors.As(err, &transient) && !errors.As(err, &stop) {
 		st.MarkFailed(up.target.String())
 	}
 	if !up.stopped {
@@ -432,9 +630,9 @@ func (up *upgrade) steps(ctx context.Context) error {
 	return nil
 }
 
-// verified is v's manifest, verified against its attestation for the
-// configured channel. Not reaching Sigstore or the source is transient.
-func (u *Updater) verified(ctx context.Context, v release.Version) (*release.Manifest, error) {
+// verified is v's manifest, verified against its attestation for channel.
+// Not reaching Sigstore or the source is transient.
+func (u *Updater) verified(ctx context.Context, v release.Version, channel release.Channel) (*release.Manifest, error) {
 	verifier, err := u.Verifier()
 	if err != nil {
 		return nil, transient(err)
@@ -443,7 +641,7 @@ func (u *Updater) verified(ctx context.Context, v release.Version) (*release.Man
 	if err != nil {
 		return nil, transient(err)
 	}
-	m, err := verifier.Verify(manifest, attestation, u.Config.Channel)
+	m, err := verifier.Verify(manifest, attestation, channel)
 	if err != nil {
 		return nil, err
 	}
@@ -457,11 +655,14 @@ func (u *Updater) verified(ctx context.Context, v release.Version) (*release.Man
 // directory, changing nothing that runs.
 func (up *upgrade) check(ctx context.Context) error {
 	u, d := up.u, up.d
-	m, err := u.verified(ctx, up.target)
+	m, err := u.verified(ctx, up.target, up.channel)
 	if err != nil {
 		return err
 	}
 	up.manifest = m
+	if needsStop(u.floor(up.running), m.UpgradeFrom) {
+		return u.stopError(ctx, up.running, choice{target: up.target, channel: up.channel}, m)
+	}
 	if m.Authentik == "" && hasProfile(d.env, "authentik") {
 		return fmt.Errorf("this deployment runs Authentik, which %s does not include", m.Version)
 	}

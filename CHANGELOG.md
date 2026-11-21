@@ -116,8 +116,12 @@ All notable changes to this project are documented here. The format follows
   starts it held and confirms it; when the new version does not start, it
   restores the backup and records the rollback in the audit log.
   `easyrmm-updater rollback` undoes a confirmed upgrade within 24 hours,
-  after saying what it loses; `status` and `check` change nothing. Each
-  bundle carries it; a clone builds it with `make updater`. Guide:
+  after saying what it loses; `status` and `check` change nothing. A
+  version whose manifest names a required upgrade stop (`upgradeFrom`)
+  above the lower of the running server's version and the updater's own
+  is refused before anything stops, naming the version to install first;
+  automatic upgrades install that stop first. Each bundle carries it; a
+  clone builds it with `make updater`. Guide:
   [the host updater](docs/operations/updater.md). The console's requests
   (feature 4b) come later.
 - **Hardening checks for Linux computers** (ADR-0051, its first part). A

@@ -381,6 +381,31 @@ Production installs upgrade when someone chooses to.
 * **The updater updating itself**, from the second release that has one.
 * Then the owner's test instance on the edge channel.
 
+*Amended 2026-11-21, with the implementation:* required upgrade stops,
+decided in review for ADR-0061, whose amendment to this ADR ("Required
+upgrade stops") is still on that ADR's branch. A manifest may name in
+`upgradeFrom` the lowest version a deployment must already run before it
+installs that one: a release or a release candidate below it, never an
+edge build. At step 1 the updater compares it with the lower of the
+running server's version and its own, which came with the bundle the
+deployment was last set up from (decided in review: an image changed by
+hand can put the server above it), in semantic versioning's precedence,
+as `scripts/release/version.sh newer` does. Below it, the version is
+refused before anything stops, naming the version to install first, and
+the refusal does not count as the version failing. That version is the
+lowest the deployment's own channel offers at or above `upgradeFrom` and
+below the version that names it, another channel's (the pre-release
+channel's, a release candidate on the stable channel) only when that
+channel offers none (decided in review), and a stop's own stop is followed
+the same way. Asked for by name, such a stop is taken on any channel.
+Automatic upgrades install it first, as a version of its own; the next
+run, by the stop's own updater, goes on. They never go down to a stop
+below the running server: that deployment is upgraded by hand. A manifest
+of a later `schemaVersion` is read as this one, and fields the updater
+does not know are ignored, so that an updater can always install the
+release that carries its successor. Not built: `setup.sh --upgrade`'s own
+refusal of the same jump, and the version the updater would pass it.
+
 *Amended 2026-11-21, with the implementation:* what is built so far.
 Unit tests drive every step against a fake Docker, and verification
 against sigstore-go's virtual Sigstore, each certificate field refused
