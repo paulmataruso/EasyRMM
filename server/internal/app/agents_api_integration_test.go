@@ -501,8 +501,27 @@ func TestAgentRequestLimits(t *testing.T) {
 		r = h.raw("POST", agentproto.PathHeartbeat, big, sign(key, enr.DeviceID, big))
 	}
 	wantStatus(t, r, http.StatusTooManyRequests, "rate_limited")
-	if _, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: facts("lim-01")}); agentclient.Code(err) != "rate_limited" {
-		t.Fatalf("the agent's own client: %v", err)
+	// The agent's own client sees the same refusal. A token can come back
+	// here too, and the client's request then spends it and succeeds; each
+	// time, ordinary requests spend what came back and the client tries
+	// again. A server that did not limit the client would let every try
+	// through.
+	var clientErr error
+	for try := 0; try < 3; try++ {
+		if try > 0 {
+			for range 400 {
+				if h.raw("POST", agentproto.PathHeartbeat, body, sign(key, enr.DeviceID, body)).status == http.StatusTooManyRequests {
+					break
+				}
+			}
+		}
+		_, clientErr = ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: facts("lim-01")})
+		if agentclient.Code(clientErr) == "rate_limited" {
+			break
+		}
+	}
+	if agentclient.Code(clientErr) != "rate_limited" {
+		t.Fatalf("the agent's own client: %v", clientErr)
 	}
 
 	// Inventory uploads have a smaller allowance of their own.
