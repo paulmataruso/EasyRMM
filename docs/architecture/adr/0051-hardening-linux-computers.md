@@ -242,7 +242,10 @@ or Kubernetes installed later.
   file's original (or that it did not exist) and its hash after apply;
   each mode and owner before and after; each live kernel value before;
   each service's enabled and running state before; the firewall table's
-  hash after; the packages it installed.
+  hash after; the packages it installed. *Amended 2026-11-21:* and,
+  outside the record because log collection (ADR-0060) shares it,
+  `/var/lib/easyrmm/auditd-installed`, written when the audit module
+  installs auditd and only then: the packages that installation added.
 * **Undo** puts every one back if it is still as apply left it: files it
   created are removed, files it changed are restored, modes, owners and
   kernel values reset, services enabled and started again, the firewall
@@ -259,7 +262,19 @@ or Kubernetes installed later.
   whose configuration files were left from an earlier removal, which is
   only removed. A package an installation upgraded as a dependency stays
   upgraded: it was there before. A removal the package manager fails
-  leaves the packages, and the result gives its reason.
+  leaves the packages, and the result gives its reason. Undo removes
+  auditd only where `/var/lib/easyrmm/auditd-installed` says EasyRMM
+  installed it, and only when no rules file is left in
+  `/etc/audit/rules.d/` but those the audit package shipped, unchanged:
+  then its packages and the marker go. A rules file from anyone else (log
+  collection's among them) keeps auditd installed and running, and the
+  marker stays, so that whoever removes the last of those files can
+  remove auditd; without the marker, hardening's own record alone would
+  forget it. An auditd that was installed before apply gets no marker and
+  is never removed. Hardening's rules carry keys starting
+  `easyrmm-hardening-`, and its check does not count loaded rules whose
+  keys start `easyrmm-` otherwise, since those come and go with another
+  feature.
   A successful undo consumes the record; the next apply takes fresh
   copies, so a later undo never brings back a file older than the
   administrator's last edit. Applying a module twice changes nothing the

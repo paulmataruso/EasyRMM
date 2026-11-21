@@ -93,9 +93,18 @@ FW_UNIT_FILE=/etc/systemd/system/$FW_UNIT
 F2B_FILE=/etc/fail2ban/jail.d/easyrmm-hardening.local
 SYSCTL_FILE=/etc/sysctl.d/60-easyrmm-hardening.conf
 AUDIT_FILE=/etc/audit/rules.d/60-easyrmm-hardening.rules
+# Written when the audit module installs auditd, and only then: the packages
+# that installation added. Shared with log collection (ADR-0060), so outside
+# hardening's own state: whoever removes auditd last removes them and it.
+AUDITD_MARKER=/var/lib/easyrmm/auditd-installed
 SUDO_FILE=/etc/sudoers.d/easyrmm-hardening
 SUDO_LOG=/var/log/sudo.log
+SUDO_ROTATE=/etc/logrotate.d/easyrmm-hardening-sudo
+MODULES_FILE=/etc/modprobe.d/60-easyrmm-hardening.conf
+USB_FILE=/etc/modprobe.d/60-easyrmm-usb-storage.conf
 # Debian's aide.conf includes only files whose names have no dot.
+AIDE_DEB_FILE=/etc/aide/aide.conf.d/99_easyrmm_hardening
+AIDE_UNIT=easyrmm-aide-check
 AIDE_INIT_UNIT=easyrmm-aide-init
 
 nl='
@@ -2271,6 +2280,12 @@ TX_N=0
 TX_HAD=no
 PKG_REFRESHED=no
 PKG_ERR=
+# The packages pkg_install added (NAME=rc: configuration files were left
+# from an earlier removal).
+PKG_NEW=
+# Set while undo of audit runs: auditd's packages and unit are the
+# marker's (undo_audit_after).
+AUDIT_UNDO=no
 
 now_utc() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 
@@ -2494,6 +2509,13 @@ narrow_mode() {
 sysctl_path() { printf '/proc/sys/%s' "$(printf '%s' "$1" | tr '.' '/')"; }
 sysctl_now() { head -n 1 "$(sysctl_path "$1")" 2>/dev/null; }
 sysctl_put() { printf '%s\n' "$2" >"$(sysctl_path "$1")"; }
+rec_sysctl() {
+	intent || return 1
+	rs_b=$(sysctl_now "$1")
+	tx_push "sysctl_put $1 $rs_b"
+	rec_has sysctl "$1" || rec_add "sysctl$tab$1$tab$rs_b$tab?"
+}
+after_sysctl() { rec_set sysctl "$1" 4 "$(sysctl_now "$1")"; }
 
 # unit_states UNIT: "ENABLED ACTIVE": what systemctl is-enabled says (or
 # not-found), then active or inactive.
@@ -2616,6 +2638,7 @@ pkg_install() {
 		{ printf "%s%s%s", (NR > 1 ? " " : ""), $0, ($0 in c ? "=rc" : "") }')
 	awk -F "$tab" -v p="pending$tab$*" '$0 == p && !d { d = 1; next } { print }' "$MANIFEST" >"$MANIFEST.new" &&
 		mv -f "$MANIFEST.new" "$MANIFEST"
+	PKG_NEW=$pi_new
 	if [ -n "$pi_new" ]; then
 		rec_add "pkg$tab$pi_new"
 		tx_push "pkg_remove_alone $pi_new"
@@ -2783,6 +2806,15 @@ undo_sysctl() {
 	fi
 }
 undo_unit() {
+	if [ "$AUDIT_UNDO" = yes ] && [ "$1" = auditd.service ]; then
+		# Installed by EasyRMM: removed with its packages, or kept.
+		[ ! -f "$AUDITD_MARKER" ] || return 0
+		ut_fo=$(audit_foreign)
+		if [ -n "$ut_fo" ]; then
+			left "auditd running and starting at boot: other rules files need it ($ut_fo)"
+			return 0
+		fi
+	fi
 	ut_now=$(unit_states "$1")
 	ut_ne=${ut_now% *}
 	ut_na=${ut_now#* }
@@ -2815,6 +2847,10 @@ undo_unit() {
 	did "$1 back to $(unit_states "$1" | sed 's/ /, /')"
 }
 undo_pkg() {
+	if [ "$AUDIT_UNDO" = yes ]; then
+		[ -f "$AUDITD_MARKER" ] || left "the packages it installed ($*): $AUDITD_MARKER, which says EasyRMM installed auditd, is gone"
+		return 0
+	fi
 	PKG_REMOVED=
 	pkg_remove_alone "$@" && up_rc=0 || up_rc=$?
 	case $up_rc in
@@ -3227,6 +3263,179 @@ undo_fail2ban_after() {
 	return 0
 }
 
+# kernel
+
+apply_kernel() {
+	[ -n "$M_TODO" ] || return 0
+	# Docker mounts /proc/sys read-only: a container's network settings are
+	# set when it is created.
+	ak_first=$(printf '%s\n' "$M_TODO" | head -n 1)
+	if [ ! -w "$(sysctl_path "${ak_first%% *}")" ]; then
+		if [ "$IN_CONTAINER" = yes ]; then
+			refuse "In this container ($CONTAINER) /proc/sys is read-only: its network settings are set when the container is created."
+		else
+			refuse '/proc/sys is read-only here.'
+		fi
+		return
+	fi
+	# The file: the parameters already in it, then those set now.
+	ak_old=
+	[ ! -f "$SYSCTL_FILE" ] || ak_old=$(grep '=' "$SYSCTL_FILE" | grep -v '^[[:space:]]*[#;]' | sed 's/[[:space:]]*=[[:space:]]*/ /')
+	ak_lines=$(printf '%s\n%s\n' "$ak_old" "$M_TODO" |
+		awk 'NF == 2 { if (!($1 in v)) o[++n] = $1; v[$1] = $2 } END { for (i = 1; i <= n; i++) print o[i] " = " v[o[i]] }')
+	for ak_n in $(printf '%s\n' "$M_TODO" | cut -d' ' -f1); do
+		if ! rec_sysctl "$ak_n"; then
+			abort 'the record could not be written'
+			return
+		fi
+	done
+	if ! write_own "$SYSCTL_FILE" 0644 "# EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.$nl# Later files in /etc/sysctl.d still win. IP forwarding is never set here.$nl$ak_lines$nl"; then
+		abort "$SYSCTL_FILE could not be written"
+		return
+	fi
+	ak_err=$(t 60 sysctl -q -p "$SYSCTL_FILE" 2>&1)
+	ak_bad=
+	for ak_n in $(printf '%s\n' "$M_TODO" | cut -d' ' -f1); do
+		after_sysctl "$ak_n"
+		ak_want=$(printf '%s\n' "$M_TODO" | awk -v n="$ak_n" '$1 == n { print $2; exit }')
+		[ "$(sysctl_now "$ak_n")" = "$ak_want" ] || ak_bad="$ak_bad $ak_n"
+	done
+	if [ -n "$ak_bad" ]; then
+		abort "sysctl -p did not set$ak_bad: $(printf '%s' "$ak_err" | head -n 1)"
+		return
+	fi
+	did "Set $(printf '%s\n' "$M_TODO" | sed 's/ / = /' | tr '\n' ';' | sed -e 's/;$//' -e 's/;/; /g') in $SYSCTL_FILE, applied with sysctl -p on that file only"
+}
+
+# audit
+
+# The rules, by the keys the check's patterns find.
+audit_rules() {
+	printf '## EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.\n'
+	printf '## Never immutable (-e 2), never panic (-f 2).\n'
+	for ar_f in /etc/passwd /etc/group /etc/shadow /etc/gshadow; do
+		printf -- '-w %s -p wa -k easyrmm-hardening-accounts\n' "$ar_f"
+	done
+	printf -- '-w /etc/sudoers -p wa -k easyrmm-hardening-sudoers\n-w /etc/sudoers.d -p wa -k easyrmm-hardening-sudoers\n'
+	printf -- '-w /etc/ssh/sshd_config -p wa -k easyrmm-hardening-sshd\n'
+	[ ! -d /etc/ssh/sshd_config.d ] || printf -- '-w /etc/ssh/sshd_config.d -p wa -k easyrmm-hardening-sshd\n'
+	printf -- '-w /etc/pam.d -p wa -k easyrmm-hardening-pam\n'
+	for ar_a in b64 b32; do
+		printf -- '-a always,exit -F arch=%s -S adjtimex,settimeofday,clock_settime -k easyrmm-hardening-time\n' "$ar_a"
+		printf -- '-a always,exit -F arch=%s -S init_module,finit_module,delete_module -k easyrmm-hardening-modules\n' "$ar_a"
+		printf -- '-a always,exit -F arch=%s -S mount -F auid!=unset -k easyrmm-hardening-mounts\n' "$ar_a"
+		printf -- '-a always,exit -F arch=%s -S execve -C uid!=euid -F euid=0 -k easyrmm-hardening-privileged\n' "$ar_a"
+	done
+}
+audit_immutable() { t 20 auditctl -s 2>/dev/null | grep -q '^enabled 2'; }
+# audit_foreign: the rules files in /etc/audit/rules.d that keep auditd,
+# separated by spaces: all but those the audit package shipped, unchanged.
+# Undo asks after removing hardening's own, so that one counts only when
+# undo left it (an administrator changed it).
+audit_foreign() {
+	fo_list=
+	for fo_f in /etc/audit/rules.d/*.rules; do
+		[ -f "$fo_f" ] || continue
+		audit_shipped "$fo_f" || fo_list="$fo_list $fo_f"
+	done
+	printf '%s' "${fo_list# }"
+}
+# audit_shipped PATH: whether the audit package shipped PATH and it is as
+# shipped (dpkg's MD5 of its configuration files, RPM's SHA-256 digests).
+audit_shipped() {
+	case $FAMILY in
+	debian)
+		# shellcheck disable=SC2016 # dpkg-query's field, not the shell's
+		ah_sum=$(t 30 dpkg-query -W -f='${Conffiles}\n' auditd 2>/dev/null | awk -v f="$1" '$1 == f { print $2 }')
+		[ ${#ah_sum} -eq 32 ] && [ "$(md5sum <"$1" | cut -c1-32)" = "$ah_sum" ]
+		;;
+	*)
+		ah_sum=$(t 30 rpm -q --qf '[%{FILENAMES} %{FILEDIGESTS}\n]' audit 2>/dev/null | awk -v f="$1" '$1 == f { print $2 }')
+		[ ${#ah_sum} -eq 64 ] && [ "$(sha256sum <"$1" | cut -c1-64)" = "$ah_sum" ]
+		;;
+	esac
+}
+# audit_mark PACKAGES: the marker, after the audit module installed auditd.
+audit_mark() {
+	mk_dir=${AUDITD_MARKER%/*}
+	if [ ! -d "$mk_dir" ]; then
+		mkdir -m 0755 "$mk_dir" || return 1
+		tx_push "rmdir $mk_dir"
+	fi
+	tx_push "rm -f $AUDITD_MARKER"
+	printf '# EasyRMM hardening (ADR-0051) installed auditd with these packages. Whoever removes\n# auditd last (when no other rules file needs it) removes them and this file.\n%s\n' "$1" >"$AUDITD_MARKER.new" &&
+		mv -f "$AUDITD_MARKER.new" "$AUDITD_MARKER"
+}
+audit_load() { t 120 augenrules --load >/dev/null 2>&1; }
+
+apply_audit() {
+	[ -n "$M_TODO" ] || return 0
+	if text_has "$M_TODO" -x install; then
+		case $FAMILY in debian) aa_p=auditd ;; *) aa_p=audit ;; esac
+		if ! rec_unit auditd.service || ! pkg_install "$aa_p"; then
+			abort "$aa_p could not be installed$(pkg_why)"
+			return
+		fi
+		if [ -n "$PKG_NEW" ] && ! audit_mark "$PKG_NEW"; then
+			abort "$AUDITD_MARKER could not be written"
+			return
+		fi
+		did "Installed $aa_p; $AUDITD_MARKER says EasyRMM did"
+	fi
+	if ! unit_active auditd.service || ! unit_enabled auditd.service; then
+		if ! turn_on auditd.service; then
+			abort 'auditd could not be started'
+			return
+		fi
+		did 'auditd runs and starts at boot'
+	fi
+	text_has "$M_TODO" -x rules || return 0
+	if ! write_own "$AUDIT_FILE" 0640 "$(audit_rules)$nl"; then
+		abort "$AUDIT_FILE could not be written"
+		return
+	fi
+	if audit_immutable; then
+		did "Wrote $AUDIT_FILE; the loaded rules are immutable, so these load at the next restart (and undo cannot unload them before one)"
+		return
+	fi
+	tx_push audit_load
+	if ! audit_load || ! t 20 auditctl -l 2>/dev/null | grep -q 'key=easyrmm-hardening-'; then
+		abort 'augenrules --load did not load the rules'
+		return
+	fi
+	did "Wrote $AUDIT_FILE and loaded it with augenrules --load: changes to accounts, sudoers, SSH and PAM configuration, the time, kernel modules, mounts, and commands run with raised privileges"
+}
+undo_audit_after() {
+	if have augenrules; then
+		if audit_immutable; then
+			did 'The loaded audit rules are immutable: they stay loaded until the next restart'
+		elif ! audit_load; then
+			left 'the audit rules loaded now: augenrules --load failed'
+		fi
+	fi
+	# auditd, if EasyRMM installed it and no other rules file needs it. An
+	# auditd that was there before is never removed.
+	[ -f "$AUDITD_MARKER" ] || return 0
+	ua_fo=$(audit_foreign)
+	if [ -n "$ua_fo" ]; then
+		left "auditd, which EasyRMM installed: other rules files need it ($ua_fo); $AUDITD_MARKER stays, for whoever removes the last of them"
+		return 0
+	fi
+	ua_pk=$(sed '/^#/d' "$AUDITD_MARKER" | tr '\n' ' ')
+	PKG_REMOVED=
+	# shellcheck disable=SC2086 # package names, one word each
+	pkg_remove_alone $ua_pk && ua_rc=0 || ua_rc=$?
+	case $ua_rc in
+	0)
+		rm -f "$AUDITD_MARKER"
+		rmdir "${AUDITD_MARKER%/*}" 2>/dev/null
+		did "Removed the packages EasyRMM installed for auditd${PKG_REMOVED:+: $PKG_REMOVED}, and $AUDITD_MARKER"
+		;;
+	1) left "auditd, which EasyRMM installed: removing its packages (${ua_pk% }) would remove other packages too" ;;
+	*) left "auditd, which EasyRMM installed: the package manager could not remove its packages (${ua_pk% })$(pkg_why)" ;;
+	esac
+}
+
 # permissions
 
 apply_permissions() {
@@ -3322,6 +3531,334 @@ apply_services() {
 }
 undo_services_after() { reload_inetd; }
 
+# kernel-modules and usb-storage
+
+# modprobe_file MODULE...: install directives that keep them from loading.
+modprobe_file() {
+	printf '# EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.\n'
+	for mf_m in "$@"; do
+		printf 'install %s /bin/false\nblacklist %s\n' "$mf_m" "$mf_m"
+	done
+}
+
+apply_kernel_modules() {
+	[ -n "$M_TODO" ] || return 0
+	ak_mods=
+	[ ! -f "$MODULES_FILE" ] || ak_mods=$(sed -n 's/^install \([^ ]*\) .*/\1/p' "$MODULES_FILE" | tr '\n' ' ')
+	for ak_m in $M_TODO; do
+		in_words "$ak_m" "$ak_mods" || ak_mods="$ak_mods $ak_m"
+	done
+	# shellcheck disable=SC2086 # module names, one word each
+	if ! write_own "$MODULES_FILE" 0644 "$(modprobe_file $ak_mods)$nl"; then
+		abort "$MODULES_FILE could not be written"
+		return
+	fi
+	MODPROBE_READ=no
+	modprobe_config
+	for ak_m in $M_TODO; do
+		if ! kept_from_loading "$ak_m"; then
+			abort "modprobe does not read $MODULES_FILE as expected ($ak_m)"
+			return
+		fi
+	done
+	did "Kept from loading:$M_TODO ($MODULES_FILE)"
+}
+
+# initramfs_update: the initramfs of every kernel, rebuilt with
+# /etc/modprobe.d as it is now; IU_ERR says why it failed.
+initramfs_update() {
+	case $FAMILY in
+	debian) iu_cmd='update-initramfs -u -k all' ;;
+	*) iu_cmd='dracut -f --regenerate-all' ;;
+	esac
+	iu_rc=0
+	if have "${iu_cmd%% *}"; then
+		# shellcheck disable=SC2086 # the command and its arguments
+		t 1200 $iu_cmd >"$TX_DIR/initramfs.log" 2>&1 || iu_rc=$?
+	else
+		iu_rc=127
+	fi
+	case $iu_rc in
+	0) IU_ERR= ;;
+	124 | 137) IU_ERR="$iu_cmd did not finish in 20 minutes and was stopped" ;;
+	127) IU_ERR="${iu_cmd%% *} is not installed" ;;
+	*) IU_ERR="$iu_cmd failed: $(tail -n 1 "$TX_DIR/initramfs.log" | cut -c1-160)" ;;
+	esac
+	[ "$iu_rc" -eq 0 ]
+}
+
+apply_usb_storage() {
+	text_has "$M_TODO" -x usb-storage || return 0
+	if ! write_own "$USB_FILE" 0644 "$(modprobe_file usb-storage)$nl"; then
+		abort "$USB_FILE could not be written"
+		return
+	fi
+	MODPROBE_READ=no
+	modprobe_config
+	if ! kept_from_loading usb_storage && ! kept_from_loading usb-storage; then
+		abort "modprobe does not read $USB_FILE as expected"
+		return
+	fi
+	tx_push initramfs_update
+	if ! initramfs_update; then
+		abort "the initramfs could not be rebuilt: $IU_ERR"
+		return
+	fi
+	did "Kept usb-storage from loading ($USB_FILE) and rebuilt the initramfs: USB disks and drives stop working"
+	! module_loaded usb_storage || did 'usb-storage is loaded now: it stays loaded until the next restart'
+}
+undo_usb_storage_after() {
+	# Only when undo removed the file.
+	text_has "$M_DONE" -xF "Removed $USB_FILE" || return 0
+	if initramfs_update; then
+		did 'Rebuilt the initramfs'
+	else
+		left "the initramfs, which could not be rebuilt ($IU_ERR): run $iu_cmd"
+	fi
+}
+
+# sudo
+
+apply_sudo() {
+	case $M_TODO in
+	'') return 0 ;;
+	refused\ *)
+		refuse "${M_TODO#refused }."
+		return
+		;;
+	esac
+	au_lines=
+	[ ! -f "$SUDO_FILE" ] || au_lines=$(grep -v '^[[:space:]]*#' "$SUDO_FILE")
+	text_has "$M_TODO" -x use_pty && au_lines="$au_lines${nl}Defaults use_pty"
+	text_has "$M_TODO" -x logfile && au_lines="$au_lines${nl}Defaults logfile=$SUDO_LOG"
+	au_lines=$(printf '%s\n' "$au_lines" | grep . | awk '!s[$0]++')
+	if text_has "$M_TODO" -Ex 'use_pty|logfile|mode'; then
+		au_new="# EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.$nl$au_lines$nl"
+		printf '%s' "$au_new" >"$TX_DIR/sudoers"
+		if ! au_err=$(t 20 visudo -c -q -f "$TX_DIR/sudoers" 2>&1); then
+			refuse "visudo -c refused the new sudoers file: $au_err"
+			return
+		fi
+		if ! write_own "$SUDO_FILE" 0440 "$au_new"; then
+			abort "$SUDO_FILE could not be written"
+			return
+		fi
+		if ! t 20 visudo -c -q >/dev/null 2>&1; then
+			abort 'visudo -c failed with the new file in place'
+			return
+		fi
+		did "Wrote $SUDO_FILE (mode 0440, checked with visudo -c): $(printf '%s\n' "$au_lines" | tr '\n' ';' | sed -e 's/;$//' -e 's/;/; /g')"
+	fi
+	au_log=$(printf '%s\n' "$M_TODO" | sed -n 's/^logrotate //p')
+	[ -n "$au_log" ] || return 0
+	case $au_log in /*) ;; *)
+		did "Left as it is: sudo's log file $au_log, which is not a full path, so no logrotate entry was added"
+		return 0
+		;;
+	esac
+	case $au_log in *[!A-Za-z0-9/._-]*)
+		did "Left as it is: no logrotate entry for $au_log, whose name has characters logrotate would read otherwise"
+		return 0
+		;;
+	esac
+	if ! write_own "$SUDO_ROTATE" 0644 "# EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.$nl$au_log {${nl}	monthly${nl}	rotate 12${nl}	compress${nl}	delaycompress${nl}	missingok${nl}	notifempty${nl}	create 0600 root root$nl}$nl"; then
+		abort "$SUDO_ROTATE could not be written"
+		return
+	fi
+	did "Wrote $SUDO_ROTATE: $au_log rotated monthly, a year kept"
+}
+
+# time
+
+apply_time() {
+	case $M_TODO in
+	'') return 0 ;;
+	install\ *)
+		at_r=${M_TODO#install }
+		if ! rec_unit "${at_r#* }" || ! pkg_install "${at_r%% *}"; then
+			abort "${at_r%% *} could not be installed$(pkg_why)"
+			return
+		fi
+		did "Installed ${at_r%% *}"
+		at_u=${at_r#* }
+		;;
+	*) at_u=${M_TODO#unit } ;;
+	esac
+	if ! turn_on "$at_u"; then
+		abort "$at_u could not be started"
+		return
+	fi
+	did "$at_u runs and starts at boot"
+}
+
+# shared-memory
+
+apply_shared_memory() {
+	[ -n "$M_TODO" ] || return 0
+	if [ ! -f /etc/fstab ]; then
+		refuse '/etc/fstab does not exist.'
+		return
+	fi
+	# The /dev/shm line with nodev, nosuid and noexec added, or a new line.
+	awk '
+	!/^[ \t]*#/ && $2 == "/dev/shm" && NF >= 4 {
+		o = $4
+		if (("," o ",") !~ /,nodev,/) o = o ",nodev"
+		if (("," o ",") !~ /,nosuid,/) o = o ",nosuid"
+		if (("," o ",") !~ /,noexec,/) o = o ",noexec"
+		$4 = o; found = 1
+	}
+	{ print }
+	END { if (!found) print "tmpfs /dev/shm tmpfs defaults,nodev,nosuid,noexec 0 0" }' /etc/fstab >/etc/fstab.easyrmm-new
+	# The new file is checked before it replaces the old: no new errors.
+	as_old=$(t 30 findmnt --verify --tab-file /etc/fstab 2>&1 | grep -ci 'error')
+	as_new=$(t 30 findmnt --verify --tab-file /etc/fstab.easyrmm-new 2>&1)
+	if [ "$(printf '%s\n' "$as_new" | grep -ci 'error')" -gt "$as_old" ]; then
+		rm -f /etc/fstab.easyrmm-new
+		refuse "findmnt --verify found errors in the new /etc/fstab: $(printf '%s\n' "$as_new" | grep -i error | head -n 1)"
+		return
+	fi
+	if ! write_edit /etc/fstab; then
+		abort '/etc/fstab could not be changed'
+		return
+	fi
+	tx_push daemon_reload
+	daemon_reload
+	did 'Mounted /dev/shm nodev,nosuid,noexec in /etc/fstab'
+	am_before=$(mount_options /dev/shm)
+	if ! intent; then
+		abort 'the record could not be written'
+		return
+	fi
+	rec_has mount /dev/shm || rec_add "mount$tab/dev/shm$tab$am_before$tab?"
+	am_add=$(mount_flags_added nodev,nosuid,noexec "$am_before")
+	if [ -n "$am_add" ]; then
+		tx_push "mount -o remount,$(mount_flags_back nodev,nosuid,noexec "$am_before") /dev/shm"
+		if ! t 30 mount -o "remount,$am_add" /dev/shm; then
+			abort "/dev/shm could not be remounted $am_add"
+			return
+		fi
+		did "Remounted /dev/shm $am_add"
+	fi
+	rec_set mount /dev/shm 4 "$(mount_options /dev/shm)"
+}
+undo_shared_memory_after() { daemon_reload; }
+
+# mac
+
+apply_mac() {
+	[ -n "$M_TODO" ] || return 0
+	if text_has "$M_TODO" -x enforce; then
+		mc_b=$(selinux_mode)
+		if ! intent; then
+			abort 'the record could not be written'
+			return
+		fi
+		rec_has selinux - || rec_add "selinux$tab-$tab$mc_b$tab?"
+		tx_push 'setenforce 0'
+		if ! setenforce 1 2>/dev/null; then
+			abort 'setenforce 1 failed'
+			return
+		fi
+		rec_set selinux - 4 "$(selinux_mode)"
+		did 'SELinux enforcing now (setenforce 1)'
+	fi
+	if text_has "$M_TODO" -x config; then
+		if grep -q '^[[:space:]]*SELINUX=' /etc/selinux/config; then
+			sed 's/^[[:space:]]*SELINUX=.*/SELINUX=enforcing/' /etc/selinux/config >/etc/selinux/config.easyrmm-new
+		else
+			{ cat /etc/selinux/config && printf 'SELINUX=enforcing\n'; } >/etc/selinux/config.easyrmm-new
+		fi
+		if ! write_edit /etc/selinux/config; then
+			abort '/etc/selinux/config could not be changed'
+			return
+		fi
+		did 'SELINUX=enforcing in /etc/selinux/config'
+	fi
+}
+
+# integrity
+
+apply_integrity() {
+	[ -n "$M_TODO" ] || return 0
+	if text_has "$M_TODO" -x install; then
+		# Debian's aide has neither its configuration nor aideinit without
+		# aide-common, which only recommends it.
+		case $FAMILY in
+		debian) ai_pk='aide aide-common' ;;
+		*) ai_pk=aide ;;
+		esac
+		# shellcheck disable=SC2086 # package names, one word each
+		if ! pkg_install $ai_pk; then
+			abort "AIDE could not be installed$(pkg_why)"
+			return
+		fi
+		did "Installed AIDE ($ai_pk)"
+	fi
+	ai_ex=$(printf '%s\n' "$M_TODO" | sed -n 's/^exclude //p')
+	if [ -n "$ai_ex" ]; then
+		if [ -d /etc/aide/aide.conf.d ]; then
+			ai_old=
+			[ ! -f "$AIDE_DEB_FILE" ] || ai_old=$(grep '^!' "$AIDE_DEB_FILE")
+			ai_lines=$(printf '%s\n%s\n' "$ai_old" "$(printf '%s\n' "$ai_ex" | sed 's/^/!/')" | grep . | awk '!s[$0]++')
+			write_own "$AIDE_DEB_FILE" 0644 "# EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.$nl$ai_lines$nl"
+		elif [ -f /etc/aide.conf ]; then
+			{ cat /etc/aide.conf && printf '%s\n' "$ai_ex" | sed 's/^/!/'; } >/etc/aide.conf.easyrmm-new && write_edit /etc/aide.conf
+		else
+			false
+		fi || {
+			abort "AIDE's configuration could not be changed to leave out $(printf '%s' "$ai_ex" | tr '\n' ' ')"
+			return
+		}
+		did "AIDE leaves out $(printf '%s\n' "$ai_ex" | tr '\n' ' ' | sed 's/ $//')"
+	fi
+	if text_has "$M_TODO" -x daily; then
+		ai_timer=$(t 20 systemctl list-unit-files --no-legend '*aide*.timer' 2>/dev/null | awk '$1 != "'"$AIDE_UNIT"'.timer" { print $1; exit }')
+		if [ -z "$ai_timer" ]; then
+			ai_timer=$AIDE_UNIT.timer
+			tx_push daemon_reload
+			if ! write_own "/etc/systemd/system/$AIDE_UNIT.service" 0644 "# EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.${nl}[Unit]${nl}Description=EasyRMM hardening: the daily AIDE check${nl}${nl}[Service]${nl}Type=oneshot${nl}Nice=19${nl}IOSchedulingClass=idle${nl}ExecStart=$(command -v aide) --check$nl# AIDE's exit status counts what changed (1 to 7); only 14 and up are errors.${nl}SuccessExitStatus=1 2 3 4 5 6 7$nl" ||
+				! write_own "/etc/systemd/system/$AIDE_UNIT.timer" 0644 "# EasyRMM hardening (ADR-0051): written by EasyRMM and removed by its undo.${nl}[Unit]${nl}Description=EasyRMM hardening: the daily AIDE check${nl}${nl}[Timer]${nl}OnCalendar=daily${nl}RandomizedDelaySec=1h${nl}Persistent=true${nl}${nl}[Install]${nl}WantedBy=timers.target$nl"; then
+				abort "EasyRMM's daily AIDE check could not be written"
+				return
+			fi
+			daemon_reload
+		fi
+		if ! turn_on "$ai_timer"; then
+			abort "$ai_timer could not be enabled"
+			return
+		fi
+		did "AIDE checks daily ($ai_timer)"
+	fi
+	text_has "$M_TODO" -x baseline || return 0
+	# Outside the job: the baseline can take longer than the job may run.
+	for ai_db in /var/lib/aide/aide.db /var/lib/aide/aide.db.gz /var/lib/aide/aide.db.new /var/lib/aide/aide.db.new.gz; do
+		[ -e "$ai_db" ] || rec_has gen "$ai_db" || rec_add "gen$tab$ai_db"
+	done
+	case $FAMILY in
+	debian) ai_cmd=$(command -v aideinit) && ai_cmd="$ai_cmd --yes --force" ;;
+	*) ai_cmd=$(command -v aide) && ai_cmd="$ai_cmd --init && mv -f /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz" ;;
+	esac || {
+		abort "the baseline could not be started: $(if [ "$FAMILY" = debian ]; then echo aideinit; else echo aide; fi) is missing"
+		return
+	}
+	t 30 systemctl reset-failed "$AIDE_INIT_UNIT.service" >/dev/null 2>&1
+	if ! t 60 systemd-run --unit="$AIDE_INIT_UNIT" --description='EasyRMM hardening: the AIDE baseline' \
+		--property=Nice=19 --property=IOSchedulingClass=idle sh -c "$ai_cmd" >/dev/null 2>&1; then
+		abort 'the baseline could not be started (systemd-run)'
+		return
+	fi
+	did "Started building AIDE's baseline in $AIDE_INIT_UNIT, outside the job's time limit; the next check reports whether it finished"
+}
+undo_integrity_before() {
+	[ "$SYSTEMD_UP" = no ] || {
+		t 120 systemctl stop "$AIDE_INIT_UNIT.service"
+		t 30 systemctl reset-failed "$AIDE_INIT_UNIT.service"
+	} >/dev/null 2>&1
+	return 0
+}
+undo_integrity_after() { daemon_reload; }
+
 # ---------------------------------------------------------------------------
 # Running the modules
 
@@ -3402,9 +3939,17 @@ apply_module() {
 				ssh) apply_ssh ;;
 				firewall) apply_firewall ;;
 				fail2ban) apply_fail2ban ;;
+				kernel) apply_kernel ;;
+				audit) apply_audit ;;
 				permissions) apply_permissions ;;
 				services) apply_services ;;
-				kernel | audit | kernel-modules | usb-storage | sudo | time | shared-memory | mac | integrity) refuse 'Apply of this module is not built yet.' ;;
+				kernel-modules) apply_kernel_modules ;;
+				sudo) apply_sudo ;;
+				time) apply_time ;;
+				shared-memory) apply_shared_memory ;;
+				usb-storage) apply_usb_storage ;;
+				mac) apply_mac ;;
+				integrity) apply_integrity ;;
 				esac
 			fi
 		fi
@@ -3457,12 +4002,21 @@ undo_module() {
 		M_OUTCOME=failed
 		M_WHY="$STATE_DIR could not be written."
 	else
+		AUDIT_UNDO=no
+		case $1 in
+		integrity) undo_integrity_before ;;
+		audit) AUDIT_UNDO=yes ;;
+		esac
 		undo_records
 		case $1 in
 		ssh) undo_ssh_after ;;
 		firewall) undo_firewall_after ;;
 		fail2ban) undo_fail2ban_after ;;
+		audit) undo_audit_after ;;
 		services) undo_services_after ;;
+		usb-storage) undo_usb_storage_after ;;
+		shared-memory) undo_shared_memory_after ;;
+		integrity) undo_integrity_after ;;
 		esac
 		if [ -z "$M_OUTCOME" ]; then
 			# Undone: the record is used up, and the next apply takes

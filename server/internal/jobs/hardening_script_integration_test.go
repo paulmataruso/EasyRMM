@@ -384,10 +384,16 @@ func scriptApplyUndo(t *testing.T, c *scriptContainer) {
 			if m.Outcome != HardeningRefused || !strings.Contains(m.OutcomeReason, "systemd is not running") {
 				t.Errorf("firewall: %+v", m)
 			}
-		case slices.Contains([]string{"integrity", "kernel"}, m.Module):
-			// Their apply is not built yet.
-			if m.Outcome != HardeningRefused || !strings.Contains(m.OutcomeReason, "not built yet") {
-				t.Errorf("%s: %+v", m.Module, m)
+		case m.Module == "integrity":
+			// AIDE cannot be installed without a network; the installation
+			// is put back.
+			if m.Outcome != HardeningOutcomeFailed || !strings.Contains(m.OutcomeReason, "put back") || m.Recorded {
+				t.Errorf("integrity: %+v", m)
+			}
+		case m.Module == "kernel":
+			// /proc/sys is read-only in a Docker container.
+			if m.Outcome != HardeningUnchanged && (m.Outcome != HardeningRefused || !strings.Contains(m.OutcomeReason, "read-only")) {
+				t.Errorf("kernel: %+v", m)
 			}
 		case slices.Contains(containerNotApplicable, m.Module):
 			if m.Outcome != HardeningSkipped {
