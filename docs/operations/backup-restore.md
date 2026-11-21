@@ -101,7 +101,9 @@ commands failed and that a fresh deployment did not start; both are fixed. A run
 deployment, backed up and restored the engine's database and keys with the
 steps above and passed. A run with Authentik on 21 November 2026 backed up
 and restored Authentik's database and directory with the steps above and
-passed ([Drills](../development/drills.md#runs)).
+passed. Runs in place the same day, with and without Authentik, set the
+running deployment aside, restored over it, then put it back, with the
+steps below, and passed ([Drills](../development/drills.md#runs)).
 
 ## Restore onto a new host
 
