@@ -3587,6 +3587,17 @@ apply_kernel_modules() {
 	done
 	did "Kept from loading:$M_TODO ($MODULES_FILE)"
 }
+undo_kernel_modules_after() {
+	# Apply leaves the initramfs alone, but one rebuilt since (by
+	# usb-storage's apply, or a kernel's update) took the file in.
+	text_has "$M_DONE" -xF "Removed $MODULES_FILE" || return 0
+	initramfs_holds "$MODULES_FILE" || return 0
+	if initramfs_update; then
+		did "Rebuilt the initramfs, which held $MODULES_FILE"
+	else
+		left "the initramfs, which holds $MODULES_FILE and could not be rebuilt ($IU_ERR): run $iu_cmd"
+	fi
+}
 
 # initramfs_update: the initramfs of every kernel, rebuilt with
 # /etc/modprobe.d as it is now; IU_ERR says why it failed.
@@ -3609,6 +3620,19 @@ initramfs_update() {
 	*) IU_ERR="$iu_cmd failed: $(tail -n 1 "$TX_DIR/initramfs.log" | cut -c1-160)" ;;
 	esac
 	[ "$iu_rc" -eq 0 ]
+}
+# initramfs_holds FILE: whether the initramfs of a kernel, one
+# initramfs_update rebuilds, holds FILE.
+initramfs_holds() {
+	for ih_i in /boot/initrd.img-* /boot/initramfs-*.img; do
+		case $ih_i in *'*'* | *kdump.img | */initramfs-0-rescue-*) continue ;; esac
+		if have lsinitramfs; then
+			t 300 lsinitramfs "$ih_i"
+		elif have lsinitrd; then
+			t 300 lsinitrd "$ih_i"
+		fi 2>/dev/null | grep -qF "${1#/}" && return 0
+	done
+	return 1
 }
 
 apply_usb_storage() {
@@ -4038,6 +4062,7 @@ undo_module() {
 		fail2ban) undo_fail2ban_after ;;
 		audit) undo_audit_after ;;
 		services) undo_services_after ;;
+		kernel-modules) undo_kernel_modules_after ;;
 		usb-storage) undo_usb_storage_after ;;
 		shared-memory) undo_shared_memory_after ;;
 		integrity) undo_integrity_after ;;
