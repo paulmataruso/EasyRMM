@@ -135,6 +135,7 @@ echo "the registry did not answer" >&2; exit 1`, registryImage, registry), 30*ti
 		b := bundle{
 			version: v, commit: commit, digest: digest, engine: engine,
 			updater: filepath.Join(work, "updater-"+v), broken: v == versionC,
+			emulated: vm.Emulated(),
 		}
 		b.build(t, root, filepath.Join(work, "bundle-"+v), served, sigstore)
 	}
@@ -335,6 +336,11 @@ type bundle struct {
 	updater string
 	// broken gives the server a health check that never passes.
 	broken bool
+	// emulated gives every service an hour to become healthy: on an
+	// emulated machine, the first starts of PostgreSQL and the engine
+	// take longer than the health checks allow (Compose then fails
+	// --wait, and up -d for what depends on them).
+	emulated bool
 }
 
 // build runs bundle.sh, then has the bundle's deployment run the server
@@ -365,8 +371,14 @@ func (b bundle) build(t *testing.T, root, out, served string, sigstore *releaset
 			return updater
 		case "easyrmm-" + b.version + "/deploy/docker-compose.yml":
 			changed[path] = true
-			if b.broken {
+			if b.emulated {
+				data = regexp.MustCompile(`(?m)^( +start_period:) \S+$`).ReplaceAll(data, []byte("$1 60m"))
+			}
+			switch {
+			case b.broken:
 				data = bytes.Replace(data, []byte("\n  server:\n"), []byte("\n  server:\n"+brokenHealthCheck), 1)
+			case b.emulated:
+				data = bytes.Replace(data, []byte("\n  server:\n"), []byte("\n  server:\n"+slowHealthCheck), 1)
 			}
 			compose = data
 		}
@@ -418,6 +430,16 @@ const brokenHealthCheck = `    healthcheck:
       timeout: 3s
       retries: 2
       start_period: 0s
+`
+
+// slowHealthCheck is the server image's own health check, given an hour to
+// pass on an emulated machine.
+const slowHealthCheck = `    healthcheck:
+      test: ["CMD", "/usr/local/bin/easyrmm-server", "healthcheck"]
+      interval: 30s
+      timeout: 6s
+      retries: 3
+      start_period: 60m
 `
 
 // composeImages lists the images a Compose file names literally.
