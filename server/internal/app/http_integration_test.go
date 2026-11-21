@@ -16,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -24,10 +23,13 @@ import (
 	"github.com/pquerna/otp/totp"
 
 	"github.com/paulmataruso/easyrmm/server/internal/app"
+	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
+	"github.com/paulmataruso/easyrmm/server/internal/mailserver"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
+	"github.com/paulmataruso/easyrmm/server/internal/testmail"
 )
 
 const publicOrigin = "https://rmm.test"
@@ -36,24 +38,12 @@ type harness struct {
 	t       *testing.T
 	srv     *httptest.Server
 	dataDir string
-	mail    *captureMailer
-	db      *testdb.Instance
-	cfg     *config.Config
-	deps    *app.Deps
-}
-
-type sentMail struct{ to, subject, body string }
-
-type captureMailer struct {
-	mu   sync.Mutex
-	sent []sentMail
-}
-
-func (m *captureMailer) Send(_ context.Context, to, subject, body string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.sent = append(m.sent, sentMail{to, subject, body})
-	return nil
+	// mp is the real SMTP server (Mailpit) the console's mail server sends
+	// to, when the harness has one.
+	mp   *testmail.Mailpit
+	db   *testdb.Instance
+	cfg  *config.Config
+	deps *app.Deps
 }
 
 func newHarness(t *testing.T, withMail bool) *harness {
@@ -85,18 +75,15 @@ func newHarnessWith(t *testing.T, withMail bool, adjust func(*config.Config)) *h
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := &harness{t: t, dataDir: cfg.DataDir, db: inst, cfg: cfg}
-	var mailer interface {
-		Send(context.Context, string, string, string) error
-	}
-	if withMail {
-		h.mail = &captureMailer{}
-		mailer = h.mail
-	}
-	deps, err := app.Build(context.Background(), cfg, inst.DB, mailer, log)
+	deps, err := app.Build(context.Background(), cfg, inst.DB, log)
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.deps = deps
+	if withMail {
+		h.mp = testmail.New(t)
+		h.useMailpit(h.mp)
+	}
 	handler, err := app.Handler(cfg, deps, log)
 	if err != nil {
 		t.Fatal(err)
@@ -104,6 +91,15 @@ func newHarnessWith(t *testing.T, withMail bool, adjust func(*config.Config)) *h
 	h.srv = httptest.NewTLSServer(handler)
 	t.Cleanup(h.srv.Close)
 	return h
+}
+
+// useMailpit sets Mailpit's plain server as the console's mail server.
+func (h *harness) useMailpit(mp *testmail.Mailpit) {
+	h.t.Helper()
+	if _, err := h.deps.Mail.Update(context.Background(), audit.SystemActor("test"), mailserver.Input{Host: mp.Host, Port: mp.Port,
+		Security: "none", SignIn: mailserver.SignInPassword, Username: mp.Username, Password: mp.Password, FromAddress: mp.From}); err != nil {
+		h.t.Fatal(err)
+	}
 }
 
 // client is a browser: it keeps cookies, sends the application's Host and
@@ -613,17 +609,15 @@ func TestHTTPPasswordResetByEmail(t *testing.T) {
 		t.Fatal("reset responses differ between known and unknown accounts")
 	}
 	h.deps.Auth.Wait() // the e-mail goes out after the answer
-	h.mail.mu.Lock()
-	sent := append([]sentMail(nil), h.mail.sent...)
-	h.mail.mu.Unlock()
-	if len(sent) != 1 || sent[0].to != "admin@msp.example" {
+	sent := h.mp.Received("admin@msp.example")
+	if len(sent) != 1 || len(h.mp.Received("nobody@msp.example")) != 0 {
 		t.Fatalf("sent mail: %+v", sent)
 	}
-	i := strings.Index(sent[0].body, "#token=")
+	i := strings.Index(sent[0].Text, "#token=")
 	if i < 0 {
-		t.Fatalf("no token in mail: %s", sent[0].body)
+		t.Fatalf("no token in mail: %s", sent[0].Text)
 	}
-	tok := strings.Fields(sent[0].body[i+len("#token="):])[0]
+	tok := strings.Fields(sent[0].Text[i+len("#token="):])[0]
 	if r := c.do("POST", "/api/v1/auth/password-reset/complete", map[string]string{"token": tok, "password": "short"}); r.status != http.StatusUnprocessableEntity {
 		t.Fatalf("weak reset password: %d %s", r.status, r.body)
 	}

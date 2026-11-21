@@ -4,6 +4,8 @@ package easypatch
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -258,7 +260,7 @@ func TestMonthlyReports(t *testing.T) {
 
 	// Emailing it: EasyRMM has no mail server yet.
 	if _, err := f.svc.SendMonthlyReport(ctx, f.tech, rep.ID, []string{"cfo@example.com"}); !isCode(err, "mail_not_configured") ||
-		!strings.Contains(err.Error(), "EASYRMM_SMTP_HOST") {
+		!strings.Contains(err.Error(), "Settings → Notifications → Mail server") {
 		t.Fatalf("no mail server: %v", err)
 	}
 	if _, err := f.svc.SendMonthlyReport(ctx, f.reader, rep.ID, []string{"cfo@example.com"}); !isKind(err, apperr.KindForbidden) {
@@ -270,9 +272,12 @@ func TestMonthlyReports(t *testing.T) {
 		}
 	}
 
-	// EasyRMM's mail server reaches the engine on the next pass, once.
-	f.svc = f.engineService(f.engine, Mail(MailConfig{Host: "smtp.example.com", Port: 465, Username: "mailer", Password: "pw",
-		From: "Acme IT <it@example.com>", TLS: "implicit"}))
+	// EasyRMM's mail server reaches the engine on the next pass, once, and
+	// again after every change, without a restart.
+	inForce := MailConfig{Host: "smtp.example.com", Port: 465, Username: "mailer", Password: "pw", FromAddress: "it@example.com",
+		FromName: "Acme IT", Security: "tls"}
+	var readErr error
+	f.svc = f.engineService(f.engine, Mail(func(context.Context) (MailConfig, error) { return inForce, readErr }))
 	f.reconcile()
 	f.reconcile()
 	if n := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")); n != 1 {
@@ -298,19 +303,44 @@ func TestMonthlyReports(t *testing.T) {
 	}
 
 	// A mail server without encryption is refused for reports.
-	f.svc = f.engineService(f.engine, Mail(MailConfig{Host: "relay.example.com", From: "it@example.com", TLS: "none"}))
+	inForce = MailConfig{Host: "localhost", FromAddress: "it@example.com", Security: "none"}
 	f.reconcile()
+	f.reconcile()
+	if n := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")); n != 2 {
+		t.Fatalf("%d mail settings pushes after a change", n)
+	}
 	if _, err := f.svc.SendMonthlyReport(ctx, f.tech, rep.ID, []string{"cfo@example.com"}); !isCode(err, "mail_not_encrypted") {
 		t.Fatalf("plain mail server: %v", err)
 	}
 	if m := f.engine.Mail(); m["smtpPort"] != float64(587) || m["smtpSecurity"] != "None" || m["fromName"] != "EasyRMM" {
 		t.Fatalf("plain mail settings: %v", m)
 	}
+	// A new password alone is a change.
+	inForce = MailConfig{Host: "smtp.example.com", Port: 587, Username: "mailer", Password: "new", FromAddress: "it@example.com", Security: "starttls"}
+	f.reconcile()
+	if m := f.engine.Mail(); m["smtpPassword"] != "new" || m["smtpSecurity"] != "StartTls" {
+		t.Fatalf("new password: %v", m)
+	}
+	inForce.Password = "newer"
+	f.reconcile()
+	if m := f.engine.Mail(); m["smtpPassword"] != "newer" {
+		t.Fatalf("newer password: %v", m)
+	}
+	// EasyRMM's mail server cannot be read: the engine keeps its own, and the
+	// next pass tries again.
+	readErr = errors.New("database unavailable")
+	if res := f.reconcile(); !slices.ContainsFunc(res.Problems, func(p string) bool { return strings.Contains(p, "could not read EasyRMM's mail server") }) {
+		t.Fatalf("problems %v", res.Problems)
+	}
+	readErr = nil
 	// No mail server at all removes the engine's.
-	f.svc = f.engineService(f.engine, Mail(MailConfig{}))
+	inForce = MailConfig{}
 	f.reconcile()
 	if m := f.engine.Mail(); m["smtpHost"] != nil || m["smtpPassword"] != "" {
 		t.Fatalf("mail server removed: %v", m)
+	}
+	if n := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")); n != 5 {
+		t.Fatalf("%d mail settings pushes in all", n)
 	}
 
 	// Deleting.

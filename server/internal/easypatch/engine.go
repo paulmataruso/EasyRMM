@@ -2,7 +2,9 @@ package easypatch
 
 import (
 	"context"
-	"net/mail"
+	"crypto/sha256"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,10 +31,11 @@ type engine struct {
 	// agentCA, when set, gives the certificate authority of the engine's
 	// public address, for EasyPatch agents to trust (ADR-0042).
 	agentCA func() []byte
-	// mail is EasyRMM's mail server, which the engine sends reports with;
-	// mailSynced says the engine has it.
-	mail       *MailConfig
-	mailSynced bool
+	// mail reads EasyRMM's mail server in force, which the engine sends
+	// its email and reports with; mailGiven fingerprints the one last given
+	// to the engine, nil until one was.
+	mail      func(context.Context) (MailConfig, error)
+	mailGiven *[sha256.Size]byte
 	// importedURLs are an imported EasyPatch's addresses, which its agents
 	// still use (AgentHostnames).
 	importedURLs []string
@@ -68,42 +71,50 @@ func AgentHostnames(names []string) EngineOption {
 	}
 }
 
-// MailConfig is EasyRMM's mail server (EASYRMM_SMTP_*). An empty Host means
-// EasyRMM has none.
+// MailConfig is EasyRMM's mail server in force: .env's EASYRMM_SMTP_* or
+// the console's (ADR-0053). An empty Host means EasyRMM has none.
 type MailConfig struct {
 	Host     string
 	Port     int
 	Username string
 	Password string
-	From     string
-	// TLS is starttls, implicit or none.
-	TLS string
+	// FromAddress is the sender's address, FromName its name.
+	FromAddress string
+	FromName    string
+	// Security is starttls, tls or none.
+	Security string
 }
 
-// Mail has the engine email monthly reports through EasyRMM's mail server:
-// the reconciler gives the engine cfg, and removes the engine's when cfg has
-// no host, so the deployment has one mail server.
-func Mail(cfg MailConfig) EngineOption {
-	return func(e *engine) { e.mail = &cfg }
+// fingerprint tells one mail server from another, password included; it
+// stays in memory.
+func (cfg MailConfig) fingerprint() [sha256.Size]byte {
+	return sha256.Sum256([]byte(strings.Join([]string{cfg.Host, strconv.Itoa(cfg.Port), cfg.Username, cfg.Password, cfg.FromAddress,
+		cfg.FromName, cfg.Security}, "\x00")))
+}
+
+// Mail has the engine email through EasyRMM's mail server, which source
+// reads: each reconcile pass gives the engine the mail server in force
+// when it is not the one last given, at start and after every change, and
+// removes the engine's when EasyRMM has none, so the deployment has one
+// mail server.
+func Mail(source func(context.Context) (MailConfig, error)) EngineOption {
+	return func(e *engine) { e.mail = source }
 }
 
 // mailSettings is cfg as the engine's mail settings, keeping what EasyRMM
 // does not set from the engine's current ones.
 func (cfg MailConfig) mailSettings(current MailSettings) MailSettingsInput {
-	security := map[string]string{"starttls": "StartTls", "implicit": "SslOnConnect", "none": "None"}[cfg.TLS]
+	security := map[string]string{"starttls": "StartTls", "tls": "SslOnConnect", "none": "None"}[cfg.Security]
 	if security == "" {
 		security = "StartTls"
 	}
 	password := cfg.Password
-	from, name := cfg.From, "EasyRMM"
-	if a, err := mail.ParseAddress(cfg.From); err == nil {
-		from = a.Address
-		if a.Name != "" {
-			name = a.Name
-		}
+	name := cfg.FromName
+	if name == "" {
+		name = "EasyRMM"
 	}
 	in := MailSettingsInput{SMTPHost: cfg.Host, SMTPPort: cfg.Port, SMTPSecurity: security, SMTPUsername: cfg.Username, SMTPPassword: &password,
-		FromAddress: from, FromName: name, AllowPrivateNetworkWebhooks: current.AllowPrivateNetworkWebhooks}
+		FromAddress: cfg.FromAddress, FromName: name, AllowPrivateNetworkWebhooks: current.AllowPrivateNetworkWebhooks}
 	if cfg.Host == "" {
 		in.SMTPPort, in.SMTPSecurity, in.SMTPUsername, in.FromAddress = 587, "StartTls", "", ""
 	}
@@ -113,33 +124,43 @@ func (cfg MailConfig) mailSettings(current MailSettings) MailSettingsInput {
 	return in
 }
 
-// syncMail gives the engine EasyRMM's mail server, once per start: the
-// engine may not be up when EasyRMM starts, so each pass tries until it is
-// done.
+// syncMail gives the engine EasyRMM's mail server in force when it is not
+// the one last given: the engine may not be up when EasyRMM starts, or
+// when the mail server changes, so each pass tries until it is done.
 func (s *Service) syncMail(ctx context.Context, c *Client, res *ReconcileResult) {
 	e := s.engine
 	if e == nil || e.mail == nil {
 		return
 	}
+	cfg, err := e.mail(ctx)
+	if err != nil {
+		res.problem("could not read EasyRMM's mail server for the patching engine: %v", err)
+		return
+	}
+	sum := cfg.fingerprint()
 	e.mu.Lock()
-	done := e.mailSynced
+	given := e.mailGiven != nil && *e.mailGiven == sum
 	e.mu.Unlock()
-	if done {
+	if given {
 		return
 	}
 	st := WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "EasyRMM", Role: RoleSuperAdmin, AllOrganizations: true})
 	current, err := c.MailSettings(st)
 	if err == nil {
-		err = c.SetMailSettings(st, e.mail.mailSettings(current))
+		err = c.SetMailSettings(st, cfg.mailSettings(current))
 	}
 	if err != nil {
 		res.problem("could not give the patching engine EasyRMM's mail server: %v", err)
 		return
 	}
 	e.mu.Lock()
-	e.mailSynced = true
+	e.mailGiven = &sum
 	e.mu.Unlock()
-	s.log.Info("patching: the engine sends reports through EasyRMM's mail server", "host", e.mail.Host)
+	if cfg.Host == "" {
+		s.log.Info("patching: the engine has no mail server, as EasyRMM has none")
+		return
+	}
+	s.log.Info("patching: the engine sends email and reports through EasyRMM's mail server", "host", cfg.Host)
 }
 
 // UseEngine has the service use the patching engine through c

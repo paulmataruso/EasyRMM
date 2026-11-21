@@ -355,8 +355,8 @@ type MailView struct {
 }
 
 // NotificationsView is EasyPatch's notification channels, the mail server
-// its email channels use (EasyRMM's, given at each start), and whether
-// webhooks may go to private networks.
+// its email channels use (EasyRMM's, given to it at start and after every
+// change), and whether webhooks may go to private networks.
 type NotificationsView struct {
 	Channels                    []Channel `json:"channels"`
 	Mail                        MailView  `json:"mail"`

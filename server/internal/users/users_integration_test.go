@@ -7,9 +7,10 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/netip"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -20,9 +21,12 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/mailer"
+	"github.com/paulmataruso/easyrmm/server/internal/mailserver"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
+	"github.com/paulmataruso/easyrmm/server/internal/testmail"
 	"github.com/paulmataruso/easyrmm/server/internal/users"
 )
 
@@ -30,32 +34,16 @@ const goodPassword = "orbit-violet-canyon-42"
 
 var meta = auth.RequestMeta{IP: netip.MustParseAddr("198.51.100.20"), UserAgent: "go-test"}
 
-type captureMailer struct {
-	mu   sync.Mutex
-	sent []string // to|subject|body
-}
-
-func (m *captureMailer) Send(_ context.Context, to, subject, body string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.sent = append(m.sent, to+"|"+subject+"|"+body)
-	return nil
-}
-
-func (m *captureMailer) all() []string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return append([]string(nil), m.sent...)
-}
-
 type env struct {
 	db    *database.DB
 	auth  *auth.Service
 	audit *audit.Logger
 	svc   *users.Service
 	hash  *auth.Hasher
-	mail  *captureMailer // nil when the environment has no mailer
-	sys   access.Caller
+	// mp is the real SMTP server (Mailpit) mail goes to; nil when the
+	// environment has no mail server.
+	mp  *testmail.Mailpit
+	sys access.Caller
 
 	orgA, orgB, siteA, siteA2, siteB uuid.UUID
 }
@@ -73,12 +61,18 @@ func newEnv(t *testing.T, withMail bool) *env {
 	cfg.PublicURL = "https://rmm.example.com"
 	e := &env{db: inst.DB, audit: audit.New(inst.DB, nil), sys: access.System("test")}
 	e.hash = auth.NewHasher(auth.Argon2Params{MemoryKiB: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLen: 16, KeyLen: 32}, 4)
-	if withMail {
-		e.mail = &captureMailer{}
-		e.auth = auth.NewService(inst.DB, e.audit, e.hash, sealer, e.mail, cfg)
-	} else {
-		e.auth = auth.NewService(inst.DB, e.audit, e.hash, sealer, nil, cfg)
+	mail, err := mailserver.New(inst.DB, e.audit, sealer, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
 	}
+	if withMail {
+		e.mp = testmail.New(t)
+		if _, err := mail.Update(context.Background(), audit.SystemActor("test"), mailserver.Input{Host: e.mp.Host, Port: e.mp.Port,
+			Security: mailer.None, SignIn: mailserver.SignInPassword, Username: e.mp.Username, Password: e.mp.Password, FromAddress: e.mp.From}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.auth = auth.NewService(inst.DB, e.audit, e.hash, sealer, mail, cfg)
 	e.svc = users.New(inst.DB, e.audit, e.auth, e.hash)
 	return e
 }
@@ -374,12 +368,12 @@ func TestInvite(t *testing.T) {
 				t.Fatalf("invited user: %+v", u)
 			}
 			if withMail {
-				sent := e.mail.all()
-				if !res.Emailed || res.Link != "" || len(sent) != 1 || !strings.HasPrefix(sent[0], "tom@acme.example|You have been invited") ||
-					!strings.Contains(sent[0], "https://rmm.example.com/welcome#token=") {
-					t.Fatalf("emailed invite: %+v %v", res, sent)
+				sent := e.mp.Received("tom@acme.example")
+				if !res.Emailed || res.Link != "" || res.MailProblem != "" || len(sent) != 1 || sent[0].Subject != "You have been invited to EasyRMM" ||
+					!strings.Contains(sent[0].Text, "https://rmm.example.com/welcome#token=") || !strings.Contains(sent[0].HTML, ">Set up your account</a>") {
+					t.Fatalf("emailed invite: %+v %+v", res, sent)
 				}
-			} else if res.Emailed || !strings.HasPrefix(res.Link, "https://rmm.example.com/welcome#token=") {
+			} else if res.Emailed || res.MailProblem != auth.MailNotConfigured || !strings.HasPrefix(res.Link, "https://rmm.example.com/welcome#token=") {
 				t.Fatalf("invite link: %+v", res)
 			}
 			// The invitation can be redeemed.
@@ -797,13 +791,23 @@ func TestIssuePasswordLink(t *testing.T) {
 				t.Fatal(err)
 			}
 			if withMail {
-				sent := e.mail.all()
-				if !res.Emailed || !res2.Emailed || res.Link != "" || len(sent) != 2 ||
-					!strings.HasPrefix(sent[0], "new@acme.example|You have been invited") || !strings.Contains(sent[0], "/welcome#token=") ||
-					!strings.HasPrefix(sent[1], "old@acme.example|Reset your EasyRMM password") || !strings.Contains(sent[1], "/reset-password#token=") {
-					t.Fatalf("mailed links: %+v %+v %v", res, res2, sent)
+				invite, reset := e.mp.Received("new@acme.example"), e.mp.Received("old@acme.example")
+				if !res.Emailed || !res2.Emailed || res.Link != "" || len(invite) != 1 || len(reset) != 1 ||
+					invite[0].Subject != "You have been invited to EasyRMM" || !strings.Contains(invite[0].Text, "/welcome#token=") ||
+					reset[0].Subject != "Reset your EasyRMM password" || !strings.Contains(reset[0].Text, "/reset-password#token=") {
+					t.Fatalf("mailed links: %+v %+v %+v %+v", res, res2, invite, reset)
+				}
+				// A link the mail server does not take is given to the
+				// administrator.
+				refused := e.user(t, testmail.Refused, false, orgRole(rbac.RoleTechnician, e.orgA))
+				res3, err := e.svc.IssuePasswordLink(ctx, oa, refused, meta)
+				if err != nil || res3.Emailed || res3.MailProblem != auth.MailNotSent || !strings.HasPrefix(res3.Link, "https://rmm.example.com/reset-password#token=") {
+					t.Fatalf("refused link: %+v %v", res3, err)
 				}
 			} else {
+				if res.MailProblem != auth.MailNotConfigured {
+					t.Fatalf("mail problem: %+v", res)
+				}
 				if !strings.HasPrefix(res.Link, "https://rmm.example.com/welcome#token=") || res.Emailed {
 					t.Fatalf("invite link: %+v", res)
 				}
@@ -824,7 +828,11 @@ func TestIssuePasswordLink(t *testing.T) {
 			}
 			_, err = e.svc.IssuePasswordLink(ctx, oa, existing, meta)
 			wantKind(t, err, apperr.KindConflict, "user_disabled", "link for disabled user")
-			if acts := e.auditActions(t, "user.password_link"); acts["user.password_link"] != 2 {
+			want := 2
+			if withMail {
+				want = 3
+			}
+			if acts := e.auditActions(t, "user.password_link"); acts["user.password_link"] != want {
 				t.Fatalf("audit: %v", acts)
 			}
 		})

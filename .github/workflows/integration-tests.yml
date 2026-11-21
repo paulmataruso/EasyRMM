@@ -1,8 +1,8 @@
 # Go integration tests against a real PostgreSQL (same version and roles as
 # production) and a real MeshCentral (the release production runs, with a
 # real MeshAgent connecting through the EasyRMM gateway) and a real OpenID
-# Connect provider (Dex), with per-package coverage floors. All run with
-# Docker host networking, as in production.
+# Connect provider (Dex) and real SMTP servers (Mailpit), with per-package
+# coverage floors. All run with Docker host networking, as in production.
 name: Integration tests
 
 on:
@@ -29,6 +29,8 @@ jobs:
         run: make test-mesh
       - name: Start Dex (OpenID Connect provider)
         run: make test-oidc
+      - name: Start Mailpit (SMTP)
+        run: make test-mail
       - name: Pull the test agent image
         run: docker pull "$(make -s print-test-agent-image)"
       - name: Unit + integration tests with coverage gates
@@ -61,3 +63,7 @@ jobs:
       - name: Dex logs on failure
         if: failure()
         run: docker logs easyrmm-testoidc 2>&1 | tail -200
+      - name: Mailpit logs on failure
+        if: failure()
+        run: |
+          for m in plain starttls tls; do docker logs "easyrmm-testmail-$m" 2>&1 | tail -100; done

@@ -171,8 +171,8 @@ func TestResetEmailIsLimitedPerAccount(t *testing.T) {
 		}
 	}
 	e.svc.Wait()
-	if len(e.mail.sent) != 3 {
-		t.Fatalf("sent %d e-mails, want 3", len(e.mail.sent))
+	if sent := e.mp.Received("many@example.com"); len(sent) != 3 {
+		t.Fatalf("sent %d e-mails, want 3", len(sent))
 	}
 	if denied := e.audits(t, "auth.password_reset_request", "denied"); len(denied) != 2 || denied[0]["reason"] != "rate_limited" {
 		t.Fatalf("limited requests not audited: %v", denied)
@@ -201,12 +201,13 @@ func TestResetForAnInvitedUserSendsANewInvitation(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.svc.Wait()
-	if len(e.mail.sent) != 1 || !strings.Contains(e.mail.sent[0], "|Finish setting up your EasyRMM account|") {
-		t.Fatalf("mail: %v", e.mail.sent)
+	sent := e.mp.Received("new@example.com")
+	if len(sent) != 1 || sent[0].Subject != "Finish setting up your EasyRMM account" || !strings.Contains(sent[0].Text, "within 72 hours") {
+		t.Fatalf("mail: %+v", sent)
 	}
-	_, after, ok := strings.Cut(e.mail.sent[0], "https://rmm.example.com/welcome#token=")
+	_, after, ok := strings.Cut(sent[0].Text, "https://rmm.example.com/welcome#token=")
 	if !ok {
-		t.Fatalf("no invitation link: %s", e.mail.sent[0])
+		t.Fatalf("no invitation link: %s", sent[0].Text)
 	}
 	token := strings.Fields(after)[0]
 	var expires time.Time

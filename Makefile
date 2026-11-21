@@ -21,6 +21,9 @@ TEST_MESH_URL ?= http://127.0.0.1:24430
 # The OpenID Connect provider single sign-on is tested against.
 DEX_IMAGE ?= ghcr.io/dexidp/dex:v2.46.1@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab
 TEST_OIDC_DIR ?= $(or $(TMPDIR),/tmp)/easyrmm-testoidc
+# The SMTP server mail is tested against (ADR-0053).
+MAILPIT_IMAGE ?= axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+TEST_MAIL_DIR ?= $(or $(TMPDIR),/tmp)/easyrmm-testmail
 # Machine tests (internal/vmtest; ADR-0051): where the cloud images and the
 # running machines' disks go (gigabytes, so not a small /tmp), the packages
 # with vm-tagged tests, how many machines boot at once, and how long the
@@ -90,6 +93,14 @@ test-oidc: ## Start a disposable Dex (OpenID Connect provider) for single sign-o
 test-oidc-stop: ## Stop the test Dex
 	DEX_IMAGE=$(DEX_IMAGE) ./scripts/test-oidc.sh stop
 
+.PHONY: test-mail
+test-mail: ## Start disposable Mailpit SMTP servers for mail tests (host networking)
+	MAILPIT_IMAGE=$(MAILPIT_IMAGE) EASYRMM_TEST_MAIL_DIR=$(TEST_MAIL_DIR) ./scripts/test-mail.sh
+
+.PHONY: test-mail-stop
+test-mail-stop: ## Stop the test Mailpit servers
+	MAILPIT_IMAGE=$(MAILPIT_IMAGE) ./scripts/test-mail.sh stop
+
 .PHONY: print-test-agent-image
 print-test-agent-image:
 	@echo $(TEST_AGENT_IMAGE)
@@ -99,13 +110,14 @@ print-test-hardening-images:
 	@echo $(TEST_HARDENING_IMAGES)
 
 .PHONY: test-integration
-test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral and Dex, with coverage gates
+test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral, Dex and Mailpit, with coverage gates
 	EASYRMM_TEST_DATABASE_URL="$${EASYRMM_TEST_DATABASE_URL:-$(TEST_DB_URL)}" \
 	EASYRMM_TEST_MESH_DIR="$${EASYRMM_TEST_MESH_DIR:-$(TEST_MESH_DIR)/config}" \
 	EASYRMM_TEST_MESH_URL="$${EASYRMM_TEST_MESH_URL:-$(TEST_MESH_URL)}" \
 	EASYRMM_TEST_AGENT_IMAGE="$${EASYRMM_TEST_AGENT_IMAGE:-$(TEST_AGENT_IMAGE)}" \
 	EASYRMM_TEST_HARDENING_IMAGES="$${EASYRMM_TEST_HARDENING_IMAGES:-$(TEST_HARDENING_IMAGES)}" \
 	EASYRMM_TEST_OIDC_DIR="$${EASYRMM_TEST_OIDC_DIR:-$(TEST_OIDC_DIR)}" \
+	EASYRMM_TEST_MAIL_DIR="$${EASYRMM_TEST_MAIL_DIR:-$(TEST_MAIL_DIR)}" \
 		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
 

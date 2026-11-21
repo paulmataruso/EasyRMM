@@ -27,6 +27,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -91,6 +92,17 @@ type InviteResult struct {
 	// administrator can deliver it another way.
 	Link    string `json:"link,omitempty"`
 	Emailed bool   `json:"emailed"`
+	// MailProblem says why the link was not e-mailed: no_mail_server, or
+	// not_sent when the mail server did not take it.
+	MailProblem string `json:"mailProblem,omitempty"`
+}
+
+// emailed records how e-mailing link went: problem is EmailLink's answer.
+func (r *InviteResult) emailed(link, problem string) {
+	r.Emailed, r.MailProblem = problem == "", problem
+	if !r.Emailed {
+		r.Link = link
+	}
 }
 
 // ListQuery filters the user list.
@@ -503,17 +515,13 @@ func (s *Service) Invite(ctx context.Context, c access.Caller, in InviteInput, m
 		return nil, err
 	}
 	res := &InviteResult{}
-	if m := s.auth.Mailer(); m != nil {
-		body := "You have been invited to EasyRMM by " + c.Actor.Label + ".\n\n" +
-			"Open this link within " + auth.InviteTTL.String() + " to choose your password and set up two-factor sign-in:\n\n" +
-			link + "\n\nIf you were not expecting this, you can ignore this message.\n"
-		if err := m.Send(context.WithoutCancel(ctx), email, "You have been invited to EasyRMM", body); err == nil {
-			res.Emailed = true
-		}
-	}
-	if !res.Emailed {
-		res.Link = link
-	}
+	res.emailed(link, s.auth.EmailLink(context.WithoutCancel(ctx), email, mailer.Letter{
+		Subject: "You have been invited to EasyRMM",
+		Before: []string{"You have been invited to EasyRMM by " + c.Actor.Label + ".",
+			"Open this link within " + auth.DurationWords(auth.InviteTTL) + " to choose your password and set up two-factor sign-in:"},
+		Link:  &mailer.Link{Label: "Set up your account", URL: link},
+		After: []string{"If you were not expecting this, you can ignore this message."},
+	}))
 	if res.User, err = s.Get(ctx, c, id); err != nil {
 		return nil, err
 	}
@@ -746,21 +754,22 @@ func (s *Service) IssuePasswordLink(ctx context.Context, c access.Caller, id uui
 	if err != nil {
 		return nil, err
 	}
+	l := mailer.Letter{
+		Subject: "Reset your EasyRMM password",
+		Before:  []string{"An administrator (" + c.Actor.Label + ") sent you a link to choose a new EasyRMM password:"},
+		Link:    &mailer.Link{Label: "Choose a new password", URL: link},
+		After:   []string{"It expires soon. If you were not expecting this, contact your administrator."},
+	}
+	if invite {
+		l = mailer.Letter{
+			Subject: "You have been invited to EasyRMM",
+			Before: []string{"You have been invited to EasyRMM by " + c.Actor.Label + ".",
+				"Open this link within " + auth.DurationWords(auth.InviteTTL) + " to choose your password:"},
+			Link: &mailer.Link{Label: "Set up your account", URL: link},
+		}
+	}
 	res := &InviteResult{}
-	if m := s.auth.Mailer(); m != nil {
-		subject, body := "Reset your EasyRMM password", "An administrator ("+c.Actor.Label+") sent you a link to choose a new EasyRMM password:\n\n"+link+
-			"\n\nIt expires soon. If you were not expecting this, contact your administrator.\n"
-		if invite {
-			subject, body = "You have been invited to EasyRMM", "You have been invited to EasyRMM by "+c.Actor.Label+".\n\n"+
-				"Open this link within "+auth.InviteTTL.String()+" to choose your password:\n\n"+link+"\n"
-		}
-		if err := m.Send(context.WithoutCancel(ctx), email, subject, body); err == nil {
-			res.Emailed = true
-		}
-	}
-	if !res.Emailed {
-		res.Link = link
-	}
+	res.emailed(link, s.auth.EmailLink(context.WithoutCancel(ctx), email, l))
 	if res.User, err = s.Get(ctx, c, id); err != nil {
 		return nil, err
 	}

@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 )
@@ -93,10 +95,14 @@ func DefaultConfig() Config {
 	}
 }
 
-// Mailer sends plain-text e-mail. When nil, self-service password reset is
-// disabled and administrators issue reset links instead.
+// Mailer sends mail to people's own accounts: invitations and password
+// resets (ADR-0053). Without a mail server in force, self-service password
+// reset is off and administrators deliver links themselves.
 type Mailer interface {
-	Send(ctx context.Context, to, subject, body string) error
+	// Available reports whether a mail server is in force.
+	Available(ctx context.Context) bool
+	// SendAccountMail sends msg to one person, ahead of other mail.
+	SendAccountMail(ctx context.Context, to string, msg mailer.Message) error
 }
 
 // RequestMeta describes the client making a request.
@@ -237,8 +243,11 @@ func (s *Service) lockout(failures, threshold int) time.Duration {
 // Config returns the active policy.
 func (s *Service) Config() Config { return s.cfg }
 
-// ResetAvailable reports whether self-service password reset can send mail.
-func (s *Service) ResetAvailable() bool { return s.mailer != nil }
+// ResetAvailable reports whether self-service password reset can send
+// mail: whether a mail server is in force now.
+func (s *Service) ResetAvailable(ctx context.Context) bool {
+	return s.mailer != nil && s.mailer.Available(ctx)
+}
 
 // NewToken returns 256 bits of randomness encoded for use in a cookie or
 // URL, and its SHA-256 hash for storage.
@@ -1065,8 +1074,34 @@ func (s *Service) issueToken(ctx context.Context, tx pgx.Tx, userID uuid.UUID, t
 	return strings.TrimRight(s.cfg.PublicURL, "/") + path + "#token=" + token, nil
 }
 
-// Mailer returns the configured mailer, or nil.
-func (s *Service) Mailer() Mailer { return s.mailer }
+// Why a link was not emailed, as EmailLink says it.
+const (
+	// MailNotConfigured: there is no mail server in force.
+	MailNotConfigured = "no_mail_server"
+	// MailNotSent: the mail server did not take the message, or the limits
+	// did not let it go.
+	MailNotSent = "not_sent"
+)
+
+// EmailLink sends l to the owner of an account, as account mail. It returns
+// "" when the mail server took it, and otherwise why not (MailNotConfigured
+// or MailNotSent), so that the administrator can deliver the link another
+// way; a failure is logged, never shown, since the mail server's reply is
+// for super administrators.
+func (s *Service) EmailLink(ctx context.Context, to string, l mailer.Letter) string {
+	if s.mailer == nil || !s.mailer.Available(ctx) {
+		return MailNotConfigured
+	}
+	msg, err := l.Message()
+	if err == nil {
+		err = s.mailer.SendAccountMail(ctx, to, msg)
+	}
+	if err != nil {
+		s.log.Error("account e-mail failed", "subject", l.Subject, "error", err)
+		return MailNotSent
+	}
+	return ""
+}
 
 // RequestPasswordReset e-mails a reset link if the address belongs to an
 // active account. It always appears to succeed, and it answers before
@@ -1075,7 +1110,7 @@ func (s *Service) Mailer() Mailer { return s.mailer }
 // account exists. Each account gets at most a few links an hour, however
 // many addresses ask.
 func (s *Service) RequestPasswordReset(ctx context.Context, email string, meta RequestMeta) error {
-	if s.mailer == nil {
+	if !s.ResetAvailable(ctx) {
 		return ErrResetUnavailable
 	}
 	if meta.IP.IsValid() && !s.ipLimit.Allow("reset:"+LimitKey(meta.IP)) {
@@ -1135,16 +1170,40 @@ func (s *Service) sendResetLink(ctx context.Context, email string, meta RequestM
 	if err != nil || link == "" {
 		return err
 	}
-	if invited {
-		body := "Someone asked to reset the password of your EasyRMM account, which is not set up yet.\n\n" +
-			"Open this link within " + InviteTTL.String() + " to choose your password and finish setting it up:\n\n" + link + "\n\n" +
-			"Earlier invitation links no longer work. If you were not expecting this, you can ignore this message.\n"
-		return s.mailer.Send(ctx, email, "Finish setting up your EasyRMM account", body)
+	l := mailer.Letter{
+		Subject: "Reset your EasyRMM password",
+		Before: []string{"A password reset was requested for your EasyRMM account.",
+			"Open this link within " + DurationWords(s.cfg.PasswordResetTTL) + " to choose a new password:"},
+		Link:  &mailer.Link{Label: "Choose a new password", URL: link},
+		After: []string{"If you did not request this, you can ignore this message. Your password has not changed."},
 	}
-	body := "A password reset was requested for your EasyRMM account.\n\n" +
-		"Open this link within " + s.cfg.PasswordResetTTL.String() + " to choose a new password:\n\n" + link + "\n\n" +
-		"If you did not request this, you can ignore this message. Your password has not changed.\n"
-	return s.mailer.Send(ctx, email, "Reset your EasyRMM password", body)
+	if invited {
+		l = mailer.Letter{
+			Subject: "Finish setting up your EasyRMM account",
+			Before: []string{"Someone asked to reset the password of your EasyRMM account, which is not set up yet.",
+				"Open this link within " + DurationWords(InviteTTL) + " to choose your password and finish setting it up:"},
+			Link:  &mailer.Link{Label: "Finish setting up", URL: link},
+			After: []string{"Earlier invitation links no longer work. If you were not expecting this, you can ignore this message."},
+		}
+	}
+	msg, err := l.Message()
+	if err != nil {
+		return err
+	}
+	return s.mailer.SendAccountMail(ctx, email, msg)
+}
+
+// DurationWords says d in words for a message: "30 minutes", "72 hours".
+func DurationWords(d time.Duration) string {
+	switch {
+	case d%time.Hour == 0 && d >= 2*time.Hour:
+		return strconv.Itoa(int(d/time.Hour)) + " hours"
+	case d == time.Hour:
+		return "1 hour"
+	case d%time.Minute == 0 && d > time.Minute:
+		return strconv.Itoa(int(d/time.Minute)) + " minutes"
+	}
+	return d.String()
 }
 
 // CompletePasswordReset sets a new password using a reset token. All of the
