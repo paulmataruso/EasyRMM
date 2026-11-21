@@ -1,7 +1,7 @@
 # ADR-0060: Collecting logs
 
-* Status: Proposed (2026-11-21). Not implemented. Revised three times the
-  same day after an independent review and two checks.
+* Status: Proposed (2026-11-21). Not implemented. Revised four times the
+  same day after an independent review and three checks.
 * Builds on: [ADR-0002](0002-postgresql-rls-tenant-isolation.md)
   (row-level security), [ADR-0009](0009-agent-protocol.md) (the agent
   protocol, with its section "Evolving the protocol" from pull request
@@ -386,13 +386,16 @@ sensitive, never fewer:
       access list of each channel it collects (`wevtutil sl <channel>
       /ca:`), the list before recorded for undo, on every computer. Where
       Group Policy's "Configure log access" sets a channel's list, owners
-      win: the channel is *managed elsewhere*, not collected, and the
-      device's tab says to add the collector's SID to that policy. Where
-      the reader *cannot tell* who owns the list (Owners win, below), it
-      is not changed either: the channel is not collected, and the tab
-      gives the reason and the same advice. Whether the Security log's
-      list can be changed this way is checked on the runner first (slice
-      3).
+      win and the list is never changed: if it already grants the
+      collector's SID read access (the channel's effective list, from
+      `wevtutil gl`, holds such an entry), the channel is collected;
+      otherwise it is *managed elsewhere*, not collected, and the device's
+      tab says to add the collector's SID to that policy. Where the reader
+      *cannot tell* who owns the list (Owners win, below), the list is not
+      changed either, and the same holds: collected if it already grants
+      the SID, otherwise not, with the reason and the same advice. Whether
+      the Security log's list can be changed this way is checked on the
+      runner first (slice 3).
     * Its spool, `%ProgramData%\EasyRMM\Collect`, is made with access for
       SYSTEM, Administrators and that account only; the agent's state is
       not readable by it (`protectedDACL`).
@@ -577,9 +580,10 @@ batch's and the status's fields follow that ADR's rules too.
 * **Exactly once**: the store keeps, per device and stream, the
   generation, the highest batch number stored and that batch's hash, and
   stores a batch, its blocks and the device's usage in one transaction
-  that takes that row's lock first. The blocks and facts are prepared
-  (compressed, hashed) before it begins, and their receipt sequence
-  numbers are drawn last, just before the commit (decided in review), so
+  that takes that row's lock first and reads the store's era (Forwarding)
+  inside it. The blocks and facts are prepared (compressed, hashed)
+  before it begins, and their receipt sequence numbers are drawn last,
+  just before the commit (decided in review), so
   that the transaction is short. It sets `SET LOCAL
   transaction_timeout = '30s'` (which ends the connection, and the pool
   drops it), only so that a stuck transaction cannot hold the device's
@@ -618,7 +622,10 @@ batch's and the status's fields follow that ADR's rules too.
     the spool until the server stores them. Only numbers never stored are
     used again; if N had in fact been stored (its answer lost, then a
     proxy's limit lowered before the retry), the resealed N is answered
-    `409 resync` (above) and nothing is lost.
+    `409 resync` (above): nothing is lost, and events may arrive twice.
+    Unsealing and sealing again is one atomic step of the spool (the new
+    sealed batches replace the old with one rename of their directory),
+    so that a crash leaves the old set or the new, never a mix.
     * The size has a floor of 64 KiB and grows back slowly after uploads
       succeed (by a quarter after each 20 stored in a row), staying below
       any size refused in the last 24 hours.
@@ -1066,9 +1073,16 @@ deleted by hand leaves logging configured, which is harmless.
     audited again with counts.
 
   A worker carries out a purge: it records the scope in the store (a
-  tombstone, which ingest checks under the device's row lock and refuses),
-  waits the 10-second horizon (Forwarding) so that no upload begun
-  before can still commit, then deletes the matching blocks, facts,
+  tombstone, which ingest checks under the device's row lock and refuses).
+  Once the tombstone has committed, it reads `pg_current_snapshot()` and
+  waits until the horizon (`pg_snapshot_xmin(pg_current_snapshot())`,
+  Forwarding) reaches that snapshot's `xmax` (decided in review): every
+  ingest transaction that had its ID by then, and so may have checked
+  before the tombstone existed, has ended; one that takes its ID later
+  checks after taking the row lock, and so sees the tombstone. Ingest's
+  30-second limit bounds the wait. (Checked while writing this on
+  PostgreSQL 18.6: an open transaction held the wait, and one begun after
+  the snapshot did not.) It then deletes the matching blocks, facts,
   status and usage, audits it (`logs.purged`, with counts) and removes the
   row. Logs of an organization the main database no longer has (after a
   restore of the main database) are shown to super administrators as
@@ -1120,10 +1134,14 @@ deleted by hand leaves logging configured, which is harmless.
   [backup-restore.md](../../operations/backup-restore.md):
   `pg_dump -Fd -Z0 -j 4` (a directory, uncompressed since blocks are, in
   parallel). A restore without it starts with an empty store, which the
-  server's migrations make; a restore with it starts a new era
-  (Forwarding). The backup drill runs once without it and
-  once with it. A new major version of PostgreSQL is moved to with
-  `pg_upgrade --link`, by the guide, as for the main one.
+  server's migrations make; a restore with it goes into a new cluster.
+  Either way the store is a new cluster with a new identity, so
+  forwarding and detections start at its current era and report the gap
+  (Forwarding). The backup
+  drill runs once without it and once with it. A new major version of
+  PostgreSQL is moved to with `pg_upgrade --link`, by the guide, as for
+  the main one, after forwarding and detections reach the horizon
+  (Forwarding).
 * **The server without its store**: if `logs-postgres` is down,
   recovering, full or refusing the server's passwords, at the server's
   start or later, the rest of EasyRMM works and the server stays ready;
@@ -1164,7 +1182,8 @@ deleted by hand leaves logging configured, which is harmless.
 * **The device's tab** also shows each source's state (last event, delay,
   paused, gaps, drops, redactions, set-aside batches), a clock skew, and
   each change *Configure logging* made, or why not (*in place*, *managed
-  elsewhere* with the owner, *not applicable*, failed).
+  elsewhere* with the owner, *check only* because the reader *cannot
+  tell* the owner, with the reason, *not applicable*, failed).
 * **Settings → Logs** (super administrators): the switches, the store's
   size, free space, floor and cap; per organization its storage, share,
   ingest a day, retention, mode and quotas; the measured volume per kind
@@ -1207,7 +1226,8 @@ deleted by hand leaves logging configured, which is harmless.
   position kept beside the destination in the main database, with the
   audit log. Audit retention waits for every destination carrying it.
 * **Device logs**: each destination's position (the era, transaction ID
-  and receipt sequence of the last block sent) lives in the store, beside
+  and receipt sequence of the last block sent, with the store's identity,
+  below) lives in the store, beside
   the logs, so that the updater's rollback does not move it back. A
   forwarder per destination, under an advisory lock in the store, walks
   blocks in (era, transaction ID, receipt sequence) order from its
@@ -1237,15 +1257,39 @@ deleted by hand leaves logging configured, which is harmless.
     wrap around (2^64 IDs) and is compared as a number, so the order
     holds for a partition's whole life; 32-bit wraparound does not
     touch it.
-  * IDs start again in a new cluster: a store restored from a dump
-    (`pg_dump`, Backups) gives its new blocks lower IDs than the restored
-    ones. Hence the era, a number kept in the store: at start, before
-    taking uploads and under an advisory lock, the server compares the
-    store's current transaction ID with the highest in the current era's
-    blocks and, when it is not above it, starts a new era, so that new
-    blocks still come after every restored one. Blocks of earlier eras
-    are all final; the horizon applies to the current one. `pg_upgrade`
-    keeps the counter, so it needs no new era, and one would be harmless.
+  * **The store's identity and its eras** (decided in review).
+    Transaction IDs start again in a new cluster (a store reset to empty,
+    or restored from a dump: `pg_dump`, Backups), so blocks are ordered
+    first by an era, a counter kept in the store, and every position is
+    kept with the store's identity: the cluster's `system_identifier`
+    (from `pg_control_system()`, made by `initdb`, readable by any role)
+    and that counter.
+    * On every new connection to the store (the pool's after-connect
+      hook), not only at start, the server compares the cluster's
+      identifier with the one recorded beside the counter; when they
+      differ, it raises the counter and records the identifier, in one
+      transaction under an advisory lock. A store reset or restored while
+      the server runs is so caught on the first connection made to it,
+      since the old connections end with the old cluster.
+    * Ingest reads the era inside its own transaction, never from a
+      cache. Blocks of earlier eras are all final; the horizon applies to
+      the current one.
+    * The forwarders (their positions in the store) and the detections
+      evaluator (its position in the main database) keep the identity
+      with each position. When a walk finds another identity, or a
+      position past the store's next transaction ID
+      (`pg_snapshot_xmax(pg_current_snapshot())`: the store went back in
+      time, as after a file-level restore of the logs root, which neither
+      part of the identity shows), the position is reset to the start of
+      the current era, and the gap, with the times it covers as far as
+      they are known, is shown in the console and audited
+      (`logs.position_reset`).
+    * `pg_upgrade` keeps the transaction counter but writes into a
+      cluster made by `initdb`, so its identifier is expected to change
+      (checked when the guide's procedure is written). The guide's
+      upgrade therefore waits for forwarding and detections to reach the
+      horizon before it stops the store, so that the reset loses nothing;
+      anything left is reported as a gap.
   * Checked while writing this on PostgreSQL 18.6 (the deployment's
     image, in a throwaway container): `SELECT … FOR UPDATE` assigns a
     transaction ID; while a transaction that took its ID first stayed
@@ -1331,7 +1375,8 @@ deleted by hand leaves logging configured, which is harmless.
   include a detection's, and tests them; counted
   detections count events by their own time within their window, so that
   a late upload counts where it happened. It opens alerts in its own
-  transaction in the main database, where it keeps its position. An alert
+  transaction in the main database, where it keeps its position with the
+  store's identity (Forwarding). An alert
   stays open, counting further matches, until someone resolves it or 7
   days pass without one (a new resolution, `expired`): an event is not a
   condition that clears.
@@ -1493,7 +1538,8 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
     organization's scope and the platform's;
   * ingest: signature before decompression, each cap, the 64 reads, two
     per claimed device and the minimum rate, the 16 slots, one in flight
-    per device, a retried batch stored once, a
+    per device, a retried batch stored once, a batch accepted after a gap
+    in its stream's numbers (one set aside on the agent), a
     restored snapshot answered `resync` (the same number, other contents),
     a new generation, collection off, a force-removed device refused;
   * quotas per kind, the other stream's half, organization quotas, the
@@ -1512,11 +1558,15 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
     reached once it commits and none skipped by the forwarder or the
     evaluator; one rolled back; a stuck one ended by its 30 seconds; a
     search open meanwhile not holding the horizon; the walk's own read
-    holding no ID; a store restored from a dump into a new cluster
-    starting a new era, its new blocks walked after the restored ones;
-    the walk's query using the (era, ID, sequence) index; order per
-    device, a
-    destination that comes back and catches up, one passed by retention
+    holding no ID; the walk's query using the (era, ID, sequence) index;
+    the store's identity: a store reset to empty with the main database
+    kept, and a store restored from a dump while the server runs, each
+    caught on the next connection, a new era begun, ingest writing it,
+    the forwarders' and the evaluator's positions reset to its start with
+    the gap shown and audited, and no block of it skipped; a position
+    past the store's next transaction ID reset the same way; order per
+    device, a destination that comes back and catches up, one passed by
+    retention
     and its gap, a deleted destination restored within 7 days, one with
     no position, forward only, the audit log moved from
     `audit_forwarding` with its position);
@@ -1548,7 +1598,9 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
     access list local Group Policy sets, *managed elsewhere* and not
     collected; with resultant set of policy logging turned off, every
     value check only (*cannot tell*, with the reason), nothing written
-    and no channel's access list changed; a Group Policy object with
+    and no channel's access list changed, and a channel whose list
+    already grants the collector's SID still collected, by Group Policy
+    and with that logging off; a Group Policy object with
     registry preference items, and a DSC configuration in
     `ApplyAndAutoCorrect` setting audit policy, both check only; the
     PowerShell logs' access list, a non-administrator's
@@ -1659,56 +1711,77 @@ Each merges and is verified on its own, after F1 and F2.
      and the run's directory is removed after the run, as now. The
      requirement (decided in review): the exit code equals what today's
      start gives in every case, and parameters bind as today.
-     * **PowerShell: called with `&` in its own scope, with today's
-       `-File` kept for scripts that need it** (the reviewer's options 1
-       and 3; chosen here). The agent writes `wrapper.ps1`, started with
-       `-File` and no values: it reads the values from the file into
-       `$__easyrmm_a` and calls `& '<script>' -Name $__easyrmm_a[0]
-       $__easyrmm_a[1]`, a call the agent writes in which each token that
-       `-File` reads as a parameter name (`-Name`, `-Name:`) stands as
-       written and each value is a variable, so that PowerShell's binder
-       does what `-File` did (named parameters, unique prefixes,
-       switches, positional values), while script block logging records
-       names and variables only. Called with `&`, the script has its own
-       scope and script scope, so no variable of its leaks into the
-       wrapper; `$MyInvocation.InvocationName` is not `.`, so the common
-       `if ($MyInvocation.InvocationName -ne '.') { Main }` guard runs
-       `Main` as under `-File`; and an `exit N` in it ends the script
-       with `$LASTEXITCODE` N, not the host, which only a `-File` script
-       does. The wrapper so recovers the exit code: it sets
-       `$global:LASTEXITCODE` to 0, makes the call inside `try` and keeps
-       `$?` after it, then exits 0 when `$?` is true, and otherwise with
-       `$LASTEXITCODE` (0 when nothing set it); a terminating error that
-       escapes the script is caught and written to the error stream, and
-       the wrapper exits 1, as `-File` does.
-       * *Why not option 2* (keep `-File <script>` and pass references
-         the script never sees): `-File` gives the script each argument
-         as the text on the command line, and nothing in PowerShell turns
-         a reference into its value before the binder sees it, so the
-         script would receive the reference. Not possible.
-       * *Why not option 1 alone*: no public signal tells an `exit N`
-         from a normal end after a failing native command, since both set
-         `$LASTEXITCODE`; and `$?` also turns false when the script wrote
-         a non-terminating error. So one case cannot match: a script that
-         wrote an error, then ran a native command that failed, and ended
-         without `exit` gets that command's code where `-File` gives 0.
-         The rule leans that way on purpose: a run never reads as
-         successful after a script that wrote an error and then asked to
-         fail with `exit N`, which we expect to be the commoner script.
-       * *Expected differences*, each confirmed or struck on the Windows
+     * **PowerShell: the script invoked through PowerShell's API, in the
+       scope `-File` uses, with today's `-File` kept for scripts that
+       need it** (decided in review). The agent starts a fixed
+       `wrapper.ps1`, shipped with the agent and never generated, with
+       `-File` and no values; the values are never source code anywhere:
+       * **The call.** The wrapper reads the run's data file (JSON, the
+         arguments as tokens) and builds the call with
+         `[PowerShell]::Create('CurrentRunspace').AddCommand($script,
+         $false)`: `useLocalScope` false runs the script in the current
+         scope, which for a `-File` script such as the wrapper is the
+         global scope, as `-File` runs it (review found `new
+         Command(filePath, false, false)` in `ConsoleHost`), so a script's
+         `$ErrorActionPreference = 'Stop'` still reaches script-module
+         functions; and its invocation name is not `.`, so the common `if
+         ($MyInvocation.InvocationName -ne '.') { Main }` guard runs
+         `Main`. Each token is added as `-File`'s own command-line parser
+         would classify it: a name alone with `AddParameter(name)`, a
+         `-Name:value` with `AddParameter(name, value)` (`$true` and
+         `$false` there as booleans, if `-File` treats them so), anything
+         else with `AddArgument(value)`, so that PowerShell's binder pairs
+         names and values, unique prefixes and switches as it does for
+         `-File`; the runner checks each against `-File`. `MergeMyResults`
+         and `Out-Default` send the script's output and other streams to
+         the console host, as `-File` does, compared stream by stream on
+         the runner. Script block
+         logging records the wrapper's fixed text and the script's own,
+         never a value.
+       * **No code injection** (decided in review): since no source is
+         generated, a name such as `-x;Start-Process …` or `-a$(…)` is
+         only a parameter name PowerShell does not find. As defence in
+         depth, the agent refuses the run, and the wrapper the call, when
+         a name, without its leading `-` and an optional trailing `:`, does
+         not match `^[\p{L}\p{Nd}_]+$`; the run's error says which
+         argument.
+       * **The exit code.** An `exit N` in the script ends the script, not
+         the host (only the script the console host itself starts with
+         `-File` ends it), and sets `$LASTEXITCODE`. The wrapper sets
+         `$global:LASTEXITCODE` to 0, invokes, and exits 0 when the
+         invocation reports no failure, otherwise with `$LASTEXITCODE` (0
+         when nothing set it). A terminating error that escapes the script
+         comes out of `Invoke()` as an exception: the wrapper writes its
+         error record to the error stream and exits 1, as `-File` does.
+         The failure signal (`HadErrors`, or the pipeline's error records)
+         is chosen on the runner: the one that is true after `exit N` (N
+         not 0) and false after a normal end that wrote errors with
+         `Write-Error` or followed a failing native command; if neither
+         is, the cases where the code differs are listed. One case is
+         expected to differ (per PowerShell's source, as read in review,
+         where only `exit N` and `$PSCmdlet.WriteError()` in an advanced
+         script fail the call, not `Write-Error`): an advanced script
+         that used `$PSCmdlet.WriteError()`, then ran a native command
+         that failed, and ended without `exit` gets that command's code
+         where `-File` gives 0. The runner checks whether it differs at
+         all on this route.
+       * **Why not the alternatives.** Keeping `-File <script>` with
+         references in place of values is not possible: `-File` gives
+         the script each argument as the text on the command line, and
+         nothing turns a reference into its value before the binder sees
+         it. Calling with `&` uses a child scope, which `-File` does not.
+       * **Expected differences**, each confirmed or struck on the Windows
          runner (Windows PowerShell 5.1, which jobs use) against `-File`
          itself before slice 0 merges, and the results written into this
-         ADR: the case above; `$?` after a script that ends normally after
-         a failing native command, which the rule assumes is true;
-         `$MyInvocation.InvocationName` and `.Line` (the wrapper's call,
-         not `-File`'s); `[Environment]::GetCommandLineArgs()` (the
-         wrapper's); the text of an escaping error, which the wrapper
-         writes, not the console host; the wrapper's `$__easyrmm_*`
-         variables, readable by the script through PowerShell's dynamic
-         scope, which no script is expected to use. `$PSCommandPath`,
-         `$PSScriptRoot`, `$MyInvocation.MyCommand.Path` and `#Requires`
-         are expected to be as under `-File`.
-       * *The fallback*: a script whose author needs `-File` exactly
+         ADR: the case above; `$MyInvocation.InvocationName` and `.Line`;
+         `[Environment]::GetCommandLineArgs()` (the wrapper's); the text
+         of an escaping error, which the wrapper writes; and the wrapper's
+         `$__easyrmm_*` globals (the PowerShell object it invokes),
+         visible to a script that runs in the same global scope, which no
+         script is expected to use. `$PSCommandPath`, `$PSScriptRoot`,
+         `$MyInvocation.MyCommand.Path`, `$global:` variables, `#Requires`
+         and each output stream are expected to be as under `-File`.
+       * **The fallback**: a script whose author needs `-File` exactly
          turns on its setting **Arguments on the command line** (on the
          script's record, ADR-0017; off by default; turning it on is
          audited, and the editor says why it is off): its runs start as
@@ -1724,7 +1797,11 @@ Each merges and is verified on its own, after F1 and F2.
        already keeps inherited `EASYRMM_` variables out), never on its
        command line or in a file. cmd expands the whole line before it
        runs it, so the script receives the values and the variables are
-       gone from its environment, as today. The line starts with `@` and
+       gone from its environment, as today. An empty value, which Windows
+       cannot hold in a variable, is written as `""` with no variable, so
+       each `set` clears a variable that exists; in a `.cmd` file a `set`
+       that succeeds sets `ERRORLEVEL` to 0, so the script starts with 0,
+       as today (a runner check). The line starts with `@` and
        there is no `@echo off`, so the line is not echoed and the script
        runs with echo on, as today. It names the script without `call`,
        so control passes to it and does not come back, and its exit code
@@ -1773,18 +1850,29 @@ Each merges and is verified on its own, after F1 and F2.
 
    *Verified*: the Windows runner: the 4688s of PowerShell and cmd jobs
    show no argument value; for PowerShell, each case run under the wrapper
-   and under `-File` itself and compared (exit code, output, error
-   stream): named parameters, a unique prefix, switches, `-Name:value`,
-   positional values, unbound names reaching `$args`, `exit N` and `exit
-   0`, `exit` after a written error, a normal end, a normal end after a
-   failing native command with and without a written error, a thrown
-   error, the `InvocationName` guard, `$PSCommandPath`, `$PSScriptRoot`,
-   `#Requires`, and a script setting a variable the wrapper reads; every
-   difference written into this ADR, and a script with **Arguments on the
-   command line** starting as today; for cmd, a caret, `exit /b N`, `exit
-   N`, a normal end and `goto :eof`, the script's lines echoed as today
-   and the wrapper's not, `%0` and `%~dp0`, `EASYRMM_A1` absent from the
-   script's environment, and a value with characters outside the OEM
+   and under `-File` itself and compared (exit code, output, each stream):
+   named parameters, a unique prefix, switches, `-Name:value`,
+   `-Switch:$false`, positional values, unbound names reaching `$args`,
+   `exit N` and `exit 0`, `exit N` after `Write-Error`, a normal end, a
+   normal end after `Write-Error`, after a failing native command, and
+   after both, an advanced script's `$PSCmdlet.WriteError()` followed by
+   a failing native command, a thrown error, `$ErrorActionPreference =
+   'Stop'` with an error inside a script-module function, `$global:`
+   variables, `$MyInvocation.InvocationName` and the guard on it,
+   `$PSCommandPath`, `$PSScriptRoot`, `#Requires`, warnings, verbose and
+   information output, and a script reading a `$__easyrmm_` variable;
+   **injection**: names such as `-x;Start-Process calc`, `-a$(whoami)`,
+   ``-a`n`` and `-a b` (a space inside one argument) refused by the agent
+   and, when the agent's check is bypassed in the test, by the wrapper,
+   with nothing run, and values holding `;`, `$( )`, backticks, quotes and
+   line breaks reaching the script as text; every difference written into
+   this ADR, and a script with **Arguments on the command line** starting
+   as today; for cmd, a caret, `exit /b N`, `exit N`, a normal end and
+   `goto :eof`, the `ERRORLEVEL` the script starts with after the
+   wrapper's `set "X="`s (0, as today), an empty value, the script's
+   lines echoed as today and the wrapper's not, `%0` and `%~dp0`,
+   `EASYRMM_A1` absent from the script's environment, and a value with
+   characters outside the OEM
    code page; every process of a job, a short-lived one included, is in
    its job object; Linux: `/proc/<pid>/cmdline` shows no value; sh, bash
    and python3 jobs with arguments, a value with a line break and one
@@ -1931,22 +2019,28 @@ Each merges and is verified on its own, after F1 and F2.
   requirements say so per fleet size.
 * A device may lose events only when the computer's own log wraps past
   what was read, or an event crashes the collector twice, both counted and
-  shown; events can arrive twice only after a computer is restored from a
-  snapshot, or at a forwarding destination after a failure.
+  shown, or when a batch is set aside (kept on the computer and
+  reported); a stream's batch numbers can then skip. Events can arrive
+  twice after a `resync`: a computer restored from a snapshot, or a
+  batch stored whose answer was lost and which a proxy's lowered limit
+  then made the agent reseal; and at a forwarding destination after a
+  failure. After a change of the store's identity, forwarding and
+  detections start at its new era and report the gap.
 * Logs survive the updater's rollback; alerts the rollback discarded are
   opened again; logs of devices and organizations the main database
   forgets stay until retention, visible to super administrators.
 * Every Windows job now starts inside its job object, and every Linux
   job runs with the login UID of `easyrmm-jobs`, which shows in their
   audit records and in tools that read login UIDs. PowerShell jobs with
-  arguments run through a wrapper whose exit code differs from `-File`'s
-  in one listed case (and any more the runner finds), with a script
-  setting to start as before.
+  arguments run through a fixed wrapper that invokes the script through
+  PowerShell's API in `-File`'s scope, generating no source; its exit
+  code may differ from `-File`'s in one listed case (and any more the
+  runner finds), with a script setting to start as before.
 * Where the ownership reader cannot tell who owns a value (Configuration
   Manager clients, DSC, Azure machine configuration, resultant set of
   policy logging turned off), Configuring logging only reports, and a
-  channel whose access list it cannot change is not collected until the
-  owner's policy grants the collector's SID.
+  channel whose access list it cannot change is not collected unless
+  that list already grants the collector's SID.
 * Store problems never stop or roll back EasyRMM; they show as degraded
   logs with `logs-db-init`'s status.
 * Searches over a whole fleet's month by free text run in the background;
@@ -1992,11 +2086,12 @@ written above.
     by default?
 12. On computers where the reader *cannot tell* who owns a channel's
     access list (Configuration Manager clients are common in larger
-    networks), the Security log is not collected until the owner's policy
+    networks), the Security log is not collected unless that list already
     grants the collector's SID: acceptable until W1's readers exist, as
     ADR-0054 asks for hardening's check only?
-13. PowerShell jobs with arguments: the wrapper's exit code differs from
-    `-File`'s for a script that wrote an error, then ran a native command
-    that failed, and ended without `exit` (that command's code instead of
-    0). Acceptable, with **Arguments on the command line** as the way back
-    to today's start per script?
+13. PowerShell jobs with arguments: if the runner confirms it, the
+    wrapper's exit code differs from `-File`'s for an advanced script that
+    used `$PSCmdlet.WriteError()`, then ran a native command that failed,
+    and ended without `exit` (that command's code instead of 0).
+    Acceptable, with **Arguments on the command line** as the way back to
+    today's start per script?
