@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/usr/bin/env bash
 # EasyRMM's versions (ADR-0052; docs/architecture/edge-manifest.md):
 #
 #   version.sh release [<commit>]                  the highest release tag reachable from the commit
@@ -15,6 +15,7 @@
 #   easyrmm-v1.0.0        ->  v1.0.1-edge.415.1
 #
 # newer compares by semantic versioning's precedence (versions with the v).
+# Values are checked as whole strings: one with a line break is refused.
 # Errors exit 2.
 set -eu
 
@@ -44,7 +45,7 @@ release() { # commit
 
 edge() { # run attempt commit
   for n in "$1" "$2"; do
-    printf '%s' "$n" | grep -Eqx '[1-9][0-9]*' || die "run and attempt must be numbers from 1, got \"$1\" and \"$2\""
+    [[ $n =~ ^[1-9][0-9]*$ ]] || die "run and attempt must be numbers from 1, got \"$1\" and \"$2\""
   done
   tag=$(release "$3")
   r=${tag#easyrmm-}
@@ -58,9 +59,9 @@ edge() { # run attempt commit
 }
 
 newer() { # a b
+  local version_re="^v$number_re\\.$number_re\\.$number_re(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?\$"
   for v in "$1" "$2"; do
-    printf '%s' "$v" | grep -Eqx "v$number_re\\.$number_re\\.$number_re(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?" ||
-      die "\"$v\" is not a version like v1.2.3 or v1.2.3-rc.1"
+    [[ $v =~ $version_re ]] || die "\"$v\" is not a version like v1.2.3 or v1.2.3-rc.1"
   done
   LC_ALL=C awk -v a="${1#v}" -v b="${2#v}" '
     # Digits only: the longer is larger, else byte order (no float rounding).

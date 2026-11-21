@@ -110,6 +110,9 @@ for bad in "0 1" "1 0" "01 1" "1 x" "-1 1" "1 1.5"; do
   # shellcheck disable=SC2086 # two words, run and attempt
   refuse 2 "run and attempt" edge $bad "$c5"
 done
+nl='
+'
+refuse 2 "run and attempt" edge "1${nl}x" 1 "$c5"
 refuse 2 "usage" edge 1
 refuse 2 "usage" bogus
 
@@ -152,6 +155,10 @@ for bad in 1.0.0 v1.0 v1.0.0- v1.0.0+build v1.0.0-rc..1 "v1.0.0 x" ""; do
   refuse 2 "is not a version" newer "$bad" v1.0.0
   refuse 2 "is not a version" newer v1.0.0 "$bad"
 done
+# A line break: each line alone would be a version.
+refuse 2 "is not a version" newer "v9.0.0${nl}x" v1.0.0
+refuse 2 "is not a version" newer v1.0.0 "v9.0.0${nl}x"
+refuse 2 "is not a version" newer "x${nl}v9.0.0" v1.0.0
 refuse 2 "usage" newer v1.0.0
 
 if [ "$failures" -ne 0 ]; then
