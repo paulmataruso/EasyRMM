@@ -437,50 +437,36 @@ on a real account on `main` only, or marked unverified; the staging trial
 by hand; then the owner's real name.
 
 ### 6. Packages for the agent: DEB, RPM, MSI
-* **The package never replaces an enrolled agent's binary.** It installs
-  the agent; on first install it runs `easyrmm-agent install`, which
-  copies the agent to the place the agent owns, as the install command
-  does today. Later package upgrades leave the running agent alone: agent
-  updates stay with the server's rollout and *Only signed builds*, and an
-  Intune or package upgrade cannot get round them. A package upgrade never
-  moves an agent to the address in its configuration.
-* **One build** of each agent binary in the release, copied into the
-  image, the release files and the packages.
-* **Enrolment input.** DEB and RPM read `/etc/easyrmm-agent/install.conf`
-  or `EASYRMM_SERVER` and `EASYRMM_TOKEN`; the file is deleted once the
-  agent has enrolled. Without either, the package installs and waits for
-  `easyrmm-agent enroll` (golden images). The MSI takes `SERVERURL`,
-  `TOKEN` and `CACERT`; the token travels as hidden custom action data,
-  never stored in the registry or put on a command line. Group Policy
-  cannot pass properties, so **Add devices** offers a transform (MST) per
-  token. Group Policy and Intune cannot keep a secret from domain users
-  (transforms and preferences sit in SYSVOL), so that transform is made
-  for approval tokens (a copy read from SYSVOL enrols nothing until
-  someone approves it) or tokens limited in use.
-* **Versions.** Programs and Features and `dpkg -l` show the package's
-  version, not the agent's after it updates itself; the guide gives
-  Intune detection by the service and the agent's own version.
-* **Removal.** Removing the package runs `easyrmm-agent uninstall`, which
-  tells the server it was uninstalled (best effort, feature 7) and leaves
-  the device in the console as *Uninstalled*. A removal from the console (ADR-0050) of a packaged
-  agent runs `dpkg -r`, `rpm -e` or `msiexec /x` from its transient unit or
-  detached process, tells the package's script not to uninstall a second
-  time, and retries while the package manager is busy. The device records
-  how its agent was installed; the removal dialog warns that Intune or
-  Group Policy may install it again.
-* **Signing.** Under *Only signed builds* the MSI is not offered: it
-  carries the unsigned agent, which WDAC and AppLocker fleets block. A
-  signed MSI (an MSI reader for its Authenticode digest, and the signed
-  agent inside) is a later step. DEB and RPM rely on the release's
-  attestation and checksums.
-* **Order**: DEB, then RPM, then MSI.
+Proposed in [ADR-0056](adr/0056-packages-for-the-agent.md), to be reviewed
+before it is built. In short:
 
-**Tests**: each package built by a reusable workflow that pull requests run
-without publishing (release-only changes are otherwise untested); DEB and
-RPM installed, enrolled, upgraded, removed in systemd containers; the
-bundle test enrols one agent from the DEB; the MSI on CI's Windows runner
-with ICE validation, then installed, upgraded and removed there; removal
-from the console of a packaged agent.
+* **Built once, at release**, from the release's single build of each
+  agent (today the image and the release files build them separately, and
+  the files differ), the same for every server, attached to the release
+  and served by the server from its image. No package is built on the
+  server, and none holds a token.
+* **The server owns updates.** A package carries its own copy of the
+  agent; its first install runs `easyrmm-agent install --package`, which
+  puts the agent in its own place as the install command does. Package
+  upgrades replace only the package's copy. No apt or dnf repository.
+* **Enrollment input**: `install.conf` (root, or SYSTEM and
+  Administrators, only; deleted once used), the environment for DEB and
+  RPM, or the MSI's `SERVERURL`, `TOKEN` and `CACERT`, which the MSI
+  writes into that file. Without input the agent waits for the file
+  (golden images). Group Policy delivers the file with Group Policy
+  Preferences rather than a transform; deployment tools get approval
+  tokens.
+* **Removal** reports *Uninstalled*; removal from the console removes the
+  package.
+* **Signing**: no OpenPGP signatures on DEB and RPM; release MSIs
+  unsigned; operators put their signed build into the MSI with Windows's
+  own tools and sign it themselves, and the agent's updates are untouched.
+* **Order**: the enrollment file, *Uninstalled*, one build, then DEB, RPM
+  and MSI, then the operator's signed MSI.
+
+**Tests**: as the ADR lists them: DEB and RPM on whole machines with the
+machine harness (arm64 in systemd containers), the bundle test enrolling
+from the DEB, the MSI on CI's Windows runners.
 
 ### 7. Email and webhook notifications for device alerts
 On F2. Decided in the same [ADR-0053](adr/0053-one-notification-sender.md);
