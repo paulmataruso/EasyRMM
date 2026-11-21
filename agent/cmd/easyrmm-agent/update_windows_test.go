@@ -330,6 +330,7 @@ func TestUpdateFromBeforeTheStateCheck(t *testing.T) {
 
 	f.mu.Lock()
 	devices, failures := len(f.keys), f.failures
+	t.Logf("devices enrolled: %d; heartbeats: %v; run %s reported by %s", devices, f.beats, f.runID, f.results[f.runID])
 	f.mu.Unlock()
 	if devices != 1 || len(failures) != 0 {
 		t.Errorf("%d devices enrolled, update failures %q; want one device, updated", devices, failures)
@@ -363,4 +364,5 @@ func TestUpdateFromBeforeTheStateCheck(t *testing.T) {
 	if strings.Contains(since, "moved aside") || strings.Contains(since, "set back") {
 		t.Errorf("this build's check changed the state:\n%s", since)
 	}
+	t.Logf("the log since the update:\n%s", since)
 }

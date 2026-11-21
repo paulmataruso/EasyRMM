@@ -112,9 +112,11 @@ func TestStandardUserPlantsState(t *testing.T) {
 		{name: "a junction at logs", planted: "logs", junction: true},
 	} {
 		for _, adminMade := range []bool{false, true} {
-			name := c.name + ", in folders the user made"
+			// No commas: cmd, which makes the junction, splits words at them,
+			// and the test's folders are named after it.
+			name := c.name + " in folders the user made"
 			if adminMade {
-				name = c.name + ", in a folder an administrator made"
+				name = c.name + " in a folder an administrator made"
 			}
 			t.Run(name, func(t *testing.T) {
 				t.Cleanup(func() { removeAgentFolders(t, p) })
@@ -210,6 +212,7 @@ func TestStandardUserPlantsState(t *testing.T) {
 				if !strings.Contains(logged.String(), "moved aside") {
 					t.Errorf("nothing logged: %s", logged.String())
 				}
+				t.Logf("planted by %s; install: %v; set aside: %s; completed TLS connections: %d", u.sid, installErr, m[0], srv.completed.Load())
 				// The service made its own logs folder, a plain one.
 				if fi, err := os.Lstat(filepath.Join(dir, c.planted)); c.junction && (err != nil || fi.Mode().Type() != fs.ModeDir) {
 					t.Errorf("logs in the agent's folder: %v, %v; want the agent's own folder", fi, err)
