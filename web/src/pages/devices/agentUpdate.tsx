@@ -13,7 +13,14 @@ export const AGENT_UPDATE_STATUS: Record<AgentUpdateStatus, { label: string; ton
   updating: { label: "Updating", tone: "accent" },
   failed: { label: "Update failed", tone: "danger" },
   unsupported: { label: "Cannot update itself", tone: "warn" },
+  waiting: { label: "Waiting for a signed build", tone: "warn" },
 };
+
+/** The name in a certificate's subject or issuer: its common name, or the whole name without one. */
+export function commonName(dn: string): string {
+  const m = /(?:^|,\s*)CN=((?:\\.|[^,])+)/.exec(dn);
+  return m?.[1] ? m[1].replace(/\\(.)/g, "$1") : dn;
+}
 
 export function AgentUpdateBadge({ status }: { status: AgentUpdateStatus }) {
   const s = AGENT_UPDATE_STATUS[status];
@@ -45,6 +52,12 @@ export function AgentLine({ device: d }: { device: Device }) {
       </span>
       {u && u.status !== "current" && u.status !== "unsupported" && u.version && (
         <span className="block text-xs text-muted">The server ships {u.version}.</span>
+      )}
+      {u?.waitingFor && (
+        <span className="block text-xs text-muted">
+          Only signed Windows builds are handed out, and {u.waitingFor} is not signed yet
+          {u.status === "waiting" ? ": none is handed out for this device." : "."}
+        </span>
       )}
       {u?.status === "unsupported" && (
         <span className="block text-xs text-muted">This agent predates self-update. Run the install command on the device once more; later versions update themselves.</span>

@@ -40,6 +40,7 @@ import {
 } from "../../components/ui";
 import { formatDate, formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
+import { commonName } from "./agentUpdate";
 
 /** Where agents fetch the installer and binaries (agentproto.PathPrefix + v1). */
 const AGENT_PATH = "/api/agent/v1";
@@ -699,6 +700,7 @@ function BuildRow({ build }: { build: AgentBuild }) {
           {build.file}
         </a>
       </div>
+      {build.signed && <p className="text-xs text-muted">Signed by {commonName(build.signed.subject)}</p>}
       <p className="text-[11px] leading-snug break-all text-muted">
         SHA-256 <span className="font-mono text-fg/80">{build.sha256}</span>
       </p>

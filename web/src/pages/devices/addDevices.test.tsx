@@ -202,6 +202,21 @@ describe("add devices", () => {
     expect(screen.getByRole("link", { name: "SHA256SUMS" })).toHaveAttribute("href", "/api/agent/v1/download/SHA256SUMS");
   });
 
+  it("names who signed a Windows build", async () => {
+    const signer = { subject: "CN=Contoso IT,O=Contoso", issuer: "CN=CA", thumbprint: "ab".repeat(20), notBefore: "", notAfter: "", timestamped: true };
+    installFakeApi(
+      routes({
+        "GET /agent-downloads": ok({
+          serverUrl: "https://rmm.example.com",
+          items: [{ os: "windows", arch: "amd64", file: "easyrmm-agent-windows-amd64.exe", size: 9_000_000, sha256: SHA, signed: signer }],
+        }),
+      }),
+    );
+    renderApp("/devices/add");
+    expect(await screen.findByText("Windows x86-64")).toBeInTheDocument();
+    expect(screen.getByText("Signed by Contoso IT")).toBeInTheDocument();
+  });
+
   it("says when the server has no agents to hand out", async () => {
     installFakeApi(routes({ "GET /agent-downloads": ok({ serverUrl: "https://rmm.example.com", items: [] }) }));
     renderApp("/devices/add");

@@ -109,6 +109,8 @@ const ACTIONS: Record<string, string> = {
   "device.retired_cleanup": "Removed agent of a removed device",
   "agent_updates.update": "Changed agent update settings",
   "agent_updates.request_all": "Asked to update every outdated agent",
+  "agent_updates.signed_upload": "Uploaded a signed Windows agent build",
+  "agent_updates.signed_remove": "Removed a signed Windows agent build",
   "report.export": "Downloaded report",
   "job.cancel": "Stopped script run",
   "alert_policy.create": "Added alert policy",

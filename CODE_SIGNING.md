@@ -42,6 +42,15 @@ The agent checks the signature against the key it pinned when it
 enrolled, then the download's size and SHA-256. Those keys belong to the
 operator; we never hold them.
 
+Operators can also sign the Windows EasyRMM agent with their own code
+signing certificate ([ADR-0049](docs/architecture/adr/0049-operators-sign-windows-agents.md)):
+they download the server's Windows builds from **Settings → Agent
+updates**, sign them with their own tools and key, and upload them there.
+The server checks that each file is its own build with only an
+Authenticode signature added, and hands it out instead; Windows then names
+the operator as the publisher. The server never holds the operator's key
+([guide](docs/deployment/agents.md#signing-the-windows-agent)).
+
 ## Not signed yet
 
 * **Windows code signing (Authenticode).** EasyRMM has no code signing
@@ -51,10 +60,9 @@ operator; we never hold them.
   checksums above, the release key (EasyPatch agent) and the server's
   signed instructions (EasyRMM agent). The EasyPatch agent's build can
   apply an Authenticode signature when given a certificate; the EasyRMM
-  agent's build cannot yet. Operators will be able to sign the EasyRMM
-  agent with their own certificate and upload it to their server
-  ([ADR-0049](docs/architecture/adr/0049-operators-sign-windows-agents.md),
-  not built yet).
+  agent's build cannot. Operators can sign the EasyRMM agent with their
+  own certificate (above); the EasyPatch agent's MSIs cannot be signed
+  that way yet.
 * **Git tags and commits** are not signed with a GPG or SSH key. Commits
   carry a `Signed-off-by` line ([CONTRIBUTING.md](CONTRIBUTING.md)), which
   is a statement, not a signature. Merge commits made on GitHub are signed

@@ -53,6 +53,9 @@ type AgentUpdate struct {
 	Error    string `json:"error"`
 	// Requested: someone asked for the update in the console.
 	Requested bool `json:"requested"`
+	// WaitingFor is the release's version while only signed builds are
+	// handed out and none was signed from it yet (ADR-0049).
+	WaitingFor string `json:"waitingFor,omitempty"`
 }
 
 // Update statuses.
@@ -63,6 +66,7 @@ const (
 	UpdateUpdating    = "updating"    // was told to update
 	UpdateFailed      = "failed"      // failed every attempt; waits for someone to ask again
 	UpdateUnsupported = "unsupported" // too old to update itself
+	UpdateWaiting     = "waiting"     // no build is handed out for it until one is signed (ADR-0049)
 )
 
 // UpdateStatus classifies an agent from the SHA-256 of its executable, the
@@ -86,9 +90,19 @@ func UpdateStatus(agentSHA, buildSHA, state, target string) string {
 	return UpdateAvailable
 }
 
-// BuildLookup returns the SHA-256 and version of the agent build the
-// server serves for a platform and architecture.
-type BuildLookup func(platform, arch string) (sha256, version string, ok bool)
+// ServedBuild is the agent build the server serves for a platform and
+// architecture.
+type ServedBuild struct {
+	SHA256, Version string
+	// WaitingFor is the release's version while only signed Windows builds
+	// are handed out and none was signed from it (ADR-0049). SHA256 and
+	// Version are then an older signed build's, or empty when there is none.
+	WaitingFor string
+}
+
+// BuildLookup returns the agent build the server serves for a platform and
+// architecture.
+type BuildLookup func(platform, arch string) (ServedBuild, bool)
 
 // Device is a managed endpoint as the console shows it.
 type Device struct {
@@ -251,20 +265,24 @@ func (s *Service) updateStatus(d *Device) {
 	if a == nil {
 		return
 	}
-	var sha, version string
+	var b ServedBuild
 	ok := false
 	if s.builds != nil {
-		sha, version, ok = s.builds(d.Platform, a.Arch)
+		b, ok = s.builds(d.Platform, a.Arch)
 	}
 	if !ok {
 		a.Update = nil
 		return
 	}
+	if b.SHA256 == "" {
+		a.Update = &AgentUpdate{Status: UpdateWaiting, WaitingFor: b.WaitingFor}
+		return
+	}
 	u := a.Update
-	if u == nil || a.updateTarget != sha {
+	if u == nil || a.updateTarget != b.SHA256 {
 		u = &AgentUpdate{} // an update to an earlier build is moot
 	}
-	u.Status, u.Version = UpdateStatus(a.SHA256, sha, a.updateState, a.updateTarget), version
+	u.Status, u.Version, u.WaitingFor = UpdateStatus(a.SHA256, b.SHA256, a.updateState, a.updateTarget), b.Version, b.WaitingFor
 	if u.Status == UpdateCurrent || u.Status == UpdateUnsupported {
 		u.Attempts, u.Error, u.Requested = 0, "", false
 	}

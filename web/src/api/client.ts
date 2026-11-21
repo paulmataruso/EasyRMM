@@ -120,6 +120,8 @@ export function setAuthErrorListener(listener: AuthListener | null): void {
 export interface RequestOptions {
   params?: QueryParams;
   body?: unknown;
+  /** A file sent as the body as it is (application/octet-stream), instead of JSON. */
+  file?: Blob;
   signal?: AbortSignal;
   /** Do not notify the auth listener (sign-in screens and the session probe). */
   silentAuth?: boolean;
@@ -127,12 +129,13 @@ export interface RequestOptions {
 
 async function send(method: string, path: string, options: RequestOptions): Promise<Response> {
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  if (options.file !== undefined) headers["Content-Type"] = "application/octet-stream";
+  else if (options.body !== undefined) headers["Content-Type"] = "application/json";
   if (UNSAFE_METHODS.has(method) && csrfToken) headers["X-CSRF-Token"] = csrfToken;
   const response = await fetch(apiUrl(path, options.params), {
     method,
     headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    body: options.file ?? (options.body !== undefined ? JSON.stringify(options.body) : undefined),
     credentials: "same-origin",
     cache: "no-store",
     signal: options.signal,
@@ -213,4 +216,6 @@ export const api = {
   put: <T = void>(path: string, body?: unknown) => request<T>("PUT", path, { body: body ?? {} }),
   patch: <T = void>(path: string, body?: unknown) => request<T>("PATCH", path, { body: body ?? {} }),
   del: <T = void>(path: string) => request<T>("DELETE", path),
+  /** POSTs a file as the request body. */
+  upload: <T = void>(path: string, file: Blob) => request<T>("POST", path, { file }),
 };

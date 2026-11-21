@@ -210,6 +210,10 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 		log.Warn("the agent builds have no "+agents.VersionFile+" file; agent updates still work, but the console cannot show versions", "dir", cfg.AgentDir)
 	}
 	d.Agents.SetUpdates(builds, jobKey)
+	// Windows builds an operator signed take the release's place (ADR-0049).
+	if err := d.Agents.LoadSignedBuilds(ctx); err != nil {
+		return nil, err
+	}
 	d.Devices.SetBuilds(d.Agents.BuildLookup)
 	return d, nil
 }

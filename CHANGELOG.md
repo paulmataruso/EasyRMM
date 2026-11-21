@@ -25,6 +25,18 @@ All notable changes to this project are documented here. The format follows
   Overview's list of endpoints with no EasyRMM device has **Remove**: the
   EasyPatch agent uninstalls itself and the engine stops patching the
   endpoint.
+- **Signing the Windows agent with your own certificate.** **Settings →
+  Agent updates** offers the server's Windows agent builds to download,
+  sign with your own code signing certificate and tools, and upload. The
+  server checks that each upload is its own build with only an
+  Authenticode signature added, then hands it out in place of the
+  unsigned build; agents update to it. The page shows the signer, the
+  thumbprint and whether the signature has a timestamp. **Hand out signed
+  Windows builds only** keeps Windows computers on signed builds after an
+  upgrade, until the new builds are signed; devices show *Waiting for a
+  signed build*. EasyRMM never holds your key.
+  ([Signing the Windows agent](docs/deployment/agents.md#signing-the-windows-agent),
+  ADR-0049.)
 
 ### Fixed
 

@@ -331,6 +331,66 @@ once more, and they update themselves from then on.
 To hold a release back, set the mode to **When asked** before upgrading the
 server, try it on a few devices, then switch back to **Automatically**.
 
+### Signing the Windows agent
+
+The Windows agent EasyRMM ships carries no Authenticode signature, so
+Windows names no publisher for it. You can sign it with your own code
+signing certificate, so that Windows and your security tools name your
+company (ADR-0049). EasyRMM never holds your key: you sign with the tools
+you already use for your certificate (`signtool` with a USB token,
+`jsign` or `osslsigncode` with a cloud key such as Azure Key Vault or
+DigiCert KeyLocker).
+
+On **Settings → Agent updates** (Super Administrators), under *Signed
+Windows builds*:
+
+1. **Download to sign** each Windows build (x86-64 and ARM 64-bit). Sign
+   these files, the server's own builds: the server accepts only them.
+2. Sign each one, with a timestamp, without changing it otherwise. For
+   example, with signtool:
+
+   ```powershell
+   signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /a easyrmm-agent-windows-amd64.exe
+   ```
+
+3. **Upload a signed build**, once for each file.
+
+The server checks that the file is one of its own Windows builds with only
+a signature added: its Authenticode digest matches the build's, the
+signature covers it and verifies with the signer's certificate, and that
+certificate is for code signing. It does not check the certificate's chain:
+each Windows computer decides whether it trusts your certificate, so a
+certificate from your own certificate authority works where your group
+policy trusts it. A refused file says why.
+
+The server then hands out the signed file in place of the unsigned one,
+under the same name: the install commands download it, and agents update to
+it as to any new build, within the rollout setting. The page shows who
+signed each build, its thumbprint, and whether the signature has a
+timestamp. Without one, Windows stops trusting the signature when your
+certificate expires, and the page warns. Uploading another signature for
+the same build replaces it. Uploads and removals are in the audit log.
+
+**After an upgrade** the server's Windows builds are new files, so the
+signed ones no longer match them. Until you sign the new builds:
+
+* by default, the server hands out the new release's unsigned build, and
+  Windows agents update to it, then to the signed one once you upload it;
+* with **Hand out signed Windows builds only** (under *Rollout*), the
+  server keeps handing out the newest older signed build, and Windows
+  agents stay on it. New installs get it too. Devices show *Waiting for a
+  signed build*, and the page says which release they wait for. An
+  architecture with no signed build at all has no Windows build handed out
+  for it. This setting cannot be turned on before a signed build is
+  uploaded, and the last signed build cannot be removed while it is on.
+  Agents running an unsigned build are moved to the signed one, even if it
+  is of an older version.
+
+The server keeps, for each architecture, the signed build of its own
+version and the newest older one, in its database, so backups keep them.
+Removing a signed build hands out the release's build again (or, with
+*signed builds only*, the older signed one).
+
 ## Uninstalling
 
 On Windows, in PowerShell as administrator:
