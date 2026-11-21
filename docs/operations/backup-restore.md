@@ -87,10 +87,17 @@ checkout with the steps below, and checks:
 * that the same agent reconnects without reinstalling and runs a job;
 * that the patching engine has the same organizations and the same keys.
 
+With `--authentik` it installs with Authentik, makes the administrator in
+Authentik from `setup.sh`'s invitation, and also checks that they sign in
+through Authentik again as the same user, to the same account, and that the
+key signing EasyRMM's ID tokens is unchanged.
+
 Its first run, on 16 November 2026, found that the guide's database
 commands failed and that a fresh deployment did not start; both are fixed. A run on 19 November 2026, after the patching engine joined every
 deployment, backed up and restored the engine's database and keys with the
-steps above and passed.
+steps above and passed. A run with Authentik on 21 November 2026 backed up
+and restored Authentik's database and directory with the steps above and
+passed ([Drills](../development/drills.md#runs)).
 
 ## Restore onto a new host
 
@@ -167,8 +174,8 @@ steps above and passed.
    ```
 
 5. Start the server: `docker compose up -d`. It serves the restored data.
-   With Authentik, this starts Authentik too, on its restored database,
-   and waits until it is healthy, a minute or two.
+   With Authentik, this starts Authentik too, on its restored database, and
+   waits until Authentik's worker is healthy.
    To move to a newer release as well, restore onto the same release first,
    check it, then upgrade as in [Upgrading](upgrading.md).
 
