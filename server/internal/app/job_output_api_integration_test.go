@@ -198,13 +198,15 @@ func TestJobOutputAPI(t *testing.T) {
 		get(cl.c, "/api/v1/job-runs?deviceId="+hqPC.id, 200)
 		get(cl.c, "/api/v1/job-runs?deviceId="+plantPC.id, 200)
 		var r struct {
-			CanViewOutput *bool `json:"canViewOutput"`
+			CanViewOutput   *bool `json:"canViewOutput"`
+			CanRemoveOutput *bool `json:"canRemoveOutput"`
 		}
 		rr := get(cl.c, "/api/v1/job-runs/"+hqRun, cl.run)
 		if cl.run == 200 {
 			rr.decode(t, &r)
 			hasSizes := strings.Contains(string(rr.body), `"stdoutBytes":`) && strings.Contains(string(rr.body), `"outputRemovedAt":`)
-			if r.CanViewOutput == nil || *r.CanViewOutput != cl.canViewOutput || hasSizes != cl.canViewOutput {
+			if r.CanViewOutput == nil || *r.CanViewOutput != cl.canViewOutput || hasSizes != cl.canViewOutput ||
+				r.CanRemoveOutput == nil || *r.CanRemoveOutput != cl.canViewOutput {
 				t.Errorf("%s: run %s", cl.name, rr.body)
 			}
 		}

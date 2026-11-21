@@ -5,7 +5,6 @@ import { CircleStop, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
 import { auditedRead, useApi, useApiMutation } from "../../api/hooks";
 import type { JobRun, JobRunOutput, RunStatus } from "../../api/types";
-import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Alert, Button, Card, ErrorState, KeyValueList, PageHeader, Spinner } from "../../components/ui";
@@ -41,7 +40,6 @@ function hasOutput(r: JobRun | undefined): boolean {
 export function RunDetailPage() {
   const { runId = "" } = useParams();
   const toast = useToast();
-  const { can } = useAuth();
   const run = useApi<JobRun>(`/job-runs/${runId}`, undefined, { refetchInterval: (d) => (d && isOpen(d.status) ? 2_000 : false) });
   // Each read of the output is audited, so it is asked for once, apart from the run (ADR-0063). Once the run says
   // the output was removed, the query is left and dropped.
@@ -69,7 +67,8 @@ export function RunDetailPage() {
   const took = runElapsed(r);
   const open = isOpen(r.status);
   const waiting = waitingFor(r);
-  const removable = hasOutput(r) && can("job.manage");
+  // The server says whether this caller may remove output at the run's site.
+  const removable = hasOutput(r) && Boolean(r.canRemoveOutput);
 
   return (
     <>

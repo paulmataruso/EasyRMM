@@ -747,6 +747,8 @@ export interface JobRun {
    * from GET /job-runs/{id}/output, each read audited (ADR-0063).
    */
   canViewOutput?: boolean;
+  /** Only in the response for one run: whether the caller may remove its output (job.view_sensitive and job.manage at its site). */
+  canRemoveOutput?: boolean;
   /** Only with canViewOutput: the size of each stream, and when the output was removed. */
   stdoutBytes?: number;
   stderrBytes?: number;

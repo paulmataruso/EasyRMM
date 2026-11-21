@@ -96,6 +96,9 @@ type RunDetail struct {
 	// CanViewOutput says whether the caller holds job.view_sensitive at
 	// the run's site.
 	CanViewOutput bool `json:"canViewOutput"`
+	// CanRemoveOutput says whether the caller may remove the output: it
+	// takes job.view_sensitive and job.manage at the run's site.
+	CanRemoveOutput bool `json:"canRemoveOutput"`
 	// OutputState is there only when CanViewOutput is.
 	*OutputState
 }
@@ -686,7 +689,7 @@ func (s *Service) GetRun(ctx context.Context, c access.Caller, id uuid.UUID) (*R
 		return nil, apperr.NotFound()
 	}
 	s.decorateRun(c, r)
-	r.RunDetail = &RunDetail{CanViewOutput: c.Can(rbac.PermJobViewSensitive, at)}
+	r.RunDetail = &RunDetail{CanViewOutput: c.Can(rbac.PermJobViewSensitive, at), CanRemoveOutput: canRemoveOutput(c, at)}
 	if r.CanViewOutput {
 		r.OutputState = state
 	}

@@ -249,6 +249,7 @@ describe("jobs", () => {
     const run = () =>
       jobRun("r2", "d2", "PRINT-02", "succeeded", {
         canViewOutput: true,
+        canRemoveOutput: true,
         stdoutBytes: removedAt ? 0 : 18,
         stderrBytes: 0,
         outputRemovedAt: removedAt,
@@ -277,10 +278,13 @@ describe("jobs", () => {
     expect(server.callsTo("GET /job-runs/:id/output")).toHaveLength(1);
   });
 
-  it("offers no removal to a caller who may read output but not manage jobs", async () => {
+  it("offers removal only when the run says the caller may remove its output", async () => {
+    // The session holds job.manage somewhere; the run says whether it holds it at this run's site.
     installFakeApi({
-      ...baseRoutes(sessionView({ isSuperAdmin: false, permissions: ["job.view", "job.view_sensitive"] })),
-      "GET /job-runs/:id": ok(jobRun("r2", "d2", "PRINT-02", "succeeded", { canViewOutput: true, stdoutBytes: 3, stderrBytes: 0, outputRemovedAt: null, canCancel: false, job: job("j1", "Disk usage") })),
+      ...baseRoutes(TECHNICIAN),
+      "GET /job-runs/:id": ok(
+        jobRun("r2", "d2", "PRINT-02", "succeeded", { canViewOutput: true, canRemoveOutput: false, stdoutBytes: 3, stderrBytes: 0, outputRemovedAt: null, canCancel: false, job: job("j1", "Disk usage") }),
+      ),
       "GET /job-runs/:id/output": ok({ stdout: "ok\n", stderr: "", stdoutTruncated: false, stderrTruncated: false }),
     });
     renderApp("/jobs/j1/runs/r2");

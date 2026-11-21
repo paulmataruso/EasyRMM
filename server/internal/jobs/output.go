@@ -118,6 +118,12 @@ func (s *Service) ReadArguments(ctx context.Context, c access.Caller, id uuid.UU
 	return &Arguments{Args: args}, nil
 }
 
+// canRemoveOutput says whether the caller may remove output at a site: it
+// takes reading it and managing jobs there.
+func canRemoveOutput(c access.Caller, at rbac.Resource) bool {
+	return c.Can(rbac.PermJobViewSensitive, at) && c.Can(rbac.PermJobManage, at)
+}
+
 // RemoveOutput empties a finished run's output at once, for a caller who
 // may read it and manage jobs at its site, records it as
 // job_run.output_remove, and returns the run.
@@ -140,7 +146,7 @@ func (s *Service) RemoveOutput(ctx context.Context, c access.Caller, id uuid.UUI
 		switch {
 		case !c.Can(rbac.PermJobView, at):
 			return apperr.NotFound()
-		case !c.Can(rbac.PermJobViewSensitive, at) || !c.Can(rbac.PermJobManage, at):
+		case !canRemoveOutput(c, at):
 			return apperr.Forbidden()
 		case r.open():
 			return apperr.Conflict("run_open", "The run has not finished: its output arrives when it ends.")

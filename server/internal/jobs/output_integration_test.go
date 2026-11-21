@@ -172,6 +172,10 @@ func TestOutputAndArgumentsNeedTheirPermission(t *testing.T) {
 			if run.CanViewOutput != holder || m["canViewOutput"] != holder {
 				t.Errorf("%s: canViewOutput %v", tc.name, m["canViewOutput"])
 			}
+			// Every built-in role that may read output also manages jobs.
+			if run.CanRemoveOutput != holder || m["canRemoveOutput"] != holder {
+				t.Errorf("%s: canRemoveOutput %v", tc.name, m["canRemoveOutput"])
+			}
 			for _, k := range []string{"stdoutBytes", "stderrBytes", "outputRemovedAt"} {
 				if _, ok := m[k]; ok != holder {
 					t.Errorf("%s: run key %s present %v", tc.name, k, ok)
