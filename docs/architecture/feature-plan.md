@@ -290,93 +290,77 @@ they could stop it.
   Linux computers.
 
 ### 3. Collecting logs
-**Decisions for its ADR**
+Proposed in [ADR-0060](adr/0060-collecting-logs.md), revised after its
+independent review and five checks, not accepted yet. In short:
 
-* **Two switches, as the owner asked.** *Configure logging* is on by
-  default: at enrolment the agent sets Windows audit policy, the Security
-  log's size and PowerShell script block and module logging, and on
-  Linux persistent journald and EasyRMM's auditd rules (in a file of their
-  own, apart from hardening's). Nothing leaves the computer. *Collect into
-  EasyRMM* is a platform switch set at install (`setup.sh
-  --collect-logs`, on for new installs) and in a first-run checklist;
-  installs that upgrade get both switches from the checklist, asked once,
-  and agents already enrolled are configured when the switch reaches them.
-  Where auditd is missing, configuring logging installs it, recorded as
-  EasyRMM's, so that neither this feature nor hardening's undo removes it
-  while the other still uses it.
-* **Settings (F1 keys)**: `logs.configure` (on or off; organization
-  administrators and above, enforceable from the platform),
-  `logs.sources` (which sources and their filters; organization
-  administrators), `logs.collect` (platform only, super administrators).
-* **Group Policy wins.** Domain computers usually get audit policy from
-  Group Policy, which applies it again every 90 minutes. The agent reads
-  the effective policy, leaves subcategories Group Policy sets alone and
-  shows *set by Group Policy*; domain controllers are left alone unless
-  the operator chooses them.
-* **Sources**: Windows Security, System, Application, Defender
-  (Operational), PowerShell (Operational), Sysmon when present; Linux
-  journal (authentication, sudo, sshd, systemd), auditd, Defender for
-  Endpoint (`mdatp`) and ClamAV when present. Each with a default filter
-  for the security-relevant part.
-* **Secrets in logs.** Script block logging records the install command,
-  with its token; process creation records command lines. The agent
-  redacts deployment tokens (`ert_…`, `EASYRMM_TOKEN`, `-Token`, `TOKEN=`)
-  before upload, and drops script block and process creation events from
-  its own jobs, whose arguments ADR-0017 keeps out of the audit log. Command lines and
-  script blocks need a permission of their own (`log.view_sensitive`);
-  `log.view` defaults to organization administrators.
-* **The collector is its own process** (`easyrmm-agent collect`), in its
-  own systemd unit with `CPUQuota` and `MemoryMax`, and on Windows in a
-  job object with a CPU rate limit, so that limits never slow jobs. Its
-  disk buffer is capped (256 MiB by default) with a quota per source, so a
-  flood in Application cannot push Security out; drops are counted and
-  reported.
-* **Collection**: Windows through the Event Log API (`EvtSubscribe` with
-  bookmarks on disk, no cgo); Linux through the journal's cursor and
-  auditd's log by inode and offset.
-* **Upload**: `POST /api/agent/v1/logs`, signed, gzip, at most every 10
-  seconds; the server caps the decompressed size while reading, after the
-  signature, and answers how much more it will take.
-* **Storage that cannot take EasyRMM down.** A database of its own,
-  created by an init service (as the engine's is), partitioned by day,
-  with the organization and site on each row (row-level security without
-  a join). Partitions are made and dropped by functions the owner holds;
-  the application reaches only the parent table. Quotas per device and
-  per organization enforced by the server; a total size cap and a
-  free-disk floor, past which ingest stops, agents buffer and an alert is
-  raised. Retention (30 days by default) always wins, also over
-  forwarding, and gaps are counted. Logs are purged with their
-  organization, site or device. The updater's backups leave this
-  database out unless asked, so its migrations only ever add, and an older
-  server runs on a newer logs schema.
-* **Before turning it on**, the page shows the measured volume per kind of
-  computer (workstation, file server, domain controller) and the space
-  left.
-* **Forwarding**: syslog over TCP or TLS first (the audit forwarder's
-  transport, through F2's address policy), with one list of syslog
-  destinations for both the audit log and device logs. Destinations
-  belong to super administrators by default. *Forward only, don't store*
-  per organization. A cursor per destination, so one that was down
-  catches up within retention.
-* **Console**: **Logs** (filters by organization, site, device, source,
-  event ID, level, time, text), a device's **Logs** tab, per-organization
-  storage and ingest.
-* **Privacy**: PRIVACY.md and the guide say what is collected and where it
-  goes.
+* **Windows jobs start inside their job object first** (slice 0,
+  amending ADR-0017); otherwise jobs start exactly as today, arguments
+  on the command line, so exit codes and binding do not change. EasyRMM's
+  copy of a job's events has its argument values replaced; the
+  computer's own Security log holds them once command lines in process
+  events are on, an organization setting, on by default, which the
+  console explains (ADR-0017's guidance: no secrets as arguments). Linux
+  jobs get a login UID of their own (slice 2), which an audit rule
+  records (slice 4). Then the volumes are **measured** on real computers
+  (slice 1) before the store is built.
+* **The collector** (`easyrmm-agent collect`) is a process of its own
+  without the device's key, network access, privileges or rights to change
+  anything: on Linux its own unit (an unnamed user in the journal's group
+  with no capability, auditd's log through descriptors the agent passes,
+  `CPUQuota` and `MemoryMax`), on Windows a service of its own whose
+  virtual account is granted read access in each collected channel's own
+  access list, blocked from the network by a filtering-platform filter, in
+  a job object with a CPU cap. It reads Windows'
+  event logs through `EvtSubscribe` and Linux's journal and auditd log
+  from positions written with the events into a capped disk spool; a
+  source whose share is full pauses, since the computer's own log holds
+  its events. It redacts EasyRMM's tokens; the agent seals its batches
+  (marking EasyRMM's own jobs, replacing their argument values) and uploads
+  them signed, paced to a bandwidth limit per site, in two streams so
+  that Security and Defender come first; the server stores each exactly
+  once and signs its answers.
+* **Configure logging** (on by default) sets Windows audit policy from
+  one table taken from Microsoft's baselines, which Windows hardening
+  reports against, `SCENoApplyLegacyAuditPolicy`, command lines in
+  process events, script block logging (narrowing who can read it) and
+  log sizes (Security at the STIGs' 1,024,000 KB); and auditd rules,
+  generated per computer, and a persistent journal on Linux. What Group
+  Policy, MDM or another owner holds is left *managed elsewhere*, read
+  with Windows hardening's reader, and a value whose owner that reader
+  cannot tell is only reported; domain controllers only when chosen;
+  undone on uninstall. On Linux each feature keeps its own rules file and
+  keys, and auditd is removed by the last one out.
+* **The store** is a PostgreSQL instance of its own in a directory beside
+  the data root, which the updater never copies, moves or deletes, with
+  its passwords set from `.env` at each start; nothing depends on it and
+  the server's readiness never does, so a broken store degrades logs and
+  never stops or rolls back EasyRMM. It holds compressed blocks
+  of events with hourly facts (B-tree indexes, which row-level security
+  can use), partitioned by retention class and day, week or month. Quotas
+  per kind of computer, a storage share per organization, a size cap and
+  a free-disk floor stop ingest before the disk fills, refusing the
+  organizations over their share first. A removed device's logs stay
+  until retention ends. At 2,000 devices and 30 days: about 150 to 210
+  GB, against about 1.25 TB as a row per event.
+* **Console**: **Logs** and a device's **Logs** tab, with a server-wide
+  search pool and background searches; `log.view` for Site
+  Administrators and above, command lines and scripts for Organization
+  Administrators (`log.view_sensitive`, enforced in results, text search
+  and exports); every search audited.
+* **Forwarding**: one list of syslog destinations for the audit log and
+  device logs, positions kept with the logs, walked up to the oldest
+  running transaction so that none is skipped, gaps counted.
+  **Detections**: alert policies of a new kind, `log`, carrying no event
+  content, sent through F2; EasyRMM's own changes open none.
 
-**Slices**: storage, upload and the Linux journal's sign-in events with the
-device's **Logs** tab; then Windows Security; then configuring logging;
-then the other sources; then forwarding; then the **Logs** page.
-
-**Tests**: integration (partitions, retention, row-level security on the
-parent, quotas, the decompression cap, the disk floor, a forwarding
-destination that comes back and catches up); the agent's buffer filling
-to its cap and dropping by source; Windows collection, audit policy,
-script block logging (event 4104), Sysmon (installed on the runner) and
-`wevtutil` on CI's Windows runner, for real; the bundle test (a Linux
-agent's sign-in events reach the console and a syslog receiver); redaction
-of a real install command's token; an upgrade from a release without the
-logs database, and a rollback of it; a load test with `tools/agentsim`.
+**Slices**: Windows jobs inside their job object; measuring; the store and
+Linux sign-ins with the device's tab; Windows Security; configuring
+logging; the other sources; forwarding; organizations' retention and
+quotas; detections; the **Logs** page; organizations' own destinations.
+**Tests**: CI's Windows runner and the virtual machines for real, the
+bundle test with a syslog receiver on host networking, the updater's
+rollbacks counting blocks, and `tools/agentsim` with recorded events,
+flooding and slow devices among them.
 
 ### 4. Upgrading EasyRMM from the console
 In two parts, both in [ADR-0052](adr/0052-the-host-updater.md).
@@ -481,6 +465,13 @@ zone on `main` only, or marked unverified; a real Let's Encrypt staging
 run by hand, then the owner's real name.
 
 ### 6. Packages for the agent: DEB, RPM, MSI
+Proposed in [ADR-0056](adr/0056-packages-for-the-agent.md), revised after
+review. Its slice 0, a fix for today's Windows agent, shipped in PR #61;
+the packages are not built yet. What follows is what the plan asked for; where the
+ADR decides otherwise, its section
+[Departures from the plan](adr/0056-packages-for-the-agent.md#departures-from-the-plan)
+says so.
+
 * **The package never replaces an enrolled agent's binary.** It installs
   the agent; on first install it runs `easyrmm-agent install`, which
   copies the agent to the place the agent owns, as the install command
@@ -772,8 +763,10 @@ code.
   collection sets it from one table, hardening only reports against that
   table, and both use the one ownership reader; log collection raises no
   alert for the changes a hardening job made.
-* **Logs take EasyRMM down**: a database of its own, quotas, a size cap and
-  a disk floor that stop ingest before the disk fills.
+* **Logs take EasyRMM down**: a PostgreSQL instance of its own outside
+  the data root, quotas per kind of computer, a share per organization, a
+  size cap and a disk floor that stop ingest before the disk fills, and a
+  server-wide limit on searches.
 * **The updater is root on the host**: it takes nothing but a version from
   the server, writes nowhere the server can, and installs only what it
   verified.
