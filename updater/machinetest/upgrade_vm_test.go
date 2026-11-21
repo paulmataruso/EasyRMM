@@ -779,26 +779,39 @@ cat `+statusDir+`/status.json`, 10*time.Minute)
 	m.t.Logf("diagnostics:\n%s\n%s", stdout, stderr)
 }
 
-// serves checks that every container of the deployment runs from v's
-// directory and that its server reports v, ready.
+// serves checks that every container of the deployment runs v's
+// configuration and that its server reports v, ready. A container runs
+// v's configuration when its Compose configuration hash is the one v's
+// directory gives: Compose keeps, with the working directory it was
+// created from, a container whose configuration a new version does not
+// change (the engine's, when its image is the same).
 func (m *machine) serves(v string) {
 	m.t.Helper()
 	out := m.run(v+" serving", fmt.Sprintf(`set -e
 cd %s
 docker compose exec -T server easyrmm-server healthcheck >/dev/null
 docker compose exec -T server easyrmm-server version
-docker ps --filter label=com.docker.compose.project=easyrmm --format '{{.Label "com.docker.compose.service"}} {{.Label "com.docker.compose.project.working_dir"}} {{.Status}}' | sort`,
+docker compose config --hash '*' | sed 's/^/want /'
+docker ps --filter label=com.docker.compose.project=easyrmm --format 'runs {{.Label "com.docker.compose.service"}} {{.Label "com.docker.compose.config-hash"}} {{.Status}} {{.Label "com.docker.compose.project.working_dir"}}' | sort`,
 		deployDir(v)), 10*time.Minute)
 	lines := strings.Split(strings.TrimSpace(out), "\n")
 	if lines[0] != v {
 		m.t.Errorf("the server reports %q, not %s", lines[0], v)
 	}
+	want := map[string]string{}
 	services := map[string]bool{}
 	for _, l := range lines[1:] {
 		f := strings.Fields(l)
-		services[f[0]] = true
-		if len(f) < 3 || f[1] != deployDir(v) || f[2] != "Up" {
-			m.t.Errorf("%s: %s", v, l)
+		switch {
+		case len(f) == 3 && f[0] == "want":
+			want[f[1]] = f[2]
+		case len(f) >= 4 && f[0] == "runs":
+			services[f[1]] = true
+			if f[2] != want[f[1]] || f[3] != "Up" {
+				m.t.Errorf("%s: %s does not run %s's configuration (hash %s, not %s): %s", v, f[1], v, f[2], want[f[1]], l)
+			}
+		default:
+			m.t.Errorf("%s: %q", v, l)
 		}
 	}
 	want := []string{"postgres", "server", "meshcentral", "easypatch-api", "easypatch-worker"}

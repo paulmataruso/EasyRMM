@@ -130,7 +130,7 @@ test-vm: ## Boot each distribution's cloud image under QEMU and drive it (EASYRM
 		$(GO) test -tags vm -count=1 -v -timeout $(VM_TEST_TIMEOUT) -parallel $(VM_PARALLEL) $(VM_PACKAGES)
 
 .PHONY: test-vm-updater
-test-vm-updater: ## The host updater on a Debian 12 machine: install, status, upgrade, rollback, a failed start, a required upgrade stop; EASYRMM_UPDATER_TEST_AUTHENTIK=1 adds Authentik (needs Docker, Go, qemu-system-x86_64 and qemu-img; the machine needs the internet)
+test-vm-updater: ## The host updater on a Debian 12 machine: install, status, upgrade, rollback, a failed start, an attempt killed and the machine restarted, a required upgrade stop; EASYRMM_UPDATER_TEST_AUTHENTIK=1 adds Authentik (needs Docker, Go, qemu-system-x86_64 and qemu-img; the machine needs the internet)
 	EASYRMM_VM_CACHE="$${EASYRMM_VM_CACHE:-$(VM_CACHE)}" EASYRMM_VM_IMAGE=debian-12 \
 		$(GO) test -tags vm -count=1 -v -timeout $(UPDATER_VM_TEST_TIMEOUT) ./updater/machinetest/
 
