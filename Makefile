@@ -21,6 +21,14 @@ TEST_MESH_URL ?= http://127.0.0.1:24430
 # The OpenID Connect provider single sign-on is tested against.
 DEX_IMAGE ?= ghcr.io/dexidp/dex:v2.46.1@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab
 TEST_OIDC_DIR ?= $(or $(TMPDIR),/tmp)/easyrmm-testoidc
+# Machine tests (internal/vmtest; ADR-0051): where the cloud images and the
+# running machines' disks go (gigabytes, so not a small /tmp), the packages
+# with vm-tagged tests, how many machines boot at once, and how long the
+# whole run may take (without KVM each boot takes minutes).
+VM_CACHE ?= /var/tmp/easyrmm-vmtest
+VM_PACKAGES ?= ./internal/vmtest/
+VM_PARALLEL ?= 2
+VM_TEST_TIMEOUT ?= 3h
 
 .PHONY: help
 help: ## Show this help
@@ -36,11 +44,12 @@ fmt-check: ## Fail if Go code is not formatted
 		if [ -n "$$out" ]; then echo "Unformatted files:"; echo "$$out"; exit 1; fi
 
 .PHONY: vet
-vet: ## go vet (including integration-, contract- and bundle-tagged files, and the agent built for Windows)
+vet: ## go vet (including integration-, contract-, bundle- and vm-tagged files, and the agent built for Windows)
 	$(GO) vet ./...
 	$(GO) vet -tags integration ./...
 	$(GO) vet -tags contract ./server/internal/easypatch/
 	$(GO) vet -tags bundle ./server/internal/easypatch/
+	$(GO) vet -tags vm $(VM_PACKAGES)
 	GOOS=windows $(GO) vet ./agent/... ./internal/...
 
 .PHONY: lint
@@ -103,6 +112,11 @@ test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral
 .PHONY: test-contract
 test-contract: ## EasyRMM's calls to the patching engine against a real one built from easypatch/ (needs Docker)
 	GO=$(GO) ./scripts/contract/easypatch.sh
+
+.PHONY: test-vm
+test-vm: ## Boot each distribution's cloud image under QEMU and drive it (EASYRMM_VM_IMAGE=debian-12 for one; needs qemu-system-x86_64, qemu-img, and xorriso for rocky-8)
+	EASYRMM_VM_CACHE="$${EASYRMM_VM_CACHE:-$(VM_CACHE)}" \
+		$(GO) test -tags vm -count=1 -v -timeout $(VM_TEST_TIMEOUT) -parallel $(VM_PARALLEL) $(VM_PACKAGES)
 
 .PHONY: check
 check: fmt-check vet lint test-integration ## Everything CI runs for Go code
