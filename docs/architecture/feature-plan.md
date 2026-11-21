@@ -375,7 +375,8 @@ TLS-ALPN-01, renewed in the process; names are read at start.
   Cloudflare; the guide recommends delegating `_acme-challenge` over
   handing EasyRMM a whole zone's token.
 * **5c. Moving to a new name** (changing the console's name, or moving
-  agents from an IP address to a name) is an ADR of its own: each
+  agents from an IP address to a name) is an ADR of its own,
+  [ADR-0061](adr/0061-moving-to-a-new-name.md) (proposed): each
   computer runs three agents that hold the address (EasyRMM's, MeshAgent's
   `.msh`, the EasyPatch agent's `ServerUrl`); an agent may only move on an
   instruction signed with the job key over its device, a nonce it sent to
