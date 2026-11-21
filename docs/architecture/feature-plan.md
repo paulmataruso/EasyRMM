@@ -197,17 +197,24 @@ set up its Teams channel once.
   are always refused. The engine refused its networks outright, which on
   host networking is the customer's LAN.
 * **Delivery is at least once**, with a stable delivery ID; queueing is
-  exactly once, and order is kept per alert. Permanent answers fail at
-  once, and one message holds its channel for an hour at most, then only
-  messages about the same alerts.
+  exactly once, and order is kept per alert, notice and site outage.
+  Permanent answers fail at once, and one message holds its channel for an
+  hour at most, then only messages about the same alerts, notices and
+  outages.
 * **Limits**: quotas per organization counted in messages (one per email
   recipient), fair share between organizations, the mail server's own
   rate a minute and a day with account mail first, and at most one unsent
   digest per channel read by people.
 * **Several recipients** each get their own copy, so no recipient sees
   another.
-* **The certificate authority** for the mail server comes with slice 6,
+* **The certificate authority** for the mail server comes with slice 7,
   once the engine (which cannot trust one) no longer sends email.
+* **Signing in to Microsoft 365** with an application's credentials
+  (`XOAUTH2`, the client credentials grant) is a slice of its own, the
+  second: Exchange Online turns SMTP password sign-in off by default for
+  existing tenants at the end of December 2026, and the mailer signs in
+  with a password only. A relay remains the alternative; Google is left
+  for the owner to decide.
 
 ### F3. The updater on the host
 Decided in [ADR-0052](adr/0052-the-host-updater.md), revised after review.
@@ -529,12 +536,14 @@ Real delivery to Slack and Teams is checked by hand and recorded.
 * **A local uninstall** marks the device *Uninstalled* and raises a
   notice of its own, *agent removed without a request*, rather than going
   quiet; a removal report that answers no instruction the server issued
-  does the same instead of deleting the device, and cancelling a removal
-  already sent keeps its record (amending ADR-0050).
+  does the same instead of deleting the device, and every instruction
+  sent is recorded under its own ID, so that neither cancelling nor asking
+  again forgets it (amending ADR-0050).
 * **ADR-0052's offline rule** delays openings only, as pull request #51
   amends and builds it; as first written it would have resolved every
   open offline alert at each restart. A fleet-wide hold covers an EasyRMM
-  that runs but that no agent can reach.
+  that runs but that no agent can reach: while most devices are silent,
+  organizations' rules send no offline openings and platform rules do.
 * **The offline test stops both agents**: a device is online while
   MeshAgent is connected, so stopping the EasyRMM agent alone raises
   nothing.

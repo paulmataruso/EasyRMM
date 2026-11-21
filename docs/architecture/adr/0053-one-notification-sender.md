@@ -1,9 +1,10 @@
 # ADR-0053: One notification sender, and notifications for device alerts
 
 * Status: Proposed (2026-11-21). Not implemented.
-* Revised after two independent reviews (2026-11-21), with the owner's
-  decisions on sharing platform channels, `alerts.acknowledged`, `.env`'s
-  mail server and the old signature headers.
+* Revised after two independent reviews and a check of the second
+  revision (2026-11-21), with the owner's decisions on sharing platform
+  channels, `alerts.acknowledged`, `.env`'s mail server, the old signature
+  headers and quotas counted in messages.
 * Builds on: [ADR-0019](0019-monitoring-and-alerts.md) (monitoring and
   alerts), [ADR-0023](0023-audit-forwarding.md) (audit forwarding and the
   address rule of the platform's integrations),
@@ -16,7 +17,8 @@
   rule as pull request #51 amends and builds it (openings only).
 * Amends: [ADR-0050](0050-removing-a-device.md): a removal report that
   answers no instruction the server issued marks the device instead of
-  deleting it, and cancelling a removal already sent keeps its record (see
+  deleting it, and every instruction sent is recorded under its own ID, so
+  that neither cancelling nor asking again forgets it (see
   ***Uninstalled***). ADR-0052: its rollback says what it does to alerts
   already sent (see **Retention**).
 * Part of [the feature plan](../feature-plan.md): F2 and feature 7. Where
@@ -96,11 +98,35 @@ What exists, and what it means here:
   (`server/internal/config/config.go`). `server/internal/mailer` sends plain
   text to one recipient, over STARTTLS or TLS trusting the system's roots
   only (its `tls.Config` names no roots), unencrypted only to loopback, and
-  dials without `netguard`. Invitations and password resets use it;
+  dials without `netguard`. It signs in with a user name and password
+  only (`smtp.PlainAuth` in `mailer.go`); so does the engine
+  (`AuthenticateAsync(user, password)`, MailKit, in
+  `NotificationTransport.cs`). Invitations and password resets use it;
   without it password reset is off (`auth.Service.ResetAvailable`). EasyRMM
   gives it to the engine **once per start** (`syncMail`,
   `server/internal/easypatch/engine.go`), so the engine's email and reports
   already go through it.
+* **Exchange Online stops taking passwords over SMTP.** Microsoft's
+  [updated deprecation timeline](https://techcommunity.microsoft.com/blog/exchange/updated-exchange-online-smtp-auth-basic-authentication-deprecation-timeline/4489835)
+  (Exchange Team blog, 27 January 2026, read 2026-11-21) says SMTP AUTH
+  with basic authentication "remains unchanged" until December 2026; at
+  the end of December 2026 it "will be disabled by default for existing
+  tenants", though "administrators will still be able to enable it if
+  needed"; for tenants created after that it is unavailable by default;
+  and in the second half of 2027 "Microsoft will announce the final removal
+  date". It names no day for either. "OAuth will be the supported
+  authentication method." Microsoft documents SMTP with OAuth for an
+  application acting alone ("Authenticate an IMAP, POP or SMTP connection
+  using OAuth", Microsoft Learn): an Entra application given the
+  `SMTP.SendAsApp` application permission and the tenant administrator's
+  consent, its service principal registered in Exchange
+  (`New-ServicePrincipal`) and given the sending mailbox
+  (`Add-MailboxPermission`), a token from the client credentials grant
+  with the scope `https://outlook.office365.com/.default`, and `AUTH
+  XOAUTH2` with `base64("user=" mailbox ^A "auth=Bearer " token ^A ^A)`.
+  The grant takes a shared secret or a certificate, issues no refresh
+  token, and gives the token's lifetime in `expires_in` (the "client
+  credentials flow" page, Microsoft Learn).
 * **Audit forwarding** (ADR-0023, `server/internal/auditfwd`) is set up by
   super administrators, can trust a named certificate authority and keeps
   a client key sealed. It dials through `server/internal/netguard`, whose
@@ -159,8 +185,11 @@ What exists, and what it means here:
   disappear. ADR-0050 makes a *removed* report "the confirmation, even of a
   removal cancelled meanwhile", and `CancelRemoval` deletes the
   `device_removals` row, the instruction's ID included, even after the
-  instruction was sent (`sent_at`); an instruction is valid for 10 minutes
-  (`UninstallValid`).
+  instruction was sent (`sent_at`). The table keeps one row per device, and
+  a new request replaces its ID (`RequestRemoval`: `ON CONFLICT (device_id)
+  DO UPDATE SET id = $2`). Every heartbeat answer while the removal waits
+  signs the instruction again, valid for 10 minutes from then
+  (`uninstallFor` and `signUninstall`, `UninstallValid`).
 * **Tenancy and secrets.** Tenant tables force row-level security on the
   `easyrmm.scope_*` settings ([database.md](../database.md)).
   `auth.DataScope` puts every organization-wide assignment's organization
@@ -250,14 +279,20 @@ What exists, and what it means here:
 
 ### The sender
 * **The outbox** (`notification_deliveries`): owner, the organization
-  charged, channel (none for a report), kind (digest, event, report,
-  test), event, the subjects it carries (each alert's incident or notice,
-  below), the message as data (JSON, no secrets), status (pending, sent,
-  failed, dropped), attempts, next attempt, a lease, the last error, and
-  when it was queued and ended. Email deliveries record each recipient's
-  outcome (`notification_delivery_recipients`): a retry goes only to the
-  recipients not yet accepted. Deliveries are queued only by the planner's
-  transaction (**Nothing lost or queued twice**).
+  charged, channel (none for a report), kind (digest, event, report, test),
+  event, the **subjects** it carries, the message as data (JSON, no
+  secrets), status (pending, sent, failed, dropped), attempts, next attempt,
+  a lease, the last error, and when it was queued and ended. Email
+  deliveries record each recipient's outcome
+  (`notification_delivery_recipients`): a retry goes only to the recipients
+  not yet accepted. Deliveries are queued only by the planner's transaction
+  (**Nothing lost or queued twice**).
+* **Subjects** are what order is kept for: each alert's incident, each
+  notice, and each site outage. A delivery about an outage
+  (`sites.offline`, `sites.online`, or a digest's section about it)
+  carries the outage **and** the incident of every alert folded into it,
+  so neither the outage's end nor a folded alert's own later event can
+  pass the outage's beginning.
 * **One worker per server, one sending.** The worker holds one connection
   taken from the pool for its whole life (the pool closes idle ones after
   5 minutes) and a session advisory lock on it. If the connection is lost,
@@ -267,9 +302,16 @@ What exists, and what it means here:
   during a failover never send the same delivery at once.
 * **A lock per channel.** The planner, before it queues or merges into a
   channel's deliveries, and the sender, while it chooses and leases a
-  channel's next delivery, lock that channel's row; the planner locks all
-  it needs at once, in order of channel ID. Neither holds the lock across
-  the network.
+  channel's next delivery, take a transaction-level advisory lock for that
+  channel (`pg_advisory_xact_lock`, the two-key form: a constant for
+  notification channels and a hash of the channel's ID; EasyRMM's other
+  advisory locks take the one-key form, as `lockEvaluate` in `evaluate.go`
+  does, whose keys PostgreSQL keeps apart; a collision only makes two
+  channels wait on each other), not a row lock, so that the foreign-key checks of a
+  rule saved or a test queued meanwhile (which take `FOR KEY SHARE` on the
+  channel's row) never wait on it or deadlock with it. The planner takes
+  all it needs at once, in order of key. Neither holds a lock across the
+  network.
 * **Fair share.** Webhooks and email are separate classes, so a slow mail
   server never holds a webhook back. Each class goes round-robin over the
   organizations charged and the platform, with at most 2 deliveries in
@@ -287,12 +329,14 @@ What exists, and what it means here:
   * **Permanent** answers fail the message at once: `401`, `403`, `404`,
     `410`, `422` and any other `4xx` but `413`; for email, a `5xx` reply
     (per recipient). `413` splits a generic webhook's delivery in two,
-    once; a half answered `413` again fails. `401`, `403`, `404` and `410`
+    once, and the halves keep its place, in order; a half answered `413`
+    again fails. This is the only split at send time. `401`, `403`, `404`
+    and `410`
     mark the channel failing at once; the others after 3 messages in a row.
   * **After an hour**, a later delivery may go before the earliest unsent
     one, but only if it carries no subject that any earlier unsent
-    delivery on that channel carries: nothing about an alert ever arrives
-    before what was queued earlier about it. Nothing is split at send time.
+    delivery on that channel carries: nothing about an alert, a notice or
+    an outage ever arrives before what was queued earlier about it.
   * A successful test retries the earliest unsent delivery at once.
 * **Retries**, as the engine's: from 1 minute, doubling to an hour; given
   up 24 hours after queueing, waits for a quota included. Tests give up
@@ -322,13 +366,18 @@ What exists, and what it means here:
   raises a notice to the organization's managers and to super
   administrators. The platform's own rules have none.
 * **The mail server's limits**: super administrators set a platform-wide
-  rate of messages a minute and a day (by default 30 and 9,000, below the
-  sending limits large hosted services publish; they set their relay's).
+  rate of messages a minute and a day, by default 30 and 9,000, and set
+  their own mail server's. For Exchange Online, 30 a minute **equals** its
+  message rate limit (above it, Microsoft throttles and carries the excess
+  over to the following minutes), and 9,000 a day is under its 10,000
+  recipients in 24 hours (past which the mailbox cannot send until its
+  count of the last 24 hours drops below), per Microsoft's published
+  limits (Exchange Online limits, Microsoft Learn, read 2026-11-21).
   Messages are shared round-robin among the organizations charged and the
   platform. **Account mail goes first**: invitations, password resets and
-  other mail to people's own accounts are never queued behind
-  notifications, and notifications stop at 90% of the day's budget, so the
-  rest is always there for them.
+  other mail to people's own accounts go through the same limiter, so
+  they count, but ahead of every notification, and notifications stop at
+  90% of the day's budget, so the rest is always there for them.
 * **The mail server's circuit**: after 5 failures in a row to connect or
   sign in, notification email pauses for 1 minute, doubling to 15, with one
   message tried at a time; attempts are not counted while paused (the 24
@@ -350,10 +399,11 @@ What exists, and what it means here:
   the evaluator, the planner nor the engine's collector runs.
 
 ### Notices: a failing channel, and the platform's other problems
-* **Notices** (`notices`) are what the console raises that is not a
-  policy's condition on a device: a failing channel, messages not sent, a
-  quota reached, a rule left without channels or with an emptied list,
-  patching items refused or dropped, a journal row quarantined, a
+* **Notices** (`notices`) are what the console raises that is not a policy's
+  condition on a device: a failing channel, messages not sent, a quota
+  reached, a rule left without channels or with an emptied list, patching
+  items refused or dropped, a journal row quarantined, planning stopped, the
+  mail server failing or its application's certificate about to expire, a
   maintenance window starting and ending, most devices silent at once, and
   an agent removed without a request. Each has a kind, the platform or one
   organization, optionally a site and a device, when it opened, and when it
@@ -490,7 +540,8 @@ channels now, its syslog destinations with log forwarding later.
 * **Sealed** with `EASYRMM_SECRET_KEY` in `notification_channel_details`
   and bound to the channel's ID and field: the URL of every webhook, Slack
   and Teams channel (Slack's and Teams' URLs are secrets in themselves) and
-  the signing secret; the mail server's password in `mail_server`. Never in
+  the signing secret; the mail server's password, or its application's
+  client secret or certificate key, in `mail_server`. Never in
   the audit log (the host is), in logs or in errors; a test feeds URLs with
   a path and a query through every failure and checks that neither logs
   nor `last_error` hold them.
@@ -500,7 +551,8 @@ channels now, its syslog destinations with log forwarding later.
   no-store`, and is audited (`notification_channel.reveal`). Lists show the
   host only. A shared platform channel is never revealed to an
   organization.
-* **The mail server's password** is write-only: nobody needs it back.
+* **The mail server's password, client secret and certificate key** are
+  write-only: nobody needs them back.
 * Rotating `EASYRMM_SECRET_KEY` works as for other sealed values.
 
 ### The mail server in the console
@@ -517,11 +569,49 @@ channels now, its syslog destinations with log forwarding later.
   sends test messages. Removing it from `.env` hands the mail server to the
   console. One mail server is in force at a time, and the console says
   which.
-* **The engine follows at once**: until slice 6 retires its email,
+* **Signing in** is one of: none, a password (`PLAIN`, as now), or **a
+  Microsoft 365 application** (slice 2): the tenant ID, the application
+  (client) ID, and a client secret or a certificate with its private key
+  (PEM), sealed. The mailbox it sends as is the sender's address.
+  * The server asks the Microsoft identity platform for the tenant's token
+    with the client credentials grant and the scope above, signing the
+    client assertion itself when it has a certificate. It keeps the token
+    in memory, shared by every sending, until 5 minutes before
+    `expires_in` runs out, then asks again; a sign-in refused (`535`) drops
+    it and tries once more with a new one. There is no refresh token to
+    keep.
+  * The mailer sends `AUTH XOAUTH2` only after STARTTLS or over TLS, and
+    only when the server offers it; the token never reaches a log, an error
+    or the audit log.
+  * The token request is made by the server as the mail server is dialed
+    (set by super administrators only); a request that fails shows
+    Microsoft's `error` and `error_description` in the form and in the
+    mail notice.
+  * The form lists what the tenant's administrator does in Entra and
+    Exchange (above), and the certificate's expiry; a notice warns 30 days
+    before it.
+  * **Google is left out.** Its XOAUTH2 scope, `https://mail.google.com/`,
+    is not limited to sending ("XOAUTH2 protocol", Google for Developers),
+    and signing in with no person present takes a service account with
+    domain-wide delegation that impersonates the mailbox through a JWT
+    bearer grant ("Using OAuth 2.0 for Server to Server Applications"): a
+    different flow, and a broader grant. Whether to add it is an owner
+    question.
+  * **A relay** that accepts the server's mail, whatever it signs in to
+    beyond, remains the alternative for every provider; the guide
+    documents it.
+  * `.env` keeps password sign-in only: to sign in with an application, a
+    super administrator removes `EASYRMM_SMTP_*` from `.env` and sets the
+    mail server in the console, which the read-only view explains.
+* **The engine follows at once**: until slice 7 retires its email,
   `syncMail` gives the engine the mail server in force at start **and on
-  every change**, not once per start.
+  every change**, not once per start. The engine signs in with a password
+  only, so while the mail server signs in with an application, `syncMail`
+  gives the engine none, as when EasyRMM has none (`Mail`, `engine.go`):
+  patching's email and monthly reports stop until slice 7, and the form
+  says so before the choice is saved.
 * **A certificate authority to trust** is shown only once the engine no
-  longer sends email (slice 6): the engine cannot trust a named
+  longer sends email (slice 7): the engine cannot trust a named
   authority, only skip verification, which EasyRMM never asks of it.
 * **A test message** goes to an address the super administrator enters
   (their own by default), at most one every 30 seconds, and shows the mail
@@ -535,7 +625,8 @@ channels now, its syslog destinations with log forwarding later.
   refused is a failure.
 * **The mailer gains**: HTML with a plain-text alternative
   (`multipart/alternative`), attachments (monthly reports), the sender's
-  name, the trusted authority, the `Message-ID` above, and the rate limits.
+  name, the trusted authority, the `Message-ID` above, the rate limits, and
+  `XOAUTH2`.
 
 ### Content
 Values that come from agents (device and host names, operating systems)
@@ -571,7 +662,7 @@ order:
 * **Size budgets**, measured on the encoded bytes sent, under the limits
   Slack and Microsoft publish (50 blocks a message and 3,000 characters a
   text for Slack; about 28 KB a card for Teams), checked against their
-  documentation when slice 5 is built: at most 40 blocks, 2,500 bytes a
+  documentation when slice 6 is built: at most 40 blocks, 2,500 bytes a
   text and 24 KB a card, then "…and N more" with a link. Email shows 25
   alerts. Generic webhooks split rather than truncate: at most 100 alerts
   and 1 MiB a delivery.
@@ -631,9 +722,8 @@ never taken from a value.
   whichever is later. The planner holds `policy_changed` resolutions that
   long; when a successor opens, neither is sent, and the incident goes on:
   its waits and reminders count from the incident's start, and an
-  acknowledgement carries over (`Evaluate`'s only change: a new alert
-  copies the acknowledgement of the one it succeeds). `alertId` is the
-  console's.
+  acknowledgement carries over (a new alert copies the acknowledgement of
+  the one it succeeds). `alertId` is the console's.
 * **Maintenance windows, per site**:
   * weekly (days, a start in the site's time zone, a length of at most 24
     hours, across midnight allowed and belonging to the day it starts) or
@@ -667,7 +757,11 @@ never taken from a value.
     resolved; the folded alerts still open are then sent as their own
     opened alerts.
   * Generic webhooks get `sites.offline` and `sites.online` with the
-    outage's ID and the IDs of the alerts folded in. A rule may turn
+    outage's ID and the IDs of the alerts folded in. Each such delivery,
+    and each digest's section about the outage, carries the outage and the
+    incident of every alert folded in as its subjects (**The sender**), so
+    that a `sites.offline` still held is passed neither by its
+    `sites.online` nor by a folded alert's own events. A rule may turn
     grouping off (on by default), to get every alert's own events instead.
   * A site whose UPS shuts its computers down cleanly sends shutdown
     notices: its outage waits for the restart grace, as each device's
@@ -691,8 +785,10 @@ never taken from a value.
     DISTINCT FROM NEW.status OR OLD.acknowledged_at IS DISTINCT FROM
     NEW.acknowledged_at)`; and `AFTER DELETE … WHEN (OLD.status <>
     'resolved')`, which records the deletion's reason from a
-    transaction-local setting (`merged`, set by the heartbeat's merge
-    before it deletes the discovered device) or else `device_removed`;
+    transaction-local setting (`merged`, which the heartbeat's merge sets
+    just before it deletes the discovered device and resets just after, so
+    nothing else in its transaction reads as merged) or else
+    `device_removed`;
   * on `notices`: `AFTER INSERT` and `AFTER UPDATE` of their status or
     acknowledgement, the same way;
   * on `engine_handoffs`: `AFTER INSERT`, for the patching engine's items.
@@ -702,9 +798,14 @@ never taken from a value.
     change it records. The device's name, site and organization come from
     what the planner recorded when the alert opened.
   * The trigger function is `SECURITY DEFINER`, owned by `easyrmm_owner`
-    with its `search_path` set, as `easyrmm_audit_append` is; `easyrmm_app`
-    may read and update the journal at platform scope, but has no `INSERT`
-    on it, so application code cannot forge a row.
+    with its `search_path` set, as `easyrmm_audit_append` is. Forced
+    row-level security binds the owner too, so the journal has its own
+    policy for it, `FOR INSERT TO easyrmm_owner WITH CHECK (true)`, as
+    `audit_log_owner` gives the audit log (migration 00001). `easyrmm_app`
+    may read the journal and update only the planner's columns (status,
+    when planned, failed runs, error), at platform scope; it has no
+    `INSERT`, so application code can neither forge a row nor rewrite what
+    one recorded.
   * Every path is covered, in the transaction that makes the change:
     `Evaluate`, a person's acknowledge or resolve, a policy's change, an
     uninstall, every kind of device removal and merge, every notice, every
@@ -725,8 +826,14 @@ never taken from a value.
   and sends nothing.
 * **A row that fails**:
   * A transient error (serialization failure, deadlock, lock or statement
-    timeout, a lost connection) only rolls the run back; the next run tries
-    again.
+    timeout, a lost connection) rolls the run back, and the next run tries
+    again. After 3 transient failures of the same batch in a row (a
+    statement that keeps reaching the server's 30-second
+    `statement_timeout`, say), the planner takes the one-row path below,
+    and each later failure halves the batch it starts with.
+  * When the planner has planned nothing for 10 minutes while rows wait, a
+    notice, *planning has stopped*, tells super administrators; it
+    resolves when a row is planned again.
   * Any other error rolls the batch back, and the planner plans that
     batch's rows one per transaction, so the bad row is found without
     savepoints. A row that fails so in 3 runs is **quarantined**: a minimal
@@ -749,13 +856,30 @@ never taken from a value.
   stays open until its device checks in, so a restart neither resolves nor
   reopens it. The evaluator does not run while the server is held.
 * **Most devices silent at once**: a restart is covered, but EasyRMM can be
-  unreachable while it runs (its name, its certificate, a firewall). When
-  at least half of the devices with an EasyRMM agent, and at least 20,
-  have stopped checking in within the same 5 minutes, new offline alerts
-  are held, and one notice, *most devices stopped checking in*, goes to
-  super administrators through platform rules. The hold ends when fewer
-  than half are silent, or after 30 minutes, whichever is first; after it,
-  offline alerts open as usual, grouped by site outages.
+  unreachable while it runs (its name, its certificate, a firewall).
+  * **It starts** when, of the devices with an EasyRMM agent, not
+    *Uninstalled*, whose agent had checked in within the online window (3
+    minutes) when a 5-minute window began, at least half, and at least 20,
+    have gone silent within it. A device is silent when its EasyRMM agent
+    has not checked in for 3 minutes, counted from the later of its last
+    check-in and pull request #51's floor (`seenFloor`: `AgentGrace`, 5
+    minutes, after the server began serving agents), as openings are; so
+    a restart or an upgrade never starts it.
+  * **While it lasts**: offline alerts open in the console as usual, and
+    platform rules send them, grouped by site outages, with one notice,
+    *most devices stopped checking in*, to super administrators.
+    Organizations' rules send no offline openings: the planner, planning
+    one for an organization's rule, checks `fleet_silences`, and an opening
+    within a silence waits.
+  * **It ends** when fewer than half of the devices counted at its start
+    are silent, or when a super administrator ends it in the console. Then
+    the openings that waited and whose alerts are still open are planned
+    for organizations' rules as usual, grouped by site outages and merged
+    into digests; those resolved meanwhile send nothing. There is no time
+    limit, so nothing floods out when one would run out; the notice stays
+    open, with its reminders, while it lasts.
+  * `Evaluate` records its start, end, the devices counted and its notice
+    in `fleet_silences`.
 * **A device's planned restart**: before it stops, the agent sends
   `POST /api/agent/v1/stopping`, signed with its device key as every agent
   request, with `{"reason": "shutdown"}` or `{"reason": "stop"}`, waiting
@@ -782,6 +906,12 @@ never taken from a value.
   sending them. Older agents send none and get no grace.
 * The grace delays the **alert**, not only its notifications, so that the
   console does not show a restarting server as down either.
+* **What `Evaluate` itself changes**, in its own transaction as today: an
+  offline alert waits out the grace after `shutdown` (above); devices
+  marked *Uninstalled* are left out (below); a new alert copies the
+  acknowledgement of the one it succeeds (incidents, above); and each run
+  checks the fleet-wide condition, recording a silence and opening or
+  resolving its notice. It sends nothing; the planner does.
 
 ### *Uninstalled*, and removals nobody asked for
 * **`easyrmm-agent uninstall`** without `--removal` (and so the removal of
@@ -801,19 +931,26 @@ never taken from a value.
   alert would.
 * **Amending ADR-0050: a report confirms only an instruction the server
   issued.**
+  * `device_removals` holds one removal per device, and a new request
+    replaces its ID (`RequestRemoval` upserts `ON CONFLICT (device_id) DO
+    UPDATE SET id = …`, `removal.go`), so it cannot remember what was sent.
+    Every instruction the server sends is therefore recorded in a table of
+    its own, `removal_instructions`, keyed by the instruction's ID, with
+    the device, when it was first and last sent, when it expires, and when
+    it was cancelled. The heartbeat signs the instruction again, valid for
+    10 minutes (`UninstallValid`), at every check-in while the removal
+    waits (`uninstallFor`), so each sending moves its expiry on.
   * A removal report (`/removed`, `Removed: true`) deletes the device only
-    when its `ID` matches a removal instruction the server sent for that
-    device. That includes a removal cancelled after its instruction was
-    sent, as ADR-0050 says ("the confirmation, even of a removal cancelled
-    meanwhile").
-  * So `CancelRemoval` no longer deletes a `device_removals` row whose
-    instruction was sent: it marks it cancelled (`cancelled_at`), and no
-    heartbeat sends a cancelled instruction again. The row is kept for the
-    instruction's validity (`UninstallValid`) plus an hour, for the report
-    to arrive, then deleted. A removal cancelled before anything was sent
-    is deleted as now.
-  * A report that matches no instruction is handled as `/uninstalled`: the
-    device is marked, not deleted, and the notice opens.
+    when its `ID` is one of that device's recorded instructions, whether
+    or not the removal was cancelled or asked for again since, as ADR-0050
+    says ("the confirmation, even of a removal cancelled meanwhile").
+  * `CancelRemoval` deletes the pending removal as now, and marks the
+    device's recorded instructions cancelled; no heartbeat sends one again.
+    A record is kept until an hour after the later of its last expiry and
+    its cancellation, for the report to arrive.
+  * A report that matches no recorded instruction is handled as
+    `/uninstalled`: the device is marked, not deleted, and the notice
+    opens.
 * Devices shows *Uninstalled*, with the date and a filter; removing such a
   device deletes it at once, as **Remove anyway** does (ADR-0050). A later
   check-in with its key (an agent restored from a backup) clears the mark
@@ -888,7 +1025,7 @@ never taken from a value.
   time. It sets the report's `DeliveryStatus`, `SentAt` and `LastError`.
 * **Sending a report by hand**: EasyRMM checks the mail server in force
   (set, encrypted, the report's size) before it asks the engine's
-  `/send`, which in slice 6 stops reading its own SMTP settings and keeps
+  `/send`, which in slice 7 stops reading its own SMTP settings and keeps
   only its checks of recipients and size; `smtp_not_configured` and its
   mapping in EasyRMM retire.
 * **Moving the channels**: in EasyRMM's reconcile pass, at start and after
@@ -924,7 +1061,7 @@ never taken from a value.
   reconcile pass, retried until done, as `syncMail` is; meanwhile items
   naming it are dropped for it. The engine's channel `DELETE` route
   retires.
-* **The switch**: the release that carries slice 6. At its first start the
+* **The switch**: the release that carries slice 7. At its first start the
   engine's migration turns pending deliveries into outbox items and its
   dispatcher no longer exists; EasyRMM's reconcile pass moves the
   channels, then collects. The engine and EasyRMM ship in one bundle, so
@@ -957,7 +1094,8 @@ never taken from a value.
 | `alert_notifications` | Until its subject is resolved and the resolution told, or given up, or dropped (recorded as *resolution not delivered*; that channel is told nothing more), then 30 days |
 | `site_outages`, notices | As alerts: `EASYRMM_ALERT_RETENTION` after they end |
 | `engine_handoffs` | 7 days, longer than the engine's 24 hours |
-| `device_removals` cancelled after sending | `UninstallValid` plus an hour |
+| `removal_instructions` | An hour after the later of its last expiry (last sending plus `UninstallValid`) and its cancellation; or with its device |
+| `fleet_silences` | As alerts |
 | The engine's outbox | Until acknowledged; dropped and counted after 24 hours |
 
 **A rollback** after a confirmed upgrade (ADR-0052) brings back the
@@ -979,27 +1117,28 @@ All with row-level security forced, on the `easyrmm_scope_*` functions:
 | `notification_rules`, their list tables, `notification_rule_channels` | Rules, modes and lists, channels (the constraints above) | Platform scope, or the organization's; lists and links follow their rule |
 | `notification_deliveries`, `notification_delivery_recipients` | The outbox, the delivery log, each recipient's outcome | Platform scope, or the owner's; an organization's scope inserts only its own tests |
 | `notices` | Notices | Opened and resolved at platform scope; read, and acknowledged, in an organization's scope for its own, and with the device's site for a device's |
-| `notification_events` | The journal | Inserted only by the triggers' `SECURITY DEFINER` function; read and changed at platform scope only |
+| `notification_events` | The journal | Inserted only by the triggers' `SECURITY DEFINER` function, under a policy for `easyrmm_owner`; read, and the planner's columns updated, at platform scope only |
 | `alert_notifications` | Per subject and channel: what was told, what is due and when, the incident, the alert as it opened | Platform scope only |
 | `site_maintenance_windows`, `site_outages` | Windows; outages and the alerts folded in | Read with their site; windows written in the site's scope, outages at platform scope only |
 | `notification_quotas` | Each organization's quotas, when not the defaults | Platform scope only |
-| `mail_server` | The console's mail server and its rate limits, one row, the password sealed | Platform scope only, as `audit_forwarding` |
+| `mail_server` | The console's mail server, how it signs in (password or a Microsoft 365 application), and its rate limits; one row, the password, client secret and certificate key sealed | Platform scope only, as `audit_forwarding` |
 | `engine_handoffs` | The engine's items taken, with their content | Platform scope only |
+| `removal_instructions` | Each removal instruction sent: device (deleted with it), first and last sending, expiry, cancellation | Through their device, as `device_removals`; written at platform scope by the heartbeat, cancelled in the canceller's scope |
+| `fleet_silences` | The fleet-wide hold: start, end, the devices counted, its notice | Platform scope only |
 
 `devices` gains `role`, `role_set_by`, `agent_stopping_at`,
-`agent_stopping_reason` and `agent_uninstalled_at`; `device_removals`
-gains `cancelled_at`; `organizations` gains `CHECK (id <> nil)`; the grace
-is a key of `settings`. `alerts.resolution` gains `uninstalled`: the new
-`CHECK` is added `NOT VALID`, then validated (`VALIDATE CONSTRAINT`), and
-only then is the old one dropped, so the table is not locked while rows
-are checked. Every migration goes into database.md.
+`agent_stopping_reason` and `agent_uninstalled_at`; `organizations` gains
+`CHECK (id <> nil)`; the grace is a key of `settings`. `alerts.resolution`
+gains `uninstalled`: the new `CHECK` is added `NOT VALID`, then validated
+(`VALIDATE CONSTRAINT`), and only then is the old one dropped, so the table
+is not locked while rows are checked. Every migration goes into database.md.
 
 ### Who
 | What | Who |
 |---|---|
 | An organization's channels and rules: change, test, reveal, the delivery log | `notification.manage` in that organization: Organization Administrators (a new permission, from organization-wide grants only; a site assignment never gives it), and super administrators |
-| The platform's channels and rules; sharing; approving private destinations; quotas; the mail server's limits; the restart grace; quarantined journal rows | Super administrators |
-| The mail server | Super administrators (`settings.manage`) |
+| The platform's channels and rules; sharing; approving private destinations; quotas; the mail server's limits; the restart grace; quarantined journal rows; ending the fleet-wide hold | Super administrators |
+| The mail server, and how it signs in | Super administrators (`settings.manage`) |
 | Maintenance windows; a device's kind | `monitoring.manage` at the site (Site Administrators and above); read with `monitoring.view` |
 | Patching alert rules | Super administrators, as now (`patch.configure` platform-wide) |
 | Notices | Whoever manages what they are about; a device's, whoever sees the device, acknowledged with `alert.manage` |
@@ -1018,8 +1157,9 @@ Every change, test, reveal, share, approval and move is audited.
   * **Delivery log**: 30 days, by channel, status and event, with each
     recipient's outcome.
   * **Maintenance windows**, read-only, by site.
-  * **Mail server**, its **limits**, **quotas**, **planned restarts'
-    grace** and **quarantined rows** (super administrators).
+  * **Mail server** and how it signs in, its **limits**, **quotas**,
+    **planned restarts' grace**, **quarantined rows** and the
+    **fleet-wide hold** with *End now* (super administrators).
 * **Alerts** gains notices and links to Settings → Notifications; its
   policies gain maintenance windows beside them; a site's page shows its
   windows. **Devices** shows *restarting* and *Uninstalled*, and the
@@ -1027,7 +1167,7 @@ Every change, test, reveal, share, approval and move is audited.
   Alert rules choose among EasyRMM's channels.
 
 ### Slices
-Each merges, and is verified, on its own:
+Each merges, and is verified, on its own, in this order:
 
 1. **The mailer and the mail server in the console**: HTML and text, one
    message per recipient, attachments, the console's settings and
@@ -1038,30 +1178,40 @@ Each merges, and is verified, on its own:
    loopback (the mailer trusts only the system's roots until the field
    comes); the contract test shows the engine's mail settings following a
    change without a restart.
-2. **Channels, the sender, notices, the journal for notices, and the
+2. **Signing in to Microsoft 365** (XOAUTH2 with an application's
+   credentials, above), early, because Microsoft turns password sign-in
+   to Exchange Online off by default at the end of December 2026, and an
+   MSP whose mail is Microsoft 365 then needs this, a relay, or basic
+   authentication turned back on for its tenant. *Verified*: unit tests against a fake token
+   endpoint and a fake SMTP server offering `AUTH XOAUTH2`; by hand against
+   a real Microsoft 365 tenant, recorded in IMPLEMENTATION_STATUS.
+3. **Channels, the sender, notices, the journal for notices, and the
    address policy**, with email and generic webhooks: tables, sharing,
    row-level security and the constraints, the scheduler, quotas,
    retries, tests, reveal, approvals. *Verified*: tests to an
    organization's webhook in its own network namespace, refused until
    approved, then signed and received; an email channel's test in Mailpit.
-3. **Device alert rules** (feature 7): rules and filters, the agent's
+4. **Device alert rules** (feature 7): rules and filters, the agent's
    `role`, the journal for alerts and the planner, when they notify,
    incidents, reminders, maintenance windows, site outages, digests, the
    fleet-wide hold. *Verified*: a device goes offline, the signed webhook
    and the email arrive; it comes back, the resolutions arrive.
-4. **Planned restarts, *Uninstalled* and removal reports**. *Verified*: a
+5. **Planned restarts, *Uninstalled* and removal reports**. *Verified*: a
    shutdown that outlasts the policy but not the grace sends nothing,
    where stopped agents alert; a local uninstall sends the resolution and
    the *agent removed without a request* notice.
-5. **Slack and Teams**. *Verified* by hand on real ones.
-6. **Patching through EasyRMM**: the engine's outbox with every change, the
-   collector, moving the channels, report emails and their outcome route,
-   the certificate authority field, everything retired. *Verified*: the
-   contract and import tests; a patching alert reaches a webhook in the
-   bundle test; Mailpit now over STARTTLS with the run's authority set in
-   the console.
+6. **Slack and Teams**. *Verified* by hand on real ones.
+7. **Patching through EasyRMM**: the engine's outbox with every change, the
+   collector, moving the channels (Slack and Teams among them, hence after
+   slice 6), report emails and their outcome route, the certificate
+   authority field, everything retired. *Verified*: the contract and import
+   tests; a patching alert reaches a webhook in the bundle test; Mailpit now
+   over STARTTLS with the run's authority set in the console.
 
-Until slice 6, patching's notifications still go out through the engine.
+Until slice 7, patching's notifications still go out through the engine,
+which signs in with a password only: from slice 2 to slice 7, a mail server
+that signs in with an application leaves patching's email and monthly
+reports unsent, and a relay serves both.
 
 ## Testing
 * **Integration** (PostgreSQL, with the race detector and coverage
@@ -1078,11 +1228,18 @@ Until slice 6, patching's notifications still go out through the engine.
     acknowledge and resolve, a policy change, an uninstall, a removal from
     the console, **Remove anyway**, a device only MeshCentral knew, a
     heartbeat's merge as `merged`, each kind of notice), none for a purge
-    or for an update that changes neither status nor acknowledgement;
-    `easyrmm_app` refused an `INSERT` into it; a failure injected after an
+    or for an update that changes neither status nor acknowledgement; a
+    person's acknowledge **in one organization's scope** writing its row
+    (the owner's policy in force); the merge's setting gone after its
+    `DELETE`, so a later deletion in the same transaction reads as
+    `device_removed`; `easyrmm_app` refused an `INSERT` into it and an
+    `UPDATE` of a recorded column; a failure injected after an
     evaluation's changes leaves neither alerts nor rows; a failure in the
     planner leaves alerts committed and rows unplanned; a transient error
-    retried on the next run; a bad row quarantined after 3 runs while the
+    retried on the next run; a statement timeout (`57014`) injected into
+    every run, after 3 of which the planner goes row by row and halves its
+    batch, and the *planning has stopped* notice opening after 10 minutes
+    on a fake clock; a bad row quarantined after 3 runs while the
     others go out, the rows about its subject held behind it, then retry
     and discard each doing what they say; a device deleted while
     `Evaluate` resolves its alert sending one resolution; two servers
@@ -1102,17 +1259,25 @@ Until slice 6, patching's notifications still go out through the engine.
     skipped hour and in a repeated hour, a window across midnight, the
     message at the end; a platform rule ignoring them; *agent removed
     without a request* sent during one.
-  * **site outages** and the fleet-wide hold: all down, one never enrolled,
-    one uninstalled, one coming back first, a straggler, devices still
-    offline when it ends, two channels whose rules match different alerts
-    of the same site; half the devices silent at once, then the hold's
-    end both ways.
+  * **site outages**: all down, one never enrolled, one uninstalled, one
+    coming back first, a straggler, devices still offline when it ends,
+    two channels whose rules match different alerts of the same site; a
+    held `sites.offline` never passed by its `sites.online` nor by a folded
+    alert's own event.
+  * **the fleet-wide hold**: half of the devices online at a window's start
+    silent at once, *Uninstalled* ones not counted; none of it at a
+    restart (the serving floor); organizations' rules sending no offline
+    opening while platform rules do; its end by devices coming back and by
+    a super administrator, sending to organizations only alerts still
+    open.
   * **the sender**: retries on a fake clock, giving up; transient and
     permanent answers; `413` splitting once; a delivery holding its
     channel for an hour, then later ones passing **except those about the
     same alert**, with a `resolved` never ahead of its `opened`; a test
     retrying a held delivery; leases with two workers; the planner and the
-    sender on the same channel at once; fair share (one organization's
+    sender on the same channel at once, while a rule naming the channel is
+    saved and a test to it queued, neither waiting on the channel's lock;
+    fair share (one organization's
     receiver that never answers delays no other organization, and a shared
     channel's deliveries counted against the organization charged); one
     unsent digest per people channel; an opened and resolved pair dropped
@@ -1134,9 +1299,12 @@ Until slice 6, patching's notifications still go out through the engine.
     in logs or `last_error`; the mail server's reply visible to super
     administrators only.
   * **removal reports**: a report matching a sent instruction deletes the
-    device, also after the removal was cancelled; one matching nothing
-    marks it and opens the notice; a re-enrolment with the same host name
-    resolves the notice.
+    device, also after the removal was cancelled, and after it was
+    cancelled and asked for again (a new ID); a report matching an
+    instruction last signed 10 minutes and 50 minutes before; one matching
+    nothing, or a record kept past its hour, marks it and opens the notice;
+    a cancelled instruction never signed again; a re-enrolment with the
+    same host name resolves the notice.
   * sealed values copied to another row do not open; every reveal is
     audited.
   * the offline rule after a restart: an open offline alert stays open, no
@@ -1153,7 +1321,14 @@ Until slice 6, patching's notifications still go out through the engine.
   budget, measured in encoded bytes; signatures checked against the vector
   frozen from the engine's `NotificationRenderer.Sign`.
 * **Mail**: 20 recipients make 20 messages, each with one address in `To`;
-  one refused, the others delivered and the refusal shown.
+  one refused, the others delivered and the refusal shown. `XOAUTH2`: the
+  initial response against the example in Microsoft's documentation as a
+  frozen vector; a fake token endpoint answering a secret and a
+  certificate's assertion; the token reused until 5 minutes before its
+  end, then renewed; a `535` renewing it once; no `XOAUTH2` before TLS or
+  when not offered; neither the secret nor the token in logs or errors;
+  `syncMail` giving the engine no mail server while an application signs
+  in.
 * **HTTP API and console**: permissions for each route; the console's
   tests for every view.
 * **Agent**: the notices' reasons from systemd's state (Linux), from the
@@ -1164,7 +1339,7 @@ Until slice 6, patching's notifications still go out through the engine.
 * **The bundle test**, in a job of its own reusing the images built once:
   * **Mailpit**, bound to `127.0.0.1` on host networking (nothing but the
     edge may listen beyond loopback, as the test checks): plain SMTP on
-    loopback until slice 6, then STARTTLS with a certificate from an
+    loopback until slice 7, then STARTTLS with a certificate from an
     authority made for the run, which the console's mail server names.
   * **A webhook receiver** (a small HTTPS server written for the test,
     recording each request) in a **network namespace of its own**, joined
@@ -1184,7 +1359,7 @@ Until slice 6, patching's notifications still go out through the engine.
     and `easyrmm-meshagent` are stopped (a device is online while either
     reports); the signed `alerts.opened` and the email arrive; both start
     again; the resolutions arrive.
-  * **With slice 4**, the grace set to 10 minutes: the machine is powered
+  * **With slice 5**, the grace set to 10 minutes: the machine is powered
     off through its systemd (`systemctl poweroff` inside it), so its
     container stops with both agents, and stays down 8 minutes, longer
     than the policy plus the 3-minute online window, shorter than the
@@ -1194,7 +1369,7 @@ Until slice 6, patching's notifications still go out through the engine.
     alert already sent to the webhook, the agent is uninstalled on the
     machine: the `uninstalled` resolution and the *agent removed without a
     request* notice arrive.
-  * **With slice 6**: a patching alert from the engine arrives at the same
+  * **With slice 7**: a patching alert from the engine arrives at the same
     receiver.
 * **The contract test** starts the engine's worker beside its API: the
   engine's mail settings follow a change (slice 1); a patching alert on a
@@ -1223,10 +1398,11 @@ Until slice 6, patching's notifications still go out through the engine.
   it chooses with customers; customers' administrators set up their own,
   for their organization only.
 * There is one SMTP client and one HTTP client for notifications, one
-  address policy, one renderer. Until slice 6, there are two senders.
+  address policy, one renderer. Until slice 7, there are two senders.
 * Webhooks are delivered at least once; receivers drop copies by
-  `deliveryId`. Queueing is exactly once, and nothing about an alert
-  arrives before what was queued earlier about it.
+  `deliveryId`. Queueing is exactly once, and nothing about an alert, a
+  notice or a site outage arrives before what was queued earlier about
+  it.
 * Organizations' administrators can have the server make HTTPS requests:
   to public addresses the server reaches by its default route only,
   unless a super administrator approved a destination for that channel.
@@ -1238,6 +1414,20 @@ Until slice 6, patching's notifications still go out through the engine.
   secrets, and the mail server's password when it is set in the console.
 * The MSP's mail relay sends at most what its super administrators allow,
   and account mail always gets through.
+* **Password sign-in to Exchange Online stops working** for a tenant once
+  Microsoft turns SMTP AUTH basic authentication off there: by default at
+  the end of December 2026 for existing tenants, unless the tenant's
+  administrator turns it back on, which Microsoft says administrators will
+  still be able to do; the final removal date is to be announced in the
+  second half of 2027. EasyRMM's mail server configured with a password on
+  such a tenant, in `.env` or the console, is then refused at sign-in:
+  invitations, password resets, email notifications, and the engine's
+  email and monthly reports stop, the mail circuit opens, and the console
+  shows Exchange's answer and points to signing in with an application or
+  to a relay. EasyRMM changes nothing on its own. Releases before slice 2
+  can only sign in with a password. The engine signs in only with a
+  password until slice 7 retires its email, so with an application its
+  email waits for slice 7, and a relay serves both meanwhile.
 * Receivers of the engine's webhooks keep working through the transition;
   they get every alert instead of 25 and a count, silent resolutions and
   reopenings they were not told of before, and new fields. Teams messages
@@ -1273,11 +1463,20 @@ Until slice 6, patching's notifications still go out through the engine.
   EasyRMM's own words and short, defanged names.
 * **A storm**: a power cut at a large site, or EasyRMM unreachable. Site
   outages, digests merged while unsent, ADR-0052's offline rule for
-  restarts, the fleet-wide hold for an EasyRMM nobody can reach, and the
-  restart grace keep it to a few messages per channel, and fair share keeps
-  one organization's storm from delaying another's.
+  restarts, and the restart grace keep it to a few messages per people
+  channel, and fair share keeps one organization's storm from delaying
+  another's. Generic webhooks still get one event per alert, as a PSA tool
+  needs.
+* **The fleet-wide hold is a guess.** It cannot tell EasyRMM unreachable
+  from half of the fleet really down at once (a shared provider, a region,
+  a wide power cut). Either way, while it lasts, organizations' rules send
+  no offline openings, though the console shows the alerts; platform
+  rules do send them, a platform webhook gets every one, and super
+  administrators decide whom to tell. Devices that stay away keep it
+  going until a super administrator ends it, so the notice reminds them.
+  Alerts still open at its end reach organizations then, late.
 * **One bad receiver** holds its channel for an hour at most, and after
-  that only its messages about the same alerts.
+  that only its messages about the same alerts, notices and outages.
 * **A message sent twice** after a crash or a rollback: receivers drop it
   by its delivery ID; the guide says so.
 * **A mail server set wrong in the console** stops notifications,
@@ -1286,11 +1485,19 @@ Until slice 6, patching's notifications still go out through the engine.
   `EASYRMM_SMTP_*` in `.env` takes over when set.
 * **Planning stops**: a row that cannot be planned is quarantined and
   raised, its subject waits, and alerting goes on; an evaluation never
-  fails because of notifications.
+  fails because of notifications. A batch that keeps timing out shrinks to
+  one row at a time, and planning that makes no progress for 10 minutes
+  is raised.
+* **Microsoft's dates may move**, and give no day. Nothing here depends on
+  them but the order of the slices. An application's client secret
+  expires in Entra, unseen by EasyRMM: sign-in then fails and the mail
+  notice says why. Its credential sends as the mailboxes the tenant's
+  administrator gave it; the guide says to give it the sending mailbox
+  only.
 * **Windows' pre-shutdown** is unverified until it is checked on real
   Windows; until then a restarting Windows computer may alert as a plain
   stop would.
-* **Slice 6 changes two products at once.** The engine and EasyRMM ship in
+* **Slice 7 changes two products at once.** The engine and EasyRMM ship in
   one bundle; pending deliveries become outbox items with their IDs, each
   item waits only for its own channels, and a channel that cannot be
   decrypted moves turned off rather than blocking the rest.
