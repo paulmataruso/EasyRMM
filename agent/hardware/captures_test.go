@@ -3,6 +3,7 @@ package hardware
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -62,4 +63,41 @@ func TestCapturedNVMe(t *testing.T) {
 		"DataWritten": read(0), "UnsafeShutdowns": read(0),
 		"SMARTStatus": notKept, "Thresholds": notKept,
 	})
+}
+
+// TestCapturedATA reads QEMU 10.2.1's ide-hd from its captured answers.
+// The register answers, logged as text in the same run, are passing's
+// and active's: RETURN STATUS 4Fh/C2h, CHECK POWER MODE count FFh. QEMU
+// aborts SMART READ LOG 00h and READ LOG EXT, as the fake does every
+// command it was not given.
+func TestCapturedATA(t *testing.T) {
+	d := &fakeATA{t: t, answers: map[ataCommand]answer{
+		ataPowerMode:                      {regs: active},
+		smartReturnStatus:                 {regs: passing},
+		ataIdentify:                       {data: captured(t, "qemu-10.2.1-ide-hd-identify-device")},
+		smartReadData:                     {data: captured(t, "qemu-10.2.1-ide-hd-smart-read-data")},
+		smartReadThresholds:               {data: captured(t, "qemu-10.2.1-ide-hd-smart-read-attribute-thresholds")},
+		smartReadLog(logSummaryErrors, 1): {data: captured(t, "qemu-10.2.1-ide-hd-smart-read-log-01h")},
+	}}
+	h, err := readATA(d, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Name, h.ReadAt, h.Route = "sda", time.Now(), d.route()
+	checkHealth(t, h)
+	wantFacts(t, h, map[string]agentproto.Fact{
+		"SMARTStatus": read(agentproto.SMARTPassed), "Temperature": read(31), "PowerMode": read(0xFF),
+		"DriveErrors": read(0), "Thresholds": read(7),
+		"Wear": notKept, "TemperatureLimit": notKept, "CriticalWarning": notKept,
+	})
+	var ids []uint8
+	for _, a := range h.Attributes {
+		ids = append(ids, a.ID)
+		if a.Threshold == nil {
+			t.Errorf("attribute %d without its threshold", a.ID)
+		}
+	}
+	if want := []uint8{1, 3, 4, 5, 9, 12, 190}; !slices.Equal(ids, want) {
+		t.Errorf("attributes %v, want %v", ids, want)
+	}
 }

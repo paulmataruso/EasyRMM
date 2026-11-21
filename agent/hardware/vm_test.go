@@ -21,11 +21,15 @@ import (
 // The machine test's disks. QEMU's NVMe controller keeps its own model,
 // "QEMU NVMe Ctrl": up to 10.2 at least it has no property to change it.
 // The second SATA disk's model is a neutral name, a stand-in for a real
-// drive's, so that the agent reads it as it would a real disk.
+// drive's, so that the agent reads it as it would a real disk. It fits in
+// 16 characters: Linux lists a SATA disk's model as SCSI's product
+// identification, the first 16 characters of the drive's.
+const standIn = "EasyRMM Stand-in"
+
 var vmDisks = []vmtest.Disk{
 	{ID: "nvme0", Kind: vmtest.DiskNVMe, Serial: "EASYRMMNVME01"},
 	{ID: "sata0", Kind: vmtest.DiskSATA, Serial: "EASYRMMSATA01"},
-	{ID: "sata1", Kind: vmtest.DiskSATA, Serial: "EASYRMMSATA02", Model: "EasyRMM Stand-in Disk"},
+	{ID: "sata1", Kind: vmtest.DiskSATA, Serial: "EASYRMMSATA02", Model: standIn},
 }
 
 // TestDisksOnMachines runs the machine test (machine_test.go) as root
@@ -145,7 +149,7 @@ func disksOnMachine(t *testing.T, image string, bin []byte) {
 		}
 		checkRead(t, "the probe of QEMU's SATA disk", p, agentproto.ProtocolATA, "sg")
 
-		h, _, ok = byModel(first, "EasyRMM Stand-in Disk", "EASYRMMSATA02")
+		h, _, ok = byModel(first, standIn, "EASYRMMSATA02")
 		if !ok {
 			t.Fatalf("no stand-in SATA disk listed: %+v", first.Disks)
 		}
