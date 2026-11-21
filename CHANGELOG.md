@@ -71,9 +71,8 @@ All notable changes to this project are documented here. The format follows
   directories under `.env`'s data root (rerunning `setup.sh` without
   `--data-root` used the default one), and issues no Authentik invitation.
   The upgrade guide now uses it (ADR-0052).
-- **The server can be held by the updater** (ADR-0052's server side; the
-  updater itself is not built yet). `setup.sh` makes
-  `${EASYRMM_DATA_ROOT}/updater/status`, root's with mode 755, which the
+- **The server can be held by the updater** (ADR-0052's server side).
+  `setup.sh` makes `${EASYRMM_DATA_ROOT}/updater/status`, root's with mode 755, which the
   server and the engine's worker mount read-only at
   `/run/easyrmm-updater`. While a file
   named `hold` exists there, the server answers its health check and
@@ -103,6 +102,28 @@ All notable changes to this project are documented here. The format follows
   major version and Authentik. A release also publishes the Sigstore
   bundle of its attestation beside the manifest, so that verifying needs
   no GitHub API.
+- **The host updater, `easyrmm-updater`** (ADR-0052, feature 4a). Run as
+  root, `setup.sh` installs it with a systemd service and an hourly timer,
+  configured in `/etc/easyrmm/updater.conf` (`--no-updater` installs
+  none; `--auto-upgrade` turns automatic upgrades on, which are off
+  otherwise). `easyrmm-updater upgrade [version]` verifies the release or
+  edge build against its Sigstore attestation for this repository's
+  workflow, checks the bundle and every image against its manifest, pulls
+  while the server runs, stops it, backs up the data root (PostgreSQL's
+  whole cluster with it, so Authentik's database too where it is
+  installed) and the deployment, checking each copy against its source,
+  sets the new bundle up with its `setup.sh --upgrade`,
+  starts it held and confirms it; when the new version does not start, it
+  restores the backup and records the rollback in the audit log.
+  `easyrmm-updater rollback` undoes a confirmed upgrade within 24 hours,
+  after saying what it loses; `status` and `check` change nothing. A
+  version whose manifest names a required upgrade stop (`upgradeFrom`)
+  above the lower of the running server's version and the updater's own
+  is refused before anything stops, naming the version to install first;
+  automatic upgrades install that stop first. Each bundle carries it; a
+  clone builds it with `make updater`. Guide:
+  [the host updater](docs/operations/updater.md). The console's requests
+  (feature 4b) come later.
 - **Hardening checks for Linux computers** (ADR-0051, its first part). A
   technician can have the agent on a Linux device check 14 areas: SSH,
   the firewall, fail2ban, kernel settings, audit rules, file permissions,

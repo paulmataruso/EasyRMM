@@ -7,6 +7,26 @@ holds the Compose file, `setup.sh` and the files they use, in the
 repository's layout. An installation from a clone and one from a bundle
 upgrade the same way.
 
+## With the updater
+
+On a host where `setup.sh` installed the [updater](updater.md):
+
+```bash
+sudo easyrmm-updater check             # what the channel offers, verified
+sudo easyrmm-updater upgrade           # the newest; or: upgrade v1.2.3
+sudo easyrmm-updater status
+```
+
+It verifies the release, backs up, upgrades and checks as this page does
+by hand, and when the new version does not start it brings the previous
+one back by itself. `sudo easyrmm-updater rollback` undoes a confirmed
+upgrade within 24 hours. Read the release notes and decide how agents
+follow first, as [below](#before-you-start); the updater takes its own
+backup.
+
+The rest of this page is the manual upgrade. Run as root, its `setup.sh`
+installs the updater on a host that lacks it.
+
 ## Before you start
 
 1. **Read the release notes**, the release's section of `CHANGELOG.md`.
@@ -28,6 +48,7 @@ From a clone:
 cd /path/to/easyrmm
 git fetch --tags
 git checkout easyrmm-v1.2.3
+make updater    # optional, needs Go: setup.sh then installs the updater
 cd deploy
 ```
 

@@ -1,0 +1,12 @@
+# Starts easyrmm-updater.service every hour (ADR-0052). The attempt acts
+# only when automatic upgrades are on, in their hours.
+[Unit]
+Description=EasyRMM updater: hourly automatic upgrade check
+Documentation=https://github.com/paulmataruso/EasyRMM/blob/main/docs/operations/updater.md
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=15min
+
+[Install]
+WantedBy=timers.target

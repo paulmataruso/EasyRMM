@@ -6,10 +6,14 @@
   server's side, `hold` and the offline rule (both amended 2026-11-21,
   below; the rule only delays openings); and the engine's, its hold on
   automatic agent updates and its presence rule, which ship in its next
-  release. The updater is not built yet; until it exists, the test on
-  `main` verifies each published build as the updater will before `edge`
-  moves, and the upgrade from the previous edge build
-  ([Testing](#testing)) joins it with the updater.
+  release. The updater is implemented (feature 4a): `easyrmm-updater`
+  with its service and timer, installed by `setup.sh`; verification, the
+  backup, the upgrade, the rollback and the status, as amended below
+  (2026-11-21, with the implementation). Not built: requests from the
+  console (feature 4b), and the test on `main` that upgrades from the
+  previous edge build with the updater ([Testing](#testing)); until it
+  is, that test verifies each published build as the updater does before
+  `edge` moves.
 * Builds on: [releasing](../../development/releasing.md) (releases, their
   attestations and manifest), [ADR-0027](0027-agent-updates.md) (agent
   updates), [ADR-0044](0044-authentik-when-chosen.md) (Authentik's files)
@@ -89,6 +93,14 @@ What exists, and what it means here:
 * **Commands**: `easyrmm-updater status`, `check` (what the channel
   offers, verified, changing nothing), `upgrade [version]`, `rollback`.
 
+*Amended 2026-11-21, with the implementation:* the updater rewrites one
+line of its configuration, `deployment`, when an upgrade or a rollback
+moves the deployment to another directory; nothing else writes it.
+`setup.sh` installs the updater from `deploy/updater/` (a bundle carries
+it for x86-64 and ARM64; a clone builds it with `make updater`), and
+`--no-updater` is the one option `--upgrade` takes along. No path unit is
+installed until feature 4b.
+
 ### Channels and versions
 * **stable** takes full releases; **pre-release** also release
   candidates; **edge** also builds of `main`. A version outside the
@@ -110,7 +122,11 @@ What exists, and what it means here:
   Versions are written as the server reports them, with the `v`.
 * **Never down**, except a rollback to the version the updater itself
   recorded as the previous one.
-* **No retrying failures**: a version that failed or was rolled back is
+* **No retrying failures** (*amended 2026-11-21, with the
+  implementation:* a failure that a later attempt could get past, such as
+  Sigstore, the network or the registry not answering, or too little room
+  on a disk, ends the attempt before anything stops and is not counted;
+  any other failure is): a version that failed or was rolled back is
   skipped by automatic upgrades until a newer one appears or an operator
   asks for it by name.
 
@@ -221,6 +237,42 @@ and the attempt ends with the reason.
    bundle directories other than the current and the previous are
    removed, with their `.env`, which holds the encryption key.
 
+*Amended 2026-11-21, with the implementation:*
+* **Set up** carries `.env` across with `EASYRMM_IMAGE` set as well as
+  `EASYRMM_VERSION`: the manifest names the server by repository, tag and
+  digest ([the manifest](../edge-manifest.md)), and the two make that
+  reference. After `setup.sh --upgrade` the updater sets both again and
+  checks `docker compose config --images` against the manifest.
+* **Start held** starts the services Compose restarts with
+  `up --wait`, and one-shot services nothing depends on with
+  `up --no-deps` and `compose wait`, since `--wait` fails when such a
+  service exits, even successfully. Then the server must pass its own
+  readiness check (`easyrmm-server healthcheck`, `/readyz` on its loopback
+  health port) and report the new version; nothing goes through its
+  public edge.
+* **The backup** is the data root without `updater/` (the status the
+  updater is writing) and failed data roots kept for diagnosis
+  (`.failed-*`), the deployment's `deploy/` and `docker/` directories, and
+  `updater.conf`, with a `backup.json` written last; one without it is
+  incomplete. A failure before the backup completes starts the previous
+  version again from where it stopped. Every copy, into a backup and back
+  out of one, is checked against its source entry by entry (type, mode,
+  owner, a file's size, a link's target). The data root holds every
+  volume of `deploy/docker-compose.yml` that holds state: PostgreSQL's
+  whole cluster, copied stopped, so every database in it (EasyRMM's, the
+  engine's and, with `--with-authentik`, Authentik's: its users, their
+  second factors, the key pair that signs EasyRMM's ID tokens), and the
+  server's, MeshCentral's, the engine's and Authentik's directories. No
+  database is dumped: a stopped cluster's files are the whole of it,
+  roles included, which a dump of each database is not. `setup.sh` puts
+  `EASYRMM_TLS_DIR`, `manual` TLS mode's certificate, in the data root
+  too. Outside are the updater's own status and `EASYRMM_TLS_DIR` if the
+  operator points it elsewhere: mounted read-only, never changed by an
+  upgrade. A unit test reads the Compose file's volumes and fails on any
+  it does not account for.
+* **The engine's hold** is `agent-updates-held-until` in the status
+  directory: one RFC 3339 time in UTC, root's, mode 644, written atomically.
+
 ### Rollback
 * **During an upgrade** (any failure after step 3): every service
   stopped. If PostgreSQL starts, the failed database's highest audit ID
@@ -249,6 +301,16 @@ and the attempt ends with the reason.
   contents: forwarding resumes from the backup's position. Records of the
   discarded version keep IDs no later record reuses.
 * Refused across a job key rotation's cut-over (ADR to come, plan F0).
+
+*Amended 2026-11-21, with the implementation:* the restore starts
+PostgreSQL alone twice: once from the failed data root, to read its
+highest audit ID and chain head, and once from the restored one, to move
+the sequence and append the record before anything else starts; only
+then does every service start. The ADR's order (the previous version
+started, then the sequence moved) would let a starting server write an
+audit record with an ID the discarded version used. The restore touches
+only the host: it stops, copies, writes the audit record and starts, and
+contacts no agent, so it does not depend on agents being reachable.
 
 ### Downtime and alerts
 From step 3 to step 7 nothing answers: a backup and a start, minutes on
@@ -318,6 +380,61 @@ Production installs upgrade when someone chooses to.
   channel, each refused.
 * **The updater updating itself**, from the second release that has one.
 * Then the owner's test instance on the edge channel.
+
+*Amended 2026-11-21, with the implementation:* required upgrade stops,
+decided in review for ADR-0061, whose amendment to this ADR ("Required
+upgrade stops") is still on that ADR's branch. A manifest may name in
+`upgradeFrom` the lowest version a deployment must already run before it
+installs that one: a release or a release candidate below it, never an
+edge build. At step 1 the updater compares it with the lower of the
+running server's version and its own, which came with the bundle the
+deployment was last set up from (decided in review: an image changed by
+hand can put the server above it), in semantic versioning's precedence,
+as `scripts/release/version.sh newer` does. Below it, the version is
+refused before anything stops, naming the version to install first, and
+the refusal does not count as the version failing. That version is the
+lowest the deployment's own channel offers at or above `upgradeFrom` and
+below the version that names it, another channel's (the pre-release
+channel's, a release candidate on the stable channel) only when that
+channel offers none (decided in review), and a stop's own stop is followed
+the same way. Asked for by name, such a stop is taken on any channel.
+Automatic upgrades install it first, as a version of its own; the next
+run, by the stop's own updater, goes on. They never go down to a stop
+below the running server: that deployment is upgraded by hand. A manifest
+of a later `schemaVersion` is read as this one, and fields the updater
+does not know are ignored, so that an updater can always install the
+release that carries its successor. Not built: `setup.sh --upgrade`'s own
+refusal of the same jump, and the version the updater would pass it.
+
+*Amended 2026-11-21, with the implementation:* what is built so far.
+Unit tests drive every step against a fake Docker, and verification
+against sigstore-go's virtual Sigstore, each certificate field refused
+in turn; integration tests run the rollback's SQL against the migrated
+schema, and take a real PostgreSQL cluster holding EasyRMM's, the
+engine's and Authentik's databases, with Authentik's directories, through
+a backup, a change and a restore. Against real artifacts, an integration
+test takes the first edge build main's CI published, kept byte for byte
+with Sigstore's public-good trusted root, through an upgrade's check,
+and refuses seven changes to it before anything stops;
+`make test-updater-published` takes the build ghcr.io's `edge` tag names
+now the same way, the trusted root fetched through TUF. The upgrade runs
+as a machine test
+(`make test-vm-updater`, internal/vmtest): a Debian 12 machine with
+Docker, installed from a bundle with `setup.sh`, upgraded to a second
+bundle, the confirmed upgrade rolled back, then an upgrade to a third
+bundle that fails at the held start and is rolled back. That third
+bundle's server fails its health check, not a held port: a server that
+cannot bind restarts until the 20-minute limit. The machine runs without
+Authentik. It has run on an emulated machine only (no KVM on the host):
+two runs failed at the install, PostgreSQL's and the engine's first starts
+outlasting their health checks, before the test's bundles gave every
+service an hour there; the third passed the install, the upgrade and the
+rollback after the confirm, but for the test's own expectation of the
+rollback's result, since corrected, and its time limit ended the third
+upgrade before it finished. Not
+built yet: the CI job, verification against a real release,
+links and named pipes planted through a backup and a restore, requests
+(4b), and the updater updating itself across releases.
 
 ## Consequences
 * An operator upgrades and rolls back from the console (4b), or with one

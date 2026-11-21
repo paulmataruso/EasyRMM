@@ -477,6 +477,10 @@ func (vm *VM) HostPort(guestPort int) int {
 	return p
 }
 
+// Emulated reports whether QEMU emulates the machine (no KVM), which runs
+// it many times slower than a KVM host does.
+func (vm *VM) Emulated() bool { return vm.m.accel == "tcg" }
+
 // Close stops QEMU and deletes the machine's disk. Boot has the test call
 // it at its end; calling it again does nothing.
 func (vm *VM) Close() error {

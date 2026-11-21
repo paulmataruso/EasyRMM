@@ -1,0 +1,19 @@
+# The EasyRMM host updater (ADR-0052; docs/operations/updater.md): one
+# attempt, started by easyrmm-updater.timer every hour. It upgrades only
+# when /etc/easyrmm/updater.conf turns automatic upgrades on, in their
+# hours; `easyrmm-updater upgrade` does the same by hand.
+[Unit]
+Description=EasyRMM updater: one automatic upgrade attempt
+Documentation=https://github.com/paulmataruso/EasyRMM/blob/main/docs/operations/updater.md
+ConditionPathExists=/etc/easyrmm/updater.conf
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/easyrmm-updater upgrade --automatic
+# An attempt runs to its end, or to its rollback: a pull, a backup of the
+# data root and a start of up to 20 minutes.
+TimeoutStartSec=infinity
+TimeoutStopSec=45min

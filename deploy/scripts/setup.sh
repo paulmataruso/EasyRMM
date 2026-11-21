@@ -23,9 +23,17 @@
 # administrator's invitation link. --new-invitation prints another.
 #
 # --upgrade, run in a new release's deploy/ directory with the deployment's
-# .env copied in, takes every setting from that .env (no other options, and
-# nothing is asked), sets the release's server version, lists settings the
-# release adds, and gives the data directories their owners (ADR-0052).
+# .env copied in, takes every setting from that .env (no other options but
+# --no-updater, and nothing is asked), sets the release's server version,
+# lists settings the release adds, and gives the data directories their
+# owners (ADR-0052).
+#
+# Run as root, setup.sh installs the host updater (ADR-0052;
+# docs/operations/updater.md): /usr/local/sbin/easyrmm-updater from
+# deploy/updater/ (a release's bundle carries it; a clone builds it with
+# `make updater`), its systemd units, and /etc/easyrmm/updater.conf naming
+# this deployment. --no-updater installs none. --auto-upgrade turns its
+# automatic upgrades on (they are off unless something turns them on).
 #
 # An existing .env is never overwritten (its secrets protect existing data):
 # setup.sh only adds secrets that later versions need and it lacks, and
@@ -51,6 +59,8 @@ authentik_hostname=""
 admin_email=""
 new_invitation=false
 upgrade=false
+install_updater=true
+auto_upgrade=false
 nargs=$#
 
 usage() {
@@ -76,6 +86,9 @@ while [[ $# -gt 0 ]]; do
     --admin-email) admin_email="${2:-}"; shift 2 ;;
     --new-invitation) new_invitation=true; shift ;;
     --upgrade) upgrade=true; shift ;;
+    # The one option --upgrade takes along: the updater runs it so.
+    --no-updater) install_updater=false; nargs=$((nargs - 1)); shift ;;
+    --auto-upgrade) auto_upgrade=true; shift ;;
     -h|--help) usage 0 ;;
     *) echo "unknown option: $1" >&2; usage 2 ;;
   esac
@@ -242,7 +255,7 @@ fi
 # --upgrade: the options the deployment was installed with, read back from
 # the .env that install wrote.
 if [[ "$upgrade" == true ]]; then
-  [[ $nargs -eq 1 ]] || die "--upgrade takes no other options: every setting comes from .env"
+  [[ $nargs -eq 1 ]] || die "--upgrade takes no other options but --no-updater: every setting comes from .env"
   [[ $(id -u) -eq 0 ]] || die "--upgrade needs root (sudo)"
   [[ -e .env ]] || die "--upgrade needs the deployment's .env here: copy it from the release you are upgrading from"
   url=$(env_value EASYRMM_PUBLIC_URL)
@@ -428,6 +441,87 @@ if [[ "$upgrade" == true ]]; then
   [[ -z "$added" ]] || echo "Settings in .env.example that .env lacks (copy any you need): ${added}"
 fi
 
+# --- The host updater (ADR-0052) -------------------------------------------
+# updater_install installs easyrmm-updater, its units and its configuration
+# for this deployment, as root. Each file is written beside its place and
+# renamed into it. An existing configuration keeps every setting but the
+# deployment (this directory), and automatic upgrades with --auto-upgrade.
+updater_conf=/etc/easyrmm/updater.conf
+updater_install() {
+  local arch bin deployment tmp auto
+  case "$(uname -m)" in
+    x86_64) arch=amd64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+    *)
+      echo "The updater: there is none for $(uname -m); not installed."
+      return
+      ;;
+  esac
+  bin="updater/easyrmm-updater-linux-${arch}"
+  if [[ ! -f "$bin" ]]; then
+    echo "The updater: $(pwd)/${bin} is missing (a Git clone builds it with make updater); not installed."
+    return
+  fi
+  if [[ ! -d /run/systemd/system ]]; then
+    echo "The updater: this host does not run systemd; not installed."
+    return
+  fi
+  deployment=$(pwd -P)
+  if [[ ! "$deployment" =~ ^/[A-Za-z0-9_./+@-]*$ ]]; then
+    echo "The updater: it takes a deployment directory of letters, digits and ._+@-/ only, not ${deployment}; not installed."
+    return
+  fi
+  updater_put 0755 "$bin" /usr/local/sbin/easyrmm-updater
+  updater_put 0644 updater/easyrmm-updater.service /etc/systemd/system/easyrmm-updater.service
+  updater_put 0644 updater/easyrmm-updater.timer /etc/systemd/system/easyrmm-updater.timer
+  [[ -d /etc/easyrmm ]] || install -d -m 0755 -o root -g root /etc/easyrmm
+  tmp=$(mktemp /etc/easyrmm/.updater.conf.XXXXXX)
+  if [[ -f "$updater_conf" && ! -L "$updater_conf" ]]; then
+    awk -v d="$deployment" -v auto="$auto_upgrade" '
+      /^[ \t]*deployment[ \t]*=/ { print "deployment = " d; seen_d = 1; next }
+      auto == "true" && /^[ \t]*auto_upgrade[ \t]*=/ { print "auto_upgrade = yes"; seen_a = 1; next }
+      { print }
+      END {
+        if (!seen_d) print "deployment = " d
+        if (auto == "true" && !seen_a) print "auto_upgrade = yes"
+      }' "$updater_conf" > "$tmp"
+  else
+    auto=no
+    [[ "$auto_upgrade" != true ]] || auto=yes
+    cat > "$tmp" <<CONF
+# The EasyRMM host updater (docs/operations/updater.md). Root's, mode 600:
+# the server never writes it.
+deployment = ${deployment}
+# stable (full releases), pre-release (also release candidates) or edge
+# (also builds of main, for test instances).
+channel = stable
+# The hourly timer upgrades to the newest version of the channel, in the
+# hours given (the host's time zone, from-to: 2-5 is 02:00 to 05:00).
+auto_upgrade = ${auto}
+auto_upgrade_hours = 2-5
+backup_dir = /var/backups/easyrmm-updater
+CONF
+  fi
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$updater_conf"
+  systemctl daemon-reload
+  systemctl enable --now easyrmm-updater.timer > /dev/null 2>&1 ||
+    echo "The updater: systemctl could not start easyrmm-updater.timer." >&2
+  auto=$(sed -n 's/^[ \t]*auto_upgrade[ \t]*=[ \t]*//p' "$updater_conf" | tail -n 1)
+  echo "The updater: installed as /usr/local/sbin/easyrmm-updater, configured in ${updater_conf}" \
+    "(automatic upgrades: ${auto:-no}). See docs/operations/updater.md."
+}
+
+# updater_put MODE SOURCE TARGET: SOURCE to TARGET, root's, renamed into place.
+updater_put() {
+  install -m "$1" -o root -g root "$2" "${3%/*}/.${3##*/}.new"
+  mv -f "${3%/*}/.${3##*/}.new" "$3"
+}
+
+if [[ $(id -u) -ne 0 && "$install_updater" == true ]]; then
+  echo "Not running as root: the updater (easyrmm-updater) is not installed. Run setup.sh with sudo to install it." >&2
+fi
+
 if [[ $(id -u) -ne 0 ]]; then
   echo "Not running as root: create these directories yourself:" >&2
   echo "  ${data_root}/server (owner 65532:65532, mode 700)" >&2
@@ -462,6 +556,7 @@ done
 # its health check and nothing else.
 install -d -m 0755 -o root -g root "$data_root/updater" "$data_root/updater/status"
 echo "Data directories ready under ${data_root}."
+[[ "$install_updater" != true ]] || updater_install
 if [[ "$with_authentik" == true ]]; then
   authentik_files
   if [[ "$upgrade" != true ]]; then

@@ -79,6 +79,12 @@ floors=(
   "server/internal/meshcentral             85"
   "server/internal/remote                  88"
   "server/cmd/easyrmm-server               80"
+  # The host updater (ADR-0052): it runs as root, verifies what it
+  # installs, and replaces the whole deployment.
+  "updater/internal/release                90"
+  "updater/internal/fetch                  90"
+  "updater/internal/host                   80"
+  "updater/cmd/easyrmm-updater             75"
   # The endpoint agent. Its end-to-end run in a container is not
   # instrumented; these floors come from its unit tests.
   "agent/client                            90"

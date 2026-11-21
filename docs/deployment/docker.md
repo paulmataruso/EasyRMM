@@ -52,6 +52,10 @@ its `.env.example` already names that release's image.
 `setup.sh` writes `deploy/.env` (mode 600) with freshly generated database
 passwords and the encryption key, and creates the data directories with the
 ownership the containers expect. It never overwrites an existing `.env`.
+Run as root, it also installs the [host updater](../operations/updater.md),
+which upgrades the deployment and rolls it back; `--no-updater` installs
+none. A bundle carries the updater; from a clone, build it first with
+`make updater` (Go needed), or `setup.sh` says it is missing and goes on.
 
 When the server starts with an empty database it writes a one-time **setup
 token** to `/srv/easyrmm/server/setup-token` and logs where it is. Open
