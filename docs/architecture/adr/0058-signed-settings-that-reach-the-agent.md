@@ -7,7 +7,10 @@
   transport, storage, and tests. Revised again after its second check:
   documents carry only the keys the agent reported, a heartbeat without
   the report changes nothing, samples are spaced, and writes are limited
-  per caller.
+  per caller. Revised a third time after the final check: metrics spaced
+  on any heartbeat, schema versions that only widen, a refusal only for
+  the envelope or an unreported key, and instances of two releases on one
+  database.
 * Refines: [ADR-0015](0015-enrollment-and-meshagent-delivery.md) (a
   heartbeat every 60 seconds, l. 46–47; online within three minutes,
   l. 76) and [ADR-0019](0019-monitoring-and-alerts.md) (measurements once a
@@ -150,8 +153,9 @@ default, a customer's, a site's, one computer's.
   given to Site Administrators and so to Organization and Super
   Administrators (`siteAdminPerms`). Log collection's keys name their own
   (feature 3).
-* **One exception, from the owner's words** ("the user can choose in the
-  device settings what they want to use"): `agent.transport` on one device
+* **One exception, decided in review** after the owner's words ("the user
+  can choose in the device settings what they want to use"):
+  `agent.transport` on one device
   needs `device.edit`, which technicians hold (`technicianPerms`). At a
   site or an organization it needs `device.configure`, like every other
   key, and every other key keeps its permission at every scope. A value
@@ -211,9 +215,10 @@ sign-in's and a few account actions', `server/internal/auth/ratelimit.go`):
   reads.
 * **`agent_device_state`**: one row per enrolled device, deleted with it,
   with its organization and site for row-level security: the capabilities
-  its agent last reported, with the build that reported them
-  (`facts.agentSha256`); the last document's version and hash and when
-  it was issued; the version the agent last reported applying, its hash,
+  its agent last reported, with the build that reported them (below);
+  the last document's version and hash, when it was issued and under
+  which version of the catalogue (it rises with every release that changes
+  the catalogue); the version the agent last reported applying, its hash,
   when, and the problems it reported; and how many heartbeats it has sent
   since the current version was issued without reporting it applied. Not
   on `devices`, whose `updated_at` moves only for real edits.
@@ -239,8 +244,8 @@ sign-in's and a few account actions', `server/internal/auth/ratelimit.go`):
   agent states its capabilities in its signed heartbeat: `capabilities`,
   with `accepts`, the signed messages it takes (`settings.v1`; ADR-0059's
   `channel.v1`), and `settings`, each key of its catalogue with the
-  version of that key's schema (a key's schema version rises whenever the
-  values it accepts change). The server issues documents only to a device
+  version of that key's schema (it rises whenever the key accepts more;
+  *Unknown and invalid*). The server issues documents only to a device
   whose last report lists `settings.v1`, and puts in them only keys that
   report lists, with values valid under the reported schema version, as
   ADR-0009 (amended, PR #52) requires of a signed instruction: nothing in
@@ -263,17 +268,25 @@ sign-in's and a few account actions', `server/internal/auth/ratelimit.go`):
   does not know what the agent holds) and counts toward nothing, *Not
   applied* included. When its answer is of level 2 or higher, the agent
   sends its next heartbeat within 10 seconds, with the report. The last
-  report holds while the heartbeat's facts name the build that sent it
-  (`agentSha256`); after a change of build without a report, the device
-  counts as one whose agent reports nothing until it reports.
+  report holds while the heartbeat's facts name the build that sent it:
+  its `agentSha256`, or, from an agent that sends none because it could
+  not read its own executable (`update.Self` failing, `updater` in
+  `agent/cmd/easyrmm-agent/main.go`), its `agentVersion` with the empty
+  hash. After a change of build without a report, the device counts as
+  one whose agent reports nothing until it reports.
 * **Issued lazily, under a lock.** At each heartbeat that carries the
   report, the server computes the device's effective settings for the
   keys its agent reported (one indexed query over at most four rows per
   key) and their hash. It reads the device's `agent_device_state` row
   `FOR UPDATE`, and when the hash differs it issues a new version and
   records it in the same transaction, so two heartbeats at once (a wake's
-  and the regular one) cannot issue one version with two contents. A change for an
-  organization writes nothing per device: each picks it up at its next
+  and the regular one) cannot issue one version with two contents. An
+  instance never replaces a document issued under a newer catalogue than
+  its own: instances of two releases share one database only for the
+  length of a rolling upgrade, and the newer one's documents stand (an
+  ADR-0052 rollback restores the database, so it never meets this rule).
+  A change for an organization writes nothing per device: each picks it
+  up at its next
   heartbeat, or at once when it holds ADR-0059's live connection (a
   `checkin` wake, spread as above).
 * **Never to a device being removed.** An answer that carries an
@@ -298,10 +311,12 @@ sign-in's and a few account actions', `server/internal/auth/ratelimit.go`):
 * **The agent refuses** a document with a version outside the range or
   lower than the one it applied, one with the same version and other
   content (the same document again changes nothing), one for another
-  device, one with a field it does not know at any level, a key its
-  catalogue lacks included (ADR-0009: signed instructions stay strict),
-  and one whose signature does not verify. It keeps its settings and
-  reports the refusal.
+  device, one with a field of the envelope it does not know or a key in
+  `settings` it did not report (ADR-0009: signed instructions stay
+  strict), and one whose signature does not verify. It keeps its settings
+  and reports the refusal, its reason naming the field or key; the server
+  logs it at error level. What is inside a reported key's value is
+  judged per key (*Unknown and invalid*).
 * **No expiry.** A setting is state; the version, not the time, keeps an
   old one from coming back.
 
@@ -317,6 +332,12 @@ sign-in's and a few account actions', `server/internal/auth/ratelimit.go`):
   device ID included. At start the agent applies it only if that ID is the
   one in `agent.json`; an agent enrolled again as another device starts
   from its built-in defaults.
+* **Moved back to an older build** (its update rolled back, ADR-0027, or
+  a rolled-back server's rollout), the agent applies its saved document,
+  verified when it arrived, for the keys this build knows, each judged
+  against this build's schema as below, and its built-in defaults for the
+  rest. It then reports its own keys and schema versions, and the server
+  issues for those.
 * **Restarts and outages keep the settings.** At start the agent applies
   its saved settings before its first heartbeat; a server it cannot reach
   changes nothing.
@@ -341,15 +362,23 @@ sign-in's and a few account actions', `server/internal/auth/ratelimit.go`):
 * **A key the agent does not know is never sent**: the server sends only
   the keys the agent reported (above). One that arrives all the same means
   a bug, and the whole document is refused (above).
+* **Schema versions only widen.** A new version of a key's schema may
+  accept more than the last (another enumeration value, wider bounds,
+  another optional field) and never less; a change that would narrow a
+  key is a new key. The server checks a value against the highest schema
+  version it knows at or below the one the agent reported, so a server
+  rolled back, which may know only older versions than its agents, still
+  sends only values they accept.
 * **A value the agent's schema does not allow is never sent either**: the
-  server checks it against the schema version the agent reported and
-  leaves the key out instead. As a guard against a bug on either side, an
-  **invalid value** for a known key (the wrong type, a value of an
-  enumeration the agent does not know) is not applied: the agent keeps
-  the value it had, from its previous document or its built-in default,
-  and reports `invalid`; **an integer out of bounds** is brought within
-  the agent's own bounds and reported as `clamped`. The rest of the
-  document applies, and the server logs either report as a warning.
+  server leaves the key out instead. As a guard against a bug on either
+  side, anything inside a key's value that fails the agent's schema (the
+  wrong type, a value of an enumeration it does not know, a field of a
+  structured value it does not know) makes that key alone **invalid**: it
+  is not applied, the agent keeps the value it had, from its previous
+  document or its built-in default, and reports `invalid`. **An integer
+  out of bounds** is brought within the agent's own bounds and reported as
+  `clamped`. The rest of the document applies, and the server logs either
+  report as a warning naming the key.
 * The server checks every write against its catalogue, and every document
   against the agent's report, so the console can say before anything is
   sent which keys a device's agent cannot take.
@@ -442,9 +471,13 @@ today; for the transport, no live connection.
   second of a process). Two rules keep them out of monitoring, so that a
   device that has just come back still cannot trip a policy on two
   samples taken seconds apart (ADR-0019):
-  * the agent sends `metrics` only with its regular heartbeats, so
-    processor use is measured over an interval, not over the seconds
-    since an extra one;
+  * the agent attaches `metrics` to a heartbeat, regular or extra, made
+    at least 0.8 of its interval after the last heartbeat that carried
+    them, and to none sooner. Processor use is then measured over about
+    an interval, and wakes or reconnections that keep moving the regular
+    schedule (a `checkin` wake restarts it, ADR-0059) cannot stop
+    metrics: wakes every half interval still leave one heartbeat with
+    metrics per interval or so;
   * the server stores a sample only when at least 0.8 of the kept
     interval has passed since the device's last stored sample; the
     device's latest measurements (`device_metrics`) still follow every
@@ -515,26 +548,33 @@ today; for the transport, no live connection.
 `agent_setting.set` and `agent_setting.cleared`, with the key, the scope and
 its target, the old and new value and whether it is enforced;
 `agent_setting.limits_set` for the platform's limits. Agents applying
-documents are not audited; the device's state shows it. A refusal reported
-by an agent is logged by the server as a warning: it means a bug or an
-answer changed on the way.
+documents are not audited; the device's state shows it. A refused document
+reported by an agent is logged by the server at error level, with the
+field or key its reason names: it means a bug or an answer changed on the
+way. An `invalid` or `clamped` key is logged as a warning.
 
 ## Testing
 * **Unit** (`internal/agentproto`, also on CI's Windows runner): signing
   and verifying; refused: another device, a lower version, a version
   outside 1 to 2^53 − 1, the same version with other content, an unknown
-  field at any level or a key the agent's catalogue lacks, a forged
-  signature; invalid values kept, integers clamped, a known key omitted
-  taking its default.
+  envelope field or an unreported key, a forged signature; a value that
+  fails its key's schema, at any depth, making that key alone invalid and
+  keeping its value; integers clamped; a known key omitted taking its
+  default.
 * **The agent** (on Linux, and its tests on CI's Windows runner): apply,
   save and act; a restart applies the saved settings before reaching the
   server; settings saved for another device ID are not applied; a server
   it cannot reach changes nothing; refusals keep the settings and are
   reported; the new fields only after an answer of level 2 or higher, and
   none to a server that states no level; the second heartbeat of a
-  process within 10 seconds of a level-2 answer; `metrics` only in
-  regular heartbeats; the interval is the shorter of the document's and
-  the answer's, never below 30 seconds.
+  process within 10 seconds of a level-2 answer; `metrics` on a heartbeat
+  only 0.8 of the interval after the last that carried them, and still
+  about once an interval with `checkin` wakes every half interval; an
+  older build applying the saved document for the keys it knows; a key
+  whose value fails the schema `invalid` alone, an unreported key or an
+  unknown envelope field refusing the whole document, the reason naming
+  it; the interval is the shorter of the document's and the answer's,
+  never below 30 seconds.
 * **Windows end to end** through the Windows harness the plan builds (the
   server built for Windows with the runner's PostgreSQL, a Windows agent
   enrolling; "Test harnesses to build"): a document applied, saved and
@@ -553,7 +593,12 @@ answer changed on the way.
   restore would, from the agent's report; a report above 2^53 − 1
   ignored; two heartbeats at once issuing one version; documents only to
   devices that reported `settings.v1`, with only the keys and values their
-  report allows; a heartbeat without the report leaving the last report,
+  report allows, checked against the highest schema version the server
+  knows at or below the reported one (an agent reporting a newer version
+  than the server's included); an instance of an older catalogue leaving
+  a newer catalogue's document in place; a report from an agent with an
+  empty `agentSha256` holding while its version does; a heartbeat without
+  the report leaving the last report,
   the kept interval and *Not applied* as they were, and a change of build
   ending the last report; a change for an organization issued lazily to
   each device; *Not applied* after three reporting heartbeats;
@@ -611,8 +656,8 @@ Each merges, is verified on its own, and leaves nothing unused.
    ADR-0057.
 2. **Delivery**: the signed document, versions, capabilities,
    `agent_device_state`, the agent's verify, save, apply and acknowledge,
-   the interval it reports and the shorter of the two, `metrics` only in
-   regular heartbeats, *Not applied*.
+   the interval it reports and the shorter of the two, `metrics` spaced
+   at 0.8 of the interval, *Not applied*.
    Verified by unit, agent and integration tests, in the bundle with the
    current and the previous release's agents and against the previous
    release's server, and on Windows as above.

@@ -9,7 +9,10 @@
   only once confirmed itself, times compared on the agent's clock, a
   clone guard that fires, crashes told apart by the server's instance,
   404 as "not supported", and message types sent only to agents that
-  list them.
+  list them. Revised a third time after the final check: which heartbeats
+  confirm, conflicts defined by order and by pings, open feature lists,
+  a stop after repeated unlisted messages, and metrics on extra
+  heartbeats.
 * Refines: [ADR-0009](0009-agent-protocol.md) (its WebSocket, "authenticated
   by a signed challenge", as the primary channel) and
   [ADR-0017](0017-scripts-and-jobs.md) (job delivery: the signed poll stays
@@ -27,8 +30,8 @@
 * Part of [the feature plan](../feature-plan.md): feature 8.
 
 ## Context
-The owner asked to "implement websockets", with the operator choosing in a
-device's settings which transport it uses.
+The owner asked to "implement websockets", with "the user" choosing "in the
+device settings what they want to use".
 
 ADR-0009 planned a WebSocket as the agent's primary channel with HTTPS
 polling as the fallback; ADR-0017 delivered jobs over a signed long poll
@@ -163,7 +166,8 @@ Every change follows ADR-0009 (amended, PR #52); nothing here has a
 fallback of its own, and no 400 is read as "not supported".
 
 * **The server lists its features** in every heartbeat answer
-  (`features`) and in `hello`:
+  (`features`) and in `hello`. The list is open: an agent ignores names
+  it does not know.
   * `channel`: the route below exists. The agent connects only while its
     last heartbeat answer listed it, so it opens no connection before a
     successful heartbeat in its process, and none to a server rolled back
@@ -242,7 +246,13 @@ while the real agent's own attempt is refused as `replayed`. So:
   `transport` report: the `connId` from `hello` and when the connection
   began. After a `hello` the agent checks in at once (within the
   `checkin` limit, below), so a real connection is confirmed within
-  seconds.
+  seconds. The agent closes its old connection, and stops pinging it,
+  before it opens a new one, so it never holds two.
+* **Which heartbeats count.** A heartbeat without `transport` (the first
+  of a process, ADR-0009) neither confirms nor contradicts. The device's
+  heartbeats are taken in the order of their signed times: one signed
+  before the last heartbeat processed for the device confirms and
+  contradicts nothing, though it may show a conflict (*Server limits*).
 * **Only a confirmed connection is live.** The console shows *Live* only
   for an `agent_connections` row that the device's heartbeat confirmed;
   `jobsWaiting` (slice 3) is computed for the same.
@@ -266,10 +276,11 @@ while the real agent's own attempt is refused as `replayed`. So:
   `signed.go`), or a heartbeat delayed on the way, cannot make a real
   connection look contradicted; the 60 seconds cover the agent's wait for
   the `101` and the `hello`. A pending connection that is contradicted is
-  closed at once. A confirmed one is sent nothing for up to 35 seconds,
-  then `closing` (`replaced`): if it pinged meanwhile, a live agent holds
-  it while the device's heartbeat says otherwise, which is the clone
-  guard's business (below); if not, it was dead. A connection no
+  closed at once. A confirmed one is sent nothing for up to 40 seconds,
+  then `closing` (`replaced`): if it pinged meanwhile (as the clone guard
+  counts pings, below), a live agent holds it while the device's
+  heartbeat says otherwise, which is the clone guard's business; if not,
+  it was dead. A connection no
   heartbeat confirms within two of the device's intervals is closed too.
 * **`replayed` is a warning sign.** An upgrade answered 401 `replayed`
   means someone else used the agent's request: the agent logs it and
@@ -307,7 +318,10 @@ while the real agent's own attempt is refused as `replayed`. So:
   inject, replay or reorder a message; it can only end the connection,
   which the agent notices. A verified message of a type, `v` or value
   the agent did not list is a server's bug, not the network's: the agent
-  closes the connection, reports it, and counts nothing.
+  closes the connection, reports it, and counts nothing. After three such
+  refusals from one `instance`, it stops connecting until a heartbeat
+  answer names another instance or its own build changes, and reports
+  why; the device meanwhile works as with regular check-ins.
 * **The agent sends no messages**, only WebSocket pings. The server closes
   a connection that sends one.
 * **Cost**: one Ed25519 signature per message. 10,000 connections ticking
@@ -366,20 +380,22 @@ while the real agent's own attempt is refused as `replayed`. So:
   confirmed connection is replaced only by one a heartbeat confirmed
   (*Presence confirmed by the heartbeat*); a newer pending one replaces an
   older pending one.
-* **The clone guard.** One agent's heartbeats name its connections in
-  order: each new `connId` after the last, never an older one again,
-  since it holds one connection at a time and sends one heartbeat at a
-  time. Two computers with one identity each hold a connection and each
-  heartbeat, so the device's heartbeats keep going back and forth. A
-  **conflict** is either of:
-  * heartbeats within one of the device's intervals that confirm two
-    different connections, the later naming the older of the two (an
-    agent never goes back);
+* **The clone guard.** One agent's heartbeats move only forward, in
+  their signed times and in the connections they name: it sends one
+  heartbeat at a time, and closes a connection before it opens the next.
+  Two computers with one identity each hold a connection and each
+  heartbeat on its own clock, so the device's heartbeats keep going back
+  and forth. A **conflict** is either of:
+  * two heartbeats processed within one of the device's intervals that
+    name two different connections out of order: the one processed
+    later was signed earlier, or names the older connection;
   * a confirmed connection that pings after a heartbeat contradicted it
-    (above): by naming another connection that heartbeat confirms, which
-    replaces it, or another already confirmed, or none. A half-open
-    connection, which can last 75 seconds after a network change, never
-    pings, so one agent reconnecting counts nothing.
+    (above), by naming another connection or none: a ping that arrives
+    at least 5 seconds after the contradiction, so not one already on
+    its way, and before that connection sent any close frame. A
+    half-open connection, which can last 75 seconds after a network
+    change, never pings, and an agent closes its old connection before
+    opening a new one, so one agent reconnecting counts nothing.
 
   Nothing about a pending connection counts, so a replayed upgrade or an
   agent reconnecting after a network change is never a conflict. The
@@ -445,7 +461,13 @@ while the real agent's own attempt is refused as `replayed`. So:
 
 ### What a wake makes the agent do
 * **`checkin`**: a heartbeat now, at most one every 10 seconds; the next
-  regular heartbeat counts from it. Sent when something the heartbeat
+  regular heartbeat counts from it. Like every extra heartbeat in this
+  ADR (after a `hello`, on a wake, to classify a failure), it carries
+  `metrics` only if 0.8 of the interval has passed since the last
+  heartbeat that did (ADR-0058), and then always: wakes, a connection cut
+  every 90 seconds on *Live connection* (which never falls back), or
+  settings written again and again move the regular schedule but never
+  stop metrics. Sent when something the heartbeat
   answer carries becomes due: a settings change (ADR-0058), a removal, an
   EasyPatch install, an update asked for one device. **Every `checkin`
   wake goes through one queue per server**, at most 100 a second, a
@@ -511,8 +533,9 @@ From slice 3:
 * **Where**: on the device's Settings tab, the owner's "device settings";
   also on its site, its organization and the platform, inherited as
   ADR-0058 says.
-* **Who**: on one device, technicians and above (`device.edit`, the
-  owner's "the user can choose in the device settings"); at a site or an
+* **Who**: on one device, technicians and above (`device.edit`, decided
+  in review after the owner's "the user can choose in the device
+  settings"); at a site or an
   organization, Site Administrators and above (`device.configure`); the
   platform's value, Super Administrators. A value enforced above the
   device wins over a technician's.
@@ -684,7 +707,13 @@ its own review) must provide, and slice 1 does not start until it does:
   monotonic clocks, both injected; connecting only after a heartbeat with
   the agent's report was answered listing `channel`; `noWait` only when
   `hello` lists `poll.noWait`; the long poll in flight left to finish; a
-  wake during a `noWait` poll making another.
+  wake during a `noWait` poll making another; feature names the agent
+  does not know ignored; three unlisted messages from one instance
+  stopping connections until the instance or the build changes; the old
+  connection closed, its pings stopped, before a new one opens; `metrics`
+  still arriving about once an interval with `checkin` wakes every half
+  interval, and with a connection cut every 90 seconds on *Live
+  connection*.
 * **On CI's Windows runner**: the agent's channel tests, part of
   `go test ./agent/...`. **Windows end to end** through the Windows
   harness the plan builds (the server built for Windows with the runner's
@@ -703,10 +732,13 @@ its own review) must provide, and slice 1 does not start until it does:
   contradicts closed; the contradiction judged on the agent's clock, with
   that clock four minutes ahead and behind and a heartbeat delayed a
   minute on the way, never closing a real connection; the clone guard:
-  two simulated agents with one identity flagged within 15 minutes, one
-  agent reconnecting after network changes and half-open connections
-  never flagged, a replayed upgrade never counted, the count across two
-  instances; the per-server budget untouched by unverified upgrades;
+  two simulated agents with one identity flagged within 15 minutes, with
+  their clocks the same and minutes apart, one agent reconnecting after
+  network changes and half-open connections never flagged, a ping within
+  5 seconds of a contradiction or after a close frame not counted, a
+  replayed upgrade never counted, the count across two instances; a
+  heartbeat without `transport`, or signed before the last one
+  processed, neither confirming nor contradicting; the per-server budget untouched by unverified upgrades;
   upgrades refused with 404 for a device whose report lists no
   `channel.v1`, and no type sent that the report does not list; every
   limit, the descriptor gate with a lowered `RLIMIT_NOFILE` (on Linux),
