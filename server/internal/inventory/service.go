@@ -336,8 +336,10 @@ func percent(used, total uint64) float64 {
 	return min(float64(used)/float64(total)*100, 100)
 }
 
-// text strips control characters and invalid UTF-8, trims and cuts to
-// maxRunes.
+// Text cleans text an agent sent as the inventory does: it strips control
+// characters and invalid UTF-8, trims and cuts to maxRunes.
+func Text(s string, maxRunes int) string { return text(s, maxRunes) }
+
 func text(s string, maxRunes int) string {
 	s = strings.ToValidUTF8(s, "")
 	s = strings.Map(func(r rune) rune {

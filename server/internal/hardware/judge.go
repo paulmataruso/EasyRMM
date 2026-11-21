@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
+	"github.com/paulmataruso/easyrmm/server/internal/inventory"
 )
 
 // States of a disk or a fact as the server and the console carry them. A
@@ -38,6 +39,9 @@ const (
 // WearLimit is the percentage of rated endurance used at which a disk is a
 // warning.
 const WearLimit = 90
+
+// maxJudgedDetail bounds what a reading's detail says.
+const maxJudgedDetail = 500
 
 // failingBits are the NVMe critical warning bits that mean failing: spare
 // below its threshold (0), reliability degraded (2), media read-only (3) and
@@ -194,7 +198,14 @@ func judge(d *agentproto.DiskHealth) reading {
 			} else {
 				set("smartStatus", StateHealthy, "")
 			}
+		} else {
+			// A path that does not return the registers reports the status
+			// unavailable, and the attributes give the verdict; a status
+			// or thresholds that could not be read this time leave the
+			// reading unknown.
+			unreadable(d.SMARTStatus)
 		}
+		unreadable(d.Thresholds)
 		thresholds := d.Thresholds.State == agentproto.FactRead
 		if thresholds && len(d.Attributes) > 0 {
 			// The attributes against their thresholds are the verdict where
@@ -283,7 +294,8 @@ func judge(d *agentproto.DiskHealth) reading {
 		r.state, r.reason, r.detail = StateUnknown, agentproto.ReasonNoVerdict, ""
 	}
 	if len(r.detail) > 0 {
-		r.detail = strings.ToUpper(r.detail[:1]) + r.detail[1:]
+		// Within what the database keeps (judged_detail).
+		r.detail = inventory.Text(strings.ToUpper(r.detail[:1])+r.detail[1:], maxJudgedDetail)
 	}
 	for i := range r.facts {
 		r.facts[i] = *views[r.facts[i].Name]

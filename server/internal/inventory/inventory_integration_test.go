@@ -212,6 +212,59 @@ func TestRecordCleansAndReplaces(t *testing.T) {
 	}
 }
 
+// TestDiskFirmware: a disk's firmware is a fact under ADR-0065's rule. The
+// server keeps a known state and reason, makes anything else unknown, and
+// hashes the body as sent; a server from before the field decodes the same
+// body, ignoring the field, and stores the same hash.
+func TestDiskFirmware(t *testing.T) {
+	f := newFixture(t)
+	pc := f.device(f.acme, f.hq, "HQ-PC")
+	super := f.user("super@example.com", rbac.Assignment{Role: rbac.RoleSuperAdmin})
+	fw := func(state, reason, value string) *agentproto.TextFact {
+		return &agentproto.TextFact{State: state, Reason: reason, Value: value}
+	}
+	inv := agentproto.Inventory{Disks: []agentproto.Disk{
+		{Name: "nvme0n1", Model: "Example NVMe 1TB", Serial: "N1", Firmware: fw(agentproto.FactRead, "", " 3B2QGXA7\x00 ")},
+		{Name: "sda", Firmware: fw(agentproto.FactUnavailable, agentproto.ReasonUSBBridge, "")},
+		{Name: "sdb", Firmware: fw("broken", "", "")},
+		{Name: "sdc", Firmware: fw(agentproto.FactUnknown, "made_up", "")},
+		{Name: "sdd", Firmware: fw(agentproto.FactRead, "", "  ")},
+		{Name: "sde", Firmware: fw(agentproto.FactRead, "", strings.Repeat("9", 100))},
+		{Name: "sdf"},
+	}}
+	body, _ := json.Marshal(inv)
+	hash, err := f.svc.Record(f.ctx, pc, body)
+	if err != nil || hash != inv.Hash() {
+		t.Fatalf("record %q %v, want %q", hash, err, inv.Hash())
+	}
+	// The release before: its disk has no firmware field.
+	var before struct {
+		Disks []struct {
+			Name, Model, Serial string
+		} `json:"disks"`
+	}
+	if err := json.Unmarshal(body, &before); err != nil || len(before.Disks) != 7 || before.Disks[0].Serial != "N1" {
+		t.Fatalf("the earlier decoder: %+v %v", before, err)
+	}
+	got, err := f.svc.Get(f.ctx, super, pc)
+	if err != nil || got.Inventory == nil || len(got.Inventory.Disks) != 7 {
+		t.Fatalf("get %+v %v", got, err)
+	}
+	invalid := agentproto.TextFact{State: agentproto.FactUnknown, Reason: agentproto.ReasonInvalidReport}
+	for i, want := range []*agentproto.TextFact{
+		{State: agentproto.FactRead, Value: "3B2QGXA7"},
+		{State: agentproto.FactUnavailable, Reason: agentproto.ReasonUSBBridge},
+		&invalid, &invalid, &invalid,
+		{State: agentproto.FactRead, Value: strings.Repeat("9", 64)},
+		nil,
+	} {
+		d := got.Inventory.Disks[i]
+		if (d.Firmware == nil) != (want == nil) || want != nil && *d.Firmware != *want {
+			t.Errorf("%s firmware %+v, want %+v", d.Name, d.Firmware, want)
+		}
+	}
+}
+
 func TestMetricsAndHistory(t *testing.T) {
 	f := newFixture(t)
 	pc := f.device(f.acme, f.hq, "HQ-PC")

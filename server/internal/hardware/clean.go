@@ -1,10 +1,7 @@
 package hardware
 
 import (
-	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
@@ -93,7 +90,7 @@ func clean(in []agentproto.DiskHealth, received time.Time) []agentproto.DiskHeal
 		if d.Name == "" {
 			continue
 		}
-		d.Detail = text(d.Detail, agentproto.MaxHardwareDetail)
+		d.Detail = inventory.Text(d.Detail, agentproto.MaxHardwareDetail)
 		if !routes[d.Route] {
 			d.Route = ""
 		}
@@ -147,20 +144,4 @@ func cleanAttributes(in []agentproto.Attribute) []agentproto.Attribute {
 		out = append(out, a)
 	}
 	return out
-}
-
-// text strips control characters and invalid UTF-8, and cuts to maxRunes.
-func text(s string, maxRunes int) string {
-	s = strings.ToValidUTF8(s, "")
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, s)
-	s = strings.TrimSpace(s)
-	if utf8.RuneCountInString(s) > maxRunes {
-		s = strings.TrimSpace(string([]rune(s)[:maxRunes]))
-	}
-	return s
 }
