@@ -12,7 +12,7 @@
 #     browser is told it is 127.0.0.1, and EasyRMM reaches it through its
 #     own edge on loopback. Before it starts, links planted where root's
 #     setup.sh writes, as authentik-setup could plant them, are written
-#     through by neither a second run nor --new-invitation.
+#     through by neither setup.sh --upgrade nor --new-invitation.
 #  2. Nothing but the edge (:80, :443 and MeshCentral's :4443) listens beyond
 #     loopback, and Authentik's metrics listen nowhere.
 #  3. Playwright (web/playwright.authentik.config.ts) opens the invitation
@@ -106,18 +106,17 @@ as_root grep -qx 'COMPOSE_PROFILES=authentik' "$deploy/.env" ||
 
 # authentik-setup (uid 1000) can write in invitations/. Links planted where
 # setup.sh writes as root, and in place of the record of the first invitation
-# that releases up to 1.0.0-rc.4 kept there; setup.sh run again, as an upgrade
-# runs it, and with --new-invitation: root must write nothing through them.
+# that releases up to 1.0.0-rc.4 kept there; setup.sh --upgrade (every
+# setting from .env, nothing asked, no invitation) and --new-invitation:
+# root must write nothing through them.
 inv=$work/data/authentik/invitations
 as_root sh -c "printf canary > '$work/canary' && rm -f '$inv/issued' &&
   ln -s '$work/made-by-root' '$inv/issued' && ln -s '$work/canary' '$inv/pending.tmp' &&
   ln -sfn '$work/canary' '$inv/pending' && chown -h 1000:1000 '$inv/issued' '$inv/pending.tmp' '$inv/pending' &&
   ln -sfn '$work/canary' '$work/data/authentik/secrets/akadmin-password'"
-(cd "$deploy" && as_root ./scripts/setup.sh --hostname 127.0.0.1 --ip-addresses 127.0.0.1 \
-  --data-root "$work/data" \
-  --with-authentik --authentik-hostname "$signin_host" --admin-email "$admin_email") > "$work/setup-again.out" < /dev/null
+(cd "$deploy" && as_root ./scripts/setup.sh --upgrade) > "$work/setup-again.out" < /dev/null
 if grep -q 'itoken=' "$work/setup-again.out"; then
-  echo "setup.sh issued the first invitation again" >&2
+  echo "setup.sh --upgrade issued an invitation" >&2
   exit 1
 fi
 (cd "$deploy" && as_root ./scripts/setup.sh --new-invitation) > "$work/setup-invitation.out" < /dev/null

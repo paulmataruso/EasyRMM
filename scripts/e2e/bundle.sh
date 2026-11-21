@@ -5,7 +5,8 @@
 # certificate authority.
 #
 #  1. The deployment tree a release ships (scripts/release/deploy-tree.sh) is
-#     set up with setup.sh, for https://127.0.0.1, and
+#     set up with setup.sh, for https://127.0.0.1, prepared again with
+#     setup.sh --upgrade as a release's bundle runs it, and
 #     brought up with images built from this checkout: EasyRMM's server, and
 #     EasyPatch's server carrying Linux agent packages signed with a key made
 #     for the run.
@@ -110,6 +111,19 @@ docker build -q -t "$host_image" "$root/scripts/e2e/bundle-host" > /dev/null
 "$root/scripts/release/deploy-tree.sh" "$work/easyrmm"
 (cd "$deploy" && as_root ./scripts/setup.sh --hostname 127.0.0.1 --ip-addresses 127.0.0.1 \
   --data-root "$work/data" > /dev/null)
+# setup.sh --upgrade, as a release's bundle runs it: every setting from .env
+# (here the data root, which is not the default), and the server version the
+# bundle's .env.example names.
+srv_before=$(test -e /srv/easyrmm && echo yes || echo no)
+as_root sed -i 's/^EASYRMM_VERSION=.*/EASYRMM_VERSION=9.9.9-bundle-test/' "$deploy/.env.example"
+as_root rm -rf "$work/data/meshcentral/backups"
+(cd "$deploy" && as_root ./scripts/setup.sh --upgrade > /dev/null < /dev/null)
+as_root grep -qx 'EASYRMM_VERSION=9.9.9-bundle-test' "$deploy/.env" ||
+  { echo "setup.sh --upgrade did not set the bundle's server version" >&2; exit 1; }
+[ "$(as_root stat -c '%u %a' "$work/data/meshcentral/backups")" = "65532 700" ] ||
+  { echo "setup.sh --upgrade did not make the data directories under .env's data root" >&2; exit 1; }
+[ "$srv_before" = yes ] || ! test -e /srv/easyrmm ||
+  { echo "setup.sh --upgrade made directories under the default data root" >&2; exit 1; }
 as_root sed -i \
   -e "s|^EASYRMM_IMAGE=.*|EASYRMM_IMAGE=${server_image%:*}|" -e "s|^EASYRMM_VERSION=.*|EASYRMM_VERSION=${server_image##*:}|" \
   -e "s|^EASYPATCH_IMAGE=.*|EASYPATCH_IMAGE=${engine_image%:*}|" -e "s|^EASYPATCH_VERSION=.*|EASYPATCH_VERSION=${engine_image##*:}|" \

@@ -28,6 +28,16 @@ All notable changes to this project are documented here. The format follows
   seconds and 10 minutes, so that an answer changed on the way cannot
   silence it.
 
+### Added
+
+- **`setup.sh --upgrade`** prepares an upgrade with the deployment's own
+  settings, all read from `.env`: the options it was installed with are not
+  given again and nothing is asked. It sets the release's server version
+  from a bundle, lists settings the release adds, makes the data
+  directories under `.env`'s data root (rerunning `setup.sh` without
+  `--data-root` used the default one), and issues no Authentik invitation.
+  The upgrade guide now uses it (ADR-0052).
+
 ### Fixed
 
 - `deploy/.env.example` lists `EASYRMM_ACME_DIRECTORY`, which the Compose

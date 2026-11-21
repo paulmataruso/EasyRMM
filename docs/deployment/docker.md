@@ -245,7 +245,8 @@ The patching engine runs inside this deployment
 up and `docker compose up -d` starts it with everything else. There is no
 setting to turn it on or off.
 
-On an existing install, rerun `setup.sh` with its usual options: it adds the
+On an existing install, `sudo ./scripts/setup.sh --upgrade` (which takes
+every setting from `.env`; see [Upgrading](../operations/upgrading.md)) adds the
 engine's database passwords and `EASYRMM_PATCHING_KEY` to `.env` if they are
 missing, and removes `EASYRMM_PATCHING` and the `patching` profile from
 `COMPOSE_PROFILES`, which no longer exist, without changing anything else
