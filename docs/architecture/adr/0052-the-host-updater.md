@@ -6,10 +6,14 @@
   server's side, `hold` and the offline rule (both amended 2026-11-21,
   below; the rule only delays openings); and the engine's, its hold on
   automatic agent updates and its presence rule, which ship in its next
-  release. The updater is not built yet; until it exists, the test on
-  `main` verifies each published build as the updater will before `edge`
-  moves, and the upgrade from the previous edge build
-  ([Testing](#testing)) joins it with the updater.
+  release. The updater is implemented (feature 4a): `easyrmm-updater`
+  with its service and timer, installed by `setup.sh`; verification, the
+  backup, the upgrade, the rollback and the status, as amended below
+  (2026-11-21, with the implementation). Not built: requests from the
+  console (feature 4b), and the test on `main` that upgrades from the
+  previous edge build with the updater ([Testing](#testing)); until it
+  is, that test verifies each published build as the updater does before
+  `edge` moves.
 * Builds on: [releasing](../../development/releasing.md) (releases, their
   attestations and manifest), [ADR-0027](0027-agent-updates.md) (agent
   updates), [ADR-0044](0044-authentik-when-chosen.md) (Authentik's files)
@@ -89,6 +93,14 @@ What exists, and what it means here:
 * **Commands**: `easyrmm-updater status`, `check` (what the channel
   offers, verified, changing nothing), `upgrade [version]`, `rollback`.
 
+*Amended 2026-11-21, with the implementation:* the updater rewrites one
+line of its configuration, `deployment`, when an upgrade or a rollback
+moves the deployment to another directory; nothing else writes it.
+`setup.sh` installs the updater from `deploy/updater/` (a bundle carries
+it for x86-64 and ARM64; a clone builds it with `make updater`), and
+`--no-updater` is the one option `--upgrade` takes along. No path unit is
+installed until feature 4b.
+
 ### Channels and versions
 * **stable** takes full releases; **pre-release** also release
   candidates; **edge** also builds of `main`. A version outside the
@@ -110,7 +122,11 @@ What exists, and what it means here:
   Versions are written as the server reports them, with the `v`.
 * **Never down**, except a rollback to the version the updater itself
   recorded as the previous one.
-* **No retrying failures**: a version that failed or was rolled back is
+* **No retrying failures** (*amended 2026-11-21, with the
+  implementation:* a failure that a later attempt could get past, such as
+  Sigstore, the network or the registry not answering, or too little room
+  on a disk, ends the attempt before anything stops and is not counted;
+  any other failure is): a version that failed or was rolled back is
   skipped by automatic upgrades until a newer one appears or an operator
   asks for it by name.
 
@@ -221,6 +237,41 @@ and the attempt ends with the reason.
    bundle directories other than the current and the previous are
    removed, with their `.env`, which holds the encryption key.
 
+*Amended 2026-11-21, with the implementation:*
+* **Set up** carries `.env` across with `EASYRMM_IMAGE` set as well as
+  `EASYRMM_VERSION`: the manifest names the server by repository, tag and
+  digest (`docs/architecture/edge-manifest.md`), and the two make that
+  reference. After `setup.sh --upgrade` the updater sets both again and
+  checks `docker compose config --images` against the manifest.
+* **Start held** starts the services Compose restarts with
+  `up --wait`, and one-shot services nothing depends on with
+  `up --no-deps` and `compose wait`, since `--wait` fails when such a
+  service exits, even successfully. Then the server must pass its own
+  readiness check (`easyrmm-server healthcheck`, `/readyz` on its loopback
+  health port) and report the new version; nothing goes through its
+  public edge.
+* **The backup** is the data root without `updater/` (the status the
+  updater is writing) and failed data roots kept for diagnosis
+  (`.failed-*`), the deployment's `deploy/` and `docker/` directories, and
+  `updater.conf`, with a `backup.json` written last; one without it is
+  incomplete. A failure before the backup completes starts the previous
+  version again from where it stopped. Every copy, into a backup and back
+  out of one, is checked against its source entry by entry (type, mode,
+  owner, a file's size, a link's target). The data root holds every
+  volume of `deploy/docker-compose.yml` that holds state: PostgreSQL's
+  whole cluster, copied stopped, so every database in it (EasyRMM's, the
+  engine's and, with `--with-authentik`, Authentik's: its users, their
+  second factors, the key pair that signs EasyRMM's ID tokens), and the
+  server's, MeshCentral's, the engine's and Authentik's directories. No
+  database is dumped: a stopped cluster's files are the whole of it,
+  roles included, which a dump of each database is not. The one volume
+  outside is `EASYRMM_TLS_DIR` in `manual` TLS mode, the operator's
+  certificate, mounted read-only and never changed by an upgrade. A unit
+  test reads the Compose file's volumes and fails on any it does not
+  account for.
+* **The engine's hold** is `agent-updates-held-until` in the status
+  directory: one RFC 3339 time in UTC, root's, mode 644, written atomically.
+
 ### Rollback
 * **During an upgrade** (any failure after step 3): every service
   stopped. If PostgreSQL starts, the failed database's highest audit ID
@@ -249,6 +300,16 @@ and the attempt ends with the reason.
   contents: forwarding resumes from the backup's position. Records of the
   discarded version keep IDs no later record reuses.
 * Refused across a job key rotation's cut-over (ADR to come, plan F0).
+
+*Amended 2026-11-21, with the implementation:* the restore starts
+PostgreSQL alone twice: once from the failed data root, to read its
+highest audit ID and chain head, and once from the restored one, to move
+the sequence and append the record before anything else starts; only
+then does every service start. The ADR's order (the previous version
+started, then the sequence moved) would let a starting server write an
+audit record with an ID the discarded version used. The restore touches
+only the host: it stops, copies, writes the audit record and starts, and
+contacts no agent, so it does not depend on agents being reachable.
 
 ### Downtime and alerts
 From step 3 to step 7 nothing answers: a backup and a start, minutes on
@@ -318,6 +379,23 @@ Production installs upgrade when someone chooses to.
   channel, each refused.
 * **The updater updating itself**, from the second release that has one.
 * Then the owner's test instance on the edge channel.
+
+*Amended 2026-11-21, with the implementation:* what is built so far.
+Unit tests drive every step against a fake Docker, and verification
+against sigstore-go's virtual Sigstore, each certificate field refused
+in turn; integration tests run the rollback's SQL against the migrated
+schema, and take a real PostgreSQL cluster holding EasyRMM's, the
+engine's and Authentik's databases, with Authentik's directories, through
+a backup, a change and a restore. The upgrade runs as a machine test (`make test-vm-updater`,
+internal/vmtest): a Debian 12 machine with Docker, installed from a
+bundle with `setup.sh`, upgraded to a second bundle, the confirmed
+upgrade rolled back, then an upgrade to a third bundle that fails at the
+held start and is rolled back. That third bundle's server fails its
+health check, not a held port: a server that cannot bind restarts until
+the 20-minute limit. The machine runs without Authentik. Not built yet: the CI job, verification against real
+published artifacts, links and named pipes planted through a backup and
+a restore, requests (4b), and the updater updating itself across
+releases.
 
 ## Consequences
 * An operator upgrades and rolls back from the console (4b), or with one
