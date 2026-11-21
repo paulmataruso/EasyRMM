@@ -7,10 +7,13 @@
 -- runs as its owner does not name pg_temp last.
 --
 -- The server never creates temporary tables, so the runtime role and PUBLIC
--- also lose the right to, in this database. Only the database's owner can
--- take it away. Every documented install makes easyrmm_owner, which runs
--- migrations, the owner; any other owner stops the upgrade here with the
--- statement to run.
+-- also lose the right to, in this database, as a second layer. Only the
+-- database's owner can take it away. Every documented install makes
+-- easyrmm_owner, which runs migrations, the owner. Under any other owner,
+-- or when the runtime role keeps the right through another grant, the
+-- migration warns with the statement to run by hand and goes on: the
+-- search_path above already blocks the attack, and a server that will not
+-- start is worse.
 
 -- +goose Up
 ALTER FUNCTION easyrmm_audit_append(timestamptz, text, uuid, text, uuid, uuid, uuid, text, text, text, text, inet, text, jsonb)
@@ -22,11 +25,23 @@ ALTER FUNCTION easyrmm_purge_audit(interval) SET search_path = pg_catalog, publi
 DO $$
 BEGIN
     IF NOT pg_has_role((SELECT datdba FROM pg_database WHERE datname = current_database()), 'USAGE') THEN
-        RAISE EXCEPTION 'database % is not owned by %, so the migration cannot revoke TEMPORARY on it', current_database(), current_user
-            USING HINT = format('As a superuser, run ALTER DATABASE %I OWNER TO %I, as docs/architecture/database.md describes, then start the server again.',
-                current_database(), current_user);
+        RAISE WARNING 'database % is not owned by %, so TEMPORARY was not revoked from easyrmm_app and PUBLIC',
+            current_database(), current_user
+            USING HINT = format('As a superuser, run: REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC, easyrmm_app; '
+                'ALTER DATABASE %I OWNER TO %I; (docs/architecture/database.md)', current_database(), current_database(), current_user);
+        RETURN;
     END IF;
     EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC, easyrmm_app', current_database());
+    -- A grant by another role, or one inherited through another role,
+    -- survives the revoke.
+    IF has_database_privilege('easyrmm_app', current_database(), 'TEMPORARY') THEN
+        RAISE WARNING 'easyrmm_app can still create temporary tables in database %, through a grant by another role or a role it belongs to',
+            current_database()
+            USING HINT = format('As a superuser, list the grants with SELECT datacl FROM pg_database WHERE datname = %L; '
+                'and the roles easyrmm_app belongs to with \du easyrmm_app in psql, then run '
+                'REVOKE TEMPORARY ON DATABASE %I FROM <that role> CASCADE; for each role that grants or holds it.',
+                current_database(), current_database());
+    END IF;
 END
 $$;
 -- +goose StatementEnd

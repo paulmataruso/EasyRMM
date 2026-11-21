@@ -312,8 +312,18 @@ export, a report or a notification, cannot read them by mistake.
     database, since the server never creates temporary tables. Only the
     database's owner can take it away. Every documented install makes
     `easyrmm_owner`, which runs migrations, the owner, so 00029 revokes
-    it; under any other owner it stops with the statement to run. The
-    install script and the end-to-end script no longer grant it.
+    it, then checks that the runtime role really lost it. The install
+    script and the end-to-end script no longer grant it.
+  * *Decided in review*: under any other owner, 00029 still pins the
+    functions, skips the revoke, and warns with the statements to run;
+    when the runtime role keeps `TEMPORARY` through another grant or
+    role, it warns the same way. It does not stop: `pg_temp` last already
+    blocks the attack, the revoke is the second layer, and stopping would
+    leave an unusual external PostgreSQL with a server that will not
+    start. The migration runner logs PostgreSQL's warnings with their
+    hints.
+  * Down gives `TEMPORARY` back to `easyrmm_app` only, as the install
+    scripts granted it before; `PUBLIC` does not get it back.
 * **The agent's poll** reads the arguments of the runs it delivers through
   a third function, `easyrmm_job_delivery_args(device, runs)`, which
   answers only at platform scope, and only for that device's runs being
@@ -757,8 +767,9 @@ Said plainly here and in the guide:
   new endpoint.
 * The server's database role can no longer select output or arguments;
   a column added to `job_runs` or `jobs` needs its own grant. It can no
-  longer create temporary tables, every function that runs as the owner
-  names `pg_temp` last, and `easyrmm_owner` must own the database.
+  longer create temporary tables where `easyrmm_owner` owns the database
+  (a warning says what to run where it does not), and every function that
+  runs as the owner names `pg_temp` last.
 * Output is kept 30 days by default, not 90, and the first purge after
   the upgrade empties older output. Job history keeps 90 days.
 * The audit log gains a record for each run page a holder opens, and for
@@ -831,9 +842,13 @@ Said plainly here and in the guide:
       `easyrmm_owner`, which shows the test can fail; each of the six
       functions, on its reading and its refusing path, answers as it
       should and never runs it;
-    * 00029 down and up: the earlier `search_path` and `TEMPORARY` come
-      back, up refuses when another role owns the database and leaves
-      nothing changed, and then succeeds once `easyrmm_owner` owns it.
+    * 00029 down and up, up run as the server runs it with its log
+      captured: the earlier `search_path` and `TEMPORARY` come back on
+      down; with a grant to the runtime role by another role, up pins the
+      functions, `TEMPORARY` stays and a warning names it; under another
+      owner, up pins the functions, leaves `TEMPORARY` and warns with the
+      statements to run; with `easyrmm_owner` owning it again, up revokes
+      it and warns nothing.
   * **The HTTP API**
     (`server/internal/app/job_output_api_integration_test.go`), with
     devices enrolled and reporting through the agent API: sites in two

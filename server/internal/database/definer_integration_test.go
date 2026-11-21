@@ -3,8 +3,10 @@
 package database_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
 
+	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
 	"github.com/paulmataruso/easyrmm/server/migrations"
 )
@@ -229,8 +232,9 @@ func TestTemporaryObjectsCannotReachTheOwner(t *testing.T) {
 
 // TestDefinerSearchPathMigration takes 00029 down and up: down gives the
 // earlier functions their old search_path and the runtime role TEMPORARY
-// back; up refuses to run when the migrating role does not own the
-// database, and otherwise names pg_temp last and revokes TEMPORARY.
+// back; up names pg_temp last and revokes TEMPORARY, and when it cannot
+// (another role grants it, or another role owns the database) it still
+// pins the functions and logs a warning with the statements to run.
 func TestDefinerSearchPathMigration(t *testing.T) {
 	inst := testdb.New(t)
 	ctx := context.Background()
@@ -266,34 +270,82 @@ func TestDefinerSearchPathMigration(t *testing.T) {
 		}
 		return s
 	}
+	down := func() {
+		t.Helper()
+		if _, err := provider.DownTo(ctx, 28); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Up the way the server runs it, with what it logs.
+	up := func() string {
+		t.Helper()
+		var log bytes.Buffer
+		if err := database.MigrateWithConfig(ctx, cfg, slog.New(slog.NewTextHandler(&log, nil))); err != nil {
+			t.Fatalf("up: %v", err)
+		}
+		return log.String()
+	}
 	const (
 		before = "search_path=pg_catalog, public | search_path=pg_catalog, public | search_path=pg_catalog, public | app temp true"
-		after  = "search_path=pg_catalog, public, pg_temp | search_path=pg_catalog, public, pg_temp | search_path=pg_catalog, public, pg_temp | app temp false"
+		pinned = "search_path=pg_catalog, public, pg_temp | search_path=pg_catalog, public, pg_temp | search_path=pg_catalog, public, pg_temp"
+		after  = pinned + " | app temp false"
+		kept   = pinned + " | app temp true"
 	)
 	if s := state(); s != after {
 		t.Errorf("migrated: %s", s)
 	}
-	if _, err := provider.DownTo(ctx, 28); err != nil {
-		t.Fatal(err)
-	}
+	down()
 	if s := state(); s != before {
 		t.Errorf("after down: %s", s)
 	}
 
-	must(`ALTER DATABASE ` + inst.Name + ` OWNER TO CURRENT_USER`)
-	_, err = provider.UpTo(ctx, 29)
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || !strings.Contains(pgErr.Message, "is not owned by easyrmm_owner") ||
-		!strings.Contains(pgErr.Hint, "OWNER TO easyrmm_owner") {
-		t.Errorf("up while another role owns the database: %v", err)
+	// Another role granted the runtime role TEMPORARY: the revoke leaves
+	// that grant, and up says so.
+	grantor := inst.Name + "_grantor"
+	must(`CREATE ROLE ` + grantor + ` NOLOGIN`)
+	t.Cleanup(func() {
+		_, _ = super.Exec(context.Background(), `REVOKE TEMPORARY ON DATABASE `+inst.Name+` FROM `+grantor+` CASCADE`)
+		_, _ = super.Exec(context.Background(), `DROP ROLE `+grantor)
+	})
+	must(`GRANT TEMPORARY ON DATABASE ` + inst.Name + ` TO ` + grantor + ` WITH GRANT OPTION`)
+	must(`SET ROLE ` + grantor)
+	must(`GRANT TEMPORARY ON DATABASE ` + inst.Name + ` TO easyrmm_app`)
+	must(`RESET ROLE`)
+	log := up()
+	if s := state(); s != kept {
+		t.Errorf("after up with another grant: %s", s)
 	}
-	if s := state(); s != before {
-		t.Errorf("after the refused up: %s", s)
+	if !strings.Contains(log, "level=WARN") || !strings.Contains(log, "easyrmm_app can still create temporary tables in database "+inst.Name) ||
+		!strings.Contains(log, "FROM <that role> CASCADE") {
+		t.Errorf("up with another grant logged: %s", log)
+	}
+	must(`REVOKE TEMPORARY ON DATABASE ` + inst.Name + ` FROM ` + grantor + ` CASCADE`)
+	if s := state(); s != after {
+		t.Errorf("after revoking the other grant: %s", s)
+	}
+
+	// Another role owns the database: the functions are pinned, TEMPORARY
+	// stays, and up says what to run.
+	down()
+	must(`ALTER DATABASE ` + inst.Name + ` OWNER TO CURRENT_USER`)
+	log = up()
+	if s := state(); s != kept {
+		t.Errorf("after up under another owner: %s", s)
+	}
+	if !strings.Contains(log, "level=WARN") ||
+		!strings.Contains(log, "database "+inst.Name+" is not owned by easyrmm_owner, so TEMPORARY was not revoked") ||
+		!strings.Contains(log, "REVOKE TEMPORARY ON DATABASE "+inst.Name+" FROM PUBLIC, easyrmm_app;") ||
+		!strings.Contains(log, "ALTER DATABASE "+inst.Name+" OWNER TO easyrmm_owner;") {
+		t.Errorf("up under another owner logged: %s", log)
 	}
 
 	must(`ALTER DATABASE ` + inst.Name + ` OWNER TO easyrmm_owner`)
-	if _, err := provider.UpTo(ctx, 29); err != nil {
-		t.Fatal(err)
+	down()
+	if s := state(); s != before {
+		t.Errorf("after down again: %s", s)
+	}
+	if log := up(); strings.Contains(log, "level=WARN") {
+		t.Errorf("up logged a warning: %s", log)
 	}
 	if s := state(); s != after {
 		t.Errorf("after up: %s", s)

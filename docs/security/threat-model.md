@@ -188,8 +188,10 @@ their own rights, and EasyRMM narrows what reaches them.
   edits are rejected even for the owner.
 * The append, like every function that runs as the database owner, names
   `pg_temp` last in its `search_path`, so a session's temporary objects
-  cannot stand in for the ones it uses, and the application's role cannot
-  create temporary tables ([database.md](../architecture/database.md)).
+  cannot stand in for the ones it uses. Where `easyrmm_owner` owns the
+  database, as every documented install makes it, the application's role
+  cannot create temporary tables either
+  ([database.md](../architecture/database.md)).
 * Records are hash-chained so that changes can be detected. Retention
   deletes only records past the configured period (at least 30 days).
 * The log can be forwarded off the server as it is written.

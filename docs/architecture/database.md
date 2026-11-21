@@ -12,11 +12,16 @@ automatically at server start-up (goose, advisory-locked).
 
 The Docker deployment creates both roles and the database on first start
 (`docker/postgres/init/`). For an external PostgreSQL, run the same script as
-a superuser. **`easyrmm_owner` must own the database**: migration 00029
+a superuser. **`easyrmm_owner` should own the database**: migration 00029
 revokes `TEMPORARY` from `easyrmm_app` and `PUBLIC`, which only the
-database's owner can do, and stops the upgrade under any other owner. To
-fix that, as a superuser: `ALTER DATABASE easyrmm OWNER TO easyrmm_owner;`,
-then start the server again.
+database's owner can do. Under any other owner it skips the revoke and
+the server logs a warning, `database migration: database … is not owned
+by easyrmm_owner`, whose hint gives the statements to run as a superuser:
+`REVOKE TEMPORARY ON DATABASE easyrmm FROM PUBLIC, easyrmm_app;` and
+`ALTER DATABASE easyrmm OWNER TO easyrmm_owner;`. When `easyrmm_app` still
+holds `TEMPORARY` after the revoke, through a grant by another role or a
+role it belongs to, the warning says so and how to find and revoke it.
+The server starts either way.
 
 ## Tenant isolation (row-level security)
 
@@ -346,8 +351,9 @@ the functions of 00028 are created that way.
 function from the catalog and fails when one does not end with `pg_temp`,
 so **a new `SECURITY DEFINER` function must end its `search_path` with
 `pg_temp`**. 00029 also revokes `TEMPORARY` on the database from
-`easyrmm_app` and `PUBLIC`: the server never creates temporary tables, and
-the install scripts no longer grant it.
+`easyrmm_app` and `PUBLIC` (see Roles for when it cannot): the server never
+creates temporary tables, and the install scripts no longer grant it.
+Warnings a migration raises reach the server's log with their hints.
 
 ## Backups
 

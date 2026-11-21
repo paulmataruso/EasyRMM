@@ -76,9 +76,11 @@ All notable changes to this project are documented here. The format follows
   - the server's role and `PUBLIC` can no longer create temporary tables
     in EasyRMM's database. The server never used them.
 
-  **`easyrmm_owner` must own the database**, as the Docker install and
-  the documented external setup make it. Under another owner the upgrade
-  stops and names the statement to run as a superuser
+  The revoke needs `easyrmm_owner` to own the database, as the Docker
+  install and the documented external setup make it. Under another owner,
+  or when the server's role keeps the right through another grant, the
+  upgrade still pins the functions, leaves `TEMPORARY` in place, and logs
+  a warning with the statements to run as a superuser
   ([database.md](docs/architecture/database.md)).
 - **The Windows agent checks its state folder before reading it.** Any
   user may create folders under ProgramData, and the agent protected
