@@ -44,10 +44,29 @@ All notable changes to this project are documented here. The format follows
   `--data-root` used the default one), and issues no Authentik invitation.
   The upgrade guide now uses it (ADR-0052).
 
+### Added
+
+- **Hardening checks for Linux computers** (ADR-0051, its first part). A
+  technician can have the agent on a Linux device check 14 areas: SSH,
+  the firewall, fail2ban, kernel settings, audit rules, file permissions,
+  legacy services, kernel modules, sudo, time synchronisation, shared
+  memory, USB storage, SELinux or AppArmor, and file integrity. It runs
+  through the API (`POST /api/v1/jobs/hardening`, mode `check`). The check
+  changes nothing on the computer. It reports, per area, whether the
+  hardening is in place, partly, not at all, not applicable, managed by
+  something else, or half applied, and what applying it would change.
+  Each device's latest findings are kept (`GET
+  /api/v1/devices/{id}/hardening`); the console lists hardening jobs and
+  shows what each checked. Applying and undoing, and a device's
+  **Hardening** tab, come next. The job table now takes job bodies up to
+  512 KiB, for the script; library scripts keep their 64 KiB limit.
+
 ### Fixed
 
 - `deploy/.env.example` lists `EASYRMM_ACME_DIRECTORY`, which the Compose
   file already passed to the server.
+- Taking the database down past migration 12 removed no software jobs:
+  row-level security hid them from the migration. It now sees every row.
 
 ## [1.0.0-rc.4] - 2026-11-21
 

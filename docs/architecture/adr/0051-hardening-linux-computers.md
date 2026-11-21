@@ -1,7 +1,8 @@
 # ADR-0051: Hardening Linux computers
 
 * Status: Accepted (2026-11-21), revised twice after review the same day.
-  Not implemented yet.
+  Check is implemented (H1); apply and undo (H2) and the console (H3) are
+  not yet.
 * Builds on: [ADR-0017](0017-scripts-and-jobs.md) (scripts and jobs) and
   [ADR-0028](0028-software-deployment.md) (a fixed script compiled into
   the server, its input as arguments).
