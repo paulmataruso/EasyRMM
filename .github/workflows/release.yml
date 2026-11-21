@@ -20,8 +20,10 @@
 #      in this order so that no tag anyone pulls appears before every check
 #      of both images has passed: the engine, carrying those agent packages,
 #      under per-architecture tags only (1.10.1-amd64); then EasyRMM's
-#      server, tagged 1.2.3, 1.2 and latest; then the engine's version and
-#      latest (pre-releases get only their own tags);
+#      server, built once, both platforms scanned and their agents checked
+#      against the release's, and pushed unchanged, tagged 1.2.3, 1.2 and
+#      latest; then the engine's version and latest (pre-releases get only
+#      their own tags);
 #   5. the deployment bundle, its manifest and the agents are built
 #      (scripts/release/bundle.sh), with the engine pinned by digest in the
 #      bundle's docker-compose.yml, checked (the bundle against its manifest,
@@ -434,13 +436,17 @@ jobs:
           push-to-registry: true
 
   # After the engine's images passed their checks and scan, so that a
-  # finding there leaves no EasyRMM tag pushed.
+  # finding there leaves no EasyRMM tag pushed. Built once, for both
+  # platforms, into an OCI layout, as CI builds edge builds: both images are
+  # scanned and their agents checked against the release's (ADR-0049), the
+  # amd64 one runs, and then the layout is pushed unchanged, so what is
+  # pushed is what was checked.
   image:
     name: Server image
     needs: [prepare, backend, integration, frontend, engine, agent-tests, engine-image]
     runs-on: ubuntu-latest
     outputs:
-      digest: ${{ steps.push.outputs.digest }}
+      digest: ${{ steps.layout.outputs.digest }}
     permissions:
       contents: read
       packages: write
@@ -451,22 +457,46 @@ jobs:
         with:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-      - name: Build for the scan
+      - name: Build both platforms
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: docker/server/Dockerfile
-          load: true
-          push: false
-          tags: easyrmm-server:release
+          platforms: linux/amd64,linux/arm64
+          outputs: type=oci,dest=easyrmm-server.oci.tar
           build-args: VERSION=${{ needs.prepare.outputs.version }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
+      - name: Load both images for the checks
+        id: layout
+        run: |
+          digest=$(tar -xOf easyrmm-server.oci.tar index.json | jq -r '.manifests[0].digest')
+          if ! printf '%s' "$digest" | grep -Eqx 'sha256:[0-9a-f]{64}'; then
+            echo "::error::no image index in the layout: $digest"
+            exit 1
+          fi
+          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$digest" linux/amd64 easyrmm-server:release
+          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$digest" linux/arm64 easyrmm-server:release-arm64
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Image reports the release version
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
         run: docker run --rm easyrmm-server:release version | grep -qF "$VERSION"
-      - name: Scan image (Trivy)
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Both images' agents are the release's
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          scripts/release/agents.sh "$VERSION" "$RUNNER_TEMP/agents"
+          scripts/release/check-agents.sh easyrmm-server:release "$RUNNER_TEMP/agents"
+          scripts/release/check-agents.sh easyrmm-server:release-arm64 "$RUNNER_TEMP/agents"
+      - name: Scan the amd64 image (Trivy)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: easyrmm-server:release
@@ -474,38 +504,50 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+      - name: Scan the arm64 image (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: easyrmm-server:release-arm64
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Install oras
+        run: |
+          scripts/ci/install-oras.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: ${{ env.IMAGE }}
-          # latest only for a release, never a pre-release; {{major}}.{{minor}} likewise.
-          # The version comes from prepare: the tag itself (easyrmm-v...) is not semver.
-          flavor: latest=auto
-          tags: |
-            type=semver,pattern={{version}},value=${{ needs.prepare.outputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.prepare.outputs.version }}
-      - id: push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: docker/server/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ needs.prepare.outputs.version }}
-          cache-from: type=gha
-          provenance: mode=max
-          sbom: true
+      # 1.2.3, 1.2 and latest; a release candidate, 1.2.3-rc.1 only.
+      - name: Push what was checked, unchanged
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          DIGEST: ${{ steps.layout.outputs.digest }}
+        run: |
+          repo="${IMAGE,,}"
+          tags=("${VERSION#v}")
+          if [ "$PRERELEASE" != true ]; then
+            core=${VERSION#v}
+            tags+=("${core%.*}" latest)
+          fi
+          mkdir "$RUNNER_TEMP/layout"
+          tar -xf easyrmm-server.oci.tar -C "$RUNNER_TEMP/layout"
+          oras cp --from-oci-layout "$RUNNER_TEMP/layout@$DIGEST" "$repo:$(IFS=,; echo "${tags[*]}")"
+          for tag in "${tags[@]}"; do
+            pushed=$(oras resolve "$repo:$tag")
+            if [ "$pushed" != "$DIGEST" ]; then
+              echo "::error::$repo:$tag is $pushed, not the checked $DIGEST"
+              exit 1
+            fi
+          done
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.push.outputs.digest }}
+          subject-digest: ${{ steps.layout.outputs.digest }}
           push-to-registry: true
 
   publish:
