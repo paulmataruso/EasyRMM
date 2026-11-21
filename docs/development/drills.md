@@ -21,6 +21,8 @@ have.
 ```bash
 sudo scripts/drill/backup-restore.sh /tmp/easyrmm-drill
 sudo scripts/drill/backup-restore.sh --authentik /tmp/easyrmm-drill-authentik
+sudo scripts/drill/backup-restore.sh --in-place /tmp/easyrmm-drill-in-place
+sudo scripts/drill/backup-restore.sh --authentik --in-place /tmp/easyrmm-drill-both
 ```
 
 1. It deploys a source host and gives it real state: first-run setup, an
@@ -59,6 +61,20 @@ Authentik's flow API. After the restore it also checks that:
 * `akadmin`'s password file is the backup's, owned by Authentik's user, and
   still opens `akadmin`.
 
+With `--in-place`, with or without `--authentik`, the drill restores over
+the running deployment instead, in its own checkout, with the steps in
+[Restore in place](../operations/backup-restore.md#restore-in-place). It
+stops the deployment, sets the data root and `.env` aside, restores, and
+makes the same checks. It then checks that:
+* the set-aside data root, PostgreSQL's data with it, is as it was when the
+  deployment stopped: every entry's owner, mode, size and time, and every
+  file's contents; the set-aside `.env` too;
+* the guide's way back works: the restored deployment set aside, the
+  set-aside one put back and started, the same checks pass again, and
+  what changed after the backup is back: the site and, with
+  `--authentik`, the Authentik user. The agent, which ran a job on the
+  restored deployment, runs another on the one put back.
+
 It prints each step to `report.txt` in the working directory, with the
 stack's output in `compose.log`.
 
@@ -74,6 +90,9 @@ drill checks MeshCentral's identity in every case.
 | 2026-11-19 | Plain, with the patching engine in every deployment | Passed: the engine's database and keys backed up and restored with the guide's steps |
 | 2026-11-21 | `--authentik`, Authentik 2026.8.5 | Passed twice, in 11 and 10 minutes. The backup held Authentik's database (3.1 MB) and directory. After the restore, the administrator signed in through Authentik with the same email, password and authenticator app, as the same Authentik user with the same subject. They reached the same EasyRMM account, through the link made before the backup. The provider's signing key was the same, by Authentik's record and by the keys it publishes. `akadmin`'s password file was the backup's and still opened `akadmin`, and an Authentik user made after the backup was gone. The agent, MeshCentral and patching engine checks passed as in the plain variant |
 | 2026-11-21 | Plain, with the guide's Authentik steps | Passed twice: the backup had no Authentik files, and the restore, with `tar --numeric-owner`, passed every check. Two attempts in between failed after the restore, on a host loaded by other work (a load average of 16 to 150 on 16 cores): the device list ran into PostgreSQL's statement timeout, with even `DISCARD ALL` taking 35 seconds in the second. The run after them, with the load back under 15, passed |
+| 2026-11-21 | `--in-place` | Passed in 3.5 minutes. The data root (2,232 entries, PostgreSQL's data among them) and `.env` were set aside, and were unchanged after the restore, entry by entry and file by file. The restored deployment passed the plain variant's checks. After the guide's way back, the deployment put back passed them too, with the site made after the backup back and the agent running a job on it |
+| 2026-11-21 | `--authentik --in-place` | Passed in 14 minutes. As `--in-place`, with 4,004 entries set aside and unchanged, and with Authentik's checks after the restore and again after the way back: the same user, subject, authenticator app and signing key both times, and the Authentik user made after the backup gone after the restore and back after the way back |
+| 2026-11-21 | Plain and `--authentik`, after the restore steps and checks became shared with `--in-place` | Both passed, in 2 and 9 minutes, with every check as before |
 
 ## Load and soak
 
