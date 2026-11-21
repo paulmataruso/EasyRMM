@@ -94,12 +94,26 @@ and this plan's own pull request for ADR-0019):
 ### F0. Rotating the job key
 Every signed instruction (jobs, updates, uninstalls, and since the fixes
 above MeshAgent's downloads) rests on one job key that cannot be rotated
-(ADR-0017, Consequences). Before the new kinds of instruction this plan
-adds (settings, a new address) depend on it: a new key is signed by the current one and announced in the
-heartbeat; agents that verify the hand-over accept both for a transition
-period, then only the new one. A rollback of EasyRMM (F3) is refused
-across a rotation's cut-over. Tested with real agents through a rotation
-and with an agent that was offline across it.
+(ADR-0017, Consequences), and the new kinds of instruction this plan adds
+(settings, a new address) would rest on it too. Proposed in
+[ADR-0057](adr/0057-rotating-the-job-key.md), not reviewed yet. In short:
+the keys become a ring with generations that only increase; agents report
+the keys they trust in their signed heartbeats and job polls, and the
+server signs each device's instructions with the newest of them. A
+rotation hands each agent the new key in a statement signed by a key it
+trusts. A super administrator finishes a planned rotation after at least
+24 hours (ADR-0052's rollback window), confirming a newer backup; a
+rotation for a compromise is cut over at once. Agents offline across the
+overlap follow when they come back, since the server keeps an old key
+while any device needs it. After a compromise a device counts as moved
+only on its own signed report; the rest are re-pinned with `easyrmm-agent
+trust-key`, a command with no secret, through MeshCentral's terminal,
+Group Policy, Intune or by hand. The updater refuses a rollback whose
+backup lacks a key agents were cut over to. Tested with real agents on the
+host's network through a rotation, one offline across it, one from before
+the change, and restores across it. The first slice (agents that can
+follow, and a flag for keys the server never issued) can ship before the
+rest of step 9.
 
 ### F1. Signed settings that reach the agent
 Proposed in [ADR-0058](adr/0058-signed-settings-that-reach-the-agent.md),
