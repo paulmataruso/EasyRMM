@@ -35,6 +35,14 @@ follows when these have been run there, or fixed:
 
 **Build**
 
+* Removing a device from the console
+  ([ADR-0050](docs/architecture/adr/0050-removing-a-device.md)). Today
+  nothing removes one. **Remove device** has the device uninstall its
+  agents (EasyRMM's, MeshAgent and the EasyPatch agent) and deletes it from
+  EasyRMM, MeshCentral and the patching engine when it confirms;
+  **Remove anyway** removes one that is off or whose uninstall failed, and
+  it cleans itself up if it comes back within 90 days. Endpoints only the
+  patching engine has get **Remove** too.
 * Operators sign the Windows agent with their own code signing
   certificate ([ADR-0049](docs/architecture/adr/0049-operators-sign-windows-agents.md)):
   they sign the server's builds with their own tools and upload them, and
@@ -53,6 +61,24 @@ follows when these have been run there, or fixed:
 * **Patching**: giving or taking a tag from many devices at once, forcing a
   restart outside the policy, and removing and holding an update in one
   step.
+* **Hardening a Linux computer in one click.** A choice of hardening
+  modules (all of them, or some) that the agent applies, with what each
+  changes shown first: EasyRMM's own implementation, modelled on what
+  [ultimate-sys-hardening](https://github.com/Kal1010101/ultimate-sys-hardening)
+  does. An ADR comes first.
+* **Collecting logs** from Windows and Linux computers: the security log,
+  Microsoft Defender's and other antivirus logs, the system log, PowerShell,
+  auth and audit logs. EasyRMM keeps them and forwards them (to a SIEM, for
+  example). The agent sets up the logging they need when it is installed
+  (audit policy, log sizes, PowerShell script-block logging, auditd
+  rules), so nobody does it by hand. An ADR comes first: storage and
+  retention, the agent's limits on CPU, bandwidth and disk, and forwarding.
+* **Upgrading EasyRMM from the console.** Today an upgrade is
+  [run on the server](docs/operations/upgrading.md). The console would
+  offer a newer release, check its signatures, back up, upgrade, and roll
+  back if it fails. EasyRMM runs in containers, so something on the host
+  does the upgrade; an ADR decides what, without giving the server the
+  Docker socket.
 * **The agent's WebSocket channel** ([ADR-0009](docs/architecture/adr/0009-agent-protocol.md)),
   if long polling (jobs within a second or so) stops being enough.
 * **macOS.** There is no EasyRMM agent for macOS. The EasyPatch agent's
