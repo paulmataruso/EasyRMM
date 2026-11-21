@@ -6,7 +6,8 @@
   four by a fourth reviewer, who found 37 of 60 findings fully answered
   and some new problems; this draft answers the rest. Feature 9 was added
   the same day, after those reviews; its ADR (ADR-0054) is proposed, had
-  one independent review, and was revised after it.
+  one independent review, and was revised after it and after that
+  review's check.
 * Scope: the work the owner asked for on 2026-11-20 and 2026-11-21:
   1. Operators sign the Windows agent (ADR-0049).
   2. Hardening Linux computers (ADR-0051).
@@ -525,9 +526,9 @@ NGINX in offload mode (refusing the upgrade, to prove the fallback); a
 and recorded in drills.md: a CI runner (4 CPUs) cannot hold them.
 
 ### 9. Hardening Windows computers and servers (ADR-0054)
-The ADR is proposed, had one independent review and was revised after it.
-It reuses feature 2's job kind, modes, results, permission and console;
-the agent does not change.
+The ADR is proposed, had one independent review and was revised after it
+and after that review's check. It reuses feature 2's job kind, modes,
+results, permission and console; the agent does not change.
 
 * **Basis**: values from Microsoft's security baselines for the
   computer's version and role; each setting cited by its DISA STIG rule
@@ -541,35 +542,44 @@ the agent does not change.
   through NIST's crosswalk, never called compliance. The same for Linux is
   a follow-up to ADR-0051.
 * **Script**: `windows.ps1`, Windows PowerShell 5.1, run as LocalSystem by
-  the existing PowerShell jobs; registry, `secedit`, Defender's cmdlets,
-  NetSecurity, Windows features without removing their payload, and the
-  Terminal Services WMI provider; no LGPO.exe, whose terms forbid
-  distributing it. It stops in Constrained Language Mode; under a Group
-  Policy of `AllSigned` it cannot start, like every PowerShell job today.
-  Its hash is published, for EDRs to allow.
+  the existing PowerShell jobs; registry values where Group Policy would
+  write them (Defender's and attack surface reduction's included, as
+  policy values), `secedit`, NetSecurity, Windows features without
+  removing their payload, and the Terminal Services WMI provider; no
+  LGPO.exe, whose terms forbid distributing it. Whether administrative
+  template values outlive Group Policy's processing is W2's first test.
+  It stops in Constrained Language Mode; under a Group Policy of
+  `AllSigned` it cannot start, like every PowerShell job today. Its hash
+  is published, for EDRs to allow.
 * **Managed elsewhere**: one ownership reader (`internal/winpolicy`),
   built in W1 and reused by log collection, reads Group Policy (with its
   preferences and audit policy), MDM through the MDM Bridge, Defender for
   Endpoint, Configuration Manager, DSC, Azure machine configuration,
-  OSConfig and Tamper Protection; what an owner holds is reported, never
-  written, and a computer whose owner cannot be read yet is check only.
+  OSConfig and Tamper Protection, and returns for each value an owner and
+  its policy, none, or *cannot tell* with a reason; what an owner holds is
+  reported, never written, and *cannot tell* is check only in both
+  features. A daily check reports owners that appear after apply.
 * **23 modules**: `accounts` (lockout after 10, none on exposed computers
   without an option, never password expiry), `firewall` (only the
   profiles it changes, every listening port, RDP, WinRM, RPC and echo open
   first; a server's firewall only with an option and in two steps),
   `defender` (never real-time protection on a server without an option;
   SmartScreen warns), `asr` (Microsoft's three standard rules blocked, the
-  rest in audit), `smb`, `ntlm`, `wdigest`, `lsa-protection`,
-  `name-resolution`, `powershell`, `rdp`, `uac`, `autoplay`, `anonymous`,
+  rest in audit; the two reputation rules blocked only with per-rule
+  exclusions for the agents' files), `smb`, `ntlm`, `wdigest`,
+  `lsa-protection`, `name-resolution`, `powershell`, `rdp`, `uac`,
+  `autoplay`, `anonymous`,
   `winrm`, `printing`, `features`, and, not recommended, `smb-signing` and
   `tls`; report only: `audit` (against log collection's one audit table;
   log collection sets it, so the two never fight), `device-guard`,
   `bitlocker`, `laps`.
 * **Guards**: RDP, WinRM and the agents stay reachable; the MSP's accounts
-  are never disabled; SMB1, NTLM on domain controllers, LSA protection
-  and a server's firewall are judged on what the computer did, two
-  applies apart; restarts are reported, never performed, and undo works
-  before them; one hardening apply or undo at a time on a device, never
+  are never disabled; SMB1, NTLM on domain controllers, LSA protection,
+  a server's firewall and the built-in Administrator's filtering are
+  judged on what the computer did, two applies apart, from an hourly
+  harvest of the logs so that busy logs that wrap still count; restarts
+  are reported, never performed, and undo works before them; one
+  hardening apply or undo at a time on a device, never
   beside a patch or software job; domain controllers need an explicit
   option; undo works without the agent.
 * **Platforms**: apply and undo on Windows 11 Pro, Enterprise and

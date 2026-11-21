@@ -1,7 +1,7 @@
 # ADR-0054: Hardening Windows computers and servers
 
-* Status: Proposed (2026-11-21), revised after its independent review the
-  same day. Not implemented.
+* Status: Proposed (2026-11-21), revised after its independent review and
+  again after that review's check, the same day. Not implemented.
 * Builds on: [ADR-0051](0051-hardening-linux-computers.md) (the `hardening`
   job, its modes, results, permission and console),
   [ADR-0017](0017-scripts-and-jobs.md) (scripts and jobs),
@@ -114,14 +114,20 @@ ISO and CIS").
   Department of Defense's class deviation 2024-O0013 requires contractors
   under DFARS 252.204-7012 "to comply with ... (SP) 800-171 Revision 2,
   instead of the version of NIST SP 800-171 in effect at the time the
-  solicitation is issued". Rev. 2's Appendix D maps each requirement to SP
+  solicitation is issued" (read from the Internet Archive's copy of the
+  memorandum: the Department's own site could not be reached). Rev. 2's
+  Appendix D maps each requirement to SP
   800-53 controls: "The security controls in Tables D-1 through D-14 are
   taken from NIST Special Publication 800-53, Revision 4."
 
 ### What the computers are like
-* **Windows' defaults moved a lot.** SMBv1 has not been installed by
-  default since Windows 10 1709; Windows 11 24H2 Enterprise, Pro and
-  Education require SMB signing both ways, Server 2025 outbound; NTLMv1 is
+* **Windows' defaults moved a lot.** A clean installation of Windows 10
+  1709 or later, Windows 11 or Windows Server 2019 to 2025 has no SMBv1
+  server, and no SMBv1 client except on Windows 10 Home (and Pro before
+  1809), which keeps the client and removes it after 15 days unused;
+  computers upgraded in place may keep both; Windows 11 24H2 Enterprise,
+  Pro and Education require SMB signing both ways, Server 2025 outbound;
+  NTLMv1 is
   removed from Windows 11 24H2 and Server 2025; PowerShell 2.0 was removed
   from Windows 11 24H2 in August 2025 and from Server 2025 in September
   2025; added LSA protection is on by default on new, enterprise-joined,
@@ -336,11 +342,19 @@ the reason if:
   Platforms), or an owner holds the computer's settings in a way EasyRMM
   cannot read yet (see Managed elsewhere).
 
-Modules that add or remove a Windows feature (`smb`, `powershell`,
-`features`) are refused, and the others go on, while Windows reports a
+**Applying** a module that removes a Windows feature (`smb`, `powershell`,
+`features`) is refused, and the others go on, while Windows reports a
 restart pending in any of the places Configuration Manager reads for it:
 a pending file rename (`PendingFileRenameOperations`), Windows Update's
 `RebootRequired` key, or component-based servicing's pending restart key.
+**Undo is never refused for a pending restart**: a feature removal
+waiting for one is itself a pending restart in component-based servicing,
+and undo exists to reverse it. Undo of a removal EasyRMM recorded enables
+the feature again before the restart; W2 checks that component-based
+servicing accepts that while the removal is pending, and where it does
+not, undo keeps the record and reports the feature as *to be restored
+after the restart*, and undo run after the restart restores it (a check
+shows it as waiting until then).
 
 If Group Policy sets PowerShell's execution policy to `AllSigned`, the
 script does not start at all: Group Policy "overrides the execution
@@ -368,17 +382,47 @@ with the policy's name, *set by MDM*, *set by OSConfig*, and here also
 *managed elsewhere (owner unknown)* for a value EasyRMM set that a later
 check finds set back twice: it has an owner no reader sees, and is left
 from then on. A value no owner holds is changed and its value before
-recorded for undo, by both features.
+recorded for undo, by both features. A value the reader *cannot tell*
+about is shown as *check only*, with the reason.
+
+**Owners that appear later.** An owner can arrive after apply: the
+computer is enrolled in Intune, onboarded to Defender for Endpoint, or
+given a Group Policy object. Some of EasyRMM's values then win silently:
+a Defender value written as policy outranks Intune's (see How settings
+are written). So wherever EasyRMM's values are in place, the server sends
+a check of the applied modules once a day (it changes nothing, and is
+audited as the server's own job), and every check looks for owners that
+appeared since apply. Where EasyRMM's value outranks the new owner's, the
+setting is shown as *EasyRMM's value outranks* the owner (*set by MDM*,
+for example), with both values, and the console offers undo of the
+module; where the owner's value won, it is *managed elsewhere*, and undo
+leaves that value, as it leaves any value changed since apply. Undo also
+leaves a value an owner now holds that happens to equal EasyRMM's.
 
 **Policy ownership: one reader, built here.** The code that finds who owns
 a setting is written once, in W1, as a PowerShell script in a Go package
 of its own (`internal/winpolicy`, beside `internal/agentproto`). The
 server includes it in the hardening script; the agent carries the same file
-for *Configure logging*, which builds no reader of its own (ADR-0060). It
-returns, per registry value, security setting and audit subcategory, the
-owner and, where there is one, the policy's name. Both features are tested
-against the same domain machines and Group Policy objects (see Testing).
-What it reads, owner by owner:
+for *Configure logging*, which builds no reader of its own (ADR-0060).
+For each registry value, security setting and audit subcategory it
+returns exactly one of three results:
+
+* **Owner and policy**: who holds the value (Group Policy, MDM,
+  OSConfig and the others below), the policy's name where there is one,
+  and the owner's value.
+* **None**: no owner holds it. Only then may either feature change it,
+  recording the value before.
+* **Cannot tell**, with the reason: an owner may hold it whose settings
+  the reader cannot read yet. The reasons are the ones listed below:
+  Group Policy with its record turned off or with registry preference
+  items, MDM until its reader is proven, Defender for Endpoint's security
+  settings management (for Defender, attack surface reduction and
+  firewall values), a Configuration Manager client, DSC correcting drift
+  and Azure machine configuration.
+
+**Both features treat *cannot tell* as check only**: nothing is written,
+and the reason is shown. Both are tested against the same domain machines
+and Group Policy objects (see Testing). What it reads, owner by owner:
 
 * **Group Policy, from the domain or the local Group Policy object**: the
   computer's **resultant set of policy** in WMI (`root\rsop\computer`):
@@ -405,12 +449,19 @@ What it reads, owner by owner:
     that reading is proven, a computer whose Group Policy carries registry
     preference items gets check only.
 * **MDM** (Intune and others through the Policy CSP): the **MDM Bridge WMI
-  provider** (`root\cimv2\mdm\dmmap`), whose `MDM_Policy_Result01_*`
-  classes are the Policy CSP's `Result` node, which "Provides a read-only
-  path to policies enforced on the device". It must be read as Local
-  System, the agent's account. Group Policy wins over MDM unless the MDM
-  set `MDMWinsOverGP`, and the reader reads that too. Microsoft's class
-  reference gives "None supported" as the minimum server, so an
+  provider** (`root\cimv2\mdm\dmmap`), read as Local System, the agent's
+  account. **Ownership comes from the Policy CSP's `Config` node** (the
+  `MDM_Policy_Config01_*` classes), the "Node for grouping all policies
+  configured by one source", and **only the value in effect from its
+  `Result` node** (`MDM_Policy_Result01_*`), which "Groups the evaluated
+  policies from all providers": a value in `Result` alone may have come
+  from Group Policy and is not taken as MDM's. Microsoft notes of `Config`
+  that "A query from a different caller could provide a different value",
+  so W1 proves that the bridge, read as Local System, shows the MDM's
+  values. Group Policy wins over MDM unless the MDM set `MDMWinsOverGP`,
+  which "doesn't apply for all settings, such as attack surface reduction
+  (ASR) rules in Windows 10", and the reader reads that too. Microsoft's
+  class reference gives "None supported" as the minimum server, so an
   MDM-enrolled server is check only. W1 proves the reader on an
   Intune-enrolled Windows 11 (see Open questions); until then, a computer
   enrolled in MDM gets check only.
@@ -454,11 +505,13 @@ What it reads, owner by owner:
 * **Microsoft Defender's own guards**: Tamper Protection blocks changes to
   real-time protection, behaviour monitoring, cloud protection and more
   ("changes made through a management tool, including Group Policy, might
-  appear to succeed, but tamper protection blocks the changes"), and
-  settings made with `Set-MpPreference` "have the lowest precedence. Any
-  policy-based method overwrites them". Settings Tamper Protection locks
-  are *protected by Tamper Protection* when they differ. EasyRMM never
-  turns Tamper Protection off.
+  appear to succeed, but tamper protection blocks the changes"). Settings
+  Tamper Protection locks are *protected by Tamper Protection* when they
+  differ. EasyRMM never turns Tamper Protection off. Settings someone made
+  locally with `Set-MpPreference` "have the lowest precedence. Any
+  policy-based method overwrites them on startup", the policy values
+  EasyRMM writes included (see How settings are written): the check names
+  each local setting apply would outrank, and the manifest records it.
 * **Another antivirus or firewall** (see Microsoft Defender and Firewall
   below). On workstations Windows Security Center names them; Microsoft
   says Security Center is not supported on server versions of Windows, so
@@ -474,28 +527,80 @@ What it reads, owner by owner:
   or its type and data). They do not appear in the Local Group Policy
   Editor as configured, since they are not in the local Group Policy
   object; the console says EasyRMM set them.
+* **Whether they outlive Group Policy is settled by a test, not assumed.**
+  Microsoft's protocol specification has the client write the
+  instructions in each changed Group Policy object's `registry.pol`, and
+  describes no deletion but the ones those instructions name (MS-GPREG
+  section 3.2.5.1.2, *New or Changed GPO List Processing*). Its older
+  description of Windows Server 2003 says the opposite of the policy
+  trees: "all keys and values beneath these paths are erased before
+  applying the resultant registry policy settings", and that the extension
+  "will run only if there are any changes in any the GPOs". So W2's first
+  test, before any module
+  writes an administrative template value, edits or links an unrelated
+  Group Policy object on a domain member (and changes the local Group
+  Policy object on a workgroup computer), runs `gpupdate /force`, and
+  checks that every administrative template value this ADR writes is
+  still there; a refresh in which nothing changed proves nothing. If they
+  do not survive, no such value is written until this ADR is amended.
 * **Security policy** (password and lockout policy, the Guest account,
   anonymous SID and name translation): read with `secedit /export`,
   written with `secedit /configure` and a template holding only the
   module's settings, read back after. Tests prove the values survive Group
   Policy's 16-hourly re-application on a domain member where no policy
   sets them.
-* **Microsoft Defender**: `Set-MpPreference` for single settings; attack
-  surface reduction rules one at a time with `Add-MpPreference` and
-  `Remove-MpPreference`, since `Set-MpPreference` replaces the whole list;
-  attack surface reduction exclusions with
-  `Add-MpPreference -AttackSurfaceReductionOnlyExclusions`, exclusions
-  that "apply to all ASR rules" (PowerShell sets no per-rule exclusions;
-  Group Policy, Intune and the Defender portal do). These are local
-  preferences, not the policy registry values the Defender STIG's checks
-  read; see What each module cites.
+* **Microsoft Defender and attack surface reduction**: as **policy
+  registry values** under
+  `HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\...`, exactly as the
+  administrative template policy would write them, like the other
+  administrative template values: never through LGPO, and never in the
+  local Group Policy object's `registry.pol`. For attack surface reduction
+  that is the policy's enabling value
+  (`...\Windows Defender Exploit Guard\ASR!ExploitGuard_ASR_Rules`), one
+  `REG_SZ` value per rule under `...\ASR\Rules`, named by the rule's GUID,
+  whose data is its mode (1 block, 2 audit), each written and removed on
+  its own, never replacing the list; and the per-rule exclusions of the
+  two reputation rules (see Attack surface reduction) as the policy *Apply
+  a list of exclusions to specific attack surface reduction (ASR) rules*
+  writes them: the rule's GUID as the value name, the exclusions as
+  `Path1\ProcessName1>Path2\ProcessName2`. That policy is in the
+  Administrative Templates of Windows 11 24H2 and later; W2 takes its key
+  from that ADMX file, and shows each supported Windows version honouring
+  it. Why policy values: the Defender STIG's checks read only these; the
+  baselines set them there; and per-rule exclusions exist only as policy
+  (PowerShell sets only exclusions that "apply to all ASR rules"). This
+  key is where Microsoft's table of Defender's settings puts Defender for
+  Endpoint's security settings management, Configuration Manager and Group
+  Policy, all of which its order of precedence ranks above Intune,
+  Configuration Manager's tenant attach and local settings. So:
+  * **Never written where another owner may be**: where the reader finds
+    any Defender value set by Group Policy, any value under
+    `...\Windows Defender\Policy Manager` (where Intune and tenant attach
+    write) or enrolment in an MDM, onboarding to Defender for Endpoint, a
+    Configuration Manager client, or a Defender policy value that none of
+    these explains and EasyRMM did not write (a tool the reader does not
+    know), `defender` and `asr` are *managed elsewhere* or check only, and
+    nothing is written.
+  * **An owner that comes later** is reported by the daily check as
+    *EasyRMM's value outranks* it, with undo offered (see Managed
+    elsewhere).
+  * **Before and after**: each value before is recorded (absent, or its
+    type and data), and after writing, `Get-MpPreference` must show the
+    value in effect and `Get-MpComputerStatus` the running mode
+    (`AMRunningMode`) and Tamper Protection (`IsTamperProtected`) as they
+    were; otherwise the module is put back and reported.
+  * **Persistence** is the test above, for these values as for the rest.
+  * **The cost**: settings set by policy cannot be switched in Windows
+    Security on the computer (W2 records which switches it locks), so a
+    technician who needs one off for a while uses undo, not the switch.
 * **Windows Defender Firewall**: the NetSecurity cmdlets, on the local
   store; EasyRMM's rules in a rule group of their own, by port, never by
   program.
 * **Windows features**: `Disable-WindowsOptionalFeature` on Windows 10
   and 11 and `Uninstall-WindowsFeature` on servers, never with `-Remove`,
   so the payload stays and undo can add a feature back without
-  installation media; never while a restart is pending.
+  installation media; removed by apply never while a restart is pending,
+  added back by undo even then (see Before anything changes).
 * **Services**: start type and state, recorded first.
 * **Remote Desktop**: the Terminal Services WMI provider
   (`Win32_TSGeneralSetting`).
@@ -505,6 +610,47 @@ What it reads, owner by owner:
   including the settings this ADR leaves out); PowerShell DSC; and the
   OSConfig module, which EasyRMM never installs (the reader only asks a
   copy already there).
+
+### Evidence over weeks: the harvest
+Five guards judge a change by what the computer did over a window: SMB1's
+audit (30 days), a server firewall's allowed connections (14 days), the
+NTLM versions a domain controller sees (30 days), the built-in
+Administrator's network sign-ins (30 days, for `uac-builtin-admin`) and
+LSA's audit events (since a start, for at least 7 days). On a busy server
+or domain controller the logs they read (the firewall's log, at most
+32,767 KB; `Microsoft-Windows-NTLM/Operational`; the SMB server's audit
+log; CodeIntegrity's Operational log; the Security log) can wrap in
+hours, and reading them at the end of the window would seldom find it
+covered. So:
+
+* **Where the evidence already covers the window**, in the log or in the
+  events log collection (ADR-0060) has collected from this computer, the
+  guard judges at once.
+* **Otherwise the first step starts a harvest**: a scheduled task, as
+  LocalSystem, every hour, that runs the script's copy in
+  `%ProgramData%\EasyRMM\Hardening\` (a folder only LocalSystem and
+  Administrators can write; see Backups, undo and interruptions) in a
+  fourth mode, `harvest`, which the server never sends. Each run reads
+  the log from where the last stopped and adds to the manifest only what
+  the guard needs, as distinct values: the local ports that received an
+  allowed connection (firewall); for each client, the NTLM versions it
+  used (NTLM); the clients that used SMB1 (event 3000); the built-in
+  Administrator's network sign-ins, with their time and source (event
+  4624, logon type 3, the account's SID ending in 500); the plug-ins in
+  events 3065 and 3066 (LSA). The task is recorded for undo.
+* **Coverage comes from the harvest's continuity**, not from how far the
+  log reaches. Each run records when it ran, the oldest event still in
+  the log and the newest it read. The window counts from the first run
+  for as long as each run finds the previous run's newest event still in
+  the log; a gap (the log wrapped or was cleared between runs, after runs
+  failed for example) restarts it, and the check shows the gap with its
+  times. A computer that is off loses nothing, since its logs are not
+  written.
+* **NTLM's log is made larger** at the first step on a domain controller,
+  to at least 65,536 KB, with its size before recorded for undo. Log
+  collection does not size that log.
+* **The second step, or undo, removes the task.** Its findings stay in the
+  manifest until the record is consumed.
 
 ### The modules
 *Recommended* ones are preselected; the others must be chosen one by one,
@@ -517,20 +663,20 @@ cite, and whether they meet the rule, is in the next section.
 | `firewall` | See **Firewall** below | Yes |
 | `defender` | See **Microsoft Defender** below | Yes |
 | `asr` | See **Attack surface reduction** below | Yes |
-| `smb` | SMBv1 off: the server's SMB1 protocol, the client's SMB1 driver, and the optional feature removed where installed (a restart); passwords never sent unencrypted to third-party SMB servers. Where the server still speaks SMB1, **in two steps**: the first apply turns on Windows' SMB1 access audit (`Set-SmbServerConfiguration -AuditSmb1Access $true`; "Each time a client attempts to use SMBv1 to connect to a server, an entry that has an event ID of 3000 appears" in the `Microsoft-Windows-SMBServer/Audit` log), records it for undo, and stops; a later apply turns SMB1 off only when the audit has been on for 30 days, its log reaches back to then and holds no event 3000, and this computer has no SMB1 connection open to another (the audit covers the server side only). Breaks: scanners, NAS boxes and old systems that speak only SMB1, including ones this computer opens shares on | Yes |
+| `smb` | SMBv1 off: the server's SMB1 protocol, the client's SMB1 driver, and the optional feature removed where installed (a restart); passwords never sent unencrypted to third-party SMB servers. Where the server still speaks SMB1, **in two steps**: the first apply turns on Windows' SMB1 access audit (`Set-SmbServerConfiguration -AuditSmb1Access $true`; "Each time a client attempts to use SMBv1 to connect to a server, an entry that has an event ID of 3000 appears" in the `Microsoft-Windows-SMBServer/Audit` log), records it for undo, starts the harvest (see Evidence over weeks) and stops; a later apply turns SMB1 off only when the audit and the harvest have covered 30 days without a gap and found no event 3000, and this computer has no SMB1 connection open to another (the audit covers the server side only). Breaks: scanners, NAS boxes and old systems that speak only SMB1, including ones this computer opens shares on | Yes |
 | `smb-signing` | SMB signing required by the client and the server; guest access to SMB shares off. Already the default on Windows 11 24H2 Enterprise, Pro and Education, and outbound on Server 2025. Breaks: multifunction printers that scan to a share and NAS boxes that cannot sign, shares opened as guest (common in small offices); large copies are slower | No |
 | `ntlm` | See **NTLM** below | Yes, except on domain controllers |
 | `wdigest` | WDigest does not keep passwords in memory (`UseLogonCredential` 0, which is also Windows' behaviour when the value is absent). Breaks nothing current | Yes |
 | `lsa-protection` | See **LSA protection** below | Yes on Windows 11 22H2 and later; no elsewhere |
 | `name-resolution` | LLMNR off; NetBIOS ignores name release requests except from WINS servers. NetBIOS over TCP/IP stays on and its node type is left (Microsoft's baseline sets P-node, which stops NetBIOS names resolving by broadcast where there is no WINS server). Breaks: on networks without DNS for local devices, names only LLMNR found (`\\NAS`) | Yes on computers in a domain; no in workgroups |
-| `powershell` | Windows PowerShell 2.0 removed where it is still installed (Windows 10, Server 2016 to 2022, Windows 11 before August 2025's update), never while a restart is pending. Script block logging is reported against log collection's table (see Audit policy). Not transcription, which writes every script's text, secrets included, to files. Breaks: tools that start `powershell -Version 2` | Yes |
+| `powershell` | Windows PowerShell 2.0 removed where it is still installed (Windows 10, Server 2016 to 2022, Windows 11 before August 2025's update), never applied while a restart is pending. Script block logging is reported against log collection's table (see Audit policy). Not transcription, which writes every script's text, secrets included, to files. Breaks: tools that start `powershell -Version 2` | Yes |
 | `rdp` | See **Remote Desktop** below | Yes, once W2 proves EasyRMM's RDP sessions work with NLA |
 | `uac` | See **User Account Control** below; not applicable on Server Core | Yes, once W2 proves remote support still answers the prompt |
 | `autoplay` | AutoPlay off for all drives and for devices that are not volumes, no AutoRun commands. Breaks: CDs and USB drives no longer start anything by themselves | Yes |
 | `anonymous` | No anonymous enumeration of accounts or shares, no anonymous SID and name translation, anonymous users not in Everyone, anonymous access to named pipes and shares restricted; remote calls to the account database only for administrators on workstations, member servers and standalone servers (the Server 2025 STIG's rule is for those; on domain controllers it is left). Mostly Windows' defaults. Breaks: very old systems and devices that list shares without signing in | Yes |
 | `winrm` | WinRM's client and service: no Basic authentication, no unencrypted traffic, no Digest (client), no stored RunAs credentials (service). These are Windows' defaults; where Basic or unencrypted traffic is on (someone turned it on, often for Ansible or a monitoring tool) it is left and reported, unless the option `winrm-basic-off` is given. WinRM is never stopped and its listeners never removed | Yes |
-| `printing` | Only administrators install print drivers (the baseline's setting), drivers are never downloaded over HTTP, no printing over HTTP; on domain controllers the Print Spooler stopped and disabled (Microsoft: "domain controllers and Active Directory admin systems need to have the Print spooler service disabled"); on other servers only with the option `spooler-off`. On any server, domain controllers included, the spooler is left, and the result says why, where the server shares a printer, has the Print Server role or is a Remote Desktop session host. Never on workstations. Breaks: users adding a printer whose driver is not installed yet | Yes |
-| `features` | Removes, where installed, the Telnet and TFTP clients, Simple TCP/IP Services and the Peer Name Resolution Protocol (payload kept), never while a restart is pending. An FTP server or Fax server is reported, never removed: it may be there on purpose (the STIG allows FTP where "required by the organization"). Breaks: someone using the Telnet client to test ports | Yes |
+| `printing` | Only administrators install print drivers (the baseline's setting), drivers are never downloaded over HTTP, no printing over HTTP; on domain controllers the Print Spooler stopped and disabled (Microsoft: "domain controllers and Active Directory admin systems need to have the Print spooler service disabled"); on other servers only with the option `spooler-off`. On any server, domain controllers included, the spooler is left, and the result says why, where the server shares a printer, has the Print Server role or is a Remote Desktop session host. Never on workstations. Breaks: users adding a printer whose driver is not installed yet; on domain controllers, the spooler's pruning of stale print queue objects from Active Directory, which Microsoft calls the trade-off of disabling it (they must then be pruned some other way) | Yes |
+| `features` | Removes, where installed, the Telnet and TFTP clients, Simple TCP/IP Services and the Peer Name Resolution Protocol (payload kept), never applied while a restart is pending. An FTP server or Fax server is reported, never removed: it may be there on purpose (the STIG allows FTP where "required by the organization"). Breaks: someone using the Telnet client to test ports | Yes |
 | `tls` | Schannel: SSL 2.0 and 3.0 and TLS 1.0 and 1.1 off for clients and servers (a restart). Microsoft's own pages disagree on whether TLS 1.0 and 1.1 are already off on Server 2025 and Windows 11 24H2; the check reads what is in effect. Breaks: older SQL Server clients and drivers, older .NET programs, devices and line-of-business software that speak only TLS 1.0 | No |
 | `audit` | Report only: see **Audit policy** below | (report) |
 | `device-guard` | Report only: whether virtualization-based security, memory integrity (HVCI) and Credential Guard are running. Turning them on needs hardware and firmware support and a restart, cannot be undone remotely when locked in UEFI, and Credential Guard is not recommended on domain controllers | (report) |
@@ -570,21 +716,20 @@ the module's section. **Not set**: the module leaves the setting, reports
 it, and names the option that sets it where there is one. The console
 shows the same three, per setting.
 
-**Where the value is written matters to scanners.** The Firewall STIG's
-checks accept the local value when no policy sets one, and EasyRMM's
-registry settings are written where Group Policy would write them. The
+**Where the value is written matters to scanners.** EasyRMM writes its
+registry settings where Group Policy would write them, Defender's and
+attack surface reduction's included (How settings are written), so a
+scanner that follows the STIGs' checks reads them where it looks: the
 Defender STIG's checks read only the policy values under
-`HKLM\Software\Policies\Microsoft\Windows Defender`, while EasyRMM writes
-Defender's settings and attack surface reduction rules as local
-preferences (How settings are written). Defender applies them, but a
-scanner that follows those checks reports them missing; the console says so
-beside each Defender setting.
+`HKLM\Software\Policies\Microsoft\Windows Defender`. The Firewall STIG's
+checks also accept the local value when no policy sets one, which is
+where the NetSecurity cmdlets write.
 
 | Module | Meets | Differs on purpose | Not set |
 |---|---|---|---|
 | `accounts` | WN11-AC-000005, -000015, -000020, -000035, -000040, -000045, WN11-SO-000010, -000015; WN25-AC-000010, -000030, -000040, -000080, -000090, WN25-SO-000010, -000020 | WN11-AC-000010, WN25-AC-000020: 10 failed sign-ins, not 3 | WN11-AC-000025, WN25-AC-000050 (maximum password age); WN11-AC-000030, WN25-AC-000060 (minimum password age: without expiry it only stops a user correcting a new password the same day); WN11-SO-000020, WN25-SO-000030 (renaming Administrator) |
 | `firewall` | WN11-00-000135, WN25-00-000280; WNFWA-000001 to -000005, -000009, -000010, -000012, -000013, -000017, -000018, -000020, -000021, -000027, -000028 | none | WNFWA-000011, -000019, -000029 (logging allowed connections, except during a server's first step); WNFWA-000024, -000025 (local rules not merged with policy); WNFWA-000100 (inbound only from management hosts) |
-| `defender` | WN11-00-000045, WN25-00-000110, WN25-CC-000300; WNDF-AV-000001, -000010, -000021, -000022, and -000039 on Windows 10 and 11 | WN11-CC-000210: SmartScreen warns and users may go on (`smartscreen-block` gives the rule's *Block*) | WNDF-AV-000073 (cloud protection level High: `cloud-block-high`); WNDF-AV-000052 (local exclusions not merged with policy, which would void EasyRMM's own: see Attack surface reduction); the Defender STIG's other rules (scans, remediation actions, the visibility of exclusions and more) are outside the module |
+| `defender` | WN11-00-000045, WN25-00-000110, WN25-CC-000300; WNDF-AV-000001, -000010, -000021, -000022, and -000039 on Windows 10 and 11 | WN11-CC-000210: SmartScreen warns and users may go on (`smartscreen-block` gives the rule's *Block*) | WNDF-AV-000021 on a server whose real-time protection is off, unless `defender-server-realtime` is given; WNDF-AV-000073 (cloud protection level High: `cloud-block-high`); WNDF-AV-000052 (local exclusions not merged with policy, with which Microsoft says "per-rule exclusions or local ASR rule exclusions don't apply", voiding EasyRMM's own: see Attack surface reduction); the Defender STIG's other rules (scans, remediation actions, the visibility of exclusions and more) are outside the module |
 | `asr` | WNDF-AV-000044, -000051 (blocked); -000047, -000049 (audited, as the rules ask); -000048 where the Configuration Manager client is installed (audited) | WNDF-AV-000048 elsewhere: blocked, where the rule's check accepts only audit; WNDF-AV-000032 to -000038, -000043, -000045, -000046, -000050: audited, not blocked (`asr-block` blocks them one by one) | WNDF-AV-000048 on Server 2016 and 2019, where Microsoft does not support the rule |
 | `smb` | WN11-00-000160, -000165, -000170, WN11-SO-000110; WN25-00-000380, -000390, -000400, WN25-SO-000180 | none | none |
 | `smb-signing` | WN11-SO-000100, -000120, WN11-CC-000040; WN25-SO-000160, -000170, -000190, -000200, WN25-CC-000070 | none | All of these while the module is not chosen |
@@ -641,13 +786,16 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
 
 ### Firewall
 * **Windows Defender Firewall on** for the domain, private and public
-  profiles, with inbound connections blocked unless a rule allows them,
-  and dropped packets logged to a log of at least 16 MB (the Firewall
-  STIG's settings). EasyRMM never blocks outbound traffic: the EasyRMM
-  agent, MeshAgent and the EasyPatch agent only connect out.
-* **Only the profiles it changes.** A profile already on and blocking
-  inbound connections (often the public one, on a laptop in a hotel) is
-  left exactly as it is, and no allow rule is added to it. Rules are added
+  profiles, with inbound connections blocked unless a rule allows them
+  (the Firewall STIG's settings). EasyRMM never blocks outbound traffic:
+  the EasyRMM agent, MeshAgent and the EasyPatch agent only connect out.
+* **Logging on every profile**: dropped packets logged, to a log of at
+  least 16,384 KB, on all three profiles, whatever their state, since
+  logging changes no traffic. A larger log is left as it is.
+* **State and rules only on the profiles it changes.** A profile already
+  on and blocking inbound connections (often the public one, on a laptop
+  in a hotel) keeps its state and its rules exactly as they are, and no
+  allow rule is added to it; only its logging is set. Rules are added
   only to the profiles the module turns on or sets to block.
 * **What a changed profile allows**, by protocol and local port only,
   never by program (a program's path changes with its version): every TCP
@@ -684,14 +832,16 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
   given. With it, in **two steps**: the first turns the profile on with
   inbound connections still allowed and allowed connections logged
   (`LogAllowed`, the log at its largest, 32,767 KB), so nothing is blocked
-  except by block rules already in Windows, which the check lists first;
-  the second, a later apply at least 14 days after, reads the log, allows
-  every local port that received a connection as well as the ports above,
-  and only then blocks. It is refused when the log no longer reaches back
-  to the first step, and says how far it reaches; the operator adds what
-  is missing and gives `ports-checked`. Fourteen days sees weekly jobs; a
-  monthly one may not appear, which the result says. On workstations one
-  step is enough: they listen on little.
+  except by block rules already in Windows, which the check lists first,
+  and starts the harvest (see Evidence over weeks), which collects every
+  local port that receives an allowed connection; the second, a later
+  apply once the harvest has covered 14 days without a gap, allows every
+  port it collected as well as the ports above, and only then blocks. It
+  is refused while the harvest's coverage is shorter, and says how long
+  it is and where the gaps were; the operator can add what is missing and
+  give `ports-checked`. Fourteen days sees weekly jobs; a monthly one may
+  not appear, which the result says. On workstations one step is enough:
+  they listen on little.
 * **Managed elsewhere**: a firewall policy from Group Policy, MDM or
   Defender for Endpoint; on workstations, a firewall product registered
   with Windows Security Center; on servers, a firewall product found by its
@@ -707,14 +857,18 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
   different pages, so the script matches them loosely; in any mode but
   Normal the module is *not applicable*.
 * **Servers.** Since a server keeps Defender running beside another
-  antivirus, on a server the module is also *not applicable* where
-  real-time protection is off, where a file system filter in the
-  anti-virus range of altitudes (320000 to 329999, filters "that detect and
-  disinfect viruses during file I/O") other than Defender's own is loaded,
-  or where a service of a known antivirus product is installed; the check
-  names what it found. **EasyRMM never turns real-time protection on on a
-  server** unless the option `defender-server-realtime` is given: two
-  engines on one server is what Microsoft's passive mode exists to avoid.
+  antivirus, on a server the module is also *not applicable* where a file
+  system filter in the anti-virus range of altitudes (320000 to 329999,
+  filters "that detect and disinfect viruses during file I/O") other than
+  Defender's own is loaded, or where a service of a known antivirus
+  product is installed; the check names what it found, and no option
+  overrides it. **Real-time protection off is not a reason**: where
+  neither is found and it is off, the module sets the rest and leaves
+  real-time protection off, reporting it, unless the option
+  `defender-server-realtime` is given, which turns it on. Without the
+  option EasyRMM never turns it on on a server: an antivirus the check
+  does not know may be there, and two engines on one server is what
+  Microsoft's passive mode exists to avoid.
 * Real-time protection and behaviour monitoring on (on servers, see
   above), cloud-delivered protection on, potentially unwanted applications
   blocked, SmartScreen for Explorer on, and network protection in block
@@ -732,8 +886,8 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
   for High, which blocks unknown files more readily, and a new EasyRMM
   agent build is an unknown file. It is offered as the option
   `cloud-block-high`, with that stated.
-* No exclusions are added or removed, except the attack surface reduction
-  exclusions below.
+* No exclusions are added or removed, except the per-rule attack surface
+  reduction exclusions below.
 * Breaks: installers bundling unwanted software; websites with a bad
   reputation; with `smartscreen-block`, downloaded programs without a
   reputation.
@@ -762,19 +916,44 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
   reading their audit events, except:
   * *Block process creations originating from PSExec and WMI commands*
     (MSP tools and Configuration Manager use both), never blocked;
-  * the two rules that judge files by reputation (*Block executable files
-    from running unless they meet a prevalence, age, or trusted list
-    criterion* and *Use advanced protection against ransomware*, which
-    "blocks files that don't yet have a positive reputation"). A new agent
-    build has none, signed or not. They are blocked only together with
-    attack surface reduction exclusions for the three agents' program and
-    state folders and the folder where the EasyRMM agent stages software
-    ([ADR-0028](0028-software-deployment.md); W2 establishes the list), and
-    are refused where Group Policy or Defender for Endpoint turned off the
-    merging of local exclusions ("local ASR rule exclusions don't apply"
-    then). The exclusions apply to every rule, as PowerShell allows no
-    other kind, and undo removes them. W2 tests an agent update and a
-    software job under them.
+  * the two rules that judge files by reputation, blocked only as the next
+    bullet says.
+* **The reputation rules** (*Block executable files from running unless
+  they meet a prevalence, age, or trusted list criterion*, and *Use
+  advanced protection against ransomware*, which "also blocks files that
+  don't yet have a positive reputation" but not "a valid signed file"). A
+  new agent build has no reputation; signed by the operator
+  ([ADR-0049](0049-operators-sign-windows-agents.md)) it passes the
+  ransomware rule, though not necessarily the prevalence rule.
+  * **They stay in audit until per-rule exclusions for these two rules
+    alone are in place**, written as policy values (see How settings are
+    written), and `asr-block` is refused for them until then. The
+    exclusions name the agents' program files (the EasyRMM agent's,
+    MeshAgent's and the EasyPatch agent's, and the files their updates
+    run) by full path, with a wildcard only where an update's file name
+    changes, never a whole folder; W2 establishes the list. No other rule
+    is exempted, so the vulnerable-driver and LSASS rules still cover the
+    agents.
+  * **Software jobs** ([ADR-0028](0028-software-deployment.md)) run
+    installers that winget and Chocolatey download to their own folders;
+    those are third-party files and are never excluded, so W2 tests a
+    software job under both rules.
+  * **Exclusions count for processes started after them**: "Exclusions
+    apply only when the application or service starts". So the apply that
+    adds them also restarts MeshAgent's and the EasyPatch agent's services,
+    and the EasyRMM agent's through a one-time scheduled task that runs
+    after the job has reported and then deletes itself (a job cannot
+    restart the agent running it). The two rules move to block at a later
+    apply, and only once every agent process started after the exclusions
+    were written (the check compares their start times with the
+    manifest's).
+  * **Refused where local merging is off** in any of the four ways
+    Microsoft lists, since "per-rule exclusions or local ASR rule
+    exclusions don't apply" then: Defender for Endpoint's security
+    settings management and Intune (each *Disable Local Admin Merge*), the
+    Defender CSP (`DisableLocalAdminMerge`), and Group Policy (*Configure
+    local administrator merge behavior for lists*).
+  * Undo removes the exclusions. W2 tests an agent update under them.
 * *Block Webshell creation for Servers* "blocks web shell script creation
   on Windows servers running Microsoft Exchange" and is never set, though
   Server 2025's baseline blocks it. Rules are set one at a time, never
@@ -795,13 +974,19 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
   Windows' **enhanced NTLM auditing** (Microsoft's KB5064479; on domain
   controllers, events 4030 to 4033 in `Microsoft-Windows-NTLM/Operational`,
   which carry the "NTLM Version"; on Windows Server 2025, and on 2022 and
-  2019 from 13 October 2026):
-  * The first apply on a domain controller turns on *Log Enhanced
-    Domain-wide NTLM Logs*, recorded for undo, and stops.
-  * A later apply goes on only when those events cover at least 30 days
-    and show no NTLMv1 or LM sign-in, read from the events' XML fields,
-    never their translated text. Where log collection (ADR-0060) collects
-    members' 4624 events, they are read too, by `LmPackageName`.
+  2019 from 13 October 2026). Microsoft: "By default, the events are
+  enabled."
+  * Where those events already cover 30 days (see Evidence over weeks),
+    the first apply judges at once. Otherwise it starts the harvest, which
+    records each client's NTLM versions, makes the NTLM log larger, and
+    stops. Only where *Log Enhanced Domain-wide NTLM Logs* has been turned
+    off does it also turn that on, recorded for undo; undo never turns off
+    logging that was on before.
+  * The module goes on only when the events, read from their XML fields
+    and never their translated text, cover at least 30 days and show no
+    NTLMv1 or LM sign-in; the result names each client that used one.
+    Where log collection (ADR-0060) collects members' 4624 events, they
+    are read too, by `LmPackageName`.
   * On a Server 2016 domain controller, which has no enhanced auditing,
     the module is refused.
 * Breaks: devices and software that speak only LM or NTLMv1 (old NAS
@@ -817,17 +1002,29 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
   program booted on the computer, removes: offered only with the option
   `lsa-uefi-lock`, stated as "undo needs someone at the computer". Server
   2025 joins the first group when a test shows value 2 taking effect there.
-* **Judged since the last start, in audit mode.** Plug-ins and drivers
-  that would not load under protection show as CodeIntegrity events 3065
-  and 3066 when LSASS loads them, if LSA's audit mode is on: by default on
-  Windows 11 22H2 and later, elsewhere with `AuditLevel` 8 under
-  `Image File Execution Options\LSASS.exe`, which takes effect at a
-  restart. LSASS loads them at start, so a server up for longer than any
-  fixed window would show nothing; the guard needs audit mode to have been
-  on at the last start and the log to reach back to it, and judges by the
-  events since then. Where audit mode was not on at the last start, the
-  first apply sets `AuditLevel` 8 (recorded for undo) and stops, *waiting
-  for a restart*; a later apply, after one, judges.
+* **Judged in audit mode, since a start, over at least 7 days.** Plug-ins
+  and drivers that would not load under protection show as CodeIntegrity
+  events 3065 and 3066 when LSASS loads them, if LSA's audit mode is on:
+  by default on Windows 11 22H2 and later, elsewhere with `AuditLevel` 8
+  under `Image File Execution Options\LSASS.exe`, which takes effect at a
+  restart. Microsoft does not say when LSASS loads each plug-in, and one
+  kind it names, smart card drivers, may load only when a card is used.
+  So the guard needs audit mode to have been on at the last start, every
+  event since then (from the log, or from the harvest where the log no
+  longer reaches back), and that start to be at least 7 days ago. A
+  plug-in used less often than that can be missed, and the result says
+  so.
+  * Where audit mode was on at the last start, the log reaches back to it
+    and it is at least 7 days ago, the first apply judges at once; where
+    that start is more recent, it starts the harvest and stops.
+  * Where audit mode was not on at the last start, the first apply sets
+    `AuditLevel` 8 (recorded for undo), starts the harvest and stops,
+    *waiting for a restart*.
+  * Where it was on but the log no longer reaches back to that start, the
+    first apply starts the harvest and stops, also *waiting for a
+    restart*: what loaded at that start can no longer be seen.
+  * A later apply judges once the last start is at least 7 days back and
+    the events since it are complete.
 * **Refused** when there is a 3065 or 3066 since the last start: smart
   card drivers, password filters and other unsigned plug-ins would stop
   working. Refused too where those events cannot be logged ("Audit events
@@ -873,11 +1070,14 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
   (`FilterAdministratorToken`) only with the option `uac-builtin-admin`.
   It gives the built-in Administrator a filtered token like other local
   administrators, so admin shares, WMI, PsExec and WinRM used with that
-  account stop getting full rights. Even with the option it is refused
-  while the Security log, or the events log collection has collected from
-  this computer, shows a network sign-in (event 4624, logon type 3) by the
-  built-in Administrator (RID 500) in the last 30 days, and refused when
-  neither reaches back 30 days.
+  account stop getting full rights. Even with the option it is set only
+  when 30 days of events show no network sign-in (event 4624, logon type
+  3) by the built-in Administrator (RID 500): the events log collection
+  has collected from this computer where they cover 30 days, else the
+  Security log where it reaches back that far. Where neither does, the
+  first apply starts the harvest (see Evidence over weeks) and stops; a
+  later apply judges once the harvest has covered 30 days without a gap.
+  Any such sign-in refuses it, and the result names its time and source.
 * **Not set**: automatically denying elevation to standard users (the
   STIGs ask for it). It stops a technician typing an administrator's
   password into a user's prompt during remote support; offered as the
@@ -943,28 +1143,37 @@ As in ADR-0051, with Windows' places and tools:
   Removing a device ([ADR-0050](0050-removing-a-device.md)) leaves the
   hardening in place, and the guide says so.
 * **What is recorded**, per module, in a manifest with a format version:
-  each registry value before (absent, or its type and data) and after;
-  each security policy value before; Defender's settings, each attack
-  surface reduction rule's action and the exclusions EasyRMM added; each
-  firewall profile's settings before, as the local store held them, and
-  the names of EasyRMM's rules; each feature's and service's state before;
-  what the first of two steps turned on (the SMB1 audit, enhanced NTLM
-  logging, LSA's audit level, a server profile's logging), and when.
+  each registry value before (absent, or its type and data) and after,
+  Defender's and attack surface reduction's policy values among them (each
+  rule's mode and each per-rule exclusion EasyRMM added); for Defender,
+  also the local settings apply outranked, and what `Get-MpPreference` and
+  `Get-MpComputerStatus` reported before and after; each security policy
+  value before; each firewall profile's settings before, as the local
+  store held them, and the names of EasyRMM's rules; each feature's and
+  service's state before; what the first of two steps turned on or changed
+  (the SMB1 audit, enhanced NTLM logging where it had been off, the NTLM
+  log's size, LSA's audit level, a server profile's logging, the
+  harvest's scheduled task), and when; and what the harvest found, with
+  each run's time, the oldest event still in the log and the newest it
+  read.
 * **Undo** puts each one back if it is still as apply left it; anything
   changed since (by an administrator, a policy, Windows) is left and the
   result says so. Features come back from their kept payload; EasyRMM's
-  firewall rules and exclusions are removed. A successful undo consumes
-  the record; the next apply takes a fresh one. Applying twice changes
-  nothing the second time.
+  firewall rules, per-rule exclusions and harvest task are removed. A
+  successful undo consumes the record; the next apply takes a fresh one.
+  Applying twice changes nothing the second time.
 * **Firewall settings that were not configured** in the local store
   (Windows' defaults) are put back as not configured, never written as an
   explicit *Block* or *Allow*. Microsoft documents `NotConfigured` as
   "Valid only when configuring a Group Policy Object", so W2 settles which
   call does this for the local store, and tests it.
 * **Undo before a restart.** Changes that wait for a restart are undone
-  before it as well as after: a feature waiting to be removed is enabled
-  again, UAC's value is written back, `RunAsPPL` and `AuditLevel` are
-  removed. W2 tests each, before and after the restart.
+  before it as well as after, and a pending restart never refuses undo: a
+  feature waiting to be removed is enabled again (where component-based
+  servicing will not take that while the removal is pending, undo reports
+  it *to be restored after the restart*: see Before anything changes),
+  UAC's value is written back, `RunAsPPL` and `AuditLevel` are removed.
+  W2 tests each, before and after the restart.
 * **Interruptions.** Each module writes its intent before changing
   anything and marks it done after; a later check reports a module left
   half-applied, and undo reverses what was recorded.
@@ -973,7 +1182,7 @@ As in ADR-0051, with Windows' places and tools:
   be run on the computer (`powershell -ExecutionPolicy Bypass -File
   "%ProgramData%\EasyRMM\Hardening\easyrmm-hardening.ps1" undo all`, as an
   administrator) from MeshCentral's terminal, a console, or after the
-  agent is gone.
+  agent is gone. The harvest's task runs the same copy.
 
 ### Lock-out guards
 * **Remote Desktop and WinRM stay reachable.** The firewall changes only
@@ -985,24 +1194,27 @@ As in ADR-0051, with Windows' places and tools:
   removed.
 * **The agents are never cut off.** The EasyRMM agent, MeshAgent and the
   EasyPatch agent connect out, and EasyRMM never blocks outbound traffic;
-  their services are never stopped or changed; Defender's High cloud
-  protection level and SmartScreen's *Block* are only set when the
-  operator chooses them, the latter never while the agent packages are
-  unsigned; the reputation-based attack surface reduction rules are only
-  blocked with exclusions for the agents' folders.
+  their services are never changed, and never stopped except for one
+  restart after the per-rule exclusions are added (see Attack surface
+  reduction); Defender's High cloud protection level and SmartScreen's
+  *Block* are only set when the operator chooses them, the latter never
+  while the agent packages are unsigned; the reputation-based attack surface
+  reduction rules are only blocked once per-rule exclusions for the
+  agents' files are in place and every agent process started after them.
 * **The MSP's accounts are never disabled**, renamed or denied a sign-in
   right; lockout (10 attempts, 15 minutes) is the one way an account can
   be blocked, it ends by itself, and it is not set on computers exposed to
   spraying without an option. The built-in Administrator keeps its full
   rights over the network unless the operator chooses otherwise and 30
-  days of events show it unused there.
-* **Restarts are reported, never performed.** Modules whose change waits
-  for one (`lsa-protection`, `tls`, `smb` where it removes the feature,
+  days of events, collected or harvested, show it unused there.
+* **The computer's restarts are reported, never performed.** Modules
+  whose change waits for one (`lsa-protection`, `tls`, `smb` where it
+  removes the feature,
   `powershell` and `features` where they do, `uac` with `uac-enable`)
   report *waiting for a restart*, and the device shows *restart needed*
   until a check sees the change in effect. The operator restarts when it
-  suits. Feature changes are refused while a restart is pending, and undo
-  works before the restart.
+  suits. Applying a feature's removal is refused while a restart is
+  pending; undo never is, and works before the restart.
 * **Each module checks itself**: after writing, it reads every value back;
   if one is not as intended, the module is put back and reported failed,
   and the others go on.
@@ -1052,7 +1264,8 @@ As in ADR-0051, with Windows' places and tools:
   `device.view`.
 
 ### The rest
-* **Audit**: `device.hardening`, with the mode, modules, options and job.
+* **Audit**: `device.hardening`, with the mode, modules, options and job;
+  the daily check (see Managed elsewhere) with the server as its actor.
 * **API**: `POST /api/v1/jobs/hardening` and `GET
   /api/v1/devices/{id}/hardening`, as in ADR-0051; `canHarden` and
   `canCheckHardening` cover Windows devices.
@@ -1126,33 +1339,50 @@ As in ADR-0051, with Windows' places and tools:
     run. The fallback is a self-hosted runner the owner provides, or the
     same scenarios run by hand on the owner's machines and recorded.
 * **Scenarios, one or more per guard**, as in ADR-0051:
+  * Persistence, first of all (see How settings are written): on a domain
+    member and on a workgroup computer, every administrative template value
+    EasyRMM writes, Defender's and attack surface reduction's included,
+    still in place after an unrelated Group Policy object is edited or
+    linked (on the workgroup computer, the local one changed) and
+    `gpupdate /force` runs.
   * Restarts: values persist, LSA protection active after one, features
     removed; undo before the restart (a feature waiting for removal, UAC,
     `RunAsPPL` with and without `lsa-uefi-lock`); a pending restart
-    refusing feature changes.
+    refusing a feature's removal but not its undo.
   * Firewall: a port forwarded from outside reaching a listening service
     before and after; a public profile already blocking, left without a
-    rule; WMI from a second guest after blocking (RPC); echo from outside;
-    a SQL Server Express named instance (ports move: refused); a Group
-    Policy object turning local rules off (refused); a server with its
-    firewall off, in two steps, and with the log rolled over (refused).
+    rule and with only its logging set; WMI from a second guest after
+    blocking (RPC); echo from outside; a SQL Server Express named instance
+    (ports move: refused); a Group Policy object turning local rules off
+    (refused); a server with its firewall off, in two steps, with a log
+    small enough to wrap between harvests (a gap: the window starts
+    again).
   * Defender and attack surface reduction: a guest with Defender active;
-    an unsigned agent, and one signed with a certificate made for the
-    test, installed and updated under SmartScreen's *Block* and under the
-    reputation rules with the exclusions; a software job under them;
+    the values written as policy, read back by `Get-MpPreference`; a local
+    `Set-MpPreference` value outranked and reported; a Group Policy object
+    setting Defender after apply (*managed elsewhere* at the next check);
+    a server with real-time protection off, with and without
+    `defender-server-realtime`; an unsigned agent, and one signed with a
+    certificate made for the test, installed and updated under
+    SmartScreen's *Block* and under the reputation rules with the per-rule
+    exclusions, after the agents' restart; a software job under them;
     Tamper Protection on, its settings reported.
   * SMB1: a client on the host forcing SMB1 against a guest with SMB1 on
-    (event 3000: refused).
+    (event 3000, harvested: refused).
   * NTLM: a Server 2019 or 2022 domain controller with enhanced NTLM
     auditing and a Windows 10 or Server 2019 member set to send NTLMv1
-    (refused); a Server 2016 domain controller (refused).
+    (harvested: refused); the domain-wide logging turned off by policy
+    beforehand (turned on, and off again by undo) and left on (untouched
+    by undo); a Server 2016 domain controller (refused).
   * LSA: an unsigned password filter built in the repository (event 3066:
-    refused); audit mode off at the last start (the `AuditLevel` step).
+    refused); audit mode off at the last start (the `AuditLevel` step); a
+    start less than 7 days ago (waits).
   * A printer shared from a domain controller (the spooler left).
   * Remote Desktop: the RDP Security Layer (refused); NLA through
     MeshCentral's web client.
   * UAC: the built-in Administrator signing in over the network from a
-    second guest (`uac-builtin-admin` refused); Server Core (not
+    second guest (`uac-builtin-admin` refused, from the Security log and,
+    with a log too small for 30 days, from the harvest); Server Core (not
     applicable); a prompt on the secure desktop answered through
     MeshCentral.
   * Lockout: ten failed sign-ins to one account within 15 minutes
@@ -1177,17 +1407,20 @@ As in ADR-0051, with Windows' places and tools:
     on a server.
 * **Before it is called complete** it is run on real computers: a real
   domain with a domain controller and member servers; a Windows 11
-  enrolled in Intune; computers with a third-party antivirus and firewall,
-  servers among them; and the script under a common EDR, to see whether it
-  is taken for an attack (see Open questions).
+  enrolled in Intune, and one enrolled after apply (the daily check
+  reports *EasyRMM's value outranks*); computers with a third-party
+  antivirus and firewall, servers among them; and the script under a
+  common EDR, to see whether it is taken for an attack (see Open
+  questions).
 
 ## Slices
 * **W1, check.** The script's skeleton (platform, role, language mode, the
   manifest, the JSON result); the ownership reader in `internal/winpolicy`
-  (Group Policy with its audit policy, preferences, its record turned off,
-  MDM, Defender for Endpoint, Configuration Manager, DSC, Azure machine
-  configuration, OSConfig, Tamper Protection, other antivirus and
-  firewalls) and ADR-0060's audit table as data beside it, for log
+  with its three results (Group Policy with its audit policy, preferences,
+  its record turned off, MDM from the `Config` node, Defender for
+  Endpoint, Configuration Manager, DSC, Azure machine configuration,
+  OSConfig, Tamper Protection, other antivirus and firewalls) and
+  ADR-0060's audit table as data beside it, for log
   collection to reuse; `check` for every module; on the server, the
   Windows platform, module names, options and result fields, and the
   related-controls tables with the tool that generates them; the static
@@ -1196,18 +1429,24 @@ As in ADR-0051, with Windows' places and tools:
   the MDM reader on a real Intune-enrolled Windows 11.
 * **W2, apply and undo**, module by module, each with its runner tests and,
   where it needs a restart, a domain, Defender active or outside traffic,
-  its machine test (or recorded hand test) before the next. Low-risk
-  modules first (`autoplay`, `wdigest`, `anonymous`, `winrm`, `features`,
-  `powershell`, `accounts`, `printing`), then `defender`, `asr`,
+  its machine test (or recorded hand test) before the next. First the
+  persistence test (see Testing), which decides whether administrative
+  template values are written at all; then low-risk modules (`autoplay`,
+  `wdigest`, `anonymous`, `winrm`, `features`, `powershell`, `accounts`,
+  `printing`), then `defender`, `asr`,
   `name-resolution`, `smb`, `ntlm`, `uac`, `firewall`, `rdp`,
   `smb-signing`, `lsa-protection`, `tls`; the report-only modules have no
-  apply. With them: the undo copy of the script; one change at a time on
-  the server; each change and its time in the result, for log collection.
+  apply. With them: the undo copy of the script; the harvest, with the
+  first two-step module; the daily check, with `defender`; one change at
+  a time on the server; each change and its time in the result, for log
+  collection.
 * **W3, the console.** Linux hardening's H3 (a device's **Hardening** tab,
   the fleet column and filter, apply and undo from **Jobs**) with Windows'
   modules: their risks and options, the owner of each setting managed
-  elsewhere, whether each setting meets its rule, *restart needed*, the
-  two-step modules' state, and the *Related controls* panel; mixed
+  elsewhere or outranked by EasyRMM's value, the reason for each *check
+  only*, whether each setting meets its rule, *restart needed*, the
+  two-step modules' state and their harvest's coverage, and the *Related
+  controls* panel; mixed
   selections sent as one job per platform.
 
 ## Consequences
@@ -1222,19 +1461,29 @@ As in ADR-0051, with Windows' places and tools:
   reduction rules in audit; standard users still offered elevation; the
   built-in Administrator unfiltered over the network; SMB signing and TLS
   1.0 removal left to the operator; no deny-sign-in rights; the spooler
-  off only on domain controllers; a server's firewall and Defender left
-  off without an option. A scanner following the Defender STIG's checks
-  also reports Defender's settings missing, since they are not written as
-  policy. The check is not an audit against a benchmark.
-* Several modules take two applies, days apart (SMB1, a server's
-  firewall, NTLM on domain controllers, LSA protection without audit
-  mode): slower, but each change is judged on what the computer did.
+  off only on domain controllers; a server's firewall and Defender's
+  real-time protection left off without an option. The check is not an
+  audit against a benchmark.
+* Defender's and attack surface reduction's settings are written as
+  policy: scanners following the Defender STIG find them, but technicians
+  can no longer switch them in Windows Security, and they outrank an MDM
+  that arrives later until the daily check reports it and someone undoes
+  them. Whether any administrative template value outlives Group Policy's
+  processing is unknown until W2's first test.
+* Several modules take two applies, most of them days or weeks apart
+  (SMB1, a server's firewall, NTLM on domain controllers, the built-in
+  Administrator's filtering, LSA protection, and the reputation rules
+  after their exclusions): slower, but each change is judged on what the
+  computer did. The harvest that makes this possible is one more
+  scheduled task on the computer while it runs.
 * Computers whose settings come from Group Policy, Intune or OSConfig are
   mostly reported, not changed: an MSP that manages a domain by Group
   Policy keeps doing so, and EasyRMM shows where its policy differs.
-  Computers with an owner EasyRMM cannot read yet (Configuration Manager,
-  Azure machine configuration, DSC correcting drift, Group Policy
-  preferences or its record turned off, MDM until W1) get check only.
+  Where the ownership reader *cannot tell* (Configuration Manager, Azure
+  machine configuration, DSC correcting drift, Group Policy preferences or
+  its record turned off, MDM until W1, Defender for Endpoint for its
+  settings), the computer or those settings get check only, in hardening
+  and log collection alike.
 * EasyRMM says nothing about CIS or CMMC. MSPs who are asked for "CIS
   Level 1" get Microsoft's values with DISA's rule IDs, unless the owner
   decides to buy CIS's membership and certification; those asked about
@@ -1326,7 +1575,9 @@ Owners of settings:
 * RSoP security settings: https://learn.microsoft.com/en-us/previous-versions/aa375070(v=vs.85)
 * Turning RSoP logging off: https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-admx-grouppolicy
 * gpresult: https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/gpresult
-* MDM Bridge WMI provider and the Policy CSP: https://learn.microsoft.com/en-us/windows/client-management/using-powershell-scripting-with-the-wmi-bridge-provider, https://learn.microsoft.com/en-us/windows/win32/dmwmibridgeprov/mdm-policy-result01-defender02, https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-configuration-service-provider
+* MDM Bridge WMI provider and the Policy CSP's `Config` and `Result` nodes: https://learn.microsoft.com/en-us/windows/client-management/using-powershell-scripting-with-the-wmi-bridge-provider, https://learn.microsoft.com/en-us/windows/win32/dmwmibridgeprov/mdm-policy-config01-defender02, https://learn.microsoft.com/en-us/windows/win32/dmwmibridgeprov/mdm-policy-result01-defender02, https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-configuration-service-provider
+* Group Policy's registry processing (MS-GPREG 3.2.5.1.2, and the Windows Server 2003 description of the policy trees): https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-gpreg/57226664-ce00-4487-994e-a6b3820f3e49, https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2003/cc758189(v=ws.10)
+* Defender's order of precedence and where each tool writes: https://learn.microsoft.com/en-us/defender-endpoint/troubleshoot-settings
 * Defender for Endpoint security settings management: https://learn.microsoft.com/en-us/intune/intune-service/protect/mde-security-integration, https://learn.microsoft.com/en-us/defender-endpoint/troubleshoot-security-config-mgt
 * Configuration Manager baselines: https://learn.microsoft.com/en-us/intune/configmgr/compliance/deploy-use/deploy-configuration-baselines
 * DSC's Local Configuration Manager: https://learn.microsoft.com/en-us/powershell/dsc/managing-nodes/metaconfig?view=dsc-1.1
@@ -1355,7 +1606,7 @@ Windows behaviour:
 * Defender beside other antivirus, and its running modes: https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-antivirus-compatibility, https://learn.microsoft.com/en-us/defender-endpoint/microsoft-defender-antivirus-windows
 * Minifilter altitudes: https://learn.microsoft.com/en-us/windows-hardware/drivers/ifs/load-order-groups-and-altitudes-for-minifilter-drivers
 * SmartScreen: https://learn.microsoft.com/en-us/windows/security/operating-system-security/virus-and-threat-protection/microsoft-defender-smartscreen/available-settings, https://learn.microsoft.com/en-us/windows/client-management/mdm/policy-csp-smartscreen
-* ASR rules and exclusions: https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-overview, https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-reference, https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-configure
+* ASR rules, their precedence, per-rule exclusions and when exclusions take effect: https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-overview, https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-reference, https://learn.microsoft.com/en-us/defender-endpoint/attack-surface-reduction-rules-configure
 * Firewall cmdlets: https://learn.microsoft.com/en-us/powershell/module/netsecurity/new-netfirewallrule, https://learn.microsoft.com/en-us/powershell/module/netsecurity/set-netfirewallprofile
 * Windows Filtering Platform's state: https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/netsh-wfp
 * SQL Server's ports: https://learn.microsoft.com/en-us/sql/sql-server/install/configure-the-windows-firewall-to-allow-sql-server-access
@@ -1377,7 +1628,7 @@ Frameworks:
 * NIST SP 800-171 Rev. 3: https://csrc.nist.gov/pubs/sp/800/171/r3/final, https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171r3.pdf
 * NIST SP 800-171 Rev. 2 and its Appendix D: https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171r2.pdf
 * CMMC (32 CFR part 170): https://www.ecfr.gov/current/title-32/part-170
-* DFARS class deviation 2024-O0013: https://www.acq.osd.mil/dpap/policy/policyvault/USA000814-24-DPC.pdf
+* DFARS class deviation 2024-O0013 (the Department's address could not be reached; quoted from the Internet Archive's copy): https://www.acq.osd.mil/dpap/policy/policyvault/USA000814-24-DPC.pdf, https://web.archive.org/web/20250106111059id_/https://www.acq.osd.mil/dpap/policy/policyvault/USA000814-24-DPC.pdf
 * National Checklist Program: https://ncp.nist.gov/repository
 * PCI DSS v4.0 (SAQ D): https://listings.pcisecuritystandards.org/documents/PCI-DSS-v4-0-SAQ-D-Merchant.pdf
 * Australian Signals Directorate (could not be fetched): https://www.cyber.gov.au
