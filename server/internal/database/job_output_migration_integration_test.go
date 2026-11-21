@@ -16,8 +16,9 @@ import (
 
 // TestJobOutputMigration takes 00028 (ADR-0063) down and up again over
 // runs kept before it: output already kept counts from when its run
-// finished, sizes and argument counts are computed, the server's role
-// loses the output and arguments, and down gives them back.
+// finished, sizes and argument counts are filled in and then kept by
+// triggers whatever a statement sets, the server's role loses the output
+// and arguments, and down gives them back.
 func TestJobOutputMigration(t *testing.T) {
 	inst := testdb.New(t)
 	ctx := context.Background()
@@ -71,7 +72,8 @@ func TestJobOutputMigration(t *testing.T) {
 		VALUES ('00000000-0000-0000-0000-00000000000c', '00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000000b', 'srv', 'srv', 'linux'),
 			('00000000-0000-0000-0000-00000000000d', '00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000000b', 'srv2', 'srv2', 'linux')`)
 	must(`INSERT INTO jobs (id, script_name, shell, body, body_sha256, args, timeout_seconds, expires_at, created_by_label)
-		VALUES ('00000000-0000-0000-0000-0000000000d1', 'x', 'sh', 'x', decode(repeat('00', 32), 'hex'), '{a,b,c}', 60, now() + interval '1 day', 'test')`)
+		VALUES ('00000000-0000-0000-0000-0000000000d1', 'x', 'sh', 'x', decode(repeat('00', 32), 'hex'), '{a,b,c}', 60, now() + interval '1 day', 'test'),
+			('00000000-0000-0000-0000-0000000000d2', 'y', 'sh', 'y', decode(repeat('00', 32), 'hex'), '{}', 60, now() + interval '1 day', 'test')`)
 	run := func(id, device, stdout, stderr string) {
 		must(`INSERT INTO job_runs (id, job_id, organization_id, site_id, device_id, status, expires_at, started_at, finished_at, stdout, stderr)
 			VALUES ($1, '00000000-0000-0000-0000-0000000000d1', '00000000-0000-0000-0000-00000000000a', '00000000-0000-0000-0000-00000000000b',
@@ -91,8 +93,28 @@ func TestJobOutputMigration(t *testing.T) {
 			(output_stored_at IS NULL)::text, ' ' ORDER BY id) FROM job_runs`); s != "7/0/true/false 0/0//true" {
 		t.Errorf("runs after 00028: %q", s)
 	}
-	if s := str(`SELECT arg_count::text FROM jobs`); s != "3" {
-		t.Errorf("argument count %s", s)
+	if s := str(`SELECT string_agg(arg_count::text, ' ' ORDER BY id) FROM jobs`); s != "3 0" {
+		t.Errorf("argument counts %s", s)
+	}
+	if s := str(`SELECT relforcerowsecurity::text FROM pg_class WHERE oid = 'jobs'::regclass`); s != "true" {
+		t.Errorf("jobs forces row-level security: %s", s)
+	}
+	// From here the triggers keep them, whatever a statement says.
+	must(`INSERT INTO jobs (id, script_name, shell, body, body_sha256, args, timeout_seconds, expires_at, created_by_label, arg_count)
+		VALUES ('00000000-0000-0000-0000-0000000000d3', 'z', 'sh', 'z', decode(repeat('00', 32), 'hex'), '{p,q}', 60, now() + interval '1 day', 'test', 9)`)
+	must(`UPDATE jobs SET arg_count = 9 WHERE id = '00000000-0000-0000-0000-0000000000d1'`)
+	must(`UPDATE jobs SET args = '{r}' WHERE id = '00000000-0000-0000-0000-0000000000d2'`)
+	if s := str(`SELECT string_agg(arg_count::text, ' ' ORDER BY id) FROM jobs`); s != "3 1 2" {
+		t.Errorf("argument counts kept by the trigger: %s", s)
+	}
+	must(`INSERT INTO job_runs (id, job_id, organization_id, site_id, device_id, status, expires_at, finished_at, stdout, stderr,
+			output_stored_at, stdout_bytes, stderr_bytes)
+		VALUES ('00000000-0000-0000-0000-0000000000e3', '00000000-0000-0000-0000-0000000000d3', '00000000-0000-0000-0000-00000000000a',
+			'00000000-0000-0000-0000-00000000000b', '00000000-0000-0000-0000-00000000000c', 'succeeded', now(), now(), 'abc', 'de', now(), 99, 99)`)
+	must(`UPDATE job_runs SET stdout = 'ünï' WHERE id = '00000000-0000-0000-0000-0000000000e3'`)
+	must(`UPDATE job_runs SET stderr_bytes = 99 WHERE id = '00000000-0000-0000-0000-0000000000e1'`)
+	if s := str(`SELECT string_agg(stdout_bytes || '/' || stderr_bytes, ' ' ORDER BY id) FROM job_runs`); s != "7/0 0/0 5/2" {
+		t.Errorf("sizes kept by the trigger: %s", s)
 	}
 	// Output and its time go together, and removed output stays removed.
 	for _, sql := range []string{
@@ -114,6 +136,9 @@ func TestJobOutputMigration(t *testing.T) {
 	if s := str(`SELECT count(*)::text FROM information_schema.columns WHERE table_name IN ('jobs', 'job_runs')
 			AND column_name IN ('stdout_bytes', 'stderr_bytes', 'output_stored_at', 'output_removed_at', 'arg_count')`); s != "0" {
 		t.Errorf("%s columns left after down", s)
+	}
+	if s := str(`SELECT count(*)::text FROM pg_proc WHERE proname IN ('easyrmm_job_runs_sizes', 'easyrmm_jobs_arg_count')`); s != "0" {
+		t.Errorf("%s trigger functions left after down", s)
 	}
 	if _, err := provider.Up(ctx); err != nil {
 		t.Fatal(err)

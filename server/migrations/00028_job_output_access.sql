@@ -7,22 +7,54 @@
 
 -- +goose Up
 
--- Sizes and the number of arguments are computed by the database, so the
+-- Sizes and the number of arguments are kept by the database, so the
 -- runtime role can read them without reading what they measure.
 -- output_stored_at is when the output arrived and is set only while there
 -- is output; output_removed_at is when retention or a person removed it.
+-- Columns with a constant default are added without rewriting the table;
+-- the triggers below keep them, and the backfill writes only the rows that
+-- have something to count.
 ALTER TABLE job_runs
-    ADD COLUMN stdout_bytes integer GENERATED ALWAYS AS (octet_length(stdout)) STORED,
-    ADD COLUMN stderr_bytes integer GENERATED ALWAYS AS (octet_length(stderr)) STORED,
+    ADD COLUMN stdout_bytes integer NOT NULL DEFAULT 0,
+    ADD COLUMN stderr_bytes integer NOT NULL DEFAULT 0,
     ADD COLUMN output_stored_at timestamptz,
     ADD COLUMN output_removed_at timestamptz;
-ALTER TABLE jobs
-    ADD COLUMN arg_count integer GENERATED ALWAYS AS (cardinality(args)) STORED;
+ALTER TABLE jobs ADD COLUMN arg_count integer NOT NULL DEFAULT 0;
 
--- Output kept before this counts from when its run finished. job_runs
--- forces row-level security, on its owner too.
+-- Output kept before this counts from when its run finished: each run with
+-- output is written once. job_runs forces row-level security, on its owner
+-- too; jobs has no policy for updates, so it is lifted for its backfill
+-- inside this transaction.
 SELECT set_config('easyrmm.scope_all', 'on', true);
-UPDATE job_runs SET output_stored_at = finished_at WHERE stdout <> '' OR stderr <> '';
+UPDATE job_runs SET stdout_bytes = octet_length(stdout), stderr_bytes = octet_length(stderr), output_stored_at = finished_at
+ WHERE stdout <> '' OR stderr <> '';
+ALTER TABLE jobs NO FORCE ROW LEVEL SECURITY;
+UPDATE jobs SET arg_count = cardinality(args) WHERE cardinality(args) > 0;
+ALTER TABLE jobs FORCE ROW LEVEL SECURITY;
+
+-- From here the sizes and the count follow what is written, whatever a
+-- statement sets them to.
+-- +goose StatementBegin
+CREATE FUNCTION easyrmm_job_runs_sizes() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.stdout_bytes := octet_length(NEW.stdout);
+    NEW.stderr_bytes := octet_length(NEW.stderr);
+    RETURN NEW;
+END
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER job_runs_sizes BEFORE INSERT OR UPDATE OF stdout, stderr, stdout_bytes, stderr_bytes ON job_runs
+    FOR EACH ROW EXECUTE FUNCTION easyrmm_job_runs_sizes();
+-- +goose StatementBegin
+CREATE FUNCTION easyrmm_jobs_arg_count() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    NEW.arg_count := cardinality(NEW.args);
+    RETURN NEW;
+END
+$$;
+-- +goose StatementEnd
+CREATE TRIGGER jobs_arg_count BEFORE INSERT OR UPDATE OF args, arg_count ON jobs
+    FOR EACH ROW EXECUTE FUNCTION easyrmm_jobs_arg_count();
 
 ALTER TABLE job_runs
     ADD CONSTRAINT job_runs_output_stored CHECK ((output_stored_at IS NOT NULL) = (stdout <> '' OR stderr <> '')),
@@ -61,7 +93,7 @@ CREATE FUNCTION easyrmm_job_refusal(
     p_organization_id uuid, p_site_id uuid, p_device_id uuid, p_action text,
     p_target_type text, p_target_id text, p_source_ip inet, p_user_agent text, p_details jsonb
 ) RETURNS void
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
+LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
     -- 63: ADR-0063. The two-key form shares no keys with one-key locks.
     PERFORM pg_advisory_xact_lock(63, hashtext(coalesce(p_actor_id::text, p_actor_label)));
@@ -95,23 +127,19 @@ CREATE FUNCTION easyrmm_job_run_output(
     p_at timestamptz, p_actor_type text, p_actor_id uuid, p_actor_label text,
     p_source_ip inet, p_user_agent text
 ) RETURNS TABLE (result text, out_text text, err_text text, out_cut boolean, err_cut boolean)
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE
     r record;
+    s record;
     about jsonb;
 BEGIN
-    -- The lock keeps a removal from emptying the output between the checks
-    -- and the read.
     SELECT jr.organization_id AS org, jr.site_id AS site, jr.device_id AS device, jr.job_id AS job,
-           jr.status AS status, jr.stdout_bytes AS out_bytes, jr.stderr_bytes AS err_bytes,
-           jr.output_stored_at AS stored, jr.output_removed_at AS removed,
            d.name AS device_name, j.script_name AS script, j.kind AS kind
       INTO r
       FROM public.job_runs jr
       JOIN public.jobs j ON j.id = jr.job_id
       JOIN public.devices d ON d.id = jr.device_id
-     WHERE jr.id = p_run
-       FOR SHARE OF jr;
+     WHERE jr.id = p_run;
     IF NOT FOUND OR NOT public.easyrmm_job_scope_covers(p_view_all, p_view_orgs, p_view_sites, r.org, r.site) THEN
         RETURN QUERY SELECT 'not_found'::text, NULL::text, NULL::text, NULL::boolean, NULL::boolean;
         RETURN;
@@ -123,21 +151,33 @@ BEGIN
         RETURN QUERY SELECT 'forbidden'::text, NULL::text, NULL::text, NULL::boolean, NULL::boolean;
         RETURN;
     END IF;
-    IF r.status IN ('queued', 'sent', 'running') THEN
+    -- Only a caller who may read takes the lock, which keeps a removal from
+    -- emptying the output between the checks below and the read.
+    SELECT jr.status AS status, jr.stdout_bytes AS out_bytes, jr.stderr_bytes AS err_bytes,
+           jr.output_stored_at AS stored, jr.output_removed_at AS removed
+      INTO s
+      FROM public.job_runs jr
+     WHERE jr.id = p_run
+       FOR SHARE;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT 'not_found'::text, NULL::text, NULL::text, NULL::boolean, NULL::boolean;
+        RETURN;
+    END IF;
+    IF s.status IN ('queued', 'sent', 'running') THEN
         RETURN QUERY SELECT 'run_open'::text, NULL::text, NULL::text, NULL::boolean, NULL::boolean;
         RETURN;
     END IF;
-    IF r.removed IS NOT NULL THEN
+    IF s.removed IS NOT NULL THEN
         RETURN QUERY SELECT 'output_removed'::text, NULL::text, NULL::text, NULL::boolean, NULL::boolean;
         RETURN;
     END IF;
-    IF r.stored IS NULL THEN
+    IF s.stored IS NULL THEN
         RETURN QUERY SELECT 'empty'::text, ''::text, ''::text, false, false;
         RETURN;
     END IF;
     PERFORM public.easyrmm_audit_append(p_at, p_actor_type, p_actor_id, p_actor_label, r.org, r.site, r.device,
         'job_run.output_view', 'job_run', p_run::text, 'success', p_source_ip, p_user_agent,
-        about || jsonb_build_object('stdoutBytes', r.out_bytes, 'stderrBytes', r.err_bytes));
+        about || jsonb_build_object('stdoutBytes', s.out_bytes, 'stderrBytes', s.err_bytes));
     RETURN QUERY SELECT 'ok'::text, jr.stdout, jr.stderr, jr.stdout_truncated, jr.stderr_truncated
         FROM public.job_runs jr WHERE jr.id = p_run;
 END
@@ -160,7 +200,7 @@ CREATE FUNCTION easyrmm_job_arguments(
     p_at timestamptz, p_actor_type text, p_actor_id uuid, p_actor_label text,
     p_source_ip inet, p_user_agent text
 ) RETURNS TABLE (result text, job_args text[])
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE
     j record;
     g record;
@@ -222,7 +262,7 @@ GRANT EXECUTE ON FUNCTION easyrmm_job_arguments(uuid, boolean, uuid[], uuid[], b
 -- +goose StatementBegin
 CREATE FUNCTION easyrmm_job_delivery_args(p_device uuid, p_runs uuid[])
 RETURNS TABLE (run_id uuid, run_args text[])
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $$
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
     SELECT jr.id, j.args
       FROM public.job_runs jr JOIN public.jobs j ON j.id = jr.job_id
      WHERE public.easyrmm_scope_all() AND jr.device_id = p_device AND jr.id = ANY (p_runs) AND jr.status = 'sent'
@@ -241,6 +281,10 @@ DROP FUNCTION easyrmm_job_scope_covers(boolean, uuid[], uuid[], uuid, uuid);
 REVOKE SELECT ON job_runs, jobs FROM easyrmm_app;
 GRANT SELECT ON job_runs, jobs TO easyrmm_app;
 DROP INDEX job_runs_output_stored_idx;
+DROP TRIGGER jobs_arg_count ON jobs;
+DROP FUNCTION easyrmm_jobs_arg_count();
+DROP TRIGGER job_runs_sizes ON job_runs;
+DROP FUNCTION easyrmm_job_runs_sizes();
 ALTER TABLE job_runs
     DROP CONSTRAINT job_runs_output_removed,
     DROP CONSTRAINT job_runs_output_stored,
