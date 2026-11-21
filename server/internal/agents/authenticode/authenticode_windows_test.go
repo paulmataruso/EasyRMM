@@ -32,6 +32,18 @@ func signtool(t *testing.T) string {
 	return found[len(found)-1]
 }
 
+// windowsPowerShell runs a script in Windows PowerShell 5.1. Started from
+// PowerShell 7 (as CI's steps are), it would inherit PowerShell 7's
+// PSModulePath and fail to load the modules behind the Cert: drive, so it
+// starts without one and builds its own.
+func windowsPowerShell(script string) *exec.Cmd {
+	cmd := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script)
+	cmd.Env = slices.DeleteFunc(os.Environ(), func(kv string) bool {
+		return strings.HasPrefix(strings.ToUpper(kv), "PSMODULEPATH=")
+	})
+	return cmd
+}
+
 // testCertificate makes a self-signed code signing certificate in the
 // current user's store, exports it with its key to a PFX in dir, and
 // removes it from the store when the test ends.
@@ -44,14 +56,13 @@ $c = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=EasyRMM signto
 $pw = ConvertTo-SecureString -String 'test' -Force -AsPlainText
 Export-PfxCertificate -Cert $c -FilePath '` + pfx + `' -Password $pw | Out-Null
 Write-Output $c.Thumbprint`
-	out, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script).CombinedOutput()
+	out, err := windowsPowerShell(script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("New-SelfSignedCertificate: %v\n%s", err, out)
 	}
 	thumb := strings.TrimSpace(string(out))
 	t.Cleanup(func() {
-		_ = exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-			`Remove-Item -Path Cert:\CurrentUser\My\`+thumb).Run()
+		_ = windowsPowerShell(`Remove-Item -Path Cert:\CurrentUser\My\` + thumb).Run()
 	})
 	return pfx
 }
