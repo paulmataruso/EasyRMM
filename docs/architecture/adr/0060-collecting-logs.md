@@ -1,7 +1,7 @@
 # ADR-0060: Collecting logs
 
-* Status: Proposed (2026-11-21). Not implemented. Revised five times the
-  same day after an independent review and four checks.
+* Status: Proposed (2026-11-21). Not implemented. Revised six times the
+  same day after an independent review and five checks.
 * Builds on: [ADR-0002](0002-postgresql-rls-tenant-isolation.md)
   (row-level security), [ADR-0009](0009-agent-protocol.md) (the agent
   protocol, with its section "Evolving the protocol" from pull request
@@ -19,7 +19,7 @@
   sender, F2) and ADR-0054 (hardening Windows).
 * Amends: [ADR-0017](0017-scripts-and-jobs.md) (Windows jobs inside
   their job object, slice 0; Linux jobs with a login UID of their own,
-  slice 4; its guidance: no secrets as arguments),
+  slice 2; its guidance: no secrets as arguments),
   [ADR-0023](0023-audit-forwarding.md) (one list of syslog destinations),
   [ADR-0051](0051-hardening-linux-computers.md) (who removes auditd) and
   [ADR-0052](0052-the-host-updater.md) (the updater never touches the log
@@ -230,7 +230,7 @@ Linux. Thirty days are about 1 TB of raw events.
   what Group Policy, MDM or another owner holds, and undoes its changes on
   uninstall. Jobs start as today, with Windows jobs inside their job
   object from the start (slice 0) and Linux jobs with a login UID of
-  their own (slice 4), so that their events are known; their argument
+  their own (slice 2), so that their events are known; their argument
   values are replaced in EasyRMM's copy of those events, while the
   computer's own logs hold them.
 * The logs live in a **PostgreSQL instance of their own, outside the data
@@ -512,24 +512,45 @@ sensitive, never fewer:
   ran: their process creation events (4688, Sysmon 1, auditd `EXECVE`)
   and script blocks (4104) are kept with their command lines and script
   text, and gain the run's ID and the script's SHA-256. Job arguments stay
-  on the command line, as today (slice 0), so sealing replaces argument
-  values, in that run's events, by `[job argument 2]`, never by a hash,
-  which a short password would not survive:
-  * **on the run's own command line** (decided in review): 4688's and
-    Sysmon 1's `CommandLine` of the run's own process, the
-    `ParentCommandLine` of what it starts, and its auditd `EXECVE`
-    arguments and `PROCTITLE`. The agent built that command line, so it
-    replaces each value where it stands, whatever its length;
-  * **in what the script passes on** to programs it starts: values of six
+  on the command line, as today (slice 0), so sealing replaces them by
+  `[job argument 2]`, never by a hash, which a short password would not
+  survive:
+  * **The run's own command line, by record** (decided in review). When
+    it creates the run's process, the agent records the exact command
+    line it built and the position of every token in it. Sealing
+    replaces that line wherever it appears, in any event of any source
+    during the run's lifetime, whether or not the event is marked as the
+    run's: every argument token is replaced whole, quotes and escapes
+    included, parameter names too, and the interpreter, its options and
+    the script's path are kept. Sealing never searches for a value's
+    text in that line. It covers:
+    * on Windows, 4688's and Sysmon 1's `CommandLine` of the run's
+      process; a child's `ParentCommandLine`, also when the job object's
+      `JOB_OBJECT_MSG_NEW_PROCESS` was dropped, since the line is matched,
+      not the process; and PowerShell's *Host Application* in the
+      PowerShell Operational log's 4100 and 4103 and in the classic
+      Windows PowerShell log's 400, 403 and 600;
+    * on Linux, `EXECVE`'s arguments by index (`aN`, and each `aN[k]`
+      chunk of a long one, with `aN_len` dropped); `PROCTITLE` by
+      position, including a value the kernel cut off at its 128-byte
+      limit; and the journal's `_CMDLINE`.
+
+    The agent keeps each run's command line and token positions in its
+    protected state, which the collector cannot read, until every
+    source's position has passed the run's end, then deletes them.
+  * **In what the script passes on** to programs it starts: values of six
     characters or more, wherever they appear in that run's events
     (shorter ones are rarely secrets and would match too much).
 
-  This protects EasyRMM's copy (the spool, the store, forwarding), not
-  the computer's own logs, which hold the values as for any process
-  (Consequences; ADR-0017's guidance gains: do not pass secrets as
-  arguments). `job.view` shows the run with its arguments. A job's
-  processes are known by more than their ID, which Windows and Linux
-  reuse:
+  The replacing happens at sealing, so the collector's spool on the
+  computer holds the raw values; it is readable only by administrators
+  (root on Linux) and the collector, no wider than the Security log.
+  Beyond that it protects what leaves the computer (sealed batches, the
+  store, forwarding), not the computer's own logs, which hold the values
+  as for any process (Consequences; ADR-0017's guidance gains: do not
+  pass secrets as arguments). `job.view` shows the run with its
+  arguments. A job's processes are known by more than their ID, which
+  Windows and Linux reuse:
   * **Windows**: after slice 0 every run's process starts inside its job
     object; the agent asks the job object to report every process that
     joins it (`JOB_OBJECT_MSG_NEW_PROCESS` on the job's completion port)
@@ -543,7 +564,11 @@ sensitive, never fewer:
     everything it starts; the agent records the run's session ID, and
     *Configure logging*'s rules file holds a rule for `execve` by that
     login UID, keyed `easyrmm-logs-jobs`. An event matches a run by its
-    session ID, which the kernel does not reuse while it runs. Without
+    session ID, which the kernel does not reuse while it runs: auditd's
+    records carry `ses`, and the journal records `_AUDIT_SESSION` with
+    each entry, so that sudo's `COMMAND=` lines (`linux.auth`, slice 2)
+    match too. The launcher and this matching come with slice 2 (decided
+    in review), the rule with slice 4. Without
     *Configure logging* (or without auditd, or where the kernel refuses
     the login UID, as in a container) Linux jobs are not audited, and the
     device's tab says so. Jobs still run as root; only their login UID
@@ -740,7 +765,7 @@ when they are chosen (below).
 | Subcategories override categories | `SCENoApplyLegacyAuditPolicy` = 1 under `HKLM\SYSTEM\CurrentControlSet\Control\Lsa` | Without it, legacy category settings can override the table. Set here, not only reported (STIG WN11-SO-000030); where Group Policy sets legacy categories, the whole audit policy is *managed elsewhere* and nothing in the table is set |
 | Command lines in process creation events | `ProcessCreationIncludeCmdLine_Enabled` = 1 under `HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System\Audit` | 4688's command line. Per organization (`logs.commandLines`, on by default); where it is set, the console says that the computer's own Security log then holds the arguments of every process, EasyRMM's jobs' included, for its administrators and Event Log Readers |
 | Script block logging | `EnableScriptBlockLogging` = 1 for Windows PowerShell (`HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging`) and PowerShell 7 (`…\PowerShellCore\ScriptBlockLogging`) | 4104 |
-| Who can read the PowerShell logs | The two PowerShell Operational logs' access list (`wevtutil sl /ca:`): read for SYSTEM, Administrators, Event Log Readers and the collector only; every other reader's read right removed, write rights unchanged, the list before recorded for undo | Script blocks hold whatever secrets scripts contain |
+| Who can read the PowerShell logs | The two PowerShell Operational logs' access list (`wevtutil sl /ca:`), and the classic Windows PowerShell log's (its `CustomSD` under `HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Windows PowerShell`, decided in review): read for SYSTEM, Administrators, Event Log Readers and the collector only; every other reader's read right removed, write rights unchanged, each list before recorded for undo | Script blocks hold whatever secrets scripts contain, and the classic log's 400, 403 and 600 hold every PowerShell host's command line, by default |
 | The collector's read access | Read (`0x1`) for the collector's SID in each collected channel's access list, the list before recorded for undo (The collector) | Without a group change anywhere, also on domain controllers |
 | Security log size | At least 1,024,000 KB (4 GiB on domain controllers when chosen) | The STIGs' minimum (WN11-AU-000505, WN25-CC-000280), which ADR-0054's check compares with; the 256 MiB first proposed would fail it. It costs at most a gigabyte of the system disk and keeps days of history on the computer for a collector that is paused or offline; a domain controller writes far more. Not raised where the system volume has under 10 GiB free: reported |
 | Other log sizes | System, Application and the PowerShell Operational logs at least 65,536 KB | Above the STIGs' 32,768 KB for System and Application |
@@ -921,16 +946,22 @@ deleted by hand leaves logging configured, which is harmless.
     `fill_secret` made again, so leaves the store usable.
   * **The finished-restore marker** (decided in review): one row in a
     schema of its own, `easyrmm_logs_ready`, readable by the server's
-    roles, which no dump carries (the backup leaves the schema out,
-    `--exclude-schema`). `logs-db-init` writes it into a new store (a
-    logs database with no tables, as `initdb` leaves it) and never into
-    one that has tables; the guide's restore writes it last, after
-    `pg_restore`, with `logs-db-init` stopped meanwhile. A store without
-    it counts as unavailable: uploads are answered `503`, the server runs
-    no migration and records no identity in it (Forwarding), and the log
-    views and `logs-db-init`'s status say a restore is unfinished. An
-    interrupted restore so stays unavailable until the guide's restore is
-    finished.
+    roles, holding the cluster's `system_identifier`. It counts only
+    when that matches the cluster's own, so a dump that did carry it (one
+    made without the backup's `--exclude-schema`) cannot bring a valid
+    marker into a new cluster.
+    * `logs-db-init` writes it into a new store (a logs database with no
+      tables, as `initdb` leaves it) and never into one that has tables.
+    * The guide's restore refuses a target store that already has a
+      marker or any table, starts with `pg_restore --section=pre-data`
+      (which makes the tables at once, so that `logs-db-init` never takes
+      a store still being restored for an empty one), then restores the
+      data and the rest, and writes the marker last.
+    * A store without a marker that counts is unavailable: uploads are
+      answered `503`, the server runs no migration and records no
+      identity in it (Forwarding), and the log views and `logs-db-init`'s
+      status say a restore is unfinished. An interrupted restore so stays
+      unavailable until the guide's restore is finished.
   * **A broken store never keeps EasyRMM down** (decided in review). A
     full or failed logs disk, a store still recovering, or missing
     secrets, never stops a start, an upgrade or a rollback:
@@ -1114,7 +1145,10 @@ deleted by hand leaves logging configured, which is harmless.
     an open `psql` session), so it is not bounded by ingest's 30 seconds:
     the purge polls, survives a restart (it resumes from its recorded
     `w`), and shows in Settings → Logs what it is waiting on (the oldest
-    session holding an ID, from `pg_stat_activity`).
+    session holding an ID, from `pg_stat_activity`). Other roles'
+    `backend_xid` is hidden there without `pg_read_all_stats`, so
+    `logs-db-init` grants that role to `easyrmm_logs_app`, the role that
+    reads it (decided in review).
   * A snapshot's `xmax` is not a safe mark: it is one past the latest
     *completed* ID, so an ingest transaction that took its ID between the
     tombstone's ID and its commit, and is still open, lies at or above
@@ -1331,7 +1365,12 @@ deleted by hand leaves logging configured, which is harmless.
       and the detections evaluator's in the main database with a copy in
       the store. The store's copy is always written before the main
       database's commits, so that a crash between them leaves the store's
-      copy ahead, never behind.
+      copy ahead, never behind. Each position is of one of two kinds:
+      *after a block* (the era, ID and sequence of the last block
+      handled) or *at the horizon* (where a destination without a
+      position, or a reset, starts, naming no block). Each forwarder and
+      the evaluator run under an advisory lock in the store, one writer
+      per position.
     * **Another identity** (a store reset to empty, restored from a dump,
       or moved by `pg_upgrade`): the position is reset to the start of the
       current era, and the gap, with the times it covers as far as they
@@ -1340,13 +1379,16 @@ deleted by hand leaves logging configured, which is harmless.
     * **The same identity, but the store went back** (a file-level
       restore of the logs root, which neither part of the identity
       shows): the store's copy of a position behind the main database's,
-      whatever the counter says, or a position whose ID is not strictly
-      below `pg_snapshot_xmax(pg_current_snapshot())`, which is one past
-      the latest completed transaction ID (every block a position names
-      was written by a completed transaction, so a sound position is
-      always below it). The position is then reset to the current
-      horizon, never to the start of the era, which would read the whole
-      era again, and the gap is shown and audited as above.
+      whatever the counter says; or a position *after a block* whose ID
+      is strictly above `pg_snapshot_xmax(pg_current_snapshot())`, which
+      is one past the latest completed transaction ID (the block it names
+      was written by a completed transaction, so on a sound store its ID
+      is below that). A position *at the horizon* is never judged by the
+      latter rule: on an idle store the horizon and `xmax` are the same
+      number, which a sound position at the horizon may hold. The
+      position is then reset to the current horizon, never to the start
+      of the era, which would read the whole era again, and the gap is
+      shown and audited as above.
     * `pg_upgrade` keeps the transaction counter but writes into a
       cluster made by `initdb`, so its identifier is expected to change
       (checked when the guide's procedure is written). The guide's
@@ -1440,7 +1482,8 @@ deleted by hand leaves logging configured, which is harmless.
   detections count events by their own time within their window, so that
   a late upload counts where it happened. It opens alerts in its own
   transaction in the main database, where it keeps its position with the
-  store's identity and a copy in the store (Forwarding). An alert
+  store's identity and a copy in the store (Forwarding), under an
+  advisory lock in the store, one evaluator writing at a time. An alert
   stays open, counting further matches, until someone resolves it or 7
   days pass without one (a new resolution, `expired`): an event is not a
   condition that clears.
@@ -1488,8 +1531,10 @@ deleted by hand leaves logging configured, which is harmless.
   process events on (`logs.commandLines`, Settings and who), that
   includes the argument values of EasyRMM's own jobs, which the console
   says where the setting is, and ADR-0017's guidance says not to pass
-  secrets as arguments. To shrink the rest: the PowerShell logs' other
-  readers are removed; and the console's install card for Windows
+  secrets as arguments; for PowerShell jobs, the classic Windows
+  PowerShell log holds them already, by default (Consequences). To
+  shrink the rest: the PowerShell logs' other readers, the classic log's
+  included, are removed; and the console's install card for Windows
   proposes an approval token valid for one day (ADR-0024: its devices
   wait for approval, so a token read later from a log enrolls nothing
   unseen), saying why.
@@ -1592,11 +1637,18 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
   spool (torn tails, the position with the event, shares, pausing, an
   older format read by the next release); the crash rules (a parser panic
   passed, an event crashing twice passed and counted); sealing (job
-  events marked; every argument value, short ones included, replaced on
-  the run's own command line in 4688, Sysmon 1, a child's
-  `ParentCommandLine`, `EXECVE` and `PROCTITLE`, with PowerShell's and
-  cmd's quoting; values of six characters or more replaced in what the
-  run starts; the batch fixed); the agent's
+  events marked; the run's own command line replaced by its record,
+  every argument token whole, short ones and parameter names included,
+  with PowerShell's and cmd's quoting and escapes, in 4688, Sysmon 1, a
+  child's `ParentCommandLine` with its new-process message dropped,
+  PowerShell's Host Application in 4100, 4103, 400, 403 and 600, an
+  unmarked event of another source, `EXECVE` by index with split `aN[k]`
+  chunks and `aN_len` dropped, a `PROCTITLE` cut at 128 bytes in the
+  middle of a value, and the journal's `_CMDLINE`; a value that also
+  appears elsewhere in the line not searched for; the record kept until
+  every source has passed the run's end, then deleted; values of six
+  characters or more replaced in what the run starts; the batch fixed);
+  the agent's
   answer to each status, signed and unsigned (an unsigned refusal never
   setting a batch aside); a `413` on N with N+1 and N+2 already sealed
   (all three resealed from N at half the size, no number stored twice), a
@@ -1657,10 +1709,12 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
     it; the era raised once when two connections find a new cluster at
     once; the same identity with the store gone back (the logs root
     restored from a file copy): a store copy of a position behind the
-    main database's, and a position not below the snapshot's `xmax`,
-    each reset to the current horizon, not to the era's start, with the
-    gap shown; a crash between a position's two writes not taken for a
-    store gone back; order per
+    main database's, and a position after a block whose ID is above the
+    snapshot's `xmax`, each reset to the current horizon, not to the
+    era's start, with the gap shown; an idle store with a position at the
+    horizon giving no reset; a crash between a position's two writes not
+    taken for a store gone back; two evaluators started at once, one
+    writing; order per
     device, a destination that comes back and catches up, one passed by
     retention
     and its gap, a deleted destination restored within 7 days, one with
@@ -1699,9 +1753,11 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
     and with that logging off; a Group Policy object with
     registry preference items, and a DSC configuration in
     `ApplyAndAutoCorrect` setting audit policy, both check only; the
-    PowerShell logs' access list, a non-administrator's
-    script still logged and that user unable to read the log; undo,
-    access lists included, with everything as before;
+    classic Windows PowerShell log's default access list read and
+    recorded first (who could read its 400, 403 and 600 before), then
+    each PowerShell log's list narrowed, a non-administrator's script
+    still logged and that user unable to read the logs; undo, access
+    lists included, with everything as before;
   * Sysmon downloaded from Microsoft and installed with a small
     configuration, its events collected; a script block carrying a token
     in the install command's form, redacted; a job with arguments: its
@@ -1808,17 +1864,23 @@ Each merges and is verified on its own, after F1 and F2.
    and Consequences.
    * **Every process in its job object.** Today the job object is
      assigned after the process starts, and a run goes on without one if
-     that fails (`start`, `agent/jobs/exec_windows.go`). The job object is
-     now made first; the process is created suspended
-     (`CREATE_SUSPENDED`), assigned to it and then resumed, so that
-     nothing it starts escapes before the assignment; a run whose job
-     object cannot be made or assigned is refused with the reason. This
-     does not go through `os/exec`: Go's `syscall` closes the new
-     process's main thread handle at once, and resuming needs it, so the
-     agent calls `windows.CreateProcess` itself and keeps the thread
-     handle. The command line (with the same quoting), pipes,
-     environment, working directory and `CREATE_NO_WINDOW` that `os/exec`
-     sets up today are then built by the agent, the same way.
+     that fails (`start`, `agent/jobs/exec_windows.go`). Now, still
+     through `os/exec` (decided in review), so that Go's list of inherited
+     handles (`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), the pipes and the
+     command line's quoting stay as they are:
+     1. the agent makes the job object and attaches its completion port,
+        and refuses the run, with the reason, if either fails;
+     2. it starts the process with `CREATE_SUSPENDED` added to its
+        creation flags;
+     3. it assigns the process to the job object, and if that fails
+        terminates the suspended process and refuses the run;
+     4. it resumes the process's single thread, found by listing the
+        process's threads (Toolhelp32: `CreateToolhelp32Snapshot` with
+        `TH32CS_SNAPTHREAD`), since Go's `syscall` closes the thread
+        handle at once.
+
+     Nothing the process starts can escape before it is assigned, since
+     it has not run.
    * **Order**: slice 0 merges before slice 3, since marking Windows
      jobs' events relies on every process of a run being in its job
      object from its start (The collector). No release needs to come
@@ -1829,7 +1891,8 @@ Each merges and is verified on its own, after F1 and F2.
 
    *Verified*: the Windows runner: every process of a job, a short-lived
    one included, in its job object and reported on its completion port; a
-   run whose job object cannot be assigned refused with the reason;
+   run whose job object cannot be assigned refused with the reason and
+   its suspended process gone; the handles the job inherits unchanged;
    PowerShell and cmd jobs with arguments giving the same exit codes (an
    `exit N`, a normal end after a failing native command, a thrown
    error), output and errors as the release before; stopping a run
@@ -1851,14 +1914,20 @@ Each merges and is verified on its own, after F1 and F2.
    two-level layout, row-level security, facts, quotas by kind, the
    organization share, the cap, the floor, the ballast and purges;
    ingest with streams, signed answers and admission; the collector with
-   its unit, limits, spool, auditd's descriptors and the agent's sealing;
-   redaction on the
-   computer, the agent and the server; `linux.auth`; sensitive fields and
-   their removal, `log.view` and `log.view_sensitive`; the device's
-   **Logs** tab; the switches and the checklist; the updater's
-   amendments (if the updater is built). *Verified*: integration, the
-   machines, the bundle test's sign-ins in the tab, the updater's tests,
-   the CI load run.
+   its unit, limits, spool, auditd's descriptors and the agent's sealing,
+   with each run's command line recorded and replaced; the jobs' launcher
+   with the `easyrmm-jobs` user and matching by audit session (amending
+   ADR-0017: each Linux run with that login UID; decided in review, since
+   sealing matches Linux events to runs by it, sudo's journal lines from
+   `linux.auth` included); redaction on the computer, the agent and the
+   server; `linux.auth`; sensitive fields and their removal, `log.view`
+   and `log.view_sensitive`; the device's **Logs** tab; the switches and
+   the checklist; the updater's amendments (if the updater is built).
+   *Verified*: integration, the machines (each Linux run's processes with
+   `easyrmm-jobs`'s login UID and a session of their own, a job's `sudo`
+   line in the journal matched to its run with its arguments replaced,
+   every existing Linux job test unchanged with the launcher), the bundle
+   test's sign-ins in the tab, the updater's tests, the CI load run.
 3. **Windows Security**: the Windows collector, its service, account,
    channel access, filtering-platform filter and job object, EasyRMM's
    jobs marked. *Verified*: the Windows runner,
@@ -1868,15 +1937,12 @@ Each merges and is verified on its own, after F1 and F2.
    process events per organization (`logs.commandLines`) and what the
    console says about them, owners, domain controllers, the PowerShell
    logs' readers, the collector's channel access, the console's install
-   card; Linux's rules generated per machine, jobs' rule included, and
-   the jobs' launcher with the `easyrmm-jobs` user (amending ADR-0017:
-   each Linux run with that login UID; moved here from slice 0, since
-   only this slice's rule uses it), the journal and auditd; undo.
+   card; Linux's rules generated per machine, the jobs' rule included,
+   the journal and auditd; undo.
    *Verified*: the Windows runner and the machines, both features' rules
    together; `logs.commandLines` off leaving the value as it was before;
-   each Linux run's processes with `easyrmm-jobs`'s login UID and a
-   session of their own, and every existing Linux job test unchanged with
-   the launcher; the domain by hand.
+   a Linux job's `EXECVE` records keyed `easyrmm-logs-jobs` and matched
+   to its run; the domain by hand.
 5. **The other sources**: Windows System, Application, Defender,
    PowerShell, Sysmon, RDP, WMI; Linux audit, system, antivirus; custom
    sources; `logs.sources`; the counts while collection is off.
@@ -1927,9 +1993,9 @@ Each merges and is verified on its own, after F1 and F2.
 * **Events of EasyRMM's own jobs are kept in full**, with the run and the
   script's hash, and only argument values replaced in EasyRMM's copy,
   not dropped; Windows jobs start inside their job object (slice 0), and
-  Linux jobs get a login UID of their own and an audit rule (slice 4),
-  decided in review. Job arguments stay on the command line, and
-  command lines in process events are an organization setting.
+  Linux jobs get a login UID of their own (slice 2) and an audit rule
+  (slice 4), decided in review. Job arguments stay on the command line,
+  and command lines in process events are an organization setting.
 * **Module logging is not configured**; script block logging is, and the
   PowerShell logs' readers are narrowed.
 * **The audit table is the baselines'** and shared with ADR-0054, which
@@ -1979,10 +2045,17 @@ Each merges and is verified on its own, after F1 and F2.
   every process's command line, readable there by its administrators and
   Event Log Readers until the log wraps; so does Sysmon's log where
   Sysmon is installed, and on Linux auditd's log (root only) once the
-  jobs' rule is in place. Today, without command-line auditing and
-  without that rule, they do not. EasyRMM's own copy has them replaced.
-  The console says so where `logs.commandLines` is set, and ADR-0017's
-  guidance gains: do not pass secrets as arguments.
+  jobs' rule is in place. Today the Security log and auditd's log do
+  not, without command-line auditing and that rule; but the classic
+  Windows PowerShell log already does for PowerShell jobs, since its 400,
+  403 and 600 record each PowerShell host's command line at every start,
+  by default, and *Configure logging* now narrows who can read it. On
+  Linux every local user can read a running job's arguments in
+  `/proc/<pid>/cmdline`, as today. The collector's spool holds the raw
+  values until sealing, readable by administrators only. EasyRMM's own
+  copy has them replaced. The console says so where `logs.commandLines`
+  is set, and ADR-0017's guidance gains: do not pass secrets as
+  arguments.
 * The deployment gains a second PostgreSQL instance in a directory beside
   the data root and, at 2,000 devices and 30 days, roughly 150 to 210 GB
   of disk for logs, best on a disk of its own; the guide's host

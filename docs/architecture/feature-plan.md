@@ -222,7 +222,7 @@ they could stop it.
 
 ### 3. Collecting logs
 Proposed in [ADR-0060](adr/0060-collecting-logs.md), revised after its
-independent review and four checks, not accepted yet. In short:
+independent review and five checks, not accepted yet. In short:
 
 * **Windows jobs start inside their job object first** (slice 0,
   amending ADR-0017); otherwise jobs start exactly as today, arguments
@@ -231,9 +231,9 @@ independent review and four checks, not accepted yet. In short:
   computer's own Security log holds them once command lines in process
   events are on, an organization setting, on by default, which the
   console explains (ADR-0017's guidance: no secrets as arguments). Linux
-  jobs get a login UID of their own, which an audit rule records (slice
-  4). Then the volumes are **measured** on real computers (slice 1)
-  before the store is built.
+  jobs get a login UID of their own (slice 2), which an audit rule
+  records (slice 4). Then the volumes are **measured** on real computers
+  (slice 1) before the store is built.
 * **The collector** (`easyrmm-agent collect`) is a process of its own
   without the device's key, network access, privileges or rights to change
   anything: on Linux its own unit (an unnamed user in the journal's group
