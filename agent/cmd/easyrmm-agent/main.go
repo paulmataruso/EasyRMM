@@ -32,6 +32,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/agent/client"
 	"github.com/paulmataruso/easyrmm/agent/easypatch"
+	"github.com/paulmataruso/easyrmm/agent/hardware"
 	"github.com/paulmataruso/easyrmm/agent/host"
 	"github.com/paulmataruso/easyrmm/agent/inventory"
 	"github.com/paulmataruso/easyrmm/agent/jobs"
@@ -385,6 +386,9 @@ func (e *env) run(ctx context.Context) error {
 		mc := &metrics.Collector{}
 		r.Metrics = mc.Collect
 		r.Inventory = inventory.Collector{}.Collect
+		// Disks are named as the inventory names them (ADR-0065).
+		hw := &hardware.Reader{Log: e.log}
+		r.Hardware = hw.Read
 	}
 	e.log.Info("EasyRMM agent started", "version", Version, "server", cfg.Server, "device_id", cfg.DeviceID)
 	if !supported() {
