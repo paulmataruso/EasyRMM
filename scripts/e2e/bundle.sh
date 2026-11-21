@@ -5,7 +5,8 @@
 # certificate authority.
 #
 #  1. The deployment tree a release ships (scripts/release/deploy-tree.sh) is
-#     set up with setup.sh, for https://127.0.0.1, prepared again with
+#     set up with setup.sh, for https://127.0.0.1 and, by IP access, also
+#     127.0.0.2, prepared again with
 #     setup.sh --upgrade as a release's bundle runs it, and
 #     brought up with images built from this checkout: EasyRMM's server, and
 #     EasyPatch's server carrying Linux agent packages signed with a key made
@@ -18,7 +19,8 @@
 #  4. Playwright (web/playwright.bundle.config.ts) makes the first account on
 #     the first-run page, runs the console's install command on the machine,
 #     installs the EasyPatch agent through EasyRMM, scans, and installs the
-#     update.
+#     update; signed in on 127.0.0.2, it opens a terminal session, which runs
+#     on that address's MeshCentral origin.
 #  5. The engine on loopback refuses missing, forged, expired, replayed and
 #     out-of-scope statements, and the edge does not reach its API
 #     (server/internal/easypatch/bundle_test.go).
@@ -45,6 +47,9 @@ project=easyrmm-e2e-bundle
 host=$project-linux
 hostname=bundle-linux-01
 public=https://127.0.0.1
+# A second address of the server's (IP access, ADR-0016): a session started
+# there runs on its own MeshCentral origin, https://127.0.0.2:4443.
+second=https://127.0.0.2
 server_image=${EASYRMM_BUNDLE_SERVER_IMAGE:-$project/easyrmm-server:local}
 engine_image=${EASYRMM_BUNDLE_ENGINE_IMAGE:-$project/easypatch-server:local}
 host_image=$project/linux:local
@@ -114,7 +119,7 @@ docker build -q -t "$host_image" "$root/scripts/e2e/bundle-host" > /dev/null
 
 # --- The deployment -----------------------------------------------------------
 "$root/scripts/release/deploy-tree.sh" "$work/easyrmm"
-(cd "$deploy" && as_root ./scripts/setup.sh --hostname 127.0.0.1 --ip-addresses 127.0.0.1 \
+(cd "$deploy" && as_root ./scripts/setup.sh --hostname 127.0.0.1 --ip-addresses "127.0.0.1,${second#https://}" \
   --data-root "$work/data" > /dev/null)
 # setup.sh --upgrade, as a release's bundle runs it: every setting from .env
 # (here the data root, which is not the default), and the server version the
@@ -183,8 +188,9 @@ esac
 # --- The story ------------------------------------------------------------------
 setup_token=$(as_root cat "$work/data/server/setup-token")
 echo "Running the story in a browser ..."
-(cd "$root/web" && EASYRMM_BUNDLE_URL=$public EASYRMM_BUNDLE_SPKI=$spki EASYRMM_BUNDLE_SETUP_TOKEN=$setup_token \
-  EASYRMM_BUNDLE_HOST=$host EASYRMM_BUNDLE_HOSTNAME=$hostname npx playwright test -c playwright.bundle.config.ts)
+(cd "$root/web" && EASYRMM_BUNDLE_URL=$public EASYRMM_BUNDLE_SECOND_URL=$second EASYRMM_BUNDLE_SPKI=$spki \
+  EASYRMM_BUNDLE_SETUP_TOKEN=$setup_token EASYRMM_BUNDLE_HOST=$host EASYRMM_BUNDLE_HOSTNAME=$hostname \
+  npx playwright test -c playwright.bundle.config.ts)
 
 # --- The gateway ----------------------------------------------------------------
 echo "Checking the engine's refusals ..."
