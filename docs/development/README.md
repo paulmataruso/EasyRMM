@@ -91,16 +91,22 @@ clone: its Compose file builds the engine from `easypatch/`
 | Contract | the engine's server and its build, EasyRMM's patching client, `go.mod`, `scripts/contract/` | EasyPatch contract |
 | Machines | the machine test harness (`internal/vmtest/`), `go.mod`, the `Makefile` | Machines, one job per distribution ([machine tests](machine-tests.md)) |
 | Security | always | Security (CodeQL for Go, C# and JavaScript, gitleaks, …) |
-| Documentation | always | Documentation links |
+| Documentation | always | Documentation links and workflow conditions |
 
 A change to `ci.yml` runs everything, as do the merge queue and manual runs.
+A push to `main` is compared with the last commit whose run passed there,
+not with the push before it, so what a failed run, or one GitHub cancelled
+while it waited behind a newer push, did not test runs in the next one.
 **CI result** is the one required check: it passes when every job passed or
 was skipped because its area did not change. Besides the tests, CI fails on
 formatting, lint and shellcheck findings, `go mod tidy` drift, coverage below
 a package's floor (`scripts/ci/check-coverage.sh`), new CodeQL alerts,
 findings of the Impeccable design detector and a broken relative link or
 anchor in any Markdown file (`scripts/ci/check-md-links.py`; run it locally
-with `python3 -I scripts/ci/check-md-links.py`).
+with `python3 -I scripts/ci/check-md-links.py`), and on a workflow job that
+comes after one using `always()` without `!cancelled()` and each need's
+result in its own `if`: GitHub would skip it whenever any job before it was
+skipped (`scripts/ci/check-job-conditions.py .github/workflows/*.yml`).
 
 ### The contract tests
 

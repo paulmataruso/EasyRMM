@@ -1,10 +1,13 @@
-# Plan: the next eight features
+# Plan: the next nine features
 
 * Status: Draft 3 (2026-11-21). Draft 1 had three independent reviews
   (security and architecture; the MSP operator's view; testing,
   feasibility and order), ADR-0051 one; Draft 2 was checked against all
   four by a fourth reviewer, who found 37 of 60 findings fully answered
-  and some new problems; this draft answers the rest.
+  and some new problems; this draft answers the rest. Feature 9 was added
+  the same day, after those reviews; its ADR (ADR-0054) is proposed, had
+  one independent review, and was revised after it and after that
+  review's check.
 * Scope: the work the owner asked for on 2026-11-20 and 2026-11-21:
   1. Operators sign the Windows agent (ADR-0049).
   2. Hardening Linux computers (ADR-0051).
@@ -14,6 +17,7 @@
   6. MSI, DEB and RPM packages for the agent.
   7. Email and webhook notifications for device alerts.
   8. The agent's WebSocket channel, with a per-device choice of transport.
+  9. Hardening Windows computers and servers (ADR-0054).
 
 This page says what each feature does, what it builds on, the decisions
 its ADR has to make, how it is tested, and the order of the work. Each
@@ -24,6 +28,8 @@ requests and its own changelog entries.
 
 * **Trust.** The host updater no longer trusts anything the server
   writes beyond a version number, and never writes where the server can.
+  One exception, decided in review: its rollback guards (ADR-0052) read a
+  few integers from the database, which can only refuse a rollback.
   Agents do not pin TLS keys, so everything new that reaches an agent
   (settings, a new address, WebSocket messages) is signed, not just sent
   over TLS. Moving agents to a new name became an ADR of its own. The job
@@ -94,12 +100,37 @@ and this plan's own pull request for ADR-0019):
 ### F0. Rotating the job key
 Every signed instruction (jobs, updates, uninstalls, and since the fixes
 above MeshAgent's downloads) rests on one job key that cannot be rotated
-(ADR-0017, Consequences). Before the new kinds of instruction this plan
-adds (settings, a new address) depend on it: a new key is signed by the current one and announced in the
-heartbeat; agents that verify the hand-over accept both for a transition
-period, then only the new one. A rollback of EasyRMM (F3) is refused
-across a rotation's cut-over. Tested with real agents through a rotation
-and with an agent that was offline across it.
+(ADR-0017, Consequences), and the new kinds of instruction this plan adds
+(settings, a new address) would rest on it too. Proposed in
+[ADR-0057](adr/0057-rotating-the-job-key.md), revised after its review and
+a second check. In
+short: the keys become a ring with generations that only increase; agents
+report the keys they trust in their signed heartbeats and job polls (by
+ADR-0009's rule), and the server signs each device's instructions with the
+newest of them. A rotation hands each agent the new key in a statement
+signed by a key it trusts. A super administrator finishes a planned
+rotation after at least 24 hours (ADR-0052's rollback window), confirming
+a newer backup; a rotation for a compromise is cut over at once, and a
+device on a compromised key is moved to it before any later key. Agents
+offline across the overlap follow when they come back, since the server
+keeps an old key while any device needs it. After a compromise a device
+counts as moved only on its own signed report, which proves only an agent
+nobody tampered with; devices that cannot be moved are re-pinned with
+`easyrmm-agent trust-key`, a command with no secret, or reinstalled; a
+device left on a key a restore lost moves with the next rotation. A
+leaked backup set also gives the TLS identities, MeshCentral's keys, the
+patching engine's notification credentials and, with Authentik, its
+signing key pair and secrets, which the incident page replaces;
+EasyRMM's own authority is replaced in two phases, both authorities
+first, so no agent is cut off. The updater refuses a rollback
+whose backup lacks a key agents were cut over to, and one while a server
+on another host shares the database (ADR-0052's rollback guards, shared
+with 5c); they ship with the second slice or before, and the second
+slice also waits for ADR-0055's step-up. Tested with real agents on the
+host's network through a rotation, one offline across it, one from before
+the change, and restores across it. The first slice (agents that can
+follow, and flags for keys and instructions the server never issued) can
+ship before the rest of step 10.
 
 ### F1. Signed settings that reach the agent
 Proposed in [ADR-0058](adr/0058-signed-settings-that-reach-the-agent.md),
@@ -222,8 +253,10 @@ last job of `main`'s CI), stops the deployment, copies the whole data root,
 runs the new `setup.sh --upgrade`, starts the new version held (answering
 only its health check), and confirms, or restores the copy and starts the
 previous version. A rollback after a confirmed upgrade restores that copy
-too, for 24 hours, and says what it loses. The server can only ask, through
-a file the updater validates, and reads the updater's status read-only.
+too, for 24 hours, and says what it loses; it is refused across a job key
+cut-over or a name move (ADR-0052's rollback guards, shared by F0 and 5c),
+unless the host overrides it. The server can only ask, through a file the
+updater validates, and reads the updater's status read-only.
 Edge builds are published only after the whole of CI passes, with versions
 that sort (`v1.0.0-rc.4.edge.<run>.<attempt>`).
 
@@ -257,93 +290,77 @@ they could stop it.
   Linux computers.
 
 ### 3. Collecting logs
-**Decisions for its ADR**
+Proposed in [ADR-0060](adr/0060-collecting-logs.md), revised after its
+independent review and five checks, not accepted yet. In short:
 
-* **Two switches, as the owner asked.** *Configure logging* is on by
-  default: at enrolment the agent sets Windows audit policy, the Security
-  log's size and PowerShell script block and module logging, and on
-  Linux persistent journald and EasyRMM's auditd rules (in a file of their
-  own, apart from hardening's). Nothing leaves the computer. *Collect into
-  EasyRMM* is a platform switch set at install (`setup.sh
-  --collect-logs`, on for new installs) and in a first-run checklist;
-  installs that upgrade get both switches from the checklist, asked once,
-  and agents already enrolled are configured when the switch reaches them.
-  Where auditd is missing, configuring logging installs it, recorded as
-  EasyRMM's, so that neither this feature nor hardening's undo removes it
-  while the other still uses it.
-* **Settings (F1 keys)**: `logs.configure` (on or off; organization
-  administrators and above, enforceable from the platform),
-  `logs.sources` (which sources and their filters; organization
-  administrators), `logs.collect` (platform only, super administrators).
-* **Group Policy wins.** Domain computers usually get audit policy from
-  Group Policy, which applies it again every 90 minutes. The agent reads
-  the effective policy, leaves subcategories Group Policy sets alone and
-  shows *set by Group Policy*; domain controllers are left alone unless
-  the operator chooses them.
-* **Sources**: Windows Security, System, Application, Defender
-  (Operational), PowerShell (Operational), Sysmon when present; Linux
-  journal (authentication, sudo, sshd, systemd), auditd, Defender for
-  Endpoint (`mdatp`) and ClamAV when present. Each with a default filter
-  for the security-relevant part.
-* **Secrets in logs.** Script block logging records the install command,
-  with its token; process creation records command lines. The agent
-  redacts deployment tokens (`ert_…`, `EASYRMM_TOKEN`, `-Token`, `TOKEN=`)
-  before upload, and drops script block and process creation events from
-  its own jobs, whose arguments ADR-0017 keeps out of the audit log. Command lines and
-  script blocks need a permission of their own (`log.view_sensitive`);
-  `log.view` defaults to organization administrators.
-* **The collector is its own process** (`easyrmm-agent collect`), in its
-  own systemd unit with `CPUQuota` and `MemoryMax`, and on Windows in a
-  job object with a CPU rate limit, so that limits never slow jobs. Its
-  disk buffer is capped (256 MiB by default) with a quota per source, so a
-  flood in Application cannot push Security out; drops are counted and
-  reported.
-* **Collection**: Windows through the Event Log API (`EvtSubscribe` with
-  bookmarks on disk, no cgo); Linux through the journal's cursor and
-  auditd's log by inode and offset.
-* **Upload**: `POST /api/agent/v1/logs`, signed, gzip, at most every 10
-  seconds; the server caps the decompressed size while reading, after the
-  signature, and answers how much more it will take.
-* **Storage that cannot take EasyRMM down.** A database of its own,
-  created by an init service (as the engine's is), partitioned by day,
-  with the organization and site on each row (row-level security without
-  a join). Partitions are made and dropped by functions the owner holds;
-  the application reaches only the parent table. Quotas per device and
-  per organization enforced by the server; a total size cap and a
-  free-disk floor, past which ingest stops, agents buffer and an alert is
-  raised. Retention (30 days by default) always wins, also over
-  forwarding, and gaps are counted. Logs are purged with their
-  organization, site or device. The updater's backups leave this
-  database out unless asked, so its migrations only ever add, and an older
-  server runs on a newer logs schema.
-* **Before turning it on**, the page shows the measured volume per kind of
-  computer (workstation, file server, domain controller) and the space
-  left.
-* **Forwarding**: syslog over TCP or TLS first (the audit forwarder's
-  transport, through F2's address policy), with one list of syslog
-  destinations for both the audit log and device logs. Destinations
-  belong to super administrators by default. *Forward only, don't store*
-  per organization. A cursor per destination, so one that was down
-  catches up within retention.
-* **Console**: **Logs** (filters by organization, site, device, source,
-  event ID, level, time, text), a device's **Logs** tab, per-organization
-  storage and ingest.
-* **Privacy**: PRIVACY.md and the guide say what is collected and where it
-  goes.
+* **Windows jobs start inside their job object first** (slice 0,
+  amending ADR-0017); otherwise jobs start exactly as today, arguments
+  on the command line, so exit codes and binding do not change. EasyRMM's
+  copy of a job's events has its argument values replaced; the
+  computer's own Security log holds them once command lines in process
+  events are on, an organization setting, on by default, which the
+  console explains (ADR-0017's guidance: no secrets as arguments). Linux
+  jobs get a login UID of their own (slice 2), which an audit rule
+  records (slice 4). Then the volumes are **measured** on real computers
+  (slice 1) before the store is built.
+* **The collector** (`easyrmm-agent collect`) is a process of its own
+  without the device's key, network access, privileges or rights to change
+  anything: on Linux its own unit (an unnamed user in the journal's group
+  with no capability, auditd's log through descriptors the agent passes,
+  `CPUQuota` and `MemoryMax`), on Windows a service of its own whose
+  virtual account is granted read access in each collected channel's own
+  access list, blocked from the network by a filtering-platform filter, in
+  a job object with a CPU cap. It reads Windows'
+  event logs through `EvtSubscribe` and Linux's journal and auditd log
+  from positions written with the events into a capped disk spool; a
+  source whose share is full pauses, since the computer's own log holds
+  its events. It redacts EasyRMM's tokens; the agent seals its batches
+  (marking EasyRMM's own jobs, replacing their argument values) and uploads
+  them signed, paced to a bandwidth limit per site, in two streams so
+  that Security and Defender come first; the server stores each exactly
+  once and signs its answers.
+* **Configure logging** (on by default) sets Windows audit policy from
+  one table taken from Microsoft's baselines, which Windows hardening
+  reports against, `SCENoApplyLegacyAuditPolicy`, command lines in
+  process events, script block logging (narrowing who can read it) and
+  log sizes (Security at the STIGs' 1,024,000 KB); and auditd rules,
+  generated per computer, and a persistent journal on Linux. What Group
+  Policy, MDM or another owner holds is left *managed elsewhere*, read
+  with Windows hardening's reader, and a value whose owner that reader
+  cannot tell is only reported; domain controllers only when chosen;
+  undone on uninstall. On Linux each feature keeps its own rules file and
+  keys, and auditd is removed by the last one out.
+* **The store** is a PostgreSQL instance of its own in a directory beside
+  the data root, which the updater never copies, moves or deletes, with
+  its passwords set from `.env` at each start; nothing depends on it and
+  the server's readiness never does, so a broken store degrades logs and
+  never stops or rolls back EasyRMM. It holds compressed blocks
+  of events with hourly facts (B-tree indexes, which row-level security
+  can use), partitioned by retention class and day, week or month. Quotas
+  per kind of computer, a storage share per organization, a size cap and
+  a free-disk floor stop ingest before the disk fills, refusing the
+  organizations over their share first. A removed device's logs stay
+  until retention ends. At 2,000 devices and 30 days: about 150 to 210
+  GB, against about 1.25 TB as a row per event.
+* **Console**: **Logs** and a device's **Logs** tab, with a server-wide
+  search pool and background searches; `log.view` for Site
+  Administrators and above, command lines and scripts for Organization
+  Administrators (`log.view_sensitive`, enforced in results, text search
+  and exports); every search audited.
+* **Forwarding**: one list of syslog destinations for the audit log and
+  device logs, positions kept with the logs, walked up to the oldest
+  running transaction so that none is skipped, gaps counted.
+  **Detections**: alert policies of a new kind, `log`, carrying no event
+  content, sent through F2; EasyRMM's own changes open none.
 
-**Slices**: storage, upload and the Linux journal's sign-in events with the
-device's **Logs** tab; then Windows Security; then configuring logging;
-then the other sources; then forwarding; then the **Logs** page.
-
-**Tests**: integration (partitions, retention, row-level security on the
-parent, quotas, the decompression cap, the disk floor, a forwarding
-destination that comes back and catches up); the agent's buffer filling
-to its cap and dropping by source; Windows collection, audit policy,
-script block logging (event 4104), Sysmon (installed on the runner) and
-`wevtutil` on CI's Windows runner, for real; the bundle test (a Linux
-agent's sign-in events reach the console and a syslog receiver); redaction
-of a real install command's token; an upgrade from a release without the
-logs database, and a rollback of it; a load test with `tools/agentsim`.
+**Slices**: Windows jobs inside their job object; measuring; the store and
+Linux sign-ins with the device's tab; Windows Security; configuring
+logging; the other sources; forwarding; organizations' retention and
+quotas; detections; the **Logs** page; organizations' own destinations.
+**Tests**: CI's Windows runner and the virtual machines for real, the
+bundle test with a syslog receiver on host networking, the updater's
+rollbacks counting blocks, and `tools/agentsim` with recorded events,
+flooding and slow devices among them.
 
 ### 4. Upgrading EasyRMM from the console
 In two parts, both in [ADR-0052](adr/0052-the-host-updater.md).
@@ -591,6 +608,91 @@ an inspecting proxy, NGINX and a server restart, 5,000 connections and
 500 agents on CI, 2,000 and 10,000 agents on a drill host (never the
 host of the owner's instance, which `soak.sh` would have to stop).
 
+### 9. Hardening Windows computers and servers (ADR-0054)
+The ADR is proposed, had one independent review and was revised after it
+and after that review's check. It reuses feature 2's job kind, modes,
+results, permission and console; the agent does not change.
+
+* **Basis**: values from Microsoft's security baselines for the
+  computer's version and role; each setting cited by its DISA STIG rule
+  ID, with whether EasyRMM's value meets the rule, differs from it on
+  purpose, or is not set; no CIS numbers, titles or claims (CIS's terms
+  forbid it without a paid Product Vendor Membership and certification
+  before sale), nothing from Wazuh (GPL, and CIS's text). Per module,
+  *Related controls*: NIST SP 800-53 Rev. 5 through DISA's CCI list, SP
+  800-171 Rev. 2 (what CMMC Level 2 and DFARS use) through its Appendix D
+  and Rev. 3 through its source controls, ISO/IEC 27001:2022 Annex A
+  through NIST's crosswalk, never called compliance. The same for Linux is
+  a follow-up to ADR-0051.
+* **Script**: `windows.ps1`, Windows PowerShell 5.1, run as LocalSystem by
+  the existing PowerShell jobs; registry values where Group Policy would
+  write them (Defender's and attack surface reduction's included, as
+  policy values), `secedit`, NetSecurity, Windows features without
+  removing their payload, and the Terminal Services WMI provider; no
+  LGPO.exe, whose terms forbid distributing it. Whether administrative
+  template values outlive Group Policy's processing is W2's first test.
+  It stops in Constrained Language Mode; under a Group Policy of
+  `AllSigned` it cannot start, like every PowerShell job today. Its hash
+  is published, for EDRs to allow.
+* **Managed elsewhere**: one ownership reader (`internal/winpolicy`),
+  built in W1 and reused by log collection, reads Group Policy (with its
+  preferences and audit policy), MDM through the MDM Bridge, Defender for
+  Endpoint, Configuration Manager, DSC, Azure machine configuration,
+  OSConfig and Tamper Protection, and returns for each value an owner and
+  its policy, none, or *cannot tell* with a reason; what an owner holds is
+  reported, never written, and *cannot tell* is check only in both
+  features, though undo of an earlier apply still runs. A daily check
+  (a signed check-only job, one per device at most) reports owners that
+  appear after apply.
+* **23 modules**: `accounts` (lockout after 10, none on exposed computers
+  without an option, never password expiry), `firewall` (only the
+  profiles it changes, every listening port, RDP, WinRM, RPC and echo open
+  first; a server's firewall only with an option and in two steps),
+  `defender` (never real-time protection on a server without an option;
+  SmartScreen warns), `asr` (Microsoft's three standard rules blocked, the
+  rest in audit; the two reputation rules blocked only with per-rule
+  exclusions for the agents' files, once the agents have restarted by
+  themselves), `smb`, `ntlm`, `wdigest`,
+  `lsa-protection`, `name-resolution`, `powershell`, `rdp`, `uac`,
+  `autoplay`, `anonymous`,
+  `winrm`, `printing`, `features`, and, not recommended, `smb-signing` and
+  `tls`; report only: `audit` (against log collection's one audit table;
+  log collection sets it, so the two never fight), `device-guard`,
+  `bitlocker`, `laps`.
+* **Guards**: RDP, WinRM and the agents stay reachable; the MSP's accounts
+  are never disabled; SMB1, NTLM on domain controllers, LSA protection,
+  a server's firewall and the built-in Administrator's filtering are
+  judged on what the computer did, two applies apart, from an hourly
+  harvest of the logs so that busy logs that wrap still count, a gap
+  wherever the logging was off; its folder checked before every run, as
+  the agent checks its own (PR #61); restarts
+  are reported, never performed, and undo works before them; one
+  hardening apply or undo at a time on a device, never
+  beside a patch or software job; domain controllers need an explicit
+  option; undo works without the agent.
+* **Platforms**: apply and undo on Windows 11 Pro, Enterprise and
+  Education versions still in service (26H1 once tested; ARM64 once the
+  agent's ARM64 build is verified), Server 2019 to 2025 (also Server Core)
+  and Server 2016 until January 2027; check only on Windows 10, Home
+  editions and versions out of service.
+* **Slices**: **W1** check, with the ownership reader, the runner matrix
+  and the decision on Windows machines under KVM; **W2** apply and undo,
+  module by module; **W3** the console, H3's with Windows' modules and
+  the related controls.
+
+**Tests**: PSScriptAnalyzer and a test that every cited STIG ID exists in
+its release; CI's `windows-2025`, `windows-2022` and `windows-11-arm`
+runners for check, apply, apply again and undo, run as LocalSystem, except
+`defender` and `asr`, only checked there since the runner images turn
+Defender off; Windows machines under KVM (evaluation media, in-box devices,
+a serial runner, images built in each run on `main` and on a schedule,
+never cached where pull requests can restore them) for restarts, a domain
+with Group Policy, traffic from outside, Defender active, a non-English
+image, Server 2016 and 2019, and one scenario or more per guard, or, if
+W1 finds that cannot work on CI, a self-hosted runner or recorded hand
+tests; then a real domain, an Intune-enrolled Windows 11, computers with
+another antivirus and firewall, and a common EDR.
+
 ## Test harnesses to build
 
 * **Virtual machines on CI** (hardening, the updater's host path):
@@ -599,7 +701,16 @@ host of the owner's instance, which `soak.sh` would have to stop).
   PostgreSQL that the `windows-2025` image carries, with a Windows agent
   enrolling (log collection, the MSI, signed agents). If that cannot be
   made to work, a self-hosted Windows machine; until one exists, Windows
-  paths are marked unverified. Windows jobs pin `windows-2025`.
+  paths are marked unverified. This harness pins `windows-2025`, whose
+  PostgreSQL it uses; Windows hardening's tests run on `windows-2025`,
+  `windows-2022` and `windows-11-arm`, and the existing *Agent tests on
+  Windows* keep `windows-latest`.
+* **Windows machines under KVM** (Windows hardening, 9): the same harness
+  with Windows guests from Microsoft's evaluation media, devices Windows
+  has drivers for, a runner on the serial port, and a small domain; the
+  images built in each run by jobs on `main` and on a schedule, never
+  cached where a pull request's run can restore them; W1 decides whether
+  CI can run them, else a self-hosted runner or recorded hand tests.
 * **Coverage on Windows**: the Windows job writes a coverage profile with
   floors of its own for Windows-only code.
 * **The bundle test split** into parallel jobs reusing images built once.
@@ -612,26 +723,50 @@ host of the owner's instance, which `soak.sh` would have to stop).
 | 2 | The fixes the reviews found | Holes in shipped code |
 | 3 | Hardening (2), H1 with the machine harness | Asked for first; ADR revised |
 | 4 | Updater 4a with the edge channel | The test instance follows `main` from then on |
-| 5 | F2 and device alert notifications (7) | Needed by 4b, 5 and 3's alerts |
-| 6 | Updater 4b: the console | Needs F2 |
-| 7 | Let's Encrypt 5a, then 5b1 to 5b4 | Needs F2 for its alerts |
-| 8 | Packages (6): DEB, RPM, MSI | How MSPs onboard computers; nothing depends on 3 |
-| 9 | F0; F1 (ADR-0058); the WebSocket (8, ADR-0059) | The agent learns from a signed setting whether to connect, so F1 comes first (proposed by ADR-0058) |
-| 10 | Log collection (3), in its slices | The largest; needs F1 and F2 |
-| 11 | Moving to a new name (5c), its ADR first | Needs F0 |
+| 5 | Windows hardening (9): its ADR, revised after review, then W1, W2, W3 | Most managed computers run Windows; reuses step 3's job, permission and console (H3) while that work is fresh; W1 needs CI's Windows runners, the KVM decision with its domain, and a real Intune-enrolled Windows 11; it builds the ownership reader step 11 reuses |
+| 6 | F2 and device alert notifications (7) | Needed by 4b, 5 and 3's alerts |
+| 7 | Updater 4b: the console | Needs F2 |
+| 8 | Let's Encrypt 5a, then 5b1 to 5b4 | Needs F2 for its alerts |
+| 9 | Packages (6): DEB, RPM, MSI | How MSPs onboard computers; nothing depends on 3 |
+| 10 | F0; F1 (ADR-0058); the WebSocket (8, ADR-0059) | The agent learns from a signed setting whether to connect, so F1 comes first (proposed by ADR-0058) |
+| 11 | Log collection (3), in its slices | The largest; needs F1 and F2; it sets the Windows audit policy that step 5 only reports, with step 5's ownership reader |
+| 12 | Moving to a new name (5c), its ADR first | Needs F0 |
 
 Each step ends with CI green, a merge, and the test instance on the new
 code.
 
 ## Risks
 
-* **Hardening locks someone out or breaks a service**: the revised ADR's
-  guards, machines for every guard, undo without the agent.
-* **Logs take EasyRMM down**: a database of its own, quotas, a size cap and
-  a disk floor that stop ingest before the disk fills.
+* **Hardening locks someone out or breaks a service**: the revised ADRs'
+  guards, a scenario for every guard (ADR-0051's and ADR-0054's lists,
+  with those only real computers can show run on real computers before
+  the feature is called complete, and any stand-in named as one), undo
+  without the agent.
+* **Windows hardening breaks remote support or line-of-business software**
+  (scanners on SMB, NTLM-only devices, technicians elevating in a user's
+  session): risky modules are not recommended and state what they break,
+  RDP and UAC changes wait for tests through EasyRMM's own remote access,
+  settings someone else owns are left alone, and undo works without the
+  agent.
+* **Windows hardening and log collection fight over audit policy**: log
+  collection sets it from one table, hardening only reports against that
+  table, and both use the one ownership reader; log collection raises no
+  alert for the changes a hardening job made.
+* **Logs take EasyRMM down**: a PostgreSQL instance of its own outside
+  the data root, quotas per kind of computer, a share per organization, a
+  size cap and a disk floor that stop ingest before the disk fills, and a
+  server-wide limit on searches.
 * **The updater is root on the host**: it takes nothing but a version from
   the server, writes nowhere the server can, and installs only what it
   verified.
+* **A key rotation strands agents, or leaves a leaked key trusted** (F0):
+  devices move only on their own signed reports, a device on a compromised
+  key is moved to the newest cut-over key before anything else, the
+  updater refuses a rollback across a cut-over, a server from before the
+  ring can neither start on its database nor be running during a
+  rotation, a device left on a key a restore lost moves with the next
+  rotation, and `trust-key` or a reinstall covers the devices that cannot
+  follow.
 * **A stolen administrator session redirects agents**: moving names needs
   signatures over the agent's own nonce, step-up authentication, and a
   notice to every super administrator.
