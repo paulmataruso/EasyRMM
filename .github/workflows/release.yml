@@ -21,9 +21,10 @@
 #      of both images has passed: the engine, carrying those agent packages,
 #      under per-architecture tags only (1.10.1-amd64); then EasyRMM's
 #      server, built once, both platforms scanned and their agents checked
-#      against the release's, and pushed unchanged, tagged 1.2.3, 1.2 and
-#      latest; then the engine's version and latest (pre-releases get only
-#      their own tags);
+#      against the release's in a job that may write nothing, and pushed
+#      unchanged by another, tagged 1.2.3, 1.2 and latest (a version is
+#      pushed once); then the engine's version and latest (pre-releases get
+#      only their own tags);
 #   5. the deployment bundle, its manifest and the agents are built
 #      (scripts/release/bundle.sh), with the engine pinned by digest in the
 #      bundle's docker-compose.yml, checked (the bundle against its manifest,
@@ -386,7 +387,7 @@ jobs:
 
   engine-manifest:
     name: Patching engine image tags
-    needs: [prepare, engine-version, engine-image, image]
+    needs: [prepare, engine-version, engine-image, image-push]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -438,9 +439,11 @@ jobs:
   # After the engine's images passed their checks and scan, so that a
   # finding there leaves no EasyRMM tag pushed. Built once, for both
   # platforms, into an OCI layout, as CI builds edge builds: both images are
-  # scanned and their agents checked against the release's (ADR-0049), the
-  # amd64 one runs, and then the layout is pushed unchanged, so what is
-  # pushed is what was checked.
+  # scanned and their agents checked against the release's (ADR-0049), and
+  # the amd64 one runs. This job may write nothing: the scanner, a
+  # third-party action, never runs where the release's identity can be
+  # minted or a package written. Push the server image pushes the layout,
+  # by the digest recorded here before any check ran.
   image:
     name: Server image
     needs: [prepare, backend, integration, frontend, engine, agent-tests, engine-image]
@@ -449,9 +452,6 @@ jobs:
       digest: ${{ steps.layout.outputs.digest }}
     permissions:
       contents: read
-      packages: write
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -481,6 +481,16 @@ jobs:
           scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$digest" linux/amd64 easyrmm-server:release
           scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$digest" linux/arm64 easyrmm-server:release-arm64
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      # Before the checks: Push the server image takes it only if it is still
+      # the index recorded above.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: easyrmm-server-image
+          path: easyrmm-server.oci.tar
+          retention-days: 7
+          # Its layers are compressed already.
+          compression-level: 0
+          if-no-files-found: error
       - name: Image reports the release version
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
@@ -512,6 +522,48 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
+
+  # The server image's one job that may write packages and mint the
+  # release's identity: GitHub's own actions, Docker's login and oras, no
+  # scanner, no build cache. It pushes the layout Server image checked,
+  # once it is the index recorded there, unchanged, and attests it.
+  image-push:
+    name: Push the server image
+    needs: [prepare, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    # bash with -o pipefail: a command that fails in a pipeline fails the step.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: easyrmm-server-image
+      - name: The layout is the one checked
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+        run: |
+          if ! [[ $DIGEST =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Server image recorded \"$DIGEST\", not a digest"
+            exit 1
+          fi
+          mkdir "$RUNNER_TEMP/layout"
+          tar -xf easyrmm-server.oci.tar -C "$RUNNER_TEMP/layout"
+          index="$RUNNER_TEMP/layout/blobs/sha256/${DIGEST#sha256:}"
+          if ! jq -e --arg d "$DIGEST" '[.manifests[].digest] == [$d]' "$RUNNER_TEMP/layout/index.json" > /dev/null ||
+            [ ! -f "$index" ] || [ "sha256:$(sha256sum < "$index" | cut -c1-64)" != "$DIGEST" ]; then
+            echo "::error::the layout is not the index Server image checked, $DIGEST"
+            exit 1
+          fi
       - name: Install oras
         run: |
           scripts/ci/install-oras.sh "$RUNNER_TEMP/bin"
@@ -521,22 +573,34 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      # 1.2.3, 1.2 and latest; a release candidate, 1.2.3-rc.1 only.
+      # 1.2.3, 1.2 and latest; a release candidate, 1.2.3-rc.1 only. A
+      # version is pushed once: run again (failed jobs), it finds its own
+      # image and pushes nothing, so 1.2 and latest move only with a
+      # version's first push; another image under the version is refused.
       - name: Push what was checked, unchanged
         env:
           VERSION: ${{ needs.prepare.outputs.version }}
           PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
-          DIGEST: ${{ steps.layout.outputs.digest }}
+          DIGEST: ${{ needs.image.outputs.digest }}
         run: |
           repo="${IMAGE,,}"
           tags=("${VERSION#v}")
-          if [ "$PRERELEASE" != true ]; then
-            core=${VERSION#v}
-            tags+=("${core%.*}" latest)
+          if pushed=$(oras resolve "$repo:${VERSION#v}" 2> "$RUNNER_TEMP/resolve.err"); then
+            if [ "$pushed" != "$DIGEST" ]; then
+              echo "::error::$repo:${VERSION#v} is $pushed already, not this run's $DIGEST: a version is pushed once; re-run failed jobs only, or release another version"
+              exit 1
+            fi
+            echo "::notice::$repo:${VERSION#v} is $DIGEST already: nothing pushed, other tags left as they are."
+          elif [ "$(< "$RUNNER_TEMP/resolve.err")" = "Error response from registry: failed to resolve digest: $repo:${VERSION#v}: not found" ]; then
+            if [ "$PRERELEASE" != true ]; then
+              core=${VERSION#v}
+              tags+=("${core%.*}" latest)
+            fi
+            oras cp --from-oci-layout "$RUNNER_TEMP/layout@$DIGEST" "$repo:$(IFS=,; echo "${tags[*]}")"
+          else
+            cat "$RUNNER_TEMP/resolve.err" >&2
+            exit 1
           fi
-          mkdir "$RUNNER_TEMP/layout"
-          tar -xf easyrmm-server.oci.tar -C "$RUNNER_TEMP/layout"
-          oras cp --from-oci-layout "$RUNNER_TEMP/layout@$DIGEST" "$repo:$(IFS=,; echo "${tags[*]}")"
           for tag in "${tags[@]}"; do
             pushed=$(oras resolve "$repo:$tag")
             if [ "$pushed" != "$DIGEST" ]; then
@@ -547,12 +611,12 @@ jobs:
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE }}
-          subject-digest: ${{ steps.layout.outputs.digest }}
+          subject-digest: ${{ needs.image.outputs.digest }}
           push-to-registry: true
 
   publish:
     name: GitHub release
-    needs: [prepare, image, engine-manifest, windows-agent, linux-agent]
+    needs: [prepare, image, image-push, engine-manifest, windows-agent, linux-agent]
     runs-on: ubuntu-latest
     permissions:
       contents: write
