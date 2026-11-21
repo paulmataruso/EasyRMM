@@ -11,7 +11,7 @@
   folder rule, certificate errors while waiting, and edge RPMs. Three
   questions remain for the owner ([Owner questions](#owner-questions)).
 * Builds on: [ADR-0009](0009-agent-protocol.md) (the agent protocol, with
-  its amendment *Evolving the protocol*, PR #52, not merged yet),
+  its amendment *Evolving the protocol*, on `main` since PR #52),
   [ADR-0015](0015-enrollment-and-meshagent-delivery.md)
   (tokens, enrollment, MeshAgent), [ADR-0024](0024-enrollment-approval.md)
   (approval tokens), [ADR-0027](0027-agent-updates.md) (agent updates),
@@ -73,16 +73,17 @@ What exists, and what it means here:
   defined" and an unknown command with "unknown command".
 * **Older servers refuse what they do not know.** The agent sends `Facts`
   in its enrollment request and in every heartbeat
-  ([`agentproto.go`](../../../internal/agentproto/agentproto.go)), and the
-  server decodes every body with `DisallowUnknownFields` (`decode` in
-  [`agentapi.go`](../../../server/internal/httpapi/agentapi/agentapi.go)).
-  ADR-0009's amendment (PR #52) makes servers of level 2 ignore unknown
-  fields and state their level in each heartbeat answer; an agent sends a
-  newer field only while its last heartbeat answer came from a server of
-  level 2 or higher, the enrollment request gains no fields, and an
-  endpoint the server does not have answers 404, which means "not
-  supported here". A package can be newer than its server, so this ADR
-  follows those rules.
+  ([`agentproto.go`](../../../internal/agentproto/agentproto.go)).
+  Servers of protocol level 1, 1.0.0-rc.4 and every build before PR #52,
+  refuse any request field they do not know. ADR-0009's amendment (PR #52,
+  merged) makes servers of level 2 ignore unknown fields (`decode` in
+  [`agentapi.go`](../../../server/internal/httpapi/agentapi/agentapi.go))
+  and state their level in each heartbeat answer (`agentproto.Protocol`);
+  an agent sends a newer field only while its last heartbeat answer came
+  from a server of level 2 or higher, the enrollment request gains no
+  fields, and an endpoint the server does not have answers 404, which
+  means "not supported here". A package can be newer than its server, so
+  this ADR follows those rules.
 * **An agent cannot wait to be enrolled.** `run` without an enrollment or
   an approval request fails (`main.go`,
   [`approval.go`](../../../agent/cmd/easyrmm-agent/approval.go)), so the
@@ -101,7 +102,9 @@ What exists, and what it means here:
   SYSTEM, Administrators, TrustedInstaller or the agent's account, and
   makes it anew for SYSTEM and Administrators only; it looks at the owner
   only, and runs only in `Save` and `SavePending`
-  ([`state.go`](../../../agent/state/state.go)), not in `SaveConfig`.
+  ([`state.go`](../../../agent/state/state.go)), and in `register` when
+  `--ca-file` is given, before it copies the authority to `ca.pem`
+  (`main.go`); not in `SaveConfig`.
   Reading checks nothing on Windows: `Load` and `LoadPending` take what is
   there, and the device key's mode is checked on Linux only. `install`
   reads the state before anything saves it (`enroll` in `main.go`); the
@@ -344,7 +347,8 @@ and makes such a token when asked ([In the console](#in-the-console)).
 
 ### The state folder is protected before anything reads it
 Slice 0: a fix for the agent as it is, which ships on its own before any
-package.
+package, as the fix being built on `fix/windows-state-folder` (its pull
+request number to be added here).
 
 * **Today's agent is exposed in one path**, from a standard user to
   LocalSystem, needing neither a token nor a place on the network:
@@ -359,8 +363,9 @@ package.
      "Already waiting for approval", does not enroll, and so neither saves
      nor protects (`enroll` in `main.go`). It then creates and starts the
      service on that state.
-  3. Nothing protects the folder later: `Protect` runs only in `Save` and
-     `SavePending`, not in `SaveConfig` or `Approved`. The user, who owns
+  3. Nothing protects the folder later: `Protect` runs only in `Save`,
+     `SavePending` and `register`, which this path skips (with
+     `--ca-file` too), not in `SaveConfig` or `Approved`. The user, who owns
      the folder, rewrites `agent.json` to name a server of their own, with
      no job key, or `pending.json` likewise.
   4. At the service's next start (a reboot, which a standard user may
@@ -378,36 +383,53 @@ package.
   first.
 * **The check.** On Windows, before any command reads or writes state
   (`install`, `enroll`, `run`, `status`, `uninstall`), and in the service
-  before it opens its log, the agent checks its state folder:
-  * every folder from `%ProgramData%` down to it a plain folder (no
-    reparse point) owned by SYSTEM, Administrators, TrustedInstaller or
-    the account the agent runs as, as `Protect` requires today;
-  * the state folder itself carrying the access list `Protect` gives it
-    (SYSTEM and Administrators only, nothing inherited), unless it is
-    empty;
-  * everything in it, at every depth, a plain file with one link or a
-    plain folder, with such an owner.
+  before it opens its log, the agent first protects its state folder as
+  `Protect` does today: every folder from `%ProgramData%` down to it must
+  be a plain folder (no reparse point) owned by SYSTEM, Administrators,
+  TrustedInstaller or the account the agent runs as, or it is moved aside
+  and made anew; the state folder then gets the protected access list
+  (SYSTEM and Administrators only, nothing inherited). Only then does it
+  walk what it reads or writes as state, and nothing else:
+  * `agent.json`, `device.key`, `pending.json`, `ca.pem`, `status.json`,
+    `removal.json` and `update.json` (ADR-0027's marker);
+  * the folders `jobs` and `jobs\journal` and what is in the journal,
+    `logs` and `agent.log`, and `easypatch`, where the EasyPatch agent's
+    package is downloaded before it is run (ADR-0031);
+  * `.tmp-*`, the temporary files `writeFile` (`state.go`) leaves when
+    interrupted.
 
-  A folder that passes is protected again, as today. One that fails is
-  moved aside, as `Protect` moves a folder another user made, and made
-  anew: nothing in it is read, the agent says so in its log and in
-  `status`, and it goes on as on a computer with no state (`install`
-  enrolls, a package's service waits). `Protect` alone is not enough: it
-  looks at the folders' owners only, and a folder an administrator made
-  without that access list inherits ProgramData's, under which every user
-  may create files; files a user made keep that user as owner, who may
-  change them still after the folder is protected.
+  Each must be a plain file with one link, or a plain folder, owned by
+  SYSTEM, Administrators, TrustedInstaller or the agent's account. Only
+  what fails is set aside (renamed `.untrusted-<time>`), and the agent
+  says so in its log and in `status`: a `device.key` of another owner
+  leaves the agent unenrolled, as it should, but a valid key is never
+  discarded for an entry that is not state. Where the chain or the state
+  folder fails, the whole folder is set aside, as `Protect` does today,
+  and the agent goes on as on a computer with no state (`install` enrolls,
+  a package's service waits). `Protect` alone is not enough: it looks at
+  the folders' owners only, and a folder an administrator made without
+  that access list inherits ProgramData's, under which every user may
+  create files; files a user made keep that user as owner, who may change
+  them still after the folder is protected.
+* **Leftovers of scripts are deleted, not judged.** Scripts run as SYSTEM
+  in `jobs\work\run-*`, with their temporary folder inside it
+  ([`exec.go`](../../../agent/jobs/exec.go)), and may leave links,
+  junctions or files of other owners there; the deferred removal fails
+  while a child the script left running holds the folder, and never runs
+  after a crash. So the walk leaves `jobs\work` alone, and the service,
+  once the checks have passed, deletes it with a removal that does not
+  follow reparse points.
 * **The store refuses to read before the check**: on Windows `Load`,
   `LoadPending` and the others fail in a process that has not run it, so
   that no later command can skip it.
 * **`install --package` checks before it writes anything or creates the
   service**, and `install` does too.
 * **Devices already enrolled pass.** `Protect` made their folders with
-  that access list, and their files were written by the agent as SYSTEM or
+  that access list, and their state was written by the agent as SYSTEM or
   by an elevated administrator, whose files Administrators own
-  (`trustedOwner` in `system_windows.go`). The slice's test updates an
-  enrolled agent from before it and checks that it keeps running as the
-  same device.
+  (`trustedOwner` in `system_windows.go`); what scripts left is not
+  judged. The slice's test updates an enrolled agent from before it and
+  checks that it keeps running as the same device.
 * **Tested on CI's Windows runner.** A standard user made for the run,
   before the agent is installed, creates `%ProgramData%\EasyRMM\Agent\` and
   leaves in it an `agent.json` and a `device.key` naming a listener of the
@@ -420,7 +442,11 @@ package.
   completes no connection; nothing is written through the junction; the
   folder is set aside, the agent behaves as on a clean computer, and the
   user can change nothing in the new folder. With the check removed, the
-  first run reaches the listener, so the test is known to catch it.
+  first run reaches the listener, so the test is known to catch it. And
+  an enrolled folder with a leftover run folder in `jobs\work` holding a
+  junction, a hard link and a file of another owner still passes: the
+  agent keeps its key and runs as the same device, `jobs\work` is gone,
+  and the junction's target is untouched.
 
 ### The enrollment file
 * **Where.** `/etc/easyrmm-agent/install.conf` on Linux, in a folder the
@@ -832,10 +858,10 @@ MeshCentral keeps updating it.
   says how the agent went (with the DEB, the RPM, the MSI, or by hand).
   A server without the endpoint answers 404, which the agent takes as
   "not supported here" (ADR-0009) and goes on with the removal, as when
-  no answer comes; any server that has the endpoint is of level 2 or
-  higher and ignores fields it does not know, so `installer` is safe to
-  ignore. Whichever of the two features is built first builds it, as
-  ADR-0053 designs it.
+  no answer comes. `/uninstalled` ships only in servers of level 2 or
+  higher, which ignore fields they do not know, so `installer` is safe to
+  ignore; slice 2 requires that. Whichever of the two features is built
+  first builds it, as ADR-0053 designs it.
 * **By hand, while a package holds the agent.** `easyrmm-agent uninstall`
   names the package manager's command and stops only while the package
   manager lists the package: `dpkg-query` showing it installed, `rpm -q`,
@@ -892,9 +918,11 @@ allowed to make tokens.
   (or `dnf install`), in bash or zsh.
 * **The steps for Intune and Group Policy, and `install.conf` to
   download, only for a token fit for them.** The steps ask how many
-  computers are planned, and make a site token for that many plus 10%,
-  rounded up, expiring in 14 days or less; or the technician chooses an
-  approval token, which always qualifies. An existing site token qualifies
+  computers are planned, at most 909, and make a site token for that many
+  plus 10%, rounded up, so at most 1,000 uses, expiring in 14 days or
+  less; or the technician chooses an approval token, which always
+  qualifies. A larger rollout uses an approval token or several site
+  tokens. An existing site token qualifies
   only with a use limit of 1,000 or less and an expiry 30 days or less
   away: every token expires, but a site token's limit can be 100,000
   ([`tokens.go`](../../../server/internal/agents/tokens.go)), and those
@@ -945,10 +973,13 @@ said what this ADR had to decide. Where it decides otherwise:
 
 ## Testing
 * **Unit**:
-  * slice 0's check of the state folder: an owner not trusted, the
-    access list missing, an entry of another owner, a reparse point and a
-    second hard link each setting the folder aside; an enrolled agent's
-    folder passing; the store refusing to read before the check;
+  * slice 0's check of the state folder: a folder in the chain of an
+    owner not trusted setting the whole folder aside; a state file of
+    another owner, a reparse point and a second hard link each setting
+    aside that entry only; an enrolled agent's folder passing, also with a
+    leftover run folder holding a junction, a hard link and a file of
+    another owner, which is deleted without following the junction; the
+    store refusing to read before the check;
   * the file's parsing, and its checks: on Linux `O_NOFOLLOW`, a regular
     file, one link, the owner, the mode and the directories; on Windows,
     on CI's Windows runner, in folders made under the runner's real
@@ -997,7 +1028,9 @@ said what this ADR had to decide. Where it decides otherwise:
 * **Console**: the packages' commands for each address, with the
   certificate authority where it applies and no token on a command line;
   the Intune and Group Policy steps making a site token for the computers
-  planned plus 10%, expiring in 14 days or less; an existing site token
+  planned plus 10%, expiring in 14 days or less, and refusing more than
+  909 computers planned, so the token never passes 1,000 uses; an
+  existing site token
   with more than 1,000 uses, or expiring later than 30 days, refused, and
   an approval token taken; the note that Fedora 45 and later refuse an
   edge build's RPM; the device's installer; the removal dialog's warning.
@@ -1141,8 +1174,10 @@ Each merges on its own, with its documentation (the
 IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
 
 0. **The state folder protected before anything reads it** (Windows):
-   the check, the store refusing to read before it, `install` and the
-   service checking first. A fix for today's agent, released on its own
+   the check of the chain, the state folder and the agent's own state,
+   the deletion of `jobs\work`, the store refusing to read before the
+   check, `install` and the service checking first. A fix for today's
+   agent, shipped as the fix on `fix/windows-state-folder`, on its own
    and before slice 1. Verified by unit tests and slice 0's test on CI's
    Windows runner, including an enrolled agent from before it updated to
    it.
@@ -1155,8 +1190,9 @@ IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
    package's script will (`install --package`, before any package exists)
    without input: it waits, and enrolls when the file appears.
 2. **The installer recorded, and new devices on the server's build**: the
-   heartbeat's `installer`, after ADR-0009's level 2 (PR #52) has landed;
-   its field in the report; the column of devices that have run the
+   heartbeat's `installer`, which needs ADR-0009's level 2 (on `main`
+   since PR #52); its field in the report, whose endpoint ships only in a
+   server of level 2 or higher; the column of devices that have run the
    server's build, its migration, and the first update under *When
    asked*. *Uninstalled* comes from ADR-0053's slice, which the plan's order
    puts first; if it has not landed, this slice builds it as ADR-0053
@@ -1207,8 +1243,8 @@ IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
   line.
 * Deployment tools' steps need an approval token, or a site token of at
   most 1,000 uses expiring within 30 days, if the owner agrees; the steps
-  make one for the computers planned. A larger rollout uses an approval
-  token or several site tokens.
+  make one for at most 909 computers planned (1,000 uses with the 10%). A
+  larger rollout uses an approval token or several site tokens.
 * Under *Only signed builds*, Windows computers get an MSI only through
   the operator's script and signature.
 * The release holds an OpenPGP key for RPMs, if the owner agrees, which
@@ -1253,6 +1289,8 @@ IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
    updates them.
 3. **Ceilings on tokens for deployment tools.** Proposed default, decided
    in review: the steps make a site token for the computers planned plus
-   10%, expiring in 14 days or less; an existing site token qualifies with
-   at most 1,000 uses and an expiry within 30 days; an approval token
-   always does. The figures are the owner's to change.
+   10%, expiring in 14 days or less, for at most 909 computers planned, so
+   that the token stays at or under 1,000 uses; an existing site token
+   qualifies with at most 1,000 uses and an expiry within 30 days; an
+   approval token always does. A larger rollout uses an approval token or
+   several site tokens. The figures are the owner's to change.
