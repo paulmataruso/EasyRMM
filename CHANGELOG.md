@@ -61,12 +61,17 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
-- **CI builds the server image once.** The Docker job builds it for amd64
-  and arm64, as the run's version, and the smoke test and end-to-end tests
-  run that image; it is no longer rebuilt and pushed on every push to
-  `main` before the other checks finish.
-- **Releases check their agents against the server image's**, byte for
-  byte, and the bundle against its manifest, before attesting.
+- **CI and releases build the server image once.** Both platforms, amd64
+  and arm64, are scanned and their agents checked against a release's
+  build, byte for byte; the amd64 image runs the tests; and the build is
+  pushed unchanged. CI no longer rebuilds and pushes it on every push to
+  `main` before the other checks finish, and a release no longer pushes a
+  build other than the one it scanned.
+- **The server image's agents are cross-compiled on the build machine**,
+  so the arm64 image hands out the same files as the amd64 one and as a
+  release: an operator-signed release agent matches either (ADR-0049).
+- **Releases check their files before attesting**: the bundle against its
+  manifest, and the attached agents against the pushed image.
 
 ### Fixed
 

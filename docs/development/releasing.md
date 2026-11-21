@@ -117,10 +117,12 @@ Done once per repository, before the first release:
    4. builds the EasyPatch agent's Windows MSIs and Linux packages for x64
       and ARM64, signed with the release key (the `easypatch-release`
       environment's secret);
-   5. builds EasyRMM's server image, checks it reports the version, scans it
-      with Trivy (high and critical fixable findings fail the release) and
-      pushes it for amd64 and arm64 to `ghcr.io/paulmataruso/easyrmm-server`,
-      with an SBOM, build provenance and a GitHub attestation;
+   5. builds EasyRMM's server image once, for amd64 and arm64; checks the
+      amd64 one reports the version, scans both with Trivy (high and
+      critical fixable findings fail the release) and checks both images'
+      agents against `scripts/release/agents.sh`'s; then pushes that build
+      unchanged to `ghcr.io/paulmataruso/easyrmm-server`, with an SBOM,
+      build provenance and a GitHub attestation;
    6. builds the engine's image on each architecture carrying those
       packages, checks it carries them read-only and holds no secrets, scans
       it with Trivy the same way, and pushes it to
@@ -158,8 +160,10 @@ fields and layout in
   first job, **Edge version**, computes it for every run, pull requests
   included.
 * **The server image is built once**, for amd64 and arm64, as that
-  version (`docker-build.yml`). The smoke test and the end-to-end jobs run
-  that image, and for `main` the publish job pushes it unchanged.
+  version (`docker-build.yml`). Both platforms are scanned and their agents
+  checked against `scripts/release/agents.sh`'s; the smoke test and the
+  end-to-end jobs run the amd64 image, each loading it by the digest the
+  build recorded, and for `main` the publish job pushes it unchanged.
 * **The engine is the last release's**, by digest, from that release's
   manifest once its attestation verifies. The contract and bundle tests
   run against it as well as against the engine built from the commit, and
@@ -168,30 +172,42 @@ fields and layout in
   release's GitHub release exists, these jobs are skipped and nothing is
   published.
 * **Publishing**, only for a push to `main` in this repository and after
-  every other job, pushes the server image (`easyrmm-server:<version
+  every other job, first checks that the manifest names this version,
+  commit and image, then pushes the server image (`easyrmm-server:<version
   without v>` and `sha-<commit>`) with a GitHub attestation, attests the
   manifest, and pushes `easyrmm-deploy:<version>`: the bundle, the
   manifest and the manifest's Sigstore bundle (`oras`). Then **Edge build
-  verified** pulls it back and verifies it as the updater will, and
-  **Move edge** tags both `edge`, only ever to a higher version. ADR-0052
-  also has that test upgrade the previous edge build to this one; that
-  joins it with the updater.
+  verified** pulls it back by digest and verifies it as the updater will,
+  and **Move edge** tags both `edge`, the server image first, only ever to
+  a higher version. ADR-0052 also has that test upgrade the previous edge
+  build to this one; that joins it with the updater.
+* **A version is published once.** If the publish job fails because its
+  version is published already with another image or bundle (the Docker
+  job was run again on its own), re-run all jobs: a new attempt is a new
+  version. Re-running only failed jobs is otherwise safe: what was
+  published already is kept.
 * **Retention**: `edge-retention.yml` deletes edge builds older than 30
-  days, daily. Run it by hand (**Run workflow**) for a dry run listing what
-  it would delete.
+  days, daily, never the server image a kept bundle names. Run it by hand
+  (**Run workflow**) for a dry run listing exactly what it would delete.
 
 Pull requests run everything up to publishing: the version, the image,
 the tests against both engines, and the edge bundle and manifest, with
 the image's digest as it would be pushed. Nothing is pushed or attested.
 
-To check the newest edge build by hand:
+To check the newest edge build by hand, as the updater does (every
+certificate field ADR-0052 names: the CLI checks the issuer, identity,
+ref, commit and runner, `jq` the repository ID, build config and trigger):
 
 ```bash
 oras pull ghcr.io/paulmataruso/easyrmm-deploy:edge
 m=$(ls easyrmm-*-manifest.json)
+workflow=https://github.com/paulmataruso/EasyRMM/.github/workflows/ci.yml@refs/heads/main
 gh attestation verify "$m" --bundle "$m.sigstore.json" --repo paulmataruso/EasyRMM \
-  --cert-identity https://github.com/paulmataruso/EasyRMM/.github/workflows/ci.yml@refs/heads/main \
-  --source-ref refs/heads/main --source-digest "$(jq -r .commit "$m")" --deny-self-hosted-runners
+  --cert-identity "$workflow" --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --source-ref refs/heads/main --source-digest "$(jq -r .commit "$m")" --deny-self-hosted-runners \
+  --format json |
+  jq -e --arg workflow "$workflow" 'length > 0 and all(.[]; .verificationResult.signature.certificate |
+    .sourceRepositoryIdentifier == "1458774020" and .buildConfigURI == $workflow and .buildTrigger == "push")'
 scripts/release/check-bundle.sh . "$(jq -r .version "$m")"
 ```
 
@@ -222,9 +238,13 @@ that a release matches its source.
 ```bash
 sha256sum -c SHA256SUMS
 gh attestation verify easyrmm-v1.2.3-deploy.tar.gz --repo paulmataruso/easyrmm
+workflow=https://github.com/paulmataruso/EasyRMM/.github/workflows/release.yml@refs/tags/easyrmm-v1.2.3
 gh attestation verify easyrmm-v1.2.3-manifest.json --bundle easyrmm-v1.2.3-manifest.json.sigstore.json \
-  --repo paulmataruso/EasyRMM --source-ref refs/tags/easyrmm-v1.2.3 \
-  --cert-identity https://github.com/paulmataruso/EasyRMM/.github/workflows/release.yml@refs/tags/easyrmm-v1.2.3
+  --repo paulmataruso/EasyRMM --cert-identity "$workflow" --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --source-ref refs/tags/easyrmm-v1.2.3 --source-digest "$(jq -r .commit easyrmm-v1.2.3-manifest.json)" \
+  --deny-self-hosted-runners --format json |
+  jq -e --arg workflow "$workflow" 'length > 0 and all(.[]; .verificationResult.signature.certificate |
+    .sourceRepositoryIdentifier == "1458774020" and .buildConfigURI == $workflow and .buildTrigger == "push")'
 gh attestation verify oci://ghcr.io/paulmataruso/easyrmm-server:1.2.3 --repo paulmataruso/easyrmm
 gh attestation verify oci://ghcr.io/paulmataruso/easypatch-server:1.10.1 --repo paulmataruso/easyrmm
 ```

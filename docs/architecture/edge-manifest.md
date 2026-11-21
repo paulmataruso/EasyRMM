@@ -24,6 +24,11 @@ As [ADR-0052](adr/0052-the-host-updater.md#channels-and-versions) decides,
   **Edge version**. Re-running only the failed jobs keeps that job's
   result, so the version and the image built for it stay the same;
   re-running every job is a new attempt, a new image and a new version.
+* A version is published once, with one server image and one bundle. A
+  run again of failed jobs that finds its version published with the same
+  image, commit, bundle and manifest keeps it; anything else under that
+  version (the Docker job run again builds another image) fails the
+  publish job. Re-run all jobs then: a new attempt is a new version.
 * With no release tag reachable there is no edge version, and CI fails
   (fetch the tags: `actions/checkout` with `fetch-depth: 0`).
 
@@ -36,7 +41,7 @@ image's tag drops it, as release images do.
 |---|---|
 | `ghcr.io/paulmataruso/easyrmm-server:<version without v>` | The server image CI built and tested, pushed unchanged: an OCI image index for `linux/amd64` and `linux/arm64`, with BuildKit's SBOM and provenance, and GitHub's build provenance attestation (stored under the tag `sha256-<index digest hex>`, ghcr.io having no referrers API). Also tagged `sha-<commit>` |
 | `ghcr.io/paulmataruso/easyrmm-deploy:<version>` | The OCI artifact [below](#the-oci-artifact): the bundle, its manifest and the manifest's Sigstore bundle |
-| `:edge` on both | The newest edge build that passed the edge test on `main`. It moves only to a higher version |
+| `:edge` on both | The newest edge build that passed the edge test on `main`. It moves only to a higher version, the server image's tag first and the bundle's last, so `easyrmm-deploy:edge` never names a server image that `easyrmm-server:edge` does not. The updater follows `easyrmm-deploy:edge` and takes the server image by the digest its manifest names |
 
 A release publishes on its GitHub release, as before: the bundle, the
 manifest, `easyrmm-<version>-manifest.json.sigstore.json`, the agents and
@@ -172,16 +177,26 @@ Sigstore's trusted root, not GitHub's API:
 | Runner environment | `github-hosted` | `github-hosted` |
 | Source repository digest | the manifest's `commit` | the manifest's `commit` |
 
-By hand, with the GitHub CLI:
+By hand, with the GitHub CLI, every field of the table (the CLI checks the
+issuer, identity, ref, commit and runner; `jq` the rest):
 
 ```bash
 oras pull ghcr.io/paulmataruso/easyrmm-deploy:edge
 m=$(ls easyrmm-*-manifest.json)
+workflow=https://github.com/paulmataruso/EasyRMM/.github/workflows/ci.yml@refs/heads/main
 gh attestation verify "$m" --bundle "$m.sigstore.json" --repo paulmataruso/EasyRMM \
-  --cert-identity https://github.com/paulmataruso/EasyRMM/.github/workflows/ci.yml@refs/heads/main \
-  --source-ref refs/heads/main --source-digest "$(jq -r .commit "$m")" --deny-self-hosted-runners
+  --cert-identity "$workflow" --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  --source-ref refs/heads/main --source-digest "$(jq -r .commit "$m")" --deny-self-hosted-runners \
+  --format json |
+  jq -e --arg workflow "$workflow" 'length > 0 and all(.[]; .verificationResult.signature.certificate |
+    .sourceRepositoryIdentifier == "1458774020" and .buildConfigURI == $workflow and .buildTrigger == "push")'
 sha256sum "$(jq -r .bundle.file "$m")"   # equals the manifest's bundle.sha256
 ```
+
+For a release, the same with `release.yml@refs/tags/easyrmm-<version>` as
+the workflow and `refs/tags/easyrmm-<version>` as the ref. CI verifies
+each edge build this way after publishing it, and the last release's
+manifest this way before using its engine.
 
 ## Retention
 
@@ -189,8 +204,14 @@ sha256sum "$(jq -r .bundle.file "$m")"   # equals the manifest's bundle.sha256
 (`scripts/release/edge-retention.sh`): from `easyrmm-deploy`, every
 version older than 30 days that `edge` does not name; from
 `easyrmm-server`, every edge image older than 30 days (all its tags edge
-versions or `sha-<commit>`, none `edge`), with its platform and attestation
-manifests and its `sha256-<digest>` attestations, except a manifest that a
-kept image also names. Release images, and whatever `edge` names, are never
-deleted. An updater that runs an edge build older than 30 days still has it
-running; it cannot pull it again.
+versions or `sha-<commit>`, none `edge`), with the untagged platform and
+attestation manifests it names and its `sha256-<digest>` attestations, and
+the attestations of images that are gone.
+
+Never deleted: the server image that the manifest of any kept
+`easyrmm-deploy` version names (so `easyrmm-deploy:edge`'s, whatever
+`easyrmm-server:edge` names), with its manifests and attestations; a
+manifest that a kept image also names; release images; whatever `edge`
+names. Run by hand, it is a dry run by default and prints exactly what a
+run would delete. An updater that runs an edge build older than 30 days
+still has it running; it cannot pull it again.
