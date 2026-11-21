@@ -224,16 +224,19 @@ they could stop it.
 Proposed in [ADR-0060](adr/0060-collecting-logs.md), revised after its
 independent review, not accepted yet. In short:
 
-* **Job arguments leave the command line first** (slice 0, amending
-  ADR-0017), so that process auditing does not record them; then the
-  volumes are **measured** on real computers (slice 1) before the store is
-  built.
+* **How jobs start changes first** (slice 0, amending ADR-0017): job
+  arguments leave the command line, so that process auditing does not
+  record them; Windows jobs start inside their job object; Linux jobs get
+  a login UID of their own, which an audit rule records. Then the volumes
+  are **measured** on real computers (slice 1) before the store is built.
 * **The collector** (`easyrmm-agent collect`) is a process of its own
-  without the device's key, network access or rights to change anything:
-  on Linux its own unit (an unnamed user in the journal's group, one read
-  capability, the agent's state hidden, `CPUQuota` and `MemoryMax`), on
-  Windows a service of its own whose virtual account reads the logs as an
-  Event Log Reader, in a job object with a CPU cap. It reads Windows'
+  without the device's key, network access, privileges or rights to change
+  anything: on Linux its own unit (an unnamed user in the journal's group
+  with no capability, auditd's log through descriptors the agent passes,
+  `CPUQuota` and `MemoryMax`), on Windows a service of its own whose
+  virtual account is granted read access in each collected channel's own
+  access list, blocked from the network by a filtering-platform filter, in
+  a job object with a CPU cap. It reads Windows'
   event logs through `EvtSubscribe` and Linux's journal and auditd log
   from positions written with the events into a capped disk spool; a
   source whose share is full pauses, since the computer's own log holds
@@ -254,7 +257,8 @@ independent review, not accepted yet. In short:
   keys, and auditd is removed by the last one out.
 * **The store** is a PostgreSQL instance of its own in a directory beside
   the data root, which the updater never copies, moves or deletes, with
-  its passwords set from `.env` at each start. It holds compressed blocks
+  its passwords set from `.env` at each start; nothing depends on it, so a
+  broken store degrades logs and never stops EasyRMM. It holds compressed blocks
   of events with hourly facts (B-tree indexes, which row-level security
   can use), partitioned by retention class and day, week or month. Quotas
   per kind of computer, a storage share per organization, a size cap and

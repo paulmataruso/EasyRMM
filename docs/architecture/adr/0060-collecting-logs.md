@@ -1,7 +1,7 @@
 # ADR-0060: Collecting logs
 
-* Status: Proposed (2026-11-21). Not implemented. Revised the same day
-  after an independent review.
+* Status: Proposed (2026-11-21). Not implemented. Revised twice the same
+  day after independent reviews.
 * Builds on: [ADR-0002](0002-postgresql-rls-tenant-isolation.md)
   (row-level security), [ADR-0009](0009-agent-protocol.md) (the agent
   protocol, with its section "Evolving the protocol" from pull request
@@ -16,12 +16,13 @@
   proposed beside this one and not merged yet, so cited without links:
   ADR-0058 (signed settings, the plan's F1), ADR-0053 (one notification
   sender, F2) and ADR-0054 (hardening Windows).
-* Amends: [ADR-0017](0017-scripts-and-jobs.md) (job arguments leave the
-  command line, slice 0), [ADR-0023](0023-audit-forwarding.md) (one list
+* Amends: [ADR-0017](0017-scripts-and-jobs.md) (how jobs start, slice 0:
+  arguments off the command line, Windows jobs inside their job object,
+  Linux jobs with a login UID of their own), [ADR-0023](0023-audit-forwarding.md) (one list
   of syslog destinations), [ADR-0051](0051-hardening-linux-computers.md)
   (who removes auditd) and [ADR-0052](0052-the-host-updater.md) (the
-  updater never touches the log store, keeps its `.env` lines across a
-  rollback, and reports the data root's size).
+  updater never touches the log store or waits for it, keeps its `.env`
+  lines across a rollback, and reports the data root's size).
 * Part of [the feature plan](../feature-plan.md): feature 3.
 
 ## Context
@@ -68,7 +69,10 @@ What exists, and what it means here:
   heartbeat answers carry `protocol: 2`; agents send fields added after
   level 2 only to servers of that level or higher; features the agent's
   behaviour depends on are listed in the answer; an unknown endpoint
-  (`404`) means "not supported".
+  (`404`) means "not supported". Before the body, the server checks only
+  the header's form, its freshness and that the device exists
+  (`BeginSigned`, `server/internal/agents/signed.go`), so a sender who
+  knows a device's ID can start requests in its name.
 * **The agent runs with full rights and no limits.** Its systemd unit sets
   no limits (`UnitContent`, `agent/host/service.go`); the Windows service
   runs as LocalSystem (`agent/host/system_windows.go`). Its state, with
@@ -81,12 +85,19 @@ What exists, and what it means here:
 * **Job arguments are on the command line.** Each run gets a directory
   with a random name, `run-*`, under the jobs directory
   (`agent/jobs/exec.go`). On Windows PowerShell runs `-File script.ps1`
-  followed by the arguments, and cmd gets them inside its `/C` line
-  (`agent/jobs/exec_windows.go`); on Linux the shell gets the script and
-  the arguments (`agent/jobs/exec_unix.go`). Process auditing records
-  command lines (Windows' 4688 once command lines are on, auditd's
-  `EXECVE`), and other local processes can read them while the job runs.
-  ADR-0017 keeps argument values out of the audit log for this reason.
+  followed by the arguments, so `-Name value` binds named parameters, and
+  cmd gets them inside its `/C` line (`agent/jobs/exec_windows.go`); on
+  Linux the interpreter (`sh`, `bash` or `python3`,
+  `internal/agentproto/jobs.go`) gets the script and the arguments
+  (`agent/jobs/exec_unix.go`). Process auditing records command lines
+  (Windows' 4688 once command lines are on, auditd's `EXECVE`), and other
+  local processes can read them while the job runs. ADR-0017 keeps
+  argument values out of the audit log for this reason. On Windows the
+  job object is made and assigned after the process has started, and a
+  run goes on without one if that fails (`start`).
+* **Linux jobs are not audited today.** The agent is a systemd service,
+  so its jobs have no login UID; rules for what people run (`auid` set)
+  never match them.
 * **Secrets reach the logs this feature reads.** The console's Windows
   install command runs `install.ps1` as a script block with
   `-Token '<token>'` (`windowsInstallCommand`,
@@ -102,7 +113,10 @@ What exists, and what it means here:
   `max_connections=200`, `shared_buffers=256MB`, initialised with
   `--auth-local=peer`) holds EasyRMM's database, the engine's and
   Authentik's. `easypatch-db-init` sets its roles' passwords from `.env`
-  each time it runs (`docker/postgres/easypatch-db-init.sh`). Tenant
+  each time it runs (`docker/postgres/easypatch-db-init.sh`); the engine's
+  services depend on it, the server does not, and the engine's secrets
+  are not required by Compose (`:-`), so a broken engine never keeps
+  EasyRMM from starting. Tenant
   tables force row-level security on the `easyrmm.scope_*` settings
   ([database.md](../database.md)); because forcing applies to the owner
   too, owner-run code needs an owner policy (`audit_forwarding_owner`,
@@ -190,7 +204,8 @@ Linux. Thirty days are about 1 TB of raw events.
 
 ### In short
 * The agent runs a **collector**, a process of its own without the
-  device's key, network access or rights to change anything, with CPU,
+  device's key, network access, privileges or rights to change anything,
+  with CPU,
   memory, bandwidth and disk limits. It reads Windows' event logs and
   Linux's journal and auditd log from its own positions, filters, redacts
   EasyRMM's tokens and writes batches to a spool; the agent seals them
@@ -201,13 +216,16 @@ Linux. Thirty days are about 1 TB of raw events.
   logging, and on Linux auditd rules and a persistent journal; it leaves
   what Group Policy, MDM or another owner holds, and undoes its changes on
   uninstall. Before it turns on command lines in process events, job
-  arguments leave the command line (slice 0).
+  arguments leave the command line (slice 0, which also starts Windows
+  jobs inside their job object and gives Linux jobs a login UID of their
+  own, so that they are audited).
 * The logs live in a **PostgreSQL instance of their own, outside the data
   root** that the updater copies, as compressed blocks with hourly facts,
   partitioned by retention class and time, under row-level security.
   Quotas per kind of computer, a storage share per organization, a size
   cap and a free-disk floor stop ingest before the store can fill its
-  disk, refusing the organizations over their share first.
+  disk, refusing the organizations over their share first. Nothing
+  depends on the store: a broken one degrades logs, never EasyRMM.
 * The console searches them (**Logs**, and a device's **Logs** tab);
   command lines and script text need a permission of their own, enforced
   by the server in results, text search and exports.
@@ -284,8 +302,13 @@ sensitive, never fewer:
 
 * Windows: `CommandLine` and `ParentCommandLine` (4688, Sysmon 1),
   `ScriptBlockText` (4104), `TaskContent` and `TaskContentNew` (4698 to
-  4702), `ImagePath` (7045), `ServiceFileName` (4697), and 5861's
-  `CONSUMER` and `PossibleCause` (the subscription's command).
+  4702), `ImagePath` (7045), `ServiceFileName` (4697), 5861's
+  `CONSUMER` and `PossibleCause` (the subscription's command), and
+  Sysmon 19's `Query` and 20's `Destination` (a WMI filter and consumer).
+* **Rendered messages repeat those fields**, so an event with a sensitive
+  field is kept without its rendered message (its fields carry
+  everything), and any other event's message is itself treated as
+  sensitive when its source is a custom one.
 * Linux: auditd's `EXECVE` arguments (`a0` onwards), `PROCTITLE`'s
   `proctitle` and `USER_CMD`'s `cmd`; the journal's `_CMDLINE`; and sudo's
   command, which the parser takes out of the message (`COMMAND=`) into a
@@ -298,33 +321,65 @@ sensitive, never fewer:
   or key, and changes nothing on the computer. *Configure logging* runs
   in the agent (below), never in the collector.
   * **Linux**: its own unit, `easyrmm-agent-collect.service`, which the
-    agent writes and removes like its own: `DynamicUser=yes` (an unnamed
-    user of its own) with `SupplementaryGroups=systemd-journal` (the
-    journal) and `AmbientCapabilities=CAP_DAC_READ_SEARCH` with nothing
-    else in `CapabilityBoundingSet` (auditd's root-only log);
-    `NoNewPrivileges=yes`, `ProtectSystem=strict`, `PrivateTmp=yes`,
-    `PrivateDevices=yes`; `StateDirectory=easyrmm-collect` (the spool, the
-    only place it writes); `InaccessiblePaths=` the agent's state and
-    hardening's (`/var/lib/easyrmm-agent`, `/var/lib/easyrmm-hardening`),
-    which its capability could otherwise read; `RestrictAddressFamilies=AF_UNIX`
-    and `IPAddressDeny=any`; `PartOf=` the agent's unit; `CPUQuota=20%` (a
-    fifth of one processor), `MemoryHigh=192M`, `MemoryMax=256M`,
-    `Nice=10`, `IOWeight=10` (a low share of the disk that cannot starve,
-    unlike the idle class).
+    agent writes and removes like its own, with **no capability**
+    (decided in review: with one that bypasses file permissions, a parser
+    exploit could read `/etc/shadow` or host keys and carry them out
+    through the spool):
+    * `DynamicUser=yes` (an unnamed user of its own), `NoNewPrivileges=yes`,
+      an empty `CapabilityBoundingSet=`, `ProtectSystem=strict`,
+      `ProtectHome=yes`, `PrivateTmp=yes`, `PrivateDevices=yes`;
+      `StateDirectory=easyrmm-collect` (the spool, the only place it
+      writes); `InaccessiblePaths=` the agent's state and hardening's
+      (`/var/lib/easyrmm-agent`, `/var/lib/easyrmm-hardening`);
+      `RestrictAddressFamilies=AF_UNIX` and `IPAddressDeny=any`;
+      `PartOf=` the agent's unit;
+    * limits: `CPUQuota=20%` (a fifth of one processor),
+      `MemoryHigh=192M`, `MemoryMax=256M`, `Nice=10`, `IOWeight=10` (a low
+      share of the disk that cannot starve, unlike the idle class);
+    * **the journal** through `SupplementaryGroups=systemd-journal`, the
+      group `journalctl` is made for, so `journalctl` runs as the
+      collector's user and opens the journal's files itself (passing it
+      descriptors would not work: it finds and opens the files it needs);
+    * **auditd's log**, which only root can read, through descriptors: the
+      agent opens the current file and each rotated one read-only and
+      passes the descriptors to the collector over a Unix socket in the
+      spool, also after a rotation (the agent watches auditd's log
+      directory), and the collector reads them by inode and offset as
+      before.
+
+    The collector can so read what any unprivileged user can, and the
+    journal, and nothing else; what it writes goes only to its spool,
+    which the agent uploads to EasyRMM's own server.
   * **Windows**: a service of its own, `easyrmm-collect`, which the agent
     installs and removes with its own, running as its virtual account
-    (`NT SERVICE\easyrmm-collect`), which the agent adds to the Event Log
-    Readers group; its spool, `%ProgramData%\EasyRMM\Collect`, is made
-    with access for SYSTEM, Administrators and that account only; the
-    agent's state is not readable by it (`protectedDACL`). A Windows
-    firewall rule for the service's SID blocks its network traffic. It
-    puts itself in a job object at start, with a hard CPU rate cap of a
-    fifth of one processor, a memory limit of 256 MiB and kill-on-close,
-    and enters background processing mode (lower I/O and memory
-    priority). Whether a virtual account can join Event Log Readers on a
-    domain controller, whose groups are the domain's, is checked by hand
-    in slice 3; if not, the collector runs there as LocalService in that
-    group.
+    (`NT SERVICE\easyrmm-collect`, whose SID derives from the service's
+    name and so is the same on every computer):
+    * **Reading, without any group** (decided in review: on a domain
+      controller Event Log Readers is a domain group, and adding to it
+      would change the directory): *Configure logging*, or the agent when
+      that is off, adds read access (`0x1`) for the collector's SID to the
+      access list of each channel it collects (`wevtutil sl <channel>
+      /ca:`), the list before recorded for undo, on every computer. Where
+      Group Policy's "Configure log access" sets a channel's list, owners
+      win: the channel is *managed elsewhere*, not collected, and the
+      device's tab says to add the collector's SID to that policy.
+      Whether the Security log's list can be changed this way is checked
+      on the runner first (slice 3).
+    * Its spool, `%ProgramData%\EasyRMM\Collect`, is made with access for
+      SYSTEM, Administrators and that account only; the agent's state is
+      not readable by it (`protectedDACL`).
+    * **No network**: the collector's code opens no sockets, and a
+      persistent filter of EasyRMM's own in the Windows Filtering Platform
+      blocks connecting and listening for the service's SID. Such a filter
+      works whether or not Windows Firewall is on (third-party firewalls
+      often turn it off), since both use the platform; where the filter
+      cannot be added, the device's tab says so, and the limit is that a
+      compromised collector could then reach the network as its own
+      account, which holds no secret of EasyRMM's.
+    * It puts itself in a job object at start, with a hard CPU rate cap of
+      a fifth of one processor, a memory limit of 256 MiB and
+      kill-on-close, and enters background processing mode (lower I/O and
+      memory priority).
   * Both run with `GOMAXPROCS=1` and a Go memory limit under the hard one.
     The limits never slow jobs, which run in the agent's process tree.
     The work the Event Log service does for the collector's queries
@@ -347,9 +402,10 @@ sensitive, never fewer:
     drained records that every record up to that number was considered.
     A gap is reported only when the oldest record in the log is past that
     position. Each event's system fields and its `EventData` or `UserData`
-    are kept; the rendered message only outside the Security log, whose
-    events are known by ID and fields (the message would triple their
-    size), capped at 2 KiB.
+    are kept; the rendered message, capped at 2 KiB, only outside the
+    Security log (whose events are known by ID and fields, and whose
+    message would triple their size) and never for an event with a
+    sensitive field (Sensitive fields).
   * **Journal**: `journalctl --follow --all --output=json` from the
     source's cursor with its matches (`--all`, or fields over 4,096 bytes
     come out empty). The journal's file format is internal to systemd;
@@ -357,8 +413,9 @@ sensitive, never fewer:
     entries vacuumed since without a word, so at each start the collector
     compares its cursor's time with the oldest entry the journal holds and
     reports a gap of unknown size when the oldest is later.
-  * **auditd**: its log file by inode and offset, following rotations,
-    with the records of one event (one serial) grouped, and the values
+  * **auditd**: its log file, through the descriptors the agent passes,
+    by inode and offset, following rotations, with the records of one
+    event (one serial) grouped, and the values
     auditd writes in hexadecimal (`proctitle`, `EXECVE` arguments, `cmd`,
     anything with spaces) decoded.
   * **Gaps** (entries gone before they were read) are reported with their
@@ -425,31 +482,48 @@ sensitive, never fewer:
   password would not survive. `job.view` shows the run with its
   arguments. A job's processes are known by more than their ID, which
   Windows and Linux reuse:
-  * **Windows**: the agent asks each run's job object to report every
-    process that joins it (`JOB_OBJECT_MSG_NEW_PROCESS` on the job's
-    completion port) and records its ID and creation time; an event
-    matches by both.
-  * **Linux**: the agent records the run's first process with its start
-    time (`/proc/<pid>/stat`) and follows its descendants through the
-    parent IDs in auditd's records while the run lasts.
+  * **Windows**: after slice 0 every run's process starts inside its job
+    object; the agent asks the job object to report every process that
+    joins it (`JOB_OBJECT_MSG_NEW_PROCESS` on the job's completion port)
+    and records its ID and creation time; an event matches by both.
+  * **Linux**: jobs are audited by a rule of their own (decided in
+    review). The agent starts each run through a small launcher, its own
+    binary, which writes the login UID of a system user the agent creates
+    at install, `easyrmm-jobs` (no shell, no home), to
+    `/proc/self/loginuid` before it executes the interpreter. The kernel
+    then gives the run an audit session of its own, inherited by
+    everything it starts; the agent records the run's session ID, and
+    *Configure logging*'s rules file holds a rule for `execve` by that
+    login UID, keyed `easyrmm-logs-jobs`. An event matches a run by its
+    session ID, which the kernel does not reuse while it runs. Without
+    *Configure logging* (or without auditd, or where the kernel refuses
+    the login UID, as in a container) Linux jobs are not audited, and the
+    device's tab says so. A job that runs as root could still
+    change its own login UID; that is reported as the job's last event,
+    not prevented.
 * **Bandwidth**: uploads are paced to `logs.bandwidth` (128 KiB/s by
-  default, set per site for slow links), with jitter.
+  default, set per site for slow links, at least 8 KiB/s), with jitter.
 
 ### Uploading
 `POST /api/agent/v1/logs`, signed like every agent request, its body JSON
 compressed with gzip (`Content-Encoding: gzip`): the spool's generation (a
 random ID made with the spool), the stream, the batch's number and the
 SHA-256 of its content, the agent's clock, and per source its events, its
-position, and what it dropped, filtered and redacted. The agent sends it
-only to a server whose heartbeat answer lists the `logs` feature
-(ADR-0009's rule for features, pull request #52); the batch's fields
-follow that ADR's rules too.
+position, and what it dropped, filtered and redacted. The agent sends it,
+and the status below, only to a server whose heartbeat answer lists the
+`logs` feature (ADR-0009's rule for features, pull request #52); the
+batch's and the status's fields follow that ADR's rules too.
 
 * **Read in order**:
   1. The header is checked first; an unknown device's body is never read.
-     At most 64 log bodies are read at once on a server, others answered
-     `503` before reading.
-  2. At most 2 MiB as sent, within 30 seconds (a batch is sized for that).
+     Before reading, two counts are taken, both answered `503` with a
+     jittered `Retry-After` when full: at most 64 log bodies read at once
+     on a server, and at most two for the device the header names (which
+     is not proven until the signature is checked, so this count is per
+     *claimed* device).
+  2. At most 2 MiB as sent, within 30 seconds, and never slower than 4
+     KiB/s after its first 5 seconds (a batch is sized for that, and
+     `logs.bandwidth` cannot be set below 8 KiB/s).
   3. The signature verified over those bytes; a device removed by force is
      then refused, as on other routes.
   4. Then the device's limits are spent: one upload every 10 seconds with
@@ -465,9 +539,10 @@ follow that ADR's rules too.
      the body.
 
   Memory is so bounded at about 64 × 2 MiB of bodies and 16 uploads of a
-  few MiB each. A sender without a device key can at worst fill the 64
-  reads with slow bodies for 30 seconds at a time, which delays log
-  uploads and nothing else.
+  few MiB each. A sender without a device key needs 32 device IDs to fill
+  the 64 reads, each body for at most 30 seconds at no less than 4 KiB/s,
+  which delays log uploads and nothing else; one who knows a device's ID
+  can delay that device's log uploads the same way.
 * **Exactly once**: the store keeps, per device and stream, the
   generation, the highest batch number stored and that batch's hash, and
   stores a batch, its blocks and the device's usage in one transaction
@@ -479,9 +554,10 @@ follow that ADR's rules too.
   spool, so events may arrive twice there, never be lost. A new
   generation (a reinstalled agent, a resync) starts a new count.
 * **Answers**, each signed back to the request as `signDownload` does, and
-  acted on only when the signature is valid; anything unsigned (a proxy's
-  error, the updater's hold) is retried with backoff and never deletes
-  or sets aside a batch:
+  acted on only when the signature is valid. Anything unsigned (a proxy's
+  error, the updater's hold) is retried with backoff (at most an hour
+  apart) and reported in the status, and never deletes or sets aside a
+  batch; only `413` and `404` are also understood unsigned (below):
   * `200` with how much more the device may send today per stream
     (`budget`, bytes, and when it renews).
   * `429` with `Retry-After` when a quota is used up or ingest is stopped
@@ -492,14 +568,17 @@ follow that ADR's rules too.
   * `403 logs_off` when collection is off for the device: the agent
     pauses and keeps its spool until its signed settings say otherwise.
   * `409 resync` (above).
-  * `413` when a batch is too large, which the agent splits.
+  * `413`, signed or not (a proxy in front of the server may allow less
+    than 2 MiB; nginx's default is 1 MiB): nothing was stored, so the
+    agent unseals the batch, seals its events again as two batches under
+    the same and the next number, and halves its batch size (down to 64
+    KiB), growing it back slowly after uploads succeed.
   * `404` (a server without this endpoint, such as one rolled back to an
     earlier release): not supported; the agent pauses, keeps its spool and
     tries again when a heartbeat answer lists `logs`.
-  * Any other `4xx`: the batch is set aside (kept in the spool's
+  * Any other signed `4xx`: the batch is set aside (kept in the spool's
     `rejected/`, at most 32 MiB, oldest removed first), reported in the
-    status with the reason, and the stream goes on; an unsigned one is set
-    aside only after the same refusal for 24 hours. It is never retried
+    status with the reason, and the stream goes on; it is never retried
     forever.
 
   On every refusal the agent keeps its spool and its sources pause as
@@ -519,9 +598,10 @@ on Linux a shell script; both report every change in the status. It runs
 when its settings change, at the agent's start, and after Group Policy is
 processed (seen in the GroupPolicy Operational log), at most hourly.
 
-**Windows audit policy**, the one table: ADR-0054's `audit` check cites it
-and compares against it. It adopts the audit subcategories of Microsoft's
-security baselines for Windows 11 and Windows Server 2025; slice 4 checks
+**Windows audit policy**, the one table (decided in ADR-0054's review):
+ADR-0054's `audit` check cites it and compares against it. It adopts
+the audit subcategories of Microsoft's security baselines for Windows 11
+and Windows Server 2025; slice 4 checks
 each value against the baselines' own files, and adds the same way
 anything else they set. Values are only raised, never lowered. Volumes are
 estimates of what each writes to the computer's own Security log, measured
@@ -575,7 +655,8 @@ when they are chosen (below).
 | Subcategories override categories | `SCENoApplyLegacyAuditPolicy` = 1 under `HKLM\SYSTEM\CurrentControlSet\Control\Lsa` | Without it, legacy category settings can override the table. Set here, not only reported (STIG WN11-SO-000030); where Group Policy sets legacy categories, the whole audit policy is *managed elsewhere* and nothing in the table is set |
 | Command lines in process creation events | `ProcessCreationIncludeCmdLine_Enabled` = 1 under `HKLM\Software\Microsoft\Windows\CurrentVersion\Policies\System\Audit` | 4688's command line. Only once slice 0 is on the computer's agent |
 | Script block logging | `EnableScriptBlockLogging` = 1 for Windows PowerShell (`HKLM\SOFTWARE\Policies\Microsoft\Windows\PowerShell\ScriptBlockLogging`) and PowerShell 7 (`…\PowerShellCore\ScriptBlockLogging`) | 4104 |
-| Who can read the PowerShell logs | The two PowerShell Operational logs' access list (`wevtutil sl /ca:`): read for SYSTEM, Administrators and Event Log Readers only; every other reader's read right removed, write rights unchanged, the list before recorded for undo | Script blocks hold whatever secrets scripts contain |
+| Who can read the PowerShell logs | The two PowerShell Operational logs' access list (`wevtutil sl /ca:`): read for SYSTEM, Administrators, Event Log Readers and the collector only; every other reader's read right removed, write rights unchanged, the list before recorded for undo | Script blocks hold whatever secrets scripts contain |
+| The collector's read access | Read (`0x1`) for the collector's SID in each collected channel's access list, the list before recorded for undo (The collector) | Without a group change anywhere, also on domain controllers |
 | Security log size | At least 1,024,000 KB (4 GiB on domain controllers when chosen) | The STIGs' minimum (WN11-AU-000505, WN25-CC-000280), which ADR-0054's check compares with; the 256 MiB first proposed would fail it. It costs at most a gigabyte of the system disk and keeps days of history on the computer for a collector that is paused or offline; a domain controller writes far more. Not raised where the system volume has under 10 GiB free: reported |
 | Other log sizes | System, Application and the PowerShell Operational logs at least 65,536 KB | Above the STIGs' 32,768 KB for System and Application |
 
@@ -615,7 +696,7 @@ Their logs are still collected.
 |---|---|
 | Persistent journal | `/var/log/journal` created and the journal flushed to it, where `Storage` is `auto` and the directory is missing (the journal is then kept in memory only). An explicit `volatile` or `none` is left and reported |
 | auditd | Installed where missing (`auditd` on Debian and Ubuntu, `audit` on the RHEL family) from the distribution's repositories, enabled and started, and `/var/lib/easyrmm/auditd-installed` written (below). Not in containers, where the audit subsystem is the host's |
-| Audit rules | `/etc/audit/rules.d/60-easyrmm-logs.rules`, keyed `easyrmm-logs-*`, generated for the computer, as hardening's are: the identity files, sudoers, SSH and PAM configuration, time, kernel modules, mounts, and commands run with raised privileges (as hardening's file), and also cron's and systemd's units under `/etc`, `/etc/ld.so.preload`, root's SSH keys, audit's own configuration, and the commands people run (`execve` with a login UID from `UID_MIN` in `/etc/login.defs`, never unset). A watch is written only for a path that exists (`/root/.ssh`, cron's spool differ between computers), a system call rule only for the architectures and calls the computer has. `-b 8192` only where the loaded backlog limit is lower (recorded for undo). Never `-e`, `-f`, `-c`, `-i` or `auditd.conf` |
+| Audit rules | `/etc/audit/rules.d/60-easyrmm-logs.rules`, keyed `easyrmm-logs-*`, generated for the computer, as hardening's are: the identity files, sudoers, SSH and PAM configuration, time, kernel modules, mounts, and commands run with raised privileges (as hardening's file), and also cron's and systemd's units under `/etc`, `/etc/ld.so.preload`, root's SSH keys, audit's own configuration, the commands people run (`execve` with a login UID from `UID_MIN` in `/etc/login.defs`, never unset), and EasyRMM's jobs (`execve` with the login UID of `easyrmm-jobs`, keyed `easyrmm-logs-jobs`). A watch is written only for a path that exists (`/root/.ssh`, cron's spool differ between computers), a system call rule only for the architectures and calls the computer has. `-b 8192` only where the loaded backlog limit is lower (recorded for undo). Never `-e`, `-f`, `-c`, `-i` or `auditd.conf` |
 
 The commands rule also records cron's jobs and remote tools such as
 Ansible, which run with a login UID; slice 1 measures it on machines with
@@ -625,11 +706,14 @@ if their share is large.
 **Loading Linux's rules safely.** `augenrules` merges every file into one
 and `auditctl -R` stops at the first line that fails, so one bad line in
 this file would also stop every file after it (such as a
-`99-finalize.rules` with `-e 2`). The file is checked with
-`augenrules --check`, loaded with `augenrules --load`, and every rule in
-it confirmed loaded (`auditctl -l`); if any is missing, the file is
-removed and the rules loaded again, so that the computer is back to its
-previous rules, and the change is reported failed. Where the loaded rules
+`99-finalize.rules` with `-e 2`). Nothing checks a rules file's syntax
+before it loads (`augenrules --check` only says whether `audit.rules` is
+older than the files), so the safety is the loading itself: the file is
+generated from fixed lines for what the computer has, loaded with
+`augenrules --load`, and every rule in it confirmed loaded (`auditctl
+-l`); if any is missing, the file is removed and the rules loaded again,
+so that the computer is back to its previous rules, and the change is
+reported failed. Where the loaded rules
 are already immutable (`enabled 2`), the file is written, loads at the
 next restart, and that is reported; undo cannot unload it before one (as
 ADR-0051).
@@ -676,40 +760,65 @@ delete the logs kept since, and the guide says how to remove it. An agent
 deleted by hand leaves logging configured, which is harmless.
 
 ### The log store
-* **Where: outside the data root.** `EASYRMM_LOGS_ROOT`, by default the
-  data root's sibling `<data root>-logs` (`/srv/easyrmm-logs`; with
-  `--data-root /data/rmm`, `/data/rmm-logs`), so that nothing is made
-  under `/srv` when the data root is elsewhere. `setup.sh` takes
-  `--logs-root`, writes the value to `.env` (`setup.sh --upgrade` adds the
-  default when it is missing), and refuses a logs root inside the data
-  root or the data root inside it. The updater never copies, moves or
-  deletes it (amending ADR-0052, below), so a rollback cannot take it
-  away and a later upgrade cannot delete it. It holds the cluster
-  (`postgres/`), the local socket's directory (`run/`) and a ballast file
-  (below). A disk of its own is recommended above 500 devices.
+* **Where: outside the data root** (decided in review).
+  `EASYRMM_LOGS_ROOT`, by default the data root's sibling `<data
+  root>-logs` (`/srv/easyrmm-logs`; with `--data-root /data/rmm`,
+  `/data/rmm-logs`), so that nothing is made under `/srv` when the data
+  root is elsewhere:
+  * `setup.sh` takes `--logs-root`, strips a trailing `/` from
+    `--data-root` before adding `-logs`, writes the value to `.env`
+    (`setup.sh --upgrade` adds the default when it is missing), and
+    refuses a logs root inside the data root or the data root inside it;
+  * Compose names it
+    `${EASYRMM_LOGS_ROOT:-${EASYRMM_DATA_ROOT:-/srv/easyrmm}-logs}`,
+    never a fixed `/srv/easyrmm-logs`;
+  * it holds the cluster (`postgres/`, owner 70:70, mode 700, as the main
+    one's), the local socket's directory (`run/`, owner 70:70, mode 700)
+    and a ballast file (below); run without root, `setup.sh` adds the
+    first two to the directories it asks the operator to create;
+  * the updater never copies, moves or deletes it (amending ADR-0052,
+    below), so a rollback cannot take it away and a later upgrade cannot
+    delete it.
+
+  A disk of its own is recommended above 500 devices.
 * **A PostgreSQL instance of its own** (`logs-postgres`), from the same
   image as the deployment's, on host networking at loopback port 15433,
   initialised with `--auth-host=scram-sha-256 --auth-local=peer` as the
   main one, with its own roles (`easyrmm_logs_owner` for migrations and
-  partitions, `easyrmm_logs_app` for the server):
+  partitions, `easyrmm_logs_app` for the server). Its secrets are not
+  required by Compose (`:-`, as the engine's are), so that missing ones
+  never stop the deployment.
   * **Passwords follow `.env`.** `logs-db-init`, a one-shot service like
-    `easypatch-db-init`, connects over the local socket as the `postgres`
-    user, which peer authentication admits without a password, and sets
-    the superuser's and both roles' passwords from `.env` each time the
-    deployment starts. A rollback that brings back an older `.env`, then
-    an upgrade that fills new values with `fill_secret`, leaves the store
-    usable: the store takes whatever `.env` holds.
-  * **A start that cannot use the store fails.** The server depends on
-    `logs-db-init` completing successfully and on `logs-postgres` being
-    healthy, so the updater's held start (`--wait`) fails, and rolls back,
-    when either fails; and the server's readiness check fails while the
-    store refuses its roles' passwords. Once running, the server survives
-    the store going away (below).
-  * **The store belongs to one installation.** At first use the server
-    writes one random ID into both the store and the main database; on a
-    mismatch (a reinstall that found an old store, a main database from
-    elsewhere) the server does not use it and Settings → Logs says why,
-    until a super administrator adopts it or moves it away (audited).
+    `easypatch-db-init` and running as `70:70` like it, connects over the
+    local socket as the `postgres` user, which peer authentication admits
+    without a password, and sets the superuser's and both roles'
+    passwords from `.env` each time the deployment starts. A `.env`
+    restored by hand, or one whose values `fill_secret` made again, so
+    leaves the store usable.
+  * **A broken store never keeps EasyRMM down.** A full or failed logs
+    disk, or missing secrets, must not stop a start, an upgrade or a
+    rollback:
+    * nothing depends on `logs-postgres` or `logs-db-init`: the server
+      starts without them, as it does without the engine's init;
+    * `logs-db-init` waits a while for the store's socket and exits 0
+      when the store is unreachable or a secret is missing, saying so; it
+      fails only when it reaches the store and the store refuses it,
+      which means the store's files are not this deployment's;
+    * the server starts degraded when the store is unreachable (uploads
+      answered `503`, log views saying why), and its readiness check fails
+      only when the store is reachable and refuses the server's
+      passwords;
+    * the updater's held start waits (`--wait`) for every service but
+      `logs-postgres`, which it starts without waiting for (amending
+      ADR-0052); a store that refuses the server's passwords fails the
+      server's readiness, and so the held start, which rolls back.
+  * **The store belongs to one installation.** `.env` holds a random ID
+    (`EASYRMM_LOGS_STORE_ID`, made by `setup.sh` and kept across a
+    rollback with the other `EASYRMM_LOGS_*` lines, below), which the
+    server writes into an empty store at first use. A store holding
+    another ID (a reinstall that found an old store, an `.env` from
+    elsewhere) is not used, and Settings → Logs says why, until a super
+    administrator adopts it or moves it away (audited).
   * Not a database in the shared PostgreSQL: the updater copies and
     restores whole data directories, and a cluster cannot be restored with
     one database left out (Context); its transaction log, checkpoints,
@@ -738,7 +847,7 @@ deleted by hand leaves logging configured, which is harmless.
   dictionary). The block's column is stored `EXTERNAL`, so PostgreSQL
   does not try to compress it again. Beside it: organization, site and
   device; source and stream; first and last event time; when it was
-  received, when its transaction began, and its receipt sequence; event
+  received, its receipt sequence and when that number was drawn; event
   count and size; the levels present; and the codes present with their
   counts. Indexes (B-tree only): device and receipt time, organization
   and receipt time, receipt sequence. Blocks are written once and never
@@ -771,10 +880,13 @@ deleted by hand leaves logging configured, which is harmless.
   apart and attached), and detached then dropped when their class's time
   has passed, each statement with a `lock_timeout` of 5 seconds and
   retried with backoff, so that maintenance never queues ingest behind
-  it. A dropped partition's counts per organization are recorded first,
-  so that gaps can be counted. `max_locks_per_transaction` is 512, so
-  that a search across classes and a month does not run out of lock
-  space. Closed partitions of the classes of 90 days and more are frozen
+  it. A concurrent detach that was interrupted leaves its partition
+  pending (`pg_inherits.inhdetachpending`); maintenance finds such
+  partitions first and completes them with `DETACH PARTITION … FINALIZE`
+  before anything else. A dropped partition's counts per organization
+  are recorded first, so that gaps can be counted.
+  `max_locks_per_transaction` is 512, so that a search across classes and
+  a month does not run out of lock space. Closed partitions of the classes of 90 days and more are frozen
   (`VACUUM (FREEZE)`) once, so that wraparound vacuums never rewrite a
   year of logs.
 * **Row-level security**, forced on every table holding an organization's
@@ -823,15 +935,19 @@ deleted by hand leaves logging configured, which is harmless.
     updater's copy and the main database's growth: the data root's size,
     which the updater writes to its status hourly (amending ADR-0052),
     plus 20%; without the updater, twice the main database's size.
-  * **A ballast file** of 2 GiB in the logs root, made by `setup.sh`,
+  * **A ballast file** of 2 GiB of random data (so that a compressing
+    filesystem cannot shrink it) in the logs root, made by `setup.sh`,
     which the guide's recovery deletes to start PostgreSQL again if the
     disk filled anyway (by something else), before retention is lowered or
-    the oldest partitions dropped.
+    the oldest partitions dropped. On a copy-on-write filesystem with
+    snapshots (btrfs, ZFS) deleting it may free nothing, so it is no
+    guarantee there; `setup.sh` and the guide say so.
   * `setup.sh` says how many devices the logs root's free space holds at
     30 days, and warns when that is fewer than a few hundred or when it is
     the root filesystem.
 * **Removed devices' logs stay until retention ends** (a device removed
-  under ADR-0050), under
+  under ADR-0050; decided in review, and a question for the owner),
+  under
   their organization and site, named as they were (the store keeps each
   device's last name), and marked removed; a device enrolled again is a
   new device. Logs are purged earlier only:
@@ -864,21 +980,30 @@ deleted by hand leaves logging configured, which is harmless.
   * a function's parameters never change: a new parameter would make a
     second overload, and calls that were fine become ambiguous for both
     servers, so new behaviour gets a function of a new name;
-  * a new codec or dictionary is read by one release before any release
-    writes with it;
+  * no new constraint, trigger or policy that the previous release's
+    reads or writes would fail;
+  * a new stored value (a retention class, a fact's kind, a source, a
+    codec or dictionary) is read by one release before any release writes
+    it, and code reading the store passes over values it does not know;
   * the batch and status fields follow ADR-0009's rules (pull request
     #52);
   * long migrations of the store (a new index on blocks, rewriting facts)
     run in the background after the upgrade is confirmed (the server sees
     the updater's `hold` gone), never inside the 20-minute held start.
 
-  A test rejects a migration that breaks the first two rules.
+  A test applies each new migration and then runs the previous release's
+  store tests (its reads and writes, with its queries) against the
+  result, and rejects a migration that drops, renames, narrows or changes
+  a function's parameters.
 * **The updater (amending [ADR-0052](0052-the-host-updater.md#an-upgrade))**:
   * it never copies, moves or deletes the logs root, and its room check
     leaves it out;
   * a rollback keeps the current `.env`'s `EASYRMM_LOGS_*` lines in the
     `.env` it brings back (an older release ignores them), so that a later
-    upgrade finds the same store, where it is;
+    upgrade finds the same store, where it is, with the same passwords and
+    installation ID;
+  * its held start, and a rollback's start, wait for every service but
+    `logs-postgres`, which they start without waiting for;
   * it writes the data root's size to its status hourly (the floor above).
 
   Logs received after the backup, forwarding positions and the store's
@@ -891,9 +1016,10 @@ deleted by hand leaves logging configured, which is harmless.
   server's migrations make. The backup drill runs once without it and
   once with it. A new major version of PostgreSQL is moved to with
   `pg_upgrade --link`, by the guide, as for the main one.
-* **The server without its store**: if `logs-postgres` stops while the
-  server runs, the rest of EasyRMM works; uploads are answered `503`,
-  agents pause, and the console's log views say the store is unavailable.
+* **The server without its store**: if `logs-postgres` is down, at the
+  server's start or later, the rest of EasyRMM works; uploads are answered
+  `503`, agents pause, and the console's log views say the store is
+  unavailable.
 
 ### Searching and viewing
 * **Logs** (a section of the console) and a device's **Logs** tab: filters
@@ -973,10 +1099,15 @@ deleted by hand leaves logging configured, which is harmless.
 * **Device logs**: each destination's position (receipt sequence) lives in
   the store, beside the logs, so that the updater's rollback does not move
   it back. A forwarder per destination, under an advisory lock in the
-  store, reads blocks whose transaction began at least 10 seconds ago:
-  ingest transactions run with PostgreSQL's `transaction_timeout` of 5
-  seconds, so a block older than that is visible or never will be, and
-  none is skipped. It sends their events in order over a kept connection,
+  store, walks blocks in sequence order from its position and stops at
+  the first block whose number was drawn less than 10 seconds ago. With
+  16 ingest transactions at once, one that began earlier can draw a
+  higher number, so the walk never passes a block it has not reached in
+  order; and since ingest transactions run with PostgreSQL's
+  `transaction_timeout` of 5 seconds, a number missing before a passed
+  block belonged to a transaction that began more than 10 seconds ago and
+  ended without committing: none is skipped. It sends their events in
+  order over a kept connection,
   up to 1,000 a write, and moves the position at block ends: at least
   once, never out of order. A destination that was down catches up from
   its position; one behind the oldest kept block jumps to it, and the
@@ -1041,9 +1172,10 @@ deleted by hand leaves logging configured, which is harmless.
     computer's Group Policy is processed (the GroupPolicy Operational
     log's start and end), setting what the reader shows Group Policy owns.
     Checked with a domain policy (Testing).
-* **How**: each minute, the evaluator reads blocks whose transaction began
-  10 seconds ago or earlier, since its position, whose codes include a
-  detection's, decompresses only those, and tests them; counted
+* **How**: each minute, the evaluator walks blocks from its position as
+  the forwarder does (in sequence order, stopping at the first number
+  drawn less than 10 seconds ago), decompresses only those whose codes
+  include a detection's, and tests them; counted
   detections count events by their own time within their window, so that
   a late upload counts where it happened. It opens alerts in its own
   transaction in the main database, where it keeps its position. An alert
@@ -1070,7 +1202,8 @@ deleted by hand leaves logging configured, which is harmless.
   PowerShell scripts, sudo commands and SSH source addresses: personal
   data about the customers' staff. The MSP processes it for the customer,
   who is the controller.
-* **Collected by default on new installs**, as the owner asked, with an
+* **Collected by default on new installs**, as the plan has it (a
+  question for the owner, below), with an
   organization-level switch for customers that decline it (then not even
   counted), retention per organization, purges with the organization or
   site or on request, and nothing that is not security-relevant by
@@ -1101,7 +1234,7 @@ deleted by hand leaves logging configured, which is harmless.
   how long anything is kept; whether an objection or erasure request
   must be met before retention ends is for the controller to assess, and
   the guide says what EasyRMM can do (shorten retention, purge a device or
-  site). An owner question below.
+  site). A question for the owner, below.
 * **PRIVACY.md and the guide** say what is collected from which computers,
   where it is kept, for how long, where it is forwarded, who sees it, what
   stays on the computers, and that MSPs tell their customers (and, where
@@ -1151,7 +1284,9 @@ permissions.
 ### The rest
 * **Agent facts**: Windows agents report whether the computer is a domain
   controller (`ProductType` is `LanmanNT`), beside the kind of device
-  ADR-0053 adds.
+  ADR-0053 adds. Like every field added after protocol level 2, it is
+  sent only to a server whose last answer said level 2 or higher
+  (ADR-0009, pull request #52).
 * **API**: `POST /api/agent/v1/logs`, `POST /api/agent/v1/logs/status`;
   `POST /api/v1/logs/search` (and its background searches),
   `POST /api/v1/logs/export`, `GET /api/v1/devices/{id}/logs/status`,
@@ -1181,7 +1316,9 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
   older format read by the next release); the crash rules (a parser panic
   passed, an event crashing twice passed and counted); sealing (job
   events marked, argument values replaced, the batch fixed); the agent's
-  answer to each status, signed and unsigned; batch sizes from bandwidth;
+  answer to each status, signed and unsigned (an unsigned refusal never
+  setting a batch aside; a `413` resealed smaller); batch sizes from
+  bandwidth;
   blocks and their dictionaries; golden RFC 5424 messages; CSV formula
   cells.
 * **Integration** (PostgreSQL, with the race detector and coverage
@@ -1189,14 +1326,15 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
   bundle and updater tests run it as its own instance):
   * partitions per class and period, made, attached, detached and dropped
     by the owner's maintenance with `lock_timeout`, while a long search
-    holds the parent, with every class; the application role unable to
-    touch a partition; freezing;
+    holds the parent, with every class; an interrupted concurrent detach
+    finished; the application role unable to touch a partition; freezing;
   * row-level security on every store table between two organizations, a
     site and the platform, and the owner's policy; `EXPLAIN` as the
     application role showing index scans of facts and blocks in an
     organization's scope and the platform's;
-  * ingest: signature before decompression, each cap, the 64 reads and 16
-    slots, one in flight per device, a retried batch stored once, a
+  * ingest: signature before decompression, each cap, the 64 reads, two
+    per claimed device and the minimum rate, the 16 slots, one in flight
+    per device, a retried batch stored once, a
     restored snapshot answered `resync` (the same number, other contents),
     a new generation, collection off, a force-removed device refused;
   * quotas per kind, the other stream's half, organization quotas, the
@@ -1207,9 +1345,12 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
     partitions; a skewed clock's events kept;
   * purges: from each delete, a device's purge after its delay, an upload
     committing during a purge refused, orphaned organizations left alone;
-  * the schema rules: a migration changing a function's parameters
-    refused; a block written with a dictionary the release before reads;
-  * forwarding (the horizon with a slow ingest transaction, order, a
+  * the schema rules: the previous release's store tests passing on each
+    new migration; a migration changing a function's parameters refused;
+    a block written with a dictionary the release before reads;
+  * forwarding (the horizon with a slow ingest transaction, interleaved
+    ingest transactions drawing numbers out of order with none skipped
+    by the forwarder or the evaluator, order, a
     destination that comes back and catches up, one passed by retention
     and its gap, a deleted destination restored within 7 days, one with
     no position, forward only, the audit log moved from
@@ -1224,22 +1365,25 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
     search and exports, searches audited per organization).
 * **Windows, on CI's Windows runner** (`windows-latest`, as
   administrator, for real):
-  * the collector as its service and virtual account, reading Security
-    through Event Log Readers and unable to read the agent's state or
-    reach the network; its job object's CPU cap and memory limit; the
-    Event Log service's processor use during a flood;
+  * the collector as its service and virtual account, reading each
+    collected channel, the Security log's included, through its own entry
+    in the channel's access list, with no group changed; unable to read
+    the agent's state; its network blocked by its filtering-platform
+    filter with Windows Firewall turned off; its job object's CPU cap and
+    memory limit; the Event Log service's processor use during a flood;
   * subscriptions from positions across a restart of the collector,
     nothing lost or twice; a cleared log reported as a gap; a filtered
     source quiet while the log wraps, reporting no gap;
-  * slice 0: a PowerShell and a cmd job whose 4688 shows no argument
-    value, with the job tests passing as before;
+  * slice 0's checks (Slices);
   * configuring logging: `auditpol /get /category:*`, `wevtutil gl` and
     the registry before and after, matching the table; then a 4104 from a
     test script, a 4688 with its command line, a 4625 from a wrong
     password and a 4720 from a new local user, collected; a subcategory
-    set by local Group Policy left *managed elsewhere*; the PowerShell
-    logs' access list, a non-administrator's script still logged and that
-    user unable to read the log; undo, with everything as before;
+    set by local Group Policy left *managed elsewhere*; a channel whose
+    access list local Group Policy sets, *managed elsewhere* and not
+    collected; the PowerShell logs' access list, a non-administrator's
+    script still logged and that user unable to read the log; undo,
+    access lists included, with everything as before;
   * Sysmon downloaded from Microsoft and installed with a small
     configuration, its events collected; a script block carrying a token
     in the install command's form, redacted; a job's 4688 and 4104 marked
@@ -1251,9 +1395,11 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
     Defender allows it, else on the owner's servers by hand.
 * **Linux machines** (the QEMU harness, `internal/vmtest`, each tested
   image):
-  * the collector's unit: its user, its capability, the agent's state
-    unreadable, no network, `CPUQuota` holding under a flood, `MemoryMax`
-    reached and the unit restarted;
+  * the collector's unit: its user without any capability, auditd's log
+    read through the descriptors the agent passes, across a rotation;
+    `/etc/shadow`, host keys and the agent's state unreadable; no network;
+    `CPUQuota` holding under a flood, `MemoryMax` reached and the unit
+    restarted;
   * configuring logging (auditd installed from the local package
     repository the hardening tests use, the rules generated for the
     machine and loaded, the journal made persistent), then a restart (all
@@ -1261,7 +1407,8 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
     still load with a later file's `-e 2`; rules already immutable;
   * real SSH sign-ins from outside through the forwarded port, failed and
     accepted, `sudo`, `useradd` and an edit of `/etc/passwd`, collected
-    with their keys; a job's processes marked;
+    with their keys; a job's processes recorded under
+    `easyrmm-logs-jobs` and marked with their run by session;
   * with hardening's rules file too: both load, each event recorded once,
     either undo leaving the other's rules running, auditd removed only by
     the last one out, and kept when an operator's own rules file is
@@ -1274,8 +1421,11 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
     networking (no bridge); ClamAV with the EICAR file on one image.
 * **The bundle test** (host networking only, never a bridge): the
   deployment with `logs-postgres`, which listens on loopback only (the
-  test's existing check), its logs root the data root's sibling and
-  nothing made under `/srv/easyrmm` or `/srv/easyrmm-logs`; a failed and
+  test's existing check, and port 15433 added to the ports it needs
+  free), its logs root the data root's sibling and nothing made under
+  `/srv/easyrmm` or `/srv/easyrmm-logs`; with `logs-postgres` stopped and
+  its secrets removed, the deployment still starts and EasyRMM works,
+  uploads answered `503`; a failed and
   an accepted SSH sign-in on the Debian machine appear in its **Logs** tab
   (Playwright) and reach a syslog receiver written for the test (RFC 5425
   over TLS, octet counting, recording each message) running on the host's
@@ -1291,8 +1441,9 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
   * a rollback during a failed upgrade, and one after a confirmed
     upgrade, the store untouched and the older server running on the
     newer schema;
-  * a held start whose store refuses its passwords, failing and rolled
-    back.
+  * a held start whose store refuses the server's passwords, failing and
+    rolled back; a held start, and a rollback's start, with the logs disk
+    full or `logs-postgres` failing, completing with logs degraded.
 * **Load**: `tools/agentsim` uploads logs from the recorded events at each
   kind of computer's rate.
   * On CI, 500 devices for an hour at four times the sizing's rate: ingest
@@ -1307,31 +1458,73 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
 * **By hand on real computers**, recorded with dates: a domain whose
   Group Policy sets audit policy (shared with ADR-0054's domain tests): the
   reader's *managed elsewhere*, and Group Policy's own 4719s opening no
-  alert; a domain controller chosen and not chosen, the virtual account in
-  Event Log Readers there; Defender detections, protection turned off and
+  alert; a domain controller chosen and not chosen, the collector reading
+  its Security log through the channel's own access list with no group
+  changed; a channel whose access Group Policy sets; Defender detections,
+  protection turned off and
   Tamper Protection blocking a change; the owner's Windows and Linux
   servers.
 
 ## Slices
 Each merges and is verified on its own, after F1 and F2.
 
-0. **Job arguments off the command line** (amending
-   [ADR-0017](0017-scripts-and-jobs.md)), before any slice turns on
-   command lines in process events. The agent writes a small wrapper into
-   the run's directory, readable by SYSTEM or root only, and runs it with
-   no argument on any command line, and each wrapper exits with the
-   script's exit code: for PowerShell, the wrapper reads the arguments
-   from a file beside it and calls the script with them
-   (`& $script @arguments`), so `$args` and `param()` see what they see
-   today; for cmd, a wrapper batch file `call`s the script with them,
-   inside the same `cmd.exe`, keeping today's refusal of `%`, quotes and
-   line breaks; for sh, a wrapper sets the positional parameters (`set
-   --`, each value quoted by the agent) and sources the script (its `$0`
-   becomes the wrapper's path, the one difference a script can see). The
-   run's directory is removed after the run, as now. *Verified*: the Windows
-   runner (4688 of a PowerShell and a cmd job shows no argument value),
-   Linux (`/proc/<pid>/cmdline` shows none), and every existing job test
-   unchanged.
+0. **How jobs start** (amending [ADR-0017](0017-scripts-and-jobs.md);
+   decided in review), shipped in a release at least one release before
+   slice 4 turns on command lines in process events, since ADR-0027's
+   crash rollback can put the previous release's agent back on a computer
+   whose logging is already configured. The job's payload does not
+   change, so an agent of the previous release still runs the new
+   server's jobs.
+   * **No argument on any command line.** The arguments go into a file in
+     the run's directory, readable by SYSTEM or root only, and the run's
+     directory is removed after the run, as now:
+     * **PowerShell**: `-File wrapper.ps1`, a wrapper that builds the call
+       as text in which each token `-File` reads as a parameter name
+       (`-Name`, `-Name:`) stands as written and each value is a variable
+       (`. $script -Name $a[1] $a[2]`, with variable names no script
+       uses), so that PowerShell's own binder does what `-File` did
+       (named parameters, unique prefixes, switches, positional values)
+       while script block logging records names and variables only. The
+       script is dot-sourced, so that an `exit N` in it ends the wrapper
+       with N; the exit code in every case (an `exit N`, a normal end after
+       a native command that failed, a thrown error) is what `-File`
+       gives today, compared on the runner against `-File` itself.
+     * **cmd**: a wrapper batch file that names the script without `call`
+       (control passes to it and does not come back, so its exit code is
+       the run's), the arguments quoted on that line; without `call`,
+       carets inside quotes are left as they are. Today's refusal of `%`,
+       double quotes and line breaks stays.
+     * **sh and bash**: no wrapper. The agent puts `set -- 'value' …;`
+       (each value quoted by the agent) at the start of the script's first
+       line in the run's copy, so the job's own interpreter executes it as
+       today, with the same `$0`, line numbers and top-level `return`.
+     * **python3**: a wrapper sets `sys.argv` to the script's path and the
+       arguments and runs it with `runpy.run_path(script,
+       run_name="__main__")`, so `sys.argv`, `__name__` and `__file__` are
+       as today and `SystemExit` gives the exit code (a statement before
+       the script's first line would break `from __future__` imports).
+   * **Windows: every process in its job object.** Today the job object
+     is assigned after the process starts, and a run goes on without one
+     if that fails (`start`, `agent/jobs/exec_windows.go`). The job object
+     is now made first; the process is created suspended, assigned to it
+     and then resumed (or created in it with
+     `PROC_THREAD_ATTRIBUTE_JOB_LIST`); a run whose job object cannot be
+     made or assigned is refused with the reason. This changes how every
+     job starts on Windows.
+   * **Linux: a login UID per run.** The agent creates the system user
+     `easyrmm-jobs` at install (removed at uninstall) and starts each run
+     through its launcher, which sets that login UID (The collector).
+
+   *Verified*: the Windows runner: the 4688s of PowerShell and cmd jobs
+   show no argument value; named parameters, a unique prefix, switches,
+   positional values, a caret, `exit N`, a normal end after a failing
+   native command and a thrown error each give what `-File` or `cmd /C`
+   gives today; every process of a job, a short-lived one included, is in
+   its job object; Linux: `/proc/<pid>/cmdline` shows no value; sh, bash
+   and python3 jobs with arguments, a top-level `return` in bash, `from
+   __future__` in python3; each run's processes with `easyrmm-jobs`'s login
+   UID and a session of their own; every existing job test unchanged; an
+   agent of the previous release running the new server's jobs.
 1. **Measuring.** A script for EasyRMM's jobs (PowerShell and sh), added
    to the library by hand, that reads what the computer's logs hold for
    the last 7 days and reports, per source, code and audit subcategory,
@@ -1343,24 +1536,29 @@ Each merges and is verified on its own, after F1 and F2.
    it, and the store's layout (block size, partition periods, facts) is
    confirmed or this ADR amended before slice 2 merges.
 2. **The store and Linux sign-ins**: `logs-postgres`, `logs-db-init` and
-   the logs root in the deployment and `setup.sh`; the schema in its final
+   the logs root in the deployment and `setup.sh`, the deployment starting
+   without them; the schema in its final
    two-level layout, row-level security, facts, quotas by kind, the
    organization share, the cap, the floor, the ballast and purges;
    ingest with streams, signed answers and admission; the collector with
-   its unit, limits, spool and the agent's sealing; redaction on the
+   its unit, limits, spool, auditd's descriptors and the agent's sealing;
+   redaction on the
    computer, the agent and the server; `linux.auth`; sensitive fields and
    their removal, `log.view` and `log.view_sensitive`; the device's
    **Logs** tab; the switches and the checklist; the updater's
    amendments (if the updater is built). *Verified*: integration, the
    machines, the bundle test's sign-ins in the tab, the updater's tests,
    the CI load run.
-3. **Windows Security**: the Windows collector, its service, account and
-   job object, EasyRMM's jobs marked. *Verified*: the Windows runner,
+3. **Windows Security**: the Windows collector, its service, account,
+   channel access, filtering-platform filter and job object, EasyRMM's
+   jobs marked. *Verified*: the Windows runner,
    with uploads to the real ingest handler.
-4. **Configuring logging**, after ADR-0054's W1 (the ownership reader)
-   and with H2's marker: Windows' table and settings, owners, domain
-   controllers, the PowerShell logs' readers, the console's install card;
-   Linux's rules generated per machine, the journal and auditd; undo.
+4. **Configuring logging**, after ADR-0054's W1 (the ownership reader),
+   with H2's marker, and at least one release after slice 0: Windows'
+   table and settings, owners, domain controllers, the PowerShell logs'
+   readers, the collector's channel access, the console's install card;
+   Linux's rules generated per machine, jobs' rule included, the journal
+   and auditd; undo.
    *Verified*: the Windows runner and the machines, both features' rules
    together; the domain by hand.
 5. **The other sources**: Windows System, Application, Defender,
@@ -1412,7 +1610,9 @@ Each merges and is verified on its own, after F1 and F2.
   Administrators.
 * **Events of EasyRMM's own jobs are kept in full**, with the run and the
   script's hash, and only argument values removed, not dropped; job
-  arguments leave the command line first (slice 0).
+  arguments leave the command line, Windows jobs start inside their job
+  object, and Linux jobs get a login UID of their own and an audit rule
+  (slice 0, decided in review).
 * **Module logging is not configured**; script block logging is, and the
   PowerShell logs' readers are narrowed.
 * **The audit table is the baselines'** and shared with ADR-0054, which
@@ -1422,14 +1622,18 @@ Each merges and is verified on its own, after F1 and F2.
   nothing**.
 * **A source pauses instead of dropping** when its spool share is full,
   since Windows' logs, the journal and auditd's files hold the events.
-* **The collector has no key and no network**; the agent seals and
-  uploads.
+* **The collector has no key, no network and no privilege**: on Linux no
+  capability (auditd's log through descriptors the agent passes), on
+  Windows read access in each channel's own access list rather than a
+  group (decided in review); the agent seals and uploads.
 * **The persistent journal stays on undo.**
 * **auditd's removal is last one out**, amending ADR-0051.
 * **Detections are alert policies of a new kind** with a fixed set.
 * **Device logs go over TCP or TLS only**; organizations' own destinations
   are a later slice.
 * **Measuring comes first** (slice 1), before the store is built.
+* **A broken log store never stops EasyRMM**: nothing depends on it, and
+  the updater does not wait for it.
 
 ## Consequences
 * An MSP sees sign-ins, account and group changes, processes, scripts,
@@ -1456,6 +1660,9 @@ Each merges and is verified on its own, after F1 and F2.
 * Logs survive the updater's rollback; alerts the rollback discarded are
   opened again; logs of devices and organizations the main database
   forgets stay until retention, visible to super administrators.
+* Every Windows job now starts suspended inside its job object, and every
+  Linux job runs with the login UID of `easyrmm-jobs`, which shows in
+  their audit records and in tools that read login UIDs.
 * Searches over a whole fleet's month by free text run in the background;
   searches by device, user, address, process or code are quick.
 * People who can see a computer's sign-ins can see who works when;
@@ -1470,3 +1677,30 @@ Each merges and is verified on its own, after F1 and F2.
   condition and these EasyRMM events. database.md, backup-restore.md,
   rbac.md, PRIVACY.md, the guide, IMPLEMENTATION_STATUS, ROADMAP and the
   CHANGELOG change with each slice.
+
+## Questions for the owner
+These are the owner's to answer; until then the ADR proposes what is
+written above.
+
+1. Collection on by default for new installs, with 30-day retention?
+2. `log.view` at Site Administrators (who may be customers' staff, and
+   already have terminals), or Organization Administrators?
+3. A second PostgreSQL instance, by default at `<data root>-logs` outside
+   the updater's copy, with a disk of its own recommended above about 500
+   devices?
+4. Domain controllers configured only when chosen (then with Kerberos
+   and directory service auditing and a 4 GiB Security log)?
+5. EasyRMM's job events kept in full with only argument values removed,
+   where the plan dropped them?
+6. The previous 24 hours read on first start?
+7. Organizations' own SIEM destinations, and a rule language such as
+   Sigma, wanted later?
+8. No erasure of one person's events, logs expiring with retention, on
+   the basis stated in Privacy?
+9. A removed device's logs kept until retention ends, purged earlier only
+   with its organization or site, or by an Organization Administrator's
+   audited request carried out after 7 days?
+10. The full baseline audit policy and a 1,024,000 KB Security log on
+    every Windows computer by default?
+11. The console's Windows install card proposing a one-day approval token
+    by default?
