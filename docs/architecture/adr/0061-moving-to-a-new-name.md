@@ -224,8 +224,9 @@ The fix this ADR needs first writes that list.
   fresh nonce of its own (below). A super administrator chooses *which* of
   this server's trusted names agents use, never another server.
 * **Old addresses keep working** for everything that still uses them until
-  the old name is removed, which is the cut-off. Until then they keep
-  the mode's certificate source, as the primary does: in `acme` mode
+  the old name is removed, which is the cut-off. Until then, and after
+  it while passkeys need the old console name (Passkeys, below), they
+  keep the mode's certificate source, as the primary does: in `acme` mode
   `acmeHosts` (`server/internal/app/edge.go`), and so autocert's host
   policy, keeps them; in `internal` mode the authority issues for them;
   in `manual` mode the page names any the operator's files do not
@@ -252,7 +253,9 @@ The fix this ADR needs first writes that list.
   initial pair waits for its first step 1, which writes it from the
   primary at that moment, so no later start takes it from a record. Until
   the initial pair is written, the primary is `.env`'s pair, as today,
-  and the record follows `.env` at each start.
+  and the record follows `.env` at each start; when several servers
+  share the database before that first step 1, each takes its own
+  `.env`, as today.
 * **The move generation**, `moveGeneration`, a number kept beside it,
   changes with every step 1 or 2, a **Move back**'s included, and never
   goes backwards, even across a restore: each new value is the larger of
@@ -1297,9 +1300,10 @@ Each merges, is verified on its own, and leaves nothing unused.
    per-server record (`server-id`, `server_env_pairs` with last seen),
    written at every start and acted on by nothing yet, so that an install
    reaching slice 4 has one. Its release is the required upgrade stop:
-   slice 4's and every later manifest name it in `upgradeFrom`, and the
-   check (ADR-0052's amendment) ships no later than slice 4. Useful
-   alone: a computer is moved by hand
+   a release (a release candidate at least) carrying slice 1 is cut
+   before slice 4 merges, and slice 4's and every later manifest name it
+   in `upgradeFrom` (ADR-0052's amendment, whose check the updater has
+   from its first release). Useful alone: a computer is moved by hand
    between two addresses the server serves. Verified in the bundle by
    moving machine 1 between `https://127.0.0.1` and the host's other
    address; the record by an integration test.
@@ -1331,8 +1335,9 @@ Each merges, is verified on its own, and leaves nothing unused.
    EasyRMM's names, the install commands' list on the page, the engine's
    `PublicUrl` no longer read, the refusal of new keys during a move on a
    DNS install, step-up, notices, the page and the devices' column,
-   audit. Needs F0, 5b1 to 5b3, and ADR-0052's "Rollback guards" shipped;
-   the contract test.
+   audit. Needs F0, 5b1 to 5b3, ADR-0052's "Rollback guards" shipped,
+   and a release carrying slice 1, cut before slice 4 merges, which its
+   `upgradeFrom` names; the contract test.
 5. **MeshCentral's move** (step 2), and the code-signing check above.
 6. **Sign-in and browsers** (steps 3 and 4): redirect URIs per name,
    confirmation, with each enabled provider starting out confirmed at

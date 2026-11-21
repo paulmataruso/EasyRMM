@@ -257,34 +257,50 @@ Production installs upgrade when someone chooses to.
 slice 1 begins to keep; a deployment that jumped over slice 1 would have
 none.*
 
-* **`upgradeFrom`**: the manifest (above) gains the lowest version, in
-  this ADR's order, that a deployment must already run before it
-  installs this one: the lowest version that carries the stop's change,
-  edge builds included, so one value serves releases and edge manifests
-  alike, and edge manifests carry it too. It is one line in the
-  repository that `scripts/release/bundle.sh` writes into the manifest
+* **`upgradeFrom`**: the manifest (above) gains the version a deployment
+  must already run before it installs this one. It always names a
+  release, a release candidate or a full release, never an edge build:
+  the scheduled workflow deletes edge artifacts after 30 days and never
+  deletes releases, so the stop stays installable. Edge manifests carry
+  it too. It is one line in the repository that
+  `scripts/release/bundle.sh` and edge publishing write into the manifest
   and the bundle's `setup.sh` reads; it only ever rises. ADR-0061's slice
-  4 and every later release name the version that brought its slice 1.
-* **The updater** checks it at step 1, against the running version, which
-  it reads from the running server: below `upgradeFrom`, the upgrade is
-  refused before anything changes, naming the version to install first
-  (the lowest on the configured channel at or above `upgradeFrom`).
-  Automatic upgrades then install that version first, as a version of
-  its own.
-* **`setup.sh --upgrade`** refuses the same jump with the same message. It
-  takes the installed version from the running server, or from the
-  updater, which passes the version it read at step 1, since step 5 runs
-  it with the services stopped; when it can learn neither, it refuses and
-  says to start the installed version first. A fresh install is never
-  refused. So an updater from before this amendment, which ignores the
-  field, still cannot complete the jump: the new `setup.sh` refuses at
-  step 5, and the attempt rolls back with nothing confirmed.
+  4 and every later version name the release that carries its slice 1,
+  which is cut before slice 4 merges.
+* **The updater has the check from its first release**: it is being built
+  now, and no updater without it ships. At step 1 it compares the running
+  version, read from the running server, with `upgradeFrom` in this
+  ADR's order: below it, the upgrade is refused before anything changes,
+  naming the release to install first. On any channel, edge included,
+  the updater may install that release as the stop, even where the
+  channel would otherwise refuse it (a release candidate on the stable
+  channel), and automatic upgrades install it first, as a version of its
+  own.
+* **No refusal by the manifest's form.** The updater refuses no manifest
+  for a schema version: an older updater must always be able to install
+  the release that carries its successor. Fields it does not know are
+  ignored, as the agents' protocol does (ADR-0009).
+* **`setup.sh --upgrade` refuses the same jump** with the same message:
+  the backstop for upgrades by hand. It takes the installed version from
+  the running server; from the updater, which passes the version it read
+  at step 1, since step 5 runs it with the services stopped; or, by hand
+  with the server stopped, from the old `.env`'s `EASYRMM_VERSION`, read
+  before `setup.sh` rewrites it. When it can learn none of them, it
+  refuses and says to start the installed version first. A fresh install
+  is never refused.
+* **Release order**: `release.yml` refuses a tag above a stop whose commit
+  does not contain the stop's commit (`git merge-base --is-ancestor`).
+  The check relies on a version above the stop carrying the stop's
+  change, which version order alone does not guarantee, since a higher
+  tag could be put on an older commit of `main`. Edge versions are made
+  from the releases reachable from their commit, so they follow.
 * **Tests**, one per refusal: the updater refusing a release and an edge
   build whose `upgradeFrom` is above the running version, and accepting
-  them from that version; `setup.sh --upgrade` refusing by hand with the
-  running server below it, and when no running server or updater gives
-  the version; an updater built without the check, whose upgrade is
-  refused at step 5 by the new `setup.sh` and rolls back.
+  them from the stop; the stop installed on a channel that would
+  otherwise refuse it; `setup.sh --upgrade` by hand refusing with the
+  running server below the stop, with the server stopped and the old
+  `.env`'s `EASYRMM_VERSION` below it, and with no version to be had;
+  `release.yml` refusing a tag above the stop on a commit without it.
 
 ## Testing
 * **Verification** against real published artifacts: the latest release
