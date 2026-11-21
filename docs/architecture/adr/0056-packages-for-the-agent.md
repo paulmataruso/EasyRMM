@@ -1,11 +1,18 @@
 # ADR-0056: Packages for the agent: DEB, RPM and MSI
 
 * Status: Proposed (2026-11-21). Not implemented.
-* Revised after an independent review (2026-11-21), with the owner's
-  decisions on tokens for deployment tools, *Uninstalled*, RPM signatures
-  and EasyPatch's MSI check. Two questions remain for the owner
-  ([Owner questions](#owner-questions)).
-* Builds on: [ADR-0015](0015-enrollment-and-meshagent-delivery.md)
+* Revised after an independent review (2026-11-21), and again after a
+  second check (2026-11-21). Decided in review, not by the owner: tokens
+  for deployment tools and their ceilings, *Uninstalled*, RPM signatures,
+  EasyPatch's MSI check, and new devices held by *Off*. The second check
+  also brought the state folder protected before anything reads it
+  (slice 0, a fix for a hole in today's Windows agent), the unregistered
+  INI component, ADR-0009's protocol rules, Group Policy's targeting, the
+  folder rule, certificate errors while waiting, and edge RPMs. Three
+  questions remain for the owner ([Owner questions](#owner-questions)).
+* Builds on: [ADR-0009](0009-agent-protocol.md) (the agent protocol, with
+  its amendment *Evolving the protocol*, PR #52, not merged yet),
+  [ADR-0015](0015-enrollment-and-meshagent-delivery.md)
   (tokens, enrollment, MeshAgent), [ADR-0024](0024-enrollment-approval.md)
   (approval tokens), [ADR-0027](0027-agent-updates.md) (agent updates),
   [ADR-0049](0049-operators-sign-windows-agents.md) (operators sign the
@@ -19,8 +26,8 @@
   with `dpkg-deb` and `rpmbuild`, as EasyPatch's are, and no package
   carries MeshAgent, as ADR-0015 already decided.
 * Amends: [ADR-0027](0027-agent-updates.md): until a device has run the
-  server's build once, the rollout mode does not hold it back (owner
-  question 2).
+  server's build once, *When asked* does not hold it back; *Off* still
+  does (owner question 2).
 * Part of [the feature plan](../feature-plan.md#6-packages-for-the-agent-deb-rpm-msi):
   feature 6. [Departures from the plan](#departures-from-the-plan) lists
   where this ADR differs from it.
@@ -64,6 +71,18 @@ What exists, and what it means here:
   parse their options with `flag.ContinueOnError` (`main.go`), so an agent
   from before this feature answers `--package` with "flag provided but not
   defined" and an unknown command with "unknown command".
+* **Older servers refuse what they do not know.** The agent sends `Facts`
+  in its enrollment request and in every heartbeat
+  ([`agentproto.go`](../../../internal/agentproto/agentproto.go)), and the
+  server decodes every body with `DisallowUnknownFields` (`decode` in
+  [`agentapi.go`](../../../server/internal/httpapi/agentapi/agentapi.go)).
+  ADR-0009's amendment (PR #52) makes servers of level 2 ignore unknown
+  fields and state their level in each heartbeat answer; an agent sends a
+  newer field only while its last heartbeat answer came from a server of
+  level 2 or higher, the enrollment request gains no fields, and an
+  endpoint the server does not have answers 404, which means "not
+  supported here". A package can be newer than its server, so this ADR
+  follows those rules.
 * **An agent cannot wait to be enrolled.** `run` without an enrollment or
   an approval request fails (`main.go`,
   [`approval.go`](../../../agent/cmd/easyrmm-agent/approval.go)), so the
@@ -76,11 +95,22 @@ What exists, and what it means here:
   (`Removed` in [`removal.go`](../../../server/internal/agents/removal.go)
   records `removalCanceled`). ADR-0053 designs *Uninstalled* and changes
   that.
-* **The ProgramData folder is not the administrators' alone.** Any user
-  may create folders and files under `%ProgramData%`. The agent protects
-  its state folder there by moving aside one it did not make and creating
-  it anew with an access list for SYSTEM and Administrators only
-  (`Protect` in `system_windows.go`), but only when it first saves state.
+* **The agent's state folder is protected only when state is saved.** Any
+  user may create folders and files under `%ProgramData%`. `Protect`
+  (`system_windows.go`) moves aside a folder there whose owner is not
+  SYSTEM, Administrators, TrustedInstaller or the agent's account, and
+  makes it anew for SYSTEM and Administrators only; it looks at the owner
+  only, and runs only in `Save` and `SavePending`
+  ([`state.go`](../../../agent/state/state.go)), not in `SaveConfig`.
+  Reading checks nothing on Windows: `Load` and `LoadPending` take what is
+  there, and the device key's mode is checked on Linux only. `install`
+  reads the state before anything saves it (`enroll` in `main.go`); the
+  Windows service creates `logs` in that folder with `MkdirAll` and opens
+  its log there, following links, before it starts the agent
+  (`service_windows.go`,
+  [`logfile.go`](../../../agent/cmd/easyrmm-agent/logfile.go)); and `run`
+  reads the state next. Today's agent is exposed through this in one
+  path ([below](#the-state-folder-is-protected-before-anything-reads-it)).
   EasyPatch's MSI keeps its enrollment token in a registry key it creates
   with such an access list
   ([`Package.wxs`](../../../easypatch/agent/Installer/Package.wxs)), where
@@ -92,9 +122,10 @@ What exists, and what it means here:
   [`bundle.sh`](../../../scripts/release/bundle.sh) compiles them again
   for the release files with whatever Go is on the path. Built from a
   clone, `bundle.sh`'s files recorded the commit and so differed from the
-  image's. PR #50 builds them with `-buildvcs=false` too: built from a
-  clone, the release's agents are then byte for byte the image's. They
-  remain two compilations, equal only while the two toolchains are.
+  image's. Since PR #50 (merged, d656a09) `bundle.sh` builds them with
+  `-buildvcs=false` too: built from a clone, the release's agents are
+  byte for byte the image's. They remain two compilations, equal only
+  while the two toolchains are.
 * **The patching engine already ships packages.** The EasyPatch agent's
   DEB and RPM are built with `dpkg-deb` and `rpmbuild` in a pinned
   container with networking off, and checked to hold the published agent
@@ -106,9 +137,9 @@ What exists, and what it means here:
   [`build-installer.ps1`](../../../easypatch/agent/Installer/build-installer.ps1),
   which the release workflow runs). Only the build under Wine,
   [`build-msi-linux.sh`](../../../easypatch/scripts/build-msi-linux.sh),
-  checks that the token's property is hidden and that no progress message
-  carries it; `build-installer.ps1` checks the platform only. That is
-  being fixed separately. Its agent removes its own package in a
+  checked that the token's property is hidden and that no progress
+  message carries it, until PR #53 (merged, 866ef4e) added the same checks
+  to `build-installer.ps1`. Its agent removes its own package in a
   transient unit with `apt-get remove` and a lock timeout, or `rpm -e`,
   and on Windows with `msiexec /x`, finding the product by its fixed
   upgrade code
@@ -137,7 +168,9 @@ What exists, and what it means here:
   endpoint protection record them. Approval tokens (ADR-0024) exist for
   this: a copy that leaks enrolls nothing until someone approves it. Every
   token expires, after 1 to 90 days; a site token's use limit is optional
-  ([`tokens.go`](../../../server/internal/agents/tokens.go)).
+  and can be as high as 100,000
+  ([`tokens.go`](../../../server/internal/agents/tokens.go)), so a limit
+  alone bounds nothing.
 
 ## Options
 
@@ -212,9 +245,9 @@ What exists, and what it means here:
 * **debconf.** Rejected: it keeps answers in its database.
 
 Whatever the path, a token given to a deployment tool must be an approval
-token, or a site token limited in uses (every token expires). The console
-shows the deployment tools' steps only for those ([In the
-console](#in-the-console)).
+token, or a site token limited to about the computers planned and to a
+short time. The console shows the deployment tools' steps only for those,
+and makes such a token when asked ([In the console](#in-the-console)).
 
 ### Who updates the agent
 * **The server, through the agent's own update** (ADR-0027, ADR-0049)
@@ -235,15 +268,19 @@ console](#in-the-console)).
   Windows signed again, for every build the server hands out.
 
 ### Old packages and new devices
-* **Until a device has run the server's build once, the rollout mode does
-  not hold it back** (chosen, owner question 2). A package kept for months
-  in Intune, a mirrored repository or a golden image installs the agent
-  of its release; the install command installs the server's build, so a
-  new device from a package should end up the same.
+* **Until a device has run the server's build once, *When asked* does not
+  hold it back; *Off* does** (chosen in review, owner question 2). A
+  package kept for months in Intune, a mirrored repository or a golden
+  image installs the agent of its release; the install command installs
+  the server's build, so a new device from a package should end up the
+  same. *Off* is the emergency stop, and stops this too.
+* **Judged against the build served now.** Rejected: every server upgrade,
+  and every rollback by the host updater (ADR-0052), changes that build,
+  and would make every device "new" again.
 * **A minimum agent version at enrollment.** Rejected: an old MSI in
   Intune would then fail on every computer, and roll back.
-* **Nothing.** Rejected: with the rollout at *When asked* or *Off*, new
-  devices would stay on an old agent nobody chose.
+* **Nothing.** Rejected: with the rollout at *When asked*, new devices
+  would stay on an old agent nobody chose.
 
 ## Decision
 
@@ -293,9 +330,97 @@ console](#in-the-console)).
 * **Versions.** `dpkg -l`, `rpm -q` and Programs and Features show the
   package's version, not the agent's after it has updated itself; the
   console shows the agent's.
-* **The device records how its agent was installed**: the heartbeat's
-  facts carry `installer` (`deb`, `rpm`, `msi`, or none for the command),
-  stored with the device and shown on its page.
+* **The device records how its agent was installed**: the heartbeat
+  request carries `installer` (`deb`, `rpm`, `msi`, or none for the
+  command), a field of its own beside `facts`, stored with the device and
+  shown on its page. Not in `Facts`, which the enrollment request carries
+  too ([`agentproto.go`](../../../internal/agentproto/agentproto.go)):
+  under ADR-0009 the enrollment request gains no fields, and a server of
+  level 1 refuses any field it does not know, so a package newer than its
+  server would fail to enroll. As a field added after level 2, the agent
+  sends it only while its last heartbeat answer came from a server of
+  level 2 or higher; a server that does not know it ignores it, and the
+  device then shows no installer.
+
+### The state folder is protected before anything reads it
+Slice 0: a fix for the agent as it is, which ships on its own before any
+package.
+
+* **Today's agent is exposed in one path**, from a standard user to
+  LocalSystem, needing neither a token nor a place on the network:
+  1. Before an administrator first installs the agent on a computer, or
+     after `uninstall`, which deletes the state folder (`Store.Remove` in
+     `state.go`), the user creates `%ProgramData%\EasyRMM\Agent\`, which
+     any user may, and leaves there an `agent.json` naming the server the
+     install command will name, with any device ID, and a `device.key` of
+     their own; or a `pending.json` naming that server.
+  2. `install` (as `install.ps1` runs it) finds that state: `Load` and
+     `LoadPending` check nothing on Windows. It says "Already enrolled" or
+     "Already waiting for approval", does not enroll, and so neither saves
+     nor protects (`enroll` in `main.go`). It then creates and starts the
+     service on that state.
+  3. Nothing protects the folder later: `Protect` runs only in `Save` and
+     `SavePending`, not in `SaveConfig` or `Approved`. The user, who owns
+     the folder, rewrites `agent.json` to name a server of their own, with
+     no job key, or `pending.json` likewise.
+  4. At the service's next start (a reboot, which a standard user may
+     start on Windows clients), `run` reads it, heartbeats to that server,
+     pins the job key it sends (`pinJobKey`, ADR-0017), and runs its
+     signed jobs as LocalSystem. The service also opens its log through
+     any link the user made in the folder before it reads its state.
+
+  The user must know the server's address, as the install command
+  carries it. Where `install` enrolls, `Save` runs `Protect` first, which
+  moves aside a folder the user made, and the service is made after it:
+  that path is not exposed. Linux is not exposed: `/var/lib` is root's
+  alone. A package's waiting service would widen this to any planted
+  server, since it starts before anything is saved, so this slice comes
+  first.
+* **The check.** On Windows, before any command reads or writes state
+  (`install`, `enroll`, `run`, `status`, `uninstall`), and in the service
+  before it opens its log, the agent checks its state folder:
+  * every folder from `%ProgramData%` down to it a plain folder (no
+    reparse point) owned by SYSTEM, Administrators, TrustedInstaller or
+    the account the agent runs as, as `Protect` requires today;
+  * the state folder itself carrying the access list `Protect` gives it
+    (SYSTEM and Administrators only, nothing inherited), unless it is
+    empty;
+  * everything in it, at every depth, a plain file with one link or a
+    plain folder, with such an owner.
+
+  A folder that passes is protected again, as today. One that fails is
+  moved aside, as `Protect` moves a folder another user made, and made
+  anew: nothing in it is read, the agent says so in its log and in
+  `status`, and it goes on as on a computer with no state (`install`
+  enrolls, a package's service waits). `Protect` alone is not enough: it
+  looks at the folders' owners only, and a folder an administrator made
+  without that access list inherits ProgramData's, under which every user
+  may create files; files a user made keep that user as owner, who may
+  change them still after the folder is protected.
+* **The store refuses to read before the check**: on Windows `Load`,
+  `LoadPending` and the others fail in a process that has not run it, so
+  that no later command can skip it.
+* **`install --package` checks before it writes anything or creates the
+  service**, and `install` does too.
+* **Devices already enrolled pass.** `Protect` made their folders with
+  that access list, and their files were written by the agent as SYSTEM or
+  by an elevated administrator, whose files Administrators own
+  (`trustedOwner` in `system_windows.go`). The slice's test updates an
+  enrolled agent from before it and checks that it keeps running as the
+  same device.
+* **Tested on CI's Windows runner.** A standard user made for the run,
+  before the agent is installed, creates `%ProgramData%\EasyRMM\Agent\` and
+  leaves in it an `agent.json` and a `device.key` naming a listener of the
+  test, with the listener's own authority as `caFile` and a job key of the
+  test; in a second run a `pending.json`; in a third a `logs` junction to a
+  folder of the test. Each again in a folder an administrator made
+  without the access list. Each time `install --server` names the
+  listener, and from slice 1 on `install --package` runs without input:
+  the listener, whose certificate only the planted authority vouches for,
+  completes no connection; nothing is written through the junction; the
+  folder is set aside, the agent behaves as on a clean computer, and the
+  user can change nothing in the new folder. With the check removed, the
+  first run reaches the listener, so the test is known to catch it.
 
 ### The enrollment file
 * **Where.** `/etc/easyrmm-agent/install.conf` on Linux, in a folder the
@@ -333,11 +458,17 @@ console](#in-the-console)).
     else.
   * *Windows*: opened without following reparse points and checked on the
     handle: a file, not a reparse point, with one link; owned by SYSTEM,
-    Administrators or TrustedInstaller; an access list that grants nothing
-    to anyone but SYSTEM and Administrators (a null access list, or an
-    entry for `Users` inherited from Program Files, refuses it); every
-    folder from `%ProgramFiles%\EasyRMM` down a plain folder with such an
-    owner, in which no one else may create or change files.
+    Administrators or TrustedInstaller; an access list whose allow
+    entries name only those three (a null access list, or an entry for
+    `Users` inherited from Program Files, refuses it). Every folder from
+    `%ProgramFiles%\EasyRMM` down must be a plain folder with such an
+    owner, in which only those three may create, change or delete files;
+    others may read. Inherit-only entries apply to what is created later,
+    not to the folder or file that holds them, and are ignored:
+    `%ProgramFiles%\EasyRMM` inherits Program Files' list (full control
+    for TrustedInstaller, SYSTEM and Administrators, read for Users and the
+    application package groups, and an inherit-only entry for `CREATOR
+    OWNER`), and passes.
   * The file is read once it has been unchanged for 5 seconds, so a file
     still being written, or not yet given its mode, is not taken.
   * Anything else is refused and left unread, and the agent says why in
@@ -369,17 +500,22 @@ console](#in-the-console)).
   real-time clock before its clock is set, or a server certificate just
   renewed, seen from a clock slightly behind. The agent's unit gains
   `After=time-sync.target` (`UnitContent` in `service.go`) for the same
-  reason. An answer that will not change
-  (`token_invalid`, `enrollment_rejected`, `key_in_use`, an address that
-  is not HTTPS, a certificate from an unknown authority or for another
-  name) is retried only when the file changes: its content, size, owner,
-  mode or access list, or its modification or change time, so a `chmod`
-  alone counts. `install --package` then exits with an error: the MSI
-  fails and rolls back; the DEB's and RPM's scripts print it and finish,
-  leaving the service waiting for a corrected file, because a failed
-  `postinst` leaves the package half-configured and apt then tries, and
-  fails, to configure it on every later run, the patching engine's
-  included.
+  reason. A certificate from an unknown authority or for another name
+  is retried every hour by a waiting service, and reported in its log and
+  `status` each time: at a first boot behind a captive portal, or a proxy
+  that inspects TLS before the computer trusts its authority, it may come
+  right without the file changing, and nothing is sent before the
+  certificate is verified, so retrying weakens nothing. An answer that
+  will not change while the file does not (`token_invalid`,
+  `enrollment_rejected`, `key_in_use`, an address that is not HTTPS) is
+  retried only when the file changes: its content, size, owner, mode or
+  access list, or its modification or change time, so a `chmod` alone
+  counts. During the install itself, `install --package` exits with an
+  error on any of these: the MSI fails and rolls back; the DEB's and RPM's
+  scripts print it and finish, leaving the service waiting for a
+  corrected file, because a failed `postinst` leaves the package
+  half-configured and apt then tries, and fails, to configure it on every
+  later run, the patching engine's included.
 
 ### Where there is no running systemd
 `install --package` looks at what the computer has:
@@ -445,15 +581,24 @@ The package `easyrmm-agent`, for `amd64` and `arm64` (`x86_64` and
   release, made with `rpmsign` from the builder's pinned rpm, with a key
   of EasyRMM's releases: RSA, which Enterprise Linux 8's rpm 4.14 checks
   as well as Fedora's. Its private key is a secret of a protected GitHub
-  environment, `release`, that admits only release tags, as
-  `easypatch-release` holds EasyPatch's release key today
-  ([`release.yml`](../../../.github/workflows/release.yml)); pull requests
-  never reach it. Its public key, `RPM-GPG-KEY-easyrmm`, is published in
+  environment, `release`, whose deployment rule admits only tags matching
+  `easyrmm-v*`, the rule `easypatch-release` has for EasyPatch's release
+  key today ([`release.yml`](../../../.github/workflows/release.yml));
+  pull requests and branches never reach it. That rule only matches
+  names; the control is the repository's tag ruleset *release tags* (id
+  27786592), which lets only administrators create, move or delete
+  `easyrmm-v*` tags. Its public key, `RPM-GPG-KEY-easyrmm`, is published in
   the repository, with each release and by the server beside the
   packages, its fingerprint in CODE_SIGNING.md and the guide; the
   console's RPM steps import it first. Creating that key is the first
   owner question. DEBs stay unsigned: dpkg checks no signature on a
   package file.
+* **Edge RPMs are unsigned.** The builds of `main` that ADR-0052
+  publishes (PR #54) carry packages built without the key, which never
+  leaves the `release` environment. Fedora 45 and later refuse them, so
+  they are unsupported on edge builds; the console says so where it
+  offers an RPM from an edge build, which it knows by the server's
+  version (`-edge.` or `.edge.`).
 * **Versions**: `1.2.3`, and `1.2.3~rc.1` for a release candidate, in
   both formats (the tilde sorts the candidate first); RPM release 1.
 * **Distributions.** Supported where the machine tests run: Debian 12
@@ -497,14 +642,27 @@ The package `easyrmm-agent`, for `amd64` and `arm64` (`x86_64` and
 * **Properties**: `SERVERURL` (HTTPS), `TOKEN` and `CACERT` (base64 DER),
   all secure; `TOKEN` hidden; `SERVERURL` and `TOKEN` together or not at
   all. When given, the MSI writes them to `install.conf` through its INI
-  table, in a component of its own that is transitive and conditioned on
-  `SERVERURL AND TOKEN`. A repair or an upgrade without them therefore
-  writes nothing: nothing saves the properties, so without that condition
-  a repair would write `server=` and `token=` empty. One with them, as an
-  upgrade pushed with the first install's command line, writes a file the
-  enrolled agent deletes without a word (above). The progress template of
-  `WriteIniValues` leaves the value out, as EasyPatch's MSI does for its
-  registry step.
+  table, in a component of its own, conditioned on `SERVERURL AND TOKEN`
+  and unregistered: it has no component code (`Guid=""` in WiX), and such
+  a component "cannot be removed or repaired by the installer"
+  ([Component table](https://learn.microsoft.com/en-us/windows/win32/msi/component-table)).
+  An install, or a major upgrade, with the properties writes the file; a
+  repair, or a major upgrade without them, writes and removes nothing; the
+  MSI's removal leaves the file to the agent's `uninstall`, which deletes
+  it. Not an ordinary component: its condition is read only when it is
+  first installed, and a repair writes its values again, `server=` and
+  `token=` empty, since nothing saves the properties. Not a transitive
+  one, as the first version of this ADR had: Windows Installer evaluates
+  its condition again at a repair or a reinstall and removes it once the
+  condition is false, and with it its INI values, so a repair without the
+  properties would take `server=` and `token=` out of a file the agent
+  still waits on; Microsoft says not to base a transitive component's
+  condition on properties set on the command line
+  ([Using Transitive Components](https://learn.microsoft.com/en-us/windows/win32/msi/using-transitive-components)).
+  An upgrade with the properties, as one pushed with the first install's
+  command line, writes a file the enrolled agent deletes without a word
+  (above). The progress template of `WriteIniValues` leaves the value out,
+  as EasyPatch's MSI does for its registry step.
 * **Where the token goes.** The MSI writes it to no registry value and to
   no custom action's command line, and keeps it out of its log, except
   where the Windows Installer *Debug* policy is 7: then Windows Installer
@@ -530,9 +688,8 @@ The package `easyrmm-agent`, for `amd64` and `arm64` (`x86_64` and
   cannot be avoided; these are the agent itself.
 * **The build checks**, in the Windows build path: `TOKEN` in
   `MsiHiddenProperties`, the `WriteIniValues` template without the value,
-  and the platform. EasyPatch's MSIs get the same checks in that path
-  (being fixed separately, above), so both MSIs are checked where releases
-  are built.
+  and the platform, as `build-installer.ps1` checks EasyPatch's MSIs since
+  PR #53, so both MSIs are checked where releases are built.
 * **Deploying it**:
   * *Intune*: as a line-of-business app with the properties, or a Win32
     app. Detection by the MSI's product code, or, where it must show that
@@ -542,13 +699,18 @@ The package `easyrmm-agent`, for `amd64` and `arm64` (`x86_64` and
     `install.conf` delivered by Group Policy Preferences (*Files*) to
     `%ProgramFiles%\EasyRMM\Package\Enrollment\`, from a share only Domain
     Computers can read, not SYSVOL, with item-level targeting: the MSI's
-    `easyrmm-agent.exe` present, and the agent neither enrolled nor
-    waiting (no `agent.json` and no `pending.json` in
-    `%ProgramData%\EasyRMM\Agent\`). Not *Apply once*: the item delivers
-    again at each refresh until the agent has used it. The targeting on
-    the MSI's file keeps the order: Group Policy Preferences create a
-    missing folder with the access it inherits from Program Files, where
-    `Users` may read, and the agent would refuse that file.
+    `easyrmm-agent.exe` present (*File Match*), and no value `Enrolled`
+    under `HKLM\SOFTWARE\EasyRMM\Agent` (*Registry Match*). The agent
+    writes that value once it has enrolled or saved its request for
+    approval, and an enrolled agent writes it when it starts if it is
+    missing, in a key it creates for SYSTEM and Administrators only;
+    `uninstall` deletes the key. Standard users cannot create keys under
+    `HKLM\SOFTWARE`, so none can stop the delivery, as files they create
+    under `%ProgramData%` could. Not *Apply once*: the item delivers again
+    at each refresh until the agent has used it. The targeting on the
+    MSI's file keeps the order: Group Policy Preferences create a missing
+    folder with the access it inherits from Program Files, where `Users`
+    may read, and the agent would refuse that file.
   * *Another RMM, Configuration Manager, a script*: `msiexec /i … /qn
     SERVERURL=… TOKEN=…`.
 
@@ -626,12 +788,20 @@ The package `easyrmm-agent`, for `amd64` and `arm64` (`x86_64` and
   has to reach. A server built from source without packages offers none.
 
 ### New devices start on the server's build
-* **Until a device has run the server's build once, the rollout mode does
-  not hold it back.** A device enrolled from an older package, whose agent
-  is not the server's build, is updated at its first heartbeat whether the
-  mode is *Automatically*, *When asked* or *Off*, within **Devices at
-  once**; from then on the mode holds it as before. This amends ADR-0027
-  (owner question 2).
+* **A device is new until it has run the server's build once.** A column
+  of its own records when it first did: set at the first heartbeat that
+  gets through with the `agentSha256` of the build the server serves then
+  (after an update, the heartbeat that confirms it, ADR-0027's
+  probation), and never cleared. Not judged against the build served now:
+  every server upgrade, and every rollback by the host updater (ADR-0052),
+  changes that build, and would make every device new again. The
+  migration that adds the column sets it for every device enrolled then.
+* **While a device is new, *When asked* does not hold it back.** It is
+  updated at its first heartbeat, within **Devices at once**, as under
+  *Automatically*. ***Off* still holds it**: *Off* is the emergency stop,
+  and stops this too. Once the column is set, the mode holds the device
+  as before. This amends ADR-0027 (owner question 2, with this as the
+  proposed default).
 * **A release candidate's MSI can replace its final release's.** The MSI
   version has no room for `-rc`, and same-version upgrades must be allowed
   for the final release to replace its candidate, so the reverse is
@@ -658,10 +828,14 @@ MeshCentral keeps updating it.
   without a request*, because a device key alone must not be able to
   silence a device; and a `/removed` report with no removal pending marks
   the device the same way instead of deleting it (ADR-0053 amending
-  ADR-0050). This ADR adds the installer to the report, so that the notice
+  ADR-0050). This ADR adds `installer` to the report, so that the notice
   says how the agent went (with the DEB, the RPM, the MSI, or by hand).
-  Whichever of the two features is built first builds it, as ADR-0053
-  designs it.
+  A server without the endpoint answers 404, which the agent takes as
+  "not supported here" (ADR-0009) and goes on with the removal, as when
+  no answer comes; any server that has the endpoint is of level 2 or
+  higher and ignores fields it does not know, so `installer` is safe to
+  ignore. Whichever of the two features is built first builds it, as
+  ADR-0053 designs it.
 * **By hand, while a package holds the agent.** `easyrmm-agent uninstall`
   names the package manager's command and stops only while the package
   manager lists the package: `dpkg-query` showing it installed, `rpm -q`,
@@ -699,8 +873,9 @@ the agent again.
 **Add devices** gains packages beside the install commands, rendered in
 the browser from the token, as the commands are
 ([`AddDevicesPage.tsx`](../../../web/src/pages/devices/AddDevicesPage.tsx)).
-Nothing new reaches the server: the token is the one already shown, or
-shown again (ADR-0047).
+Nothing new reaches the server: the token is one already shown, shown
+again (ADR-0047), or made through the existing token endpoint by someone
+allowed to make tokens.
 
 * **For every token**: the MSI and its `msiexec` line (with `CACERT` for
   an address on the server's own authority); the DEB and RPM (the RPM key
@@ -715,11 +890,16 @@ shown again (ADR-0047).
   ```
 
   (or `dnf install`), in bash or zsh.
-* **Only for an approval token, or a site token with a use limit** (every
-  token has an expiry already): the steps for Intune and Group Policy, and
-  `install.conf` to download. For any other token the page shows instead
-  a link to creating one: those tools copy what they deploy into shares,
-  Intune, downloads folders and backups.
+* **The steps for Intune and Group Policy, and `install.conf` to
+  download, only for a token fit for them.** The steps ask how many
+  computers are planned, and make a site token for that many plus 10%,
+  rounded up, expiring in 14 days or less; or the technician chooses an
+  approval token, which always qualifies. An existing site token qualifies
+  only with a use limit of 1,000 or less and an expiry 30 days or less
+  away: every token expires, but a site token's limit can be 100,000
+  ([`tokens.go`](../../../server/internal/agents/tokens.go)), and those
+  tools copy what they deploy into shares, Intune, downloads folders and
+  backups. For any other token the page offers to make one instead.
 
 ## Departures from the plan
 Feature 6 in [the feature plan](../feature-plan.md#6-packages-for-the-agent-deb-rpm-msi)
@@ -746,28 +926,49 @@ said what this ADR had to decide. Where it decides otherwise:
   script does it on Windows, where the server reads no MSI. RPMs are
   signed, which Fedora 45 now requires; the plan left DEB and RPM to the
   attestation and checksums.
-* **New devices start on the server's build** whatever the rollout mode,
-  which the plan did not address (owner question 2).
+* **New devices start on the server's build** under *When asked*; *Off*
+  still holds them. The plan did not address it (decided in review, owner
+  question 2).
+* **Tokens for deployment tools have ceilings.** The plan allowed any
+  token limited in use; here a site token qualifies only with at most
+  1,000 uses and an expiry within 30 days, and the steps make one for the
+  computers planned (decided in review, owner question 3).
 * **Packages are not for containers without systemd**, and images built
   offline get an enabled service that is not started; the plan did not
   address either.
-* **Order**: the enrollment file, the installer record and the one build
-  come before the DEB, and the operator's signed MSI after the MSI.
+* **Order**: the agent's state folder protected first (slice 0, which the
+  plan did not have); the enrollment file, the installer record and the
+  one build before the DEB; the operator's signed MSI after the MSI.
 * **Tests**: DEB and RPM on whole machines with the machine harness, not
   in systemd containers, which remain for arm64 until the harness boots
   arm64 images.
 
 ## Testing
 * **Unit**:
+  * slice 0's check of the state folder: an owner not trusted, the
+    access list missing, an entry of another owner, a reparse point and a
+    second hard link each setting the folder aside; an enrolled agent's
+    folder passing; the store refusing to read before the check;
   * the file's parsing, and its checks: on Linux `O_NOFOLLOW`, a regular
     file, one link, the owner, the mode and the directories; on Windows,
-    on CI's Windows runner, reparse points, one link, the owner, the
-    access list (an inherited `Users` entry, a null list) and the folders;
+    on CI's Windows runner, in folders made under the runner's real
+    `%ProgramFiles%`, reparse points, one link, the owner, the access list
+    (an inherited `Users` entry and a null list refused; TrustedInstaller's
+    entry and the inherit-only `CREATOR OWNER` entry accepted) and the
+    folders;
   * what counts as a change (a `chmod` alone), and the 5-second wait;
   * the environment's precedence;
   * waiting; errors that pass and final ones: a certificate outside its
-    validity retried, one from an unknown authority or for another name
-    final until the file changes;
+    validity retried with backoff; one from an unknown authority or for
+    another name retried hourly and reported by a waiting service, and an
+    error at once from `install --package`; a refused token final until
+    the file changes;
+  * `installer` in the heartbeat only after an answer of level 2 or
+    higher, never in the enrollment request; `/uninstalled` answering 404
+    taken as not supported, and the removal going on;
+  * the `Enrolled` registry value written once enrolled or waiting, and
+    at start when missing, in a key for SYSTEM and Administrators only;
+    deleted by `uninstall`;
   * `install --package` never replacing an installed agent, recording
     install or adopt; `--rollback` undoing only what was recorded;
   * the hand-over: to an agent listing `package`; not to one answering
@@ -782,18 +983,24 @@ said what this ADR had to decide. Where it decides otherwise:
 
   Coverage floors for the new packages.
 * **PostgreSQL integration and HTTP API**: the installer recorded, and
-  carried in the report; a new device updated at its first heartbeat with
-  the rollout *Off*, then held by it; the packages and the RPM key in the
-  downloads and in `SHA256SUMS`; the release's MSIs withheld from both
-  under *Only signed builds* and still on **Settings → Agent updates**. The
-  *Uninstalled* state and its notice are ADR-0053's tests; here, a
-  `/removed` report for a packaged device with no removal pending marks it
-  *Uninstalled* and opens the notice instead of deleting it.
+  carried in the report, a heartbeat without it accepted; a new device
+  updated at its first heartbeat under *When asked*, then held by it, and
+  held under *Off*; the column set at the first heartbeat with the served
+  build, and left set by a server upgrade and by a rollback to another
+  build; the migration setting it for devices already enrolled; the packages
+  and the RPM key in the downloads and in `SHA256SUMS`; the release's MSIs
+  withheld from both under *Only signed builds* and still on **Settings →
+  Agent updates**. The *Uninstalled* state and its notice are ADR-0053's
+  tests; here, a `/removed` report for a packaged device with no removal
+  pending marks it *Uninstalled* and opens the notice instead of deleting
+  it.
 * **Console**: the packages' commands for each address, with the
   certificate authority where it applies and no token on a command line;
-  the Intune and Group Policy steps and `install.conf` only for an
-  approval token or a site token with a use limit, and the link otherwise;
-  the device's installer; the removal dialog's warning.
+  the Intune and Group Policy steps making a site token for the computers
+  planned plus 10%, expiring in 14 days or less; an existing site token
+  with more than 1,000 uses, or expiring later than 30 days, refused, and
+  an approval token taken; the note that Fedora 45 and later refuse an
+  edge build's RPM; the device's installer; the removal dialog's warning.
 * **Builds**: each package holds the release's agent byte for byte;
   lintian and rpmlint, with any finding accepted listed with its reason;
   `shellcheck` on the scripts; ICE; at release, each RPM's signature
@@ -801,8 +1008,9 @@ said what this ADR had to decide. Where it decides otherwise:
   path, for this MSI and EasyPatch's, the hidden property, the progress
   template and the platform.
 * **Whole machines** for DEB and RPM, with the harness of ADR-0051's first
-  slice (`internal/vmtest` and `docs/development/machine-tests.md`, on
-  that slice's branch, not on `main` yet): distributions' cloud images
+  slice (`internal/vmtest` and
+  [machine tests](../../development/machine-tests.md), on `main` since
+  PR #49): distributions' cloud images
   under QEMU with KVM and user networking, never a bridge, one job per
   image. Debian 12 and 13 and Ubuntu 22.04 and 24.04 for the DEB; Rocky
   Linux 8 and 9, AlmaLinux 9 and Fedora 45 for the RPM, with SELinux
@@ -875,10 +1083,13 @@ said what this ADR had to decide. Where it decides otherwise:
   installed and patches as today; `apt remove` leaves the device
   *Uninstalled*, with the notice.
 * **Windows**, on CI's `windows-2025` runner for x64 and GitHub's
-  `windows-11-arm` runner for ARM64 (marked unverified if that runner is
-  not available to the repository). These need no server, since an address
-  nothing answers (a closed port on the runner itself) only makes the
-  agent wait, and run in slice 6:
+  `windows-11-arm` runner for ARM64. GitHub made that runner generally
+  available to public repositories in August 2025 and to private ones in
+  January 2026, so it stays available if this repository, public today,
+  goes private. It is Windows 11: no ARM64 Windows Server is tested. These
+  need no server, since an address nothing answers (a closed port on the
+  runner itself) only makes the agent wait. Slice 0's test (above) runs
+  from slice 0; these run from slice 6:
   1. ICE and the build checks;
   2. silent installs with properties (they install and wait), with the
      file, and without input (it waits);
@@ -889,10 +1100,17 @@ said what this ADR had to decide. Where it decides otherwise:
      an `install.conf` in it and a hard link to that file, and tries to
      create `%ProgramFiles%\EasyRMM\Package\Enrollment\`, which Windows
      refuses; the MSI runs with `TOKEN`: that user can read the token
-     nowhere, and the agent never reads their file;
-  5. a repair (`msiexec /fa`) and an upgrade without properties while the
-     agent waits: `install.conf` unchanged; an upgrade with the same
-     properties: the same values written again;
+     nowhere, and the agent never reads their file; that user cannot
+     create `HKLM\SOFTWARE\EasyRMM`, and the `Enrolled` value appears only
+     once the agent has enrolled or waits for approval;
+  5. while the agent waits on the file the first install's properties
+     wrote (its server an address nothing answers): a repair
+     (`msiexec /fa`), and a major upgrade to a build of the MSI with a
+     higher version, without properties: `install.conf` unchanged, byte
+     for byte, with the same access list; a major upgrade with the same
+     properties: the same values written again; a build made for this
+     test with the component transitive fails the repair's check, so the
+     test is known to catch it;
   6. rollback: a build of the MSI made only for this test, with a
      deferred action after the first that always fails, on a computer
      without the agent (nothing left) and over an installed agent (still
@@ -922,6 +1140,12 @@ Each merges on its own, with its documentation (the
 [agents guide](../../deployment/agents.md), CODE_SIGNING.md,
 IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
 
+0. **The state folder protected before anything reads it** (Windows):
+   the check, the store refusing to read before it, `install` and the
+   service checking first. A fix for today's agent, released on its own
+   and before slice 1. Verified by unit tests and slice 0's test on CI's
+   Windows runner, including an enrolled agent from before it updated to
+   it.
 1. **The enrollment file and an agent that waits**: `install.conf` and
    the environment, the checks on both platforms, deletion, waiting, the
    errors and the unit's ordering, `install --package` with its record and
@@ -931,8 +1155,10 @@ IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
    package's script will (`install --package`, before any package exists)
    without input: it waits, and enrolls when the file appears.
 2. **The installer recorded, and new devices on the server's build**: the
-   fact, its field in the report, the first update outside the rollout
-   mode. *Uninstalled* comes from ADR-0053's slice, which the plan's order
+   heartbeat's `installer`, after ADR-0009's level 2 (PR #52) has landed;
+   its field in the report; the column of devices that have run the
+   server's build, its migration, and the first update under *When
+   asked*. *Uninstalled* comes from ADR-0053's slice, which the plan's order
    puts first; if it has not landed, this slice builds it as ADR-0053
    designs it. Verified by integration and console tests and by the bundle
    test.
@@ -944,10 +1170,12 @@ IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
    on the Debian and Ubuntu machines, the arm64 containers and the bundle
    test.
 5. **RPM**: the same through rpm, and its signature at release once the
-   owner has decided on the key. Verified on the Rocky Linux, AlmaLinux
+   owner has decided on the key; edge builds' RPMs unsigned, with the
+   console's note. Verified on the Rocky Linux, AlmaLinux
    and Fedora machines and the arm64 container.
-6. **MSI**: x64 and ARM64, the properties, the enrollment folder, the
-   custom actions, the build checks, Add devices with Intune and Group
+6. **MSI**: x64 and ARM64, the properties and their unregistered INI
+   component, the enrollment folder, the custom actions, the build
+   checks, the agent's `Enrolled` value, Add devices with Intune and Group
    Policy, removal through `msiexec`, *Only signed builds* withholding it.
    Verified on the Windows runners, every check above that needs no
    server included.
@@ -955,6 +1183,9 @@ IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
    the Windows runner with a certificate made for the run.
 
 ## Consequences
+* Slice 0 closes a hole in today's Windows agent: a standard user who
+  can prepare its state folder before the first install, or after an
+  uninstall, gets LocalSystem through it.
 * MSPs can install the agent with Intune, Group Policy, Configuration
   Manager, another RMM, configuration management or a golden image. The
   packages are the same for every server and never contain a token.
@@ -974,14 +1205,19 @@ IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
   read until the agent has used it; under the *Debug* policy 7 it is also
   in Windows Installer's log, and the deployment tool may keep the command
   line.
-* Deployment tools' steps need an approval token or a site token with a
-  use limit; a technician with another token is sent to create one.
+* Deployment tools' steps need an approval token, or a site token of at
+  most 1,000 uses expiring within 30 days, if the owner agrees; the steps
+  make one for the computers planned. A larger rollout uses an approval
+  token or several site tokens.
 * Under *Only signed builds*, Windows computers get an MSI only through
   the operator's script and signature.
 * The release holds an OpenPGP key for RPMs, if the owner agrees, which
   must be kept, and replaced with a new public key if it is ever lost.
-* A new device from an old package updates at once, whatever the rollout
-  mode, if the owner agrees.
+* A new device from an old package updates at once under *When asked*,
+  if the owner agrees; *Off* holds it. Each device carries a column
+  saying whether it has run the server's build.
+* Fedora 45 and later are unsupported on edge builds, whose RPMs are
+  unsigned.
 * Packages are not for containers without systemd.
 * The image grows by six packages and a key.
 * **Not covered**:
@@ -1004,10 +1240,19 @@ IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
    long-lived signing key the project must keep, and every computer that
    imports it trusts it for packages. Without it the RPM installs on
    Enterprise Linux but not on Fedora 45 and later, and the RPM slice
-   lists Fedora as unsupported.
-2. **New devices start on the server's build.** Proposed: until a device
-   has run the server's build once, the rollout mode does not hold it
-   back, so that an old MSI or package in a deployment tool never leaves
-   new computers on an old agent while the rollout is *When asked* or
-   *Off*. The alternative keeps ADR-0027 as it is, and such devices show
-   as outdated until someone updates them.
+   lists Fedora as unsupported. Edge builds' RPMs stay unsigned either
+   way.
+2. **New devices start on the server's build.** Proposed default,
+   decided in review: until a device has run the server's build once (a
+   column set at its first heartbeat with the build the server serves
+   then, and by the migration for every device already enrolled), *When
+   asked* does not hold it back, so that an old MSI or package in a
+   deployment tool never leaves new computers on an old agent; *Off*
+   still holds it, being the emergency stop. The alternative keeps
+   ADR-0027 as it is, and such devices show as outdated until someone
+   updates them.
+3. **Ceilings on tokens for deployment tools.** Proposed default, decided
+   in review: the steps make a site token for the computers planned plus
+   10%, expiring in 14 days or less; an existing site token qualifies with
+   at most 1,000 uses and an expiry within 30 days; an approval token
+   always does. The figures are the owner's to change.
