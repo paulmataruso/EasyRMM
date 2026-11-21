@@ -120,10 +120,21 @@ What exists, and what it means here:
   using OAuth", Microsoft Learn): an Entra application given the
   `SMTP.SendAsApp` application permission and the tenant administrator's
   consent, its service principal registered in Exchange
-  (`New-ServicePrincipal`) and given the sending mailbox
-  (`Add-MailboxPermission`), a token from the client credentials grant
-  with the scope `https://outlook.office365.com/.default`, and `AUTH
-  XOAUTH2` with `base64("user=" mailbox ^A "auth=Bearer " token ^A ^A)`.
+  (`New-ServicePrincipal`, with the Object ID of the **Enterprise
+  application**, "not the Object ID from the Overview page of the App
+  Registrations node") and given the sending mailbox
+  (`Add-MailboxPermission`), `Add-RecipientPermission` (SendAs) to send as
+  another address, a token from the client credentials grant with the
+  scope `https://outlook.office365.com/.default`, and `AUTH XOAUTH2` with
+  `base64("user=" mailbox ^A "auth=Bearer " token ^A ^A)`. SMTP AUTH, which
+  "supports modern authentication (Modern Auth) through OAuth in addition
+  to basic authentication", is switched per organization and per mailbox,
+  the mailbox's setting winning (`Set-CASMailbox -Identity <mailbox>
+  -SmtpClientAuthenticationDisabled $false`); and "if security defaults is
+  enabled in your organization, SMTP AUTH is already disabled in Exchange
+  Online. To use SMTP AUTH, you need to disable security defaults" ("Enable
+  or disable SMTP AUTH in Exchange Online", Microsoft Learn, read
+  2026-11-21).
   The grant takes a shared secret or a certificate, issues no refresh
   token, and gives the token's lifetime in `expires_in` (the "client
   credentials flow" page, Microsoft Learn).
@@ -307,11 +318,12 @@ What exists, and what it means here:
   notification channels and a hash of the channel's ID; EasyRMM's other
   advisory locks take the one-key form, as `lockEvaluate` in `evaluate.go`
   does, whose keys PostgreSQL keeps apart; a collision only makes two
-  channels wait on each other), not a row lock, so that the foreign-key checks of a
-  rule saved or a test queued meanwhile (which take `FOR KEY SHARE` on the
-  channel's row) never wait on it or deadlock with it. The planner takes
-  all it needs at once, in order of key. Neither holds a lock across the
-  network.
+  channels wait on each other), not a row lock, so that the foreign-key
+  checks of a rule saved or a test queued meanwhile (which take `FOR KEY
+  SHARE` on the channel's row) never wait on it or deadlock with it. The
+  planner takes all it needs at once, in order of key; the sender never
+  holds two channels' locks in one transaction. Neither holds a lock across
+  the network.
 * **Fair share.** Webhooks and email are separate classes, so a slow mail
   server never holds a webhook back. Each class goes round-robin over the
   organizations charged and the platform, with at most 2 deliveries in
@@ -368,8 +380,11 @@ What exists, and what it means here:
 * **The mail server's limits**: super administrators set a platform-wide
   rate of messages a minute and a day, by default 30 and 9,000, and set
   their own mail server's. For Exchange Online, 30 a minute **equals** its
-  message rate limit (above it, Microsoft throttles and carries the excess
-  over to the following minutes), and 9,000 a day is under its 10,000
+  message rate limit: for SMTP client submission above it, "the messages
+  will be rejected and the client will need to retry", so the sender
+  treats a refusal for rate as transient (retried after the minute, never
+  the recipient's failure), and the reply Exchange gives is recorded in
+  slice 2's check on a real tenant. 9,000 a day is under its 10,000
   recipients in 24 hours (past which the mailbox cannot send until its
   count of the last 24 hours drops below), per Microsoft's published
   limits (Exchange Online limits, Microsoft Learn, read 2026-11-21).
@@ -585,11 +600,27 @@ channels now, its syslog destinations with log forwarding later.
     or the audit log.
   * The token request is made by the server as the mail server is dialed
     (set by super administrators only); a request that fails shows
-    Microsoft's `error` and `error_description` in the form and in the
-    mail notice.
-  * The form lists what the tenant's administrator does in Entra and
-    Exchange (above), and the certificate's expiry; a notice warns 30 days
-    before it.
+    Microsoft's `error` and `error_description` on the mail server page
+    and in the log, from slice 2, and in the mail notice once notices come
+    (slice 3).
+  * The form, and the guide, list what the tenant's administrator does
+    (above): the application, `SMTP.SendAsApp` and consent;
+    `New-ServicePrincipal` with the **Enterprise application's** Object ID;
+    `Add-MailboxPermission` for the sending mailbox;
+    `Add-RecipientPermission` (SendAs) when the sender's address is not
+    that mailbox's; SMTP AUTH turned on for the mailbox (`Set-CASMailbox
+    -SmtpClientAuthenticationDisabled $false`). Both say that a tenant with
+    Entra's **security defaults** on has SMTP AUTH off, OAuth included, and
+    must turn them off (and protect sign-in otherwise) or use a relay.
+  * A sign-in refused with `535 5.7.139` and "SmtpClientAuthentication is
+    disabled" (as Microsoft's forums report it; the page above does not
+    quote the reply) is shown as that: SMTP AUTH off for the mailbox or the
+    organization, or security defaults on, with the setting to change.
+    Other `5.7.139` answers are shown as given. `mail check` and the
+    console's test both do this.
+  * The certificate's expiry shows on the mail server page, and the log
+    warns from 30 days before it, from slice 2; the notice comes with
+    slice 3.
   * **Google is left out.** Its XOAUTH2 scope, `https://mail.google.com/`,
     is not limited to sending ("XOAUTH2 protocol", Google for Developers),
     and signing in with no person present takes a service account with
@@ -610,10 +641,19 @@ channels now, its syslog destinations with log forwarding later.
       `EASYRMM_SMTP_CLIENT_CERT_FILE` and `EASYRMM_SMTP_CLIENT_KEY_FILE`.
       The configuration already reads `KEY_FILE` for secrets (`secret` in
       `config.go`, the Docker secrets convention); for these the file is
-      the only form. The files live in `${EASYRMM_DATA_ROOT}/secrets/`
-      (directory 0700, files 0400, owned by the server's user, 65532),
-      mounted read-only into the server's container at
-      `/run/secrets/easyrmm`.
+      the only form. The values are paths **inside the container**
+      (`/run/secrets/easyrmm/…`), as `EASYRMM_TLS_CERT_FILE` and
+      `EASYRMM_TLS_KEY_FILE` are (`setup.sh` refuses other paths for
+      those). The files live in `${EASYRMM_DATA_ROOT}/secrets/`, owned
+      **as `tls/` is**: the directory `0750 root:65532`, the files `0440
+      root:65532` (`install -d -m 0750 -o root -g 65532` in `setup.sh`),
+      so root never writes into a directory a non-root user owns, and the
+      server's user (65532) only reads. The compose file mounts it
+      read-only at `/run/secrets/easyrmm`, and every new variable is added
+      to the server's `environment:` block beside `EASYRMM_SMTP_*`. As
+      for `server/` and `tls/`, Docker's user namespace remapping and
+      rootless Docker are not supported: uid 65532 in the container is
+      not 65532 on the host (ADR-0052 refuses them for the same reason).
     * The server refuses to start with half of it set, as it does today
       without `EASYRMM_SMTP_FROM` (`config.go`'s checks): an ID missing,
       both a secret and a certificate, or a file it cannot read.
@@ -621,11 +661,18 @@ channels now, its syslog destinations with log forwarding later.
     `--smtp-tenant-id`, `--smtp-client-id`, and
     `--smtp-client-secret-file`, or `--smtp-client-cert-file` with
     `--smtp-client-key-file`, each a file on the host that `setup.sh`
-    copies into `secrets/` with the modes above, so that the secret is in
-    neither `.env` nor a command line; without a file, and on a terminal,
-    it asks for the secret without echoing it. With an existing `.env` it
-    sets only the mail settings, replacing what was there, as its
-    `set_setting` does.
+    copies into `secrets/` with the owners and modes above, so that the
+    secret is in neither `.env` nor a command line; without a file, and on
+    a terminal, it asks for the secret without echoing it.
+    * Writing into `secrets/` needs root: these options stop without it,
+      as `--with-authentik` does ("needs root (sudo)").
+    * With an existing `.env`, the mail options may be given alone:
+      `setup.sh` reads the rest (`--hostname`, TLS, the data root) from
+      `.env`, as `--upgrade` does on main, and replaces only the mail
+      settings. `--upgrade` gives `secrets/` its owner and modes as it
+      does the other data directories.
+    * When `--smtp-tenant-id` is given, it prints the warning below about
+      patching's email.
   * **Checked at install**: `setup.sh` refuses a tenant ID that is neither
     a GUID nor a domain name (the forms Microsoft's token endpoint takes),
     a client ID that is not a GUID, an empty or multi-line secret, and,
@@ -646,8 +693,11 @@ channels now, its syslog destinations with log forwarding later.
   every change**, not once per start. The engine signs in with a password
   only, so while the mail server signs in with an application, `syncMail`
   gives the engine none, as when EasyRMM has none (`Mail`, `engine.go`):
-  patching's email and monthly reports stop until slice 6, and the form
-  says so before the choice is saved.
+  patching's email and monthly reports stop until slice 6. While an
+  application signs in, **from `.env` or the console**, a standing warning
+  says so on the mail server page and on Settings → Patching, the server
+  logs it at every start, and the console's form says so before the
+  choice is saved.
 * **A certificate authority to trust** is shown only once the engine no
   longer sends email (slice 6): the engine cannot trust a named
   authority, only skip verification, which EasyRMM never asks of it.
@@ -847,7 +897,8 @@ never taken from a value.
   * Every path is covered, in the transaction that makes the change:
     `Evaluate`, a person's acknowledge or resolve, a policy's change, an
     uninstall, every kind of device removal and merge, every notice, every
-    patching item taken. Purging resolved alerts writes nothing, so it never reads as a removal.
+    patching item taken. Purging resolved alerts writes nothing, so it never
+    reads as a removal.
 * **The planner** runs in its own transaction, at platform scope, under an
   advisory lock of its own, after each evaluation and every 15 seconds. It
   never locks `alerts` or `notices`: it reads them, so `Evaluate` and
@@ -874,15 +925,18 @@ never taken from a value.
     resolves when a row is planned again.
   * Any other error rolls the batch back, and the planner plans that
     batch's rows one per transaction, so the bad row is found without
-    savepoints. A row that fails so in 3 runs is **quarantined**: a minimal
-    update of its status and its error, clipped, which nothing can refuse,
-    and a notice to super administrators.
-  * **Per subject**: the rows after a quarantined one about the same
-    alert's incident or notice wait unplanned, so nothing about it is sent
-    out of order. **Retry** replays them in order; **Discard** marks them
-    all planned and plans the subject's current state as one row: channels
-    told of it get that state (a resolution, say), others nothing. Every
-    other subject goes on.
+    savepoints. On this path every failure counts, transient ones too: a
+    row that fails in 3 runs is **quarantined**: a minimal update of its
+    status and its error, clipped, which nothing can refuse, and a notice
+    to super administrators.
+  * **Per subject**: a row is planned only when every earlier row about
+    the same alert or notice is planned. So a row that failed, quarantined
+    or not yet, holds the later rows about its subject unplanned, in every
+    batch and on both paths, and nothing about it is sent out of order.
+    **Retry** replays a quarantined row and those behind it in order;
+    **Discard** marks them all planned and plans the subject's current
+    state as one row: channels told of it get that state (a resolution,
+    say), others nothing. Every other subject goes on.
 * A person's change is therefore sent within 15 seconds, by the planner,
   not by that person's transaction, whose scope could not write the
   platform's deliveries.
@@ -903,14 +957,24 @@ never taken from a value.
     check-in and pull request #51's floor (`seenFloor`: `AgentGrace`, 5
     minutes, after the server began serving agents), as openings are; so
     a restart or an upgrade never starts it.
+  * **The floor is each server's own memory** (`Service.seenFloor` in
+    pull request #51's `monitoring/service.go`, from when that process
+    began serving), and `Evaluate` runs on whichever server takes its
+    lock. So the floor only ever stops a silence from starting: while
+    `now` is before the evaluating server's floor, `Evaluate` neither
+    starts nor ends one, and a device counts as **back** only when it has
+    checked in after the silence began (its last check-in later than the
+    silence's start), never because of a floor. A restart during a
+    silence, or two servers with different floors taking turns, can
+    neither end it nor start one.
   * **While it lasts**: offline alerts open in the console as usual, and
     platform rules send them, grouped by site outages, with one notice,
     *most devices stopped checking in*, to super administrators.
     Organizations' rules send no offline openings: the planner, planning
     one for an organization's rule, checks `fleet_silences`, and an opening
     within a silence waits.
-  * **It ends** when fewer than half of the devices counted at its start
-    are silent, or when a super administrator ends it in the console. Then
+  * **It ends** when more than half of the devices counted at its start
+    are back, or when a super administrator ends it in the console. Then
     the openings that waited and whose alerts are still open are planned
     for organizations' rules as usual, grouped by site outages and merged
     into digests; those resolved meanwhile send nothing. There is no time
@@ -1222,10 +1286,18 @@ Each merges, and is verified, on its own, in this order:
    password sign-in to Exchange Online off by default at the end of
    December 2026, and an MSP whose mail is Microsoft 365 then needs this,
    a relay, or basic authentication turned back on for its tenant.
-   *Verified*: unit tests against a fake token endpoint and a fake SMTP
-   server offering `AUTH XOAUTH2`, `mail check` included; a script test of
-   `setup.sh`'s options; by hand against a real Microsoft 365 tenant, from
-   `setup.sh` and from the console, recorded in IMPLEMENTATION_STATUS.
+   Its documents: the guide's Microsoft 365 steps (above),
+   `.env.example`, and `docs/operations/backup-restore.md`, where
+   `${EASYRMM_DATA_ROOT}/secrets` becomes a part to back up and restore
+   with its owners and modes (`root:65532`, `0750` and `0440`);
+   `upgrading.md` lists no directories, and `--upgrade` gives `secrets/`
+   its owners as it does the others; ADR-0052's updater copies the whole
+   data root, so it needs nothing. *Verified*: unit tests against a fake
+   token endpoint and a fake SMTP server offering `AUTH XOAUTH2`, `mail
+   check` included; a script test of `setup.sh`'s options; by hand
+   against a real Microsoft 365 tenant, from `setup.sh` and from the
+   console, recording Exchange's replies to a sign-in with SMTP AUTH off
+   and to a message over the rate, in IMPLEMENTATION_STATUS.
 3. **Channels, the sender, notices, the journal for notices, and the
    address policy**, with email and generic webhooks: tables, sharing,
    row-level security and the constraints, the scheduler, quotas,
@@ -1288,7 +1360,10 @@ nothing to apply to.
     retried on the next run; a statement timeout (`57014`) injected into
     every run, after 3 of which the planner goes row by row and halves its
     batch, and the *planning has stopped* notice opening after 10 minutes
-    on a fake clock; a bad row quarantined after 3 runs while the
+    on a fake clock; on the one-row path, a row failing transiently in 3
+    runs quarantined; a row that failed once, not yet quarantined, holding
+    its subject's later rows while other subjects go on; a bad row
+    quarantined after 3 runs while the
     others go out, the rows about its subject held behind it, then retry
     and discard each doing what they say; a device deleted while
     `Evaluate` resolves its alert sending one resolution; two servers
@@ -1318,7 +1393,10 @@ nothing to apply to.
     restart (the serving floor); organizations' rules sending no offline
     opening while platform rules do; its end by devices coming back and by
     a super administrator, sending to organizations only alerts still
-    open.
+    open; **a restart during a silence** not ending it (nothing started or
+    ended before the floor, no device back until it checks in); **two
+    servers with floors hours apart** taking turns at `Evaluate`, neither
+    ending nor starting one falsely.
   * **the sender**: retries on a fake clock, giving up; transient and
     permanent answers; `413` splitting once; a delivery holding its
     channel for an hour, then later ones passing **except those about the
@@ -1373,18 +1451,24 @@ nothing to apply to.
   one refused, the others delivered and the refusal shown. `XOAUTH2`: the
   initial response against the example in Microsoft's documentation as a
   frozen vector; a fake token endpoint answering a secret and a
-  certificate's assertion; the token reused until 5 minutes before its
-  end, then renewed; a `535` renewing it once; no `XOAUTH2` before TLS or
-  when not offered; neither the secret nor the token in logs or errors;
-  `syncMail` giving the engine no mail server while an application signs
-  in. `.env`: an application read from its variables and files, the
+  certificate's assertion; the token reused until 5 minutes before its end,
+  then renewed; a `535` renewing it once; no `XOAUTH2` before TLS or when
+  not offered; neither the secret nor the token in logs or errors;
+  `syncMail` giving the engine no mail server while an application signs in,
+  and the standing warning shown and logged whether the application comes
+  from `.env` or the console; `535 5.7.139` with "SmtpClientAuthentication
+  is disabled" shown as the mailbox's setting; a refusal for rate retried,
+  not failed. `.env`: an application read from its variables and files, the
   server refusing to start with an ID missing, both a secret and a
-  certificate, a secret given other than by file, or a file it cannot
-  read; `.env` still winning over the console; `easyrmm-server mail check`
-  against the fakes, sending nothing.
+  certificate, a secret given other than by file, or a file it cannot read;
+  `.env` still winning over the console; `easyrmm-server mail check` against
+  the fakes, sending nothing.
 * **`setup.sh`**, in a script test: the `--smtp-*` options writing `.env`
-  and the files under `secrets/` with their modes and owner, the secret
-  in neither `.env` nor the process list; refused: a malformed tenant or
+  (container paths) and the files under `secrets/` (`0750`/`0440`,
+  `root:65532`), the secret in neither `.env` nor the process list; the
+  file options stopping without root; the mail options alone on an
+  existing `.env`, the rest read from it; the patching warning printed;
+  refused: a malformed tenant or
   client ID, an empty or multi-line secret, a certificate that does not
   parse, a key that does not match it, a certificate expired; a warning
   within 30 days of expiry; an existing `.env` keeping everything but its
@@ -1554,7 +1638,9 @@ nothing to apply to.
   expires in Entra, unseen by EasyRMM: sign-in then fails and the mail
   notice says why. Its credential sends as the mailboxes the tenant's
   administrator gave it; the guide says to give it the sending mailbox
-  only.
+  only. A tenant with Entra's security defaults on cannot use SMTP AUTH
+  at all, OAuth included, without turning them off; for it, a relay is
+  the way, and the guide says so.
 * **Windows' pre-shutdown** is unverified until it is checked on real
   Windows; until then a restarting Windows computer may alert as a plain
   stop would.
