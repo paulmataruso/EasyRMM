@@ -114,10 +114,11 @@ counts as moved only on its own signed report, which proves only an agent
 nobody tampered with; devices that cannot be moved are re-pinned with
 `easyrmm-agent trust-key`, a command with no secret, or reinstalled; a
 device left on a key a restore lost moves with the next rotation. A
-leaked backup set also gives the TLS identities, MeshCentral's keys and
-the patching engine's notification credentials, which the incident page
-replaces; EasyRMM's own authority is replaced in two phases, both
-authorities first, so no agent is cut off. The updater refuses a rollback
+leaked backup set also gives the TLS identities, MeshCentral's keys, the
+patching engine's notification credentials and, with Authentik, its
+signing key pair and secrets, which the incident page replaces;
+EasyRMM's own authority is replaced in two phases, both authorities
+first, so no agent is cut off. The updater refuses a rollback
 whose backup lacks a key agents were cut over to, and one while a server
 on another host shares the database (ADR-0052's rollback guards, shared
 with 5c); they ship with the second slice or before, and the second

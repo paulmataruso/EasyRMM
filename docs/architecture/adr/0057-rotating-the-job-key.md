@@ -129,6 +129,21 @@ webhook credentials, and `.env` holds the statements key the engine
 trusts; of its agents' credentials, the engine's database holds only the
 public keys (After a leaked backup set, below).
 
+With Authentik (`setup.sh --with-authentik`, ADR-0044), `.env` also holds
+`AUTHENTIK_SECRET_KEY` and `EASYRMM_AUTHENTIK_CLIENT_SECRET`
+([docker.md](../../deployment/docker.md)), and the `authentik` database in
+the same PostgreSQL holds Authentik's users with what they sign in with,
+and the key pair that signs the ID tokens EasyRMM accepts (`signing_key`
+in `docker/authentik/blueprints/easyrmm.yaml`). Whoever holds that pair
+and can answer EasyRMM's requests to Authentik can mint ID tokens EasyRMM
+verifies (`Verify` in `server/internal/sso/flow.go`) and sign in as any
+single-sign-on user. Those requests go over loopback through EasyRMM's
+own edge (`Client` in `server/internal/sso/deployment.go`), so that takes
+the host; Authentik's users and second factors in the copy are the risk
+from anywhere. The backup guide does not dump the `authentik` database
+today; that is being fixed on `fix/backup-authentik`, so a backup set
+holds it once that fix lands.
+
 `/srv/easyrmm/server` holds the ACME account and the certificates' keys
 (autocert's cache, `server/internal/app/edge.go`), `/srv/easyrmm/tls` the
 manual certificate's key, and `/srv/easyrmm/meshcentral` MeshCentral's
@@ -196,12 +211,14 @@ rotatable first.
 * **The move from `settings`**, on the first start with this ADR, in one
   transaction under an advisory lock: the seed becomes generation 1,
   sealed again under the new additional data (the same seed and public
-  key; the sealed value differs, since the additional data does), and the
-  `settings` row `jobs.signing_key` is replaced by a **tombstone**: a JSON
-  string naming this ADR. An older server's `LoadKey` cannot read a string
-  into its `storedKey` and fails (`key.go`), so it refuses to start against
-  the migrated database instead of finding no row and making a key of its
-  own. A fresh install makes generation 1 and writes the tombstone too.
+  key; the sealed value differs, since the additional data does), recorded
+  as cut over to, so the floor (below) is generation 1 from the start; and
+  the `settings` row `jobs.signing_key` is replaced by a **tombstone**: a
+  JSON string naming this ADR. An older server's `LoadKey` cannot read a
+  string into its `storedKey` and fails (`key.go`), so it refuses to start
+  against the migrated database instead of finding no row and making a
+  key of its own. A fresh install makes generation 1, records it as cut
+  over to, and writes the tombstone too.
 * A package of its own, `server/internal/jobkeys`, holds the ring. The
   jobs, agents and EasyPatch services ask it for the key to sign each
   device's instruction; none keeps a key of its own. Every server reloads
@@ -372,8 +389,9 @@ build, reports a failure, or 15 minutes pass, including one opened in this
 very answer. A build that rolls back so never finds its keys changed
 underneath it.
 
-Let the **floor** be the newest key that has been cut over to, and the
-**newest** the ring's newest key. From the device's report:
+Let the **floor** be the newest key that has been cut over to (generation
+1 until the first cut-over, since the ring starts with it recorded as cut
+over to), and the **newest** the ring's newest key. From the device's report:
 1. **The target** is the floor if the device trusts any key older than
    the floor; otherwise the newest.
 2. A device that trusts the target and other keys is sent the cut-over to
@@ -560,13 +578,22 @@ its build has no `trust-key`.
     last restore, is shown as *not checked*: the rows that would match it
     may be gone.
   * **The server's last restore** is known from the updater's status,
-    which records a rollback (ADR-0052); from `easyrmm-server incident
+    which records a rollback (ADR-0052), and from `easyrmm-server incident
     restored`, which the guide's restore procedure runs on the host after
-    `pg_restore`; and, for a restore nobody recorded, from the first
-    heartbeat whose acknowledged sequence is ahead of what the database
-    says it acknowledged. That last one records a restore at that moment
-    and withdraws, as *not checked*, the flags raised since the server
-    started for entries dated before it.
+    `pg_restore`. Both apply to every device.
+  * **A restore nobody recorded** shows when a device's heartbeat says
+    the server acknowledged more of its log than the database recorded.
+    That is the device's own claim, and a device key someone holds could
+    make it, so it counts for that device alone: its entries dated before
+    that heartbeat become *not checked*, and its flags raised since the
+    server started for such entries are withdrawn, audited with both
+    sequences. The server also raises a **possible unrecorded restore**
+    alert for super administrators, naming the devices that showed it;
+    `incident restored` on the host confirms it and applies it to every
+    device. Until then it changes nothing for any other device.
+  * **A new enrollment starts a new log**: the agent clears its log and
+    its sequence when it enrolls, so a device enrolled again is never
+    compared with what its previous identity was acknowledged.
 
   This is a tripwire, not proof: code that ran as root can erase the log
   before it is sent.
@@ -592,11 +619,16 @@ its build has no `trust-key`.
 * **Re-pinning a device.** `easyrmm-agent trust-key <generation>:<key>`,
   run as root or administrator on the device, replaces the keys the agent
   trusts with the one given (the console prints it in that form, with its
-  fingerprint) and restarts the agent's service. It refuses when the agent
-  trusts a key with a higher generation than the one given, unless
-  `--force`, so a command deployed by policy that runs again never moves a
-  device back to an older key. The key is public, so the command carries
-  no secret and can be run:
+  fingerprint) and restarts the agent's service. It refuses when the
+  agent trusts a key with a higher generation than the one given, unless
+  `--force`, so a command deployed by policy that runs again never moves
+  a device back to an older key. The key the console prints is the
+  floor's, during a planned rotation's overlap too: a device re-pinned to
+  a newer key alone would trust no key a backup from before the rotation
+  holds, while ADR-0052's rollback guards, which compare the floor, would
+  still allow that rollback. The device then follows the rotation by its
+  hand-over like any other. The key is public, so the command carries no
+  secret and can be run:
   * in a terminal session through MeshCentral: the device's page shows the
     command beside **Open terminal** to anyone with `device.terminal`
     there. MeshAgent authenticates MeshCentral by MeshCentral's identity,
@@ -639,22 +671,40 @@ response replaces the others too:
      `ServerCaCertificate` (the registry value on Windows, `agent.conf` on
      Linux), each with its service restarted, through the channels
      `trust-key` uses (MeshCentral's terminal, Group Policy, Intune, or by
-     hand). The EasyPatch agent accepts a PEM bundle there; today `Parse`
-     reads one certificate. Each agent reports the authorities it loaded:
-     the EasyRMM agent in its heartbeat (What agents report, above), the
-     EasyPatch agent in a new optional field of its check-in
-     (`CheckInRequest`, `AgentDtos.cs`), which an engine without it
-     ignores (no unmapped-member handling is set). The console and
-     `replace-authority status` count the agents that trust the old one
-     only, both, and the new one only (Console, below).
+     hand). Each agent reports the authorities it loaded: the EasyRMM
+     agent in its heartbeat (What agents report, above), the EasyPatch
+     agent in a new optional field of its check-in (`CheckInRequest`,
+     `AgentDtos.cs`), which an engine without it ignores (no
+     unmapped-member handling is set). The console and `replace-authority
+     status` count the agents that trust the old one only, both, and the
+     new one only (Console, below).
+
+     **The EasyPatch agent's format.** It keeps its authority on one line,
+     as base64 DER (`ServerCertificateAuthority.Base64`; the registry
+     value, the MSI's `SERVERCACERT`, and `agent.conf`'s line). Its bundle
+     is therefore one line too: the certificates in base64 DER, separated
+     by commas. The builds that report their authorities are the ones
+     that read it; `Parse` reads one certificate today, and an older build
+     would refuse the bundle as not a certificate. So the bundle goes
+     only to EasyPatch agents whose build reports their authorities: the
+     console lists them, and the guide's scripts check the installed
+     version before they write it. An EasyPatch agent that reports nothing
+     counts as on the old authority alone, so the switch waits until it
+     is updated. The engine updates its agents only where a policy turns
+     it on (`AgentAutoUpdateEnabled`), and holds those updates for 24
+     hours after an upgrade (ADR-0052), so the operator turns the policy
+     on, or updates the agents by hand, before the bundle can reach
+     them.
   2. **The switch.** `easyrmm-server incident replace-authority switch`
      serves a certificate from the new authority, with a new server key,
      and deletes the old authority; install commands change, since they
      pin the server key (`pki.go`). It refuses while an agent seen in the
      last 30 days reports the old authority alone, unless `--strand`,
      which lists them; they are reinstalled. An EasyRMM agent of a build
-     from before this ADR reports nothing and counts as on the old
-     authority alone; updated first (ADR-0027), it reports. MeshAgent
+     from before this ADR, and an EasyPatch agent whose build does not
+     report its authorities, report nothing and count as on the old
+     authority alone; updated first (ADR-0027, or the engine's update), they
+     report. MeshAgent
      follows the new certificate as at a renewal (ADR-0016). The bundle is
      then replaced with the new authority alone, by the same channels,
      since the old one's key leaked; the console counts the agents that
@@ -726,6 +776,24 @@ response replaces the others too:
     is replaced by emptying it in `.env`, rerunning `setup.sh`, which
     makes a new one, and `docker compose up -d`
     ([patching.md](../../operations/patching.md)).
+* **Authentik**, with `--with-authentik`:
+  * a new signing key pair in Authentik for EasyRMM's provider. The
+    blueprint chooses the pair by name, each time it is applied
+    (`signing_key` in `docker/authentik/blueprints/easyrmm.yaml`), so
+    the new pair replaces the named one, or the blueprint names the new
+    one in a release; the guide's slice says which;
+  * a new client secret: `EASYRMM_AUTHENTIK_CLIENT_SECRET` emptied in
+    `.env` and `setup.sh` run again, which fills an empty secret
+    (`fill_secret` in `deploy/scripts/setup.sh`); the blueprint (`!Env`)
+    and EasyRMM read it at their next start;
+  * a new `AUTHENTIK_SECRET_KEY`, the same way. EasyRMM links an account
+    to a provider by the subject in the ID token (`user_identities`,
+    `flow.go`), which this provider derives from the user (`sub_mode:
+    hashed_user_id`), so the slice that writes the guide checks, on the
+    release's Authentik, that a new secret key keeps every subject before
+    the guide tells operators to replace it;
+  * a review of Authentik's users and their second factors: each user's
+    second factors enrolled again, and anyone not expected removed.
 * **Persistence.** When someone could have signed in or written to the
   database (the host, or credentials from the set), the restored database
   is reviewed for what they could have added: users with their sign-in
@@ -749,8 +817,8 @@ The guide's incident page:
 
 | What leaked | The job key | Answering agents | MeshCentral | What to do |
 |---|---|---|---|---|
-| A database dump, without `.env` | Safe: sealed | Safe: the authority is sealed | Safe | Nothing has to be rotated; a planned rotation if unsure |
-| `.env`, without the database | Safe: the seed is in the database | Safe | Safe | Rotate the encryption key ([docker.md](../../deployment/docker.md#rotating-the-encryption-key)), then a planned rotation, since any earlier database backup opens with that `.env` |
+| A database dump, without `.env` | Safe: sealed | Safe: the authority is sealed | Safe | Nothing has to be rotated, except Authentik's signing key pair and second factors when the dump holds the `authentik` database, which nothing seals (Authentik, above); a planned rotation if unsure |
+| `.env`, without the database | Safe: the seed is in the database | Safe | Safe | Rotate the encryption key ([docker.md](../../deployment/docker.md#rotating-the-encryption-key)), then a planned rotation, since any earlier database backup opens with that `.env`; with Authentik, its client secret and `AUTHENTIK_SECRET_KEY` (Authentik, above) |
 | `.env` and a database dump together (a backup set) | Compromised | Possible from any path: in `internal` mode by the authority; with `/srv/easyrmm/server` or the `tls` directory, by the certificate keys until they expire | Its login and session keys; its identity too if `/srv/easyrmm/meshcentral` went | The sequence below |
 | The host | Compromised | Possible from any path | Compromised, identity included | Rebuild the host from a known state and restore a backup from before the compromise; then the sequence below, with MeshCentral's identity replaced and MeshAgent installed again everywhere (backup-restore.md), and devices re-pinned through Group Policy, Intune or by hand |
 
@@ -775,7 +843,8 @@ The guide's incident page:
    console shows none left on the old authority alone, then the new
    authority alone.
 7. **MeshCentral's keys**, **what stays readable**, **the patching
-   engine's part**, and the **persistence** review (above).
+   engine's part**, **Authentik** where the deployment has it, and the
+   **persistence** review (above).
 
 Steps 2 to 4 take minutes; builds from before this ADR take ADR-0027's
 pace (above). Step 6 takes as long as the channels it uses, by hand.
@@ -785,17 +854,20 @@ pace (above). Step 6 takes as long as the channels it uses, by hand.
   start, as now, so that a mistaken `EASYRMM_SECRET_KEY` is fixed in
   `.env`, not by losing the key.
 * `docker compose run --rm server easyrmm-server job-key replace-lost`, on
-  the host, marks the key lost and makes a new one with no hand-over;
-  every device on the lost key then needs re-pinning. It refuses unless
-  the other values the server opens at start (`tls.internal_ca`,
-  `meshcentral.secrets`, where the deployment has them) open with the
-  current key: ".env does not match this database". A restore without its
-  `.env` never reaches `LoadKey` (`pki.Load` and `remote.LoadSecrets` fail
-  first, `app.go`), and is answered as backup-restore.md says, by
-  reinstalling every agent; `replace-lost` is for a seed lost while `.env`
-  still opens the rest. Where the database holds neither value, it checks
-  the sealed values it does hold (Context) instead, and goes ahead only if
-  they open or there are none.
+  the host, marks the key lost and makes a new one with no hand-over, and
+  makes the new key the floor, in the same transaction under the ring's
+  lock; a planned rotation in progress ends there. Devices on a key the
+  server still holds then follow to the new key as after any cut-over
+  (rule 4 above); every device on the lost key needs re-pinning. It
+  refuses unless the other values the server opens at start
+  (`tls.internal_ca`, `meshcentral.secrets`, where the deployment has
+  them) open with the current key: ".env does not match this database".
+  A restore without its `.env` never reaches `LoadKey` (`pki.Load` and
+  `remote.LoadSecrets` fail first, `app.go`), and is answered as
+  backup-restore.md says, by reinstalling every agent; `replace-lost` is
+  for a seed lost while `.env` still opens the rest. Where the database
+  holds neither value, it checks the sealed values it does hold (Context)
+  instead, and goes ahead only if they open or there are none.
 * The lost key's sealed seed is kept, never deleted by the automatic rule.
   `easyrmm-server job-key recover <generation>` opens it with the current
   key or one in `EASYRMM_SECRET_KEYS_PREVIOUS`; if it opens, the key is
@@ -895,8 +967,9 @@ it strands. This ADR provides what they read and adds:
   the key protects. `replace-lost`, `recover`, `--now` and the `incident`
   commands exist only there.
 * While a rotation is in progress, while devices that trust a compromised
-  key are owed a cut-over, and after a rotation that ended a rollback,
-  every super administrator sees a banner.
+  key are owed a cut-over, after a rotation that ended a rollback, and
+  while a possible unrecorded restore is not confirmed, every super
+  administrator sees a banner.
 * One key for the whole server: organizations have no keys of their own,
   and their administrators cannot rotate.
 
@@ -949,7 +1022,8 @@ it strands. This ADR provides what they read and adds:
   reason, made, cut over, compromised, lost, for how many devices it is
   kept), the rotation's progress, the devices owed a cut-over, the
   servers seen, when the rotation may be finished, whether finishing it
-  ends the updater's rollback, and the server's last restore.
+  ends the updater's rollback, the server's last restore, and a possible
+  unrecorded restore with the devices that showed it.
 * `POST /api/v1/settings/job-key/rotations` (`reason`);
   `POST /api/v1/settings/job-key/finish` (`backupTakenSinceStart`);
   `POST /api/v1/settings/job-key/keys/{generation}/forget`. Super
@@ -988,7 +1062,8 @@ it strands. This ADR provides what they read and adds:
 | `device.instruction_unknown` | An agent logged an instruction the server never issued | Kind, ID, signer fingerprint and time of each entry |
 | `tls.authority_begin` | The host makes a new internal authority beside the old one | Both authorities' fingerprints |
 | `tls.authority_switch` | The host serves the new authority's certificate | Both fingerprints; the agents that reported the old authority alone, if `--strand` was given |
-| `server.restored` | `incident restored` on the host, a rollback in the updater's status, or a heartbeat that shows a restore nobody recorded | How it was learned; the time from which instruction log entries are not checked; the flags withdrawn |
+| `server.restored` | `incident restored` on the host, or a rollback in the updater's status | How it was learned; the time from which instruction log entries are not checked; the flags withdrawn; the alert it confirms |
+| `device.instruction_log_ahead` | A device's heartbeat claims acknowledgments the database has no record of | Both sequences; the device's entries now not checked and its flags withdrawn; the server-wide alert raised |
 | `remote.keys_replace` | The host replaces MeshCentral's keys | That they were replaced (never the keys) |
 
 Step-up itself is ADR-0055's. One device's move is not audited:
@@ -1115,17 +1190,20 @@ them; 10,000 records per rotation would bury the ones above. Forwarding
   `ca.pem` by the same rule; a job signed by a dropped key left for
   redelivery twice and reported failed at the third, one by a key never
   trusted failed at once; the instruction log written, bounded, sent with
-  its acknowledged sequence only when the answer lists it, and dropped
-  once acknowledged; `trust-key` (refusing a lower generation, `--force`)
-  and `status`. The EasyPatch agent (`EasyPatch.Agent.Tests`): a bundle of
-  two authorities accepted, a certificate from either verifies, and their
-  fingerprints in the check-in. The agent tests run on CI's Windows runner
-  too (`backend-tests.yml`, *Agent tests on Windows*), `trust-key`'s
-  service restart included.
+  its acknowledged sequence only when the answer lists it, dropped once
+  acknowledged, and cleared with its sequence at a new enrollment;
+  `trust-key` (refusing a lower generation, `--force`) and `status`. The
+  EasyPatch agent (`EasyPatch.Agent.Tests`): a comma-separated bundle of
+  two authorities accepted, one certificate still accepted, a
+  certificate from either authority verifies, and their fingerprints in
+  the check-in. The agent tests run on CI's Windows runner too
+  (`backend-tests.yml`, *Agent tests on Windows*), `trust-key`'s service
+  restart included.
 * **Integration** (PostgreSQL, with the race detector):
   * the move from `settings`: the same seed and public key, sealed under
-    the new additional data, the tombstone written; sealed again after the
-    encryption key changes;
+    the new additional data, recorded as cut over to (floor 1), the
+    tombstone written; the same for a fresh install; sealed again after
+    the encryption key changes;
   * **mixed versions**: the server of the last release before this ADR,
     by its tag, refuses to start against the migrated database; starting
     and finishing a rotation are refused while a connection named plain
@@ -1161,9 +1239,11 @@ them; 10,000 records per rotation would bury the ones above. Forwarding
     and audited once per device and key, and cleared; reloads limited; the
     report written only when it changes; a seed kept while a device, or a
     removed device, needs it, and deleted after; removed devices signed by
-    their report; instructions
-    refused for a device that needs re-pinning; `replace-lost` refused
-    when `.env` does not match, the seed kept, and `recover`; the API's
+    their report; instructions refused for a device that needs re-pinning,
+    and the re-pin command giving the floor's key during an overlap;
+    `replace-lost` refused when `.env` does not match, its new key made
+    the floor in the same transaction, devices on a held key following
+    it, the seed kept, and `recover`; the API's
     permissions, step-up and audit records; nothing while held;
   * **issued instructions**, for each kind: a job run; an agent update
     whose device comes back on the new build, whose first heartbeat
@@ -1173,13 +1253,17 @@ them; 10,000 records per rotation would bury the ones above. Forwarding
     is stopped and resumed; a MeshAgent download; a hand-over and a
     cut-over. Each flagged when its ID, device or key does not match; an
     entry older than 90 days, or dated before the last restore, *not
-    checked*; a restore learnt from `incident restored`, from the
-    updater's status, and from a heartbeat whose acknowledged sequence is
-    ahead, withdrawing the flags raised since the start;
+    checked*; a restore learnt from `incident restored` and from the
+    updater's status, for every device; a device whose acknowledged
+    sequence is ahead: only its own entries not checked and its own flags
+    withdrawn, another device's flag kept, the alert raised, and every
+    device's earlier entries not checked once `incident restored`
+    confirms it; a device enrolled again starting a new sequence;
   * **the authority's replacement**: `begin` keeps the old certificate
-    served and writes a bundle of both; agents' reports counted; `switch`
-    refused while one reports the old authority alone, and with
-    `--strand`;
+    served and writes a bundle of both, as PEM and as the EasyPatch
+    agent's one line; agents' reports counted; `switch` refused while one
+    reports the old authority alone or an EasyPatch agent reports
+    nothing, and with `--strand`;
 * **Console**: the page, its dialogs and the device states, in the
   console's checks.
 * **The bundle test, with real agents, every machine on the host's
@@ -1308,8 +1392,9 @@ builds, so slice 2 does not merge before 5b2 either.
   minutes and offline ones when they return, counts a device as moved only
   on its own signed report, and says that this report proves only an
   untouched agent. A leaked backup set is answered beyond the job key: the
-  TLS identities, MeshCentral's keys, the secrets that stay readable, and
-  a review for what was added.
+  TLS identities, MeshCentral's keys, the secrets that stay readable, the
+  patching engine's part, Authentik's keys and users, and a review for
+  what was added.
 * A key handed to a device that this server never issued, and an
   instruction it never issued, show from the first slice. The server keeps
   a record of everything it signs for 90 days to tell them apart.

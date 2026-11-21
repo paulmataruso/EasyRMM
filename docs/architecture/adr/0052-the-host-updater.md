@@ -272,7 +272,9 @@ go back across either.
   kind has happened:
   * **The job key.** The backup records `jobKeyGeneration`, the newest
     generation whose seed the database holds. The live value is the
-    floor, the generation of the newest key cut over to (ADR-0057). A
+    floor, the generation of the newest key cut over to (ADR-0057): 1
+    from the moment the ring exists, since ADR-0057 records generation 1
+    as cut over to, and moved by a cut-over or by `replace-lost`. A
     restored server that holds the floor's key can sign for every device
     that moved, so only a floor above every key the backup holds is a
     problem: a backup taken during a rotation's overlap and restored after
@@ -283,18 +285,22 @@ go back across either.
   * **A move.** `moveGeneration`, recorded and read live: ADR-0061's move
     generation, kept with `name_moves` and defined there; 0 for a database
     without `name_moves`. Baseline 0.
-* **They never go backwards, even across a restore.** Each new value is
-  the larger of the time in milliseconds and the last value plus one;
-  for the job key also above any generation a device reports within
+* **They do not go backwards across a restore.** Each new value is the
+  larger of the time in milliseconds and the last value plus one; for
+  the job key also above any generation a device reports within
   `MaxSkew` (ADR-0057, "One ring"). A restored database holds an older
   last value, but the clock has moved on, so a value made after a restore
-  is above the values the restore lost, and a later state never shows a
-  value a backup holds for an earlier one. For the job key, devices'
-  reports of the lost values lift it too. A server whose clock is more
-  than 5 minutes off cannot talk to agents (ADR-0057).
+  is above the values the restore lost, with one exception: a lost job
+  key's generation can sit up to `MaxSkew` (5 minutes) ahead of the
+  clock, through the reported-key term, so a key made within those
+  minutes can be below it until a device reports it. That does not
+  affect the guards, which compare a backup's record with the live
+  database. A server whose clock is more than 5 minutes off cannot talk
+  to agents (ADR-0057).
 * **What a backup records.** At step 3, once every other service has
   stopped and before PostgreSQL does, the updater runs one fixed `psql`
-  query, as PostgreSQL's own user in the `postgres` container, which
+  query, as PostgreSQL's own user in the `postgres` container, with `-X`
+  (no `psqlrc`) and `-At` (bare values) and a `lock_timeout`, which
   returns both values. It keeps `{jobKeyGeneration, moveGeneration}` with
   the backup. A value that is absent or does not parse as an integer is
   recorded as unknown. The upgrade that brings the first updater with the
@@ -307,18 +313,27 @@ go back across either.
 * **A rollback after a confirmed upgrade**, in this order:
   1. `hold` is written. It holds a running server too: new requests get
      `503`, and requests in progress finish (PR #51).
-  2. The updater waits, up to 30 seconds, until every server instance
-     seen in the last 2 minutes reports that it is held
-     (`server_instances`, ADR-0057: each server records it at once when it
-     enters or leaves a hold). It refuses while one does not, which
-     includes every server on another host, since `hold` is this host's
-     file, and while a database connection named plain `easyrmm-server`
-     is open (a server from before ADR-0057, which records nothing). A
-     guarded rollback is a single-host one: with several hosts, the
+  2. When the live database has `server_instances` (ADR-0057's first
+     slice on), the updater waits, up to 30 seconds, until every server
+     instance seen in the last 2 minutes reports that it is held (each
+     server records it at once when it enters or leaves a hold). It
+     refuses while one does not, which includes every server on another
+     host, since `hold` is this host's file, and while a database
+     connection named plain `easyrmm-server` is open (a server from
+     before ADR-0057, which records nothing). A database without
+     `server_instances` gets neither check, since there every server
+     names its connections plain `easyrmm-server`
+     (`server/internal/database/database.go`) and the checks would refuse
+     every rollback; the updater waits instead until this host's server
+     says on `/readyz` that it is held (PR #51). A guarded rollback is a
+     single-host one, as every rollback here is: the updater stops and
+     restores this host's deployment only, and with several hosts the
      operator stops the others first.
   3. In one transaction that takes, in this fixed order, the job key
      ring's advisory lock and then the name move's, it reads the floor
-     and the move generation and counts again the servers not held.
+     and the move generation and, where step 2 applied, counts again the
+     servers not held. Its statements run under the same `lock_timeout`;
+     a lock not taken in time is a value that cannot be read.
      Every change to either value takes its lock first and then checks
      `hold` again inside it, by looking at the file, not at the flag the
      server refreshes every second: ADR-0057's changes to the ring, and
@@ -454,7 +469,10 @@ Production installs upgrade when someone chooses to.
   baseline allowed; unreadable); a change to the ring or a move step
   racing the hold, either committed before the read or refused inside the
   lock; a recorded instance not held, and a connection named plain
-  `easyrmm-server`, each refused; `--strand-agents` listing every refusal
+  `easyrmm-server`, each refused; a database without `server_instances`
+  (from before ADR-0057), with the server's plain connections open,
+  rolled back; a lock not taken within `lock_timeout` refused as
+  unreadable; `--strand-agents` listing every refusal
   it overrode, in its confirmation, its status record and its audit
   record. ADR-0057 and ADR-0061 test what their agents do after each.
 * **The updater updating itself**, from the second release that has one.
