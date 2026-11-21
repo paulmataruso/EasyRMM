@@ -379,31 +379,51 @@ release with one; then the owner's instance on edge.
 
 ### 5. Let's Encrypt in one step
 5a and 5b are decided in
-[ADR-0055](adr/0055-lets-encrypt-in-one-step.md) (proposed). In short:
-every DNS name the edge serves (console, MeshCentral, Authentik, an
-imported EasyPatch's) gets its own Let's Encrypt certificate; IP addresses
-keep the internal authority, and there are no wildcards.
+[ADR-0055](adr/0055-lets-encrypt-in-one-step.md) (proposed, revised after
+review). In short: every DNS name the edge serves (console, MeshCentral,
+Authentik, an imported EasyPatch's) gets its own Let's Encrypt
+certificate; IP addresses keep the internal authority, and there are no
+wildcards. A fix comes first: MeshCentral is told every origin EasyRMM
+serves for it (`allowedOrigin`), which sessions on any MeshCentral origin
+but the primary one need.
 
 * **5a. CertMagic, status and alerts.** CertMagic instead of `autocert`:
-  issued at start from a managed list, renewed by ARI with Let's Encrypt's
-  retry schedule, no OCSP; keys and certificates sealed in PostgreSQL and
-  shared by several servers; `autocert`'s cache imported, so the upgrade
-  orders nothing; no email unless set; a private ACME CA with its roots
-  (`EASYRMM_ACME_CA_FILE`). Settings → **Certificates** shows each name;
-  alerts after 24 hours of failure or with 14 days left (critical at 7),
-  in the console and through F2's sender behind one interface.
-* **5b. Names and sources from the console.** Built around an IP install
-  getting a name: the records to create, checks as ticks, a trial order
-  against Let's Encrypt's staging service, then **Agree and get
-  certificates**. A DNS name served by the authority or the operator's
-  files moves to Let's Encrypt and back without a restart, once the
-  agent trusts both (system roots and the authority for DNS names) and
-  the move is refused while a device would lose trust. DNS-01 through RFC
-  2136 or Cloudflare, delegation recommended. Step-up authentication; `tls
-  reset`. The added name becomes a console origin, the install commands'
-  first address, the email links' and the authenticator's name, and
-  WebAuthn's relying party; single sign-on, Authentik's address and the
-  engine's stay on the IP address until 5c.
+  issued at start from a managed list, renewed by ARI, no OCSP. EasyRMM
+  schedules and gates every attempt (Let's Encrypt's retry schedule,
+  persisted, a failure budget per name and hour, nothing during the
+  updater's hold); CertMagic's own retries are not used. Keys and
+  certificates sealed in PostgreSQL; `autocert`'s account and ECDSA
+  certificates imported, so the upgrade orders nothing and registers no
+  account; no email unless set; a private ACME CA with its roots
+  (`EASYRMM_ACME_CA_FILE`). Checks for every name, on the page and in
+  `easyrmm-server tls check`. Settings → **Certificates** shows each name;
+  alerts as fractions of each certificate's lifetime, and after an hour
+  without a certificate, on every console origin and through F2's sender
+  behind one interface. MeshCentral's certificate changes at most once
+  every 5 minutes, and its loopback read gets what agents get.
+* **5b1. Agent trust**, released first: a trust instruction signed with
+  the job key carries the chain a source will serve; the agent verifies
+  it on the device and widens its trust (system roots and its CA file)
+  only for a move, only on that device, only if it verified.
+* **5b2. Sources and moves.** A DNS name served by the authority or the
+  operator's files moves to Let's Encrypt and back without a restart,
+  once every device seen in 30 days verified the chain (EasyRMM's agent,
+  and the EasyPatch agent through the system's roots). Account
+  registration, CAA `accounturi`, a trial order against staging, then
+  **Agree and get certificates**. ADR-0042's instructions carry the
+  authority whenever there is one. Step-up authentication, defined there
+  for this plan; `tls reset`.
+* **5b3. An IP install's name**: the records to create, checks as ticks,
+  **Agree and get certificates**. The added name becomes a console origin
+  (never internal), the install commands' first address and the email
+  links' while it is reachable (checked daily), the authenticator's name,
+  WebAuthn's relying party, and an allowed origin in MeshCentral; when it
+  stops being trusted, agents enrolled through it keep working. Single
+  sign-on, Authentik's address and the engine's stay on the IP address
+  until 5c.
+* **5b4. DNS-01** through RFC 2136 (HMAC-SHA256 or stronger) or
+  Cloudflare, delegation recommended, propagation checked at the zone's
+  own servers.
 * **5c. Moving to a new name** (changing the console's name, or moving
   agents from an IP address to a name) is an ADR of its own: each
   computer runs three agents that hold the address (EasyRMM's, MeshAgent's
@@ -419,11 +439,13 @@ keep the internal authority, and there are no wildcards.
 
 **Tests**: as [ADR-0055](adr/0055-lets-encrypt-in-one-step.md#testing)
 lists them: Pebble and BIND on host networking for every challenge,
-renewal with a short-lived certificate, the failure alert, two servers,
-the upgrade from `autocert` and moves between sources with real agents in
-the bundle test; a second Pebble as a flagged stand-in for staging in CI;
-Cloudflare on a real account on `main` only, or marked unverified; a real
-Let's Encrypt staging run by hand, then the owner's real name.
+renewal with a 10-minute certificate, the failure alert, restarts that
+repeat no attempt, the upgrade from `autocert` and moves between sources
+with real agents in the bundle test; the Windows runner for the agent's
+trust, or marked unverified; a second Pebble as a flagged stand-in for
+staging in CI; Cloudflare against Let's Encrypt's staging with a real
+zone on `main` only, or marked unverified; a real Let's Encrypt staging
+run by hand, then the owner's real name.
 
 ### 6. Packages for the agent: DEB, RPM, MSI
 * **The package never replaces an enrolled agent's binary.** It installs
@@ -610,7 +632,7 @@ and recorded in drills.md: a CI runner (4 CPUs) cannot hold them.
 | 4 | Updater 4a with the edge channel | The test instance follows `main` from then on |
 | 5 | F2 and device alert notifications (7) | Needed by 4b, 5 and 3's alerts |
 | 6 | Updater 4b: the console | Needs F2 |
-| 7 | Let's Encrypt 5a, then 5b | Needs F2 for its alerts |
+| 7 | Let's Encrypt 5a, then 5b1 to 5b4 | Needs F2 for its alerts; the `allowedOrigin` fix it starts with is a hole in shipped code, so it may go with step 2 |
 | 8 | Packages (6): DEB, RPM, MSI | How MSPs onboard computers; nothing depends on 3 |
 | 9 | F0; the wake-only WebSocket; F1; the transport setting (8) | F1's first key is the transport |
 | 10 | Log collection (3), in its slices | The largest; needs F1 and F2 |
