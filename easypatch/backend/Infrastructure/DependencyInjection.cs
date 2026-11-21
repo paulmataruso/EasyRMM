@@ -135,6 +135,7 @@ public static class DependencyInjection
         services.AddScoped<RolloutGuardTask>();
         services.AddScoped<PreDownloadTask>();
         services.AddSingleton<MaintenanceHeartbeat>();
+        services.AddSingleton<AgentUpdateHold>();
         services.AddHostedService<MaintenanceLoop<JobMaintenanceTask>>();
         services.AddHostedService<MaintenanceLoop<PresenceMonitorTask>>();
         services.AddHostedService<MaintenanceLoop<ScheduledInstallTask>>();

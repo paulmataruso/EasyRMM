@@ -26,6 +26,10 @@ public sealed class EasyPatchOptions
 
     /// <summary>At most this many automatic agent updates run at the same time (spreads the downloads).</summary>
     public int AutomaticAgentUpdateConcurrency { get; set; } = 25;
+
+    /// <summary>The host updater's status directory, mounted read-only into the worker (EasyRMM's ADR-0052). The worker reads
+    /// <see cref="Maintenance.AgentUpdateHold.FileName"/> there.</summary>
+    public string UpdaterStatusPath { get; set; } = "/run/easyrmm-updater";
 }
 
 /// <param name="Release">The release signature file, when present and describing exactly this file. The server never

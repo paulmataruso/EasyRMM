@@ -209,7 +209,7 @@ public sealed class JobQueueTests(PostgresFixture postgres) : IntegrationTest(po
         await agent.CheckInAsync();
         await FlushPresenceAsync();
 
-        Clock.Advance(TimeSpan.FromMinutes(20));
+        Clock.Advance(TimeSpan.FromMinutes(30)); // the worker started with the test: past its grace and the offline threshold
         await RunMaintenanceAsync<PresenceMonitorTask>();
         Assert.Equal(EndpointStatus.Active, await WithDbAsync(db => db.Endpoints.Select(e => e.Status).FirstAsync()));
         Assert.False((await root.GetAsync<EndpointDetailDto>($"/api/v1/endpoints/{agent.EndpointId}")).Summary.IsOnline);

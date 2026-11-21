@@ -100,6 +100,10 @@ public sealed class EasyPatchApiFactory(string connectionString, TimeProvider cl
     public string KeysPath { get; } = Directory.CreateTempSubdirectory("easypatch-keys-").FullName;
     public string PackagesPath { get; } = Directory.CreateTempSubdirectory("easypatch-packages-").FullName;
     public string WingetCachePath { get; } = Directory.CreateTempSubdirectory("easypatch-winget-").FullName;
+
+    /// <summary>The host updater's status directory, empty: nothing is held.</summary>
+    public string UpdaterStatusPath { get; } = Directory.CreateTempSubdirectory("easypatch-updater-").FullName;
+
     public const string PublicUrl = "https://easypatch.test";
 
     /// <summary>Records email and webhook sends instead of performing them.</summary>
@@ -112,6 +116,7 @@ public sealed class EasyPatchApiFactory(string connectionString, TimeProvider cl
         builder.UseSetting("EasyPatch:DataProtectionKeysPath", KeysPath);
         builder.UseSetting("EasyPatch:AgentPackagesPath", PackagesPath);
         builder.UseSetting("EasyPatch:WingetCachePath", WingetCachePath);
+        builder.UseSetting("EasyPatch:UpdaterStatusPath", UpdaterStatusPath);
         builder.UseSetting("EasyPatch:PublicUrl", PublicUrl);
         builder.UseSetting("Logging:Format", "text");
         builder.UseSetting("Logging:LogLevel:Default", "Warning");
@@ -129,7 +134,10 @@ public sealed class EasyPatchApiFactory(string connectionString, TimeProvider cl
         builder.ConfigureTestServices(services =>
         {
             services.AddSingleton(clock);
-            // Maintenance tasks are executed explicitly by tests (no hosted loops in the API).
+            // Maintenance tasks are executed explicitly by tests (no hosted loops in the API). The worker starts with the host,
+            // at the clock's time then.
+            services.AddSingleton(new MaintenanceHeartbeat(clock));
+            services.AddSingleton<AgentUpdateHold>();
             services.AddScoped<JobMaintenanceTask>();
             services.AddScoped<PresenceMonitorTask>();
             services.AddScoped<ScheduledInstallTask>();
@@ -156,6 +164,7 @@ public sealed class EasyPatchApiFactory(string connectionString, TimeProvider cl
         TryDelete(KeysPath);
         TryDelete(PackagesPath);
         TryDelete(WingetCachePath);
+        TryDelete(UpdaterStatusPath);
     }
 
     private static void TryDelete(string path)
