@@ -119,6 +119,10 @@ const ACTIONS: Record<string, string> = {
   "alert_policy.delete": "Deleted alert policy",
   "alert.acknowledge": "Acknowledged alert",
   "alert.resolve": "Resolved alert",
+  "mail_server.update": "Changed the mail server",
+  "mail_server.delete": "Removed the mail server",
+  "mail_server.limits_update": "Changed the mail limits",
+  "mail_server.test": "Sent a test message",
   "audit_forwarding.update": "Changed audit forwarding",
   "audit_forwarding.test": "Tested audit forwarding",
   "easypatch.connection_update": "Changed the patching engine connection",
@@ -190,6 +194,7 @@ export const ACTION_GROUPS: [string, string][] = [
   ["alert_policy", "Alert policies"],
   ["alert", "Alerts"],
   ["user", "Users"],
+  ["mail_server", "Mail server"],
   ["audit_forwarding", "Audit forwarding"],
   ["patch", "Patching"],
   ["easypatch", "Patching engine settings"],
@@ -216,6 +221,11 @@ export function auditTarget(e: AuditEntry): string {
   if (e.targetType === "session") return "Session";
   if (e.targetType === "report") return REPORT_TITLES[e.targetId ?? ""] ?? "Report";
   if (e.targetType === "audit_forwarding") return e.targetId ? `Collector ${e.targetId}` : "Collector";
+  if (e.targetType === "mail_server") {
+    if (e.targetId === "limits") return "Mail limits";
+    if (e.action === "mail_server.test" && typeof d.to === "string") return `To ${d.to} through ${e.targetId ?? "the mail server"}`;
+    return e.targetId ? `Mail server ${e.targetId}` : "Mail server";
+  }
   if (e.action.startsWith("easypatch.organization_") && typeof d.organization === "string") {
     return typeof d.easyPatchName === "string" ? `${d.organization} → ${d.easyPatchName}` : d.organization;
   }

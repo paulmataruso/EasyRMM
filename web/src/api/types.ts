@@ -226,7 +226,12 @@ export interface InviteResult {
   user?: User;
   link?: string;
   emailed: boolean;
+  /** Why the link was not emailed, when it was not. */
+  mailProblem?: MailProblem;
 }
+
+/** Why a link was not emailed: there is no mail server, or it did not take the message. */
+export type MailProblem = "no_mail_server" | "not_sent";
 
 export interface RoleView {
   role: Role;
@@ -631,6 +636,65 @@ export interface AuditForwardingInput {
 }
 
 export interface AuditForwardingTest {
+  ok: boolean;
+  message: string;
+}
+
+// The mail server (ADR-0053) ---------------------------------------------------------------------
+
+/** STARTTLS required, TLS from the first byte, or none (only to a relay on this machine). */
+export type MailSecurity = "starttls" | "tls" | "none";
+export type MailSignIn = "none" | "password";
+
+export interface MailServer {
+  host: string;
+  port: number;
+  security: MailSecurity;
+  signIn: MailSignIn;
+  username: string;
+  /** A password is stored; it is never shown. */
+  passwordSet: boolean;
+  fromAddress: string;
+  fromName: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface MailServerView {
+  /** Where the mail server in force comes from: .env (which wins), the console, or nowhere. */
+  inForce: "env" | "console" | "none";
+  env?: MailServer;
+  console?: MailServer;
+  limits: { perMinute: number; perDay: number; updatedAt?: string; updatedBy?: string };
+  usage: {
+    lastMinute: number;
+    lastDay: number;
+    /** Of the last 24 hours' messages, invitations and password resets. */
+    accountLastDay: number;
+    /** Where mail other than account mail stops: 90% of the day's limit. */
+    otherDayLimit: number;
+  };
+}
+
+export interface MailServerInput {
+  host: string;
+  port: number;
+  security: MailSecurity;
+  signIn: MailSignIn;
+  username: string;
+  /** Write-only; empty keeps the stored one while the host and user name stay the same. */
+  password: string;
+  fromAddress: string;
+  fromName: string;
+}
+
+export interface MailServerTestInput {
+  to: string;
+  /** The form as it stands; absent tests the mail server in force. */
+  server?: MailServerInput;
+}
+
+export interface MailServerTest {
   ok: boolean;
   message: string;
 }

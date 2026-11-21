@@ -727,7 +727,7 @@ describe("alert wording", () => {
     expect(thresholdText("ScanStale", 3)).toBeNull();
     expect(acknowledgedBy("easyrmm:otto@example.com")).toBe("otto@example.com");
     expect(acknowledgedBy("jo")).toBe("jo");
-    expect(deliveryError("SMTP is not configured (Settings → Notifications).")).toBe("EasyRMM has no mail server: set EASYRMM_SMTP_HOST and restart EasyRMM.");
+    expect(deliveryError("SMTP is not configured (Settings → Notifications).")).toBe("EasyRMM has no mail server: a super administrator sets one under Settings → Notifications → Mail server.");
     expect(deliveryError("Connection refused.")).toBe("Connection refused.");
   });
 

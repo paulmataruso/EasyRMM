@@ -15,6 +15,7 @@ import { formatDateTime, formatRelative } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { useUrlState } from "../../lib/urlState";
 import { AssignmentEditor, blankDraft, draftComplete, fromDraft, type DraftAssignment } from "./AssignmentEditor";
+import { whyNotEmailed } from "./mailProblem";
 
 export function UsersTab() {
   const { can } = useAuth();
@@ -177,7 +178,7 @@ function InviteDialog({ open, onClose, defaultOrganizationId }: { open: boolean;
       <Dialog open={open} onClose={close} title="Send this invitation link" size="md" dismissible={false}>
         <div className="flex flex-col gap-3.5">
           <OneTimeNotice title="Copy this link now. It is shown only once.">
-            Email is not configured on this server, so send it to {email.trim()} yourself. The link works once and expires in 72 hours.
+            {whyNotEmailed(result.mailProblem, email.trim())} The link works once and expires in 72 hours.
           </OneTimeNotice>
           <CodeBlock code={result.link} />
           <div className="flex justify-end gap-2">
