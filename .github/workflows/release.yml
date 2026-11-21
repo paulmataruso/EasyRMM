@@ -24,8 +24,10 @@
 #      latest (pre-releases get only their own tags);
 #   5. the deployment bundle, its manifest and the agents are built
 #      (scripts/release/bundle.sh), with the engine pinned by digest in the
-#      bundle's docker-compose.yml, attested, and attached to a GitHub release
-#      with the changelog's notes.
+#      bundle's docker-compose.yml, checked (the bundle against its manifest,
+#      the agents against the server image's), attested, and attached to a
+#      GitHub release with the changelog's notes and the Sigstore bundle of
+#      the attestation beside the manifest (ADR-0052).
 #
 # The release private key is the secret EASYPATCH_RELEASE_KEY of the
 # "easypatch-release" environment, which must admit easyrmm-v* tags. It is
@@ -540,14 +542,31 @@ jobs:
           EASYPATCH_PACKAGES: dist/easypatch-packages
         run: |
           EASYRMM_IMAGE_PIN="${IMAGE,,}:${VERSION#v}@${DIGEST}" scripts/release/bundle.sh "$TAG" dist/release
+          # The bundle as the updater will check it; the agents, the image's (ADR-0049).
+          scripts/release/check-bundle.sh dist/release "$VERSION"
+          scripts/release/check-agents.sh "${IMAGE,,}@${DIGEST}" dist/release
           scripts/release/notes.sh "$TAG" > dist/notes.md
           ep_version="${EASYPATCH_IMAGE_PIN##*/easypatch-server:}"
           # shellcheck disable=SC2016 # the backquotes are Markdown
           printf '\n**Patching engine:** EasyPatch %s (`%s`); versions and digests in `%s`.\n' \
             "${ep_version%@*}" "$EASYPATCH_IMAGE_PIN" "easyrmm-${VERSION}-manifest.json" >> dist/notes.md
-      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      - id: attest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: dist/release/*
+      # The attestation travels with the manifest (ADR-0052): verifying it
+      # needs this file and Sigstore's trusted root, not GitHub's API.
+      - name: The manifest's Sigstore bundle
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SIGSTORE_BUNDLE: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          sigstore=application/vnd.dev.sigstore.bundle.v0.3+json
+          if [ "$(wc -l < "$SIGSTORE_BUNDLE")" -ne 1 ] || ! jq -e --arg t "$sigstore" '.mediaType == $t' "$SIGSTORE_BUNDLE" > /dev/null; then
+            echo "::error::the attestation is not one Sigstore bundle of $sigstore"
+            exit 1
+          fi
+          cp "$SIGSTORE_BUNDLE" "dist/release/easyrmm-$VERSION-manifest.json.sigstore.json"
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
