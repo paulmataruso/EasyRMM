@@ -224,7 +224,7 @@ func TestEdgeInternalTLS(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("host=" + r.Host)) })
-	stop := runEdge(t, &edge{cfg: cfg, handler: h, log: discard(), pki: ca})
+	stop := runEdge(t, &edge{cfg: cfg, handler: h, hold: notHeld(t), log: discard(), pki: ca})
 	defer stop()
 
 	block, _ := pem.Decode(ca.CAPEM())
@@ -246,7 +246,7 @@ func TestEdgeInternalTLS(t *testing.T) {
 	}
 
 	// An internal mode edge without its authority refuses to start.
-	e := &edge{cfg: cfg, handler: h, log: discard()}
+	e := &edge{cfg: cfg, handler: h, hold: notHeld(t), log: discard()}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := e.run(ctx); err == nil {
