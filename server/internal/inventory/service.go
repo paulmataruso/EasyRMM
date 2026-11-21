@@ -183,14 +183,14 @@ func cleanInventory(in agentproto.Inventory) agentproto.Inventory {
 		Packages: []agentproto.Package{},
 	}
 	for _, d := range in.Disks {
-		if name := text(d.Name, 64); name != "" && len(out.Disks) < agentproto.MaxListed {
+		if name, model, serial := DiskIdentity(d.Name, d.Model, d.Serial); name != "" && len(out.Disks) < agentproto.MaxListed {
 			kind := d.Kind
 			if kind != "ssd" && kind != "hdd" && kind != "nvme" {
 				kind = ""
 			}
 			out.Disks = append(out.Disks, agentproto.Disk{
-				Name: name, Model: text(d.Model, maxText), Serial: text(d.Serial, maxText),
-				SizeBytes: min(d.SizeBytes, maxBytes), Kind: kind, Removable: d.Removable,
+				Name: name, Model: model, Serial: serial,
+				SizeBytes: min(d.SizeBytes, maxBytes), Kind: kind, Removable: d.Removable, Firmware: firmware(d.Firmware),
 			})
 		}
 	}
@@ -236,6 +236,34 @@ func cleanInventory(in agentproto.Inventory) agentproto.Inventory {
 		}
 	}
 	return out
+}
+
+// DiskIdentity is a disk's name, model and serial as the inventory stores
+// them. A hardware report's disks are cleaned with it too, so that both
+// name a disk the same way (ADR-0065).
+func DiskIdentity(name, model, serial string) (string, string, string) {
+	return text(name, 64), text(model, maxText), text(serial, maxText)
+}
+
+// maxFirmware bounds a disk's firmware revision: eight characters for ATA
+// and NVMe, a little more for others.
+const maxFirmware = 64
+
+// firmware keeps a disk's firmware fact with a known state and reason
+// (ADR-0065); anything else becomes unknown, and an older agent's missing
+// fact stays missing.
+func firmware(f *agentproto.TextFact) *agentproto.TextFact {
+	if f == nil {
+		return nil
+	}
+	switch v := text(f.Value, maxFirmware); {
+	case f.State == agentproto.FactRead && v != "":
+		return &agentproto.TextFact{State: agentproto.FactRead, Value: v}
+	case (f.State == agentproto.FactUnknown || f.State == agentproto.FactUnsupported || f.State == agentproto.FactUnavailable) &&
+		agentproto.KnownReason(f.Reason):
+		return &agentproto.TextFact{State: f.State, Reason: f.Reason}
+	}
+	return &agentproto.TextFact{State: agentproto.FactUnknown, Reason: agentproto.ReasonInvalidReport}
 }
 
 // cleanMetrics keeps measurements within physical bounds.

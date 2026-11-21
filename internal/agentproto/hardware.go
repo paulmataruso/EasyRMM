@@ -222,8 +222,8 @@ type DiskHealth struct {
 	UncorrectableSectors Fact `json:"uncorrectableSectors"`
 	// DriveErrors is NVMe's number of error information log entries, or
 	// the ATA summary SMART error log's count.
-	DriveErrors     Fact `json:"driveErrors"`
-	PowerOnHours    Fact `json:"powerOnHours"`
+	DriveErrors  Fact `json:"driveErrors"`
+	PowerOnHours Fact `json:"powerOnHours"`
 	// DataWritten is NVMe's data units written, each 1,000 units of 512
 	// bytes.
 	DataWritten     Fact `json:"dataWritten"`

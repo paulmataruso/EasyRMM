@@ -83,12 +83,16 @@ type Config struct {
 	// MetricsRetention is how long devices' metric samples are kept.
 	MetricsRetention time.Duration
 	// AlertRetention is how long resolved alerts are kept.
-	AlertRetention   time.Duration
-	PasswordResetTTL time.Duration
-	LogLevel         string
-	LogFormat        string // "json" or "text"
-	ArgonMaxParallel int
-	WebDir           string // optional override of the embedded UI
+	AlertRetention time.Duration
+	// HardwareRetention is how long one disk health sample per disk and day
+	// is kept, once readings older than MetricsRetention are thinned
+	// (ADR-0065).
+	HardwareRetention time.Duration
+	PasswordResetTTL  time.Duration
+	LogLevel          string
+	LogFormat         string // "json" or "text"
+	ArgonMaxParallel  int
+	WebDir            string // optional override of the embedded UI
 	// AgentDir holds the EasyRMM agent builds the server hands out.
 	AgentDir string
 	// UpdaterStatusDir is the updater's status directory, mounted read-only
@@ -189,6 +193,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		JobRetention:      l.duration("EASYRMM_JOB_RETENTION", 90*24*time.Hour),
 		MetricsRetention:  l.duration("EASYRMM_METRICS_RETENTION", 7*24*time.Hour),
 		AlertRetention:    l.duration("EASYRMM_ALERT_RETENTION", 90*24*time.Hour),
+		HardwareRetention: l.duration("EASYRMM_HARDWARE_RETENTION", 730*24*time.Hour),
 		PasswordResetTTL:  l.duration("EASYRMM_PASSWORD_RESET_TTL", 30*time.Minute),
 		LogLevel:          l.str("EASYRMM_LOG_LEVEL", "info"),
 		LogFormat:         l.str("EASYRMM_LOG_FORMAT", "json"),
@@ -386,6 +391,9 @@ func (c *Config) validate(l *loader) {
 	}
 	if c.AlertRetention < 24*time.Hour {
 		add("EASYRMM_ALERT_RETENTION must be at least 24h")
+	}
+	if c.HardwareRetention < c.MetricsRetention {
+		add("EASYRMM_HARDWARE_RETENTION must be at least EASYRMM_METRICS_RETENTION")
 	}
 	if c.PasswordResetTTL < 5*time.Minute || c.PasswordResetTTL > 24*time.Hour {
 		add("EASYRMM_PASSWORD_RESET_TTL must be between 5m and 24h")
