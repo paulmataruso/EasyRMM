@@ -4,7 +4,7 @@
 #
 #   easyrmm-<version>-deploy.tar.gz    the Compose deployment, pinned to this version's images
 #   easyrmm-<version>-manifest.json    its version, commit, bundle digest and images (manifest.sh)
-#   easyrmm-agent-<os>-<arch>[.exe]    the agents (the server image carries the same ones)
+#   easyrmm-agent-<os>-<arch>[.exe]    the agents (the server image carries the same ones: check-agents.sh)
 #   SHA256SUMS
 #
 #   EASYRMM_IMAGE_PIN=ghcr.io/<owner>/easyrmm-server:1.2.3@sha256:<digest> \
