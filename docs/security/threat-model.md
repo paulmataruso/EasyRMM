@@ -186,6 +186,10 @@ their own rights, and EasyRMM narrows what reaches them.
 **The record** ([ADR-0007](../architecture/adr/0007-hash-chained-audit-log.md))
 * The application's database role can only append to the audit log, and
   edits are rejected even for the owner.
+* The append, like every function that runs as the database owner, names
+  `pg_temp` last in its `search_path`, so a session's temporary objects
+  cannot stand in for the ones it uses, and the application's role cannot
+  create temporary tables ([database.md](../architecture/database.md)).
 * Records are hash-chained so that changes can be detected. Retention
   deletes only records past the configured period (at least 30 days).
 * The log can be forwarded off the server as it is written.
