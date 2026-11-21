@@ -29,6 +29,9 @@ VM_CACHE ?= /var/tmp/easyrmm-vmtest
 VM_PACKAGES ?= ./internal/vmtest/ ./server/internal/jobs/
 VM_PARALLEL ?= 2
 VM_TEST_TIMEOUT ?= 3h
+# The updater's machine test (ADR-0052) runs on its own: it builds three
+# server images and bundles, and starts the deployment four times.
+UPDATER_VM_TEST_TIMEOUT ?= 4h
 
 .PHONY: help
 help: ## Show this help
@@ -49,7 +52,7 @@ vet: ## go vet (including integration-, contract-, bundle-, vm- and updatertest-
 	$(GO) vet -tags integration ./...
 	$(GO) vet -tags contract ./server/internal/easypatch/
 	$(GO) vet -tags bundle ./server/internal/easypatch/
-	$(GO) vet -tags vm $(VM_PACKAGES)
+	$(GO) vet -tags vm $(VM_PACKAGES) ./updater/machinetest/
 	$(GO) vet -tags updatertest ./updater/...
 	GOOS=windows $(GO) vet ./agent/... ./internal/...
 
@@ -119,6 +122,11 @@ test-contract: ## EasyRMM's calls to the patching engine against a real one buil
 test-vm: ## Boot each distribution's cloud image under QEMU and drive it (EASYRMM_VM_IMAGE=debian-12 for one; needs qemu-system-x86_64, qemu-img, and xorriso for rocky-8)
 	EASYRMM_VM_CACHE="$${EASYRMM_VM_CACHE:-$(VM_CACHE)}" \
 		$(GO) test -tags vm -count=1 -v -timeout $(VM_TEST_TIMEOUT) -parallel $(VM_PARALLEL) $(VM_PACKAGES)
+
+.PHONY: test-vm-updater
+test-vm-updater: ## The host updater on a Debian 12 machine: install, status, upgrade, rollback, a failed start (needs Docker, Go, qemu-system-x86_64 and qemu-img; the machine needs the internet)
+	EASYRMM_VM_CACHE="$${EASYRMM_VM_CACHE:-$(VM_CACHE)}" EASYRMM_VM_IMAGE=debian-12 \
+		$(GO) test -tags vm -count=1 -v -timeout $(UPDATER_VM_TEST_TIMEOUT) ./updater/machinetest/
 
 .PHONY: check
 check: fmt-check vet lint test-integration ## Everything CI runs for Go code
