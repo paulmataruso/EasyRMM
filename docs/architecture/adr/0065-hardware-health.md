@@ -1,6 +1,11 @@
 # ADR-0065: Hardware diagnostics and health monitoring
 
-* Status: Proposed (2026-11-21). Not implemented.
+* Status: Accepted (2026-11-21, after an independent review). Not
+  implemented.
+* Revised after an independent review (2026-11-21): commands allowed
+  whole rather than by opcode, kernel default timeouts, failing disks
+  that stay in view, and the review's other findings, each in its
+  section.
 * Nothing here was decided by the owner. Everything marked as decided
   was decided in review, and the owner can overturn it; the
   [owner questions](#owner-questions) list what is the owner's.
@@ -10,16 +15,17 @@
   [ADR-0019](0019-monitoring-and-alerts.md) (an alert kind,
   `disk_health`, with a check per policy; alerts with a subject, one
   per disk). Each gains an *Amended by ADR-0065* line when this is
-  implemented. It asks two amendments of proposed ADRs, made in them
-  before the slices that would build otherwise (as the
+  implemented. It amends two proposed ADRs before the slices that would
+  build otherwise (as the
   [plan](../feature-plan-msp.md#what-this-plan-asks-of-the-earlier-adrs)
   requires): [ADR-0053](0053-one-notification-sender.md), whose condition
-  filter gains `disk_health` and whose incident and `key` gain the
-  alert's subject, before ADR-0053's slice 4 (device alert rules and
-  incidents) is built; and [ADR-0060](0060-collecting-logs.md), whose
-  `log` policies name their detection in the `check` column this ADR
-  adds (at the plan's step 12, before ADR-0060's step 26) rather than in
-  a column of their own.
+  filter gains `disk_health` and its checks, and whose incident and
+  `key` gain the alert's check and subject, before ADR-0053's slice 4
+  (device alert rules and incidents) is built; this change adds the
+  dated amendment line to ADR-0053's header. And
+  [ADR-0060](0060-collecting-logs.md), whose `log` policies name their
+  detection in the `check_name` column this ADR adds (at the plan's step 12,
+  before ADR-0060's step 26) rather than in a column of their own.
 * Builds on: [ADR-0009](0009-agent-protocol.md) (its section "Evolving
   the protocol"), [ADR-0020](0020-windows-agent.md) (the Windows agent
   and the versions it supports), [ADR-0027](0027-agent-updates.md)
@@ -29,10 +35,9 @@
   [ADR-0051](0051-hardening-linux-computers.md) (the machine harness,
   `internal/vmtest`),
   [ADR-0064](0064-remote-powershell-management.md) (accepted, not
-  built: its slice 1, the plan's step 6, makes the agent keep the
-  protocol level of its last heartbeat answer, which this ADR uses; its
-  Windows test job runs the agent's tests as LocalSystem on CI's
-  runners), and these proposed ADRs:
+  built: its Windows test job, the plan's step 6, runs the agent's tests
+  as LocalSystem on CI's runners; nothing else of it is needed here),
+  and these proposed ADRs:
   [ADR-0054](0054-hardening-windows-computers-and-servers.md) (Windows
   machines under KVM; tests run as LocalSystem),
   [ADR-0058](0058-signed-settings-that-reach-the-agent.md) (settings
@@ -329,25 +334,30 @@ linked; what could not be checked says *to be confirmed*.
   Apache-2.0, Linux only, "in the early stages of development", last
   changed 2023-06-25.
 
-**Emulated disks** (QEMU
-[v11.1.3](https://github.com/qemu/qemu/tree/v11.1.3)):
+**Emulated disks**, in QEMU 8.2.2, the version CI's Ubuntu 24.04
+installs (1:8.2.2+ds-0ubuntu1.16 on 2026-11-21,
+[Ubuntu](https://packages.ubuntu.com/noble/qemu-system-x86)); the
+model names and `scsi-disk` were checked in
+[v11.1.3](https://github.com/qemu/qemu/tree/v11.1.3):
 
 * **NVMe** (`-device nvme`) answers the health log with a critical
   warning, a composite temperature of 323 K, data units, host commands
   and power-on hours since the device started; available spare,
   percentage used and media errors are always zero
-  ([`hw/nvme/ctrl.c`](https://github.com/qemu/qemu/blob/v11.1.3/hw/nvme/ctrl.c),
-  `nvme_smart_info`). `smart_critical_warning` is a property that
-  `qom-set` changes on a running machine (same file; commit
+  ([`hw/nvme/ctrl.c`](https://github.com/qemu/qemu/blob/v8.2.2/hw/nvme/ctrl.c),
+  `nvme_smart_info`). `smart_critical_warning` is a property with a
+  setter, which `qom-set` changes on a running machine (same file;
+  commit
   [`4714791`](https://github.com/qemu/qemu/commit/4714791b66ae39bea6b6e3c3e84aaed8dcb005c7)).
   Its default model is *QEMU NVMe Ctrl*, which the `model` property
   changes
   ([`nvme.rst`](https://github.com/qemu/qemu/blob/v11.1.3/docs/system/devices/nvme.rst)).
 * **ATA** (`ide-hd` on an AHCI controller) answers SMART READ DATA,
   READ THRESHOLDS, RETURN STATUS and READ LOG 01h, with attributes 1,
-  3, 4, 5, 9, 12 and 190 (31 °C), and CHECK POWER MODE; RETURN STATUS
-  always passes and nothing injects a failure; there is no READ LOG EXT
-  ([`hw/ide/core.c`](https://github.com/qemu/qemu/blob/v11.1.3/hw/ide/core.c)).
+  3, 4, 5, 9, 12 and 190 (31 °C), and CHECK POWER MODE ("device active
+  or idle"); RETURN STATUS always passes and nothing injects a failure;
+  there is no READ LOG EXT
+  ([`hw/ide/core.c`](https://github.com/qemu/qemu/blob/v8.2.2/hw/ide/core.c)).
   Its default model is *QEMU HARDDISK*, which `model` changes
   ([`ide-dev.h`](https://github.com/qemu/qemu/blob/v11.1.3/include/hw/ide/ide-dev.h)).
 * **`scsi-disk`** and `usb-storage` refuse ATA PASS-THROUGH with
@@ -370,23 +380,33 @@ linked; what could not be checked says *to be confirmed*.
   for ATA; on Linux `NVME_IOCTL_ADMIN_CMD` and `SG_IO` with ATA
   PASS-THROUGH (16). No WMI, no PowerShell, no smartctl, no driver, no
   new library. One parser serves both systems.
+* **Only whole commands on a list are sent**, every field fixed: one
+  NVMe log page, read so that it changes nothing on the drive, Identify
+  Controller, and seven ATA commands that only read, limited to three
+  logs. ATA PASS-THROUGH (16) only. The kernel's own timeouts; a disk
+  that timed out is left alone for a day.
 * **Every fact has one of five states**, *healthy*, *unhealthy*
   (*warning* or *failing*), *unknown*, *unsupported* or *unavailable*,
   each with a reason, and a fact EasyRMM does not judge is *reported*.
   A disk is *healthy* only after a complete, checked reading in the
-  last two hours that finds nothing. This is F1's rule, which every
-  part of F1 uses.
+  last two hours that finds nothing. A *failing* or *warning* disk stays
+  so, with the time it was last read, until a complete reading says
+  otherwise; a disk that disappears stays in view. This is F1's rule,
+  which every part of F1 uses.
 * **Readings every 30 minutes**, in a report of their own to a new
   endpoint, never in the heartbeat or the hashed inventory. Sleeping
-  disks are not woken, except once a day.
+  disks are not woken, except once a day. USB disks are *unavailable*
+  in slice 1.
 * **The server judges**: the agent reports what it read; the server
   applies one table of rules, so the rules change without an agent
   update.
-* **History**: every reading for 7 days, then one a day per disk for
-  730 days.
-* **Alerts**: a new kind, `disk_health`, with four checks (failing,
-  errors, wear, temperature), one alert per disk through a subject on
-  `alerts_active_key`; notifications through ADR-0053.
+* **History**: every reading for 7 days, then one a day per disk, with
+  the day's worst level, for 730 days.
+* **Alerts**: a new kind, `disk_health`, with five checks (failing,
+  errors, pending, wear, temperature), one alert per disk through a
+  subject on `alerts_active_key`, resolved only after two clear
+  readings; notifications through ADR-0053. Only *Disk failing* is
+  turned on at upgrade.
 * **Disk firmware** in the inventory, as F1's first fact under its
   rule.
 * **The console**: health on the Disks card, each disk's facts and
@@ -408,15 +428,15 @@ domain-controller role).
 | **Unhealthy**, *warning* | Read and checked, and a rule for degradation holds | Pending sectors 8; 91% of rated endurance used; 61 °C, over the drive's 60 °C |
 | **Unhealthy**, *failing* | Read and checked, and the drive's own verdict fails | SMART status: threshold exceeded; NVMe: media in read-only mode |
 | **Reported** | Read, and EasyRMM does not judge it | Firmware, power-on hours, data written |
-| **Unknown** | EasyRMM could read it here, and this time it could not tell | Timed out; I/O error; checksum wrong; asleep, not woken; not read for over 2 hours |
-| **Unsupported** | The disk, by what it is, has no such data | A virtual disk; an SD card; a USB bridge that refuses SMART commands; the drive does not keep this attribute |
-| **Unavailable** | The data exists, but EasyRMM cannot reach it from where the agent runs | Behind a hardware RAID controller; a storage driver that refuses health queries; the agent runs in a container; SMART turned off on the drive; SAS, not read yet |
+| **Unknown** | EasyRMM could read it here, and this time it could not tell | Timed out; I/O error; checksum wrong; asleep, not woken; a healthy disk not read for over 2 hours; a disk missing from the last report |
+| **Unsupported** | The disk, by what it is, has no such data | A virtual disk; a Storage Spaces disk; an SD card; the drive does not keep this attribute |
+| **Unavailable** | The data exists, but EasyRMM cannot reach it from where the agent runs | Behind a hardware RAID controller; a storage driver that refuses health queries; a USB disk (slice 1); the agent runs in a container; SMART turned off on the drive; SAS, not read yet |
 
 * **The difference between the last three** is what can change it:
   *unknown* may clear at the next reading; *unavailable* needs
   something else in place (the controller's own tools, another driver,
   a later slice of EasyRMM); *unsupported* never changes for that disk.
-* **A disk's state** is the worst of its judged facts, in the order
+* **A reading's level** is the worst of its judged facts, in the order
   *failing*, *warning*, *unknown*, *healthy*, unless the disk as a
   whole was *unsupported* or *unavailable*, which then is its state. A
   fact the drive does not keep (an NVMe drive has no pending sectors)
@@ -426,21 +446,78 @@ domain-controller role).
 * **Healthy needs the verdict.** For NVMe it is the critical warning
   of the health log. For ATA it is SMART RETURN STATUS or, where a
   path does not return the registers, the attribute values against
-  their thresholds, as smartmontools falls back; without either the
-  disk is *unknown*.
-* **Stale is unknown.** The server shows a disk whose last complete
-  reading is more than 2 hours old (four missed readings) as *unknown:
-  not read since …*, with its last values and their time. An offline
-  device's disks become *unknown* the same way; the offline alert is
-  ADR-0019's business.
-* **On the wire** a fact is an object, `{"state": …, "reason": …,
-  "value": …}`. Reasons are fixed codes from a list the server knows
-  (`virtual_disk`, `raid_controller`, `storage_driver`, `container`,
-  `smart_off`, `usb_bridge`, `protocol_not_read`, `not_kept`, `asleep`,
-  `timeout`, `io_error`, `access_denied`, `bad_checksum`, `stale` and
-  the like), shown in words by the console. The health report may add
-  a short detail (a Windows error number); the inventory never does, so
-  its hash stays stable.
+  their thresholds (see *What is read* for how far that fallback
+  goes); without either the disk is *unknown*.
+* **What the console shows for a disk**, in this order, the first that
+  applies:
+  1. **Missing**: the device's latest report does not list the disk.
+     *Unknown* (`missing`), with "missing since …" and the last level
+     it was read with ("Missing since 3 May; last read Failing, 2 May
+     14:30"). See *Disks that disappear*, below.
+  2. **Unsupported** or **unavailable**: the disk as a whole, from its
+     latest reading.
+  3. **Failing** or **warning**: the level of the disk's latest judged
+     reading (one that read the verdict, and found this level),
+     whenever it was, with "last read …". **Age never turns a failing
+     or warning disk into *unknown***, and nor do later readings that
+     could not tell (a timeout, a sleeping disk, the device offline):
+     those show as a note ("the 3 readings since timed out"). Only a
+     newer judged reading changes the level.
+  4. **Healthy**: the latest judged reading was complete and healthy
+     and is at most 2 hours old (four missed readings).
+  5. **Unknown**: anything else: a healthy reading older than 2 hours
+     (`stale`, "not read since …", with its last values), or no judged
+     reading yet (the latest reading's reason). An offline
+     device's healthy disks become *unknown* this way; the offline alert
+     is ADR-0019's business.
+* **Disks that disappear.** A report that no longer lists a disk with a
+  row marks it *missing* at that report's time; its row, its history and
+  its open alerts stay, and nothing new opens on it. A later report that
+  lists it again ends that. A missing disk's alerts resolve:
+  * **by hand**, by someone with `alert.manage`; they stay resolved,
+    since nothing opens on a missing disk; or
+  * **on their own** as `subject_gone`, a new resolution, at the first
+    evaluation at which both hold: the disk has been missing for at
+    least 14 days (by the server's clock, from the first report that
+    left it out), and the device's latest inventory was received after
+    that report and lists no disk with the disk's identity (model and
+    serial, or name where it has no serial). Its row goes then too; its
+    samples stay until their retention. Until both hold, nothing
+    happens on its own, however long it has been missing.
+
+  A device that stops reporting marks nothing missing: only a report
+  that leaves a disk out does. A disk that died and dropped off the bus
+  therefore stays in view, with its last level, until someone looks.
+* **A device's disk health**, for the Devices column, its filter and
+  its sorting:
+  * its **label** is the highest of its disks' shown states in the
+    order *failing*, *warning*, *unknown*, *healthy*, with the disks in
+    the other two states counted after it ("Healthy, 3 disks
+    unavailable"; "Failing, 1 disk unsupported"); a device with no disk
+    in those four is *Unavailable* if any disk is, else *Unsupported*,
+    with its count ("Unavailable, 4 disks"); a device that has sent no
+    report is *Not reported*;
+  * **sorting** by the column ranks *failing*, *warning*, *unknown*,
+    *unavailable*, *healthy*, *unsupported*, *not reported*, by label;
+  * the **filter** offers each of the seven; *Unavailable* and
+    *Unsupported* match a device with any disk in that state, so
+    "Healthy, 3 disks unavailable" is found under both *Healthy* and
+    *Unavailable*.
+* **On the wire**, from the agent, a fact is an object, `{"state": …,
+  "reason": …, "value": …}` whose state is `read` (with a value),
+  `unknown`, `unsupported` or `unavailable`: the agent judges nothing.
+  The server's API and the console carry **six values for a judged
+  fact**, `healthy`, `warning`, `failing`, `unknown`, `unsupported` and
+  `unavailable` (*unhealthy* is sent as its level), and `reported` for
+  a fact EasyRMM does not judge. Reasons are fixed codes from a list the
+  server knows (`virtual_disk`, `virtual_machine`, `storage_spaces`,
+  `raid_controller`, `storage_driver`, `container`, `smart_off`,
+  `usb_bridge`, `protocol_not_read`, `not_kept`, `asleep`, `timeout`,
+  `timed_out_recently`, `io_error`, `access_denied`, `bad_checksum`,
+  `agent_error`, `stale`, `missing`, `invalid_report` and the like),
+  shown in words by the console. The health report may add a short
+  detail (a Windows error number); the inventory never does, so its
+  hash stays stable.
 * **Old fields keep the old rule.** The inventory's existing fields
   stay as they are, empty when unread; changing their encoding would
   break every older server. New facts follow this rule.
@@ -459,14 +536,29 @@ would hide it.
 |---|---|---|
 | Any disk, when the agent runs in a container | *Unavailable* (`container`) | The inventory's container detection (`inventory.go:73-90`) |
 | A hypervisor's emulated disk | *Unsupported* (`virtual_disk`) | Windows bus types Virtual (14) and FileBackedVirtual (15); Linux `virtio_blk` and Xen's `xvd` devices; models of emulated disks (*QEMU HARDDISK*, *QEMU NVMe Ctrl*, *Msft Virtual Disk*, *VMware Virtual*, *VBOX HARDDISK* and the like, a list in the agent) |
-| A Storage Spaces virtual disk (Windows bus type 16) | *Unsupported* (`storage_spaces`) | Bus type; whether its member disks are still visible to be read is *to be confirmed* |
-| A logical volume of a hardware RAID controller | *Unavailable* (`raid_controller`) | Windows bus type RAID (8); on Linux, a SCSI host driven by a RAID driver (`megaraid_sas`, `hpsa`, `smartpqi`, `aacraid` and the like, a list in the agent; the sysfs attribute that names the driver is *to be confirmed*) |
+| A Storage Spaces virtual disk (Windows bus type 16) | *Unsupported* (`storage_spaces`) | Bus type; whether its member disks are still visible to be read on their own is *to be confirmed* |
+| A logical volume of a hardware RAID controller, on Linux | *Unavailable* (`raid_controller`) | A SCSI host driven by a hardware RAID driver (`megaraid_sas`, `hpsa`, `smartpqi`, `aacraid` and the like, a list in the agent; the sysfs attribute that names the driver is *to be confirmed*) |
+| A disk on Windows bus type RAID (8) | Read first (below); if refused, *unavailable* (`storage_driver`) | Bus type 8 covers hardware RAID volumes and also single drives behind Intel RST or VMD on laptops, which may answer; the answer is recorded |
 | SAS, Fibre Channel, iSCSI and other SCSI disks | *Unavailable* (`protocol_not_read`) | Bus type, or a SCSI disk that refuses ATA PASS-THROUGH; SCSI's own health pages are a later slice |
+| USB disks | *Unavailable* (`usb_bridge`), nothing sent | Windows bus type USB (7); on Linux a disk whose sysfs device path runs through a USB device (`usb-storage` or `uas`). Probing bridges is slice 9 |
 | SD and MMC cards | *Unsupported* | Windows bus types 12 and 13; Linux `mmcblk` |
 | NVMe | Read (below) | Windows bus type 17; Linux `nvme` devices |
 | SATA and ATA, also behind a host bus adapter | Read | Windows bus types 3 and 11; on Linux a disk behind libata or an HBA that answers ATA PASS-THROUGH |
-| USB disks | Read where the bridge passes ATA commands; otherwise *unsupported* (`usb_bridge`) | The bridge's answer: an *invalid opcode* is a definite no |
 
+* **USB disks are not read in slice 1.** A USB bridge decides what
+  becomes of an ATA command, and some cannot handle one: the Linux
+  kernel flags such bridges `US_FL_NO_ATA_1X`, "Cannot handle ATA_12
+  or ATA_16 CDBs", and refuses to pass the command to them (slice 9
+  cites it). Reading USB disks safely needs a memory per bridge (its
+  USB vendor and product IDs) of what it answered, and the kernel's
+  list honoured; that is slice 9.
+* **On Windows bus type RAID (8)** the agent tries the NVMe query
+  first, which needs no access rights (below), then ATA IDENTIFY
+  DEVICE; the first answer decides the protocol, and a refusal of both
+  makes the disk *unavailable* (`storage_driver`) with the driver's
+  error. Windows cannot tell a hardware RAID volume from a single drive
+  behind Intel RST by bus type, so the reason is the driver's refusal,
+  not a guess at a controller.
 * **After a read fails**, the answer decides: "not supported" from the
   driver or the device makes the disk *unsupported* (a device's own
   refusal) or *unavailable* (a driver on the way refused); any other
@@ -492,10 +584,44 @@ would hide it.
   controller; slice 1 uses the form the page's example uses and tries
   the adapter form only where the device form is refused, recording
   which answered, so the choice rests on real drivers' answers.
-* **ATA**: `IOCTL_ATA_PASS_THROUGH` on a handle opened for reading and
-  writing, which LocalSystem can open, carrying only the read-only
-  commands listed below. The same commands, and the same 512-byte
-  answers, as on Linux.
+  * **Opened with no access rights** (`dwDesiredAccess` 0).
+    `IOCTL_STORAGE_QUERY_PROPERTY` needs none: its code, 0x2D1400
+    (Microsoft's
+    [windows-rs constant](https://microsoft.github.io/windows-docs-rs/doc/windows/Win32/System/Ioctl/constant.IOCTL_STORAGE_QUERY_PROPERTY.html)),
+    carries `FILE_ANY_ACCESS` in its access bits. And with
+    `FILE_FLAG_OVERLAPPED`, so that a query has a deadline (below).
+  * **RAE and LSP.** Windows builds the Get Log Page command itself.
+    `ProtocolDataRequestSubValue4` carries Retain Asynchronous Event and
+    the Log Specific Field
+    ([`STORAGE_PROTOCOL_DATA_SUBVALUE_GET_LOG_PAGE`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddstor/ns-ntddstor-storage_protocol_data_subvalue_get_log_page),
+    documented from Windows Server 2022); the agent sets RAE to 1 and
+    LSP to 0 there. On earlier versions the inbox driver fills those
+    bits itself; what it sends there, and so whether a read can clear
+    an event, is *to be confirmed* on Windows 10 and Server 2016 and
+    2019, and the guide says so until it is.
+* **ATA**: `IOCTL_ATA_PASS_THROUGH`, carrying only the commands of the
+  list below; the same commands, and the same 512-byte answers, as on
+  Linux.
+  * **Read and write access only here**, as the IOCTL requires: its
+    code, 0x4D02C
+    ([windows-rs](https://microsoft.github.io/windows-docs-rs/doc/windows/Win32/Storage/IscsiDisc/constant.IOCTL_ATA_PASS_THROUGH.html)),
+    carries read and write access, and Microsoft's page says callers
+    "must have read/write access to the device". LocalSystem can open
+    it so.
+  * **The power state first.** Before that handle is opened, the agent
+    opens the disk for query only (access 0) and asks
+    [`GetDevicePowerState`](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-getdevicepowerstate);
+    a disk not in the working state is skipped as *asleep*, with no
+    pass-through. smartmontools does the same, because "opening for
+    SMART r/w operations can already spin up the disk"
+    (`win_ata_device::is_powered_down` in
+    [`os_win32.cpp`](https://github.com/smartmontools/smartmontools/blob/master/smartmontools/os_win32.cpp)).
+    Whether a drive that spun down on its own timer shows as not
+    working there is *to be confirmed*; CHECK POWER MODE follows on
+    the open handle either way.
+  * **Synchronous**, as Microsoft requires: "Applications must not
+    attempt to send a pass-through request asynchronously"
+    ([IOCTL](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddscsi/ni-ntddscsi-ioctl_ata_pass_through)).
 * **Why not the others**:
   * **WMI** (`MSFT_StorageReliabilityCounter`): the inventory's rule is
     no WMI (`windows.go:30-31`; the plan's F1), the plan allows one
@@ -513,26 +639,41 @@ would hide it.
   * **`StorageDeviceTemperatureProperty`** is a second source for a
     temperature the health log and Device Statistics already hold.
 * **What stays unverified** until real computers show it: whether the
-  protocol-specific query needs more than the inventory's read-only
-  handle; which vendor NVMe drivers (Samsung's, Intel RST and its VMD
-  mode, common on recent laptops) answer it; whether `IOCTL_ATA_PASS_THROUGH`
-  passes through Intel RST in RAID mode and through USB bridges on
-  Windows. Each driver that refuses makes its disks *unavailable*
-  (`storage_driver`) with the driver's error, never *unknown* every
-  half hour.
+  protocol-specific query answers on a handle with no access rights
+  (the access bits say it may; the drivers decide); which vendor NVMe
+  drivers (Samsung's, Intel RST and its VMD mode, common on recent
+  laptops) answer it; whether `IOCTL_ATA_PASS_THROUGH` passes through
+  Intel RST in RAID mode. Each driver that refuses makes its disks
+  *unavailable* (`storage_driver`) with the driver's error, never
+  *unknown* every half hour.
 
 ### Reading on Linux
 *Decided in review.*
 
-* **NVMe**: `NVME_IOCTL_ADMIN_CMD` on `/dev/nvmeN`, the controller of
-  each `nvmeNnM` the inventory lists, with Get Log Page 02h for the
-  whole controller and Identify Controller. Root holds `CAP_SYS_ADMIN`;
-  should the agent's unit ever drop it, Get Log Page fails with
-  `EACCES`, which is *unavailable* (`access_denied`), and the guide
-  says why.
+* **NVMe**: `NVME_IOCTL_ADMIN_CMD` on the controller's character
+  device, `/dev/nvmeZ`, with Get Log Page 02h for the whole controller
+  and Identify Controller. Root holds `CAP_SYS_ADMIN`; should the
+  agent's unit ever drop it, Get Log Page fails with `EACCES`, which is
+  *unavailable* (`access_denied`), and the guide says why.
+  * **The controller is found through sysfs, never from the name.**
+    Under native multipath the block device `nvmeXnY` is a namespace
+    head whose X is the *subsystem's* number, not a controller's; its
+    paths `nvmeXcZnY` are hidden disks whose parent is controller
+    `nvmeZ`, linked from the head's `multipath` directory (the
+    kernel's `nvme_alloc_ns` in
+    [`core.c`](https://github.com/torvalds/linux/blob/master/drivers/nvme/host/core.c),
+    `nvme_mpath_add_sysfs_link` in
+    [`multipath.c`](https://github.com/torvalds/linux/blob/master/drivers/nvme/host/multipath.c)).
+    The agent follows the head's `multipath` links where they exist,
+    else the disk's `device` link, reads the first controller found
+    that answers, and reads a controller once however many namespaces
+    it serves. No stable ABI document describes this layout, so the
+    machine tests check the agent's walk on every image, and a unit
+    test checks it against a multipath tree captured from a kernel.
 * **SATA**: `SG_IO` with ATA PASS-THROUGH (16) and the check-condition
   bit, on the disk's `/dev/sdX`. Disks behind an HBA in pass-through
-  (IT) mode answer the same way.
+  (IT) mode answer the same way. CHECK POWER MODE comes first, and a
+  disk in standby is skipped (*When it reads*).
 * **Not `hwmon`.** The plan said temperature from `hwmon`. The NVMe
   sensor there reads the health log the agent already reads, behind a
   kernel option; `drivetemp` covers SATA only where it is loaded and may
@@ -563,37 +704,132 @@ would hide it.
   then be parsed by two codes. **Not `dswarbrick/smart`**: Linux only,
   early, not maintained since 2023. **Never smartmontools' code or its
   drive database** (GPL).
-* **Read-only commands only, enforced.** The transport accepts only
-  this list and refuses anything else, tested: ATA IDENTIFY DEVICE
-  (ECh), CHECK POWER MODE (E5h), SMART READ DATA (B0h/D0h), SMART READ
-  ATTRIBUTE THRESHOLDS (B0h/D1h), SMART RETURN STATUS (B0h/DAh), SMART
-  READ LOG (B0h/D5h) for the summary error log, READ LOG EXT (2Fh) for
-  the log directory and Device Statistics; NVMe Identify (06h) and Get
-  Log Page (02h). Never SMART ENABLE, self-tests, SCT (which writes a
-  log to send its command), Set Features, or anything that writes.
-* **Every command has a deadline**: 10 seconds in `SG_IO`'s and NVMe's
-  timeout fields and `ATA_PASS_THROUGH_EX`'s; Windows' protocol-specific
-  query has none, so it runs on a goroutine of its own and the disk is
-  *unknown* (`timeout`) after 30 seconds. A disk whose call has not
-  returned is not asked again until it does.
+* **Each reading is isolated.** Each disk is read on a goroutine of
+  its own, under `recover`: a panic in a parser makes that disk
+  *unknown* (`agent_error`), is logged, and the others go on. The
+  round waits for each disk at most its deadline (below) plus 30
+  seconds and sends what it has; the heartbeat has its own loop
+  (`agent/runner/runner.go:168-249`) and never waits for a reading.
+
+### The commands: whole commands, every field fixed
+*Decided in review.*
+
+An opcode is not enough to make a command harmless. Get Log Page with
+RAE cleared clears a pending asynchronous event for that log on
+success; log 07h with its LSP bit set makes the drive capture
+telemetry; log 0Dh with an LSP action establishes or releases a
+persistent-event context (NVM Express Base Specification 2.0c, figures
+197, 214 and 223,
+[PDF](https://nvmexpress.org/wp-content/uploads/NVM-Express-Base-Specification-2.0c-2022.10.04-Ratified.pdf)).
+So the transport accepts **only the commands below, each with every
+field fixed**, builds them itself from a name ("NVMe health log",
+"SMART read log 01h"), and refuses anything else before it reaches the
+operating system. A table-driven test changes each fixed field of each
+command, one at a time, and every opcode, feature, log address and
+page not listed, and expects every one refused.
+
+| Command | Fields fixed | Why |
+|---|---|---|
+| NVMe Identify (06h) | CNS 01h (Identify Controller); NSID 0; CNTID 0; CNS-specific identifier 0; CSI 0; UUID index 0; 4,096 bytes | Model, serial, firmware revision, `wctemp` and `cctemp`. Not CNS 00h (Identify Namespace): nothing in slice 1 uses a namespace's data, sizes come from the inventory and the health log is read for the controller |
+| NVMe Get Log Page (02h) | LID 02h only; NSID FFFFFFFFh, which "hosts should use … to request the controller log page"; LSP 0; **RAE 1**; NUMDL 127 and NUMDU 0 (512 bytes); offset 0; UUID index 0; CSI 0 | The SMART / Health log. It holds the number of error information log entries (bytes 191:176), so log 01h is not read. RAE 1 leaves any event for the log pending for the driver that owns events |
+| ATA IDENTIFY DEVICE (ECh) | Features 0; count 1; LBA 0; PIO data-in; 512 bytes | Whether SMART is supported and enabled; model, serial and firmware |
+| ATA CHECK POWER MODE (E5h) | Every field 0; non-data; registers returned | A disk in standby is skipped |
+| SMART READ DATA (B0h, feature D0h) | LBA mid 4Fh, LBA high C2h, LBA low 0; count 1; PIO data-in; 512 bytes | The attribute table |
+| SMART READ ATTRIBUTE THRESHOLDS (B0h, D1h) | As READ DATA | The fallback verdict only (*What is read*) |
+| SMART RETURN STATUS (B0h, DAh) | LBA mid 4Fh, LBA high C2h; every other field 0; non-data; registers returned | The drive's verdict |
+| SMART READ LOG (B0h, D5h) | LBA mid 4Fh, LBA high C2h; log address (LBA low) 00h or 01h with count 1, or 04h with count 1 to 8 as the directory gives its size; PIO data-in | 00h, the SMART log directory: which logs exist and how long. 01h, the summary error log: the drive's error count. 04h, Device Statistics, where only this directory lists it |
+| READ LOG EXT (2Fh) | Log address 00h, page 0; or 04h, page 00h, 03h, 04h, 05h or 07h; count 1; features 0; PIO data-in; 48-bit | 00h, the general-purpose log directory. 04h, Device Statistics: the list of pages, rotating media, general errors, temperature, solid state |
+
+* **ATA PASS-THROUGH (16) only, never (12).** Operation code A1h,
+  PASS-THROUGH (12), is also BLANK, an MMC command for optical drives
+  (T10's [operation code list](https://www.t10.org/lists/op-num.htm)),
+  and the Linux kernel relays every command but ATA_16 to an ATAPI
+  device as it is (`__ata_scsi_queuecmd` in
+  [`libata-scsi.c`](https://github.com/torvalds/linux/blob/master/drivers/ata/libata-scsi.c)).
+  On Linux the agent sends `ATA_16` with protocol PIO data-in (4) for
+  reads and non-data (3), with the check-condition bit, for CHECK POWER
+  MODE and RETURN STATUS; the direction bit from the device; the
+  extend bit only for READ LOG EXT. Never DMA, never data-out. On
+  Windows: `ATA_FLAGS_DATA_IN` for reads and no data flag otherwise,
+  `ATA_FLAGS_48BIT_COMMAND` only for READ LOG EXT, never
+  `ATA_FLAGS_DATA_OUT` or `ATA_FLAGS_USE_DMA`
+  ([`ATA_PASS_THROUGH_EX`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddscsi/ns-ntddscsi-_ata_pass_through_ex)).
+* **Without a directory.** A drive may refuse a log directory. Then
+  the agent reads log 01h only if the SMART data says the drive keeps
+  an error log, and Device Statistics only through a directory that
+  lists it; nothing is tried blind.
+* **Never** SMART ENABLE or DISABLE, self-tests, SCT (which writes a log
+  to send its command), Set Features, a log or page not listed, or
+  anything that writes.
+
+### Deadlines
+*Decided in review.*
+
+A short deadline of EasyRMM's own would do harm: on Linux an admin
+command that times out makes the NVMe driver reset the controller
+("Shutdown the controller immediately and schedule a reset … if this
+is the admin queue", `nvme_timeout` in
+[`pci.c`](https://github.com/torvalds/linux/blob/master/drivers/nvme/host/pci.c)),
+and a disk may need its spin-up time to answer. So:
+
+* **Linux NVMe**: `timeout_ms` 0, which leaves the request the admin
+  queue's own timeout (`nvme_user_cmd` in
+  [`ioctl.c`](https://github.com/torvalds/linux/blob/master/drivers/nvme/host/ioctl.c),
+  `blk_add_timer` in
+  [`blk-timeout.c`](https://github.com/torvalds/linux/blob/master/block/blk-timeout.c)):
+  the `admin_timeout` module parameter, 60 seconds unless an operator
+  changed it ([`core.c`](https://github.com/torvalds/linux/blob/master/drivers/nvme/host/core.c)).
+  smartmontools leaves it there too ("Kernel default for NVMe admin
+  commands is 60 seconds", `os_linux.cpp`).
+* **Linux SATA**: `SG_IO` with 60,000 ms. A timeout of 0 would mean
+  the device's `sg_timeout`, else `BLK_DEFAULT_SG_TIMEOUT`, 60 seconds
+  (`scsi_fill_sghdr_rq` in
+  [`scsi_ioctl.c`](https://github.com/torvalds/linux/blob/master/drivers/scsi/scsi_ioctl.c));
+  the agent states 60 seconds itself, as smartmontools does
+  (`SCSI_TIMEOUT_DEFAULT`, "longer than the spin up time of a disk",
+  [`scsicmds.h`](https://github.com/smartmontools/smartmontools/blob/master/smartmontools/scsicmds.h)).
+* **Windows NVMe**: the query is sent overlapped; after 60 seconds the
+  agent calls
+  [`CancelIoEx`](https://learn.microsoft.com/en-us/windows/win32/fileio/cancelioex-func).
+  Cancelling does not wait and may not take, and the `OVERLAPPED` and
+  buffers must not be freed until the request completes (same page),
+  so they are allocated outside Go's heap and kept until then; each
+  later round checks them with `GetOverlappedResult` without waiting.
+  No goroutine waits on a cancelled query.
+* **Windows ATA**: `TimeOutValue` 60 (seconds,
+  [`ATA_PASS_THROUGH_EX`](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddscsi/ns-ntddscsi-_ata_pass_through_ex)),
+  which the port driver applies. Pass-through must be synchronous, so
+  overlapped I/O is not allowed here: the call runs on a goroutine
+  locked to its thread, and if it has not returned 30 seconds after
+  its timeout the agent calls
+  [`CancelSynchronousIo`](https://learn.microsoft.com/en-us/windows/win32/fileio/cancelsynchronousio-func)
+  on that thread. If the driver still does not return, that one
+  goroutine waits for it; the disk is not asked again meanwhile, so
+  there is at most one per disk.
+* **After a timeout** the disk is *unknown* (`timeout`) and is not
+  asked again for 24 hours, whatever the cause; the readings between
+  say so (`timed_out_recently`), and a *failing* or *warning* disk keeps
+  its level meanwhile (*The five states*). A disk with a call still out
+  is not asked again until that call has returned and the 24 hours
+  have passed.
 
 ### What is read
 *Decided in review.*
 
 | Fact | NVMe | ATA | Judged |
 |---|---|---|---|
-| Verdict | Critical warning bits 0, 2, 3, 4 | SMART RETURN STATUS; attributes against thresholds where status is not returned | Yes: *failing* |
-| Temperature (°C) | Composite temperature | Device Statistics *Current Temperature*, else attribute 194 or 190's low byte | Yes |
-| The drive's temperature limit (°C) | `wctemp` from Identify Controller | Device Statistics *Specified Maximum Operating Temperature* | Used by the temperature rule |
-| Wear (% of rated endurance used) | Percentage used | Device Statistics *Percentage Used Endurance Indicator* | Yes |
+| Verdict | Critical warning, every bit | SMART RETURN STATUS; attributes against thresholds where status is not returned | Yes |
+| Temperature (°C) | Composite temperature, in kelvins | Device Statistics *Current Temperature*, else attribute 194 or 190's low byte | Yes |
+| The drive's temperature limit (°C) | `wctemp` from Identify Controller; 0 means none | Device Statistics *Specified Maximum Operating Temperature* | Used by the temperature rule |
+| Wear (% of rated endurance used) | Percentage used, which may exceed 100 and is 255 above 254 | Device Statistics *Percentage Used Endurance Indicator* | Yes |
 | Available spare and its threshold (%) | Health log | — | Through bit 0 |
 | Media errors | Media and data integrity errors | — | Yes |
 | Reallocated sectors | — | Attribute 5, or Device Statistics' count | Yes |
-| Pending sectors | — | Attribute 197 | Yes |
-| Uncorrectable sectors | — | Attribute 198 | Yes |
-| Reported drive errors | Error information log entries | The summary SMART error log's count (its offset *to be confirmed* against ACS) | Reported |
-| Power-on hours | Health log | Device Statistics, else attribute 9 | Reported |
-| Data written | Data units written | — | Reported |
+| Pending sectors | — | Attribute 197 | Yes, apart from reallocated ones |
+| Uncorrectable sectors | — | Attribute 198 | Yes, with pending ones |
+| Reported drive errors | Number of error information log entries (bytes 191:176) | The summary SMART error log's count, bytes 452–453 | Reported |
+| Power-on hours | Health log | Attribute 9 | Reported |
+| Data written | Data units written, in thousands of 512-byte units | — | Reported |
 | Unsafe shutdowns | Health log | — | Reported |
 | Every attribute | — | ID, flags, value, worst, threshold, raw (48 bits) | Pre-fail ones in the verdict |
 | Model, serial | Identify Controller | IDENTIFY DEVICE | Identity |
@@ -606,6 +842,33 @@ would hide it.
   shows wear as *unsupported* (`not_kept`). Interpreting them later is
   done from each vendor's documents, never from smartmontools' GPL
   database.
+* **NVMe's units**, from the specification (2.0c, figure 207): the
+  composite temperature is "a temperature in Kelvins"; percentage used
+  "is allowed to exceed 100. Percentages greater than 254 shall be
+  represented as 255"; a data unit is "1,000 units of 512 bytes". The
+  critical warning's bit 5 is "the Persistent Memory Region has become
+  read-only or unreliable" and bits 7:6 are reserved; the kernel's
+  `nvme.h` names only bits 0 to 4. A WCTEMP of 0h means "no warning
+  temperature threshold value is reported" (figure 275).
+* **The ATA fallback is partial, and says so.** Where a path does not
+  return RETURN STATUS's registers, the verdict comes from the
+  attribute values against READ ATTRIBUTE THRESHOLDS. That command may
+  be obsolete in current ATA standards (smartmontools' `atacmds.h` says
+  only that some SMART subcommands "are obsolete as of ATA-7", without
+  naming them; which ones is *to be confirmed*), and a drive may not
+  answer it or answer with a bad checksum. Then the verdict is
+  *unknown* (`no_verdict`), never inferred from the attributes alone.
+* **Device Statistics' flags are honoured.** Each statistic is 8 bytes
+  whose top byte holds flags: bit 63 *supported*, bit 62 *valid*. An
+  unsupported statistic is *unsupported* (`not_kept`); a supported one
+  without a valid value is *unknown* (`not_valid`), never 0
+  (`print_device_statistics_page` in
+  [`ataprint.cpp`](https://github.com/smartmontools/smartmontools/blob/master/smartmontools/ataprint.cpp)
+  skips the first and prints the second as "-").
+* **The summary error log's count** is the 16-bit value at bytes 452
+  and 453: after a revision byte, a pointer byte and five 90-byte
+  entries (`struct ata_smart_errorlog` in
+  [`atacmds.h`](https://github.com/smartmontools/smartmontools/blob/master/smartmontools/atacmds.h)).
 * **Firmware** is the inventory's (below), not the report's, so it has
   one source.
 
@@ -620,8 +883,17 @@ numbers.
 | Level | Rule |
 |---|---|
 | *Failing* | NVMe critical warning bit 0 (spare below threshold), 2 (reliability degraded), 3 (read-only) or 4 (volatile memory backup failed); ATA SMART status *threshold exceeded*, or a pre-fail attribute at or below its non-zero threshold |
-| *Warning* | Any reallocated, pending or uncorrectable sector, or any NVMe media error; wear at 90% or more; temperature at or above the drive's own limit, or NVMe critical warning bit 1; an ATA attribute that is not pre-fail at or below its threshold |
+| *Warning* | Any reallocated sector or NVMe media error; any pending or offline-uncorrectable sector; wear at 90% or more; temperature at or above the drive's own limit; NVMe critical warning bit 1 (temperature), bit 5 (persistent memory region) or any bit the specification reserves today; an ATA attribute that is not pre-fail at or below its threshold |
 | *Healthy* | The verdict read, every judged fact the drive keeps read, none of the above |
+
+* **No limit, no limit rule.** A drive that reports no temperature limit
+  (NVMe WCTEMP 0h; ATA without the Device Statistics maximum, or with it
+  not valid) has its temperature *reported*, not judged, by the
+  drive's-own-limit rule; a policy with a temperature in °C still
+  applies to it, and NVMe's own bit 1 still makes it *warning*.
+* **Reserved bits count.** A critical-warning bit the specification
+  reserves today means a newer drive is warning of something; it is
+  *warning*, named by its number, rather than ignored.
 
 ### When it reads
 *Decided in review.*
@@ -631,9 +903,11 @@ numbers.
   temperature alert needs more than one reading (below).
 * **On a goroutine of its own**, not in the heartbeat's loop, so a slow
   disk never delays a heartbeat.
-* **Sleeping disks are not woken.** An ATA disk that CHECK POWER MODE
-  says is in standby is skipped: *unknown* (`asleep`), and the server
-  keeps showing its last values with their time. After 24 hours of
+* **Sleeping disks are not woken.** An ATA disk that Windows'
+  `GetDevicePowerState` says is not working, or that CHECK POWER MODE
+  says is in standby, is skipped: *unknown* (`asleep`), and the server
+  keeps showing its last values with their time (and its level, if it
+  was failing or warning). After 24 hours of
   skipping, the agent reads it once, waking it, so a disk that always
   sleeps (a backup disk) is still checked daily. NVMe drives have no
   spin-up; a read may bring one out of a low-power state for a moment,
@@ -690,11 +964,17 @@ numbers.
 * **The serial gap on Linux**: where `device/serial` is missing, the
   serial comes from `vpd_pg89` (SATA) or `vpd_pg80` (other SCSI), as
   the plan's survey suspected; *to be confirmed* on a real SATA disk.
-* `cleanInventory` keeps the field in the same release; the agent sends
-  it only while its last heartbeat answer was of level 2 or higher
-  (ADR-0009), using the level ADR-0064's slice 1 makes the agent keep.
-  Every device uploads its inventory once after the update, since its
-  document changed.
+* **No protocol level needed.** The server decodes an inventory with
+  `json.Unmarshal` into its own type, which ignores fields it does not
+  know, and hashes the body as sent
+  (`server/internal/inventory/service.go:62-72`); an older server
+  therefore stores the inventory without `firmware` and still matches
+  the agent's hash. `cleanInventory` keeps the field from the release
+  that adds it. The agent sends it to every server.
+* **A one-time upload.** The field changes every device's inventory
+  document, so its hash, once: every device uploads its inventory once
+  after the agent update, within the limit of one in 10 minutes per
+  device (`agentapi.go:76-79`).
 
 ### Data model and retention
 *Decided in review.*
@@ -702,20 +982,29 @@ numbers.
 * **`device_disk_health`**: the latest reading per disk: the device, the
   disk's identity and name, protocol, model and serial, the state, level
   and reason, the facts as JSON, when the agent read it and when the
-  server received it. The disks a report no longer lists are deleted
-  with it (a disk removed or replaced).
+  server received it; and, kept apart so that later readings cannot
+  overwrite them, the level and time of the last complete reading and
+  `missing_since`. A disk a report no longer lists keeps its row,
+  marked missing, until the rule in *Disks that disappear* removes it.
 * **`device_disk_health_samples`**: one row per disk per reading, with
   the state and level, temperature, wear, the error counts and power-on
   hours. Kept at full resolution for `EASYRMM_METRICS_RETENTION` (7
   days by default), then thinned by the hourly purge to one row per
-  disk per day (the day's last, in UTC, with the day's highest
-  temperature), kept for `EASYRMM_HARDWARE_RETENTION`, **730 days by
-  default**, at least 30. Disks wear over years; two years shows a
-  trend and a replacement.
+  disk per day, in UTC, holding **the day's worst level** (a day with
+  one *failing* reading stays *failing*), its highest temperature, and
+  the day's last counts and wear (which only rise, or for pending
+  sectors, are as of the end of the day). Kept for
+  `EASYRMM_HARDWARE_RETENTION`, a duration like the other retentions
+  (`config.go:186-192`), **17520h (730 days) by default**, refused at
+  start below `EASYRMM_METRICS_RETENTION`, as the other minimums are
+  (`config.go:376-388`). Disks wear over years; two years shows a trend
+  and a replacement.
 * **Size**, estimated at about 200 bytes a row with its index: 336 rows
   for the week and 730 for the two years, about 0.2 MiB per disk;
   1,000 devices with two disks about 0.4 GiB. Measured with
-  `tools/agentsim` in slice 1, the numbers in its pull request.
+  `tools/agentsim` in slice 1, the numbers in its pull request. The
+  backups grow by the same amount, since they copy the database: the
+  backup guide states it beside the metrics' share.
 * **Row-level security** as the inventory's: read through the device
   (`00005_inventory.sql:62-68`), written only by the agent API and the
   purge with the system scope.
@@ -727,20 +1016,35 @@ numbers.
 *Decided in review.*
 
 * **A new kind, `disk_health`**, with a **check** per policy, in a new
-  column `check` on policies (`NULL` for the other kinds), copied to
-  the alert:
+  column `check_name` on policies (`NULL` for the other kinds; `check`
+  itself is a reserved word in PostgreSQL), copied to the alert. Every
+  check opens on complete readings only and **resolves only after two
+  complete readings in a row that clear it**, by a margin where the
+  value is a measurement: an hour at the reading interval, as
+  `ResolveWindow` holds a metric alert until 5 minutes below its
+  threshold (`evaluate.go:19-22`).
 
-  | Check | Opens when | Threshold | Default shared policy |
-  |---|---|---|---|
-  | `failing` | The disk's level is *failing* | None | *Disk failing*, critical |
-  | `errors` | Reallocated, pending or uncorrectable sectors, or media errors, at or above the threshold | A count, 1 to 100 | *Disk errors*, 1, warning |
-  | `wear` | Wear at or above the threshold | A percentage, 1 to 100 | *Disk wearing out*, 90, warning |
-  | `temperature` | Every reading in the policy's minutes at or above the threshold, at least two | °C, 1 to 100, or none for the drive's own limit | *Disk too hot*, the drive's limit, 60 minutes, warning |
+  | Check | Opens when | Threshold | Resolves after two complete readings | Default shared policy |
+  |---|---|---|---|---|
+  | `failing` | The reading's level is *failing* | None | Not *failing* | *Disk failing*, critical, **on** |
+  | `errors` | Reallocated sectors plus NVMe media errors at or above the threshold: counts that only rise | A count, 1 to 100 | Below the threshold | *Disk errors*, 1, warning, off |
+  | `pending` | Pending plus offline-uncorrectable sectors at or above the threshold: counts that fall again | A count, 1 to 100 | Below the threshold | *Disk sectors pending*, 1, warning, off |
+  | `wear` | Wear at or above the threshold | A percentage, 1 to 100 | Below the threshold | *Disk wearing out*, 90, warning, off |
+  | `temperature` | Every complete reading in the policy's minutes at or above the threshold, at least two | °C, 1 to 100, or none for the drive's own limit | At least 5 °C below the threshold or limit | *Disk too hot*, the drive's limit, 60 minutes, warning, off |
 
-  The existing threshold column (1 to 100) fits all four; its `CHECK`
+  The existing threshold column (1 to 100) fits all five; its `CHECK`
   that only `offline` has no threshold gains `failing` and the
   temperature check's *drive's own limit*. Minutes apply to temperature
   only (at least 30, the reading interval).
+* **Pending sectors are judged apart** from reallocated ones because
+  they go down: smartd's manual says the count of pending sectors
+  drops "when all pending sectors have been reallocated or could be
+  read again", and that "some disks do not reset this attribute when a
+  bad sector is reallocated" (`-C` and `-U` in
+  [`smartd.conf.5.in`](https://github.com/smartmontools/smartmontools/blob/master/smartmontools/smartd.conf.5.in)).
+  A `pending` alert can therefore resolve; an `errors` or `wear` alert
+  in practice resolves only when its threshold is raised (a policy
+  change) or the disk is replaced (*Disks that disappear*).
 * **One alert per disk.** `alerts_active_key` allows one open alert per
   policy and device (`00006_monitoring.sql:117-118`), so two failing
   disks would share one alert, and acknowledging a worn disk would
@@ -748,28 +1052,49 @@ numbers.
   (the disk's identity, empty for the other kinds), `subject_label`
   ("PhysicalDrive1 · Samsung SSD 870 EVO 1TB") and `detail` ("Pending
   sectors 8, reallocated 0"), and the key becomes (policy, device,
-  subject). The plan left this choice to this ADR for every new kind
+  subject). `subject` is `NOT NULL DEFAULT ''`, so that the other
+  kinds' alerts, whose subject is empty, still allow one per policy
+  and device (a `NULL` would make every row distinct in a unique
+  index); `evaluate.go:75`'s `ON CONFLICT (policy_id, device_id)` names
+  the new key's columns, and `reconcile`'s `policy_changed`
+  (`evaluate.go:127`) also compares `check_name`, so changing a
+  policy's check resolves its alerts as changing its kind does. The
+  plan left this choice to this ADR for every new kind
   ([Notifications](../feature-plan-msp.md#notifications-for-every-new-alert-kind));
   feature 12's detection counted per domain and account needs a subject
   either way. This ADR builds the columns and the key; alerts without a
   device, which feature 12's needs, are that feature's change.
 * **The value** is the count, percentage or temperature that opened the
   alert (1 for `failing`), updated as for other kinds.
-* **Resolving.** A fresh reading where the condition no longer holds
-  resolves it (`cleared`). A disk that a report no longer lists
-  resolves it as `subject_gone`, a new resolution. An *unknown*,
-  *unavailable* or stale reading changes nothing: the alert stays as
-  it is, as metric alerts do without measurements
-  (`evaluate.go:271-273`), and nothing opens on one.
-* **Counters do not go down.** A disk with reallocated sectors keeps
-  them; resolving its alert by hand opens it again at the next
-  evaluation while the count holds. The console says to acknowledge it
-  instead; rising counts are slice 6's degradation alerts.
+* **Resolving.** Two complete readings that clear it resolve an alert
+  (`cleared`). A missing disk's alerts resolve only by hand or by the
+  14-day rule (`subject_gone`, a new resolution added to the `CHECK` at
+  `00006_monitoring.sql:112`; *Disks that disappear*). An *unknown*, *unavailable* or stale reading, or a
+  missing disk, changes nothing: the alert stays as it is, as metric
+  alerts do without measurements (`evaluate.go:271-273`), and nothing
+  opens on one.
+* **Resolving by hand** a present disk's alert while its condition
+  holds opens it again at the next evaluation, as for every kind. For
+  counts that only rise the console says to acknowledge instead; rising
+  counts are slice 6's degradation alerts.
 * **Evaluated in `monitoring.Evaluate`**, each minute, under its lock,
   from `device_disk_health` and the samples, with the policies'
   coverage and reconciliation as for every kind.
-* **Added by a migration** as shared policies, turned on, as migration
-  00006 added the first four (owner question 2).
+* **Added by a migration** as five shared policies, **only *Disk
+  failing* turned on**, the other four added turned off for each MSP
+  to turn on (owner question 2 asks the owner to confirm this
+  default). A failing drive is worth a message everywhere; a single
+  reallocated sector, 90% wear or a warm drive is a judgement each MSP
+  makes. The same migration runs on new installations, so they start
+  the same way.
+  * **Names already taken.** Policy names are unique per scope, case
+    aside (`alert_policies_name_key`, `00006_monitoring.sql:33`), and a
+    super administrator may already have a platform policy called
+    *Disk failing*. Each insert is `ON CONFLICT DO NOTHING`; one that
+    conflicted is tried once more with " (disk health)" appended, again
+    `ON CONFLICT DO NOTHING`. An installation that has both names has
+    chosen its own, and gets no default for that check; the release
+    notes say so.
 
 ### Notifications
 *Decided in review.*
@@ -778,12 +1103,20 @@ numbers.
   this. Its condition filter gains `disk_health`, with the check as a
   second choice ("any", or a list of checks), as ADR-0060 adds `log`
   and its detection.
-* **ADR-0053's incident and `key` gain the subject**: an incident
-  carries over "on the same policy and device, with the same kind" and
-  subject; `key` is the same for every alert of one condition on one
-  device and subject. ADR-0053 is amended so before its slice 4 (device
-  alert rules, the planner and incidents) is built, at the plan's step
-  10, so its planner is built with subjects rather than changed after.
+* **ADR-0053's incident and `key` gain the check and the subject**: an
+  incident carries over "on the same policy and device, with the same
+  kind", check and subject; `key` is the same for every alert of one
+  condition on one device and subject. ADR-0053 is amended so before
+  its slice 4 (device alert rules, the planner and incidents) is built,
+  at the plan's step 10, so its planner is built with subjects rather
+  than changed after; this change adds the dated amendment line to
+  ADR-0053's header.
+* **One item per alert.** ADR-0053's generic webhooks carry every alert,
+  "split into deliveries of at most 100", because "a PSA tool opens a
+  ticket per alert" (ADR-0053, *Digests*). With one alert per disk, a
+  server with three failing disks opens three tickets, one per disk to
+  replace, which is the point; ADR-0053's grouping of a site's outage is
+  unchanged.
 * **Content** follows ADR-0053's rules: the subject label and detail
   are agent text, cleaned, clipped and defanged; no serial number in a
   message (the console shows it).
@@ -810,13 +1143,16 @@ numbers.
 
 * **The Disks card** gains *Firmware* and *Health*: a state with its
   level and reason ("Unavailable: behind a RAID controller"), and when
-  it was read.
+  it was read ("Failing, last read 2 May 14:30"). Missing disks stay on
+  the card, marked so, below the present ones.
 * **A disk's panel**: every fact with its state and reason, the ATA
   attribute table, the last 30 days (highest temperature, wear and
   error counts per day), and the disk's open alerts. Charts are slice 6.
-* **Devices** gains a *Disk health* column, the device's worst disk,
-  and a filter (*Failing*, *Warning*, *Unknown*, *Healthy*, *Not
-  read*), as hardening's.
+* **Devices** gains a *Disk health* column with the device's label,
+  sorting and filter as *A device's disk health* defines them (*Failing*,
+  *Warning*, *Unknown*, *Healthy*, *Unavailable*, *Unsupported*, *Not
+  reported*), as hardening's column and filter are built
+  (`server/internal/devices/devices.go:153-155,223-234`).
 * **The policy form** gains the kind and its check, with the threshold
   each check takes.
 * **Words for every state**, the same in the console and the guide; a
@@ -843,6 +1179,16 @@ numbers.
   acknowledgement would cover disks it was never about.
 * **Waking sleeping disks at every reading**: spins up disks every half
   hour.
+* **A deadline shorter than the kernel's**: on Linux it would reset a
+  slow NVMe controller that the kernel would have waited for.
+* **Overlapped ATA pass-through on Windows**: Microsoft forbids it;
+  `CancelSynchronousIo` is the documented way to stop one.
+* **Commands allowed by opcode**: a Get Log Page or SMART READ LOG can
+  change state depending on its other fields.
+* **Probing USB bridges in slice 1**: some must never get ATA
+  pass-through, and knowing which needs a memory per bridge (slice 9).
+* **Letting age or a missing disk turn *failing* into *unknown***: the
+  disk most likely to die is the one most likely to stop answering.
 * **A switch to turn readings off** in slice 1: no setting reaches the
   agent before ADR-0058; until then an MSP that must stop them holds
   its agents on the build before through ADR-0027's builds by hash.
@@ -855,6 +1201,10 @@ numbers.
   pages are read.
 * **Vendor storage drivers that refuse** the queries leave their disks
   *unavailable*; EasyRMM does not replace drivers.
+* **USB disks** stay *unavailable* until slice 9.
+* **A Windows ATA call the driver never returns** keeps one goroutine
+  per disk waiting; nothing in Windows can free it short of the driver
+  answering.
 * **SMART predicts some failures, not all**: a *healthy* disk can still
   fail without warning. The guide says so.
 * **A hypervisor's disk with a changed model** reads as what it claims.
@@ -868,10 +1218,10 @@ Feature 10, bullet by bullet. Slices are those [below](#slices).
 | Drive temperature | Slice 1 | From the drive, both systems |
 | Drive model and serial number | Exists (inventory); slice 1 | The drive's own identity in the report; Linux's empty SATA serials filled |
 | Drive firmware | Slice 1 | In the inventory, under F1's rule |
-| Reported drive errors | Slice 1 | NVMe error log entries; ATA error log count; reported, judged when rising (slice 6) |
-| Media errors | Slice 1 | NVMe media errors; ATA uncorrectable sectors |
-| Reallocated sectors where available | Slice 1 | ATA; *unsupported* on NVMe |
-| Pending sectors where available | Slice 1 | ATA; *unsupported* on NVMe |
+| Reported drive errors | Slice 1 | NVMe's count of error log entries; ATA's summary error log count; reported, judged when rising (slice 6) |
+| Media errors | Slice 1 | NVMe media errors (`errors` check); ATA uncorrectable sectors (`pending` check) |
+| Reallocated sectors where available | Slice 1 | ATA (`errors` check); *unsupported* on NVMe |
+| Pending sectors where available | Slice 1 | ATA (`pending` check, which can resolve); *unsupported* on NVMe |
 | NVMe health information | Slice 1 | The whole health log |
 | NVMe percentage used | Slice 1 | Judged at 90% |
 | SSD wear indicators | Slice 1 | NVMe percentage used and spare; SATA Device Statistics; vendors' own attributes later |
@@ -894,10 +1244,10 @@ Feature 10, bullet by bullet. Slices are those [below](#slices).
 | Motherboard information | Slice 2 | SMBIOS type 2 |
 | Firmware versions | Exists (BIOS); slice 1 (disks); later | TPM's with feature 8's F1 part; controllers' with slice 8 |
 | **Considerations**: availability varies by maker and model | Every slice | Five states with reasons |
-| SMART not equally available | Slice 1 | Classification of disks |
+| SMART not equally available | Slice 1; slice 9 | Classification of disks; USB bridges in slice 9 |
 | Elevated privileges | Slice 1 | Root and LocalSystem already; what each read needs, above |
 | Distinguish unavailable from failures | Slice 1 | F1's rule |
-| No drive healthy because SMART could not be read | Slice 1 | Healthy only after a complete, checked, recent reading |
+| No drive healthy because SMART could not be read | Slice 1 | Healthy only after a complete, checked, recent reading; a failing or missing disk never fades to *unknown* by age |
 | Track historical health changes | Slice 1; slice 6 | Samples and daily history from slice 1; charts in slice 6 |
 | Alerts for significant degradation | Slice 1; slice 6 | Thresholds now; rising counts and falling capacity in slice 6 |
 
@@ -913,9 +1263,10 @@ this order, each when its inputs exist.
 1. **Disk health, read-only, with F1's first part.** Everything under
    *Decision*: the five states and their encoding, disk firmware in the
    inventory, the readers on both systems, the report and its endpoint,
-   the tables and retention, `disk_health` with its four checks and
-   subjects on alerts, the console's card, panel, column, filter and
-   policy form, and the guide. First because a failing disk is the
+   the tables and retention, `disk_health` with its five checks and
+   subjects on alerts, ADR-0053's amendment, the console's card, panel,
+   column, filter and policy form, and the guide. First because a
+   failing disk is the
    failure most worth predicting, it works on both systems, and it
    needs no driver and nothing from outside. Two pull requests: the
    server, protocol and console (tested with the simulated agent),
@@ -972,9 +1323,11 @@ this order, each when its inputs exist.
    faster than a rate, battery capacity falling); health columns in the
    *Device health* report and a disk report, with CSV (ADR-0029).
 7. **On-demand diagnostics.** *Read now* for one device (a field in the
-   answer to the agent's job poll, as ADR-0064 tells the agent which runs
-   are watched; read at most once in 5 minutes); drive self-tests (SMART short and extended,
-   NVMe device self-test), `chkdsk /scan` and the Windows memory test
+   answer to the agent's job poll, as ADR-0064 tells the agent which
+   runs are watched; read at most once in 5 minutes, and never a disk
+   inside its 24 hours after a timeout); drive self-tests (SMART short
+   and extended, NVMe device self-test), `chkdsk /scan` and the Windows
+   memory test
    as feature 11's maintenance tasks and the plan's F2 job kinds, under
    a permission of their own, recorded, their output under ADR-0063's
    rule. Self-tests write a command to the drive, so they never run on
@@ -1005,27 +1358,44 @@ this order, each when its inputs exist.
    operator installed it. Power supplies and servers' fans and
    temperatures come from here. Its own ADR amendment first: it
    weighs WMI, credentials and which controllers.
+9. **USB disks.** ATA pass-through to USB bridges that take it, with a
+   memory per bridge (its USB vendor and product IDs) of what it
+   answered, so that a bridge that refused or misbehaved once is never
+   asked again, and the Linux kernel's own list honoured: bridges
+   flagged `US_FL_NO_ATA_1X`, "Cannot handle ATA_12 or ATA_16 CDBs",
+   which `uas` and `usb-storage` refuse to pass on
+   ([`usb_usual.h`](https://github.com/torvalds/linux/blob/master/include/linux/usb_usual.h);
+   [`uas.c`](https://github.com/torvalds/linux/blob/master/drivers/usb/storage/uas.c)).
+   On Windows, where EasyRMM knows of no such list, the memory per
+   bridge is the guard. Its own ADR amendment first, on which bridges are tried
+   and how a misbehaving one is recognised.
 
 ## Consequences
 * Technicians see each disk's health, why it is what it is, and its
-  history, on both systems, and are alerted to failing, erroring, worn
-  and hot disks, one alert per disk.
-* Nothing is ever *healthy* because it could not be read; servers show
-  many *unavailable* disks until slice 8.
-* The agent sends read-only ATA and NVMe commands to every disk it
-  classifies as readable, every 30 minutes; a sleeping disk is woken
-  once a day.
+  history, on both systems, and are alerted to failing disks, and,
+  where an MSP turns them on, to erroring, pending, worn and hot ones,
+  one alert per disk.
+* Nothing is ever *healthy* because it could not be read, and a failing
+  or vanished disk never fades from view; servers show many
+  *unavailable* disks until slice 8, USB disks until slice 9.
+* The agent sends a fixed list of read-only ATA and NVMe commands to
+  every disk it classifies as readable, every 30 minutes, with the
+  kernel's timeouts; a sleeping disk is woken once a day, a disk that
+  timed out is left alone for a day.
 * The inventory's disks gain `firmware`, under a rule every new fact
   follows; every device uploads its inventory once after the update.
 * The agent API gains `POST /api/agent/v1/hardware` and a limit per
   device; the server gains two tables, `EASYRMM_HARDWARE_RETENTION`, and
-  about 0.2 MiB per disk at the defaults.
-* Policies gain `disk_health` and `check`; alerts gain `subject`,
-  `subject_label`, `detail` and the resolution `subject_gone`, and
-  `alerts_active_key` includes the subject. ADR-0053's planner keys on
-  the subject; ADR-0060's detections use `check`.
-* Existing installations gain four shared policies on upgrade (owner
-  question 2).
+  about 0.2 MiB per disk at the defaults, in the database and in its
+  backups.
+* Policies gain `disk_health` and `check_name`; alerts gain `check_name`,
+  `subject`, `subject_label`, `detail` and the resolution
+  `subject_gone`, and `alerts_active_key` includes the subject.
+  ADR-0053's incidents and planner key on the check and subject (its
+  header carries the amendment); ADR-0060's detections use
+  `check_name`.
+* Every installation gains five shared policies, only *Disk failing*
+  turned on (owner question 2).
 * Windows paths stay marked unverified until real computers or
   ADR-0054's Windows machines show them.
 
@@ -1035,28 +1405,55 @@ this order, each when its inputs exist.
   it), thresholds, the log directory and Device Statistics pages, the
   summary error log; each from bytes captured from real drives (serial
   numbers replaced) and from QEMU (named as such); truncated and
-  oversized answers refused. The command allow-list refusing every
-  command not on it.
+  oversized answers refused; Device Statistics entries without their
+  *supported* or *valid* flag; NVMe's reserved warning bits and a
+  WCTEMP of 0.
+* **Fuzz tests for every parser** (health log, Identify Controller,
+  IDENTIFY DEVICE, SMART data and thresholds, each log directory,
+  Device Statistics, the summary error log, and the report's server-side
+  decoder), seeded with the captured bytes, as `FuzzVerify` does for
+  Authenticode (`server/internal/agents/authenticode/authenticode_test.go:153`):
+  no input panics or reads past its buffer.
+* **The command list**: a table-driven test that changes each fixed
+  field of each allowed command, one at a time, and sends every opcode,
+  SMART feature, log address and page not listed, and expects each
+  refused before any system call; ATA_12 never built.
 * **Classification**: each bus type, driver, model and answer of the
-  table above to its state and reason, the virtual-machine fallback
-  included.
+  table above to its state and reason, the virtual-machine fallback,
+  USB disks and Windows bus type 8 included.
 * **Server integration tests** in Go against real PostgreSQL
   (`testdb`), no mocks: the endpoint with requests signed by the real
   agent client; cleaning and bounds; every rule of the server's table,
-  each state and level; stale readings becoming *unknown*; a disk
-  dropped by a report deleted and its alert resolved `subject_gone`;
-  two disks giving two alerts, one acknowledged; each check opening and
-  resolving, temperature needing two readings, *unknown* readings
-  changing nothing; the purge thinning to one row a day and removing
-  past retention; row-level security for every role, Read-Only seeing
-  health, another organization seeing nothing; the Devices column and
-  filter; the inventory's `firmware` kept by `cleanInventory`; a level-1
-  heartbeat answer keeping the agent from sending it.
-* **Agent tests**: the reading loop's interval and jitter, the
-  sleeping-disk skip and its daily read, a stuck call's deadline, the
-  404 from an older server dropping the reading.
+  each state and level; a healthy disk's stale reading becoming
+  *unknown* and a failing one staying *failing*, "last read …", through
+  age, timeouts and an offline device; a disk dropped by a report kept
+  as *missing* with its alert open, resolved by hand and staying so, and
+  resolved `subject_gone` only after 14 days and an inventory without
+  it, not after 13 days, not without that inventory; two disks giving
+  two alerts, one acknowledged; each check opening, and resolving only
+  after two clearing readings (temperature 5 °C below), a `pending`
+  alert resolving when the count falls; changing a policy's check
+  resolving its alerts `policy_changed`; *unknown* readings changing
+  nothing; the upgrade migration on a database that already has a
+  platform policy named *Disk failing*, and on one that has both names;
+  the purge thinning to one row a day keeping the day's worst level,
+  and removing past retention; the retention refused below the metrics
+  retention; row-level security for every role, Read-Only seeing
+  health, another organization seeing nothing; the Devices label,
+  sorting and each filter; the inventory's `firmware` kept by
+  `cleanInventory`, and an inventory with `firmware` accepted by the
+  release before's decoder with its hash unchanged.
+* **Agent tests**: the reading loop's interval and jitter; the
+  sleeping-disk skip and its daily read; a stuck call held to its
+  deadline while the other disks and the heartbeat go on; a disk left
+  alone for 24 hours after a timeout; a panicking parser making one disk
+  *unknown*; the 404 from an older server dropping the reading.
 * **Linux machine tests** (`internal/vmtest`), on each image of CI's
-  *Machines* jobs: the harness gains, for this test, an NVMe disk
+  *Machines* jobs, which run on `ubuntu-24.04` and install its
+  `qemu-system-x86` (`.github/workflows/ci.yml:609-631`), version
+  1:8.2.2+ds-0ubuntu1.16 on 2026-11-21
+  ([Ubuntu](https://packages.ubuntu.com/noble/qemu-system-x86)), so
+  QEMU 8.2.2: the harness gains, for this test, an NVMe disk
   (`-device nvme`) and a SATA disk on AHCI (`-device ahci` and
   `ide-hd`), beside its `virtio-blk` disk.
   * With QEMU's own models, the agent reports both *unsupported*
@@ -1067,21 +1464,32 @@ this order, each when its inputs exist.
     paths, as root: the NVMe log's 50 °C and power-on hours; setting
     `smart_critical_warning` to 04h through QMP makes the disk
     *failing* on the server and opens a `failing` alert, and clearing it
-    resolves it; SMART data with a valid checksum, attribute 190's
-    31 °C, a passing status, CHECK POWER MODE's answer, and READ LOG
-    EXT refused, so Device Statistics' facts are *unsupported*.
+    resolves it after two readings; SMART data with a valid checksum,
+    attribute 190's 31 °C, a passing status, CHECK POWER MODE's answer,
+    the summary error log's count through log 01h, and READ LOG EXT
+    refused, so Device Statistics' facts are *unsupported*. QEMU 8.2.2
+    has all of it:
+    `nvme_smart_info` reports 323 K and a settable
+    `smart_critical_warning` property
+    ([`hw/nvme/ctrl.c`](https://github.com/qemu/qemu/blob/v8.2.2/hw/nvme/ctrl.c)),
+    and the IDE model the same SMART commands, attributes and power
+    answer as later versions
+    ([`hw/ide/core.c`](https://github.com/qemu/qemu/blob/v8.2.2/hw/ide/core.c)).
   * What emulation cannot give, a real *failing* ATA disk and non-zero
     wear or media errors, is tested from captured bytes only, and said
-    so. Whether the runners' QEMU has `smart_critical_warning` is *to
-    be confirmed*; the test fails loudly if it does not.
+    so.
 * **CI's Windows runners, as LocalSystem**, in the job ADR-0064 adds (a
   scheduled task, `windows-latest` and `windows-11-arm`): the
   readers on whatever disks the runner has, whose bus and model are
-  printed in the job's log for the pull request; the invariant that no
-  disk is *healthy* without a checked reading and every other state
-  has a reason; no call outlives its deadline; a VHD attached in the
-  job (FileBackedVirtual) reported *unsupported* (whether the runner
-  allows attaching one is *to be confirmed*).
+  printed in the job's log for the pull request. The test **fails
+  unless at least one disk was actually read through an IOCTL** (NVMe
+  or ATA) or refused by its driver with the refusal recorded, so that a
+  classification that skipped everything cannot pass; and it checks the
+  invariant that no disk is *healthy* without a checked reading and
+  every other state has a reason, and that no call outlives its
+  deadline. A VHD attached in the job (FileBackedVirtual) is reported
+  *unsupported* (whether the runner allows attaching one is *to be
+  confirmed*).
 * **Windows machines under KVM**, when ADR-0054's W1 builds them: QEMU's
   NVMe and AHCI disks under Windows' own `stornvme` and `storahci`, read
   through both IOCTLs: stand-ins for real drives, named so.
@@ -1107,15 +1515,14 @@ this order, each when its inputs exist.
    real reallocated or pending sectors if one exists, since emulation
    cannot make a failing ATA disk. Until then the Windows and real-disk
    paths stay unverified.
-2. **The new policies on upgrade.** Slice 1 adds four shared
-   `disk_health` policies, turned on, to every existing installation,
-   as migration 00006 did for new ones. With ADR-0053 built, rules
-   whose condition filter is *any* will then notify about disks with,
-   for example, a single reallocated sector. On, as decided in review,
-   or added turned off for each MSP to turn on?
+2. **The new policies' default: confirm.** Slice 1 adds five shared
+   `disk_health` policies to every installation, and, as decided in
+   review, turns on only *Disk failing*; *Disk errors*, *Disk sectors
+   pending*, *Disk wearing out* and *Disk too hot* are added turned
+   off. With ADR-0053 built, a rule whose condition filter is *any*
+   then notifies about failing disks everywhere, and about the rest only
+   where an MSP turns them on. Confirm this default, or turn more on.
 3. **No kernel driver** (the plan's question 10, decided in review, to
    confirm or overturn): processor temperatures on Windows stay
    *unavailable* (slice 5), because the tools that show them load a
    ring-0 driver.
-</content>
-</invoke>
