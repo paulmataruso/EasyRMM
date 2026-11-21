@@ -677,6 +677,10 @@ jobs:
       attestations: write
     outputs:
       deploy-digest: ${{ steps.existing.outputs.digest || steps.deploy.outputs.digest }}
+    # bash with -o pipefail: a command that fails in a pipeline fails the step.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -698,19 +702,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       # Before anything is pushed or attested: the manifest names this
-      # version, this commit and the image the tests ran, and the bundle is
-      # the one it names.
+      # version, this commit and the image the tests ran, as easyrmm.image
+      # and as the only easyrmm-server image among its images, and the
+      # bundle is the one it names.
       - name: The manifest and bundle are this build's
         env:
           VERSION: ${{ needs.version.outputs.version }}
           DIGEST: ${{ needs.docker.outputs.digest }}
         run: |
-          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-server:${VERSION#v}@$DIGEST"
-          if ! jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" --arg image "$image" '
+          repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-server"
+          image="$repo:${VERSION#v}@$DIGEST"
+          if ! jq -e --arg version "$VERSION" --arg commit "$GITHUB_SHA" --arg repo "$repo" --arg image "$image" '
             .schemaVersion == 2 and .version == $version and .commit == $commit and
-            .easyrmm.version == $version and .easyrmm.image == $image and any(.images[]; . == $image)' \
+            .easyrmm.version == $version and .easyrmm.image == $image and
+            [.images[] | select(sub("@.*$"; "") | sub(":[^:/]*$"; "") == $repo)] == [$image]' \
             "dist/edge/easyrmm-$VERSION-manifest.json" > /dev/null; then
-            echo "::error::the manifest is not of $VERSION, $GITHUB_SHA and $image"
+            echo "::error::the manifest is not of $VERSION, $GITHUB_SHA and $image, the one easyrmm-server image it names"
             exit 1
           fi
           scripts/release/check-bundle.sh dist/edge "$VERSION"
@@ -729,7 +736,7 @@ jobs:
               echo "::error::$image:${VERSION#v} is $pushed already, not this run's $DIGEST: re-run all jobs (a new attempt is a new version)"
               exit 1
             fi
-          elif ! grep -q 'not found' "$RUNNER_TEMP/resolve.err"; then
+          elif [ "$(< "$RUNNER_TEMP/resolve.err")" != "Error response from registry: failed to resolve digest: $image:${VERSION#v}: not found" ]; then
             cat "$RUNNER_TEMP/resolve.err" >&2
             exit 1
           fi
@@ -749,12 +756,15 @@ jobs:
           push-to-registry: true
       # Published already by this run, the same bundle and manifest (a run
       # again of failed jobs): kept, with its Sigstore bundle. Anything else
-      # under this version is refused. Before the first push the package does
-      # not exist, which ghcr.io may answer as denied rather than not found;
-      # a token that may push may read, so denied means not there.
+      # under this version is refused. Not published: oras's answer for a
+      # missing tag, exactly. Before easyrmm-deploy's first version ghcr.io
+      # answers for the package as for one the token may not read, denied;
+      # that counts only while GitHub's API answers that it has no such
+      # package.
       - name: Is this version published already?
         id: existing
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           deploy="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-deploy"
@@ -767,10 +777,15 @@ jobs:
               echo "::error::$deploy:$VERSION is published already, of another commit or with another bundle or manifest: re-run all jobs (a new attempt is a new version)"
               exit 1
             fi
+            digest="sha256:$(sha256sum < "$RUNNER_TEMP/existing.json" | cut -c1-64)"
             echo "::notice::$deploy:$VERSION is published already, with this bundle and manifest: kept."
-            echo "digest=sha256:$(sha256sum < "$RUNNER_TEMP/existing.json" | cut -c1-64)" >> "$GITHUB_OUTPUT"
-          elif grep -q 'not found\|denied' "$RUNNER_TEMP/fetch.err"; then
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          elif [ "$(< "$RUNNER_TEMP/fetch.err")" = "Error response from registry: failed to fetch the content of \"$deploy:$VERSION\": $deploy:$VERSION: not found" ]; then
             echo "$deploy:$VERSION is not published yet."
+          elif [ "$(< "$RUNNER_TEMP/fetch.err")" = "Error response from registry: denied: requested access to the resource is denied" ] &&
+            ! gh api "/users/${GITHUB_REPOSITORY_OWNER,,}/packages/container/easyrmm-deploy" > /dev/null 2> "$RUNNER_TEMP/api.err" &&
+            [ "$(< "$RUNNER_TEMP/api.err")" = "gh: Package not found. (HTTP 404)" ]; then
+            echo "easyrmm-deploy has no versions yet: $VERSION is its first."
           else
             cat "$RUNNER_TEMP/fetch.err" >&2
             exit 1
@@ -804,7 +819,12 @@ jobs:
             "easyrmm-$VERSION-deploy.tar.gz:application/vnd.easyrmm.deploy.bundle.v1.tar+gzip" \
             "$manifest:application/vnd.easyrmm.deploy.manifest.v1+json" \
             "$manifest.sigstore.json:$sigstore"
-          echo "digest=$(oras resolve "$deploy:$VERSION")" >> "$GITHUB_OUTPUT"
+          digest=$(oras resolve "$deploy:$VERSION")
+          if ! [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::$deploy:$VERSION resolves to \"$digest\", not a digest"
+            exit 1
+          fi
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
   # The published build as the updater will take it (ADR-0052, Verification):
   # pulled by the digest Move edge tags, which its version names too, the
@@ -821,6 +841,10 @@ jobs:
     permissions:
       contents: read
       packages: read
+    # bash with -o pipefail: a command that fails in a pipeline fails the step.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -846,8 +870,10 @@ jobs:
           server="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-server"
           manifest="easyrmm-$VERSION-manifest.json"
           workflow="https://github.com/$GITHUB_REPOSITORY/.github/workflows/ci.yml@refs/heads/main"
-          if [ "$(oras resolve "$deploy:$VERSION")" != "$DEPLOY_DIGEST" ] || [ "$(oras resolve "$server:${VERSION#v}")" != "$DIGEST" ]; then
-            echo "::error::$deploy:$VERSION or $server:${VERSION#v} is not what publish pushed ($DEPLOY_DIGEST, $DIGEST)"
+          deploy_tagged=$(oras resolve "$deploy:$VERSION")
+          server_tagged=$(oras resolve "$server:${VERSION#v}")
+          if [ "$deploy_tagged" != "$DEPLOY_DIGEST" ] || [ "$server_tagged" != "$DIGEST" ]; then
+            echo "::error::$deploy:$VERSION is $deploy_tagged and $server:${VERSION#v} $server_tagged, not what publish pushed ($DEPLOY_DIGEST, $DIGEST)"
             exit 1
           fi
           oras manifest fetch "$deploy@$DEPLOY_DIGEST" | jq -e --arg v "$VERSION" --arg commit "$GITHUB_SHA" '
@@ -879,15 +905,19 @@ jobs:
             echo "$image is published"
           done
 
-  # Moves edge to this build once it is verified, only ever to a higher
-  # version: an older run, run again, leaves it. The server image first, then
-  # the bundle the updater follows, so that easyrmm-deploy:edge never names
-  # an image easyrmm-server:edge is not; a run again after the server's tag
-  # moved and the bundle's did not moves both, and one after both moved
-  # makes sure the server's names this build. One run at a time, so that no
-  # other run moves edge between the check and the move. GitHub keeps one
-  # run waiting: a later one cancels the one that waited, which would most
-  # often have been older anyway.
+  # Moves edge to this build once it is verified, each tag only ever to a
+  # higher version: an older run, run again, leaves them. The server image's
+  # tag first, then the bundle's, which the updater follows. The two can
+  # name different builds: between the two tags, for good if the second
+  # fails, and when easyrmm-server:edge names a higher version already (a
+  # later run that stopped before the bundle's tag). Nothing depends on
+  # their agreeing: the updater takes the server image by the digest the
+  # bundle's manifest names, and retention keeps every image a kept
+  # easyrmm-deploy version names. A run again whose bundle is edge already
+  # tags its image easyrmm-server:edge, under the same rule. One run at a
+  # time, so that no other run moves edge between the check and the move.
+  # GitHub keeps one run waiting: a later one cancels the one that waited,
+  # which would most often have been older anyway.
   edge-tag:
     name: Move edge
     needs: [version, docker, publish, edge-test]
@@ -900,6 +930,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+    # bash with -o pipefail: a command that fails in a pipeline fails the step.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -921,14 +955,41 @@ jobs:
         run: |
           deploy="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-deploy"
           server="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/easyrmm-server"
+          # Tags this build's image easyrmm-server:edge, unless the image
+          # there reports a higher version (its version label; an image
+          # without a version, as the builds before edge versions, is moved).
+          tag_server() {
+            local tagged config labelled status
+            if tagged=$(oras resolve "$server:edge" 2> "$RUNNER_TEMP/resolve.err"); then
+              [ "$tagged" != "$IMAGE_DIGEST" ] || return 0
+              oras manifest fetch --platform linux/amd64 --output "$RUNNER_TEMP/tagged.json" "$server@$tagged"
+              config=$(jq -r .config.digest "$RUNNER_TEMP/tagged.json")
+              labelled=$(oras blob fetch --output - "$server@$config" | jq -r '.config.Labels["org.opencontainers.image.version"] // ""')
+              status=0
+              scripts/release/version.sh newer "$labelled" "$VERSION" 2> "$RUNNER_TEMP/newer.err" || status=$?
+              if [ "$status" -eq 0 ]; then
+                echo "::notice::easyrmm-server:edge stays at $labelled, which ranks above $VERSION."
+                return 0
+              elif [ "$status" -ne 1 ] &&
+                [ "$(< "$RUNNER_TEMP/newer.err")" != "version: \"$labelled\" is not a version like v1.2.3 or v1.2.3-rc.1" ]; then
+                cat "$RUNNER_TEMP/newer.err" >&2
+                return "$status"
+              fi
+            elif [ "$(< "$RUNNER_TEMP/resolve.err")" != "Error response from registry: failed to resolve digest: $server:edge: not found" ]; then
+              cat "$RUNNER_TEMP/resolve.err" >&2
+              return 1
+            fi
+            oras tag "$server@$IMAGE_DIGEST" edge
+          }
           if oras manifest fetch --output "$RUNNER_TEMP/edge.json" "$deploy:edge" 2> "$RUNNER_TEMP/fetch.err"; then
             current=$(jq -r '.annotations["org.opencontainers.image.version"] // ""' "$RUNNER_TEMP/edge.json")
             status=0
             scripts/release/version.sh newer "$VERSION" "$current" || status=$?
             if [ "$status" -eq 1 ]; then
-              if [ "sha256:$(sha256sum < "$RUNNER_TEMP/edge.json" | cut -c1-64)" = "$DEPLOY_DIGEST" ]; then
-                oras tag "$server@$IMAGE_DIGEST" edge
-                echo "edge is $VERSION already; easyrmm-server:edge is its image."
+              edge_digest="sha256:$(sha256sum < "$RUNNER_TEMP/edge.json" | cut -c1-64)"
+              if [ "$edge_digest" = "$DEPLOY_DIGEST" ]; then
+                tag_server
+                echo "edge is $VERSION already."
               else
                 echo "::notice::edge stays at $current, which ranks above or equal to $VERSION."
               fi
@@ -936,12 +997,12 @@ jobs:
             elif [ "$status" -ne 0 ]; then
               exit "$status"
             fi
-          elif grep -q 'not found' "$RUNNER_TEMP/fetch.err"; then
+          elif [ "$(< "$RUNNER_TEMP/fetch.err")" = "Error response from registry: failed to fetch the content of \"$deploy:edge\": $deploy:edge: not found" ]; then
             echo "Nothing is tagged edge yet."
           else
             cat "$RUNNER_TEMP/fetch.err" >&2
             exit 1
           fi
-          oras tag "$server@$IMAGE_DIGEST" edge
+          tag_server
           oras tag "$deploy@$DEPLOY_DIGEST" edge
           echo "edge is $VERSION."
