@@ -98,6 +98,11 @@ type Disk struct {
 	// Kind is ssd, hdd, nvme or empty when unknown.
 	Kind      string `json:"kind"`
 	Removable bool   `json:"removable"`
+	// Firmware is the drive's firmware revision, a fact with its state
+	// (ADR-0065): fields added from that ADR on say why they are empty,
+	// where the fields above are left empty when unread. nil from agents
+	// older than it.
+	Firmware *TextFact `json:"firmware,omitempty"`
 }
 
 // Interface is a network interface other than loopback.
