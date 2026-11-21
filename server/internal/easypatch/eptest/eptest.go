@@ -30,7 +30,7 @@ const StatusCanceled = "Cancelled" //nolint:misspell // EasyPatch's enum value
 
 // EngineVersion is the version the server reports: <Version> in
 // easypatch/Directory.Build.props, the engine EasyRMM ships with.
-const EngineVersion = "1.12.0"
+const EngineVersion = "1.12.1"
 
 // Server is a fake patching engine: plain HTTP on loopback, as in
 // EasyRMM's deployment. Change its state inside Set.

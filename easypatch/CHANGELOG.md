@@ -5,6 +5,10 @@ and the agents share one version number.
 
 ## [Unreleased]
 
+## [1.12.1] - 2026-11-21
+
+Released with EasyRMM 1.0.0-rc.4. No changes to the engine or its agents.
+
 ## [1.12.0] - 2026-11-21
 
 Released with EasyRMM 1.0.0-rc.3.

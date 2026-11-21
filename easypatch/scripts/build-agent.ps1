@@ -4,8 +4,8 @@
   Builds and tests the EasyPatch agent and, on Windows, produces the MSI installer(s).
 
 .EXAMPLE
-  pwsh scripts/build-agent.ps1 -Version 1.12.0
-  pwsh scripts/build-agent.ps1 -Version 1.12.0 -Architecture x64,arm64 -RequireSigning -RequireReleaseKey
+  pwsh scripts/build-agent.ps1 -Version 1.12.1
+  pwsh scripts/build-agent.ps1 -Version 1.12.1 -Architecture x64,arm64 -RequireSigning -RequireReleaseKey
 
 .NOTES
   The release public key (EASYPATCH_RELEASE_PUBLIC_KEY, default ~/.easypatch/easypatch-release-key.pub.pem) is built
@@ -14,7 +14,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidatePattern('^\d{1,3}\.\d{1,3}\.\d{1,5}$')][string]$Version = '1.12.0',
+    [ValidatePattern('^\d{1,3}\.\d{1,3}\.\d{1,5}$')][string]$Version = '1.12.1',
     [ValidateSet('x64', 'arm64')][string[]]$Architecture = @('x64'),
     [switch]$SkipTests,
     [switch]$SkipInstaller,
