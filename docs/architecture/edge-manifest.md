@@ -48,6 +48,12 @@ tag) CI verifies before using it. Until R's GitHub release exists (its
 workflow still running, or failed), CI does not test against R's engine and
 nothing is published.
 
+Every push to `main` that builds the server image is published, once every
+other CI job passed. A push that changes only EasyPatch (`easypatch/` and
+its workflows) builds none and publishes nothing: an edge build runs R's
+engine, not `main`'s, so it would be the previous build again. A run that
+fails publishes nothing; its version is never used.
+
 ## The OCI artifact
 
 One OCI image manifest (OCI 1.1, pushed with `oras push`):
@@ -179,9 +185,12 @@ sha256sum "$(jq -r .bundle.file "$m")"   # equals the manifest's bundle.sha256
 
 ## Retention
 
-`.github/workflows/edge-retention.yml`, daily: from `easyrmm-deploy`, every
+`.github/workflows/edge-retention.yml`, daily
+(`scripts/release/edge-retention.sh`): from `easyrmm-deploy`, every
 version older than 30 days that `edge` does not name; from
 `easyrmm-server`, every edge image older than 30 days (all its tags edge
 versions or `sha-<commit>`, none `edge`), with its platform and attestation
-manifests and its `sha256-<digest>` attestations. Release images, and
-whatever `edge` names, are never deleted.
+manifests and its `sha256-<digest>` attestations, except a manifest that a
+kept image also names. Release images, and whatever `edge` names, are never
+deleted. An updater that runs an edge build older than 30 days still has it
+running; it cannot pull it again.

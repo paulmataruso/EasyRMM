@@ -31,8 +31,9 @@ choose updates by version: `<Version>` in `easypatch/Directory.Build.props`,
 1.10.0 and up. A version is published once. A release whose engine version
 was already published from another commit fails before anything is signed,
 so **every EasyRMM release raises `<Version>`**, sets the same version in
-`eptest.EngineVersion` (`server/internal/easypatch/eptest/eptest.go`; the
-contract test fails until they match), and moves
+`eptest.EngineVersion` (`server/internal/easypatch/eptest/eptest.go`;
+`TestEngineVersion` in `server/internal/easypatch` fails until they match),
+and moves
 `easypatch/CHANGELOG.md`'s `[Unreleased]` entries under `## [1.10.1] -
 YYYY-MM-DD`. Running a failed release again for the same commit is allowed.
 
@@ -83,6 +84,12 @@ Done once per repository, before the first release:
    To change one later, edit its file here, then run `gh api -X PUT
    repos/paulmataruso/EasyRMM/rulesets/<id> --input <file>`. Nothing reads
    these files except that command.
+5. After the first edge build is published ([below](#edge-builds)),
+   `ghcr.io/paulmataruso/easyrmm-deploy` public, as in step 3: CI creates
+   it private. In its settings, and in `easyrmm-server`'s, **Manage Actions
+   access** must list `paulmataruso/EasyRMM` with the role **Admin** for
+   the retention workflow to delete old versions; a package that this
+   repository's workflow created has it already. Both only in the browser.
 
 ## Cutting a release
 
@@ -120,8 +127,12 @@ Done once per repository, before the first release:
       `ghcr.io/paulmataruso/easypatch-server` with an SBOM, build
       provenance, the commit recorded, and a GitHub attestation;
    7. builds the release files with `scripts/release/bundle.sh`, with the
-      engine pinned by digest, attests them, and creates the GitHub release
-      with the changelog's notes and the engine's version.
+      engine pinned by digest; checks the bundle against its manifest
+      (`scripts/release/check-bundle.sh`) and the agents against the server
+      image's (`scripts/release/check-agents.sh`: the same bytes, which
+      ADR-0049's signed agents need); attests them, and creates the GitHub
+      release with the changelog's notes, the engine's version, and the
+      Sigstore bundle of the attestation beside the manifest.
 
 If any step fails, nothing after it runs. No image is pushed until every
 test has passed. The engine's images are pushed first under
@@ -134,14 +145,65 @@ environment's key, so that environment's deployment rule must admit
 the tag and the draft release (if any), then tag again. Never move a
 published tag.
 
+## Edge builds
+
+Every build of `main` is also a version, published once every CI job
+passed ([ADR-0052](../architecture/adr/0052-the-host-updater.md); names,
+fields and layout in
+[Edge builds and the release manifest](../architecture/edge-manifest.md)):
+
+* **Its version** comes from the last release tag reachable,
+  `scripts/release/version.sh edge <run> <attempt>`: `v1.0.0-rc.4.edge.412.1`
+  after a release candidate, `v1.0.1-edge.415.1` after a release. CI's
+  first job, **Edge version**, computes it for every run, pull requests
+  included.
+* **The server image is built once**, for amd64 and arm64, as that
+  version (`docker-build.yml`). The smoke test and the end-to-end jobs run
+  that image, and for `main` the publish job pushes it unchanged.
+* **The engine is the last release's**, by digest, from that release's
+  manifest once its attestation verifies. The contract and bundle tests
+  run against it as well as against the engine built from the commit, and
+  the edge bundle and manifest are built and checked as the updater will
+  check them (`check-bundle.sh`, `check-agents.sh`). Until the last
+  release's GitHub release exists, these jobs are skipped and nothing is
+  published.
+* **Publishing**, only for a push to `main` in this repository and after
+  every other job, pushes the server image (`easyrmm-server:<version
+  without v>` and `sha-<commit>`) with a GitHub attestation, attests the
+  manifest, and pushes `easyrmm-deploy:<version>`: the bundle, the
+  manifest and the manifest's Sigstore bundle (`oras`). Then **Edge build
+  verified** pulls it back and verifies it as the updater will, and
+  **Move edge** tags both `edge`, only ever to a higher version. ADR-0052
+  also has that test upgrade the previous edge build to this one; that
+  joins it with the updater.
+* **Retention**: `edge-retention.yml` deletes edge builds older than 30
+  days, daily. Run it by hand (**Run workflow**) for a dry run listing what
+  it would delete.
+
+Pull requests run everything up to publishing: the version, the image,
+the tests against both engines, and the edge bundle and manifest, with
+the image's digest as it would be pushed. Nothing is pushed or attested.
+
+To check the newest edge build by hand:
+
+```bash
+oras pull ghcr.io/paulmataruso/easyrmm-deploy:edge
+m=$(ls easyrmm-*-manifest.json)
+gh attestation verify "$m" --bundle "$m.sigstore.json" --repo paulmataruso/EasyRMM \
+  --cert-identity https://github.com/paulmataruso/EasyRMM/.github/workflows/ci.yml@refs/heads/main \
+  --source-ref refs/heads/main --source-digest "$(jq -r .commit "$m")" --deny-self-hosted-runners
+scripts/release/check-bundle.sh . "$(jq -r .version "$m")"
+```
+
 ## What a release contains
 
 | File | Contents |
 |---|---|
-| `easyrmm-v1.2.3-deploy.tar.gz` | In the repository's layout (`scripts/release/deploy-tree.sh`): `deploy/` (`docker-compose.yml` with the patching engine pinned by digest, `.env.example` pinned to this release's image, `scripts/setup.sh`), the PostgreSQL and MeshCentral start scripts the Compose file mounts from `docker/`, the deployment, agent, backup and upgrade guides, `LICENSE` and `CHANGELOG.md`. `bundle.sh` refuses to build a bundle that lacks a file the Compose file mounts, or whose engine is not pinned |
-| `easyrmm-v1.2.3-manifest.json` | The commit, EasyRMM's version and image digest, the engine's version and image digest, and the name and SHA-256 of each EasyPatch agent package the engine's image carries |
+| `easyrmm-v1.2.3-deploy.tar.gz` | In the repository's layout (`scripts/release/deploy-tree.sh`): `deploy/` (`docker-compose.yml` with every image pinned by digest, `.env.example` pinned to this release's image by tag and digest, `scripts/setup.sh`), the PostgreSQL and MeshCentral start scripts the Compose file mounts from `docker/`, the deployment, agent, backup and upgrade guides, `LICENSE` and `CHANGELOG.md`. `bundle.sh` refuses to build a bundle that lacks a file the Compose file mounts, or whose engine is not pinned |
+| `easyrmm-v1.2.3-manifest.json` | Schema version 2 ([fields](../architecture/edge-manifest.md#the-manifest)): the version and commit, the bundle's name and SHA-256, EasyRMM's and the engine's versions and images by digest, the EasyPatch agent packages the engine's image carries, PostgreSQL's major version and image, MeshCentral's image, whether Authentik is included and its image, and every image the bundle runs |
+| `easyrmm-v1.2.3-manifest.json.sigstore.json` | The Sigstore bundle of the release's attestation, to verify the manifest without GitHub's API |
 | `easyrmm-agent-<os>-<arch>[.exe]` | The agents for Windows (amd64, arm64) and Linux (amd64, arm64, arm, 386). The server image carries the same agents and serves them to devices; these are for inspection and offline installs |
-| `SHA256SUMS` | Checksums of the files above |
+| `SHA256SUMS` | Checksums of the files above but the Sigstore bundle, which is made after them |
 
 The files are reproducible. Given the same commit, Go version and the image
 pins from the release's manifest,
@@ -160,6 +222,9 @@ that a release matches its source.
 ```bash
 sha256sum -c SHA256SUMS
 gh attestation verify easyrmm-v1.2.3-deploy.tar.gz --repo paulmataruso/easyrmm
+gh attestation verify easyrmm-v1.2.3-manifest.json --bundle easyrmm-v1.2.3-manifest.json.sigstore.json \
+  --repo paulmataruso/EasyRMM --source-ref refs/tags/easyrmm-v1.2.3 \
+  --cert-identity https://github.com/paulmataruso/EasyRMM/.github/workflows/release.yml@refs/tags/easyrmm-v1.2.3
 gh attestation verify oci://ghcr.io/paulmataruso/easyrmm-server:1.2.3 --repo paulmataruso/easyrmm
 gh attestation verify oci://ghcr.io/paulmataruso/easypatch-server:1.10.1 --repo paulmataruso/easyrmm
 ```

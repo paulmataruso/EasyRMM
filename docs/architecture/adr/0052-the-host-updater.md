@@ -1,6 +1,11 @@
 # ADR-0052: Upgrading EasyRMM with an updater on the host
 
-* Status: Accepted (2026-11-21, revised after review). Not implemented yet.
+* Status: Accepted (2026-11-21, revised after review). Publishing
+  implemented: edge builds of `main`, manifest schema 2 and the manifests'
+  Sigstore bundles ([details](../edge-manifest.md)). The updater not yet;
+  until it exists, the test on `main` verifies each published build as the
+  updater will before `edge` moves, and the upgrade from the previous edge
+  build ([Testing](#testing)) joins it with the updater.
 * Builds on: [releasing](../../development/releasing.md) (releases, their
   attestations and manifest), [ADR-0027](0027-agent-updates.md) (agent
   updates), [ADR-0044](0044-authentik-when-chosen.md) (Authentik's files)

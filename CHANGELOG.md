@@ -43,6 +43,30 @@ All notable changes to this project are documented here. The format follows
   directories under `.env`'s data root (rerunning `setup.sh` without
   `--data-root` used the default one), and issues no Authentik invitation.
   The upgrade guide now uses it (ADR-0052).
+- **Edge builds.** Every build of `main` that passes CI is published as a
+  version: `v1.0.0-rc.4.edge.412.1` after a release candidate,
+  `v1.0.1-edge.415.1` after a release. The server image the tests ran is
+  pushed unchanged as `easyrmm-server:<version>`, and the bundle, its
+  manifest and the manifest's Sigstore bundle as the OCI artifact
+  `ghcr.io/paulmataruso/easyrmm-deploy:<version>`; `edge` moves to the
+  newest once it verifies. An edge build runs the last release's patching
+  engine, so CI also runs the contract and bundle tests against it. Edge
+  builds older than 30 days are deleted (ADR-0052;
+  `docs/architecture/edge-manifest.md`).
+- **The release manifest names everything a deployment runs**: schema
+  version 2 adds the bundle's SHA-256, every image by digest, PostgreSQL's
+  major version and Authentik. A release also publishes the Sigstore
+  bundle of its attestation beside the manifest, so that verifying needs
+  no GitHub API.
+
+### Changed
+
+- **CI builds the server image once.** The Docker job builds it for amd64
+  and arm64, as the run's version, and the smoke test and end-to-end tests
+  run that image; it is no longer rebuilt and pushed on every push to
+  `main` before the other checks finish.
+- **Releases check their agents against the server image's**, byte for
+  byte, and the bundle against its manifest, before attesting.
 
 ### Fixed
 
