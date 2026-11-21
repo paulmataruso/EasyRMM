@@ -1,7 +1,12 @@
 # ADR-0017: Scripts and jobs
 
 * Status: Accepted (2026-11-16). Phases ADR-0009's job delivery: signed
-  HTTPS long polling now, the WebSocket channel later.
+  HTTPS long polling now, the WebSocket channel later. Amended by
+  [ADR-0063](0063-who-sees-job-output-and-arguments.md): a run's output and
+  a job's argument values need `job.view_sensitive` and come from endpoints
+  of their own, each read audited; output is kept for
+  `EASYRMM_JOB_OUTPUT_RETENTION` (30 days by default) and can be removed at
+  once.
 
 ## Context
 Phase 7 brings automation: technicians run scripts on devices and read what

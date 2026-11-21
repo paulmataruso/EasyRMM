@@ -63,6 +63,32 @@ func TestDefaults(t *testing.T) {
 	}
 }
 
+// TestJobOutputRetention: 30 days, or the job retention when that is
+// shorter, unless set (ADR-0063).
+func TestJobOutputRetention(t *testing.T) {
+	for _, tc := range []struct {
+		jobs, output string
+		want         time.Duration
+	}{
+		{"", "", 30 * 24 * time.Hour},
+		{"", " ", 30 * 24 * time.Hour},
+		{"240h", "", 240 * time.Hour},
+		{"24h", "", 24 * time.Hour},
+		{"", "48h", 48 * time.Hour},
+		{"240h", "240h", 240 * time.Hour},
+		{"", "2160h", 2160 * time.Hour},
+	} {
+		m := base()
+		if tc.jobs != "" {
+			m["EASYRMM_JOB_RETENTION"] = tc.jobs
+		}
+		m["EASYRMM_JOB_OUTPUT_RETENTION"] = tc.output
+		if c, err := LoadFrom(env(m), noFiles); err != nil || c.JobOutputRetention != tc.want {
+			t.Errorf("jobs %q, output %q: %v", tc.jobs, tc.output, err)
+		}
+	}
+}
+
 func TestMissingRequiredValuesAreAllReported(t *testing.T) {
 	_, err := LoadFrom(env(map[string]string{}), noFiles)
 	if err == nil {
@@ -90,6 +116,8 @@ func TestRejectsUnsafeOrInvalidValues(t *testing.T) {
 		"max age below idle":       {"EASYRMM_SESSION_IDLE_TIMEOUT": "3h", "EASYRMM_SESSION_MAX_AGE": "2h"},
 		"short audit retention":    {"EASYRMM_AUDIT_RETENTION": "24h"},
 		"short job retention":      {"EASYRMM_JOB_RETENTION": "1h"},
+		"short output retention":   {"EASYRMM_JOB_OUTPUT_RETENTION": "1h"},
+		"output past jobs":         {"EASYRMM_JOB_RETENTION": "240h", "EASYRMM_JOB_OUTPUT_RETENTION": "241h"},
 		"short metrics retention":  {"EASYRMM_METRICS_RETENTION": "2h"},
 		"short alert retention":    {"EASYRMM_ALERT_RETENTION": "2h"},
 		"hardware below metrics":   {"EASYRMM_METRICS_RETENTION": "720h", "EASYRMM_HARDWARE_RETENTION": "240h"},

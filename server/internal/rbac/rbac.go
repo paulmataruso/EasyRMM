@@ -21,26 +21,29 @@ type Permission string
 
 // Permissions. Keep this list in sync with docs/security/rbac.md.
 const (
-	PermOrgView        Permission = "org.view"
-	PermOrgManage      Permission = "org.manage"    // edit an organization, create sites in it
-	PermOrgCreate      Permission = "org.create"    // create and delete organizations (platform-wide)
-	PermSiteView       Permission = "site.view"     //
-	PermSiteManage     Permission = "site.manage"   // edit a site and its device groups
-	PermDeviceView     Permission = "device.view"   //
-	PermDeviceEdit     Permission = "device.edit"   // rename, move between groups, tags, custom fields
-	PermDeviceRetire   Permission = "device.retire" // revoke credentials, uninstall, delete
-	PermRemoteDesktop  Permission = "device.remote_desktop"
-	PermTerminal       Permission = "device.terminal"
-	PermFiles          Permission = "device.files"
-	PermScriptView     Permission = "script.view"
-	PermScriptManage   Permission = "script.manage"
-	PermScriptRun      Permission = "script.run"
-	PermJobView        Permission = "job.view"
-	PermJobManage      Permission = "job.manage" // cancel, reschedule
-	PermSoftwareView   Permission = "software.view"
-	PermSoftwareManage Permission = "software.manage"
-	PermPatchView      Permission = "patch.view"
-	PermPatchManage    Permission = "patch.manage"
+	PermOrgView       Permission = "org.view"
+	PermOrgManage     Permission = "org.manage"    // edit an organization, create sites in it
+	PermOrgCreate     Permission = "org.create"    // create and delete organizations (platform-wide)
+	PermSiteView      Permission = "site.view"     //
+	PermSiteManage    Permission = "site.manage"   // edit a site and its device groups
+	PermDeviceView    Permission = "device.view"   //
+	PermDeviceEdit    Permission = "device.edit"   // rename, move between groups, tags, custom fields
+	PermDeviceRetire  Permission = "device.retire" // revoke credentials, uninstall, delete
+	PermRemoteDesktop Permission = "device.remote_desktop"
+	PermTerminal      Permission = "device.terminal"
+	PermFiles         Permission = "device.files"
+	PermScriptView    Permission = "script.view"
+	PermScriptManage  Permission = "script.manage"
+	PermScriptRun     Permission = "script.run"
+	PermJobView       Permission = "job.view"
+	PermJobManage     Permission = "job.manage" // cancel, reschedule
+	// PermJobViewSensitive opens what a run printed and a job's argument
+	// values, each read audited (ADR-0063). job.view shows the rest.
+	PermJobViewSensitive Permission = "job.view_sensitive"
+	PermSoftwareView     Permission = "software.view"
+	PermSoftwareManage   Permission = "software.manage"
+	PermPatchView        Permission = "patch.view"
+	PermPatchManage      Permission = "patch.manage"
 	// PermPatchConfigure marks who may change EasyPatch's standing rules
 	// (policies, exclusions, windows): it makes someone an Admin in
 	// EasyPatch rather than ReadOnly. Only organization-wide grants count.
@@ -61,7 +64,7 @@ const (
 var AllPermissions = []Permission{
 	PermOrgView, PermOrgManage, PermOrgCreate, PermSiteView, PermSiteManage,
 	PermDeviceView, PermDeviceEdit, PermDeviceRetire, PermRemoteDesktop, PermTerminal, PermFiles,
-	PermScriptView, PermScriptManage, PermScriptRun, PermJobView, PermJobManage,
+	PermScriptView, PermScriptManage, PermScriptRun, PermJobView, PermJobManage, PermJobViewSensitive,
 	PermSoftwareView, PermSoftwareManage, PermPatchView, PermPatchManage, PermPatchConfigure,
 	PermMonitorView, PermMonitorManage, PermAlertView, PermAlertManage,
 	PermEnrollManage, PermUserView, PermUserManage, PermAuditView, PermReportView, PermSettingsManage,
@@ -141,7 +144,7 @@ func union(sets ...[]Permission) []Permission {
 
 var technicianPerms = union(viewPerms, []Permission{
 	PermDeviceEdit, PermRemoteDesktop, PermTerminal, PermFiles,
-	PermScriptRun, PermJobManage, PermSoftwareManage, PermPatchManage, PermAlertManage,
+	PermScriptRun, PermJobManage, PermJobViewSensitive, PermSoftwareManage, PermPatchManage, PermAlertManage,
 })
 
 var siteAdminPerms = union(technicianPerms, []Permission{

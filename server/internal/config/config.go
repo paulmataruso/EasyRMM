@@ -78,8 +78,12 @@ type Config struct {
 	SessionIdle    time.Duration
 	SessionMaxAge  time.Duration
 	AuditRetention time.Duration
-	// JobRetention is how long finished jobs and their output are kept.
+	// JobRetention is how long finished jobs and their runs are kept.
 	JobRetention time.Duration
+	// JobOutputRetention is how long a run's output is kept after it
+	// arrived (ADR-0063): DefaultJobOutputRetention, or JobRetention when
+	// that is shorter.
+	JobOutputRetention time.Duration
 	// MetricsRetention is how long devices' metric samples are kept.
 	MetricsRetention time.Duration
 	// AlertRetention is how long resolved alerts are kept.
@@ -112,6 +116,10 @@ type Config struct {
 // DefaultUpdaterStatusDir is where deploy/docker-compose.yml mounts the
 // updater's status directory.
 const DefaultUpdaterStatusDir = "/run/easyrmm-updater"
+
+// DefaultJobOutputRetention is how long a run's output is kept by default
+// (ADR-0063): 30 days, as ADR-0060 keeps collected logs.
+const DefaultJobOutputRetention = 30 * 24 * time.Hour
 
 // DefaultPatchingURL is where the patching engine listens
 // (deploy/docker-compose.yml, easypatch-api).
@@ -212,6 +220,7 @@ func LoadFrom(getenv Getenv, readFile func(string) ([]byte, error)) (*Config, er
 		},
 	}
 	c.DatabaseMigrationURL = l.secret("EASYRMM_DATABASE_MIGRATION_URL")
+	c.JobOutputRetention = l.duration("EASYRMM_JOB_OUTPUT_RETENTION", min(DefaultJobOutputRetention, c.JobRetention))
 	c.Mesh = MeshConfig{
 		Enabled:   l.boolean("EASYRMM_MESH_ENABLED", true),
 		ConfigDir: l.str("EASYRMM_MESH_CONFIG_DIR", "/var/lib/easyrmm-meshcentral"),
@@ -385,6 +394,9 @@ func (c *Config) validate(l *loader) {
 	}
 	if c.JobRetention < 24*time.Hour {
 		add("EASYRMM_JOB_RETENTION must be at least 24h")
+	}
+	if c.JobOutputRetention < 24*time.Hour || c.JobOutputRetention > c.JobRetention {
+		add("EASYRMM_JOB_OUTPUT_RETENTION must be at least 24h and at most EASYRMM_JOB_RETENTION")
 	}
 	if c.MetricsRetention < 24*time.Hour {
 		add("EASYRMM_METRICS_RETENTION must be at least 24h")
