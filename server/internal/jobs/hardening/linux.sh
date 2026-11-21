@@ -446,11 +446,35 @@ SYSTEMD_UP=no
 PROCS=$(cat /proc/[0-9]*/comm 2>/dev/null | sort -u)
 proc_running() { text_has "$PROCS" -xF "$1"; }
 
+# unit_ask VERB UNIT: the first line systemctl VERB UNIT prints. Nothing
+# for a unit whose file is there means systemd did not answer in time (busy
+# reloading, or slow under load): it is asked twice more, with a minute
+# each, so that a slow answer is not taken for a unit that is off or
+# missing, in a finding or in apply's record.
+unit_ask() {
+	for uq_s in 20 60 60; do
+		uq_out=$(t "$uq_s" systemctl "$1" "$2" 2>/dev/null | head -n 1)
+		if [ -n "$uq_out" ] || ! unit_on_disk "$2"; then
+			[ -z "$uq_out" ] || printf '%s\n' "$uq_out"
+			return 0
+		fi
+	done
+}
+# unit_on_disk UNIT: whether UNIT's file (or its template's) is where
+# systemd looks for units.
+unit_on_disk() {
+	uo_t=$1
+	case $1 in *@?*.*) uo_t=${1%%@*}@.${1##*.} ;; esac
+	for uo_d in /etc/systemd/system /run/systemd/system /run/systemd/transient /run/systemd/generator.early /run/systemd/generator /run/systemd/generator.late /usr/local/lib/systemd/system /usr/lib/systemd/system /lib/systemd/system; do
+		if [ -e "$uo_d/$1" ] || [ -e "$uo_d/$uo_t" ]; then return 0; fi
+	done
+	return 1
+}
 # unit_file_state UNIT: what systemctl is-enabled says (it reads unit files,
 # so it works without systemd running), or nothing.
 unit_file_state() {
 	have systemctl || return 0
-	t 20 systemctl is-enabled "$1" 2>/dev/null | head -n 1
+	unit_ask is-enabled "$1"
 }
 unit_enabled() {
 	case $(unit_file_state "$1") in enabled | enabled-runtime) return 0 ;; esac
@@ -462,7 +486,7 @@ unit_exists() {
 }
 unit_active() {
 	[ "$SYSTEMD_UP" = yes ] || return 1
-	case $(t 20 systemctl is-active "$1" 2>/dev/null) in active | reloading | activating) return 0 ;; esac
+	case $(unit_ask is-active "$1") in active | reloading | activating) return 0 ;; esac
 	return 1
 }
 # svc_on NAME...: whether any NAME runs or starts at boot: a unit (NAME ends
