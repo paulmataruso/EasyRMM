@@ -71,6 +71,21 @@ follows when these have been run there, or fixed:
   back if it fails. EasyRMM runs in containers, so something on the host
   does the upgrade; an ADR decides what, without giving the server the
   Docker socket.
+* **Let's Encrypt certificates set up from the console, in one step.**
+  Today the server gets and renews Let's Encrypt certificates by itself
+  (`EASYRMM_TLS_MODE=acme`), but for the names given when it was installed
+  (`setup.sh --hostname`); adding a name or moving an IP-only install to a
+  name means editing `.env` and restarting, and a failed renewal shows only
+  in the server's log. The console would: take the names (the console,
+  MeshCentral, the patching engine, Authentik) and check, before asking
+  Let's Encrypt, that each resolves to this server and that ports 80 or 443
+  reach it, saying what to fix otherwise; switch to the new certificates
+  without a restart; show each certificate's names, expiry and last
+  renewal; and alert (and email) well before a certificate expires or when
+  a renewal fails. DNS-01 validation through the common DNS providers would
+  cover servers with port 80 closed or not reachable from the internet. An
+  ADR comes first: where the names live once they are set in the console,
+  and how agents and MeshCentral follow a name change.
 * **The agent's WebSocket channel** ([ADR-0009](docs/architecture/adr/0009-agent-protocol.md)),
   if long polling (jobs within a second or so) stops being enough.
 * **macOS.** There is no EasyRMM agent for macOS. The EasyPatch agent's
