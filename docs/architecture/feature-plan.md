@@ -438,7 +438,8 @@ MeshCentral origin but the primary one need, is fixed separately (branch
   Cloudflare, delegation recommended, propagation checked at the zone's
   own servers.
 * **5c. Moving to a new name** (changing the console's name, or moving
-  agents from an IP address to a name) is an ADR of its own: each
+  agents from an IP address to a name) is an ADR of its own,
+  [ADR-0061](adr/0061-moving-to-a-new-name.md) (proposed): each
   computer runs three agents that hold the address (EasyRMM's, MeshAgent's
   `.msh`, the EasyPatch agent's `ServerUrl`); an agent may only move on an
   instruction signed with the job key over its device, a nonce it sent to
@@ -448,7 +449,10 @@ MeshCentral origin but the primary one need, is fixed separately (branch
   kept registered and served until a cut-off; single sign-on's redirect
   URIs, Authentik's address and the engine's public URL move with the
   console's name. WebAuthn keys stay valid through Related Origin
-  Requests (`/.well-known/webauthn`). 5a and 5b ship without it.
+  Requests (`/.well-known/webauthn`). Its first slice's release is a
+  required upgrade stop (`upgradeFrom` in the manifest, an amendment to
+  ADR-0052), so that a deployment reaching the move has a record of the
+  names its agents use. 5a and 5b ship without it.
 
 **Tests**: as [ADR-0055](adr/0055-lets-encrypt-in-one-step.md#testing)
 lists them: Pebble and BIND on host networking for every challenge,
