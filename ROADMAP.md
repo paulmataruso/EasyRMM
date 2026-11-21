@@ -42,52 +42,53 @@ follows when these have been run there, or fixed:
 
 ## After 1.0.0
 
-* **Packages for the EasyRMM agent**: an MSI for Windows (needs Windows CI
-  runners) and DEB and RPM packages for Linux. Today computers install with
-  the PowerShell or shell command.
-* **Authenticode signing** of the Windows agents with a certificate of
-  EasyRMM's own, so Windows names a publisher without the operator signing
-  them ([CODE_SIGNING.md](CODE_SIGNING.md)). On hold.
-* **Email and webhook notifications for device alerts.** Patching alerts
-  have them; device alerts show in the console only.
-* **Patching**: giving or taking a tag from many devices at once, forcing a
-  restart outside the policy, and removing and holding an update in one
-  step.
-* **Hardening a Linux computer in one click.** A choice of hardening
-  modules (all of them, or some) that the agent applies, with what each
-  changes shown first: EasyRMM's own implementation, modelled on what
-  [ultimate-sys-hardening](https://github.com/Kal1010101/ultimate-sys-hardening)
-  does. An ADR comes first.
+How the next eight features work and the order they are built in is in
+[the feature plan](docs/architecture/feature-plan.md); each gets its ADR
+before its code.
+
+* **Hardening a Linux computer in one click**
+  ([ADR-0051](docs/architecture/adr/0051-hardening-linux-computers.md)):
+  check, apply and undo 14 hardening modules (SSH, firewall, fail2ban,
+  kernel parameters, audit rules and more), some or all of them, as a job,
+  with what each changes shown first. EasyRMM's own implementation, after
+  studying [ultimate-sys-hardening](https://github.com/Kal1010101/ultimate-sys-hardening);
+  safe for computers nobody is logged in to.
+* **Upgrading EasyRMM from the console.** Today an upgrade is
+  [run on the server](docs/operations/upgrading.md). A small updater on
+  the host (not the server, which never gets the Docker socket) checks a
+  release's signatures, backs up, upgrades, and rolls back if the new
+  release fails its checks; then the console offers new releases and
+  shows the upgrade.
+* **Email and webhook notifications for device alerts**, through one
+  sender that patching alerts move to as well: rules per organization,
+  site and tag, maintenance windows, and one notice for a site that goes
+  offline instead of one per device.
+* **Let's Encrypt certificates set up from the console, in one step.**
+  Today the server gets and renews certificates by itself for the names
+  given at install. The console would check each name before asking Let's
+  Encrypt, saying what to fix; get the certificates without a restart;
+  show their expiry and renewals; alert when a renewal fails; and take
+  new names, including moving an IP-only install to a name, with DNS-01
+  for servers that the internet cannot reach.
+* **Packages for the EasyRMM agent**: DEB and RPM packages for Linux and an
+  MSI for Windows (for Group Policy and Intune). Today computers install
+  with the PowerShell or shell command.
+* **The agent's WebSocket channel** ([ADR-0009](docs/architecture/adr/0009-agent-protocol.md)):
+  a live connection, so jobs and changes reach a computer at once, chosen
+  per device, site or organization: *Automatic* (recommended), *Live
+  connection* or *Regular check-ins*.
 * **Collecting logs** from Windows and Linux computers: the security log,
   Microsoft Defender's and other antivirus logs, the system log, PowerShell,
   auth and audit logs. EasyRMM keeps them and forwards them (to a SIEM, for
-  example). The agent sets up the logging they need when it is installed
-  (audit policy, log sizes, PowerShell script-block logging, auditd
-  rules), so nobody does it by hand. An ADR comes first: storage and
-  retention, the agent's limits on CPU, bandwidth and disk, and forwarding.
-* **Upgrading EasyRMM from the console.** Today an upgrade is
-  [run on the server](docs/operations/upgrading.md). The console would
-  offer a newer release, check its signatures, back up, upgrade, and roll
-  back if it fails. EasyRMM runs in containers, so something on the host
-  does the upgrade; an ADR decides what, without giving the server the
-  Docker socket.
-* **Let's Encrypt certificates set up from the console, in one step.**
-  Today the server gets and renews Let's Encrypt certificates by itself
-  (`EASYRMM_TLS_MODE=acme`), but for the names given when it was installed
-  (`setup.sh --hostname`); adding a name or moving an IP-only install to a
-  name means editing `.env` and restarting, and a failed renewal shows only
-  in the server's log. The console would: take the names (the console,
-  MeshCentral, the patching engine, Authentik) and check, before asking
-  Let's Encrypt, that each resolves to this server and that ports 80 or 443
-  reach it, saying what to fix otherwise; switch to the new certificates
-  without a restart; show each certificate's names, expiry and last
-  renewal; and alert (and email) well before a certificate expires or when
-  a renewal fails. DNS-01 validation through the common DNS providers would
-  cover servers with port 80 closed or not reachable from the internet. An
-  ADR comes first: where the names live once they are set in the console,
-  and how agents and MeshCentral follow a name change.
-* **The agent's WebSocket channel** ([ADR-0009](docs/architecture/adr/0009-agent-protocol.md)),
-  if long polling (jobs within a second or so) stops being enough.
+  example). The agent sets up the logging they need (audit policy, log
+  sizes, PowerShell script-block logging, auditd rules), so nobody does it
+  by hand.
+* **Authenticode signing** of the Windows agents with a certificate of
+  EasyRMM's own, so Windows names a publisher without the operator signing
+  them ([CODE_SIGNING.md](CODE_SIGNING.md)). On hold.
+* **Patching**: giving or taking a tag from many devices at once, forcing a
+  restart outside the policy, and removing and holding an update in one
+  step.
 * **macOS.** There is no EasyRMM agent for macOS. The EasyPatch agent's
   macOS build is experimental and not released; before it is:
   * enroll a real Mac and run scans, installs, restarts and a self-update end
