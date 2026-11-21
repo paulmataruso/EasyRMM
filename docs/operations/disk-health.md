@@ -31,8 +31,9 @@ words are used in the console, in alerts and here.
 
 Rules the console follows for a disk, the first that applies:
 
-1. A disk the device's latest report no longer lists is **Unknown**,
-   *missing since …*, with the state it was last read with.
+1. A disk the device's latest report no longer lists shows **Missing**,
+   with the state and time it was last read (*Missing since 3 May; last
+   read Failing, 2 May 14:30*). It counts as *Unknown* in the Devices list.
 2. A disk that is **Unsupported** or **Unavailable** as a whole shows that.
 3. A disk last read **Failing** or **Warning** keeps showing it, however
    long ago that was, with *last read …*. Readings that could not tell (the
@@ -40,8 +41,11 @@ Rules the console follows for a disk, the first that applies:
    reading that reads the drive's verdict does.
 4. A disk read **Healthy** within the last 2 hours is **Healthy**.
 5. Anything else is **Unknown**: a healthy disk not read for over 2 hours
-   (*not read since …*, for example because the device is offline), or a
-   disk with no complete reading yet.
+   (*Unknown: not read since …*, for example because the device is
+   offline), or a disk with no complete reading yet, with the reason.
+
+Readings since the last complete one that could not tell are noted under
+the state (*The 3 readings since could not tell; the latest: timed out.*).
 
 **A disk is never shown *Healthy* because something could not be read.**
 Without the drive's verdict, or with a fact the rules judge unread, a
@@ -62,42 +66,46 @@ reading is *Unknown*.
   *Unsupported* and does not make the disk *Unknown*.
 * Where Windows does not return the ATA SMART status, the verdict comes from
   the attributes against their thresholds. A drive that answers neither is
-  *Unknown* (*No verdict*), never judged from attribute values alone.
+  *Unknown: the drive's verdict could not be read*, never judged from
+  attribute values alone.
 * Vendors' own wear attributes are not read yet: a SATA SSD without ATA's
   Device Statistics page shows wear as *Unsupported*.
 
 ## Reasons
 
-A state other than *Healthy* comes with a reason:
+A state other than *Healthy* comes with a reason, shown after it: *Unavailable:
+behind a RAID controller*. A *Warning* or *Failing* disk says instead what
+holds (*Pending sectors 8*).
 
-| Reason | State | Means |
-|---|---|---|
-| Asleep, not woken | Unknown | The disk was in standby and was not spun up. A disk asleep for a day is read once anyway |
-| Timed out | Unknown | The disk did not answer within the operating system's timeout |
-| Timed out recently | Unknown | The disk timed out within the last 24 hours and is left alone until then |
-| I/O error | Unknown | The query failed |
-| Checksum wrong, malformed answer | Unknown | The answer could not be trusted |
-| Agent error | Unknown | The agent failed reading the answer; please report it |
-| No verdict | Unknown | Neither the SMART status nor the attributes against their thresholds could be read |
-| No valid value | Unknown | The drive keeps this statistic but holds no valid value now |
-| Not read since … | Unknown | A healthy disk not read for over 2 hours |
-| Missing since … | Unknown | The device's latest report does not list the disk |
-| Invalid report | Unknown | The agent sent something the server does not know |
-| Behind a RAID controller | Unavailable | A hardware RAID controller's volume, on Linux |
-| Storage driver refused | Unavailable | A driver on the way refused the query, as hardware RAID and some vendor drivers do on Windows |
-| SAS or SCSI, not read yet | Unavailable | SAS, Fibre Channel, iSCSI and other SCSI disks |
-| USB disk, not read yet | Unavailable | A disk behind a USB bridge |
-| SMART turned off | Unavailable | The drive's SMART is off; turn it on with the maker's tool or `smartctl -s on` |
-| Access denied | Unavailable | The agent may not send the query (on Linux, without `CAP_SYS_ADMIN`) |
-| In a container | Unavailable | The agent runs in a container and cannot reach the host's disks |
-| Not exposed | Unavailable | The operating system does not give this fact |
-| Virtual disk | Unsupported | A hypervisor's emulated disk |
-| Virtual machine | Unsupported | A read failed on a virtual machine |
-| Storage Spaces | Unsupported | A Storage Spaces virtual disk |
-| Memory card | Unsupported | An SD or MMC card |
-| No SMART | Unsupported | The drive has no SMART |
-| Refused by the disk | Unsupported | The disk itself refused the query as not supported |
-| Not kept by the drive | Unsupported | The drive does not keep this fact |
+| Shown | Means |
+|---|---|
+| *Unknown: asleep, not woken* | The disk was in standby and was not spun up. A disk asleep for a day is read once anyway |
+| *Unknown: timed out* | The disk did not answer within the operating system's timeout |
+| *Unknown: timed out in the last 24 hours, left alone until then* | After a timeout, the agent leaves the disk alone for a day |
+| *Unknown: an I/O error* | The query failed |
+| *Unknown: the answer's checksum was wrong* | The answer could not be trusted |
+| *Unknown: the answer was too short or malformed* | The same |
+| *Unknown: the agent failed reading it* | The agent failed reading the answer; please report it |
+| *Unknown: the drive's verdict could not be read* | Neither the SMART status nor the attributes against their thresholds could be read |
+| *Unknown: the drive holds no valid value for this now* | The drive keeps this statistic but holds no valid value now |
+| *Unknown: not read for over 2 hours* | A healthy disk not read since; *not read since …* on the disk |
+| *Unknown: not in the device's latest report* | A missing disk, shown as *Missing since …* |
+| *Unknown: the agent's report could not be used* | The agent sent a state, reason or value the server does not know |
+| *Unavailable: behind a RAID controller* | A hardware RAID controller's volume, on Linux |
+| *Unavailable: a storage driver refused the query* | A driver on the way refused, as hardware RAID and some vendor drivers do on Windows |
+| *Unavailable: a SAS or other SCSI disk, not read yet* | SAS, Fibre Channel, iSCSI and other SCSI disks |
+| *Unavailable: behind a USB bridge, not read yet* | A USB disk |
+| *Unavailable: SMART is turned off on the drive* | Turn it on with the maker's tool or `smartctl -s on` |
+| *Unavailable: the agent is not allowed to query the disk* | On Linux, the agent's service lacks `CAP_SYS_ADMIN` |
+| *Unavailable: the agent runs in a container* | It cannot reach the host's disks |
+| *Unavailable: the operating system does not show this* | A fact the operating system does not give |
+| *Unsupported: a virtual machine's emulated disk* | A hypervisor's emulated disk |
+| *Unsupported: a virtual machine that does not pass the disk's health through* | A read failed on a machine the inventory names as virtual |
+| *Unsupported: a Storage Spaces virtual disk* | Windows Storage Spaces |
+| *Unsupported: an SD or MMC card* | Memory cards keep no SMART |
+| *Unsupported: the drive has no SMART* | An ATA drive without SMART |
+| *Unsupported: the disk refused the query* | The disk itself answered that it does not support it |
+| *Unsupported: the drive does not keep this* | A fact the drive does not keep, such as pending sectors on NVMe |
 
 ## What is read where
 
@@ -174,7 +182,7 @@ disappears.
 |---|---|
 | *Not reported* on a device with the agent | The agent is older than this feature, or started less than 2 minutes ago. `easyrmm-agent status` shows the agent's version |
 | Every disk of a server *Unavailable* | Most servers keep their disks behind a RAID controller; read them with the controller's own tools for now |
-| A disk *Unknown*, *Asleep, not woken* | Normal for a disk that spins down. It is read at least once a day |
-| A disk *Unknown*, *Timed out* | The disk or its cable may be failing; the agent leaves it alone for a day. Check the operating system's log |
-| *Access denied* on Linux | The agent's service lost `CAP_SYS_ADMIN`, for example through a drop-in that limits capabilities |
-| A replaced disk still listed as missing | It goes 14 days after it went missing, once the device's inventory no longer lists it; resolve its alerts by hand meanwhile |
+| *Unknown: asleep, not woken* | Normal for a disk that spins down. It is read at least once a day |
+| *Unknown: timed out* | The disk or its cable may be failing; the agent leaves it alone for a day. Check the operating system's log |
+| *Unavailable: the agent is not allowed to query the disk* on Linux | The agent's service lost `CAP_SYS_ADMIN`, for example through a drop-in that limits capabilities |
+| A replaced disk still listed as *Missing* | It goes 14 days after it went missing, once the device's inventory no longer lists it; resolve its alerts by hand meanwhile |
