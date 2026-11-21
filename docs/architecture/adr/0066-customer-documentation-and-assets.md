@@ -41,11 +41,12 @@
   (step-up authentication), [ADR-0060](0060-collecting-logs.md) (indexes
   under row-level security) and
   [ADR-0062](0062-the-audit-log-across-restores.md) (the audit log
-  across restores). Two ADRs are on branches of their own and not
-  merged, so they are cited without links: ADR-0063 (who sees a job's
+  across restores). It also builds on
+  [ADR-0063](0063-who-sees-job-output-and-arguments.md) (who sees a job's
   output and arguments), whose bound on recorded refusals and whose rule
   and test for `SECURITY DEFINER` functions' `search_path` this ADR
-  reuses; and ADR-0065 (hardware health, proposed), whose states for
+  reuses; and [ADR-0065](0065-hardware-health.md) (hardware health,
+  accepted), whose states for
   facts EasyRMM reports this ADR's agent values carry. The plan's
   [keystore](../feature-plan-msp.md#the-keystore-for-bitlocker-and-luks-recovery-keys)
   has no ADR yet.
