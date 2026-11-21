@@ -12,7 +12,9 @@
   list them. Revised a third time after the final check: which heartbeats
   confirm, conflicts defined by order and by pings, open feature lists,
   a stop after repeated unlisted messages, and metrics on extra
-  heartbeats.
+  heartbeats. Minor fixes after that check: an agent's clock stepped
+  back, "unlisted" defined, the console's *Stopped* state and *Live
+  connection*'s exceptions, and the 40 seconds before `replaced`.
 * Refines: [ADR-0009](0009-agent-protocol.md) (its WebSocket, "authenticated
   by a signed challenge", as the primary channel) and
   [ADR-0017](0017-scripts-and-jobs.md) (job delivery: the signed poll stays
@@ -189,13 +191,15 @@ fallback of its own, and no 400 is read as "not supported".
 * **The channel's messages go only to agents that list them**, like any
   signed instruction (ADR-0009). The agent lists `channel.v1` in its
   signed report's `accepts` (ADR-0058's `capabilities`): the four types
-  below, with `v` 1 and the values of `what` and `reason` this ADR names.
-  A later type or value comes with a capability of its own (`channel.v2`,
-  or one named for it), and the server sends it only to agents that list
-  it. So the agent connects only once a heartbeat that carried its
-  report, the second of its process at the earliest (ADR-0058), was
-  answered listing `channel`; the server refuses an upgrade from a device
-  whose last report lists no `channel.v1` with 404.
+  below, with `v` 1, the fields and the values of `what` and `reason`
+  this ADR names. A message with a type, field, `v` or value the agent
+  did not list is **unlisted**. A later type, field or value comes with a
+  capability of its own (`channel.v2`, or one named for it), and the
+  server sends it only to agents that list it. So the agent connects
+  only once a heartbeat that carried its report, the second of its
+  process at the earliest (ADR-0058), was answered listing `channel`;
+  the server refuses an upgrade from a device whose last report lists
+  no `channel.v1` with 404.
 * **The transport** reaches the agent in ADR-0058's document, which goes
   only to agents that report taking it.
 
@@ -250,9 +254,20 @@ while the real agent's own attempt is refused as `replayed`. So:
   before it opens a new one, so it never holds two.
 * **Which heartbeats count.** A heartbeat without `transport` (the first
   of a process, ADR-0009) neither confirms nor contradicts. The device's
-  heartbeats are taken in the order of their signed times: one signed
-  before the last heartbeat processed for the device confirms and
-  contradicts nothing, though it may show a conflict (*Server limits*).
+  heartbeats are taken in the order of their signed times, the only
+  order the signed request carries (its header has the device, the time,
+  a nonce and the signature, `internal/agentproto`; no counter): one
+  signed before the latest heartbeat processed for the device, whose time
+  ADR-0058's `agent_device_state` keeps, confirms and contradicts nothing,
+  though it may show a conflict (*Server limits*).
+* **An agent's clock stepped back** stalls this until it passes that
+  time again: at most about 10 minutes, since both heartbeats were within
+  five minutes of the server's clock (`MaxSkew`), one ahead and the other
+  behind at worst. Meanwhile its confirmed connection stays confirmed and
+  keeps its wakes, a new one stays pending, and the two intervals a
+  pending connection has to be confirmed (below) count from the stall's
+  end. A stall is not an *Automatic* failure, and no conflict: the
+  heartbeats name the connection they named before, or a pending one.
 * **Only a confirmed connection is live.** The console shows *Live* only
   for an `agent_connections` row that the device's heartbeat confirmed;
   `jobsWaiting` (slice 3) is computed for the same.
@@ -277,7 +292,12 @@ while the real agent's own attempt is refused as `replayed`. So:
   connection look contradicted; the 60 seconds cover the agent's wait for
   the `101` and the `hello`. A pending connection that is contradicted is
   closed at once. A confirmed one is sent nothing for up to 40 seconds,
-  then `closing` (`replaced`): if it pinged meanwhile (as the clone guard
+  but the pongs that answer its pings, which keep proxies' and NATs'
+  idle timers from closing it, then `closing` (`replaced`). The 40 seconds
+  stop 5 seconds short of the agent's 75 on purpose: its last `tick` can
+  be 30 seconds old, and 30 and 40 make 70, so the signed `closing`
+  reaches it before it would call the connection dead and count a
+  failure (*Keepalives*). If it pinged meanwhile (as the clone guard
   counts pings, below), a live agent holds it while the device's
   heartbeat says otherwise, which is the clone guard's business; if not,
   it was dead. A connection no
@@ -316,8 +336,9 @@ while the real agent's own attempt is refused as `replayed`. So:
   breaks the sequence (a gap, a repeat), or exceeds 16 KiB, and when no
   `hello` arrives within 10 seconds of the `101`. Nothing on the way can
   inject, replay or reorder a message; it can only end the connection,
-  which the agent notices. A verified message of a type, `v` or value
-  the agent did not list is a server's bug, not the network's: the agent
+  which the agent notices. A verified unlisted message (a type, field,
+  `v` or value the agent did not list, *Features the server lists*) is a
+  server's bug, not the network's: the agent
   closes the connection, reports it, and counts nothing. After three such
   refusals from one `instance`, it stops connecting until a heartbeat
   answer names another instance or its own build changes, and reports
@@ -381,7 +402,8 @@ while the real agent's own attempt is refused as `replayed`. So:
   (*Presence confirmed by the heartbeat*); a newer pending one replaces an
   older pending one.
 * **The clone guard.** One agent's heartbeats move only forward, in
-  their signed times and in the connections they name: it sends one
+  their signed times (but for a clock stepped back, which counts nothing,
+  above) and in the connections they name: it sends one
   heartbeat at a time, and closes a connection before it opens the next.
   Two computers with one identity each hold a connection and each
   heartbeat on its own clock, so the device's heartbeats keep going back
@@ -464,7 +486,8 @@ while the real agent's own attempt is refused as `replayed`. So:
   regular heartbeat counts from it. Like every extra heartbeat in this
   ADR (after a `hello`, on a wake, to classify a failure), it carries
   `metrics` only if 0.8 of the interval has passed since the last
-  heartbeat that did (ADR-0058), and then always: wakes, a connection cut
+  heartbeat whose metrics the server accepted (ADR-0058), and then
+  always: wakes, a connection cut
   every 90 seconds on *Live connection* (which never falls back), or
   settings written again and again move the regular schedule but never
   stop metrics. Sent when something the heartbeat
@@ -527,9 +550,15 @@ From slice 3:
 | Choice (value) | Its line in the console |
 |---|---|
 | **Automatic (recommended)** (`automatic`) | A live connection, so changes reach the device at once. If the network blocks it, the device checks in regularly instead and tries again every hour. |
-| **Live connection** (`live`) | A live connection, retried whenever it fails. While it is down, the device checks in regularly. |
+| **Live connection** (`live`) | A live connection, retried whenever it fails, after any wait the server asks for. While it is down, the device checks in regularly. |
 | **Regular check-ins** (`poll`) | No live connection, for networks that block or inspect them. Jobs still arrive within seconds; other changes at the next check-in. |
 
+* ***Live connection* retries, but for three cases**: it waits out a
+  "later" answer's `Retry-After` (at most 30 minutes, *Automatic's
+  fallback*); after a 404 it tries again only once a heartbeat answer
+  lists `channel`; and after three unlisted messages from one instance
+  it stops until a heartbeat answer names another instance or its own
+  build changes (*Messages*). The console shows each.
 * **Where**: on the device's Settings tab, the owner's "device settings";
   also on its site, its organization and the platform, inherited as
   ADR-0058 says.
@@ -558,8 +587,7 @@ From slice 3:
   connection fails when it ends without a signed `closing`, whatever its
   age, the agent's own close after 75 silent seconds included. Ends the
   agent causes for its own reasons (a sleep it detected, a change of
-  transport, the service stopping, a message of a type it did not list)
-  do not fail.
+  transport, the service stopping, an unlisted message) do not fail.
 * **Counted only against a server still serving.** Each failure is
   classified by a signed heartbeat made after it: at once, or, when the
   agent made one in the last 10 seconds, as soon as those 10 seconds have
@@ -634,11 +662,15 @@ instance reaches a device whose poll another holds at once.
   only), *Regular check-ins*, *Fell back to regular check-ins at 10:42:
   the network refused the live connection (HTTP 403); trying again at
   11:42*, *Connecting: 12 attempts since 10:42 (…)*, *Someone else used
-  this device's connection request at 10:42*, or *This agent's version
-  has no live connection*; and *Last wake*, when and why. Its Settings tab
-  shows the transport with the same state under it.
+  this device's connection request at 10:42*, *Stopped at 10:42: the
+  server sent messages this agent does not take, a server bug (the last
+  one shown); trying again when the server restarts or the agent is
+  updated*, or *This agent's version has no live connection*;
+  and *Last wake*, when and why. Its Settings tab shows the transport
+  with the same state under it.
 * **Devices**: a *Connection* column (Live, Check-ins, Fell back,
-  Connecting) and a filter for devices that fell back.
+  Connecting, Stopped) and a filter for devices that fell back or
+  stopped.
 * **Settings → Agent settings** (Super Administrators): connected now, per
   server, against its maximum and its descriptor limit; upgrades refused
   as full or busy in the last hour; wakes sent in the last hour; the
@@ -701,11 +733,12 @@ its own review) must provide, and slice 1 does not start until it does:
   attempts until a later heartbeat lists `channel`; "later" with and
   without the server's codes and three in a row as one failure; every end
   counted whatever its age, the agent's own ends not counted; a verified
-  message of an unlisted type closing the connection and counting
-  nothing; three in 30 minutes, the hourly retry, *Live connection* never
-  falling back; changes of transport; sleep detected from the wall and
-  monotonic clocks, both injected; connecting only after a heartbeat with
-  the agent's report was answered listing `channel`; `noWait` only when
+  message with an unlisted type, field, `v` or value, each in turn,
+  closing the connection and counting nothing; three in 30 minutes, the
+  hourly retry, *Live connection* never falling back; changes of
+  transport; sleep detected from the wall and monotonic clocks, both
+  injected; connecting only after a heartbeat with the agent's report
+  was answered listing `channel`; `noWait` only when
   `hello` lists `poll.noWait`; the long poll in flight left to finish; a
   wake during a `noWait` poll making another; feature names the agent
   does not know ignored; three unlisted messages from one instance
@@ -737,10 +770,14 @@ its own review) must provide, and slice 1 does not start until it does:
   network changes and half-open connections never flagged, a ping within
   5 seconds of a contradiction or after a close frame not counted, a
   replayed upgrade never counted, the count across two instances; a
-  heartbeat without `transport`, or signed before the last one
-  processed, neither confirming nor contradicting; the per-server budget untouched by unverified upgrades;
+  heartbeat without `transport`, or signed before the latest one
+  processed, neither confirming nor contradicting; the agent's clock
+  stepped back nine minutes: its confirmed connection kept, a new one
+  pending until its clock passes the stored time, no conflict and no
+  failure counted; the per-server budget untouched by unverified upgrades;
   upgrades refused with 404 for a device whose report lists no
-  `channel.v1`, and no type sent that the report does not list; every
+  `channel.v1`, and no type, field or value sent that the report does not
+  list; every
   limit, the descriptor gate with a lowered `RLIMIT_NOFILE` (on Linux),
   the per-organization cap; a restarted instance's stale rows showing no
   one live. From slice 2: two server instances on one database, a job queued

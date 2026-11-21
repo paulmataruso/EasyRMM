@@ -10,15 +10,21 @@
   per caller. Revised a third time after the final check: metrics spaced
   on any heartbeat, schema versions that only widen, a refusal only for
   the envelope or an unreported key, and instances of two releases on one
-  database.
-* Refines: [ADR-0015](0015-enrollment-and-meshagent-delivery.md) (a
-  heartbeat every 60 seconds, l. 46–47; online within three minutes,
-  l. 76) and [ADR-0019](0019-monitoring-and-alerts.md) (measurements once a
-  minute, l. 6; half the expected measurements, l. 26–28): both follow
-  the device's own interval. Each gains a *Refined by ADR-0058* line when
-  slice 1 merges.
-* Builds on: [ADR-0009](0009-agent-protocol.md) (amended, PR #52: protocol
-  levels), ADR-0015 (signed requests and the heartbeat),
+  database. Minor fixes after that check: schema versions the server
+  knows, metrics spacing that tolerates jitter, the order of heartbeats,
+  ADR-0009 refined, and *Not applied* across catalogues.
+* Refines: [ADR-0009](0009-agent-protocol.md) (amended, PR #52: signed
+  instructions "refused with unknown fields"; for settings documents the
+  envelope and the set of keys stay that strict, and what is inside a
+  key's value is judged per key, *Unknown and invalid*);
+  [ADR-0015](0015-enrollment-and-meshagent-delivery.md) (a heartbeat
+  every 60 seconds, l. 46–47; online within three minutes, l. 76) and
+  [ADR-0019](0019-monitoring-and-alerts.md) (measurements once a minute,
+  l. 6; half the expected measurements, l. 26–28), which follow the
+  device's own interval. Each gains a *Refined by ADR-0058* line: ADR-0015
+  and ADR-0019 when slice 1 merges, ADR-0009 when slice 2 does.
+* Builds on: ADR-0009's protocol levels (PR #52), ADR-0015 (signed
+  requests and the heartbeat),
   [ADR-0017](0017-scripts-and-jobs.md) (the job key), the instructions
   already carried in the heartbeat answer
   ([ADR-0027](0027-agent-updates.md), [ADR-0031](0031-easypatch-agent-install.md),
@@ -219,9 +225,13 @@ sign-in's and a few account actions', `server/internal/auth/ratelimit.go`):
   the last document's version and hash, when it was issued and under
   which version of the catalogue (it rises with every release that changes
   the catalogue); the version the agent last reported applying, its hash,
-  when, and the problems it reported; and how many heartbeats it has sent
-  since the current version was issued without reporting it applied. Not
-  on `devices`, whose `updated_at` moves only for real edits.
+  when, and the problems it reported; how many heartbeats it has sent
+  since the current version was issued without reporting it applied,
+  counted only by an instance whose catalogue is not older than that
+  version's (*Not applied*); and the signed time of the latest heartbeat
+  processed for the device, which an earlier-signed one does not move
+  (ADR-0059 takes the device's heartbeats in that order). Not on
+  `devices`, whose `updated_at` moves only for real edits.
 * **Two liveness columns on `devices`**: `agent_heartbeat_seconds`, the
   interval the agent uses (below), and `agent_online_until`. The migration
   redefines `easyrmm_touch_device` to ignore both, as it ignores
@@ -247,9 +257,10 @@ sign-in's and a few account actions', `server/internal/auth/ratelimit.go`):
   version of that key's schema (it rises whenever the key accepts more;
   *Unknown and invalid*). The server issues documents only to a device
   whose last report lists `settings.v1`, and puts in them only keys that
-  report lists, with values valid under the reported schema version, as
-  ADR-0009 (amended, PR #52) requires of a signed instruction: nothing in
-  one is unknown to the agent. A key the agent does not know, or whose
+  report lists, with values valid under the highest schema version the
+  server knows at or below the reported one, as ADR-0009 (amended, PR
+  #52) requires of a signed instruction: nothing in one is unknown to the
+  agent. A key the agent does not know, or whose
   effective value its schema version does not allow, is left out, so the
   agent uses its built-in default for it (below), and the console says
   *Not supported by this agent's version: it uses its default; update the
@@ -269,11 +280,13 @@ sign-in's and a few account actions', `server/internal/auth/ratelimit.go`):
   applied* included. When its answer is of level 2 or higher, the agent
   sends its next heartbeat within 10 seconds, with the report. The last
   report holds while the heartbeat's facts name the build that sent it:
-  its `agentSha256`, or, from an agent that sends none because it could
-  not read its own executable (`update.Self` failing, `updater` in
-  `agent/cmd/easyrmm-agent/main.go`), its `agentVersion` with the empty
-  hash. After a change of build without a report, the device counts as
-  one whose agent reports nothing until it reports.
+  its `agentSha256`, or, from an agent that sends none, its `agentVersion`
+  with the empty hash. An agent sends none where it does not update
+  itself (on a system other than Linux and Windows: `supported()` false,
+  `agent/cmd/easyrmm-agent/main.go` l. 366–367) and where it could not
+  read its own executable (`update.Self` failing, `updater`,
+  l. 429–433). After a change of build without a report, the device
+  counts as one whose agent reports nothing until it reports.
 * **Issued lazily, under a lock.** At each heartbeat that carries the
   report, the server computes the device's effective settings for the
   keys its agent reported (one indexed query over at most four rows per
@@ -356,19 +369,34 @@ sign-in's and a few account actions', `server/internal/auth/ratelimit.go`):
   applied, is flagged
   *Not applied*: on its Settings tab, with the version and the agent's
   report; by a filter in Devices; and in a count on Settings → Agent
-  settings.
+  settings. An instance whose catalogue is older than the one that
+  version was issued under counts nothing toward it (it leaves that
+  document in place, above), so the heartbeats an older instance answers
+  during a rolling upgrade never flag a device.
 
 ### Unknown and invalid
+This refines ADR-0009's strictness (signed instructions are "refused with
+unknown fields") for settings documents: the envelope and the set of keys
+stay strict, so an envelope field the agent does not know, or a key it
+did not report, refuses the whole document (above); what is inside a
+reported key's value is judged per key (below), so one bad value costs
+that key alone.
+
 * **A key the agent does not know is never sent**: the server sends only
   the keys the agent reported (above). One that arrives all the same means
   a bug, and the whole document is refused (above).
 * **Schema versions only widen.** A new version of a key's schema may
   accept more than the last (another enumeration value, wider bounds,
   another optional field) and never less; a change that would narrow a
-  key is a new key. The server checks a value against the highest schema
-  version it knows at or below the one the agent reported, so a server
-  rolled back, which may know only older versions than its agents, still
-  sends only values they accept.
+  key is a new key. The catalogue keeps every past schema version of each
+  key, from its first. The server checks a value against the highest
+  schema version it knows at or below the one the agent reported: an older
+  agent's version is always among them, and a server rolled back, which
+  may know only older versions than its agents, still sends only values
+  they accept. A key reported at a version with none the server knows at
+  or below it (version 0, say: only a bug or a damaged report gives one)
+  is left out of the document, and the server logs it as a warning naming
+  the key.
 * **A value the agent's schema does not allow is never sent either**: the
   server leaves the key out instead. As a guard against a bug on either
   side, anything inside a key's value that fails the agent's schema (the
@@ -472,16 +500,21 @@ today; for the transport, no live connection.
   device that has just come back still cannot trip a policy on two
   samples taken seconds apart (ADR-0019):
   * the agent attaches `metrics` to a heartbeat, regular or extra, made
-    at least 0.8 of its interval after the last heartbeat that carried
-    them, and to none sooner. Processor use is then measured over about
-    an interval, and wakes or reconnections that keep moving the regular
-    schedule (a `checkin` wake restarts it, ADR-0059) cannot stop
-    metrics: wakes every half interval still leave one heartbeat with
-    metrics per interval or so;
-  * the server stores a sample only when at least 0.8 of the kept
-    interval has passed since the device's last stored sample; the
-    device's latest measurements (`device_metrics`) still follow every
-    heartbeat that carries them.
+    at least 0.8 of its interval after the last heartbeat whose metrics
+    the server accepted (answered 2xx), and to none sooner; a heartbeat
+    that failed counts as carrying none, so the next one carries them.
+    Processor use is then measured over about an interval, and wakes or
+    reconnections that keep moving the regular schedule (a `checkin` wake
+    restarts it, ADR-0059) cannot stop metrics: wakes every half interval
+    still leave one heartbeat with metrics per interval or so;
+  * the server stores a sample only when at least 0.7 of the kept
+    interval has passed since the device's last stored sample: below the
+    agent's 0.8 (and rc.4's regular heartbeats, 0.9 to 1.1 apart with
+    their jitter, `jitter` in `agent/runner/runner.go`), so two sent 0.8
+    apart and arriving up to a tenth of the interval closer, the first
+    delayed on the way, are both stored.
+    The device's latest measurements (`device_metrics`) still follow
+    every heartbeat that carries them.
 * **Metric policies expect the device's own measurements**: a window of N
   minutes expects `N × 60 / interval` of them, at least one, and opens an
   alert with at least half of them (rounded up). A window, and the
@@ -568,8 +601,9 @@ way. An `invalid` or `clamped` key is logged as a warning.
   reported; the new fields only after an answer of level 2 or higher, and
   none to a server that states no level; the second heartbeat of a
   process within 10 seconds of a level-2 answer; `metrics` on a heartbeat
-  only 0.8 of the interval after the last that carried them, and still
-  about once an interval with `checkin` wakes every half interval; an
+  only 0.8 of the interval after the last whose metrics were answered
+  2xx, on the next one after a heartbeat that failed, and still about
+  once an interval with `checkin` wakes every half interval; an
   older build applying the saved document for the keys it knows; a key
   whose value fails the schema `invalid` alone, an unreported key or an
   unknown envelope field refusing the whole document, the reason naming
@@ -595,8 +629,12 @@ way. An `invalid` or `clamped` key is logged as a warning.
   devices that reported `settings.v1`, with only the keys and values their
   report allows, checked against the highest schema version the server
   knows at or below the reported one (an agent reporting a newer version
-  than the server's included); an instance of an older catalogue leaving
-  a newer catalogue's document in place; a report from an agent with an
+  than the server's included, an older agent's checked against its own
+  older version, and a key reported at version 0 left out); an instance
+  of an older catalogue leaving a newer catalogue's document in place and
+  counting nothing toward *Not applied*; a heartbeat signed before the
+  latest processed leaving its stored time unmoved; a report from an
+  agent with an
   empty `agentSha256` holding while its version does; a heartbeat without
   the report leaving the last report,
   the kept interval and *Not applied* as they were, and a change of build
@@ -609,7 +647,9 @@ way. An `invalid` or `clamped` key is logged as a warning.
   seconds**: Offline (no alert before three intervals, one after), and
   processor, memory and disk opening on the measurements expected at that
   interval and resolving, with heartbeats jittered a tenth either way;
-  samples stored no closer than 0.8 of the interval; a device back from
+  samples stored no closer than 0.7 of the interval, and both stored from
+  heartbeats sent 0.8 apart, the first delayed a tenth of the interval; a
+  device back from
   an outage at 300 seconds, its heartbeats 10 seconds apart, raising no
   metric alert.
 * **HTTP API**: every route and every error above.
@@ -645,8 +685,9 @@ Each merges, is verified on its own, and leaves nothing unused.
    the effective interval in `heartbeatSeconds`, `agent_heartbeat_seconds`
    and `agent_online_until` (from the answered interval, since no agent
    reports one yet), the function redefined, the backfill and the index,
-   everything that reads online and expects measurements, samples spaced
-   at 0.8 of the interval and windows of at least 1.2, and the alert
+   everything that reads online and expects measurements, samples stored
+   at least 0.7 of the interval apart and windows of at least 1.2, and the
+   alert
    policy page's list of devices that wait longer, so the effect is never
    silent. Every agent, rc.4's included, follows the key from this slice.
    ADR-0015 and ADR-0019 gain their *Refined by* lines. Verified by unit,
@@ -657,7 +698,7 @@ Each merges, is verified on its own, and leaves nothing unused.
 2. **Delivery**: the signed document, versions, capabilities,
    `agent_device_state`, the agent's verify, save, apply and acknowledge,
    the interval it reports and the shorter of the two, `metrics` spaced
-   at 0.8 of the interval, *Not applied*.
+   at 0.8 of the interval after the last accepted, *Not applied*.
    Verified by unit, agent and integration tests, in the bundle with the
    current and the previous release's agents and against the previous
    release's server, and on Windows as above.
