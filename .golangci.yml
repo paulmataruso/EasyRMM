@@ -5,6 +5,7 @@ run:
     - integration
     - contract
     - bundle
+    - vm
 
 linters:
   default: standard

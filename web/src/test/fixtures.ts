@@ -73,8 +73,10 @@ export function device(id: string, name: string, extra: Partial<Device> = {}): D
     canRunScripts: false,
     canUpdateAgent: false,
     canManageSoftware: false,
+    canCheckHardening: false,
     canRemove: false,
     removal: null,
+    hardening: null,
     ...extra,
   };
 }
@@ -198,6 +200,7 @@ export function job(id: string, scriptName: string, extra: Partial<Job> = {}): J
     id,
     kind: "script",
     software: null,
+    hardening: null,
     scriptId: "sc1",
     scriptName,
     shell: "bash",

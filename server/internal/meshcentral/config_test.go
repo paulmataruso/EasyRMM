@@ -69,6 +69,81 @@ func TestRenderConfig(t *testing.T) {
 	}
 }
 
+// renderedAllowedOrigin renders cfg and returns the default domain's
+// allowedOrigin, failing unless it is a list of strings.
+func renderedAllowedOrigin(t *testing.T, cfg ServerConfig) []string {
+	t.Helper()
+	out, err := cfg.Render()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Settings map[string]json.RawMessage            `json:"settings"`
+		Domains  map[string]map[string]json.RawMessage `json:"domains"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	// MeshCentral reads it from the domain only (domains[""].allowedorigin
+	// once it lower-cases the keys); `true` would accept any origin.
+	for k := range doc.Settings {
+		if strings.EqualFold(k, "allowedOrigin") {
+			t.Errorf("allowedOrigin in settings")
+		}
+	}
+	var hosts []string
+	if err := json.Unmarshal(doc.Domains[""]["allowedOrigin"], &hosts); err != nil {
+		t.Fatalf("allowedOrigin = %s: %v", doc.Domains[""]["allowedOrigin"], err)
+	}
+	return hosts
+}
+
+// MeshCentral 1.3.1 compares each entry with the Origin header's host as
+// Node's URL.hostname gives it, so entries are written that way; the
+// expected values are what Node 24 in MeshCentral's image returns for
+// these origins.
+func TestRenderAllowedOrigin(t *testing.T) {
+	for name, tc := range map[string]struct {
+		hostname string
+		origins  []string
+		want     []string
+	}{
+		"DNS install with IP access": {
+			hostname: "mesh.rmm.example.com",
+			origins:  []string{"https://mesh.rmm.example.com", "https://203.0.113.10:4443", "https://[2001:db8::10]:4443"},
+			want:     []string{"mesh.rmm.example.com", "203.0.113.10", "[2001:db8::10]"},
+		},
+		// The public address and the private one behind NAT.
+		"IP-only install": {
+			hostname: "203.0.113.10",
+			origins:  []string{"https://203.0.113.10:4443", "https://192.0.2.10:4443"},
+			want:     []string{"203.0.113.10", "192.0.2.10"},
+		},
+		"IPv6": {
+			hostname: "2001:DB8::1",
+			origins:  []string{"https://[2001:db8:0:0::1]:4443", "https://[2001:db8::20]:4443", "https://[::ffff:192.0.2.1]:4443"},
+			want:     []string{"[2001:db8::1]", "[2001:db8::20]", "[::ffff:c000:201]"},
+		},
+		"IP access off": {
+			hostname: "Mesh.RMM.Example.com",
+			origins:  []string{"https://mesh.rmm.example.com"},
+			want:     []string{"mesh.rmm.example.com"},
+		},
+		"no origins given": {
+			hostname: "mesh.rmm.example.com",
+			want:     []string{"mesh.rmm.example.com"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := validConfig(t)
+			cfg.Hostname, cfg.MeshOrigins = tc.hostname, tc.origins
+			if got := renderedAllowedOrigin(t, cfg); strings.Join(got, " ") != strings.Join(tc.want, " ") {
+				t.Errorf("allowedOrigin = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestConfigValidation(t *testing.T) {
 	for name, mutate := range map[string]func(*ServerConfig){
 		"no hostname":     func(c *ServerConfig) { c.Hostname = "" },
@@ -81,12 +156,17 @@ func TestConfigValidation(t *testing.T) {
 		"origin with path": func(c *ServerConfig) {
 			c.FramingOrigins = []string{"https://rmm.example.com", "https://rmm.example.com/app"}
 		},
-		"no origins":        func(c *ServerConfig) { c.FramingOrigins = nil },
-		"cert URL scheme":   func(c *ServerConfig) { c.CertURL = "ftp://x" },
-		"short login key":   func(c *ServerConfig) { c.LoginKey = c.LoginKey[:32] },
-		"short session key": func(c *ServerConfig) { c.SessionKey = "short" },
-		"relative mount":    func(c *ServerConfig) { c.ConfigMount = "easyrmm/config" },
-		"unclean mount":     func(c *ServerConfig) { c.ConfigMount = "/easyrmm/config/" },
+		"no origins":       func(c *ServerConfig) { c.FramingOrigins = nil },
+		"http mesh origin": func(c *ServerConfig) { c.MeshOrigins = []string{"http://192.0.2.10:4443"} },
+		"mesh origin with path": func(c *ServerConfig) {
+			c.MeshOrigins = []string{"https://mesh.rmm.example.com", "https://192.0.2.10:4443/x"}
+		},
+		"mesh origin without host": func(c *ServerConfig) { c.MeshOrigins = []string{"https://"} },
+		"cert URL scheme":          func(c *ServerConfig) { c.CertURL = "ftp://x" },
+		"short login key":          func(c *ServerConfig) { c.LoginKey = c.LoginKey[:32] },
+		"short session key":        func(c *ServerConfig) { c.SessionKey = "short" },
+		"relative mount":           func(c *ServerConfig) { c.ConfigMount = "easyrmm/config" },
+		"unclean mount":            func(c *ServerConfig) { c.ConfigMount = "/easyrmm/config/" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := validConfig(t)

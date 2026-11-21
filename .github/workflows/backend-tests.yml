@@ -29,6 +29,9 @@ jobs:
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           version: v2.15.0
+      # The machine harness's runner runs under each distribution's sh.
+      - name: shellcheck the machine harness's runner
+        run: shellcheck -s sh internal/vmtest/runner.sh
       # Workflow files are code too: actionlint (with shellcheck) catches
       # expression mistakes and run: scripts that do not fail when they should.
       - name: actionlint

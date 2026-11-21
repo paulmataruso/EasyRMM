@@ -79,6 +79,7 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		s.log.Warn("agents: checking remote access failed", "error", err, "device_id", d.ID)
 	}
 	return &agentproto.HeartbeatResponse{
+		Protocol:         agentproto.Protocol,
 		HeartbeatSeconds: int(HeartbeatInterval.Seconds()),
 		MeshAgent:        agentproto.MeshAgentInfo{Available: available},
 		JobKey:           s.jobKey,

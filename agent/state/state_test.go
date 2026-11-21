@@ -8,29 +8,41 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/paulmataruso/easyrmm/agent/host"
 )
+
+// open opens the store of a state folder under a test's own root.
+func open(t *testing.T) Store {
+	t.Helper()
+	s, checked, err := Open(host.Paths{Root: t.TempDir()})
+	if err != nil || len(checked.Aside) != 0 {
+		t.Fatalf("open: %v, moved aside %v", err, checked.Aside)
+	}
+	return s
+}
 
 // checkModes checks that only the owner can read the state, and that a key
 // others can read is refused.
 func checkModes(t *testing.T, s Store) {
 	t.Helper()
 	for name, want := range map[string]os.FileMode{"": 0o700, keyFile: 0o600, configFile: 0o600} {
-		st, err := os.Stat(filepath.Join(s.Dir, name))
+		st, err := os.Stat(filepath.Join(s.Dir(), name))
 		if err != nil || st.Mode().Perm() != want {
 			t.Errorf("%s mode = %v, %v", name, st.Mode().Perm(), err)
 		}
 	}
-	if err := os.Chmod(filepath.Join(s.Dir, keyFile), 0o644); err != nil {
+	if err := os.Chmod(filepath.Join(s.Dir(), keyFile), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.Load(); err == nil || !strings.Contains(err.Error(), "owner only") {
 		t.Errorf("readable key: %v", err)
 	}
-	_ = os.Chmod(filepath.Join(s.Dir, keyFile), 0o600)
+	_ = os.Chmod(filepath.Join(s.Dir(), keyFile), 0o600)
 }
 
 func TestSaveAndLoad(t *testing.T) {
-	s := Store{Dir: filepath.Join(t.TempDir(), "state")}
+	s := open(t)
 	if _, _, err := s.Load(); !errors.Is(err, ErrNotEnrolled) {
 		t.Fatalf("empty store: %v", err)
 	}
@@ -55,7 +67,7 @@ func TestSaveAndLoad(t *testing.T) {
 	// Damaged files are reported.
 	write := func(name, content string) {
 		t.Helper()
-		if err := os.WriteFile(filepath.Join(s.Dir, name), []byte(content), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(s.Dir(), name), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -63,7 +75,7 @@ func TestSaveAndLoad(t *testing.T) {
 	if _, _, err := s.Load(); err == nil {
 		t.Error("foreign PEM accepted as the key")
 	}
-	_ = os.Remove(filepath.Join(s.Dir, keyFile))
+	_ = os.Remove(filepath.Join(s.Dir(), keyFile))
 	if _, _, err := s.Load(); err == nil {
 		t.Error("missing key accepted")
 	}
@@ -75,7 +87,7 @@ func TestSaveAndLoad(t *testing.T) {
 	if _, _, err := s.Load(); err == nil {
 		t.Error("corrupt config accepted")
 	}
-	if err := os.Chmod(filepath.Join(s.Dir, configFile), 0o000); err == nil && os.Geteuid() != 0 {
+	if err := os.Chmod(filepath.Join(s.Dir(), configFile), 0o000); err == nil && os.Geteuid() != 0 {
 		if _, _, err := s.Load(); err == nil {
 			t.Error("unreadable config accepted")
 		}
@@ -84,13 +96,79 @@ func TestSaveAndLoad(t *testing.T) {
 	if err := s.Remove(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(s.Dir); !errors.Is(err, os.ErrNotExist) {
+	if _, err := os.Stat(s.Dir()); !errors.Is(err, os.ErrNotExist) {
 		t.Error("state directory kept")
 	}
 }
 
+// TestUncheckedStore: a store that Open did not make, after checking its
+// folder, reads and writes nothing.
+func TestUncheckedStore(t *testing.T) {
+	var s Store
+	key, err := NewKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{Server: "https://rmm.example.com", DeviceID: "d1"}
+	p := &Pending{Server: cfg.Server, Token: "ert_x"}
+	_, _, loadErr := s.Load()
+	_, _, pendingErr := s.LoadPending()
+	_, caErr := s.SaveCA([]byte("ca"))
+	_, statusErr := s.LoadStatus()
+	for name, err := range map[string]error{
+		"Load": loadErr, "LoadPending": pendingErr, "SaveCA": caErr, "LoadStatus": statusErr,
+		"Save": s.Save(cfg, key), "SavePending": s.SavePending(p, key), "UpdatePending": s.UpdatePending(p),
+		"SaveConfig": s.SaveConfig(cfg), "Approved": s.Approved(cfg), "SaveStatus": s.SaveStatus(Status{}),
+		"Remove": s.Remove(),
+	} {
+		if !errors.Is(err, errNotOpened) {
+			t.Errorf("%s on an unchecked store: %v", name, err)
+		}
+	}
+	if s.Dir() != "" {
+		t.Errorf("dir = %q", s.Dir())
+	}
+}
+
+// TestLayout: what the check covers is what the agent's packages read and
+// write in the folder.
+func TestLayout(t *testing.T) {
+	var names []string
+	for _, group := range layout {
+		names = append(names, group...)
+	}
+	all := strings.Join(names, " ")
+	for _, want := range []string{configFile, keyFile, pendingFile, caFile, statusFile, ".tmp-*", "removal.json", "update.json",
+		"logs", filepath.Join("logs", "*"), "jobs", filepath.Join("jobs", "journal", "*"), "easypatch", filepath.Join("easypatch", "*")} {
+		if !strings.Contains(" "+all+" ", " "+want+" ") {
+			t.Errorf("the check leaves out %s", want)
+		}
+	}
+	if strings.Contains(all, "work") {
+		t.Error("the scripts' working folders are checked")
+	}
+	if len(layout[0]) != 4 || layout[0][1] != keyFile {
+		t.Errorf("the enrollment is not one group: %v", layout[0])
+	}
+}
+
+// TestCAFile keeps a copy of the certificate authority in the folder.
+func TestCAFile(t *testing.T) {
+	s := open(t)
+	path, err := s.SaveCA([]byte("ca"))
+	if err != nil || path != filepath.Join(s.Dir(), caFile) {
+		t.Fatalf("SaveCA = %s, %v", path, err)
+	}
+	if b, err := os.ReadFile(path); err != nil || string(b) != "ca" {
+		t.Errorf("ca.pem = %q, %v", b, err)
+	}
+}
+
 func TestStatus(t *testing.T) {
-	s := Store{Dir: t.TempDir()}
+	s := open(t)
+	if err := os.MkdirAll(s.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := s.LoadStatus(); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("no status yet: %v", err)
 	}
@@ -102,13 +180,16 @@ func TestStatus(t *testing.T) {
 	if err != nil || got != st {
 		t.Errorf("status = %+v, %v", got, err)
 	}
-	if err := (Store{Dir: filepath.Join(t.TempDir(), "missing")}).SaveStatus(st); err == nil {
+	if err := os.RemoveAll(s.Dir()); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveStatus(st); err == nil {
 		t.Error("status saved into a missing directory")
 	}
 }
 
 func TestPendingEnrollment(t *testing.T) {
-	s := Store{Dir: filepath.Join(t.TempDir(), "state")}
+	s := open(t)
 	if _, _, err := s.LoadPending(); !errors.Is(err, ErrNotPending) {
 		t.Fatalf("empty store: %v", err)
 	}
@@ -129,7 +210,7 @@ func TestPendingEnrollment(t *testing.T) {
 		t.Fatalf("load pending: %+v %v", got, err)
 	}
 	if runtime.GOOS != "windows" {
-		st, err := os.Stat(filepath.Join(s.Dir, pendingFile))
+		st, err := os.Stat(filepath.Join(s.Dir(), pendingFile))
 		if err != nil || st.Mode().Perm() != 0o600 {
 			t.Errorf("pending file mode %v %v", st.Mode().Perm(), err)
 		}
@@ -158,13 +239,13 @@ func TestPendingEnrollment(t *testing.T) {
 	}
 
 	// Damaged files are reported.
-	if err := os.WriteFile(filepath.Join(s.Dir, pendingFile), []byte("{"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(s.Dir(), pendingFile), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.LoadPending(); err == nil {
 		t.Error("damaged pending file accepted")
 	}
-	if err := os.WriteFile(filepath.Join(s.Dir, pendingFile), []byte(`{"server":"x"}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(s.Dir(), pendingFile), []byte(`{"server":"x"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := s.LoadPending(); err == nil {

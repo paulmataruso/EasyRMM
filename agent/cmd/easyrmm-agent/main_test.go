@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -57,7 +58,7 @@ func newHarness(t *testing.T) *harness {
 	h := &harness{out: &bytes.Buffer{}}
 	p := host.Paths{Root: root, OS: "linux"}
 	h.e = &env{
-		paths: p, store: state.Store{Dir: p.State()}, stdout: h.out,
+		paths: p, stdout: h.out,
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		sd: host.Systemd{Dir: p.Units(), Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			h.calls = append(h.calls, name+" "+strings.Join(args, " "))
@@ -72,8 +73,11 @@ func newHarness(t *testing.T) *harness {
 	return h
 }
 
+// run runs a command as a new process would: with the state folder not
+// checked yet.
 func (h *harness) run(args ...string) error {
 	h.out.Reset()
+	h.e.store = state.Store{}
 	return h.e.dispatch(context.Background(), args, io.Discard)
 }
 
@@ -276,7 +280,6 @@ func TestWindowsLayout(t *testing.T) {
 	h := newHarness(t)
 	svcs := &services{}
 	h.e.paths.OS, h.e.sd = "windows", svcs
-	h.e.store = state.Store{Dir: h.e.paths.State()}
 
 	h.e.isRoot = func() bool { return false }
 	if err := h.run("install", "--server", srv.URL, "--token", "ert_good"); err == nil || !strings.Contains(err.Error(), "started as administrator") {
@@ -299,6 +302,12 @@ func TestWindowsLayout(t *testing.T) {
 		!strings.Contains(h.out.String(), "Log:        "+filepath.Join(h.e.paths.State(), "logs", "agent.log")) {
 		t.Errorf("status: %q, %v", h.out, err)
 	}
+	// Only administrators may open the state folder on Windows.
+	h.e.isRoot = func() bool { return false }
+	if err := h.run("status"); err == nil || !strings.Contains(err.Error(), "started as administrator") {
+		t.Errorf("status without elevation: %v", err)
+	}
+	h.e.isRoot = func() bool { return true }
 	if err := h.run("uninstall"); err != nil || !strings.Contains(h.out.String(), "removed") {
 		t.Fatalf("uninstall: %q, %v", h.out, err)
 	}
@@ -339,7 +348,91 @@ func TestLogFile(t *testing.T) {
 
 func TestRunWithoutEnrollment(t *testing.T) {
 	h := newHarness(t)
-	if err := h.run("run"); err == nil {
-		t.Error("run without an enrollment")
+	if runtime.GOOS == "windows" {
+		h.e.paths.OS = "windows" // the state is checked below ProgramData
+	}
+	if err := h.run("run"); !errors.Is(err, state.ErrNotEnrolled) {
+		t.Errorf("run without an enrollment: %v", err)
+	}
+}
+
+// TestServiceLog: the Windows service opens its log only once the state
+// folder is checked, in that folder.
+func TestServiceLog(t *testing.T) {
+	h := newHarness(t)
+	h.e.paths.OS = "windows"
+	lf, err := h.e.openServiceLog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.e.store.Dir() != h.e.paths.State() {
+		t.Errorf("store = %q", h.e.store.Dir())
+	}
+	h.e.log.Info("hello")
+	if err := lf.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(h.e.paths.Logs(), logName)); err != nil || !strings.Contains(string(b), "hello") {
+		t.Errorf("log = %q, %v", b, err)
+	}
+
+	// Without a log, the service logs nowhere rather than into memory. (On
+	// Windows the check moves aside a folder made this way, with the access
+	// list it inherits: TestServiceLogNotThroughJunction.)
+	if runtime.GOOS == "windows" {
+		return
+	}
+	h = newHarness(t)
+	h.e.paths.OS = "windows"
+	if err := os.MkdirAll(h.e.paths.State(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.e.paths.Logs(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.e.openServiceLog(); err == nil {
+		t.Error("a log under a file opened")
+	}
+	h.e.log.Info("dropped")
+}
+
+// TestRunEmptiesWorkOnWindows: an agent laid out as on Windows starts with
+// the scripts' working folders empty, since the state check leaves them
+// out, and keeps the journal.
+func TestRunEmptiesWorkOnWindows(t *testing.T) {
+	linuxOnly(t) // runs the whole agent; Windows' own test is TestLeftoversInWork
+	var beats atomic.Int32
+	srv := fakeServer(t, &beats)
+	h := newHarness(t)
+	h.e.paths.OS = "windows"
+	if err := h.run("enroll", "--server", srv.URL, "--token", "ert_good"); err != nil {
+		t.Fatal(err)
+	}
+	jobs := filepath.Join(h.e.paths.State(), "jobs")
+	for _, d := range []string{filepath.Join(jobs, "work", "run-x"), filepath.Join(jobs, "journal")} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(jobs, "work", "run-x", "left"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	h.e.store = state.Store{}
+	go func() { done <- h.e.dispatch(ctx, []string{"run"}, io.Discard) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for beats.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil || beats.Load() == 0 {
+		t.Fatalf("run: %v, %d heartbeats", err, beats.Load())
+	}
+	if _, err := os.Stat(filepath.Join(jobs, "work")); !os.IsNotExist(err) {
+		t.Errorf("the scripts' working folder was kept: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(jobs, "journal")); err != nil {
+		t.Errorf("the journal went: %v", err)
 	}
 }

@@ -50,6 +50,17 @@ func TestDefaults(t *testing.T) {
 	if len(c.SecretKeys) != 1 || c.SecretKeys[0].ID != "k1" {
 		t.Errorf("secret keys: %+v", c.SecretKeys)
 	}
+	if c.UpdaterStatusDir != "/run/easyrmm-updater" {
+		t.Errorf("updater status directory: %q", c.UpdaterStatusDir)
+	}
+	// Blank, as from Compose, is the default too; another path is taken.
+	for value, want := range map[string]string{" ": "/run/easyrmm-updater", "/srv/status": "/srv/status"} {
+		e := base()
+		e["EASYRMM_UPDATER_STATUS_DIR"] = value
+		if c, err := LoadFrom(env(e), noFiles); err != nil || c.UpdaterStatusDir != want {
+			t.Errorf("EASYRMM_UPDATER_STATUS_DIR=%q: %v", value, err)
+		}
+	}
 }
 
 func TestMissingRequiredValuesAreAllReported(t *testing.T) {
@@ -91,6 +102,7 @@ func TestRejectsUnsafeOrInvalidValues(t *testing.T) {
 		"insecure cookies in prod": {"EASYRMM_DEV_INSECURE_COOKIES": "true"},
 		"bad log format":           {"EASYRMM_LOG_FORMAT": "xml"},
 		"bad previous key":         {"EASYRMM_SECRET_KEYS_PREVIOUS": "nocolon"},
+		"relative updater status":  {"EASYRMM_UPDATER_STATUS_DIR": "run/easyrmm-updater"},
 	}
 	for name, overrides := range cases {
 		t.Run(name, func(t *testing.T) {

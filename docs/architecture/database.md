@@ -159,7 +159,7 @@ an argument (ADR-0028).
 
 | Column | Notes |
 |---|---|
-| `jobs.kind` | `script` (a library script someone chose; the default) or `software` (a software action). `jobs_kind_created` lists the jobs of a kind, newest first |
+| `jobs.kind` | `script` (a library script someone chose; the default) or `software` (a software action); `hardening` since 00027. `jobs_kind_created` lists the jobs of a kind, newest first |
 | `jobs.software` | Set for software actions only (`jobs_software_kind`): a JSON object with the action, package manager, package and version, for people and filters to read. The job's body and arguments are what runs |
 
 ## Patching engine links (migrations 00013 and 00023)
@@ -294,6 +294,18 @@ uploaded (ADR-0049). Kept in the database so that backups keep them.
 | Table | Notes |
 |---|---|
 | `signed_agent_builds` | One row per architecture (`amd64`, `arm64`) and version: the signed file (up to 64 MiB), its SHA-256 and that of the release's build it was made from, the signer's subject, issuer and SHA-1 thumbprint, the certificate's validity, whether the signature has a timestamp, and when and by whom it was uploaded. For each architecture the server keeps the build of its own version and the newest older one. Platform scope only; the service allows Super Administrators (`settings.manage`) |
+
+## Hardening Linux computers (migration 00027)
+
+Jobs that run EasyRMM's own hardening script, and what the last check found
+on each device (ADR-0051).
+
+| Table or column | Notes |
+|---|---|
+| `jobs.kind`, `jobs.hardening` | `hardening` joins `script` and `software`. `jobs.hardening` is set for hardening jobs only (`jobs_hardening_kind`): the mode, the modules and the options, for people and filters to read; the job's body and arguments are what runs |
+| `jobs.body` | Up to 512 KiB, for EasyRMM's own scripts; a library script stays at most 64 KiB |
+| `device_hardening_checks` | One row per device a hardening job reported on: the platform as the script read it (distribution, version, family, container, and whether apply is supported there), the job and when it ran. Kept from the run that started last. Goes with its device |
+| `device_hardening` | One row per device and module: its state (`in_place`, `partly`, `not_in_place`, `not_applicable`, `managed_elsewhere`, `not_supported`, `half_applied`, `failed`), the finding (a reason, what is missing, what apply would change, and the firewall's ports), the job and when it ran. A later job that covers the module replaces it. Read through the device's row-level security; written from job results at platform scope |
 
 ## Backups
 

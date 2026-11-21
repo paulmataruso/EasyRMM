@@ -59,6 +59,9 @@ func TestDeviceRemovalAPI(t *testing.T) {
 		if resp.Update != nil || resp.EasyPatchInstall != nil {
 			t.Errorf("other instructions with the uninstall: %+v", resp)
 		}
+		if resp.Protocol != agentproto.Protocol {
+			t.Errorf("protocol level %d with the uninstall, want %d", resp.Protocol, agentproto.Protocol)
+		}
 		key, err := agentproto.DecodeKey(resp.JobKey)
 		if err != nil {
 			t.Fatal(err)

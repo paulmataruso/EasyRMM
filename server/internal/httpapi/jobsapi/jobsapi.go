@@ -30,6 +30,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/jobs", a.listJobs)
 	r("POST /api/v1/jobs", a.createJob)
 	r("POST /api/v1/jobs/software", a.createSoftwareJob)
+	r("POST /api/v1/jobs/hardening", a.createHardeningJob)
+	r("GET /api/v1/devices/{id}/hardening", a.deviceHardening)
 	r("GET /api/v1/jobs/{id}", a.getJob)
 	r("POST /api/v1/jobs/{id}/cancel", a.cancelJob)
 	r("GET /api/v1/job-runs", a.listRuns)
@@ -171,6 +173,32 @@ func (a *API) createSoftwareJob(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+func (a *API) createHardeningJob(w http.ResponseWriter, r *http.Request) error {
+	var in jobs.HardeningInput
+	if err := httpapi.DecodeJSON(w, r, &in); err != nil {
+		return err
+	}
+	j, err := a.svc.CreateHardeningJob(r.Context(), httpapi.Caller(r), in)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusCreated, j)
+	return nil
+}
+
+func (a *API) deviceHardening(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	h, err := a.svc.DeviceHardening(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	httpapi.WriteJSON(w, http.StatusOK, h)
+	return nil
+}
+
 func (a *API) getJob(w http.ResponseWriter, r *http.Request) error {
 	id, err := httpapi.PathID(r)
 	if err != nil {
@@ -202,7 +230,7 @@ func (a *API) listRuns(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	items, err := a.svc.ListRuns(r.Context(), httpapi.Caller(r), jobs.RunQuery{DeviceID: device})
+	items, err := a.svc.ListRuns(r.Context(), httpapi.Caller(r), jobs.RunQuery{DeviceID: device, Kind: r.URL.Query().Get("kind")})
 	if err != nil {
 		return err
 	}

@@ -2,7 +2,9 @@
 // used by integration tests (scripts/test-meshcentral.sh). It writes
 // config.json, the shared key (key.hex) and, unless a certificate URL is
 // given, a self-signed certificate and key for the test's TLS front end,
-// which MeshCentral reports to agents.
+// which MeshCentral reports to agents. Besides its public origin, the
+// MeshCentral serves the IP-access origins in meshtest.IPOrigins, as
+// EasyRMM's does with IP access.
 //
 // Test use only: the key is written in the clear.
 package main
@@ -18,11 +20,15 @@ import (
 	"flag"
 	"fmt"
 	"math/big"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
+	"github.com/paulmataruso/easyrmm/server/internal/meshcentral/meshtest"
 )
 
 func main() {
@@ -54,10 +60,11 @@ func main() {
 		}
 		*certURL = "file://" + *mountedAt + "/proxy-cert.pem"
 	}
+	meshOrigins := append([]string{"https://" + net.JoinHostPort(*host, strconv.Itoa(*publicPort))}, meshtest.IPOrigins...)
 	cfg := meshcentral.ServerConfig{
 		Hostname: *host, Listen: *listen, PublicPort: *publicPort, TrustedProxy: "127.0.0.1",
-		FramingOrigins: []string{*origin}, CertURL: *certURL, LoginKey: key, SessionKey: hex.EncodeToString(session),
-		ConfigMount: *mountedAt,
+		FramingOrigins: []string{*origin}, MeshOrigins: meshOrigins, CertURL: *certURL, LoginKey: key,
+		SessionKey: hex.EncodeToString(session), ConfigMount: *mountedAt,
 	}
 	out, err := cfg.Render()
 	if err != nil {
@@ -87,16 +94,26 @@ func main() {
 }
 
 // writeCert writes a self-signed certificate (proxy-cert.pem) and its key
-// (proxy-key.pem), which tests serve the EasyRMM gateway with.
+// (proxy-key.pem), which tests serve the EasyRMM gateway with. It names the
+// public hostname and the addresses of meshtest.IPOrigins.
 func writeCert(dir, host string) error {
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return err
 	}
+	var ips []net.IP
+	for _, o := range meshtest.IPOrigins {
+		u, err := url.Parse(o)
+		if err != nil {
+			return err
+		}
+		ips = append(ips, net.ParseIP(u.Hostname()))
+	}
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject:      pkix.Name{CommonName: host},
 		DNSNames:     []string{host},
+		IPAddresses:  ips,
 		NotBefore:    time.Now().Add(-time.Hour),
 		NotAfter:     time.Now().Add(30 * 24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

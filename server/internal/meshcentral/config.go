@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 )
 
 // ServiceAccount is the MeshCentral administrator EasyRMM acts as. It is
@@ -39,6 +42,11 @@ type ServerConfig struct {
 	// with IP access, the server's IP addresses), the only pages allowed to
 	// embed MeshCentral.
 	FramingOrigins []string
+	// MeshOrigins are the MeshCentral origins EasyRMM serves sessions on
+	// (the public MeshCentral URL and, with IP access, one per IP address).
+	// MeshCentral refuses a session's control connection from a page on
+	// any other host. Hostname is always allowed.
+	MeshOrigins []string
 	// CertURL is where MeshCentral reads the TLS certificate agents see, so it
 	// can tell agents which certificate to expect.
 	CertURL string
@@ -84,8 +92,13 @@ func (c ServerConfig) Validate() error {
 		errs = append(errs, errors.New("at least one framing origin is required"))
 	}
 	for _, o := range c.FramingOrigins {
-		if u, err := url.Parse(o); err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "" {
+		if !isOrigin(o) {
 			errs = append(errs, fmt.Errorf("framing origin must be an https origin, got %q", o))
+		}
+	}
+	for _, o := range c.MeshOrigins {
+		if !isOrigin(o) {
+			errs = append(errs, fmt.Errorf("MeshCentral origin must be an https origin, got %q", o))
 		}
 	}
 	if u, err := url.Parse(c.CertURL); err != nil || (u.Scheme != "https" && u.Scheme != "file") {
@@ -103,6 +116,45 @@ func (c ServerConfig) Validate() error {
 	return errors.Join(errs...)
 }
 
+// isOrigin reports whether o is an https origin: a scheme and host, no path.
+func isOrigin(o string) bool {
+	u, err := url.Parse(o)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.Path == ""
+}
+
+// allowedOrigins returns the hosts whose pages MeshCentral accepts a
+// session's control connection from: Hostname and the host of every
+// MeshCentral origin, once each.
+func (c ServerConfig) allowedOrigins() []string {
+	hosts := []string{originHostname(c.Hostname)}
+	for _, o := range c.MeshOrigins {
+		u, _ := url.Parse(o) // checked by Validate
+		if h := originHostname(u.Hostname()); !slices.Contains(hosts, h) {
+			hosts = append(hosts, h)
+		}
+	}
+	return hosts
+}
+
+// originHostname writes a host the way MeshCentral reads it from a
+// browser's Origin header, with Node's URL.hostname, since it compares the
+// two as strings: a name in lower case, an IPv6 address compressed and in
+// brackets, an IPv4-mapped one in hexadecimal ([::ffff:c000:201]).
+func originHostname(host string) string {
+	a, err := netip.ParseAddr(host)
+	switch {
+	case err != nil:
+		return strings.ToLower(host)
+	case a.Is4():
+		return a.String()
+	case a.Is4In6():
+		b := a.As16()
+		return fmt.Sprintf("[::ffff:%x:%x]", uint16(b[12])<<8|uint16(b[13]), uint16(b[14])<<8|uint16(b[15]))
+	default:
+		return "[" + a.String() + "]"
+	}
+}
+
 // Render returns MeshCentral's config.json. EasyRMM rewrites it on every
 // start, so edits to the file do not survive.
 //
@@ -112,7 +164,8 @@ func (c ServerConfig) Validate() error {
 // self-update, plugins and MeshCentral's own backups (the deployment backs
 // up its data volume). Its pages are compressed and load EasyRMM's session
 // view tuning from the web folder in the configuration directory (WriteWeb,
-// ADR-0025).
+// ADR-0025). A session's control connection is accepted only from the
+// MeshCentral origins EasyRMM serves (allowedOrigin, ADR-0016).
 func (c ServerConfig) Render() ([]byte, error) {
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("meshcentral config: %w", err)
@@ -150,6 +203,13 @@ func (c ServerConfig) Render() ([]byte, error) {
 			"": map[string]any{
 				"title":       "EasyRMM remote access",
 				"newAccounts": false,
+				// MeshCentral closes a session's control connection
+				// (control.ashx, "invalidorigin") when the page's Origin
+				// host is not listed. Without a list it accepts only
+				// `cert`, refusing sessions from every other MeshCentral
+				// origin, such as an IP address's (ADR-0016). Never true:
+				// that accepts any origin.
+				"allowedOrigin": c.allowedOrigins(),
 				// Agent installers only for signed-in users; agents updating
 				// themselves get a signed link from MeshCentral.
 				"lockAgentDownload":  true,

@@ -10,11 +10,25 @@ POSTGRES_IMAGE ?= postgres:18.6-alpine3.24
 # deploy/docker-compose.yml), and a glibc image the test MeshAgent runs in.
 MESHCENTRAL_IMAGE ?= ghcr.io/ylianst/meshcentral:1.3.1@sha256:266b01942545829f11d53e6cecd5c2e48033d9edb48bbd3a9a569482ff1d050d
 TEST_AGENT_IMAGE ?= debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+# Containers the hardening script's check runs in (ADR-0051), one of each
+# family, each a fully supported release.
+TEST_HARDENING_IMAGES ?= debian:12@sha256:268fb24c39bca92d326dd83ea3abebe4a3f7751c804ffef23bb6d857dd343ff8 \
+	ubuntu:24.04@sha256:9c7f200c07e3d4a03e7249d2c16bf66a51120fb876aa2242cf31451412543289 \
+	rockylinux/rockylinux:9@sha256:bb5755f96bec05ff26165e779ec843d7167544be9e50770508f307019a6d05c4 \
+	fedora:44@sha256:15da97ed9aa94dd3d92c3925eb89520f6c80e07ea7ee24cba848d1f8b6912b3e
 TEST_MESH_DIR ?= $(or $(TMPDIR),/tmp)/easyrmm-testmesh
 TEST_MESH_URL ?= http://127.0.0.1:24430
 # The OpenID Connect provider single sign-on is tested against.
 DEX_IMAGE ?= ghcr.io/dexidp/dex:v2.46.1@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab
 TEST_OIDC_DIR ?= $(or $(TMPDIR),/tmp)/easyrmm-testoidc
+# Machine tests (internal/vmtest; ADR-0051): where the cloud images and the
+# running machines' disks go (gigabytes, so not a small /tmp), the packages
+# with vm-tagged tests, how many machines boot at once, and how long the
+# whole run may take (without KVM each boot takes minutes).
+VM_CACHE ?= /var/tmp/easyrmm-vmtest
+VM_PACKAGES ?= ./internal/vmtest/ ./server/internal/jobs/
+VM_PARALLEL ?= 2
+VM_TEST_TIMEOUT ?= 3h
 
 .PHONY: help
 help: ## Show this help
@@ -30,11 +44,12 @@ fmt-check: ## Fail if Go code is not formatted
 		if [ -n "$$out" ]; then echo "Unformatted files:"; echo "$$out"; exit 1; fi
 
 .PHONY: vet
-vet: ## go vet (including integration-, contract- and bundle-tagged files, and the agent built for Windows)
+vet: ## go vet (including integration-, contract-, bundle- and vm-tagged files, and the agent built for Windows)
 	$(GO) vet ./...
 	$(GO) vet -tags integration ./...
 	$(GO) vet -tags contract ./server/internal/easypatch/
 	$(GO) vet -tags bundle ./server/internal/easypatch/
+	$(GO) vet -tags vm $(VM_PACKAGES)
 	GOOS=windows $(GO) vet ./agent/... ./internal/...
 
 .PHONY: lint
@@ -79,12 +94,17 @@ test-oidc-stop: ## Stop the test Dex
 print-test-agent-image:
 	@echo $(TEST_AGENT_IMAGE)
 
+.PHONY: print-test-hardening-images
+print-test-hardening-images:
+	@echo $(TEST_HARDENING_IMAGES)
+
 .PHONY: test-integration
 test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral and Dex, with coverage gates
 	EASYRMM_TEST_DATABASE_URL="$${EASYRMM_TEST_DATABASE_URL:-$(TEST_DB_URL)}" \
 	EASYRMM_TEST_MESH_DIR="$${EASYRMM_TEST_MESH_DIR:-$(TEST_MESH_DIR)/config}" \
 	EASYRMM_TEST_MESH_URL="$${EASYRMM_TEST_MESH_URL:-$(TEST_MESH_URL)}" \
 	EASYRMM_TEST_AGENT_IMAGE="$${EASYRMM_TEST_AGENT_IMAGE:-$(TEST_AGENT_IMAGE)}" \
+	EASYRMM_TEST_HARDENING_IMAGES="$${EASYRMM_TEST_HARDENING_IMAGES:-$(TEST_HARDENING_IMAGES)}" \
 	EASYRMM_TEST_OIDC_DIR="$${EASYRMM_TEST_OIDC_DIR:-$(TEST_OIDC_DIR)}" \
 		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
@@ -92,6 +112,11 @@ test-integration: ## Go unit + integration tests against PostgreSQL, MeshCentral
 .PHONY: test-contract
 test-contract: ## EasyRMM's calls to the patching engine against a real one built from easypatch/ (needs Docker)
 	GO=$(GO) ./scripts/contract/easypatch.sh
+
+.PHONY: test-vm
+test-vm: ## Boot each distribution's cloud image under QEMU and drive it (EASYRMM_VM_IMAGE=debian-12 for one; needs qemu-system-x86_64, qemu-img, and xorriso for rocky-8)
+	EASYRMM_VM_CACHE="$${EASYRMM_VM_CACHE:-$(VM_CACHE)}" \
+		$(GO) test -tags vm -count=1 -v -timeout $(VM_TEST_TIMEOUT) -parallel $(VM_PARALLEL) $(VM_PACKAGES)
 
 .PHONY: check
 check: fmt-check vet lint test-integration ## Everything CI runs for Go code

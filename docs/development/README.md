@@ -12,6 +12,7 @@ terms) is in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 | `web/` | The console: React, TypeScript and Vite. Playwright tests in `web/e2e/`, the README's screenshots in `web/screenshots/` |
 | `agent/` | The EasyRMM agent (Go; Windows and Linux), including its installer of the EasyPatch agent |
 | `internal/agentproto/` | The wire protocol the server and the agent share |
+| `internal/vmtest/` | The machine test harness: distributions' cloud images under QEMU, for tests only ([machine tests](machine-tests.md)) |
 | `easypatch/` | The patching engine: `backend/` (.NET API, worker and their tests), `agent/` (the EasyPatch agent for Windows and Linux; macOS is experimental and not released), `shared/` (contracts), `scripts/` (agent packages), `tools/` (the release signer), `keys/` (the release public key) |
 | `docker/`, `deploy/` | Container images and the Compose deployment with its scripts |
 | `docs/` | Architecture and ADRs, deployment, operations, security, development; [index](../README.md) |
@@ -65,6 +66,9 @@ clone: its Compose file builds the engine from `easypatch/`
 
 * [Console development](web-console.md): the console's conventions and the
   Impeccable design workflow.
+* [Machine tests](machine-tests.md): distributions' cloud images booted
+  under QEMU and driven as root (`make test-vm`), for hardening Linux
+  computers.
 * [Drills](drills.md): the backup and restore drill and the load test. Run
   them before a release and after changing `deploy/`, the backup guide or
   anything that affects load.
@@ -85,8 +89,9 @@ clone: its Compose file builds the engine from `easypatch/`
 | Engine server | `easypatch/` except the agent, docs and Markdown; EasyRMM's patching client | EasyPatch server |
 | EasyPatch agent | the agent, `shared/`, its build scripts and props | EasyPatch agent |
 | Contract | the engine's server and its build, EasyRMM's patching client, `go.mod`, `scripts/contract/` | EasyPatch contract |
+| Machines | the machine test harness (`internal/vmtest/`), `go.mod`, the `Makefile` | Machines, one job per distribution ([machine tests](machine-tests.md)) |
 | Security | always | Security (CodeQL for Go, C# and JavaScript, gitleaks, …) |
-| Documentation | always | Documentation links |
+| Documentation | always | Documentation links and workflow conditions |
 
 A change to `ci.yml` runs everything, as do the merge queue and manual runs.
 **CI result** is the one required check: it passes when every job passed or
@@ -95,7 +100,10 @@ formatting, lint and shellcheck findings, `go mod tidy` drift, coverage below
 a package's floor (`scripts/ci/check-coverage.sh`), new CodeQL alerts,
 findings of the Impeccable design detector and a broken relative link or
 anchor in any Markdown file (`scripts/ci/check-md-links.py`; run it locally
-with `python3 -I scripts/ci/check-md-links.py`).
+with `python3 -I scripts/ci/check-md-links.py`), and on a workflow job that
+comes after one using `always()` without `!cancelled()` and each need's
+result in its own `if`: GitHub would skip it whenever any job before it was
+skipped (`scripts/ci/check-job-conditions.py .github/workflows/*.yml`).
 
 ### The contract tests
 

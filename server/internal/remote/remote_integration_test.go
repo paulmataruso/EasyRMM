@@ -481,9 +481,13 @@ func (r *rig) get(c *http.Client, target string) (fetched, string) {
 }
 
 // open signs a browser in through a launch link, as the console's iframe
-// does, and returns the page it lands on.
+// does, and returns the page it lands on, on the link's origin.
 func (r *rig) open(c *http.Client, l *Launch) string {
 	r.t.Helper()
+	link, err := url.Parse(l.URL)
+	if err != nil {
+		r.t.Fatal(err)
+	}
 	resp, body := r.get(c, l.URL)
 	if resp.StatusCode != http.StatusSeeOther {
 		r.t.Fatalf("launch: %d %s", resp.StatusCode, body)
@@ -503,21 +507,28 @@ func (r *rig) open(c *http.Client, l *Launch) string {
 	if grant == nil || !grant.HttpOnly || !grant.Secure || grant.SameSite != http.SameSiteStrictMode || grant.Path != "/" {
 		r.t.Fatalf("grant cookie = %+v", grant)
 	}
-	resp, body = r.get(c, loc)
+	resp, body = r.get(c, link.Scheme+"://"+link.Host+loc)
 	if resp.StatusCode != http.StatusOK || !strings.Contains(body, "var userinfo") {
 		r.t.Fatalf("MeshCentral page after launch: %d %.300s", resp.StatusCode, body)
 	}
 	return body
 }
 
-// dial opens a WebSocket through the gateway as the browser.
+// dial opens a WebSocket through the gateway as the browser, from a page on
+// the public MeshCentral origin.
 func (r *rig) dial(c *http.Client, path string) (*websocket.Conn, error) {
+	return r.dialOn(c, r.origin(), r.origin(), path)
+}
+
+// dialOn opens a WebSocket through the gateway on a MeshCentral origin, as
+// a page on origin.
+func (r *rig) dialOn(c *http.Client, meshOrigin, origin, path string) (*websocket.Conn, error) {
 	ctx, cancel := context.WithTimeout(r.ctx, 15*time.Second)
 	defer cancel()
 	//nolint:bodyclose // coder/websocket owns the handshake response body
-	ws, _, err := websocket.Dial(ctx, "wss://"+r.env.Hostname+":"+strconv.Itoa(r.env.PublicPort)+path, &websocket.DialOptions{
+	ws, _, err := websocket.Dial(ctx, "wss://"+strings.TrimPrefix(meshOrigin, "https://")+path, &websocket.DialOptions{
 		HTTPClient: c,
-		HTTPHeader: http.Header{"Origin": {r.origin()}},
+		HTTPHeader: http.Header{"Origin": {origin}},
 	})
 	if err == nil {
 		ws.SetReadLimit(16 << 20)
@@ -749,6 +760,92 @@ func TestRemoteSessionLaunch(t *testing.T) {
 	}
 	if n := r.count(`SELECT count(*) FROM remote_grants`); n != 0 {
 		t.Errorf("grants after cleanup = %d", n)
+	}
+}
+
+// controlAnswer reads a control connection's first answer that is either
+// the user's details or MeshCentral closing it, and returns its action
+// and cause.
+func controlAnswer(t *testing.T, ws *websocket.Conn) (action, cause string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	for {
+		typ, data, err := ws.Read(ctx)
+		if err != nil {
+			t.Fatalf("waiting for MeshCentral's answer: %v", err)
+		}
+		var m struct {
+			Action string `json:"action"`
+			Cause  string `json:"cause"`
+		}
+		if typ == websocket.MessageText && json.Unmarshal(data, &m) == nil && (m.Action == "userinfo" || m.Action == "close") {
+			return m.Action, m.Cause
+		}
+	}
+}
+
+// A session launched from a console reached by IP address runs on that
+// address's MeshCentral origin (ADR-0016), so MeshCentral sees that origin
+// on the session's control connection. It accepts every MeshCentral origin
+// EasyRMM serves (allowedOrigin), IPv4 and IPv6, and still refuses others.
+// Until 2026-11-21 it accepted only its own hostname (`cert`) and closed
+// every session from an IP origin with "invalidorigin".
+func TestRemoteSessionFromIPOrigin(t *testing.T) {
+	r := newRig(t)
+	acme := r.org("Acme")
+	hq := r.site(acme.ID, "HQ")
+	techID, tech := r.user("Tess Tech", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: acme.ID, SiteID: hq.ID})
+	r.reconcile()
+	online := r.device(hq, "web-01", "node//easyrmmtest"+hex.EncodeToString([]byte(uuid.NewString()[:8])), true)
+
+	upstream, _ := url.Parse(r.env.URL)
+	g, err := NewGateway(r.svc, GatewayConfig{Upstream: upstream, Secure: true}, r.log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.serveGateway(g)
+	cert, err := tls.LoadX509KeyPair(r.env.CertFile, r.env.KeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, origin := range meshtest.IPOrigins {
+		t.Run(origin, func(t *testing.T) {
+			o, _ := url.Parse(origin)
+			if err := cert.Leaf.VerifyHostname(o.Hostname()); err != nil {
+				t.Fatalf("the test MeshCentral predates its IP origins; set it up again with `make test-mesh`: %v", err)
+			}
+			l, err := r.svc.StartSession(r.ctx, tech, r.session(techID), online, KindTerminal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// As the console's API moves a launch to the MeshCentral
+			// origin of the console origin it was asked on.
+			link, _ := url.Parse(l.URL)
+			link.Host = o.Host
+			l.URL = link.String()
+			b := r.browser()
+			r.open(b, l)
+
+			ws, err := r.dialOn(b, origin, origin, "/control.ashx")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = ws.CloseNow() }()
+			if action, cause := controlAnswer(t, ws); action != "userinfo" {
+				t.Fatalf("MeshCentral answered a session from %s with %s (%s)", origin, action, cause)
+			}
+
+			// A page on a host EasyRMM does not serve is refused.
+			other, err := r.dialOn(b, origin, "https://198.51.100.7:4443", "/control.ashx")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = other.CloseNow() }()
+			if action, cause := controlAnswer(t, other); action != "close" || cause != "invalidorigin" {
+				t.Fatalf("a foreign origin got %s (%s)", action, cause)
+			}
+		})
 	}
 }
 

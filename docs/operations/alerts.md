@@ -46,6 +46,20 @@ New installations start with four shared policies, all turned on:
 
 Change or delete them like any other policy.
 
+## Restarts and upgrades
+
+A restart or an upgrade of the server stops every device's check-ins for
+a while, and agents then wait up to 5 minutes between attempts. So that
+this raises no alert, offline policies count every device as seen no
+earlier than 5 minutes after the server began serving agents: after it
+started, or after the updater stopped holding it
+([ADR-0052](../architecture/adr/0052-the-host-updater.md)). A device that
+is really down raises its offline alert that much later after a restart:
+with the default 15-minute policy, 20 minutes after the server is back.
+The rule only delays openings: an offline alert that was already open
+stays open, and resolves only when the device checks in. While the
+updater holds the server, no offline alert opens.
+
 ## Working with alerts
 
 The server checks every enabled policy once a minute. An alert is

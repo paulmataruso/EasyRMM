@@ -296,11 +296,24 @@ export interface Device {
   canUpdateAgent: boolean;
   /** The caller may install and remove software here (software.manage), on Windows or Linux with the agent (ADR-0028). */
   canManageSoftware: boolean;
+  /** The caller may check the device's hardening (script.run), on Linux with the agent (ADR-0051). */
+  canCheckHardening: boolean;
   /** The caller may remove the device (device.retire; ADR-0050). */
   canRemove: boolean;
   /** The removal under way, while the device waits for its agent to uninstall itself (ADR-0050). */
   removal: DeviceRemoval | null;
+  /** What hardening jobs found here, summed up; null until one reported (ADR-0051). */
+  hardening: HardeningSummary | null;
 }
+
+/** When a device's latest hardening job reported, and how many modules are in each state. */
+export interface HardeningSummary {
+  checkedAt: string;
+  states: Partial<Record<HardeningState, number>>;
+}
+
+/** The Devices list's hardening filter. */
+export type HardeningFilter = "attention" | "in_place" | "unchecked";
 
 /** A device's removal, while its agent has not confirmed it (ADR-0050). */
 export interface DeviceRemoval {
@@ -676,11 +689,13 @@ export type RunStatus = "queued" | "sent" | "running" | "succeeded" | "failed" |
 
 export interface Job {
   id: string;
-  /** A library script, or a software action run with one of EasyRMM's own scripts (ADR-0028). */
+  /** A library script, or a software action or hardening run with one of EasyRMM's own scripts (ADR-0028, ADR-0051). */
   kind: JobKind;
-  /** The software action; null for script jobs. */
+  /** The software action; null for other jobs. */
   software: SoftwareAction | null;
-  /** Null once the script is deleted (the job keeps its own copy), and for software actions. */
+  /** What a hardening job does; null for other jobs. */
+  hardening: HardeningJob | null;
+  /** Null once the script is deleted (the job keeps its own copy), and for EasyRMM's own scripts. */
   scriptId: string | null;
   scriptName: string;
   shell: Shell;
@@ -730,7 +745,95 @@ export interface JobRun {
   canCancel: boolean;
 }
 
-export type JobKind = "script" | "software";
+export type JobKind = "script" | "software" | "hardening";
+
+/** A hardening job (ADR-0051). Only checks so far: they report and change nothing. */
+export interface HardeningJob {
+  mode: "check";
+  /** In the order the script runs them. */
+  modules: string[];
+  options: HardeningOptions;
+}
+
+export interface HardeningOptions {
+  /** Ports and ranges the firewall leaves open besides those in use. */
+  allowTcp?: string[];
+  allowUdp?: string[];
+  /** Addresses and ranges fail2ban never bans. */
+  trusted?: string[];
+  rootPasswordOff?: boolean;
+  passwordOff?: boolean;
+  epel?: boolean;
+}
+
+/** Asks for a hardening job (POST /jobs/hardening). */
+export interface HardeningInput {
+  deviceIds: string[];
+  mode: HardeningJob["mode"];
+  modules: string[];
+  options: HardeningOptions;
+  /** Hours to wait for an offline device; 0 is the server's default. */
+  waitHours: number;
+}
+
+/** A module's state, as the hardening script reports it. */
+export type HardeningState =
+  | "in_place"
+  | "partly"
+  | "not_in_place"
+  | "not_applicable"
+  | "managed_elsewhere"
+  | "not_supported"
+  | "half_applied"
+  | "failed";
+
+/** The computer as the hardening script saw it. */
+export interface HardeningPlatform {
+  /** os-release's ID and VERSION_ID: "debian", "12". */
+  id: string;
+  versionId: string;
+  family: "debian" | "rhel" | "fedora" | "other";
+  /** "none", or the kind of container the script ran in ("lxc", "docker", …). */
+  container: string;
+  /** full: check, apply and undo; check_only: check runs, apply and undo do not; unsupported: neither apply nor undo. */
+  support: "full" | "check_only" | "unsupported";
+}
+
+/** The firewall's ports: left open to TCP and UDP, published by Docker past the input hook, and services enabled but not running. */
+export interface HardeningPorts {
+  tcp?: string[];
+  udp?: string[];
+  /** "tcp/8080". */
+  docker?: string[];
+  /** Unit names, "minidlna.service". */
+  unknown?: string[];
+}
+
+/** One module as the job that last covered it found it. */
+export interface HardeningModule {
+  module: string;
+  state: HardeningState;
+  reason?: string;
+  /** What is not in place. */
+  missing?: string[];
+  /** What apply would change. */
+  changes?: string[];
+  /** The firewall's only. */
+  ports?: HardeningPorts;
+  /** Null once the job is deleted. */
+  jobId: string | null;
+  checkedAt: string;
+}
+
+/** What hardening jobs found on a device (GET /devices/{id}/hardening). */
+export interface DeviceHardening {
+  /** Platform, jobId and checkedAt are the latest job's; null until one reported. */
+  platform: HardeningPlatform | null;
+  jobId: string | null;
+  checkedAt: string | null;
+  /** Each module the device was checked for, in the order the script runs them. */
+  modules: HardeningModule[];
+}
 
 export type SoftwareVerb = "install" | "upgrade" | "uninstall";
 

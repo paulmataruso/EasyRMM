@@ -82,9 +82,12 @@ sudo docker compose logs --since 10m server | grep -i error
 ```
 
 Then sign in. Check that every device's last-seen time has moved on within
-a couple of minutes (agents report every minute), and that the audit chain
-verifies (`GET /api/v1/audit/verify` as a Super
-Administrator). If you held agents back, update a few from their device
+about 5 minutes (agents report every minute, but one that could not reach
+the server waits up to 5 minutes before it tries again), and that the
+audit chain verifies (`GET /api/v1/audit/verify` as a Super
+Administrator). The upgrade's downtime raises no offline alert: offline
+policies count every device as seen until 5 minutes after the server
+starts ([Alerts](alerts.md#restarts-and-upgrades)). If you held agents back, update a few from their device
 pages, watch them on **Settings → Agent updates**, then switch back to
 **Automatically**.
 
