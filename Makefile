@@ -30,8 +30,9 @@ VM_PACKAGES ?= ./internal/vmtest/ ./server/internal/jobs/
 VM_PARALLEL ?= 2
 VM_TEST_TIMEOUT ?= 3h
 # The updater's machine test (ADR-0052) runs on its own: it builds three
-# server images and bundles, and starts the deployment four times.
-UPDATER_VM_TEST_TIMEOUT ?= 4h
+# server images and bundles, and starts the deployment four times. On an
+# emulated machine (no KVM) that took more than four hours.
+UPDATER_VM_TEST_TIMEOUT ?= 6h
 
 .PHONY: help
 help: ## Show this help

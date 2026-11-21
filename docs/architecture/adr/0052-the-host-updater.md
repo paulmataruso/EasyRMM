@@ -412,16 +412,23 @@ against sigstore-go's virtual Sigstore, each certificate field refused
 in turn; integration tests run the rollback's SQL against the migrated
 schema, and take a real PostgreSQL cluster holding EasyRMM's, the
 engine's and Authentik's databases, with Authentik's directories, through
-a backup, a change and a restore. The upgrade runs as a machine test (`make test-vm-updater`,
-internal/vmtest): a Debian 12 machine with Docker, installed from a
-bundle with `setup.sh`, upgraded to a second bundle, the confirmed
-upgrade rolled back, then an upgrade to a third bundle that fails at the
-held start and is rolled back. That third bundle's server fails its
-health check, not a held port: a server that cannot bind restarts until
-the 20-minute limit. The machine runs without Authentik. Not built yet: the CI job, verification against real
-published artifacts, links and named pipes planted through a backup and
-a restore, requests (4b), and the updater updating itself across
-releases.
+a backup, a change and a restore. The upgrade runs as a machine test
+(`make test-vm-updater`, internal/vmtest): a Debian 12 machine with
+Docker, installed from a bundle with `setup.sh`, upgraded to a second
+bundle, the confirmed upgrade rolled back, then an upgrade to a third
+bundle that fails at the held start and is rolled back. That third
+bundle's server fails its health check, not a held port: a server that
+cannot bind restarts until the 20-minute limit. The machine runs without
+Authentik. It has run on an emulated machine only (no KVM on the host):
+two runs failed at the install, PostgreSQL's and the engine's first starts
+outlasting their health checks, before the test's bundles gave every
+service an hour there; the third passed the install, the upgrade and the
+rollback after the confirm, but for the test's own expectation of the
+rollback's result, since corrected, and its time limit ended the third
+upgrade before it finished. Not
+built yet: the CI job, verification against real published artifacts,
+links and named pipes planted through a backup and a restore, requests
+(4b), and the updater updating itself across releases.
 
 ## Consequences
 * An operator upgrades and rolls back from the console (4b), or with one
