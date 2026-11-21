@@ -1145,7 +1145,7 @@ export type AlertKind = "offline" | "cpu" | "memory" | "disk" | "disk_health";
 export type DiskCheck = "failing" | "errors" | "pending" | "wear" | "temperature";
 export type AlertSeverity = "warning" | "critical";
 export type AlertStatus = "open" | "acknowledged" | "resolved";
-/** subject_gone: a disk missing for 14 days that the device's inventory no longer lists. */
+/** subject_gone: a disk missing from the device's hardware reports for 14 days. */
 export type AlertResolution = "cleared" | "manual" | "not_covered" | "policy_off" | "policy_changed" | "policy_deleted" | "subject_gone";
 
 export interface AlertPolicy {

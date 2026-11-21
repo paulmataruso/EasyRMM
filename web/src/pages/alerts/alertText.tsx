@@ -116,7 +116,7 @@ export const RESOLUTIONS: Record<AlertResolution, string> = {
   policy_off: "Policy turned off",
   policy_changed: "Policy changed",
   policy_deleted: "Policy deleted",
-  subject_gone: "The disk is gone: missing 14 days and no longer in the inventory",
+  subject_gone: "The disk is gone: missing from the device's disk readings for 14 days",
 };
 
 /** Why and by whom an alert was resolved. */

@@ -340,7 +340,7 @@ describe("disk health alerts (ADR-0065)", () => {
     expect(v("temperature", 61)).toBe("61 °C");
     expect(v("smart_trend" as DiskCheck, 4)).toBe("4");
 
-    expect(resolutionText({ resolution: "subject_gone" })).toBe("The disk is gone: missing 14 days and no longer in the inventory");
+    expect(resolutionText({ resolution: "subject_gone" })).toBe("The disk is gone: missing from the device's disk readings for 14 days");
     expect(resolutionText({ resolution: "replaced" as never })).toBe("replaced");
 
     // Counts that only rise: acknowledge rather than resolve.
@@ -370,7 +370,7 @@ describe("disk health alerts (ADR-0065)", () => {
 
     await userEvent.setup().selectOptions(screen.getByLabelText("Show"), "all");
     await waitFor(() => expect(server.callsTo("GET /alerts").at(-1)?.query.get("status")).toBe("all"));
-    expect((await screen.findAllByText(/The disk is gone: missing 14 days and no longer in the inventory/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/The disk is gone: missing from the device's disk readings for 14 days/)).length).toBeGreaterThan(0);
   });
 
   it("shows a disk alert's disk on the device's page and the dashboard", async () => {

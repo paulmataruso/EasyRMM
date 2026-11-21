@@ -162,8 +162,8 @@ disappears.
 ## History and retention
 
 * The latest reading of each disk is kept for as long as the disk is
-  reported, and for 14 days after it goes missing once the device's
-  inventory no longer lists it.
+  reported, and for 14 days after the device's disk readings stop listing
+  it.
 * Every reading is kept for `EASYRMM_METRICS_RETENTION` (default `168h`, 7
   days). After that the hourly purge keeps one row per disk and UTC day:
   the day's worst state, highest temperature, and last counts and wear.
@@ -185,4 +185,4 @@ disappears.
 | *Unknown: asleep, not woken* | Normal for a disk that spins down. It is read at least once a day |
 | *Unknown: timed out* | The disk or its cable may be failing; the agent leaves it alone for a day. Check the operating system's log |
 | *Unavailable: the agent is not allowed to query the disk* on Linux | The agent's service lost `CAP_SYS_ADMIN`, for example through a drop-in that limits capabilities |
-| A replaced disk still listed as *Missing* | It goes 14 days after it went missing, once the device's inventory no longer lists it; resolve its alerts by hand meanwhile |
+| A replaced disk still listed as *Missing* | It goes 14 days after the device's disk readings stopped listing it, with its alerts (*Disk gone*); resolve them by hand meanwhile |

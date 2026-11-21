@@ -323,17 +323,6 @@ func TestDiskGone(t *testing.T) {
 	if a == nil {
 		t.Fatal("no alert")
 	}
-	inventory := func(at string, disks ...string) {
-		t.Helper()
-		var list []map[string]string
-		for _, d := range disks {
-			list = append(list, map[string]string{"name": d, "model": "Example SSD 500GB", "serial": "A1"})
-		}
-		b, _ := json.Marshal(map[string]any{"disks": list})
-		f.exec(`INSERT INTO device_inventory (device_id, hash, data, received_at) VALUES ($1, repeat('a', 64), $2, `+at+`)
-			ON CONFLICT (device_id) DO UPDATE SET data = EXCLUDED.data, received_at = EXCLUDED.received_at`, dev, b)
-	}
-
 	// Left out of a report: missing, its alert stays, nothing opens on it.
 	f.report(dev, nvmeDisk("nvme1n1", "N2", 0))
 	if r := f.evaluate(); r.Opened != 0 || r.Resolved != 0 || f.diskAlert(dev, "Disk failing", label) == nil {
@@ -348,21 +337,23 @@ func TestDiskGone(t *testing.T) {
 	if r := f.evaluate(); r.Opened != 0 || f.diskAlert(dev, "Disk failing", sda.SubjectLabel) != nil {
 		t.Fatalf("after resolving a missing disk's alert by hand: %+v", r)
 	}
-	// 13 days, and an inventory without either disk since: nothing yet.
+	// 13 days missing: nothing yet.
 	f.exec(`UPDATE device_disk_health SET missing_since = now() - interval '13 days' WHERE missing_since IS NOT NULL`)
-	inventory("now()")
 	if r := f.evaluate(); r.Resolved != 0 {
 		t.Fatalf("resolved after 13 days")
 	}
-	// 14 days, but the latest inventory came before the disk went missing.
-	f.exec(`UPDATE device_disk_health SET missing_since = now() - interval '14 days' WHERE missing_since IS NOT NULL`)
-	inventory("now() - interval '15 days'")
-	if r := f.evaluate(); r.Resolved != 0 {
-		t.Fatalf("resolved with an older inventory")
+	// sda is listed again, still failing: no longer missing, and an alert
+	// opens on it again, since the old one was resolved by hand.
+	f.report(dev, ataDisk("sda", "A1", agentproto.SMARTThresholdExceeded, 0, 0), nvmeDisk("nvme1n1", "N2", 0))
+	if n := f.count(`SELECT count(*) FROM device_disk_health WHERE device_id = $1 AND missing_since IS NOT NULL`, dev); n != 1 {
+		t.Fatalf("%d disks missing, want nvme0n1 alone", n)
 	}
-	// 14 days, and a later inventory that still lists sda: only nvme0n1 is
-	// gone.
-	inventory("now() - interval '1 day'", "sda")
+	if r := f.evaluate(); r.Opened != 1 || f.diskAlert(dev, "Disk failing", sda.SubjectLabel) == nil {
+		t.Fatalf("sda back: %+v", r)
+	}
+	// 14 days missing, and no report since lists it: nvme0n1 is gone, sda
+	// (listed again) is not.
+	f.exec(`UPDATE device_disk_health SET missing_since = now() - interval '14 days' WHERE missing_since IS NOT NULL`)
 	if r := f.evaluate(); r.Resolved != 1 {
 		t.Fatalf("subject gone: %+v", r)
 	}
@@ -371,13 +362,27 @@ func TestDiskGone(t *testing.T) {
 		t.Fatalf("resolved %+v %v", got, err)
 	}
 	if n := f.count(`SELECT count(*) FROM device_disk_health WHERE device_id = $1`, dev); n != 2 {
-		t.Errorf("%d disks left, want sda (still in the inventory) and nvme1n1", n)
+		t.Errorf("%d disks left, want sda and nvme1n1", n)
 	}
 	if n := f.count(`SELECT count(*) FROM device_disk_health_samples WHERE device_id = $1 AND disk_key = $2`, dev, a.Subject); n == 0 {
 		t.Error("the gone disk's history went with it")
 	}
 	if got, _ := f.svc.GetAlert(f.ctx, f.super, sda.ID); got.Resolution != "manual" {
-		t.Errorf("sda's alert %+v", got)
+		t.Errorf("sda's first alert %+v", got)
+	}
+	if f.diskAlert(dev, "Disk failing", sda.SubjectLabel) == nil {
+		t.Error("sda's new alert resolved")
+	}
+	// Gone, then back, still failing: a new row and a new alert on it.
+	f.report(dev, nvmeDisk("nvme0n1", "N1", 1), ataDisk("sda", "A1", agentproto.SMARTThresholdExceeded, 0, 0), nvmeDisk("nvme1n1", "N2", 0))
+	if r := f.evaluate(); r.Opened != 1 {
+		t.Fatalf("nvme0n1 back: %+v", r)
+	}
+	if b := f.diskAlert(dev, "Disk failing", label); b == nil || b.ID == a.ID || b.Subject != a.Subject {
+		t.Errorf("nvme0n1's new alert %+v", b)
+	}
+	if n := f.count(`SELECT count(*) FROM device_disk_health WHERE device_id = $1 AND missing_since IS NULL`, dev); n != 3 {
+		t.Errorf("%d disks present, want 3", n)
 	}
 }
 

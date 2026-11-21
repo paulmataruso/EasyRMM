@@ -304,18 +304,14 @@ func evaluateDisks(ctx context.Context, tx pgx.Tx, now time.Time) (opened, resol
 
 // goneDisks resolves the alerts of disks gone for good (subject_gone) and
 // removes their rows; their samples stay until their retention. A disk is
-// gone once it has been missing for GoneAfter and the device's latest
-// inventory, received after the report that first left it out, lists no
-// disk with its identity (ADR-0065, "Disks that disappear").
+// gone once it has been missing for GoneAfter and no hardware report since
+// it went missing lists it (ADR-0065, "Disks that disappear", as amended):
+// a report that lists the disk clears missing_since, so a disk still
+// missing has not been listed since.
 func goneDisks(ctx context.Context, tx pgx.Tx, now time.Time) (int, error) {
 	tag, err := tx.Exec(ctx, `WITH gone AS (
 			DELETE FROM device_disk_health h
-			USING device_inventory i
-			WHERE i.device_id = h.device_id AND h.missing_since <= $1::timestamptz - make_interval(secs => $2)
-			  AND i.received_at > h.missing_since
-			  AND NOT EXISTS (
-				SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(i.data->'disks') = 'array' THEN i.data->'disks' ELSE '[]' END) e
-				WHERE easyrmm_disk_key(coalesce(e->>'name', ''), coalesce(e->>'model', ''), coalesce(e->>'serial', '')) = h.disk_key)
+			WHERE h.missing_since <= $1::timestamptz - make_interval(secs => $2)
 			RETURNING h.device_id, h.disk_key
 		)
 		UPDATE alerts a SET status = 'resolved', resolved_at = $1, resolution = 'subject_gone'

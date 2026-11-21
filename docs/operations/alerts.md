@@ -99,8 +99,10 @@ two alerts, and acknowledging one leaves the other open.
 * **A disk that disappears** from the device's readings keeps its alerts:
   a disk that died and dropped off the bus stays in view until someone
   looks. Resolve them by hand, or they resolve on their own (*Disk gone*)
-  once the disk has been missing for 14 days **and** the device's
-  inventory, received after the disk went missing, no longer lists it.
+  once the disk has been missing for 14 days: no disk reading of the
+  device has listed it since. A disk listed again before then is no
+  longer missing, and its alerts carry on; one that comes back after
+  them gets new ones if its condition holds.
 
 ## Restarts and upgrades
 

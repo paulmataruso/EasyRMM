@@ -6,6 +6,15 @@
   whole rather than by opcode, kernel default timeouts, failing disks
   that stay in view, and the review's other findings, each in its
   section.
+* Amended 2026-11-21, decided in review while slice 1 was built: a
+  missing disk's alerts resolve `subject_gone` once it has been missing
+  for 14 days and no hardware report since lists it, compared with the
+  hardware reports rather than with when the inventory arrived. The
+  agent uploads its inventory only when it changes, so after a disk is
+  swapped while the device is off, the inventory arrives before the
+  report that leaves the disk out and never after it, and the rule as
+  first written would never have resolved the alert. See *Disks that
+  disappear*.
 * Nothing here was decided by the owner. Everything marked as decided
   was decided in review, and the owner can overturn it; the
   [owner questions](#owner-questions) list what is the owner's.
@@ -479,11 +488,14 @@ domain-controller role).
   * **on their own** as `subject_gone`, a new resolution, at the first
     evaluation at which both hold: the disk has been missing for at
     least 14 days (by the server's clock, from the first report that
-    left it out), and the device's latest inventory was received after
-    that report and lists no disk with the disk's identity (model and
-    serial, or name where it has no serial). Its row goes then too; its
-    samples stay until their retention. Until both hold, nothing
-    happens on its own, however long it has been missing.
+    left it out), and no hardware report since then lists a disk with
+    its identity (model and serial, or name where it has no serial); a
+    report that lists it ends its being missing. Its row goes then too;
+    its samples stay until their retention. Until both hold, nothing
+    happens on its own. *(Amended 2026-11-21, decided in review: the
+    rule first compared with the device's inventory, which an agent
+    sends only when it changes, so it could arrive before the report
+    that left the disk out and never after it.)*
 
   A device that stops reporting marks nothing missing: only a report
   that leaves a disk out does. A disk that died and dropped off the bus
@@ -1428,8 +1440,9 @@ this order, each when its inputs exist.
   *unknown* and a failing one staying *failing*, "last read …", through
   age, timeouts and an offline device; a disk dropped by a report kept
   as *missing* with its alert open, resolved by hand and staying so, and
-  resolved `subject_gone` only after 14 days and an inventory without
-  it, not after 13 days, not without that inventory; two disks giving
+  resolved `subject_gone` only after 14 days missing, not after 13
+  days, not when a report lists it again, and a disk that comes back
+  after it opening a new alert; two disks giving
   two alerts, one acknowledged; each check opening, and resolving only
   after two clearing readings (temperature 5 °C below), a `pending`
   alert resolving when the count falls; changing a policy's check

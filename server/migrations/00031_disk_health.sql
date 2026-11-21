@@ -161,8 +161,8 @@ CREATE TRIGGER alert_policies_touch
 -- a unique index would never count as equal). subject_label names it for
 -- people ("PhysicalDrive1 · Samsung SSD 870 EVO 1TB"), never with a serial;
 -- detail says what holds ("Pending sectors 8, reallocated 0").
--- subject_gone: the disk has been missing for 14 days and the device's
--- inventory no longer lists it.
+-- subject_gone: the disk has been missing for 14 days, and no hardware
+-- report since has listed it.
 ALTER TABLE alerts
     DROP CONSTRAINT alerts_kind_check,
     DROP CONSTRAINT alerts_resolution_check,

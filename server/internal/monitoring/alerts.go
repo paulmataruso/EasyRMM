@@ -60,7 +60,7 @@ type Alert struct {
 	ResolvedBy     string     `json:"resolvedBy,omitempty"`
 	// Resolution says why it resolved: cleared, manual, not_covered,
 	// policy_off, policy_changed, policy_deleted or subject_gone (a disk
-	// missing for 14 days that the inventory no longer lists).
+	// missing from the device's hardware reports for 14 days).
 	Resolution string `json:"resolution,omitempty"`
 	CanManage  bool   `json:"canManage"`
 

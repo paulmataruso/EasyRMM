@@ -156,8 +156,8 @@ All notable changes to this project are documented here. The format follows
     and resolves after two readings in a row clear it. Five shared
     policies come with it, only **Disk failing** turned on. A disk that
     disappears keeps its alerts; they resolve on their own (*Disk gone*,
-    `subject_gone`) 14 days later once the device's inventory no longer
-    lists it. See [Disk health policies](docs/operations/alerts.md#disk-health-policies).
+    `subject_gone`) once it has been missing from the device's disk
+    readings for 14 days. See [Disk health policies](docs/operations/alerts.md#disk-health-policies).
   - **History**: every reading for `EASYRMM_METRICS_RETENTION`, then one
     row per disk and day for `EASYRMM_HARDWARE_RETENTION` (new; `17520h`,
     730 days, by default, at least the metrics retention). About 0.3 MiB
