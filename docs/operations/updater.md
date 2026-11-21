@@ -235,7 +235,7 @@ the server and the engine's worker mount read-only at `/run/easyrmm-updater`:
 
 | File | What |
 |---|---|
-| `status.json` | `running`, `previous`, `channel`, the last `attempt` (`action`, `by`, `from`, `to`, `step`, `result`: `running`, `succeeded`, `failed`, `rolled-back` or `rollback-failed`, and `reason`), the `rollback` on offer (`to`, `since`, `until`) and `updated` |
+| `status.json` | `running`, `previous`, `channel`, the last `attempt` (`action`, `by`, `from`, `to`, `step`, `result`: `running`, `succeeded`, `failed`, `rolled-back` or `rollback-failed`, a rollback asked for ending `rolled-back`, and `reason`), the `rollback` on offer (`to`, `since`, `until`) and `updated` |
 | `hold` | While it exists the server is held |
 | `agent-updates-held-until` | One RFC 3339 time: until then the engine starts no automatic agent update |
 

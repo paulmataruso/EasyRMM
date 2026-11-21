@@ -223,7 +223,7 @@ done`, base, installDir, versionA, versionB, versionC), 2*time.Hour)
 	}
 	m.serves(versionA)
 	st = m.status()
-	if a := st.Attempt; a == nil || a.Action != "rollback" || a.Result != host.ResultSucceeded {
+	if a := st.Attempt; a == nil || a.Action != "rollback" || a.Result != host.ResultRolledBack {
 		t.Errorf("after the rollback: %+v", a)
 	}
 	if st.Running != versionA || st.Rollback != nil {
