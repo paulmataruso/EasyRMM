@@ -60,7 +60,7 @@ const (
 	ReasonStorageDriver = "storage_driver"
 	// The device itself refused the query as not supported (unsupported).
 	ReasonDeviceRefused = "device_refused"
-	// SAS, Fibre Channel, iSCSI or another SCSI disk: its own health pages
+	// SAS, FC, iSCSI or another SCSI disk: its own health pages
 	// are not read yet (unavailable).
 	ReasonProtocolNotRead = "protocol_not_read"
 	// A disk behind a USB bridge: not read until a later slice
@@ -222,8 +222,8 @@ type DiskHealth struct {
 	UncorrectableSectors Fact `json:"uncorrectableSectors"`
 	// DriveErrors is NVMe's number of error information log entries, or
 	// the ATA summary SMART error log's count.
-	DriveErrors     Fact `json:"driveErrors"`
-	PowerOnHours    Fact `json:"powerOnHours"`
+	DriveErrors  Fact `json:"driveErrors"`
+	PowerOnHours Fact `json:"powerOnHours"`
 	// DataWritten is NVMe's data units written, each 1,000 units of 512
 	// bytes.
 	DataWritten     Fact `json:"dataWritten"`
