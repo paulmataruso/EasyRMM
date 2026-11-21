@@ -1970,7 +1970,7 @@ export interface PatchDeliveryPage {
 
 export interface PatchNotifications {
   channels: PatchChannel[];
-  /** The mail server email channels send through: EasyRMM's, given to EasyPatch at each start. */
+  /** The mail server email channels send through: EasyRMM's, given to EasyPatch at start and after every change. */
   mail: { host: string; port: number; security: string; fromAddress: string; fromName: string };
   allowPrivateNetworkWebhooks: boolean;
 }

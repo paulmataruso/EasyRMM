@@ -105,6 +105,10 @@ test-mail-stop: ## Stop the test Mailpit servers
 print-test-agent-image:
 	@echo $(TEST_AGENT_IMAGE)
 
+.PHONY: print-mailpit-image
+print-mailpit-image:
+	@echo $(MAILPIT_IMAGE)
+
 .PHONY: print-test-hardening-images
 print-test-hardening-images:
 	@echo $(TEST_HARDENING_IMAGES)

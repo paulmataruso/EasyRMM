@@ -14,6 +14,9 @@
 // is added and tested, which fails for want of a mail server; EasyPatch's own rule for unsupported
 // operating systems sends to it; moving Debian 12's end of support near makes EasyPatch raise an
 // alert for the machine, which Patching → Alerts shows and acknowledges, and the channel is sent it.
+// Settings → Notifications sets Mailpit, on loopback, as the mail server: the console's test message
+// and an invitation arrive there, and the patching engine follows without a restart, so an email
+// channel's test arrives too; removed, password reset is no longer offered.
 // Signed in on the server's second address, the administrator opens a terminal session, which runs
 // on that address's MeshCentral origin. scripts/e2e/bundle.sh starts everything and runs this.
 
@@ -31,6 +34,9 @@ const ADMIN = { name: "Morgan Patel", email: "morgan@example.com", password: "or
 const ORG = "Fabrikam Logistics";
 const SITE = "Main warehouse";
 const PACKAGE = "easyrmm-e2e-demo";
+/** Mailpit, a real SMTP server on loopback: where the console's mail server sends, and its API. */
+const smtp = process.env.EASYRMM_BUNDLE_SMTP ?? "";
+const mailpit = process.env.EASYRMM_BUNDLE_MAILPIT ?? "";
 
 test.describe.configure({ mode: "serial" });
 
@@ -41,6 +47,8 @@ test.beforeAll(async ({ browser }) => {
   expect(host, "EASYRMM_BUNDLE_HOST").not.toBe("");
   expect(hostname, "EASYRMM_BUNDLE_HOSTNAME").not.toBe("");
   expect(setupToken, "EASYRMM_BUNDLE_SETUP_TOKEN").not.toBe("");
+  expect(smtp, "EASYRMM_BUNDLE_SMTP").not.toBe("");
+  expect(mailpit, "EASYRMM_BUNDLE_MAILPIT").not.toBe("");
   admin = await (await browser.newContext()).newPage();
 });
 test.afterAll(async () => {
@@ -638,6 +646,105 @@ test("an alert rule raises an alert for the machine, which Patching → Alerts a
     "patch.channel_create",
   ]);
   expect(audit.items[3]!.deviceId).toBe(deviceId);
+});
+
+type Mail = { ID: string; Subject: string; From: { Address: string; Name: string }; To: { Address: string }[] };
+
+/** The messages Mailpit received for an address, newest first. */
+async function mailTo(address: string): Promise<Mail[]> {
+  const r = await fetch(`${mailpit}/api/v1/search?query=${encodeURIComponent(`to:"${address}"`)}`);
+  expect(r.ok, `Mailpit: ${r.status}`).toBe(true);
+  return ((await r.json()) as { messages: Mail[] }).messages;
+}
+
+test("Settings → Notifications sets the mail server; its test message, an invitation and the patching engine's email arrive, without a restart", async () => {
+  test.setTimeout(300_000);
+  const page = admin;
+  const main = page.getByRole("main");
+  const [smtpHost = "", smtpPort = ""] = smtp.split(":");
+  const FROM = "rmm@fabrikam.example";
+  const resetOffered = async () => (await api<{ passwordResetAvailable: boolean }>("GET", "/api/v1/auth/options")).passwordResetAvailable;
+
+  // No mail server yet: password reset is not offered.
+  expect(await resetOffered()).toBe(false);
+  await page.goto("/settings?tab=notifications");
+  await expect(main.getByText("No mail server")).toBeVisible();
+
+  // Mailpit, on loopback: plain SMTP, without signing in.
+  await main.getByLabel(/^Server/).fill(smtpHost);
+  await main.getByLabel(/^Security/).selectOption("none");
+  await main.getByLabel(/^Port/).fill(smtpPort);
+  await main.getByLabel(/^Sign in/).selectOption("none");
+  await main.getByLabel(/^Send from/).fill(FROM);
+  await main.getByLabel(/^Sender's name/).fill("Fabrikam IT");
+
+  // The test message, before saving, to the administrator's own address.
+  await expect(main.getByLabel(/^Send a test message to/)).toHaveValue(ADMIN.email);
+  await main.getByRole("button", { name: "Send test message" }).click();
+  await expect(main.getByText("Test message sent")).toBeVisible({ timeout: 60_000 });
+  await expect(main.getByText(new RegExp(`took the message for ${ADMIN.email.replace(".", "\\.")} and answered: 250 `))).toBeVisible();
+  await expect.poll(async () => (await mailTo(ADMIN.email)).map((m) => m.Subject), { timeout: 60_000 }).toContain("EasyRMM test message");
+  const tested = (await mailTo(ADMIN.email)).find((m) => m.Subject === "EasyRMM test message")!;
+  expect(tested.From).toMatchObject({ Address: FROM, Name: "Fabrikam IT" });
+
+  await main.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText(`Saved. EasyRMM sends mail through ${smtpHost}.`)).toBeVisible();
+  await expect(main.getByText("No mail server")).toBeHidden();
+  expect(await resetOffered()).toBe(true);
+
+  // An invitation goes by mail now, and its link does not come back.
+  const orgs = await api<{ items: { id: string; name: string }[] }>("GET", "/api/v1/organizations");
+  const invited = await api<{ emailed: boolean; link?: string }>("POST", "/api/v1/users", {
+    email: "casey@example.com",
+    displayName: "Casey Ng",
+    assignments: [{ role: "read_only", organizationId: orgs.items.find((o) => o.name === ORG)!.id }],
+  });
+  expect(invited.emailed).toBe(true);
+  expect(invited.link).toBeUndefined();
+  await expect.poll(async () => (await mailTo("casey@example.com")).map((m) => m.Subject), { timeout: 60_000 }).toContain("You have been invited to EasyRMM");
+
+  // The patching engine follows the change without a restart: it has the mail server, and an email
+  // channel's test arrives.
+  await expect
+    .poll(async () => (await api<{ mail: { host: string; port: number } }>("GET", "/api/v1/patching/notifications")).mail, { timeout: 120_000, intervals: [2_000] })
+    .toMatchObject({ host: smtpHost, port: Number(smtpPort) });
+  const CHANNEL = "Fabrikam mail check";
+  await page.goto("/settings?tab=patching&view=notifications");
+  await expect(main.getByText(`${smtpHost}:${smtpPort}`)).toBeVisible();
+  await main.getByRole("button", { name: "Add channel" }).click();
+  const add = page.getByRole("dialog", { name: "Add channel" });
+  await add.getByRole("textbox", { name: /Name/ }).fill(CHANNEL);
+  await add.getByRole("textbox", { name: /Recipients/ }).fill("mailcheck@example.com");
+  await add.getByRole("button", { name: "Add channel" }).click();
+  await expect(page.getByText(`${CHANNEL} added.`)).toBeVisible();
+  await main.getByRole("button", { name: `Send a test to ${CHANNEL}` }).click();
+  await expect(page.getByText(`Test sent to ${CHANNEL}.`, { exact: false })).toBeVisible();
+  await expect.poll(async () => (await mailTo("mailcheck@example.com")).length, { timeout: 120_000, intervals: [2_000] }).toBeGreaterThan(0);
+  const channels = await api<{ channels: { id: string; name: string }[] }>("GET", "/api/v1/patching/notifications");
+  const channelId = channels.channels.find((c) => c.name === CHANNEL)!.id;
+  await expect
+    .poll(async () => (await api<{ items: Delivery[] }>("GET", `/api/v1/patching/notifications/deliveries?channelId=${channelId}`)).items.find((d) => d.kind === "Test")?.status ?? "", {
+      timeout: 60_000,
+      intervals: [2_000],
+    })
+    .toBe("Sent");
+  await main.getByRole("button", { name: `Delete ${CHANNEL}` }).click();
+  await page.getByRole("dialog", { name: "Delete channel" }).getByRole("button", { name: "Delete channel" }).click();
+  await expect(page.getByText(`${CHANNEL} deleted.`)).toBeVisible();
+
+  // Removed: no mail server again, for EasyRMM and for the engine.
+  await page.goto("/settings?tab=notifications");
+  await main.getByRole("button", { name: "Remove" }).click();
+  await page.getByRole("dialog", { name: "Remove the mail server?" }).getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByText("The mail server is removed.")).toBeVisible();
+  expect(await resetOffered()).toBe(false);
+  await expect
+    .poll(async () => (await api<{ mail: { host: string } }>("GET", "/api/v1/patching/notifications")).mail.host, { timeout: 120_000, intervals: [2_000] })
+    .toBe("");
+
+  // EasyRMM's audit log has each.
+  const audit = await api<{ items: { action: string }[] }>("GET", "/api/v1/audit?action=mail_server");
+  expect(audit.items.map((a) => a.action)).toEqual(["mail_server.delete", "mail_server.update", "mail_server.test"]);
 });
 
 /** MeshCentral's answer on a session's control connection: the user's details, or closing it and why. */
