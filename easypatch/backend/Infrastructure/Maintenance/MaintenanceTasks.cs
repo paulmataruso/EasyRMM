@@ -97,9 +97,15 @@ public sealed class JobMaintenanceTask(EasyPatchDbContext db, SettingsService se
 }
 
 /// <summary>Online/offline transitions (with activity events) and time-based compliance re-evaluation (stale scans).</summary>
-public sealed class PresenceMonitorTask(EasyPatchDbContext db, SettingsService settingsService, PolicyService policies, TimeProvider clock,
-    ILogger<PresenceMonitorTask> logger) : IMaintenanceTask
+/// <remarks>An endpoint counts as seen no earlier than the worker's start plus <see cref="ReconnectGrace"/> (EasyRMM's
+/// ADR-0052): after a restart or an upgrade no endpoint goes offline whose agent is back within its backoff. The rule only
+/// delays going offline; an endpoint already offline comes online only when its agent checks in.</remarks>
+public sealed class PresenceMonitorTask(EasyPatchDbContext db, SettingsService settingsService, PolicyService policies, MaintenanceHeartbeat worker,
+    TimeProvider clock, ILogger<PresenceMonitorTask> logger) : IMaintenanceTask
 {
+    /// <summary>The longest an agent waits between two attempts to reach the engine (the agent's <c>BackoffMax</c>).</summary>
+    public static readonly TimeSpan ReconnectGrace = TimeSpan.FromMinutes(15);
+
     public string Name => "presence-monitor";
     public long LockKey => 0x4550_0002;
     public TimeSpan Interval => TimeSpan.FromSeconds(60);
@@ -110,7 +116,11 @@ public sealed class PresenceMonitorTask(EasyPatchDbContext db, SettingsService s
         var settings = await settingsService.GetAsync(ct);
         var cutoff = now.AddMinutes(-settings.OfflineThresholdMinutes);
 
-        var wentOffline = await db.Endpoints.Where(e => e.IsOnline && (e.LastCheckInAt == null || e.LastCheckInAt < cutoff)).ToListAsync(ct);
+        // Every endpoint counts as seen at the worker's start plus the grace or later: until that is older than the threshold,
+        // none goes offline.
+        List<Endpoint> wentOffline = worker.StartedAt + ReconnectGrace >= cutoff
+            ? []
+            : await db.Endpoints.Where(e => e.IsOnline && (e.LastCheckInAt == null || e.LastCheckInAt < cutoff)).ToListAsync(ct);
         var cameOnline = await db.Endpoints.Where(e => !e.IsOnline && e.Status == EndpointStatus.Active && e.LastCheckInAt >= cutoff).ToListAsync(ct);
         foreach (var e in wentOffline)
         {
@@ -458,12 +468,14 @@ public sealed class ScheduledRestartTask(
 /// Automatic agent updates: queues an agent update for online endpoints whose policy has <c>AgentAutoUpdateEnabled</c>
 /// and whose agent can update to a newer signed package. At most <see cref="EasyPatchOptions.AutomaticAgentUpdateConcurrency"/>
 /// run at once, so a new package reaches the fleet in waves instead of every agent downloading it in the same minute.
+/// Nothing is queued while the host updater holds automatic agent updates (<see cref="AgentUpdateHold"/>).
 /// </summary>
 public sealed class AgentUpdateTask(
     EasyPatchDbContext db,
     PolicyService policies,
     JobService jobs,
     AgentPackageService packages,
+    AgentUpdateHold hold,
     IOptions<EasyPatchOptions> options,
     TimeProvider clock,
     ILogger<AgentUpdateTask> logger) : IMaintenanceTask
@@ -480,6 +492,12 @@ public sealed class AgentUpdateTask(
 
     public async Task RunOnceAsync(CancellationToken ct)
     {
+        var now = clock.GetUtcNow();
+        if (hold.IsHeld(now))
+        {
+            return;
+        }
+
         if (!packages.List().Any(p => p.Release is not null))
         {
             return; // nothing is signed, so nothing can be offered
@@ -492,7 +510,6 @@ public sealed class AgentUpdateTask(
             return;
         }
 
-        var now = clock.GetUtcNow();
         var resolver = await policies.CreateResolverAsync(ct);
         var candidates = await db.Endpoints.AsNoTracking()
             .Where(e => e.Status == EndpointStatus.Active && e.Organization!.IsActive && e.IsOnline &&

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CheckCircle2, Info, OctagonAlert, X } from "lucide-react";
 import { cx } from "./ui";
 
@@ -24,14 +24,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const dismiss = useCallback((id: number) => setItems((list) => list.filter((t) => t.id !== id)), []);
 
-  const push = useCallback(
-    (tone: ToastTone, message: ReactNode) => {
-      const id = nextId.current++;
-      setItems((list) => [...list.slice(-4), { id, tone, message }]);
-      window.setTimeout(() => dismiss(id), tone === "error" ? 9000 : 5000);
-    },
-    [dismiss],
-  );
+  const push = useCallback((tone: ToastTone, message: ReactNode) => {
+    const id = nextId.current++;
+    setItems((list) => [...list.slice(-4), { id, tone, message }]);
+  }, []);
 
   const api = useMemo<ToastApi>(
     () => ({
@@ -50,27 +46,35 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         aria-live="polite"
         aria-relevant="additions"
       >
-        {items.map((t) => {
-          const Icon = t.tone === "success" ? CheckCircle2 : t.tone === "error" ? OctagonAlert : Info;
-          return (
-            <div
-              key={t.id}
-              role={t.tone === "error" ? "alert" : "status"}
-              className="toast-enter pointer-events-auto flex items-start gap-2.5 rounded-lg border border-line bg-surface px-3.5 py-3 text-sm text-fg shadow-lg"
-            >
-              <Icon
-                className={cx("mt-0.5 size-4 shrink-0", t.tone === "success" ? "text-ok" : t.tone === "error" ? "text-danger" : "text-info")}
-                aria-hidden
-              />
-              <div className="min-w-0 flex-1 break-words">{t.message}</div>
-              <button type="button" onClick={() => dismiss(t.id)} aria-label="Dismiss" className="rounded p-0.5 text-muted hover:text-fg">
-                <X className="size-3.5" aria-hidden />
-              </button>
-            </div>
-          );
-        })}
+        {items.map((t) => (
+          <Toast key={t.id} item={t} onDismiss={dismiss} />
+        ))}
       </div>
     </ToastContext.Provider>
+  );
+}
+
+/** One toast. It closes itself after a while, on a timer it owns: a toast closed by hand, pushed out by newer ones or
+ * unmounted with the console clears its timer, so none fires a state update after its component is gone. */
+function Toast({ item, onDismiss }: { item: ToastItem; onDismiss: (id: number) => void }) {
+  const { id, tone, message } = item;
+  useEffect(() => {
+    const timer = window.setTimeout(() => onDismiss(id), tone === "error" ? 9000 : 5000);
+    return () => window.clearTimeout(timer);
+  }, [id, tone, onDismiss]);
+
+  const Icon = tone === "success" ? CheckCircle2 : tone === "error" ? OctagonAlert : Info;
+  return (
+    <div
+      role={tone === "error" ? "alert" : "status"}
+      className="toast-enter pointer-events-auto flex items-start gap-2.5 rounded-lg border border-line bg-surface px-3.5 py-3 text-sm text-fg shadow-lg"
+    >
+      <Icon className={cx("mt-0.5 size-4 shrink-0", tone === "success" ? "text-ok" : tone === "error" ? "text-danger" : "text-info")} aria-hidden />
+      <div className="min-w-0 flex-1 break-words">{message}</div>
+      <button type="button" onClick={() => onDismiss(id)} aria-label="Dismiss" className="rounded p-0.5 text-muted hover:text-fg">
+        <X className="size-3.5" aria-hidden />
+      </button>
+    </div>
   );
 }
 

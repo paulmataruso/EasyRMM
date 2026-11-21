@@ -46,7 +46,7 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) error {
 	}
 	q := r.URL.Query()
 	items, err := a.svc.List(r.Context(), httpapi.Caller(r), devices.Query{
-		OrganizationID: org, SiteID: site, Search: q.Get("q"), Status: q.Get("status"),
+		OrganizationID: org, SiteID: site, Search: q.Get("q"), Status: q.Get("status"), Hardening: q.Get("hardening"),
 	})
 	if err != nil {
 		return err

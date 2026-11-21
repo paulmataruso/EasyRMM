@@ -142,15 +142,45 @@ type Device struct {
 	// CanManageSoftware: the caller holds software.manage here and the
 	// device has the EasyRMM agent on Windows or Linux (ADR-0028).
 	CanManageSoftware bool `json:"canManageSoftware"`
+	// CanCheckHardening: the caller holds script.run here and the device
+	// has the EasyRMM agent on Linux (ADR-0051).
+	CanCheckHardening bool `json:"canCheckHardening"`
 	// CanRemove: the caller may remove the device (ADR-0050).
 	CanRemove bool `json:"canRemove"`
 	// Removal is the device's removal while it waits for its agent, nil
 	// when nobody asked for one.
 	Removal *Removal `json:"removal"`
+	// Hardening sums up what hardening jobs found on the device, nil until
+	// one reported (ADR-0051).
+	Hardening *HardeningSummary `json:"hardening"`
 
 	// MeshNodeID is MeshCentral's node identifier, empty without MeshAgent.
 	MeshNodeID string `json:"-"`
 }
+
+// HardeningSummary is what the last hardening jobs found on a device: when
+// the latest reported, and how many modules are in each state (ADR-0051).
+// The device's Hardening tab has the detail.
+type HardeningSummary struct {
+	CheckedAt time.Time      `json:"checkedAt"`
+	States    map[string]int `json:"states"`
+}
+
+// Hardening filters of a device list (Query.Hardening).
+const (
+	// HardeningAttention: a module is not, or only partly, in place, was
+	// left half applied, or failed.
+	HardeningAttention = "attention"
+	// HardeningInPlace: checked, and no module needs attention.
+	HardeningInPlace = "in_place"
+	// HardeningUnchecked: a Linux device with the EasyRMM agent that no
+	// hardening job has reported on.
+	HardeningUnchecked = "unchecked"
+)
+
+// attentionStates are the module states HardeningAttention looks for, as
+// the jobs package names them.
+var attentionStates = []string{"partly", "not_in_place", "half_applied", "failed"}
 
 // Removal is a device's removal waiting for its agent to uninstall itself
 // (ADR-0050).
@@ -171,6 +201,8 @@ type Query struct {
 	Search         string
 	// Status is "", "online" or "offline".
 	Status string
+	// Hardening is "" or one of the Hardening* filters.
+	Hardening string
 }
 
 // MaxList bounds one list response.
@@ -185,14 +217,22 @@ var columns = `d.id, d.organization_id, o.name, d.site_id, s.name, d.device_grou
 	d.enrolled_at, coalesce(d.agent_version, ''), coalesce(d.agent_arch, ''), d.agent_last_seen_at, ` + agentOnline + `,
 	coalesce(d.agent_sha256, ''), coalesce(u.state, ''), coalesce(u.target_sha256, ''), coalesce(u.attempts, 0),
 	coalesce(u.error, ''), coalesce(u.requested, false),
-	rm.requested_at, rm.sent_at, rm.reported_at, coalesce(rm.error, '')`
+	rm.requested_at, rm.sent_at, rm.reported_at, coalesce(rm.error, ''),
+	hc.checked_at, coalesce(hs.states, '{}')`
 
+// from joins what the columns read. hs counts the device's hardening
+// modules by state, as {"in_place": 9, "partly": 1}.
 const from = ` FROM devices d
 	JOIN sites s ON s.id = d.site_id
 	JOIN organizations o ON o.id = d.organization_id
 	LEFT JOIN device_groups g ON g.id = d.device_group_id
 	LEFT JOIN agent_updates u ON u.device_id = d.id
-	LEFT JOIN device_removals rm ON rm.device_id = d.id`
+	LEFT JOIN device_removals rm ON rm.device_id = d.id
+	LEFT JOIN device_hardening_checks hc ON hc.device_id = d.id
+	LEFT JOIN LATERAL (
+		SELECT jsonb_object_agg(x.state, x.n) AS states
+		FROM (SELECT h.state, count(*) AS n FROM device_hardening h WHERE h.device_id = d.id GROUP BY h.state) x
+	) hs ON true`
 
 func scan(row pgx.Row) (*Device, error) {
 	var (
@@ -202,13 +242,16 @@ func scan(row pgx.Row) (*Device, error) {
 		u          AgentUpdate
 		rm         Removal
 		asked      *time.Time
+		checkedAt  *time.Time
+		states     map[string]int
 	)
 	err := row.Scan(&d.ID, &d.OrganizationID, &d.OrganizationName, &d.SiteID, &d.SiteName, &d.DeviceGroupID, &d.DeviceGroupName,
 		&d.Name, &d.Hostname, &d.OSDescription, &d.Platform, &d.MeshNodeID, &d.RemoteOnline,
 		&d.LastSeenAt, &d.CreatedAt, &d.UpdatedAt,
 		&enrolledAt, &a.Version, &a.Arch, &a.LastSeenAt, &a.Online,
 		&a.SHA256, &a.updateState, &a.updateTarget, &u.Attempts, &u.Error, &u.Requested,
-		&asked, &rm.SentAt, &rm.ReportedAt, &rm.Error)
+		&asked, &rm.SentAt, &rm.ReportedAt, &rm.Error,
+		&checkedAt, &states)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +259,9 @@ func scan(row pgx.Row) (*Device, error) {
 	if asked != nil {
 		rm.RequestedAt = *asked
 		d.Removal = &rm
+	}
+	if checkedAt != nil {
+		d.Hardening = &HardeningSummary{CheckedAt: *checkedAt, States: states}
 	}
 	if enrolledAt != nil {
 		a.EnrolledAt = *enrolledAt
@@ -254,6 +300,7 @@ func (s *Service) decorate(c access.Caller, d *Device) {
 	d.CanRunScripts = d.Agent != nil && c.Can(rbac.PermScriptRun, r)
 	d.CanUpdateAgent = d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
 	d.CanManageSoftware = d.Agent != nil && (d.Platform == "windows" || d.Platform == "linux") && c.Can(rbac.PermSoftwareManage, r)
+	d.CanCheckHardening = d.Agent != nil && d.Platform == "linux" && c.Can(rbac.PermScriptRun, r)
 	d.CanRemove = c.Can(rbac.PermDeviceRetire, r)
 	s.updateStatus(d)
 }
@@ -296,6 +343,11 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 	default:
 		return nil, apperr.Invalid("status", "Use online or offline.")
 	}
+	switch q.Hardening {
+	case "", HardeningAttention, HardeningInPlace, HardeningUnchecked:
+	default:
+		return nil, apperr.Invalid("hardening", "Use attention, in_place or unchecked.")
+	}
 	out := []*Device{}
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT `+columns+from+`
@@ -303,8 +355,13 @@ func (s *Service) List(ctx context.Context, c access.Caller, q Query) ([]*Device
 			  AND ($2::uuid IS NULL OR d.site_id = $2)
 			  AND ($3 = '' OR strpos(lower(d.name), lower($3)) > 0 OR strpos(lower(d.hostname), lower($3)) > 0)
 			  AND ($4 = '' OR (d.remote_online OR `+agentOnline+`) = ($4 = 'online'))
+			  AND CASE $6
+				WHEN 'attention' THEN coalesce(hs.states ?| $7::text[], false)
+				WHEN 'in_place' THEN hc.device_id IS NOT NULL AND NOT coalesce(hs.states ?| $7::text[], false)
+				WHEN 'unchecked' THEN d.platform = 'linux' AND d.enrolled_at IS NOT NULL AND hc.device_id IS NULL
+				ELSE true END
 			ORDER BY lower(d.name), d.id LIMIT $5`,
-			nullUUID(q.OrganizationID), nullUUID(q.SiteID), strings.TrimSpace(q.Search), q.Status, MaxList)
+			nullUUID(q.OrganizationID), nullUUID(q.SiteID), strings.TrimSpace(q.Search), q.Status, MaxList, q.Hardening, attentionStates)
 		if err != nil {
 			return err
 		}

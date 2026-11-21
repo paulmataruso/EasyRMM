@@ -5,6 +5,36 @@ and the agents share one version number.
 
 ## [Unreleased]
 
+### Added
+
+- The worker follows EasyRMM's host updater (EasyRMM's ADR-0052). While the updater's
+  `agent-updates-held-until` holds a time still ahead, in RFC 3339 (`2026-11-22T07:00:00Z`), the
+  `agent-updates` task queues no automatic agent update, so a rollback within that time finds no
+  agent ahead of the engine it restores. The worker reads the file in the updater's status
+  directory, `EasyPatch:UpdaterStatusPath` (default `/run/easyrmm-updater`, mounted read-only), and
+  logs when a hold begins, changes and ends. Without the file or the directory, or once the time
+  has passed, nothing is held. A file the worker cannot read, or that holds anything but one time,
+  holds updates and is logged as an error at every run until it is corrected or removed. Agent
+  updates an Operator starts (`POST /api/v1/endpoints/bulk/agent-update`, or a retry of a finished
+  one) are not held.
+
+### Changed
+
+- After a restart or an upgrade the presence monitor counts every endpoint as seen no earlier than
+  15 minutes after the worker started, the agents' longest wait between two attempts (EasyRMM's
+  ADR-0052). Endpoints whose agents come back in that time are never marked offline, so they get
+  no `Offline` event and no offline alert; one that stays away goes offline after the usual
+  threshold, counted from then. Endpoints already offline stay offline until their agent checks in.
+
+### Fixed
+
+- The Windows build of the agent's MSI now checks, as the Linux build did, that the package keeps
+  the enrollment token out of MSI logs: `ENROLLMENTTOKEN` is listed in `MsiHiddenProperties`, and
+  `WriteRegistryValues`' progress text leaves registry values out. Release MSIs are built on
+  Windows (`build-agent.ps1` → `build-installer.ps1`), which until now checked only the package's
+  platform, so a change to `Package.wxs` that exposed the token would have shipped. The packages
+  released so far are not affected: their source sets both.
+
 ## [1.12.1] - 2026-11-21
 
 Released with EasyRMM 1.0.0-rc.4. No changes to the engine or its agents.

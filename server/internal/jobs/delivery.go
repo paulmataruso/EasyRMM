@@ -194,16 +194,23 @@ func (s *Service) Result(ctx context.Context, device, run uuid.UUID, in agentpro
 		started = &t
 	}
 	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE job_runs SET status = $3, exit_code = $4, stdout = $5, stderr = $6,
+		var job uuid.UUID
+		var ran time.Time
+		err := tx.QueryRow(ctx, `UPDATE job_runs SET status = $3, exit_code = $4, stdout = $5, stderr = $6,
 				stdout_truncated = $7, stderr_truncated = $8, error = $9,
 				started_at = coalesce(started_at, $10), finished_at = now()
-			WHERE id = $1 AND device_id = $2 AND status IN ('sent', 'running', 'lost')`,
-			run, device, in.Status, in.ExitCode, stdout, stderr, in.StdoutTruncated || cutOut, in.StderrTruncated || cutErr, msg, started)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 1 {
+			WHERE id = $1 AND device_id = $2 AND status IN ('sent', 'running', 'lost')
+			RETURNING job_id, coalesce(started_at, finished_at)`,
+			run, device, in.Status, in.ExitCode, stdout, stderr, in.StdoutTruncated || cutOut, in.StderrTruncated || cutErr, msg, started).
+			Scan(&job, &ran)
+		switch {
+		case err == nil && in.Status == StatusSucceeded:
+			// A hardening run's result is kept per module (ADR-0051).
+			return s.recordHardening(ctx, tx, device, run, job, ran, stdout)
+		case err == nil:
 			return nil
+		case !errors.Is(err, pgx.ErrNoRows):
+			return err
 		}
 		var exists bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM job_runs WHERE id = $1 AND device_id = $2)`, run, device).Scan(&exists); err != nil {

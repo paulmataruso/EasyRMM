@@ -524,6 +524,19 @@ the installed agent and signed with a key the agent reported, runs at most
 hours after a failure and stops after 3 failures of a version. The agent's
 checks are in [Agent release signing](#agent-release-signing).
 
+After an upgrade, EasyRMM's host updater holds automatic agent updates for
+24 hours ([ADR-0052](adr/0052-the-host-updater.md)): it writes the time
+they may start again, in RFC 3339 (`2026-11-22T07:00:00Z`), to
+`agent-updates-held-until` in its status directory, which the worker reads
+at `EasyPatch:UpdaterStatusPath` (default `/run/easyrmm-updater`,
+read-only; the worker's user, UID 1654, must be able to read both). Until
+that time the task queues nothing, and logs when a hold begins, changes
+and ends. Without the file or the directory, or once the time has passed,
+nothing is held. A file the worker cannot read, or that holds anything but
+one time, holds updates and is logged as an error at every run until it
+is corrected or removed. Updates an Operator starts, and retries of
+finished agent update jobs, are not held.
+
 ### Update removal jobs
 
 `UninstallUpdate` removes one installed Windows update (agent capability
@@ -812,12 +825,12 @@ Each task runs under a PostgreSQL advisory lock.
 | Task | Interval | Work |
 |---|---|---|
 | `job-maintenance` | 30 s | Lease expiry and redelivery, job expiry, running-job timeouts |
-| `presence-monitor` | 60 s | Online and offline transitions (offline after 10 minutes by default), scan staleness |
+| `presence-monitor` | 60 s | Online and offline transitions (offline after 10 minutes without a check-in by default, counting every endpoint as seen no earlier than 15 minutes after the worker started, the agents' longest backoff), scan staleness |
 | `scheduled-installs` | 2 min | Install jobs inside open maintenance windows |
 | `pre-downloads` | 10 min | Downloads before a window |
 | `deferral-expiry` | 10 min | Updates whose rollout delay ended |
 | `scheduled-restarts` | 2 min | Restart jobs from restart schedules |
-| `agent-updates` | 2 min | Automatic agent updates |
+| `agent-updates` | 2 min | Automatic agent updates, none while the host updater holds them |
 | `rollout-guard` | 5 min | Holds for updates that fail too often |
 | `compliance-snapshots` | 30 min | Daily compliance counters |
 | `vulnerability-feeds` | 1 h | KEV, MSRC and Debian downloads |

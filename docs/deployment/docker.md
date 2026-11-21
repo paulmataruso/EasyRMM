@@ -7,10 +7,10 @@ listen on loopback; only the server's TLS edge listens publicly.
 | Container | Listens on | Data |
 |---|---|---|
 | `postgres` | `127.0.0.1:15432` | `/srv/easyrmm/postgres` |
-| `server` | `:443`, `:80` (optional), `127.0.0.1:18081` (health) | `/srv/easyrmm/server` |
+| `server` | `:443`, `:80` (optional), `127.0.0.1:18081` (health) | `/srv/easyrmm/server`; `/srv/easyrmm/updater/status`, read-only ([the updater's](#held-by-the-updater)) |
 | `meshcentral` | `127.0.0.1:14430` | `/srv/easyrmm/meshcentral` (its data), `/srv/easyrmm/meshcentral-config` (configuration written by the server) |
 | `easypatch-api` | `127.0.0.1:18180` | `/srv/easyrmm/easypatch/keys`, `/srv/easyrmm/easypatch/winget`; its database `easypatch` in `postgres` |
-| `easypatch-worker` | `127.0.0.1:18181` (health) | The same, keys read-only |
+| `easypatch-worker` | `127.0.0.1:18181` (health) | The same, keys read-only; `/srv/easyrmm/updater/status`, read-only |
 | `easypatch-db-init`, `easypatch-migrate` | Nothing; they run once at each start and exit | |
 
 See [network.md](../architecture/network.md) for the full port plan.
@@ -343,6 +343,32 @@ To upgrade, follow [Upgrading](../operations/upgrading.md). Migrations run at
 start-up under an advisory lock, so several servers starting at once cannot
 race. They only run forward, so take a backup first
 ([backup-restore.md](../operations/backup-restore.md)).
+
+### Held by the updater
+
+`/srv/easyrmm/updater/status` belongs to root (mode 755): `setup.sh`
+makes it, and the server and the engine's worker mount it read-only at
+`/run/easyrmm-updater`. The updater on the host
+([ADR-0052](../architecture/adr/0052-the-host-updater.md), not built yet)
+will tell the deployment there what it is doing.
+
+While a file named `hold` exists in it, the server answers its health
+check and nothing else: the console, the API, agents, the patching
+engine's agents, and Authentik's and MeshCentral's names get
+`503 Service Unavailable` with `Retry-After: 60`. Only ACME's challenges
+are still answered, so that certificates can be renewed. The updater
+writes the file before it starts a new version and removes it once the
+upgrade is confirmed, so that nothing reaches a version it may still roll
+back. The server looks for it every second and logs when it is held and
+when it serves again; without the file nothing is held. The health check
+passes while the server is held, and says so:
+
+```bash
+curl -s http://127.0.0.1:18081/readyz   # "ready, held by the updater"
+```
+
+A restart, an upgrade or a hold raises no offline alert: see
+[Alerts](../operations/alerts.md#restarts-and-upgrades).
 
 ### Rotating the encryption key
 

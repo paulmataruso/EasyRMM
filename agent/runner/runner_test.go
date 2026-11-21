@@ -11,12 +11,14 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/paulmataruso/easyrmm/agent/client"
+	"github.com/paulmataruso/easyrmm/agent/host"
 	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
@@ -136,8 +138,15 @@ func newRunner(t *testing.T, s *server, m *mesh) *Runner {
 	c.SetIdentity("dev-1", key)
 	jobPub, job, _ := ed25519.GenerateKey(rand.Reader)
 	s.job = job
+	store, _, err := state.Open(host.Paths{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(store.Dir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	r := &Runner{
-		Client: c, Store: state.Store{Dir: t.TempDir()},
+		Client: c, Store: store,
 		Facts: func() agentproto.Facts { return agentproto.Facts{Hostname: "h"} },
 		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Key:   func() ed25519.PublicKey { return jobPub },

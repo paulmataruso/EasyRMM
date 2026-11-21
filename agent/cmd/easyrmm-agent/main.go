@@ -80,7 +80,8 @@ approved in the EasyRMM console, then finishes enrolling on its own.
 
 // env bundles what the commands share.
 type env struct {
-	paths  host.Paths
+	paths host.Paths
+	// store is the agent's state, once openStore has checked its folder.
 	store  state.Store
 	stdout io.Writer
 	log    *slog.Logger
@@ -98,7 +99,6 @@ func newEnv(stdout, stderr io.Writer) *env {
 	p := host.Paths{Root: os.Getenv("EASYRMM_AGENT_ROOT")}
 	return &env{
 		paths:       p,
-		store:       state.Store{Dir: p.State()},
 		stdout:      stdout,
 		log:         slog.New(slog.NewTextHandler(stderr, nil)),
 		sd:          host.SystemServices(p),
@@ -126,6 +126,28 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return errors.New("no command given")
 	}
 	return newEnv(stdout, stderr).dispatch(ctx, args, stderr)
+}
+
+// openStore checks the agent's state folder before a command reads or
+// writes anything in it (state.Open), and logs what the check changed.
+// Each command calls it once it knows it may run; the store refuses
+// everything until then.
+func (e *env) openStore() error {
+	if e.store.Dir() != "" {
+		return nil
+	}
+	s, checked, err := state.Open(e.paths)
+	for _, p := range checked.Aside {
+		e.log.Warn("the agent did not make this in its state folder, or cannot trust it: it was moved aside and is not read", "moved_to", p)
+	}
+	for _, p := range checked.Reprotected {
+		e.log.Warn("this folder of the agent's had another access list; it was set back to the agent's own", "folder", p)
+	}
+	if err != nil {
+		return err
+	}
+	e.store = s
+	return nil
 }
 
 func (e *env) dispatch(ctx context.Context, args []string, stderr io.Writer) error {
@@ -178,6 +200,9 @@ func (e *env) enroll(ctx context.Context, args []string, service bool) error {
 		return errors.New("--server is required")
 	}
 	if _, err := client.ParseServer(*server); err != nil {
+		return err
+	}
+	if err := e.openStore(); err != nil {
 		return err
 	}
 
@@ -280,11 +305,7 @@ func (e *env) register(ctx context.Context, server, token, caFile string, servic
 		if err != nil {
 			return nil, nil, fmt.Errorf("reading the CA file: %w", err)
 		}
-		if err := host.Protect(e.store.Dir); err != nil {
-			return nil, nil, err
-		}
-		cfg.CAFile = filepath.Join(e.store.Dir, "ca.pem")
-		if err := os.WriteFile(cfg.CAFile, pem, 0o600); err != nil { //nolint:gosec // inside the agent's state directory
+		if cfg.CAFile, err = e.store.SaveCA(pem); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -329,6 +350,9 @@ func (e *env) mesh(cfg *state.Config) *meshagent.Manager {
 }
 
 func (e *env) run(ctx context.Context) error {
+	if err := e.openStore(); err != nil {
+		return err
+	}
 	cfg, key, err := e.store.Load()
 	if errors.Is(err, state.ErrNotEnrolled) {
 		cfg, key, err = e.awaitApproval(ctx)
@@ -380,13 +404,22 @@ func (e *env) run(ctx context.Context) error {
 		r.Update = up
 	}
 	w := &jobs.Worker{Client: c, DeviceID: cfg.DeviceID, Dir: e.store.JobsDir(), Log: e.log, Finished: r.RefreshInventory}
+	if e.paths.Windows() {
+		// The state check leaves out the scripts' working folders: scripts
+		// ran there as SYSTEM and may have left links or files others own.
+		// Nothing there is read; they start empty. openStore checked jobs
+		// itself, and RemoveAll follows no link or junction below it.
+		if err := w.ClearWork(); err != nil {
+			e.log.Warn("emptying the scripts' working folder failed", "error", err)
+		}
+	}
 	if cfg.JobKey != "" {
 		if err := w.SetKey(cfg.JobKey); err != nil {
 			return fmt.Errorf("the pinned job key in the configuration is damaged: %w", err)
 		}
 	}
 	// The EasyPatch agent's install (ADR-0031) trusts the same key.
-	ep := &easypatch.Installer{DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Dir: e.store.Dir, Log: e.log,
+	ep := &easypatch.Installer{DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Dir: e.store.Dir(), Log: e.log,
 		Present: inventory.Collector{}.EasyPatch, Finished: r.RefreshInventory}
 	r.EasyPatch = ep
 	if up != nil {
@@ -395,7 +428,7 @@ func (e *env) run(ctx context.Context) error {
 	}
 	r.OnJobKey = e.pinJobKey(cfg, w)
 	r.Removal = &removal.Remover{
-		DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Dir: e.store.Dir, Log: e.log,
+		DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Dir: e.store.Dir(), Log: e.log,
 		Launch: e.launchRemoval, Report: c.Removed,
 	}
 	parent := ctx
@@ -433,7 +466,7 @@ func (e *env) updater(cfg *state.Config, c *client.Client) *update.Updater {
 		return nil
 	}
 	return &update.Updater{
-		Client: c, DeviceID: cfg.DeviceID, Version: Version, SHA256: sum, Exe: exe, Dir: e.store.Dir, Log: e.log,
+		Client: c, DeviceID: cfg.DeviceID, Version: Version, SHA256: sum, Exe: exe, Dir: e.store.Dir(), Log: e.log,
 		// The key pinned for jobs signs updates too.
 		Key: pinnedKey(cfg),
 	}
@@ -485,6 +518,14 @@ func (e *env) pinJobKey(cfg *state.Config, w *jobs.Worker) func(string) {
 }
 
 func (e *env) status(ctx context.Context) error {
+	// Only administrators may open the folder on Windows; checking it as
+	// anyone else would leave folders of theirs in ProgramData.
+	if e.paths.Windows() && !e.isRoot() {
+		return e.needAdmin("status command")
+	}
+	if err := e.openStore(); err != nil {
+		return err
+	}
 	cfg, _, err := e.store.Load()
 	if errors.Is(err, state.ErrNotEnrolled) {
 		return e.pendingStatus(ctx)
@@ -534,6 +575,9 @@ func (e *env) uninstall(ctx context.Context, args []string) error {
 	}
 	if supported() && !e.isRoot() && (e.paths.Root == "" || e.paths.Root == "/") {
 		return e.needAdmin("uninstallation")
+	}
+	if err := e.openStore(); err != nil {
+		return err
 	}
 	if *removal != "" {
 		return e.removeOnRequest(ctx, *removal)

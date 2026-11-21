@@ -29,6 +29,8 @@ Everything about running, using and building EasyRMM. Start with the
 * [Alerts](operations/alerts.md)
 * [Scripts and jobs](operations/scripts-and-jobs.md)
 * [Installing, updating and removing software](operations/software.md)
+* [Hardening Linux computers](operations/hardening.md): checks, each
+  device's findings, and drift across the fleet.
 * [Reports](operations/reports.md)
 * [Forwarding the audit log](operations/audit-forwarding.md)
 
@@ -55,7 +57,7 @@ Everything about running, using and building EasyRMM. Start with the
   inside.
 * [Architecture decision records](architecture/adr/README.md): why it is
   built this way.
-* [Feature plan](architecture/feature-plan.md): how the next eight
+* [Feature plan](architecture/feature-plan.md): how the next nine
   features will work and the order they are built in.
 
 ## Develop

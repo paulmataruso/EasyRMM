@@ -147,6 +147,7 @@ var fixedInCompose = map[string]string{
 	"EASYRMM_PATCHING_URL":         "where the easypatch-api service listens (TestComposeListeners checks they agree)",
 	"EASYRMM_PATCHING":             "not a setting: the engine in this deployment always runs",
 	"EASYRMM_AUTHENTIK_UPSTREAM":   "where the authentik-server service listens (TestComposeListeners checks they agree)",
+	"EASYRMM_UPDATER_STATUS_DIR":   "where the server service mounts the updater's status directory (TestComposeUpdaterStatus checks they agree)",
 }
 
 func TestInterpolate(t *testing.T) {
@@ -229,6 +230,68 @@ func composeEnvironment(t *testing.T, service string) map[string]string {
 		t.Fatalf("%s: no environment for %s", composeFile, service)
 	}
 	return out
+}
+
+// composeVolumes returns a service's volumes from the Compose file, read
+// as composeEnvironment reads its environment.
+func composeVolumes(t *testing.T, service string) []string {
+	t.Helper()
+	b, err := os.ReadFile(composeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	inService, inVolumes := false, false
+	for _, line := range strings.Split(string(b), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		switch {
+		case indent == 2:
+			inService, inVolumes = trimmed == service+":", false
+		case inService && indent == 4:
+			inVolumes = trimmed == "volumes:"
+		case inVolumes && indent == 6 && strings.HasPrefix(trimmed, "- "):
+			out = append(out, strings.TrimPrefix(trimmed, "- "))
+		}
+	}
+	return out
+}
+
+// TestComposeUpdaterStatus mounts the updater's status directory read-only
+// where the server looks for it, into the server and the engine's worker
+// only (ADR-0052).
+func TestComposeUpdaterStatus(t *testing.T) {
+	c, err := LoadFrom(env(map[string]string{
+		"EASYRMM_PUBLIC_URL": "https://rmm.example.com", "EASYRMM_ACME_EMAIL": "ops@example.com",
+		"EASYRMM_DATABASE_URL": "postgres://a@127.0.0.1/x", "EASYRMM_DATABASE_MIGRATION_URL": "postgres://o@127.0.0.1/x",
+		"EASYRMM_SECRET_KEY": testKey, "EASYRMM_PATCHING_KEY": testKey,
+	}), noFiles)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "${EASYRMM_DATA_ROOT:-/srv/easyrmm}/updater/status:" + c.UpdaterStatusDir + ":ro"
+	b, err := os.ReadFile(composeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := regexp.MustCompile(`(?m)^  ([a-z][a-z0-9-]*):$`).FindAllStringSubmatch(string(b), -1)
+	var mounted []string
+	for _, s := range services {
+		for _, v := range composeVolumes(t, s[1]) {
+			if strings.Contains(v, "/updater") {
+				if v != want {
+					t.Errorf("%s mounts %q, want %q", s[1], v, want)
+				}
+				mounted = append(mounted, s[1])
+			}
+		}
+	}
+	if !slices.Equal(mounted, []string{"server", "easypatch-worker"}) {
+		t.Errorf("the updater's status is mounted into %v, want the server and the engine's worker", mounted)
+	}
 }
 
 var variable = regexp.MustCompile(`\$\{([A-Za-z0-9_]+)(?:(:?[-?])([^}]*))?\}`)

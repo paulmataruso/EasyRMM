@@ -6,6 +6,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +19,23 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 )
+
+// The fake reports the version of the engine built from this commit,
+// <Version> in easypatch/Directory.Build.props: a release that raises one
+// raises the other. The contract test checks the real engine's version.
+func TestEngineVersion(t *testing.T) {
+	props, err := os.ReadFile(filepath.Join("..", "..", "..", "easypatch", "Directory.Build.props"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`<Version>([^<]*)</Version>`).FindSubmatch(props)
+	if m == nil {
+		t.Fatal("easypatch/Directory.Build.props has no <Version>")
+	}
+	if string(m[1]) != eptest.EngineVersion {
+		t.Errorf("the engine is %s but eptest.EngineVersion is %s: set it to the engine's <Version>", m[1], eptest.EngineVersion)
+	}
+}
 
 func TestParseURL(t *testing.T) {
 	good := map[string]string{

@@ -21,16 +21,19 @@ import (
 
 	"github.com/paulmataruso/easyrmm/server/internal/config"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
+	"github.com/paulmataruso/easyrmm/server/internal/updater"
 )
 
 // edge owns the public listeners: HTTPS on 443 (with certificates from
 // ACME, files or the internal certificate authority), HTTPS on MeshCentral's
 // own port when it has one (4443 for IP access), the optional HTTP listener
 // on 80 (ACME challenges and redirects to HTTPS), or, in offload mode, plain
-// HTTP on loopback behind a proxy.
+// HTTP on loopback behind a proxy. While the updater holds the server,
+// every listener answers 503, except to ACME's challenges (ADR-0052).
 type edge struct {
 	cfg     *config.Config
 	handler http.Handler
+	hold    *updater.Hold
 	log     *slog.Logger
 	pki     *pki.Authority
 	servers []*http.Server
@@ -96,12 +99,14 @@ func baseTLS() *tls.Config {
 // run starts the listeners and blocks until ctx is canceled or a listener
 // fails, then shuts every listener down gracefully.
 func (e *edge) run(ctx context.Context) error {
+	handler := e.hold.Handler(e.handler)
+	redirect := e.hold.Handler(redirectHandler(e.cfg))
 	var plain http.Handler // what the port-80 listener serves, if enabled
 	var primary getCertificate
 	var acmeALPN bool
 	switch e.cfg.TLSMode {
 	case config.TLSOffload:
-		e.servers = append(e.servers, e.newServer(e.cfg.ListenOffload, e.handler, nil))
+		e.servers = append(e.servers, e.newServer(e.cfg.ListenOffload, handler, nil))
 	case config.TLSAcme:
 		m := &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
@@ -111,7 +116,9 @@ func (e *edge) run(ctx context.Context) error {
 			Client:     &acme.Client{DirectoryURL: e.cfg.ACMEDirectory},
 		}
 		primary, acmeALPN = m.GetCertificate, true
-		plain = m.HTTPHandler(redirectHandler(e.cfg)) // HTTP-01 challenges
+		// HTTP-01 challenges, answered while held too: a certificate can
+		// then be issued or renewed during a held start.
+		plain = m.HTTPHandler(redirect)
 	case config.TLSManual:
 		r, err := newCertReloader(e.cfg.CertFile, e.cfg.KeyFile, e.log)
 		if err != nil {
@@ -121,13 +128,13 @@ func (e *edge) run(ctx context.Context) error {
 			return err
 		}
 		primary = r.get
-		plain = redirectHandler(e.cfg)
+		plain = redirect
 	case config.TLSInternal:
 		if e.pki == nil {
 			return errors.New("internal TLS mode without a certificate authority")
 		}
 		primary = e.pki.GetCertificate
-		plain = redirectHandler(e.cfg)
+		plain = redirect
 	default:
 		return fmt.Errorf("unsupported TLS mode %q", e.cfg.TLSMode)
 	}
@@ -139,7 +146,7 @@ func (e *edge) run(ctx context.Context) error {
 			if acmeALPN {
 				t.NextProtos = append(t.NextProtos, acme.ALPNProto) // TLS-ALPN-01 challenges
 			}
-			e.servers = append(e.servers, e.newServer(addr, e.handler, t))
+			e.servers = append(e.servers, e.newServer(addr, handler, t))
 		}
 	}
 	if plain != nil && e.cfg.ListenHTTP != "" {
