@@ -40,6 +40,24 @@ func TestAttributePreFail(t *testing.T) {
 	}
 }
 
+// A disk not read is sent without facts, never with facts of no state.
+func TestDiskNotReadLeavesFactsOut(t *testing.T) {
+	b, err := json.Marshal(DiskHealth{Name: "sda", State: FactUnavailable, Reason: ReasonUSBBridge})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"name":"sda","model":"","serial":"","state":"unavailable","reason":"usb_bridge","readAt":"0001-01-01T00:00:00Z"}`
+	if string(b) != want {
+		t.Errorf("%s, want %s", b, want)
+	}
+	b, _ = json.Marshal(DiskHealth{Name: "nvme0n1", State: FactRead, Protocol: ProtocolNVMe, CriticalWarning: Read(0), SMARTStatus: NotRead(FactUnsupported, ReasonNotKept)})
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil || string(m["criticalWarning"]) != `{"state":"read","value":0}` ||
+		string(m["smartStatus"]) != `{"state":"unsupported","reason":"not_kept"}` || m["temperature"] != nil {
+		t.Errorf("read disk %s", b)
+	}
+}
+
 // A report from a later agent, with a fact this release does not know,
 // still decodes.
 func TestHardwareReportDecodesUnknownFacts(t *testing.T) {

@@ -20,11 +20,13 @@ func parseVPD89(b []byte) ([]byte, bool) {
 	return b[60:end], true
 }
 
-// ataIdentityStrings reads the serial number (words 10 to 19) and firmware
-// revision (words 23 to 26) of IDENTIFY DEVICE data. ATA strings hold two
-// characters a word, the first in the word's high byte.
-func ataIdentityStrings(id []byte) (serial, firmware string) {
-	return ataString(id[20:40]), ataString(id[46:54])
+// ataIdentityStrings reads the serial number (words 10 to 19), firmware
+// revision (words 23 to 26) and model (words 27 to 46, all 40 characters,
+// where the SCSI layer's device/model holds the first 16) of IDENTIFY
+// DEVICE data. ATA strings hold two characters a word, the first in the
+// word's high byte.
+func ataIdentityStrings(id []byte) (serial, firmware, model string) {
+	return ataString(id[20:40]), ataString(id[46:54]), ataString(id[54:94])
 }
 
 func ataString(b []byte) string {

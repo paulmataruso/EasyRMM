@@ -107,7 +107,7 @@ func TestStorage(t *testing.T) {
 	want := []ListedDisk{
 		{Disk: agentproto.Disk{Name: "nvme0n1", Serial: "TESTSERIAL0002", SizeBytes: 1000 * 512, Kind: "nvme", Firmware: read("3B2QGXA7")}, Controllers: []string{"nvme0", "nvme1"}},
 		{Disk: agentproto.Disk{Name: "nvme2n1", SizeBytes: 2000 * 512, Kind: "nvme", Firmware: read("GDC5302Q")}, Controllers: []string{"nvme2"}},
-		{Disk: agentproto.Disk{Name: "sda", Model: "WDC WD10EFRX-68F", Serial: "TESTSERIAL0003", SizeBytes: 3000 * 512, Firmware: read("82.00A82")}},
+		{Disk: agentproto.Disk{Name: "sda", Model: "WDC WD10EFRX-68FYTN0", Serial: "TESTSERIAL0003", SizeBytes: 3000 * 512, Firmware: read("82.00A82")}},
 		{Disk: agentproto.Disk{Name: "sdb", Model: "ST600MM0088", Serial: "TESTSERIAL0004", SizeBytes: 4000 * 512, Firmware: read("N004")}},
 		{Disk: agentproto.Disk{Name: "sdc", SizeBytes: 5000 * 512, Firmware: notExposed}},
 		{Disk: agentproto.Disk{Name: "sdd", SizeBytes: 6000 * 512, Firmware: &agentproto.TextFact{State: agentproto.FactUnknown, Reason: agentproto.ReasonBadAnswer}}},

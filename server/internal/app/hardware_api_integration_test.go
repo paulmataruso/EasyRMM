@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	agentclient "github.com/paulmataruso/easyrmm/agent/client"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -34,6 +35,7 @@ func TestHardwareAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ac.SetIdentity(enr.DeviceID, key)
 	device := "/api/v1/devices/" + enr.DeviceID
 	sign := func(b []byte) string {
 		s, err := agentproto.Sign(key, enr.DeviceID, "POST", agentproto.PathHardware, b, time.Now())
@@ -98,7 +100,10 @@ func TestHardwareAPI(t *testing.T) {
 		{Name: "sdb", Model: "Example USB 2TB", Serial: "U1", State: agentproto.FactUnavailable, Reason: agentproto.ReasonUSBBridge},
 	}}
 	body, _ := json.Marshal(report)
-	wantStatus(t, send(body, "application/json"), http.StatusNoContent, "")
+	// The first report through the agent's own client.
+	if err := ac.Hardware(ctx, body); err != nil {
+		t.Fatal(err)
+	}
 
 	admin.expect(http.StatusOK, "GET", device+"/disks", nil, &disks)
 	if len(disks.Items) != 2 || disks.Items[0].Name != "nvme0n1" || disks.Items[0].State != "failing" ||
@@ -152,7 +157,9 @@ func TestHardwareAPI(t *testing.T) {
 
 	// Reports the agent API refuses.
 	wantStatus(t, send(body, "text/plain"), http.StatusUnsupportedMediaType, "unsupported_media_type")
-	wantStatus(t, send([]byte(`{"disks":[1]}`), "application/json"), http.StatusBadRequest, "hardware_invalid")
+	if err := ac.Hardware(ctx, []byte(`{"disks":[1]}`)); agentclient.Code(err) != "hardware_invalid" {
+		t.Errorf("junk through the client: %v", err)
+	}
 	big := bytes.Repeat([]byte(" "), agentproto.MaxHardwareBody+1)
 	wantStatus(t, send(big, "application/json"), http.StatusRequestEntityTooLarge, "")
 	wantStatus(t, h.raw("POST", agentproto.PathHardware, body, ""), http.StatusUnauthorized, "agent_unauthorized")

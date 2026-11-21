@@ -239,6 +239,8 @@ func TestClean(t *testing.T) {
 	d.DriveErrors = agentproto.Fact{State: "broken"}
 	d.UnsafeShutdowns = agentproto.Fact{State: agentproto.FactUnknown, Reason: "made_up"}
 	d.PowerOnHours = agentproto.Fact{State: agentproto.FactRead}
+	// A fact a read disk leaves out arrives with no state: refused too.
+	d.DataWritten = agentproto.Fact{}
 	d.AvailableSpare = agentproto.Fact{State: agentproto.FactUnsupported, Reason: agentproto.ReasonNotKept, Value: ptr(5)}
 	d.Thresholds = read(7)
 	d.CriticalWarning = agentproto.Fact{State: agentproto.FactRead, Reason: agentproto.ReasonTimeout, Value: ptr(0)}
@@ -258,6 +260,7 @@ func TestClean(t *testing.T) {
 	for name, got := range map[string]agentproto.Fact{
 		"temperature": c.Temperature, "temperatureLimit": c.TemperatureLimit, "wear": c.Wear, "mediaErrors": c.MediaErrors,
 		"driveErrors": c.DriveErrors, "unsafeShutdowns": c.UnsafeShutdowns, "powerOnHours": c.PowerOnHours,
+		"dataWritten": c.DataWritten,
 	} {
 		if got.State != invalidReport.State || got.Reason != invalidReport.Reason || got.Value != nil {
 			t.Errorf("%s = %+v, want invalid_report", name, got)

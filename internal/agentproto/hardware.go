@@ -193,44 +193,44 @@ type DiskHealth struct {
 	ReadAt time.Time `json:"readAt"`
 
 	// CriticalWarning is NVMe's critical warning byte, the drive's verdict.
-	CriticalWarning Fact `json:"criticalWarning"`
+	CriticalWarning Fact `json:"criticalWarning,omitzero"`
 	// SMARTStatus is ATA SMART RETURN STATUS: SMARTPassed or
 	// SMARTThresholdExceeded, the drive's verdict.
-	SMARTStatus Fact `json:"smartStatus"`
+	SMARTStatus Fact `json:"smartStatus,omitzero"`
 	// Thresholds says whether READ ATTRIBUTE THRESHOLDS was read; its
 	// values are in Attributes. They give the verdict where SMARTStatus
 	// could not be read.
-	Thresholds Fact `json:"thresholds"`
+	Thresholds Fact `json:"thresholds,omitzero"`
 	// Temperature is the drive's own, in °C.
-	Temperature Fact `json:"temperature"`
+	Temperature Fact `json:"temperature,omitzero"`
 	// TemperatureLimit is the drive's own warning temperature in °C: NVMe
 	// WCTEMP, ATA Device Statistics' specified maximum.
-	TemperatureLimit Fact `json:"temperatureLimit"`
+	TemperatureLimit Fact `json:"temperatureLimit,omitzero"`
 	// Wear is the percentage of rated endurance used, which may exceed 100
 	// (NVMe: 255 means above 254).
-	Wear Fact `json:"wear"`
+	Wear Fact `json:"wear,omitzero"`
 	// AvailableSpare and AvailableSpareThreshold are NVMe's, in percent.
-	AvailableSpare          Fact `json:"availableSpare"`
-	AvailableSpareThreshold Fact `json:"availableSpareThreshold"`
+	AvailableSpare          Fact `json:"availableSpare,omitzero"`
+	AvailableSpareThreshold Fact `json:"availableSpareThreshold,omitzero"`
 	// MediaErrors is NVMe's count of media and data integrity errors.
-	MediaErrors Fact `json:"mediaErrors"`
+	MediaErrors Fact `json:"mediaErrors,omitzero"`
 	// ReallocatedSectors is ATA attribute 5, or Device Statistics' count.
-	ReallocatedSectors Fact `json:"reallocatedSectors"`
+	ReallocatedSectors Fact `json:"reallocatedSectors,omitzero"`
 	// PendingSectors is ATA attribute 197.
-	PendingSectors Fact `json:"pendingSectors"`
+	PendingSectors Fact `json:"pendingSectors,omitzero"`
 	// UncorrectableSectors is ATA attribute 198.
-	UncorrectableSectors Fact `json:"uncorrectableSectors"`
+	UncorrectableSectors Fact `json:"uncorrectableSectors,omitzero"`
 	// DriveErrors is NVMe's number of error information log entries, or
 	// the ATA summary SMART error log's count.
-	DriveErrors  Fact `json:"driveErrors"`
-	PowerOnHours Fact `json:"powerOnHours"`
+	DriveErrors  Fact `json:"driveErrors,omitzero"`
+	PowerOnHours Fact `json:"powerOnHours,omitzero"`
 	// DataWritten is NVMe's data units written, each 1,000 units of 512
 	// bytes.
-	DataWritten     Fact `json:"dataWritten"`
-	UnsafeShutdowns Fact `json:"unsafeShutdowns"`
+	DataWritten     Fact `json:"dataWritten,omitzero"`
+	UnsafeShutdowns Fact `json:"unsafeShutdowns,omitzero"`
 	// PowerMode is ATA CHECK POWER MODE's answer: 00h standby, 80h idle,
 	// FFh active or idle.
-	PowerMode Fact `json:"powerMode"`
+	PowerMode Fact `json:"powerMode,omitzero"`
 	// Attributes is the ATA SMART attribute table, with each attribute's
 	// threshold when Thresholds was read.
 	Attributes []Attribute `json:"attributes,omitempty"`

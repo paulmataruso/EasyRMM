@@ -39,8 +39,8 @@ func TestParseVPD89(t *testing.T) {
 	if !ok || len(id) != 512 {
 		t.Fatalf("page refused: %d bytes, %v", len(id), ok)
 	}
-	if serial, firmware := ataIdentityStrings(id); serial != "TESTSERIAL0001" || firmware != "82.00A82" {
-		t.Errorf("serial %q, firmware %q", serial, firmware)
+	if serial, firmware, model := ataIdentityStrings(id); serial != "TESTSERIAL0001" || firmware != "82.00A82" || model != "WDC WD10EFRX-68FYTN0" {
+		t.Errorf("serial %q, firmware %q, model %q", serial, firmware, model)
 	}
 	// A longer page (the kernel's buffer) is read up to the IDENTIFY data.
 	if _, ok := parseVPD89(append(page, make([]byte, 100)...)); !ok {
@@ -82,7 +82,7 @@ func FuzzParseVPD89(f *testing.F) {
 	f.Add([]byte{0, 0x89, 2, 0x38})
 	f.Fuzz(func(t *testing.T, b []byte) {
 		if id, ok := parseVPD89(b); ok {
-			_, _ = ataIdentityStrings(id)
+			_, _, _ = ataIdentityStrings(id)
 		}
 		_ = parseVPD80(b)
 	})

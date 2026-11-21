@@ -298,9 +298,10 @@ func (c Collector) nvmeControllers(base string) []string {
 // identity fills the disk's firmware revision (ADR-0065): an NVMe
 // controller's, a SATA disk's from the IDENTIFY data in its ATA Information
 // VPD page (all eight characters, where device/rev holds the last four), or
-// another SCSI disk's device/rev; and a serial number the kernel does not
-// give in device/serial, from the same VPD page or, for other SCSI disks,
-// the Unit Serial Number page.
+// another SCSI disk's device/rev; a SATA disk's whole model from the same
+// IDENTIFY data (device/model holds its first 16 characters); and a serial
+// number the kernel does not give in device/serial, from the same VPD page
+// or, for other SCSI disks, the Unit Serial Number page.
 func (c Collector) identity(d *ListedDisk, base string) {
 	switch {
 	case d.Kind == "nvme":
@@ -323,8 +324,11 @@ func (c Collector) identity(d *ListedDisk, base string) {
 			d.Firmware = &agentproto.TextFact{State: agentproto.FactUnknown, Reason: agentproto.ReasonBadAnswer}
 			return
 		}
-		serial, firmware := ataIdentityStrings(id)
+		serial, firmware, model := ataIdentityStrings(id)
 		d.Firmware = firmwareRead(firmware)
+		if model != "" {
+			d.Model = model
+		}
 		if d.Serial == "" {
 			d.Serial = serial
 		}
