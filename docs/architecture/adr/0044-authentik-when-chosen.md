@@ -108,6 +108,12 @@ back after use. And `setup.sh` runs before Authentik exists. So `setup.sh`
 only *decides* the invitation: a random id, the administrator's email, and
 an expiry 7 days out. It writes them to `authentik/invitations/pending` and
 prints the link `https://<sign-in name>/if/flow/easyrmm-enrollment/?itoken=<id>`.
+`authentik-setup` can write in that directory, so `setup.sh`, which runs as
+root, writes the file in `authentik/`, which only root can write, and
+renames it into place; a link planted there is replaced, never written
+through. Its record that the first invitation was issued is
+`authentik/invitation-issued`, out of the container's reach (amended
+2026-11-21).
 
 At the next start, `authentik-setup` creates the invitation:
 

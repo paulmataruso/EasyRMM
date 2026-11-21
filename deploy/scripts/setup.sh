@@ -124,6 +124,34 @@ authentik_env() {
   echo "Sign-in: Authentik at https://${authentik_hostname} (COMPOSE_PROFILES=$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -n 1))."
 }
 
+# authentik_put writes its input to a file in one of Authentik's
+# directories, as Authentik's file (uid 1000, mode 600). Authentik's
+# containers can write in some of them (authentik-setup in invitations/), and
+# root must write nothing through a link one of them planted: the file is
+# written in authentik/, which only root can write, and renamed into place.
+# A rename replaces whatever has the name, a link included.
+authentik_put() {
+  local path="$1" dir tmp
+  dir=${path%/*}
+  tmp=$(mktemp "${dir%/*}/.new.XXXXXX")
+  if ! { cat > "$tmp" && chown 1000:1000 "$tmp" && mv -T -f "$tmp" "$path"; }; then
+    rm -f "$tmp"
+    die "could not write ${path}"
+  fi
+}
+
+# authentik_issued says whether setup.sh issued the administrator's first
+# invitation. Its record is authentik/invitation-issued, which only root can
+# write. Releases up to 1.0.0-rc.4 kept it in invitations/, where
+# authentik-setup can remove or replace it; a regular file there still counts.
+authentik_issued() {
+  local a="$1/authentik"
+  if [[ ! -e "$a/invitation-issued" && -f "$a/invitations/issued" && ! -L "$a/invitations/issued" ]]; then
+    touch "$a/invitation-issued"
+  fi
+  [[ -e "$a/invitation-issued" ]]
+}
+
 # authentik_invite decides a 7-day, single-use invitation for the
 # administrator's email and prints its link. Authentik's user (uid 1000)
 # owns the pending file; the authentik-setup service creates the invitation
@@ -133,9 +161,8 @@ authentik_invite() {
   h=$(openssl rand -hex 16)
   id="${h:0:8}-${h:8:4}-4${h:13:3}-$(printf '%x' $(( (0x${h:16:1} & 3) | 8 )))${h:17:3}-${h:20:12}"
   expires=$(( $(date +%s) + 7 * 24 * 3600 ))
-  (umask 077 && printf 'id=%s\nemail=%s\nexpires=%s\n' "$id" "$email" "$expires" > "$dir/pending.tmp")
-  chown 1000:1000 "$dir/pending.tmp"
-  mv "$dir/pending.tmp" "$dir/pending"
+  printf 'id=%s\nemail=%s\nexpires=%s\n' "$id" "$email" "$expires" | authentik_put "$dir/pending"
+  touch "${dir%/*}/invitation-issued"
   authentik_link="https://${host}/if/flow/easyrmm-enrollment/?itoken=${id}"
   echo "Invitation for ${email}, valid for 7 days and once:"
   echo "  ${authentik_link}"
@@ -149,15 +176,12 @@ authentik_files() {
     install -d -m 0700 -o 1000 -g 1000 "$data_root/authentik/$d"
   done
   local pw="$data_root/authentik/secrets/akadmin-password"
-  if [[ ! -s "$pw" ]]; then
-    (umask 077 && openssl rand -base64 30 | tr '+/' '-_' > "$pw")
-    chown 1000:1000 "$pw"
-    chmod 0600 "$pw"
+  if [[ ! -f "$pw" || -L "$pw" || ! -s "$pw" ]]; then
+    openssl rand -base64 30 | tr '+/' '-_' | authentik_put "$pw"
     echo "Authentik's own administrator is akadmin; its password is in ${pw} (mode 600)."
   fi
-  if [[ ! -e "$data_root/authentik/invitations/issued" ]]; then
+  if ! authentik_issued "$data_root"; then
     authentik_invite "$data_root/authentik/invitations" "$authentik_hostname" "$admin_email"
-    touch "$data_root/authentik/invitations/issued"
   else
     authentik_link=""
     echo "An invitation was issued before; ./scripts/setup.sh --new-invitation prints another."
@@ -195,7 +219,6 @@ new_invitation_only() {
   [[ -n "$host" && -n "$email" ]] || die "Authentik is not set up in .env: run setup.sh --with-authentik"
   [[ -d "${root:-/srv/easyrmm}/authentik/invitations" ]] || die "${root:-/srv/easyrmm}/authentik/invitations is missing: run setup.sh --with-authentik"
   authentik_invite "${root:-/srv/easyrmm}/authentik/invitations" "$host" "$email"
-  touch "${root:-/srv/easyrmm}/authentik/invitations/issued"
   echo "It works after the next: docker compose up -d"
   echo "(Any earlier invitation of setup.sh's that is still unused stops working then.)"
 }

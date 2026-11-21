@@ -8,6 +8,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **`setup.sh` writes nothing through a link Authentik's containers plant.**
+  As root, it wrote the administrator's invitation in
+  `authentik/invitations/`, which the `authentik-setup` container can write,
+  by a name that container could have made a link: a compromised container
+  could have had root overwrite any file on the host, and own it, at the next
+  upgrade. `setup.sh` now writes Authentik's files where only root can and
+  renames them into place, and keeps its record of the first invitation in
+  `authentik/invitation-issued`, which no container can reach. The Authentik
+  end-to-end test plants those links.
 - **MeshAgent's binary and settings are signed.** The agent fetched them
   from the server over TLS only; since agents trust the system's
   certificate authorities, a TLS-terminating proxy or an inspecting
