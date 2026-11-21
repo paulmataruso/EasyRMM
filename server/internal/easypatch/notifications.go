@@ -352,6 +352,10 @@ type MailView struct {
 	Security    string `json:"security"`
 	FromAddress string `json:"fromAddress"`
 	FromName    string `json:"fromName"`
+	// Problem says why EasyRMM could not give the engine its mail server,
+	// after several tries in a row, which removed the engine's; "" when it
+	// could.
+	Problem string `json:"problem,omitempty"`
 }
 
 // NotificationsView is EasyPatch's notification channels, the mail server
@@ -384,7 +388,8 @@ func (s *Service) Notifications(ctx context.Context, c access.Caller) (Notificat
 		channels[i].EmailRecipients = orEmpty(channels[i].EmailRecipients)
 	}
 	return NotificationsView{Channels: orEmpty(channels), AllowPrivateNetworkWebhooks: m.AllowPrivateNetworkWebhooks,
-		Mail: MailView{Host: m.SMTPHost, Port: m.SMTPPort, Security: m.SMTPSecurity, FromAddress: m.FromAddress, FromName: m.FromName}}, nil
+		Mail: MailView{Host: m.SMTPHost, Port: m.SMTPPort, Security: m.SMTPSecurity, FromAddress: m.FromAddress, FromName: m.FromName,
+			Problem: s.mailProblem()}}, nil
 }
 
 // NotificationSettings is what EasyRMM changes of EasyPatch's notification
@@ -394,35 +399,54 @@ type NotificationSettings struct {
 }
 
 // SetNotificationSettings changes whether webhooks may go to private
-// networks, keeping the mail server as it is.
+// networks. EasyPatch replaces its notification settings at once, so the
+// mail server goes with the switch: EasyRMM's in force, read under the lock
+// syncMail holds, never the engine's copy, which may be a mail server
+// EasyRMM no longer has.
 func (s *Service) SetNotificationSettings(ctx context.Context, c access.Caller, in NotificationSettings) (NotificationsView, error) {
 	cl, err := s.notifications(ctx, c)
 	if err != nil {
 		return NotificationsView{}, err
 	}
+	if err := s.setPrivateWebhooks(ctx, c, cl, in.AllowPrivateNetworkWebhooks); err != nil {
+		return NotificationsView{}, err
+	}
+	return s.Notifications(ctx, c)
+}
+
+// errMailUnreadable is EasyRMM's mail server unreadable when the engine's
+// notification settings, which carry it, are to change.
+var errMailUnreadable = apperr.Unavailable("mail_server_unreadable",
+	"EasyRMM could not read its mail server, which the patching engine's notification settings carry. Try again; if it goes on, check Settings → Notifications → Mail server.")
+
+func (s *Service) setPrivateWebhooks(ctx context.Context, c access.Caller, cl *Client, allow bool) error {
+	e := s.engine
+	e.mailMu.Lock()
+	defer e.mailMu.Unlock()
 	st := s.everywhere(ctx, c, RoleSuperAdmin)
 	m, err := cl.MailSettings(st)
 	if err != nil {
 		s.noteError(err)
-		return NotificationsView{}, epError(err)
+		return epError(err)
 	}
-	if m.AllowPrivateNetworkWebhooks != in.AllowPrivateNetworkWebhooks {
-		// EasyPatch replaces its notification settings at once; a nil
-		// password keeps the stored one.
-		err := cl.SetMailSettings(st, MailSettingsInput{SMTPHost: m.SMTPHost, SMTPPort: m.SMTPPort, SMTPSecurity: m.SMTPSecurity,
-			SMTPUsername: m.SMTPUsername, FromAddress: m.FromAddress, FromName: m.FromName, SMTPSkipCertificateCheck: m.SMTPSkipCertificateCheck,
-			AllowPrivateNetworkWebhooks: in.AllowPrivateNetworkWebhooks})
-		if err != nil {
-			s.noteError(err)
-			return NotificationsView{}, epError(err)
-		}
-		if err := s.record(ctx, []audit.Event{{Actor: c.Actor, Action: "patch.notifications_update", TargetType: "easypatch_notifications",
-			TargetID: "settings", Outcome: audit.Success, Details: map[string]any{"changes": map[string]any{"allowPrivateNetworkWebhooks": map[string]any{
-				"from": m.AllowPrivateNetworkWebhooks, "to": in.AllowPrivateNetworkWebhooks}}}}}); err != nil {
-			return NotificationsView{}, err
-		}
+	if m.AllowPrivateNetworkWebhooks == allow {
+		return nil
 	}
-	return s.Notifications(ctx, c)
+	cfg, err := e.mailInForce(ctx)
+	if err != nil {
+		s.log.Error("patching: reading EasyRMM's mail server for the engine's notification settings", "error", err)
+		return errMailUnreadable
+	}
+	put := cfg.mailSettings(m)
+	put.AllowPrivateNetworkWebhooks = allow
+	if err := cl.SetMailSettings(st, put); err != nil {
+		s.noteError(err)
+		return epError(err)
+	}
+	e.mailGiven = &cfg
+	return s.record(ctx, []audit.Event{{Actor: c.Actor, Action: "patch.notifications_update", TargetType: "easypatch_notifications",
+		TargetID: "settings", Outcome: audit.Success, Details: map[string]any{"changes": map[string]any{"allowPrivateNetworkWebhooks": map[string]any{
+			"from": m.AllowPrivateNetworkWebhooks, "to": allow}}}}})
 }
 
 // ChannelRequest is a channel as EasyRMM takes it.

@@ -390,6 +390,12 @@ function Delivery({ view }: { view: PatchNotifications }) {
   return (
     <Card title="Email and webhooks">
       <div className="flex flex-col gap-4 text-sm">
+        {mail.problem && (
+          <Alert tone="danger" title="The patching engine does not have EasyRMM's mail server">
+            EasyRMM could not give it to the engine several times in a row, so the engine&apos;s mail server is removed and email channels and monthly reports do not send
+            until it can. EasyRMM tries again every minute. The last try: {mail.problem}
+          </Alert>
+        )}
         {mail.host ? (
           <p className="max-w-3xl">
             Email channels send through EasyRMM&apos;s mail server, <Mono>{`${mail.host}:${mail.port}`}</Mono> ({SECURITY[mail.security] ?? mail.security}),

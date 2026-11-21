@@ -2,6 +2,8 @@ package easypatch
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -29,10 +31,15 @@ type engine struct {
 	// public address, for EasyPatch agents to trust (ADR-0042).
 	agentCA func() []byte
 	// mail reads EasyRMM's mail server in force, which the engine sends
-	// its email and reports with; mailGiven is the one last given to the
-	// engine, nil until one was.
-	mail      func(context.Context) (MailConfig, error)
-	mailGiven *MailConfig
+	// its email and reports with; without it, EasyRMM has none. mailMu
+	// serializes every change of the engine's mail settings, so that each
+	// gives the engine one mail server whole. Under it, mailGiven is the
+	// one last given, nil until one was, and mailFailures counts the
+	// passes in a row that could not give it.
+	mail         func(context.Context) (MailConfig, error)
+	mailMu       sync.Mutex
+	mailGiven    *MailConfig
+	mailFailures int
 	// importedURLs are an imported EasyPatch's addresses, which its agents
 	// still use (AgentHostnames).
 	importedURLs []string
@@ -42,6 +49,9 @@ type engine struct {
 	checkedAt   *time.Time
 	lastError   string
 	lastErrorAt *time.Time
+	// mailProblem says why the engine could not be given EasyRMM's mail
+	// server, once mailFailLimit passes in a row have failed; "" otherwise.
+	mailProblem string
 }
 
 // EngineOption configures UseEngine.
@@ -84,9 +94,10 @@ type MailConfig struct {
 
 // Mail has the engine email through EasyRMM's mail server, which source
 // reads: each reconcile pass gives the engine the mail server in force
-// when it is not the one last given, at start and after every change, and
-// removes the engine's when EasyRMM has none, so the deployment has one
-// mail server.
+// when it is not the one last given or the engine's differs, at start and
+// after every change, and removes the engine's when EasyRMM has none, so
+// the deployment has one mail server. EasyRMM is its one source: a change
+// made in the engine itself is overwritten.
 func Mail(source func(context.Context) (MailConfig, error)) EngineOption {
 	return func(e *engine) { e.mail = source }
 }
@@ -114,42 +125,139 @@ func (cfg MailConfig) mailSettings(current MailSettings) MailSettingsInput {
 	return in
 }
 
+// mailFailLimit is how many reconcile passes in a row may fail to give the
+// engine EasyRMM's mail server before the engine's is removed, so that it
+// does not go on sending through one EasyRMM may no longer have.
+const mailFailLimit = 3
+
+// mailInForce reads EasyRMM's mail server in force.
+func (e *engine) mailInForce(ctx context.Context) (MailConfig, error) {
+	if e.mail == nil {
+		return MailConfig{}, nil
+	}
+	return e.mail(ctx)
+}
+
+// mailStatement is EasyRMM's own statement for the engine's mail settings,
+// which need a super administrator.
+func mailStatement(ctx context.Context) context.Context {
+	return WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "EasyRMM", Role: RoleSuperAdmin, AllOrganizations: true})
+}
+
+// sameMail reports whether the engine's mail settings are in's, as far as
+// the engine shows them: it never shows the password, only whether there
+// is one. The engine trims text and keeps blank text as none.
+func sameMail(cur MailSettings, in MailSettingsInput) bool {
+	t := strings.TrimSpace
+	return cur.SMTPHost == t(in.SMTPHost) && cur.SMTPPort == in.SMTPPort && cur.SMTPSecurity == in.SMTPSecurity &&
+		cur.SMTPUsername == t(in.SMTPUsername) && cur.FromAddress == t(in.FromAddress) && cur.FromName == t(in.FromName) &&
+		cur.SMTPSkipCertificateCheck == in.SMTPSkipCertificateCheck &&
+		cur.SMTPPasswordConfigured == (in.SMTPPassword != nil && *in.SMTPPassword != "")
+}
+
 // syncMail gives the engine EasyRMM's mail server in force when it is not
-// the one last given: the engine may not be up when EasyRMM starts, or
-// when the mail server changes, so each pass tries until it is done.
+// the one last given, or when the engine's differs from it: the engine may
+// not be up when EasyRMM starts or when the mail server changes, and its
+// mail settings may be changed in the engine, so each pass looks and tries
+// until it is done.
 func (s *Service) syncMail(ctx context.Context, c *Client, res *ReconcileResult) {
 	e := s.engine
-	if e == nil || e.mail == nil {
+	if e == nil {
 		return
 	}
-	cfg, err := e.mail(ctx)
+	e.mailMu.Lock()
+	defer e.mailMu.Unlock()
+	cfg, err := e.mailInForce(ctx)
 	if err != nil {
-		res.problem("could not read EasyRMM's mail server for the patching engine: %v", err)
+		s.mailFailed(ctx, c, res, fmt.Sprintf("could not read EasyRMM's mail server for the patching engine: %v", err))
 		return
 	}
-	e.mu.Lock()
-	given := e.mailGiven != nil && *e.mailGiven == cfg
-	e.mu.Unlock()
-	if given {
-		return
-	}
-	st := WithStatement(ctx, Statement{Subject: ServiceSubject, Name: "EasyRMM", Role: RoleSuperAdmin, AllOrganizations: true})
+	st := mailStatement(ctx)
 	current, err := c.MailSettings(st)
-	if err == nil {
-		err = c.SetMailSettings(st, cfg.mailSettings(current))
-	}
 	if err != nil {
-		res.problem("could not give the patching engine EasyRMM's mail server: %v", err)
+		s.mailFailed(ctx, c, res, fmt.Sprintf("could not give the patching engine EasyRMM's mail server: %v", err))
+		return
+	}
+	in := cfg.mailSettings(current)
+	given := e.mailGiven != nil && *e.mailGiven == cfg
+	if given && sameMail(current, in) {
+		s.mailSucceeded()
+		return
+	}
+	if err := c.SetMailSettings(st, in); err != nil {
+		s.mailFailed(ctx, c, res, fmt.Sprintf("could not give the patching engine EasyRMM's mail server: %v", err))
+		return
+	}
+	e.mailGiven = &cfg
+	s.mailSucceeded()
+	switch {
+	case given:
+		s.log.Warn("patching: the engine's mail settings were changed in the engine; EasyRMM gave it its own mail server again", "host", cfg.Host)
+	case cfg.Host == "":
+		s.log.Info("patching: the engine has no mail server, as EasyRMM has none")
+	default:
+		s.log.Info("patching: the engine sends email and reports through EasyRMM's mail server", "host", cfg.Host)
+	}
+}
+
+// mailFailed notes a pass that could not give the engine EasyRMM's mail
+// server. Once mailFailLimit passes in a row have failed, each removes the
+// engine's mail server if it can, so that the engine does not go on
+// sending through one EasyRMM may no longer have, and the console shows
+// why (MailView.Problem). Call it with mailMu held.
+func (s *Service) mailFailed(ctx context.Context, c *Client, res *ReconcileResult, problem string) {
+	e := s.engine
+	res.problem("%s", problem)
+	e.mailFailures++
+	if e.mailFailures < mailFailLimit {
 		return
 	}
 	e.mu.Lock()
-	e.mailGiven = &cfg
+	first := e.mailProblem == ""
+	e.mailProblem = problem
 	e.mu.Unlock()
-	if cfg.Host == "" {
-		s.log.Info("patching: the engine has no mail server, as EasyRMM has none")
+	st := mailStatement(ctx)
+	current, err := c.MailSettings(st)
+	if err != nil {
+		if first {
+			s.log.Error("patching: could not give the engine EasyRMM's mail server, nor remove its own", "problem", problem, "error", err)
+		}
 		return
 	}
-	s.log.Info("patching: the engine sends email and reports through EasyRMM's mail server", "host", cfg.Host)
+	none := MailConfig{}.mailSettings(current)
+	if sameMail(current, none) {
+		return
+	}
+	if err := c.SetMailSettings(st, none); err != nil {
+		if first {
+			s.log.Error("patching: could not give the engine EasyRMM's mail server, nor remove its own", "problem", problem, "error", err)
+		}
+		return
+	}
+	e.mailGiven = &MailConfig{}
+	s.log.Error("patching: could not give the engine EasyRMM's mail server; its own is removed until EasyRMM's can be given, so it sends no email or reports",
+		"passes", e.mailFailures, "problem", problem)
+}
+
+// mailSucceeded notes a pass that left the engine with EasyRMM's mail
+// server. Call it with mailMu held.
+func (s *Service) mailSucceeded() {
+	e := s.engine
+	e.mailFailures = 0
+	e.mu.Lock()
+	e.mailProblem = ""
+	e.mu.Unlock()
+}
+
+// mailProblem says why the engine could not be given EasyRMM's mail
+// server, after mailFailLimit passes in a row; "" when it was.
+func (s *Service) mailProblem() string {
+	if s.engine == nil {
+		return ""
+	}
+	s.engine.mu.Lock()
+	defer s.engine.mu.Unlock()
+	return s.engine.mailProblem
 }
 
 // UseEngine has the service use the patching engine through c

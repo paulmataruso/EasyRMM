@@ -98,6 +98,22 @@ mail server leaves the engine without one too. Settings → Patching →
 Notifications shows the mail server the engine has, and says so when there
 is none. The engine sends monthly reports only over STARTTLS or TLS.
 
+EasyRMM is the mail server's one source. Every minute it compares the
+engine's mail settings with its own and gives them again when they differ,
+so **a mail server set in the engine itself is overwritten** within a
+minute. The engine's switch for webhooks to private networks carries the
+mail server with it, and EasyRMM sends its own mail server in force with
+that switch, never the engine's copy back.
+
+When EasyRMM cannot give the engine its mail server three passes in a row
+(a pass runs every minute, and at once after a change), because it cannot
+read its own (for example, a stored password that the secret key no
+longer opens) or the engine refuses it, it removes the engine's mail
+server rather than leave the engine sending through one EasyRMM may no
+longer have. Patching's email and monthly reports then stop, the server
+logs an error, and Settings → Patching → Notifications says why. The first
+pass that works gives the mail server back.
+
 ## Audit
 Each change is in the audit log, under **Mail server**:
 
@@ -130,7 +146,8 @@ Super administrators (`settings.manage` on the platform):
 | `does not offer STARTTLS` | The port is for TLS from the first byte (465), or the server offers no encryption. Choose TLS, or a relay on the same machine |
 | Sign-in refused (`535`) | The user name or password, and that the mailbox may sign in over SMTP. Exchange Online is retiring passwords over SMTP ([ADR-0053](../architecture/adr/0053-one-notification-sender.md)); a relay on the same machine is the way until signing in with an application comes |
 | `Not sent: the limit of … messages a day is reached` | Raise the limit, or wait until the oldest of them is 24 hours old |
-| Patching's email does not arrive but test messages do | Settings → Patching → Notifications shows the engine's mail server; check the channel's last message there |
+| Patching's email does not arrive but test messages do | Settings → Patching → Notifications shows the engine's mail server, or why the engine has none; check the channel's last message there |
+| A mail server set in the patching engine went back | EasyRMM is the mail server's one source and overwrites the engine's within a minute. Set it under Settings → Notifications |
 
 ## What is not built yet
 These come with later slices of

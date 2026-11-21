@@ -277,10 +277,12 @@ func TestMonthlyReports(t *testing.T) {
 	inForce := MailConfig{Host: "smtp.example.com", Port: 465, Username: "mailer", Password: "pw", FromAddress: "it@example.com",
 		FromName: "Acme IT", Security: "tls"}
 	var readErr error
+	// Without a mail source, EasyRMM had none, and gave the engine none.
+	base := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings"))
 	f.svc = f.engineService(f.engine, Mail(func(context.Context) (MailConfig, error) { return inForce, readErr }))
 	f.reconcile()
 	f.reconcile()
-	if n := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")); n != 1 {
+	if n := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")) - base; n != 1 {
 		t.Fatalf("%d mail settings pushes", n)
 	}
 	mail := f.engine.Mail()
@@ -306,7 +308,7 @@ func TestMonthlyReports(t *testing.T) {
 	inForce = MailConfig{Host: "localhost", FromAddress: "it@example.com", Security: "none"}
 	f.reconcile()
 	f.reconcile()
-	if n := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")); n != 2 {
+	if n := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")) - base; n != 2 {
 		t.Fatalf("%d mail settings pushes after a change", n)
 	}
 	if _, err := f.svc.SendMonthlyReport(ctx, f.tech, rep.ID, []string{"cfo@example.com"}); !isCode(err, "mail_not_encrypted") {
@@ -339,7 +341,7 @@ func TestMonthlyReports(t *testing.T) {
 	if m := f.engine.Mail(); m["smtpHost"] != nil || m["smtpPassword"] != "" {
 		t.Fatalf("mail server removed: %v", m)
 	}
-	if n := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")); n != 5 {
+	if n := len(f.engine.RequestsTo("PUT", "/api/v1/notifications/settings")) - base; n != 5 {
 		t.Fatalf("%d mail settings pushes in all", n)
 	}
 

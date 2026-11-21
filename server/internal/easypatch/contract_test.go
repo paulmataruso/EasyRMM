@@ -1422,7 +1422,7 @@ func TestContract(t *testing.T) {
 		// The engine's mail settings follow every change of EasyRMM's mail
 		// server, through one service, without a restart (ADR-0053): each
 		// reconcile pass gives the engine the mail server in force when it
-		// is not the one last given.
+		// is not the one last given, or when the engine's differs.
 		inForce := MailConfig{Host: "smtp-a.example.test", Port: 587, Username: "rmm", Password: "contract-only-1", FromAddress: "rmm@example.test",
 			FromName: "EasyRMM Contract", Security: "starttls"}
 		follower := New(nil, nil, "contract", slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -1444,6 +1444,11 @@ func TestContract(t *testing.T) {
 			if got != want {
 				t.Fatalf("%s: the engine's mail settings are %+v, want %+v", step, got, want)
 			}
+			// The engine keeps them as EasyRMM gives them, so the next pass
+			// finds nothing to give again.
+			if !sameMail(got, inForce.mailSettings(got)) {
+				t.Fatalf("%s: the engine keeps %+v, which the next pass gives again", step, got)
+			}
 		}
 		follow("first pass", MailSettings{SMTPHost: "smtp-a.example.test", SMTPPort: 587, SMTPSecurity: "StartTls", SMTPUsername: "rmm",
 			SMTPPasswordConfigured: true, FromAddress: "rmm@example.test", FromName: "EasyRMM Contract"})
@@ -1454,14 +1459,15 @@ func TestContract(t *testing.T) {
 		inForce = MailConfig{Host: "127.0.0.1", Port: 25, FromAddress: "it@example.test", FromName: "Relay", Security: "none"}
 		follow("a relay without signing in", MailSettings{SMTPHost: "127.0.0.1", SMTPPort: 25, SMTPSecurity: "None", FromAddress: "it@example.test",
 			FromName: "Relay"})
-		// Unchanged, it is not given again: a change made in the engine
-		// stays until EasyRMM's mail server changes.
-		if err := engine.SetMailSettings(super, MailConfig{Host: "elsewhere.example.test", Port: 587, FromAddress: "x@example.test",
-			Security: "starttls"}.mailSettings(mail)); err != nil {
+		// EasyRMM is the mail server's one source: a change made in the
+		// engine, even keeping the stored password, is overwritten on the
+		// next pass.
+		if err := engine.SetMailSettings(super, MailSettingsInput{SMTPHost: "elsewhere.example.test", SMTPPort: 587, SMTPSecurity: "StartTls",
+			FromAddress: "x@example.test", AllowPrivateNetworkWebhooks: mail.AllowPrivateNetworkWebhooks}); err != nil {
 			t.Fatal(err)
 		}
-		follow("unchanged", MailSettings{SMTPHost: "elsewhere.example.test", SMTPPort: 587, SMTPSecurity: "StartTls", FromAddress: "x@example.test",
-			FromName: "EasyRMM"})
+		follow("a change made in the engine", MailSettings{SMTPHost: "127.0.0.1", SMTPPort: 25, SMTPSecurity: "None", FromAddress: "it@example.test",
+			FromName: "Relay"})
 		inForce = MailConfig{}
 		follow("removed", MailSettings{SMTPPort: 587, SMTPSecurity: "StartTls", FromName: "EasyRMM"})
 		if _, err := engine.SendMonthlyReport(ctx, rep.ID, []string{"cfo@example.com"}, ""); !isEngineCode(err, "smtp_not_configured") {

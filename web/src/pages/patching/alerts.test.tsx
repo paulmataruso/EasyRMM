@@ -557,6 +557,15 @@ describe("Settings → Patching → Notifications", () => {
     expect(main().getAllByText("No mail server")).toHaveLength(2);
     expect(within(table).getAllByText("No mail server")).toHaveLength(1);
     expect(main().getByRole("checkbox", { name: "Allow webhooks to private network addresses" })).toBeChecked();
+    expect(main().queryByText("The patching engine does not have EasyRMM's mail server")).not.toBeInTheDocument();
+  });
+
+  it("says why the engine does not have EasyRMM's mail server", async () => {
+    const problem = "could not read EasyRMM's mail server for the patching engine: the stored password cannot be opened";
+    installFakeApi(settingsRoutes(SUPER, { "GET /patching/notifications": ok({ channels: CHANNELS, mail: { ...MAIL, host: "", port: 0, problem }, allowPrivateNetworkWebhooks: false }) }));
+    await open("/settings?tab=patching&view=notifications");
+    expect(await main().findByText("The patching engine does not have EasyRMM's mail server")).toBeInTheDocument();
+    expect(main().getByText(new RegExp(`The last try: ${problem}`))).toBeInTheDocument();
   });
 
   it("adds an email channel, and a webhook whose signing key it shows once", async () => {
