@@ -140,3 +140,11 @@ func TestApplyLaunchFails(t *testing.T) {
 		t.Errorf("launches %d, reports %d", len(g.launches), len(g.reports))
 	}
 }
+
+// TestFileName: the agent checks its state folder by name before reading
+// it (state.layout); the instruction is checked as removal.json.
+func TestFileName(t *testing.T) {
+	if File != "removal.json" {
+		t.Errorf("File = %s: rename it in state.layout too", File)
+	}
+}

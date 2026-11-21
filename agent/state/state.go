@@ -33,9 +33,11 @@ type Config struct {
 	JobKey string `json:"jobKey,omitempty"`
 }
 
-// Store reads and writes the agent's files under one directory.
+// Store reads and writes the agent's files in its state folder. Only Open
+// makes one, once it has checked the folder; a Store made any other way
+// reads and writes nothing.
 type Store struct {
-	Dir string
+	dir string
 }
 
 const (
@@ -43,14 +45,69 @@ const (
 	configFile  = "agent.json"
 	keyFile     = "device.key"
 	statusFile  = "status.json"
+	caFile      = "ca.pem"
 )
+
+// layout is what the agent reads and writes in its folder, for the check
+// before any of it is read (host.Paths.CheckState). A folder comes before
+// what is in it. When one entry fails the check, its whole group is moved
+// aside: the enrollment goes as one, since a key without its configuration,
+// or the reverse, is no enrollment; anything else goes on its own, and the
+// enrollment stays.
+//
+// jobs\work is left out: scripts run there, and may leave links or files
+// others own. The agent reads nothing from it and empties it when it starts.
+var layout = [][]string{
+	{configFile, keyFile, pendingFile, caFile},
+	{statusFile},
+	{".tmp-*"},                         // writeFile's
+	{"removal.json"},                   // removal.File
+	{"update.json", "update.json.tmp"}, // the update's probation marker
+	{"logs"},
+	{filepath.Join("logs", "*")},
+	{"jobs"},
+	{filepath.Join("jobs", "journal")},
+	{filepath.Join("jobs", "journal", "*")},
+	{"easypatch"},
+	{filepath.Join("easypatch", "*")},
+}
+
+// Open returns the store of the agent's state folder, p.State(), once the
+// folder is safe to read: on Windows, what the agent did not make there, or
+// cannot trust, is moved aside first and never read (host.Paths.CheckState).
+// checked tells what the check changed.
+func Open(p host.Paths) (s Store, checked host.StateCheck, err error) {
+	checked, err = p.CheckState(layout)
+	if err != nil {
+		return Store{}, checked, fmt.Errorf("checking the agent's state folder %s: %w", p.State(), err)
+	}
+	return Store{dir: p.State()}, checked, nil
+}
+
+// errNotOpened stops a store that Open did not make.
+var errNotOpened = errors.New("the agent's state folder is used before it was checked")
+
+// path is name in the state folder, or errNotOpened.
+func (s Store) path(name string) (string, error) {
+	if s.dir == "" {
+		return "", errNotOpened
+	}
+	return filepath.Join(s.dir, name), nil
+}
+
+// Dir is the state folder, "" for a store Open did not make.
+func (s Store) Dir() string { return s.dir }
 
 // ErrNotEnrolled means the agent has no enrollment yet.
 var ErrNotEnrolled = errors.New("the agent is not enrolled")
 
 // Load returns the enrollment and private key.
 func (s Store) Load() (*Config, ed25519.PrivateKey, error) {
-	b, err := os.ReadFile(filepath.Join(s.Dir, configFile))
+	path, err := s.path(configFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // inside the agent's state directory
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil, ErrNotEnrolled
 	}
@@ -72,13 +129,16 @@ func (s Store) Load() (*Config, ed25519.PrivateKey, error) {
 }
 
 func (s Store) loadKey() (ed25519.PrivateKey, error) {
-	path := filepath.Join(s.Dir, keyFile)
+	path, err := s.path(keyFile)
+	if err != nil {
+		return nil, err
+	}
 	st, err := os.Stat(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading the device key: %w", err)
 	}
-	// On Windows the directory's access list protects the key (host.Protect);
-	// file modes say nothing there.
+	// On Windows the directory's access list protects the key (host.Protect),
+	// and Open checked who made it; file modes say nothing there.
 	if runtime.GOOS != "windows" && st.Mode().Perm()&0o077 != 0 {
 		return nil, fmt.Errorf("%s must be readable by its owner only (mode %v)", path, st.Mode().Perm())
 	}
@@ -119,11 +179,11 @@ var ErrNotPending = errors.New("the agent is not waiting for approval")
 // SavePending writes a pending enrollment and the device's key, the key
 // first, under the same protection as an enrollment.
 func (s Store) SavePending(p *Pending, key ed25519.PrivateKey) error {
-	if err := host.Protect(s.Dir); err != nil {
-		return fmt.Errorf("protecting %s: %w", s.Dir, err)
+	if err := s.protect(); err != nil {
+		return err
 	}
 	pemKey := pem.EncodeToMemory(&pem.Block{Type: "EASYRMM DEVICE KEY", Bytes: key.Seed()})
-	if err := writeFile(filepath.Join(s.Dir, keyFile), pemKey, 0o600); err != nil {
+	if err := s.write(keyFile, pemKey); err != nil {
 		return err
 	}
 	return s.UpdatePending(p)
@@ -135,12 +195,16 @@ func (s Store) UpdatePending(p *Pending) error {
 	if err != nil {
 		return err
 	}
-	return writeFile(filepath.Join(s.Dir, pendingFile), append(b, '\n'), 0o600)
+	return s.write(pendingFile, append(b, '\n'))
 }
 
 // LoadPending returns the pending enrollment and the device's key.
 func (s Store) LoadPending() (*Pending, ed25519.PrivateKey, error) {
-	b, err := os.ReadFile(filepath.Join(s.Dir, pendingFile))
+	path, err := s.path(pendingFile)
+	if err != nil {
+		return nil, nil, err
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // inside the agent's state directory
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil, ErrNotPending
 	}
@@ -167,7 +231,11 @@ func (s Store) Approved(c *Config) error {
 	if err := s.SaveConfig(c); err != nil {
 		return err
 	}
-	if err := os.Remove(filepath.Join(s.Dir, pendingFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	path, err := s.path(pendingFile)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	return nil
@@ -184,18 +252,14 @@ func NewKey() (ed25519.PrivateKey, error) {
 // before the configuration, so a configuration never points at a missing
 // key.
 func (s Store) Save(c *Config, key ed25519.PrivateKey) error {
-	if err := host.Protect(s.Dir); err != nil {
-		return fmt.Errorf("protecting %s: %w", s.Dir, err)
+	if err := s.protect(); err != nil {
+		return err
 	}
 	pemKey := pem.EncodeToMemory(&pem.Block{Type: "EASYRMM DEVICE KEY", Bytes: key.Seed()})
-	if err := writeFile(filepath.Join(s.Dir, keyFile), pemKey, 0o600); err != nil {
+	if err := s.write(keyFile, pemKey); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(c, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeFile(filepath.Join(s.Dir, configFile), append(b, '\n'), 0o600)
+	return s.SaveConfig(c)
 }
 
 // SaveConfig rewrites the configuration of an enrolled agent.
@@ -204,11 +268,45 @@ func (s Store) SaveConfig(c *Config) error {
 	if err != nil {
 		return err
 	}
-	return writeFile(filepath.Join(s.Dir, configFile), append(b, '\n'), 0o600)
+	return s.write(configFile, append(b, '\n'))
+}
+
+// SaveCA keeps a copy of the private certificate authority the agent
+// trusts, and returns its path for Config.CAFile.
+func (s Store) SaveCA(pem []byte) (string, error) {
+	if err := s.protect(); err != nil {
+		return "", err
+	}
+	path, err := s.path(caFile)
+	if err != nil {
+		return "", err
+	}
+	return path, writeFile(path, pem, 0o600)
+}
+
+// protect creates the state folder if needed, reachable by root (on
+// Windows SYSTEM and Administrators) only.
+func (s Store) protect() error {
+	if s.dir == "" {
+		return errNotOpened
+	}
+	if err := host.Protect(s.dir); err != nil {
+		return fmt.Errorf("protecting %s: %w", s.dir, err)
+	}
+	return nil
+}
+
+// write replaces name in the state folder.
+func (s Store) write(name string, b []byte) error {
+	path, err := s.path(name)
+	if err != nil {
+		return err
+	}
+	return writeFile(path, b, 0o600)
 }
 
 // JobsDir holds the job journal and the runs' working directories.
-func (s Store) JobsDir() string { return filepath.Join(s.Dir, "jobs") }
+func (s Store) JobsDir() string { return filepath.Join(s.dir, "jobs") }
 
 // Status is what the running agent last observed, for `easyrmm-agent status`.
 type Status struct {
@@ -228,21 +326,31 @@ func (s Store) SaveStatus(st Status) error {
 	if err != nil {
 		return err
 	}
-	return writeFile(filepath.Join(s.Dir, statusFile), append(b, '\n'), 0o600)
+	return s.write(statusFile, append(b, '\n'))
 }
 
 // LoadStatus reads the last recorded status.
 func (s Store) LoadStatus() (Status, error) {
 	var st Status
-	b, err := os.ReadFile(filepath.Join(s.Dir, statusFile))
+	path, err := s.path(statusFile)
+	if err != nil {
+		return st, err
+	}
+	b, err := os.ReadFile(path) //nolint:gosec // inside the agent's state directory
 	if err != nil {
 		return st, err
 	}
 	return st, json.Unmarshal(b, &st)
 }
 
-// Remove deletes the agent's files.
-func (s Store) Remove() error { return os.RemoveAll(s.Dir) }
+// Remove deletes the agent's files. RemoveAll follows no link or junction
+// below the folder: it deletes the link, not what it points to.
+func (s Store) Remove() error {
+	if s.dir == "" {
+		return errNotOpened
+	}
+	return os.RemoveAll(s.dir)
+}
 
 // writeFile replaces path atomically.
 func writeFile(path string, b []byte, mode os.FileMode) error {

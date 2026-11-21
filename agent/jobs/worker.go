@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/rand/v2"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -92,6 +93,11 @@ func (w *Worker) init() {
 
 func (w *Worker) journal() journal { return journal{dir: filepath.Join(w.Dir, "journal")} }
 func (w *Worker) workRoot() string { return filepath.Join(w.Dir, "work") }
+
+// ClearWork deletes the runs' working directories, with whatever a stopped
+// agent, or a script's own processes, left in them. RemoveAll deletes a
+// link or junction found there, never what it points to.
+func (w *Worker) ClearWork() error { return os.RemoveAll(w.workRoot()) }
 
 // SetKey sets the pinned job-signing key. Until it is set the worker does
 // not ask for jobs.

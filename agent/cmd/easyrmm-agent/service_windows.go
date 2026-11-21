@@ -6,8 +6,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log/slog"
-	"path/filepath"
 	"time"
 
 	"golang.org/x/sys/windows/svc"
@@ -23,9 +21,9 @@ func asService() (started bool, code int) {
 	}
 	e := newEnv(io.Discard, io.Discard)
 	e.service = true
-	if lf, err := openLog(filepath.Join(e.paths.Logs(), logName), 10<<20); err == nil {
+	// The log is in the state folder: it opens once the folder is checked.
+	if lf, err := e.openServiceLog(); err == nil {
 		defer func() { _ = lf.Close() }()
-		e.log = slog.New(slog.NewTextHandler(lf, nil))
 	}
 	if err := svc.Run(host.AgentWindowsService, &service{e: e}); err != nil {
 		e.log.Error("running as a Windows service failed", "error", err)
