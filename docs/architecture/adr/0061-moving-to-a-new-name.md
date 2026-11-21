@@ -261,12 +261,37 @@ The fix this ADR needs first writes that list.
     the framing origins built from every origin served. The server
     serves `.env`'s console as it does today, the candidates' console
     origins as agent routes, and the stored MeshCentral name with its
-    route and a certificate from its source (ADR-0055), so MeshAgents
-    and `certUrl`'s read keep working. It refuses moves and offers, and
-    shows an alert and a banner naming the pairs.
+    route, so MeshAgents and `certUrl`'s read keep working; the edge
+    listens on the stored `aliasPort` too, which covers an IP install
+    whose `EASYRMM_IP_MESH_PORT` changed in the same jump. It refuses
+    moves and offers, and shows an alert and a banner naming the pairs.
+  * **Their certificates**: until Confirm, and afterwards while they are
+    old addresses, the stored MeshCentral name and each candidate's
+    console origin take the mode's source, as the primary does: in
+    `acme` mode `acmeHosts` (`server/internal/app/edge.go`), and so
+    autocert's host policy, gains them; in `internal` mode the authority
+    issues for them; in `manual` mode they come from the operator's
+    files, and the banner names any the files do not cover.
+  * **The gates**: before Confirm is accepted, step 1's gates run against
+    the chosen pair: every device seen in the last 30 days trusting its
+    certificate, reachability (a warning for an IP target), `validateMesh`
+    and the dot rule. A choice that fails is listed with the reason and
+    cannot be chosen, as for the candidates above.
+  * **What Confirm writes**, one rule for every choice: the chosen pair
+    becomes the initial pair; for an agents' pair, that is the candidate
+    origin and `https://<cert>:<aliasPort>`, and the stored pin is
+    deleted. Every other candidate origin with devices seen in the last
+    30 days becomes an old address of a move to the chosen pair, which
+    Confirm records in `name_moves` with itself as step 1; so does the
+    pinned MeshCentral name when `.env`'s pair is chosen and names
+    another. Those old addresses are then handled exactly as a move's
+    old name: served as agent routes, with their certificates and the
+    stored `aliasPort`, while devices use them; their agents sent the
+    ordinary move instruction; MeshCentral keeping the pinned name until
+    step 2; and removed by step 5's rule. Confirm is audited as
+    `name_move.initial`, naming the move it starts.
   * Choosing an agents' pair leaves `.env` naming another pair, which is
-    then offered as below; choosing `.env`'s releases the pin, and
-    MeshAgents follow MeshCentral's name by slice 3's rule.
+    then offered as below.
 * **The move generation**, `moveGeneration`, a number kept beside it,
   changes with every step 1 or 2, a **Move back**'s included, and never
   goes backwards, even across a restore: each new value is the larger of
@@ -290,7 +315,7 @@ old name.
 
 | Step | What changes | Waits for |
 |---|---|---|
-| 1. **Agents** | The new pair becomes the primary for everything new. EasyRMM's agents and EasyPatch agents on the old addresses move as they check in | The new pair trusted, and reachable when checked again now; every device seen in the last 30 days able to move, or **Start anyway**; on a DNS install, until slice 7, no security key or passkey registered (and none registered until the move ends) |
+| 1. **Agents** | The new pair becomes the primary for everything new. EasyRMM's agents and EasyPatch agents on the old addresses move as they check in | The new pair trusted, and reachable when checked again now (for an IP target, a warning if not, never a wait); every device seen in the last 30 days able to move, or **Start anyway**; on a DNS install, until slice 7, no security key or passkey registered (and none registered until the move ends) |
 | 2. **Remote access** | MeshCentral moves to the new MeshCentral name; MeshAgents follow through their EasyRMM agent. Skipped when remote access is off | Step 1 |
 | 3. **Sign-in** | Each single sign-on provider confirmed at the new name; Authentik's redirect URI added | Step 1 |
 | 4. **Browsers** | The old console name sends browsers to the new one | Steps 1 and 3; nobody left whose only second factor is a key that has not worked at the new name, or **Redirect anyway** |
@@ -584,7 +609,10 @@ they follow.
     reconciles on a change. After an apply succeeds, the reconcile also
     reads Authentik's objects, the provider's `redirect_uris`, the
     stage's `target_static` and the application's `meta_launch_url`, and
-    sends the apply again when they differ from the context: an earlier
+    sends the apply again when they differ from the context. The
+    redirect URIs are `{matching_mode, url, redirect_uri_type}` objects,
+    so both sides are normalised first (the blueprint's values for each
+    field, compared as a set): an earlier
     apply sent again and committed last cannot leave stale values. So
     changes made while it waited for the
     blueprint (up to 15 minutes at a first start), while the server
@@ -1024,7 +1052,7 @@ pair an install starts with.
 | `name_move.step` | Steps 2 to 5 | The step; with an override, what it overrode |
 | `name_move.back` | Moved back, from the console, `names move --to-env` or `tls reset` | The step it had reached |
 | `name_move.env_offer` | A server's `.env` first names a pair other than the primary; recorded and offered, not acted on | The pair, the primary, the move's pairs if any, the server |
-| `name_move.initial` | The initial pair adopted from a record or `.env`, or confirmed in the console | The pair, where it came from; when confirmed, the origins agents used |
+| `name_move.initial` | The initial pair adopted from a record or `.env`, or confirmed in the console | The pair, where it came from; when confirmed, the candidates with their device counts and the move Confirm started |
 | `name_move.server_forget` | A server's record forgotten | The server's ID, its last pair, when it was last seen |
 | `name_move.keys_remove` | Keys under an old relying party ID removed | The name, how many, whose |
 | `sso.provider_confirm` | A provider's sign-in first completes at a name | The provider and the name |
@@ -1148,9 +1176,20 @@ any other.
     offers refused; candidates leave out IP-access addresses on a DNS
     install, carry their device counts when the devices are split, and
     one that fails `validateMesh` or the dot rule cannot be chosen; with
-    no `config.json`, the candidates use `.env`'s MeshCentral name;
-    **Confirm** takes `.env`'s pair (the pin released, MeshAgents
-    following) or a candidate (`.env` then offered); the initial pair
+    no `config.json`, the candidates use `.env`'s MeshCentral name; the
+    edge listening on the stored `aliasPort`, also after
+    `EASYRMM_IP_MESH_PORT` changed; `acmeHosts` holding the stored name
+    and the candidates in `acme` mode, and the banner naming those a
+    `manual` certificate does not cover; a choice failing step 1's gates
+    (a device that would not trust its certificate, `validateMesh`, the
+    dot rule) refused with the reason; **Confirm** of `.env`'s pair and
+    of an agents' pair each writing the initial pair (for the latter,
+    with `https://<cert>:<aliasPort>`, and the pin deleted) and recording
+    a move from the other candidates (and, for `.env`'s pair, the pinned
+    MeshCentral name): a device on another candidate is sent the move
+    instruction and moves, its old address stays served with its
+    certificate until step 5, and MeshCentral keeps the pinned name
+    until step 2; `name_move.initial` names that move; the initial pair
     stays the primary until a move;
   * while `.env` is only offered: its pair answers agents and redirects
     browsers to the primary; the relying party ID, issuer, email links,
@@ -1248,7 +1287,9 @@ any other.
   apply with no result after 10 minutes is recorded as failed; with no
   context written, the conditional entries are skipped and the provider,
   stage and application keep their values; after an apply, objects that
-  differ from the context (a stale apply committed last) make it send
+  differ from the context once normalised (redirect URIs in another
+  order or with other default fields compare equal; a stale apply
+  committed last does not) make it send
   again; `WAIT_SECONDS` running out is recorded as an error while the
   loop keeps ticking.
 * **Single sign-on and Authentik**: the Authentik bundle test
