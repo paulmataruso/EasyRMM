@@ -1097,10 +1097,16 @@ func (s *Service) EmailLink(ctx context.Context, to string, l mailer.Letter) str
 		err = s.mailer.SendAccountMail(ctx, to, msg)
 	}
 	if err != nil {
-		s.log.Error("account e-mail failed", "subject", l.Subject, "error", err)
+		s.log.Error("account e-mail failed", "subject", l.Subject, "error", oneLine(err.Error()))
 		return MailNotSent
 	}
 	return ""
+}
+
+// oneLine keeps a logged value on one line: a mail error can carry the
+// address someone typed, or the mail server's reply.
+func oneLine(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r", " "), "\n", " ")
 }
 
 // RequestPasswordReset e-mails a reset link if the address belongs to an

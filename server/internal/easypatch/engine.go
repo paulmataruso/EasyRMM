@@ -2,9 +2,6 @@ package easypatch
 
 import (
 	"context"
-	"crypto/sha256"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -32,10 +29,10 @@ type engine struct {
 	// public address, for EasyPatch agents to trust (ADR-0042).
 	agentCA func() []byte
 	// mail reads EasyRMM's mail server in force, which the engine sends
-	// its email and reports with; mailGiven fingerprints the one last given
-	// to the engine, nil until one was.
+	// its email and reports with; mailGiven is the one last given to the
+	// engine, nil until one was.
 	mail      func(context.Context) (MailConfig, error)
-	mailGiven *[sha256.Size]byte
+	mailGiven *MailConfig
 	// importedURLs are an imported EasyPatch's addresses, which its agents
 	// still use (AgentHostnames).
 	importedURLs []string
@@ -85,13 +82,6 @@ type MailConfig struct {
 	Security string
 }
 
-// fingerprint tells one mail server from another, password included; it
-// stays in memory.
-func (cfg MailConfig) fingerprint() [sha256.Size]byte {
-	return sha256.Sum256([]byte(strings.Join([]string{cfg.Host, strconv.Itoa(cfg.Port), cfg.Username, cfg.Password, cfg.FromAddress,
-		cfg.FromName, cfg.Security}, "\x00")))
-}
-
 // Mail has the engine email through EasyRMM's mail server, which source
 // reads: each reconcile pass gives the engine the mail server in force
 // when it is not the one last given, at start and after every change, and
@@ -137,9 +127,8 @@ func (s *Service) syncMail(ctx context.Context, c *Client, res *ReconcileResult)
 		res.problem("could not read EasyRMM's mail server for the patching engine: %v", err)
 		return
 	}
-	sum := cfg.fingerprint()
 	e.mu.Lock()
-	given := e.mailGiven != nil && *e.mailGiven == sum
+	given := e.mailGiven != nil && *e.mailGiven == cfg
 	e.mu.Unlock()
 	if given {
 		return
@@ -154,7 +143,7 @@ func (s *Service) syncMail(ctx context.Context, c *Client, res *ReconcileResult)
 		return
 	}
 	e.mu.Lock()
-	e.mailGiven = &sum
+	e.mailGiven = &cfg
 	e.mu.Unlock()
 	if cfg.Host == "" {
 		s.log.Info("patching: the engine has no mail server, as EasyRMM has none")

@@ -193,8 +193,8 @@ The engine sends alert notifications and monthly reports through
 EasyRMM's mail server, the console's or `.env`'s
 ([Mail](../operations/mail.md)): EasyRMM's reconciler writes it into the
 engine's notification settings at start and on every change (`syncMail`,
-`server/internal/easypatch/engine.go`, ADR-0053). It compares a
-fingerprint of the settings, the password included, on each pass, so an
+`server/internal/easypatch/engine.go`, ADR-0053). On each pass it compares
+the settings, the password included, with those it last gave, so an
 unchanged mail server is not written again; a change in the console kicks
 a pass at once. The engine keeps the SMTP password encrypted with its Data
 Protection keys and never returns it.
