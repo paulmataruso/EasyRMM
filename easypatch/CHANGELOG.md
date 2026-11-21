@@ -26,6 +26,15 @@ and the agents share one version number.
   no `Offline` event and no offline alert; one that stays away goes offline after the usual
   threshold, counted from then. Endpoints already offline stay offline until their agent checks in.
 
+### Fixed
+
+- The Windows build of the agent's MSI now checks, as the Linux build did, that the package keeps
+  the enrollment token out of MSI logs: `ENROLLMENTTOKEN` is listed in `MsiHiddenProperties`, and
+  `WriteRegistryValues`' progress text leaves registry values out. Release MSIs are built on
+  Windows (`build-agent.ps1` → `build-installer.ps1`), which until now checked only the package's
+  platform, so a change to `Package.wxs` that exposed the token would have shipped. The packages
+  released so far are not affected: their source sets both.
+
 ## [1.12.1] - 2026-11-21
 
 Released with EasyRMM 1.0.0-rc.4. No changes to the engine or its agents.
