@@ -35,6 +35,13 @@ type server struct {
 	uploads    [][]byte
 	invStatus  int
 	heartbeats []agentproto.HeartbeatRequest
+	// beats counts heartbeat requests, answered or not.
+	beats int
+	// Hardware reports: those taken, how many were sent, and an error
+	// status for them.
+	hardware   []agentproto.HardwareReport
+	hwRequests int
+	hwStatus   int
 	// update is the heartbeat answer's update instruction, JSON.
 	update string
 	// easyPatch is its EasyPatch install instruction, JSON.
@@ -61,7 +68,18 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch r.URL.Path {
+	case agentproto.PathHardware:
+		s.hwRequests++
+		if s.hwStatus != 0 {
+			w.WriteHeader(s.hwStatus)
+			return
+		}
+		var in agentproto.HardwareReport
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		s.hardware = append(s.hardware, in)
+		w.WriteHeader(http.StatusAccepted)
 	case agentproto.PathHeartbeat:
+		s.beats++
 		if s.status != 0 {
 			w.WriteHeader(s.status)
 			_, _ = io.WriteString(w, `{"error":{"code":"`+s.code+`","message":"m"}}`)

@@ -96,6 +96,9 @@ floors=(
   "agent/easypatch                         85"
   "agent/inventory                         90"
   "agent/metrics                           90"
+  # Parses what disks answer (ADR-0065); the transports' system calls run
+  # only in the machine tests.
+  "agent/hardware                          97"
 )
 
 if [[ ! -f "$profile" ]]; then
