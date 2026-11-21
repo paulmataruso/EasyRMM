@@ -115,9 +115,13 @@ runs themselves ([ADR-0063](../architecture/adr/0063-who-sees-job-output-and-arg
 * **Every read is recorded** in the audit log, super administrators'
   included: *Viewed job output* under the run's organization, site and
   device, and *Viewed job arguments* under each organization of the job's
-  runs. A refused read is recorded as *Denied*. The records hold sizes and
-  names, never the output or the values. The console reads a run's output
-  once each time its page is opened, never in the background.
+  runs. A refused read is recorded as *Denied*, at most once per user,
+  read and target in 10 minutes, and **at most 20 times per user in 10
+  minutes**: after 20, that user's further refusals are not recorded until
+  the 10 minutes pass. A gap in *Denied* records is therefore not proof
+  that nobody tried. The records hold sizes and names, never the output or
+  the values. The console reads a run's output once each time its page is
+  opened, never in the background.
 * **Remove output** on a run's page empties a finished run's output at once,
   for everyone. It needs `job.view_sensitive` and `job.manage` at the run's
   site, and is recorded as *Removed job output*. Backups made before keep

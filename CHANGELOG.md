@@ -25,8 +25,11 @@ All notable changes to this project are documented here. The format follows
     and `GET /api/v1/jobs/{id}/arguments`. Each read is recorded in the
     audit log (*Viewed job output*, *Viewed job arguments*) in the same
     transaction, super administrators' included; a refused read is
-    recorded as denied, at most once per user and run in 10 minutes. The
-    server's database role can no longer select them directly. Scripts
+    recorded as denied, at most once per user and run in 10 minutes and at
+    most 20 times per user in 10 minutes. After 20, that user's further
+    refusals are not recorded until the 10 minutes pass, so a gap in the
+    denied records is not proof that nobody tried. The server's database
+    role can no longer select them directly. Scripts
     that read `stdout`, `stderr` or `args` from the run and job answers
     move to the new endpoints; `/api/v1` has no written compatibility
     policy, and the console is its only client in this repository;
@@ -49,6 +52,34 @@ All notable changes to this project are documented here. The format follows
   job's page, and says "Nothing was written" on a run's page, until it is
   reloaded. From this release on, a console page that fails to render
   offers **Reload** instead of going blank.
+
+  **The upgrade fills in the output sizes of every run that has output,**
+  in one pass, while `job_runs` and `jobs` are locked: jobs and runs
+  cannot be read or written until the migration ends. Measured on a test
+  database: 3 seconds for 50,000 runs with 1 KB of output each, and under
+  a second for 5,000 runs with 16 KB each. It needs free disk about the
+  size of the runs with output as stored in the table, 69 MB for those
+  50,000 runs; output large enough to be stored apart (TOAST) is not
+  copied, 1 MB for the 5,000. `VACUUM`, which autovacuum runs, makes that
+  space reusable.
+- **Functions that run as the database owner no longer look in a
+  session's temporary schema first.** EasyRMM's `SECURITY DEFINER`
+  functions, which run as `easyrmm_owner`, did not name `pg_temp` in their
+  `search_path`. PostgreSQL then searches a session's temporary objects
+  before its own for tables and types, so a database session of the
+  server's role, for example through a flaw in the server, could have had
+  its own code run as the owner. This covered the audit log's functions
+  (`easyrmm_audit_append`, `easyrmm_audit_verify`, `easyrmm_purge_audit`)
+  as well as the new ones above. Now:
+  - every such function names `pg_temp` last (migration 00029 for the
+    older ones), and a test fails the build for one that does not;
+  - the server's role and `PUBLIC` can no longer create temporary tables
+    in EasyRMM's database. The server never used them.
+
+  **`easyrmm_owner` must own the database**, as the Docker install and
+  the documented external setup make it. Under another owner the upgrade
+  stops and names the statement to run as a superuser
+  ([database.md](docs/architecture/database.md)).
 - **The Windows agent checks its state folder before reading it.** Any
   user may create folders under ProgramData, and the agent protected
   `%ProgramData%\EasyRMM\Agent` only when it saved an enrollment. A

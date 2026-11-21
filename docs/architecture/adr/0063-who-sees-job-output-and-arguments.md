@@ -217,7 +217,8 @@ the run's error and in the server's log.
   * **New fields are on the answers for one run or one job only**, never
     in a list, where nothing would read them:
     * one run (`GET /api/v1/job-runs/{id}`, and the run that canceling it
-      or removing its output returns): `canViewOutput`, for everyone; and
+      or removing its output returns): `canViewOutput` and
+      `canRemoveOutput`, for everyone; and
       `stdoutBytes`, `stderrBytes` and `outputRemovedAt` only for a caller
       who holds `job.view_sensitive` at the run's site, so that the console
       says "Nothing was written" or when the output was removed without
@@ -272,12 +273,15 @@ export, a report or a notification, cannot read them by mistake.
   privileges: creating a job writes its arguments, a result writes the
   output, and the purge and *Remove output* empty it. None of them reads
   it back: their `WHERE` and `RETURNING` clauses name granted columns only.
-  The sizes and the number of arguments are stored generated columns
-  (`stdout_bytes`, `stderr_bytes`, `arg_count`), computed by PostgreSQL
-  from what is written, so the server reads them without reading the
-  values.
+  The sizes and the number of arguments (`stdout_bytes`, `stderr_bytes`,
+  `arg_count`) are set by `BEFORE INSERT OR UPDATE` triggers from what is
+  written, whatever a statement says, so the server reads them without
+  reading the values. *Decided in review*: plain columns kept by triggers,
+  not generated columns, which would rewrite both tables while the
+  upgrade holds them locked (Upgrading).
 * **Reads go through two `SECURITY DEFINER` functions**, owned by
-  `easyrmm_owner` with a fixed `search_path`: `easyrmm_job_run_output` and
+  `easyrmm_owner` with `search_path = pg_catalog, public, pg_temp`:
+  `easyrmm_job_run_output` and
   `easyrmm_job_arguments`. The server passes the run or the job, the
   caller's `job.view` and `job.view_sensitive` scopes as it resolved them
   from the caller's roles, and who asks. The function checks the scopes
@@ -286,8 +290,30 @@ export, a report or a notification, cannot read them by mistake.
   transaction: if the record cannot be written, the transaction fails and
   nothing is returned. Row-level security applies inside, since
   `easyrmm_owner` is subject to it too, so a run outside the request's
-  scope is not found. The output read locks the run (`FOR SHARE`), so a
-  removal cannot empty it between the checks and the read.
+  scope is not found. The output read checks the caller's scopes first and
+  only then locks the run (`FOR SHARE`), so a removal cannot empty it
+  between the checks and the read, and a caller who may not read takes no
+  lock (*decided in review*).
+* **`pg_temp` last.** *Decided in review.* A function that does not name
+  `pg_temp` in its `search_path` has the session's temporary schema
+  searched first for tables and types. A caller able to create temporary
+  objects could then put its own type where a function that runs as its
+  owner expects PostgreSQL's, and have its code run as `easyrmm_owner`.
+  * Every function that runs as its owner names `pg_temp` last: the three
+    above, created that way, and the three before them
+    (`easyrmm_audit_append`, `easyrmm_audit_verify`,
+    `easyrmm_purge_audit`), changed by migration 00029. They were found in
+    the catalog and are named one by one; down gives them their earlier
+    `search_path`.
+  * A test reads every `SECURITY DEFINER` function from the catalog and
+    fails the build when one does not end its `search_path` with
+    `pg_temp`.
+  * A second layer: `easyrmm_app` and `PUBLIC` lose `TEMPORARY` on the
+    database, since the server never creates temporary tables. Only the
+    database's owner can take it away. Every documented install makes
+    `easyrmm_owner`, which runs migrations, the owner, so 00029 revokes
+    it; under any other owner it stops with the statement to run. The
+    install script and the end-to-end script no longer grant it.
 * **The agent's poll** reads the arguments of the runs it delivers through
   a third function, `easyrmm_job_delivery_args(device, runs)`, which
   answers only at platform scope, and only for that device's runs being
@@ -295,8 +321,9 @@ export, a report or a notification, cannot read them by mistake.
   them.
 * **What it does not stop**: a compromised server process. It holds the
   owner's credentials, to run migrations, so it can read anything. The
-  privileges guard against mistakes in the server's own code, not against
-  its compromise.
+  functions check the scopes and the caller that the server passes them.
+  The privileges and the functions guard against mistakes in the server's
+  own code, not against its compromise.
 
 ### The console
 *Decided in review.*
@@ -320,11 +347,13 @@ export, a report or a notification, cannot read them by mistake.
   * Removed output says when it was removed, "by retention or by someone
     who could read it"; the audit log says by whom, when a person removed
     it.
-  * **Remove output**, offered with `canViewOutput` and `job.manage`, asks
-    to confirm: "The output is emptied for everyone, and the audit log
-    records that you removed it. Backups made before keep it." Every
-    built-in role that holds `job.view_sensitive` at a site holds
-    `job.manage` there too; the server checks both.
+  * **Remove output**, offered with `canRemoveOutput`, asks to confirm:
+    "The output is emptied for everyone, and the audit log records that
+    you removed it. Backups made before keep it." The server sets
+    `canRemoveOutput` for the run's site with the same check the removal
+    makes, `job.view_sensitive` and `job.manage` there (*decided in
+    review*). Every built-in role that holds the one at a site holds the
+    other there too.
 * **A job's page.**
   * With `canViewArguments`, a library script's job with arguments asks
     for them once, with the same options and a key of its own
@@ -337,9 +366,9 @@ export, a report or a notification, cannot read them by mistake.
     without them would run something else. No built-in role holds
     `script.run` without `job.view_sensitive`, so this does not happen
     with today's roles.
-* The console decides from `canViewOutput` and `canViewArguments`, not
-  from the user's permission list, because the permission may hold in
-  some sites only.
+* The console decides from `canViewOutput`, `canRemoveOutput` and
+  `canViewArguments`, not from the user's permission list, because the
+  permissions may hold in some sites only.
 * **The run-script dialog** no longer says that arguments are shown to
   everyone who can see the job: "Arguments are kept with the job, and
   people who may see job arguments can read them, each read recorded.
@@ -414,7 +443,10 @@ rule for each is set here so that later work keeps it:
   (ADR-0007), which every record in the deployment waits for. So a
   refusal is recorded at most once per caller, action, target and
   organization in 10 minutes, and at most 20 times per caller in 10
-  minutes across both reads. Every refusal still answers `403`.
+  minutes across both reads. Every refusal still answers `403`. After 20,
+  nothing more is recorded for that caller until the 10 minutes pass, so
+  a gap in the records does not prove there were no attempts; the guide
+  and the CHANGELOG say so.
   * **No table of its own.** The audit log is the state:
     `easyrmm_job_refusal` looks for the caller's denied records of the
     last 10 minutes before it appends.
@@ -567,12 +599,31 @@ rule for each is set here so that later work keeps it:
   `scripts/drill/backup-restore.sh`, which now reads its run's output from
   `/output`.
 * **The database.** Migration 00028 adds the sizes, `output_stored_at`,
-  `output_removed_at` and `arg_count`, the two constraints, the purge's
-  index, the column privileges and the four functions. Output kept before
-  counts from when its run finished, so the first purge after the upgrade
-  empties output whose run finished more than 30 days before (or the value
-  set). The CHANGELOG says so. Down gives the server's role its table
-  privileges back and drops what up added.
+  `output_removed_at` and `arg_count`, the two triggers that keep the
+  sizes and the count, the two constraints, the purge's index, the column
+  privileges and seven functions: the five that check and read
+  (`easyrmm_job_scope_covers`, `easyrmm_job_refusal`,
+  `easyrmm_job_run_output`, `easyrmm_job_arguments`,
+  `easyrmm_job_delivery_args`) and the two the triggers run. Output kept
+  before counts from when its run finished, so the first purge after the
+  upgrade empties output whose run finished more than 30 days before (or
+  the value set). The CHANGELOG says so. Down gives the server's role its
+  table privileges back and drops what up added.
+  * **The backfill.** *Decided in review.* The new columns have constant
+    defaults, which PostgreSQL adds without rewriting the table; one
+    `UPDATE` then fills in the runs that have output, and another the jobs
+    with arguments. The tables stay locked for the migration, as for any
+    `ALTER TABLE`, but each run with output is written once, where
+    generated columns rewrote every run and then wrote those with output
+    again. The update keeps a second version of each run with output until
+    `VACUUM`, so it needs free disk about the size of those rows; output
+    stored out of line (TOAST) is not copied. Measured on a test
+    database, against the generated columns: 50,000 runs with 1 KB of
+    output each, 3 seconds instead of 15, and 69 MB of extra disk either
+    way; 5,000 runs with 16 KB each, under a second instead of 5 to 6, and
+    1 MB of extra disk instead of 11.
+  * Migration 00029 names `pg_temp` last for the older functions and
+    revokes `TEMPORARY` (In the database).
 * **Secrets printed before.** Reads before the upgrade left no record. The
   CHANGELOG and the guide say: treat a secret that a job printed, or that
   was passed as an argument, within the job retention before the upgrade
@@ -705,7 +756,9 @@ Said plainly here and in the guide:
   The console is the only client; the backup-restore drill moves to the
   new endpoint.
 * The server's database role can no longer select output or arguments;
-  a column added to `job_runs` or `jobs` needs its own grant.
+  a column added to `job_runs` or `jobs` needs its own grant. It can no
+  longer create temporary tables, every function that runs as the owner
+  names `pg_temp` last, and `easyrmm_owner` must own the database.
 * Output is kept 30 days by default, not 90, and the first purge after
   the upgrade empties older output. Job history keeps 90 days.
 * The audit log gains a record for each run page a holder opens, and for
@@ -751,6 +804,8 @@ Said plainly here and in the guide:
       (the state set as the owner, since today's statuses cannot reach
       it); *Remove output*'s permissions and its `409`s, with one record;
       a second result ignored.
+    * **Who may remove**: the run's `canRemoveOutput` for every caller
+      above, equal to `canViewOutput` with the built-in roles.
     * **The database refuses the server's role**: `42501` for selecting
       `stdout`, `stderr`, `*`, `args`, a whole row, or `RETURNING stdout`,
       and for calling the helper functions directly; the only columns of
@@ -761,8 +816,24 @@ Said plainly here and in the guide:
   * **The migration**
     (`server/internal/database/job_output_migration_integration_test.go`):
     00028 down and up over runs kept before: the backfill, the sizes, the
-    argument count, the constraints, and the privileges taken and given
-    back.
+    argument count, the triggers keeping them on insert and update
+    whatever a statement sets, row-level security forced on `jobs` again,
+    the constraints, and the privileges taken and given back.
+  * **Functions that run as their owner**
+    (`server/internal/database/definer_integration_test.go`):
+    * every `SECURITY DEFINER` function in the catalog ends its
+      `search_path` with `pg_temp`, and the six known ones are among them;
+    * the runtime role cannot create a temporary table or type, and
+      neither it nor `PUBLIC` holds `TEMPORARY`;
+    * with types planted in a session's temporary schema (made as the
+      superuser, which may, in a session that then acts as
+      `easyrmm_app`), a function made the old way runs the planted code as
+      `easyrmm_owner`, which shows the test can fail; each of the six
+      functions, on its reading and its refusing path, answers as it
+      should and never runs it;
+    * 00029 down and up: the earlier `search_path` and `TEMPORARY` come
+      back, up refuses when another role owns the database and leaves
+      nothing changed, and then succeeds once `easyrmm_owner` owns it.
   * **The HTTP API**
     (`server/internal/app/job_output_api_integration_test.go`), with
     devices enrolled and reporting through the agent API: sites in two
@@ -774,7 +845,7 @@ Said plainly here and in the guide:
       the output and the arguments; `401` without a session; `404`,
       `409 run_open`, `409 no_output` and `409 output_removed`; removal
       refused for Read-Only (`403`) and for the other organization
-      (`404`).
+      (`404`); `canRemoveOutput` on the run for each caller.
     * The site's administrator sees the records through
       `GET /api/v1/audit`, the Read-Only user's denied one included; the
       other organization's administrator does not.
@@ -813,7 +884,8 @@ Said plainly here and in the guide:
     none again when the job refreshes, shared with *Run again*, which
     presets the fetched values and is not offered where they are hidden;
   * *Remove output* with its dialog, after which the page says the output
-    was removed and holds no marker; not offered without `job.manage`;
+    was removed and holds no marker; not offered when the run says
+    `canRemoveOutput` is false, though the session holds `job.manage`;
   * the audit log's names for the three records, and the *Job output*
     area;
   * the error boundary (`web/src/components/ErrorBoundary.test.tsx`).
