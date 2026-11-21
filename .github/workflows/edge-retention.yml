@@ -1,0 +1,62 @@
+# Deletes edge builds older than 30 days from ghcr.io (ADR-0052;
+# docs/architecture/edge-manifest.md#retention) with
+# scripts/release/edge-retention.sh: easyrmm-deploy versions, and
+# easyrmm-server images with their platform manifests and attestations.
+# Releases, whatever edge names, and the server image any kept
+# easyrmm-deploy version names are kept. Run it by hand to list exactly what
+# it would delete (dry run, the default) or to delete now.
+name: Edge retention
+
+on:
+  schedule:
+    - cron: "41 5 * * *" # daily
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: List what it would delete, and delete nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edge-retention
+  cancel-in-progress: false
+
+jobs:
+  retention:
+    name: Delete edge builds older than 30 days
+    # The packages are this repository's; a fork has none of them. Only
+    # main's copy of this workflow and script may delete them: one run by
+    # hand from another branch would run that branch's (the schedule always
+    # runs main's).
+    if: github.repository == 'paulmataruso/EasyRMM' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install oras
+        run: |
+          scripts/ci/install-oras.sh "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # For oras, which reads Docker's credentials.
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Delete edge builds older than 30 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Empty on the schedule, which deletes.
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          flags=()
+          if [ "$DRY_RUN" = true ]; then flags=(--dry-run); fi
+          scripts/release/edge-retention.sh "${GITHUB_REPOSITORY_OWNER,,}" "${flags[@]}"

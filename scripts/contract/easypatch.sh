@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Runs EasyRMM's EasyPatch contract tests against a real EasyPatch server
 # built from this commit's easypatch/ directory (make test-contract; CI's
-# "EasyPatch contract" job).
+# "EasyPatch contract" job), or against a release's (CI's "EasyPatch
+# contract, last release's engine": edge builds run it, ADR-0052).
 #
-# 1. Builds EasyPatch's server image (or uses EASYPATCH_CONTRACT_IMAGE).
+# 1. Builds EasyPatch's server image, or uses EASYPATCH_CONTRACT_IMAGE, whose
+#    version EASYPATCH_CONTRACT_VERSION gives.
 # 2. Starts PostgreSQL and the API, both on the host network and listening
 #    on 127.0.0.1 only. The API serves plain HTTP with a gateway key, as the
 #    patching engine in EasyRMM's deployment does (ADR-0038): EasyRMM's
@@ -24,7 +26,11 @@ pg_image=$(sed -n 's/^ *image: \(postgres:[^ ]*\)$/\1/p' "$root/deploy/docker-co
 pg_port=${EASYPATCH_CONTRACT_PG_PORT:-55433}
 api_port=${EASYPATCH_CONTRACT_PORT:-18443}
 engine_port=${EASYPATCH_CONTRACT_ENGINE_PORT:-18444}
-version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' "$root/easypatch/Directory.Build.props" | head -n1)
+if [ -n "${EASYPATCH_CONTRACT_IMAGE:-}" ]; then
+  version=${EASYPATCH_CONTRACT_VERSION:?the version of EASYPATCH_CONTRACT_IMAGE}
+else
+  version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' "$root/easypatch/Directory.Build.props" | head -n1)
+fi
 name=easyrmm-contract
 work=$(mktemp -d)
 

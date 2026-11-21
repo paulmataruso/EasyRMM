@@ -1,10 +1,15 @@
 # ADR-0052: Upgrading EasyRMM with an updater on the host
 
-* Status: Accepted (2026-11-21, revised after review). The server's side
-  is implemented: `hold` and the offline rule (both amended 2026-11-21,
-  below; the rule only delays openings). So is the engine's, its hold on
+* Status: Accepted (2026-11-21, revised after review). Implemented:
+  publishing, that is edge builds of `main`, manifest schema 2 and the
+  manifests' Sigstore bundles ([details](../edge-manifest.md)); the
+  server's side, `hold` and the offline rule (both amended 2026-11-21,
+  below; the rule only delays openings); and the engine's, its hold on
   automatic agent updates and its presence rule, which ship in its next
-  release. The updater is not built yet.
+  release. The updater is not built yet; until it exists, the test on
+  `main` verifies each published build as the updater will before `edge`
+  moves, and the upgrade from the previous edge build
+  ([Testing](#testing)) joins it with the updater.
 * Builds on: [releasing](../../development/releasing.md) (releases, their
   attestations and manifest), [ADR-0027](0027-agent-updates.md) (agent
   updates), [ADR-0044](0044-authentik-when-chosen.md) (Authentik's files)

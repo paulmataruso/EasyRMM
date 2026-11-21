@@ -60,7 +60,21 @@ All notable changes to this project are documented here. The format follows
   agents wait between attempts. The rule only delays openings: an offline
   alert already open stays open, and resolves only when its device checks
   in.
-
+- **Edge builds.** Every build of `main` that passes CI is published as a
+  version: `v1.0.0-rc.4.edge.412.1` after a release candidate,
+  `v1.0.1-edge.415.1` after a release. The server image the tests ran is
+  pushed unchanged as `easyrmm-server:<version>`, and the bundle, its
+  manifest and the manifest's Sigstore bundle as the OCI artifact
+  `ghcr.io/paulmataruso/easyrmm-deploy:<version>`; `edge` moves to the
+  newest once it verifies. An edge build runs the last release's patching
+  engine, so CI also runs the contract and bundle tests against it. Edge
+  builds older than 30 days are deleted (ADR-0052;
+  `docs/architecture/edge-manifest.md`).
+- **The release manifest names everything a deployment runs**: schema
+  version 2 adds the bundle's SHA-256, every image by digest, PostgreSQL's
+  major version and Authentik. A release also publishes the Sigstore
+  bundle of its attestation beside the manifest, so that verifying needs
+  no GitHub API.
 - **Hardening checks for Linux computers** (ADR-0051, its first part). A
   technician can have the agent on a Linux device check 14 areas: SSH,
   the firewall, fail2ban, kernel settings, audit rules, file permissions,
@@ -90,6 +104,24 @@ All notable changes to this project are documented here. The format follows
   kind (`GET /api/v1/job-runs?kind=hardening`). The audit log names
   hardening jobs *Hardening job*. See
   [Hardening Linux computers](docs/operations/hardening.md).
+
+### Changed
+
+- **CI and releases build the server image once.** Both platforms, amd64
+  and arm64, are scanned and their agents checked against a release's
+  build, byte for byte; the amd64 image runs the tests; and the build is
+  pushed unchanged. CI no longer rebuilds and pushes it on every push to
+  `main` before the other checks finish, and a release no longer pushes a
+  build other than the one it scanned.
+- **The server image's agents are cross-compiled on the build machine**,
+  so the arm64 image hands out the same files as the amd64 one and as a
+  release: an operator-signed release agent matches either (ADR-0049).
+- **Releases check their files before attesting**: the bundle against its
+  manifest, and the attached agents against the pushed image.
+- **A release published out of order leaves `latest` where it is.**
+  `easyrmm-v1.1.5` after `easyrmm-v1.2.0` tags the server image `1.1.5`
+  and `1.1`, not `latest`, and is not GitHub's Latest release. A version's
+  server image is pushed once; a release run again pushes nothing more.
 
 ### Fixed
 

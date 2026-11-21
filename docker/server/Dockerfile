@@ -39,8 +39,10 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 # The EasyRMM agent for every platform the installers support. The server
 # hands these out (ADR-0015) and updates enrolled agents to them (ADR-0027);
 # they are static and the same for every server. VERSION names their
-# version for the console.
-FROM ${GO_IMAGE} AS agents
+# version for the console. Built on the build machine's platform, so that
+# every image's agents are the same bytes, cross-compiled by one toolchain as
+# scripts/release/agents.sh builds a release's (check-agents.sh, ADR-0049).
+FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS agents
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
