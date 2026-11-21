@@ -46,8 +46,10 @@ public static class MaintenanceExecutor
 /// holds the lock). The worker's health endpoint reports unhealthy when a loop stops making progress.</summary>
 public sealed class MaintenanceHeartbeat(TimeProvider clock)
 {
-    private readonly DateTimeOffset startedAt = clock.GetUtcNow();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (TimeSpan Interval, DateTimeOffset? LastBeat)> loops = new();
+
+    /// <summary>When the worker started: the maintenance loops, which need the heartbeat, are created with the host.</summary>
+    public DateTimeOffset StartedAt { get; } = clock.GetUtcNow();
 
     public void Register(string name, TimeSpan interval) => loops.TryAdd(name, (interval, null));
 
@@ -57,7 +59,7 @@ public sealed class MaintenanceHeartbeat(TimeProvider clock)
     public IReadOnlyList<string> Stalled()
     {
         var now = clock.GetUtcNow();
-        return loops.Where(l => now - (l.Value.LastBeat ?? startedAt) > l.Value.Interval * 3 + TimeSpan.FromMinutes(2))
+        return loops.Where(l => now - (l.Value.LastBeat ?? StartedAt) > l.Value.Interval * 3 + TimeSpan.FromMinutes(2))
             .Select(l => l.Key).Order(StringComparer.Ordinal).ToList();
     }
 

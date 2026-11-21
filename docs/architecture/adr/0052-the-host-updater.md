@@ -49,10 +49,10 @@ What exists, and what it means here:
   worker, every two minutes, moves agents only to newer packages, where a
   policy has `AgentAutoUpdateEnabled`.
 * **Restarts raise offline alerts.** Offline policies can be as short as
-  3 minutes, and agents back off for up to 5 minutes after failures; the
-  engine marks endpoints offline after its threshold (10 minutes by
-  default). Any stop of a few minutes, a manual upgrade included, raises
-  offline alerts.
+  3 minutes, and EasyRMM's agents back off for up to 5 minutes after
+  failures, the engine's for up to 15; the engine marks endpoints offline
+  after its threshold (10 minutes by default). Any stop of a few minutes,
+  a manual upgrade included, raises offline alerts.
 
 ## Decision
 
@@ -218,8 +218,9 @@ and the attempt ends with the reason.
   restore from that upgrade's backup, so everything written since is
   lost: the console and `status` say what (since when, devices enrolled
   since, which must enroll again, jobs, audit records) and the operator
-  confirms. The engine's agents cannot be ahead of the restored engine,
-  since its automatic agent updates were held for those 24 hours;
+  confirms. The engine's agents are not ahead of the restored engine,
+  since its automatic agent updates were held for those 24 hours, unless
+  an operator updated one by hand (the hold leaves those alone);
   EasyRMM's agents move to the restored server's build as to any build
   (in Manual mode, once approved). The updater keeps its own newer
   version.
@@ -230,12 +231,15 @@ and the attempt ends with the reason.
 
 ### Downtime and alerts
 From step 3 to step 7 nothing answers: a backup and a start, minutes on
-a typical install. Agents come back within their 5-minute backoff. So
-that this raises no alert, EasyRMM's offline policies count a device as
-seen no earlier than the moment the server began serving agents (its
-start, or the end of a hold) plus 5 minutes; this holds after any restart.
-The engine's presence monitor gets the same rule from its worker's start,
-in a release.
+a typical install. EasyRMM's agents come back within their 5-minute
+backoff, the engine's within 15 minutes. So that this raises no alert,
+EasyRMM's offline policies count a device as seen no earlier than the
+moment the server began serving agents (its start, or the end of a hold)
+plus 5 minutes; this holds after any restart. The engine's presence
+monitor gets the same rule from its worker's start, in a release, with
+15 minutes for its agents' longest backoff (revised when the engine
+implemented it: with 5, an engine agent that waited out its backoff could
+still be marked offline).
 
 ### Seeing it
 `easyrmm-updater status` on the host, and journald for each attempt.
