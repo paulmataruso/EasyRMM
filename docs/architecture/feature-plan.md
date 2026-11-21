@@ -197,8 +197,13 @@ set up its Teams channel once.
   are always refused. The engine refused its networks outright, which on
   host networking is the customer's LAN.
 * **Delivery is at least once**, with a stable delivery ID; queueing is
-  exactly once. Permanent answers fail at once, and one message holds its
-  channel for an hour at most.
+  exactly once, and order is kept per alert. Permanent answers fail at
+  once, and one message holds its channel for an hour at most, then only
+  messages about the same alerts.
+* **Limits**: quotas per organization counted in messages (one per email
+  recipient), fair share between organizations, the mail server's own
+  rate a minute and a day with account mail first, and at most one unsent
+  digest per channel read by people.
 * **Several recipients** each get their own copy, so no recipient sees
   another.
 * **The certificate authority** for the mail server comes with slice 6,
@@ -523,10 +528,16 @@ Real delivery to Slack and Teams is checked by hand and recorded.
   notifications can then never stop alerting.
 * **A local uninstall** marks the device *Uninstalled* and raises a
   notice of its own, *agent removed without a request*, rather than going
-  quiet; a removal report the server did not ask for does the same
-  instead of deleting the device (amending ADR-0050).
-* **ADR-0052's offline rule** delays openings only; as written it would
-  resolve every open offline alert at each restart.
+  quiet; a removal report that answers no instruction the server issued
+  does the same instead of deleting the device, and cancelling a removal
+  already sent keeps its record (amending ADR-0050).
+* **ADR-0052's offline rule** delays openings only, as pull request #51
+  amends and builds it; as first written it would have resolved every
+  open offline alert at each restart. A fleet-wide hold covers an EasyRMM
+  that runs but that no agent can reach.
+* **The offline test stops both agents**: a device is online while
+  MeshAgent is connected, so stopping the EasyRMM agent alone raises
+  nothing.
 * **PSA tools also get `alerts.acknowledged`** (the owner's decision), and
   an incident ID that survives a policy change.
 
