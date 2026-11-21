@@ -94,6 +94,9 @@ clone: its Compose file builds the engine from `easypatch/`
 | Documentation | always | Documentation links and workflow conditions |
 
 A change to `ci.yml` runs everything, as do the merge queue and manual runs.
+A push to `main` is compared with the last commit whose run passed there,
+not with the push before it, so what a failed run, or one GitHub cancelled
+while it waited behind a newer push, did not test runs in the next one.
 **CI result** is the one required check: it passes when every job passed or
 was skipped because its area did not change. Besides the tests, CI fails on
 formatting, lint and shellcheck findings, `go mod tidy` drift, coverage below
