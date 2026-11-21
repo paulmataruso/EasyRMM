@@ -58,6 +58,35 @@ All notable changes to this project are documented here. The format follows
   major version and Authentik. A release also publishes the Sigstore
   bundle of its attestation beside the manifest, so that verifying needs
   no GitHub API.
+- **Hardening checks for Linux computers** (ADR-0051, its first part). A
+  technician can have the agent on a Linux device check 14 areas: SSH,
+  the firewall, fail2ban, kernel settings, audit rules, file permissions,
+  legacy services, kernel modules, sudo, time synchronisation, shared
+  memory, USB storage, SELinux or AppArmor, and file integrity. It runs
+  through the API (`POST /api/v1/jobs/hardening`, mode `check`). The check
+  changes nothing on the computer. It reports, per area, whether the
+  hardening is in place, partly, not at all, not applicable, managed by
+  something else, or half applied, and what applying it would change.
+  Each device's latest findings are kept (`GET
+  /api/v1/devices/{id}/hardening`); the console lists hardening jobs and
+  shows what each checked. Applying and undoing come next. The job table
+  now takes job bodies up to 512 KiB, for the script; library scripts keep
+  their 64 KiB limit.
+- **A device's Hardening tab, and hardening across the fleet** (ADR-0051,
+  H3). Linux devices with the agent have a **Hardening** tab: each
+  module's latest state, what is missing, what applying it would change,
+  and for the firewall the ports it would leave open; when the last check
+  ran, by which job, on which distribution and release, and how far
+  EasyRMM's hardening supports it, with *check only* explained. **Run
+  check…** chooses the modules, the recommended ones preselected and the
+  others with their risk beside them, and needs `script.run`; the
+  findings need only `device.view`. **Devices** gains a **Hardening**
+  column (*9 of 10 in place*) and a filter (needs attention, in place, not
+  checked), also on the API (`GET /api/v1/devices?hardening=`), and devices
+  in the API carry a summary of their hardening. Job runs can be listed by
+  kind (`GET /api/v1/job-runs?kind=hardening`). The audit log names
+  hardening jobs *Hardening job*. See
+  [Hardening Linux computers](docs/operations/hardening.md).
 
 ### Changed
 
@@ -83,6 +112,8 @@ All notable changes to this project are documented here. The format follows
   two are identical for Linux and Windows.
 - `deploy/.env.example` lists `EASYRMM_ACME_DIRECTORY`, which the Compose
   file already passed to the server.
+- Taking the database down past migration 12 removed no software jobs:
+  row-level security hid them from the migration. It now sees every row.
 
 ## [1.0.0-rc.4] - 2026-11-21
 

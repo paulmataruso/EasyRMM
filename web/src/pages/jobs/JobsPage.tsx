@@ -34,7 +34,7 @@ export function JobsPage() {
     <>
       <PageHeader
         title="Jobs"
-        subtitle="Scripts and software actions started on devices, newest first. A job runs one script on one or more devices."
+        subtitle="Scripts, software actions and hardening checks started on devices, newest first. A job runs one script on one or more devices."
         actions={
           can("software.manage") && (
             <Button icon={<PackagePlus className="size-4" aria-hidden />} onClick={() => setInstalling(true)}>
@@ -149,6 +149,7 @@ function KindSelect({ value, onChange }: { value: string; onChange: (v: string) 
         <option value="">Every kind</option>
         <option value="script">Scripts</option>
         <option value="software">Software</option>
+        <option value="hardening">Hardening</option>
       </Select>
     </Field>
   );

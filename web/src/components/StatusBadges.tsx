@@ -100,6 +100,7 @@ const ACTIONS: Record<string, string> = {
   "script.delete": "Deleted script",
   "device.script_run": "Ran script",
   "device.software_action": "Software action",
+  "device.hardening": "Hardening job",
   "device.agent_update": "Updated agent",
   "device.agent_update_request": "Asked for an agent update",
   "device.removal_request": "Asked to remove device",

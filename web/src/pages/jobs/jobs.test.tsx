@@ -87,6 +87,34 @@ describe("jobs", () => {
     expect(await screen.findByText(/Stopping the job/)).toBeInTheDocument();
   });
 
+  it("shows what a hardening check asked for, with no Run again yet", async () => {
+    installFakeApi({
+      ...baseRoutes(TECHNICIAN),
+      "GET /jobs/:id": ok(
+        job("j7", "Check hardening: ssh, firewall", {
+          kind: "hardening",
+          scriptId: null,
+          shell: "sh",
+          args: ["check", "ssh,firewall", "allow-tcp=8443,9000-9100"],
+          hardening: { mode: "check", modules: ["ssh", "firewall"], options: { allowTcp: ["8443", "9000-9100"], passwordOff: true } },
+          body: "#!/bin/sh\n",
+          runs: [jobRun("r1", "d1", "SRV-01", "succeeded")],
+        }),
+      ),
+    });
+    renderApp("/jobs/j7");
+    expect(await screen.findByRole("heading", { name: "Check hardening: ssh, firewall" })).toBeInTheDocument();
+    expect(screen.getByText(/own hardening script/)).toBeInTheDocument();
+    expect(screen.getByText("Check")).toBeInTheDocument();
+    expect(screen.getByText("ssh")).toBeInTheDocument();
+    expect(screen.getByText("firewall")).toBeInTheDocument();
+    expect(screen.getByText("8443, 9000-9100")).toBeInTheDocument();
+    expect(screen.getByText("Password sign-in to SSH off")).toBeInTheDocument();
+    // Not a library script, and not offered again until the console has its dialog.
+    expect(screen.queryByText(/deleted from the library/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run again" })).not.toBeInTheDocument();
+  });
+
   it("runs a job again with the same devices and arguments", async () => {
     const user = userEvent.setup();
     const linux = { platform: "linux" as const, agent: AGENT, canRunScripts: true };

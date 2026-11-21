@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { CircleStop, RotateCcw } from "lucide-react";
 import { api } from "../../api/client";
 import { useApi, useApiMutation, usePrefetch } from "../../api/hooks";
-import type { Job, JobRun, Script, SoftwareAction } from "../../api/types";
+import type { HardeningJob, Job, JobRun, Script, SoftwareAction } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
@@ -76,6 +76,12 @@ export function JobDetailPage() {
                 package reaches it as an argument, never as script text.
               </p>
             )}
+            {j.hardening && (
+              <p className="mb-3 text-sm text-muted">
+                EasyRMM&rsquo;s own hardening script. The modules and options reach it as arguments, never as script text. A check changes nothing on the
+                device.
+              </p>
+            )}
             <CodeView code={j.body ?? ""} label="Script as run" />
           </Card>
         </div>
@@ -85,7 +91,7 @@ export function JobDetailPage() {
             items={[
               ["Status", <JobStateBadge key="s" job={j} />],
               ["Progress", <StatusBreakdown key="p" job={j} />],
-              ...(j.software ? softwareDetails(j.software) : scriptDetails(j)),
+              ...(j.software ? softwareDetails(j.software) : j.hardening ? hardeningDetails(j.hardening) : scriptDetails(j)),
               ["Timeout", formatSeconds(j.timeoutSeconds)],
               ...(!j.finished ? [["Waits until", formatDateTime(j.expiresAt)] as [string, string]] : []),
               ["Started", formatDateTime(j.createdAt)],
@@ -159,8 +165,41 @@ function softwareDetails(sw: SoftwareAction): Row[] {
   ];
 }
 
-/** Runs the same script on the same devices with the same arguments, after checking them in the dialog. */
+/** What a hardening job asked for (ADR-0051). */
+function hardeningDetails(h: HardeningJob): Row[] {
+  const o = h.options;
+  const switches = [
+    o.rootPasswordOff && "Root's password sign-in to SSH off",
+    o.passwordOff && "Password sign-in to SSH off",
+    o.epel && "fail2ban from EPEL",
+  ].filter((s): s is string => Boolean(s));
+  const lists: [string, string[] | undefined][] = [
+    ["TCP ports kept open", o.allowTcp],
+    ["UDP ports kept open", o.allowUdp],
+    ["Never banned", o.trusted],
+  ];
+  return [
+    ["Hardening", "Check"],
+    [
+      "Modules",
+      <ol key="m" className="flex flex-wrap gap-1">
+        {h.modules.map((m) => (
+          <li key={m}>
+            <Mono>{m}</Mono>
+          </li>
+        ))}
+      </ol>,
+    ],
+    ...lists
+      .filter(([, v]) => v && v.length > 0)
+      .map(([label, v]) => [label, <Mono key={label}>{v!.join(", ")}</Mono>] as Row),
+    ...(switches.length > 0 ? [["Options", switches.join("; ")] as Row] : []),
+  ];
+}
+
+/** Runs the same script on the same devices with the same arguments, after checking them in the dialog. Hardening has no dialog yet. */
 function RunAgain({ job }: { job: Job }) {
+  if (job.hardening) return null;
   return job.software ? <SoftwareAgain job={job} software={job.software} /> : <ScriptAgain job={job} />;
 }
 

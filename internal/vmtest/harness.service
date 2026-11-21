@@ -1,0 +1,14 @@
+# The runner of EasyRMM's machine test harness (internal/vmtest), on test
+# machines only. It restarts until udev has created the port.
+[Unit]
+Description=EasyRMM test harness runner
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/local/sbin/easyrmm-harness /dev/virtio-ports/org.easyrmm.harness
+Environment=HOME=/root
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=multi-user.target

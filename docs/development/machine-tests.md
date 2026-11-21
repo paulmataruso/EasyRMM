@@ -1,0 +1,105 @@
+# Machine tests
+
+Hardening Linux computers ([ADR-0051](../architecture/adr/0051-hardening-linux-computers.md#testing))
+is tested on whole machines: each distribution's official cloud image boots
+under QEMU, and a test drives it as root. The harness is `internal/vmtest`;
+its own smoke test (`internal/vmtest/smoke_vm_test.go`, build tag `vm`)
+boots each image, runs scripts, writes a file and reads it back, reaches
+the guest's sshd through a forwarded port, restarts the machine and runs a
+script again.
+
+The hardening script's machine test
+(`server/internal/jobs/hardening_vm_test.go`) runs `check all` on each
+image. Its result must be one the server accepts, for the machine's own
+release with full support. No module may fail, and no module that a
+container rules out may be not applicable. Nothing under `/etc`,
+`/usr/local` or the script's own state may change.
+
+## Running them
+
+You need `qemu-system-x86_64` and `qemu-img`, `xorriso` for Rocky Linux 8
+(Debian and Ubuntu: `apt install qemu-system-x86 qemu-utils xorriso`), and
+about 10 GB free under `/var/tmp`.
+
+```bash
+make test-vm                               # every image, two at a time
+EASYRMM_VM_IMAGE=debian-12 make test-vm    # one image
+EASYRMM_VM_IMAGE=debian-12,rocky-9 make test-vm VM_PARALLEL=2
+```
+
+| Setting | Default | |
+|---|---|---|
+| `EASYRMM_VM_IMAGE` | every image | Images to boot, by name, separated by commas: `debian-12`, `debian-13`, `ubuntu-22.04`, `ubuntu-24.04`, `rocky-8`, `rocky-9`, `alma-9`, `fedora-45` |
+| `EASYRMM_VM_CACHE` | `/var/tmp/easyrmm-vmtest` | Downloaded images (`images/`) and the running machines' disks (`run/`). Keep it off `/tmp`, which is often a small tmpfs |
+| `EASYRMM_VM_LOG_DIR` | none | When set, each machine's serial console log is copied there when it stops |
+| `VM_PARALLEL` (make) | 2 | Machines booting at once |
+| `VM_TEST_TIMEOUT` (make) | 3h | The whole run |
+
+The first run downloads each image (0.3 to 2 GB) and checks it against the
+digest pinned in `internal/vmtest/images.go`; later runs check the cached
+copy again and reuse it. Each machine boots from a qcow2 overlay that is
+deleted when its test ends.
+
+**Without KVM it is slow.** When `/dev/kvm` can be opened QEMU uses it;
+otherwise it emulates the processor (TCG) and gives each machine four
+processors instead of two. On a 16-core workstation without KVM, with
+two processors per machine and three or four machines at once, a first
+boot took 4½ minutes (Debian 13) to 18 minutes (Rocky Linux 9, whose
+kdump builds its initramfs on first boot), and a restart 3 to 10
+minutes. Emulated, slow services can outlast systemd's 90-second start
+timeout: Ubuntu 24.04 has come up "degraded" with polkit and udisks2
+failed, which the smoke test reports as a failure. To use KVM as a
+normal user, add yourself to the `kvm` group.
+
+When a test fails, its output ends with the last lines of the machine's
+serial console, QEMU's own messages and the requests the machine made for
+its cloud-init seed.
+
+## How it works
+
+* **Network.** QEMU's user networking only, never a bridge or a tap
+  device. The machine reaches the host as `10.0.2.2`; the host reaches the
+  guest ports a test asks for (`vmtest.Options{Forward: []int{22}}`) on
+  `127.0.0.1`, at `vm.HostPort(22)`. Tests with two machines will join them
+  with QEMU's socket networking.
+* **Driving the machine.** A test's scripts do not go over the machine's
+  network, which the test may firewall or ban: they go over a virtio-serial
+  port (`org.easyrmm.harness`) to a small `sh` runner
+  (`internal/vmtest/runner.sh`), which runs each as root under `timeout`
+  and answers with its output and exit code. A script sent before a
+  restart is refused after it.
+* **First boot.** cloud-init installs the runner. Its NoCloud seed comes
+  over HTTP from the test process, named in the machine's SMBIOS serial
+  number, so no seed disk is built. Rocky Linux 8's cloud-init (23.4) looks
+  for that name on the kernel command line only, so its seed is a CD-ROM
+  labeled `cidata`, built with `xorriso`. The seed creates no account and
+  sets no password. It also tells cloud-init not to fetch the seed again
+  on later boots, and `Restart` fails if it does, so that a firewall
+  cannot hold up a restart.
+
+```go
+vm := vmtest.Boot(t, "debian-12", vmtest.Options{Forward: []int{22}})
+stdout, stderr, exit, err := vm.Run(ctx, "sshd -T | grep -i ^permitrootlogin")
+err = vm.WriteFile(ctx, "/etc/ssh/sshd_config.d/50-test.conf", conf, 0o600)
+err = vm.Restart(ctx) // a clean reboot; returns when systemd has started
+```
+
+## Updating an image
+
+Take the new file's URL and digest from the vendor's checksum file (and
+check that file's signature where the vendor signs it), never from the
+downloaded image, and use a dated or versioned file rather than "latest".
+Update the comment above the entry, which names the checksum file and the
+image's cloud-init version. The version decides the seed: `nocloud` for
+cloud-init 24.4 and later, `nocloud-net` for Debian 12's 22.4, and a
+CD-ROM (`SeedISO`) for Rocky Linux 8's 23.4. CI's image cache is keyed on
+`images.go`, so the change downloads the images again.
+
+## In CI
+
+The **Machines** jobs in `ci.yml` run `make test-vm` once per image, in
+parallel, on GitHub's Ubuntu runners with KVM. They run when the harness,
+the hardening script or its server side, `go.mod` or the `Makefile`
+change, and on the merge queue and manual runs.
+Images are kept between runs with `actions/cache`; a failed job uploads
+the serial console log.

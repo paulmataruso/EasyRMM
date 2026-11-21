@@ -43,6 +43,11 @@ jobs:
   #                     server and its build, EasyRMM's side of the patching
   #                     engine, Go modules, the contract script and the
   #                     PostgreSQL image it takes from deploy/docker-compose.yml.
+  #   machines          what the machine tests depend on: the harness
+  #                     (internal/vmtest), the hardening script and its
+  #                     server side (server/internal/jobs/hardening*), go.mod
+  #                     and the Makefile. Add packages with vm-tagged tests
+  #                     as they arrive.
   # EasyRMM's side of the patching engine (server/internal/easypatch/) counts for
   # EasyRMM and the EasyPatch server; this file counts for everything. The
   # merge queue, manual runs, and anything this cannot work out run all.
@@ -54,6 +59,7 @@ jobs:
       easypatch_server: ${{ steps.diff.outputs.easypatch_server }}
       easypatch_agent: ${{ steps.diff.outputs.easypatch_agent }}
       contract: ${{ steps.diff.outputs.contract }}
+      machines: ${{ steps.diff.outputs.machines }}
     steps:
       - if: github.event_name == 'pull_request' || github.event_name == 'push'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,7 +80,10 @@ jobs:
                 contract=true ;;
             esac
             case $1 in
-              .github/workflows/ci.yml) easyrmm=true easypatch_server=true easypatch_agent=true contract=true; return ;;
+              internal/vmtest/* | server/internal/jobs/hardening* | go.mod | Makefile) machines=true ;;
+            esac
+            case $1 in
+              .github/workflows/ci.yml) easyrmm=true easypatch_server=true easypatch_agent=true contract=true machines=true; return ;;
               server/internal/easypatch/*) easyrmm=true easypatch_server=true; return ;;
               scripts/ci/check-nuget-licences.py) easypatch_server=true; return ;;
               easypatch/* | .github/workflows/easypatch-*.yml) ;;
@@ -100,20 +109,21 @@ jobs:
           case $base in *[!0]*) ;; *) base= ;; esac
           if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null &&
             files=$(git diff --name-only --no-renames "$base" HEAD) && [ -n "$files" ]; then
-            easyrmm=false easypatch_server=false easypatch_agent=false contract=false
+            easyrmm=false easypatch_server=false easypatch_agent=false contract=false machines=false
             while IFS= read -r file; do
               echo "$file"
               classify "$file"
             done <<< "$files"
           else
             echo "No list of changed files for this event; everything runs."
-            easyrmm=true easypatch_server=true easypatch_agent=true contract=true
+            easyrmm=true easypatch_server=true easypatch_agent=true contract=true machines=true
           fi
           {
             echo "easyrmm=$easyrmm"
             echo "easypatch_server=$easypatch_server"
             echo "easypatch_agent=$easypatch_agent"
             echo "contract=$contract"
+            echo "machines=$machines"
           } | tee -a "$GITHUB_OUTPUT"
 
   # This run's version (scripts/release/version.sh), and the patching engine
@@ -536,6 +546,77 @@ jobs:
           retention-days: 7
           if-no-files-found: error
 
+  # Each distribution's cloud image, pinned by its vendor's digest, boots
+  # under QEMU with KVM and is driven over a virtio-serial channel, not its
+  # network: scripts as root, a file, sshd through a forwarded port, a
+  # restart (internal/vmtest; ADR-0051). QEMU's user networking only, never
+  # a bridge. One job per image, in parallel.
+  machines:
+    name: Machines (${{ matrix.image }})
+    needs: changes
+    if: needs.changes.outputs.machines == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [debian-12, debian-13, ubuntu-22.04, ubuntu-24.04, rocky-8, rocky-9, alma-9, fedora-45]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      # xorriso builds the seed CD-ROM of images that cannot take their
+      # seed over HTTP (Rocky Linux 8).
+      - name: Install QEMU and xorriso
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils xorriso
+      # GitHub's Linux runners have KVM, but the job's user may not open
+      # /dev/kvm. Without it QEMU emulates the processor, far too slowly for
+      # this job, so the step fails rather than let that happen. It runs
+      # after QEMU is installed, whose udev rules give /dev/kvm to the kvm
+      # group alone, and waits for udev: `udevadm trigger` alone returns
+      # before the mode is applied.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm --settle
+          if [ -e /dev/kvm ] && ! { [ -r /dev/kvm ] && [ -w /dev/kvm ]; }; then
+            sudo chmod 0666 /dev/kvm
+          fi
+          if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+            ls -l /dev/kvm
+            exit 0
+          fi
+          echo "::error title=No KVM::this runner gives the job no usable /dev/kvm"
+          ls -l /dev/kvm || true
+          echo "processors with VMX or SVM: $(grep -c -w -E 'vmx|svm' /proc/cpuinfo || true)"
+          lsmod | grep -w -E 'kvm|kvm_intel|kvm_amd' || echo "no kvm module loaded"
+          exit 1
+      # The harness checks the image against its pinned digest whether it
+      # was downloaded or restored from here.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/tmp/easyrmm-vmtest/images
+          key: vm-image-${{ matrix.image }}-${{ hashFiles('internal/vmtest/images.go') }}
+      - name: Boot and drive ${{ matrix.image }}
+        env:
+          EASYRMM_VM_IMAGE: ${{ matrix.image }}
+          EASYRMM_VM_LOG_DIR: ${{ runner.temp }}/vm-logs
+        run: make test-vm VM_TEST_TIMEOUT=25m
+      - name: Upload the serial console
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: machines-console-${{ matrix.image }}
+          path: ${{ runner.temp }}/vm-logs
+          retention-days: 7
+          if-no-files-found: ignore
+
   # Relative links and anchors in every Markdown file, for every change: a
   # moved or renamed file breaks links in documents the change never touched.
   docs:
@@ -552,7 +633,7 @@ jobs:
     name: CI result
     if: always()
     needs: [changes, version, backend, integration, frontend, docker, easypatch-server, easypatch-agent, contract,
-      contract-release, bundle, bundle-release, authentik, edge-bundle, security, docs]
+      contract-release, bundle, bundle-release, authentik, edge-bundle, machines, security, docs]
     runs-on: ubuntu-latest
     steps:
       - name: Require every job to succeed or to have been skipped

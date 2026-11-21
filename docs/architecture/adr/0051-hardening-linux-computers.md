@@ -1,7 +1,9 @@
 # ADR-0051: Hardening Linux computers
 
 * Status: Accepted (2026-11-21), revised twice after review the same day.
-  Not implemented yet.
+  Check (H1) and the console for it (H3: a device's **Hardening** tab,
+  and the column and filter in **Devices**) are implemented; apply and
+  undo (H2) are not yet.
 * Builds on: [ADR-0017](0017-scripts-and-jobs.md) (scripts and jobs) and
   [ADR-0028](0028-software-deployment.md) (a fixed script compiled into
   the server, its input as arguments).
@@ -302,9 +304,11 @@ later ADR.
   options and job.
 * **API**: `POST /api/v1/jobs/hardening`; `GET /api/v1/devices/{id}/hardening`.
   Devices report `canHarden` and `canCheckHardening`.
-* **Benchmarks.** Settings name the CIS Benchmark recommendation or DISA
-  STIG they follow in the script's comments; no benchmark text is copied,
-  and EasyRMM does not claim compliance with either.
+* **Benchmarks.** Settings name the DISA STIG rule they follow, by its ID,
+  in the script's comments, where one exists; each ID is checked against
+  the published STIG. CIS Benchmark numbers are not given, since they could
+  not be checked against the benchmark itself. No benchmark text is copied,
+  and EasyRMM does not claim compliance with any benchmark.
 * **Upstream.** No code or text is taken from ultimate-sys-hardening, so
   no notice is owed. If any is taken later, its MIT notice goes in
   THIRD_PARTY_NOTICES.md. Features of its commercial tiers are not

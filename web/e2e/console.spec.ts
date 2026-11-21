@@ -1,11 +1,11 @@
 // The technician console, end to end, against a real server and database: first-run setup,
-// mandatory two-factor enrollment, tenancy, invitations, scoped access, device enrollment and the
-// audit trail.
+// mandatory two-factor enrollment, tenancy, invitations, scoped access, device enrollment, a
+// hardening check through the device's agent, and the audit trail.
 // The suite is one ordered story because each step builds on the server state of the last.
 
-import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
+import { Agent, deviceKey } from "./agent";
 import { enrollAuthenticator, nextCode } from "./authenticator";
 
 const ADMIN = { name: "Alex Rivera", email: "alex@example.com", password: "harbor lantern quietly 42" };
@@ -21,6 +21,8 @@ test.describe.configure({ mode: "serial" });
 
 let inviteLink = "";
 let northwindId = "";
+// The device the suite enrolls, as its agent.
+let agent: Agent;
 
 // The administrator keeps one browser session across the story, as a technician would.
 let admin: Page;
@@ -218,11 +220,6 @@ test("devices and remote access report honestly when MeshCentral is not running"
   await expect(page.getByText("Not found")).toBeVisible();
 });
 
-/** A device key as the agent sends it: the raw Ed25519 public key, base64. */
-function devicePublicKey(): string {
-  return generateKeyPairSync("ed25519").publicKey.export({ format: "der", type: "spki" }).subarray(-32).toString("base64");
-}
-
 test("a deployment token enrolls a device, which then reports in", async () => {
   const page = admin;
   await page.goto("/devices");
@@ -254,10 +251,12 @@ test("a deployment token enrolls a device, which then reports in", async () => {
 
   // A device enrolls the way the agent does: its own key, its facts, the token.
   const facts = { hostname: "dt-reception-01", os: "Debian GNU/Linux 13 (trixie)", platform: "linux", arch: "amd64", agentVersion: "0.6.0-e2e" };
-  const enroll = await page.request.post("/api/agent/v1/enroll", { data: { token, publicKey: devicePublicKey(), facts } });
+  const key = deviceKey();
+  const enroll = await page.request.post("/api/agent/v1/enroll", { data: { token, publicKey: key.publicKey, facts } });
   expect(enroll.status(), await enroll.text()).toBe(201);
+  agent = new Agent(page.request, ((await enroll.json()) as { deviceId: string }).deviceId, key.privateKey);
   // The token allowed one device.
-  const again = await page.request.post("/api/agent/v1/enroll", { data: { token, publicKey: devicePublicKey(), facts: { ...facts, hostname: "dt-reception-02" } } });
+  const again = await page.request.post("/api/agent/v1/enroll", { data: { token, publicKey: deviceKey().publicKey, facts: { ...facts, hostname: "dt-reception-02" } } });
   expect(again.status()).toBe(401);
 
   await page.getByRole("button", { name: "Create another token" }).click();
@@ -283,6 +282,92 @@ test("a deployment token enrolls a device, which then reports in", async () => {
   await expect(page.getByText("Not set up yet")).toBeVisible();
 });
 
+/** The result line EasyRMM's hardening script ends with, as the script writes it on a Debian 13 server. */
+function hardeningResult(): string {
+  const modules = [
+    { module: "ssh", state: "partly", reason: "Some of the settings this module checks are in place.", missing: ["PermitRootLogin prohibit-password (now yes)"], changes: ["PermitRootLogin prohibit-password"] },
+    {
+      module: "firewall",
+      state: "not_in_place",
+      reason: "None of the settings this module checks is in place.",
+      missing: ["nftables table inet easyrmm loaded"],
+      changes: ["Install nftables"],
+      ports: { tcp: ["22", "443"], docker: ["tcp/8080"] },
+    },
+    { module: "fail2ban", state: "not_in_place", missing: ["fail2ban installed and running"] },
+    { module: "kernel", state: "in_place", reason: "Everything this module checks is in place." },
+    { module: "audit", state: "not_in_place", missing: ["auditd installed and running"] },
+    { module: "permissions", state: "in_place" },
+    { module: "services", state: "in_place" },
+    { module: "kernel-modules", state: "partly", missing: ["sctp kept from loading"] },
+    { module: "sudo", state: "in_place" },
+    { module: "time", state: "in_place" },
+    { module: "shared-memory", state: "not_in_place" },
+    { module: "usb-storage", state: "not_in_place" },
+    { module: "mac", state: "not_applicable", reason: "Neither SELinux nor AppArmor is installed." },
+    { module: "integrity", state: "not_in_place" },
+  ];
+  const platform = { id: "debian", versionId: "13", family: "debian", container: "none", support: "full" };
+  return `EASYRMM-HARDENING-RESULT-V1 ${JSON.stringify({ version: 1, mode: "check", platform, modules })}\n`;
+}
+
+test("a hardening check runs through the device's agent; its findings show on the device and across the fleet", async () => {
+  const page = admin;
+  // The device page from the step before.
+  await page.getByRole("tab", { name: "Hardening" }).click();
+  await expect(page.getByText("Not checked yet")).toBeVisible();
+  await page.getByRole("button", { name: "Run check…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Check hardening" });
+  // The recommended modules are chosen; the optional ones, chosen one by one here, carry their risk.
+  await expect(dialog.getByText("10 of 14 modules")).toBeVisible();
+  await expect(dialog.getByText("When applied: USB disks and backup drives stop working.")).toBeVisible();
+  for (const name of ["Shared memory", "USB storage", "SELinux or AppArmor", "File integrity"]) {
+    await dialog.getByRole("checkbox", { name: new RegExp(`^${name}`) }).check();
+  }
+  await expect(dialog.getByText("14 of 14 modules")).toBeVisible();
+  await dialog.getByRole("button", { name: "Run check" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("Checking hardening", { exact: true })).toBeVisible();
+
+  // The device's agent picks the check up: EasyRMM's own script, with every module the console sent as an argument.
+  const [job] = await agent.poll();
+  expect(job?.shell).toBe("sh");
+  expect(job?.args).toEqual(["check", "ssh,firewall,fail2ban,kernel,audit,permissions,services,kernel-modules,sudo,time,shared-memory,usb-storage,mac,integrity"]);
+  expect(job?.script).toContain("EASYRMM-HARDENING-RESULT-V1");
+  expect(await agent.start(job!.runId)).toBe(true);
+  await expect(page.getByRole("heading", { name: "Checks" }).locator("xpath=ancestor::section").getByText("Running")).toBeVisible();
+  await agent.succeeded(job!.runId, `EasyRMM hardening check: debian 13 (debian family; container: none; support: full).\n${hardeningResult()}`);
+
+  // Once the run ends, the tab reads what the server kept.
+  await expect(page.getByText("5 of 13 in place")).toBeVisible();
+  const ssh = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "SSH", level: 3 }) });
+  await expect(ssh).toContainText("Partly in place");
+  await expect(ssh).toContainText("PermitRootLogin prohibit-password (now yes)");
+  const firewall = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "Firewall", level: 3 }) });
+  await expect(firewall).toContainText("22, 443");
+  await expect(firewall).toContainText("tcp/8080");
+  const last = page.getByRole("heading", { name: "Last check" }).locator("xpath=ancestor::section");
+  await expect(last).toContainText("Debian 13");
+  await expect(last).toContainText("Tested");
+  await last.getByRole("link", { name: "Check hardening (every module)" }).click();
+  await expect(page.getByRole("heading", { name: "Check hardening (every module)" })).toBeVisible();
+  await page.goBack();
+
+  // Across the fleet: the Devices list's column, and its filter on the server.
+  await page.goto("/devices");
+  const row = page.getByRole("row", { name: /dt-reception-01/ });
+  await expect(row).toContainText("5 of 13 in place");
+  await page.getByLabel("Hardening").selectOption({ label: "Needs attention" });
+  await expect(page).toHaveURL(/\/devices\?hardening=attention$/);
+  await expect(row).toBeVisible();
+  await page.getByLabel("Hardening").selectOption({ label: "In place" });
+  await expect(page.getByText("No devices match these filters")).toBeVisible();
+  await page.getByLabel("Hardening").selectOption({ label: "Not checked" });
+  await expect(page.getByText("No devices match these filters")).toBeVisible();
+  await page.getByLabel("Hardening").selectOption({ label: "Any hardening" });
+  await expect(row).toBeVisible();
+});
+
 test("a deep link survives sign-in and the second factor", async () => {
   const page = admin;
   await page.getByRole("navigation", { name: "Main" }).getByRole("button", { name: "Sign out" }).click();
@@ -300,7 +385,7 @@ test("a deep link survives sign-in and the second factor", async () => {
 
 test("the audit log records everything and its hash chain verifies", async () => {
   const page = admin;
-  for (const label of ["Created organization", "Created site", "Created device group", "Invited user", "Created deployment token", "Enrolled device"]) {
+  for (const label of ["Created organization", "Created site", "Created device group", "Invited user", "Created deployment token", "Enrolled device", "Hardening job"]) {
     await expect(page.getByRole("cell", { name: new RegExp(label) }).first()).toBeVisible();
   }
   await page.getByLabel("Area").selectOption({ label: "Users" });
