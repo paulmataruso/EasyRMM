@@ -178,6 +178,10 @@ All notable changes to this project are documented here. The format follows
   file already passed to the server.
 - Taking the database down past migration 12 removed no software jobs:
   row-level security hid them from the migration. It now sees every row.
+- Toasts and copy buttons clear their timers when they leave the page. A
+  closed toast, or a copy button in a dialog closed straight after copying,
+  left a timer that later updated a component already gone; at the end of a
+  unit-test file, that update threw `window is not defined` and failed the run.
 
 ## [1.0.0-rc.4] - 2026-11-21
 
