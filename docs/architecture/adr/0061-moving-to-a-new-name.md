@@ -46,9 +46,10 @@
   blueprint reads;
   [ADR-0031](0031-easypatch-agent-install.md): install instructions name
   EasyRMM's own address, not the engine's `PublicUrl`;
-  ADR-0055: what
-  wins when `.env`, `tls reset` or **Remove name** meet a move
-  ("Precedence over ADR-0055", below).
+  [ADR-0052](0052-the-host-updater.md), "Required upgrade stops": the
+  manifest's `upgradeFrom`, which makes slice 1's release a stop;
+  ADR-0055: what wins when `.env`, `tls reset` or **Remove name** meet a
+  move ("Precedence over ADR-0055", below).
 * Part of [the feature plan](../feature-plan.md): feature 5, slice 5c. It
   comes last in the plan's order and needs F0 (ADR-0057) and 5b1 to 5b3
   (ADR-0055).
@@ -223,7 +224,14 @@ The fix this ADR needs first writes that list.
   fresh nonce of its own (below). A super administrator chooses *which* of
   this server's trusted names agents use, never another server.
 * **Old addresses keep working** for everything that still uses them until
-  the old name is removed, which is the cut-off.
+  the old name is removed, which is the cut-off. Until then they keep
+  the mode's certificate source, as the primary does: in `acme` mode
+  `acmeHosts` (`server/internal/app/edge.go`), and so autocert's host
+  policy, keeps them; in `internal` mode the authority issues for them;
+  in `manual` mode the page names any the operator's files do not
+  cover. The edge keeps listening on the old MeshCentral port, recorded
+  with the old pair, which covers an IP install whose
+  `EASYRMM_IP_MESH_PORT` changed with the move.
 * **`name_moves`**, a platform table like `settings`, outside row-level
   security: one row per move, with the pairs it moves from and to, who
   started it and how (console or host), when each step was taken and by
@@ -232,66 +240,19 @@ The fix this ADR needs first writes that list.
   back, or the initial pair when there has been none, so a `.env` that
   changes on its own never changes the primary. Every server on the
   database reloads it on `NOTIFY`, as ADR-0055's certificates do.
-* **The initial pair**, kept beside the rows, is written once, at the
-  first start of slice 4's build: from that server's record ("Names in
+* **The initial pair**, kept beside the rows, is written once: at the
+  first start of slice 4's build, from that server's record ("Names in
   `.env`"), which slice 1 began keeping, so a `.env` edited just before
-  the upgrade is not taken for the pair agents use. With no record, it
-  is taken from `.env` only when no device has been seen in the last 30
-  days, or every such device has a recorded origin (the origin of its
-  signed requests, ADR-0055) that the server serves with that `.env`; a
-  device seen with no recorded origin counts as not matching. Otherwise
-  nothing is adopted until a super administrator, with step-up, chooses
-  with **Confirm** between `.env`'s pair and an **agents' pair**:
-  * **The agents' MeshCentral name.** At that start the server reads
-    `cert` and `aliasPort` from MeshCentral's existing `config.json`
-    once, before rendering it, and stores them in the database. With no
-    `config.json` (remote access never on, or the folder lost), the
-    agents' pairs use `.env`'s MeshCentral name, and the banner says so.
-  * **The candidates**: each console origin the devices seen in the last
-    30 days use, leaving out addresses IP access serves anyway (unless
-    the public URL is itself an IP address), with its device count. Each
-    is paired with that MeshCentral name and checked as `validateMesh`
-    and MeshCentral's dot rule check a pair; one that fails is listed
-    with the reason and cannot be chosen. When the devices are split,
-    every candidate is listed.
-  * **Until Confirm**: `config.json` is rendered as at every start
-    (`Render` and `WriteConfig` in `server/internal/meshcentral`, with
-    the `allowedOrigin` fix), with `cert`, `aliasPort` and `certUrl`'s
-    port pinned to the stored MeshCentral name, and `allowedOrigin` and
-    the framing origins built from every origin served. The server
-    serves `.env`'s console as it does today, the candidates' console
-    origins as agent routes, and the stored MeshCentral name with its
-    route, so MeshAgents and `certUrl`'s read keep working; the edge
-    listens on the stored `aliasPort` too, which covers an IP install
-    whose `EASYRMM_IP_MESH_PORT` changed in the same jump. It refuses
-    moves and offers, and shows an alert and a banner naming the pairs.
-  * **Their certificates**: until Confirm, and afterwards while they are
-    old addresses, the stored MeshCentral name and each candidate's
-    console origin take the mode's source, as the primary does: in
-    `acme` mode `acmeHosts` (`server/internal/app/edge.go`), and so
-    autocert's host policy, gains them; in `internal` mode the authority
-    issues for them; in `manual` mode they come from the operator's
-    files, and the banner names any the files do not cover.
-  * **The gates**: before Confirm is accepted, step 1's gates run against
-    the chosen pair: every device seen in the last 30 days trusting its
-    certificate, reachability (a warning for an IP target), `validateMesh`
-    and the dot rule. A choice that fails is listed with the reason and
-    cannot be chosen, as for the candidates above.
-  * **What Confirm writes**, one rule for every choice: the chosen pair
-    becomes the initial pair; for an agents' pair, that is the candidate
-    origin and `https://<cert>:<aliasPort>`, and the stored pin is
-    deleted. Every other candidate origin with devices seen in the last
-    30 days becomes an old address of a move to the chosen pair, which
-    Confirm records in `name_moves` with itself as step 1; so does the
-    pinned MeshCentral name when `.env`'s pair is chosen and names
-    another. Those old addresses are then handled exactly as a move's
-    old name: served as agent routes, with their certificates and the
-    stored `aliasPort`, while devices use them; their agents sent the
-    ordinary move instruction; MeshCentral keeping the pinned name until
-    step 2; and removed by step 5's rule. Confirm is audited as
-    `name_move.initial`, naming the move it starts.
-  * Choosing an agents' pair leaves `.env` naming another pair, which is
-    then offered as below.
+  the upgrade is not taken for the pair agents use. Slice 1's release is
+  a required upgrade stop (ADR-0052's amendment "Required upgrade stops":
+  slice 4's and every later manifest name it in `upgradeFrom`), so a
+  deployment upgraded by the updater or `setup.sh --upgrade` always has a
+  record by then. One that has none (an image swapped by hand past the
+  stop) is described under "Names in `.env`": that start stores that its
+  initial pair waits for its first step 1, which writes it from the
+  primary at that moment, so no later start takes it from a record. Until
+  the initial pair is written, the primary is `.env`'s pair, as today,
+  and the record follows `.env` at each start.
 * **The move generation**, `moveGeneration`, a number kept beside it,
   changes with every step 1 or 2, a **Move back**'s included, and never
   goes backwards, even across a restore: each new value is the larger of
@@ -805,7 +766,9 @@ pair an install starts with.
   while it runs). ADR-0057's `server_instances` rows are per process and
   are deleted at stop, so they are not used for this; each of them names
   its server's ID. Slice 1 writes the record, a release before anything
-  acts on it, so that an install upgrading to slice 4 already has one.
+  acts on it, and its release is a required upgrade stop (ADR-0052's
+  amendment "Required upgrade stops"), so that an install upgrading to
+  slice 4 already has one.
   * A server compares its `.env` only with its own record, so servers
     whose `.env`s differ never undo each other's moves; the page warns
     while they differ.
@@ -821,6 +784,20 @@ pair an install starts with.
   * A record that cannot be written is logged, retried every minute and
     alerted; nothing is offered from that server's `.env` until it is
     written.
+* **A start with no record**: slice 4's build, or a later one, started
+  with no initial pair written and no record for this server, on a
+  database an earlier version has run on (its migrations were applied
+  before this start; a new install records its `.env` and raises
+  nothing). That happens only past the upgrade stop, for example when
+  the image was swapped by hand. The server takes `.env`'s pair as the
+  primary, as today, writes the record, and raises an alert: "No record
+  of this server's previous names was found; the names were taken from
+  `.env`." Where ADR-0055 has recorded each device's origin, the alert
+  lists the devices seen in the last 30 days whose origin `.env` does
+  not serve. It gives the recovery: put the previous names back in
+  `.env`, restart, then move from the console. Nothing is pinned,
+  offered or moved automatically; the initial pair is written at the
+  first step 1, from the primary at that moment.
 * **A `.env` that names another pair never moves anything by itself**,
   whatever made it differ: an edit, a restore that kept a newer `.env`, a
   new host, a change during a move. When a server's `.env` names a pair
@@ -1014,14 +991,6 @@ pair an install starts with.
   than the primary: the pair, the server, and **Move to the pair in
   `.env`** (step-up), or **Move back** when it is a move's old pair;
   offered once no move is in progress otherwise.
-* A banner when no initial pair could be adopted ("What a move is"):
-  "Agents use <origin> (<count> devices)[, <origin> (<count> devices)…],
-  with MeshCentral at <cert>; `.env` names <pair>. Until you confirm
-  which pair EasyRMM starts from, all are served and no move can start."
-  When there was no `config.json`, it says that the agents' pairs use
-  `.env`'s MeshCentral name. **Confirm** (step-up) offers **Use `.env`'s
-  pair** and **Use <origin>** for each candidate that passes the checks;
-  the others are shown with the reason.
 * The servers on the database with their ID, `.env` pair and last seen;
   **Forget** on those not seen for 30 days.
 * Authentik's last apply (`names-status.json`) on the move's page and in
@@ -1031,10 +1000,7 @@ pair an install starts with.
 * `GET /api/v1/settings/names`: the names and their roles, the move in
   progress, each step's state and the counts.
 * `POST /api/v1/settings/names/moves` (`to`; **Move to the pair in
-  `.env`** is this call with that pair), `POST
-  /api/v1/settings/names/initial` (**Confirm**, `{"pair": "env"}` or
-  `{"pair": "agents", "origin": "<origin>"}`, one of the candidates `GET`
-  lists with their device counts, MeshCentral name and checks), `DELETE
+  `.env`** is this call with that pair), `DELETE
   /api/v1/settings/names/servers/{id}` (**Forget**), and on the move `POST
   …/steps/{remote-access|browsers|remove}`, `POST …/back`; `anyway: true`
   for the overrides; step-up as above. `POST
@@ -1052,7 +1018,6 @@ pair an install starts with.
 | `name_move.step` | Steps 2 to 5 | The step; with an override, what it overrode |
 | `name_move.back` | Moved back, from the console, `names move --to-env` or `tls reset` | The step it had reached |
 | `name_move.env_offer` | A server's `.env` first names a pair other than the primary; recorded and offered, not acted on | The pair, the primary, the move's pairs if any, the server |
-| `name_move.initial` | The initial pair adopted from a record or `.env`, or confirmed in the console | The pair, where it came from; when confirmed, the candidates with their device counts and the move Confirm started |
 | `name_move.server_forget` | A server's record forgotten | The server's ID, its last pair, when it was last seen |
 | `name_move.keys_remove` | Keys under an old relying party ID removed | The name, how many, whose |
 | `sso.provider_confirm` | A provider's sign-in first completes at a name | The provider and the name |
@@ -1088,8 +1053,11 @@ any other.
   instruction, bound to the agent's request, and the new address's
   confirmation of a nonce the agent sent there.
 * **Added**: the fall-back, `set-server` and an idempotent `install`; a
-  hand edit of `.env` that offers a move instead of stranding agents; and
-  MeshAgents that follow MeshCentral's name whatever changed it.
+  hand edit of `.env` that offers a move instead of stranding agents;
+  MeshAgents that follow MeshCentral's name whatever changed it; and a
+  required upgrade stop at slice 1's release (ADR-0052's amendment), so
+  that the move starts from a record of the names agents use rather than
+  from guesses about them.
 * **Signed settings (ADR-0058) are not how agents learn an address**: a
   setting can be set per organization or site, and an address must not be;
   a move needs a check against the new address from each computer, which a
@@ -1163,40 +1131,27 @@ any other.
     the alert, while a restart's old row, a row older than 2 minutes and
     a command-line subcommand do not;
   * the initial pair, at slice 4's first start: from the record slice 1
-    wrote, also when `.env` was edited just before the upgrade; with no
-    record, from `.env` when the recorded origins of recent devices
-    match it; a recent device with no recorded origin, or one on another
-    origin, leaves it unadopted until **Confirm** with step-up: `cert`
-    and `aliasPort` read once from the existing `config.json` and
-    stored, `config.json` rendered with them pinned and `allowedOrigin`
-    and framing from every origin served, the stored MeshCentral name
-    served with its certificate (a MeshAgent on it stays connected and
-    `certUrl`'s read gets that certificate), every candidate origin
-    served to agents (a device on each keeps checking in), moves and
-    offers refused; candidates leave out IP-access addresses on a DNS
-    install, carry their device counts when the devices are split, and
-    one that fails `validateMesh` or the dot rule cannot be chosen; with
-    no `config.json`, the candidates use `.env`'s MeshCentral name; the
-    edge listening on the stored `aliasPort`, also after
-    `EASYRMM_IP_MESH_PORT` changed; `acmeHosts` holding the stored name
-    and the candidates in `acme` mode, and the banner naming those a
-    `manual` certificate does not cover; a choice failing step 1's gates
-    (a device that would not trust its certificate, `validateMesh`, the
-    dot rule) refused with the reason; **Confirm** of `.env`'s pair and
-    of an agents' pair each writing the initial pair (for the latter,
-    with `https://<cert>:<aliasPort>`, and the pin deleted) and recording
-    a move from the other candidates (and, for `.env`'s pair, the pinned
-    MeshCentral name): a device on another candidate is sent the move
-    instruction and moves, its old address stays served with its
-    certificate until step 5, and MeshCentral keeps the pinned name
-    until step 2; `name_move.initial` names that move; the initial pair
-    stays the primary until a move;
+    wrote, also when `.env` was edited just before the upgrade; it stays
+    the primary until a move;
+  * **a start with no record** (slice 4's image started on a database
+    and data directory that slice 1 never ran on): `.env`'s pair is the
+    primary, the record is written, and the alert is raised with its
+    recovery and the devices seen in the last 30 days whose recorded
+    origin `.env` does not serve; nothing is pinned, offered or moved;
+    with the previous names put back in `.env` and the server
+    restarted, they are the primary again and the first step 1 from
+    the console writes the initial pair from them;
+  * the required upgrade stop's refusals, each tested as ADR-0052's
+    amendment lists them;
   * while `.env` is only offered: its pair answers agents and redirects
     browsers to the primary; the relying party ID, issuer, email links,
     install commands, single sign-on callback, audit `HOSTNAME`,
     `recover`'s link and Authentik's `primary` all name the primary; in
     `acme` mode the primary stays in the host policy, and in `manual`
     mode a certificate that no longer covers it is warned about;
+  * a move's old names kept in `acmeHosts` until step 5, a `manual`
+    certificate that does not cover one named on the page, and the old
+    MeshCentral port still listening until step 5;
   * an IP-to-IP move passing step 1 with the internal authority's
     certificate and a browser's load in the last 24 hours, or the
     self-check; with neither, step 1 warns and goes ahead, and an agent
@@ -1341,7 +1296,10 @@ Each merges, is verified on its own, and leaves nothing unused.
    No capability is reported yet: nothing parses `move`. Also the
    per-server record (`server-id`, `server_env_pairs` with last seen),
    written at every start and acted on by nothing yet, so that an install
-   reaching slice 4 has one. Useful alone: a computer is moved by hand
+   reaching slice 4 has one. Its release is the required upgrade stop:
+   slice 4's and every later manifest name it in `upgradeFrom`, and the
+   check (ADR-0052's amendment) ships no later than slice 4. Useful
+   alone: a computer is moved by hand
    between two addresses the server serves. Verified in the bundle by
    moving machine 1 between `https://127.0.0.1` and the host's other
    address; the record by an integration test.
@@ -1365,9 +1323,10 @@ Each merges, is verified on its own, and leaves nothing unused.
    the build
    that parses it, which first reports `move.easyrmm` and
    `move.easypatch`, the failure reports, `.env` offered per server (an
-   agent route only, the banner, `names move --to-env`, the initial pair
-   and **Confirm**,
-   **Forget**, the shared-ID alert), `setup.sh --upgrade`'s warning, the
+   agent route only, the banner, `names move --to-env`, the initial pair,
+   the alert for a start with no record, **Forget**, the shared-ID
+   alert), `setup.sh --upgrade`'s warning, `upgradeFrom` naming slice
+   1's release, the
    precedence over ADR-0055, link matching and install instructions from
    EasyRMM's names, the install commands' list on the page, the engine's
    `PublicUrl` no longer read, the refusal of new keys during a move on a
@@ -1424,6 +1383,10 @@ Slices 1 to 6 complete the IP-to-name case.
 * Nothing moves agents unattended: a `.env` naming another pair, after
   an edit, a restore or on a new host, waits for someone to choose the
   move in the console, with step-up, or on the host.
+* Slice 1's release is a required upgrade stop: a deployment below it is
+  refused by the updater and `setup.sh --upgrade` until it installs that
+  release first. One that gets past it by hand starts from `.env`'s
+  names with an alert, as today, and its operator recovers by hand.
 * The EasyPatch agent gains a command, and its older builds stay on the old
   name until updated. `authentik-setup` becomes a long-running service,
   and Authentik's containers never read a file the server can write.
@@ -1454,6 +1417,11 @@ Slices 1 to 6 complete the IP-to-name case.
 * **Queuing a `.env` pair refused during a move**, to act on it when the
   move ends: a move would then start at some later restart with nobody
   watching.
+* **Recovering the names agents use when there is no record** (from the
+  origins devices report and MeshCentral's `config.json`, chosen in the
+  console): it needed candidate pairs, a pinned MeshCentral name and a
+  move started at the choice, and still left cases a move could not
+  start from cleanly; an upgrade stop makes the record certain instead.
 * **A rollback guard of this ADR's own**: two guards for one rollback
   would differ in locking and in their generations; ADR-0052's amendment
   is the one.

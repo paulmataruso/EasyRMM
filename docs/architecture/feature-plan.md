@@ -384,8 +384,11 @@ TLS-ALPN-01, renewed in the process; names are read at start.
   trusts; step-up authentication and a notice to every super
   administrator; a view of the devices still on the old name; old names
   kept registered and served until a cut-off. WebAuthn keys stay valid
-  through Related Origin Requests (`/.well-known/webauthn`). 5a and 5b
-  ship without it.
+  through Related Origin Requests (`/.well-known/webauthn`). Its first
+  slice's release is a required upgrade stop (`upgradeFrom` in the
+  manifest, an amendment to ADR-0052), so that a deployment reaching the
+  move has a record of the names its agents use. 5a and 5b ship without
+  it.
 
 **Tests**: Pebble for HTTP-01 and TLS-ALPN-01, and for DNS-01 through RFC
 2136 against a real BIND on host networking; renewal and the failure

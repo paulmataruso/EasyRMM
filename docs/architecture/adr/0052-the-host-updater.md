@@ -6,6 +6,8 @@
   updates), [ADR-0044](0044-authentik-when-chosen.md) (Authentik's files)
   and the Docker deployment ([docker.md](../../deployment/docker.md)).
 * Part of [the feature plan](../feature-plan.md): F3 and feature 4.
+* Amended 2026-11-21: "Required upgrade stops", decided in review for
+  [ADR-0061](0061-moving-to-a-new-name.md).
 
 ## Context
 An upgrade is run by hand on the server
@@ -249,6 +251,40 @@ Off unless `setup.sh --auto-upgrade` (or the configuration) turns them on,
 in the hours configured. Meant for test instances on the edge channel:
 each build of `main` that passed everything arrives within the hour.
 Production installs upgrade when someone chooses to.
+
+### Required upgrade stops (amended 2026-11-21)
+*Decided in review for ADR-0061, whose slice 4 acts on a record that its
+slice 1 begins to keep; a deployment that jumped over slice 1 would have
+none.*
+
+* **`upgradeFrom`**: the manifest (above) gains the lowest version, in
+  this ADR's order, that a deployment must already run before it
+  installs this one: the lowest version that carries the stop's change,
+  edge builds included, so one value serves releases and edge manifests
+  alike, and edge manifests carry it too. It is one line in the
+  repository that `scripts/release/bundle.sh` writes into the manifest
+  and the bundle's `setup.sh` reads; it only ever rises. ADR-0061's slice
+  4 and every later release name the version that brought its slice 1.
+* **The updater** checks it at step 1, against the running version, which
+  it reads from the running server: below `upgradeFrom`, the upgrade is
+  refused before anything changes, naming the version to install first
+  (the lowest on the configured channel at or above `upgradeFrom`).
+  Automatic upgrades then install that version first, as a version of
+  its own.
+* **`setup.sh --upgrade`** refuses the same jump with the same message. It
+  takes the installed version from the running server, or from the
+  updater, which passes the version it read at step 1, since step 5 runs
+  it with the services stopped; when it can learn neither, it refuses and
+  says to start the installed version first. A fresh install is never
+  refused. So an updater from before this amendment, which ignores the
+  field, still cannot complete the jump: the new `setup.sh` refuses at
+  step 5, and the attempt rolls back with nothing confirmed.
+* **Tests**, one per refusal: the updater refusing a release and an edge
+  build whose `upgradeFrom` is above the running version, and accepting
+  them from that version; `setup.sh --upgrade` refusing by hand with the
+  running server below it, and when no running server or updater gives
+  the version; an updater built without the check, whose upgrade is
+  refused at step 5 by the new `setup.sh` and rolls back.
 
 ## Testing
 * **Verification** against real published artifacts: the latest release
