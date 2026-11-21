@@ -582,7 +582,7 @@ results, permission and console; the agent does not change.
   judged on what the computer did, two applies apart, from an hourly
   harvest of the logs so that busy logs that wrap still count, a gap
   wherever the logging was off; its folder checked before every run, as
-  the agent checks its own (pull request #61); restarts
+  the agent checks its own (PR #61); restarts
   are reported, never performed, and undo works before them; one
   hardening apply or undo at a time on a device, never
   beside a patch or software job; domain controllers need an explicit

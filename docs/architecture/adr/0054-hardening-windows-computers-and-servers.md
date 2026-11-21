@@ -338,15 +338,29 @@ reason above for its not naming CIS recommendations.
 * **A daily check** on every device where EasyRMM's values are in place,
   so that an owner that arrives later is seen (see Managed elsewhere). It
   is an ordinary signed `hardening` job in `check` mode, never apply or
-  undo, sent by the server: at most one is outstanding per device, its
-  expiry at most 24 hours after it is issued; none is sent while an apply
-  or undo for the device is queued or running, and an undo cancels a
-  queued one. Devices' checks are spread over the day; a day missed while
-  jobs were held or the server was down is not caught up. Its runs and
-  their output are removed after 7 days rather than ADR-0017's
-  `EASYRMM_JOB_RETENTION` (the results kept per device and module, as in
-  ADR-0051, still hold the last check); they are grouped as one daily
-  batch in **Jobs**, and make one audit row per batch, not per device.
+  undo, created by the server:
+  * **One device, one job, at its own time.** The server creates each
+    device's check at that device's time of day, derived from a hash of
+    its device ID, so checks spread over the day without a "not before"
+    field. At most one is outstanding per device, its expiry at most 24
+    hours after it is created. None is created while an apply or undo
+    for the device is queued or running, and a day missed while jobs were
+    held or the server was down is not caught up.
+  * **An undo comes first.** Creating an undo cancels the device's check
+    if it is queued or delivered and not yet running; a running check is
+    waited for, as any job is (see One change at a time). The server
+    cancels it as a consequence of the undo, so the user needs no
+    `job.manage`: the run is `canceled` with `canceled_by` NULL and the
+    reason *replaced by an undo* in its `error`, audited with the system
+    as actor.
+  * **Amendments to ADR-0017**, made with W2: jobs gain a batch id, which
+    the day's many small check jobs share and by which **Jobs** groups
+    them; this kind of job and its runs are removed after 7 days rather
+    than after `EASYRMM_JOB_RETENTION` (the results kept per device and
+    module, as in ADR-0051, still hold the last check); it is audited
+    with one row per organization per daily batch instead of one
+    `device.script_run` per run; and the server may cancel a run itself,
+    as above.
 
 ### Before anything changes
 The script first checks, and stops with every module *not supported* and
@@ -359,18 +373,36 @@ the reason if:
 * For apply, the platform is check only or not supported (see
   Platforms), or an owner holds the computer's settings in a way EasyRMM
   cannot read yet (see Managed elsewhere).
-* The Hardening folder, its manifest or the script's copy fails the check
-  below (see Backups, undo and interruptions), in any mode.
+* The Hardening folder, its manifest, the script's copy or the lock file
+  fails the check below (see Backups, undo and interruptions), in any
+  mode.
 
 **Undo is never refused for check only, *not supported* or *cannot
 tell***, so that a computer that moved to a check-only or untested
 version, or gained an owner EasyRMM cannot read, can still be put back
-(Constrained Language Mode and a failed folder check still stop it). It
-restores only values that are still as EasyRMM left them. Where the
-reader *cannot tell*, it also leaves every value in a place the
-unreadable owner may write, and reports each one: the Defender policy
-key while Defender for Endpoint or a Configuration Manager client is
-present, for example.
+(Constrained Language Mode and a failed folder check still stop it). On
+a *not supported* version the result labels it *run on an untested
+version*. It restores only values that are still as EasyRMM left them.
+Where the reader *cannot tell*, it also leaves, and reports, every value
+in a place the unreadable owner may write, which depends on the reason:
+
+* **Group Policy with its record turned off**: every value Group Policy
+  can set (registry policy values, security policy, audit policy).
+* **Group Policy registry preference items**: every registry value, since
+  a preference item can set any.
+* **MDM, until its reader is proven**: every setting this ADR writes for
+  which the Policy CSP has a policy (W1 lists them).
+* **Defender for Endpoint's security settings management**: Defender's,
+  attack surface reduction's and the firewall's values.
+* **A Configuration Manager client**: Defender's policy key, where its
+  endpoint protection writes. Values its configuration baselines may
+  remediate are restored, and the result says that it may set them
+  again.
+* **DSC correcting drift, Azure machine configuration**: nothing is left;
+  undo restores, and the result says that the owner may set each value
+  again.
+* **A policy value none of these explains, or *owner unknown***: that
+  value.
 
 **Applying** a module that removes a Windows feature (`smb`, `powershell`,
 `features`) is refused, and the others go on, while Windows reports a
@@ -585,16 +617,16 @@ and Group Policy objects (see Testing). What it reads, owner by owner:
   its terms allow use "on your devices to develop and test your
   programs"; it is never committed, cached or shipped; until a hosted
   runner is known to count as one of "your devices", this case runs on
-  the fallback in Testing). Each step counts only when
-  `Microsoft-Windows-GroupPolicy/Operational` shows, for that refresh's
-  activity ID, the registry extension's event 4016 (a client-side
-  extension "begins its processing") and 5016 ("completes its processing
-  successfully"); a refresh in which the extension did not run proves
-  nothing. After each, every value must still be there. It runs on at
-  least Windows Server 2016, Windows Server 2025 and Windows 11, and on
-  every other version before apply is allowed there. If the values do
-  not survive, no administrative template value is written until this
-  ADR is amended.
+  the fallback in Testing; see Open questions). Each step counts only
+  when `Microsoft-Windows-GroupPolicy/Operational` shows, for that
+  refresh's activity ID, the registry extension's event 4016 (a
+  client-side extension "begins its processing") and 5016 ("completes
+  its processing successfully"); a refresh in which the extension did
+  not run proves nothing. After each, every value must still be there.
+  It runs on at least Windows Server 2016, Windows Server 2025 and
+  Windows 11, and on every other version before apply is allowed there.
+  If the values do not survive, no administrative template value is
+  written until this ADR is amended.
 * **Security policy** (password and lockout policy, the Guest account,
   anonymous SID and name translation): read with `secedit /export`,
   written with `secedit /configure` and a template holding only the
@@ -679,11 +711,14 @@ hours, and a log that reaches back far enough shows neither that the
 logging was on throughout nor that nothing was lost. So:
 
 * **Judged at once only from collected events**: where log collection
-  (ADR-0060) collects the guard's channel and reports that collection as
-  without a gap over the whole window. Of these guards' events, it
-  collects today only the Security log's 4624, so only the built-in
-  Administrator's guard can be judged at once. Every other guard starts a
-  harvest at its first step.
+  (ADR-0060) collects the guard's channel, with no filter dropping the
+  guard's events, and its report covers the whole window without a gap
+  and with the logging the guard needs on throughout. Of these guards'
+  events, it collects today only the Security log's 4624, so only the
+  built-in Administrator's guard can be judged at once, and only where
+  that report shows the Logon subcategory's success audit on for the 30
+  days. Every other guard, and that one otherwise, starts a harvest at
+  its first step.
 * **The harvest** is a scheduled task that runs as LocalSystem every hour,
   for at most 30 minutes a run. Its action is
   `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`, by full
@@ -694,8 +729,10 @@ logging was on throughout nor that nothing was lost. So:
   Backups, undo and interruptions), then reads each log from after the
   last event it read and adds to the manifest only what the guard needs,
   as distinct values: the local ports that received an allowed
-  connection (firewall); for each client, the NTLM versions it used
-  (NTLM); the clients that used SMB1 (event 3000); the built-in
+  connection (firewall); the clients that used NTLMv1 or LM, with counts
+  of the sign-ins by each version, never the clients that used only
+  NTLMv2, so that a domain of many clients stays far from the limit
+  below (NTLM); the clients that used SMB1 (event 3000); the built-in
   Administrator's network sign-ins, with their time and source (event
   4624, logon type 3, by the account's SID: the computer's own account
   domain SID followed by 500, the domain's on a domain controller, never
@@ -717,7 +754,10 @@ logging was on throughout nor that nothing was lost. So:
   that is full, records a gap: silence after logging stopped is not
   evidence. Where an owner holds that logging off (Group Policy turning
   off enhanced NTLM logging, for example), the module is refused and the
-  owner named; EasyRMM never writes a value Group Policy holds.
+  owner named; EasyRMM never writes a value Group Policy holds. Where the
+  Logon subcategory's success audit is off with no owner, the result
+  names log collection's *Configure logging*, which owns audit policy
+  (see Audit policy); hardening never sets it.
 * **Coverage comes from the harvest's continuity**, not from how far the
   log reaches. Each run records when it ran and, for each log, the newest
   event it read, by record ID and time. The window counts from the first
@@ -728,31 +768,37 @@ logging was on throughout nor that nothing was lost. So:
   log is a text file without record IDs, by default one file for every
   profile, and Microsoft says only that at its limit "old log entries are
   deleted to make room for the newly created ones" (and elsewhere speaks
-  of rotation, without saying how). So there each run records the last
-  line it read, with its time, and the file's size; the next run must
-  find that line again, in the log or in a rotated copy beside it, and
-  reads on from it (a file smaller than before has rotated); a line not
-  found is a gap. W2 records how each version rotates. Days the computer
-  is off count toward the window: its logs are not written, so nothing
-  is lost.
+  of rotation, without saying how). So there each run reads only
+  complete lines, and records the last one, with its time, and the byte
+  offset at which it ends. The next run must find that line ending at
+  that offset, in the log or, where the log is now smaller (it has
+  rotated), in a rotated copy beside it, and reads on from there;
+  anything else is a gap. W2 records how each version rotates. Days the
+  computer is off count toward the window: its logs are not written, so
+  nothing is lost.
 * **NTLM's log is made larger** at the first step on a domain controller,
   to at least 65,536 KB, with its size before recorded for undo. Log
   collection does not size that log.
 * **The task's life.** It is removed when no module on the computer still
   harvests: by the second step, or undo, of the last one. It also ends by
   itself: its trigger has an end date (its start, plus the longest window
-  it serves, plus 14 days), and a run unregisters it once that date has
-  passed or once the EasyRMM agent's service is gone. A refused second
+  it serves, plus 14 days), moved forward when a gap restarts a window,
+  but never past 90 days from the task's start; a run unregisters it
+  once that date has passed or once the EasyRMM agent's service is gone,
+  and the module shows *harvest ended: apply again*. A refused second
   step leaves it harvesting until then; a later first step starts it
   again. Its findings stay in the manifest until the record is
   consumed.
-* **One writer at a time.** Every mode, the harvest included, takes one
-  named mutex (in the `Global\` namespace) before it reads or writes the
-  manifest. A harvest run that cannot take it within a minute skips that
-  run (the next one carries on from the same event); apply, undo and
-  check wait up to five minutes and then fail, saying why. A mutex of
-  that name created by anyone but LocalSystem or Administrators fails the
-  run at once, and is reported.
+* **One writer at a time.** Every mode, the harvest included, after the
+  folder check, opens `Hardening\lock` with
+  `[IO.File]::Open(path, OpenOrCreate, ReadWrite, FileShare.None)` and
+  holds it until it ends; the lock file goes through the same check as
+  the manifest. It sits in the checked folder, where no one else can
+  reach it, and Windows releases it when the process exits, so a run
+  that dies leaves no lock behind. A
+  harvest run that cannot open it within a minute skips that run (the
+  next one carries on from the same event); apply, undo and check wait
+  up to five minutes and then fail, saying why.
 * **An EDR may flag it.** A task that runs PowerShell from `ProgramData`
   as LocalSystem every hour looks like what attackers leave behind. The
   console says so when an operator starts a first step, and the guide
@@ -1266,25 +1312,43 @@ As in ADR-0051, with Windows' places and tools:
   ([ADR-0050](0050-removing-a-device.md)) leaves the hardening in place,
   and the guide says so.
 * **Checked before every mode**, the harvest included, since any local
-  user may create folders under `ProgramData` and one planted there
+  user may create folders under `ProgramData`, and one planted there
   before the first apply, or changed since, must not be trusted. The
-  script applies the rule the agent applies to its own state folder
-  (pull request #61, *Windows agent: check the state folder before
-  reading it*): every folder from `ProgramData` down to `Hardening\` is
-  a plain folder (no junction or other reparse point) with a trusted
-  owner (SYSTEM, Administrators or TrustedInstaller); no one but those
-  three may write to `Hardening\`; the manifest and the script's copy are
-  plain files with one link, a trusted owner and an access list that
-  lets no one else write, opened without following reparse points.
-  Anything else is moved aside, beside the folder, and never read again,
-  and the run refuses, saying what it found. A copy cannot vouch for
-  itself once someone else could have written to it, so apply, undo and
-  check, which run from the signed job and never from the copy, also
-  compare the copy's SHA-256 with the one recorded in the manifest when
-  apply or undo wrote it, and move aside a copy that differs. What keeps
-  the copy sound between those checks is that apply checks the folder
-  before it writes anything there, and that afterwards only those three
-  may write to it.
+  script applies PR #61's rule, the one the agent applies to its own
+  state folder:
+  * **The chain**: every folder from `ProgramData` down to `Hardening\`
+    is a plain folder (no junction or other reparse point) with a trusted
+    owner (SYSTEM, Administrators or TrustedInstaller).
+  * **What it holds**: `Hardening\`, the manifest, the script's copy and
+    the lock file must each have a trusted owner, and the files must be
+    plain files with one link, opened without following reparse points.
+  * **Judged by who may write.** Where no one but SYSTEM, Administrators
+    or TrustedInstaller may write, an access list that differs from the
+    protected one (entries in another order, an extra Administrators
+    entry, a read-only grant) is set back to it, a warning is given, and
+    the run goes on. Where anyone else may write, the entry fails.
+  * **Only inside `Hardening\` is anything moved.** A failing manifest,
+    copy or lock file is moved aside within `Hardening\` and never read
+    again, and the run refuses, saying what it found; for the manifest,
+    the result gives its new path, so that an administrator can review it
+    and put it back. A failing `Hardening\`, or a folder above it, is
+    never moved (`%ProgramData%\EasyRMM` holds the agent's state): the
+    run refuses and names it, for an administrator.
+  * In check mode, setting an access list back and moving something
+    aside are the only changes the script makes.
+* **The copy's hash finds drift and corruption; it protects nothing.** The
+  manifest, which records the copy's SHA-256 when apply or undo writes
+  it, sits beside the copy, so whoever could change one could change
+  both. Every result reports the copy's hash, and the server compares it
+  with the SHA-256 of the script the device's last apply or undo job ran
+  (ADR-0017 records it) and shows a difference. Apply, undo and check,
+  which run from the signed job and never from the copy, also compare it
+  with the manifest's and move aside a copy that differs. Until the next
+  apply or undo writes a new copy, the harvest stops (its time is a gap)
+  and undo on the computer itself is unavailable, and the check says so.
+  What keeps the copy sound is that apply checks the folder before it
+  writes anything there, and that afterwards only those three may write
+  to it.
 * **What is recorded**, per module, in a manifest with a format version:
   each registry value before (absent, or its type and data) and after,
   Defender's and attack surface reduction's policy values among them (each
@@ -1300,8 +1364,9 @@ As in ADR-0051, with Windows' places and tools:
   script copy's SHA-256; and what the harvest found, with each run's
   time, the computer's last start, the logging it found in effect, and
   for each log the newest event it read (record ID and time; for the
-  firewall's log, the last line and the file's size). Every later script
-  reads every earlier manifest format.
+  firewall's log, the last complete line, its time and the byte offset
+  at which it ends). Every later script reads every earlier manifest
+  format.
 * **Undo** puts each one back if it is still as apply left it; anything
   changed since (by an administrator, a policy, Windows) is left and the
   result says so. Features come back from their kept payload; EasyRMM's
@@ -1416,8 +1481,9 @@ As in ADR-0051, with Windows' places and tools:
 
 ### The rest
 * **Audit**: `device.hardening`, with the mode, modules, options and job;
-  one row per daily batch of checks (see The job), with the server as its
-  actor.
+  for the daily check, one row per organization per daily batch (see The
+  job), with the system as its actor, and the system's cancellations of
+  checks an undo replaced.
 * **API**: `POST /api/v1/jobs/hardening` and `GET
   /api/v1/devices/{id}/hardening`, as in ADR-0051; `canHarden` and
   `canCheckHardening` cover Windows devices.
@@ -1506,26 +1572,44 @@ As in ADR-0051, with Windows' places and tools:
     refusing a feature's removal but not its undo; *undo needed* after the
     restart, and apply refused until that undo has run; an undo recorded
     by an earlier script's manifest format, run by the current one.
-  * Undo on a computer gone check only, and under *cannot tell*: values
-    still as EasyRMM left them restored, values in the unreadable owner's
-    place left and reported.
+  * Undo on a computer gone check only, on an untested version (labelled
+    so), and under each *cannot tell* reason: values still as EasyRMM left
+    them restored, values in that reason's places left and reported, and
+    for DSC, a Configuration Manager baseline and Azure machine
+    configuration, restored with the owner named.
   * The Hardening folder: planted before the first apply by a standard
-    user, owned by that user, with a junction in its path, with a
-    hard-linked manifest or script copy, with a grant letting users write,
-    and a copy changed after apply wrote it (its hash differs); each moved
-    aside and the run refused, in every mode, the harvest included.
+    user, owned by that user, with a junction in its path (each refused,
+    nothing moved, `%ProgramData%\EasyRMM` untouched); a hard-linked
+    manifest, script copy or lock file, one with a grant letting users
+    write, and a copy changed after apply wrote it (each moved aside
+    within `Hardening\`, the run refused, a set-aside manifest's new path
+    in the result); an extra Administrators entry or a read-only grant
+    (set back, a warning, the run goes on); in every mode, the harvest
+    included, a check making no other change. A copy whose hash differs
+    from the last apply's script, shown by the server; the harvest and
+    undo on the computer stopping until the next apply writes a copy.
   * The harvest: logging turned off locally (no owner) between runs, and a
     log set to keep its events that fills (each a gap); NTLM's logging
     turned off by a Group Policy object (refused, the policy named); the
-    firewall's log rotated past the last line read (a gap); the
-    distinct-value limit reached (refused); two modes at once (the second
-    waits for the mutex, or the harvest skips its run); the task ending
-    at its end date and when the EasyRMM agent is uninstalled.
-  * The daily check: not sent while an apply or undo is queued or
-    running, a queued one cancelled by an undo, one outstanding per device
-    at most, a missed day not caught up; a Configuration Manager client
-    installed after apply (*an owner EasyRMM cannot read appeared*, undo
-    offered).
+    firewall's log rotated past the last line read, and a last line no
+    longer ending at its recorded offset (each a gap); a partly written
+    last line (not read until complete); the Logon subcategory's success
+    audit off with no owner (a gap, *Configure logging* named); a domain
+    controller with more than 4,096 NTLMv2 clients (no limit reached);
+    the distinct-value limit reached (refused); two modes at once (the
+    second waits for the lock file, or the harvest skips its run); a run
+    killed while holding it (the next one opens it); the task ending at
+    its end date, at that date moved forward by gaps up to 90 days
+    (*harvest ended: apply again*), and when the EasyRMM agent is
+    uninstalled.
+  * The daily check: created at each device's own time, not created while
+    an apply or undo is queued or running, one outstanding per device at
+    most, a missed day not caught up; an undo cancelling a queued or
+    delivered check (by the system, *replaced by an undo*, the user
+    without `job.manage`) and waiting for a running one; one audit row per
+    organization per batch; runs gone after 7 days; a Configuration
+    Manager client installed after apply (*an owner EasyRMM cannot read
+    appeared*, undo offered).
   * Firewall: a port forwarded from outside reaching a listening service
     before and after; a public profile already blocking, left without a
     rule and with only its logging set; WMI from a second guest after
@@ -1599,8 +1683,8 @@ As in ADR-0051, with Windows' places and tools:
 
 ## Slices
 * **W1, check.** The script's skeleton (platform, role, language mode, the
-  Hardening folder's check as in pull request #61, the manifest and its
-  mutex, the JSON result); the ownership reader in `internal/winpolicy`
+  Hardening folder's check as in PR #61, the manifest and its lock file,
+  the JSON result); the ownership reader in `internal/winpolicy`
   with its three results (Group Policy with its audit policy, preferences,
   its record turned off, MDM from the `Config` node, Defender for
   Endpoint, Configuration Manager, DSC, Azure machine configuration,
@@ -1719,6 +1803,11 @@ As in ADR-0051, with Windows' places and tools:
 * **A self-hosted runner** for the Windows guests, since their images may
   not be cached where pull requests can restore them and building them on
   GitHub's runners in each run may prove too slow?
+* **LGPO.exe on a hosted runner**: its terms allow use "on your devices
+  to develop and test your programs". Does a GitHub-hosted runner count
+  as one of "your devices"? Until that is answered, the persistence
+  test's workgroup case runs on a self-hosted runner or by hand (see How
+  settings are written).
 * **Which EDR or managed detection service** to run the script under
   before it is called complete: the one MSPs using EasyRMM most often run?
 * **Check only for computers with Configuration Manager, DSC or Azure
@@ -1835,4 +1924,4 @@ Test infrastructure:
 * Windows 11 in a virtual machine: https://learn.microsoft.com/en-us/windows/whats-new/windows-11-requirements
 
 EasyRMM:
-* The agent's state-folder check, whose rule the Hardening folder's check follows (pull request #61): https://github.com/paulmataruso/EasyRMM/pull/61
+* The agent's state-folder check, whose rule the Hardening folder's check follows (PR #61): https://github.com/paulmataruso/EasyRMM/pull/61
