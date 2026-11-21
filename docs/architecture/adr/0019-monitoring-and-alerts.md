@@ -64,7 +64,8 @@ the devices they support. RBAC has had `monitoring.view` and
   with `alert.view` and changed with `alert.manage` on the device's site.
 
 ### Notifications
-* E-mail and webhook notifications are a separate decision (ADR-0020); this
+* E-mail and webhook notifications are a separate decision, still to be
+  written (see [the feature plan](../feature-plan.md), feature 7); this
   one makes alerts visible in the console only.
 
 ## Consequences

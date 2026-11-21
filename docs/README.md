@@ -55,6 +55,8 @@ Everything about running, using and building EasyRMM. Start with the
   inside.
 * [Architecture decision records](architecture/adr/README.md): why it is
   built this way.
+* [Feature plan](architecture/feature-plan.md): how the next eight
+  features will work and the order they are built in.
 
 ## Develop
 
