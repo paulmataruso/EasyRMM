@@ -93,6 +93,15 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **Remote sessions work from every address the server answers on.**
+  MeshCentral accepted a session's control connection only from a page on
+  its own name, so it closed every session started from a console reached
+  at another address (`invalidorigin`): the IP addresses of a DNS install,
+  and an IP-only install's addresses other than its public one, such as a
+  private address behind NAT. EasyRMM now writes the host of every
+  MeshCentral origin it serves into MeshCentral's `allowedOrigin`; when
+  they change, the next start rewrites the list and MeshCentral restarts
+  with it (ADR-0016, amended).
 - **The release's agents are the same files the server hands out.** The
   release bundle built them with the commit stamped in and the server's image
   without, so their bytes differed, and a Windows agent an operator signed

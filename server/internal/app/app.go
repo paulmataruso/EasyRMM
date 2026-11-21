@@ -288,9 +288,15 @@ func MeshServerConfig(cfg *config.Config, sec *remote.Secrets) meshcentral.Serve
 	if p := cfg.MeshPublicURL.Port(); p != "" {
 		port, _ = strconv.Atoi(p)
 	}
-	var framing []string
+	// Written on every start from the origins served then: a change in them
+	// (IP access, the addresses) changes the file, and MeshCentral's start
+	// script then restarts MeshCentral.
+	var framing, mesh []string
 	for _, o := range cfg.Origins() {
 		framing = append(framing, originString(o.Console))
+		if o.Mesh != nil {
+			mesh = append(mesh, originString(o.Mesh))
+		}
 	}
 	return meshcentral.ServerConfig{
 		Hostname:       cfg.MeshPublicURL.Hostname(),
@@ -298,6 +304,7 @@ func MeshServerConfig(cfg *config.Config, sec *remote.Secrets) meshcentral.Serve
 		PublicPort:     port,
 		TrustedProxy:   cfg.Mesh.InternalURL.Hostname(),
 		FramingOrigins: framing,
+		MeshOrigins:    mesh,
 		CertURL:        cfg.Mesh.CertURL,
 		LoginKey:       sec.LoginKey,
 		SessionKey:     sec.SessionKey,

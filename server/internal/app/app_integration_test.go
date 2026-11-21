@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -251,7 +252,7 @@ func TestRunWithRemoteAccess(t *testing.T) {
 		t.Fatalf("MeshCentral config: %v", err)
 	}
 	raw, _ := os.ReadFile(path) //nolint:gosec // test directory
-	var mc struct {
+	type meshConfig struct {
 		Settings struct {
 			Cert      string   `json:"cert"`
 			Port      int      `json:"port"`
@@ -259,7 +260,11 @@ func TestRunWithRemoteAccess(t *testing.T) {
 			Framing   []string `json:"allowedFramingOrigins"`
 			Key       string   `json:"loginCookieEncryptionKey"`
 		} `json:"settings"`
+		Domains map[string]struct {
+			AllowedOrigin []string `json:"allowedOrigin"`
+		} `json:"domains"`
 	}
+	var mc meshConfig
 	if err := json.Unmarshal(raw, &mc); err != nil {
 		t.Fatal(err)
 	}
@@ -267,6 +272,9 @@ func TestRunWithRemoteAccess(t *testing.T) {
 	if mc.Settings.Cert != "mesh.rmm.test" || mc.Settings.Port != port || mc.Settings.AliasPort != 443 ||
 		len(mc.Settings.Framing) != 1 || mc.Settings.Framing[0] != "https://rmm.test" || len(mc.Settings.Key) != 160 {
 		t.Fatalf("MeshCentral settings: %+v", mc.Settings)
+	}
+	if got := strings.Join(mc.Domains[""].AllowedOrigin, " "); got != "mesh.rmm.test" {
+		t.Fatalf("MeshCentral allowedOrigin = %q", got)
 	}
 	// The MeshCentral hostname reaches the gateway.
 	if resp, body := get(t, &http.Client{}, "http://"+cfg.ListenOffload+"/", "mesh.rmm.test"); resp.StatusCode != http.StatusForbidden || !strings.Contains(body, "Remote session required") {
@@ -290,6 +298,21 @@ func TestRunWithRemoteAccess(t *testing.T) {
 	after, _ := os.ReadFile(path) //nolint:gosec // test directory
 	if string(before) != string(after) {
 		t.Fatal("MeshCentral configuration changed between starts")
+	}
+	// Origins added since (IP access on two addresses) change the file, so
+	// MeshCentral's start script restarts MeshCentral with them.
+	cfg.IPAccess, cfg.IPMeshPort = true, 4443
+	cfg.IPAddresses = []netip.Addr{netip.MustParseAddr("192.0.2.10"), netip.MustParseAddr("2001:db8::10")}
+	if err := writeMeshConfig(cfg, mustSecrets(t, inst, cfg), discard()); err != nil {
+		t.Fatal(err)
+	}
+	after, _ = os.ReadFile(path) //nolint:gosec // test directory
+	mc = meshConfig{}
+	if err := json.Unmarshal(after, &mc); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(mc.Domains[""].AllowedOrigin, " "); got != "mesh.rmm.test 192.0.2.10 [2001:db8::10]" {
+		t.Fatalf("MeshCentral allowedOrigin with IP access = %q", got)
 	}
 	// An unwritable directory is reported, not fatal.
 	cfg.Mesh.ConfigDir = "/proc/easyrmm-no-such-dir"

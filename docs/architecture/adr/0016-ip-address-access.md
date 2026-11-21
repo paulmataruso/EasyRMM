@@ -1,7 +1,8 @@
 # ADR-0016: Reaching the server by IP address
 
 * Status: Accepted (2026-11-15). Refines ADR-0003 (TLS edge) and ADR-0004
-  (MeshCentral origin).
+  (MeshCentral origin). Amended (2026-11-21): MeshCentral's `allowedOrigin`
+  lists every MeshCentral origin.
 
 ## Context
 ADR-0003 provides TLS from ACME, the operator's files, or a proxy, and
@@ -101,6 +102,17 @@ An IP address changes four things browsers and agents rely on:
   * A session started from a console origin launches on that origin's
     MeshCentral origin.
   * MeshCentral's `allowedFramingOrigins` lists every console origin.
+  * MeshCentral's `allowedOrigin` lists the host of every MeshCentral
+    origin. MeshCentral checks the `Origin` of a session's control
+    connection against that list, and without one accepts only its own
+    name (`cert`). It is never `true`, which accepts any origin.
+    *Amended 2026-11-21:* until then it was not set, so MeshCentral closed
+    every session started from any other MeshCentral origin
+    (`invalidorigin`): the addresses of a DNS deployment, and an IP-only
+    deployment's addresses other than the public URL's. The list is
+    written from the origins the server serves on every start, so origins
+    added later are allowed with them; when it changes, MeshCentral's start
+    script restarts MeshCentral.
   * The console's CSP `frame-src` lists every MeshCentral origin.
   * The CSRF origin check accepts every console origin.
 * **Cookies across ports.**
@@ -113,7 +125,8 @@ An IP address changes four things browsers and agents rely on:
 ## Consequences
 * The console, enrollment and remote sessions work without DNS, either as
   the whole deployment or as a way in when DNS fails. Agents installed by IP
-  address keep using that address.
+  address keep using that address. (Remote sessions from an address other
+  than MeshCentral's own name work since the 2026-11-21 amendment above.)
 * **MeshAgent always uses the primary MeshCentral origin.** That origin is
   written into MeshAgent's settings by MeshCentral, and MeshCentral checks
   that agents see the certificate it reads from `EASYRMM_MESH_CERT_URL`, a
