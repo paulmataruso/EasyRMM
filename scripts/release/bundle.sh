@@ -1,24 +1,29 @@
 #!/bin/sh
-# Builds the files attached to a GitHub release:
+# Builds the files attached to a GitHub release, and those of an edge build
+# of main (ADR-0052; docs/architecture/edge-manifest.md):
 #
-#   easyrmm-<version>-deploy.tar.gz    the Compose deployment, pinned to this release's images
-#   easyrmm-<version>-manifest.json    the versions and image digests of this release
+#   easyrmm-<version>-deploy.tar.gz    the Compose deployment, pinned to this version's images
+#   easyrmm-<version>-manifest.json    its version, commit, bundle digest and images (manifest.sh)
 #   easyrmm-agent-<os>-<arch>[.exe]    the agents (the server image carries the same ones)
 #   SHA256SUMS
 #
 #   EASYRMM_IMAGE_PIN=ghcr.io/<owner>/easyrmm-server:1.2.3@sha256:<digest> \
 #   EASYPATCH_IMAGE_PIN=ghcr.io/<owner>/easypatch-server:1.10.1@sha256:<digest> \
-#   [EASYPATCH_PACKAGES=<dir>] scripts/release/bundle.sh easyrmm-v1.2.3 [out-dir]
+#   [EASYPATCH_PACKAGES=<dir> | <release manifest>] scripts/release/bundle.sh easyrmm-v1.2.3 [out-dir]
 #
-# Takes the release tag (easyrmm-v1.2.3) or the version alone (v1.2.3); the
-# files carry the version (easyrmm-v1.2.3-deploy.tar.gz, agents reporting
-# v1.2.3) either way.
+# Takes the release tag (easyrmm-v1.2.3), the version alone (v1.2.3), or an
+# edge version (v1.0.1-edge.415.1, from version.sh); the files carry the
+# version (easyrmm-v1.2.3-deploy.tar.gz, agents reporting v1.2.3) either
+# way. The bundle's .env.example names the server image by tag and digest,
+# which setup.sh --upgrade copies into .env.
 #
 # The patching engine is part of the release (ADR-0043): the bundle's
 # docker-compose.yml names its image by digest, so a deployment runs the
 # engine built from the same commit, and upgrading the bundle upgrades both.
-# The manifest records both images, the engine's version and, with
-# EASYPATCH_PACKAGES, the EasyPatch agent packages its image carries.
+# An edge build runs the engine of the last release. EASYPATCH_PACKAGES
+# lists the agent packages the engine's image carries, in the manifest: the
+# packages themselves (a release), or the manifest of the release whose
+# engine it is (an edge build).
 #
 # The output depends only on the commit, the Go toolchain and the pins:
 # archive entries are sorted, owned by root and dated at the commit, and gzip
@@ -27,8 +32,10 @@ set -eu
 
 tag=${1:?usage: bundle.sh easyrmm-vX.Y.Z [out-dir]}
 version=${tag#easyrmm-}
-if ! printf '%s' "$version" | grep -Eqx 'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.[1-9][0-9]*)?'; then
-  echo "bundle: \"$tag\" is not a release tag like easyrmm-v1.2.3 or easyrmm-v1.2.3-rc.1" >&2
+n='(0|[1-9][0-9]*)'
+p='[1-9][0-9]*'
+if ! printf '%s' "$version" | grep -Eqx "v$n\\.$n\\.$n(-rc\\.$p(\\.edge\\.$p\\.$p)?|-edge\\.$p\\.$p)?"; then
+  echo "bundle: \"$tag\" is not a release tag like easyrmm-v1.2.3 or easyrmm-v1.2.3-rc.1, nor an edge version" >&2
   exit 1
 fi
 root=$(cd "$(dirname "$0")/../.." && pwd)
@@ -50,10 +57,8 @@ if ! printf '%s' "$ep_pin" | grep -Eqx "$owner_re/easypatch-server:[0-9]+\.[0-9]
   echo "bundle: EASYPATCH_IMAGE_PIN must be ghcr.io/<owner>/easypatch-server:<version>@sha256:<digest>, got \"$ep_pin\"" >&2
   exit 1
 fi
-ep_version=${ep_pin##*/easypatch-server:}
-ep_version=${ep_version%@*}
-if [ -n "${EASYPATCH_PACKAGES:-}" ] && [ ! -d "$EASYPATCH_PACKAGES" ]; then
-  echo "bundle: EASYPATCH_PACKAGES=$EASYPATCH_PACKAGES is not a directory" >&2
+if [ -n "${EASYPATCH_PACKAGES:-}" ] && [ ! -e "$EASYPATCH_PACKAGES" ]; then
+  echo "bundle: EASYPATCH_PACKAGES=$EASYPATCH_PACKAGES does not exist" >&2
   exit 1
 fi
 
@@ -66,9 +71,15 @@ trap 'rm -rf "$stage"' EXIT
 name=easyrmm-$version
 dir=$stage/$name
 "$root/scripts/release/deploy-tree.sh" "$dir"
-sed -e "s|^EASYRMM_VERSION=.*|EASYRMM_VERSION=$image_tag|" "$root/deploy/.env.example" > "$dir/deploy/.env.example"
-if ! grep -qx "EASYRMM_VERSION=$image_tag" "$dir/deploy/.env.example"; then
-  echo "bundle: could not pin EASYRMM_VERSION in .env.example" >&2
+# The server by tag and digest: the image line is
+# ${EASYRMM_IMAGE}:${EASYRMM_VERSION}, so the two make the pin.
+rmm_repo=${rmm_pin%:*@*}
+rmm_version=${rmm_pin#"$rmm_repo":}
+sed -e "s|^EASYRMM_IMAGE=.*|EASYRMM_IMAGE=$rmm_repo|" -e "s|^EASYRMM_VERSION=.*|EASYRMM_VERSION=$rmm_version|" \
+  "$root/deploy/.env.example" > "$dir/deploy/.env.example"
+if ! grep -qx "EASYRMM_IMAGE=$rmm_repo" "$dir/deploy/.env.example" ||
+  ! grep -qx "EASYRMM_VERSION=$rmm_version" "$dir/deploy/.env.example"; then
+  echo "bundle: could not pin EASYRMM_IMAGE and EASYRMM_VERSION in .env.example" >&2
   exit 1
 fi
 # The engine by digest: each of its three services names the image, and the
@@ -98,26 +109,8 @@ tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --format=g
   -C "$stage" -cf - "$name" | gzip -n -9 > "$out/$name-deploy.tar.gz"
 
 # --- Manifest -----------------------------------------------------------------
-commit=$(git -C "$root" rev-parse HEAD)
-packages=""
-if [ -n "${EASYPATCH_PACKAGES:-}" ]; then
-  packages=$(cd "$EASYPATCH_PACKAGES" && find . -maxdepth 1 -type f -name 'EasyPatchAgent-*' ! -name '*.sig' -printf '%f\n' |
-    LC_ALL=C sort | while IFS= read -r f; do
-      printf '      {"file": "%s", "sha256": "%s"},\n' "$f" "$(sha256sum "$f" | cut -d' ' -f1)"
-    done | sed '$ s/,$//')
-  if [ -z "$packages" ] || ! printf '%s\n' "$packages" | grep -q "EasyPatchAgent-$ep_version-"; then
-    echo "bundle: no EasyPatch $ep_version agent packages in $EASYPATCH_PACKAGES" >&2
-    exit 1
-  fi
-fi
-{
-  printf '{\n'
-  printf '  "commit": "%s",\n' "$commit"
-  printf '  "easyrmm": {\n    "version": "%s",\n    "image": "%s"\n  },\n' "$version" "$rmm_pin"
-  printf '  "easypatch": {\n    "version": "%s",\n    "image": "%s",\n    "agentPackages": [' "$ep_version" "$ep_pin"
-  if [ -n "$packages" ]; then printf '\n%s\n    ]\n' "$packages"; else printf ']\n'; fi
-  printf '  }\n}\n'
-} > "$out/$name-manifest.json"
+"$root/scripts/release/manifest.sh" "$version" "$(git -C "$root" rev-parse HEAD)" "$out/$name-deploy.tar.gz" "$compose" \
+  > "$out/$name-manifest.json"
 
 # --- Agents -------------------------------------------------------------------
 # Built exactly as docker/server/Dockerfile builds the agents the server hands
