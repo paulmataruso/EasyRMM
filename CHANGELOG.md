@@ -81,6 +81,12 @@ All notable changes to this project are documented here. The format follows
   from the release's file would not have matched the server's own build
   (ADR-0049). Both now build with `-buildvcs=false`; built from a clone, the
   two are identical for Linux and Windows.
+- **Agents keep working when a server is rolled back.** The server now ignores
+  request fields it does not know, instead of refusing the request, and says
+  in each heartbeat answer which protocol level it speaks (2). Agents will
+  send fields added by later releases only to servers of level 2 or higher,
+  so an agent that updated before a rollback is never cut off (ADR-0009,
+  "Evolving the protocol"). Malformed requests are still refused.
 - `deploy/.env.example` lists `EASYRMM_ACME_DIRECTORY`, which the Compose
   file already passed to the server.
 - Taking the database down past migration 12 removed no software jobs:

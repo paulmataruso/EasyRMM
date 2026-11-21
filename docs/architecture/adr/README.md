@@ -21,7 +21,7 @@ says by which.
 | [0006](0006-sessions-and-mfa.md) | Opaque cookie sessions with mandatory MFA | Accepted |
 | [0007](0007-hash-chained-audit-log.md) | Append-only, hash-chained audit log | Accepted |
 | [0008](0008-unified-endpoint-installer.md) | Unified endpoint installer bundling MeshAgent | Accepted; MeshAgent sourcing superseded by 0015 |
-| [0009](0009-agent-protocol.md) | Agent protocol: device keys, WebSocket with HTTPS polling fallback | Accepted; refined by 0017 |
+| [0009](0009-agent-protocol.md) | Agent protocol: device keys, WebSocket with HTTPS polling fallback | Accepted; refined by 0017; amended 2026-11-21 (evolving the protocol) |
 | [0010](0010-easypatch-integration.md) | EasyPatch integration through a service API | Accepted; its separate EasyPatch server replaced by the engine in every deployment (0043, 0046) |
 | [0012](0012-frontend-stack-and-impeccable.md) | React/TypeScript frontend designed with Impeccable | Accepted; styling superseded by 0013 |
 | [0013](0013-easypatch-design-system.md) | The console shares EasyPatch's design system | Accepted |
