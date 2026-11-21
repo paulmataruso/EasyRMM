@@ -174,6 +174,19 @@ func TestWorkerRunsEachJobOnce(t *testing.T) {
 	h.srv.proceed[run2] = false
 	h.srv.mu.Unlock()
 	h.srv.polls <- &agentproto.PollResponse{Jobs: []agentproto.SignedJob{h.job(run2, "echo two")}}
+	// Wait for run2's start request before run3 goes out: run3 can finish
+	// first otherwise, and the count below would race it.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		h.srv.mu.Lock()
+		n := h.srv.starts[run2]
+		h.srv.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("run2's start request never came")
+		}
+	}
 	h.srv.polls <- &agentproto.PollResponse{Jobs: []agentproto.SignedJob{h.job(run3, "echo three")}}
 	if run, _ := h.srv.result(t); run != run3 {
 		t.Fatalf("expected run3, got %s", run)
