@@ -53,11 +53,13 @@ follows when these have been run there, or fixed:
 * **Patching**: giving or taking a tag from many devices at once, forcing a
   restart outside the policy, and removing and holding an update in one
   step.
-* **Hardening a Linux computer in one click.** A choice of hardening
-  modules (all of them, or some) that the agent applies, with what each
-  changes shown first: EasyRMM's own implementation, modelled on what
-  [ultimate-sys-hardening](https://github.com/Kal1010101/ultimate-sys-hardening)
-  does. An ADR comes first.
+* **Hardening a Linux computer in one click**
+  ([ADR-0051](docs/architecture/adr/0051-hardening-linux-computers.md)):
+  check, apply and undo 14 hardening modules (SSH, firewall, fail2ban,
+  kernel parameters, audit rules and more), some or all of them, as a job,
+  with what each changes shown first. EasyRMM's own implementation, after
+  studying [ultimate-sys-hardening](https://github.com/Kal1010101/ultimate-sys-hardening);
+  safe for computers nobody is logged in to.
 * **Collecting logs** from Windows and Linux computers: the security log,
   Microsoft Defender's and other antivirus logs, the system log, PowerShell,
   auth and audit logs. EasyRMM keeps them and forwards them (to a SIEM, for
