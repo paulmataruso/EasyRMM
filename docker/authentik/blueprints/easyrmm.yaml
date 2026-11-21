@@ -1,6 +1,11 @@
 # Authentik for EasyRMM (ADR-0044). The authentik services of
-# deploy/docker-compose.yml mount this blueprint; Authentik's worker applies it
-# at the first start and again whenever it changes.
+# deploy/docker-compose.yml mount this blueprint. Authentik's worker applies
+# it at the first start and again whenever this file changes, but not when
+# only a value it reads from .env (!Env) does. At every start, authentik-setup
+# (docker/authentik/setup.py) compares what this makes of .env with what
+# Authentik holds, and applies it again if they differ. It stops if this
+# reads from outside the file anything it does not compare, so a new !Env
+# must be compared there too.
 #
 # It makes:
 #   * the OpenID provider and application EasyRMM signs in with, with the

@@ -421,7 +421,8 @@ services:
     logging: *logging
 
   # Background work, and the blueprints: EasyRMM's is applied at the first
-  # start and whenever it changes.
+  # start and whenever the file changes (authentik-setup applies it again
+  # when .env changes what it makes).
   authentik-worker:
     image: ghcr.io/goauthentik/server:2026.8.5@sha256:602227a86455d6772e3d16b7d852713c4f864f40df5df894abd1285bb53979a5
     profiles: [authentik]
@@ -446,8 +447,13 @@ services:
     healthcheck: *authentik-healthcheck
     logging: *logging
 
-  # After every start: the settings blueprints cannot make, and the
-  # invitation setup.sh decided, if one is pending (docker/authentik/setup.py).
+  # After every start: EasyRMM's blueprint, applied again if Authentik does
+  # not match what it makes of .env as it is now, then checked (the worker
+  # applies it only when the file changes, and .env is not in the file), the
+  # settings blueprints cannot make, and the invitation setup.sh decided, if
+  # one is pending (docker/authentik/setup.py). When one of its settings in
+  # .env changes, such as EASYRMM_PUBLIC_URL, `docker compose up -d`
+  # recreates it with the new one.
   authentik-setup:
     image: ghcr.io/goauthentik/server:2026.8.5@sha256:602227a86455d6772e3d16b7d852713c4f864f40df5df894abd1285bb53979a5
     profiles: [authentik]
@@ -465,6 +471,7 @@ services:
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/authentik/secrets:/easyrmm/secrets:ro
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/authentik/invitations:/easyrmm/invitations
       - ../docker/authentik:/easyrmm/bin:ro
+      - ../docker/authentik/blueprints:/blueprints/easyrmm:ro
     shm_size: 512m
     <<: *authentik-hardening
     logging: *logging

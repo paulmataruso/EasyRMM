@@ -9,10 +9,15 @@
 //   4. the invitation no longer works, and setup.sh --new-invitation issues another that does;
 //   5. a second Authentik user without an EasyRMM account is refused;
 //   6. signing in again asks for the second factor;
-//   7. with Authentik stopped, easyrmm-server recover prints a link that signs in, once.
+//   7. with Authentik stopped, easyrmm-server recover prints a link that signs in, once;
+//   8. EASYRMM_PUBLIC_URL and EASYRMM_AUTHENTIK_CLIENT_SECRET changed in .env and docker compose
+//      up -d: authentik-setup applies the blueprint again, Authentik sends people to the new URL
+//      and takes the new secret, and signing in there works;
+//   9. docker compose up -d with .env unchanged: authentik-setup applies nothing.
 //
-// Commands in the deployment (docker compose, setup.sh) go through EASYRMM_AUTHENTIK_CTL, which
-// the script writes. Links, passwords and keys are made for the run and never printed.
+// Commands in the deployment (docker compose, setup.sh, the change to .env) go through
+// EASYRMM_AUTHENTIK_CTL, which the script writes. Links, passwords and keys are made for the run
+// and never printed.
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -23,6 +28,11 @@ const invitation = process.env.EASYRMM_AUTHENTIK_INVITATION ?? "";
 const signInHost = process.env.EASYRMM_AUTHENTIK_SIGNIN_HOST ?? "";
 const adminEmail = process.env.EASYRMM_AUTHENTIK_ADMIN_EMAIL ?? "";
 const ctlPath = process.env.EASYRMM_AUTHENTIK_CTL ?? "";
+// EASYRMM_PUBLIC_URL as installed, and where test 8 moves it to.
+const installed = process.env.EASYRMM_AUTHENTIK_URL ?? "";
+const moved = process.env.EASYRMM_AUTHENTIK_MOVED_URL ?? "";
+// When authentik-setup last applied EasyRMM's blueprint, as test 8 left it.
+let appliedInTest8 = "";
 const ADMIN = { name: "Morgan Patel", password: "orchard signal calmly 58" };
 // Someone at Authentik, in the administrator's domain, whom nobody invited to EasyRMM.
 const OTHER = { name: "Riley Chen", email: "riley@easyrmm.test", password: randomBytes(18).toString("base64url") };
@@ -40,6 +50,8 @@ test.beforeAll(async ({ browser }) => {
   expect(signInHost, "EASYRMM_AUTHENTIK_SIGNIN_HOST").not.toBe("");
   expect(adminEmail, "EASYRMM_AUTHENTIK_ADMIN_EMAIL").not.toBe("");
   expect(ctlPath, "EASYRMM_AUTHENTIK_CTL").not.toBe("");
+  expect(installed, "EASYRMM_AUTHENTIK_URL").toMatch(/^https:\/\/[a-z0-9.-]+$/);
+  expect(moved, "EASYRMM_AUTHENTIK_MOVED_URL").toMatch(/^https:\/\/[a-z0-9.-]+$/);
   admin = await (await browser.newContext()).newPage();
 });
 test.afterAll(async () => {
@@ -175,6 +187,55 @@ async function throughAuthentik(page: Page, person: { name?: string; email: stri
   } finally {
     page.off("response", onResponse);
   }
+}
+
+type Held = { redirectUris: string[]; enrollmentRedirect: string; launchUrl: string; clientSecretMatchesEnv: boolean; lastApplied: string };
+
+/**
+ * What Authentik holds of .env for EasyRMM, read with Authentik's own models: where it sends people,
+ * whether the client secret is the worker's (from .env; the secret itself is not printed), and when
+ * EasyRMM's blueprint was last applied.
+ */
+function heldByAuthentik(): Held {
+  const python = [
+    "import hmac, json, os",
+    "from authentik.blueprints.models import BlueprintInstance",
+    "from authentik.core.models import Application",
+    "from authentik.providers.oauth2.models import OAuth2Provider",
+    "from authentik.stages.redirect.models import RedirectStage",
+    "provider = OAuth2Provider.objects.get(name='EasyRMM')",
+    "held = {",
+    "    'redirectUris': [u.url for u in provider.redirect_uris],",
+    "    'enrollmentRedirect': RedirectStage.objects.get(name='easyrmm-enrollment-redirect').target_static,",
+    "    'launchUrl': Application.objects.get(slug='easyrmm').meta_launch_url,",
+    "    'clientSecretMatchesEnv': hmac.compare_digest(provider.client_secret.encode(), os.environ['EASYRMM_AUTHENTIK_CLIENT_SECRET'].encode()),",
+    "    'lastApplied': BlueprintInstance.objects.get(name='EasyRMM - Sign-in').last_applied.isoformat(),",
+    "}",
+    'print("easyrmm-e2e: " + json.dumps(held))',
+  ].join("\n");
+  const out = ctl("compose", "exec", "-T", "authentik-worker", "/bin/sh", "/easyrmm/bin/start.sh", "shell", "-c", python);
+  const line = out.split("\n").find((l) => l.startsWith("easyrmm-e2e: "));
+  expect(line, "Authentik's objects were read").toBeDefined();
+  return JSON.parse((line ?? "").slice("easyrmm-e2e: ".length)) as Held;
+}
+
+/** authentik-setup's state and exit code, such as "exited 0". */
+function setupState(): string {
+  return ctl("compose", "ps", "-a", "--format", "{{.State}} {{.ExitCode}}", "authentik-setup").trim();
+}
+
+/** Runs docker compose up -d, waits until authentik-setup has run, and returns what it printed. */
+async function upAndSetup(): Promise<string> {
+  const since = new Date(Date.now() - 1_000).toISOString();
+  ctl("compose", "up", "-d", "--no-build", "--quiet-pull");
+  // authentik-setup runs again, with .env as it is, once Authentik's worker is healthy.
+  await expect.poll(setupState, { message: "authentik-setup finishes", timeout: 600_000, intervals: [5_000] }).toMatch(/^exited /);
+  const printed = ctl("compose", "logs", "--no-log-prefix", "--since", since, "authentik-setup")
+    .split("\n")
+    .filter((line) => line.startsWith("authentik-setup: "))
+    .join("\n");
+  expect(setupState(), printed).toBe("exited 0");
+  return printed;
 }
 
 function base32(bytes: Buffer): string {
@@ -329,4 +390,60 @@ test("7. with Authentik stopped, easyrmm-server recover signs in, once", async (
   await again.getByRole("button", { name: "Sign in" }).click();
   await expect(again.getByText("This link has expired or was already used.", { exact: false })).toBeVisible();
   await again.context().close();
+});
+
+test("8. after EASYRMM_PUBLIC_URL changes in .env, docker compose up -d moves Authentik to it, and signing in works there", async ({ browser }) => {
+  test.setTimeout(900_000);
+  // What docs/deployment/docker.md says to do (Authentik is still stopped from test 7). The client
+  // secret, the blueprint's other value from .env, changes too: EasyRMM and Authentik take it from
+  // there, so signing in below works only if Authentik took the new one.
+  const started = Date.now();
+  ctl("public-url");
+  ctl("client-secret");
+  const printed = await upAndSetup();
+  const { lastApplied, ...held } = heldByAuthentik();
+  expect(held).toEqual({
+    redirectUris: [`${moved}/api/v1/auth/sso/callback`],
+    // sso.DeploymentProviderID's sign-in.
+    enrollmentRedirect: `${moved}/api/v1/auth/sso/b2927669-72ce-48a1-a83d-8215013be7ab/start`,
+    launchUrl: moved,
+    clientSecretMatchesEnv: true,
+  });
+  // authentik-setup saw both changes, and applied the blueprint for them.
+  expect(printed).toContain("the provider's client secret is not EASYRMM_AUTHENTIK_CLIENT_SECRET");
+  expect(printed).toContain(`the application's launch URL is '${installed}', not '${moved}'`);
+  expect(printed).toContain(`applied: EasyRMM's provider, enrollment flow and application are at ${moved}`);
+  expect(Date.parse(lastApplied)).toBeGreaterThan(started);
+  appliedInTest8 = lastApplied;
+
+  // EasyRMM started again with the new URL too: sign in there through Authentik.
+  const page = await stranger(browser);
+  const button = page.getByRole("link", { name: "Sign in with Authentik" });
+  await expect
+    .poll(
+      async () => {
+        await page.goto(`${moved}/login`).catch(() => undefined);
+        return button
+          .waitFor({ timeout: 10_000 })
+          .then(() => true)
+          .catch(() => false);
+      },
+      { message: "EasyRMM's sign-in page at the new URL", timeout: 180_000, intervals: [3_000] },
+    )
+    .toBe(true);
+  await button.click();
+  const stages = await throughAuthentik(page, { email: adminEmail, password: ADMIN.password });
+  expect(stages.filter((s) => s !== "failed")).toEqual(["identify", "password", "code"]);
+  await signedInAsAdministrator(page);
+  expect(new URL(page.url()).origin).toBe(moved);
+  await page.context().close();
+});
+
+test("9. docker compose up -d with .env unchanged applies nothing", async () => {
+  test.setTimeout(900_000);
+  expect(appliedInTest8, "test 8 applied the blueprint").not.toBe("");
+  const printed = await upAndSetup();
+  expect(printed).toContain("authentik-setup: Authentik matches .env; nothing applied");
+  expect(printed).not.toContain("applying the blueprint");
+  expect(heldByAuthentik().lastApplied).toBe(appliedInTest8);
 });
