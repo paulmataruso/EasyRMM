@@ -102,30 +102,23 @@ across a rotation's cut-over. Tested with real agents through a rotation
 and with an agent that was offline across it.
 
 ### F1. Signed settings that reach the agent
-Features 3 and 8 need settings an operator sets for the platform, an
-organization, a site or one device.
-
-* **Scopes**: platform, organization, site, device, with the nearest scope
-  winning, unless a higher scope **enforces** the value ("set by your
-  MSP"). Device groups later, if asked for.
-* **Keys** are a fixed list, each with a schema, a default, the scopes it
-  may be set at and the permission that sets it (`agent.transport`: Site
-  Administrators and above; log collection's keys: see feature 3).
-* **Delivery**: the heartbeat answer carries the device's effective
-  settings as one document signed with the job key under its own context,
-  with the device's ID, a hash and a version that only increases (the
-  time of the change in milliseconds, at least one more than the last, so
-  that a database restored from a backup still issues higher versions).
-  The agent refuses a document for another device or with a lower version,
-  and clamps every value to its schema. Turning something *off* is as
-  sensitive as turning it on (collection off is a way to hide), so the
-  whole document is signed, not just some keys.
-* **Console**: on a device, each setting's effective value and where it
-  comes from; editors at each scope.
-* **Tests**: precedence and enforcement (integration), a forged and a
-  replayed document refused (agent), an agent from the previous release
-  ignoring the new field (bundle test with the previous release's real
-  agent).
+Proposed in [ADR-0058](adr/0058-signed-settings-that-reach-the-agent.md),
+not reviewed yet. In short: a fixed catalogue of keys, each with a schema,
+a default, its scopes and its permission (`device.configure`, new, for
+Site Administrators and above, for the first keys); set at the platform,
+an organization, a site or a device, the nearest winning unless a higher
+scope enforces. The heartbeat answer carries the device's effective
+settings, all keys, as one document signed with the job key, only when
+the agent's version is behind; versions only increase (the time, the last
+issued and the agent's own report), so a restored database or a replay
+cannot roll them back. The agent saves what it applied, keeps it across
+restarts and outages, ignores unknown keys, keeps its value for invalid
+ones, and reports what it applied in its next heartbeat; the console shows
+*Applied* or *Waiting for the device*. First keys:
+`agent.heartbeat_seconds` (30 seconds to 5 minutes; online becomes three
+missed heartbeats of the device's own interval) and `agent.transport`
+(feature 8). Slices: the server and its API; delivery and the agent; the
+console, with a Settings tab on each device.
 
 ### F2. One notification sender
 Decided in [ADR-0053](adr/0053-one-notification-sender.md), with feature 7,
@@ -569,48 +562,34 @@ Real delivery to Slack and Teams is checked by hand and recorded.
   an incident ID that survives a policy change.
 
 ### 8. The agent's WebSocket channel
-On F0 and F1.
-
-* **`GET /api/agent/v1/connect`**: the upgrade request is signed like
-  every agent request today (single-use nonce), which authenticates the
-  connection; there is no separate challenge that the agent would sign
-  (it could be made into a signing oracle).
-* **Every message is signed**: Ed25519 over a context of its own, a
-  connection ID the server issues, a sequence number, the type and the
-  body's hash. The sequence, kept in memory, stops replays; what is saved
-  is the nonce's database write per message, not the signature.
-  Connections cannot be bound to TLS (offload, NGINX), and the ADR does
-  not claim they are.
-* **What goes over it**: server to agent: *wake* (a job is waiting),
-  signed instructions as soon as they exist, settings changes, pings;
-  agent to server: heartbeats. Large uploads (job results, inventory,
-  logs) stay signed HTTPS requests with their limits.
-* **Limits and lifetime**: one connection per device; per-message rate and
-  size limits; reconnect at least every 12 hours; closed at once when the
-  device is removed or retired; pings every 30 seconds both ways; the
-  server's file descriptor limit raised.
-* **Several servers**: wakes and instructions through PostgreSQL
-  `LISTEN/NOTIFY`, which long polling gains too.
-* **The setting** (F1 key `agent.transport`, Site Administrators and
-  above): **Automatic (recommended)**; **Live connection**; **Regular
-  check-ins** (for networks that block live connections), each with one
-  line on what it changes. Automatic falls back after three failed
-  connections in 10 minutes (a connection that dies within a minute
-  counts: TLS inspection does that) and tries again hourly. *Live
-  connection* keeps an HTTPS heartbeat every 10 minutes, so a device whose
-  connection fails can still receive the setting that would fix it.
-  Devices shows the transport in use and has a filter for those that
-  fell back.
-* **Slices**: wake-only WebSocket beside polling; then F1 with this one
-  key; then the setting and the fallback.
-
-**Tests**: unit (framing, signatures, sequence, fallback), integration (a
-job and an instruction reach a connected agent at once; NOTIFY across two
-server instances; a forged and a replayed message refused; removal closes
-the socket), the bundle test with agents on each transport and through
-NGINX in offload mode (refusing the upgrade, to prove the fallback); a
-500-agent run on CI. 2,000 and 10,000 agents are run on the owner's host
-and recorded in drills.md: a CI runner (4 CPUs) cannot hold them.
+Proposed in [ADR-0059](adr/0059-the-agents-websocket-channel.md), not
+reviewed yet; on F0 and F1. In short: **wake-only**. `GET
+/api/agent/v1/connect` is authenticated by the agent's signed upgrade
+request (no URL token, no challenge to sign); the server sends only signed
+`hello`, `tick` (every 30 seconds; the agent pings every 30 seconds too),
+`wake` (*jobs*: poll now; *checkin*: heartbeat now) and `closing`, bound to
+the connection and a sequence. Jobs, instructions and settings still come
+only in answers to signed HTTPS requests, so a lost wake or connection
+delays a job but never loses one; a live agent stops holding long polls
+and polls on connect, on a wake and when a heartbeat says `jobsWaiting`,
+and holds them again the moment the connection ends. Full delivery over
+the connection, and heartbeats over it, are not planned: reconsidered
+only if the 10,000-agent drill shows the HTTPS requests left limit a
+server. Per device in its Settings tab (F1's `agent.transport`):
+**Automatic (recommended)**, the default; **Live connection**, never
+falling back; **Regular check-ins**; inheritable from the site,
+organization and platform, enforceable by the platform or an
+organization. Automatic falls back after three failures in 10 minutes
+that happen while HTTPS works, and retries hourly. Limits: one connection
+per device, upgrades per device and per second, 10,000 connections per
+server by default, `nofile` raised, a memory gate in CI. Slices: the
+channel beside the long poll (*Regular check-ins* by default); the live
+connection replacing the held poll, *Automatic* by default; several
+servers through `LISTEN/NOTIFY`. Tests: unit and Windows runner,
+integration, the bundle with real agents through an idle-killing proxy,
+an inspecting proxy, NGINX and a server restart, 5,000 connections and
+500 agents on CI, 2,000 and 10,000 agents on a drill host (never the
+host of the owner's instance, which `soak.sh` would have to stop).
 
 ## Test harnesses to build
 
@@ -637,7 +616,7 @@ and recorded in drills.md: a CI runner (4 CPUs) cannot hold them.
 | 6 | Updater 4b: the console | Needs F2 |
 | 7 | Let's Encrypt 5a, then 5b1 to 5b4 | Needs F2 for its alerts |
 | 8 | Packages (6): DEB, RPM, MSI | How MSPs onboard computers; nothing depends on 3 |
-| 9 | F0; the wake-only WebSocket; F1; the transport setting (8) | F1's first key is the transport |
+| 9 | F0; F1 (ADR-0058); the WebSocket (8, ADR-0059) | The agent learns from a signed setting whether to connect, so F1 comes first (proposed by ADR-0058) |
 | 10 | Log collection (3), in its slices | The largest; needs F1 and F2 |
 | 11 | Moving to a new name (5c), its ADR first | Needs F0 |
 
@@ -656,8 +635,9 @@ code.
 * **A stolen administrator session redirects agents**: moving names needs
   signatures over the agent's own nonce, step-up authentication, and a
   notice to every super administrator.
-* **Middleboxes break WebSockets**: automatic fallback, and an HTTPS
-  heartbeat kept on forced connections.
+* **Middleboxes break WebSockets**: automatic fallback, the HTTPS
+  heartbeat kept on every transport, and jobs only ever delivered by the
+  signed poll (ADR-0059).
 * **Packages fight self-update**: the package never replaces the running
   agent.
 * **Organizations' webhooks reach into a network**: every connection
