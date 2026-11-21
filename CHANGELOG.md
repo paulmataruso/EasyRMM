@@ -179,6 +179,21 @@ All notable changes to this project are documented here. The format follows
   (`backup-restore.sh --authentik`): the administrator made from
   `setup.sh`'s invitation signs in through Authentik before the backup and
   after the restore, as the same user, with the same signing key.
+- **Restoring over a deployment on the same host has its own steps.** The
+  restore steps expect an empty data root and an empty PostgreSQL, but
+  nothing said how to get there on a host that still has the deployment,
+  and *Going back* after an upgrade sent operators straight to them. Run
+  over the existing deployment, they overwrite its `.env` and cannot load
+  the dumps into the databases already there, and deleting the data root
+  to start clean throws away the way back. *Restore in place*, in the
+  backup guide, stops the deployment, sets its data root (PostgreSQL's
+  data with it) and `.env` aside under a timestamp, restores, and puts the
+  set-aside deployment back if the restore fails; it also covers a data
+  root that is a mount point. *Going back* points to it. The restore drill
+  has an in-place variant (`backup-restore.sh --in-place`, with or without
+  `--authentik`), which also checks that the set-aside data root is
+  unchanged, puts it back, and checks that what changed after the backup
+  returns.
 - **The release's agents are the same files the server hands out.** The
   release bundle built them with the commit stamped in and the server's image
   without, so their bytes differed, and a Windows agent an operator signed
