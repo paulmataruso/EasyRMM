@@ -41,7 +41,7 @@ image's tag drops it, as release images do.
 |---|---|
 | `ghcr.io/paulmataruso/easyrmm-server:<version without v>` | The server image CI built and tested, pushed unchanged: an OCI image index for `linux/amd64` and `linux/arm64`, with BuildKit's SBOM and provenance, and GitHub's build provenance attestation (stored under the tag `sha256-<index digest hex>`, ghcr.io having no referrers API). Also tagged `sha-<commit>` |
 | `ghcr.io/paulmataruso/easyrmm-deploy:<version>` | The OCI artifact [below](#the-oci-artifact): the bundle, its manifest and the manifest's Sigstore bundle |
-| `:edge` on both | The newest edge build that passed the edge test on `main`. It moves only to a higher version, the server image's tag first and the bundle's last, so `easyrmm-deploy:edge` never names a server image that `easyrmm-server:edge` does not. The updater follows `easyrmm-deploy:edge` and takes the server image by the digest its manifest names |
+| `:edge` on both | The newest edge build that passed the edge test on `main`. Each tag moves only to a higher version, the server image's first and the bundle's last. The two can name different builds: between the two tags, for good if the second fails, and when `easyrmm-server:edge` names a higher version already (a later run that stopped before the bundle's tag). Nothing depends on their agreeing: the updater follows `easyrmm-deploy:edge` and takes the server image by the digest its manifest names, and [retention](#retention) keeps every server image a kept `easyrmm-deploy` version names |
 
 A release publishes on its GitHub release, as before: the bundle, the
 manifest, `easyrmm-<version>-manifest.json.sigstore.json`, the agents and
@@ -208,10 +208,13 @@ versions or `sha-<commit>`, none `edge`), with the untagged platform and
 attestation manifests it names and its `sha256-<digest>` attestations, and
 the attestations of images that are gone.
 
-Never deleted: the server image that the manifest of any kept
-`easyrmm-deploy` version names (so `easyrmm-deploy:edge`'s, whatever
-`easyrmm-server:edge` names), with its manifests and attestations; a
-manifest that a kept image also names; release images; whatever `edge`
-names. Run by hand, it is a dry run by default and prints exactly what a
-run would delete. An updater that runs an edge build older than 30 days
-still has it running; it cannot pull it again.
+Never deleted: every `easyrmm-server` image that the manifest of any kept
+`easyrmm-deploy` version names, as `easyrmm.image` or among its `images`
+(so `easyrmm-deploy:edge`'s, whatever `easyrmm-server:edge` names), with
+its manifests and attestations; a manifest that a kept image also names;
+release images; whatever `edge` names. If GitHub answers 404 for
+`easyrmm-deploy` (no such package, or none the token may read) while
+`easyrmm-server` has edge builds, it deletes nothing and fails. It runs
+only from `main`. Run by hand, it is a dry run by default and prints
+exactly what a run would delete. An updater that runs an edge build older
+than 30 days still has it running; it cannot pull it again.

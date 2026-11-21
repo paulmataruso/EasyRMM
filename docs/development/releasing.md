@@ -120,9 +120,11 @@ Done once per repository, before the first release:
    5. builds EasyRMM's server image once, for amd64 and arm64; checks the
       amd64 one reports the version, scans both with Trivy (high and
       critical fixable findings fail the release) and checks both images'
-      agents against `scripts/release/agents.sh`'s; then pushes that build
-      unchanged to `ghcr.io/paulmataruso/easyrmm-server`, with an SBOM,
-      build provenance and a GitHub attestation;
+      agents against `scripts/release/agents.sh`'s, in a job that may write
+      nothing; then another job, with no scanner and no build cache, pushes
+      that build unchanged to `ghcr.io/paulmataruso/easyrmm-server`, by the
+      digest the first recorded, with an SBOM, build provenance and a
+      GitHub attestation;
    6. builds the engine's image on each architecture carrying those
       packages, checks it carries them read-only and holds no secrets, scans
       it with Trivy the same way, and pushes it to
@@ -146,6 +148,14 @@ environment's key, so that environment's deployment rule must admit
 `easyrmm-v*` tags. To retry after fixing a problem in the workflow, delete
 the tag and the draft release (if any), then tag again. Never move a
 published tag.
+
+A version's server image is pushed once. Re-running a release's failed
+jobs is safe: run again, the push finds its own image and pushes nothing
+(`1.2` and `latest` move only with a version's first push; if a run
+stopped between its tags, set them by hand with `oras tag`). Re-running
+all jobs, or tagging again, builds another image, which the push refuses
+under a version that has one: once a version's server image is pushed, a
+retry is the next version (`-rc.N+1`, or the next patch).
 
 ## Edge builds
 
