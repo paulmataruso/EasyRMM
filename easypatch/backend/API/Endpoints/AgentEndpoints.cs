@@ -6,12 +6,12 @@ using EasyPatch.Infrastructure.Services;
 namespace EasyPatch.Api.Endpoints;
 
 /// <summary>Agent protocol. Every route except <c>/enroll</c> requires a signed request; the endpoint identity always
-/// comes from the verified credential, never from the request body.</summary>
+/// comes from the verified credential, never from the request body. A body that sends null for a list is refused (400).</summary>
 public static class AgentEndpoints
 {
     public static void MapAgentEndpoints(this IEndpointRouteBuilder app)
     {
-        var g = app.MapGroup("/" + AgentRoutes.Prefix).WithTags("Agent protocol");
+        var g = app.MapGroup("/" + AgentRoutes.Prefix).WithTags("Agent protocol").AddEndpointFilter(AgentRequestLists.RefuseNullLists);
 
         g.MapPost("/enroll", async (EnrollRequest request, EnrollmentService enrollment, CancellationToken ct) =>
                 TypedResults.Ok(await enrollment.EnrollAsync(request, ct)))

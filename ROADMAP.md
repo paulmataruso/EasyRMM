@@ -40,14 +40,6 @@ follows when these have been run there, or fixed:
   they sign the server's builds with their own tools and upload them, and
   the server checks and hands out the signed builds.
 
-**Fix in the patching engine**
-
-* The endpoint list sorts agent versions as text, so 1.10.0 comes before
-  1.9.0 (`EndpointEndpoints.ListAsync`). Sort them as versions.
-* An agent request that sends `null` for a list (for example
-  `"activeJobIds": null`) gets 500 instead of 400. EasyPatch agents always
-  send lists; reject null lists in the agent request types, with tests.
-
 ## After 1.0.0
 
 * **Packages for the EasyRMM agent**: an MSI for Windows (needs Windows CI

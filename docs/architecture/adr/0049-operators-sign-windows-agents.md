@@ -6,7 +6,7 @@
 
 ## Context
 `easyrmm-agent-windows-amd64.exe` and `-arm64.exe` carry no Authenticode
-signature ([CODE_SIGNING.md](../../CODE_SIGNING.md)). Windows names no
+signature ([CODE_SIGNING.md](../../../CODE_SIGNING.md)). Windows names no
 publisher for them, and endpoint protection products treat unsigned programs running as LocalSystem with suspicion;
 many MSPs allow only signed programs on the computers they manage. A
 public certificate for EasyRMM itself is on hold. Many MSPs already hold

@@ -54,6 +54,17 @@ and package downloads.
 - **`capabilities` in `/api/v1/server-info`.** Its one entry, `scheduled-installs`, told EasyRMM it
   could schedule installs; EasyRMM ships with this engine and no longer asks.
 
+### Fixed
+
+- `GET /api/v1/endpoints?sort=agentVersion` sorted the versions as text, so 1.10.0 came before
+  1.9.0. PostgreSQL now compares the numbers a version starts with, so paging stays right; a
+  pre-release (1.10.0-rc.1) comes just before its release. Ascending, endpoints with no version
+  come first, then those whose version does not start with a number; descending is the reverse.
+- An agent request that sent `null` for a list got 500: `"activeJobIds": null` in a check-in, or
+  `"kbNumbers": null` in one of a scan's updates. Every agent route now refuses a null list
+  anywhere in the body with `400 validation_failed`, naming each list in `errors` (at most 20). A
+  list left out still reads as empty. No agent sends null: they leave out a member that is null.
+
 ## [1.11.1] - 2026-11-20
 
 Released with EasyRMM 1.0.0-rc.2. No change to the engine or its agents: a version is published from

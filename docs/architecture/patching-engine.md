@@ -152,6 +152,7 @@ statement.
 |---|---|
 | Versioning | Administrator and agent routes are under `/api/v1`. JSON is camelCase, enums are strings, times are ISO 8601 UTC |
 | Errors | RFC 9457 `application/problem+json` with `code` and `correlationId`; validation errors (`400 validation_failed`) add `errors`. Some carry more, such as `existingJobId` on `409 duplicate_job` |
+| Lists in agent requests | A list left out reads as empty; `null` for a list, anywhere in the body, gets `400 validation_failed` naming it |
 | Paging | `?page=&pageSize=` (at most 200), answered as `{items, page, pageSize, totalCount}` |
 | Rate limits | Enrollment 30 a minute per IP; agent routes 120 a minute per credential; downloads 60 a minute per IP; administrator routes 600 a minute per EasyRMM user and 6,000 for `service`. Over the limit: `429 rate_limited` with `Retry-After`. Configurable with `RateLimits:*` |
 | Body size | At most 16 MiB (20 MiB through the edge) |

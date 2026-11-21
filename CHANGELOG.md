@@ -59,6 +59,13 @@ All notable changes to this project are documented here. The format follows
   They now say no passkey or security key answered and suggest reloading the
   page. Browsers report a closed prompt the same way, so it is a note, not an
   error.
+- **The patching engine sorts agent versions as versions.** Its endpoint
+  list, sorted by agent version, put 1.10.0 before 1.9.0. It now compares the
+  numbers, in the database so that paging stays right.
+- **The patching engine refuses a null list from an agent.** An agent
+  request that sent `null` for a list, such as `"activeJobIds": null`, got a
+  server error; it now gets `400 validation_failed` naming the list.
+  EasyPatch agents never send one.
 - **Software on Windows treats a missing package as Linux does.**
   *Uninstall* of a package that is not installed now succeeds with winget
   and Chocolatey, as the guide says, instead of failing; *Update* of one
