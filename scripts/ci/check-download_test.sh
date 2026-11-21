@@ -82,6 +82,11 @@ cp "$work/two.json" "$l/index.json"
 tar -C "$l" -cf "$work/two.tar" .
 cp "$work/one.json" "$l/index.json"
 run 1 "does not name" check-oci-layout.sh "$work/two.tar" "$i" "$work/x5"
+# A link beside a good index: a layout is files and folders only.
+ln -s /etc/passwd "$l/link"
+tar -C "$l" -cf "$work/link.tar" .
+rm "$l/link"
+run 1 "neither a file nor a folder" check-oci-layout.sh "$work/link.tar" "$i" "$work/x9"
 printf ' ' >> "$l/blobs/sha256/${i#sha256:}"
 tar -C "$l" -cf "$work/changed.tar" .
 run 1 "hashes to" check-oci-layout.sh "$work/changed.tar" "$i" "$work/x6"

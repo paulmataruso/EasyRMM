@@ -20,6 +20,9 @@ tar=$1 digest=$2 dir=$3
 [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "check-oci-layout: \"$digest\" is not a digest" >&2; exit 2; }
 mkdir "$dir"
 tar -xf "$tar" -C "$dir"
+# A layout is folders and files only: no links, devices or pipes.
+odd=$(find "$dir" ! -type f ! -type d -print -quit)
+[ -z "$odd" ] || die "$tar holds ${odd#"$dir"/}, which is neither a file nor a folder"
 jq -e --arg d "$digest" '[.manifests[].digest] == [$d]' "$dir/index.json" > /dev/null ||
   die "$tar's index.json does not name $digest alone"
 index="$dir/blobs/sha256/${digest#sha256:}"

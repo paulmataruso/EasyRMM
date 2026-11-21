@@ -57,6 +57,11 @@ jobs:
           outputs: type=oci,dest=easyrmm-server.oci.tar
           build-args: VERSION=${{ inputs.version }}
           labels: org.opencontainers.image.revision=${{ github.sha }}
+          # A push to main builds the image publish signs as an edge build:
+          # it reads no cache, since any job of a main run can write the
+          # Actions cache (as release.yml's build). It still writes one, for
+          # pull requests' builds.
+          no-cache: ${{ github.event_name == 'push' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: mode=max

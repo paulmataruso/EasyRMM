@@ -31,6 +31,9 @@ As [ADR-0052](adr/0052-the-host-updater.md#channels-and-versions) decides,
   publish job. Re-run all jobs then: a new attempt is a new version.
 * With no release tag reachable there is no edge version, and CI fails
   (fetch the tags: `actions/checkout` with `fetch-depth: 0`).
+* A push to `main` builds its server image with no build cache, as a
+  release does: any job of a `main` run can write the Actions cache, and
+  this is the image publish signs. Pull requests' builds still use it.
 
 Versions are written with the `v`, as the server reports them. The server
 image's tag drops it, as release images do.
