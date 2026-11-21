@@ -38,9 +38,9 @@
   ownership reader, W2's job amendments),
   [ADR-0055](0055-lets-encrypt-in-one-step.md#step-up-authentication)
   (step-up) and [ADR-0060](0060-collecting-logs.md) (arguments on the
-  command line; the PowerShell logs it collects). ADR-0065 (hardware
-  health, PR #83) is accepted on a branch of its own and not merged, so it
-  is cited without a link; this ADR uses its words for states.
+  command line; the PowerShell logs it collects), and
+  [ADR-0065](0065-hardware-health.md) (hardware health), whose words for
+  states this ADR uses.
 * Requirements: feature 7, "Remote Windows Registry Editor", of the
   [owner's requirements of 2026-11-21](../requirements/2026-11-21-msp-features.md#7-remote-windows-registry-editor).
   Every bullet is placed in [The requirements](#the-requirements). The
@@ -222,7 +222,7 @@ ADR.
   "is built with the first kind that needs it, not before"
   ([Retention](0063-who-sees-job-output-and-arguments.md#retention)).
 
-**ADR-0065, not merged** (PR #83, accepted): F1's rule of five states
+**[ADR-0065](0065-hardware-health.md)** (accepted): F1's rule of five states
 (healthy, unhealthy, unknown, unsupported, unavailable) and *reported* for
 what EasyRMM reads and does not judge. *Unavailable* is "the data exists,
 but EasyRMM cannot reach it from where the agent runs".
