@@ -261,7 +261,7 @@ Who uses which part:
 
 | Part | Used by |
 |---|---|
-| Step-up | The keystore's reads and export; feature 7's protected paths (slice 3); feature 8's actions (slice 3); feature 5's shared-level entries (only super administrators edit them, with step-up); features 11 and 3 when a schedule or an automation with sensitive actions is saved (F3) |
+| Step-up | The keystore's reads and export; feature 6's one-off commands, for every job ([ADR-0064](adr/0064-remote-powershell-management.md#one-off-commands), its slice 3); feature 7's protected paths (slice 3); feature 8's actions (slice 3); feature 5's shared-level entries (only super administrators edit them, with step-up); features 11 and 3 when a schedule or an automation with sensitive actions is saved (F3) |
 | Approvals | The keystore's optional two-person rule for reads; feature 11's sensitive tasks (slice 4); feature 3's sensitive steps (slice 3) |
 
 * **Step-up is designed in
