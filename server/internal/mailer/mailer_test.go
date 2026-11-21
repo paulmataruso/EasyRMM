@@ -128,10 +128,7 @@ func TestComposeText(t *testing.T) {
 	m, _ := New(cfg())
 	to := &mail.Address{Name: "Zoë", Address: "zoe@example.org"}
 	subject := "Réinitialisez votre mot de passe EasyRMM — " + strings.Repeat("très long ", 12)
-	data, err := m.compose(to, Message{Subject: subject, Text: "Line one\nLine two é\n"}, time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC))
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := m.compose(to, Message{Subject: subject, Text: "Line one\nLine two é\n"}, time.Date(2026, 11, 21, 8, 0, 0, 0, time.UTC))
 	for _, line := range strings.Split(string(data[:bytes.Index(data, []byte("\r\n\r\n"))]), "\r\n") {
 		if len(line) > 78 {
 			t.Errorf("header line of %d characters: %q", len(line), line)
@@ -166,7 +163,7 @@ func TestComposeText(t *testing.T) {
 		t.Fatalf("body %q", body)
 	}
 	// Each message gets its own ID.
-	again, _ := m.compose(to, Message{Subject: "s", Text: "t"}, time.Now())
+	again := m.compose(to, Message{Subject: "s", Text: "t"}, time.Now())
 	if parse(t, again).Header.Get("Message-ID") == h.Get("Message-ID") {
 		t.Fatal("two messages with one Message-ID")
 	}
@@ -214,10 +211,7 @@ func TestComposeHTMLAndAttachments(t *testing.T) {
 	pdf := bytes.Repeat([]byte("%PDF-1.7 \x00\xff"), 200)
 	msg := Message{Subject: "Monthly report", Text: "See the report.", HTML: "<p>See the <b>report</b>.</p>",
 		Attachments: []Attachment{{Name: "report november.pdf", ContentType: "application/pdf", Data: pdf}, {Name: "data.bin", Data: []byte{1, 2, 3}}}}
-	data, err := m.compose(&mail.Address{Address: "a@example.org"}, msg, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
+	data := m.compose(&mail.Address{Address: "a@example.org"}, msg, time.Now())
 	top := parse(t, data)
 	mixed := parts(t, top.Header.Get("Content-Type"), top.Body)
 	if !strings.HasPrefix(top.Header.Get("Content-Type"), "multipart/mixed;") || len(mixed) != 3 {
@@ -258,10 +252,7 @@ func TestComposeHTMLAndAttachments(t *testing.T) {
 	}
 
 	// Text alone with an attachment: the text is the first part.
-	data, err = m.compose(&mail.Address{Address: "a@example.org"}, Message{Subject: "s", Text: "t", Attachments: msg.Attachments[1:]}, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
+	data = m.compose(&mail.Address{Address: "a@example.org"}, Message{Subject: "s", Text: "t", Attachments: msg.Attachments[1:]}, time.Now())
 	top = parse(t, data)
 	mixed = parts(t, top.Header.Get("Content-Type"), top.Body)
 	if len(mixed) != 2 || mixed[0].Header.Get("Content-Type") != "text/plain; charset=utf-8" {

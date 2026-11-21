@@ -221,11 +221,8 @@ func (m *SMTP) Send(ctx context.Context, msg Message, to []string, gate Gate) []
 		if outs[i].Err != nil {
 			continue
 		}
-		data, err := m.compose(rcpts[i], msg, time.Now())
-		if err != nil {
-			outs[i].Err = err
-			continue
-		}
+		data := m.compose(rcpts[i], msg, time.Now())
+		var err error
 		release := func() {}
 		if gate != nil {
 			r, err := gate(ctx)
@@ -434,15 +431,13 @@ func clip(s string, n int) string {
 
 func utf8RuneStart(b byte) bool { return b&0xC0 != 0x80 }
 
-// base64Lines writes data in base64, in lines of 76 characters.
-func base64Lines(w io.Writer, data []byte) error {
+// base64Lines writes data in base64, in lines of 76 characters, to a
+// writer in memory.
+func base64Lines(w io.Writer, data []byte) {
 	enc := base64.StdEncoding.EncodeToString(data)
 	for len(enc) > 76 {
-		if _, err := io.WriteString(w, enc[:76]+"\r\n"); err != nil {
-			return err
-		}
+		_, _ = io.WriteString(w, enc[:76]+"\r\n")
 		enc = enc[76:]
 	}
-	_, err := io.WriteString(w, enc+"\r\n")
-	return err
+	_, _ = io.WriteString(w, enc+"\r\n")
 }

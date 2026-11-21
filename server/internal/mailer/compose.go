@@ -73,8 +73,10 @@ func (msg Message) check() error {
 	return nil
 }
 
-// compose writes the message to one recipient, with its headers.
-func (m *SMTP) compose(to *mail.Address, msg Message, now time.Time) ([]byte, error) {
+// compose writes the message to one recipient, with its headers. It is
+// built in memory, where writing cannot fail, so the multipart and encoding
+// writers' errors are not checked.
+func (m *SMTP) compose(to *mail.Address, msg Message, now time.Time) []byte {
 	var b bytes.Buffer
 	h := func(k, v string) { b.WriteString(k + ": " + v + "\r\n") }
 	h("From", m.from.String())
@@ -85,10 +87,7 @@ func (m *SMTP) compose(to *mail.Address, msg Message, now time.Time) ([]byte, er
 	h("MIME-Version", "1.0")
 	// Automatic mail (RFC 3834): out-of-office replies are not sent back.
 	h("Auto-Submitted", "auto-generated")
-	bodyHeader, bodyContent, err := body(msg)
-	if err != nil {
-		return nil, err
-	}
+	bodyHeader, bodyContent := body(msg)
 	if len(msg.Attachments) == 0 {
 		for _, k := range []string{"Content-Type", "Content-Transfer-Encoding"} {
 			if v := bodyHeader.Get(k); v != "" {
@@ -97,18 +96,13 @@ func (m *SMTP) compose(to *mail.Address, msg Message, now time.Time) ([]byte, er
 		}
 		b.WriteString("\r\n")
 		b.Write(bodyContent)
-		return b.Bytes(), nil
+		return b.Bytes()
 	}
 	mw := multipart.NewWriter(&b)
 	h("Content-Type", mime.FormatMediaType("multipart/mixed", map[string]string{"boundary": mw.Boundary()}))
 	b.WriteString("\r\n")
-	w, err := mw.CreatePart(bodyHeader)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := w.Write(bodyContent); err != nil {
-		return nil, err
-	}
+	w, _ := mw.CreatePart(bodyHeader)
+	_, _ = w.Write(bodyContent)
 	for _, a := range msg.Attachments {
 		ct := a.ContentType
 		if ct == "" {
@@ -120,30 +114,23 @@ func (m *SMTP) compose(to *mail.Address, msg Message, now time.Time) ([]byte, er
 		hdr.Set("Content-Type", mime.FormatMediaType(mt, params))
 		hdr.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": a.Name}))
 		hdr.Set("Content-Transfer-Encoding", "base64")
-		w, err := mw.CreatePart(hdr)
-		if err != nil {
-			return nil, err
-		}
-		if err := base64Lines(w, a.Data); err != nil {
-			return nil, err
-		}
+		w, _ := mw.CreatePart(hdr)
+		base64Lines(w, a.Data)
 	}
-	if err := mw.Close(); err != nil {
-		return nil, err
-	}
-	return b.Bytes(), nil
+	_ = mw.Close()
+	return b.Bytes()
 }
 
 // body is the text, or the text and its HTML alternative: the headers that
 // describe it and its content, for the message itself or a part of it.
-func body(msg Message) (textproto.MIMEHeader, []byte, error) {
+func body(msg Message) (textproto.MIMEHeader, []byte) {
 	hdr := textproto.MIMEHeader{}
 	var b bytes.Buffer
 	if msg.HTML == "" {
 		hdr.Set("Content-Type", "text/plain; charset=utf-8")
 		hdr.Set("Content-Transfer-Encoding", "quoted-printable")
-		err := writeQP(&b, msg.Text)
-		return hdr, b.Bytes(), err
+		writeQP(&b, msg.Text)
+		return hdr, b.Bytes()
 	}
 	alt := multipart.NewWriter(&b)
 	hdr.Set("Content-Type", mime.FormatMediaType("multipart/alternative", map[string]string{"boundary": alt.Boundary()}))
@@ -151,27 +138,19 @@ func body(msg Message) (textproto.MIMEHeader, []byte, error) {
 		ph := textproto.MIMEHeader{}
 		ph.Set("Content-Type", p.ct)
 		ph.Set("Content-Transfer-Encoding", "quoted-printable")
-		w, err := alt.CreatePart(ph)
-		if err != nil {
-			return nil, nil, err
-		}
-		if err := writeQP(w, p.content); err != nil {
-			return nil, nil, err
-		}
+		w, _ := alt.CreatePart(ph)
+		writeQP(w, p.content)
 	}
-	if err := alt.Close(); err != nil {
-		return nil, nil, err
-	}
-	return hdr, b.Bytes(), nil
+	_ = alt.Close()
+	return hdr, b.Bytes()
 }
 
-// writeQP writes s in quoted-printable, with CRLF line ends.
-func writeQP(w io.Writer, s string) error {
+// writeQP writes s in quoted-printable, with CRLF line ends, to a writer
+// in memory.
+func writeQP(w io.Writer, s string) {
 	qp := quotedprintable.NewWriter(w)
-	if _, err := qp.Write([]byte(strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\n", "\r\n"))); err != nil {
-		return err
-	}
-	return qp.Close()
+	_, _ = qp.Write([]byte(strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\n", "\r\n")))
+	_ = qp.Close()
 }
 
 // fold folds a header's value at spaces so that no line is longer than 78
