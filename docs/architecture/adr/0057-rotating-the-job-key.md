@@ -6,7 +6,11 @@
   in which devices are moved, generations, older servers on a migrated
   database, the updater's rollback, a lost key, and the protocol rule now
   in ADR-0009 (amended, PR #52); step-up as ADR-0055 defines it; and the
-  six needs ADR-0058 and ADR-0059 list.
+  six needs ADR-0058 and ADR-0059 list. Revised again after a second
+  check: devices left on a lost key, the record of issued instructions,
+  the updater's rollback (its first release, the hold, other hosts), a
+  shorter declared transition, the authority replaced in two phases, and
+  the patching engine's part of a leaked backup set.
 * Builds on: [ADR-0009](0009-agent-protocol.md) (amended, PR #52: how the
   protocol evolves), [ADR-0015](0015-enrollment-and-meshagent-delivery.md)
   (signed requests, MeshAgent's signed downloads),
@@ -15,7 +19,7 @@
   and [ADR-0050](0050-removing-a-device.md) (the other instructions it
   signs), [ADR-0016](0016-ip-address-access.md) and
   [ADR-0042](0042-agents-trust-easyrmms-authority.md) (EasyRMM's own
-  certificate authority), ADR-0055 ("Who": step-up authentication).
+  certificate authority), ADR-0055 ("Step-up authentication").
 * Amends: [ADR-0017](0017-scripts-and-jobs.md), "Signing" and
   "Consequences": the agent follows a signed hand-over instead of refusing
   every other key, and a lost key alone means re-pinning, not re-enrolling;
@@ -118,6 +122,11 @@ holds them can open:
   tokens (`server/internal/auth`, `sso`, `auditfwd`,
   `agents/tokens.go`).
 
+The engine's keys (`/srv/easyrmm/easypatch/keys`) open its mail and
+webhook credentials, and `.env` holds the statements key the engine
+trusts; of its agents' credentials, the engine's database holds only the
+public keys (After a leaked backup set, below).
+
 `/srv/easyrmm/server` holds the ACME account and the certificates' keys
 (autocert's cache, `server/internal/app/edge.go`), `/srv/easyrmm/tls` the
 manual certificate's key, and `/srv/easyrmm/meshcentral` MeshCentral's
@@ -204,8 +213,9 @@ rotatable first.
 ### What agents report
 * An agent keeps the keys it trusts in `agent.json` (`jobKeys`), each with
   its generation, in a trust store of its own (`agent/trust`). It holds two
-  at most in practice (a hand-over goes only to a device that trusts one
-  key, below) and refuses a fifth.
+  in practice (a hand-over goes to a device that trusts one key, below),
+  three when it also trusts a key the server never held, and refuses a
+  fifth.
 * `jobKey`, today's field, holds the oldest of them. A build from before
   this ADR reads only that field, and a server from before this ADR signs
   only with generation 1, so an agent moved back to an older build (a
@@ -229,6 +239,11 @@ rotatable first.
   never in the first heartbeat of a process. A level-2 server from before
   this ADR ignores it. Nothing is remembered in `agent.json` for it, and no
   `400` is read as "not supported".
+* **Heartbeats also carry the authorities the agent trusts**: the SHA-256
+  fingerprint of each certificate in the `ca.pem` it loaded at start
+  (none when it uses the system's roots), under the same rule. The
+  replacement of EasyRMM's own authority after a leak counts them (After a
+  leaked backup set, below).
 
 ### Two statements
 Both are signed with a job key under a context of their own, bound to one
@@ -258,23 +273,30 @@ shows a build that understands them (ADR-0009).
   checks with the keys it now trusts. It reports a statement it refused,
   with the reason, in its next heartbeat.
 * **A declared transition.** An agent is in a key transition from the
-  hand-over it accepts until 10 minutes after the cut-over that ends it
-  (the longest anything signed with the dropped key can still be on its
-  way). Its trust store records it, and `easyrmm-agent status` shows it.
-  ADR-0059 counts no channel failure for a message that
-  does not verify during it. The transition is declared by the signed
-  statements, not by a field of the answer, so nothing on the path can
-  declare one.
+  cut-over it accepts until 10 minutes after (the longest anything signed
+  with a dropped key can still be on its way). Between a hand-over and
+  its cut-over nothing can fail for the rotation's sake: the agent trusts
+  both keys, and the server signs with one of them. So the transition is
+  minutes long, not the 24 hours or more of a planned overlap, and
+  ADR-0059's detection of middleboxes stays on through the overlap. Its
+  trust store records it, and `easyrmm-agent status` shows it. ADR-0059
+  counts no channel failure for a message that does not verify during it.
+  It is declared by a signed statement, not by a field of the answer, so
+  nothing on the path can declare one.
 * Every verifier in `agentproto` (`VerifyJob`, `VerifyUpdate`,
   `VerifyUninstall`, `VerifyEasyPatchInstall`, `VerifyDownload`) takes the
   keys the agent trusts and accepts a signature by any of them.
 * **A job signed by a key the agent dropped** (one whose fingerprint it
-  kept) is left alone: not journaled, not run, not reported. The server
-  delivers a run again when it has been sent and not started for 2 minutes
-  (`RedeliverAfter`, `jobs/service.go`; the `due` query in `delivery.go`),
-  signed from the device's newer report. Today the worker reports such a
-  job as failed (`accept` in `agent/jobs/worker.go`). A job signed by a key
-  the agent never trusted is still refused and reported failed.
+  kept) is left alone the first times: not journaled, not run, not
+  reported. The server delivers a run again when it has been sent and not
+  started for 2 minutes (`RedeliverAfter`, `jobs/service.go`; the `due`
+  query in `delivery.go`), signed from the device's newer report. The
+  third delivery of the same run still signed with a dropped key is
+  reported failed ("signed with a key this agent no longer trusts"), so a
+  run never stays *sent* silently until it expires, up to 7 days later.
+  Today the worker reports such a job as failed at once (`accept` in
+  `agent/jobs/worker.go`). A job signed by a key the agent never trusted is
+  still refused and reported failed at once.
 
 ### The key the server signs with
 * **For each device, from its report**, where "its report" is the newer
@@ -297,6 +319,14 @@ shows a build that understands them (ADR-0009).
     of them, since no statement goes to a device while its update is open,
     and one that does not reads the oldest from `jobKey`. No statement
     goes to it until it reports.
+
+  When the server has sent a cut-over to K and the build has also changed
+  since, with no report in the request, the cut-over rule wins. The
+  cut-over went only to a device whose report had K, and no update opens
+  in an answer that carries a statement, so the build it runs now trusts
+  K whether or not it took the cut-over; and a build from before this ADR
+  cannot come back, since ADR-0027 removes the previous build once the
+  new one reaches the server.
 * **Why the newer of the two.** Some requests carry no report: the first
   heartbeat of a process (ADR-0009), MeshAgent's downloads (plain `GET`s,
   `installMesh` in `agent/runner/runner.go`, signed by `SignDownload` in
@@ -345,14 +375,26 @@ Let the **floor** be the newest key that has been cut over to, and the
 1. **The target** is the floor if the device trusts any key older than
    the floor; otherwise the newest.
 2. A device that trusts the target and other keys is sent the cut-over to
-   the target if the target is the floor; otherwise (a planned rotation's
-   overlap) nothing.
-3. A device that lacks the target and trusts more than one key is first
-   sent the cut-over to the newest key it trusts, when the server holds
-   it. A hand-over therefore always finds the device on one key, and its
-   trust store never needs more than two. When the newest key it trusts is
-   one the server never held, it is sent nothing: it cannot be moved until
-   it is re-pinned, and shows *Trusts an unknown key*.
+   the target when the target is the floor and the newest key the device
+   trusts. Otherwise it is sent nothing: during a planned rotation's
+   overlap, or while it also trusts a newer key the server never held, in
+   which case it moves with the next rotation (rule 3).
+3. A device that lacks the target and trusts more than one key:
+   * when the newest key it trusts is one the server holds, is first sent
+     the cut-over to that key, so that the hand-over which follows finds
+     it on one key;
+   * when the newest key it trusts is one the server never held (a key
+     lost with a restore or with a rollback during an overlap, or one
+     someone handed it), is sent the hand-over to the target at once,
+     signed with a key it trusts that the server holds. It then trusts
+     three keys, within its limit of four, and the target's cut-over drops
+     the unknown one. The hand-over needs the target's generation above
+     the unknown key's. A lost key's generation is the time it was made,
+     and any reported key within the 5-minute bound raises the next one's
+     (One ring, above), so only an unknown key beyond the bound, or one
+     handed over in the 5 minutes before the target was made and not
+     reported by then (Generations, below), is above the target. Such a
+     device is sent nothing and needs re-pinning.
 4. A device that lacks the target and trusts one key the server holds is
    sent the hand-over to the target, signed with that key.
 5. A device that trusts no key the server holds is sent nothing: it
@@ -361,7 +403,8 @@ Let the **floor** be the newest key that has been cut over to, and the
 So a device still on a key older than the floor (a laptop offline across a
 rotation for a compromise) is moved to the floor before any newer planned
 key reaches it, and never carries a compromised key through a planned
-rotation's overlap.
+rotation's overlap; and a device left trusting a key the server lost moves
+with the next rotation, which the console offers (Orphaned keys, below).
 
 ### A rotation
 1. **Start.** A super administrator, or the host (below), gives the
@@ -370,8 +413,9 @@ rotation's overlap.
    time. A rotation for a compromise may start during a planned rotation's
    overlap: it marks every older key compromised, the planned rotation
    ends there, and its key is never cut over to as the floor. Starting is
-   refused while the updater holds the server, or while a server older
-   than the ring is seen (below). Enrollments get the new key at once.
+   refused while the updater holds the server or an upgrade is under way,
+   or while a server older than the ring is seen (below). Enrollments get
+   the new key at once.
 2. **Following.** Each agent that can follow gets the hand-over in a
    heartbeat answer, trusts both keys, and reports them; from that report
    on, its instructions are signed with the new key.
@@ -387,6 +431,20 @@ rotation's overlap.
    left, the seed is deleted; the public key and its record stay. A super
    administrator may **forget** it sooner, but never the newest key; the
    devices still on it then need re-pinning (below).
+
+**One lock for every change to the ring.** Starting, finishing,
+forgetting, `replace-lost`, `recover` and the automatic deletion of a seed
+each run in one transaction that first takes the ring's advisory lock and
+then, inside it, checks again that the updater does not hold the server
+and has no upgrade under way, and, for starting and finishing, that no
+server older than the ring is seen. The hold is checked by looking at the
+file itself, not at the flag the server keeps: PR #51 checks that flag
+once, when a request arrives (`Handler` in `server/internal/updater/hold.go`
+on `feat/server-hold`), and refreshes it every second, so a request
+admitted just before the hold may still be running. Such a change
+therefore either commits before the updater can read the ring under the
+same lock, or finds the file inside the lock and is refused (The updater's
+rollback, below). The host commands take the same path.
 
 **When a rotation ends** is separate from the devices it has not reached.
 A planned rotation, or one for a move, ends when it is finished; a rotation
@@ -470,16 +528,46 @@ its build has no `trust-key`.
   records every instruction it accepts in a log in its state directory
   (the last 1,000): its kind, its ID (a job's run, an update's or an
   EasyPatch install's attempt, an uninstall's ID; for a MeshAgent download,
-  the nonce of the request it answered), the fingerprint of the key that
-  signed it, and when. It sends the entries the server has not
-  acknowledged with its heartbeats, to a server that lists this feature in
-  its answer (ADR-0009). The server checks each against what it issued
-  (runs, update attempts, removals, EasyPatch install attempts, and the
-  downloads it signed, which it now records for 90 days) and flags a
-  device with an entry it never issued: **Ran instructions this server
-  never issued**, audited with the entries. An entry older than what the
-  server keeps is shown as not checked. This is a tripwire, not proof:
-  code that ran as root can erase the log before it is sent.
+  the nonce of the request it answered; a hand-over's or cut-over's key),
+  the fingerprint of the key that signed it, and when. It sends the
+  entries the server has not acknowledged with its heartbeats, with the
+  sequence of the last one acknowledged, to a server that lists this
+  feature in its answer (ADR-0009).
+  * **What the server checks against.** Not the rows that drive the work:
+    they do not last. An agent update's row is deleted when the device
+    comes back on the target build (`updates.go` in
+    `server/internal/agents`), and its `attempt_id` is overwritten by each
+    attempt (`00011_agent_updates.sql`); a removal's row is deleted when
+    it is cancelled (`CancelRemoval` in `removal.go`) and with the device;
+    EasyPatch installs are deleted when patching is stopped or resumed for
+    a device, or its agent is removed after a move (`optout.go`, and
+    `saveRemoval` in `reconcile.go`, in `server/internal/easypatch`).
+    Under ADR-0009 the first heartbeat of the new build carries no log,
+    and that heartbeat is the one that deletes the update's row, so every
+    successful update would be flagged.
+    Instead a table of its own, `issued_instructions`, is appended to
+    wherever the server signs something for a device: the kind, the ID,
+    the device, the generation of the key that signed it, and when. It is
+    written in the transaction that signs, so nothing leaves the server
+    unrecorded; a redelivery signed with another key adds a row. Rows are
+    never updated, have no foreign key (removing or deleting a device
+    keeps them), and are kept 90 days.
+  * **The check.** An entry whose kind, ID, device and key match no row is
+    flagged: **Ran instructions this server never issued**, audited with
+    the entries. An entry older than 90 days, or dated before the server's
+    last restore, is shown as *not checked*: the rows that would match it
+    may be gone.
+  * **The server's last restore** is known from the updater's status,
+    which records a rollback (ADR-0052); from `easyrmm-server incident
+    restored`, which the guide's restore procedure runs on the host after
+    `pg_restore`; and, for a restore nobody recorded, from the first
+    heartbeat whose acknowledged sequence is ahead of what the database
+    says it acknowledged. That last one records a restore at that moment
+    and withdraws, as *not checked*, the flags raised since the server
+    started for entries dated before it.
+
+  This is a tripwire, not proof: code that ran as root can erase the log
+  before it is sent.
 * **Unknown keys.** A report with a key the ring has never held is
   recorded on the device, audited once per device and key, and shown to
   super administrators as **Trusts an unknown key**: a key this server
@@ -533,18 +621,48 @@ its build has no `trust-key`.
 ### After a leaked backup set
 The job key is one of the secrets a leaked backup set gives (Context). The
 response replaces the others too:
-* **EasyRMM's own authority** (`internal` mode).
-  `easyrmm-server incident replace-authority`, on the host, makes a new
-  authority and server key; install commands change, since they pin the
-  server key (`pki.go`). EasyRMM's agents get the new authority by having
-  `ca.pem` in their state directory replaced and their service restarted
-  (the client reads it at start, `client.go`), through the channels
-  `trust-key` uses, or by reinstalling. The EasyPatch agents are enrolled
-  again with it (ADR-0042). MeshAgent follows the new certificate as at a
-  renewal (ADR-0016). This comes after the job key's rotation has moved
-  the online devices: an agent that does not trust the new authority
-  cannot reach the server to follow. A signed hand-over of the authority
-  is left to the owner (below).
+* **EasyRMM's own authority** (`internal` mode), in two phases. An
+  EasyRMM agent with a `ca.pem` trusts the certificates in it instead of
+  the system's roots (`CAFile`, a PEM bundle read at start,
+  `agent/client/client.go`), and an EasyPatch agent installed with the
+  authority trusts that one authority beside the system's roots
+  (`ServerCertificateAuthority`, from `SERVERCACERT` or `enroll
+  --server-ca`, in `easypatch/agent/EasyPatch.Agent.Core/Security`).
+  Switching the server to a new authority at once would cut off every one
+  of them.
+  1. **Both authorities.** `easyrmm-server incident replace-authority
+     begin`, on the host, makes a new authority and keeps serving with
+     the old one's certificate. It writes a bundle holding both. Each
+     EasyRMM agent gets it as its `ca.pem`, and each EasyPatch agent as its
+     `ServerCaCertificate` (the registry value on Windows, `agent.conf` on
+     Linux), each with its service restarted, through the channels
+     `trust-key` uses (MeshCentral's terminal, Group Policy, Intune, or by
+     hand). The EasyPatch agent accepts a PEM bundle there; today `Parse`
+     reads one certificate. Each agent reports the authorities it loaded:
+     the EasyRMM agent in its heartbeat (What agents report, above), the
+     EasyPatch agent in a new optional field of its check-in
+     (`CheckInRequest`, `AgentDtos.cs`), which an engine without it
+     ignores (no unmapped-member handling is set). The console and
+     `replace-authority status` count the agents that trust the old one
+     only, both, and the new one only (Console, below).
+  2. **The switch.** `easyrmm-server incident replace-authority switch`
+     serves a certificate from the new authority, with a new server key,
+     and deletes the old authority; install commands change, since they
+     pin the server key (`pki.go`). It refuses while an agent seen in the
+     last 30 days reports the old authority alone, unless `--strand`,
+     which lists them; they are reinstalled. An EasyRMM agent of a build
+     from before this ADR reports nothing and counts as on the old
+     authority alone; updated first (ADR-0027), it reports. MeshAgent
+     follows the new certificate as at a renewal (ADR-0016). The bundle is
+     then replaced with the new authority alone, by the same channels,
+     since the old one's key leaked; the console counts the agents that
+     still trust it.
+
+  The first phase can take days by hand. Meanwhile the leaked authority
+  still lets someone in the path answer agents, as it did before; the
+  rotated job key is what keeps that from running anything, as for ACME
+  and manual certificates (below). A signed hand-over of the authority is
+  left to the owner (below).
 * **ACME and manual certificates.** New keys and certificates: for ACME,
   autocert's cache (`/srv/easyrmm/server/acme`: the account and the
   certificates' keys) moved aside before a start, so the server obtains
@@ -575,6 +693,37 @@ response replaces the others too:
   `EASYRMM_SECRET_KEYS_PREVIOUS`. The job keys, the authority and
   MeshCentral's keys are sealed again at every start by their loaders, and
   replaced above.
+* **The patching engine's part.** The engine's database and its keys
+  (`/srv/easyrmm/easypatch/keys`) are in the backup set
+  ([backup-restore.md](../../operations/backup-restore.md)):
+  * **Its agents' credentials** are not secrets there: the engine keeps
+    each EasyPatch agent's public key only (`AgentCredential` in
+    `easypatch/backend/Core/Entities/Endpoints.cs`) and its enrollment
+    tokens hashed, and EasyRMM never stores the tokens it makes
+    (`server/migrations/00014_easypatch_install.sql`). Nothing in the set
+    lets anyone act as an EasyPatch agent, so nothing is replaced for the
+    leak itself. What the set does give is answering those agents, by the
+    authority or the certificate keys, replaced above. The EasyPatch agent
+    on a device that is reinstalled (A compromised key) gets a new key
+    with its new install, and its enrollment revokes the endpoint's old
+    credentials ("Endpoint re-enrolled", `EnrollmentService.cs` in
+    `easypatch/backend/Infrastructure/Services`).
+  * **Its notification credentials** (the mail password, Slack and Teams
+    webhook URLs, and generic webhooks' signing keys,
+    `easypatch/backend/Core/Entities/Notifications.cs`) are sealed with
+    the keys in that directory, so they are readable. First the engine's
+    key ring is moved aside, so the API makes a new one at its next start
+    (only the API makes keys, `AddEasyPatchDataProtection` in
+    `easypatch/backend/Infrastructure/DependencyInjection.cs`; the worker
+    reads the ring again when a value does not open). Then each credential
+    is replaced at its source and entered again in the patching settings:
+    a new mail password, new webhook URLs from the receiving service, and
+    a new signing key made by the engine and given to the receiver.
+  * **The statements key** (`EASYRMM_PATCHING_KEY`, in `.env`) lets anyone
+    who can reach the engine on loopback speak as EasyRMM (ADR-0038). It
+    is replaced by emptying it in `.env`, rerunning `setup.sh`, which
+    makes a new one, and `docker compose up -d`
+    ([patching.md](../../operations/patching.md)).
 * **Persistence.** When someone could have signed in or written to the
   database (the host, or credentials from the set), the restored database
   is reviewed for what they could have added: users with their sign-in
@@ -583,7 +732,15 @@ response replaces the others too:
   EasyRMM has no scheduled jobs), operator-signed agent builds (ADR-0049),
   and the engine's patching policies. `easyrmm-server incident review
   --since <time>` lists, read-only, what in those was made or changed
-  since a time.
+  since a time, by their `created_at` and `updated_at`. Whoever could
+  write to the database could also set those columns, so the list is a
+  starting point only when the database was out of reach (credentials
+  that only sign in). When the host or the database was writable,
+  `incident review --all` lists everything in those tables, and the guide
+  has the operator compare it with the audit records their collector
+  received (ADR-0023): forwarded records are outside the database, so
+  something present with no record of its making was added behind the
+  server.
 
 ### What leaked decides what to do
 The guide's incident page:
@@ -611,13 +768,15 @@ The guide's incident page:
    after checking the key on the host); *Cannot follow* with
    a failed update (reinstall); *Ran instructions this server never
    issued*, and devices whose path the attacker could reach (reinstall).
-6. In `internal` mode, once online devices have moved, **replace the
-   authority**, then `ca.pem` everywhere (or reinstall).
-7. **MeshCentral's keys**, **what stays readable**, and the
-   **persistence** review (above).
+6. In `internal` mode, **replace the authority** in its two phases
+   (above): the bundle of both to every agent, the switch once the
+   console shows none left on the old authority alone, then the new
+   authority alone.
+7. **MeshCentral's keys**, **what stays readable**, **the patching
+   engine's part**, and the **persistence** review (above).
 
 Steps 2 to 4 take minutes; builds from before this ADR take ADR-0027's
-pace (above).
+pace (above). Step 6 takes as long as the channels it uses, by hand.
 
 ### A lost key
 * If the seed cannot be opened or is gone, the server still refuses to
@@ -646,19 +805,21 @@ pace (above).
 
 ### Several servers, and older ones
 * Each server records itself in `server_instances` (an ID per process, its
-  version, when it started, and when it last reloaded the ring), at start
-  and with each reload, and names its database connections
-  `easyrmm-server/<version>` (today every server is `easyrmm-server`,
-  `server/internal/database/database.go`). The console lists them.
+  version, when it started, when it last reloaded the ring, and whether
+  the updater holds it), at start, with each reload, and at once when it
+  enters or leaves a hold; it removes its row when it stops. It names its
+  database connections `easyrmm-server/<version>` (today every server is
+  `easyrmm-server`, `server/internal/database/database.go`). The console
+  lists them.
 * An older server started after the move from `settings` refuses to
   start (the tombstone). One already running when another server moved
   the key keeps the key it loaded at start, generation 1, and would keep
-  signing with it after a cut-over. So a rotation is refused, in the
-  console and on the host, while a server older than the ring is seen: a
-  database connection named plain `easyrmm-server`, which only builds from
-  before this ADR use, or a recorded instance, seen in the last 2 minutes,
-  of a version older than the server starting the rotation. A rotation so
-  waits for a rolling upgrade to end.
+  signing with it after a cut-over. So starting a rotation, and finishing
+  one, are refused, in the console and on the host, while a server older
+  than the ring is seen: a database connection named plain
+  `easyrmm-server`, which only builds from before this ADR use, or a
+  recorded instance, seen in the last 2 minutes, of a version older than
+  the server acting. A rotation so waits for a rolling upgrade to end.
 
 ### Storage, backups and restore
 * The ring lives in the database, sealed with the encryption key, so the
@@ -670,18 +831,22 @@ pace (above).
   | Backup taken | Restored before the cut-over | Restored after the cut-over |
   |---|---|---|
   | Since the rotation started | Works | Works: the restored server holds the new key and signs with what each device reports |
-  | Before the rotation started | Works: agents still trust the old key. Devices that had moved show the new key as unknown, with the reason | Devices that moved trust only a key the restored server never held: they need re-pinning, or a newer backup restored |
+  | Before the rotation started | Works: agents still trust the old key. Devices that had moved show the new key as unknown, with the reason, and move with the next rotation | Devices that moved trust only a key the restored server never held: they need re-pinning, or a newer backup restored |
 
 * The server signs from each device's report, not from what its restored
   rows say. That is why a backup from the overlap works after the cut-over
   with nothing to do.
-* **Orphaned keys.** After a restore or a rollback from before a rotation,
-  devices that had moved trust a key the restored server never held. The
-  console offers a planned rotation, whose cut-over ends their trust in
-  it. The guide has the operator match the unknown fingerprint against the
-  `job_key.rotate` record their collector received (ADR-0023: forwarded
-  records outlive the restore), to tell the server's own lost key from
-  someone else's.
+* **Orphaned keys.** After a restore, or a rollback during an overlap,
+  devices that had moved trust a key the restored server never held, beside
+  one it holds. The console offers a rotation, planned by default. Its
+  hand-over reaches those devices at once, signed with the key they trust
+  that the server holds (rule 3 of "What the server offers each device"),
+  and its cut-over drops the lost key. The guide has the operator match the
+  unknown fingerprint against the `job_key.rotate` record their collector
+  received (ADR-0023: forwarded records outlive the restore), to tell the
+  server's own lost key from someone else's; where that record shows that
+  the lost rotation was for a compromise, the operator chooses a rotation
+  for a compromise instead.
 * A job or any other instruction for a device that **needs re-pinning** is
   refused at once, with the command that fixes it, instead of queued to
   fail. Removing such a device skips the uninstall instruction it could not
@@ -694,44 +859,72 @@ amended when it does.
 
 * **When it ships.** With the second slice of this ADR, which first allows
   a cut-over, or before it: the second slice does not merge before an
-  updater with the record and the refusal is released. Shipping both with
-  the updater's first release means no updater's backup lacks the record.
+  updater with the record and the refusal is released.
 * **What a backup records.** At step 3 of an upgrade, when every other
   service has stopped and PostgreSQL has not yet, the updater reads the
   highest generation whose seed the database holds (1 for a database
   without `job_keys`, whose `settings` key becomes generation 1) and keeps
-  it with the backup. If it cannot read it, it records "unknown".
+  it with the backup. If it cannot read it, it records "unknown". The
+  upgrade that brings the first updater with the record is backed up by
+  the updater before it (ADR-0052: the backup is step 4, and the updater
+  replaces itself only at step 7), so that backup has no record; the rule
+  below lets it roll back, since no cut-over can have happened before
+  slice 2.
 * **A rollback during an upgrade** (a failure after step 3) is never
   blocked: the new version was held throughout (ADR-0052), so nothing can
   have been cut over, and ADR-0052 allows PostgreSQL not to start then.
 * **A rollback after a confirmed upgrade** first writes `hold`
   (`/run/easyrmm-updater/hold` in the server, PR #51: the server looks
   every second and then answers `503` everywhere but its health checks),
-  waits until the server's `/readyz` says it is held, and only then reads
-  the newest generation that has been cut over to (1 for a database
-  without `job_keys`), in a transaction that takes the rotation's advisory
-  lock, so that a rotation begun before the hold has either committed or
-  not begun. If that generation is above the backup's, or the backup has
-  none (a backup from an updater before the record, or "unknown"), or the
-  live one cannot be read, the rollback is refused, `hold` is removed and
-  nothing was stopped: "Agents moved to a signing key made after this
-  backup, on <time>; restoring it would leave them unable to accept
-  anything from the server", or, without a generation on either side,
-  that the updater cannot tell whether restoring would do so. Otherwise it
-  goes ahead; when the live ring
-  held a newer key than the backup, its record says that devices that
-  moved keep trusting that key until the next rotation's cut-over.
+  and waits until the server's `/readyz` says it is held. It then reads,
+  in one transaction that takes the ring's advisory lock (One lock for
+  every change to the ring, above), so that a change admitted before the
+  hold has committed and none can follow:
+  * the newest generation that has been cut over to, the **floor** (1 for
+    a database without `job_keys`);
+  * the server instances seen in the last 2 minutes that the hold has not
+    reached (`server_instances`, above: a server on another host shares
+    the database but not this host's `hold`), and the database connections
+    named plain `easyrmm-server` (servers from before this ADR, which
+    record nothing).
+
+  It decides:
+  * a floor of 1 goes ahead whatever the backup recorded: no device has
+    ever been cut over, and every backup holds generation 1 or the
+    `settings` key that becomes it;
+  * a floor above the backup's generation, or a backup without one (from
+    an updater before the record, or "unknown"), or a floor that cannot be
+    read, is refused: "Agents moved to a signing key made after this
+    backup, on <time>; restoring it would leave them unable to accept
+    anything from the server", or, without a generation, that the updater
+    cannot tell whether restoring would do so;
+  * any instance the hold has not reached is refused too: "A server on
+    another host shares this database; it would keep changing the ring
+    during the rollback." A rollback that is safe for rotations is a
+    single-host one; with several hosts, the operator stops the others
+    first;
+  * otherwise it goes ahead; when the live ring held a newer key than the
+    backup, its record says that devices that moved keep trusting that key
+    until the next rotation's cut-over.
+
+  On a refusal `hold` is removed, and nothing was stopped.
 * **`--strand-agents`**, on the host only, rolls back anyway; the record
-  says so, and the restored server shows the devices that need
-  re-pinning.
+  says so. A restored server of this ADR shows the devices that need
+  re-pinning. A restored version from before this ADR shows nothing: it
+  has no ring, no reports and no states, and a job it sends a moved device
+  just fails. So the guide has the operator re-pin every device with this
+  ADR's agent by policy, with `trust-key --force 1:<key>` and the key the
+  restored server holds, since that version cannot tell which devices
+  moved; devices on an older build never moved and need nothing.
 * **Why the updater reads the database.** The plan's rule is that the
   updater trusts nothing the server writes beyond a version number
   ([feature-plan.md](../feature-plan.md), "What the reviews changed"). This
-  departs from it by one integer, read by a fixed `psql` query that the
+  departs from it by two values, read by a fixed `psql` query that the
   updater runs as PostgreSQL's own user in the `postgres` container,
-  parsed as an integer and nothing else. The value can only add a refusal
-  to a rollback the operator asked for, which the host can override; it
-  never makes the updater do anything else.
+  parsed as integers and nothing else: the floor, and the count of
+  instances the hold has not reached. They decide only between the
+  rollback the operator asked for and a refusal, which the host can
+  override; they never make the updater do anything else.
 * The updater's status gains the backup's generation, so the console shows
   that **Roll back** is gone, and why, before anyone tries; the console's
   dialog for a rotation for a compromise, and `finish --now` on the host,
@@ -742,8 +935,9 @@ amended when it does.
 ### Who may rotate
 * **Super administrators** (`settings.manage` platform-wide, as for signed
   agent builds), with **step-up authentication as ADR-0055 defines it**
-  ("Who"), for starting, finishing and forgetting. A super administrator
-  who cannot pass it (no second factor enrolled) uses the host.
+  ("Step-up authentication"), for starting, finishing and forgetting. A
+  super administrator who cannot pass it (no second factor enrolled) uses
+  the host.
 * **The host**, as root, through `docker compose exec server
   easyrmm-server job-key …`, for an incident where the console cannot be
   reached or trusted. Whoever is root on the host already holds everything
@@ -766,7 +960,8 @@ amended when it does.
     proves (above), **Devices at once** and *Automatically* offered when
     devices cannot follow, and, when the updater offers a rollback, its
     end. Each says to take a backup now. Refused, with the reason, while a
-    server older than the ring is seen;
+    server older than the ring is seen, or while the updater holds the
+    server or an upgrade is under way;
   * during a rotation, its progress: devices moved; devices still on an
     older key (online, or offline since when); devices that cannot follow,
     with their agent's version and whether an update failed; devices that
@@ -774,18 +969,25 @@ amended when it does.
     the devices list filtered. Devices owed a cut-over have the same view
     after the rotation ended;
   * **Finish rotation**: from 24 hours on, with the backup confirmation and
-    the devices not moved yet (they follow when they come back);
+    the devices not moved yet (they follow when they come back); refused,
+    with the reason, while a server older than the ring is seen;
   * older keys still held, for how many devices, with **Forget** (not for
     the newest key) and the devices it would leave needing re-pinning;
   * after a restore that left devices on an unknown key, the offer of a
-    planned rotation (above).
+    rotation, planned unless the operator finds the lost one was for a
+    compromise (Orphaned keys, above);
+  * during the replacement of EasyRMM's own authority, the agents that
+    trust the old authority only, both, and the new one only, for EasyRMM's
+    agents and the EasyPatch agents, each count opening the devices list
+    filtered.
 * **Devices**: the signing key's state as a column and a filter:
   *Current*, *Moving* (trusts the new key and older ones), *On an older
   key*, *Cannot follow*, *Not reporting* (its agent's version reports
   keys, but three heartbeats in a row carried none), *Needs
-  re-pinning*, *Trusts an unknown key*; and the flag *Ran instructions this
-  server never issued*. After a rotation for a compromise, *Current* says
-  what it proves.
+  re-pinning*, *Trusts an unknown key*; the flag *Ran instructions this
+  server never issued*; and, while EasyRMM's own authority is being
+  replaced, which authorities each agent trusts. After a rotation for a
+  compromise, *Current* says what it proves.
 * **A device's page**: its state; for *Needs re-pinning* and *Trusts an
   unknown key*, the re-pin command, **Open terminal** when MeshAgent is
   connected, and the reasons; for the flag, the entries and the advice to
@@ -795,8 +997,8 @@ amended when it does.
 * `GET /api/v1/settings/job-key`: the ring (fingerprint, generation,
   reason, made, cut over, compromised, lost, for how many devices it is
   kept), the rotation's progress, the devices owed a cut-over, the
-  servers seen, when the rotation may be finished, and whether finishing
-  it ends the updater's rollback.
+  servers seen, when the rotation may be finished, whether finishing it
+  ends the updater's rollback, and the server's last restore.
 * `POST /api/v1/settings/job-key/rotations` (`reason`);
   `POST /api/v1/settings/job-key/finish` (`backupTakenSinceStart`);
   `POST /api/v1/settings/job-key/keys/{generation}/forget`. Super
@@ -809,12 +1011,14 @@ amended when it does.
     planned|moving|compromised`, `finish --backup-taken [--now]` (`--now`
     skips the 24 hours, and its record says so), `forget <generation>`,
     `replace-lost` and `recover <generation>`;
-  * `easyrmm-server incident replace-authority`, `replace-remote-keys` and
-    `review --since <time>`.
+  * `easyrmm-server incident replace-authority begin|status|switch
+    [--strand]`, `replace-remote-keys`, `restored`, and `review --since
+    <time>|--all`.
 
   Each refuses while the updater holds the server (`hold`, PR #51) or its
   status shows an upgrade under way, except `status` and `review`, which
-  only read.
+  only read; those that change the ring check it again inside the ring's
+  lock (A rotation, above).
 * On the device: `easyrmm-agent status` lists the keys the agent trusts,
   with fingerprints and generations, and its latest logged instructions;
   `easyrmm-agent trust-key <generation>:<key> [--force]`.
@@ -831,7 +1035,9 @@ amended when it does.
 | `device.job_key_unknown_cleared` | That key is gone from the device's report | The key's fingerprint |
 | `device.job_key_refused` | An agent refused a statement | The statement and the agent's reason |
 | `device.instruction_unknown` | An agent logged an instruction the server never issued | Kind, ID, signer fingerprint and time of each entry |
-| `tls.authority_replace` | The host replaces the internal authority | The old and new authority's fingerprints |
+| `tls.authority_begin` | The host makes a new internal authority beside the old one | Both authorities' fingerprints |
+| `tls.authority_switch` | The host serves the new authority's certificate | Both fingerprints; the agents that reported the old authority alone, if `--strand` was given |
+| `server.restored` | `incident restored` on the host, a rollback in the updater's status, or a heartbeat that shows a restore nobody recorded | How it was learned; the time from which instruction log entries are not checked; the flags withdrawn |
 | `remote.keys_replace` | The host replaces MeshCentral's keys | That they were replaced (never the keys) |
 
 Step-up itself is ADR-0055's. One device's move is not audited:
@@ -870,8 +1076,10 @@ them; 10,000 records per rotation would bury the ones above. Forwarding
      checks in at once (ADR-0059), and gets its statement in that
      heartbeat's answer instead of waiting for its next one.
   6. *No failures counted during a declared transition*: the agent's
-     declared transition (Two statements), from the signed hand-over
-     until 10 minutes after the cut-over.
+     declared transition (Two statements), from the signed cut-over it
+     accepts until 10 minutes after. Before the cut-over nothing fails for
+     the rotation's sake, so ADR-0059's detection stays on through the
+     overlap.
 
   An agent checks a settings document when it receives it and keeps it as
   checked; it does not check it again later against keys it may have
@@ -886,8 +1094,10 @@ them; 10,000 records per rotation would bury the ones above. Forwarding
   offline past both the old name's cut-off and its key's removal needs
   `trust-key` and the local step 5c's ADR gives for the address, or a
   reinstall.
-* MeshCentral's identity, the EasyPatch agent and the engine's statement
-  key are unchanged (Context).
+* A rotation changes neither MeshCentral's identity, nor the EasyPatch
+  agent, nor the engine's statement key (Context). After a leak, the
+  EasyPatch agent takes a bundle of authorities and reports them, and the
+  statement key is replaced (After a leaked backup set).
 
 ## Options considered
 * **Every instruction signed with both keys during the overlap.** It needs
@@ -925,41 +1135,60 @@ them; 10,000 records per rotation would bury the ones above. Forwarding
 * **An offline recovery key** (Options considered): worth an ADR of its
   own?
 * **A signed hand-over of EasyRMM's own authority** for `internal`-mode
-  deployments, the same two statements for `ca.pem`, instead of replacing
-  it through policy tools or reinstalling after a leaked backup set: worth
-  an ADR of its own?
-* **The patching engine's part of a leaked backup set**: its database and
-  keys hold the EasyPatch agents' credentials and the notification
-  credentials (backup-restore.md). Should F0's incident page cover them,
-  or an engine ADR?
+  deployments: worth an ADR of its own? With the two phases above, it no
+  longer decides whether agents are cut off; the bundle of both
+  authorities and the agents' reports already prevent that. What it would
+  change is how the two bundles reach the agents: through the heartbeat,
+  signed with the rotated job key, instead of by hand through policy tools
+  or a terminal, twice per device. ADR-0055's trust instruction (5b1),
+  which adds an authority to an agent's trust once a chain verifies, is
+  the likely base for the first bundle; the second, which removes the old
+  authority, and the EasyPatch agent's own setting, which the EasyRMM
+  agent would write, are what such an ADR adds.
 
 ## Testing
 * **Unit** (`internal/agentproto`, `agent`): the statements signed and
   verified; each refusal (a signer not trusted, another device, expired, a
   generation not above, more than 5 minutes ahead, a fifth key, a
   cut-over by a key that is not the newest, unknown fields); a hand-over
-  and a cut-over received twice; the declared transition, from a
-  hand-over until 10 minutes after the cut-over, and across a restart;
+  and a cut-over received twice; the declared transition, from the
+  cut-over until 10 minutes after, none after a hand-over alone, and
+  across a restart; three keys after a hand-over to a device that also
+  trusts a key the server never held, and the cut-over that leaves one;
   the statements applied before the instructions and a settings document
   in the same answer; each verifier with two keys; the trust
   store's writes, `jobKey` kept as the oldest, ignored on reading when
   `jobKeys` exists, and a generation learnt from `jobKeyGeneration`; the
   report sent only by ADR-0009's rule (never in a process's first
-  heartbeat, never after an answer of level 1); a job signed by a dropped
-  key left for redelivery, one by a key never trusted failed; the
-  instruction log written, bounded, sent only when the answer lists it,
-  and dropped once acknowledged; `trust-key` (refusing a lower generation,
-  `--force`) and `status`. The agent tests run on CI's Windows runner too
-  (`backend-tests.yml`, *Agent tests on Windows*), `trust-key`'s service
-  restart included.
+  heartbeat, never after an answer of level 1), and the authorities in
+  `ca.pem` by the same rule; a job signed by a dropped key left for
+  redelivery twice and reported failed at the third, one by a key never
+  trusted failed at once; the instruction log written, bounded, sent with
+  its acknowledged sequence only when the answer lists it, and dropped
+  once acknowledged; `trust-key` (refusing a lower generation, `--force`)
+  and `status`. The EasyPatch agent (`EasyPatch.Agent.Tests`): a bundle of
+  two authorities accepted, a certificate from either verifies, and their
+  fingerprints in the check-in. The agent tests run on CI's Windows runner
+  too (`backend-tests.yml`, *Agent tests on Windows*), `trust-key`'s
+  service restart included.
 * **Integration** (PostgreSQL, with the race detector):
   * the move from `settings`: the same seed and public key, sealed under
     the new additional data, the tombstone written; sealed again after the
     encryption key changes;
   * **mixed versions**: the server of the last release before this ADR,
-    by its tag, refuses to start against the migrated database; a rotation
-    is refused while a connection named plain `easyrmm-server` is open or
-    an older recorded instance was seen;
+    by its tag, refuses to start against the migrated database; starting
+    and finishing a rotation are refused while a connection named plain
+    `easyrmm-server` is open or an older recorded instance was seen;
+  * **the signing key's precedence**: a cut-over sent, then a heartbeat
+    with no report from a changed build, signed with the cut-over key;
+  * **a lost key**: a device moved to a key the restored ring never held,
+    beside one it holds, gets the next rotation's hand-over at once, signed
+    with the held key, and its cut-over; one whose unknown key is beyond
+    the bound needs re-pinning;
+  * **the lock**: a rotation started while a hold appears, across the
+    moment the updater reads the ring: either committed before the read or
+    refused inside the lock; each change to the ring and each host command
+    refused while held or while an upgrade is under way;
   * the key per device from its reports, the newer of the request's and
     the stored one; **the races**: a cut-over sent in a heartbeat, then a
     MeshAgent download without a report, signed with the new key; a poll
@@ -981,10 +1210,25 @@ them; 10,000 records per rotation would bury the ones above. Forwarding
     and audited once per device and key, and cleared; reloads limited; the
     report written only when it changes; a seed kept while a device, or a
     removed device, needs it, and deleted after; removed devices signed by
-    their report; never-issued instruction IDs flagged; instructions
+    their report; instructions
     refused for a device that needs re-pinning; `replace-lost` refused
     when `.env` does not match, the seed kept, and `recover`; the API's
-    permissions, step-up and audit records; nothing while held.
+    permissions, step-up and audit records; nothing while held;
+  * **issued instructions**, for each kind: a job run; an agent update
+    whose device comes back on the new build, whose first heartbeat
+    carries no log and deletes the update's row, and whose second brings
+    the entry, not flagged; an uninstall, after the removal is cancelled
+    and after the device is deleted; an EasyPatch install, after patching
+    is stopped and resumed; a MeshAgent download; a hand-over and a
+    cut-over. Each flagged when its ID, device or key does not match; an
+    entry older than 90 days, or dated before the last restore, *not
+    checked*; a restore learnt from `incident restored`, from the
+    updater's status, and from a heartbeat whose acknowledged sequence is
+    ahead, withdrawing the flags raised since the start;
+  * **the authority's replacement**: `begin` keeps the old certificate
+    served and writes a bundle of both; agents' reports counted; `switch`
+    refused while one reports the old authority alone, and with
+    `--strand`;
 * **Console**: the page, its dialogs and the device states, in the
   console's checks.
 * **The bundle test, with real agents, every machine on the host's
@@ -1034,13 +1278,25 @@ them; 10,000 records per rotation would bury the ones above. Forwarding
     unknown), is moved back to that server's build, and runs a script.
     Then an upgrade again, a rotation finished with `--now`, and **Roll
     back** refused with nothing stopped; a backup without a generation
-    refused the same way; `--strand-agents` rolling back anyway.
+    refused the same way, unless the floor is generation 1, which rolls
+    back (the release that brings the recording updater); refused while
+    another instance, not held, is recorded; `--strand-agents` rolling
+    back anyway.
+  * **A rollback during an overlap, then a new rotation**: a planned
+    rotation started, the agent moved to both keys, **Roll back** (allowed:
+    nothing was cut over); the restored server shows the newer key as
+    unknown; a new planned rotation's hand-over reaches the agent at once,
+    signed with the old key, its finish cuts over, and the agent trusts
+    only the new key and runs a script.
   * The backup-restore drill (`scripts/drill/backup-restore.sh`, whose
     agent runs on the host's network) takes one backup before a rotation
     and one during its overlap, finishes the rotation, restores the second
     (the agent runs a script, nothing done), then the first (the device
     needs re-pinning, and a job is refused with the command), then runs
-    `trust-key`. Recorded in [drills.md](../../development/drills.md).
+    `trust-key`. In `internal` mode it then replaces the authority:
+    `begin`, the bundle copied to the agent and its service restarted, the
+    agent's report counted, `switch`, a script run, and the new authority
+    alone copied. Recorded in [drills.md](../../development/drills.md).
 * **Windows**: the agent's unit tests run on CI's Windows runner; a
   rotation end to end on Windows is marked unverified until the plan's
   Windows end-to-end harness exists, and is checked meanwhile on the
@@ -1052,33 +1308,47 @@ them; 10,000 records per rotation would bury the ones above. Forwarding
   touches keep theirs.
 * **database.md** gains, with each migration: `job_keys`, the report and
   cut-over columns on `devices` and `retired_devices`, `server_instances`,
-  the record of signed downloads, and the tombstone in `settings`.
+  `issued_instructions`, the last restore, the authorities each device
+  reports, and the tombstone in `settings`.
 
 ## Slices
+Two of them depend on work not merged yet. Slice 1's rollback test needs
+the host updater, being built on `feat/updater` (ADR-0052), and slice 2
+needs that updater released with the record and the refusal (above).
+Slice 2's API needs step-up authentication, which ADR-0055's slice 5b2
+builds, so slice 2 does not merge before 5b2 either.
+
 1. **Agents that can follow, the ring, and the tripwires.** The statements
    and the report in `agentproto`; the agent's trust store, the report by
-   ADR-0009's rule, the worker's redelivery, the instruction log,
+   ADR-0009's rule (the authorities in `ca.pem` with it), the worker's
+   redelivery and its failure at the third, the instruction log,
    `trust-key` and `status`; the ring, the move from `settings` with its
-   tombstone, `server_instances`, the key chosen per device (one key so
-   far), unknown keys and never-issued instructions flagged. No way to
-   rotate yet. Verified on its own: the bundle test's step 1 with machine
-   3 and step 6; this agent against the last release's server; ADR-0052's
-   upgrade and rollback test across the move. It can merge before the rest
-   of the plan's step 9: the sooner such agents are in the field, the fewer
-   devices a first rotation finds unable to follow.
+   tombstone, `server_instances`, `issued_instructions` and the last
+   restore, the key chosen per device (one key so far), unknown keys and
+   never-issued instructions flagged. No way to rotate yet. Verified on
+   its own: the bundle test's step 1 with machine 3 and step 6; this agent
+   against the last release's server; ADR-0052's upgrade and rollback test
+   across the move, once the updater is merged. It can merge before the
+   rest of the plan's step 9: the sooner such agents are in the field, the
+   fewer devices a first rotation finds unable to follow.
 2. **Rotation**: the statements offered by the rules above; start,
    finish, forget, replace-lost and recover through the API and the host,
-   with their audit records; the refusal while an older server is seen;
-   the floor's change made an event every server sees, on which ADR-0059's
-   channel, when it is built, sends `closing` (`refresh`), tested there;
-   the bundle test. Not merged before a released updater records the
-   generation and refuses (above).
+   each under the ring's lock, with their audit records; the refusals
+   while an older server is seen, while held and while an upgrade is under
+   way; the floor's change made an event every server sees, on which
+   ADR-0059's channel, when it is built, sends `closing` (`refresh`),
+   tested there; the bundle test. Not merged before a released updater
+   records the generation and refuses (above); its API needs ADR-0055's
+   step-up (5b2).
 3. **Console**: the page, the devices' states, the re-pin helper; the
    bundle test through the console.
-4. **Restore and incidents**: the `incident` host commands, the drill, and
-   the guide: a page on rotating and one on incidents with the sequence,
-   with backup-restore.md, docker.md's encryption key steps and the threat
-   model updated.
+4. **Restore and incidents**: the `incident` host commands (the
+   authority's two phases among them, with the EasyPatch agent taking a
+   bundle and reporting it), the drill, and the guide: a page on rotating
+   and one on incidents with the sequence and the patching engine's part,
+   with backup-restore.md (its restore procedure ending with `incident
+   restored`), docker.md's encryption key steps and the threat model
+   updated.
 
 ## Consequences
 * The job key can be rotated with no downtime, and with nothing to do for
@@ -1091,14 +1361,20 @@ them; 10,000 records per rotation would bury the ones above. Forwarding
   TLS identities, MeshCentral's keys, the secrets that stay readable, and
   a review for what was added.
 * A key handed to a device that this server never issued, and an
-  instruction it never issued, show from the first slice.
+  instruction it never issued, show from the first slice. The server keeps
+  a record of everything it signs for 90 days to tell them apart.
+* Replacing EasyRMM's own authority after a leak no longer cuts agents
+  off, but takes two rounds through the operator's own tools until a
+  signed hand-over of it exists.
 * ADR-0017's "must re-enroll its agents" after a lost key becomes "must
   re-pin them" only for a seed lost while `.env` still opens the rest; a
   restore without `.env` still means reinstalling every agent, and builds
   from before this ADR need a reinstall or a hand edit.
 * Backups from before a rotation stop restoring a working fleet once it is
   cut over to. Finishing asks for a newer backup, and the updater refuses
-  such a rollback, reading one integer from the database to do so.
+  such a rollback, reading two integers from the database to do so. A
+  rollback that is safe for rotations is a single-host one: it is refused
+  while a server on another host shares the database.
 * Old keys stay sealed in the database while any device may need them,
   and a lost key's seed stays until it is recovered.
 * A server from before this ADR cannot start against a migrated database,

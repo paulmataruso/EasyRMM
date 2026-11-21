@@ -96,7 +96,8 @@ Every signed instruction (jobs, updates, uninstalls, and since the fixes
 above MeshAgent's downloads) rests on one job key that cannot be rotated
 (ADR-0017, Consequences), and the new kinds of instruction this plan adds
 (settings, a new address) would rest on it too. Proposed in
-[ADR-0057](adr/0057-rotating-the-job-key.md), revised after its review. In
+[ADR-0057](adr/0057-rotating-the-job-key.md), revised after its review and
+a second check. In
 short: the keys become a ring with generations that only increase; agents
 report the keys they trust in their signed heartbeats and job polls (by
 ADR-0009's rule), and the server signs each device's instructions with the
@@ -109,14 +110,19 @@ offline across the overlap follow when they come back, since the server
 keeps an old key while any device needs it. After a compromise a device
 counts as moved only on its own signed report, which proves only an agent
 nobody tampered with; devices that cannot be moved are re-pinned with
-`easyrmm-agent trust-key`, a command with no secret, or reinstalled. A
-leaked backup set also gives the TLS identities and MeshCentral's keys,
-which the incident page replaces. The updater refuses a rollback whose
-backup lacks a key agents were cut over to; that ships with the second
-slice or before. Tested with real agents on the host's network through a
-rotation, one offline across it, one from before the change, and restores
-across it. The first slice (agents that can follow, and flags for keys and
-instructions the server never issued) can ship before the rest of step 9.
+`easyrmm-agent trust-key`, a command with no secret, or reinstalled; a
+device left on a key a restore lost moves with the next rotation. A
+leaked backup set also gives the TLS identities, MeshCentral's keys and
+the patching engine's notification credentials, which the incident page
+replaces; EasyRMM's own authority is replaced in two phases, both
+authorities first, so no agent is cut off. The updater refuses a rollback
+whose backup lacks a key agents were cut over to, and one while a server
+on another host shares the database; that ships with the second slice or
+before, and the second slice also waits for ADR-0055's step-up. Tested
+with real agents on the host's network through a rotation, one offline
+across it, one from before the change, and restores across it. The first
+slice (agents that can follow, and flags for keys and instructions the
+server never issued) can ship before the rest of step 9.
 
 ### F1. Signed settings that reach the agent
 Proposed in [ADR-0058](adr/0058-signed-settings-that-reach-the-agent.md),
@@ -654,6 +660,7 @@ code.
   key is moved to the newest cut-over key before anything else, the
   updater refuses a rollback across a cut-over, a server from before the
   ring can neither start on its database nor be running during a
+  rotation, a device left on a key a restore lost moves with the next
   rotation, and `trust-key` or a reinstall covers the devices that cannot
   follow.
 * **A stolen administrator session redirects agents**: moving names needs
