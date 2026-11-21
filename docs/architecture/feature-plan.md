@@ -222,7 +222,7 @@ they could stop it.
 
 ### 3. Collecting logs
 Proposed in [ADR-0060](adr/0060-collecting-logs.md), revised after its
-independent review, not accepted yet. In short:
+independent review and two checks, not accepted yet. In short:
 
 * **How jobs start changes first** (slice 0, amending ADR-0017): job
   arguments leave the command line, so that process auditing does not
@@ -252,13 +252,15 @@ independent review, not accepted yet. In short:
   log sizes (Security at the STIGs' 1,024,000 KB); and auditd rules,
   generated per computer, and a persistent journal on Linux. What Group
   Policy, MDM or another owner holds is left *managed elsewhere*, read
-  with Windows hardening's reader; domain controllers only when chosen;
+  with Windows hardening's reader, and a value whose owner that reader
+  cannot tell is only reported; domain controllers only when chosen;
   undone on uninstall. On Linux each feature keeps its own rules file and
   keys, and auditd is removed by the last one out.
 * **The store** is a PostgreSQL instance of its own in a directory beside
   the data root, which the updater never copies, moves or deletes, with
-  its passwords set from `.env` at each start; nothing depends on it, so a
-  broken store degrades logs and never stops EasyRMM. It holds compressed blocks
+  its passwords set from `.env` at each start; nothing depends on it and
+  the server's readiness never does, so a broken store degrades logs and
+  never stops or rolls back EasyRMM. It holds compressed blocks
   of events with hourly facts (B-tree indexes, which row-level security
   can use), partitioned by retention class and day, week or month. Quotas
   per kind of computer, a storage share per organization, a size cap and
@@ -272,7 +274,8 @@ independent review, not accepted yet. In short:
   Administrators (`log.view_sensitive`, enforced in results, text search
   and exports); every search audited.
 * **Forwarding**: one list of syslog destinations for the audit log and
-  device logs, positions kept with the logs, gaps counted.
+  device logs, positions kept with the logs, walked up to the oldest
+  running transaction so that none is skipped, gaps counted.
   **Detections**: alert policies of a new kind, `log`, carrying no event
   content, sent through F2; EasyRMM's own changes open none.
 

@@ -1,11 +1,12 @@
 # ADR-0060: Collecting logs
 
-* Status: Proposed (2026-11-21). Not implemented. Revised twice the same
-  day after independent reviews.
+* Status: Proposed (2026-11-21). Not implemented. Revised three times the
+  same day after an independent review and two checks.
 * Builds on: [ADR-0002](0002-postgresql-rls-tenant-isolation.md)
   (row-level security), [ADR-0009](0009-agent-protocol.md) (the agent
   protocol, with its section "Evolving the protocol" from pull request
-  #52, not merged yet), [ADR-0017](0017-scripts-and-jobs.md) (jobs),
+  #52, merged on 2026-11-21 after this branch began),
+  [ADR-0017](0017-scripts-and-jobs.md) (jobs),
   [ADR-0019](0019-monitoring-and-alerts.md) (alerts),
   [ADR-0023](0023-audit-forwarding.md) (audit forwarding),
   [ADR-0024](0024-enrollment-approval.md) (approval tokens),
@@ -64,7 +65,8 @@ What exists, and what it means here:
   device cannot use up its allowance
   (`server/internal/httpapi/agentapi/agentapi.go`). Answers the agent acts
   on can be signed back to the request (`signDownload`).
-* **Evolving the protocol** (ADR-0009, pull request #52, not merged yet):
+* **Evolving the protocol** (ADR-0009, pull request #52, merged on
+  2026-11-21 after this branch began):
   the server ignores request fields it does not know (protocol level 2);
   heartbeat answers carry `protocol: 2`; agents send fields added after
   level 2 only to servers of that level or higher; features the agent's
@@ -156,8 +158,17 @@ What exists, and what it means here:
   makes its `audit` module report only and leaves Windows audit policy to
   this feature; as decided in its review, it compares against this ADR's
   audit table and builds, in its slice W1, the one reader of who owns a
-  setting (resultant set of policy, Group Policy Preferences, the MDM
-  Bridge in `root\cimv2\mdm\dmmap`, `gpresult /x`).
+  setting. As written at its revision of 2026-11-21 (commit `27b05a0`),
+  that reader reads Group Policy's resultant set of policy and `gpresult
+  /x`, the MDM Bridge in `root\cimv2\mdm\dmmap`, OSConfig, and Defender's
+  Tamper Protection, and gives check only where it cannot read the owner:
+  resultant set of policy logging turned off (`RSoPLogging` 0), Group
+  Policy Preferences and MDM until W1 proves how to read them, the
+  Configuration Manager client, PowerShell DSC in `ApplyAndAutoCorrect`,
+  and Azure machine configuration. Its check (M6) has the reader give a
+  result for each value: an owner and its policy, none, or *cannot tell*
+  with the reason; that definition is ADR-0054's to write, and this ADR
+  follows it.
 * **Test harnesses.** CI's Windows job runs the agent's Windows tests for
   real on `windows-latest`, as an administrator
   (`.github/workflows/backend-tests.yml`, "Agent tests on Windows"); the
@@ -349,7 +360,21 @@ sensitive, never fewer:
 
     The collector can so read what any unprivileged user can, and the
     journal, and nothing else; what it writes goes only to its spool,
-    which the agent uploads to EasyRMM's own server.
+    which the agent uploads to EasyRMM's own server. Two limits remain:
+    * **The journal group reads every unit's and every user's journal**,
+      including secrets other services and users log there (a token in a
+      unit's output, a password in a failed command). The collector's
+      filters keep only what its sources select, but a compromised
+      collector could put anything it reads into its spool, and so into
+      the store, where holders of `log.view` would see it; redaction
+      catches only EasyRMM's own tokens.
+    * **Name lookups**: `AF_UNIX` is needed for the agent's socket, and
+      over it a lookup through systemd-resolved (its socket in
+      `/run/systemd/resolve`) or the system bus (`/run/dbus`) sends a name
+      of the collector's choosing to the network, so a compromised
+      collector could leak data in DNS queries. Slice 1 adds those two
+      directories to `InaccessiblePaths=` and keeps that if `journalctl`
+      still works without them; until that is verified, this is a limit.
   * **Windows**: a service of its own, `easyrmm-collect`, which the agent
     installs and removes with its own, running as its virtual account
     (`NT SERVICE\easyrmm-collect`, whose SID derives from the service's
@@ -362,9 +387,12 @@ sensitive, never fewer:
       /ca:`), the list before recorded for undo, on every computer. Where
       Group Policy's "Configure log access" sets a channel's list, owners
       win: the channel is *managed elsewhere*, not collected, and the
-      device's tab says to add the collector's SID to that policy.
-      Whether the Security log's list can be changed this way is checked
-      on the runner first (slice 3).
+      device's tab says to add the collector's SID to that policy. Where
+      the reader *cannot tell* who owns the list (Owners win, below), it
+      is not changed either: the channel is not collected, and the tab
+      gives the reason and the same advice. Whether the Security log's
+      list can be changed this way is checked on the runner first (slice
+      3).
     * Its spool, `%ProgramData%\EasyRMM\Collect`, is made with access for
       SYSTEM, Administrators and that account only; the agent's state is
       not readable by it (`protectedDACL`).
@@ -375,7 +403,10 @@ sensitive, never fewer:
       often turn it off), since both use the platform; where the filter
       cannot be added, the device's tab says so, and the limit is that a
       compromised collector could then reach the network as its own
-      account, which holds no secret of EasyRMM's.
+      account, which holds no secret of EasyRMM's. Name lookups go through
+      the DNS Client service (Dnscache), which sends the query as its own
+      account, so the filter does not stop them: a compromised collector
+      could still leak data in DNS queries, which is a limit too.
     * It puts itself in a job object at start, with a hard CPU rate cap of
       a fifth of one processor, a memory limit of 256 MiB and
       kill-on-close, and enters background processing mode (lower I/O and
@@ -498,9 +529,9 @@ sensitive, never fewer:
     session ID, which the kernel does not reuse while it runs. Without
     *Configure logging* (or without auditd, or where the kernel refuses
     the login UID, as in a container) Linux jobs are not audited, and the
-    device's tab says so. A job that runs as root could still
-    change its own login UID; that is reported as the job's last event,
-    not prevented.
+    device's tab says so. Jobs still run as root; only their login UID
+    changes. A job could still change its own login UID; that is
+    reported as the job's last event, not prevented.
 * **Bandwidth**: uploads are paced to `logs.bandwidth` (128 KiB/s by
   default, set per site for slow links, at least 8 KiB/s), with jitter.
 
@@ -546,7 +577,14 @@ batch's and the status's fields follow that ADR's rules too.
 * **Exactly once**: the store keeps, per device and stream, the
   generation, the highest batch number stored and that batch's hash, and
   stores a batch, its blocks and the device's usage in one transaction
-  that takes that row's lock first. The same number with the same hash is
+  that takes that row's lock first. The blocks and facts are prepared
+  (compressed, hashed) before it begins, and their receipt sequence
+  numbers are drawn last, just before the commit (decided in review), so
+  that the transaction is short. It sets `SET LOCAL
+  transaction_timeout = '30s'` (which ends the connection, and the pool
+  drops it), only so that a stuck transaction cannot hold the device's
+  lock and the forwarding horizon (Forwarding) for long; nothing depends
+  on it for correctness. The same number with the same hash is
   a retry, answered as stored without storing it again. Anything else at
   or below the highest number (a computer restored from a snapshot, whose
   spool sends numbers already used with other contents) is answered
@@ -556,8 +594,10 @@ batch's and the status's fields follow that ADR's rules too.
 * **Answers**, each signed back to the request as `signDownload` does, and
   acted on only when the signature is valid. Anything unsigned (a proxy's
   error, the updater's hold) is retried with backoff (at most an hour
-  apart) and reported in the status, and never deletes or sets aside a
-  batch; only `413` and `404` are also understood unsigned (below):
+  apart) and reported in the status, and never deletes a batch; only
+  `413`, `408` and `404` are also understood unsigned (below), and only
+  five `413`s at the floor set a batch aside. A proxy in front of the
+  server is trusted that far: it could already drop every upload.
   * `200` with how much more the device may send today per stream
     (`budget`, bytes, and when it renews).
   * `429` with `Retry-After` when a quota is used up or ingest is stopped
@@ -568,11 +608,35 @@ batch's and the status's fields follow that ADR's rules too.
   * `403 logs_off` when collection is off for the device: the agent
     pauses and keeps its spool until its signed settings say otherwise.
   * `409 resync` (above).
-  * `413`, signed or not (a proxy in front of the server may allow less
-    than 2 MiB; nginx's default is 1 MiB): nothing was stored, so the
-    agent unseals the batch, seals its events again as two batches under
-    the same and the next number, and halves its batch size (down to 64
-    KiB), growing it back slowly after uploads succeed.
+  * `413` for batch N, signed or not (a proxy in front of the server may
+    allow less than 2 MiB; nginx's default is 1 MiB): nothing was stored,
+    so the agent unseals N and every later batch of that stream that is
+    sealed but not stored, halves the stream's batch size, and seals
+    again from N at the new size, splitting closed batches as it needs
+    (decided in review). None of those later batches was sent, since a
+    stream's batches go in order, one at a time, and their events stay in
+    the spool until the server stores them. Only numbers never stored are
+    used again; if N had in fact been stored (its answer lost, then a
+    proxy's limit lowered before the retry), the resealed N is answered
+    `409 resync` (above) and nothing is lost.
+    * The size has a floor of 64 KiB and grows back slowly after uploads
+      succeed (by a quarter after each 20 stored in a row), staying below
+      any size refused in the last 24 hours.
+    * A batch at the floor, or one holding a single event, that is
+      refused with `413` five times is set aside as below, with the reason
+      `too_large`, and keeps its number; the stream goes on from the next
+      number, so a limit no batch can meet never stops it.
+  * **A body cut off** (decided in review): a `408 body_timeout` (unsigned,
+    since the body was never verified, as `readBody` answers a body past
+    its deadline today; the 30-second and the 4 KiB/s rules both answer
+    it), or the agent's own send not finishing within 30 seconds, means
+    the link is slower than `logs.bandwidth` for now. The agent unseals,
+    halves and seals again as for a `413`, so that a link slower than its
+    setting still uploads (64 KiB at the 4 KiB/s minimum takes 16
+    seconds). At the floor the batch is retried with backoff and reported
+    in the status, never set aside: a slow link can recover, the events
+    wait in the spool and the sources pause. An unsigned `408` can only
+    make batches smaller.
   * `404` (a server without this endpoint, such as one rolled back to an
     earlier release): not supported; the agent pauses, keeps its spool and
     tries again when a heartbeat answer lists `logs`.
@@ -671,20 +735,38 @@ blocks to a certificate, was considered and not chosen: the collector
 would forward text only the server could read, other local tools would
 lose it, and its keys would be one more thing to manage.
 
-**Owners win**, with ADR-0054's words and reader. A setting an owner holds
-(Group Policy, from the domain or the local Group Policy object, Group
-Policy Preferences, MDM, OSConfig) is never written: it is *in place* if
-the owner's value is as strict as the table's, otherwise *managed
-elsewhere*, naming the owner and its policy. Audit subcategories that
+**Owners win**, with ADR-0054's words and reader. For each value the
+reader gives one of three results, as ADR-0054's check (M6) has it
+define them: an owner and its policy, none, or *cannot tell* with the
+reason. *Configure logging* acts on each:
+
+* **An owner**: the value is never written. It is *in place* if the
+  owner's value is as strict as the table's, otherwise *managed
+  elsewhere*, naming the owner and its policy, with ADR-0054's words:
+  *set by Group Policy* (from the domain or the local Group Policy
+  object, with the policy's name), *set by MDM*, *set by OSConfig*, *set
+  by Defender for Endpoint* and *protected by Tamper Protection*.
+* **None**: the value is raised and its value before recorded for undo,
+  as hardening does.
+* ***Cannot tell***: **check only**, as hardening does (decided in
+  ADR-0054's check): the value is reported against the table, with the
+  reason, and never written. That is the result wherever an owner could
+  hold the value and the reader cannot read it: resultant set of policy
+  logging turned off; Group Policy Preferences and MDM until W1 proves
+  their reading; and Configuration Manager's remediating baselines,
+  PowerShell DSC and Azure machine configuration until readers for them
+  exist. Each of these can own audit policy and log sizes (the check
+  names Azure's Windows baseline and the `AuditPolicyDsc` module, which
+  both set audit policy).
+
+Audit subcategories that
 Group Policy sets come from its own extension (Advanced Audit Policy
 Configuration, from `audit.csv` files), not from registry policy, so
 ADR-0054's reader takes them from `gpresult /x`'s audit settings with the
 winning policy (W1 confirms this against a domain policy); this ADR's
-tests and W1's use the same domain policies. A
-value no owner holds is raised and its value before recorded, as
-hardening does. A value set back twice after EasyRMM set it has an owner
-the reader cannot see: it becomes *managed elsewhere* (owner unknown) and
-is left from then on.
+tests and W1's use the same domain policies. A value set back twice
+after EasyRMM set it has an owner the reader cannot see: it becomes
+*managed elsewhere* (owner unknown) and is left from then on.
 
 **Domain controllers** are left alone unless the operator chooses them
 (`logs.configure.domainControllers`): their audit policy is the domain's.
@@ -710,13 +792,17 @@ this file would also stop every file after it (such as a
 before it loads (`augenrules --check` only says whether `audit.rules` is
 older than the files), so the safety is the loading itself: the file is
 generated from fixed lines for what the computer has, loaded with
-`augenrules --load`, and every rule in it confirmed loaded (`auditctl
--l`); if any is missing, the file is removed and the rules loaded again,
-so that the computer is back to its previous rules, and the change is
-reported failed. Where the loaded rules
-are already immutable (`enabled 2`), the file is written, loads at the
-next restart, and that is reported; undo cannot unload it before one (as
-ADR-0051).
+`augenrules --load`, and every rule in it confirmed loaded. `auditctl
+-l` prints the rules as the kernel holds them, normalised (syscalls and
+`-F` fields in its own order, a watch possibly as a `-F path=` or `-F
+dir=` rule), not as written, so the check compares by key and count: the
+number of loaded rules carrying each `easyrmm-logs-*` key must equal the
+number of the file's lines carrying it. If any falls short, the file is
+removed and the rules loaded again, so that the computer is back to its
+previous rules, and the change is reported failed. Where the loaded
+rules are already immutable (`enabled 2`), the file is written, loads at
+the next restart, and that is reported; undo cannot unload it before one
+(as ADR-0051).
 
 **Who owns what**, so that hardening and this feature never fight:
 
@@ -773,9 +859,10 @@ deleted by hand leaves logging configured, which is harmless.
     `${EASYRMM_LOGS_ROOT:-${EASYRMM_DATA_ROOT:-/srv/easyrmm}-logs}`,
     never a fixed `/srv/easyrmm-logs`;
   * it holds the cluster (`postgres/`, owner 70:70, mode 700, as the main
-    one's), the local socket's directory (`run/`, owner 70:70, mode 700)
-    and a ballast file (below); run without root, `setup.sh` adds the
-    first two to the directories it asks the operator to create;
+    one's), the local socket's directory (`run/`, owner 70:70, mode 700),
+    `logs-db-init`'s status (`status/`, owner 70:70, mode 755) and a
+    ballast file (below); run without root, `setup.sh` adds the three
+    directories to those it asks the operator to create;
   * the updater never copies, moves or deletes it (amending ADR-0052,
     below), so a rollback cannot take it away and a later upgrade cannot
     delete it.
@@ -788,37 +875,46 @@ deleted by hand leaves logging configured, which is harmless.
   partitions, `easyrmm_logs_app` for the server). Its secrets are not
   required by Compose (`:-`, as the engine's are), so that missing ones
   never stop the deployment.
-  * **Passwords follow `.env`.** `logs-db-init`, a one-shot service like
-    `easypatch-db-init` and running as `70:70` like it, connects over the
+  * **The store's identity is `EASYRMM_LOGS_STORE_ID` alone**, a random
+    ID in `.env` made by `setup.sh` and kept across a rollback with the
+    other `EASYRMM_LOGS_*` lines (below). The server writes it into an
+    empty store at first use. A store holding another ID (a reinstall that
+    found an old store, an `.env` from elsewhere) is not used, and
+    Settings → Logs says why and what to do, on the host, since the
+    server cannot reach such a store: `setup.sh --adopt-logs-store` writes
+    that store's ID, which `logs-db-init` reports, into `.env`, and the
+    next start sets its passwords; or the store's directory is moved
+    away. The server records in the audit log its first use of a store it
+    had reported as another installation's.
+  * **Passwords follow `.env`.** `logs-db-init` is a one-shot service, but
+    unlike `easypatch-db-init`, which connects over loopback with the
+    superuser's password (`PGPASSWORD`), it connects over the store's
     local socket as the `postgres` user, which peer authentication admits
-    without a password, and sets the superuser's and both roles'
-    passwords from `.env` each time the deployment starts. A `.env`
-    restored by hand, or one whose values `fill_secret` made again, so
-    leaves the store usable.
-  * **A broken store never keeps EasyRMM down.** A full or failed logs
-    disk, or missing secrets, must not stop a start, an upgrade or a
-    rollback:
+    without a password. That needs the logs root's `run/` mounted as the
+    socket directory in both `logs-postgres` and `logs-db-init`, and
+    `logs-db-init` running as uid 70, the image's `postgres`. It sets the
+    superuser's and both roles' passwords from `.env` each time the
+    deployment starts, but only in a store that is empty or holds
+    `.env`'s store ID (peer authentication would admit it to any store
+    under that root). A `.env` restored by hand, or one whose values
+    `fill_secret` made again, so leaves the store usable.
+  * **A broken store never keeps EasyRMM down** (decided in review). A
+    full or failed logs disk, a store still recovering, or missing
+    secrets, never stops a start, an upgrade or a rollback:
     * nothing depends on `logs-postgres` or `logs-db-init`: the server
       starts without them, as it does without the engine's init;
-    * `logs-db-init` waits a while for the store's socket and exits 0
-      when the store is unreachable or a secret is missing, saying so; it
-      fails only when it reaches the store and the store refuses it,
-      which means the store's files are not this deployment's;
-    * the server starts degraded when the store is unreachable (uploads
-      answered `503`, log views saying why), and its readiness check fails
-      only when the store is reachable and refuses the server's
-      passwords;
-    * the updater's held start waits (`--wait`) for every service but
-      `logs-postgres`, which it starts without waiting for (amending
-      ADR-0052); a store that refuses the server's passwords fails the
-      server's readiness, and so the held start, which rolls back.
-  * **The store belongs to one installation.** `.env` holds a random ID
-    (`EASYRMM_LOGS_STORE_ID`, made by `setup.sh` and kept across a
-    rollback with the other `EASYRMM_LOGS_*` lines, below), which the
-    server writes into an empty store at first use. A store holding
-    another ID (a reinstall that found an old store, an `.env` from
-    elsewhere) is not used, and Settings → Logs says why, until a super
-    administrator adopts it or moves it away (audited).
+    * `logs-db-init` always exits 0; it waits a while for the store's
+      socket and writes what it found (done, unreachable, a secret
+      missing, another installation's store with its ID) to
+      `status/logs-db-init.json` (mode 644), which the server reads
+      through its read-only mount of the logs root and shows in Settings
+      → Logs;
+    * the server's readiness never depends on the store: an unreachable
+      store, or one refusing the server's passwords, shows as degraded
+      logs (uploads answered `503`, log views saying why);
+    * the updater's held start, and a rollback's start, wait (`--wait`)
+      for every service but `logs-postgres` and `logs-db-init`, which they
+      start without waiting for (amending ADR-0052).
   * Not a database in the shared PostgreSQL: the updater copies and
     restores whole data directories, and a cluster cannot be restored with
     one database left out (Context); its transaction log, checkpoints,
@@ -847,10 +943,12 @@ deleted by hand leaves logging configured, which is harmless.
   dictionary). The block's column is stored `EXTERNAL`, so PostgreSQL
   does not try to compress it again. Beside it: organization, site and
   device; source and stream; first and last event time; when it was
-  received, its receipt sequence and when that number was drawn; event
-  count and size; the levels present; and the codes present with their
-  counts. Indexes (B-tree only): device and receipt time, organization
-  and receipt time, receipt sequence. Blocks are written once and never
+  received; the store's era, the ID of the transaction that wrote it
+  (`pg_current_xact_id()`, an `xid8`) and its receipt sequence (all
+  three for Forwarding); event count and size; the levels present; and
+  the codes present with their counts. Indexes (B-tree only): device and
+  receipt time, organization and receipt time, (era, transaction ID,
+  receipt sequence). Blocks are written once and never
   rewritten; merging small blocks is not built unless the load test shows
   block rows above a third of the store.
 * **Facts**, in a table of their own: for each device, hour received and
@@ -935,13 +1033,20 @@ deleted by hand leaves logging configured, which is harmless.
     updater's copy and the main database's growth: the data root's size,
     which the updater writes to its status hourly (amending ADR-0052),
     plus 20%; without the updater, twice the main database's size.
-  * **A ballast file** of 2 GiB of random data (so that a compressing
-    filesystem cannot shrink it) in the logs root, made by `setup.sh`,
-    which the guide's recovery deletes to start PostgreSQL again if the
-    disk filled anyway (by something else), before retention is lowered or
-    the oldest partitions dropped. On a copy-on-write filesystem with
-    snapshots (btrfs, ZFS) deleting it may free nothing, so it is no
-    guarantee there; `setup.sh` and the guide say so.
+  * **A ballast file, best effort** (decided in review): 2 GiB of random
+    data (so that a compressing filesystem cannot shrink it) in the logs
+    root, which the guide's recovery deletes to start PostgreSQL again if
+    the disk filled anyway (by something else), before retention is
+    lowered or the oldest partitions dropped. `setup.sh` writes it when
+    it is missing and there is room for it above the floor; when there is
+    not, or the write fails, it warns, removes what it wrote, and goes on.
+    `setup.sh --upgrade` never fails an upgrade over it: the backup the
+    updater just took may share the filesystem, and finishing the upgrade
+    matters more than the ballast. Settings → Logs shows a missing ballast
+    (seen through the read-only mount) as a warning, and the next
+    `setup.sh` run tries again. On a copy-on-write
+    filesystem with snapshots (btrfs, ZFS) deleting it may free nothing,
+    so it is no guarantee there; `setup.sh` and the guide say so.
   * `setup.sh` says how many devices the logs root's free space holds at
     30 days, and warns when that is fewer than a few hundred or when it is
     the root filesystem.
@@ -1001,9 +1106,11 @@ deleted by hand leaves logging configured, which is harmless.
   * a rollback keeps the current `.env`'s `EASYRMM_LOGS_*` lines in the
     `.env` it brings back (an older release ignores them), so that a later
     upgrade finds the same store, where it is, with the same passwords and
-    installation ID;
+    store ID;
   * its held start, and a rollback's start, wait for every service but
-    `logs-postgres`, which they start without waiting for;
+    `logs-postgres` and `logs-db-init`, which they start without waiting
+    for; neither the store nor `logs-db-init` can fail a held start, so a
+    store problem never rolls back an upgrade;
   * it writes the data root's size to its status hourly (the floor above).
 
   Logs received after the backup, forwarding positions and the store's
@@ -1013,13 +1120,16 @@ deleted by hand leaves logging configured, which is harmless.
   [backup-restore.md](../../operations/backup-restore.md):
   `pg_dump -Fd -Z0 -j 4` (a directory, uncompressed since blocks are, in
   parallel). A restore without it starts with an empty store, which the
-  server's migrations make. The backup drill runs once without it and
+  server's migrations make; a restore with it starts a new era
+  (Forwarding). The backup drill runs once without it and
   once with it. A new major version of PostgreSQL is moved to with
   `pg_upgrade --link`, by the guide, as for the main one.
-* **The server without its store**: if `logs-postgres` is down, at the
-  server's start or later, the rest of EasyRMM works; uploads are answered
-  `503`, agents pause, and the console's log views say the store is
-  unavailable.
+* **The server without its store**: if `logs-postgres` is down,
+  recovering, full or refusing the server's passwords, at the server's
+  start or later, the rest of EasyRMM works and the server stays ready;
+  uploads are answered `503`, agents pause, and the console's log views
+  say the store is unavailable and why, with `logs-db-init`'s last
+  status.
 
 ### Searching and viewing
 * **Logs** (a section of the console) and a device's **Logs** tab: filters
@@ -1096,26 +1206,69 @@ deleted by hand leaves logging configured, which is harmless.
 * **The audit log** goes as ADR-0023 has it, per destination, its
   position kept beside the destination in the main database, with the
   audit log. Audit retention waits for every destination carrying it.
-* **Device logs**: each destination's position (receipt sequence) lives in
-  the store, beside the logs, so that the updater's rollback does not move
-  it back. A forwarder per destination, under an advisory lock in the
-  store, walks blocks in sequence order from its position and stops at
-  the first block whose number was drawn less than 10 seconds ago. With
-  16 ingest transactions at once, one that began earlier can draw a
-  higher number, so the walk never passes a block it has not reached in
-  order; and since ingest transactions run with PostgreSQL's
-  `transaction_timeout` of 5 seconds, a number missing before a passed
-  block belonged to a transaction that began more than 10 seconds ago and
-  ended without committing: none is skipped. It sends their events in
-  order over a kept connection,
-  up to 1,000 a write, and moves the position at block ends: at least
-  once, never out of order. A destination that was down catches up from
-  its position; one behind the oldest kept block jumps to it, and the
-  events it missed are counted as a gap, shown, and alerted. A deleted
-  destination's position is kept for 7 days, so that one a rollback
-  brings back continues where it stopped; a destination without a
-  position (made since the backup's restore, or after those 7 days)
-  starts at the newest block and says from when.
+* **Device logs**: each destination's position (the era, transaction ID
+  and receipt sequence of the last block sent) lives in the store, beside
+  the logs, so that the updater's rollback does not move it back. A
+  forwarder per destination, under an advisory lock in the store, walks
+  blocks in (era, transaction ID, receipt sequence) order from its
+  position, **up to an exact horizon** (decided in review): the oldest
+  transaction still running, `pg_snapshot_xmin(pg_current_snapshot())`,
+  read in a transaction that has written nothing (one that has a
+  transaction ID counts itself as running).
+  * Every transaction with an ID below the horizon has committed or
+    rolled back, so the blocks below it are final: no block can appear
+    later behind a position. Ingest transactions take their ID with the
+    device's row lock (`FOR UPDATE` assigns one), and with 16 at once one
+    that took its ID earlier may commit later; its blocks are simply not
+    reached until it ends. Nothing rests on a timeout or a clock: a
+    transaction held up in its commit (a slow disk flushing the
+    transaction log) holds the horizon back until it ends, and the walk
+    waits.
+  * A device's batches are stored one at a time (one upload in flight,
+    under its row lock), so its blocks are walked in the order it sent
+    them.
+  * Read-only transactions (searches, the forwarders' own reads) take no
+    ID and never hold the horizon back; anything that keeps an ID for
+    long (a stuck ingest until its 30 seconds, maintenance's detach while
+    it waits, a background migration) delays forwarding and detections,
+    never makes them skip, and each destination shows how far behind it
+    is.
+  * `xid8` is the 64-bit transaction ID with its epoch, which does not
+    wrap around (2^64 IDs) and is compared as a number, so the order
+    holds for a partition's whole life; 32-bit wraparound does not
+    touch it.
+  * IDs start again in a new cluster: a store restored from a dump
+    (`pg_dump`, Backups) gives its new blocks lower IDs than the restored
+    ones. Hence the era, a number kept in the store: at start, before
+    taking uploads and under an advisory lock, the server compares the
+    store's current transaction ID with the highest in the current era's
+    blocks and, when it is not above it, starts a new era, so that new
+    blocks still come after every restored one. Blocks of earlier eras
+    are all final; the horizon applies to the current one. `pg_upgrade`
+    keeps the counter, so it needs no new era, and one would be harmless.
+  * Checked while writing this on PostgreSQL 18.6 (the deployment's
+    image, in a throwaway container): `SELECT … FOR UPDATE` assigns a
+    transaction ID; while a transaction that took its ID first stayed
+    open, the block a later one had committed stayed at or above the
+    horizon, and once the first committed both were below it, in ID
+    order; an open repeatable
+    read transaction that only read held no ID and did not hold the
+    horizon back; a transaction with an ID saw its own ID as the horizon;
+    a new cluster's first IDs are in the hundreds (757 there); a query on
+    (transaction ID, sequence) with a row comparison and the horizon used
+    the index; and `SET LOCAL transaction_timeout` set inside a
+    transaction ended that transaction's connection when it ran over, and
+    did not touch the next transaction.
+
+  It sends their events in order over a kept connection, up to 1,000 a
+  write, and moves the position at block ends, in a transaction of its
+  own: at least once, never out of order. A destination that was down
+  catches up from its position; one behind the oldest kept block jumps to
+  it, and the events it missed are counted as a gap, shown, and alerted.
+  A deleted destination's position is kept for 7 days, so that one a
+  rollback brings back continues where it stopped; a destination without
+  a position (made since the backup's restore, or after those 7 days)
+  starts at the horizon and says from when.
 * **The message**: RFC 5424, HOSTNAME the device's host name (a SIEM
   files the event under the computer it came from), APP-NAME `easyrmm`,
   MSGID the source, the `origin` structured data as for the audit log, and
@@ -1173,8 +1326,8 @@ deleted by hand leaves logging configured, which is harmless.
     log's start and end), setting what the reader shows Group Policy owns.
     Checked with a domain policy (Testing).
 * **How**: each minute, the evaluator walks blocks from its position as
-  the forwarder does (in sequence order, stopping at the first number
-  drawn less than 10 seconds ago), decompresses only those whose codes
+  the forwarder does (in (era, transaction ID, receipt sequence) order, up
+  to the same exact horizon), decompresses only those whose codes
   include a detection's, and tests them; counted
   detections count events by their own time within their window, so that
   a late upload counts where it happened. It opens alerts in its own
@@ -1317,8 +1470,14 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
   passed, an event crashing twice passed and counted); sealing (job
   events marked, argument values replaced, the batch fixed); the agent's
   answer to each status, signed and unsigned (an unsigned refusal never
-  setting a batch aside; a `413` resealed smaller); batch sizes from
-  bandwidth;
+  setting a batch aside); a `413` on N with N+1 and N+2 already sealed
+  (all three resealed from N at half the size, no number stored twice), a
+  second `413` on the resealed N, a resealed N that the server had stored
+  (`409 resync`, nothing lost), a batch at the floor and a single event
+  over the limit set aside after five tries with `too_large`; a `408` and
+  a send past 30 seconds halving the size like a `413`, and at the floor
+  retried, never set aside; the size growing back, never above one
+  refused that day; batch sizes from bandwidth;
   blocks and their dictionaries; golden RFC 5424 messages; CSV formula
   cells.
 * **Integration** (PostgreSQL, with the race detector and coverage
@@ -1348,9 +1507,15 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
   * the schema rules: the previous release's store tests passing on each
     new migration; a migration changing a function's parameters refused;
     a block written with a dictionary the release before reads;
-  * forwarding (the horizon with a slow ingest transaction, interleaved
-    ingest transactions drawing numbers out of order with none skipped
-    by the forwarder or the evaluator, order, a
+  * forwarding (the horizon: an ingest transaction that took its ID
+    first and commits last, held open across several walks, its blocks
+    reached once it commits and none skipped by the forwarder or the
+    evaluator; one rolled back; a stuck one ended by its 30 seconds; a
+    search open meanwhile not holding the horizon; the walk's own read
+    holding no ID; a store restored from a dump into a new cluster
+    starting a new era, its new blocks walked after the restored ones;
+    the walk's query using the (era, ID, sequence) index; order per
+    device, a
     destination that comes back and catches up, one passed by retention
     and its gap, a deleted destination restored within 7 days, one with
     no position, forward only, the audit log moved from
@@ -1381,7 +1546,12 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
     password and a 4720 from a new local user, collected; a subcategory
     set by local Group Policy left *managed elsewhere*; a channel whose
     access list local Group Policy sets, *managed elsewhere* and not
-    collected; the PowerShell logs' access list, a non-administrator's
+    collected; with resultant set of policy logging turned off, every
+    value check only (*cannot tell*, with the reason), nothing written
+    and no channel's access list changed; a Group Policy object with
+    registry preference items, and a DSC configuration in
+    `ApplyAndAutoCorrect` setting audit policy, both check only; the
+    PowerShell logs' access list, a non-administrator's
     script still logged and that user unable to read the log; undo,
     access lists included, with everything as before;
   * Sysmon downloaded from Microsoft and installed with a small
@@ -1424,9 +1594,13 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
   test's existing check, and port 15433 added to the ports it needs
   free), its logs root the data root's sibling and nothing made under
   `/srv/easyrmm` or `/srv/easyrmm-logs`; with `logs-postgres` stopped and
-  its secrets removed, the deployment still starts and EasyRMM works,
-  uploads answered `503`; a failed and
-  an accepted SSH sign-in on the Debian machine appear in its **Logs** tab
+  its secrets removed, the deployment still starts, the server's
+  readiness passes and EasyRMM works, uploads answered `503`, and
+  `logs-db-init` exits 0 with its status shown in Settings → Logs; the
+  same with the store's passwords changed behind the server's back, and
+  with a store from another run's `.env` (another store ID), which is
+  not used and is named; a failed and an accepted SSH sign-in on the
+  Debian machine appear in its **Logs** tab
   (Playwright) and reach a syslog receiver written for the test (RFC 5425
   over TLS, octet counting, recording each message) running on the host's
   network, listening on loopback as a platform destination with a
@@ -1441,9 +1615,12 @@ marked unverified in IMPLEMENTATION_STATUS until it is run.
   * a rollback during a failed upgrade, and one after a confirmed
     upgrade, the store untouched and the older server running on the
     newer schema;
-  * a held start whose store refuses the server's passwords, failing and
-    rolled back; a held start, and a rollback's start, with the logs disk
-    full or `logs-postgres` failing, completing with logs degraded.
+  * a held start, and a rollback's start, with the logs disk full,
+    `logs-postgres` failing or still recovering, a store refusing the
+    server's passwords, and a store holding another store ID, each
+    completing with the server ready, logs degraded and `logs-db-init`'s
+    status shown in Settings → Logs, and none rolled back; `logs-db-init`
+    exiting 0 in each.
 * **Load**: `tools/agentsim` uploads logs from the recorded events at each
   kind of computer's rate.
   * On CI, 500 devices for an hour at four times the sizing's rate: ingest
@@ -1475,29 +1652,101 @@ Each merges and is verified on its own, after F1 and F2.
    whose logging is already configured. The job's payload does not
    change, so an agent of the previous release still runs the new
    server's jobs.
-   * **No argument on any command line.** The arguments go into a file in
-     the run's directory, readable by SYSTEM or root only, and the run's
-     directory is removed after the run, as now:
-     * **PowerShell**: `-File wrapper.ps1`, a wrapper that builds the call
-       as text in which each token `-File` reads as a parameter name
-       (`-Name`, `-Name:`) stands as written and each value is a variable
-       (`. $script -Name $a[1] $a[2]`, with variable names no script
-       uses), so that PowerShell's own binder does what `-File` did
-       (named parameters, unique prefixes, switches, positional values)
-       while script block logging records names and variables only. The
-       script is dot-sourced, so that an `exit N` in it ends the wrapper
-       with N; the exit code in every case (an `exit N`, a normal end after
-       a native command that failed, a thrown error) is what `-File`
-       gives today, compared on the runner against `-File` itself.
-     * **cmd**: a wrapper batch file that names the script without `call`
-       (control passes to it and does not come back, so its exit code is
-       the run's), the arguments quoted on that line; without `call`,
-       carets inside quotes are left as they are. Today's refusal of `%`,
-       double quotes and line breaks stays.
-     * **sh and bash**: no wrapper. The agent puts `set -- 'value' …;`
-       (each value quoted by the agent) at the start of the script's first
-       line in the run's copy, so the job's own interpreter executes it as
-       today, with the same `$0`, line numbers and top-level `return`.
+   * **No argument on any command line.** A run without arguments starts
+     exactly as today, in every shell: it has nothing to hide. A run with
+     arguments has them in a file in the run's directory, readable by
+     SYSTEM or root only (for cmd, in its process's environment, below),
+     and the run's directory is removed after the run, as now. The
+     requirement (decided in review): the exit code equals what today's
+     start gives in every case, and parameters bind as today.
+     * **PowerShell: called with `&` in its own scope, with today's
+       `-File` kept for scripts that need it** (the reviewer's options 1
+       and 3; chosen here). The agent writes `wrapper.ps1`, started with
+       `-File` and no values: it reads the values from the file into
+       `$__easyrmm_a` and calls `& '<script>' -Name $__easyrmm_a[0]
+       $__easyrmm_a[1]`, a call the agent writes in which each token that
+       `-File` reads as a parameter name (`-Name`, `-Name:`) stands as
+       written and each value is a variable, so that PowerShell's binder
+       does what `-File` did (named parameters, unique prefixes,
+       switches, positional values), while script block logging records
+       names and variables only. Called with `&`, the script has its own
+       scope and script scope, so no variable of its leaks into the
+       wrapper; `$MyInvocation.InvocationName` is not `.`, so the common
+       `if ($MyInvocation.InvocationName -ne '.') { Main }` guard runs
+       `Main` as under `-File`; and an `exit N` in it ends the script
+       with `$LASTEXITCODE` N, not the host, which only a `-File` script
+       does. The wrapper so recovers the exit code: it sets
+       `$global:LASTEXITCODE` to 0, makes the call inside `try` and keeps
+       `$?` after it, then exits 0 when `$?` is true, and otherwise with
+       `$LASTEXITCODE` (0 when nothing set it); a terminating error that
+       escapes the script is caught and written to the error stream, and
+       the wrapper exits 1, as `-File` does.
+       * *Why not option 2* (keep `-File <script>` and pass references
+         the script never sees): `-File` gives the script each argument
+         as the text on the command line, and nothing in PowerShell turns
+         a reference into its value before the binder sees it, so the
+         script would receive the reference. Not possible.
+       * *Why not option 1 alone*: no public signal tells an `exit N`
+         from a normal end after a failing native command, since both set
+         `$LASTEXITCODE`; and `$?` also turns false when the script wrote
+         a non-terminating error. So one case cannot match: a script that
+         wrote an error, then ran a native command that failed, and ended
+         without `exit` gets that command's code where `-File` gives 0.
+         The rule leans that way on purpose: a run never reads as
+         successful after a script that wrote an error and then asked to
+         fail with `exit N`, which we expect to be the commoner script.
+       * *Expected differences*, each confirmed or struck on the Windows
+         runner (Windows PowerShell 5.1, which jobs use) against `-File`
+         itself before slice 0 merges, and the results written into this
+         ADR: the case above; `$?` after a script that ends normally after
+         a failing native command, which the rule assumes is true;
+         `$MyInvocation.InvocationName` and `.Line` (the wrapper's call,
+         not `-File`'s); `[Environment]::GetCommandLineArgs()` (the
+         wrapper's); the text of an escaping error, which the wrapper
+         writes, not the console host; the wrapper's `$__easyrmm_*`
+         variables, readable by the script through PowerShell's dynamic
+         scope, which no script is expected to use. `$PSCommandPath`,
+         `$PSScriptRoot`, `$MyInvocation.MyCommand.Path` and `#Requires`
+         are expected to be as under `-File`.
+       * *The fallback*: a script whose author needs `-File` exactly
+         turns on its setting **Arguments on the command line** (on the
+         script's record, ADR-0017; off by default; turning it on is
+         audited, and the editor says why it is off): its runs start as
+         today, with `-File` and the arguments. The computer's own logs
+         then hold the values, and sealing still replaces those of six
+         characters or more in what reaches the store.
+     * **cmd**: a wrapper batch file, written in the OEM code page with
+       CRLF line ends as `writeScript` writes the script
+       (`agent/jobs/exec_windows.go`), of one line:
+       `@set "EASYRMM_A1=" & set "EASYRMM_A2=" & "<script.cmd>"
+       "%EASYRMM_A1%" "%EASYRMM_A2%"`. The values are in the cmd
+       process's environment (`EASYRMM_A1`…, set by the agent, which
+       already keeps inherited `EASYRMM_` variables out), never on its
+       command line or in a file. cmd expands the whole line before it
+       runs it, so the script receives the values and the variables are
+       gone from its environment, as today. The line starts with `@` and
+       there is no `@echo off`, so the line is not echoed and the script
+       runs with echo on, as today. It names the script without `call`,
+       so control passes to it and does not come back, and its exit code
+       is the run's; `%0` and `%~dp0` are as today. Inside quotes, carets
+       are left as they are. Today's refusal of `%`, double quotes and
+       line breaks stays.
+     * **sh and bash**: no wrapper, so that values may hold line breaks.
+       The agent writes `args`, readable by root only, holding one line
+       `set -- 'value' …` (each value in single quotes, a quote in it
+       written `'\''`), and starts the run's copy of the script with
+       `. ./args; ` on its first line, before what was there (a `#!` line
+       included: after `; ` it is a comment, and the interpreter is named
+       on the command line anyway). The run's directory is the working
+       directory (`cmd.Dir`, `agent/jobs/exec.go`), and nothing runs
+       before that prefix to change it. A file read with `.` and no
+       arguments shares the script's positional parameters, so `set --`
+       sets them; `$0`, line numbers and a top-level `return` are as
+       today. Checked while writing this with bash 5.3.9 and dash 0.5.12:
+       three values (one with a space, one with a line break, one with a
+       quote) arriving as `$1` to `$3`, `$0` unchanged, `$LINENO` 2 on
+       line 2 in bash, and a top-level `return` doing what it does without
+       the prefix (an error in bash, the script's end in dash).
      * **python3**: a wrapper sets `sys.argv` to the script's path and the
        arguments and runs it with `runpy.run_path(script,
        run_name="__main__")`, so `sys.argv`, `__name__` and `__file__` are
@@ -1506,25 +1755,45 @@ Each merges and is verified on its own, after F1 and F2.
    * **Windows: every process in its job object.** Today the job object
      is assigned after the process starts, and a run goes on without one
      if that fails (`start`, `agent/jobs/exec_windows.go`). The job object
-     is now made first; the process is created suspended, assigned to it
-     and then resumed (or created in it with
-     `PROC_THREAD_ATTRIBUTE_JOB_LIST`); a run whose job object cannot be
-     made or assigned is refused with the reason. This changes how every
-     job starts on Windows.
+     is now made first and the process created in it, either with
+     `PROC_THREAD_ATTRIBUTE_JOB_LIST` or suspended, assigned and then
+     resumed; a run whose job object cannot be made or assigned is
+     refused with the reason. This changes how every job starts on
+     Windows. Neither way works through `os/exec`: Go's `syscall` closes
+     the new process's main thread handle at once and builds its own
+     attribute list (a parent process and inherited handles only), so the
+     agent calls `windows.CreateProcess` itself with a `StartupInfoEx`
+     (`EXTENDED_STARTUPINFO_PRESENT`), holding the job-list attribute, or
+     keeping the thread handle to resume it; the pipes, environment,
+     working directory and `CREATE_NO_WINDOW` that `os/exec` sets up today
+     are then the agent's.
    * **Linux: a login UID per run.** The agent creates the system user
      `easyrmm-jobs` at install (removed at uninstall) and starts each run
      through its launcher, which sets that login UID (The collector).
 
    *Verified*: the Windows runner: the 4688s of PowerShell and cmd jobs
-   show no argument value; named parameters, a unique prefix, switches,
-   positional values, a caret, `exit N`, a normal end after a failing
-   native command and a thrown error each give what `-File` or `cmd /C`
-   gives today; every process of a job, a short-lived one included, is in
+   show no argument value; for PowerShell, each case run under the wrapper
+   and under `-File` itself and compared (exit code, output, error
+   stream): named parameters, a unique prefix, switches, `-Name:value`,
+   positional values, unbound names reaching `$args`, `exit N` and `exit
+   0`, `exit` after a written error, a normal end, a normal end after a
+   failing native command with and without a written error, a thrown
+   error, the `InvocationName` guard, `$PSCommandPath`, `$PSScriptRoot`,
+   `#Requires`, and a script setting a variable the wrapper reads; every
+   difference written into this ADR, and a script with **Arguments on the
+   command line** starting as today; for cmd, a caret, `exit /b N`, `exit
+   N`, a normal end and `goto :eof`, the script's lines echoed as today
+   and the wrapper's not, `%0` and `%~dp0`, `EASYRMM_A1` absent from the
+   script's environment, and a value with characters outside the OEM
+   code page; every process of a job, a short-lived one included, is in
    its job object; Linux: `/proc/<pid>/cmdline` shows no value; sh, bash
-   and python3 jobs with arguments, a top-level `return` in bash, `from
-   __future__` in python3; each run's processes with `easyrmm-jobs`'s login
-   UID and a session of their own; every existing job test unchanged; an
-   agent of the previous release running the new server's jobs.
+   and python3 jobs with arguments, a value with a line break and one
+   with a quote, a script starting with `#!`, a top-level `return` in sh
+   and bash, `from __future__` in python3; each run's processes with
+   `easyrmm-jobs`'s login UID and a session of their own; a run without
+   arguments starting exactly as today; every existing job test
+   unchanged; an agent of the previous release running the new server's
+   jobs.
 1. **Measuring.** A script for EasyRMM's jobs (PowerShell and sh), added
    to the library by hand, that reads what the computer's logs hold for
    the last 7 days and reports, per source, code and audit subcategory,
@@ -1632,8 +1901,15 @@ Each merges and is verified on its own, after F1 and F2.
 * **Device logs go over TCP or TLS only**; organizations' own destinations
   are a later slice.
 * **Measuring comes first** (slice 1), before the store is built.
-* **A broken log store never stops EasyRMM**: nothing depends on it, and
-  the updater does not wait for it.
+* **A broken log store never stops EasyRMM**: nothing depends on it,
+  `logs-db-init` always exits 0 and reports a status, the server's
+  readiness never depends on the store, and the updater does not wait
+  for either, so a store problem never rolls back an upgrade.
+* **Forwarding and detections walk to an exact horizon**, the oldest
+  running transaction's ID, instead of a time margin.
+* **Owners the reader cannot tell are check only** (ADR-0054's
+  *cannot tell*): Configuring logging never writes a value whose owner it
+  cannot see.
 
 ## Consequences
 * An MSP sees sign-ins, account and group changes, processes, scripts,
@@ -1660,9 +1936,19 @@ Each merges and is verified on its own, after F1 and F2.
 * Logs survive the updater's rollback; alerts the rollback discarded are
   opened again; logs of devices and organizations the main database
   forgets stay until retention, visible to super administrators.
-* Every Windows job now starts suspended inside its job object, and every
-  Linux job runs with the login UID of `easyrmm-jobs`, which shows in
-  their audit records and in tools that read login UIDs.
+* Every Windows job now starts inside its job object, and every Linux
+  job runs with the login UID of `easyrmm-jobs`, which shows in their
+  audit records and in tools that read login UIDs. PowerShell jobs with
+  arguments run through a wrapper whose exit code differs from `-File`'s
+  in one listed case (and any more the runner finds), with a script
+  setting to start as before.
+* Where the ownership reader cannot tell who owns a value (Configuration
+  Manager clients, DSC, Azure machine configuration, resultant set of
+  policy logging turned off), Configuring logging only reports, and a
+  channel whose access list it cannot change is not collected until the
+  owner's policy grants the collector's SID.
+* Store problems never stop or roll back EasyRMM; they show as degraded
+  logs with `logs-db-init`'s status.
 * Searches over a whole fleet's month by free text run in the background;
   searches by device, user, address, process or code are quick.
 * People who can see a computer's sign-ins can see who works when;
@@ -1704,3 +1990,13 @@ written above.
     every Windows computer by default?
 11. The console's Windows install card proposing a one-day approval token
     by default?
+12. On computers where the reader *cannot tell* who owns a channel's
+    access list (Configuration Manager clients are common in larger
+    networks), the Security log is not collected until the owner's policy
+    grants the collector's SID: acceptable until W1's readers exist, as
+    ADR-0054 asks for hardening's check only?
+13. PowerShell jobs with arguments: the wrapper's exit code differs from
+    `-File`'s for a script that wrote an error, then ran a native command
+    that failed, and ended without `exit` (that command's code instead of
+    0). Acceptable, with **Arguments on the command line** as the way back
+    to today's start per script?
