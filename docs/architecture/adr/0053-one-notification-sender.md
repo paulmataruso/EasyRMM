@@ -564,11 +564,11 @@ channels now, its syslog destinations with log forwarding later.
   notifications, invitations and password resets; `ResetAvailable`
   follows it.
 * **`EASYRMM_SMTP_*` wins** (the owner's decision): when
-  `EASYRMM_SMTP_HOST` is set, the deployment's mail server is used, and the
-  console shows it read-only, says that it comes from `.env`, and still
-  sends test messages. Removing it from `.env` hands the mail server to the
-  console. One mail server is in force at a time, and the console says
-  which.
+  `EASYRMM_SMTP_HOST` is set, the deployment's mail server is used, however
+  it signs in, and the console shows it read-only, says that it comes from
+  `.env`, and still sends test messages. Removing it from `.env` hands the
+  mail server to the console. One mail server is in force at a time, and
+  the console says which.
 * **Signing in** is one of: none, a password (`PLAIN`, as now), or **a
   Microsoft 365 application** (slice 2): the tenant ID, the application
   (client) ID, and a client secret or a certificate with its private key
@@ -595,23 +595,61 @@ channels now, its syslog destinations with log forwarding later.
     and signing in with no person present takes a service account with
     domain-wide delegation that impersonates the mailbox through a JWT
     bearer grant ("Using OAuth 2.0 for Server to Server Applications"): a
-    different flow, and a broader grant. Whether to add it is an owner
-    question.
+    different flow, and a broader grant. It can be added later.
   * **A relay** that accepts the server's mail, whatever it signs in to
     beyond, remains the alternative for every provider; the guide
     documents it.
-  * `.env` keeps password sign-in only: to sign in with an application, a
-    super administrator removes `EASYRMM_SMTP_*` from `.env` and sets the
-    mail server in the console, which the read-only view explains.
-* **The engine follows at once**: until slice 7 retires its email,
+  * **In `.env` too**, because an MSP on Microsoft 365 needs mail at
+    install, before anyone can sign in to the console (invitations and
+    password resets go by mail):
+    * `EASYRMM_SMTP_AUTH=microsoft365` (`password` when a user name is set,
+      as now), `EASYRMM_SMTP_TENANT_ID` and `EASYRMM_SMTP_CLIENT_ID` in
+      plain, with `EASYRMM_SMTP_HOST`, `_PORT`, `_FROM` and `_TLS` as now;
+    * the client secret, or the certificate and its key, only in files
+      named by path: `EASYRMM_SMTP_CLIENT_SECRET_FILE`, or
+      `EASYRMM_SMTP_CLIENT_CERT_FILE` and `EASYRMM_SMTP_CLIENT_KEY_FILE`.
+      The configuration already reads `KEY_FILE` for secrets (`secret` in
+      `config.go`, the Docker secrets convention); for these the file is
+      the only form. The files live in `${EASYRMM_DATA_ROOT}/secrets/`
+      (directory 0700, files 0400, owned by the server's user, 65532),
+      mounted read-only into the server's container at
+      `/run/secrets/easyrmm`.
+    * The server refuses to start with half of it set, as it does today
+      without `EASYRMM_SMTP_FROM` (`config.go`'s checks): an ID missing,
+      both a secret and a certificate, or a file it cannot read.
+  * **`setup.sh` options**: `--smtp-host`, `--smtp-port`, `--smtp-from`,
+    `--smtp-tenant-id`, `--smtp-client-id`, and
+    `--smtp-client-secret-file`, or `--smtp-client-cert-file` with
+    `--smtp-client-key-file`, each a file on the host that `setup.sh`
+    copies into `secrets/` with the modes above, so that the secret is in
+    neither `.env` nor a command line; without a file, and on a terminal,
+    it asks for the secret without echoing it. With an existing `.env` it
+    sets only the mail settings, replacing what was there, as its
+    `set_setting` does.
+  * **Checked at install**: `setup.sh` refuses a tenant ID that is neither
+    a GUID nor a domain name (the forms Microsoft's token endpoint takes),
+    a client ID that is not a GUID, an empty or multi-line secret, and,
+    with `openssl`, a certificate or key that does not parse, a key that
+    does not match the certificate, or a certificate expired; it warns
+    within 30 days of expiry. Signing in itself needs the network and
+    the server's image: `easyrmm-server mail check`, a new command, gets a
+    token, connects, signs in with `AUTH XOAUTH2` and quits without
+    sending, and prints Microsoft's or the mail server's answer;
+    `setup.sh`'s next steps say to run it after `docker compose up -d`.
+    There is no `tls check` command to follow (the server's commands are
+    `serve`, `migrate`, `import-easypatch`, `recover`, `healthcheck` and
+    `version`, `main.go`), so this one is new. The server runs the same
+    check at start and logs its answer; the console's mail server shows
+    it.
+* **The engine follows at once**: until slice 6 retires its email,
   `syncMail` gives the engine the mail server in force at start **and on
   every change**, not once per start. The engine signs in with a password
   only, so while the mail server signs in with an application, `syncMail`
   gives the engine none, as when EasyRMM has none (`Mail`, `engine.go`):
-  patching's email and monthly reports stop until slice 7, and the form
+  patching's email and monthly reports stop until slice 6, and the form
   says so before the choice is saved.
 * **A certificate authority to trust** is shown only once the engine no
-  longer sends email (slice 7): the engine cannot trust a named
+  longer sends email (slice 6): the engine cannot trust a named
   authority, only skip verification, which EasyRMM never asks of it.
 * **A test message** goes to an address the super administrator enters
   (their own by default), at most one every 30 seconds, and shows the mail
@@ -662,7 +700,7 @@ order:
 * **Size budgets**, measured on the encoded bytes sent, under the limits
   Slack and Microsoft publish (50 blocks a message and 3,000 characters a
   text for Slack; about 28 KB a card for Teams), checked against their
-  documentation when slice 6 is built: at most 40 blocks, 2,500 bytes a
+  documentation when slice 5 is built: at most 40 blocks, 2,500 bytes a
   text and 24 KB a card, then "…and N more" with a link. Email shows 25
   alerts. Generic webhooks split rather than truncate: at most 100 alerts
   and 1 MiB a delivery.
@@ -1025,7 +1063,7 @@ never taken from a value.
   time. It sets the report's `DeliveryStatus`, `SentAt` and `LastError`.
 * **Sending a report by hand**: EasyRMM checks the mail server in force
   (set, encrypted, the report's size) before it asks the engine's
-  `/send`, which in slice 7 stops reading its own SMTP settings and keeps
+  `/send`, which in slice 6 stops reading its own SMTP settings and keeps
   only its checks of recipients and size; `smtp_not_configured` and its
   mapping in EasyRMM retire.
 * **Moving the channels**: in EasyRMM's reconcile pass, at start and after
@@ -1061,7 +1099,7 @@ never taken from a value.
   reconcile pass, retried until done, as `syncMail` is; meanwhile items
   naming it are dropped for it. The engine's channel `DELETE` route
   retires.
-* **The switch**: the release that carries slice 7. At its first start the
+* **The switch**: the release that carries slice 6. At its first start the
   engine's migration turns pending deliveries into outbox items and its
   dispatcher no longer exists; EasyRMM's reconcile pass moves the
   channels, then collects. The engine and EasyRMM ship in one bundle, so
@@ -1179,12 +1217,15 @@ Each merges, and is verified, on its own, in this order:
    comes); the contract test shows the engine's mail settings following a
    change without a restart.
 2. **Signing in to Microsoft 365** (XOAUTH2 with an application's
-   credentials, above), early, because Microsoft turns password sign-in
-   to Exchange Online off by default at the end of December 2026, and an
-   MSP whose mail is Microsoft 365 then needs this, a relay, or basic
-   authentication turned back on for its tenant. *Verified*: unit tests against a fake token
-   endpoint and a fake SMTP server offering `AUTH XOAUTH2`; by hand against
-   a real Microsoft 365 tenant, recorded in IMPLEMENTATION_STATUS.
+   credentials, above), in the console, in `.env` and through `setup.sh`,
+   with `easyrmm-server mail check`; early, because Microsoft turns
+   password sign-in to Exchange Online off by default at the end of
+   December 2026, and an MSP whose mail is Microsoft 365 then needs this,
+   a relay, or basic authentication turned back on for its tenant.
+   *Verified*: unit tests against a fake token endpoint and a fake SMTP
+   server offering `AUTH XOAUTH2`, `mail check` included; a script test of
+   `setup.sh`'s options; by hand against a real Microsoft 365 tenant, from
+   `setup.sh` and from the console, recorded in IMPLEMENTATION_STATUS.
 3. **Channels, the sender, notices, the journal for notices, and the
    address policy**, with email and generic webhooks: tables, sharing,
    row-level security and the constraints, the scheduler, quotas,
@@ -1196,22 +1237,30 @@ Each merges, and is verified, on its own, in this order:
    incidents, reminders, maintenance windows, site outages, digests, the
    fleet-wide hold. *Verified*: a device goes offline, the signed webhook
    and the email arrive; it comes back, the resolutions arrive.
-5. **Planned restarts, *Uninstalled* and removal reports**. *Verified*: a
-   shutdown that outlasts the policy but not the grace sends nothing,
-   where stopped agents alert; a local uninstall sends the resolution and
-   the *agent removed without a request* notice.
-6. **Slack and Teams**. *Verified* by hand on real ones.
-7. **Patching through EasyRMM**: the engine's outbox with every change, the
+5. **Slack and Teams**. *Verified* by hand on real ones.
+6. **Patching through EasyRMM**: the engine's outbox with every change, the
    collector, moving the channels (Slack and Teams among them, hence after
-   slice 6), report emails and their outcome route, the certificate
+   slice 5), report emails and their outcome route, the certificate
    authority field, everything retired. *Verified*: the contract and import
    tests; a patching alert reaches a webhook in the bundle test; Mailpit now
    over STARTTLS with the run's authority set in the console.
+7. **Planned restarts, *Uninstalled* and removal reports**, with
+   `removal_instructions`. *Verified*: a shutdown that outlasts the policy
+   but not the grace sends nothing, where stopped agents alert; a local
+   uninstall sends the resolution and the *agent removed without a
+   request* notice.
 
-Until slice 7, patching's notifications still go out through the engine,
-which signs in with a password only: from slice 2 to slice 7, a mail server
-that signs in with an application leaves patching's email and monthly
-reports unsent, and a relay serves both.
+Slices 5 and 6 come before 7 so that patching's email waits as briefly as
+it can: until slice 6, patching's notifications still go out through the
+engine, which signs in with a password only, so from slice 2 to slice 6 a
+mail server that signs in with an application leaves patching's email and
+monthly reports unsent, and a relay serves both. Nothing in slices 5 and 6
+needs slice 7: patching and Slack and Teams touch neither the grace,
+*Uninstalled*, nor removal reports. Slice 4 already names *Uninstalled*
+devices (site outages and the fleet-wide hold leave them out) and site
+outages wait for the restart grace; until slice 7 no device is
+*Uninstalled* and no device has a grace, so both rules simply find
+nothing to apply to.
 
 ## Testing
 * **Integration** (PostgreSQL, with the race detector and coverage
@@ -1328,7 +1377,18 @@ reports unsent, and a relay serves both.
   end, then renewed; a `535` renewing it once; no `XOAUTH2` before TLS or
   when not offered; neither the secret nor the token in logs or errors;
   `syncMail` giving the engine no mail server while an application signs
-  in.
+  in. `.env`: an application read from its variables and files, the
+  server refusing to start with an ID missing, both a secret and a
+  certificate, a secret given other than by file, or a file it cannot
+  read; `.env` still winning over the console; `easyrmm-server mail check`
+  against the fakes, sending nothing.
+* **`setup.sh`**, in a script test: the `--smtp-*` options writing `.env`
+  and the files under `secrets/` with their modes and owner, the secret
+  in neither `.env` nor the process list; refused: a malformed tenant or
+  client ID, an empty or multi-line secret, a certificate that does not
+  parse, a key that does not match it, a certificate expired; a warning
+  within 30 days of expiry; an existing `.env` keeping everything but its
+  mail settings.
 * **HTTP API and console**: permissions for each route; the console's
   tests for every view.
 * **Agent**: the notices' reasons from systemd's state (Linux), from the
@@ -1339,7 +1399,7 @@ reports unsent, and a relay serves both.
 * **The bundle test**, in a job of its own reusing the images built once:
   * **Mailpit**, bound to `127.0.0.1` on host networking (nothing but the
     edge may listen beyond loopback, as the test checks): plain SMTP on
-    loopback until slice 7, then STARTTLS with a certificate from an
+    loopback until slice 6, then STARTTLS with a certificate from an
     authority made for the run, which the console's mail server names.
   * **A webhook receiver** (a small HTTPS server written for the test,
     recording each request) in a **network namespace of its own**, joined
@@ -1359,7 +1419,7 @@ reports unsent, and a relay serves both.
     and `easyrmm-meshagent` are stopped (a device is online while either
     reports); the signed `alerts.opened` and the email arrive; both start
     again; the resolutions arrive.
-  * **With slice 5**, the grace set to 10 minutes: the machine is powered
+  * **With slice 7**, the grace set to 10 minutes: the machine is powered
     off through its systemd (`systemctl poweroff` inside it), so its
     container stops with both agents, and stays down 8 minutes, longer
     than the policy plus the 3-minute online window, shorter than the
@@ -1369,7 +1429,7 @@ reports unsent, and a relay serves both.
     alert already sent to the webhook, the agent is uninstalled on the
     machine: the `uninstalled` resolution and the *agent removed without a
     request* notice arrive.
-  * **With slice 7**: a patching alert from the engine arrives at the same
+  * **With slice 6**: a patching alert from the engine arrives at the same
     receiver.
 * **The contract test** starts the engine's worker beside its API: the
   engine's mail settings follow a change (slice 1); a patching alert on a
@@ -1398,7 +1458,7 @@ reports unsent, and a relay serves both.
   it chooses with customers; customers' administrators set up their own,
   for their organization only.
 * There is one SMTP client and one HTTP client for notifications, one
-  address policy, one renderer. Until slice 7, there are two senders.
+  address policy, one renderer. Until slice 6, there are two senders.
 * Webhooks are delivered at least once; receivers drop copies by
   `deliveryId`. Queueing is exactly once, and nothing about an alert, a
   notice or a site outage arrives before what was queued earlier about
@@ -1426,8 +1486,8 @@ reports unsent, and a relay serves both.
   shows Exchange's answer and points to signing in with an application or
   to a relay. EasyRMM changes nothing on its own. Releases before slice 2
   can only sign in with a password. The engine signs in only with a
-  password until slice 7 retires its email, so with an application its
-  email waits for slice 7, and a relay serves both meanwhile.
+  password until slice 6 retires its email, so with an application its
+  email waits for slice 6, and a relay serves both meanwhile.
 * Receivers of the engine's webhooks keep working through the transition;
   they get every alert instead of 25 and a count, silent resolutions and
   reopenings they were not told of before, and new fields. Teams messages
@@ -1443,7 +1503,8 @@ reports unsent, and a relay serves both.
 * `alerts.resolution` gains `uninstalled`; devices gain their kind and
   their *Uninstalled* and *restarting* states; database.md, the guide,
   rbac.md, IMPLEMENTATION_STATUS, ROADMAP and the CHANGELOG change with
-  each slice.
+  each slice, and `.env.example`, the compose file (the `secrets/` mount)
+  and `setup.sh` with slice 2.
 
 ## Risks
 * **The server as a way into a customer's network.** An organization's
@@ -1497,7 +1558,7 @@ reports unsent, and a relay serves both.
 * **Windows' pre-shutdown** is unverified until it is checked on real
   Windows; until then a restarting Windows computer may alert as a plain
   stop would.
-* **Slice 7 changes two products at once.** The engine and EasyRMM ship in
+* **Slice 6 changes two products at once.** The engine and EasyRMM ship in
   one bundle; pending deliveries become outbox items with their IDs, each
   item waits only for its own channels, and a channel that cannot be
   decrypted moves turned off rather than blocking the rest.

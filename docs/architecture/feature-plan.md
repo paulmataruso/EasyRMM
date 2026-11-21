@@ -207,14 +207,18 @@ set up its Teams channel once.
   digest per channel read by people.
 * **Several recipients** each get their own copy, so no recipient sees
   another.
-* **The certificate authority** for the mail server comes with slice 7,
+* **The certificate authority** for the mail server comes with slice 6,
   once the engine (which cannot trust one) no longer sends email.
 * **Signing in to Microsoft 365** with an application's credentials
   (`XOAUTH2`, the client credentials grant) is a slice of its own, the
   second: Exchange Online turns SMTP password sign-in off by default for
   existing tenants at the end of December 2026, and the mailer signs in
-  with a password only. A relay remains the alternative; Google is left
-  for the owner to decide.
+  with a password only. It works from `.env` and `setup.sh` too, the
+  secret or certificate key in a file under `secrets/`, so that mail works
+  at install. A relay remains the alternative; Google can be added later.
+  Slack and Teams, then patching, come before restarts and *Uninstalled*,
+  so that patching's email, which the engine cannot send with an
+  application, waits as briefly as it can.
 
 ### F3. The updater on the host
 Decided in [ADR-0052](adr/0052-the-host-updater.md), revised after review.
