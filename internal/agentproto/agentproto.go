@@ -135,6 +135,13 @@ type HeartbeatRequest struct {
 	EasyPatch *EasyPatchInstallStatus `json:"easyPatch,omitempty"`
 }
 
+// The agent keeps the server's heartbeat interval within these bounds, so
+// that an answer changed on the way cannot silence it.
+const (
+	MinHeartbeatSeconds = 10
+	MaxHeartbeatSeconds = 600
+)
+
 // HeartbeatResponse carries the server's current instructions.
 type HeartbeatResponse struct {
 	HeartbeatSeconds int           `json:"heartbeatSeconds"`

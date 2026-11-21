@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -159,22 +160,44 @@ func (c *Client) Inventory(ctx context.Context, body []byte) (string, error) {
 	return out.Hash, nil
 }
 
-// MeshAgent downloads the MeshAgent binary for a platform into w.
-func (c *Client) MeshAgent(ctx context.Context, goos, goarch string, w io.Writer) error {
+// Signed is the server's signature on a download the agent runs
+// (agentproto.SignDownload) and what it covers. Nothing downloaded is used
+// before Verify succeeds.
+type Signed struct {
+	Device, Target, Nonce, Signature string
+	SHA256                           [sha256.Size]byte
+}
+
+// Verify checks the signature with the pinned job key.
+func (s Signed) Verify(key ed25519.PublicKey) error {
+	return agentproto.VerifyDownload(key, s.Signature, s.Device, s.Target, s.Nonce, s.SHA256)
+}
+
+// MeshAgent downloads the MeshAgent binary for a platform into w and
+// returns the server's signature on it, for the caller to verify before it
+// uses what w holds.
+func (c *Client) MeshAgent(ctx context.Context, goos, goarch string, w io.Writer) (Signed, error) {
 	q := url.Values{"os": {goos}, "arch": {goarch}}
-	resp, err := c.do(ctx, http.MethodGet, agentproto.PathMeshAgent+"?"+q.Encode(), nil, true)
+	target := agentproto.PathMeshAgent + "?" + q.Encode()
+	resp, nonce, err := c.send(ctx, http.MethodGet, target, nil, true)
 	if err != nil {
-		return err
+		return Signed{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	n, err := io.Copy(w, resp.Body)
-	if err != nil {
-		return fmt.Errorf("downloading MeshAgent: %w", err)
+	// A body shorter than its Content-Length fails as io.ErrUnexpectedEOF.
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(w, h), io.LimitReader(resp.Body, agentproto.MaxMeshAgentBytes+1))
+	switch {
+	case err != nil:
+		return Signed{}, fmt.Errorf("downloading MeshAgent: %w", err)
+	case n > agentproto.MaxMeshAgentBytes:
+		return Signed{}, fmt.Errorf("downloading MeshAgent: larger than %d bytes", agentproto.MaxMeshAgentBytes)
 	}
-	if resp.ContentLength >= 0 && n != resp.ContentLength {
-		return fmt.Errorf("downloading MeshAgent: got %d of %d bytes", n, resp.ContentLength)
-	}
-	return nil
+	return c.signed(resp, target, nonce, [sha256.Size]byte(h.Sum(nil))), nil
+}
+
+func (c *Client) signed(resp *http.Response, target, nonce string, sum [sha256.Size]byte) Signed {
+	return Signed{Device: c.device, Target: target, Nonce: nonce, Signature: resp.Header.Get(agentproto.HeaderDownloadSignature), SHA256: sum}
 }
 
 // Download downloads one of the server's agent builds into w (ADR-0027).
@@ -185,57 +208,68 @@ func (c *Client) Download(ctx context.Context, file string, w io.Writer) error {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	n, err := io.Copy(w, resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.ContentLength >= 0 && n != resp.ContentLength {
-		return fmt.Errorf("got %d of %d bytes", n, resp.ContentLength)
-	}
-	return nil
+	// A body shorter than its Content-Length fails as io.ErrUnexpectedEOF.
+	_, err = io.Copy(w, resp.Body)
+	return err
 }
 
-// MeshSettings returns the MeshAgent settings for the device's site.
-func (c *Client) MeshSettings(ctx context.Context) ([]byte, error) {
-	resp, err := c.do(ctx, http.MethodGet, agentproto.PathMeshSettings, nil, true)
+// MeshSettings returns the MeshAgent settings for the device's site and
+// the server's signature on them, for the caller to verify before using
+// them.
+func (c *Client) MeshSettings(ctx context.Context) ([]byte, Signed, error) {
+	resp, nonce, err := c.send(ctx, http.MethodGet, agentproto.PathMeshSettings, nil, true)
 	if err != nil {
-		return nil, err
+		return nil, Signed{}, err
 	}
 	defer func() { _ = resp.Body.Close() }()
-	return io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return nil, Signed{}, err
+	}
+	return b, c.signed(resp, agentproto.PathMeshSettings, nonce, sha256.Sum256(b)), nil
 }
 
 // do sends a request and returns a 2xx response; other statuses become an
 // *Error.
 func (c *Client) do(ctx context.Context, method, target string, body []byte, sign bool) (*http.Response, error) {
+	resp, _, err := c.send(ctx, method, target, body, sign)
+	return resp, err
+}
+
+// send is do that also returns the nonce a signed request carried, which
+// the server's signature on its answer covers.
+func (c *Client) send(ctx context.Context, method, target string, body []byte, sign bool) (*http.Response, string, error) {
 	var rd io.Reader
 	if body != nil {
 		rd = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.base.String()+target, rd)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	req.Header.Set("User-Agent", c.agent)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	var nonce string
 	if sign {
 		if c.key == nil {
-			return nil, errors.New("the agent is not enrolled")
+			return nil, "", errors.New("the agent is not enrolled")
 		}
 		h, err := agentproto.Sign(c.key, c.device, method, target, body, c.now())
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		req.Header.Set("Authorization", h)
+		a, _ := agentproto.Parse(h) // what Sign wrote parses
+		nonce = a.Nonce
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if resp.StatusCode/100 == 2 {
-		return resp, nil
+		return resp, nonce, nil
 	}
 	defer func() { _ = resp.Body.Close() }()
 	e := &Error{Status: resp.StatusCode}
@@ -248,7 +282,7 @@ func (c *Client) do(ctx context.Context, method, target string, body []byte, sig
 	if b, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10)); err == nil && json.Unmarshal(b, &env) == nil {
 		e.Code, e.Message = env.Error.Code, env.Error.Message
 	}
-	return nil, e
+	return nil, "", e
 }
 
 // Poll waits for jobs (ADR-0017). The server holds the request for up to

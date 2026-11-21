@@ -52,6 +52,13 @@ jobs to deliver yet, only enrollment, health and the MeshAgent install.
   server fetches both from MeshCentral over loopback as its service account
   (`/meshagents`, `/meshsettings`), so the agent version always matches the
   server and the `.msh` is never published unauthenticated.
+  *Amended 2026-11-21:* the server signs both answers with the job key the
+  agent pinned (ADR-0017), over the device, the request and its single-use
+  nonce, and the agent installs neither unless the signature verifies. TLS
+  alone did not vouch for them: agents trust the system's roots or the
+  internal certificate authority, so a TLS-terminating proxy or an
+  inspecting firewall could have changed what then runs as SYSTEM or root.
+  The server keeps each platform's binary for ten minutes to sign it whole.
 * **MeshAgent runs beside the agent, not inside it.** `easyrmm-agent
   install` (the normal path) gives MeshAgent its own systemd unit,
   `easyrmm-meshagent.service`. `easyrmm-agent enroll` followed by `run` (for

@@ -6,6 +6,24 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Security
+
+- **MeshAgent's binary and settings are signed.** The agent fetched them
+  from the server over TLS only; since agents trust the system's
+  certificate authorities, a TLS-terminating proxy or an inspecting
+  firewall could have changed what then runs as SYSTEM or root. The server
+  now signs both with the job key the agent pinned, over the device and
+  the request's single-use nonce, and the agent installs neither unless
+  the signature verifies (ADR-0015, amended).
+- **The agent bounds the server's heartbeat interval** to between 10
+  seconds and 10 minutes, so that an answer changed on the way cannot
+  silence it.
+
+### Fixed
+
+- `deploy/.env.example` lists `EASYRMM_ACME_DIRECTORY`, which the Compose
+  file already passed to the server.
+
 ## [1.0.0-rc.4] - 2026-11-21
 
 The fourth release candidate: devices can be removed from the console with

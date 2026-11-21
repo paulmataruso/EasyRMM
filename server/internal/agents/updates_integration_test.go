@@ -397,8 +397,12 @@ func TestAgentUpdateSettingsAndAccess(t *testing.T) {
 			t.Errorf("%+v accepted: %v", p, err)
 		}
 	}
-	// Without builds, nothing is offered.
+	// Without builds, nothing is offered; without the key, no download is
+	// signed.
 	f.svc.SetUpdates(nil, nil)
+	if sig := f.svc.SignDownload(&SignedRequest{}, agentproto.PathMeshSettings, []byte("MeshID=0x1")); sig != "" {
+		t.Errorf("signed without a key: %q", sig)
+	}
 	var ae *apperr.Error
 	if err := f.svc.RequestUpdate(f.ctx, f.sys, d2.ID); !errors.As(err, &ae) || ae.Code != "no_build" {
 		t.Errorf("no builds: %v", err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -38,6 +39,20 @@ type server struct {
 	easyPatch string
 	// uninstall is its uninstall instruction, JSON.
 	uninstall string
+	// job signs MeshAgent's downloads, as the server's job key does;
+	// tamper changes the binary after signing it.
+	job    ed25519.PrivateKey
+	tamper bool
+}
+
+// download serves a signed download, as the server does.
+func (s *server) download(w http.ResponseWriter, r *http.Request, body string) {
+	a, _ := agentproto.Parse(r.Header.Get("Authorization"))
+	w.Header().Set(agentproto.HeaderDownloadSignature, agentproto.SignDownload(s.job, a, r.RequestURI, sha256.Sum256([]byte(body))))
+	if s.tamper {
+		body += "!"
+	}
+	_, _ = io.WriteString(w, body)
 }
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -74,9 +89,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.uploads = append(s.uploads, b)
 		_, _ = io.WriteString(w, `{"hash":"h"}`)
 	case agentproto.PathMeshSettings:
-		_, _ = io.WriteString(w, "MeshID=0x1")
+		s.download(w, r, "MeshID=0x1")
 	case agentproto.PathMeshAgent:
-		_, _ = io.WriteString(w, "ELF")
+		s.download(w, r, "ELF")
 	}
 }
 
@@ -119,10 +134,13 @@ func newRunner(t *testing.T, s *server, m *mesh) *Runner {
 	}
 	_, key, _ := ed25519.GenerateKey(rand.Reader)
 	c.SetIdentity("dev-1", key)
+	jobPub, job, _ := ed25519.GenerateKey(rand.Reader)
+	s.job = job
 	r := &Runner{
 		Client: c, Store: state.Store{Dir: t.TempDir()},
 		Facts: func() agentproto.Facts { return agentproto.Facts{Hostname: "h"} },
 		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Key:   func() ed25519.PublicKey { return jobPub },
 	}
 	if m != nil {
 		r.Mesh = m
@@ -173,6 +191,82 @@ func TestBeatInstallsMeshAgentWhenOffered(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not stop")
+	}
+}
+
+// MeshAgent runs as SYSTEM or root: nothing is installed that the server
+// did not sign with the pinned job key.
+func TestBeatRefusesUnsignedMeshAgent(t *testing.T) {
+	ctx := context.Background()
+	for name, c := range map[string]struct {
+		prepare func(*Runner, *server)
+		want    string
+	}{
+		"no key pinned yet": {func(r *Runner, _ *server) { r.Key = func() ed25519.PublicKey { return nil } },
+			"install failed: no server key is pinned yet"},
+		"another server's key": {func(r *Runner, _ *server) {
+			other, _, _ := ed25519.GenerateKey(rand.Reader)
+			r.Key = func() ed25519.PublicKey { return other }
+		}, "install failed: MeshAgent's settings: agentproto: the download's signature does not verify"},
+		"changed on the way": {func(_ *Runner, s *server) { s.tamper = true },
+			"install failed: MeshAgent's settings: agentproto: the download's signature does not verify"},
+	} {
+		s := &server{available: true}
+		m := &mesh{}
+		r := newRunner(t, s, m)
+		c.prepare(r, s)
+		if _, err := r.beat(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if m.installed || !strings.HasPrefix(r.status.MeshAgent, c.want) {
+			t.Errorf("%s: installed %v, status %q", name, m.installed, r.status.MeshAgent)
+		}
+	}
+
+	// A binary that does not match its signature is not installed either.
+	s := &server{available: true}
+	m := &mesh{}
+	r := newRunner(t, s, m)
+	tamperBinary := &binaryTamper{Handler: s}
+	srv := httptest.NewServer(tamperBinary)
+	t.Cleanup(srv.Close)
+	c, err := client.New(client.Options{Server: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, key, _ := ed25519.GenerateKey(rand.Reader)
+	c.SetIdentity("dev-1", key)
+	r.Client = c
+	if _, err := r.beat(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if m.installed || !strings.HasPrefix(r.status.MeshAgent, "install failed: MeshAgent: agentproto: the download's signature does not verify") {
+		t.Errorf("tampered binary: installed %v, status %q", m.installed, r.status.MeshAgent)
+	}
+}
+
+// binaryTamper changes MeshAgent's binary after the server signed it.
+type binaryTamper struct{ http.Handler }
+
+func (b *binaryTamper) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != agentproto.PathMeshAgent {
+		b.Handler.ServeHTTP(w, r)
+		return
+	}
+	rec := httptest.NewRecorder()
+	b.Handler.ServeHTTP(rec, r)
+	w.Header().Set(agentproto.HeaderDownloadSignature, rec.Header().Get(agentproto.HeaderDownloadSignature))
+	_, _ = w.Write(append(rec.Body.Bytes(), '!'))
+}
+
+func TestHeartbeatInterval(t *testing.T) {
+	for in, want := range map[int]time.Duration{
+		0: time.Minute, -5: time.Minute, 1: 10 * time.Second, 60: time.Minute,
+		600: 10 * time.Minute, 1 << 30: 10 * time.Minute,
+	} {
+		if got := heartbeatInterval(in); got != want {
+			t.Errorf("heartbeatInterval(%d) = %v, want %v", in, got, want)
+		}
 	}
 }
 
