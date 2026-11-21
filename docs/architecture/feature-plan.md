@@ -588,7 +588,8 @@ connection replacing the held poll, *Automatic* by default; several
 servers through `LISTEN/NOTIFY`. Tests: unit and Windows runner,
 integration, the bundle with real agents through an idle-killing proxy,
 an inspecting proxy, NGINX and a server restart, 5,000 connections and
-500 agents on CI, 2,000 and 10,000 agents on the owner's host.
+500 agents on CI, 2,000 and 10,000 agents on a drill host (never the
+host of the owner's instance, which `soak.sh` would have to stop).
 
 ## Test harnesses to build
 

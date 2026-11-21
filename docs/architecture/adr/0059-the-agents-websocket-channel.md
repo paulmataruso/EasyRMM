@@ -847,9 +847,11 @@ its own review) must provide, and slice 1 does not start until it does:
     second; and the spread of a restart's reconnections.
   * On the bundle's deployment, 500 agents of `tools/agentsim`, which
     gains `-transport`, for 10 minutes with jobs.
-  * On the owner's host, 2,000 and 10,000 agents for an hour on each
+  * On a drill host, 2,000 and 10,000 agents for an hour on each
     transport, recorded in `drills.md` beside the existing 2,000-agent
-    run: requests, nonce rows, CPU, memory and descriptors.
+    run: requests, nonce rows, CPU, memory and descriptors. Never on the
+    host of the owner's instance: `scripts/drill/soak.sh` deploys its own
+    copy and needs every other deployment on the host stopped.
 * **Coverage floors** in `scripts/ci/check-coverage.sh` for `agent/channel`
   and the server's channel package, at their measured coverage and no
   lower than their neighbours' (`agent/jobs` 80, `agent/client` 90).
