@@ -592,6 +592,9 @@ func (s *Service) GetJob(ctx context.Context, c access.Caller, id uuid.UUID) (*J
 // RunQuery filters the run list.
 type RunQuery struct {
 	DeviceID uuid.UUID
+	// Kind is "" or a job kind: a device's hardening runs, for its
+	// Hardening tab.
+	Kind string
 }
 
 // ListRuns returns a device's newest runs.
@@ -599,10 +602,16 @@ func (s *Service) ListRuns(ctx context.Context, c access.Caller, q RunQuery) ([]
 	if q.DeviceID == uuid.Nil {
 		return nil, apperr.Invalid("deviceId", "Choose a device.")
 	}
+	switch q.Kind {
+	case "", KindScript, KindSoftware, KindHardening:
+	default:
+		return nil, apperr.Invalid("kind", "Use script, software or hardening.")
+	}
 	out := []*Run{}
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT `+runColumns+runFrom+` WHERE r.device_id = $1 ORDER BY r.created_at DESC, r.id LIMIT $2`,
-			q.DeviceID, MaxList)
+		rows, err := tx.Query(ctx, `SELECT `+runColumns+runFrom+` WHERE r.device_id = $1 AND ($3 = '' OR j.kind = $3)
+			ORDER BY r.created_at DESC, r.id LIMIT $2`,
+			q.DeviceID, MaxList, q.Kind)
 		if err != nil {
 			return err
 		}
