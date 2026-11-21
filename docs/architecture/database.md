@@ -307,6 +307,17 @@ on each device (ADR-0051).
 | `device_hardening_checks` | One row per device a hardening job reported on: the platform as the script read it (distribution, version, family, container, and whether apply is supported there), the job and when it ran. Kept from the run that started last. Goes with its device |
 | `device_hardening` | One row per device and module: its state (`in_place`, `partly`, `not_in_place`, `not_applicable`, `managed_elsewhere`, `not_supported`, `half_applied`, `failed`), the finding (a reason, what is missing, what apply would change, and the firewall's ports), the job and when it ran. A later job that covers the module replaces it. Read through the device's row-level security; written from job results at platform scope |
 
+## The mail server in the console (migration 00028)
+
+The mail server super administrators set in the console, and the limits on
+the mail EasyRMM sends through whichever mail server is in force
+(ADR-0053, [Mail](../operations/mail.md)).
+
+| Table | Notes |
+|---|---|
+| `mail_server` | Always one row (`id` is always true), so the limits hold before anyone sets them. The console's mail server, if any (an empty `host` means none): port, security (`starttls`, `tls`, or `none`, which the service allows only to loopback), how it signs in (`none` or `password`), the user name, the password sealed with `EASYRMM_SECRET_KEY` (additional data: the column), the sender's address and name, and who changed it and when. The limits, 30 a minute and 9,000 a day by default, with who changed them and when; and when the last test message went (one every 30 seconds). `.env`'s mail server is never stored. Platform scope only |
+| `mail_sends` | One row per message sent, or being sent, in the last 24 hours: when, and whether it was account mail (invitations, password resets), which may use the whole day's limit. Taken under an advisory lock across servers; a message the mail server refuses is removed again, and rows older than 24 hours are deleted. `easyrmm_app` cannot change a row. Platform scope only |
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

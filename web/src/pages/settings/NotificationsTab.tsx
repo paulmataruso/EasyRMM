@@ -374,8 +374,8 @@ function Limits({ view }: { view: MailServerView }) {
       />
       <div className="mt-4 space-y-2 border-t border-line pt-4 text-sm text-muted">
         <p>
-          They hold whichever mail server is in force, counted per recipient. The defaults, 30 a minute and 9,000 a day, stay under Exchange Online&apos;s limits; set your own mail
-          server&apos;s.
+          They hold whichever mail server is in force, counted per recipient. Patching&apos;s email and monthly reports, which the patching engine still sends itself, are not
+          counted. The defaults, 30 a minute and 9,000 a day, stay under Exchange Online&apos;s limits; set your own mail server&apos;s.
         </p>
         <p>
           Invitations and password resets go first: they may use the whole day, and wait up to a minute for room. Other mail stops at {formatNumber(usage.otherDayLimit)}, 90% of

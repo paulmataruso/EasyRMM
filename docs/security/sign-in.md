@@ -132,6 +132,11 @@ ask. A reset link works once, for 30 minutes (`EASYRMM_PASSWORD_RESET_TTL`),
 and only the newest link works. Someone invited who has not chosen a
 password yet is sent a new invitation link instead, valid for 72 hours.
 
+**Forgot password** is offered only while EasyRMM has a mail server
+([Mail](../operations/mail.md)); it appears and disappears with it,
+without a restart. Reset e-mails go ahead of other mail under the mail
+server's limits.
+
 ## When someone loses their second factor
 
 With a recovery code, they sign in and set up a new factor under

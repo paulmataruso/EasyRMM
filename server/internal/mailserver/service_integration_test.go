@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -537,6 +538,52 @@ func TestLimits(t *testing.T) {
 		t.Fatalf("account mail at 90%%: %v", err)
 	}
 	f.mp.Wait(to, 1)
+}
+
+// Two servers sending at once share the limits: the advisory lock lets
+// exactly the minute's limit through, whichever server asks.
+func TestLimitsAcrossServers(t *testing.T) {
+	f := newFixture(t, nil)
+	if _, err := f.svc.SetLimits(f.ctx, f.admin, LimitsInput{PerMinute: 5, PerDay: 100}); err != nil {
+		t.Fatal(err)
+	}
+	other, err := New(f.db, f.audit, f.sealer, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const tries = 24
+	errs := make(chan error, tries)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range tries {
+		svc := f.svc
+		if i%2 == 1 {
+			svc = other
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, err := svc.take(f.ctx, false)
+			errs <- err
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	taken := 0
+	for err := range errs {
+		var le *LimitError
+		switch {
+		case err == nil:
+			taken++
+		case !errors.As(err, &le) || le.Day:
+			t.Fatalf("refusal %v, want the minute's limit", err)
+		}
+	}
+	if n := f.str(`SELECT count(*)::text FROM mail_sends`); taken != 5 || n != "5" {
+		t.Fatalf("%d taken, %s counted, want 5 of %d", taken, n, tries)
+	}
 }
 
 func TestLimitErrorWords(t *testing.T) {

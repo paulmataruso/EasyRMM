@@ -160,6 +160,8 @@ services:
       EASYRMM_METRICS_RETENTION: ${EASYRMM_METRICS_RETENTION:-}
       EASYRMM_ALERT_RETENTION: ${EASYRMM_ALERT_RETENTION:-}
       EASYRMM_ACME_DIRECTORY: ${EASYRMM_ACME_DIRECTORY:-}
+      # Set, the mail server is .env's; empty, the console's (Settings ->
+      # Notifications -> Mail server).
       EASYRMM_SMTP_HOST: ${EASYRMM_SMTP_HOST:-}
       EASYRMM_SMTP_PORT: ${EASYRMM_SMTP_PORT:-587}
       EASYRMM_SMTP_USERNAME: ${EASYRMM_SMTP_USERNAME:-}

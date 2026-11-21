@@ -14,7 +14,8 @@ boundary is enforced. The decisions behind each control are in the
   and which computers belong to whom.
 * **The audit log**: the record of who did what.
 * **Secrets held by the server**: the job-signing key, MeshCentral's
-  service account, the audit-forwarding client key, the internal
+  service account, the audit-forwarding client key, the console's mail
+  server password (ADR-0053; write-only, never returned), the internal
   certificate authority and active deployment and approval tokens
   (ADR-0047), all sealed in the database under `EASYRMM_SECRET_KEY`; and the key that signs EasyRMM's statements to the
   patching engine (`EASYRMM_PATCHING_KEY`, in `.env`).

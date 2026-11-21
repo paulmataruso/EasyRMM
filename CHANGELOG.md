@@ -132,8 +132,31 @@ All notable changes to this project are documented here. The format follows
   kind (`GET /api/v1/job-runs?kind=hardening`). The audit log names
   hardening jobs *Hardening job*. See
   [Hardening Linux computers](docs/operations/hardening.md).
+- **The mail server in the console** (ADR-0053, slice 1). Super
+  administrators set it under **Settings → Notifications → Mail server**:
+  host, port, STARTTLS, TLS or none (only to a relay on the same machine),
+  signing in with a password or not at all, and the sender's address and
+  name. The password is sealed with `EASYRMM_SECRET_KEY`, write-only, and
+  kept while the host and user name stay the same. It applies at once,
+  without a restart: to invitations, password resets, whether password
+  reset is offered, and the patching engine, which EasyRMM now gives the
+  mail server on every change rather than once per start. `EASYRMM_SMTP_*`
+  in `.env` still works and wins: the console then shows it read-only.
+  **Send test message** tries the form's settings, saved or not, one every
+  30 seconds, and shows the mail server's answer. **Limits**, 30 messages
+  a minute and 9,000 a day by default, hold across servers; invitations
+  and password resets go first. Every change and test is audited
+  (`mail_server.*`). See [Mail](docs/operations/mail.md).
 
 ### Changed
+
+- **Invitations and password reset emails come in HTML and text**, from a
+  new mailer that sends each recipient a message of their own, can carry
+  attachments, checks the mail server's certificate against the system's
+  authorities with TLS 1.2 or later, and dials through the same address
+  checks as EasyRMM's other outbound connections. When an invitation's or
+  password link's email does not go, the console now says why: no mail
+  server, or the mail server did not take it.
 
 - **CI and releases build the server image once.** Both platforms, amd64
   and arm64, are scanned and their agents checked against a release's
