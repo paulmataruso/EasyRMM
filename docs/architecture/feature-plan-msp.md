@@ -583,15 +583,41 @@ server, so it stays available when a device is offline.
   A technician's correction is kept and labelled, never overwritten by a
   lookup. Whether a vendor tool's copy on the computer also counts as
   verified is decided in feature 1's ADR, once the research below is in.
-* **On-device vendor data is a candidate source: being researched
-  (2026-11-21); confirmed sources go into feature 1's ADR.** The owner
-  asked whether EasyRMM can read warranty data from the vendor's own tool
-  on the computer instead of calling vendor APIs: for example Lenovo
-  Commercial Vantage, Dell Command | Monitor or SupportAssist, and HP's
-  tools; and whether firmware dates, such as a manufacture or
-  first-power-on date, can estimate the purchase. Nothing on this page
-  names a WMI class or registry key as fact. If it works, it needs no MSP
-  key and EasyRMM sends no serials anywhere itself.
+* **On-device vendor data: researched from the vendors' documentation
+  (2026-11-21), not yet tried on a real computer.** The owner asked
+  whether EasyRMM can read warranty data from the vendor's own tool on the
+  computer instead of calling vendor APIs. For business PCs on Windows
+  10 and 11, each of the three has a free tool that fetches the warranty
+  from the vendor and writes it to WMI, where the agent can read it:
+  * **Dell Command | Monitor** (10.2.1 and later):
+    `root\dcim\sysman`, `DCIM_AssetWarrantyInformation`, with the start
+    and end dates and when it last refreshed (every 15 days). Dell's own
+    documents disagree on whether every version fills it, and Dell lists
+    a bug in 10.13.2 and earlier for some systems.
+  * **Lenovo Commercial Vantage** (10.2104 and later), with its policy
+    *Write Warranty Information to WMI*: `ROOT\Lenovo`,
+    `Lenovo_WarrantyInformation`. How often it refreshes is not
+    documented.
+  * **HP Client Management Script Library** (1.8.5 and later), whose
+    `Get-HPWarrantyInfo` fills `root/HP/InstrumentedServices/v1`
+    `HP_Warranty` only when it is run, with a 30-day cache and a limit
+    per IP address. HP's licence forbids "commercial timesharing or
+    bureau use", which could be read to cover an MSP: **EasyRMM does not
+    run it until that clause has had a legal review** (an owner question).
+
+  Firmware dates estimate the purchase where there is no warranty: HP's
+  BIOS setting *Born On Date* (readable through HP's BIOS WMI with no
+  tool) and Dell's ownership or first-power-on date (through Dell's
+  tools). Lenovo, Surface, Acer, ASUS, Windows Server and Linux have no
+  equivalent found: they need a vendor API or entry by hand. The agent
+  only reads: it installs nothing by default and needs no vendor
+  credentials. Installing Dell's tool or setting Lenovo's policy is the
+  MSP's choice, offered as a script. Each value keeps the tool's
+  last-refreshed time, so stale data shows as stale. A firmware date is
+  only ever a start-date estimate, never an end date. The sources and
+  their evidence are in feature 1's ADR. The first slice that uses them
+  starts by checking each one on a real Dell, ThinkPad and HP. With this
+  source, EasyRMM sends no serials anywhere itself.
 * **Vendor APIs are opt-in and off by default**, starting with Dell,
   with each MSP's own key (Dell's terms forbid passing credentials on;
   EasyRMM never ships a key). **`PRIVACY.md` is updated before any serial
@@ -621,9 +647,10 @@ lifecycle), ADR-0053 (alerts; `role`), feature 5 (vendor update tools).
    and the four source labels are in the data from the first day.
 2. **OS support and age**: the engine's status and end date on the device
    page and in the report; age; replacement policies by kind of device.
-3. **On-device vendor data and firmware estimates**, for the sources the
-   research confirms. Before Dell's API, since it needs no key and sends
-   nothing out.
+3. **On-device vendor data and firmware estimates**: Dell's and Lenovo's
+   WMI and HP's *Born On Date*, each first checked on a real computer;
+   HP's warranty command only after its licence review. Before Dell's
+   API, since it needs no key and sends nothing out.
 4. **Dell's API**: per organization, off by default; the MSP's client ID
    and secret sealed; scheduled with F3, rate-limited and cached, plus
    *Look up now*; the vendor's raw answer kept; `PRIVACY.md` first.
@@ -644,8 +671,10 @@ Debian's `distro-info-data` (ISC).
   and Fedora; Alpine, Arch and SUSE have no status yet. EasyRMM's agent
   does not report Windows' `EditionID`, so the engine's status is the
   source.
-* The vendor tools named above are Windows programs; what Linux offers is
-  part of the research.
+* The vendor tools named above are Windows programs. Dell's Linux build
+  of Command | Monitor lacks the warranty class; whether the kernel's
+  `/sys/class/firmware-attributes` exposes Dell's and HP's firmware dates
+  is unconfirmed.
 
 **Depends on**: feature 4's slice 2 and F1 for slice 1; F3 for slice 4's
 schedule; ADR-0053 for slice 5.
@@ -1504,6 +1533,14 @@ same order, and only the dependencies above still hold.
     "meets its security policy"; the interleaving in [Order](#order).
 11. **Contacts**: `PRIVACY.md`'s wording for customers' contacts (feature
     4).
+12. **HP's script library licence**: whether its clause against
+    "commercial timesharing or bureau use" allows an MSP's EasyRMM to run
+    `Get-HPWarrantyInfo` on customers' computers. Until a legal review
+    says yes, feature 1 reads only HP's *Born On Date* and what an MSP
+    has already put in WMI itself.
+13. **A ThinkPad and an HP business PC**, alongside the Dell above, to
+    check the vendor tools' WMI on real computers before slice 3 is
+    built.
 
 ## Risks across the twelve
 
