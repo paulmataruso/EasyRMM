@@ -264,11 +264,12 @@ and the attempt ends with the reason.
   second factors, the key pair that signs EasyRMM's ID tokens), and the
   server's, MeshCentral's, the engine's and Authentik's directories. No
   database is dumped: a stopped cluster's files are the whole of it,
-  roles included, which a dump of each database is not. The one volume
-  outside is `EASYRMM_TLS_DIR` in `manual` TLS mode, the operator's
-  certificate, mounted read-only and never changed by an upgrade. A unit
-  test reads the Compose file's volumes and fails on any it does not
-  account for.
+  roles included, which a dump of each database is not. `setup.sh` puts
+  `EASYRMM_TLS_DIR`, `manual` TLS mode's certificate, in the data root
+  too. Outside are the updater's own status and `EASYRMM_TLS_DIR` if the
+  operator points it elsewhere: mounted read-only, never changed by an
+  upgrade. A unit test reads the Compose file's volumes and fails on any
+  it does not account for.
 * **The engine's hold** is `agent-updates-held-until` in the status
   directory: one RFC 3339 time in UTC, root's, mode 644, written atomically.
 

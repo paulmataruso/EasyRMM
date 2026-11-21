@@ -36,9 +36,11 @@ import (
 // state: PostgreSQL's whole cluster (EasyRMM's, the engine's and, when
 // installed, Authentik's databases, copied stopped), the server's,
 // MeshCentral's, the engine's and Authentik's directories. The other
-// volumes are the deployment's own docker/ files, in the tree, and
-// EASYRMM_TLS_DIR, the operator's certificates in manual TLS mode, mounted
-// read-only and not changed by an upgrade (TestBackupCoversEveryVolume).
+// volumes are the deployment's own docker/ files, in the tree, the
+// updater's own status, and EASYRMM_TLS_DIR, the operator's certificates
+// in manual TLS mode: setup.sh puts it in the data root, as tls/, and an
+// operator who points it elsewhere keeps it there, mounted read-only and
+// never changed by an upgrade (TestBackupCoversEveryVolume).
 
 // KeepBackups is how many backups are kept.
 const KeepBackups = 2

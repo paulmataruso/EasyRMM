@@ -53,21 +53,31 @@ func composeVolumes(t *testing.T, path string) []string {
 
 // Every volume of the deployment is in a backup: the data root's (every
 // one that holds state), or the deployment's own docker/ files (the
-// tree), or the operator's certificates in manual TLS mode, mounted
-// read-only and never changed by an upgrade. A volume anywhere else would
-// be state the updater neither backs up nor restores.
+// tree). The exceptions are the updater's own status, which it writes as
+// it goes, and the operator's certificates in manual TLS mode, which
+// setup.sh puts in the data root but an operator may point elsewhere,
+// mounted read-only and never changed by an upgrade. A volume anywhere
+// else would be state the updater neither backs up nor restores.
 func TestBackupCoversEveryVolume(t *testing.T) {
 	const dataRootVar = "${EASYRMM_DATA_ROOT:-/srv/easyrmm}/"
 	var dataRoot []string
 	for _, src := range composeVolumes(t, composeFile) {
 		switch {
 		case strings.HasPrefix(src, dataRootVar):
-			dataRoot = append(dataRoot, strings.TrimPrefix(src, dataRootVar))
+			dir := strings.TrimPrefix(src, dataRootVar)
+			if top, _, _ := strings.Cut(dir, "/"); !skippedEntry(top) {
+				dataRoot = append(dataRoot, dir)
+			} else if dir != updaterEntry+"/status" {
+				t.Errorf("%s mounts %s, which a backup leaves out", composeFile, src)
+			}
 		case strings.HasPrefix(src, "../docker/"):
 		case src == "${EASYRMM_TLS_DIR:-/srv/easyrmm/tls}":
 		default:
 			t.Errorf("%s mounts %s, which a backup does not hold", composeFile, src)
 		}
+	}
+	if setup := readFile(t, "../../../deploy/scripts/setup.sh"); !strings.Contains(setup, "EASYRMM_TLS_DIR=${data_root}/tls") {
+		t.Error("setup.sh no longer puts EASYRMM_TLS_DIR in the data root")
 	}
 	// What an Authentik deployment keeps: its directories, and its
 	// database in the cluster.

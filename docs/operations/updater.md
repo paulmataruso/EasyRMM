@@ -167,10 +167,13 @@ That covers every volume in `deploy/docker-compose.yml` that holds state.
 With Authentik that is its database, with its users, their second factors
 and the key pair that signs EasyRMM's ID tokens, and its `authentik/data`,
 `authentik/secrets` and `authentik/invitations` directories; a rollback
-restores all of them with the rest. The one volume outside a backup is
-`EASYRMM_TLS_DIR` in `manual` TLS mode: your own certificate and key,
-mounted read-only, which an upgrade never changes. Back them up where you
-manage certificates ([Backup and restore](backup-restore.md)).
+restores all of them with the rest. `setup.sh` puts `EASYRMM_TLS_DIR`
+(`manual` TLS mode's certificate and key) in the data root, as `tls/`, so
+a backup holds it too. Outside a backup are the updater's own status
+directory, which it writes as it goes, and `EASYRMM_TLS_DIR` if you have
+pointed it elsewhere: your own certificate and key, mounted read-only,
+which an upgrade never changes. Back those up where you manage
+certificates ([Backup and restore](backup-restore.md)).
 
 These backups are for rolling an upgrade back on the same host, not a
 replacement for [Backup and restore](backup-restore.md): they stay on the
