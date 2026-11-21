@@ -222,7 +222,9 @@ Authentik's settings are in `.env`: `EASYRMM_AUTHENTIK_HOSTNAME`,
 `EASYRMM_AUTHENTIK_ADMIN_EMAIL`, and the secrets
 `EASYRMM_AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_SECRET_KEY` and
 `AUTHENTIK_DB_PASSWORD`. Its data is the `authentik` database in the same
-PostgreSQL, and `/srv/easyrmm/authentik/`; back both up with the rest.
+PostgreSQL, and `/srv/easyrmm/authentik/`; back both up with the rest, as
+in [Backup and restore](../operations/backup-restore.md). A backup without
+them loses everyone's sign-in and the key that signs EasyRMM's ID tokens.
 Settings → Single sign-on shows the Authentik provider as set by the
 deployment, so it is changed only through `.env`. EasyRMM's edge holds
 Authentik's name with its own certificate, so `--with-authentik` does not
