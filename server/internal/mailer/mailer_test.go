@@ -75,15 +75,15 @@ func TestNewValidation(t *testing.T) {
 
 func TestBareAddressAndLoopback(t *testing.T) {
 	for s, want := range map[string]bool{
-		"rmm@example.com":                   true,
-		"first.last+tag@example.co":         true,
-		"":                                  false,
-		"rmm":                               false,
-		"<rmm@example.com>":                 false,
-		"EasyRMM <rmm@example.com>":         false,
-		"a@b.com, c@d.com":                  false,
-		" rmm@example.com":                  false,
-		strings.Repeat("a", 250) + "@b.com": false,
+		"rmm@example.com":              true,
+		"first.last+tag@example.co":    true,
+		"":                             false,
+		"rmm":                          false,
+		"<rmm@example.com>":            false,
+		"EasyRMM <rmm@example.com>":    false,
+		"a@example.org, c@example.net": false,
+		" rmm@example.com":             false,
+		strings.Repeat("a", 250) + "@example.org": false,
 	} {
 		if BareAddress(s) != want {
 			t.Errorf("BareAddress(%q) = %v", s, !want)
