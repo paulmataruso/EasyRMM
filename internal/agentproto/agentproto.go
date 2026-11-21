@@ -151,6 +151,9 @@ type HeartbeatResponse struct {
 	// EasyPatchInstall tells the agent to install the EasyPatch agent
 	// (ADR-0031).
 	EasyPatchInstall *SignedEasyPatchInstall `json:"easyPatchInstall,omitempty"`
+	// Uninstall tells the agent to uninstall itself (ADR-0050). An answer
+	// that carries it carries no other instruction.
+	Uninstall *SignedUninstall `json:"uninstall,omitempty"`
 }
 
 // MeshAgentInfo tells the agent about remote access.

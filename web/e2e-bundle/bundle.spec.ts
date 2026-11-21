@@ -636,3 +636,47 @@ test("an alert rule raises an alert for the machine, which Patching → Alerts a
   ]);
   expect(audit.items[3]!.deviceId).toBe(deviceId);
 });
+
+/** The HTTP status EasyRMM's API answers a GET with, from the administrator's page. */
+async function statusOf(path: string): Promise<number> {
+  return admin.evaluate(async (p) => (await fetch(p, { credentials: "same-origin" })).status, path);
+}
+
+test("removing the machine from the console uninstalls EasyRMM's agent, MeshAgent and the EasyPatch agent", async () => {
+  const page = admin;
+  const main = page.getByRole("main");
+  await page.goto(`/devices/${deviceId}`);
+  await expect(page.getByRole("heading", { name: hostname })).toBeVisible();
+  await page.getByRole("button", { name: "Remove", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: `Remove ${hostname}?` });
+  await dialog.getByRole("button", { name: "Remove device" }).click();
+  await expect(main.getByText(/Waiting for the agent to check in|The agent is uninstalling itself/)).toBeVisible();
+
+  // With its next heartbeat the agent starts its uninstaller as a systemd unit of its own, which
+  // removes the agent's service, MeshAgent and the agent, and reports: the device is deleted.
+  await expect
+    .poll(() => statusOf(`/api/v1/devices/${deviceId}`), { message: "the device is removed", timeout: 180_000, intervals: [3_000] })
+    .toBe(404);
+  expect(onHost("systemctl is-active easyrmm-agent easyrmm-meshagent || true").trim().split("\n")).toEqual(["inactive", "inactive"]);
+  expect(onHost("ls /etc/systemd/system | grep -c '^easyrmm-' || true").trim()).toBe("0");
+  expect(onHost("ls -d /usr/local/bin/easyrmm-agent /var/lib/easyrmm-agent /usr/local/lib/easyrmm-agent 2>/dev/null | wc -l").trim()).toBe("0");
+
+  // The patching engine has the EasyPatch agent uninstall itself, which removes its package.
+  await expect
+    .poll(() => onHost("dpkg-query -W -f='${Status}' easypatch-agent 2>/dev/null || true").trim(), {
+      message: "the EasyPatch agent's package is removed",
+      timeout: 300_000,
+      intervals: [10_000],
+    })
+    .not.toBe("install ok installed");
+  expect(onHost("systemctl is-active easypatch-agent || true").trim()).not.toBe("active");
+
+  // The machine is in neither list any more, and the audit log says who removed it and that the
+  // agent confirmed.
+  await page.goto("/devices");
+  await expect(main.getByRole("link", { name: hostname })).toHaveCount(0);
+  const audit = await api<{ items: { action: string; actorType: string; details?: { confirmed?: boolean } }[] }>("GET", `/api/v1/audit?deviceId=${deviceId}&action=device`);
+  const removed = audit.items.find((a) => a.action === "device.remove");
+  expect(removed).toMatchObject({ actorType: "agent", details: { confirmed: true } });
+  expect(audit.items.some((a) => a.action === "device.removal_request" && a.actorType === "user")).toBe(true);
+});

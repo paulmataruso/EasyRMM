@@ -73,6 +73,8 @@ export function device(id: string, name: string, extra: Partial<Device> = {}): D
     canRunScripts: false,
     canUpdateAgent: false,
     canManageSoftware: false,
+    canRemove: false,
+    removal: null,
     ...extra,
   };
 }

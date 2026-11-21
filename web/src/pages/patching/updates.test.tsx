@@ -83,7 +83,7 @@ const FLEET: PatchFleet = {
     device("d4", "FS-01", CONTOSO, endpoint("e4", "fs-01", { complianceStatus: "NeverScanned", agentOutdated: true })),
     device("d5", "APP-01", CONTOSO, undefined, "unlinked"),
   ],
-  unmatched: [{ ...endpoint("e9", "FRONTDESK-2", { complianceStatus: "MissingUpdates" }), organizationId: "o2", organizationName: "Contoso Dental" }],
+  unmatched: [{ ...endpoint("e9", "FRONTDESK-2", { complianceStatus: "MissingUpdates" }), organizationId: "o2", organizationName: "Contoso Dental", canRemove: true }],
   truncated: false,
   errors: [],
 };
@@ -296,6 +296,41 @@ describe("patching overview", () => {
     expect(server.call("GET /patching/alerts/summary").query.get("organizationId")).toBe("o1");
     await user.click(main().getByRole("link", { name: "Up to date" }));
     expect(await main().findByRole("tab", { name: "Devices", selected: true })).toBeInTheDocument();
+  });
+
+  it("removes an endpoint with no EasyRMM device, and shows the ones being removed", async () => {
+    const user = userEvent.setup();
+    let fleet: PatchFleet = FLEET;
+    const server = installFakeApi(
+      routes(TECH, {
+        "GET /patching/devices": () => ok(fleet),
+        "POST /patching/endpoints/:id/remove": (r) => {
+          const removed = { ...fleet.unmatched[0]!, removal: { reason: "deleted" as const, state: "pending" as const, requestedAt: T } };
+          fleet = { ...fleet, unmatched: [removed] };
+          return ok({ ...removed, id: r.params.id });
+        },
+      }),
+    );
+    renderApp("/patching");
+    await screen.findByRole("main");
+    const unmatched = within((await main().findByRole("heading", { name: /In the patching engine, with no EasyRMM device/ })).closest("section")!);
+    await user.click(unmatched.getByRole("button", { name: "Remove" }));
+    const dialog = screen.getByRole("dialog", { name: "Remove FRONTDESK-2?" });
+    expect(within(dialog).getByText(/its EasyPatch agent uninstalls itself, and the patching engine stops patching it/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Remove endpoint" }));
+    expect(await unmatched.findByText("Removing")).toBeInTheDocument();
+    expect(unmatched.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    expect(server.call("POST /patching/endpoints/:id/remove").params.id).toBe("e9");
+  });
+
+  it("offers no removal to people who may not remove devices", async () => {
+    installFakeApi(routes(TECH, { "GET /patching/devices": ok({ ...FLEET, unmatched: [{ ...FLEET.unmatched[0]!, canRemove: false }] }) }));
+    renderApp("/patching");
+    await screen.findByRole("main");
+    const unmatched = within((await main().findByRole("heading", { name: /In the patching engine, with no EasyRMM device/ })).closest("section")!);
+    expect(unmatched.getByText("FRONTDESK-2")).toBeInTheDocument();
+    expect(unmatched.queryByRole("button", { name: "Remove" })).not.toBeInTheDocument();
+    expect(unmatched.queryByRole("columnheader", { name: "Remove" })).not.toBeInTheDocument();
   });
 
   it("says when there is nothing to patch yet", async () => {

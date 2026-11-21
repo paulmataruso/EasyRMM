@@ -31,6 +31,8 @@ type Mesh interface {
 	SetMeshRights(ctx context.Context, meshID, userID string, rights uint32) error
 	RemoveMeshUser(ctx context.Context, meshID, userID string) error
 	Nodes(ctx context.Context) ([]meshcentral.Node, error)
+	RemoveDevice(ctx context.Context, nodeID string) error
+	UninstallAgent(ctx context.Context, nodeID string) error
 }
 
 // Config configures the service.
@@ -389,14 +391,22 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 		}
 	}
 	now := s.now()
-	var waiting map[string]time.Time
-	var soonest time.Duration
+	var (
+		waiting map[string]time.Time
+		soonest time.Duration
+		retired map[string]retiredNode
+		doomed  []retiredNode
+	)
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		waiting, soonest = map[string]time.Time{}, 0
 		recorded, err := s.recordedNodes(ctx, tx, present)
 		if err != nil {
 			return err
 		}
+		if retired, err = retiredNodes(ctx, tx, present); err != nil {
+			return err
+		}
+		doomed = doomed[:0]
 		// Enrolled devices (ADR-0015) keep the facts their EasyRMM agent
 		// reports; MeshCentral only says whether MeshAgent is connected. A
 		// link to a node in another site's group is refused: the node id an
@@ -435,6 +445,13 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 					}
 					continue
 				}
+			}
+			if r, ok := retired[n.ID]; ok {
+				// A removed device's MeshAgent came back, or its node is not
+				// removed yet: no discovered device (ADR-0050).
+				r.connected = n.AgentConnected()
+				doomed = append(doomed, r)
+				continue
 			}
 			hostname := n.OSName
 			if hostname == "" {
@@ -489,6 +506,9 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 	if err != nil {
 		return err
 	}
+	if wait := s.removeRetired(ctx, doomed); wait > 0 && (soonest == 0 || wait < soonest) {
+		soonest = wait
+	}
 	// Claimed, recorded and vanished nodes are forgotten: a node that comes
 	// back waits again.
 	s.unclaimed = waiting
@@ -500,6 +520,113 @@ func (s *Service) syncDevices(ctx context.Context, known map[string]uuid.UUID) e
 		s.recheck = time.AfterFunc(soonest, s.DevicesChanged)
 	}
 	return nil
+}
+
+// Removed devices' nodes (ADR-0050).
+const (
+	// RetiredAttemptGap is the least time between two attempts on one node.
+	RetiredAttemptGap = time.Minute
+	// RetiredUninstalls is how many times a connected MeshAgent is asked to
+	// uninstall itself before its node is removed regardless.
+	RetiredUninstalls = 3
+	// RetiredReturnGap is the least time between two removals of a node that
+	// came back: its MeshAgent did not uninstall itself, typically because
+	// it does not run as the service MeshCentral installs (EasyRMM's own
+	// runs as easyrmm-meshagent; the EasyRMM agent removes that one). It
+	// is not asked again; MeshCentral forgets it once an hour.
+	RetiredReturnGap = time.Hour
+)
+
+// retiredNode is a node of a removed device that MeshCentral still lists.
+type retiredNode struct {
+	node       string
+	device     uuid.UUID
+	attemptAt  *time.Time
+	uninstalls int
+	connected  bool
+	// returned says MeshCentral removed the node once already.
+	returned bool
+}
+
+// retiredNodes returns the nodes among nodes that belong to devices removed
+// in the last RetiredFor, and that no device holds since.
+func retiredNodes(ctx context.Context, tx pgx.Tx, nodes []string) (map[string]retiredNode, error) {
+	rows, err := tx.Query(ctx, `SELECT r.mesh_node_id, r.device_id, r.mesh_attempt_at, r.mesh_uninstalls, r.mesh_removed_at IS NOT NULL FROM retired_devices r
+		WHERE r.mesh_node_id = ANY ($1) AND r.expires_at > now()
+		  AND NOT EXISTS (SELECT 1 FROM devices d WHERE d.mesh_node_id = r.mesh_node_id)`, nodes)
+	if err != nil {
+		return nil, fmt.Errorf("listing removed devices' nodes: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]retiredNode{}
+	for rows.Next() {
+		var r retiredNode
+		if err := rows.Scan(&r.node, &r.device, &r.attemptAt, &r.uninstalls, &r.returned); err != nil {
+			return nil, err
+		}
+		out[r.node] = r
+	}
+	return out, rows.Err()
+}
+
+// removeRetired has the MeshAgents of removed devices uninstall themselves
+// while connected, then removes their nodes, at most once per node every
+// RetiredAttemptGap, or RetiredReturnGap for a node that came back. It
+// returns when the next attempt is due, zero for none. Failures are
+// recorded on the removed device and tried again.
+func (s *Service) removeRetired(ctx context.Context, nodes []retiredNode) time.Duration {
+	var next time.Duration
+	for _, r := range nodes {
+		gap := RetiredAttemptGap
+		if r.returned {
+			gap = RetiredReturnGap
+		}
+		if r.attemptAt != nil {
+			if wait := r.attemptAt.Add(gap).Sub(s.now()); wait > 0 {
+				if next == 0 || wait < next {
+					next = wait
+				}
+				continue
+			}
+		}
+		var (
+			err    error
+			update string
+		)
+		uninstall := r.connected && !r.returned && r.uninstalls < RetiredUninstalls
+		if uninstall {
+			err = s.mesh.UninstallAgent(ctx, r.node)
+			update = `UPDATE retired_devices SET mesh_attempt_at = $3, mesh_uninstalls = mesh_uninstalls + 1, mesh_error = $2 WHERE device_id = $1`
+			s.log.Info("remote access: asked the MeshAgent of a removed device to uninstall itself", "device_id", r.device, "error", err)
+		} else {
+			err = s.mesh.RemoveDevice(ctx, r.node)
+			update = `UPDATE retired_devices SET mesh_attempt_at = $3, mesh_error = $2,
+				mesh_removed_at = CASE WHEN $2 = '' THEN now() ELSE mesh_removed_at END,
+				mesh_uninstalls = CASE WHEN $2 = '' THEN 0 ELSE mesh_uninstalls END
+				WHERE device_id = $1`
+			if err == nil {
+				s.log.Info("remote access: removed a removed device's node from MeshCentral", "device_id", r.device)
+			}
+		}
+		msg := ""
+		if err != nil {
+			msg = truncateRunes(err.Error(), 1000)
+			s.log.Warn("remote access: cleaning up a removed device in MeshCentral failed", "device_id", r.device, "error", err)
+		}
+		if err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+			// The service's clock, which the gap is measured on.
+			_, err := tx.Exec(ctx, update, r.device, msg, s.now())
+			return err
+		}); err != nil {
+			s.log.Error("remote access: recording a removed device's cleanup failed", "device_id", r.device, "error", err)
+		}
+		// Again after the gap: to remove the node of a MeshAgent asked to
+		// uninstall, or to retry a failure. A removed node is gone.
+		if (err != nil || uninstall) && (next == 0 || gap < next) {
+			next = gap
+		}
+	}
+	return next
 }
 
 // recordedNodes reports which of the nodes a device already holds.

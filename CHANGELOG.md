@@ -6,6 +6,33 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **Removing a device.** **Remove** on a device's page (Site
+  Administrators and above) has its agents uninstall themselves: with its
+  next heartbeat the EasyRMM agent gets a signed instruction, starts its
+  uninstaller outside its service, removes its service, MeshAgent and
+  itself, and confirms; EasyRMM then deletes the device, the patching
+  engine has the EasyPatch agent uninstall itself, and MeshCentral forgets
+  the device. Until the agent confirms, the device shows *Removing* and
+  the removal can be cancelled. If the agent cannot remove itself, the
+  device shows why, with **Ask again** and **Remove anyway**. A device
+  removed by force that comes back within 90 days is still told to
+  uninstall itself. Devices with no EasyRMM agent are removed at once.
+  ([Removing a device](docs/deployment/agents.md#removing-a-device),
+  ADR-0050.)
+- **Removing an endpoint only the patching engine has.** Patching →
+  Overview's list of endpoints with no EasyRMM device has **Remove**: the
+  EasyPatch agent uninstalls itself and the engine stops patching the
+  endpoint.
+
+### Fixed
+
+- **`easyrmm-agent uninstall` on Linux left an empty
+  `/usr/local/lib/easyrmm-agent` folder.** It is removed with MeshAgent.
+- **The patching overview's list of endpoints with no EasyRMM device** drew
+  the line under its description only part of the way across.
+
 ## [1.0.0-rc.3] - 2026-11-21
 
 The third release candidate: the patching engine keeps only what EasyRMM

@@ -128,9 +128,26 @@ type Device struct {
 	// CanManageSoftware: the caller holds software.manage here and the
 	// device has the EasyRMM agent on Windows or Linux (ADR-0028).
 	CanManageSoftware bool `json:"canManageSoftware"`
+	// CanRemove: the caller may remove the device (ADR-0050).
+	CanRemove bool `json:"canRemove"`
+	// Removal is the device's removal while it waits for its agent, nil
+	// when nobody asked for one.
+	Removal *Removal `json:"removal"`
 
 	// MeshNodeID is MeshCentral's node identifier, empty without MeshAgent.
 	MeshNodeID string `json:"-"`
+}
+
+// Removal is a device's removal waiting for its agent to uninstall itself
+// (ADR-0050).
+type Removal struct {
+	RequestedAt time.Time `json:"requestedAt"`
+	// SentAt is when a heartbeat answer first carried the instruction, nil
+	// while the agent has not checked in since.
+	SentAt *time.Time `json:"sentAt"`
+	// ReportedAt and Error: the agent could not remove itself, and why.
+	ReportedAt *time.Time `json:"reportedAt"`
+	Error      string     `json:"error"`
 }
 
 // Query filters a device list.
@@ -153,13 +170,15 @@ var columns = `d.id, d.organization_id, o.name, d.site_id, s.name, d.device_grou
 	greatest(d.last_seen_at, d.agent_last_seen_at), d.created_at, d.updated_at,
 	d.enrolled_at, coalesce(d.agent_version, ''), coalesce(d.agent_arch, ''), d.agent_last_seen_at, ` + agentOnline + `,
 	coalesce(d.agent_sha256, ''), coalesce(u.state, ''), coalesce(u.target_sha256, ''), coalesce(u.attempts, 0),
-	coalesce(u.error, ''), coalesce(u.requested, false)`
+	coalesce(u.error, ''), coalesce(u.requested, false),
+	rm.requested_at, rm.sent_at, rm.reported_at, coalesce(rm.error, '')`
 
 const from = ` FROM devices d
 	JOIN sites s ON s.id = d.site_id
 	JOIN organizations o ON o.id = d.organization_id
 	LEFT JOIN device_groups g ON g.id = d.device_group_id
-	LEFT JOIN agent_updates u ON u.device_id = d.id`
+	LEFT JOIN agent_updates u ON u.device_id = d.id
+	LEFT JOIN device_removals rm ON rm.device_id = d.id`
 
 func scan(row pgx.Row) (*Device, error) {
 	var (
@@ -167,16 +186,23 @@ func scan(row pgx.Row) (*Device, error) {
 		enrolledAt *time.Time
 		a          Agent
 		u          AgentUpdate
+		rm         Removal
+		asked      *time.Time
 	)
 	err := row.Scan(&d.ID, &d.OrganizationID, &d.OrganizationName, &d.SiteID, &d.SiteName, &d.DeviceGroupID, &d.DeviceGroupName,
 		&d.Name, &d.Hostname, &d.OSDescription, &d.Platform, &d.MeshNodeID, &d.RemoteOnline,
 		&d.LastSeenAt, &d.CreatedAt, &d.UpdatedAt,
 		&enrolledAt, &a.Version, &a.Arch, &a.LastSeenAt, &a.Online,
-		&a.SHA256, &a.updateState, &a.updateTarget, &u.Attempts, &u.Error, &u.Requested)
+		&a.SHA256, &a.updateState, &a.updateTarget, &u.Attempts, &u.Error, &u.Requested,
+		&asked, &rm.SentAt, &rm.ReportedAt, &rm.Error)
 	if err != nil {
 		return nil, err
 	}
 	d.RemoteAgent = d.MeshNodeID != ""
+	if asked != nil {
+		rm.RequestedAt = *asked
+		d.Removal = &rm
+	}
 	if enrolledAt != nil {
 		a.EnrolledAt = *enrolledAt
 		if a.updateState != "" {
@@ -214,6 +240,7 @@ func (s *Service) decorate(c access.Caller, d *Device) {
 	d.CanRunScripts = d.Agent != nil && c.Can(rbac.PermScriptRun, r)
 	d.CanUpdateAgent = d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
 	d.CanManageSoftware = d.Agent != nil && (d.Platform == "windows" || d.Platform == "linux") && c.Can(rbac.PermSoftwareManage, r)
+	d.CanRemove = c.Can(rbac.PermDeviceRetire, r)
 	s.updateStatus(d)
 }
 

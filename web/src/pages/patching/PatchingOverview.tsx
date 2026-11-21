@@ -1,10 +1,13 @@
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ArrowUpCircle, BellRing, CircleX, Download, ListChecks, Power, Radar, ServerOff, ShieldAlert, ShieldCheck, Unlink, WifiOff } from "lucide-react";
-import { useApi, useList } from "../../api/hooks";
-import type { ComplianceStatus, PatchAlertCounts, PatchFleet, PatchJobView } from "../../api/types";
+import { ArrowUpCircle, BellRing, CircleX, Download, ListChecks, Power, Radar, ServerOff, ShieldAlert, ShieldCheck, Trash2, Unlink, WifiOff } from "lucide-react";
+import { api } from "../../api/client";
+import { useApi, useApiMutation, useList } from "../../api/hooks";
+import type { ComplianceStatus, PatchAlertCounts, PatchFleet, PatchJobView, PatchUnmatchedEndpoint } from "../../api/types";
+import { ConfirmDialog } from "../../components/Dialog";
 import { OrganizationSelect } from "../../components/Filters";
-import { Alert, Card, cx, Dot, EmptyState, ErrorState, Spinner, TableWrap, Toolbar, type Tone } from "../../components/ui";
+import { useToast } from "../../components/Toast";
+import { Alert, Badge, Button, Card, cx, Dot, EmptyState, ErrorState, Spinner, TableWrap, Toolbar, type Tone } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
 import { COMPLIANCE, ComplianceBadge } from "./patchText";
@@ -454,16 +457,19 @@ function Organizations({ orgs }: { orgs: OrgTally[] }) {
 /** EasyPatch endpoints with no EasyRMM device, with what to do about them. */
 function Unmatched({ fleet }: { fleet: PatchFleet }) {
   if (fleet.unmatched.length === 0) return null;
+  const removable = fleet.unmatched.some((e) => e.canRemove || e.removal);
   return (
     <Card id="unmatched" title={`In the patching engine, with no EasyRMM device (${fleet.unmatched.length.toLocaleString()})`} padded={false} className="mb-5 scroll-mt-4">
-      <p className="max-w-3xl border-b border-line px-4 py-3 text-sm text-muted">
-        The patching engine patches these endpoints, but no EasyRMM device is linked to them, so they show only here. Install EasyRMM's agent on each machine, in the
-        same organization: EasyRMM links the device to the EasyPatch agent already there when their host names match, and the device's Patches tab says why
-        when it cannot.{" "}
-        <Link to="/devices/add" className="font-medium text-accent hover:underline">
-          Add a device
-        </Link>
-      </p>
+      <div className="border-b border-line px-4 py-3">
+        <p className="max-w-3xl text-sm text-muted">
+          The patching engine patches these endpoints, but no EasyRMM device is linked to them, so they show only here. Install EasyRMM's agent on each machine, in
+          the same organization: EasyRMM links the device to the EasyPatch agent already there when their host names match, and the device's Patches tab says why
+          when it cannot. Remove an endpoint whose computer is gone.{" "}
+          <Link to="/devices/add" className="font-medium text-accent hover:underline">
+            Add a device
+          </Link>
+        </p>
+      </div>
       <TableWrap className="rounded-none border-0">
         <table className="table-base">
           <thead>
@@ -472,6 +478,11 @@ function Unmatched({ fleet }: { fleet: PatchFleet }) {
               <th className="hidden sm:table-cell">Status</th>
               <th className="hidden md:table-cell">Organization / site</th>
               <th className="hidden lg:table-cell">Last check-in</th>
+              {removable && (
+                <th>
+                  <span className="sr-only">Remove</span>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
@@ -491,11 +502,69 @@ function Unmatched({ fleet }: { fleet: PatchFleet }) {
                 <td className="hidden whitespace-nowrap text-muted lg:table-cell">
                   {e.lastCheckInAt ? <span title={formatDateTime(e.lastCheckInAt)}>{formatRelative(e.lastCheckInAt)}</span> : "Never"}
                 </td>
+                {removable && (
+                  <td className="text-right">
+                    <RemoveEndpoint endpoint={e} />
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
         </table>
       </TableWrap>
     </Card>
+  );
+}
+
+/**
+ * Removes an endpoint no EasyRMM device is linked to, such as a computer decommissioned before its device was (ADR-0050):
+ * its EasyPatch agent uninstalls itself and the patching engine stops patching it.
+ */
+function RemoveEndpoint({ endpoint: e }: { endpoint: PatchUnmatchedEndpoint }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const remove = useApiMutation(() => api.post<PatchUnmatchedEndpoint>(`/patching/endpoints/${e.id}/remove`), {
+    invalidate: ["/patching/devices"],
+    onSuccess: () => {
+      setOpen(false);
+      toast.success(`${e.hostname}'s EasyPatch agent uninstalls itself the next time it checks in.`);
+    },
+  });
+  if (e.removal) {
+    return (
+      <Badge
+        tone={e.removal.error ? "danger" : "warn"}
+        icon={<Dot tone={e.removal.error ? "danger" : "warn"} />}
+        title={
+          e.removal.error ||
+          `Asked ${formatRelative(e.removal.requestedAt)}. The patching engine stops patching the endpoint once its agent has uninstalled itself, or after 7 days.`
+        }
+      >
+        {e.removal.state === "uninstalling" ? "Uninstalling" : "Removing"}
+      </Badge>
+    );
+  }
+  if (!e.canRemove) return null;
+  return (
+    <>
+      <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" aria-hidden />} onClick={() => setOpen(true)}>
+        Remove
+      </Button>
+      <ConfirmDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        onConfirm={() => remove.mutate(undefined)}
+        title={`Remove ${e.hostname}?`}
+        confirmLabel="Remove endpoint"
+        tone="danger"
+        loading={remove.isPending}
+        error={remove.error}
+      >
+        <p className="text-left">
+          The next time {e.hostname} checks in, its EasyPatch agent uninstalls itself, and the patching engine stops patching it. If it does not check in
+          within 7 days, the engine stops patching it anyway. The engine keeps its patch history.
+        </p>
+      </ConfirmDialog>
+    </>
   );
 }

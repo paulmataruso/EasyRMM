@@ -50,7 +50,8 @@ gateway has not checked.
 The EasyRMM agent talks to the console name under `/api/agent/v1/`:
 enrollment with a deployment token, signed heartbeats, MeshAgent and its
 settings (fetched by the server from MeshCentral over loopback), the install
-script and the agent downloads. These routes take no browser session or
+script and the agent downloads, and the report of a removed agent
+(ADR-0050). These routes take no browser session or
 CSRF token; enrollment is rate-limited per address and everything after it
 is signed with the device's key (ADR-0015).
 

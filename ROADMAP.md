@@ -26,7 +26,10 @@ follows when these have been run there, or fixed:
   ([ADR-0028](docs/architecture/adr/0028-software-deployment.md)), with the
   [hand test](docs/development/windows-software-hand-test.md).
 * On Windows: the rollback of an agent update that crashes, a `cmd` script's
-  time-out ending its child processes, and ARM64.
+  time-out ending its child processes, ARM64, and removing a device from
+  the console ([ADR-0050](docs/architecture/adr/0050-removing-a-device.md)):
+  the uninstaller started outside the agent's service, and whether
+  MeshCentral can uninstall the MeshAgent the agent runs as a service.
 * Enrollment with approval and the EasyPatch agent's dnf install on more
   Linux distributions (Debian, Ubuntu, Rocky Linux, Fedora).
 * Importing a standalone EasyPatch on a real server with a DNS move, and
@@ -35,14 +38,6 @@ follows when these have been run there, or fixed:
 
 **Build**
 
-* Removing a device from the console
-  ([ADR-0050](docs/architecture/adr/0050-removing-a-device.md)). Today
-  nothing removes one. **Remove device** has the device uninstall its
-  agents (EasyRMM's, MeshAgent and the EasyPatch agent) and deletes it from
-  EasyRMM, MeshCentral and the patching engine when it confirms;
-  **Remove anyway** removes one that is off or whose uninstall failed, and
-  it cleans itself up if it comes back within 90 days. Endpoints only the
-  patching engine has get **Remove** too.
 * Operators sign the Windows agent with their own code signing
   certificate ([ADR-0049](docs/architecture/adr/0049-operators-sign-windows-agents.md)):
   they sign the server's builds with their own tools and upload them, and

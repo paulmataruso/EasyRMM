@@ -20,6 +20,10 @@ type Device struct {
 	SiteID         uuid.UUID
 	Hostname       string
 	MeshNodeID     string
+	// Retired is a device removed by force whose agent came back
+	// (ADR-0050): it may only fetch its uninstall instruction and report.
+	// Hostname is then the device's name when it was removed.
+	Retired bool
 }
 
 // nonceGrace keeps a nonce a little past the moment its timestamp stops
@@ -50,9 +54,10 @@ type SignedRequest struct {
 func (p *SignedRequest) DeviceID() uuid.UUID { return p.device.ID }
 
 // BeginSigned checks what a signed request's header says on its own: its
-// form, its timestamp and that it names an enrolled device. The server
-// does this before reading the body, so a request from no enrolled device
-// is refused before it can send one.
+// form, its timestamp and that it names an enrolled device, or one removed
+// by force whose agent is still waited for. The server does this before
+// reading the body, so a request from no such device is refused before it
+// can send one.
 func (s *Service) BeginSigned(ctx context.Context, header string) (*SignedRequest, error) {
 	a, err := agentproto.Parse(header)
 	if err != nil {
@@ -70,9 +75,17 @@ func (s *Service) BeginSigned(ctx context.Context, header string) (*SignedReques
 		key []byte
 	)
 	err = s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT agent_public_key, organization_id, site_id, hostname, coalesce(mesh_node_id, '')
+		d.Retired = false // the transaction may run again
+		err := tx.QueryRow(ctx, `SELECT agent_public_key, organization_id, site_id, hostname, coalesce(mesh_node_id, '')
 			FROM devices WHERE id = $1 AND agent_public_key IS NOT NULL`, id).
 			Scan(&key, &d.OrganizationID, &d.SiteID, &d.Hostname, &d.MeshNodeID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			d.Retired = true
+			err = tx.QueryRow(ctx, `SELECT agent_public_key, organization_id, site_id, name, coalesce(mesh_node_id, '')
+				FROM retired_devices WHERE device_id = $1 AND agent_public_key IS NOT NULL AND expires_at > now()`, id).
+				Scan(&key, &d.OrganizationID, &d.SiteID, &d.Hostname, &d.MeshNodeID)
+		}
+		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrUnknownDevice
@@ -96,8 +109,12 @@ func (s *Service) FinishSigned(ctx context.Context, p *SignedRequest, method, ta
 		return nil, ErrClockSkew
 	}
 	expires := time.Unix(a.Timestamp, 0).Add(agentproto.MaxSkew + nonceGrace)
+	table := "agent_nonces"
+	if d.Retired {
+		table = "retired_agent_nonces"
+	}
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `INSERT INTO agent_nonces (device_id, nonce, expires_at) VALUES ($1, $2, $3)
+		tag, err := tx.Exec(ctx, `INSERT INTO `+table+` (device_id, nonce, expires_at) VALUES ($1, $2, $3)
 			ON CONFLICT DO NOTHING`, id, a.Nonce, expires)
 		if err == nil && tag.RowsAffected() == 0 {
 			return ErrReplay

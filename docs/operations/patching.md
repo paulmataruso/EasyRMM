@@ -226,7 +226,10 @@ them, and refreshes every minute:
   EasyRMM links the device to the EasyPatch agent already there when their
   host names match, and the device's Patches tab says why when it cannot.
   Only organizations whose whole you can see are listed; site-level roles do
-  not see this list.
+  not see this list. **Remove** takes out an endpoint whose computer is gone:
+  its EasyPatch agent uninstalls itself when it next checks in, and the
+  engine stops patching the endpoint then, or after 7 days if it does not
+  ([Removing a device](../deployment/agents.md#removing-a-device)).
 
 ### Devices
 

@@ -21,6 +21,7 @@ import { PatchesPanel } from "./DevicePatches";
 import { platformName } from "./platform";
 import { allowedKinds, KIND_ICONS, unavailableReason } from "./remote";
 import { AgentLine } from "./agentUpdate";
+import { RemovalBanner, RemoveDeviceButton } from "./deviceRemoval";
 import { openSessionWindow, sessionPath } from "./sessionWindow";
 
 /** The remote-access part of a device, in a few words, and what it means when that is not obvious. */
@@ -108,9 +109,12 @@ export function DeviceDetailPage() {
                 Run script
               </Button>
             )}
+            <RemoveDeviceButton device={d} />
           </>
         }
       />
+
+      <RemovalBanner device={d} />
 
       {kinds.length > 0 && reason && (
         <Alert tone="info" className="mb-5" title={reason}>

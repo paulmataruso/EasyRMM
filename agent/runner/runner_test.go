@@ -36,6 +36,8 @@ type server struct {
 	update string
 	// easyPatch is its EasyPatch install instruction, JSON.
 	easyPatch string
+	// uninstall is its uninstall instruction, JSON.
+	uninstall string
 }
 
 func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +59,9 @@ func (s *server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if s.easyPatch != "" {
 			update += `,"easyPatchInstall":` + s.easyPatch
+		}
+		if s.uninstall != "" {
+			update += `,"uninstall":` + s.uninstall
 		}
 		_, _ = io.WriteString(w, `{"heartbeatSeconds":60,"inventoryHash":"`+s.invHash+`","meshAgent":{"available":`+map[bool]string{true: "true", false: "false"}[s.available]+`}`+update+`}`)
 	case agentproto.PathInventory:
@@ -148,7 +153,9 @@ func TestBeatInstallsMeshAgentWhenOffered(t *testing.T) {
 		t.Fatalf("MeshAgent = %+v", m)
 	}
 	m.node = "AB"
-	r.beat(ctx)
+	if _, err := r.beat(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if r.status.MeshNodeID != "AB" || r.status.MeshAgent != "installed" {
 		t.Errorf("status = %+v", r.status)
 	}
@@ -173,18 +180,24 @@ func TestBeatInstallFailureWaits(t *testing.T) {
 	s := &server{available: true}
 	m := &mesh{installErr: errors.New("disk full"), nodeErr: errors.New("x")}
 	r := newRunner(t, s, m)
-	r.beat(context.Background())
+	if _, err := r.beat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(r.status.MeshAgent, "install failed: disk full") {
 		t.Errorf("status = %+v", r.status)
 	}
 	// No second attempt before InstallWait passes.
 	m.installErr = nil
-	r.beat(context.Background())
+	if _, err := r.beat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if m.installed {
 		t.Error("retried the install immediately")
 	}
 	r.lastInstall = time.Now().Add(-r.InstallWait)
-	r.beat(context.Background())
+	if _, err := r.beat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if !m.installed {
 		t.Error("install not retried after the wait")
 	}
@@ -226,7 +239,9 @@ func TestBeatFailuresBackOff(t *testing.T) {
 
 	// Recovery clears the error.
 	s.status = 0
-	r.beat(context.Background())
+	if _, err := r.beat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if r.status.LastError != "" || r.failures != 0 {
 		t.Errorf("after recovery: %+v", r.status)
 	}
@@ -246,5 +261,51 @@ func TestJitter(t *testing.T) {
 	}
 	if jitter(0) != 0 || jitter(2) != 2 {
 		t.Error("tiny durations changed")
+	}
+}
+
+// removal records the uninstall instructions it gets.
+type removal struct {
+	got    []*agentproto.SignedUninstall
+	inline bool
+}
+
+func (r *removal) Apply(_ context.Context, u *agentproto.SignedUninstall) bool {
+	r.got = append(r.got, u)
+	return r.inline
+}
+
+// An uninstall instruction goes to the removal and nothing else happens:
+// no inventory, no MeshAgent install, no EasyPatch agent (ADR-0050).
+func TestUninstallInstruction(t *testing.T) {
+	s := &server{available: true, invHash: "other", uninstall: `{"payload":"cA==","signature":"cw=="}`, easyPatch: `{"payload":"e30=","signature":"cw=="}`}
+	m := &mesh{}
+	r := newRunner(t, s, m)
+	rm := &removal{}
+	r.Removal = rm
+	ep := &easyPatch{}
+	r.EasyPatch = ep
+	r.Inventory = func(context.Context) agentproto.Inventory { return agentproto.Inventory{} }
+	ctx := context.Background()
+	wait, err := r.beat(ctx)
+	if err != nil || wait <= 0 {
+		t.Fatalf("beat: %v %v", wait, err)
+	}
+	if len(rm.got) != 1 || rm.got[0].Payload != "cA==" || rm.got[0].Signature != "cw==" {
+		t.Errorf("removal got %+v", rm.got)
+	}
+	if m.installed || len(s.uploads) != 0 || len(ep.started) != 0 {
+		t.Errorf("did more: MeshAgent %v, uploads %d, EasyPatch %d", m.installed, len(s.uploads), len(ep.started))
+	}
+	// Inline: the runner stops for the agent to uninstall itself.
+	rm.inline = true
+	if err := r.Run(ctx); !errors.Is(err, ErrRemoved) {
+		t.Errorf("Run = %v", err)
+	}
+	// Without a removal the instruction is ignored, and still nothing else
+	// happens.
+	r.Removal = nil
+	if _, err := r.beat(ctx); err != nil || m.installed {
+		t.Errorf("beat without removal: %v, MeshAgent %v", err, m.installed)
 	}
 }

@@ -37,6 +37,7 @@ import (
 	"github.com/paulmataruso/easyrmm/agent/jobs"
 	"github.com/paulmataruso/easyrmm/agent/meshagent"
 	"github.com/paulmataruso/easyrmm/agent/metrics"
+	"github.com/paulmataruso/easyrmm/agent/removal"
 	"github.com/paulmataruso/easyrmm/agent/runner"
 	"github.com/paulmataruso/easyrmm/agent/state"
 	"github.com/paulmataruso/easyrmm/agent/update"
@@ -84,6 +85,8 @@ type env struct {
 	stdout io.Writer
 	log    *slog.Logger
 	sd     host.Services
+	// command runs programs: systemd-run for a removal (ADR-0050).
+	command host.Runner
 	// Checks of the machine, replaced by tests.
 	isRoot      func() bool
 	hasServices func() bool
@@ -99,6 +102,7 @@ func newEnv(stdout, stderr io.Writer) *env {
 		stdout:      stdout,
 		log:         slog.New(slog.NewTextHandler(stderr, nil)),
 		sd:          host.SystemServices(p),
+		command:     host.Exec,
 		isRoot:      host.IsAdmin,
 		hasServices: host.ServicesAvailable,
 	}
@@ -137,7 +141,7 @@ func (e *env) dispatch(ctx context.Context, args []string, stderr io.Writer) err
 	case "status":
 		return e.status(ctx)
 	case "uninstall":
-		return e.uninstall(ctx)
+		return e.uninstall(ctx, rest)
 	case "version", "--version", "-v":
 		_, _ = fmt.Fprintf(stdout, "easyrmm-agent %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
 		return nil
@@ -388,6 +392,11 @@ func (e *env) run(ctx context.Context) error {
 		up.Jobs = busyJobs{w, ep}
 	}
 	r.OnJobKey = e.pinJobKey(cfg, w)
+	r.Removal = &removal.Remover{
+		DeviceID: cfg.DeviceID, Key: pinnedKey(cfg), Dir: e.store.Dir, Log: e.log,
+		Launch: e.launchRemoval, Report: c.Removed,
+	}
+	parent := ctx
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	var g sync.WaitGroup
@@ -395,6 +404,14 @@ func (e *env) run(ctx context.Context) error {
 	err = r.Run(ctx)
 	cancel()
 	g.Wait()
+	if errors.Is(err, runner.ErrRemoved) {
+		// No service to leave: the agent uninstalls itself once its jobs
+		// and MeshAgent have stopped (ADR-0050).
+		if mesh != nil {
+			mesh.Wait()
+		}
+		return e.removeOnRequest(parent, e.removalFile())
+	}
 	if errors.Is(err, runner.ErrRestart) {
 		// The new build starts its own MeshAgent child.
 		if mesh != nil {
@@ -507,9 +524,17 @@ func (e *env) status(ctx context.Context) error {
 	return nil
 }
 
-func (e *env) uninstall(ctx context.Context) error {
+func (e *env) uninstall(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
+	removal := fs.String("removal", "", "the server's uninstall instruction, as the agent saved it (ADR-0050)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
 	if supported() && !e.isRoot() && (e.paths.Root == "" || e.paths.Root == "/") {
 		return e.needAdmin("uninstallation")
+	}
+	if *removal != "" {
+		return e.removeOnRequest(ctx, *removal)
 	}
 	cfg, _, err := e.store.Load()
 	if err != nil && !errors.Is(err, state.ErrNotEnrolled) {
@@ -525,23 +550,9 @@ func (e *env) uninstall(ctx context.Context) error {
 	if err := e.mesh(cfg).Remove(ctx); err != nil {
 		return err
 	}
-	if err := e.store.Remove(); err != nil {
-		return err
-	}
-	later, err := host.RemoveExecutable(e.paths.Binary())
+	later, err := e.removeFiles()
 	if err != nil {
 		return err
-	}
-	// What an interrupted update left beside it (ADR-0027).
-	for _, ext := range []string{".new", ".old", ".failed"} {
-		if l, err := host.RemoveExecutable(e.paths.Binary() + ext); err == nil && l {
-			later = true
-		}
-	}
-	if e.paths.Windows() {
-		// Empty program folders go too; Remove leaves a folder with files.
-		_ = os.Remove(filepath.Dir(e.paths.Binary()))
-		_ = os.Remove(filepath.Dir(filepath.Dir(e.paths.Binary())))
 	}
 	if enrolled {
 		_, _ = fmt.Fprintln(e.stdout, "EasyRMM agent removed. The device stays listed in the EasyRMM console as offline.")
@@ -552,4 +563,31 @@ func (e *env) uninstall(ctx context.Context) error {
 		_, _ = fmt.Fprintf(e.stdout, "%s is in use; Windows deletes it at the next restart.\n", e.paths.Binary())
 	}
 	return nil
+}
+
+// removeFiles deletes the agent's state and executables. later reports an
+// executable in use, which Windows deletes at the next restart.
+func (e *env) removeFiles() (later bool, err error) {
+	if err := e.store.Remove(); err != nil {
+		return false, err
+	}
+	later, err = host.RemoveExecutable(e.paths.Binary())
+	if err != nil {
+		return later, err
+	}
+	// What an interrupted update left beside it (ADR-0027).
+	for _, ext := range []string{".new", ".old", ".failed"} {
+		if l, err := host.RemoveExecutable(e.paths.Binary() + ext); err == nil && l {
+			later = true
+		}
+	}
+	// Empty folders of the agent's own go too; Remove leaves a folder with
+	// files, such as MeshAgent's when removing it failed.
+	if e.paths.Windows() {
+		_ = os.Remove(filepath.Dir(e.paths.Binary()))
+		_ = os.Remove(filepath.Dir(filepath.Dir(e.paths.Binary())))
+	} else {
+		_ = os.Remove(filepath.Dir(e.paths.MeshAgent()))
+	}
+	return later, nil
 }

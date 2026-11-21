@@ -54,13 +54,20 @@ type Service struct {
 	waits                  *waitHub
 	approvalWait           time.Duration
 	jobKey                 string
-	// Agent updates (ADR-0027); nil without builds.
+	// Agent updates (ADR-0027); nil without builds. updateKey is the job
+	// key, which also signs uninstall instructions (ADR-0050).
 	builds    *Builds
 	updateKey ed25519.PrivateKey
 	// tokens seals the secrets of new deployment and approval tokens, so
 	// they can be shown again (ADR-0047); nil keeps only their hashes.
 	tokens *secrets.Sealer
+	// removed is called once a device was deleted (ADR-0050); nil for none.
+	removed func()
 }
+
+// OnRemoved has f called after a device is deleted, such as to have the
+// patching engine told at once to remove the device's EasyPatch agent.
+func (s *Service) OnRemoved(f func()) { s.removed = f }
 
 // SetSealer keeps new tokens' secrets, sealed with sl, so that their install
 // commands can be shown again (ADR-0047).
@@ -134,19 +141,26 @@ func (s *Service) Run(ctx context.Context) {
 // PruneNonces removes nonces that can no longer be replayed.
 func (s *Service) PruneNonces(ctx context.Context) error {
 	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `DELETE FROM agent_nonces WHERE expires_at < now()`)
+		if _, err := tx.Exec(ctx, `DELETE FROM agent_nonces WHERE expires_at < now()`); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `DELETE FROM retired_agent_nonces WHERE expires_at < now()`)
 		return err
 	})
 }
 
-// Cleanup removes expired nonces and enrollment requests nobody needs any
-// more.
+// Cleanup removes expired nonces, enrollment requests nobody needs any
+// more, and removed devices no longer waited for (ADR-0050).
 func (s *Service) Cleanup(ctx context.Context) error {
 	if err := s.PruneNonces(ctx); err != nil {
 		return err
 	}
 	return s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		return cleanupRequests(ctx, tx)
+		if err := cleanupRequests(ctx, tx); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `DELETE FROM retired_devices WHERE expires_at < now()`)
+		return err
 	})
 }
 

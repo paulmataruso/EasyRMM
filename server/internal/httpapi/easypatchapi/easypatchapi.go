@@ -60,6 +60,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("POST /api/v1/patching/agent-install", a.installAgent)
 	r("POST /api/v1/patching/stop", a.stopPatching)
 	r("POST /api/v1/patching/allow", a.allowPatching)
+	r("POST /api/v1/patching/endpoints/{id}/remove", a.removeEndpoint)
 	// A device's Patches tab.
 	r("GET /api/v1/patching/devices/{id}/install-preview", a.installPreview)
 	r("POST /api/v1/patching/devices/{id}/exclusions", a.exclude)
@@ -335,6 +336,15 @@ func (a *API) allowPatching(w http.ResponseWriter, r *http.Request) error {
 	}
 	res, err := a.svc.AllowPatching(r.Context(), httpapi.Caller(r), in)
 	return ok(w, res, err)
+}
+
+func (a *API) removeEndpoint(w http.ResponseWriter, r *http.Request) error {
+	id, err := parseID(r.PathValue("id"), "id")
+	if err != nil {
+		return err
+	}
+	e, err := a.svc.RemoveEndpoint(r.Context(), httpapi.Caller(r), id)
+	return ok(w, e, err)
 }
 
 func (a *API) sync(w http.ResponseWriter, r *http.Request) error {

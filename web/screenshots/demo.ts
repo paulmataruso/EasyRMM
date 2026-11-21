@@ -173,6 +173,7 @@ function device(id: string, name: string, siteId: string, os: string, platform: 
     canRunScripts: true,
     canUpdateAgent: true,
     canManageSoftware: true,
+    canRemove: true,
   });
 }
 
@@ -447,6 +448,7 @@ export const fleet: PatchFleet = {
       rebootPending: false,
       knownExploitedMissingCount: 0,
       currentActivity: "",
+      canRemove: true,
     },
   ],
   devices: devices
