@@ -211,6 +211,14 @@ log collection feature will).
   matches this distribution's sshd messages (OpenSSH 9.8 and later logs
   as `sshd-session`, which needs fail2ban 1.1) is proved by the tests,
   which sign in wrongly on every tested release until banned.
+  *Amended 2026-11-21:* check and apply also ask for the jail's ban
+  actions (`fail2ban-client get sshd actions`). A jail without one lists
+  the addresses it bans and blocks none of them; fail2ban 1.1 (Debian 13)
+  leaves the jail so when a reload changes its ban action, as apply's did
+  where installing the package had started fail2ban with the
+  distribution's own action. Apply and undo therefore restart fail2ban
+  instead of reloading it, and apply fails, and is put back, when the
+  jail still has no action.
 
 ### Kernel parameters
 `/etc/sysctl.d/60-easyrmm-hardening.conf`, applied with `sysctl -p` on that

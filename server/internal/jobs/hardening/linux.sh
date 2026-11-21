@@ -1375,6 +1375,12 @@ f2b_changes() {
 	change "Ban with $(f2b_banaction)"
 }
 
+# f2b_jail_actions: the running sshd jail's ban actions, one a line.
+f2b_jail_actions() {
+	t 20 fail2ban-client get sshd actions 2>/dev/null |
+		grep -v -e '^No actions' -e 'has the following actions' | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep .
+}
+
 check_fail2ban() {
 	if ! have sshd; then
 		not_applicable 'No SSH server is installed, and the jail is for SSH.'
@@ -1445,6 +1451,11 @@ check_fail2ban() {
 		;;
 	*) change 'Whether repeat offenders get longer bans could not be read from this fail2ban' ;;
 	esac
+	# A jail without a ban action lists its bans and blocks nothing.
+	if [ -n "$(f2b_jail_actions)" ]; then in_place; else
+		missing 'The sshd jail bans with an action (it has none)'
+		ck_fix=yes
+	fi
 	# The trusted ranges, compared in the form fail2ban prints them.
 	if [ -n "$OPT_TRUSTED" ]; then
 		ck_ign=$(t 20 fail2ban-client get sshd ignoreip 2>/dev/null | sed -n 's/^[|`]- *//p')
@@ -3266,26 +3277,35 @@ apply_fail2ban() {
 	fi
 	did "Wrote $F2B_FILE: jail sshd on port ${af_ports:-ssh}, $af_max failures in $af_find seconds bans for $af_time seconds, longer for repeat offenders; never banned: $af_ignore; banned with $af_ban"
 	unit_put fail2ban.service enabled -
+	# Restarted, not reloaded: fail2ban 1.1 (Debian 13) reloads a jail whose
+	# ban action changed into one with no action at all.
 	if unit_active fail2ban.service; then
-		t 120 systemctl reload fail2ban.service >/dev/null 2>&1 || t 120 systemctl restart fail2ban.service >/dev/null 2>&1
+		t 120 systemctl restart fail2ban.service >/dev/null 2>&1
 	else
 		t 120 systemctl start fail2ban.service >/dev/null 2>&1
 	fi
 	after_unit fail2ban.service
-	# The jail, once fail2ban has read its logs.
+	# The jail, once fail2ban has read its logs, and its ban action, which
+	# fail2ban adds to the jail after the jail itself.
 	af_n=0
-	until t 20 fail2ban-client status sshd >/dev/null 2>&1; do
+	af_act=
+	until t 20 fail2ban-client status sshd >/dev/null 2>&1 && af_act=$(f2b_jail_actions | tr '\n' ' ' | sed 's/ $//') && [ -n "$af_act" ]; do
 		af_n=$((af_n + 1))
 		if [ "$af_n" -gt 60 ]; then
-			abort 'the sshd jail did not start (journalctl -u fail2ban says why)' 'unit_active fail2ban.service && t 120 systemctl restart fail2ban.service'
+			if t 20 fail2ban-client status sshd >/dev/null 2>&1; then
+				abort 'the sshd jail started with no ban action (journalctl -u fail2ban says why)' 'unit_active fail2ban.service && t 120 systemctl restart fail2ban.service'
+			else
+				abort 'the sshd jail did not start (journalctl -u fail2ban says why)' 'unit_active fail2ban.service && t 120 systemctl restart fail2ban.service'
+			fi
 			return
 		fi
 		sleep 2
 	done
-	did 'fail2ban runs and starts at boot; the sshd jail is running'
+	did "fail2ban runs and starts at boot; the sshd jail is running and bans with $af_act"
 }
 undo_fail2ban_after() {
-	! unit_active fail2ban.service || t 120 systemctl reload fail2ban.service >/dev/null 2>&1 || t 120 systemctl restart fail2ban.service >/dev/null 2>&1
+	# Restarted, as apply does.
+	! unit_active fail2ban.service || t 120 systemctl restart fail2ban.service >/dev/null 2>&1
 	return 0
 }
 
