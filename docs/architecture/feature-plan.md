@@ -75,15 +75,16 @@ requests and its own changelog entries.
 
 ## Fixes the reviews found in what exists
 
-Small, and first, because they are holes in shipped code:
+Small, and first, because they are holes in shipped code. **Done** (#42,
+and this plan's own pull request for ADR-0019):
 
-* **MeshAgent arrives unsigned.** The agent fetches MeshAgent's binary and
-  its `.msh` settings over TLS (`agent/runner/runner.go`); nothing signs
-  them, and agents trust the system's roots. The heartbeat answer gains
-  their SHA-256s signed with the job key, and the agent refuses a binary
-  or settings file that does not match.
-* **`heartbeatSeconds` has no upper bound** on the agent; it is clamped
-  (10 seconds to 10 minutes).
+* **MeshAgent arrived unsigned.** The agent fetched MeshAgent's binary and
+  its `.msh` settings over TLS only, and agents trust the system's roots.
+  The server now signs each download with the job key, over the device,
+  the request and its single-use nonce, and the agent installs neither
+  unless the signature verifies (ADR-0015, amended).
+* **`heartbeatSeconds` had no bound** on the agent; it is clamped to 10
+  seconds to 10 minutes.
 * ADR-0019's reference to "ADR-0020" for notifications; overview.md's
   description of how MeshCentral reads the certificate;
   `EASYRMM_ACME_DIRECTORY` missing from `.env.example`.
