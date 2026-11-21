@@ -128,6 +128,9 @@ organization, a site or one device.
   agent).
 
 ### F2. One notification sender
+Decided in [ADR-0053](adr/0053-one-notification-sender.md), with feature 7,
+revised after review; its departures from what follows are listed below.
+
 Patching sends its own email and webhooks from the engine (Settings →
 Patching → Notifications); device alerts need a sender too. An MSP should
 set up its Teams channel once.
@@ -176,6 +179,46 @@ set up its Teams channel once.
   list, the sender and the address policy with email and generic webhooks;
   device alert rules (feature 7); Slack and Teams; patching's
   notifications through EasyRMM and the channels' migration.
+
+**Where ADR-0053 departs from this**:
+
+* **"Moved over by a migration"** becomes an export and a move at start:
+  the engine's database is separate and its secrets are sealed with its
+  own keys. The channels keep their IDs, so the engine's rules need no
+  rewrite; a channel the engine cannot decrypt moves turned off. The
+  engine's channel table and export route stay, because imports
+  (ADR-0045) still bring channels.
+* **Monthly report emails** move to EasyRMM too; the plan did not name
+  them, and they go through the engine's SMTP client.
+* **Organizations' rules** use a platform channel only once a super
+  administrator shares it with that organization (decided in review).
+* **The server's own networks**, whatever their kind, need approval as
+  private ranges do; the server's own addresses and the deployment's names
+  are always refused. The engine refused its networks outright, which on
+  host networking is the customer's LAN.
+* **Delivery is at least once**, with a stable delivery ID; queueing is
+  exactly once, and order is kept per alert, notice and site outage.
+  Permanent answers fail at once, and one message holds its channel for an
+  hour at most, then only messages about the same alerts, notices and
+  outages.
+* **Limits**: quotas per organization counted in messages (one per email
+  recipient), fair share between organizations, the mail server's own
+  rate a minute and a day with account mail first, and at most one unsent
+  digest per channel read by people.
+* **Several recipients** each get their own copy, so no recipient sees
+  another.
+* **The certificate authority** for the mail server comes with slice 6,
+  once the engine (which cannot trust one) no longer sends email.
+* **Signing in to Microsoft 365** with an application's credentials
+  (`XOAUTH2`, the client credentials grant) is a slice of its own, the
+  second: Exchange Online turns SMTP password sign-in off by default for
+  existing tenants at the end of December 2026, and the mailer signs in
+  with a password only. It works from `.env` and `setup.sh` too, the
+  secret or certificate key in a file under `secrets/`, so that mail works
+  at install. A relay remains the alternative; Google can be added later.
+  Slack and Teams, then patching, come before restarts and *Uninstalled*,
+  so that patching's email, which the engine cannot send with an
+  application, waits as briefly as it can.
 
 ### F3. The updater on the host
 Decided in [ADR-0052](adr/0052-the-host-updater.md), revised after review.
@@ -440,7 +483,8 @@ with ICE validation, then installed, upgraded and removed there; removal
 from the console of a packaged agent.
 
 ### 7. Email and webhook notifications for device alerts
-On F2.
+On F2. Decided in the same [ADR-0053](adr/0053-one-notification-sender.md);
+its departures from what follows are listed below.
 
 * **Rules**: which alerts reach which channels, by organization (or the
   platform), site, kind of device (server or workstation, from its
@@ -476,6 +520,39 @@ offline, the signed webhook and the email arrive, it comes back, the
 resolve arrives. The bundle test is split into parallel jobs that reuse
 images built once, so these waits do not lengthen the critical path.
 Real delivery to Slack and Teams is checked by hand and recorded.
+
+**Where ADR-0053 departs from this**:
+
+* **No tag filter**: EasyRMM's devices have no tags (the engine's
+  endpoints do). Rules filter by device group until devices have tags.
+* **Kind of device** comes from a new agent fact (`InstallationType` on
+  Windows), with the operating system's description as the fallback and
+  an override at the site.
+* **Generic webhooks get every alert**, in deliveries of at most 100, not
+  25 and a count: a PSA tool cannot ticket an alert hidden in a count.
+  People's channels keep 25 and a count.
+* **The grace delays the alert itself**, not only its notice, and only
+  after a shutdown; a stopped service gets none.
+* **`Evaluate` gains no `RETURNING`**: triggers write a journal of every
+  alert change in the same transaction, wherever it is made, and a planner
+  queues the notifications in a transaction of its own. A failure in
+  notifications can then never stop alerting.
+* **A local uninstall** marks the device *Uninstalled* and raises a
+  notice of its own, *agent removed without a request*, rather than going
+  quiet; a removal report that answers no instruction the server issued
+  does the same instead of deleting the device, and every instruction
+  sent is recorded under its own ID, so that neither cancelling nor asking
+  again forgets it (amending ADR-0050).
+* **ADR-0052's offline rule** delays openings only, as pull request #51
+  amends and builds it; as first written it would have resolved every
+  open offline alert at each restart. A fleet-wide hold covers an EasyRMM
+  that runs but that no agent can reach: while most devices are silent,
+  organizations' rules send no offline openings and platform rules do.
+* **The offline test stops both agents**: a device is online while
+  MeshAgent is connected, so stopping the EasyRMM agent alone raises
+  nothing.
+* **PSA tools also get `alerts.acknowledged`** (decided in review), and
+  an incident ID that survives a policy change.
 
 ### 8. The agent's WebSocket channel
 On F0 and F1.
@@ -569,5 +646,13 @@ code.
   heartbeat kept on forced connections.
 * **Packages fight self-update**: the package never replaces the running
   agent.
+* **Organizations' webhooks reach into a network**: every connection
+  checked and none shared between channels; private ranges and the
+  server's own networks only once approved for that channel; the server
+  itself never (ADR-0053).
+* **Notifications storm, go missing or stop alerting**: site outages,
+  digests, fair share and the restart grace keep a power cut to a few
+  messages; a failing channel raises a notice; planning runs apart from
+  `Evaluate`, so a failure in it never stops alerts (ADR-0053).
 * **Windows is unverified in CI** until the Windows end-to-end harness
   exists: every Windows path says so until then.
