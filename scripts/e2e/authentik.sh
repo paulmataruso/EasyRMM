@@ -10,7 +10,9 @@
 #     Authentik at https://auth.easyrmm.test, and brought up with images
 #     built from this checkout. Authentik's name resolves nowhere: the
 #     browser is told it is 127.0.0.1, and EasyRMM reaches it through its
-#     own edge on loopback.
+#     own edge on loopback. Before it starts, links planted where root's
+#     setup.sh writes, as authentik-setup could plant them, are written
+#     through by neither a second run nor --new-invitation.
 #  2. Nothing but the edge (:80, :443 and MeshCentral's :4443) listens beyond
 #     loopback, and Authentik's metrics listen nowhere.
 #  3. Playwright (web/playwright.authentik.config.ts) opens the invitation
@@ -101,6 +103,35 @@ as_root grep -qx 'COMPOSE_PROFILES=authentik' "$deploy/.env" ||
   { echo "setup.sh did not turn on the authentik profile" >&2; exit 1; }
 [ "$(as_root stat -c '%a %u' "$work/data/authentik/secrets/akadmin-password")" = "600 1000" ] ||
   { echo "akadmin's password file is not 0600 and Authentik's" >&2; exit 1; }
+
+# authentik-setup (uid 1000) can write in invitations/. Links planted where
+# setup.sh writes as root, and in place of the record of the first invitation
+# that releases up to 1.0.0-rc.4 kept there; setup.sh run again, as an upgrade
+# runs it, and with --new-invitation: root must write nothing through them.
+inv=$work/data/authentik/invitations
+as_root sh -c "printf canary > '$work/canary' && rm -f '$inv/issued' &&
+  ln -s '$work/made-by-root' '$inv/issued' && ln -s '$work/canary' '$inv/pending.tmp' &&
+  ln -sfn '$work/canary' '$inv/pending' && chown -h 1000:1000 '$inv/issued' '$inv/pending.tmp' '$inv/pending' &&
+  ln -sfn '$work/canary' '$work/data/authentik/secrets/akadmin-password'"
+(cd "$deploy" && as_root ./scripts/setup.sh --hostname 127.0.0.1 --ip-addresses 127.0.0.1 \
+  --data-root "$work/data" \
+  --with-authentik --authentik-hostname "$signin_host" --admin-email "$admin_email") > "$work/setup-again.out" < /dev/null
+if grep -q 'itoken=' "$work/setup-again.out"; then
+  echo "setup.sh issued the first invitation again" >&2
+  exit 1
+fi
+(cd "$deploy" && as_root ./scripts/setup.sh --new-invitation) > "$work/setup-invitation.out" < /dev/null
+invitation=$(grep -o "https://$signin_host/if/flow/easyrmm-enrollment/?itoken=[0-9a-f-]*" "$work/setup-invitation.out" || true)
+[ -n "$invitation" ] || { echo "setup.sh --new-invitation printed no invitation link" >&2; exit 1; }
+if [ "$(as_root cat "$work/canary")" != canary ] || [ "$(as_root stat -c '%u' "$work/canary")" != 0 ] ||
+  as_root test -e "$work/made-by-root"; then
+  echo "setup.sh wrote through a link in Authentik's directories" >&2
+  exit 1
+fi
+for f in "$inv/pending" "$work/data/authentik/secrets/akadmin-password"; do
+  [ "$(as_root stat -c '%F %a %u' "$f")" = "regular file 600 1000" ] ||
+    { echo "$f is not Authentik's regular file" >&2; exit 1; }
+done
 as_root sed -i \
   -e "s|^EASYRMM_IMAGE=.*|EASYRMM_IMAGE=${server_image%:*}|" -e "s|^EASYRMM_VERSION=.*|EASYRMM_VERSION=${server_image##*:}|" \
   -e "s|^EASYPATCH_IMAGE=.*|EASYPATCH_IMAGE=${engine_image%:*}|" -e "s|^EASYPATCH_VERSION=.*|EASYPATCH_VERSION=${engine_image##*:}|" \
