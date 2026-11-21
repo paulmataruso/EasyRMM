@@ -199,6 +199,42 @@ func (d Docker) plan(ctx context.Context, dir string) (running, leaves []string,
 	return running, leaves, nil
 }
 
+// statusMount is where Compose mounts the updater's status directory into
+// the server.
+const statusMount = "/run/easyrmm-updater"
+
+// DataRoot is the data root Compose reads for the deployment in dir: the
+// directory above the updater's status directory, <data root>/updater/
+// status, which it mounts into the server.
+func (d Docker) DataRoot(ctx context.Context, dir string) (string, error) {
+	out, err := d.R.Run(ctx, dir, nil, "compose", "config", "--format", "json")
+	if err != nil {
+		return "", err
+	}
+	var cfg struct {
+		Services map[string]struct {
+			Volumes []struct {
+				Source string `json:"source"`
+				Target string `json:"target"`
+			} `json:"volumes"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(out, &cfg); err != nil {
+		return "", fmt.Errorf("docker compose config: %w", err)
+	}
+	for _, v := range cfg.Services["server"].Volumes {
+		if v.Target != statusMount {
+			continue
+		}
+		root, ok := strings.CutSuffix(v.Source, "/updater/status")
+		if !ok {
+			return "", fmt.Errorf("the server's %s is mounted from %s, not from the data root's updater/status", statusMount, v.Source)
+		}
+		return root, nil
+	}
+	return "", fmt.Errorf("the deployment in %s does not mount the updater's status directory into the server: set it up again with its setup.sh", dir)
+}
+
 // Start starts the deployment's services but those excluded, within the
 // timeout: those that keep running, each running and healthy where it has
 // a health check (the one-shot services they depend on run first, to

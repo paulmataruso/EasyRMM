@@ -43,6 +43,10 @@ func TestRunUsage(t *testing.T) {
 		{[]string{"check", "--verbose"}, 2, "flag provided but not defined"},
 		{[]string{"upgrade", "v1.0.0", "v1.1.0"}, 2, "upgrade takes 1 arguments"},
 		{[]string{"upgrade", "--automatic", "v1.0.0"}, 2, "takes no version"},
+		{[]string{"upgrade", "--automatic", "--deployment-repaired"}, 2, "only an operator says so"},
+		{[]string{"status", "--deployment-repaired"}, 2, "flag provided but not defined"},
+		{[]string{"upgrade", "--deployment-repaired"}, 1, "runs as root"},
+		{[]string{"rollback", "--deployment-repaired", "--yes"}, 1, "runs as root"},
 		{[]string{"upgrade", "latest"}, 2, "latest"},
 		{[]string{"rollback", "v1.0.0"}, 2, "rollback takes 0 arguments"},
 		{[]string{"upgrade", "v1.1.0"}, 1, "runs as root"},
@@ -163,20 +167,29 @@ func TestNewLogger(t *testing.T) {
 	}
 }
 
-// The signals that would stop an attempt halfway are held until it ends.
-func TestHoldSignals(t *testing.T) {
+// Ctrl-C and systemd's stop cancel the attempt's context, which an attempt
+// heeds only until it stops the deployment; a hang-up does nothing.
+func TestStopSignals(t *testing.T) {
 	var out syncBuffer
-	stop := holdSignals(slog.New(slog.NewTextHandler(&out, nil)))
+	ctx, stop := stopSignals(context.Background(), slog.New(slog.NewTextHandler(&out, nil)))
 	defer stop()
-	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
 		t.Fatal(err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for !strings.Contains(out.String(), "an attempt is running") {
-		if time.Now().After(deadline) {
-			t.Fatalf("log %q", out.String())
-		}
-		time.Sleep(10 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	if ctx.Err() != nil {
+		t.Fatal("a hang-up canceled the attempt")
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("SIGTERM did not cancel the attempt")
+	}
+	if !strings.Contains(out.String(), "runs on to its end") {
+		t.Errorf("log %q", out.String())
 	}
 }
 

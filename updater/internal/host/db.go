@@ -23,10 +23,10 @@ const unknownHeadMargin = 1_000_000
 // auditHead is a database's last audit record.
 type auditHead struct {
 	// LastID is the highest ID handed out, by the sequence or a record.
-	LastID int64
+	LastID int64 `json:"lastId"`
 	// Head is the last record's hash, in hexadecimal; "" when there is
 	// no record.
-	Head string
+	Head string `json:"head"`
 }
 
 var headRE = regexp.MustCompile(`^([0-9]+)\|([0-9a-f]{64})?$`)

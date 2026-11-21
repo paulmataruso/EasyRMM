@@ -52,13 +52,16 @@ make updater    # optional, needs Go: setup.sh then installs the updater
 cd deploy
 ```
 
-From a bundle, unpack it beside the old one and bring the old `.env`
-across:
+From a bundle, unpack it as root into a directory only root can write,
+such as `/opt/easyrmm`, where the [host updater](updater.md) unpacks its
+own, and bring the old `.env` across. Everything in a bundle is root's;
+`setup.sh` and Compose run from it as root, so no one else may change it:
 
 ```bash
-tar -xzf easyrmm-v1.2.3-deploy.tar.gz
-cp easyrmm-v1.2.2/deploy/.env easyrmm-v1.2.3/deploy/.env
-cd easyrmm-v1.2.3/deploy
+sudo install -d -m 0755 /opt/easyrmm
+sudo tar -xzf easyrmm-v1.2.3-deploy.tar.gz -C /opt/easyrmm
+sudo cp -p /path/to/easyrmm-v1.2.2/deploy/.env /opt/easyrmm/easyrmm-v1.2.3/deploy/.env
+cd /opt/easyrmm/easyrmm-v1.2.3/deploy
 ```
 
 Then, in `deploy/`:

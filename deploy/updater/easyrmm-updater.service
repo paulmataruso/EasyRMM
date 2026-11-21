@@ -14,6 +14,9 @@ Requires=docker.service
 Type=oneshot
 ExecStart=/usr/local/sbin/easyrmm-updater upgrade --automatic
 # An attempt runs to its end, or to its rollback: a pull, a backup of the
-# data root and a start of up to 20 minutes.
+# data root and a start of up to 20 minutes. Stopped (SIGTERM) before it
+# stops the deployment, it ends there; after, it runs on to its end, or
+# brings the previous version back, for up to 45 minutes. Killed then, the
+# next run finishes it from what it recorded.
 TimeoutStartSec=infinity
 TimeoutStopSec=45min

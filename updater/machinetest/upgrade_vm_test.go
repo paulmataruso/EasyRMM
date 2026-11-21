@@ -271,6 +271,84 @@ done`, base, installDir, versionA, versionB, versionC, authentikFlags()), 2*time
 		t.Errorf("status after the rollback:\n%s", status)
 	}
 
+	// 3a. setup.sh, run again while an attempt holds the updater's lock,
+	// leaves the updater, its units and updater.conf alone: here it would
+	// have put A's older updater in place of B's.
+	installed := m.run("the installed updater", "stat -c %Y /usr/local/sbin/easyrmm-updater /etc/easyrmm/updater.conf", time.Minute)
+	if out := m.run("setup.sh while the updater's lock is held", fmt.Sprintf(`set -e
+cd %s
+flock -n -o /var/lib/easyrmm-updater/lock ./scripts/setup.sh --upgrade </dev/null 2>&1`, deployDir(versionA)), 10*time.Minute); !strings.Contains(out, "The updater: an attempt is running (easyrmm-updater status); not installed.") {
+		t.Errorf("setup.sh did not refuse to install the updater while an attempt held its lock:\n%s", out)
+	}
+	if again := m.run("the installed updater", "stat -c %Y /usr/local/sbin/easyrmm-updater /etc/easyrmm/updater.conf", time.Minute); again != installed {
+		t.Errorf("setup.sh changed the updater or updater.conf while an attempt held the lock: %q, then %q", installed, again)
+	}
+	if out := m.run("the updater's version", "easyrmm-updater version", time.Minute); !strings.HasPrefix(out, versionB+" (TEST BUILD") {
+		t.Errorf("the updater after setup.sh: %q", out)
+	}
+
+	// 3b. The updater killed (SIGKILL to its whole unit, as systemd's stop
+	// timeout does) while B's server starts held, then the machine
+	// restarted: Docker brings B's containers back, held, and the timer's
+	// run after the boot finishes the attempt from what it recorded,
+	// restoring A from the backup.
+	discarded, err = strconv.Atoi(m.audit(versionA, "max(id)"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.run("the updater killed during "+versionB+"'s held start", fmt.Sprintf(`set -e
+systemd-run --unit=easyrmm-updater-crash --quiet --collect /usr/local/sbin/easyrmm-updater upgrade %[1]s
+end=$(($(date +%%s) + 3600))
+until grep -q '"step": "start-held"' /var/lib/easyrmm-updater/state.json &&
+  [ "$(docker ps --filter label=com.docker.compose.service=server --format '{{.Label "com.docker.compose.project.working_dir"}}')" = %[2]s ]; do
+  if [ "$(date +%%s)" -ge "$end" ] || ! systemctl is-active --quiet easyrmm-updater-crash; then
+    echo "the updater did not reach the held start" >&2
+    journalctl -u easyrmm-updater-crash --no-pager -o cat >&2
+    exit 1
+  fi
+  sleep 1
+done
+systemctl kill --signal=SIGKILL easyrmm-updater-crash
+while systemctl is-active --quiet easyrmm-updater-crash; do sleep 1; done
+grep -q '"result": "running"' /var/lib/easyrmm-updater/state.json
+test -e %[3]s/hold`, versionB, deployDir(versionB), statusDir), 3*time.Hour)
+	if err := vm.Restart(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// The timer starts its service 5 to 20 minutes after the boot; the
+	// restore then takes as long as the rollback above.
+	m.run("the timer's run after the boot", `end=$(($(date +%s) + 3 * 3600))
+while grep -q '"result": "running"' /var/lib/easyrmm-updater/state.json; do
+  [ "$(date +%s)" -lt "$end" ] || { echo "the attempt was not finished within 3 hours of the boot" >&2; systemctl list-timers --all >&2; exit 1; }
+  sleep 10
+done
+while [ "$(systemctl show -P ActiveState easyrmm-updater.service)" = activating ]; do sleep 5; done`, 3*time.Hour+15*time.Minute)
+	if journal := m.run("the service's journal", "journalctl -b -u easyrmm-updater.service --no-pager -o cat", time.Minute); !strings.Contains(journal, "finishing an attempt the updater did not see to its end") {
+		t.Errorf("the journal does not say the attempt was finished:\n%s", journal)
+	}
+	m.serves(versionA)
+	st = m.status()
+	if a := st.Attempt; a == nil || a.Action != "upgrade" || a.To != versionB || a.Result != host.ResultRolledBack ||
+		!strings.Contains(a.Reason, "the updater's process ended during the start-held step") {
+		t.Errorf("after the interrupted upgrade: %+v", a)
+	}
+	if st.Running != versionA {
+		t.Errorf("status after the interrupted upgrade: %+v", st)
+	}
+	m.rolledBack(versionA, versionB, discarded)
+	m.run("what the interrupted upgrade left", fmt.Sprintf(`set -e
+test ! -e %[1]s/easyrmm-%[2]s
+test ! -e %[3]s/hold
+grep -x 'deployment = %[4]s' /etc/easyrmm/updater.conf`, installDir, versionB, statusDir, deployDir(versionA)), time.Minute)
+	if n := m.audit(versionA, "count(*) FILTER (WHERE action = 'test.before_upgrade')"); n != "2" {
+		t.Errorf("the records written before the upgrades: %s", n)
+	}
+	if m.authentik {
+		if notes := m.psqlDB(versionA, "authentik", "SELECT string_agg(note, ', ') FROM machinetest_marker;"); notes != "before the upgrade" {
+			t.Errorf("Authentik's database after the interrupted upgrade: %q", notes)
+		}
+	}
+
 	// 4. C's server never turns healthy: A comes back from the backup.
 	discarded, err = strconv.Atoi(m.audit(versionA, "max(id)"))
 	if err != nil {
@@ -365,6 +443,14 @@ grep -x 'auto_upgrade_hours = 0-24' /etc/easyrmm/updater.conf`, time.Minute)
 			t.Errorf("Authentik's database on %s: %q", versionE, notes)
 		}
 	}
+	// A's directory, which the operator unpacked, loses only its .env; the
+	// updater's own, but for the two it keeps, go whole.
+	m.run("the old deployments", fmt.Sprintf(`set -e
+test -e %[1]s/docker-compose.yml
+test ! -e %[1]s/.env
+test ! -e %[2]s/easyrmm-%[3]s
+test -e %[4]s/.env
+test -e %[5]s/.env`, deployDir(versionA), installDir, versionB, deployDir(versionD), deployDir(versionE)), time.Minute)
 }
 
 // authentikFlags are setup.sh's flags for Authentik, when the test

@@ -312,6 +312,66 @@ audit record with an ID the discarded version used. The restore touches
 only the host: it stops, copies, writes the audit record and starts, and
 contacts no agent, so it does not depend on agents being reachable.
 
+*Amended 2026-11-21, after review of the implementation:*
+* **Interrupted attempts.** An attempt records its deployment, data root,
+  new deployment directory and backup as soon as each exists, and each
+  stage of a restore before the next. Every run, under the lock, first
+  finishes an attempt whose process ended before it did (the
+  out-of-memory killer, systemd's stop timeout, a reboot), and does
+  nothing else: before the stop, the attempt ends failed; stopped before
+  the backup was complete, the incomplete backup is removed and the
+  previous version starts; after it, the backup is restored and the
+  version marked failed. A restore cut short is done again, without
+  reading the discarded database's head a second time; one that had put
+  everything back only starts the restored version. The timer also runs
+  five minutes after the host starts. A stop asked for (SIGINT, SIGTERM)
+  ends an attempt that has not stopped the deployment; after that the
+  attempt runs on to its end.
+* **After a failed rollback** the updater does nothing, by the timer or by
+  hand, and removes no backup, until an operator runs it with
+  `--deployment-repaired`, which the automatic run never takes (decided
+  in review).
+* **The confirm** records the new deployment, in `updater.conf` and then
+  the state, before it removes `hold`: a confirm cut short leaves the
+  server held, and the next run restores the previous version; a `hold`
+  left after the record is removed.
+* **The host, at step 1.** The data root Compose mounts must be the one
+  `.env` names. No entry at its top may be a link, and nothing in it, at
+  any depth, a mount point (read from `/proc/self/mountinfo`, which also
+  shows bind mounts within one filesystem); the data root itself may be
+  one. Bundles are unpacked into `/opt/easyrmm`, which, with every
+  directory above it, only root may write (or is sticky), not beside the
+  running deployment, which may be anyone's. Room is added up per
+  filesystem: the backup, a restore's copy of the data root, the images
+  and the bundle. A host not as needed, a disk that fills (`ENOSPC`,
+  `EDQUOT`) and a stop asked for before the stop are tried again at the
+  next attempt, not counted against the version. A backup that fails is
+  removed.
+* **Tidying** removes whole only the bundle directories the updater
+  recorded unpacking; of any other deployment directory only
+  `deploy/.env`; and nothing that holds the data root, the backup
+  directory, the updater's state or its configuration.
+* **The running version** (decided in review). An upgrade never goes below
+  the highest of the server's report, the updater's record and `.env`'s
+  `EASYRMM_VERSION`; `upgradeFrom` is compared with the lowest of those and
+  the updater's own. When the server and `.env` disagree (or, when `.env`
+  names no version, the server and the record), the updater refuses and
+  says why. When the server and `.env` agree on another version than the
+  record, the deployment was changed by hand and the record follows them:
+  refusing then would stop the updater for good after any manual upgrade
+  (decided in implementation, beyond the review's wording). A rollback
+  needs all three to name the version the confirmed upgrade installed.
+* **`.env`** is read as `setup.sh` writes it: `KEY=value` lines, comments
+  and blank lines. `export`, quoted values, spaces around a key and
+  Windows line ends are refused, and the settings the updater reads must
+  be set once, to plain values.
+* **The updater not replacing itself** at the confirm is recorded as the
+  attempt's warning, in `status`; the next run re-installs it from the
+  running version's bundle, when it is older than that version and the
+  bundle is one it unpacked.
+* **`setup.sh`** takes the updater's lock while it installs the updater
+  and rewrites `updater.conf`, and installs nothing while an attempt runs.
+
 ### Downtime and alerts
 From step 3 to step 7 nothing answers: a backup and a start, minutes on
 a typical install. EasyRMM's agents come back within their 5-minute

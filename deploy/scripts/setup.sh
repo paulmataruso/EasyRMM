@@ -446,9 +446,12 @@ fi
 # for this deployment, as root. Each file is written beside its place and
 # renamed into it. An existing configuration keeps every setting but the
 # deployment (this directory), and automatic upgrades with --auto-upgrade.
+# It holds the updater's own lock while it does: an attempt running now
+# rewrites updater.conf, and replaces the updater and its units, itself.
 updater_conf=/etc/easyrmm/updater.conf
+updater_state=/var/lib/easyrmm-updater
 updater_install() {
-  local arch bin deployment tmp auto
+  local arch bin deployment tmp auto lock
   case "$(uname -m)" in
     x86_64) arch=amd64 ;;
     aarch64 | arm64) arch=arm64 ;;
@@ -469,6 +472,13 @@ updater_install() {
   deployment=$(pwd -P)
   if [[ ! "$deployment" =~ ^/[A-Za-z0-9_./+@-]*$ ]]; then
     echo "The updater: it takes a deployment directory of letters, digits and ._+@-/ only, not ${deployment}; not installed."
+    return
+  fi
+  [[ -d "$updater_state" ]] || install -d -m 0700 -o root -g root "$updater_state"
+  exec {lock}>> "${updater_state}/lock"
+  if ! flock -n "$lock"; then
+    exec {lock}>&-
+    echo "The updater: an attempt is running (easyrmm-updater status); not installed. Run setup.sh again once it has ended." >&2
     return
   fi
   updater_put 0755 "$bin" /usr/local/sbin/easyrmm-updater
@@ -507,6 +517,7 @@ CONF
   systemctl daemon-reload
   systemctl enable --now easyrmm-updater.timer > /dev/null 2>&1 ||
     echo "The updater: systemctl could not start easyrmm-updater.timer." >&2
+  exec {lock}>&-
   auto=$(sed -n 's/^[ \t]*auto_upgrade[ \t]*=[ \t]*//p' "$updater_conf" | tail -n 1)
   echo "The updater: installed as /usr/local/sbin/easyrmm-updater, configured in ${updater_conf}" \
     "(automatic upgrades: ${auto:-no}). See docs/operations/updater.md."

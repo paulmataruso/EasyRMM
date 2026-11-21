@@ -1,11 +1,13 @@
-# Starts easyrmm-updater.service every hour (ADR-0052). The attempt acts
-# only when automatic upgrades are on, in their hours.
+# Starts easyrmm-updater.service every hour, and soon after the host boots
+# (ADR-0052). Each run first finishes an attempt a reboot cut short; it
+# upgrades only when automatic upgrades are on, in their hours.
 [Unit]
 Description=EasyRMM updater: hourly automatic upgrade check
 Documentation=https://github.com/paulmataruso/EasyRMM/blob/main/docs/operations/updater.md
 
 [Timer]
 OnCalendar=hourly
+OnBootSec=5min
 RandomizedDelaySec=15min
 
 [Install]

@@ -72,16 +72,25 @@ type Backup struct {
 	Meta BackupMeta
 }
 
+// cpProgram is the cp that copies; the tests' runs out of room.
+var cpProgram = "cp"
+
 // copyTree copies src to dst, which must not exist, preserving owners,
-// modes, times, links and hard links.
+// modes, times, links and hard links. A copy that runs out of room fails
+// with syscall.ENOSPC (or EDQUOT): a later attempt may have the room.
 func copyTree(ctx context.Context, src, dst string) error {
 	if _, err := os.Lstat(dst); !errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("will not copy into %s: it exists", dst)
 	}
-	cmd := exec.CommandContext(ctx, "cp", "-a", "--reflink=auto", "--no-target-directory", "--", src, dst) //nolint:gosec // paths the updater builds
+	cmd := exec.CommandContext(ctx, cpProgram, "-a", "--reflink=auto", "--no-target-directory", "--", src, dst) //nolint:gosec // paths the updater builds
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C"}
 	cmd.SysProcAttr = ownGroup()
 	if out, err := cmd.CombinedOutput(); err != nil {
+		for errno, text := range map[syscall.Errno]string{syscall.ENOSPC: "No space left on device", syscall.EDQUOT: "Disk quota exceeded"} {
+			if strings.Contains(string(out), text) {
+				err = fmt.Errorf("%w (%w)", err, errno)
+			}
+		}
 		return fmt.Errorf("copying %s to %s: %w: %s", src, dst, err, lastLines(string(out), 3))
 	}
 	return verifyCopy(src, dst)
@@ -170,16 +179,33 @@ func listTree(root string) (map[string]treeEntry, error) {
 	return entries, err
 }
 
-// takeBackup copies the stopped deployment into a new backup directory.
-func takeBackup(ctx context.Context, backupDir string, meta BackupMeta, configPath string) (*Backup, error) {
-	if err := ensureRootDir(backupDir, 0o700); err != nil {
+// backupDirFor is the directory a backup described by meta goes in.
+func backupDirFor(backupDir string, meta BackupMeta) string {
+	return filepath.Join(backupDir, meta.Taken.UTC().Format("20060102T150405Z")+"-"+meta.Version)
+}
+
+// takeBackup copies the stopped deployment into dir, a new directory in
+// backup_dir, and calls made once dir exists, to record it. A backup that
+// fails is removed, so that it takes no room from the version started
+// again.
+func takeBackup(ctx context.Context, dir string, meta BackupMeta, configPath string, made func() error) (b *Backup, err error) {
+	if err := ensureRootDir(filepath.Dir(dir), 0o700); err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(backupDir, meta.Taken.UTC().Format("20060102T150405Z")+"-"+meta.Version)
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return nil, err
 	}
-	b := &Backup{Dir: dir, Meta: meta}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if rerr := os.RemoveAll(dir); rerr != nil {
+			err = fmt.Errorf("%w; removing the incomplete backup %s: %w", err, dir, rerr)
+		}
+	}()
+	if err := made(); err != nil {
+		return nil, err
+	}
 	if err := os.Mkdir(filepath.Join(dir, "data"), 0o700); err != nil {
 		return nil, err
 	}
@@ -214,7 +240,7 @@ func takeBackup(ctx context.Context, backupDir string, meta BackupMeta, configPa
 	if err := writeFileAtomic(filepath.Join(dir, "backup.json"), append(data, '\n'), 0o600); err != nil {
 		return nil, err
 	}
-	return b, nil
+	return &Backup{Dir: dir, Meta: meta}, nil
 }
 
 // openBackup reads a complete backup.
@@ -271,9 +297,18 @@ func rotateBackups(backupDir string, keep ...string) error {
 // root writes into no directory a container could have written. It returns
 // where the failed entries went.
 func (b *Backup) restoreData(ctx context.Context, dataRoot, aside string) (string, error) {
+	// A restore done again in the same second, after an interrupted one,
+	// moves the half restored entries aside beside the first's.
 	asideDir := filepath.Join(dataRoot, failedPrefix+aside)
-	if err := os.Mkdir(asideDir, 0o700); err != nil {
-		return "", err
+	for i := 2; ; i++ {
+		err := os.Mkdir(asideDir, 0o700)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return "", err
+		}
+		asideDir = filepath.Join(dataRoot, fmt.Sprintf("%s%s.%d", failedPrefix, aside, i))
 	}
 	entries, err := os.ReadDir(dataRoot)
 	if err != nil {
@@ -307,6 +342,10 @@ func (b *Backup) restoreTree(ctx context.Context, root, aside string) error {
 	for _, name := range []string{"deploy", "docker"} {
 		dst := filepath.Join(root, name)
 		old := filepath.Join(root, "."+name+".replaced-"+aside)
+		// Left by an interrupted restore.
+		if err := os.RemoveAll(old); err != nil {
+			return err
+		}
 		if err := os.Rename(dst, old); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}

@@ -153,8 +153,9 @@ host's IP address.
 
 ```bash
 curl -LO https://github.com/paulmataruso/EasyRMM/releases/download/easyrmm-v1.0.0-rc.4/easyrmm-v1.0.0-rc.4-deploy.tar.gz
-tar -xzf easyrmm-v1.0.0-rc.4-deploy.tar.gz
-cd easyrmm-v1.0.0-rc.4/deploy
+sudo install -d -m 0755 /opt/easyrmm
+sudo tar -xzf easyrmm-v1.0.0-rc.4-deploy.tar.gz -C /opt/easyrmm
+cd /opt/easyrmm/easyrmm-v1.0.0-rc.4/deploy
 sudo ./scripts/setup.sh --hostname rmm.example.com --acme-email you@example.com
 sudo docker compose up -d
 ```

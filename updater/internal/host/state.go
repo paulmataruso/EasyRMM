@@ -31,6 +31,10 @@ type State struct {
 	// Deployments lists every deploy/ directory the updater has run, so
 	// that it removes the old ones and their .env.
 	Deployments []string `json:"deployments,omitempty"`
+	// Unpacked lists the bundle directories the updater unpacked itself,
+	// recorded before it unpacks each: the only directories it removes
+	// whole. Of any other deployment it removes the .env alone.
+	Unpacked []string `json:"unpacked,omitempty"`
 	// Attempt is the last attempt, or the one running.
 	Attempt *Attempt `json:"attempt,omitempty"`
 }
@@ -63,6 +67,38 @@ type Attempt struct {
 	Reason  string     `json:"reason,omitempty"`
 	Started time.Time  `json:"started"`
 	Ended   *time.Time `json:"ended,omitempty"`
+
+	// What the attempt works on, each recorded as soon as it exists, so
+	// that the next run finishes an attempt whose process was killed
+	// (finishInterrupted). Deployment is the deploy/ directory that ran
+	// when it started, DataRoot that deployment's data root.
+	Deployment string `json:"deployment,omitempty"`
+	DataRoot   string `json:"dataRoot,omitempty"`
+	// NewDeploy is the new version's deploy/ directory, recorded before
+	// the bundle is unpacked.
+	NewDeploy string `json:"newDeploy,omitempty"`
+	// Backup is the backup's directory, recorded once it is made; the
+	// backup is complete once its backup.json is there.
+	Backup string `json:"backup,omitempty"`
+	// Discarded is the discarded database's audit chain head, recorded
+	// before a restore moves anything; nil while it is not known.
+	Discarded *auditHead `json:"discarded,omitempty"`
+	// Restored is set once a restore has put the backup back and
+	// recorded the rollback: only the start is left.
+	Restored bool `json:"restored,omitempty"`
+	// Warning is what went wrong once the attempt was confirmed, which
+	// does not undo it: the updater not replacing itself.
+	Warning string `json:"warning,omitempty"`
+	// Repaired names who said, with --deployment-repaired, that they
+	// repaired the deployment by hand after this attempt's rollback
+	// failed, and when: the updater acts again.
+	Repaired string `json:"repaired,omitempty"`
+}
+
+// unresolved reports whether the updater must not act after a: its
+// rollback failed and no one has said the deployment is repaired.
+func (a *Attempt) unresolved() bool {
+	return a != nil && a.Result == ResultRollbackFailed && a.Repaired == ""
 }
 
 // The steps of an upgrade (ADR-0052), and of a rollback.

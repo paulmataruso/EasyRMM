@@ -167,8 +167,8 @@ func TestUpgradeStopsChain(t *testing.T) {
 	}
 }
 
-// upgradeFrom is compared with the lower of the running server's version
-// and the updater's own, which came with the bundle the deployment was last
+// upgradeFrom is compared with the lowest of the versions known to run and
+// the updater's own, which came with the bundle the deployment was last
 // set up from: a server image changed by hand above it does not count.
 func TestUpgradeStopComparesTheLowerVersion(t *testing.T) {
 	h := newTestHost(t, "v1.0.0", release.ChannelStable)
@@ -180,7 +180,7 @@ func TestUpgradeStopComparesTheLowerVersion(t *testing.T) {
 	envPath := filepath.Join(h.deploy("v1.0.0"), ".env")
 	writeFile(t, envPath, regexp.MustCompile(`(?m)^EASYRMM_VERSION=.*$`).ReplaceAllString(readFile(t, envPath), "EASYRMM_VERSION=1.1.0"), 0o600)
 	err := h.upgrade(Request{Version: release.MustParseVersion("v1.2.0")})
-	if err == nil || !strings.Contains(err.Error(), "this deployment was set up from v1.0.0's bundle, though its server runs v1.1.0 (an image changed by hand); the required upgrade stop, v1.1.0, is not above the running server") {
+	if err == nil || !strings.Contains(err.Error(), "the updater itself is v1.0.0, older than the v1.1.0 that runs (it did not replace itself with that version's, or the server was changed by hand: see easyrmm-updater status); the required upgrade stop, v1.1.0, is not above the running server") {
 		t.Fatalf("got %v", err)
 	}
 	if err := h.upgrade(Request{Automatic: true}); err == nil || !strings.Contains(err.Error(), "upgrade by hand") || h.docker.called("compose stop") != 0 {

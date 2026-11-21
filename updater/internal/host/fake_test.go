@@ -26,6 +26,13 @@ import (
 	"github.com/paulmataruso/easyrmm/updater/internal/release/releasetest"
 )
 
+// TestMain runs the tests with ensureRootPath checking the directories
+// they make, and not the TMPDIR they are given.
+func TestMain(m *testing.M) {
+	checkedBelow = filepath.Clean(os.TempDir())
+	os.Exit(m.Run())
+}
+
 func init() {
 	// The tests' files are the user's who runs them.
 	rootUID = uint32(os.Getuid()) //nolint:gosec // a user ID
@@ -76,6 +83,10 @@ type fakeDocker struct {
 	security string
 	// fail returns an error for a command (its dir and args), or nil.
 	fail func(dir string, args []string) error
+	// composeDataRoot, when set, is the data root Compose reads, whatever
+	// .env says; serverSays, when set, the version the server reports.
+	composeDataRoot string
+	serverSays      string
 	// psql records what PostgreSQL was sent; head answers the audit head.
 	psql []string
 	vars []map[string]string
@@ -162,6 +173,20 @@ func (f *fakeDocker) Run(ctx context.Context, dir string, stdin []byte, args ...
 			if s.restart != "-" {
 				svc["restart"] = s.restart
 			}
+			if s.name == "server" {
+				env, _ := os.ReadFile(filepath.Join(dir, ".env"))
+				root := envValue(env, "EASYRMM_DATA_ROOT")
+				switch {
+				case f.composeDataRoot != "":
+					root = f.composeDataRoot
+				case root == "":
+					root = "/srv/easyrmm"
+				}
+				svc["volumes"] = []any{
+					map[string]any{"type": "bind", "source": root + "/server", "target": "/var/lib/easyrmm"},
+					map[string]any{"type": "bind", "source": root + "/updater/status", "target": "/run/easyrmm-updater", "read_only": true},
+				}
+			}
 			cfg[s.name] = svc
 		}
 		return json.Marshal(map[string]any{"name": Project, "services": cfg})
@@ -217,20 +242,26 @@ func (f *fakeDocker) up(dir string, args []string) error {
 	return nil
 }
 
-func (f *fakeDocker) exec(dir string, stdin []byte, args []string) ([]byte, error) {
+// exec runs a command in the service's container, whichever directory it
+// was started from: the project's name is fixed, so Compose finds it from
+// any of them.
+func (f *fakeDocker) exec(_ string, stdin []byte, args []string) ([]byte, error) {
 	user := ""
 	if args[0] == "--user" {
 		user, args = args[1], args[2:]
 	}
 	service := args[0]
-	if f.running[service] != dir {
+	runDir, ok := f.running[service]
+	if !ok {
 		return nil, fmt.Errorf("service %q is not running", service)
 	}
 	switch {
 	case service == "server" && slices.Equal(args[1:], []string{"easyrmm-server", "healthcheck"}):
 		return nil, nil
+	case service == "server" && slices.Equal(args[1:], []string{"easyrmm-server", "version"}) && f.serverSays != "":
+		return []byte(f.serverSays + "\n"), nil
 	case service == "server" && slices.Equal(args[1:], []string{"easyrmm-server", "version"}):
-		env, _ := os.ReadFile(filepath.Join(dir, ".env"))
+		env, _ := os.ReadFile(filepath.Join(runDir, ".env"))
 		return []byte("v" + strings.SplitN(envValue(env, "EASYRMM_VERSION"), "@", 2)[0] + "\n"), nil
 	case service == "postgres" && user == "postgres" && args[1] == "psql":
 		sql := string(stdin)
@@ -408,6 +439,11 @@ func readFile(t *testing.T, path string) string {
 func newTestHost(t *testing.T, version string, channel release.Channel) *testHost {
 	t.Helper()
 	base := t.TempDir()
+	// Only its owner writes the directories above the bundle directory,
+	// whatever the umask.
+	if err := os.Chmod(base, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	h := &testHost{
 		t: t, root: filepath.Join(base, "opt"), dataRoot: filepath.Join(base, "srv"),
 		releases: filepath.Join(base, "releases"), now: time.Date(2026, 11, 21, 3, 0, 0, 0, time.UTC),
@@ -444,8 +480,9 @@ func newTestHost(t *testing.T, version string, channel release.Channel) *testHos
 			h.installs = append(h.installs, strings.Join(args, " "))
 			return nil
 		}},
-		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Now: func() time.Time { return h.now },
+		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:       func() time.Time { return h.now },
+		BundleDir: h.root,
 	}
 	for _, d := range []string{filepath.Dir(h.u.Install.Binary), h.u.Install.UnitDir} {
 		if err := os.MkdirAll(d, 0o755); err != nil {

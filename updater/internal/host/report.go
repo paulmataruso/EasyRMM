@@ -43,7 +43,11 @@ func (u *Updater) Check(ctx context.Context) (*CheckReport, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &CheckReport{Running: u.runningVersion(ctx, d, st), Channel: u.Config.Channel}
+	vs, err := u.runningVersions(ctx, d, st)
+	if err != nil {
+		return nil, err
+	}
+	r := &CheckReport{Running: vs.high(), Channel: u.Config.Channel}
 	offered, err := u.Source.Versions(ctx)
 	if err != nil {
 		return nil, err
@@ -60,8 +64,8 @@ func (u *Updater) Check(ctx context.Context) (*CheckReport, error) {
 	}
 	r.Newest, r.Failed = newest, st.HasFailed(newest.String())
 	r.Manifest, r.VerifyErr = u.verified(ctx, newest, r.Channel)
-	if r.Manifest != nil && needsStop(u.floor(r.Running), r.Manifest.UpgradeFrom) {
-		r.Stop = u.stopError(ctx, r.Running, choice{target: newest, channel: r.Channel}, r.Manifest).Stop
+	if r.Manifest != nil && needsStop(u.floor(vs), r.Manifest.UpgradeFrom) {
+		r.Stop = u.stopError(ctx, vs, choice{target: newest, channel: r.Channel}, r.Manifest).Stop
 	}
 	return r, nil
 }
@@ -108,6 +112,9 @@ type StatusReport struct {
 	// is the engine's hold file's time, "" without one.
 	Held                  bool
 	AgentUpdatesHeldUntil string
+	// Interrupted is set when the last attempt is recorded as running and
+	// no updater runs: its process ended, and the next run finishes it.
+	Interrupted bool
 	// Rollback is what rolling back would restore and lose, when a
 	// confirmed upgrade can be rolled back.
 	Rollback *RollbackPlan
@@ -122,6 +129,7 @@ func (u *Updater) Status(ctx context.Context) (*StatusReport, error) {
 		return nil, err
 	}
 	r := &StatusReport{Config: u.Config, State: st, Now: u.now()}
+	r.Interrupted = st.Attempt != nil && st.Attempt.Result == ResultRunning && !u.attemptRunning()
 	d, err := u.openDeployment()
 	if err != nil {
 		return nil, err
@@ -136,7 +144,7 @@ func (u *Updater) Status(ctx context.Context) (*StatusReport, error) {
 	if b, err := readSmall(status.path(AgentUpdatesHeldFile), 256); err == nil {
 		r.AgentUpdatesHeldUntil = strings.TrimSpace(string(b))
 	}
-	if plan, err := u.PlanRollback(ctx); err == nil {
+	if plan, err := u.PlanRollback(ctx, false); err == nil {
 		r.Rollback = plan
 	}
 	if entries, err := os.ReadDir(u.Config.BackupDir); err == nil {
@@ -168,7 +176,18 @@ func (r *StatusReport) Write(w io.Writer) {
 		if a.Reason != "" {
 			fmt.Fprintf(w, "\n             %s", a.Reason)
 		}
+		if a.Warning != "" {
+			fmt.Fprintf(w, "\n             Warning: %s", a.Warning)
+		}
 		fmt.Fprintln(w)
+		switch {
+		case r.Interrupted:
+			fmt.Fprintln(w, "             No updater runs: its process ended before the attempt did. The next run (the timer's, or easyrmm-updater upgrade) finishes it.")
+		case a.unresolved():
+			fmt.Fprintln(w, "             The updater does nothing more until the deployment is repaired by hand and it is run with --deployment-repaired (docs/operations/updater.md#when-a-rollback-fails).")
+		case a.Repaired != "":
+			fmt.Fprintf(w, "             Repaired by hand, said %s.\n", a.Repaired)
+		}
 	}
 	if r.Rollback != nil {
 		fmt.Fprintf(w, "Roll back:   to %s, until %s, with easyrmm-updater rollback. It loses ", r.Rollback.To, r.Rollback.Until.Format(time.RFC3339))

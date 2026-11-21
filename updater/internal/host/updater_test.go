@@ -156,12 +156,31 @@ func TestUpgrade(t *testing.T) {
 	if err := h.upgrade(Request{}); err != nil {
 		t.Fatal(err)
 	}
-	for v, kept := range map[string]bool{"v1.0.0": false, "v1.1.0": true, "v1.2.0": true} {
+	// v1.0.0's was installed by hand: its .env goes, which holds the key,
+	// and nothing else.
+	for v, kept := range map[string]bool{"v1.1.0": true, "v1.2.0": true} {
 		if _, err := os.Stat(h.deploy(v)); (err == nil) != kept {
 			t.Errorf("%s kept: %v", v, err == nil)
 		}
 	}
-	if st := h.state(); !slices.Equal(st.Deployments, []string{h.deploy("v1.1.0"), h.deploy("v1.2.0")}) {
+	if _, err := os.Stat(filepath.Join(h.deploy("v1.0.0"), ".env")); err == nil {
+		t.Error("v1.0.0's .env is left")
+	}
+	if _, err := os.Stat(filepath.Join(h.deploy("v1.0.0"), "docker-compose.yml")); err != nil {
+		t.Error("v1.0.0's directory, which the updater did not unpack, was removed")
+	}
+	if st := h.state(); !slices.Equal(st.Unpacked, []string{filepath.Join(h.root, "easyrmm-v1.1.0"), filepath.Join(h.root, "easyrmm-v1.2.0")}) {
+		t.Errorf("unpacked %v", st.Unpacked)
+	}
+	// The third upgrade removes v1.1.0's directory, which it unpacked.
+	h.offer("v1.3.0", nil)
+	if err := h.upgrade(Request{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(h.root, "easyrmm-v1.1.0")); err == nil {
+		t.Error("v1.1.0's directory is left")
+	}
+	if st := h.state(); !slices.Equal(st.Deployments, []string{h.deploy("v1.2.0"), h.deploy("v1.3.0")}) {
 		t.Errorf("deployments %v", st.Deployments)
 	}
 	// Two backups kept.
@@ -517,7 +536,7 @@ func TestUpgradeSetupChangesImages(t *testing.T) {
 func TestRollback(t *testing.T) {
 	h := newTestHost(t, "v1.0.0", release.ChannelStable)
 	ctx := context.Background()
-	if _, err := h.u.PlanRollback(ctx); !errors.Is(err, errNoRollback) {
+	if _, err := h.u.PlanRollback(ctx, false); !errors.Is(err, errNoRollback) {
 		t.Errorf("before any upgrade: %v", err)
 	}
 	h.offer("v1.1.0", nil)
@@ -527,7 +546,7 @@ func TestRollback(t *testing.T) {
 	// Written since the upgrade, and lost by the rollback.
 	writeFile(t, filepath.Join(h.dataRoot, "server", "data"), "written by v1.1.0", 0o600)
 	h.now = h.now.Add(2 * time.Hour)
-	plan, err := h.u.PlanRollback(ctx)
+	plan, err := h.u.PlanRollback(ctx, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -537,7 +556,7 @@ func TestRollback(t *testing.T) {
 	if s := plan.Loss.String(); !strings.Contains(s, "2 devices") || !strings.Contains(s, "desk-1, desk-2") {
 		t.Errorf("loss %q", s)
 	}
-	if err := h.u.Rollback(ctx, "root on the host"); err != nil {
+	if err := h.u.Rollback(ctx, "root on the host", false); err != nil {
 		t.Fatal(err)
 	}
 	st := h.state()
@@ -553,10 +572,10 @@ func TestRollback(t *testing.T) {
 	if got := readFile(t, h.u.Install.Binary); got != "updater of v1.1.0" {
 		t.Errorf("the updater went back to %q", got)
 	}
-	if _, err := h.u.PlanRollback(ctx); !errors.Is(err, errNoRollback) {
+	if _, err := h.u.PlanRollback(ctx, false); !errors.Is(err, errNoRollback) {
 		t.Errorf("after the rollback: %v", err)
 	}
-	if err := h.u.Rollback(ctx, "x"); !errors.Is(err, errNoRollback) {
+	if err := h.u.Rollback(ctx, "x", false); !errors.Is(err, errNoRollback) {
 		t.Errorf("a second rollback: %v", err)
 	}
 	// Automatic upgrades skip the version rolled back.
@@ -577,24 +596,42 @@ func TestRollbackRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.now = h.now.Add(RollbackWindow)
-	if _, err := h.u.PlanRollback(ctx); err == nil || !strings.Contains(err.Error(), "until") {
+	if _, err := h.u.PlanRollback(ctx, false); err == nil || !strings.Contains(err.Error(), "until") {
 		t.Errorf("after 24 hours: %v", err)
 	}
-	if err := h.u.Rollback(ctx, "x"); err == nil || !strings.Contains(err.Error(), "until") {
+	if err := h.u.Rollback(ctx, "x", false); err == nil || !strings.Contains(err.Error(), "until") {
 		t.Errorf("after 24 hours: %v", err)
 	}
 	h.now = h.now.Add(-time.Hour)
+	// The updater's record says what the upgrade installed, but the
+	// deployment was upgraded by hand since: .env and the server say so,
+	// and the record is not acted on.
+	envPath := filepath.Join(h.deploy("v1.1.0"), ".env")
+	env := readFile(t, envPath)
+	writeFile(t, envPath, strings.Replace(env, "EASYRMM_VERSION=1.1.0", "EASYRMM_VERSION=1.1.1", 1), 0o600)
+	// With the server down, only .env says so.
+	running := h.docker.running
+	h.docker.running = map[string]string{}
+	for _, err := range []error{h.u.Rollback(ctx, "x", false), planErr(h.u.PlanRollback(ctx, false))} {
+		if err == nil || !strings.Contains(err.Error(), "the server says unknown, .env names v1.1.1, the updater last brought up v1.1.0, not v1.1.0 alone") {
+			t.Errorf("upgraded by hand, the server down: %v", err)
+		}
+	}
+	h.docker.running = running
+	for _, err := range []error{h.u.Rollback(ctx, "x", false), planErr(h.u.PlanRollback(ctx, false))} {
+		if err == nil || !strings.Contains(err.Error(), "the server says v1.1.1, .env names v1.1.1, the updater last brought up v1.1.1, not v1.1.0 alone") {
+			t.Errorf("upgraded by hand since: %v", err)
+		}
+	}
+	// A server that says it runs another version than .env names is not
+	// acted on either.
+	writeFile(t, envPath, env, 0o600)
+	h.docker.serverSays = "v1.0.0"
+	if err := h.u.Rollback(ctx, "x", false); err == nil || !strings.Contains(err.Error(), "the server says it runs v1.0.0, and the deployment's .env names v1.1.0") {
+		t.Errorf("a server misreporting its version: %v", err)
+	}
+	h.docker.serverSays = ""
 	st := h.state()
-	st.Running = "v1.1.1"
-	if err := st.save(h.u.StateDir); err != nil {
-		t.Fatal(err)
-	}
-	if err := h.u.Rollback(ctx, "x"); err == nil || !strings.Contains(err.Error(), "v1.1.1 runs") {
-		t.Errorf("another version running: %v", err)
-	}
-	if _, err := h.u.PlanRollback(ctx); err == nil || !strings.Contains(err.Error(), "v1.1.1 runs") {
-		t.Errorf("another version running: %v", err)
-	}
 	st.Running = "v1.1.0"
 	if err := st.save(h.u.StateDir); err != nil {
 		t.Fatal(err)
@@ -607,10 +644,12 @@ func TestRollbackRefused(t *testing.T) {
 	if err := os.Remove(filepath.Join(b.Dir, "backup.json")); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.u.Rollback(ctx, "x"); err == nil || !strings.Contains(err.Error(), "not complete") {
+	if err := h.u.Rollback(ctx, "x", false); err == nil || !strings.Contains(err.Error(), "not complete") {
 		t.Errorf("an incomplete backup: %v", err)
 	}
 }
+
+func planErr(_ *RollbackPlan, err error) error { return err }
 
 func TestUpgradeLock(t *testing.T) {
 	h := newTestHost(t, "v1.0.0", release.ChannelStable)
@@ -621,7 +660,7 @@ func TestUpgradeLock(t *testing.T) {
 	if err := h.upgrade(Request{}); err == nil || !strings.Contains(err.Error(), "another attempt") {
 		t.Errorf("while locked: %v", err)
 	}
-	if err := h.u.Rollback(context.Background(), "x"); err == nil || !strings.Contains(err.Error(), "another attempt") {
+	if err := h.u.Rollback(context.Background(), "x", false); err == nil || !strings.Contains(err.Error(), "another attempt") {
 		t.Errorf("while locked: %v", err)
 	}
 	unlock()

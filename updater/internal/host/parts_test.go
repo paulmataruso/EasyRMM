@@ -124,12 +124,12 @@ func TestSetDeployment(t *testing.T) {
 }
 
 func TestEnvFile(t *testing.T) {
-	env := []byte("A=1\nB=2\nA=3\nCOMPOSE_PROFILES=patching, authentik\n")
+	env := []byte("A=1\nB=2\nA=3\nCOMPOSE_PROFILES=patching,authentik\n")
 	if envValue(env, "A") != "3" || envValue(env, "C") != "" || envValue(env, "B") != "2" {
 		t.Error("envValue")
 	}
 	out, err := setEnv(env, "A", "4")
-	if err != nil || string(out) != "A=4\nB=2\nCOMPOSE_PROFILES=patching, authentik\n" {
+	if err != nil || string(out) != "A=4\nB=2\nCOMPOSE_PROFILES=patching,authentik\n" {
 		t.Errorf("setEnv replaced: %q, %v", out, err)
 	}
 	if out, err = setEnv(env, "C", "5"); err != nil || !strings.HasSuffix(string(out), "authentik\nC=5\n") {
@@ -250,7 +250,8 @@ func backupAt(t *testing.T, dir string, at time.Time, complete bool) string {
 	for _, d := range []string{"deploy", "docker"} {
 		writeFile(t, filepath.Join(tree, d, "f"), "x", 0o600)
 	}
-	b, err := takeBackup(context.Background(), dir, BackupMeta{Version: "v1.0.0", Deployment: filepath.Join(tree, "deploy"), DataRoot: data, Taken: at}, conf)
+	meta := BackupMeta{Version: "v1.0.0", Deployment: filepath.Join(tree, "deploy"), DataRoot: data, Taken: at}
+	b, err := takeBackup(context.Background(), backupDirFor(dir, meta), meta, conf, func() error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +314,8 @@ func TestTakeBackupLeavesOutTheUpdatersFiles(t *testing.T) {
 		writeFile(t, filepath.Join(tree, d, "f"), "x", 0o600)
 	}
 	dir := filepath.Join(t.TempDir(), "backups")
-	b, err := takeBackup(context.Background(), dir, BackupMeta{Version: "v1.0.0", Deployment: filepath.Join(tree, "deploy"), DataRoot: data, Taken: time.Now()}, conf)
+	meta := BackupMeta{Version: "v1.0.0", Deployment: filepath.Join(tree, "deploy"), DataRoot: data, Taken: time.Now()}
+	b, err := takeBackup(context.Background(), backupDirFor(dir, meta), meta, conf, func() error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -483,59 +485,86 @@ func (f runnerFunc) Run(ctx context.Context, dir string, stdin []byte, args ...s
 	return f(ctx, dir, stdin, args...)
 }
 
+// An old deployment the updater unpacked goes whole; of any other (a Git
+// clone, an operator's bundle directory) only deploy/.env, which holds the
+// key; and nothing that holds what the updater keeps.
 func TestRemoveDeployment(t *testing.T) {
+	h := newTestHost(t, "v1.0.0", release.ChannelStable)
+	st := &State{Attempt: &Attempt{DataRoot: h.dataRoot}}
 	parent := t.TempDir()
-	// A Git clone keeps everything but its .env, which holds the key.
-	clone := filepath.Join(parent, "EasyRMM")
-	writeFile(t, filepath.Join(clone, ".git", "HEAD"), "ref: refs/heads/main\n", 0o644)
-	writeFile(t, filepath.Join(clone, "deploy", ".env"), "EASYRMM_SECRET_KEY=x\n", 0o600)
-	writeFile(t, filepath.Join(clone, "deploy", "docker-compose.yml"), "x", 0o644)
-	if err := removeDeployment(filepath.Join(clone, "deploy")); err != nil {
+	for _, root := range []string{filepath.Join(parent, "EasyRMM"), filepath.Join(parent, "easyrmm-v0.9.0")} {
+		writeFile(t, filepath.Join(root, ".git", "HEAD"), "ref: refs/heads/main\n", 0o644)
+		writeFile(t, filepath.Join(root, "deploy", ".env"), "EASYRMM_SECRET_KEY=x\n", 0o600)
+		writeFile(t, filepath.Join(root, "deploy", "docker-compose.yml"), "x", 0o644)
+		if err := h.u.removeDeployment(st, filepath.Join(root, "deploy")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(root, "deploy", ".env")); err == nil {
+			t.Errorf("%s: the .env is left", root)
+		}
+		if _, err := os.Stat(filepath.Join(root, "deploy", "docker-compose.yml")); err != nil {
+			t.Errorf("%s was removed", root)
+		}
+		if err := h.u.removeDeployment(st, filepath.Join(root, "deploy")); err != nil {
+			t.Errorf("%s without .env: %v", root, err)
+		}
+	}
+	unpacked := filepath.Join(parent, "easyrmm-v1.0.1")
+	writeFile(t, filepath.Join(unpacked, "deploy", ".env"), "x", 0o600)
+	writeFile(t, filepath.Join(parent, ".easyrmm-v1.0.1.unpack-123", "x"), "x", 0o600)
+	st.Unpacked = []string{unpacked}
+	if err := h.u.removeDeployment(st, filepath.Join(unpacked, "deploy")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(clone, "deploy", ".env")); err == nil {
-		t.Error("the clone's .env is left")
+	if left, _ := filepath.Glob(filepath.Join(parent, "*easyrmm-v1.0.1*")); len(left) != 0 || len(st.Unpacked) != 0 {
+		t.Errorf("left %v, unpacked %v", left, st.Unpacked)
 	}
-	if _, err := os.Stat(filepath.Join(clone, "deploy", "docker-compose.yml")); err != nil {
-		t.Error("the clone was removed")
+	// One that holds the data root, the backups, the state or the
+	// configuration stays, unpacked by the updater or not.
+	for name, keep := range map[string]*string{"data root": &st.Attempt.DataRoot, "backups": &h.u.Config.BackupDir, "state": &h.u.StateDir, "configuration": &h.u.Config.Path} {
+		holding := filepath.Join(parent, "easyrmm-v1.0.2")
+		writeFile(t, filepath.Join(holding, "deploy", ".env"), "x", 0o600)
+		was := *keep
+		*keep = filepath.Join(holding, "kept")
+		st.Unpacked = []string{holding}
+		if err := h.u.removeDeployment(st, filepath.Join(holding, "deploy")); err == nil || !strings.Contains(err.Error(), "which the updater keeps") {
+			t.Errorf("%s: %v", name, err)
+		}
+		if _, err := os.Stat(filepath.Join(holding, "deploy", ".env")); err != nil {
+			t.Errorf("%s: removed", name)
+		}
+		*keep = was
 	}
-	if err := removeDeployment(filepath.Join(clone, "deploy")); err != nil {
-		t.Errorf("a clone without .env: %v", err)
-	}
-	// A bundle's directory goes whole; another directory is refused.
-	bundle := filepath.Join(parent, "easyrmm-v1.0.0")
-	writeFile(t, filepath.Join(bundle, "deploy", ".env"), "x", 0o600)
-	if err := removeDeployment(filepath.Join(bundle, "deploy")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(bundle); err == nil {
-		t.Error("the bundle's directory is left")
-	}
-	other := filepath.Join(parent, "srv")
-	writeFile(t, filepath.Join(other, "deploy", ".env"), "x", 0o600)
-	if err := removeDeployment(filepath.Join(other, "deploy")); err == nil {
-		t.Error("a directory that is not a bundle's was removed")
+	// So does an operator's .env that is the configuration.
+	h.u.Config.Path = filepath.Join(parent, "easyrmm-v0.9.0", "deploy", ".env")
+	writeFile(t, h.u.Config.Path, "x", 0o600)
+	if err := h.u.removeDeployment(st, filepath.Dir(h.u.Config.Path)); err == nil {
+		t.Error("removed the configuration")
 	}
 }
 
-// An upgrade unpacks beside a Git clone, and never over one.
+// An upgrade never unpacks over a directory the updater did not unpack (a
+// Git clone, an operator's own), and replaces one it did.
 func TestUpgradeBesideAClone(t *testing.T) {
 	h := newTestHost(t, "v1.0.0", release.ChannelStable)
 	writeFile(t, filepath.Join(h.root, "easyrmm-v1.1.0", ".git", "HEAD"), "x", 0o644)
 	h.offer("v1.1.0", nil)
-	if err := h.upgrade(Request{}); err == nil || !strings.Contains(err.Error(), "Git clone") {
+	if err := h.upgrade(Request{}); err == nil || !strings.Contains(err.Error(), "the updater did not unpack it") {
 		t.Errorf("over a clone: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(h.root, "easyrmm-v1.1.0", ".git", "HEAD")); err != nil {
 		t.Error("the clone was touched")
 	}
-	// A directory an earlier attempt left is replaced.
-	h.offer("v1.2.0", nil)
-	writeFile(t, filepath.Join(h.root, "easyrmm-v1.2.0", "deploy", "left"), "x", 0o644)
-	if err := h.upgrade(Request{}); err != nil {
+	// One an earlier attempt unpacked and left is replaced.
+	st := h.state()
+	st.Unpacked = append(st.Unpacked, filepath.Join(h.root, "easyrmm-v1.1.0"))
+	if err := st.save(h.u.StateDir); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(h.root, "easyrmm-v1.2.0", "deploy", "left")); err == nil {
+	if err := h.upgrade(Request{Version: release.MustParseVersion("v1.1.0")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(h.root, "easyrmm-v1.1.0", ".git")); err == nil {
 		t.Error("an earlier attempt's file is left")
 	}
 }

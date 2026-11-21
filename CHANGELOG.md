@@ -103,7 +103,8 @@ All notable changes to this project are documented here. The format follows
   bundle of its attestation beside the manifest, so that verifying needs
   no GitHub API.
 - **The host updater, `easyrmm-updater`** (ADR-0052, feature 4a). Run as
-  root, `setup.sh` installs it with a systemd service and an hourly timer,
+  root, `setup.sh` installs it with a systemd service and a timer (hourly,
+  and five minutes after the host starts),
   configured in `/etc/easyrmm/updater.conf` (`--no-updater` installs
   none; `--auto-upgrade` turns automatic upgrades on, which are off
   otherwise). `easyrmm-updater upgrade [version]` verifies the release or
@@ -118,10 +119,18 @@ All notable changes to this project are documented here. The format follows
   `easyrmm-updater rollback` undoes a confirmed upgrade within 24 hours,
   after saying what it loses; `status` and `check` change nothing. A
   version whose manifest names a required upgrade stop (`upgradeFrom`)
-  above the lower of the running server's version and the updater's own
-  is refused before anything stops, naming the version to install first;
-  automatic upgrades install that stop first. Each bundle carries it; a
-  clone builds it with `make updater`. Guide:
+  above the lowest of the running server's version, `.env`'s, the
+  updater's record and the updater's own is refused before anything
+  stops, naming the version to install first; automatic upgrades install
+  that stop first, and never go below the highest of the first three. An
+  attempt cut short (killed, or the host restarted) is finished by the
+  next run from what it recorded, and after a rollback that failed the
+  updater does nothing until it is run with `--deployment-repaired`. It
+  refuses, before anything stops, a data root holding links at its top or
+  mount points, a host without room on each disk for everything that goes
+  on it, and a `.env` it could read otherwise than Compose does; it
+  unpacks bundles into `/opt/easyrmm`, root's, and removes only those. Each
+  bundle carries it; a clone builds it with `make updater`. Guide:
   [the host updater](docs/operations/updater.md). The console's requests
   (feature 4b) come later.
 - **Hardening checks for Linux computers** (ADR-0051, its first part). A

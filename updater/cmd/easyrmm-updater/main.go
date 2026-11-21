@@ -8,8 +8,11 @@
 //	easyrmm-updater rollback [--yes]    the last confirmed upgrade, within 24 hours
 //	easyrmm-updater version
 //
-// The hourly timer runs `upgrade --automatic`, which acts only when
-// automatic upgrades are on, in their hours.
+// The hourly timer runs `upgrade --automatic`, which upgrades only when
+// automatic upgrades are on, in their hours. Every run but status, check
+// and version first finishes an attempt whose process ended before it did.
+// After an attempt whose rollback failed, upgrade and rollback act again
+// only with --deployment-repaired, once the deployment is repaired by hand.
 package main
 
 import (
@@ -41,6 +44,10 @@ const usage = `usage: easyrmm-updater [--config FILE] COMMAND
   upgrade [VERSION]   upgrade to VERSION, or to the newest the channel offers
   rollback [--yes]    roll the last confirmed upgrade back (within 24 hours)
   version             the updater's version
+
+  upgrade and rollback take --deployment-repaired: after an attempt whose
+  rollback failed, you repaired the deployment by hand, and the updater may
+  act again (docs/operations/updater.md#when-a-rollback-fails)
 `
 
 func main() {
@@ -102,15 +109,16 @@ func runWith(args []string, e env) int {
 func newUpdater(conf *host.Config, log *slog.Logger) *host.Updater {
 	self, _ := release.ParseVersion(Version) // a clone's build has none
 	return &host.Updater{
-		Self:     self,
-		Config:   conf,
-		StateDir: host.DefaultStateDir,
-		Docker:   host.Docker{R: host.ExecRunner{}},
-		Source:   newSource(conf.Channel),
-		Verifier: newVerifier(host.DefaultStateDir),
-		Install:  host.DefaultInstall,
-		Log:      log,
-		Now:      time.Now,
+		Self:      self,
+		Config:    conf,
+		StateDir:  host.DefaultStateDir,
+		Docker:    host.Docker{R: host.ExecRunner{}},
+		Source:    newSource(conf.Channel),
+		Verifier:  newVerifier(host.DefaultStateDir),
+		Install:   host.DefaultInstall,
+		Log:       log,
+		Now:       time.Now,
+		BundleDir: host.DefaultBundleDir,
 	}
 }
 
@@ -120,7 +128,10 @@ type command struct {
 	version   release.Version // upgrade's, when one is named
 	automatic bool            // upgrade --automatic
 	yes       bool            // rollback --yes
+	repaired  bool            // upgrade and rollback --deployment-repaired
 }
+
+const repairedUsage = "the deployment was repaired by hand after an attempt whose rollback failed: act again"
 
 func parseCommand(name string, args []string, stderr io.Writer) (*command, error) {
 	c := &command{name: name}
@@ -131,9 +142,11 @@ func parseCommand(name string, args []string, stderr io.Writer) (*command, error
 	case "status", "check", "version":
 	case "upgrade":
 		fs.BoolVar(&c.automatic, "automatic", false, "as the hourly timer: only when automatic upgrades are on, in their hours")
+		fs.BoolVar(&c.repaired, "deployment-repaired", false, repairedUsage)
 		maxArgs = 1
 	case "rollback":
 		fs.BoolVar(&c.yes, "yes", false, "roll back without asking")
+		fs.BoolVar(&c.repaired, "deployment-repaired", false, repairedUsage)
 	default:
 		return nil, fmt.Errorf("unknown command %q", name)
 	}
@@ -142,6 +155,9 @@ func parseCommand(name string, args []string, stderr io.Writer) (*command, error
 	}
 	if fs.NArg() > maxArgs {
 		return nil, fmt.Errorf("%s takes %d arguments", name, maxArgs)
+	}
+	if c.automatic && c.repaired {
+		return nil, fmt.Errorf("upgrade --automatic does not take --deployment-repaired: only an operator says so")
 	}
 	if fs.NArg() == 1 {
 		if c.automatic {
@@ -163,11 +179,11 @@ func (c *command) run(ctx context.Context, u *host.Updater, e env, log *slog.Log
 	case "check":
 		return check(ctx, u, e)
 	case "upgrade":
-		req := host.Request{Version: c.version, Automatic: c.automatic, By: by()}
+		req := host.Request{Version: c.version, Automatic: c.automatic, By: by(), Repaired: c.repaired}
 		if c.automatic {
 			req.By = "automatic"
 		}
-		stop := holdSignals(log)
+		ctx, stop := stopSignals(ctx, log)
 		defer stop()
 		if err := u.Upgrade(ctx, req); err != nil {
 			log.Error("upgrade", "error", err)
@@ -175,7 +191,7 @@ func (c *command) run(ctx context.Context, u *host.Updater, e env, log *slog.Log
 		}
 		return 0
 	default:
-		return rollback(ctx, u, c.yes, e, log)
+		return rollback(ctx, u, c, e, log)
 	}
 }
 
@@ -213,8 +229,8 @@ func by() string {
 	return "root on the host"
 }
 
-func rollback(ctx context.Context, u *host.Updater, yes bool, e env, log *slog.Logger) int {
-	plan, err := u.PlanRollback(ctx)
+func rollback(ctx context.Context, u *host.Updater, c *command, e env, log *slog.Logger) int {
+	plan, err := u.PlanRollback(ctx, c.repaired)
 	if err != nil {
 		fmt.Fprintln(e.stderr, err)
 		return 1
@@ -226,7 +242,7 @@ func rollback(ctx context.Context, u *host.Updater, yes bool, e env, log *slog.L
 		fmt.Fprintf(e.stdout, "everything written since the upgrade (the database cannot say what: %v)\n", plan.LossErr)
 	}
 	fmt.Fprintln(e.stdout, "EasyRMM's agents that updated move back to the restored server's build (in Manual mode, once approved).")
-	if !yes {
+	if !c.yes {
 		if !e.isTerminal {
 			fmt.Fprintln(e.stderr, "add --yes to roll back without a terminal to confirm on")
 			return 1
@@ -238,20 +254,25 @@ func rollback(ctx context.Context, u *host.Updater, yes bool, e env, log *slog.L
 			return 1
 		}
 	}
-	stop := holdSignals(log)
+	ctx, stop := stopSignals(ctx, log)
 	defer stop()
-	if err := u.Rollback(ctx, by()); err != nil {
+	if err := u.Rollback(ctx, by(), c.repaired); err != nil {
 		log.Error("rollback", "error", err)
 		return 1
 	}
 	return 0
 }
 
-// holdSignals keeps an attempt running to its end, or its rollback, when
-// the terminal hangs up or someone presses Ctrl-C or systemd stops the
-// unit: stopping halfway would leave the deployment down.
-func holdSignals(log *slog.Logger) func() {
+// stopSignals is ctx, canceled when someone presses Ctrl-C or systemd
+// stops the unit (SIGINT, SIGTERM). An attempt that has not stopped the
+// deployment ends there, having changed nothing; one that has runs on to
+// its end, or brings the previous version back, before the updater exits:
+// stopping halfway would leave the deployment down. systemd kills it after
+// the unit's TimeoutStopSec, and the next run finishes the attempt from
+// what it recorded. A terminal that hangs up changes nothing.
+func stopSignals(ctx context.Context, log *slog.Logger) (context.Context, func()) {
 	signal.Ignore(syscall.SIGHUP, syscall.SIGPIPE)
+	ctx, cancel := context.WithCancel(ctx)
 	ch := make(chan os.Signal, 1)
 	signal.Notify(ch, os.Interrupt, syscall.SIGTERM)
 	done := make(chan struct{})
@@ -259,14 +280,16 @@ func holdSignals(log *slog.Logger) func() {
 		for {
 			select {
 			case s := <-ch:
-				log.Warn("an attempt is running: it finishes, or rolls back, before the updater stops", "signal", s.String())
+				log.Warn("asked to stop: an attempt that has not stopped the deployment ends now; one that has runs on to its end, or brings the previous version back, first", "signal", s.String())
+				cancel()
 			case <-done:
 				return
 			}
 		}
 	}()
-	return func() {
+	return ctx, func() {
 		signal.Stop(ch)
 		close(done)
+		cancel()
 	}
 }
