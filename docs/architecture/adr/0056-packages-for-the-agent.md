@@ -1,6 +1,9 @@
 # ADR-0056: Packages for the agent: DEB, RPM and MSI
 
-* Status: Proposed (2026-11-21). Not implemented.
+* Status: Proposed (2026-11-21). Slice 0 implemented (PR #61, merged
+  2026-11-21; two of its tests are still to be built, see
+  [below](#the-state-folder-is-protected-before-anything-reads-it)); the
+  rest not implemented.
 * Revised after an independent review (2026-11-21), and again after a
   second check (2026-11-21). Decided in review, not by the owner: tokens
   for deployment tools and their ceilings, *Uninstalled*, RPM signatures,
@@ -347,8 +350,8 @@ and makes such a token when asked ([In the console](#in-the-console)).
 
 ### The state folder is protected before anything reads it
 Slice 0: a fix for the agent as it is, which ships on its own before any
-package, as the fix being built on `fix/windows-state-folder` (its pull
-request number to be added here).
+package. It shipped in PR #61 (merged 2026-11-21); what follows describes
+the merged code, with the two tests it does not have yet marked as such.
 
 * **Today's agent is exposed in one path**, from a standard user to
   LocalSystem, needing neither a token nor a place on the network:
@@ -387,9 +390,16 @@ request number to be added here).
   `Protect` does today: every folder from `%ProgramData%` down to it must
   be a plain folder (no reparse point) owned by SYSTEM, Administrators,
   TrustedInstaller or the account the agent runs as, or it is moved aside
-  and made anew; the state folder then gets the protected access list
-  (SYSTEM and Administrators only, nothing inherited). Only then does it
-  walk what it reads or writes as state, and nothing else:
+  and made anew. The state folder's access list, read before anything
+  above it is protected, is then judged by who it lets write (`acl.go`):
+  one that lets anyone but SYSTEM, Administrators and TrustedInstaller
+  write, append, change attributes, delete, change the list or the owner
+  (inherit-only grants included) sets the folder aside too; any other
+  list, such as the same entries in another order or an extra read-only
+  grant, is set back to the protected one (SYSTEM and Administrators
+  only, nothing inherited) with a warning, and the enrollment is kept.
+  Only then does it walk what it reads or writes as state, and nothing
+  else:
   * `agent.json`, `device.key`, `pending.json`, `ca.pem`, `status.json`,
     `removal.json` and `update.json` (ADR-0027's marker);
   * the folders `jobs` and `jobs\journal` and what is in the journal,
@@ -399,11 +409,16 @@ request number to be added here).
     interrupted.
 
   Each must be a plain file with one link, or a plain folder, owned by
-  SYSTEM, Administrators, TrustedInstaller or the agent's account. Only
-  what fails is set aside (renamed `.untrusted-<time>`), and the agent
-  says so in its log and in `status`: a `device.key` of another owner
-  leaves the agent unenrolled, as it should, but a valid key is never
-  discarded for an entry that is not state. Where the chain or the state
+  SYSTEM, Administrators, TrustedInstaller or the agent's account, whose
+  access list lets no one else write (the same rule as the folder's). Only
+  what fails is set aside (renamed `.untrusted-<time>`), with the rest of
+  its group: the enrollment (`agent.json`, `device.key`, `pending.json`
+  and `ca.pem`) goes as one, anything else on its own (`layout` in
+  `state.go`). The command or service start whose check moved it logs a
+  warning naming where; a later `status` does not repeat it. A
+  `device.key` of another owner leaves the agent unenrolled, as it
+  should, but a valid key is never discarded for an entry that is not
+  state. Where the chain or the state
   folder fails, the whole folder is set aside, as `Protect` does today,
   and the agent goes on as on a computer with no state (`install` enrolls,
   a package's service waits). `Protect` alone is not enough: it looks at
@@ -427,10 +442,25 @@ request number to be added here).
 * **Devices already enrolled pass.** `Protect` made their folders with
   that access list, and their state was written by the agent as SYSTEM or
   by an elevated administrator, whose files Administrators own
-  (`trustedOwner` in `system_windows.go`); what scripts left is not
-  judged. The slice's test updates an enrolled agent from before it and
-  checks that it keeps running as the same device.
-* **Tested on CI's Windows runner.** A standard user made for the run,
+  (`trusted` in `system_windows.go`); what scripts left is not
+  judged. *Not yet tested:* a test that updates an agent enrolled by the
+  release before PR #61 to it and checks that it keeps running as the
+  same device; until it exists this is argued from the code, not shown.
+* **Tested on CI's Windows runner, as merged** (`main_windows_test.go`,
+  `host_windows_test.go`, `acl_test.go`). The tests plant state as a
+  standard user would leave it, made owned by `BUILTIN\Users` with the
+  restore privilege: an enrollment (`agent.json` and `device.key`) and a
+  pending one naming the server the install uses, a user's own file
+  among the agent's, a second hard link, junctions at `logs`, `jobs` and
+  `easypatch`, an access list that only reorders the agent's own, and
+  leftovers in `jobs\work`; each install enrolls anew or keeps its own
+  state as the case requires, and nothing is written through a junction.
+  An enrolled folder passes unchanged. Five deliberate breaks of the
+  check (no check in `install`, a store that skips it, access lists read
+  after the folders above are protected, entries' lists ignored, the
+  exact list required) each failed the predicted tests on CI's Windows
+  runner before the merge.
+* **Still to be built: the standard-user test.** A standard user made for the run,
   before the agent is installed, creates `%ProgramData%\EasyRMM\Agent\` and
   leaves in it an `agent.json` and a `device.key` naming a listener of the
   test, with the listener's own authority as `caFile` and a job key of the
@@ -976,7 +1006,7 @@ said what this ADR had to decide. Where it decides otherwise:
   * slice 0's check of the state folder: a folder in the chain of an
     owner not trusted setting the whole folder aside; a state file of
     another owner, a reparse point and a second hard link each setting
-    aside that entry only; an enrolled agent's folder passing, also with a
+    aside that entry, or its enrollment group, only; an enrolled agent's folder passing, also with a
     leftover run folder holding a junction, a hard link and a file of
     another owner, which is deleted without following the junction; the
     store refusing to read before the check;
@@ -1121,7 +1151,7 @@ said what this ADR had to decide. Where it decides otherwise:
   January 2026, so it stays available if this repository, public today,
   goes private. It is Windows 11: no ARM64 Windows Server is tested. These
   need no server, since an address nothing answers (a closed port on the
-  runner itself) only makes the agent wait. Slice 0's test (above) runs
+  runner itself) only makes the agent wait. Slice 0's tests (above) run
   from slice 0; these run from slice 6:
   1. ICE and the build checks;
   2. silent installs with properties (they install and wait), with the
@@ -1177,10 +1207,11 @@ IMPLEMENTATION_STATUS, ROADMAP, CHANGELOG, database.md for migrations).
    the check of the chain, the state folder and the agent's own state,
    the deletion of `jobs\work`, the store refusing to read before the
    check, `install` and the service checking first. A fix for today's
-   agent, shipped as the fix on `fix/windows-state-folder`, on its own
-   and before slice 1. Verified by unit tests and slice 0's test on CI's
-   Windows runner, including an enrolled agent from before it updated to
-   it.
+   agent, shipped on its own in PR #61 (merged 2026-11-21) before slice
+   1. Verified by unit tests and the Windows tests on CI's runner listed
+   [above](#the-state-folder-is-protected-before-anything-reads-it); the
+   standard-user test and the update of an agent enrolled before it are
+   still to be built.
 1. **The enrollment file and an agent that waits**: `install.conf` and
    the environment, the checks on both platforms, deletion, waiting, the
    errors and the unit's ordering, `install --package` with its record and
