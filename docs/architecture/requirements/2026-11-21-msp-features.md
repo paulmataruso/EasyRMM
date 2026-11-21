@@ -6,9 +6,11 @@
 * **What is verbatim**: everything from the heading *EasyRMM – Additional
   Feature Requirements* to the sentence that ends *in one unified
   product.* Nothing inside it was added, corrected or reworded.
-* **Added**: this header, and the [addendum](#addendum-the-keystore)
-  after the requirements, which quotes the owner's two later messages
-  about a keystore.
+* **Added**: this header, and the
+  [addendum](#addendum-the-owners-later-messages) after the requirements,
+  which quotes the owner's four later messages: about a keystore, about
+  warranty data from the vendors' own tools, and about where the keys are
+  kept and interactive PowerShell.
 * **The owner's instruction on the twelve**: "Add this to the plan, and
   start doing them one by one".
 
@@ -803,10 +805,12 @@ The following expectations apply across the feature set:
 
 ---
 
-# Addendum: the keystore
+# Addendum: the owner's later messages
 
 Not part of the requirements above. The owner's own words, 2026-11-21,
-after the twelve:
+after the twelve, in the order they came.
+
+## The keystore
 
 > I think we should also create a highly secure keystore, to backup bitlocker keys for client devices as well
 
@@ -816,3 +820,23 @@ Then, about Linux LUKS recovery keys:
 
 So the keystore holds BitLocker and LUKS recovery keys. How it is built
 is in the [plan](../feature-plan-msp.md#the-keystore-for-bitlocker-and-luks-recovery-keys).
+
+## Warranty data from the vendors' own tools
+
+About requirement 1:
+
+> Ok but dosent each vender have like a tool you can install on the computer that shows all the warrnety stuff? Can't we pull it from there?
+
+The plan's [feature 1](../feature-plan-msp.md#1-hardware-warranty-and-lifecycle-management)
+answers it: what each vendor's tool stores on the computer, as researched
+from the vendors' documents and not yet tried on a real computer.
+
+## Where the keys are kept, and interactive PowerShell
+
+> So we just need to find a super secure way to store the keys on the EasyRMM server, and for powershell yes the Mesh one is fine.
+
+So the keystore keeps its keys on the EasyRMM server, under the most
+secure on-host protection its ADR chooses, and interactive PowerShell
+(requirement 6) uses MeshCentral's terminal, audited per session, with
+typed input not recorded. Both are in the
+[plan](../feature-plan-msp.md).
