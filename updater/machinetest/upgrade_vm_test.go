@@ -52,13 +52,23 @@ const (
 	dockerKey = "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
 )
 
-// The versions: A is installed, B is upgraded to and rolled back from, and
-// C is a release whose server never turns healthy.
+// The versions: A is installed, B is upgraded to and rolled back from, C
+// is a release whose server never turns healthy, and E a release that
+// installs only over D (its manifest's upgradeFrom), both published once
+// C has failed.
 const (
 	versionA = "v9.0.0"
 	versionB = "v9.0.1"
 	versionC = "v9.0.2"
+	versionD = "v9.1.0"
+	versionE = "v9.2.0"
 )
+
+// withAuthentik, when EASYRMM_UPDATER_TEST_AUTHENTIK is 1, installs the
+// deployment with Authentik (setup.sh --with-authentik): its services must
+// run from each version's directory, and its database come back with the
+// rest from each restore.
+var withAuthentik = os.Getenv("EASYRMM_UPDATER_TEST_AUTHENTIK") == "1"
 
 // TestUpgradeOnAMachine installs a deployment from a bundle with setup.sh
 // on a Debian 12 machine with Docker, as an operator does, and drives the
@@ -70,14 +80,18 @@ const (
 //     bundle.sh, each manifest attested by the virtual Sigstore;
 //  3. a rollback of that confirmed upgrade, losing what was written since;
 //  4. an upgrade to C, whose server fails its health check: the updater
-//     brings A back from the backup it took.
+//     brings A back from the backup it took;
+//  5. D and E published, E naming D as its required upgrade stop: E asked
+//     for by name is refused before anything stops, and the timer's
+//     service, automatic upgrades on, installs D first and E on its next
+//     run.
 //
 // Each step is checked from the outside: the version the server reports,
 // the directory every container runs from, the data, the audit chain, the
 // status the server reads and the updater's configuration. Run it with
 // `make test-vm-updater`; it needs Docker and Go on the host, and the
 // machine needs the internet (Docker's packages and the images the bundle
-// names).
+// names). EASYRMM_UPDATER_TEST_AUTHENTIK=1 installs Authentik too.
 func TestUpgradeOnAMachine(t *testing.T) {
 	if !slices.Contains(vmtest.Selected(t), machineImage) {
 		t.Skipf("the updater's machine test runs on %s", machineImage)
@@ -100,7 +114,7 @@ func TestUpgradeOnAMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := serve(t, served)
-	versions := []string{versionA, versionB, versionC}
+	versions := []string{versionA, versionB, versionC, versionD, versionE}
 
 	// The server images and the updater's test builds, while the machine
 	// boots.
@@ -108,7 +122,7 @@ func TestUpgradeOnAMachine(t *testing.T) {
 	go func() { builds <- buildAll(ctx, root, work, versions, t.Logf) }()
 
 	vm := vmtest.Boot(t, machineImage, vmtest.Options{Forward: []int{5000}, MemoryMB: 6144, DiskGB: 40})
-	m := &machine{t: t, vm: vm}
+	m := &machine{t: t, vm: vm, authentik: withAuthentik}
 	m.run("Docker", installDocker, time.Hour)
 	m.run("the registry", fmt.Sprintf(`set -e
 docker run -d --name registry --network host --restart always -e REGISTRY_HTTP_ADDR=0.0.0.0:5000 %s >/dev/null
@@ -137,6 +151,9 @@ echo "the registry did not answer" >&2; exit 1`, registryImage, registry), 30*ti
 			updater: filepath.Join(work, "updater-"+v), broken: v == versionC,
 			emulated: vm.Emulated(),
 		}
+		if v == versionE {
+			b.upgradeFrom = versionD
+		}
 		b.build(t, root, filepath.Join(work, "bundle-"+v), served, sigstore)
 	}
 
@@ -150,14 +167,14 @@ cd /root
 curl -fsS -O %[1]seasyrmm-%[3]s-deploy.tar.gz
 tar -xzf easyrmm-%[3]s-deploy.tar.gz -C %[2]s
 cd %[2]s/easyrmm-%[3]s/deploy
-./scripts/setup.sh --hostname 127.0.0.1 --ip-addresses 127.0.0.1 </dev/null
+./scripts/setup.sh --hostname 127.0.0.1 --ip-addresses 127.0.0.1 %[6]s</dev/null
 docker compose pull --quiet
 docker compose up -d
 cd /var/lib/easyrmm-updater-test/releases
 for v in %[4]s %[5]s; do
   for f in manifest.json manifest.json.sigstore.json deploy.tar.gz; do curl -fsS -O "%[1]seasyrmm-$v-$f"; done
-done`, base, installDir, versionA, versionB, versionC), 2*time.Hour)
-	m.healthy(versionA, time.Hour)
+done`, base, installDir, versionA, versionB, versionC, authentikFlags()), 2*time.Hour)
+	m.healthy(versionA, 2*time.Hour)
 	m.serves(versionA)
 	if out := m.run("the updater's version", "easyrmm-updater version", time.Minute); !strings.HasPrefix(out, versionA+" (TEST BUILD") {
 		t.Errorf("the installed updater: %q", out)
@@ -180,6 +197,9 @@ done`, base, installDir, versionA, versionB, versionC), 2*time.Hour)
 		}
 	}
 	m.appendAudit(versionA, "test.before_upgrade", 2)
+	if m.authentik {
+		m.psqlDB(versionA, "authentik", "CREATE TABLE machinetest_marker (note text); INSERT INTO machinetest_marker VALUES ('before the upgrade');")
+	}
 
 	// 2. Upgrade to B.
 	m.updater("upgrading to "+versionB, "easyrmm-updater upgrade "+versionB)
@@ -213,6 +233,9 @@ done`, base, installDir, versionA, versionB, versionC), 2*time.Hour)
 
 	// 3. Written since, then rolled back: lost, and the audit IDs move on.
 	m.appendAudit(versionB, "test.after_upgrade", 3)
+	if m.authentik {
+		m.psqlDB(versionB, "authentik", "INSERT INTO machinetest_marker VALUES ('after the upgrade');")
+	}
 	discarded, err := strconv.Atoi(m.audit(versionB, "max(id)"))
 	if err != nil {
 		t.Fatal(err)
@@ -232,6 +255,11 @@ done`, base, installDir, versionA, versionB, versionC), 2*time.Hour)
 	m.rolledBack(versionA, versionB, discarded)
 	if n := m.audit(versionA, "count(*) FILTER (WHERE action = 'test.after_upgrade')"); n != "0" {
 		t.Errorf("records written after the upgrade survived the rollback: %s", n)
+	}
+	if m.authentik {
+		if notes := m.psqlDB(versionA, "authentik", "SELECT string_agg(note, ', ') FROM machinetest_marker;"); notes != "before the upgrade" {
+			t.Errorf("Authentik's database after the rollback: %q", notes)
+		}
 	}
 	if out := m.run("the updater kept its version", "easyrmm-updater version", time.Minute); !strings.HasPrefix(out, versionB+" (TEST BUILD") {
 		t.Errorf("the updater after the rollback: %q", out)
@@ -270,6 +298,83 @@ stat -c '%%U %%a %%n' %[4]s/.failed-*-%[2]s`, installDir, versionC, statusDir, d
 	if n := m.audit(versionA, "count(*) FILTER (WHERE action = 'test.before_upgrade')"); n != "2" {
 		t.Errorf("the records written before the upgrades: %s", n)
 	}
+	if m.authentik {
+		if notes := m.psqlDB(versionA, "authentik", "SELECT string_agg(note, ', ') FROM machinetest_marker;"); notes != "before the upgrade" {
+			t.Errorf("Authentik's database after the failed upgrade: %q", notes)
+		}
+	}
+
+	// 5. D and E published; E installs only over D.
+	m.run("publishing "+versionD+" and "+versionE, fmt.Sprintf(`set -e
+cd /var/lib/easyrmm-updater-test/releases
+for v in %[2]s %[3]s; do
+  for f in manifest.json manifest.json.sigstore.json deploy.tar.gz; do curl -fsS -O "%[1]seasyrmm-$v-$f"; done
+done`, base, versionD, versionE), 10*time.Minute)
+	const serverStarted = "docker inspect -f '{{.State.StartedAt}}' easyrmm-server-1"
+	started := m.run("the server's start", serverStarted, time.Minute)
+	stdout, stderr, exit = m.try("upgrading to "+versionE+" from below its stop", "easyrmm-updater upgrade "+versionE, time.Hour)
+	if refusal := versionE + " installs only over " + versionD + " or later, and " + versionA + " runs: install " + versionD + " first (easyrmm-updater upgrade " + versionD + ")"; exit == 0 || !strings.Contains(stderr, refusal) {
+		t.Errorf("the upgrade to %s from below its stop, which should say %q: exit %d\n%s\n%s", versionE, refusal, exit, stdout, stderr)
+	}
+	if again := m.run("the server's start", serverStarted, time.Minute); again != started {
+		t.Errorf("the refused upgrade restarted the server: started %s, then %s", started, again)
+	}
+	m.serves(versionA)
+	check = m.run("check", "easyrmm-updater check", 10*time.Minute)
+	for _, want := range []string{
+		"Newest:   " + versionE + ", verified (commit " + commit + ")",
+		"which must first upgrade to " + versionD + ", a required upgrade stop: easyrmm-updater upgrade " + versionD,
+	} {
+		if !strings.Contains(check, want) {
+			t.Errorf("check lacks %q:\n%s", want, check)
+		}
+	}
+	// Automatic upgrades on, at any hour; the timer stopped so that its
+	// service runs only when the test starts it, as the timer would.
+	m.run("automatic upgrades on", `set -e
+systemctl stop easyrmm-updater.timer
+sed -i -e 's/^auto_upgrade = .*/auto_upgrade = yes/' -e 's/^auto_upgrade_hours = .*/auto_upgrade_hours = 0-24/' /etc/easyrmm/updater.conf
+grep -x 'auto_upgrade = yes' /etc/easyrmm/updater.conf
+grep -x 'auto_upgrade_hours = 0-24' /etc/easyrmm/updater.conf`, time.Minute)
+	m.updater("the timer's service, installing "+versionD+" first", "systemctl start easyrmm-updater.service")
+	m.serves(versionD)
+	st = m.status()
+	if a := st.Attempt; a == nil || a.Action != "upgrade" || a.By != "automatic" || a.Result != host.ResultSucceeded || a.From != versionA || a.To != versionD {
+		t.Errorf("after the first automatic upgrade: %+v", a)
+	}
+	if journal := m.run("the service's journal", "journalctl -u easyrmm-updater.service --no-pager -o cat", time.Minute); !strings.Contains(journal, "installing the required upgrade stop first") {
+		t.Errorf("the journal does not say the stop was installed first:\n%s", journal)
+	}
+	if out := m.run("the updater replaced itself", "easyrmm-updater version", time.Minute); !strings.HasPrefix(out, versionD+" (TEST BUILD") {
+		t.Errorf("the updater after the upgrade to the stop: %q", out)
+	}
+	m.updater("the timer's service, installing "+versionE, "systemctl start easyrmm-updater.service")
+	m.serves(versionE)
+	st = m.status()
+	if a := st.Attempt; a == nil || a.By != "automatic" || a.Result != host.ResultSucceeded || a.From != versionD || a.To != versionE {
+		t.Errorf("after the second automatic upgrade: %+v", a)
+	}
+	if st.Running != versionE || st.Previous != versionD {
+		t.Errorf("status after the upgrades: %+v", st)
+	}
+	if n := m.audit(versionE, "count(*) FILTER (WHERE action = 'test.before_upgrade')"); n != "2" {
+		t.Errorf("the records written before the upgrades, on %s: %s", versionE, n)
+	}
+	if m.authentik {
+		if notes := m.psqlDB(versionE, "authentik", "SELECT string_agg(note, ', ') FROM machinetest_marker;"); notes != "before the upgrade" {
+			t.Errorf("Authentik's database on %s: %q", versionE, notes)
+		}
+	}
+}
+
+// authentikFlags are setup.sh's flags for Authentik, when the test
+// installs it: a sign-in name no one resolves, which the deployment's own
+// services never need to.
+func authentikFlags() string {
+	if !withAuthentik {
+		return ""
+	}
+	return "--with-authentik --authentik-hostname auth.rmm.test --admin-email admin@rmm.test "
 }
 
 // installDocker installs Docker Engine and its Compose plugin from Docker's
@@ -336,6 +441,8 @@ type bundle struct {
 	updater string
 	// broken gives the server a health check that never passes.
 	broken bool
+	// upgradeFrom is the manifest's required upgrade stop, if any.
+	upgradeFrom string
 	// emulated gives every service an hour to become healthy: on an
 	// emulated machine, the first starts of PostgreSQL and the engine
 	// take longer than the health checks allow (Compose then fails
@@ -394,6 +501,7 @@ func (b bundle) build(t *testing.T, root, out, served string, sigstore *releaset
 	m.BundleSHA256 = hex.EncodeToString(sum[:])
 	m.Server, m.ServerDigest, m.Engine = registry+"/easyrmm-server", "@"+b.digest, b.engine
 	m.Postgres, m.MeshCentral, m.Authentik = "", "", ""
+	m.UpgradeFrom = b.upgradeFrom
 	for _, img := range composeImages(compose) {
 		switch {
 		case img == b.engine:
@@ -505,6 +613,8 @@ func rewriteBundle(t *testing.T, path string, change func(name string, data []by
 type machine struct {
 	t  *testing.T
 	vm *vmtest.VM
+	// authentik is set when the deployment runs Authentik.
+	authentik bool
 }
 
 // try runs a script and returns what it printed and its exit code.
@@ -605,7 +715,11 @@ docker ps --filter label=com.docker.compose.project=easyrmm --format '{{.Label "
 			m.t.Errorf("%s: %s", v, l)
 		}
 	}
-	for _, s := range []string{"postgres", "server", "meshcentral", "easypatch-api", "easypatch-worker"} {
+	want := []string{"postgres", "server", "meshcentral", "easypatch-api", "easypatch-worker"}
+	if m.authentik {
+		want = append(want, "authentik-server", "authentik-worker")
+	}
+	for _, s := range want {
 		if !services[s] {
 			m.t.Errorf("%s: %s is not running:\n%s", v, s, out)
 		}
@@ -623,11 +737,18 @@ func (m *machine) status() host.Status {
 	return s
 }
 
-// psql runs SQL as PostgreSQL's superuser in the deployment of v.
+// psql runs SQL as PostgreSQL's superuser in EasyRMM's database, in the
+// deployment of v.
 func (m *machine) psql(v, sql string) string {
 	m.t.Helper()
-	return strings.TrimSpace(m.run("psql", fmt.Sprintf("cd %s && docker compose exec -T --user postgres postgres psql -X -q -A -t -v ON_ERROR_STOP=1 -p 15432 -d easyrmm <<'SQL'\n%s\nSQL",
-		deployDir(v), sql), 10*time.Minute))
+	return m.psqlDB(v, "easyrmm", sql)
+}
+
+// psqlDB runs SQL as PostgreSQL's superuser in database db.
+func (m *machine) psqlDB(v, db, sql string) string {
+	m.t.Helper()
+	return strings.TrimSpace(m.run("psql", fmt.Sprintf("cd %s && docker compose exec -T --user postgres postgres psql -X -q -A -t -v ON_ERROR_STOP=1 -p 15432 -d %s <<'SQL'\n%s\nSQL",
+		deployDir(v), db, sql), 10*time.Minute))
 }
 
 // audit is an aggregate over the audit log.

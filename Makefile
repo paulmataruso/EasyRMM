@@ -29,10 +29,10 @@ VM_CACHE ?= /var/tmp/easyrmm-vmtest
 VM_PACKAGES ?= ./internal/vmtest/ ./server/internal/jobs/
 VM_PARALLEL ?= 2
 VM_TEST_TIMEOUT ?= 3h
-# The updater's machine test (ADR-0052) runs on its own: it builds three
-# server images and bundles, and starts the deployment four times. On an
-# emulated machine (no KVM) that took more than four hours.
-UPDATER_VM_TEST_TIMEOUT ?= 6h
+# The updater's machine test (ADR-0052) runs on its own: it builds five
+# server images and bundles, and starts the deployment seven times. On an
+# emulated machine (no KVM), four of those starts took more than four hours.
+UPDATER_VM_TEST_TIMEOUT ?= 10h
 
 .PHONY: help
 help: ## Show this help
@@ -125,7 +125,7 @@ test-vm: ## Boot each distribution's cloud image under QEMU and drive it (EASYRM
 		$(GO) test -tags vm -count=1 -v -timeout $(VM_TEST_TIMEOUT) -parallel $(VM_PARALLEL) $(VM_PACKAGES)
 
 .PHONY: test-vm-updater
-test-vm-updater: ## The host updater on a Debian 12 machine: install, status, upgrade, rollback, a failed start (needs Docker, Go, qemu-system-x86_64 and qemu-img; the machine needs the internet)
+test-vm-updater: ## The host updater on a Debian 12 machine: install, status, upgrade, rollback, a failed start, a required upgrade stop; EASYRMM_UPDATER_TEST_AUTHENTIK=1 adds Authentik (needs Docker, Go, qemu-system-x86_64 and qemu-img; the machine needs the internet)
 	EASYRMM_VM_CACHE="$${EASYRMM_VM_CACHE:-$(VM_CACHE)}" EASYRMM_VM_IMAGE=debian-12 \
 		$(GO) test -tags vm -count=1 -v -timeout $(UPDATER_VM_TEST_TIMEOUT) ./updater/machinetest/
 
