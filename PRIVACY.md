@@ -42,11 +42,19 @@ grant) and keeps one setting in the browser's storage: the light or dark
 theme. It loads no third-party scripts, fonts or trackers; its content
 security policy forbids them.
 
-**Retention** is up to the operator: metrics, alerts, job output and the
-audit log are kept for the periods set in the deployment's `.env`
+**Script output** (what a script printed on a device) and a job's
+arguments can hold whatever the script or the person who ran it put there.
+Only Technicians and above of the device's organization or site can read
+them, and every read is recorded in the audit log; Read-Only users see that
+a script ran and how it ended, not what it printed
+([Scripts and jobs](docs/operations/scripts-and-jobs.md#who-sees-output-and-arguments)).
+
+**Retention** is up to the operator: metrics, alerts, job output, jobs and
+the audit log are kept for the periods set in the deployment's `.env`
 (`EASYRMM_METRICS_RETENTION`, `EASYRMM_ALERT_RETENTION`,
-`EASYRMM_JOB_RETENTION`, `EASYRMM_AUDIT_RETENTION`), and devices and
-accounts until someone removes them.
+`EASYRMM_JOB_OUTPUT_RETENTION`, 30 days by default, `EASYRMM_JOB_RETENTION`,
+`EASYRMM_AUDIT_RETENTION`), and devices and accounts until someone removes
+them. A run's output can also be removed at once from its page.
 
 ## Connections it makes on its own
 

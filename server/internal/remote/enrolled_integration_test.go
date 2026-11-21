@@ -109,7 +109,7 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 	}
 	svc := agents.New(r.db, r.audit, NewMeshAgents(r.svc, files), r.log)
 	_, jobKey, _ := ed25519.GenerateKey(rand.Reader)
-	js := jobs.New(r.db, r.audit, jobKey, 24*time.Hour, r.log)
+	js := jobs.New(r.db, r.audit, jobKey, 24*time.Hour, 24*time.Hour, r.log)
 	t.Cleanup(js.Close)
 	svc.SetJobKey(js.PublicKey())
 	// The job key also signs uninstall instructions (ADR-0050); no builds
@@ -230,9 +230,13 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 		run, err = js.GetRun(r.ctx, tech, job.Runs[0].ID)
 		return err == nil && run.FinishedAt != nil
 	})
-	if run.Status != jobs.StatusFailed || run.ExitCode == nil || *run.ExitCode != 4 || *run.Stderr != "warning\n" ||
-		!strings.HasPrefix(*run.Stdout, "args: one|two words\nuid 65534 in /agent/root/var/lib/easyrmm-agent/jobs/work/run-") || run.StartedAt == nil {
-		t.Errorf("run %+v\nstdout %q stderr %q", run, *run.Stdout, *run.Stderr)
+	out, err := js.ReadOutput(r.ctx, tech, run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.Status != jobs.StatusFailed || run.ExitCode == nil || *run.ExitCode != 4 || out.Stderr != "warning\n" ||
+		!strings.HasPrefix(out.Stdout, "args: one|two words\nuid 65534 in /agent/root/var/lib/easyrmm-agent/jobs/work/run-") || run.StartedAt == nil {
+		t.Errorf("run %+v\nstdout %q stderr %q", run, out.Stdout, out.Stderr)
 	}
 
 	// A long script stops when canceled.
@@ -255,8 +259,8 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 		run, err = js.GetRun(r.ctx, tech, job.Runs[0].ID)
 		return err == nil && run.FinishedAt != nil
 	})
-	if run.Status != jobs.StatusCanceled || *run.Stdout != "started\n" {
-		t.Errorf("canceled run %+v, stdout %q", run, *run.Stdout)
+	if out, err = js.ReadOutput(r.ctx, tech, run.ID); err != nil || run.Status != jobs.StatusCanceled || out.Stdout != "started\n" {
+		t.Errorf("canceled run %+v, output %+v, %v", run, out, err)
 	}
 	ps := docker(t, "exec", name, "sh", "-c", `for p in /proc/[0-9]*; do tr '\0' ' ' < $p/cmdline 2>/dev/null; echo; done | grep -c '^sleep 600' || true`)
 	if strings.TrimSpace(ps) != "0" {

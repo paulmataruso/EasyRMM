@@ -72,8 +72,11 @@ From a script's page, **Run** asks for the devices; from a device's page,
 
 * **Arguments**, one per line, passed to the script exactly as typed, with
   no shell expansion: `$1`, `$2` and so on, or `sys.argv[1:]` in Python. At
-  most 32, each up to 1 KiB. Arguments are stored with the job and shown to
-  everyone who can see it; **never pass passwords or keys as arguments**.
+  most 32, each up to 1 KiB. Arguments are stored with the job. People who
+  hold `job.view_sensitive` can read them, and each read is recorded (see
+  [Who sees output and arguments](#who-sees-output-and-arguments)). They
+  are also on the device's command line and in its logs. **Never pass
+  passwords or keys as arguments.**
 * **Timeout**, the script's default unless changed for this job.
 * **Wait for offline devices**, 1 hour to 7 days (24 hours by default). A
   device that does not come online in that time is marked *Expired*.
@@ -86,9 +89,68 @@ The job keeps its own copy of the script. Changing or deleting the script
 afterwards does not change what a job runs, and a job's page shows the exact
 script it ran. **Run again** on a job's page starts a new job with the
 library's current version, after showing the devices and arguments again.
+It is offered only to people who can read the job's arguments, since
+running it without them would run something else.
 
 Each device's run is recorded in the audit log as *Ran script*, with the
 script's hash and the number of arguments but not their values.
+
+## Who sees output and arguments
+
+What a script prints, and the arguments it was given, can hold secrets: a
+recovery password, a token, a key. They have a permission of their own,
+`job.view_sensitive`, separate from `job.view`, which shows the jobs and
+runs themselves ([ADR-0063](../architecture/adr/0063-who-sees-job-output-and-arguments.md)).
+
+* **Technicians and above** hold it where their role is: Technician, Site
+  Administrator, Organization Administrator and Super Administrator. A
+  Technician sees other technicians' output in the same organization or
+  site.
+* **Read-Only does not.** A Read-Only user still sees every job and run in
+  their scope: the status, the exit code, the error text the agent or the
+  server wrote, when it ran and how long it took, who started it, the
+  script as run, and how many arguments it had. Where the output and the
+  argument values would be, the console says *Hidden: needs permission to
+  see job output* (or *job arguments*).
+* **Every read is recorded** in the audit log, super administrators'
+  included: *Viewed job output* under the run's organization, site and
+  device, and *Viewed job arguments* under each organization of the job's
+  runs. A refused read is recorded as *Denied*, at most once per user,
+  read and target in 10 minutes, and **at most 20 times per user in 10
+  minutes**: after 20, that user's further refusals are not recorded until
+  the 10 minutes pass. A gap in *Denied* records is therefore not proof
+  that nobody tried. The records hold sizes and names, never the output or
+  the values. The console reads a run's output once each time its page is
+  opened, never in the background.
+* **Remove output** on a run's page empties a finished run's output at once,
+  for everyone. It needs `job.view_sensitive` and `job.manage` at the run's
+  site, and is recorded as *Removed job output*. Backups made before keep
+  the output.
+* **Output is kept for less time than the job**: see [Retention](#retention).
+
+**Never print secrets** (passwords, tokens, keys, recovery passwords) in a
+script's output if you can avoid it. Everyone who holds `job.view_sensitive`
+in the site can read them until the output is removed, backups keep them,
+and they pass through the agent's journal on the device. If a script must
+print one, remove the run's output once the secret is used, and change the
+secret if others could have read it.
+
+**BitLocker and LUKS recovery keys** will have a keystore of their own, with
+its own permission and every read recorded. It is planned, not built. Until
+then, a recovery key retrieved by a script is in that run's output: remove
+it after use. For BitLocker, add a new recovery password and remove the old
+one once it has been used.
+
+**After upgrading from a version before this.** Reads before the upgrade
+left no record, and every Read-Only user of a site could read its output
+and arguments. Treat a secret that a job printed, or that was passed as an
+argument, within the job retention before the upgrade as seen, and change
+it.
+
+What this does not cover: whoever can run scripts or open a terminal at a
+site can print any secret on an online device again; super administrators
+and the server's operator can read the database; and once output is shown,
+the record says who opened it, not what they did with it.
 
 ## What happens on the device
 
@@ -149,11 +211,14 @@ standard output and of standard error, with a note in the middle saying how
 much was left out. Output is sent when the script ends; it is not streamed
 while it runs.
 
-The agent records each run in `/var/lib/easyrmm-agent/jobs/journal/` until
-the server has its result. If the agent restarts while a script runs, the
-run is reported as failed ("The agent restarted while the script ran.")
-rather than run a second time. Results the server could not take yet are
-sent again later.
+The agent records each run, output included, in a journal under its state
+folder until the server has its result, then deletes the file:
+`/var/lib/easyrmm-agent/jobs/journal/` on Linux (root only), and
+`%ProgramData%\EasyRMM\Agent\jobs\journal\` on Windows (SYSTEM and
+Administrators only). Whoever can read it can read the device's own key
+beside it. If the agent restarts while a script runs, the run is reported as
+failed ("The agent restarted while the script ran.") rather than run a
+second time. Results the server could not take yet are sent again later.
 
 ## Statuses
 
@@ -167,7 +232,7 @@ sent again later.
 | Timed out | Ran past its timeout and was stopped |
 | Canceled | Stopped from the console, before or while it ran |
 | Expired | The device did not pick it up before the wait ran out |
-| No result | It started, but the device reported nothing by the timeout plus 5 minutes. A result that arrives later still replaces it |
+| No result | It started, but the device reported nothing by the timeout plus 5 minutes. A result that arrives later still replaces it, without its output if the run's output was removed meanwhile |
 
 **Stop job** cancels every run still open that you may cancel; **Stop run**
 on a run's page cancels one. A run that has not started is canceled at once
@@ -177,10 +242,19 @@ stays changed.
 
 ## Retention
 
-Finished jobs, with their output, are removed after
-`EASYRMM_JOB_RETENTION` (default `2160h`, 90 days; at least `24h`). Jobs
-with runs still open are kept. The audit log keeps its own record of every
-run for `EASYRMM_AUDIT_RETENTION`.
+* **Output** is emptied `EASYRMM_JOB_OUTPUT_RETENTION` after it arrived:
+  by default `720h` (30 days), or the job retention when that is shorter.
+  Set, it must be at least `24h` and at most `EASYRMM_JOB_RETENTION`, or
+  the server does not start. The run, its status and exit code stay; its
+  page says when the output was removed.
+* **Finished jobs**, with their runs and arguments, are removed after
+  `EASYRMM_JOB_RETENTION` (default `2160h`, 90 days; at least `24h`). Jobs
+  with runs still open are kept.
+
+Both are for the whole deployment. Emptied output leaves the database at
+PostgreSQL's next vacuum; backups made before keep it as long as they are
+kept. The audit log keeps its own record of every run for
+`EASYRMM_AUDIT_RETENTION`.
 
 ## Troubleshooting
 

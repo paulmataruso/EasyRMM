@@ -20,6 +20,7 @@ you what to change.
 | See the findings, on the device's **Hardening** tab and in **Devices** | `device.view` (every role) |
 | Run a check | `script.run`: Technicians and above, as for any script |
 | Open the job a finding came from | `job.view` as well |
+| Read the run's raw output | `job.view_sensitive` as well: Technicians and above ([Who sees output and arguments](scripts-and-jobs.md#who-sees-output-and-arguments)) |
 
 See [Roles and permissions](../security/rbac.md). Applying and undoing will
 need a permission of their own, `device.harden`, held by Site
@@ -121,6 +122,6 @@ opens the list of devices to look at; the API takes the same parameter on
 |---|---|
 | No **Hardening** tab | The device is not Linux, or has no EasyRMM agent |
 | No **Run check…** | You do not hold `script.run` on the device |
-| A run *Failed*: "The script finished, but its output does not end with a result." | The script stopped before its last line: the run's output shows where |
+| A run *Failed*: "The script finished, but its output does not end with a result." | The script stopped before its last line: the run's output shows where (it needs `job.view_sensitive`) |
 | A run *Timed out* | The check took more than 30 minutes, which a computer under heavy load can. Run it again, or check fewer modules |
 | A module *Not applicable* in a container | The host owns what it hardens. Check the host |

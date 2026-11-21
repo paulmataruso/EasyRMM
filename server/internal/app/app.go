@@ -179,7 +179,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	if err != nil {
 		return nil, err
 	}
-	d.Jobs = jobs.New(db, auditLog, jobKey, cfg.JobRetention, log)
+	d.Jobs = jobs.New(db, auditLog, jobKey, cfg.JobRetention, cfg.JobOutputRetention, log)
 	d.Agents.SetJobKey(d.Jobs.PublicKey())
 	d.Inventory = inventory.New(db, cfg.MetricsRetention, log)
 	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, log)

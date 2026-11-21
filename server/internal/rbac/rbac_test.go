@@ -62,6 +62,22 @@ func TestReadOnlyHasNoWritePermissions(t *testing.T) {
 	}
 }
 
+// TestJobViewSensitive: Technicians and above read output and arguments;
+// Read-Only sees jobs without them (ADR-0063).
+func TestJobViewSensitive(t *testing.T) {
+	for role, want := range map[Role]bool{
+		RoleReadOnly: false, RoleTechnician: true, RoleSiteAdmin: true, RoleOrgAdmin: true, RoleSuperAdmin: true,
+	} {
+		perms := Roles[role].Permissions
+		if slices.Contains(perms, PermJobViewSensitive) != want || !slices.Contains(perms, PermJobView) {
+			t.Errorf("%s: job.view_sensitive %v", role, !want)
+		}
+	}
+	if slices.Contains(viewPerms, PermJobViewSensitive) {
+		t.Error("job.view_sensitive is a view permission")
+	}
+}
+
 func TestAssignmentValidation(t *testing.T) {
 	cases := []struct {
 		a     Assignment

@@ -36,8 +36,11 @@ func TestHardeningJobs(t *testing.T) {
 	wantArgs := []string{"check", "ssh,firewall", "allow-tcp=8443"}
 	if job.Kind != KindHardening || job.Hardening == nil || !slices.Equal(job.Hardening.Modules, []string{"ssh", "firewall"}) ||
 		job.Software != nil || job.ScriptID != nil || job.ScriptName != "Check hardening: ssh, firewall" || job.Shell != agentproto.ShellSh ||
-		job.Body != hardeningScript || !slices.Equal(job.Args, wantArgs) || job.TimeoutSeconds != HardeningTimeout || job.Total != 2 {
+		job.Body != hardeningScript || job.ArgCount != len(wantArgs) || job.TimeoutSeconds != HardeningTimeout || job.Total != 2 {
 		t.Errorf("job %+v", job)
+	}
+	if args, err := f.svc.ReadArguments(f.ctx, tech, job.ID); err != nil || !slices.Equal(args.Args, wantArgs) {
+		t.Errorf("arguments %+v, %v", args, err)
 	}
 
 	// The agent gets EasyRMM's script, signed, with the choices as
