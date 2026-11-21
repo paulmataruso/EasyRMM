@@ -44,7 +44,13 @@ follows when these have been run there, or fixed:
 
 How the next nine features work and the order they are built in is in
 [the feature plan](docs/architecture/feature-plan.md); each gets its ADR
-before its code.
+before its code. Twelve more, asked for on 2026-11-21, are planned in
+[the MSP feature plan](docs/architecture/feature-plan-msp.md), with a
+keystore for BitLocker and LUKS recovery keys: hardware warranty and
+lifecycle, security posture, automation, customer documentation and
+assets, a software catalog, remote PowerShell, a registry editor,
+BitLocker management, an event viewer, hardware health, scheduled tasks
+and Active Directory health. None of them is built.
 
 * **Hardening a Linux computer in one click**
   ([ADR-0051](docs/architecture/adr/0051-hardening-linux-computers.md)):

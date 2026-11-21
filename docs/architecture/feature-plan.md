@@ -18,6 +18,9 @@
   7. Email and webhook notifications for device alerts.
   8. The agent's WebSocket channel, with a per-device choice of transport.
   9. Hardening Windows computers and servers (ADR-0054).
+* Next: the twelve MSP features and the keystore the owner asked for on
+  2026-11-21 are planned in [their own plan](feature-plan-msp.md), which
+  also gives the order of both plans together.
 
 This page says what each feature does, what it builds on, the decisions
 its ADR has to make, how it is tested, and the order of the work. Each
@@ -745,6 +748,9 @@ another antivirus and firewall, and a common EDR.
 
 Each step ends with CI green, a merge, and the test instance on the new
 code.
+
+The twelve MSP features of 2026-11-21 go between these steps, which keep
+their order: see [the order of both plans](feature-plan-msp.md#order).
 
 ## Risks
 
