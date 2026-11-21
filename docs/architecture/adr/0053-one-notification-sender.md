@@ -22,6 +22,10 @@
   that neither cancelling nor asking again forgets it (see
   ***Uninstalled***). ADR-0052: its rollback says what it does to alerts
   already sent (see **Retention**).
+* Amended 2026-11-21 by the
+  [MSP feature plan](../feature-plan-msp.md#f4-one-set-of-maintenance-windows-per-site):
+  maintenance windows gain a purpose, added by that plan's feature 11,
+  not by this ADR's slices (see **Maintenance windows, per site**).
 * Part of [the feature plan](../feature-plan.md): F2 and feature 7. Where
   this ADR departs from the plan, the plan lists it.
 
@@ -832,7 +836,18 @@ never taken from a value.
     and end is a notice that rules can send;
   * managed with `monitoring.manage` at the site, on the Alerts page
     beside the policies and on the site's page; Settings → Notifications
-    lists them, read-only.
+    lists them, read-only;
+  * **a purpose** (amended 2026-11-21 by the
+    [MSP feature plan](../feature-plan-msp.md#f4-one-set-of-maintenance-windows-per-site),
+    F4): each window holds notifications, allows scheduled tasks, or
+    both, so that a site has one set of windows rather than one per
+    feature. This ADR's slice 4 builds `site_maintenance_windows` as
+    written above, without the purpose, and every window holds
+    notifications; the plan's feature 11 (scheduled tasks) adds the
+    purpose, defaulting existing windows to *hold notifications*, in the
+    slice where tasks first use windows, so the column never sits unused.
+    The patching engine's patch windows are not these and stay in patch
+    policy.
 * **A site goes offline**: when offline alerts open on a site's devices
   and every device of that site that has an EasyRMM agent, is not
   uninstalled and is watched by an enabled offline policy is offline, and

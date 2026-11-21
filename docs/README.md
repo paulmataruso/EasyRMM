@@ -59,6 +59,10 @@ Everything about running, using and building EasyRMM. Start with the
   built this way.
 * [Feature plan](architecture/feature-plan.md): how the next nine
   features will work and the order they are built in.
+* [MSP feature plan](architecture/feature-plan-msp.md): the twelve
+  features asked for on 2026-11-21 and a keystore for recovery keys,
+  planned from the owner's
+  [requirements](architecture/requirements/2026-11-21-msp-features.md).
 
 ## Develop
 
