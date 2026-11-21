@@ -162,6 +162,23 @@ All notable changes to this project are documented here. The format follows
   MeshCentral origin it serves into MeshCentral's `allowedOrigin`; when
   they change, the next start rewrites the list and MeshCentral restarts
   with it (ADR-0016, amended).
+- **Backups keep Authentik.** With `setup.sh --with-authentik`, Authentik
+  keeps everyone's sign-in in its own database, `authentik`, in the same
+  PostgreSQL, and `akadmin`'s password and its files in
+  `/srv/easyrmm/authentik`. The backup guide dumped only EasyRMM's and the
+  patching engine's databases. A restore from it therefore started a new,
+  empty Authentik: every user, password and second factor gone, a new key
+  signing EasyRMM's ID tokens, and users made again refused by EasyRMM,
+  whose accounts stay linked to their old identities. The guide now backs
+  both up when Authentik is installed, and restores them in order: the
+  `authentik` role and database from `authentik-db-init`, then the dump,
+  and only then Authentik's first start. It also extracts the data
+  directories with `tar --numeric-owner`, so that their owners survive a
+  host where the same user names have other numbers. The upgrade guide
+  says the same. The restore drill has an Authentik variant
+  (`backup-restore.sh --authentik`): the administrator made from
+  `setup.sh`'s invitation signs in through Authentik before the backup and
+  after the restore, as the same user, with the same signing key.
 - **The release's agents are the same files the server hands out.** The
   release bundle built them with the commit stamped in and the server's image
   without, so their bytes differed, and a Windows agent an operator signed
@@ -178,6 +195,10 @@ All notable changes to this project are documented here. The format follows
   file already passed to the server.
 - Taking the database down past migration 12 removed no software jobs:
   row-level security hid them from the migration. It now sees every row.
+- Toasts and copy buttons clear their timers when they leave the page. A
+  closed toast, or a copy button in a dialog closed straight after copying,
+  left a timer that later updated a component already gone; at the end of a
+  unit-test file, that update threw `window is not defined` and failed the run.
 
 ## [1.0.0-rc.4] - 2026-11-21
 
