@@ -18,7 +18,7 @@ enforce that higher roles are strict supersets of lower ones.
 | `org.view`, `site.view`, `device.view`, `script.view`, `job.view`, `software.view`, `patch.view`, `monitoring.view`, `alert.view`, `report.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `device.edit`, `device.remote_desktop`, `device.terminal`, `device.files` | | ✓ | ✓ | ✓ | ✓ |
 | `script.run`, `job.manage`, `job.view_sensitive`, `software.manage`, `patch.manage`, `alert.manage` | | ✓ | ✓ | ✓ | ✓ |
-| `site.manage`, `device.retire`, `script.manage`, `monitoring.manage`, `enrollment.manage`, `user.view`, `audit.view` | | | ✓ | ✓ | ✓ |
+| `site.manage`, `device.retire`, `device.harden`, `script.manage`, `monitoring.manage`, `enrollment.manage`, `user.view`, `audit.view` | | | ✓ | ✓ | ✓ |
 | `org.manage`, `user.manage`, `patch.configure` | | | | ✓ | ✓ |
 | `org.create`, `settings.manage` | | | | | ✓ |
 

@@ -29,6 +29,7 @@ const (
 	PermDeviceView    Permission = "device.view"   //
 	PermDeviceEdit    Permission = "device.edit"   // rename, move between groups, tags, custom fields
 	PermDeviceRetire  Permission = "device.retire" // revoke credentials, uninstall, delete
+	PermDeviceHarden  Permission = "device.harden" // apply and undo hardening (ADR-0051)
 	PermRemoteDesktop Permission = "device.remote_desktop"
 	PermTerminal      Permission = "device.terminal"
 	PermFiles         Permission = "device.files"
@@ -63,7 +64,7 @@ const (
 // AllPermissions lists every permission.
 var AllPermissions = []Permission{
 	PermOrgView, PermOrgManage, PermOrgCreate, PermSiteView, PermSiteManage,
-	PermDeviceView, PermDeviceEdit, PermDeviceRetire, PermRemoteDesktop, PermTerminal, PermFiles,
+	PermDeviceView, PermDeviceEdit, PermDeviceRetire, PermDeviceHarden, PermRemoteDesktop, PermTerminal, PermFiles,
 	PermScriptView, PermScriptManage, PermScriptRun, PermJobView, PermJobManage, PermJobViewSensitive,
 	PermSoftwareView, PermSoftwareManage, PermPatchView, PermPatchManage, PermPatchConfigure,
 	PermMonitorView, PermMonitorManage, PermAlertView, PermAlertManage,
@@ -148,7 +149,7 @@ var technicianPerms = union(viewPerms, []Permission{
 })
 
 var siteAdminPerms = union(technicianPerms, []Permission{
-	PermSiteManage, PermDeviceRetire, PermScriptManage, PermMonitorManage,
+	PermSiteManage, PermDeviceRetire, PermDeviceHarden, PermScriptManage, PermMonitorManage,
 	PermEnrollManage, PermUserView, PermAuditView,
 })
 

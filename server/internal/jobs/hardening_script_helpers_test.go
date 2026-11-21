@@ -47,13 +47,21 @@ func scriptModule(t *testing.T, r *hardeningResult, name string) HardeningModule
 	return HardeningModuleResult{}
 }
 
-// parseScriptResult reads the result as the server does, and checks what
-// the server's parser leaves to the script: empty values left out, the
-// container's kind, a reason where the state needs one, and the modules in
-// the script's order.
+// parseScriptResult reads a check's result as the server does; see
+// parseScriptOutcome.
 func parseScriptResult(t *testing.T, stdout string, wantModules []string) *hardeningResult {
 	t.Helper()
-	r, err := parseHardeningResult(stdout, Hardening{Mode: HardeningCheck, Modules: wantModules})
+	return parseScriptOutcome(t, stdout, HardeningCheck, wantModules)
+}
+
+// parseScriptOutcome reads the result of MODE as the server does, and
+// checks what the server's parser leaves to the script: empty values left
+// out, the container's kind, a reason where the state or the outcome needs
+// one, what apply did where it applied, and the modules in the script's
+// order.
+func parseScriptOutcome(t *testing.T, stdout, mode string, wantModules []string) *hardeningResult {
+	t.Helper()
+	r, err := parseHardeningResult(stdout, Hardening{Mode: mode, Modules: wantModules})
 	if err != nil {
 		t.Fatalf("the server would refuse the result: %v\n%s", err, stdout)
 	}
@@ -78,6 +86,21 @@ func parseScriptResult(t *testing.T, stdout string, wantModules []string) *harde
 			if len(m.Missing) == 0 {
 				t.Errorf("%s is partly in place with nothing missing", m.Module)
 			}
+		}
+		switch m.Outcome {
+		case HardeningSkipped, HardeningRefused, HardeningOutcomeFailed, HardeningNothingToUndo:
+			if m.OutcomeReason == "" {
+				t.Errorf("%s: %s without a reason", m.Module, m.Outcome)
+			}
+		case HardeningApplied, HardeningUndone, HardeningPartlyUndone:
+			if len(m.Done) == 0 {
+				t.Errorf("%s: %s, and nothing said what", m.Module, m.Outcome)
+			}
+		}
+		// Skipped exactly when the check rules the module out.
+		notHere := slices.Contains([]string{HardeningNotApplicable, HardeningManagedElsewhere, HardeningNotSupported}, m.State)
+		if mode == HardeningApply && notHere != (m.Outcome == HardeningSkipped) {
+			t.Errorf("%s: %s, and apply's outcome is %s", m.Module, m.State, m.Outcome)
 		}
 	}
 	if !slices.Equal(got, wantModules) {

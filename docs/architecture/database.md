@@ -314,7 +314,7 @@ on each device (ADR-0051).
 | `jobs.kind`, `jobs.hardening` | `hardening` joins `script` and `software`. `jobs.hardening` is set for hardening jobs only (`jobs_hardening_kind`): the mode, the modules and the options, for people and filters to read; the job's body and arguments are what runs |
 | `jobs.body` | Up to 512 KiB, for EasyRMM's own scripts; a library script stays at most 64 KiB |
 | `device_hardening_checks` | One row per device a hardening job reported on: the platform as the script read it (distribution, version, family, container, and whether apply is supported there), the job and when it ran. Kept from the run that started last. Goes with its device |
-| `device_hardening` | One row per device and module: its state (`in_place`, `partly`, `not_in_place`, `not_applicable`, `managed_elsewhere`, `not_supported`, `half_applied`, `failed`), the finding (a reason, what is missing, what apply would change, and the firewall's ports), the job and when it ran. A later job that covers the module replaces it. Read through the device's row-level security; written from job results at platform scope |
+| `device_hardening` | One row per device and module: its state (`in_place`, `partly`, `not_in_place`, `not_applicable`, `managed_elsewhere`, `not_supported`, `half_applied`, `failed`), the finding (a reason, what is missing, what apply would change, and the firewall's ports; after an apply or undo, its outcome, why, what it did, and whether EasyRMM's record of applying the module is on the computer), the job and when it ran. A later job that covers the module replaces it. Read through the device's row-level security; written from job results at platform scope |
 
 ## Who sees job output and arguments (migration 00028)
 

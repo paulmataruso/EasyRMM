@@ -175,6 +175,7 @@ function device(id: string, name: string, siteId: string, os: string, platform: 
     canUpdateAgent: true,
     canManageSoftware: true,
     canCheckHardening: true,
+    canHarden: true,
     canRemove: true,
   });
 }

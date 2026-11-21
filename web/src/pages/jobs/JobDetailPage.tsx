@@ -87,8 +87,10 @@ export function JobDetailPage() {
             )}
             {j.hardening && (
               <p className="mb-3 text-sm text-muted">
-                EasyRMM&rsquo;s own hardening script. The modules and options reach it as arguments, never as script text. A check changes nothing on the
-                device.
+                EasyRMM&rsquo;s own hardening script. The modules and options reach it as arguments, never as script text.{" "}
+                {j.hardening.mode === "check"
+                  ? "A check changes nothing on the device."
+                  : "It changes the device, keeping a record on it that undo reverses, and then checks what it changed."}
               </p>
             )}
             <CodeView code={j.body ?? ""} label="Script as run" />
@@ -185,6 +187,8 @@ function softwareDetails(sw: SoftwareAction): Row[] {
 }
 
 /** What a hardening job asked for (ADR-0051). */
+const HARDENING_MODES: Record<HardeningJob["mode"], string> = { check: "Check", apply: "Apply", undo: "Undo" };
+
 function hardeningDetails(h: HardeningJob): Row[] {
   const o = h.options;
   const switches = [
@@ -198,7 +202,7 @@ function hardeningDetails(h: HardeningJob): Row[] {
     ["Never banned", o.trusted],
   ];
   return [
-    ["Hardening", "Check"],
+    ["Hardening", HARDENING_MODES[h.mode]],
     [
       "Modules",
       <ol key="m" className="flex flex-wrap gap-1">

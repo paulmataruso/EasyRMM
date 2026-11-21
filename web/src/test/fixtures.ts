@@ -74,6 +74,7 @@ export function device(id: string, name: string, extra: Partial<Device> = {}): D
     canUpdateAgent: false,
     canManageSoftware: false,
     canCheckHardening: false,
+    canHarden: false,
     canRemove: false,
     removal: null,
     hardening: null,

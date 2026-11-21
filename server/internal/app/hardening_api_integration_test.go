@@ -50,14 +50,19 @@ func TestHardeningAPI(t *testing.T) {
 
 	var dev struct {
 		CanCheckHardening bool `json:"canCheckHardening"`
+		CanHarden         bool `json:"canHarden"`
 	}
 	tech.expect(http.StatusOK, "GET", "/api/v1/devices/"+device, nil, &dev)
-	if !dev.CanCheckHardening {
-		t.Error("a technician may not check the device's hardening")
+	if !dev.CanCheckHardening || dev.CanHarden {
+		t.Errorf("a technician: %+v; checks, and does not apply", dev)
 	}
 	viewer.expect(http.StatusOK, "GET", "/api/v1/devices/"+device, nil, &dev)
-	if dev.CanCheckHardening {
-		t.Error("a read-only user may check hardening")
+	if dev.CanCheckHardening || dev.CanHarden {
+		t.Errorf("a read-only user: %+v", dev)
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/devices/"+device, nil, &dev)
+	if !dev.CanCheckHardening || !dev.CanHarden {
+		t.Errorf("the administrator: %+v", dev)
 	}
 
 	var empty struct {
@@ -78,6 +83,9 @@ func TestHardeningAPI(t *testing.T) {
 	}
 	r = tech.do("POST", path, map[string]any{"deviceIds": []string{device}, "mode": "apply", "modules": []string{"ssh"}})
 	wantStatus(t, r, http.StatusUnprocessableEntity, "validation_failed")
+	if !strings.Contains(string(r.body), "You cannot apply hardening on srv-01.") {
+		t.Errorf("technician's apply: %s", r.body)
+	}
 	r = viewer.do("POST", path, map[string]any{"deviceIds": []string{device}, "mode": "check", "modules": []string{"ssh"}})
 	wantStatus(t, r, http.StatusUnprocessableEntity, "validation_failed")
 	if !strings.Contains(string(r.body), "You cannot check hardening on srv-01.") {

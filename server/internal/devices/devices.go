@@ -145,6 +145,9 @@ type Device struct {
 	// CanCheckHardening: the caller holds script.run here and the device
 	// has the EasyRMM agent on Linux (ADR-0051).
 	CanCheckHardening bool `json:"canCheckHardening"`
+	// CanHarden: the caller holds device.harden here and the device has the
+	// EasyRMM agent on Linux: it may apply and undo hardening (ADR-0051).
+	CanHarden bool `json:"canHarden"`
 	// CanRemove: the caller may remove the device (ADR-0050).
 	CanRemove bool `json:"canRemove"`
 	// Removal is the device's removal while it waits for its agent, nil
@@ -301,6 +304,7 @@ func (s *Service) decorate(c access.Caller, d *Device) {
 	d.CanUpdateAgent = d.Agent != nil && c.Can(rbac.PermDeviceEdit, r)
 	d.CanManageSoftware = d.Agent != nil && (d.Platform == "windows" || d.Platform == "linux") && c.Can(rbac.PermSoftwareManage, r)
 	d.CanCheckHardening = d.Agent != nil && d.Platform == "linux" && c.Can(rbac.PermScriptRun, r)
+	d.CanHarden = d.Agent != nil && d.Platform == "linux" && c.Can(rbac.PermDeviceHarden, r)
 	d.CanRemove = c.Can(rbac.PermDeviceRetire, r)
 	s.updateStatus(d)
 }

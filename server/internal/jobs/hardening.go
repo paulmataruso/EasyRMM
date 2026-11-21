@@ -30,9 +30,22 @@ import (
 // KindHardening is the kind of a hardening job.
 const KindHardening = "hardening"
 
-// HardeningCheck is the mode that reports what is in place and what apply
-// would change, and changes nothing.
-const HardeningCheck = "check"
+// The modes: check reports what is in place and what apply would change,
+// and changes nothing; apply applies the modules and undo reverses them from
+// the record apply kept on the computer, each then checking them.
+const (
+	HardeningCheck = "check"
+	HardeningApply = "apply"
+	HardeningUndo  = "undo"
+)
+
+// hardeningModes are the modes, with the words a job's label and refusals
+// use for them.
+var hardeningModes = map[string]struct{ label, verb string }{
+	HardeningCheck: {"Check hardening", "check hardening"},
+	HardeningApply: {"Apply hardening", "apply hardening"},
+	HardeningUndo:  {"Undo hardening", "undo hardening"},
+}
 
 // HardeningTimeout is how long a hardening job may run (ADR-0051).
 const HardeningTimeout = 30 * 60
@@ -96,7 +109,8 @@ type HardeningInput struct {
 // check validates the input and puts its modules and options in their
 // canonical form.
 func (h *Hardening) check(f apperr.Fields) {
-	f.Check(h.Mode == HardeningCheck, "mode", "Choose check.")
+	_, known := hardeningModes[h.Mode]
+	f.Check(known, "mode", "Choose check, apply or undo.")
 	chosen := map[string]bool{}
 	for _, m := range h.Modules {
 		if !slices.Contains(HardeningModules, m) {
@@ -130,6 +144,12 @@ func (h *Hardening) check(f apperr.Fields) {
 	needs(o.EPEL, "options.epel", "fail2ban", "fail2ban")
 	needs(o.RootPasswordOff, "options.rootPasswordOff", "ssh", "SSH")
 	needs(o.PasswordOff, "options.passwordOff", "ssh", "SSH")
+	// Undo reverses what the record says, whatever the options were.
+	f.Check(h.Mode != HardeningUndo || o.empty(), "options", "Undo takes no options.")
+}
+
+func (o HardeningOptions) empty() bool {
+	return len(o.AllowTCP) == 0 && len(o.AllowUDP) == 0 && len(o.Trusted) == 0 && !o.RootPasswordOff && !o.PasswordOff && !o.EPEL
 }
 
 // ports checks and normalizes port numbers and ranges; bad is true when one
@@ -216,16 +236,17 @@ func (h Hardening) args() []string {
 
 // label names the job for job lists: "Check hardening: ssh, firewall".
 func (h Hardening) label() string {
+	l := hardeningModes[h.Mode].label
 	if len(h.Modules) == len(HardeningModules) {
-		return "Check hardening (every module)"
+		return l + " (every module)"
 	}
-	return "Check hardening: " + strings.Join(h.Modules, ", ")
+	return l + ": " + strings.Join(h.Modules, ", ")
 }
 
 // CreateHardeningJob runs EasyRMM's hardening script on Linux devices
 // (ADR-0051). A check changes nothing, and needs script.run on every
-// device, as any script does. Every device must pass every check, or
-// nothing runs.
+// device, as any script does; apply and undo need device.harden. Every
+// device must pass every check, or nothing runs.
 func (s *Service) CreateHardeningJob(ctx context.Context, c access.Caller, in HardeningInput) (*Job, error) {
 	f := apperr.Fields{}
 	ids := checkDevices(f, in.DeviceIDs)
@@ -240,7 +261,10 @@ func (s *Service) CreateHardeningJob(ctx context.Context, c access.Caller, in Ha
 		timeout: HardeningTimeout, auditAction: "device.hardening",
 		details: map[string]any{"mode": h.Mode, "modules": h.Modules, "options": h.Options},
 	}
-	r := rule{perm: rbac.PermScriptRun, verb: "check hardening", platforms: []string{"linux"}, runsOn: "Hardening runs on"}
+	r := rule{perm: rbac.PermDeviceHarden, verb: hardeningModes[h.Mode].verb, platforms: []string{"linux"}, runsOn: "Hardening runs on"}
+	if h.Mode == HardeningCheck {
+		r.perm = rbac.PermScriptRun
+	}
 	return s.create(ctx, c, ids, wait, sp, func(ctx context.Context, tx pgx.Tx) ([]target, error) {
 		return s.targets(ctx, tx, c, ids, r)
 	})
@@ -284,13 +308,45 @@ type HardeningPorts struct {
 	Unknown []string `json:"unknown,omitempty"`
 }
 
-// HardeningFinding is what a module's check found besides its state.
+// HardeningFinding is what a module's check found besides its state, and
+// what an apply or undo did before it checked.
 type HardeningFinding struct {
 	Reason string `json:"reason,omitempty"`
 	// Missing lists what is not in place; Changes what apply would change.
 	Missing []string        `json:"missing,omitempty"`
 	Changes []string        `json:"changes,omitempty"`
 	Ports   *HardeningPorts `json:"ports,omitempty"`
+	// Outcome is what an apply or undo did (empty for a check), with why
+	// when it did nothing or failed; Done lists what it changed, and for
+	// undo what it left as it was and why.
+	Outcome       string   `json:"outcome,omitempty"`
+	OutcomeReason string   `json:"outcomeReason,omitempty"`
+	Done          []string `json:"done,omitempty"`
+	// Recorded: EasyRMM's record of applying the module is on the
+	// computer, so undo can reverse it.
+	Recorded bool `json:"recorded,omitempty"`
+}
+
+// Outcomes of apply and undo.
+const (
+	HardeningApplied       = "applied"
+	HardeningUnchanged     = "unchanged"
+	HardeningUndone        = "undone"
+	HardeningPartlyUndone  = "partly_undone"
+	HardeningNothingToUndo = "nothing_to_undo"
+	HardeningRefused       = "refused"
+	HardeningSkipped       = "skipped"
+	HardeningOutcomeFailed = "failed"
+)
+
+// hardeningOutcomes are the outcomes each mode may report.
+var hardeningOutcomes = map[string][]string{
+	HardeningCheck: {""},
+	HardeningApply: {HardeningApplied, HardeningUnchanged, HardeningRefused, HardeningSkipped, HardeningOutcomeFailed},
+	HardeningUndo: {
+		HardeningUndone, HardeningPartlyUndone, HardeningNothingToUndo, HardeningRefused, HardeningSkipped,
+		HardeningOutcomeFailed,
+	},
 }
 
 // HardeningModuleResult is one module's state.
@@ -318,7 +374,8 @@ var errHardeningResult = errors.New("the hardening script's result could not be 
 
 // parseHardeningResult reads the result line that ends a hardening job's
 // output and checks it against the job: the same mode, every module the job
-// named and no other, known states, text within its limits.
+// named and no other, known states, the outcomes of that mode (none for a
+// check), text within its limits.
 func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) {
 	fail := func(why string) (*hardeningResult, error) {
 		return nil, fmt.Errorf("%w: %s", errHardeningResult, why)
@@ -362,6 +419,8 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 			return fail("module " + m.Module + " is reported twice")
 		case !slices.Contains(hardeningStates, m.State):
 			return fail("module " + m.Module + " has an unknown state")
+		case !slices.Contains(hardeningOutcomes[r.Mode], m.Outcome):
+			return fail("module " + m.Module + " has no outcome of " + r.Mode)
 		case !m.valid(m.Module == "firewall"):
 			return fail("module " + m.Module + "'s findings are not within their limits")
 		}
@@ -376,14 +435,14 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 // valid says whether a finding's text is within its limits, and ports are
 // only the firewall's.
 func (f HardeningFinding) valid(firewall bool) bool {
-	lists := [][]string{f.Missing, f.Changes}
+	lists := [][]string{f.Missing, f.Changes, f.Done}
 	if f.Ports != nil {
 		if !firewall {
 			return false
 		}
 		lists = append(lists, f.Ports.TCP, f.Ports.UDP, f.Ports.Docker, f.Ports.Unknown)
 	}
-	if !shortText(f.Reason, maxFindingText) {
+	if !shortText(f.Reason, maxFindingText) || !shortText(f.OutcomeReason, maxFindingText) {
 		return false
 	}
 	for _, l := range lists {

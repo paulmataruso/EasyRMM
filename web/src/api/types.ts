@@ -9,6 +9,7 @@ export type Permission =
   | "device.view"
   | "device.edit"
   | "device.retire"
+  | "device.harden"
   | "device.remote_desktop"
   | "device.terminal"
   | "device.files"
@@ -299,6 +300,8 @@ export interface Device {
   canManageSoftware: boolean;
   /** The caller may check the device's hardening (script.run), on Linux with the agent (ADR-0051). */
   canCheckHardening: boolean;
+  /** The caller may apply and undo hardening here (device.harden), on Linux with the agent (ADR-0051). */
+  canHarden: boolean;
   /** The caller may remove the device (device.retire; ADR-0050). */
   canRemove: boolean;
   /** The removal under way, while the device waits for its agent to uninstall itself (ADR-0050). */
@@ -771,9 +774,9 @@ export interface JobArguments {
 
 export type JobKind = "script" | "software" | "hardening";
 
-/** A hardening job (ADR-0051). Only checks so far: they report and change nothing. */
+/** A hardening job (ADR-0051): a check reports and changes nothing; apply and undo change the device, then check. */
 export interface HardeningJob {
-  mode: "check";
+  mode: "check" | "apply" | "undo";
   /** In the order the script runs them. */
   modules: string[];
   options: HardeningOptions;

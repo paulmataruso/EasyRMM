@@ -1,29 +1,43 @@
 #!/bin/sh
 # EasyRMM hardening for Linux computers (ADR-0051), run by the EasyRMM agent
-# as root. This release has one mode, check: for each chosen module it reports
-# whether the module's settings are in effect and what apply would change on
-# this computer, and it changes nothing (see "What check writes" below).
+# as root, or by hand from the copy apply leaves on the computer:
+#   sh /var/lib/easyrmm-hardening/easyrmm-hardening.sh undo all
+#
+# Three modes:
+#   check  reports for each chosen module whether its settings are in effect
+#          and what apply would change on this computer, and changes nothing
+#          (see "What check writes" below);
+#   apply  applies the chosen modules, keeping a record of what it changed,
+#          then checks them;
+#   undo   reverses the chosen modules from that record, then checks them.
+# Apply and undo run only on the releases this script was tested on
+# (FULL_SUPPORT below); elsewhere every module is reported as not supported.
 #
 # Arguments, which are never part of this script's text. The EasyRMM server
 # accepts only the names and forms below, and this script checks them again:
-#   check <modules> [option ...]
+#   check|apply|undo <modules> [option ...]
 #   <modules>           all, or a comma-separated list of ssh, firewall,
 #                       fail2ban, kernel, audit, permissions, services,
 #                       kernel-modules, sudo, time, shared-memory,
 #                       usb-storage, mac and integrity
-#   allow-tcp=LIST      ports or ranges (8080,9000-9100) the firewall would
-#   allow-udp=LIST      leave open besides those in use
-#   trusted=LIST        IPv4 or IPv6 addresses or CIDR ranges fail2ban would
-#                       never ban
+#   allow-tcp=LIST      ports or ranges (8080,9000-9100) the firewall leaves
+#   allow-udp=LIST      open besides those in use
+#   trusted=LIST        IPv4 or IPv6 addresses or CIDR ranges fail2ban never
+#                       bans
 #   root-password-off   turn root's password sign-in to SSH off even if it was
 #                       used in the last 30 days
 #   password-off        turn password sign-in to SSH off
-#   epel                let fail2ban come from EPEL on RHEL and its rebuilds
+#   epel                let fail2ban come from EPEL on Rocky Linux and
+#                       AlmaLinux (on RHEL itself EPEL must be there already)
+# Undo takes the same options and ignores them.
 #
 # Output: progress lines, then as the last line of stdout
 #   EASYRMM-HARDENING-RESULT-V1 {"version":1,"mode":"check",...}
-# kept under 64 KiB. The exit status is 0 whenever the check ran, whatever it
-# found; 2 for a usage error, 3 when not run as root.
+# kept under 64 KiB. Apply and undo add to each module what they did
+# ("outcome", "outcomeReason", "done"), and every mode says whether
+# EasyRMM's record of the module is on the computer ("recorded"). The exit
+# status is 0 whenever the result was printed, whatever it says; 2 for a
+# usage error, 3 when not run as root.
 #
 # What check writes: nothing, with one exception ADR-0051 requires. On Debian
 # and Ubuntu, sshd -T fails when /run/sshd is missing (socket-activated ssh
@@ -34,14 +48,23 @@
 # locks, starts and loads nothing, and reads kernel state only where the
 # reading cannot load a module.
 #
-# The journal, written by apply and undo (H2) and read here:
+# The record apply and undo keep, which check reads (ADR-0051, "Backups,
+# undo and interruptions"), away from the agent's own state:
 #   /var/lib/easyrmm-hardening/                      mode 700
-#   /var/lib/easyrmm-hardening/modules/<module>/intent
-#       written before apply or undo changes anything in that module
-#   /var/lib/easyrmm-hardening/modules/<module>/done
-#       written after it finished
+#     easyrmm-hardening.sh     a copy of this script
+#     lock/                    held while apply or undo runs
+#     tx/                      this run's copies, to put a module back
+#     modules/<module>/
+#       intent                 written before apply or undo changes anything
+#                              in the module
+#       done                   written when it finished
+#       manifest               "format 1", then a record of each change, in
+#                              order, fields separated by tabs (see "The
+#                              record" below)
+#       files/                 the originals of the files it changed
 # A module with an intent and no done mark was interrupted (a timeout or a
-# cancel killed the job): check reports it as half_applied.
+# cancel killed the job): check reports it as half_applied, and undo
+# reverses what it recorded.
 #
 # Benchmarks: comments name the DISA Red Hat Enterprise Linux 9 STIG rule a
 # setting follows, by its ID, where one exists; each ID was checked against
@@ -61,16 +84,21 @@ RESULT_TAG=EASYRMM-HARDENING-RESULT-V1
 # The modules in the order they are checked and reported.
 ALL_MODULES='ssh firewall fail2ban kernel audit permissions services kernel-modules sudo time shared-memory usb-storage mac integrity'
 STATE_DIR=/var/lib/easyrmm-hardening
-# EasyRMM's own files, which apply (H2) writes.
+# EasyRMM's own files, which apply writes and undo removes.
 SSH_DROPIN=/etc/ssh/sshd_config.d/00-easyrmm-hardening.conf
-FW_FILE=/etc/easyrmm-hardening/firewall.nft
+FW_DIR=/etc/easyrmm-hardening
+FW_FILE=$FW_DIR/firewall.nft
 FW_UNIT=easyrmm-firewall.service
 SYSCTL_FILE=/etc/sysctl.d/60-easyrmm-hardening.conf
 AUDIT_FILE=/etc/audit/rules.d/60-easyrmm-hardening.rules
 SUDO_FILE=/etc/sudoers.d/easyrmm-hardening
+SUDO_LOG=/var/log/sudo.log
+# Debian's aide.conf includes only files whose names have no dot.
+AIDE_INIT_UNIT=easyrmm-aide-init
 
 nl='
 '
+tab=$(printf '\t')
 
 # The platforms apply and undo are tested on (ADR-0051, "Platforms"), one
 # distribution a line: its ID in os-release, then its releases. A release
@@ -95,11 +123,19 @@ say() { printf '%s\n' "$*"; }
 
 usage() {
 	printf 'linux.sh: %s\n' "$1" >&2
-	printf 'Usage: sh linux.sh check <all|module,...> [allow-tcp=LIST] [allow-udp=LIST] [trusted=LIST] [root-password-off] [password-off] [epel]\n' >&2
+	printf 'Usage: sh linux.sh check|apply|undo <all|module,...> [allow-tcp=LIST] [allow-udp=LIST] [trusted=LIST] [root-password-off] [password-off] [epel]\n' >&2
 	exit 2
 }
 
 have() { command -v "$1" >/dev/null 2>&1; }
+# text_has TEXT GREP-OPTION... PATTERN: whether a line of TEXT matches.
+# grep -q stops at the first match; where SIGPIPE is ignored (systemd's
+# default for services) printf would then complain about the closed pipe.
+text_has() {
+	th_text=$1
+	shift
+	printf '%s\n' "$th_text" 2>/dev/null | grep -q "$@"
+}
 
 # t SECONDS COMMAND...: runs a command that could hang (a stuck daemon, a
 # hung network mount) with a time limit.
@@ -125,12 +161,14 @@ in_words() {
 [ $# -ge 1 ] || usage 'no mode given.'
 MODE=$1
 case $MODE in
-check) ;;
-*) usage "unknown mode: $MODE (this release has check only)." ;;
+check | apply | undo) ;;
+*) usage "unknown mode: $MODE (modes: check, apply, undo)." ;;
 esac
 [ $# -ge 2 ] || usage 'no modules given.'
 MODULES_ARG=$2
 shift 2
+# Undo reverses what the record says, whatever the options were.
+[ "$MODE" != undo ] || [ $# -eq 0 ] || usage 'undo takes no options: it reverses what EasyRMM recorded.'
 
 valid_port() {
 	case $1 in '' | 0* | *[!0-9]*) return 1 ;; esac
@@ -395,7 +433,7 @@ SYSTEMD_UP=no
 
 # Every process's name, once (comm, cut to 15 characters by the kernel).
 PROCS=$(cat /proc/[0-9]*/comm 2>/dev/null | sort -u)
-proc_running() { printf '%s\n' "$PROCS" | grep -qxF "$1"; }
+proc_running() { text_has "$PROCS" -xF "$1"; }
 
 # unit_file_state UNIT: what systemctl is-enabled says (it reads unit files,
 # so it works without systemd running), or nothing.
@@ -508,6 +546,9 @@ begin_module() {
 	M_DOCKER=
 	M_UNKNOWN=
 	M_NOTE=
+	# What apply would do, as each check found it (read by the module's
+	# apply).
+	M_TODO=
 }
 
 # keep NAME VALUE and kept NAME: set and read a variable whose name is made
@@ -533,6 +574,8 @@ missing() {
 # What apply would change, or (starting "Left as it is" or "Refused") what it
 # would not, and why.
 change() { append M_CHANGES "$1"; }
+# What apply is to do, in the module's own terms (see each apply_ function).
+todo() { append M_TODO "$1"; }
 reason() { M_REASON=$(printf '%s' "$1" | tr '\n\r' '  '); }
 not_applicable() {
 	M_STATE=not_applicable
@@ -543,7 +586,8 @@ failed() {
 	reason "$1"
 }
 
-finish_module() {
+# settle_state: the module's state from what its check found.
+settle_state() {
 	if [ -z "$M_STATE" ]; then
 		if [ "$M_BAD" -eq 0 ]; then
 			M_STATE=in_place
@@ -563,11 +607,15 @@ finish_module() {
 	# Something the module could not check, said after its state (ssh's
 	# Match blocks).
 	[ -z "$M_NOTE" ] || reason "${M_REASON%.};$M_NOTE"
-	# An apply or undo of this module that was interrupted (see the journal).
+	# An apply or undo of this module that was interrupted (see the record).
 	if [ -e "$STATE_DIR/modules/$CUR/intent" ] && [ ! -e "$STATE_DIR/modules/$CUR/done" ]; then
 		M_STATE=half_applied
 		reason 'An apply or undo of this module was interrupted before it finished; undo reverses what it recorded.'
 	fi
+}
+
+finish_module() {
+	settle_state
 	# Kept as S_ssh, MI_kernel_modules and so on until the result is written.
 	fm_v=$(printf '%s' "$CUR" | tr '-' '_')
 	keep "S_$fm_v" "$M_STATE"
@@ -578,6 +626,9 @@ finish_module() {
 	keep "PU_$fm_v" "$M_UDP"
 	keep "PD_$fm_v" "$M_DOCKER"
 	keep "PK_$fm_v" "$M_UNKNOWN"
+	fm_rec=no
+	[ ! -s "$STATE_DIR/modules/$CUR/manifest" ] || fm_rec=yes
+	keep "RC_$fm_v" "$fm_rec"
 	say "$CUR: $M_STATE. $M_REASON"
 }
 
@@ -602,6 +653,7 @@ ssh_algorithms() {
 	else
 		missing "$2 without weak algorithms (now also $sa_weak)"
 		change "$2: remove $sa_weak"
+		todo "$2 $(printf '%s\n' "$sa_now" | tr ',' '\n' | grep -Ev -- "$3" | tr '\n' ',' | sed 's/,$//')"
 	fi
 }
 
@@ -616,7 +668,7 @@ root_password_used() {
 		rp_rc=$?
 		if [ "$rp_rc" -eq 0 ]; then
 			rp_read=yes
-			printf '%s\n' "$rp_out" | grep -Eq "$rp_pattern" && return 0
+			text_has "$rp_out" -E "$rp_pattern" && return 0
 		fi
 	fi
 	# Log files written in the last 30 days. They may also hold older lines,
@@ -770,6 +822,7 @@ check_ssh() {
 		cs_rp=$?
 		if [ "$cs_rp" -eq 1 ] || [ "$OPT_ROOT_PASSWORD_OFF" = yes ]; then
 			change 'PermitRootLogin prohibit-password'
+			todo 'PermitRootLogin prohibit-password'
 			cs_changes=yes
 			cs_root_after=prohibit-password
 		elif [ "$cs_rp" -eq 0 ]; then
@@ -785,6 +838,7 @@ check_ssh() {
 	if [ "$cs_v" = no ]; then in_place; else
 		missing "PermitEmptyPasswords no (now $cs_v)"
 		change 'PermitEmptyPasswords no'
+		todo 'PermitEmptyPasswords no'
 		cs_changes=yes
 	fi
 
@@ -794,6 +848,7 @@ check_ssh() {
 	if [ "$cs_n" -ge 1 ] && [ "$cs_n" -le 30 ]; then in_place; else
 		missing "LoginGraceTime 30 (now $cs_v)"
 		change 'LoginGraceTime 30'
+		todo 'LoginGraceTime 30'
 		cs_changes=yes
 	fi
 
@@ -802,6 +857,7 @@ check_ssh() {
 	if [ "$cs_v" = no ]; then in_place; else
 		missing "X11Forwarding no (now $cs_v)"
 		change 'X11Forwarding no'
+		todo 'X11Forwarding no'
 		cs_changes=yes
 	fi
 
@@ -812,6 +868,7 @@ check_ssh() {
 	if [ "$cs_n" -ge 1 ] && [ "$cs_n" -le 300 ]; then in_place; else
 		missing "ClientAliveInterval 300 (now $cs_v)"
 		change 'ClientAliveInterval 300'
+		todo 'ClientAliveInterval 300'
 		cs_changes=yes
 	fi
 	cs_v=$(sshd_val clientalivecountmax)
@@ -819,6 +876,7 @@ check_ssh() {
 	if [ "$cs_n" -ge 1 ] && [ "$cs_n" -le 3 ]; then in_place; else
 		missing "ClientAliveCountMax 3 (now $cs_v)"
 		change 'ClientAliveCountMax 3'
+		todo 'ClientAliveCountMax 3'
 		cs_changes=yes
 	fi
 
@@ -872,6 +930,8 @@ check_ssh() {
 			if key_sign_in_possible "$cs_root_key"; then
 				change 'PasswordAuthentication no'
 				change "$cs_kbd_name no"
+				todo 'PasswordAuthentication no'
+				todo "$cs_kbd_name no"
 				cs_changes=yes
 			else
 				change 'Refused: password sign-in stays on, because no account that may sign in has a key in its authorized keys file and sshd has no AuthorizedKeysCommand'
@@ -896,6 +956,7 @@ check_ssh() {
 		change "The settings go in $SSH_DROPIN; the configuration is tested with sshd -t and sshd reloaded only if it is running"
 		if [ "$cs_covered" = no ]; then
 			change "Add 'Include $SSH_DROPIN' at the top of /etc/ssh/sshd_config, which includes no drop-ins before its first Match block"
+			todo include
 		fi
 	fi
 
@@ -1006,26 +1067,41 @@ fw_elsewhere() {
 	svc_on vsftpd.service proftpd.service pure-ftpd.service vsftpd proftpd pure-ftpd && echo 'an FTP server runs here (its passive ports move)'
 	svc_on asterisk.service freeswitch.service kamailio.service opensips.service asterisk freeswitch kamailio opensips &&
 		echo 'a SIP server runs here (its media ports move)'
-	printf '%s\n' "$fe_rules" | grep -q '^unreadable$' && echo 'UNREADABLE'
+	text_has "$fe_rules" '^unreadable$' && echo 'UNREADABLE'
 	return 0
 }
 
 # listening: "tcp PORT" and "udp PORT" for every socket listening outside
-# loopback, from the kernel's socket tables (what ss -lntu shows).
+# loopback, from the kernel's socket tables (what ss -lntu shows). ISC
+# dhclient binds an unused UDP socket to a random port besides 68, another
+# one at each start: a client's, which nothing reaches, so it is left out.
 listening() {
+	li_dhcp=$(dhclient_sockets)
 	for li_f in tcp tcp6 udp udp6; do
 		[ -r "/proc/net/$li_f" ] || continue
 		case $li_f in tcp*) li_state=0A ;; *) li_state=07 ;; esac
-		awk -v proto="${li_f%6}" -v want="$li_state" '
+		awk -v proto="${li_f%6}" -v want="$li_state" -v dhcp=" $li_dhcp " '
 		function hex(h,  i, n) { n = 0; h = toupper(h); for (i = 1; i <= length(h); i++) n = n * 16 + index("0123456789ABCDEF", substr(h, i, 1)) - 1; return n }
 		NR > 1 && $4 == want {
 			split($2, a, ":"); addr = toupper(a[1])
 			if (length(addr) == 8 && substr(addr, 7, 2) == "7F") next
 			if (addr == "00000000000000000000000001000000") next
 			if (length(addr) == 32 && substr(addr, 1, 24) == "0000000000000000FFFF0000" && substr(addr, 31, 2) == "7F") next
-			print proto, hex(a[2])
+			port = hex(a[2])
+			if (proto == "udp" && port != 68 && index(dhcp, " " $10 " ")) next
+			print proto, port
 		}' "/proc/net/$li_f"
 	done | sort -u
+}
+# dhclient_sockets: the inodes of the sockets dhclient holds, separated by
+# spaces.
+dhclient_sockets() {
+	for ds_d in /proc/[0-9]*; do
+		[ "$(cat "$ds_d/comm" 2>/dev/null)" = dhclient ] || continue
+		for ds_fd in "$ds_d"/fd/*; do
+			readlink "$ds_fd" 2>/dev/null
+		done | sed -n 's/^socket:\[\([0-9]*\)\]$/\1/p'
+	done | tr '\n' ' '
 }
 
 # docker_published: "tcp/8443" for each port Docker publishes outside
@@ -1092,10 +1168,30 @@ port_list() {
 	}' | sort -t- -k1,1n -k2,2n -u
 }
 
+# fw_table_ports TABLE PROTO: the ports and ranges EasyRMM's table (as nft -n
+# lists it) lets PROTO through to, one a line ("22", "9000-9100").
+fw_table_ports() {
+	printf '%s\n' "$1" | awk -v proto="$2" '
+	$1 == proto && $2 == "dport" {
+		s = $0; sub(/^.*dport[ \t]*/, "", s); sub(/[ \t]*accept[ \t]*$/, "", s)
+		gsub(/[{},]/, " ", s); n = split(s, p, " ")
+		for (i = 1; i <= n; i++) if (p[i] ~ /^[0-9]+(-[0-9]+)?$/) print p[i]
+	}'
+}
+
+# fw_table_allows TABLE PROTO PORT-OR-RANGE: whether the table lets all of it
+# through.
+fw_table_allows() {
+	fw_table_ports "$1" "$2" | awk -v want="$3" '
+	BEGIN { n = split(want, w, "-"); lo = w[1] + 0; hi = (n > 1) ? w[2] + 0 : lo }
+	{ n = split($0, r, "-"); a = r[1] + 0; b = (n > 1) ? r[2] + 0 : a; if (lo >= a && hi <= b) f = 1 }
+	END { exit !f }'
+}
+
 check_firewall() {
 	cf_else=$(fw_elsewhere)
 	cf_unreadable=no
-	if printf '%s\n' "$cf_else" | grep -q '^UNREADABLE$'; then
+	if text_has "$cf_else" '^UNREADABLE$'; then
 		cf_unreadable=yes
 		cf_else=$(printf '%s\n' "$cf_else" | grep -v '^UNREADABLE$')
 	fi
@@ -1132,8 +1228,18 @@ check_firewall() {
 	# EasyRMM's own table, its file and the unit that loads it at boot.
 	cf_nft=no
 	have nft && cf_nft=yes
-	if [ "$cf_nft" = yes ] && nf_tables_present && t 30 nft list table inet easyrmm >/dev/null 2>&1; then
+	if [ "$cf_nft" = yes ] && nf_tables_present && cf_table=$(t 30 nft -n list table inet easyrmm 2>/dev/null); then
 		in_place
+		# Every port apply would leave open must be open in the table: a
+		# service that started listening since is cut off until it is.
+		for cf_pr in tcp udp; do
+			if [ "$cf_pr" = tcp ]; then cf_want=$M_TCP; else cf_want=$M_UDP; fi
+			for cf_p in $cf_want; do
+				if fw_table_allows "$cf_table" "$cf_pr" "$cf_p"; then in_place; else
+					missing "$cf_pr port $cf_p open in table inet easyrmm (it is dropped now)"
+				fi
+			done
+		done
 	else
 		missing 'nftables table inet easyrmm loaded'
 	fi
@@ -1162,7 +1268,7 @@ epel_enabled() {
 		[ -f "$ee_f" ] || continue
 		ee_section=$(sed -n '/^\[epel\][[:space:]]*$/,/^\[/p' "$ee_f")
 		[ -n "$ee_section" ] || continue
-		printf '%s\n' "$ee_section" | grep -Eiq '^[[:space:]]*enabled[[:space:]]*=[[:space:]]*(0|false|no)[[:space:]]*$' || return 0
+		text_has "$ee_section" -Ei '^[[:space:]]*enabled[[:space:]]*=[[:space:]]*(0|false|no)[[:space:]]*$' || return 0
 	done
 	return 1
 }
@@ -1404,6 +1510,7 @@ check_kernel() {
 		else
 			missing "$ck_name = $ck_want (now $ck_now)"
 			change "$ck_name = $ck_want"
+			todo "$ck_name $ck_want"
 			ck_set=yes
 		fi
 	done
@@ -1444,13 +1551,19 @@ check_audit() {
 		missing "EasyRMM's audit rules"
 		change 'Install auditd and start it at boot'
 		change "Add rules for accounts, sudoers, SSH and PAM configuration, time, kernel modules, mounts and commands run with raised privileges in $AUDIT_FILE, loaded with augenrules --load (never immutable, never panic)"
+		todo install
+		todo start
+		todo rules
 		return
 	fi
 	if unit_active auditd.service && unit_enabled auditd.service; then in_place; else
 		missing 'auditd running and started at boot'
 		change 'Start auditd and start it at boot'
+		todo start
 	fi
-	ca_live=$(t 20 auditctl -l 2>/dev/null)
+	# Rules of other EasyRMM features (their keys start easyrmm- too) come
+	# and go with them: they do not count here.
+	ca_live=$(t 20 auditctl -l 2>/dev/null | awk '!/key=easyrmm-/ || /key=easyrmm-hardening-/')
 	ca_status=$(t 20 auditctl -s 2>/dev/null)
 	ca_missing=
 	ca_oifs=$IFS
@@ -1461,7 +1574,7 @@ check_audit() {
 		IFS=$ca_oifs
 		ca_what=${ca_rule%%|*}
 		ca_re=${ca_rule#*|}
-		if printf '%s\n' "$ca_live" | grep -Eq -- "$ca_re"; then in_place; else
+		if text_has "$ca_live" -E -- "$ca_re"; then in_place; else
 			missing "Audit rules for $ca_what"
 			ca_missing=yes
 		fi
@@ -1471,7 +1584,8 @@ check_audit() {
 	IFS=$ca_oifs
 	if [ -n "$ca_missing" ]; then
 		change "Add the missing rules in $AUDIT_FILE, loaded with augenrules --load (never immutable, never panic)"
-		if printf '%s\n' "$ca_status" | grep -q '^enabled 2'; then
+		todo rules
+		if text_has "$ca_status" '^enabled 2'; then
 			change 'Left as it is until the next restart: the loaded rules are immutable (enabled 2), so the new rules load at the next restart, and undo cannot unload them before one'
 		fi
 	fi
@@ -1497,6 +1611,7 @@ perm_max() {
 		pm_now=$(printf '%04o' $((0$pm_m)))
 		missing "$1 mode $2 or stricter (now $pm_now)"
 		change "$1: mode $pm_now to $pm_new"
+		todo "$1 $pm_new"
 	fi
 }
 
@@ -1648,7 +1763,7 @@ modprobe_config() {
 # kept_from_loading MODULE: an install directive that runs false or true in
 # its place (blacklist alone does not stop an explicit modprobe).
 kept_from_loading() {
-	printf '%s\n' "$MODPROBE_C" | grep -Eq "^install $1 (/usr)?/bin/(false|true)([[:space:]]|\$)"
+	text_has "$MODPROBE_C" -E "^install $1 (/usr)?/bin/(false|true)([[:space:]]|\$)"
 }
 module_loaded() { grep -q "^$1 " /proc/modules 2>/dev/null; }
 
@@ -1686,6 +1801,7 @@ check_kernel_modules() {
 		fi
 	done
 	[ -z "$km_set" ] || change "Keep from loading:$km_set (an install directive in /etc/modprobe.d)"
+	M_TODO=$km_set
 }
 
 # usb_disks_in_use: USB disks with a mounted filesystem or swap on them, or
@@ -1728,6 +1844,7 @@ check_usb_storage() {
 		change "Refused: a mounted filesystem or swap is on a USB disk (${us_disks% }), and the computer would not boot without usb-storage"
 	else
 		change 'Keep usb-storage from loading, in /etc/modprobe.d and the initramfs: USB disks and backup drives stop working'
+		todo usb-storage
 	fi
 }
 
@@ -1806,6 +1923,7 @@ check_sudo() {
 	if [ "$cu_pty" = yes ]; then in_place; else
 		missing 'sudo runs commands in a pseudo-terminal (use_pty)'
 		change 'Defaults use_pty'
+		todo use_pty
 	fi
 	# Commands logged to a file of their own, with a logrotate
 	# entry for it.
@@ -1814,26 +1932,37 @@ check_sudo() {
 		if grep -Fqs "$cu_logfile" /etc/logrotate.conf /etc/logrotate.d/*; then in_place; else
 			missing "A logrotate entry for $cu_logfile"
 			change "Add a logrotate entry for $cu_logfile"
+			todo "logrotate $cu_logfile"
 		fi
 	else
-		missing 'sudo logs commands to /var/log/sudo.log (logfile)'
-		missing 'A logrotate entry for /var/log/sudo.log'
-		change 'Defaults logfile=/var/log/sudo.log, with a logrotate entry for it'
+		missing "sudo logs commands to $SUDO_LOG (logfile)"
+		missing "A logrotate entry for $SUDO_LOG"
+		change "Defaults logfile=$SUDO_LOG, with a logrotate entry for it"
+		todo logfile
+		todo "logrotate $SUDO_LOG"
 	fi
 	if [ -e "$SUDO_FILE" ]; then
 		cu_mode=$(stat -c %a "$SUDO_FILE" 2>/dev/null)
 		[ "$cu_mode" = 440 ] || {
 			missing "$SUDO_FILE mode 0440 (now $cu_mode)"
 			change "$SUDO_FILE: mode 0440"
+			todo mode
 		}
 	fi
 	if [ "$M_BAD" -gt 0 ]; then
 		change "The settings go in $SUDO_FILE (mode 0440), checked with visudo -c before it is put in place"
+		cu_refused=
 		if ! grep -Eq '^[#@]includedir[[:space:]]+/etc/sudoers\.d/?[[:space:]]*$' /etc/sudoers; then
-			change 'Refused: /etc/sudoers does not include /etc/sudoers.d'
-		elif have visudo && ! t 20 visudo -c -q >/dev/null 2>&1; then
-			change 'Refused: the sudoers files have errors now (visudo -c fails)'
+			cu_refused='/etc/sudoers does not include /etc/sudoers.d'
+		elif ! have visudo; then
+			cu_refused='visudo, which checks sudoers files, is not installed'
+		elif ! t 20 visudo -c -q >/dev/null 2>&1; then
+			cu_refused='the sudoers files have errors now (visudo -c fails)'
 		fi
+		[ -z "$cu_refused" ] || {
+			change "Refused: $cu_refused"
+			M_TODO="refused $cu_refused"
+		}
 	fi
 }
 
@@ -1866,6 +1995,7 @@ check_time() {
 		if unit_enabled "$ct_running"; then in_place; else
 			missing "$ct_running started at boot"
 			change "Start $ct_running at boot"
+			M_TODO="unit $ct_running"
 		fi
 		reason "$ct_running keeps the time."
 		[ "$M_BAD" -eq 0 ] || reason "$ct_running keeps the time but is not started at boot."
@@ -1874,11 +2004,14 @@ check_time() {
 	missing 'A time synchronisation service running'
 	if [ -n "$ct_installed" ]; then
 		change "Start $ct_installed, and start it at boot"
+		M_TODO="unit $ct_installed"
 	else
 		case $FAMILY in
-		rhel | fedora) change 'Install chrony, and start it at boot' ;;
-		*) change 'Install systemd-timesyncd, and start it at boot' ;;
+		rhel | fedora) M_TODO='install chrony chronyd.service' ;;
+		*) M_TODO='install systemd-timesyncd systemd-timesyncd.service' ;;
 		esac
+		ct_p=${M_TODO#install }
+		change "Install ${ct_p%% *}, and start it at boot"
 	fi
 }
 
@@ -1914,6 +2047,7 @@ check_shared_memory() {
 	fi
 	if [ "$cm_fix" = yes ]; then
 		change 'Mount /dev/shm nodev,nosuid,noexec in /etc/fstab (the new file checked with findmnt --verify first) and remount it; programs that run code from shared memory stop working'
+		todo shm
 	fi
 }
 
@@ -1927,7 +2061,7 @@ avc_denials() {
 	ad_out=$(t 120 ausearch -m AVC,USER_AVC -ts week-ago --input-logs 2>&1 >/dev/null)
 	ad_rc=$?
 	[ "$ad_rc" -eq 0 ] && return 0
-	printf '%s\n' "$ad_out" | grep -q '<no matches>' && return 1
+	text_has "$ad_out" '<no matches>' && return 1
 	return 2
 }
 
@@ -1950,6 +2084,7 @@ check_mac() {
 			if [ "$cm_cfg" = enforcing ]; then in_place; else
 				missing "SELINUX=enforcing in /etc/selinux/config (now ${cm_cfg:-not set})"
 				change 'SELINUX=enforcing in /etc/selinux/config'
+				todo config
 			fi
 			;;
 		disabled)
@@ -1993,6 +2128,8 @@ check_mac() {
 				change "Refused: $cm_refused"
 			else
 				change 'SELinux enforcing now (setenforce 1) and in /etc/selinux/config'
+				todo enforce
+				todo config
 			fi
 			;;
 		esac
@@ -2031,29 +2168,53 @@ check_mac() {
 # integrity
 
 check_integrity() {
-	# AIDE installed, a baseline, a daily check.
-	if ! have aide; then
+	# AIDE installed, a baseline, a daily check. Debian's aide comes without
+	# its configuration and aideinit, which are aide-common's.
+	if ! have aide || { [ "$FAMILY" = debian ] && ! have aideinit; }; then
 		missing 'AIDE installed'
 		missing 'An AIDE baseline'
 		missing 'A daily AIDE check'
 		change 'Install AIDE'
+		todo install
+		for ci_d in /var/lib/docker /var/lib/containers; do
+			[ -d "$ci_d" ] || continue
+			change "Leave $ci_d out of AIDE's checks"
+			todo "exclude $ci_d"
+		done
 		change "Build the baseline in a unit of its own (systemd-run), outside the job's time limit; the next check reports whether it finished"
 		change "Check daily, with the distribution's timer where it has one"
-		[ -d /var/lib/docker ] || [ -d /var/lib/containers ] && change 'Leave /var/lib/docker and /var/lib/containers out'
+		todo baseline
+		todo daily
 		return
 	fi
 	in_place
+	for ci_d in /var/lib/docker /var/lib/containers; do
+		[ -d "$ci_d" ] || continue
+		if grep -Eqs "^[[:space:]]*!$ci_d" /etc/aide/aide.conf /etc/aide/aide.conf.d/* /etc/aide.conf; then in_place; else
+			missing "AIDE leaves out $ci_d"
+			change "Leave $ci_d out of AIDE's checks"
+			todo "exclude $ci_d"
+		fi
+	done
 	ci_db=no
 	for ci_f in /var/lib/aide/aide.db /var/lib/aide/aide.db.gz; do
 		[ -s "$ci_f" ] && ci_db=yes
 	done
 	if [ "$ci_db" = yes ]; then in_place; else
-		if [ "$SYSTEMD_UP" = yes ] && t 20 systemctl list-units --no-legend --plain --state=active 'easyrmm-aide*' 2>/dev/null | grep -q .; then
+		case $(unit_states "$AIDE_INIT_UNIT.service") in
+		*' active')
 			missing 'An AIDE baseline (being built now)'
-		else
-			missing 'An AIDE baseline'
-			change "Build the baseline in a unit of its own (systemd-run), outside the job's time limit"
-		fi
+			;;
+		*)
+			if [ "$SYSTEMD_UP" = yes ] && t 20 systemctl is-failed "$AIDE_INIT_UNIT.service" >/dev/null 2>&1; then
+				missing "An AIDE baseline (the last build failed: journalctl -u $AIDE_INIT_UNIT)"
+			else
+				missing 'An AIDE baseline'
+			fi
+			change "Build the baseline in a unit of its own (systemd-run), outside the job's time limit; the next check reports whether it finished"
+			todo baseline
+			;;
+		esac
 	fi
 	ci_daily=no
 	if have systemctl && t 20 systemctl list-unit-files --no-legend --state=enabled '*aide*.timer' 2>/dev/null | grep -q .; then
@@ -2064,14 +2225,930 @@ check_integrity() {
 	if [ "$ci_daily" = yes ]; then in_place; else
 		missing 'A daily AIDE check'
 		change "Check daily, with the distribution's timer where it has one"
+		todo daily
 	fi
-	for ci_d in /var/lib/docker /var/lib/containers; do
-		[ -d "$ci_d" ] || continue
-		if grep -Eqs "^[[:space:]]*!$ci_d" /etc/aide/aide.conf /etc/aide/aide.conf.d/* /etc/aide.conf; then in_place; else
-			missing "AIDE leaves out $ci_d"
-			change "Leave $ci_d out of AIDE's checks"
+}
+
+# ---------------------------------------------------------------------------
+# The record (apply and undo only; check reads it and writes nothing)
+#
+# Each module's manifest starts "format 1" and then has one record a line,
+# fields separated by tabs, in the order apply made the changes; undo
+# reverses them in the opposite order. "-" stands for nothing (no file, no
+# copy), "?" for not known yet (the job was killed between a change and its
+# record).
+#   file PATH ORIGINAL ORIGINAL-SHA256 AFTER-SHA256
+#       a file apply wrote; ORIGINAL is its copy under files/, or "-" when
+#       apply created it
+#   dir PATH                     a directory apply created
+#   line PATH TEXT               a line apply added at the top of PATH
+#   mode PATH BEFORE OWNER AFTER a mode apply narrowed (owners never change)
+#   sysctl NAME BEFORE AFTER     a kernel parameter's live value
+#   unit UNIT ENABLED ACTIVE ENABLED-AFTER ACTIVE-AFTER
+#       a systemd unit's state before apply changed it, and after
+#   pkg PACKAGE...               the packages an installation added
+#   pending PACKAGE...           an installation that did not finish
+#   table inet-easyrmm SHA256    the firewall table as apply loaded it
+#   gen PATH                     a file that a program apply started makes
+#   selinux - BEFORE AFTER       SELinux's mode (permissive, enforcing)
+#   mount PATH BEFORE AFTER      a mount's options
+# The first apply of a module keeps each original; a later one adds only
+# what it changes for the first time, so undo goes back to the computer as
+# it was before EasyRMM changed it. Undo puts back only what is still as
+# apply left it, and then removes the module's record: the next apply
+# takes fresh copies.
+
+FORMAT=1
+MD=
+MANIFEST=
+INTENT=no
+TX_DIR=$STATE_DIR/tx
+TX_STACK=
+TX_SAVED=
+TX_N=0
+TX_HAD=no
+PKG_ERR=
+
+now_utc() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
+
+# did MESSAGE: something apply or undo did, for the result.
+did() { append M_DONE "$1"; }
+# left MESSAGE: something undo left as it is, and why.
+left() {
+	append M_DONE "Left as it is: $1"
+	M_LEFT=yes
+}
+
+# sha PATH: the file's SHA-256, or "-" where there is no file.
+sha() {
+	if [ -f "$1" ]; then
+		sha256sum <"$1" | cut -c1-64
+	else
+		printf -
+	fi
+}
+
+# relabel PATH: SELinux's label for a file EasyRMM wrote, where SELinux is.
+relabel() {
+	! have restorecon || restorecon "$1" 2>/dev/null
+	return 0
+}
+
+# module_record MODULE: the module whose record the functions below keep.
+module_record() {
+	MD=$STATE_DIR/modules/$1
+	MANIFEST=$MD/manifest
+	INTENT=no
+}
+
+rec_has() {
+	[ -f "$MANIFEST" ] && awk -F "$tab" -v t="$1" -v k="$2" '$1 == t && $2 == k { f = 1; exit } END { exit !f }' "$MANIFEST"
+}
+rec_add() { printf '%s\n' "$1" >>"$MANIFEST"; }
+# rec_set TYPE KEY N VALUE: sets field N of the record TYPE KEY.
+rec_set() {
+	awk -F "$tab" -v OFS="$tab" -v t="$1" -v k="$2" -v n="$3" -v v="$4" \
+		'$1 == t && $2 == k && !d { $n = v; d = 1 } { print }' "$MANIFEST" >"$MANIFEST.new" &&
+		mv -f "$MANIFEST.new" "$MANIFEST"
+}
+
+# intent: written before the module's first change in this run, so that a
+# job killed from here on leaves the module half applied.
+intent() {
+	[ "$INTENT" = yes ] && return 0
+	mkdir -p "$MD/files" && rm -f "$MD/done" || return 1
+	[ -s "$MANIFEST" ] || printf 'format %s\n' "$FORMAT" >"$MANIFEST" || return 1
+	printf '%s %s\n' "$MODE" "$(now_utc)" >"$MD/intent" || return 1
+	INTENT=yes
+}
+# mark_done: the module finished; its record is whole.
+mark_done() {
+	[ "$INTENT" = yes ] || return 0
+	printf '%s %s\n' "$MODE" "$(now_utc)" >"$MD/done"
+}
+
+# What this run changed, to put the module back as it was before the run
+# when it fails: copies of the files under tx/, and a stack of commands
+# (EasyRMM's own words: paths, units, values, never anything given to the
+# job) run last first.
+tx_begin() {
+	TX_STACK=
+	TX_SAVED=
+	TX_N=0
+	TX_HAD=no
+	rm -rf "$TX_DIR" && mkdir -p "$TX_DIR/record" || return 1
+	[ -d "$MD" ] || return 0
+	TX_HAD=yes
+	for tb_f in manifest intent 'done'; do
+		[ ! -e "$MD/$tb_f" ] || cp -p "$MD/$tb_f" "$TX_DIR/record/$tb_f" || return 1
+	done
+}
+tx_push() { TX_STACK=$1$nl$TX_STACK; }
+# tx_save PATH: PATH as it was before this run, once.
+tx_save() {
+	case "$nl$TX_SAVED$nl" in *"$nl$1$nl"*) return 0 ;; esac
+	TX_SAVED=$TX_SAVED$nl$1
+	if [ -e "$1" ]; then
+		TX_N=$((TX_N + 1))
+		cp -p "$1" "$TX_DIR/$TX_N" || return 1
+		tx_push "put_copy $TX_DIR/$TX_N $1"
+	else
+		tx_push "rm -f $1"
+	fi
+}
+# tx_rollback: puts back what this run changed, and the record as it was.
+tx_rollback() {
+	tr_oifs=$IFS
+	IFS=$nl
+	set -f
+	for tr_c in $TX_STACK; do
+		IFS=$tr_oifs
+		set +f
+		eval "$tr_c" >/dev/null 2>&1
+		IFS=$nl
+		set -f
+	done
+	set +f
+	IFS=$tr_oifs
+	TX_STACK=
+	if [ "$TX_HAD" = no ]; then
+		rm -rf "$MD"
+	else
+		for tr_f in manifest intent 'done'; do
+			if [ -e "$TX_DIR/record/$tr_f" ]; then
+				cp -p "$TX_DIR/record/$tr_f" "$MD/$tr_f"
+			else
+				rm -f "$MD/$tr_f"
+			fi
+		done
+	fi
+	INTENT=no
+}
+
+# abort REASON [COMMAND]: the module failed; what this run changed is put
+# back (then COMMAND runs, to reload what reads the files put back).
+abort() {
+	tx_rollback
+	[ $# -lt 2 ] || eval "$2" >/dev/null 2>&1
+	M_DONE=
+	M_OUTCOME=failed
+	M_WHY="$1; what this run changed was put back."
+}
+# refuse REASON: a guard refused the module; nothing is left changed.
+refuse() {
+	tx_rollback
+	M_DONE=
+	M_OUTCOME=refused
+	M_WHY=$1
+}
+
+# put_copy COPY PATH: puts a kept copy back, with its mode and owner.
+put_copy() {
+	if cp -p "$1" "$2.easyrmm-new" && mv -f "$2.easyrmm-new" "$2"; then
+		relabel "$2"
+		return 0
+	fi
+	rm -f "$2.easyrmm-new"
+	return 1
+}
+# replace_with PATH: puts PATH.easyrmm-new in PATH's place, with PATH's mode
+# and owner.
+replace_with() {
+	if chown --reference="$1" "$1.easyrmm-new" && chmod --reference="$1" "$1.easyrmm-new" &&
+		mv -f "$1.easyrmm-new" "$1"; then
+		relabel "$1"
+		return 0
+	fi
+	rm -f "$1.easyrmm-new"
+	return 1
+}
+
+# rec_file PATH: before apply changes PATH. Its original is kept the first
+# time; its state before this run, every time.
+rec_file() {
+	intent && tx_save "$1" || return 1
+	rec_has file "$1" && return 0
+	rf_id=$(printf '%s' "$1" | sha256sum | cut -c1-16)
+	if [ -e "$1" ]; then
+		cp -p "$1" "$MD/files/$rf_id" || return 1
+		tx_push "rm -f $MD/files/$rf_id"
+		rec_add "file$tab$1${tab}files/$rf_id$tab$(sha "$1")$tab?"
+	else
+		rec_add "file$tab$1$tab-$tab-$tab?"
+	fi
+}
+after_file() { rec_set file "$1" 5 "$(sha "$1")"; }
+# write_edit PATH: PATH.easyrmm-new, made by the caller, replaces a file
+# EasyRMM does not own, recorded.
+write_edit() {
+	if rec_file "$1" && replace_with "$1" && after_file "$1"; then return 0; fi
+	rm -f "$1.easyrmm-new"
+	return 1
+}
+
+
+
+# narrow_mode PATH MODE: PATH's mode set to MODE, recorded (of the file a
+# symbolic link points to, as chmod does).
+narrow_mode() {
+	intent || return 1
+	nm_b=$(stat -L -c %a "$1") && nm_o=$(stat -L -c %U:%G "$1") || return 1
+	tx_push "chmod $nm_b $1"
+	rec_has mode "$1" || rec_add "mode$tab$1$tab$nm_b$tab$nm_o$tab?"
+	chmod "$2" "$1" && rec_set mode "$1" 5 "$(stat -L -c %a "$1")"
+}
+
+# Kernel parameters, read and written in /proc/sys.
+sysctl_path() { printf '/proc/sys/%s' "$(printf '%s' "$1" | tr '.' '/')"; }
+sysctl_now() { head -n 1 "$(sysctl_path "$1")" 2>/dev/null; }
+sysctl_put() { printf '%s\n' "$2" >"$(sysctl_path "$1")"; }
+
+# unit_states UNIT: "ENABLED ACTIVE": what systemctl is-enabled says (or
+# not-found), then active or inactive.
+unit_states() {
+	us_e=$(unit_file_state "$1")
+	[ -n "$us_e" ] || us_e=not-found
+	if unit_active "$1"; then us_a=active; else us_a=inactive; fi
+	printf '%s %s' "$us_e" "$us_a"
+}
+# unit_put UNIT ENABLED ACTIVE: puts a unit in that state; "-" leaves either
+# as it is.
+unit_put() {
+	case $(unit_file_state "$1"):$2 in
+	masked:masked | *:-) ;;
+	masked:*) t 60 systemctl unmask "$1" ;;
+	esac >/dev/null 2>&1
+	[ "$3" != inactive ] || t 120 systemctl stop "$1" >/dev/null 2>&1
+	case $2 in
+	enabled | enabled-runtime) t 60 systemctl enable "$1" ;;
+	disabled | not-found) t 60 systemctl disable "$1" ;;
+	masked) t 60 systemctl mask "$1" ;;
+	esac >/dev/null 2>&1
+	[ "$3" != active ] || t 120 systemctl start "$1" >/dev/null 2>&1
+	unit_gone "$1"
+	return 0
+}
+# unit_gone UNIT: a unit whose file is gone (its package removed) keeps no
+# failed state, as before its package came.
+unit_gone() {
+	[ "$SYSTEMD_UP" = no ] || [ -n "$(unit_file_state "$1")" ] || t 30 systemctl reset-failed "$1" >/dev/null 2>&1
+	return 0
+}
+# rec_unit UNIT: before apply changes a unit's state.
+rec_unit() {
+	intent || return 1
+	ru_s=$(unit_states "$1")
+	tx_push "unit_put $1 $ru_s"
+	rec_has unit "$1" || rec_add "unit$tab$1$tab${ru_s% *}$tab${ru_s#* }$tab?$tab?"
+}
+after_unit() {
+	au_s=$(unit_states "$1")
+	rec_set unit "$1" 5 "${au_s% *}" && rec_set unit "$1" 6 "${au_s#* }"
+}
+
+# Packages. pkg_names lists those installed, one a line, by name and
+# architecture (name:arch on Debian and Ubuntu, name.arch elsewhere), so
+# that a package an installation upgraded is not taken for one it added;
+# an imported signing key, which has no architecture, by its full name.
+pkg_names() {
+	case $FAMILY in
+	debian) dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' 2>/dev/null | awk '$1 == "ii" { print $2 }' ;;
+	*) rpm -qa --qf '%{NAME}%|ARCH?{.%{ARCH}}:{-%{VERSION}-%{RELEASE}}|\n' 2>/dev/null ;;
+	esac | sort -u
+}
+# pkg_why: why the last installation or removal failed, for a reason (""
+# or ": ...").
+pkg_why() { [ -z "$PKG_ERR" ] || printf ': %s' "$PKG_ERR"; }
+# pkg_failed EXIT MINUTES: PKG_ERR for a package manager that exited EXIT,
+# from $TX_DIR/pkg.log or from its time limit.
+pkg_failed() {
+	case $1 in
+	124 | 137)
+		PKG_ERR="the package manager did not finish in $2 minutes and was stopped"
+		[ "$FAMILY" != debian ] || PKG_ERR="$PKG_ERR (dpkg --configure -a finishes what it left)"
+		;;
+	*)
+		PKG_ERR=$(grep -E '^E: |^[Ee]rror|No match|^Problem' "$TX_DIR/pkg.log" | head -n 1 | cut -c1-160)
+		[ -n "$PKG_ERR" ] || PKG_ERR=$(tail -n 1 "$TX_DIR/pkg.log" | cut -c1-160)
+		;;
+	esac
+}
+# pkg_removable PACKAGE...: whether removing them would remove nothing else
+# (simulated: apt-get -s, rpm -e --test). Names without =rc. Returns 1 when
+# it would, 2 when the simulation failed (PKG_ERR says why).
+pkg_removable() {
+	PKG_ERR=
+	case $FAMILY in
+	debian)
+		if ! t 120 apt-get -s -o Debug::NoLocking=1 remove "$@" >"$TX_DIR/pkg.log" 2>&1; then
+			PKG_ERR=$(grep '^E: ' "$TX_DIR/pkg.log" | head -n 1 | cut -c1-160)
+			return 2
+		fi
+		pr_rm=$(sed -n 's/^Remv \([^ ]*\) .*/\1/p' "$TX_DIR/pkg.log")
+		for pr_p in $pr_rm; do
+			pr_ok=no
+			for pr_q in "$@"; do
+				[ "${pr_q%%:*}" = "${pr_p%%:*}" ] && pr_ok=yes
+			done
+			[ "$pr_ok" = yes ] || return 1
+		done
+		;;
+	*)
+		t 120 rpm -e --test "$@" >"$TX_DIR/pkg.log" 2>&1 && return 0
+		grep -q 'Failed dependencies' "$TX_DIR/pkg.log" && return 1
+		PKG_ERR=$(grep '^error' "$TX_DIR/pkg.log" | head -n 1 | cut -c1-160)
+		return 2
+		;;
+	esac
+}
+# pkg_remove PURGE PACKAGE...: removes them; on Debian and Ubuntu, then
+# purges the configuration files of those in PURGE (one word, names
+# separated by commas), which were not there before apply. PKG_ERR says why
+# it failed.
+pkg_remove() {
+	pr_purge=$1
+	shift
+	PKG_ERR=
+	pr_rc=0
+	case $FAMILY in
+	debian)
+		t 900 env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout=300 remove "$@" || pr_rc=$?
+		# shellcheck disable=SC2046 # package names, one word each
+		[ "$pr_rc" -ne 0 ] || [ -z "$pr_purge" ] || t 900 dpkg --purge $(printf '%s' "$pr_purge" | tr ',' ' ') || pr_rc=$?
+		;;
+	*) t 900 rpm -e "$@" || pr_rc=$? ;;
+	esac >"$TX_DIR/pkg.log" 2>&1
+	[ "$pr_rc" -eq 0 ] || {
+		pkg_failed "$pr_rc" 15
+		return 1
+	}
+}
+# pkg_remove_alone PACKAGE...: removes those still installed (NAME=rc:
+# keeping its configuration files), if that removes nothing else. Returns 1
+# when it would have, 2 when the package manager failed (PKG_ERR says why).
+pkg_remove_alone() {
+	pa_have=
+	pa_purge=
+	pa_now=$(pkg_names)
+	for pa_p in "$@"; do
+		text_has "$pa_now" -xF "${pa_p%=rc}" || continue
+		pa_have="$pa_have ${pa_p%=rc}"
+		[ "${pa_p%=rc}" != "$pa_p" ] || pa_purge="$pa_purge,$pa_p"
+	done
+	[ -n "$pa_have" ] || return 0
+	# shellcheck disable=SC2086 # package names, one word each
+	pkg_removable $pa_have || return
+	# shellcheck disable=SC2086
+	pkg_remove "${pa_purge#,}" $pa_have || return 2
+	PKG_REMOVED=${pa_have# }
+	return 0
+}
+
+# Mounts: mount_options PATH is the options PATH is mounted with now;
+# mount_flags_added NOW BEFORE lists which of nodev, nosuid and noexec NOW
+# has and BEFORE had not; mount_flags_back NOW BEFORE the options that take
+# those away again (dev, suid, exec).
+mount_options() { awk -v m="$1" '$2 == m { o = $4 } END { print o }' /proc/self/mounts; }
+mount_flags_added() {
+	ma_out=
+	for ma_f in nodev nosuid noexec; do
+		case ",$1," in *",$ma_f,"*)
+			case ",$2," in *",$ma_f,"*) ;; *) ma_out="$ma_out,$ma_f" ;; esac
+			;;
+		esac
+	done
+	printf '%s' "${ma_out#,}"
+}
+mount_flags_back() { mount_flags_added "$1" "$2" | sed 's/no//g'; }
+
+selinux_mode() {
+	case $(cat /sys/fs/selinux/enforce 2>/dev/null) in
+	1) printf enforcing ;;
+	0) printf permissive ;;
+	*) printf disabled ;;
+	esac
+}
+
+fw_table_sha() { t 30 nft -n list table inet easyrmm 2>/dev/null | sha256sum | cut -c1-64; }
+
+# Undo of each kind of record. Each says what it did with did, or why it
+# left something with left; one already as it was says nothing.
+undo_file() {
+	uf_now=$(sha "$1")
+	[ "$uf_now" = "$3" ] && return 0
+	if [ "$4" != '?' ] && [ "$uf_now" != "$4" ]; then
+		left "$1, changed since apply"
+		return 0
+	fi
+	tx_save "$1" || return 1
+	if [ "$2" = - ]; then
+		rm -f "$1" && did "Removed $1"
+	else
+		put_copy "$MD/$2" "$1" && did "Put back $1"
+	fi
+}
+undo_dir() {
+	[ -d "$1" ] || return 0
+	if rmdir "$1" 2>/dev/null; then
+		tx_push "mkdir -m 0755 $1"
+		did "Removed $1"
+	else
+		left "$1, which is not empty"
+	fi
+}
+undo_line() {
+	[ -f "$1" ] || return 0
+	if [ "$(head -n 1 "$1")" = "$2" ]; then
+		tx_save "$1" || return 1
+		sed '1d' "$1" >"$1.easyrmm-new" && replace_with "$1" && did "Removed '$2' from $1"
+	elif grep -qxF -- "$2" "$1"; then
+		left "'$2' in $1, moved from the top since apply"
+	fi
+}
+undo_mode() {
+	[ -e "$1" ] || return 0
+	um_m=$(stat -L -c %a "$1")
+	[ "$um_m" = "$2" ] && return 0
+	if [ "$4" != '?' ] && { [ "$um_m" != "$4" ] || [ "$(stat -L -c %U:%G "$1")" != "$3" ]; }; then
+		left "the mode of $1, changed since apply"
+		return 0
+	fi
+	tx_push "chmod $um_m $1"
+	chmod "$2" "$1" && did "$1: mode $(printf '%04o' "0$um_m") back to $(printf '%04o' "0$2")"
+}
+undo_sysctl() {
+	us_now=$(sysctl_now "$1")
+	[ -n "$us_now" ] && [ "$us_now" != "$2" ] || return 0
+	if [ "$3" != '?' ] && [ "$us_now" != "$3" ]; then
+		left "$1 = $us_now, changed since apply"
+		return 0
+	fi
+	tx_push "sysctl_put $1 $us_now"
+	if sysctl_put "$1" "$2" 2>/dev/null; then
+		did "$1 back to $2"
+	else
+		left "$1, which could not be set back to $2"
+	fi
+}
+undo_unit() {
+	ut_now=$(unit_states "$1")
+	ut_ne=${ut_now% *}
+	ut_na=${ut_now#* }
+	# A unit whose package undo removed is gone, as it was.
+	if [ "$ut_ne" = not-found ]; then
+		unit_gone "$1"
+		return 0
+	fi
+	ut_want=$2
+	[ "$ut_want" != not-found ] || ut_want=disabled
+	ut_e=-
+	ut_a=-
+	if [ "$ut_ne" != "$ut_want" ]; then
+		if [ "$4" != '?' ] && [ "$ut_ne" != "$4" ]; then
+			left "whether $1 starts at boot ($ut_ne), changed since apply"
+		else
+			ut_e=$ut_want
+		fi
+	fi
+	if [ "$ut_na" != "$3" ]; then
+		if [ "$5" != '?' ] && [ "$ut_na" != "$5" ]; then
+			left "whether $1 runs ($ut_na), changed since apply"
+		else
+			ut_a=$3
+		fi
+	fi
+	[ "$ut_e$ut_a" != -- ] || return 0
+	tx_push "unit_put $1 $ut_now"
+	unit_put "$1" "$ut_e" "$ut_a"
+	did "$1 back to $(unit_states "$1" | sed 's/ /, /')"
+}
+undo_pkg() {
+	PKG_REMOVED=
+	pkg_remove_alone "$@" && up_rc=0 || up_rc=$?
+	case $up_rc in
+	0) [ -z "$PKG_REMOVED" ] || did "Removed the packages it installed: $PKG_REMOVED" ;;
+	1) left "the packages it installed ($*), because removing them would remove other packages too" ;;
+	*) left "the packages it installed ($*): the package manager could not remove them$(pkg_why)" ;;
+	esac
+}
+undo_table() {
+	have nft && t 30 nft list table inet easyrmm >/dev/null 2>&1 || return 0
+	if [ "$1" != '?' ] && [ "$(fw_table_sha)" != "$1" ]; then
+		left 'table inet easyrmm, changed since apply (it stays loaded until the next restart: nft delete table inet easyrmm removes it)'
+		return 0
+	fi
+	printf 'table inet easyrmm\ndelete table inet easyrmm\n%s\n' "$(t 30 nft list table inet easyrmm)" >"$TX_DIR/table.nft"
+	tx_push "nft -f $TX_DIR/table.nft"
+	t 30 nft delete table inet easyrmm && did 'Removed table inet easyrmm'
+}
+undo_selinux() {
+	sl_now=$(selinux_mode)
+	[ "$sl_now" != "$1" ] || return 0
+	if [ "$2" != '?' ] && [ "$sl_now" != "$2" ]; then
+		left "SELinux's mode ($sl_now), changed since apply"
+		return 0
+	fi
+	case $1 in permissive) sl_n=0 ;; *) sl_n=1 ;; esac
+	tx_push "setenforce $(case $sl_now in permissive) echo 0 ;; *) echo 1 ;; esac)"
+	setenforce "$sl_n" && did "SELinux back to $1"
+}
+undo_mount() {
+	mt_now=$(mount_options "$1")
+	mt_back=$(mount_flags_back "$mt_now" "$2")
+	[ -n "$mt_back" ] || return 0
+	if [ "$3" != '?' ] && [ "$mt_now" != "$3" ]; then
+		left "the options $1 is mounted with, changed since apply"
+		return 0
+	fi
+	tx_push "mount -o remount,$(mount_flags_added "$mt_now" "$2") $1"
+	t 30 mount -o "remount,$mt_back" "$1" && did "Mounted $1 $mt_back again"
+}
+
+# undo_records: reverses every record of the module, last first.
+undo_records() {
+	ur_oifs=$IFS
+	IFS=$nl
+	set -f
+	# shellcheck disable=SC2013 # IFS is a line feed: one record a line
+	for ur_line in $(sed '1d' "$MANIFEST" | awk '{ l[NR] = $0 } END { for (i = NR; i > 0; i--) print l[i] }'); do
+		IFS=$tab
+		# shellcheck disable=SC2086 # fields separated by tabs, none empty
+		set -- $ur_line
+		IFS=$ur_oifs
+		set +f
+		case $1:$# in
+		file:5) undo_file "$2" "$3" "$4" "$5" ;;
+		dir:2) undo_dir "$2" ;;
+		line:3) undo_line "$2" "$3" ;;
+		mode:5) undo_mode "$2" "$3" "$4" "$5" ;;
+		sysctl:4) undo_sysctl "$2" "$3" "$4" ;;
+		unit:6) undo_unit "$2" "$3" "$4" "$5" "$6" ;;
+		pkg:2)
+			# shellcheck disable=SC2086 # package names, one word each
+			undo_pkg $2
+			;;
+		pending:2) left "the packages of an installation that was interrupted ($2): remove them by hand if they are not wanted" ;;
+		table:3) undo_table "$3" ;;
+		gen:2) [ ! -e "$2" ] || { rm -f "$2" && did "Removed $2"; } ;;
+		selinux:4) undo_selinux "$3" "$4" ;;
+		mount:4) undo_mount "$2" "$3" "$4" ;;
+		*) left "a record this script does not know ($1)" ;;
+		esac
+		IFS=$nl
+		set -f
+	done
+	set +f
+	IFS=$ur_oifs
+}
+
+# ---------------------------------------------------------------------------
+# Apply and undo, module by module
+#
+# Each apply_<module> runs after the module's check, reads what the check
+# left in M_TODO (and the firewall's ports), makes the changes through the
+# record functions above, and says what it did with did. On a failure it
+# calls abort, which puts back what the run changed; a guard that says no
+# calls refuse. Each undo_<module>_before and undo_<module>_after runs
+# around undo_records: what a module needs reloaded once its files are back.
+# A module without one needs nothing.
+
+# permissions
+
+apply_permissions() {
+	ap_oifs=$IFS
+	IFS=$nl
+	for ap_l in $M_TODO; do
+		IFS=$ap_oifs
+		ap_b=$(stat -L -c %a "${ap_l% *}")
+		if ! narrow_mode "${ap_l% *}" "${ap_l##* }"; then
+			abort "the mode of ${ap_l% *} could not be changed"
+			return
+		fi
+		did "${ap_l% *}: mode $(printf '%04o' "0$ap_b") to ${ap_l##* }"
+		IFS=$nl
+	done
+	IFS=$ap_oifs
+}
+
+# services
+
+# reload_first UNIT...: reloads the first of the units that runs.
+reload_first() {
+	for rf_u in "$@"; do
+		if unit_active "$rf_u"; then
+			t 60 systemctl reload "$rf_u" >/dev/null 2>&1 || t 60 systemctl restart "$rf_u" >/dev/null 2>&1
+			return
 		fi
 	done
+}
+reload_inetd() {
+	reload_first xinetd.service
+	reload_first openbsd-inetd.service inetutils-inetd.service inetd.service
+}
+
+apply_services() {
+	[ "$M_BAD" -gt 0 ] || return 0
+	sv_oifs=$IFS
+	IFS=$nl
+	set -f
+	for sv_e in $LEGACY_SERVICES; do
+		IFS=$sv_oifs
+		set +f
+		sv_name=${sv_e%%|*}
+		sv_rest=${sv_e#*|}
+		for sv_u in ${sv_rest%%|*}; do
+			unit_active "$sv_u" || unit_enabled "$sv_u" || continue
+			if ! rec_unit "$sv_u"; then
+				abort 'the record could not be written'
+				return
+			fi
+			unit_put "$sv_u" disabled inactive
+			after_unit "$sv_u"
+			if unit_active "$sv_u" || unit_enabled "$sv_u"; then
+				abort "$sv_u could not be stopped and disabled"
+				return
+			fi
+			did "Turned $sv_name off: stopped and disabled $sv_u"
+		done
+		for sv_x in ${sv_rest#*|}; do
+			for sv_f in /etc/xinetd.d/* /etc/xinetd.conf; do
+				{ [ -f "$sv_f" ] && xinetd_on "$sv_x"; } || continue
+				awk -v name="$sv_x" '
+				$1 == "service" { insvc = ($2 == name); seen = 0 }
+				insvc && $1 == "disable" { print "\tdisable\t\t= yes"; seen = 1; next }
+				insvc && $1 == "}" { if (!seen) print "\tdisable\t\t= yes"; insvc = 0 }
+				{ print }' "$sv_f" >"$sv_f.easyrmm-new"
+				[ "$(sha "$sv_f")" != "$(sha "$sv_f.easyrmm-new")" ] || {
+					rm -f "$sv_f.easyrmm-new"
+					continue
+				}
+				if ! write_edit "$sv_f"; then
+					abort "$sv_f could not be changed"
+					return
+				fi
+				did "Turned $sv_name off in xinetd: disable = yes in $sv_f"
+			done
+			if inetd_on "$sv_x"; then
+				sed "s/^\\([[:space:]]*${sv_x}[[:space:]]\\)/#<off by EasyRMM># \\1/" /etc/inetd.conf >/etc/inetd.conf.easyrmm-new
+				if ! write_edit /etc/inetd.conf; then
+					abort '/etc/inetd.conf could not be changed'
+					return
+				fi
+				did "Turned $sv_name off in /etc/inetd.conf (its line commented out)"
+			fi
+		done
+		IFS=$nl
+		set -f
+	done
+	set +f
+	IFS=$sv_oifs
+	tx_push reload_inetd
+	reload_inetd
+}
+undo_services_after() { reload_inetd; }
+
+# ---------------------------------------------------------------------------
+# Running the modules
+
+# check_module MODULE: the module's check, from begin_module on.
+check_module() {
+	begin_module "$1"
+	case $1 in
+	ssh) check_ssh ;;
+	firewall) check_firewall ;;
+	fail2ban) check_fail2ban ;;
+	kernel) check_kernel ;;
+	audit) check_audit ;;
+	permissions) check_permissions ;;
+	services) check_services ;;
+	kernel-modules) check_kernel_modules ;;
+	sudo) check_sudo ;;
+	time) check_time ;;
+	shared-memory) check_shared_memory ;;
+	usb-storage) check_usb_storage ;;
+	mac) check_mac ;;
+	integrity) check_integrity ;;
+	esac
+}
+
+# What is read once per check, read again after a module changed it.
+fresh_reads() {
+	SSHD_T_DONE=no
+	MODPROBE_READ=no
+	DOCKER_UNREAD=no
+	PROCS=$(cat /proc/[0-9]*/comm 2>/dev/null | sort -u)
+}
+
+# finish_change [recheck]: the module's result with what the run did; with
+# recheck, from a check made after the change.
+finish_change() {
+	fc_out=$M_OUTCOME
+	fc_why=$M_WHY
+	fc_done=$M_DONE
+	if [ $# -gt 0 ]; then
+		fresh_reads
+		check_module "$CUR"
+	fi
+	finish_module
+	fc_v=$(printf '%s' "$CUR" | tr '-' '_')
+	keep "O_$fc_v" "$fc_out"
+	keep "W_$fc_v" "$fc_why"
+	keep "D_$fc_v" "$fc_done"
+	say "$CUR: $fc_out. $fc_why"
+}
+
+# check_said PREFIX: the first of the check's changes that starts with
+# PREFIX ("Refused: " or "Left as it is: "), without it.
+check_said() { printf '%s\n' "$M_CHANGES" | sed -n "s/^$1//p" | head -n 1; }
+
+apply_module() {
+	module_record "$1"
+	check_module "$1"
+	settle_state
+	M_OUTCOME=
+	M_WHY=
+	M_DONE=
+	case $M_STATE in
+	not_applicable | managed_elsewhere | not_supported)
+		M_OUTCOME=skipped
+		M_WHY=$M_REASON
+		;;
+	failed)
+		M_OUTCOME=refused
+		M_WHY="The check failed: $M_REASON"
+		;;
+	*)
+		if [ "$M_BAD" -gt 0 ]; then
+			if ! tx_begin; then
+				M_OUTCOME=failed
+				M_WHY="$TX_DIR could not be written."
+			else
+				case $1 in
+				permissions) apply_permissions ;;
+				services) apply_services ;;
+				ssh | firewall | fail2ban | kernel | audit | kernel-modules | usb-storage | sudo | time | shared-memory | mac | integrity) refuse 'Apply of this module is not built yet.' ;;
+				esac
+			fi
+		fi
+		if [ -z "$M_OUTCOME" ]; then
+			# What the check said apply leaves, and why.
+			am_ref=$(check_said 'Refused: ')
+			am_left=$(check_said 'Left as it is: ')
+			if [ -n "$M_DONE" ]; then
+				M_OUTCOME=applied
+			elif [ -n "$am_ref" ]; then
+				M_OUTCOME=refused
+				M_WHY="Refused: $am_ref."
+			else
+				M_OUTCOME=unchanged
+				[ -z "$am_left" ] || M_WHY="Left as it is: $am_left."
+			fi
+			if [ "$M_OUTCOME" = applied ]; then
+				printf '%s\n' "$M_CHANGES" | grep -E '^(Refused|Left as it is): ' >"$TX_DIR/left" 2>/dev/null
+				while IFS= read -r am_l; do did "$am_l"; done <"$TX_DIR/left"
+			fi
+			# A record left by a run that was cut short is whole again once
+			# the module is as apply leaves it.
+			[ -e "$MD/done" ] || [ ! -e "$MD/intent" ] || INTENT=yes
+			mark_done
+		fi
+		;;
+	esac
+	case $M_OUTCOME in
+	skipped | refused) finish_change ;;
+	*) finish_change recheck ;;
+	esac
+}
+
+undo_module() {
+	module_record "$1"
+	M_OUTCOME=
+	M_WHY=
+	M_DONE=
+	M_LEFT=no
+	um_format=$(sed -n '1s/^format \([0-9][0-9]*\)$/\1/p' "$MANIFEST" 2>/dev/null)
+	if [ ! -s "$MANIFEST" ]; then
+		M_OUTCOME=nothing_to_undo
+		M_WHY='EasyRMM has no record of applying this module here.'
+		# An apply cut short before its first record left only its intent.
+		rm -rf "$MD"
+	elif [ -z "$um_format" ] || [ "$um_format" -gt "$FORMAT" ]; then
+		M_OUTCOME=refused
+		M_WHY="The record was written by a later release of this script (format ${um_format:-unknown}); undo with that release."
+	elif ! tx_begin || ! intent; then
+		M_OUTCOME=failed
+		M_WHY="$STATE_DIR could not be written."
+	else
+		undo_records
+		case $1 in
+		services) undo_services_after ;;
+		esac
+		if [ -z "$M_OUTCOME" ]; then
+			# Undone: the record is used up, and the next apply takes
+			# fresh copies.
+			rm -rf "$MD"
+			M_OUTCOME=undone
+			[ "$M_LEFT" = no ] || M_OUTCOME=partly_undone
+			[ -n "$M_DONE" ] || did 'Everything EasyRMM recorded was already as it was before apply; the record was removed'
+		fi
+	fi
+	CUR=$1
+	finish_change recheck
+}
+
+# Apply and undo run one at a time on a computer. The lock names the run
+# that holds it: its process ID and start time (so that a later process
+# given the same ID does not hold it).
+LOCK_DIR=$STATE_DIR/lock
+LOCK_HELD=no
+# proc_start PID: the process's start time, if it runs (a zombie does not).
+proc_start() {
+	sed -n 's/^.*) \([^ ]*\)\( [^ ]*\)\{18\} \([0-9]*\) .*$/\1 \3/p' "/proc/$1/stat" 2>/dev/null | awk '$1 != "Z" { print $2 }'
+}
+take_lock() {
+	if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+		tl_id=$(cat "$LOCK_DIR/pid" 2>/dev/null)
+		case $tl_id in
+		[0-9]*' '[0-9]*)
+			[ "$(proc_start "${tl_id% *}")" != "${tl_id#* }" ] || return 1
+			;;
+		*)
+			# Taken a moment ago, or by a run killed before it wrote its
+			# number: stale after ten minutes.
+			[ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +10 2>/dev/null)" ] || return 1
+			;;
+		esac
+		rm -rf "$LOCK_DIR" && mkdir "$LOCK_DIR" 2>/dev/null || return 1
+	fi
+	LOCK_HELD=yes
+	printf '%s %s\n' "$$" "$(proc_start $$)" >"$LOCK_DIR/pid"
+}
+release() {
+	[ "$LOCK_HELD" = yes ] || return 0
+	rm -rf "$TX_DIR"
+	# Nothing recorded any more: nothing of EasyRMM's is left here.
+	if [ -z "$(ls -A "$STATE_DIR/modules" 2>/dev/null)" ]; then
+		rm -rf "$STATE_DIR"
+	else
+		rm -rf "$LOCK_DIR"
+	fi
+	LOCK_HELD=no
+}
+
+# change_all: apply or undo every chosen module (undo last first).
+change_all() {
+	ca_mods=$SELECTED
+	if [ "$MODE" = undo ]; then
+		# shellcheck disable=SC2086 # module names, one word each
+		ca_mods=$(printf '%s\n' $SELECTED | awk '{ l[NR] = $0 } END { for (i = NR; i > 0; i--) print l[i] }')
+	fi
+	ca_why=
+	case $SUPPORT in
+	check_only) ca_why="This release is checked only: $MODE runs on the releases EasyRMM was tested on." ;;
+	unsupported) ca_why="This distribution or release is not supported: $MODE runs on the releases EasyRMM was tested on." ;;
+	esac
+	if [ -z "$ca_why" ]; then
+		if ! (umask 077 && mkdir -p "$STATE_DIR/modules") || ! chmod 700 "$STATE_DIR"; then
+			ca_why="$STATE_DIR could not be created."
+		elif ! take_lock; then
+			ca_why='Another EasyRMM hardening run is changing this computer; try again when it has finished.'
+		fi
+	fi
+	if [ -n "$ca_why" ]; then
+		# Not supported here: nothing is checked either. Otherwise each
+		# module is checked, and changes nothing.
+		for ca_m in $SELECTED; do
+			M_OUTCOME=refused
+			M_WHY=$ca_why
+			M_DONE=
+			CUR=$ca_m
+			if [ "$SUPPORT" = full ]; then
+				finish_change recheck
+			else
+				begin_module "$ca_m"
+				M_STATE=not_supported
+				reason "$ca_why"
+				M_OUTCOME=skipped
+				finish_change
+			fi
+		done
+		return
+	fi
+	trap 'release' EXIT
+	trap 'exit 143' TERM INT HUP
+	# A copy of this script, for undo on the computer without the agent.
+	if [ -f "$0" ] && [ "$(sha "$0")" != "$(sha "$STATE_DIR/easyrmm-hardening.sh")" ]; then
+		cp "$0" "$STATE_DIR/easyrmm-hardening.sh.new" && chmod 700 "$STATE_DIR/easyrmm-hardening.sh.new" &&
+			mv -f "$STATE_DIR/easyrmm-hardening.sh.new" "$STATE_DIR/easyrmm-hardening.sh"
+	fi
+	for ca_m in $ca_mods; do
+		case $MODE in
+		apply) apply_module "$ca_m" ;;
+		undo) undo_module "$ca_m" ;;
+		esac
+	done
+	release
+	trap - EXIT TERM INT HUP
 }
 
 # ---------------------------------------------------------------------------
@@ -2135,6 +3212,16 @@ render_module() {
 			;;
 		esac
 	fi
+	# What apply or undo did.
+	rm_o=$(kept "O_$rm_v")
+	if [ -n "$rm_o" ]; then
+		rm_out="$rm_out,\"outcome\":\"$rm_o\""
+		rm_a=$(kept "W_$rm_v")
+		[ -z "$rm_a" ] || rm_out="$rm_out,\"outcomeReason\":$(jstr "$rm_a" 300)"
+		rm_a=$(jarr "$(kept "D_$rm_v")" "$2" "$3" yes)
+		[ -z "$rm_a" ] || rm_out="$rm_out,\"done\":$rm_a"
+	fi
+	[ "$(kept "RC_$rm_v")" != yes ] || rm_out="$rm_out,\"recorded\":true"
 	printf '%s}' "$rm_out"
 }
 
@@ -2147,38 +3234,26 @@ render() {
 	for rr_mod in $SELECTED; do
 		rr_m="$rr_m,$(render_module "$rr_mod" "$1" "$2")"
 	done
-	printf '{"version":1,"mode":"check","platform":{%s},"modules":[%s]}' "$rr_p" "${rr_m#,}"
+	printf '{"version":1,"mode":"%s","platform":{%s},"modules":[%s]}' "$MODE" "$rr_p" "${rr_m#,}"
 }
 
 # ---------------------------------------------------------------------------
-# Check
+# Check, apply or undo
 
-say "EasyRMM hardening check: ${OS_ID:-unknown} ${OS_VERSION:-} ($FAMILY family; container: $CONTAINER; support: $SUPPORT)."
+say "EasyRMM hardening $MODE: ${OS_ID:-unknown} ${OS_VERSION:-} ($FAMILY family; container: $CONTAINER; support: $SUPPORT)."
 case $SUPPORT in
 check_only) say 'This release is checked only: apply and undo do not run on it.' ;;
 unsupported) say 'This distribution or release is not supported: apply and undo do not run on it.' ;;
 esac
 
-for mod in $SELECTED; do
-	begin_module "$mod"
-	case $mod in
-	ssh) check_ssh ;;
-	firewall) check_firewall ;;
-	fail2ban) check_fail2ban ;;
-	kernel) check_kernel ;;
-	audit) check_audit ;;
-	permissions) check_permissions ;;
-	services) check_services ;;
-	kernel-modules) check_kernel_modules ;;
-	sudo) check_sudo ;;
-	time) check_time ;;
-	shared-memory) check_shared_memory ;;
-	usb-storage) check_usb_storage ;;
-	mac) check_mac ;;
-	integrity) check_integrity ;;
-	esac
-	finish_module
-done
+if [ "$MODE" = check ]; then
+	for mod in $SELECTED; do
+		check_module "$mod"
+		finish_module
+	done
+else
+	change_all
+fi
 
 # The last line: within 64 KiB, with fewer and shorter list entries if the
 # full lists would not fit. The last attempt has no lists, only reasons.

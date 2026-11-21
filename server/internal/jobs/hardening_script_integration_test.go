@@ -10,8 +10,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,10 +27,12 @@ import (
 // Where the script is mounted, read-only, in each container.
 const scriptPath = "/opt/easyrmm/linux.sh"
 
-// TestCheckInContainers runs `linux.sh check` in a container of each
+// TestCheckInContainers runs `linux.sh` in a container of each
 // distribution in EASYRMM_TEST_HARDENING_IMAGES (pinned in the Makefile),
-// with no network, as root, with the script mounted read-only. Containers
-// exercise the container path only; machines are ADR-0051's main test.
+// with no network, as root, with the script mounted read-only: check, then
+// apply and undo of what a container leaves them to do. Containers
+// exercise the container path, the record and its interruptions; machines
+// are ADR-0051's main test.
 func TestCheckInContainers(t *testing.T) {
 	images := strings.Fields(os.Getenv("EASYRMM_TEST_HARDENING_IMAGES"))
 	if len(images) == 0 {
@@ -48,6 +52,10 @@ func TestCheckInContainers(t *testing.T) {
 			scriptOptions(t, c)
 			scriptListeningPorts(t, c)
 			scriptJournal(t, c)
+			scriptApplyUndo(t, c)
+			scriptInterrupted(t, c)
+			scriptFailures(t, c)
+			scriptPackagesLeft(t, c)
 			scriptPlatforms(t, c)
 		})
 	}
@@ -170,8 +178,8 @@ func scriptUsageErrors(t *testing.T, c *scriptContainer) {
 	for _, args := range [][]string{
 		{},
 		{"check"},
-		{"apply", "all"},
-		{"undo", "all"},
+		{"undo", "all", "allow-tcp=22"},
+		{"undo", "ssh", "password-off"},
 		{"status", "all"},
 		{"CHECK", "all"},
 		{"check", ""},
@@ -211,9 +219,11 @@ func scriptUsageErrors(t *testing.T, c *scriptContainer) {
 			t.Errorf("%q: exit %d, stdout %q, stderr %q; want exit 2 with a message", args, code, out, errOut)
 		}
 	}
-	out, errOut, code := c.runAs(t, "65534:65534", "sh", scriptPath, "check", "all")
-	if code != 3 || strings.TrimSpace(errOut) == "" || strings.Contains(out, HardeningResultPrefix) {
-		t.Errorf("not root: exit %d, stdout %q, stderr %q; want exit 3 with a message", code, out, errOut)
+	for _, mode := range []string{"check", "apply", "undo"} {
+		out, errOut, code := c.runAs(t, "65534:65534", "sh", scriptPath, mode, "all")
+		if code != 3 || strings.TrimSpace(errOut) == "" || strings.Contains(out, HardeningResultPrefix) {
+			t.Errorf("%s, not root: exit %d, stdout %q, stderr %q; want exit 3 with a message", mode, code, out, errOut)
+		}
 	}
 }
 
@@ -244,38 +254,72 @@ func scriptOptions(t *testing.T, c *scriptContainer) {
 }
 
 // scriptListeningPorts: sockets listening outside loopback are ports apply would
-// leave open; loopback ones are not. Needs perl or python3 in the image to
-// listen with.
+// leave open; loopback ones are not, nor the client socket dhclient binds to
+// a random port besides 68 (a stand-in named dhclient binds both). Needs
+// perl or python3 in the image to listen with.
 func scriptListeningPorts(t *testing.T, c *scriptContainer) {
-	var listen []string
+	type sock struct {
+		addr string
+		port int
+		tcp  bool
+	}
+	var interpreter string
+	var listen func(sockets []sock) []string
 	switch {
 	case c.has(t, "perl"):
-		listen = []string{"perl", "-MIO::Socket::INET", "-e",
-			`my @s = (IO::Socket::INET->new(LocalAddr => "0.0.0.0:8443", Listen => 5),` +
-				`IO::Socket::INET->new(LocalAddr => "127.0.0.1:9999", Listen => 5),` +
-				`IO::Socket::INET->new(LocalAddr => "0.0.0.0:5355", Proto => "udp"),` +
-				`IO::Socket::INET->new(LocalAddr => "127.0.0.1:5356", Proto => "udp"));` +
-				`grep { !defined } @s and die; sleep 600`}
+		interpreter = "perl"
+		listen = func(sockets []sock) []string {
+			var s []string
+			for _, k := range sockets {
+				kind := `Proto => "udp"`
+				if k.tcp {
+					kind = "Listen => 5"
+				}
+				s = append(s, fmt.Sprintf(`IO::Socket::INET->new(LocalAddr => "%s:%d", %s)`, k.addr, k.port, kind))
+			}
+			return []string{"-MIO::Socket::INET", "-e", "my @s = (" + strings.Join(s, ", ") + "); grep { !defined } @s and die; sleep 600"}
+		}
 	case c.has(t, "python3"):
-		listen = []string{"python3", "-c",
-			"import socket, time\n" +
-				"for a, p, k in ((\"0.0.0.0\", 8443, 1), (\"127.0.0.1\", 9999, 1), (\"0.0.0.0\", 5355, 2), (\"127.0.0.1\", 5356, 2)):\n" +
-				"    s = socket.socket(socket.AF_INET, k); s.bind((a, p))\n" +
-				"    s.listen() if k == 1 else None\n" +
-				"    globals()[str(p)] = s\n" +
+		interpreter = "python3"
+		listen = func(sockets []sock) []string {
+			var s []string
+			for _, k := range sockets {
+				kind := "socket.SOCK_DGRAM"
+				if k.tcp {
+					kind = "socket.SOCK_STREAM"
+				}
+				s = append(s, fmt.Sprintf("(%q, %d, %s)", k.addr, k.port, kind))
+			}
+			return []string{"-c", "import socket, time\nkeep = []\n" +
+				"for a, p, kind in (" + strings.Join(s, ", ") + ",):\n" +
+				"    s = socket.socket(socket.AF_INET, kind); s.bind((a, p))\n" +
+				"    s.listen() if kind == socket.SOCK_STREAM else None\n" +
+				"    keep.append(s)\n" +
 				"time.sleep(600)\n"}
+		}
 	default:
 		t.Log("no perl or python3 in this image to listen with: listening ports not tested here")
 		return
 	}
-	docker(t, append([]string{"exec", "-d", c.name}, listen...)...)
-	// 8443 is 20FB in the kernel's socket table.
-	deadline := time.Now().Add(10 * time.Second)
-	for !strings.Contains(docker(t, "exec", c.name, "cat", "/proc/net/tcp"), ":20FB ") {
-		if time.Now().After(deadline) {
-			t.Fatal("the test listener did not start")
+	// The kernel names a process after the file it runs: here a link named
+	// dhclient.
+	c.sh(t, `ln -sf "$(command -v `+interpreter+`)" /tmp/dhclient`)
+	for _, l := range []struct {
+		run, table string
+		ready      int
+		socks      []sock
+	}{
+		{interpreter, "tcp", 8443, []sock{{"0.0.0.0", 8443, true}, {"127.0.0.1", 9999, true}, {"0.0.0.0", 5355, false}, {"127.0.0.1", 5356, false}}},
+		{"/tmp/dhclient", "udp", 41234, []sock{{"0.0.0.0", 68, false}, {"0.0.0.0", 41234, false}}},
+	} {
+		docker(t, append([]string{"exec", "-d", c.name, l.run}, listen(l.socks)...)...)
+		deadline := time.Now().Add(10 * time.Second)
+		for !strings.Contains(docker(t, "exec", c.name, "cat", "/proc/net/"+l.table), fmt.Sprintf(":%04X ", l.ready)) {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s did not start listening", l.run)
+			}
+			time.Sleep(200 * time.Millisecond)
 		}
-		time.Sleep(200 * time.Millisecond)
 	}
 	out, errOut, code := c.run(t, "sh", scriptPath, "check", "firewall")
 	if code != 0 {
@@ -283,7 +327,8 @@ func scriptListeningPorts(t *testing.T, c *scriptContainer) {
 	}
 	fw := scriptModule(t, parseScriptResult(t, out, []string{"firewall"}), "firewall")
 	if fw.Ports == nil || !slices.Contains(fw.Ports.TCP, "8443") || slices.Contains(fw.Ports.TCP, "9999") ||
-		!slices.Contains(fw.Ports.UDP, "5355") || slices.Contains(fw.Ports.UDP, "5356") {
+		!slices.Contains(fw.Ports.UDP, "5355") || slices.Contains(fw.Ports.UDP, "5356") ||
+		!slices.Contains(fw.Ports.UDP, "68") || slices.Contains(fw.Ports.UDP, "41234") {
 		t.Errorf("listening ports: %+v", fw.Ports)
 	}
 }
@@ -305,6 +350,238 @@ func scriptJournal(t *testing.T, c *scriptContainer) {
 	}
 	if m := scriptModule(t, r, "kernel"); m.State == "half_applied" {
 		t.Errorf("kernel with an intent and a done mark: %+v", m)
+	}
+}
+
+// The record apply keeps, and the copy of the script undo can run without
+// the agent.
+const (
+	stateDir   = "/var/lib/easyrmm-hardening"
+	scriptCopy = stateDir + "/easyrmm-hardening.sh"
+)
+
+// scriptApplyUndo: apply and undo every module in a container, where most
+// are not applicable and the network is off, so that only permissions has
+// something to apply. What apply changes is recorded with a copy of the
+// script; a second apply changes nothing; undo, run from that copy, puts
+// back what is still as apply left it, leaves what an administrator
+// changed since, and removes the record.
+func scriptApplyUndo(t *testing.T, c *scriptContainer) {
+	c.sh(t, "rm -rf "+stateDir+" && chmod 0666 /etc/passwd /etc/group")
+	sum := sha256.Sum256([]byte(hardeningScript))
+	scriptSum := hex.EncodeToString(sum[:]) + "  -\n"
+	out := c.script(t, "apply", "all")
+	r := parseScriptOutcome(t, out, HardeningApply, HardeningModules)
+	for _, m := range r.Modules {
+		switch {
+		case m.Module == "permissions":
+			if m.Outcome != HardeningApplied || m.State != HardeningInPlace || !m.Recorded ||
+				!slices.Contains(m.Done, "/etc/passwd: mode 0666 to 0644") || !slices.Contains(m.Done, "/etc/group: mode 0666 to 0644") {
+				t.Errorf("permissions: %+v", m)
+			}
+		case slices.Contains([]string{"firewall", "integrity", "kernel"}, m.Module):
+			// Their apply is not built yet.
+			if m.Outcome != HardeningRefused || !strings.Contains(m.OutcomeReason, "not built yet") {
+				t.Errorf("%s: %+v", m.Module, m)
+			}
+		case slices.Contains(containerNotApplicable, m.Module):
+			if m.Outcome != HardeningSkipped {
+				t.Errorf("%s in a container: %+v", m.Module, m)
+			}
+		case m.Outcome == HardeningApplied || m.Recorded:
+			t.Errorf("%s applied in a container without a network: %+v", m.Module, m)
+		}
+	}
+	c.wantModes(t, "644 /etc/passwd", "644 /etc/group")
+	if got := c.sh(t, "stat -c '%a' "+stateDir+" && ls "+stateDir+" "+stateDir+"/modules && sha256sum <"+scriptPath+" && sha256sum <"+scriptCopy); got !=
+		"700\n"+stateDir+":\neasyrmm-hardening.sh\nmodules\n\n"+stateDir+"/modules:\npermissions\n"+scriptSum+scriptSum {
+		t.Errorf("the record after apply:\n%s", got)
+	}
+
+	// Applying again changes nothing; check sees the record.
+	m := scriptModule(t, parseScriptOutcome(t, c.script(t, "apply", "permissions"), HardeningApply, []string{"permissions"}), "permissions")
+	if m.Outcome != HardeningUnchanged || len(m.Done) != 0 || !m.Recorded {
+		t.Errorf("permissions applied again: %+v", m)
+	}
+	m = scriptModule(t, parseScriptResult(t, c.script(t, "check", "permissions"), []string{"permissions"}), "permissions")
+	if m.State != HardeningInPlace || !m.Recorded {
+		t.Errorf("permissions checked after apply: %+v", m)
+	}
+
+	// An administrator narrows /etc/group further: undo leaves it.
+	c.sh(t, "chmod 0600 /etc/group")
+	out, errOut, code := c.run(t, "sh", scriptCopy, "undo", "all")
+	if code != 0 {
+		t.Fatalf("undo from the copy: exit %d\n%s\n%s", code, out, errOut)
+	}
+	r = parseScriptOutcome(t, out, HardeningUndo, HardeningModules)
+	for _, m := range r.Modules {
+		if m.Module == "permissions" {
+			if m.Outcome != HardeningPartlyUndone || m.Recorded || !slices.Contains(m.Done, "/etc/passwd: mode 0644 back to 0666") ||
+				!slices.Contains(m.Done, "Left as it is: the mode of /etc/group, changed since apply") {
+				t.Errorf("permissions undone: %+v", m)
+			}
+		} else if m.Outcome != HardeningNothingToUndo {
+			t.Errorf("%s undone without a record: %+v", m.Module, m)
+		}
+	}
+	c.wantModes(t, "666 /etc/passwd", "600 /etc/group")
+	c.wantGone(t, stateDir)
+	r = parseScriptOutcome(t, c.script(t, "undo", "all"), HardeningUndo, HardeningModules)
+	for _, m := range r.Modules {
+		if m.Outcome != HardeningNothingToUndo {
+			t.Errorf("%s undone twice: %+v", m.Module, m)
+		}
+	}
+	c.wantGone(t, stateDir)
+	c.sh(t, "chmod 0644 /etc/passwd /etc/group")
+}
+
+// slowChmod makes chmod in the container wait five minutes before it
+// changes /etc/passwd, so that a run can be caught in the middle of a
+// module; failChmod makes it fail for /etc/group. The script's PATH puts
+// /usr/local/sbin first.
+const (
+	slowChmod = "printf '%s\\n' '#!/bin/sh' 'case \"$*\" in *\" /etc/passwd\") : >/tmp/slow; sleep 300 ;; esac' 'exec /bin/chmod \"$@\"' " +
+		">/usr/local/sbin/chmod && /bin/chmod 0755 /usr/local/sbin/chmod && rm -f /tmp/slow"
+	failChmod = "printf '%s\\n' '#!/bin/sh' 'case \"$*\" in *\" /etc/group\") echo refused by the test >&2; exit 1 ;; esac' 'exec /bin/chmod \"$@\"' " +
+		">/usr/local/sbin/chmod && /bin/chmod 0755 /usr/local/sbin/chmod"
+)
+
+// interrupt starts `apply permissions` in a process group of its own, waits
+// until it is changing /etc/passwd, and sends the group SIGNAL, as a job's
+// timeout or cancel does (SIGTERM, then SIGKILL ten seconds later).
+func (c *scriptContainer) interrupt(t *testing.T, signal string) {
+	t.Helper()
+	c.sh(t, slowChmod)
+	docker(t, "exec", "-d", c.name, "setsid", "sh", "-c", "echo $$ >/tmp/pgid; exec sh "+scriptPath+" apply permissions")
+	c.waitFor(t, "/tmp/slow")
+	c.sh(t, "kill -"+signal+" -$(cat /tmp/pgid)")
+	// Ended: gone, or a zombie (the container's PID 1, sleep, reaps
+	// nothing).
+	c.waitUntil(t, `p=$(cat /tmp/pgid); test ! -e /proc/$p || test "$(cut -d' ' -f3 /proc/$p/stat)" = Z`, "the run to end")
+	c.sh(t, "rm -f /usr/local/sbin/chmod /tmp/slow /tmp/pgid")
+}
+
+// scriptInterrupted: a run killed in the middle of a module leaves it half
+// applied; the lock a killed run left does not stop the next; apply then
+// finishes the module, and undo reverses it to the state before the first,
+// interrupted apply. Undo of a module whose only run was killed puts back
+// what it recorded.
+func scriptInterrupted(t *testing.T, c *scriptContainer) {
+	c.sh(t, "rm -rf "+stateDir+" && chmod 0666 /etc/passwd")
+	for _, signal := range []string{"KILL", "TERM"} {
+		c.interrupt(t, signal)
+		m := scriptModule(t, parseScriptResult(t, c.script(t, "check", "permissions"), []string{"permissions"}), "permissions")
+		if m.State != HardeningHalfApplied || !m.Recorded {
+			t.Errorf("after SIG%s: %+v", signal, m)
+		}
+		if signal == "TERM" {
+			// The run released its lock as it ended.
+			c.wantGone(t, stateDir+"/lock")
+		}
+	}
+	c.wantModes(t, "666 /etc/passwd")
+
+	m := scriptModule(t, parseScriptOutcome(t, c.script(t, "apply", "permissions"), HardeningApply, []string{"permissions"}), "permissions")
+	if m.Outcome != HardeningApplied || m.State != HardeningInPlace {
+		t.Errorf("apply after the interruptions: %+v", m)
+	}
+	c.wantModes(t, "644 /etc/passwd")
+	m = scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "permissions"), HardeningUndo, []string{"permissions"}), "permissions")
+	if m.Outcome != HardeningUndone || !slices.Contains(m.Done, "/etc/passwd: mode 0644 back to 0666") {
+		t.Errorf("undo after the interruptions: %+v", m)
+	}
+	c.wantModes(t, "666 /etc/passwd")
+	c.wantGone(t, stateDir)
+
+	c.interrupt(t, "KILL")
+	m = scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "permissions"), HardeningUndo, []string{"permissions"}), "permissions")
+	if m.Outcome != HardeningUndone || m.State == HardeningHalfApplied || m.Recorded {
+		t.Errorf("undo of an interrupted apply: %+v", m)
+	}
+	c.wantModes(t, "666 /etc/passwd")
+	c.wantGone(t, stateDir)
+	c.sh(t, "chmod 0644 /etc/passwd")
+}
+
+// scriptFailures: a module that fails part way is put back as it was before
+// the run; another run holding the lock refuses every module; a record from
+// a later release of the script is refused, not misread.
+func scriptFailures(t *testing.T, c *scriptContainer) {
+	c.sh(t, "rm -rf "+stateDir+" && chmod 0666 /etc/passwd /etc/group && "+failChmod)
+	m := scriptModule(t, parseScriptOutcome(t, c.script(t, "apply", "permissions"), HardeningApply, []string{"permissions"}), "permissions")
+	if m.Outcome != HardeningOutcomeFailed || !strings.Contains(m.OutcomeReason, "/etc/group") || !strings.Contains(m.OutcomeReason, "put back") ||
+		m.Recorded || len(m.Done) != 0 {
+		t.Errorf("a failed apply: %+v", m)
+	}
+	c.sh(t, "rm -f /usr/local/sbin/chmod")
+	// /etc/passwd, changed before /etc/group failed, is put back.
+	c.wantModes(t, "666 /etc/passwd", "666 /etc/group")
+	c.wantGone(t, stateDir)
+
+	// Another run holds the lock (PID 1 runs as long as the container).
+	c.sh(t, "mkdir -p "+stateDir+"/lock && echo 1 $(cut -d' ' -f22 /proc/1/stat) >"+stateDir+"/lock/pid")
+	r := parseScriptOutcome(t, c.script(t, "apply", "permissions,services"), HardeningApply, []string{"permissions", "services"})
+	for _, m := range r.Modules {
+		if m.Outcome != HardeningRefused || !strings.Contains(m.OutcomeReason, "Another EasyRMM hardening run") {
+			t.Errorf("%s while another run holds the lock: %+v", m.Module, m)
+		}
+	}
+	c.wantModes(t, "666 /etc/passwd")
+	c.sh(t, "rm -rf "+stateDir)
+
+	// A record of format 2.
+	c.sh(t, "mkdir -p "+stateDir+"/modules/permissions && printf 'format 2\\nmode\\t/etc/passwd\\t600\\troot:root\\t666\\n' >"+stateDir+
+		"/modules/permissions/manifest && date >"+stateDir+"/modules/permissions/done")
+	m = scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "permissions"), HardeningUndo, []string{"permissions"}), "permissions")
+	if m.Outcome != HardeningRefused || !strings.Contains(m.OutcomeReason, "format 2") || !m.Recorded {
+		t.Errorf("undo of a later format: %+v", m)
+	}
+	c.wantModes(t, "666 /etc/passwd")
+	c.sh(t, "rm -rf "+stateDir+" && chmod 0644 /etc/passwd /etc/group")
+}
+
+// scriptPackagesLeft: undo removes a package apply installed only when
+// that removes nothing else, and says why it left one. A record names a
+// package others need, then one the package manager fails to remove (a
+// stand-in, first in the script's PATH, refuses). Both stay installed.
+func scriptPackagesLeft(t *testing.T, c *scriptContainer) {
+	const left = "Left as it is: the packages it installed ("
+	// name prints a package's name as the script records it.
+	manager, name := "apt-get", "dpkg-query -W -f='${binary:Package}' "
+	cases := []struct{ pkg, refuse, why string }{
+		// apt-get refuses to simulate it: essential packages need it.
+		{"libc6", "", "): the package manager could not remove them: E: "},
+		{"e2fsprogs", `*" -s "*) ;; *" remove "*) echo 'E: refused by the test' >&2; exit 100 ;;`,
+			"): the package manager could not remove them: E: refused by the test"},
+	}
+	if !c.has(t, "dpkg-query") {
+		manager, name = "rpm", "rpm -q --qf '%{NAME}.%{ARCH}' "
+		cases = []struct{ pkg, refuse, why string }{
+			{"glibc", "", "), because removing them would remove other packages too"},
+			{"tar", `*" --test "*) ;; *" -e "*) echo 'error: refused by the test' >&2; exit 1 ;;`,
+				"): the package manager could not remove them: error: refused by the test"},
+		}
+	}
+	for _, tc := range cases {
+		pkg := strings.TrimSpace(c.sh(t, name+tc.pkg))
+		c.sh(t, "rm -rf "+stateDir+" && mkdir -p "+stateDir+"/modules/sudo && printf 'format 1\\npkg\\t%s\\n' "+pkg+" >"+stateDir+
+			"/modules/sudo/manifest && date >"+stateDir+"/modules/sudo/done")
+		if tc.refuse != "" {
+			c.sh(t, "printf '%s\\n' '#!/bin/sh' 'case \" $* \" in "+strings.ReplaceAll(tc.refuse, "'", `'"'"'`)+" esac' 'exec /usr/bin/"+manager+
+				" \"$@\"' >/usr/local/sbin/"+manager+" && chmod 0755 /usr/local/sbin/"+manager)
+		}
+		m := scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "sudo"), HardeningUndo, []string{"sudo"}), "sudo")
+		c.sh(t, "rm -f /usr/local/sbin/"+manager)
+		want := left + pkg + tc.why
+		if m.Outcome != HardeningPartlyUndone || m.Recorded || !slices.ContainsFunc(m.Done, func(d string) bool { return strings.HasPrefix(d, want) }) {
+			t.Errorf("undo with %s recorded: %+v, want %q", pkg, m, want)
+		}
+		if got := strings.TrimSpace(c.sh(t, name+tc.pkg)); got != pkg {
+			t.Errorf("%s after undo: %q", pkg, got)
+		}
+		c.wantGone(t, stateDir)
 	}
 }
 
@@ -352,6 +629,65 @@ func (c *scriptContainer) runAs(t *testing.T, user string, args ...string) (stri
 	default:
 		t.Fatalf("docker exec %q: %v\n%s", args, err, errOut)
 		return "", "", -1
+	}
+}
+
+// sh runs a shell script in the container as root; it must succeed.
+func (c *scriptContainer) sh(t *testing.T, script string) string {
+	t.Helper()
+	out, errOut, code := c.run(t, "sh", "-c", script)
+	if code != 0 {
+		t.Fatalf("%s: exit %d\n%s\n%s", script, code, out, errOut)
+	}
+	return out
+}
+
+// script runs the hardening script; it must exit 0.
+func (c *scriptContainer) script(t *testing.T, args ...string) string {
+	t.Helper()
+	out, errOut, code := c.run(t, append([]string{"sh", scriptPath}, args...)...)
+	if code != 0 {
+		t.Fatalf("%q: exit %d\nstdout:\n%s\nstderr:\n%s", args, code, out, errOut)
+	}
+	return out
+}
+
+// wantModes checks files' modes, each given as "MODE PATH".
+func (c *scriptContainer) wantModes(t *testing.T, want ...string) {
+	t.Helper()
+	for _, w := range want {
+		_, path, _ := strings.Cut(w, " ")
+		if got := strings.TrimSpace(c.sh(t, "stat -c '%a %n' "+path)); got != w {
+			t.Errorf("mode %q, want %q", got, w)
+		}
+	}
+}
+
+func (c *scriptContainer) wantGone(t *testing.T, path string) {
+	t.Helper()
+	if _, _, code := c.run(t, "test", "-e", path); code == 0 {
+		t.Errorf("%s is still there", path)
+	}
+}
+
+// waitFor waits for a path to appear.
+func (c *scriptContainer) waitFor(t *testing.T, path string) {
+	t.Helper()
+	c.waitUntil(t, "test -e "+path, path+" to appear")
+}
+
+// waitUntil waits for a shell test to succeed.
+func (c *scriptContainer) waitUntil(t *testing.T, test, what string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		if _, _, code := c.run(t, "sh", "-c", test); code == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("waited a minute for %s", what)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 

@@ -49,13 +49,30 @@ func TestHardeningInput(t *testing.T) {
 	if l, a := all.label(), all.args(); l != "Check hardening (every module)" || !slices.Equal(a, []string{"check", strings.Join(HardeningModules, ",")}) {
 		t.Errorf("every module: %q, %q", l, a)
 	}
+	apply := Hardening{Mode: HardeningApply, Modules: []string{"firewall", "ssh"}, Options: HardeningOptions{AllowTCP: []string{"443"}, PasswordOff: true}}
+	undo := Hardening{Mode: HardeningUndo, Modules: slices.Clone(HardeningModules)}
+	for _, h := range []*Hardening{&apply, &undo} {
+		f := apperr.Fields{}
+		h.check(f)
+		if err := f.Err(); err != nil {
+			t.Fatalf("%s: %v", h.Mode, err)
+		}
+	}
+	if l, a := apply.label(), apply.args(); l != "Apply hardening: ssh, firewall" || !slices.Equal(a, []string{"apply", "ssh,firewall", "allow-tcp=443", "password-off"}) {
+		t.Errorf("apply: %q, %q", l, a)
+	}
+	if l, a := undo.label(), undo.args(); l != "Undo hardening (every module)" || !slices.Equal(a, []string{"undo", strings.Join(HardeningModules, ",")}) {
+		t.Errorf("undo: %q, %q", l, a)
+	}
 
 	for name, c := range map[string]struct {
 		h     Hardening
 		field string
 	}{
-		"apply is not offered yet": {Hardening{Mode: "apply", Modules: []string{"ssh"}}, "mode"},
+		"an unknown mode":          {Hardening{Mode: "harden", Modules: []string{"ssh"}}, "mode"},
 		"no mode":                  {Hardening{Modules: []string{"ssh"}}, "mode"},
+		"undo with ports":          {Hardening{Mode: HardeningUndo, Modules: []string{"firewall"}, Options: HardeningOptions{AllowTCP: []string{"22"}}}, "options"},
+		"undo with a choice":       {Hardening{Mode: HardeningUndo, Modules: []string{"ssh"}, Options: HardeningOptions{PasswordOff: true}}, "options"},
 		"no module":                {Hardening{Mode: HardeningCheck}, "modules"},
 		"an unknown module":        {Hardening{Mode: HardeningCheck, Modules: []string{"ssh", "selinux; reboot"}}, "modules"},
 		"all is not a module":      {Hardening{Mode: HardeningCheck, Modules: []string{"all"}}, "modules"},
@@ -162,6 +179,7 @@ func TestParseHardeningResult(t *testing.T) {
 		"too many ports": with(func(m map[string]any) {
 			m["modules"] = []any{ssh, map[string]any{"module": "firewall", "state": "in_place", "ports": map[string]any{"udp": slices.Repeat([]string{"53"}, maxFindingItems+1)}}}
 		}),
+		"an outcome of a check": with(module(map[string]any{"outcome": "applied"})),
 	} {
 		if _, err := parseHardeningResult(out, job); !errors.Is(err, errHardeningResult) {
 			t.Errorf("%s: %v", name, err)
@@ -178,6 +196,57 @@ func TestParseHardeningResult(t *testing.T) {
 		_, err := parseHardeningResult(out, job)
 		if err == nil || strings.Contains(err.Error(), "marker-7f3a") || strings.Contains(err.Error(), "7317") {
 			t.Errorf("error %v", err)
+		}
+	}
+}
+
+func TestParseHardeningOutcomes(t *testing.T) {
+	platform := map[string]any{"id": "rocky", "versionId": "9.6", "family": "rhel", "container": "none", "support": "full"}
+	line := func(mode string, ssh map[string]any) string {
+		return result(t, map[string]any{"version": 1, "mode": mode, "platform": platform, "modules": []any{ssh}})
+	}
+	apply := Hardening{Mode: HardeningApply, Modules: []string{"ssh"}}
+	undo := Hardening{Mode: HardeningUndo, Modules: []string{"ssh"}}
+	r, err := parseHardeningResult(line("apply", map[string]any{
+		"module": "ssh", "state": "in_place", "outcome": "applied", "recorded": true,
+		"done": []string{"Wrote /etc/ssh/sshd_config.d/00-easyrmm-hardening.conf: MaxAuthTries 4", "Reloaded sshd.service"},
+	}), apply)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := r.Modules[0]; m.Outcome != HardeningApplied || !m.Recorded || len(m.Done) != 2 {
+		t.Errorf("apply %+v", m)
+	}
+	r, err = parseHardeningResult(line("undo", map[string]any{
+		"module": "ssh", "state": "partly", "outcome": "partly_undone", "outcomeReason": "",
+		"done": []string{"Left as it is: /etc/ssh/sshd_config, which was changed after EasyRMM's apply"},
+	}), undo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m := r.Modules[0]; m.Outcome != HardeningPartlyUndone || m.Recorded {
+		t.Errorf("undo %+v", m)
+	}
+	long := strings.Repeat("x", maxFindingText+1)
+	for name, c := range map[string]struct {
+		job Hardening
+		out string
+	}{
+		"apply without an outcome":    {apply, line("apply", map[string]any{"module": "ssh", "state": "in_place"})},
+		"an outcome of undo in apply": {apply, line("apply", map[string]any{"module": "ssh", "state": "in_place", "outcome": "undone"})},
+		"an outcome of apply in undo": {undo, line("undo", map[string]any{"module": "ssh", "state": "in_place", "outcome": "applied"})},
+		"an unknown outcome":          {undo, line("undo", map[string]any{"module": "ssh", "state": "in_place", "outcome": "reverted"})},
+		"an apply result for undo":    {undo, line("apply", map[string]any{"module": "ssh", "state": "in_place", "outcome": "applied"})},
+		"a reason too long": {apply, line("apply", map[string]any{
+			"module": "ssh", "state": "failed", "outcome": "failed", "outcomeReason": long,
+		})},
+		"an empty step": {apply, line("apply", map[string]any{"module": "ssh", "state": "in_place", "outcome": "applied", "done": []string{""}})},
+		"too many steps": {apply, line("apply", map[string]any{
+			"module": "ssh", "state": "in_place", "outcome": "applied", "done": slices.Repeat([]string{"x"}, maxFindingItems+1),
+		})},
+	} {
+		if _, err := parseHardeningResult(c.out, c.job); !errors.Is(err, errHardeningResult) {
+			t.Errorf("%s: %v", name, err)
 		}
 	}
 }

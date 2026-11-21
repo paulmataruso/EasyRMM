@@ -203,8 +203,13 @@ func TestHardeningJobs(t *testing.T) {
 	}
 	_, err = f.svc.CreateHardeningJob(f.ctx, viewer, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: HardeningCheck, Modules: []string{"ssh"}}})
 	fieldErr(t, err, "deviceIds", "You cannot check hardening on HQ-LNX.")
-	_, err = f.svc.CreateHardeningJob(f.ctx, tech, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: "apply", Modules: []string{"ssh"}}})
-	fieldErr(t, err, "mode", "check")
+	// Apply and undo need device.harden: Site Administrators and above.
+	for _, mode := range []string{HardeningApply, HardeningUndo} {
+		_, err = f.svc.CreateHardeningJob(f.ctx, tech, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: mode, Modules: []string{"ssh"}}})
+		fieldErr(t, err, "deviceIds", "You cannot "+mode+" hardening on HQ-LNX.")
+	}
+	_, err = f.svc.CreateHardeningJob(f.ctx, tech, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: "harden", Modules: []string{"ssh"}}})
+	fieldErr(t, err, "mode", "check, apply or undo")
 	_, err = f.svc.CreateHardeningJob(f.ctx, tech, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: HardeningCheck, Modules: []string{"ssh"}}, WaitHours: 1000})
 	fieldErr(t, err, "waitHours", "")
 
@@ -218,6 +223,54 @@ func TestHardeningJobs(t *testing.T) {
 	}
 	if !slices.Equal(ids, []uuid.UUID{failing.ID, later.ID, job.ID}) {
 		t.Errorf("hardening jobs %v", ids)
+	}
+
+	// A Site Administrator applies and undoes; what each run did is kept
+	// with the check that followed it.
+	siteAdmin := f.user("siteadmin@example.com", rbac.Assignment{Role: rbac.RoleSiteAdmin, OrganizationID: f.acme, SiteID: f.hq})
+	_, err = f.svc.CreateHardeningJob(f.ctx, siteAdmin, HardeningInput{DeviceIDs: []uuid.UUID{meshOnly}, Hardening: Hardening{Mode: HardeningApply, Modules: []string{"ssh"}}})
+	fieldErr(t, err, "deviceIds", "HQ-MESH has no EasyRMM agent to apply hardening.")
+	applied, err := f.svc.CreateHardeningJob(f.ctx, siteAdmin, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{
+		Mode: HardeningApply, Modules: []string{"firewall", "ssh"}, Options: HardeningOptions{AllowTCP: []string{"443"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied.ScriptName != "Apply hardening: ssh, firewall" || applied.ArgCount != 3 {
+		t.Errorf("apply job %+v", applied)
+	}
+	if args, err := f.svc.ReadArguments(f.ctx, siteAdmin, applied.ID); err != nil || !slices.Equal(args.Args, []string{"apply", "ssh,firewall", "allow-tcp=443"}) {
+		t.Errorf("apply job's arguments %+v, %v", args, err)
+	}
+	f.svc.now = func() time.Time { return time.Now().Add(2 * time.Minute) }
+	finish(lnx, runOf(applied, lnx), HardeningResultPrefix+`{"version":1,"mode":"apply","platform":`+platform+`,"modules":[`+
+		`{"module":"ssh","state":"in_place","outcome":"applied","done":["Wrote 00-easyrmm-hardening.conf","Reloaded ssh.service"],"recorded":true},`+
+		`{"module":"firewall","state":"managed_elsewhere","reason":"ufw is active.","outcome":"skipped","outcomeReason":"ufw is active."}]}`)
+	h, _ = f.svc.DeviceHardening(f.ctx, viewer, lnx)
+	if len(h.Modules) != 2 || h.Modules[0].State != HardeningInPlace || h.Modules[0].Outcome != HardeningApplied || !h.Modules[0].Recorded ||
+		!slices.Equal(h.Modules[0].Done, []string{"Wrote 00-easyrmm-hardening.conf", "Reloaded ssh.service"}) ||
+		h.Modules[1].Outcome != HardeningSkipped || h.Modules[1].OutcomeReason != "ufw is active." || *h.JobID != applied.ID {
+		t.Errorf("after apply: %+v", h)
+	}
+	_, err = f.svc.CreateHardeningJob(f.ctx, siteAdmin, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{
+		Mode: HardeningUndo, Modules: []string{"ssh"}, Options: HardeningOptions{AllowTCP: []string{"443"}},
+	}})
+	fieldErr(t, err, "options", "no options")
+	undone, err := f.svc.CreateHardeningJob(f.ctx, siteAdmin, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: HardeningUndo, Modules: []string{"ssh"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc.now = func() time.Time { return time.Now().Add(3 * time.Minute) }
+	finish(lnx, runOf(undone, lnx), HardeningResultPrefix+`{"version":1,"mode":"undo","platform":`+platform+`,"modules":[`+
+		`{"module":"ssh","state":"partly","missing":["LoginGraceTime 30"],"outcome":"undone","done":["Removed 00-easyrmm-hardening.conf"]}]}`)
+	h, _ = f.svc.DeviceHardening(f.ctx, viewer, lnx)
+	if len(h.Modules) != 2 || h.Modules[0].Outcome != HardeningUndone || h.Modules[0].Recorded || h.Modules[0].State != HardeningPartly ||
+		h.Modules[1].Outcome != HardeningSkipped || *h.Modules[1].JobID != applied.ID {
+		t.Errorf("after undo: %+v", h)
+	}
+	audited = f.str(`SELECT details::text FROM audit_log WHERE action = 'device.hardening' AND details->>'jobId' = $1`, undone.ID.String())
+	if !strings.Contains(audited, `"mode": "undo"`) {
+		t.Errorf("undo audit %s", audited)
 	}
 
 	// Removing a device removes what was found on it.
