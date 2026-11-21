@@ -86,13 +86,16 @@ clone: its Compose file builds the engine from `easypatch/`
 | EasyPatch agent | the agent, `shared/`, its build scripts and props | EasyPatch agent |
 | Contract | the engine's server and its build, EasyRMM's patching client, `go.mod`, `scripts/contract/` | EasyPatch contract |
 | Security | always | Security (CodeQL for Go, C# and JavaScript, gitleaks, …) |
+| Documentation | always | Documentation links |
 
 A change to `ci.yml` runs everything, as do the merge queue and manual runs.
 **CI result** is the one required check: it passes when every job passed or
 was skipped because its area did not change. Besides the tests, CI fails on
 formatting, lint and shellcheck findings, `go mod tidy` drift, coverage below
-a package's floor (`scripts/ci/check-coverage.sh`), new CodeQL alerts and
-findings of the Impeccable design detector.
+a package's floor (`scripts/ci/check-coverage.sh`), new CodeQL alerts,
+findings of the Impeccable design detector and a broken relative link or
+anchor in any Markdown file (`scripts/ci/check-md-links.py`; run it locally
+with `python3 -I scripts/ci/check-md-links.py`).
 
 ### The contract tests
 

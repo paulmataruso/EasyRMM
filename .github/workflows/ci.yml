@@ -282,10 +282,22 @@ jobs:
           # upload-artifact leaves out unless told otherwise.
           include-hidden-files: true
 
+  # Relative links and anchors in every Markdown file, for every change: a
+  # moved or renamed file breaks links in documents the change never touched.
+  docs:
+    name: Documentation links
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python3 -I scripts/ci/check-md-links.py .
+
   result:
     name: CI result
     if: always()
-    needs: [changes, backend, integration, frontend, docker, easypatch-server, easypatch-agent, contract, bundle, authentik, security]
+    needs: [changes, backend, integration, frontend, docker, easypatch-server, easypatch-agent, contract, bundle, authentik, security, docs]
     runs-on: ubuntu-latest
     steps:
       - name: Require every job to succeed or to have been skipped
