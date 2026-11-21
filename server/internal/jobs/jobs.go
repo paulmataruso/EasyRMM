@@ -26,9 +26,11 @@ import (
 // the caller can see.
 type Job struct {
 	ID uuid.UUID `json:"id"`
-	// Kind is KindScript or KindSoftware; Software is the software action.
+	// Kind is KindScript, KindSoftware or KindHardening; Software is the
+	// software action, Hardening what a hardening job does.
 	Kind           string     `json:"kind"`
 	Software       *Software  `json:"software"`
+	Hardening      *Hardening `json:"hardening"`
 	ScriptID       *uuid.UUID `json:"scriptId"`
 	ScriptName     string     `json:"scriptName"`
 	Shell          string     `json:"shell"`
@@ -231,14 +233,15 @@ func checkWait(f apperr.Fields, hours int) int {
 
 // spec is what a new job runs, and how its runs are audited.
 type spec struct {
-	kind     string
-	scriptID *uuid.UUID
-	software *Software
-	name     string
-	shell    string
-	body     string
-	args     []string
-	timeout  int
+	kind      string
+	scriptID  *uuid.UUID
+	software  *Software
+	hardening *Hardening
+	name      string
+	shell     string
+	body      string
+	args      []string
+	timeout   int
 	// auditAction and details describe each run in the audit log, with the
 	// device, job, script hash and timeout added.
 	auditAction string
@@ -260,10 +263,10 @@ func (s *Service) create(ctx context.Context, c access.Caller, ids []uuid.UUID, 
 		expires := now.Add(time.Duration(wait) * time.Hour)
 		sum := sha256.Sum256([]byte(sp.body))
 		if _, err := tx.Exec(ctx, `INSERT INTO jobs (id, script_id, script_name, shell, body, body_sha256, args, timeout_seconds,
-				expires_at, created_by, created_by_label, created_at, kind, software)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+				expires_at, created_by, created_by_label, created_at, kind, software, hardening)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 			jobID, sp.scriptID, sp.name, sp.shell, sp.body, sum[:], sp.args, sp.timeout, expires, nullUUID(c.Actor.ID),
-			truncateRunes(c.Actor.Label, 320), now, sp.kind, sp.software); err != nil {
+			truncateRunes(c.Actor.Label, 320), now, sp.kind, sp.software, sp.hardening); err != nil {
 			return err
 		}
 		for _, t := range targets {
@@ -423,12 +426,12 @@ type JobQuery struct {
 	Kind string
 }
 
-const jobColumns = `j.id, j.kind, j.software, j.script_id, j.script_name, j.shell, encode(j.body_sha256, 'hex'), j.args, j.timeout_seconds,
+const jobColumns = `j.id, j.kind, j.software, j.hardening, j.script_id, j.script_name, j.shell, encode(j.body_sha256, 'hex'), j.args, j.timeout_seconds,
 	j.expires_at, j.created_by_label, j.created_at`
 
 // jobDest is where jobColumns are scanned into.
 func jobDest(j *Job) []any {
-	return []any{&j.ID, &j.Kind, &j.Software, &j.ScriptID, &j.ScriptName, &j.Shell, &j.SHA256, &j.Args, &j.TimeoutSeconds,
+	return []any{&j.ID, &j.Kind, &j.Software, &j.Hardening, &j.ScriptID, &j.ScriptName, &j.Shell, &j.SHA256, &j.Args, &j.TimeoutSeconds,
 		&j.ExpiresAt, &j.CreatedBy, &j.CreatedAt}
 }
 
@@ -453,9 +456,9 @@ func (s *Service) ListJobs(ctx context.Context, c access.Caller, q JobQuery) ([]
 		return nil, apperr.Invalid("status", "Use open or finished.")
 	}
 	switch q.Kind {
-	case "", KindScript, KindSoftware:
+	case "", KindScript, KindSoftware, KindHardening:
 	default:
-		return nil, apperr.Invalid("kind", "Use script or software.")
+		return nil, apperr.Invalid("kind", "Use script, software or hardening.")
 	}
 	if !c.CanAnywhere(rbac.PermJobView) {
 		return []*Job{}, nil

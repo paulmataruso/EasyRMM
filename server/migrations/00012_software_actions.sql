@@ -17,6 +17,8 @@ CREATE INDEX jobs_kind_created ON jobs (kind, created_at DESC);
 
 -- +goose Down
 DROP INDEX jobs_kind_created;
+-- jobs forces row-level security, on its owner too.
+SELECT set_config('easyrmm.scope_all', 'on', true);
 DELETE FROM jobs WHERE kind = 'software';
 ALTER TABLE jobs
     DROP CONSTRAINT jobs_software_object,
