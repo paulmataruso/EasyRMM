@@ -42,8 +42,8 @@ What exists, and what it means here:
 * **`setup.sh` takes the install's options again** at every upgrade; with
   Authentik and no terminal it needs `--admin-email`. Run as root, it
   wrote in a directory Authentik's setup container can write, through any
-  link planted there (fixed before this ADR: it now writes Authentik's
-  files where only root can and renames them into place).
+  link planted there (fixed before this ADR, in #44: it now writes
+  Authentik's files where only root can and renames them into place).
 * **Two agent rollouts.** EasyRMM's server moves every agent whose build
   differs to its own build, older ones included (ADR-0027). The engine's
   worker, every two minutes, moves agents only to newer packages, where a
