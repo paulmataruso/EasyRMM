@@ -42,7 +42,7 @@ follows when these have been run there, or fixed:
 
 ## After 1.0.0
 
-How the next eight features work and the order they are built in is in
+How the next nine features work and the order they are built in is in
 [the feature plan](docs/architecture/feature-plan.md); each gets its ADR
 before its code.
 
@@ -53,6 +53,17 @@ before its code.
   with what each changes shown first. EasyRMM's own implementation, after
   studying [ultimate-sys-hardening](https://github.com/Kal1010101/ultimate-sys-hardening);
   safe for computers nobody is logged in to.
+* **Hardening Windows computers and servers** the same way
+  ([ADR-0054](docs/architecture/adr/0054-hardening-windows-computers-and-servers.md),
+  proposed): check, apply and undo modules such as the firewall, account
+  lockout, Microsoft Defender and attack surface reduction, SMBv1, NTLM,
+  LSA protection, Remote Desktop and UAC, with values from Microsoft's
+  security baselines and each setting cited by its DISA STIG rule. Each
+  module shows the NIST SP 800-53 and ISO/IEC 27001:2022 controls it
+  relates to, from published mappings, without claiming compliance.
+  Settings that Group Policy, Intune or OSConfig manage are reported and
+  left alone; Remote Desktop, WinRM and EasyRMM's agents are never cut
+  off, and restarts are left to the operator.
 * **Upgrading EasyRMM from the console.** Today an upgrade is
   [run on the server](docs/operations/upgrading.md). A small updater on
   the host (not the server, which never gets the Docker socket) checks a
