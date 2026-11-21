@@ -75,6 +75,12 @@ jobs:
         run: |
           go build -trimpath -o easyrmm-agent-windows-amd64.exe ./agent/cmd/easyrmm-agent
           ./easyrmm-agent-windows-amd64.exe version
+      # ADR-0049: what signtool makes, the agent just built included, is
+      # what the server's Authenticode reader accepts.
+      - name: Authenticode reader against signtool
+        env:
+          EASYRMM_AUTHENTICODE_PROGRAM: ${{ github.workspace }}\easyrmm-agent-windows-amd64.exe
+        run: go test -count=1 -v -run 'OnWindows' ./server/internal/agents/authenticode/
 
   build:
     name: Build server

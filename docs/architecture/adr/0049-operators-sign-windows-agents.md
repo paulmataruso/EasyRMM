@@ -1,6 +1,6 @@
 # ADR-0049: Operators sign the Windows agent with their own certificate
 
-* Status: Accepted (2026-11-20). Not implemented yet.
+* Status: Accepted (2026-11-20). Implemented (2026-11-21).
 * Refines: [ADR-0027](0027-agent-updates.md) (which build the server hands
   out and updates agents to).
 
@@ -102,3 +102,29 @@ Four facts shape the design:
   * MeshCentral's agent, which MeshCentral builds, signs and updates.
   * Signing by the server with a key file or a signing service.
     Rejected: it puts the key, or a way to use it, on the server.
+
+## Implementation notes
+* The checks are in `server/internal/agents/authenticode`: a PE reader
+  and a PKCS #7 (SignedData) verifier for RSA and ECDSA signatures with
+  SHA-256, SHA-384 or SHA-512. A signature may carry further signatures
+  nested in it (`signtool /as`); only the outer one is checked and shown.
+  Timestamps are noted, both RFC 3161 (`signtool /tr`) and Authenticode
+  countersignatures (`signtool /t`), not checked. Tested against the
+  checked-in programs signed by `osslsigncode` (with and without either
+  timestamp), and on CI's Windows runner against `tiny.exe` and the
+  Windows agent built there, signed by `signtool`.
+* Uploads are at most 64 MiB. A new upload for the same architecture and
+  version replaces the one before. The table is
+  `signed_agent_builds` (migration 00026).
+* *Only signed builds* cannot be turned on before a signed build is
+  uploaded (`no_signed_builds`), and the last signed build cannot be
+  removed while it is on (`last_signed_build`). For an architecture with
+  no signed build at all, it hands out no Windows build: the install
+  command for it fails until one is uploaded, and the page says so.
+* With *Only signed builds*, an agent on an unsigned build updates to the
+  signed build handed out even when that is of an older version. Agents
+  identify builds by SHA-256 only (ADR-0027); the guide says so.
+* Removing the signed build handed out hands out the release's build
+  again, or, with *Only signed builds*, the newest older signed build.
+* Devices waiting show the status *Waiting for a signed build* (`waiting`)
+  with the release's version; the settings page counts them.

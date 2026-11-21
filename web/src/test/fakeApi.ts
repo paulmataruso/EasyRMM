@@ -75,7 +75,8 @@ export function installFakeApi(routes: Record<string, FakeHandler | FakeReply> =
     const method = (init.method ?? "GET").toUpperCase();
     const path = url.pathname.replace(/^\/api\/v1/, "");
     const headers = Object.fromEntries(Object.entries((init.headers as Record<string, string>) ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
-    const body = typeof init.body === "string" ? JSON.parse(init.body) : undefined;
+    // JSON is parsed; a file sent as it is (api.upload) is kept as the Blob.
+    const body = typeof init.body === "string" ? JSON.parse(init.body) : init.body instanceof Blob ? init.body : undefined;
     for (const route of table) {
       if (route.method !== method) continue;
       const m = route.pattern.exec(path);

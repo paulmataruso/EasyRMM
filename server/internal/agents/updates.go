@@ -45,6 +45,10 @@ type UpdatePolicy struct {
 	Mode UpdateMode `json:"mode"`
 	// MaxConcurrent is how many devices may update at once.
 	MaxConcurrent int `json:"maxConcurrent"`
+	// SignedOnly has the server hand out signed Windows builds only
+	// (ADR-0049): with none for the release's version, the newest signed
+	// build of an older version, or none.
+	SignedOnly bool `json:"signedOnly"`
 }
 
 // DefaultUpdatePolicy applies until someone changes the setting.
@@ -80,13 +84,19 @@ func (s *Service) SetUpdates(b *Builds, key ed25519.PrivateKey) {
 	s.builds, s.updateKey = b, key
 }
 
-// BuildLookup finds the server's build for a platform, for devices.
-func (s *Service) BuildLookup(platform, arch string) (sha256, version string, ok bool) {
+// BuildLookup finds the server's build for a platform, for devices. With
+// only signed builds handed out, and none signed from the release's build
+// (ADR-0049), it says so, with the older signed build served or none.
+func (s *Service) BuildLookup(platform, arch string) (devices.ServedBuild, bool) {
 	if s.builds == nil {
-		return "", "", false
+		return devices.ServedBuild{}, false
 	}
+	waiting := s.builds.Waiting(platform, arch)
 	b, ok := s.builds.For(platform, arch)
-	return b.SHA256, b.Version, ok
+	if !ok {
+		return devices.ServedBuild{WaitingFor: waiting}, waiting != ""
+	}
+	return devices.ServedBuild{SHA256: b.SHA256, Version: b.Version, WaitingFor: waiting}, true
 }
 
 // Validate checks a policy.
@@ -314,9 +324,17 @@ type UpdateSettings struct {
 	UpdatedAt *time.Time `json:"updatedAt"`
 	UpdatedBy string     `json:"updatedBy,omitempty"`
 	// Version is the version of the server's builds, "" when unknown.
-	Version string  `json:"version"`
+	Version string `json:"version"`
+	// Builds are the builds served; Release the release's, whatever is
+	// served: its Windows builds are what an operator signs (ADR-0049).
 	Builds  []Build `json:"builds"`
-	Fleet   Fleet   `json:"fleet"`
+	Release []Build `json:"release"`
+	// Signed are the signed Windows builds the server keeps, newest first.
+	Signed []SignedBuild `json:"signed"`
+	// Withheld are the Windows architectures for which no build is handed
+	// out: only signed builds are, and there is none for them.
+	Withheld []string `json:"withheld"`
+	Fleet    Fleet    `json:"fleet"`
 }
 
 // Fleet counts the enrolled devices by where their agent stands; the keys
@@ -328,15 +346,28 @@ func (s *Service) UpdateSettings(ctx context.Context, c access.Caller) (*UpdateS
 	if err := c.RequireGlobal(rbac.PermSettingsManage); err != nil {
 		return nil, err
 	}
-	out := &UpdateSettings{Builds: []Build{}, Fleet: Fleet{}}
+	out := &UpdateSettings{Builds: []Build{}, Release: []Build{}, Signed: []SignedBuild{}, Withheld: []string{}, Fleet: Fleet{}}
 	if s.builds != nil {
-		out.Version, out.Builds = s.builds.Version(), s.builds.List()
+		out.Version, out.Builds, out.Release = s.builds.Version(), s.builds.List(), s.builds.Release()
+		for _, b := range out.Release {
+			if b.OS == windowsOS && s.builds.Withheld(b.OS, b.Arch) {
+				out.Withheld = append(out.Withheld, b.Arch)
+			}
+		}
 	}
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		p, err := loadPolicy(ctx, tx)
 		if err != nil {
 			return err
 		}
+		signed, err := listSigned(ctx, tx)
+		if err != nil {
+			return err
+		}
+		for i := range signed {
+			signed[i].Served = s.builds != nil && s.served(signed[i].SHA256)
+		}
+		out.Signed = signed
 		out.UpdatePolicy, out.Stored = p.UpdatePolicy, p.stored
 		if p.stored {
 			out.UpdatedAt = &p.updatedAt
@@ -359,12 +390,15 @@ func (s *Service) UpdateSettings(ctx context.Context, c access.Caller) (*UpdateS
 			if err := rows.Scan(&platform, &arch, &sha, &state, &target, &n); err != nil {
 				return err
 			}
-			build, _, ok := s.BuildLookup(platform, arch)
-			if !ok {
+			build, ok := s.BuildLookup(platform, arch)
+			switch {
+			case !ok:
 				out.Fleet["none"] += n
-				continue
+			case build.SHA256 == "":
+				out.Fleet[devices.UpdateWaiting] += n
+			default:
+				out.Fleet[devices.UpdateStatus(sha, build.SHA256, state, target)] += n
 			}
-			out.Fleet[devices.UpdateStatus(sha, build, state, target)] += n
 		}
 		return rows.Err()
 	})
@@ -391,6 +425,15 @@ func (s *Service) SetUpdatePolicy(ctx context.Context, c access.Caller, p Update
 		if err != nil {
 			return err
 		}
+		if p.SignedOnly && !old.SignedOnly {
+			var have bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM signed_agent_builds)`).Scan(&have); err != nil {
+				return err
+			}
+			if !have {
+				return apperr.Conflict("no_signed_builds", "Upload a signed Windows build first: with none, no Windows agent could be installed.")
+			}
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO settings (key, value, updated_at, updated_by) VALUES ($1, $2, now(), $3)
 			ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now(), updated_by = $3`,
 			updatePolicyKey, raw, userID(c)); err != nil {
@@ -400,12 +443,15 @@ func (s *Service) SetUpdatePolicy(ctx context.Context, c access.Caller, p Update
 			Actor: c.Actor, Action: "agent_updates.update", Outcome: audit.Success,
 			TargetType: "agent_updates", TargetID: updatePolicyKey,
 			Details: map[string]any{
-				"mode": p.Mode, "maxConcurrent": p.MaxConcurrent,
-				"previousMode": old.Mode, "previousMaxConcurrent": old.MaxConcurrent,
+				"mode": p.Mode, "maxConcurrent": p.MaxConcurrent, "signedOnly": p.SignedOnly,
+				"previousMode": old.Mode, "previousMaxConcurrent": old.MaxConcurrent, "previousSignedOnly": old.SignedOnly,
 			},
 		})
 	})
 	if err != nil {
+		return nil, err
+	}
+	if err := s.LoadSignedBuilds(ctx); err != nil {
 		return nil, err
 	}
 	return s.UpdateSettings(ctx, c)

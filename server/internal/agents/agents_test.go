@@ -143,10 +143,10 @@ func TestBuilds(t *testing.T) {
 	if _, ok := b.For("windows", "amd64"); ok {
 		t.Error("found a build that is not there")
 	}
-	if sha, _, ok := (&Service{builds: b}).BuildLookup("linux", "arm64"); !ok || sha == "" {
-		t.Error("BuildLookup missed a build")
+	if got, ok := (&Service{builds: b}).BuildLookup("linux", "arm64"); !ok || got.SHA256 == "" || got.WaitingFor != "" {
+		t.Errorf("BuildLookup missed a build: %+v", got)
 	}
-	if _, _, ok := (&Service{}).BuildLookup("linux", "arm64"); ok {
+	if _, ok := (&Service{}).BuildLookup("linux", "arm64"); ok {
 		t.Error("BuildLookup without builds found one")
 	}
 }

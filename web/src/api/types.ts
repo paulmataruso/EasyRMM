@@ -330,8 +330,11 @@ export interface DeviceAgent {
   update: AgentUpdate | null;
 }
 
-/** Where an agent stands against the build the server serves (ADR-0027). */
-export type AgentUpdateStatus = "current" | "available" | "queued" | "updating" | "failed" | "unsupported";
+/**
+ * Where an agent stands against the build the server serves (ADR-0027). "waiting": only signed Windows builds are handed
+ * out and none is for its architecture yet (ADR-0049).
+ */
+export type AgentUpdateStatus = "current" | "available" | "queued" | "updating" | "failed" | "unsupported" | "waiting";
 
 export interface AgentUpdate {
   status: AgentUpdateStatus;
@@ -340,6 +343,8 @@ export interface AgentUpdate {
   attempts: number;
   error: string;
   requested: boolean;
+  /** The release's version while only signed builds are handed out and none was signed from it yet. */
+  waitingFor?: string;
 }
 
 export type AgentUpdateMode = "automatic" | "manual" | "off";
@@ -347,6 +352,8 @@ export type AgentUpdateMode = "automatic" | "manual" | "off";
 export interface AgentUpdatePolicy {
   mode: AgentUpdateMode;
   maxConcurrent: number;
+  /** Hand out signed Windows builds only (ADR-0049). */
+  signedOnly: boolean;
 }
 
 /** The rollout's setting and the fleet's state. Fleet keys are statuses, and "none" for devices without a build. */
@@ -355,8 +362,41 @@ export interface AgentUpdateSettings extends AgentUpdatePolicy {
   updatedAt: string | null;
   updatedBy?: string;
   version: string;
+  /** The builds handed out: a signed Windows build in place of the release's. */
   builds: AgentBuild[];
+  /** The release's builds, whatever is handed out: its Windows builds are what an operator signs. */
+  release: AgentBuild[];
+  /** The signed Windows builds the server keeps, newest first. */
+  signed: SignedAgentBuild[];
+  /** Windows architectures with no build handed out: only signed builds are, and there is none for them. */
+  withheld: string[];
   fleet: Partial<Record<AgentUpdateStatus | "none", number>>;
+}
+
+/** The certificate that signed a Windows build (ADR-0049). */
+export interface AgentSigner {
+  subject: string;
+  issuer: string;
+  /** SHA-1 of the certificate, as Windows shows it. */
+  thumbprint: string;
+  notBefore: string;
+  notAfter: string;
+  timestamped: boolean;
+}
+
+/** A Windows build an operator signed and uploaded (ADR-0049). */
+export interface SignedAgentBuild {
+  id: string;
+  arch: string;
+  version: string;
+  sha256: string;
+  releaseSha256: string;
+  size: number;
+  signer: AgentSigner;
+  uploadedAt: string;
+  uploadedBy?: string;
+  /** The server hands it out now. */
+  served: boolean;
 }
 
 export type EnrollmentTokenStatus = "active" | "expired" | "revoked" | "used_up";
@@ -490,6 +530,8 @@ export interface AgentBuild {
   sha256: string;
   /** The builds' version from the server's VERSION file, "" when unknown. */
   version: string;
+  /** The operator's signature on a Windows build they signed (ADR-0049); absent for the release's build. */
+  signed?: AgentSigner;
 }
 
 /** An address the server answers on: its public URL, or one of its IP addresses (ADR-0016). */

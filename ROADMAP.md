@@ -30,18 +30,15 @@ follows when these have been run there, or fixed:
   the console ([ADR-0050](docs/architecture/adr/0050-removing-a-device.md)):
   the uninstaller started outside the agent's service, and whether
   MeshCentral can uninstall the MeshAgent the agent runs as a service.
+* A Windows agent signed with an operator's certificate from a public
+  certificate authority ([ADR-0049](docs/architecture/adr/0049-operators-sign-windows-agents.md)):
+  uploaded, installed and updated to on real Windows computers, and what
+  Windows and Defender show for it.
 * Enrollment with approval and the EasyPatch agent's dnf install on more
   Linux distributions (Debian, Ubuntu, Rocky Linux, Fedora).
 * Importing a standalone EasyPatch on a real server with a DNS move, and
   with a Windows agent. The import is tested only from 1.10.0 with a Linux
   agent; 1.4 to 1.9 are accepted but untested.
-
-**Build**
-
-* Operators sign the Windows agent with their own code signing
-  certificate ([ADR-0049](docs/architecture/adr/0049-operators-sign-windows-agents.md)):
-  they sign the server's builds with their own tools and upload them, and
-  the server checks and hands out the signed builds.
 
 ## After 1.0.0
 

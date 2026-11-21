@@ -286,6 +286,15 @@ comes back (ADR-0050).
 | `retired_devices` | A device deleted in the last 90 days that had an agent key or a MeshAgent node: its id, organization, site and name; the agent's Ed25519 public key while the agent has not confirmed removing itself (an agent signing with it is answered with the uninstall instruction only), its report; the MeshCentral node, until a device enrolled since in the same site reports it, and the cleanup of that node: when last tried, how many times its MeshAgent was asked to uninstall itself, when the node was removed, and the last error. Deleted when they expire. Any scope may insert one (the removal runs in the caller's scope); read, changed and deleted with platform scope only |
 | `retired_agent_nonces` | Nonces of signed requests from removed devices' agents, as `agent_nonces` for enrolled ones. Platform scope only |
 
+## Signed Windows agents (migration 00026)
+
+Windows agent builds an operator signed with their own certificate and
+uploaded (ADR-0049). Kept in the database so that backups keep them.
+
+| Table | Notes |
+|---|---|
+| `signed_agent_builds` | One row per architecture (`amd64`, `arm64`) and version: the signed file (up to 64 MiB), its SHA-256 and that of the release's build it was made from, the signer's subject, issuer and SHA-1 thumbprint, the certificate's validity, whether the signature has a timestamp, and when and by whom it was uploaded. For each architecture the server keeps the build of its own version and the newest older one. Platform scope only; the service allows Super Administrators (`settings.manage`) |
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

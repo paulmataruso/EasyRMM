@@ -1,12 +1,13 @@
-import { useId, useState, type ReactNode } from "react";
-import { ArrowUpCircle } from "lucide-react";
-import { api, fieldError } from "../../api/client";
+import { useId, useRef, useState, type ReactNode } from "react";
+import { ArrowUpCircle, Download, Trash2, Upload } from "lucide-react";
+import { api, apiUrl, fieldError } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
-import type { AgentUpdateMode, AgentUpdatePolicy, AgentUpdateSettings, AgentUpdateStatus } from "../../api/types";
+import type { AgentBuild, AgentUpdateMode, AgentUpdatePolicy, AgentUpdateSettings, AgentUpdateStatus, SignedAgentBuild } from "../../api/types";
+import { ConfirmDialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Alert, Button, Card, ErrorState, InlineError, KeyValueList, Mono, Spinner, TextField } from "../../components/ui";
-import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
-import { AgentUpdateBadge } from "../devices/agentUpdate";
+import { Alert, Badge, Button, Card, ErrorState, InlineError, KeyValueList, Mono, Spinner, TableWrap, TextField } from "../../components/ui";
+import { formatDate, formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
+import { AgentUpdateBadge, commonName } from "../devices/agentUpdate";
 import { archName, byArch } from "../devices/AddDevicesPage";
 import { platformName } from "../devices/platform";
 
@@ -17,44 +18,50 @@ const MODES: { mode: AgentUpdateMode; label: string; detail: string }[] = [
 ];
 
 /** The order the fleet's states are listed in. */
-const ORDER: AgentUpdateStatus[] = ["current", "updating", "queued", "available", "failed", "unsupported"];
+const ORDER: AgentUpdateStatus[] = ["current", "updating", "queued", "available", "failed", "waiting", "unsupported"];
 
 /** Platform settings: rolling the server's agent build out to enrolled agents (ADR-0027). */
 export function AgentUpdatesTab() {
   const settings = useApi<AgentUpdateSettings>("/settings/agent-updates", undefined, { refetchInterval: 15_000 });
   if (settings.isPending) return <Spinner />;
   if (settings.isError) return <ErrorState error={settings.error} onRetry={() => void settings.refetch()} />;
+  const windows = settings.data.release.some((b) => b.os === "windows");
   return (
     <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
-      <RolloutForm settings={settings.data} className="xl:col-span-2" />
+      <div className="space-y-5 xl:col-span-2">
+        <RolloutForm settings={settings.data} windows={windows} />
+        {windows && <SignedBuilds settings={settings.data} />}
+      </div>
       <Fleet settings={settings.data} />
     </div>
   );
 }
 
-function RolloutForm({ settings, className }: { settings: AgentUpdateSettings; className?: string }) {
+function RolloutForm({ settings, windows }: { settings: AgentUpdateSettings; windows: boolean }) {
   const toast = useToast();
   const [mode, setMode] = useState<AgentUpdateMode>(settings.mode);
   const [max, setMax] = useState(String(settings.maxConcurrent));
+  const [signedOnly, setSignedOnly] = useState(settings.signedOnly);
   const name = useId();
   const save = useApiMutation((body: AgentUpdatePolicy) => api.put<AgentUpdateSettings>("/settings/agent-updates", body), {
-    invalidate: ["/settings/agent-updates", "/audit"],
+    invalidate: ["/settings/agent-updates", "/devices", "/audit"],
     onSuccess: (s) => {
       setMode(s.mode);
       setMax(String(s.maxConcurrent));
+      setSignedOnly(s.signedOnly);
       toast.success(s.mode === "off" ? "Saved. Agent updates are off." : "Saved.");
     },
   });
-  const noBuilds = settings.builds.length === 0;
+  const noBuilds = settings.release.length === 0;
 
   return (
-    <Card title="Rollout" className={className}>
+    <Card title="Rollout">
       <form
         className="space-y-4"
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
-          save.mutate({ mode, maxConcurrent: Number(max) || 0 });
+          save.mutate({ mode, maxConcurrent: Number(max) || 0, signedOnly });
         }}
       >
         {noBuilds && (
@@ -85,6 +92,18 @@ function RolloutForm({ settings, className }: { settings: AgentUpdateSettings; c
           className="max-w-xs"
           required
         />
+        {windows && (
+          <label className="flex items-start gap-2.5 text-sm">
+            <input type="checkbox" checked={signedOnly} onChange={(e) => setSignedOnly(e.target.checked)} className="mt-0.5 size-4 accent-accent" />
+            <span>
+              <span className="font-medium">Hand out signed Windows builds only</span>
+              <span className="block text-muted">
+                Windows computers install and update to builds you signed, never an unsigned one. After an upgrade they keep the older signed build until
+                you sign the new one.
+              </span>
+            </span>
+          </label>
+        )}
         <InlineError error={save.error} fields={["maxConcurrent"]} />
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-4">
           <span className="text-xs text-muted">
@@ -157,5 +176,194 @@ function Fleet({ settings: s }: { settings: AgentUpdateSettings }) {
         {count("unsupported") > 0 && <p>Agents that cannot update themselves predate self-update: run the install command on them once more.</p>}
       </div>
     </Card>
+  );
+}
+
+/** Windows builds signed with the operator's own certificate (ADR-0049). */
+function SignedBuilds({ settings: s }: { settings: AgentUpdateSettings }) {
+  const toast = useToast();
+  const input = useRef<HTMLInputElement>(null);
+  const [removing, setRemoving] = useState<SignedAgentBuild | null>(null);
+  const upload = useApiMutation((file: File) => api.upload<SignedAgentBuild>("/settings/agent-updates/signed", file), {
+    invalidate: ["/settings/agent-updates", "/devices", "/audit"],
+    onSuccess: (b) =>
+      toast.success(
+        b.served
+          ? `Uploaded. Windows ${archName(b.arch)} agents update to the signed build.`
+          : `Uploaded. It is kept, but the server hands out another build for Windows ${archName(b.arch)}.`,
+      ),
+  });
+  const remove = useApiMutation((id: string) => api.del(`/settings/agent-updates/signed/${id}`), {
+    invalidate: ["/settings/agent-updates", "/devices", "/audit"],
+    onSuccess: () => {
+      setRemoving(null);
+      toast.success("Removed the signed build.");
+    },
+  });
+  const release = s.release.filter((b) => b.os === "windows").sort(byArch);
+
+  return (
+    <Card
+      title="Signed Windows builds"
+      padded={false}
+      actions={
+        <Button size="sm" variant="primary" icon={<Upload className="size-3.5" aria-hidden />} loading={upload.isPending} onClick={() => input.current?.click()}>
+          Upload a signed build
+        </Button>
+      }
+    >
+      <input
+        ref={input}
+        type="file"
+        accept=".exe"
+        className="sr-only"
+        tabIndex={-1}
+        aria-hidden
+        data-testid="signed-build-file"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) upload.mutate(file);
+        }}
+      />
+      <div className="space-y-3 border-b border-line px-4 py-3">
+        <p className="max-w-3xl text-sm text-muted">
+          Sign the Windows agent with your own code signing certificate, so that Windows and security tools name you as its publisher. Download each build,
+          sign it with your own tools (signtool, jsign or osslsigncode, with your token or cloud key), and upload it. EasyRMM checks that it is this
+          server&apos;s build with only a signature added, hands it out in its place, and agents update to it. EasyRMM never holds your key.
+        </p>
+        <InlineError error={upload.error} />
+      </div>
+      <TableWrap className="rounded-none border-0">
+        <table className="table-base">
+          <thead>
+            <tr>
+              <th>Build</th>
+              <th>Handed out</th>
+            </tr>
+          </thead>
+          <tbody>
+            {release.map((r) => (
+              <ReleaseRow key={r.file} release={r} served={s.builds.find((b) => b.file === r.file)} withheld={s.withheld.includes(r.arch)} />
+            ))}
+          </tbody>
+        </table>
+      </TableWrap>
+      {s.signed.length > 0 && (
+        <div className="border-t border-line">
+          <h3 className="px-4 pt-3 pb-1 text-xs font-medium text-muted">Uploaded</h3>
+          <ul className="divide-y divide-line">
+            {s.signed.map((b) => (
+              <SignedRow key={b.id} build={b} onRemove={() => setRemoving(b)} />
+            ))}
+          </ul>
+        </div>
+      )}
+      <ConfirmDialog
+        open={removing !== null}
+        onClose={() => setRemoving(null)}
+        onConfirm={() => removing && remove.mutate(removing.id)}
+        title={removing ? `Remove the signed ${archName(removing.arch)} build of ${removing.version}?` : ""}
+        confirmLabel="Remove"
+        tone="danger"
+        loading={remove.isPending}
+        error={remove.error}
+      >
+        {removing?.served
+          ? s.signedOnly
+            ? "Windows computers get an older signed build instead, if one is kept, or none."
+            : "The release's unsigned build is handed out again, and Windows agents update back to it."
+          : "It is not handed out now; nothing changes on Windows computers."}
+      </ConfirmDialog>
+    </Card>
+  );
+}
+
+/** One Windows architecture: the release's build and what is handed out for it. */
+function ReleaseRow({ release: r, served, withheld }: { release: AgentBuild; served?: AgentBuild; withheld: boolean }) {
+  let state: ReactNode;
+  if (withheld || !served) {
+    state = (
+      <span className="block space-y-1">
+        <Badge tone="warn">None</Badge>
+        <span className="block text-xs text-muted">Only signed builds are handed out, and this one is not signed yet.</span>
+      </span>
+    );
+  } else if (served.signed) {
+    const older = served.version !== r.version;
+    state = (
+      <span className="block space-y-1">
+        <Badge tone={older ? "warn" : "ok"}>{older ? `Signed ${served.version}` : "Signed"}</Badge>
+        <span className="block text-xs text-muted">
+          By {commonName(served.signed.subject)}
+          {older && `; waiting for a signed build of ${r.version || "this version"}`}
+        </span>
+      </span>
+    );
+  } else {
+    state = <span className="text-muted">The release&apos;s build, unsigned</span>;
+  }
+  return (
+    <tr>
+      <td className="align-top">
+        <span className="block font-medium">Windows {archName(r.arch)}</span>
+        <Mono className="text-xs whitespace-nowrap text-muted">{r.version || "version unknown"}</Mono>
+        <a
+          href={apiUrl(`/settings/agent-updates/release/${r.file}`)}
+          download={r.file}
+          className="mt-1.5 flex w-fit items-center gap-1.5 text-sm font-medium whitespace-nowrap text-accent hover:underline"
+          title={`SHA-256 ${r.sha256}`}
+        >
+          <Download className="size-3.5 shrink-0" aria-hidden />
+          Download to sign
+        </a>
+      </td>
+      <td className="align-top">{state}</td>
+    </tr>
+  );
+}
+
+/** A signed build the server keeps, with its signer. */
+function SignedRow({ build: b, onRemove }: { build: SignedAgentBuild; onRemove: () => void }) {
+  const expired = new Date(b.signer.notAfter).getTime() < Date.now();
+  return (
+    <li className="flex items-start gap-4 px-4 py-3">
+      <div className="min-w-0 flex-1 space-y-1 text-sm">
+        <p className="flex flex-wrap items-center gap-2">
+          <span className="font-medium">
+            Windows {archName(b.arch)} <Mono className="whitespace-nowrap">{b.version}</Mono>
+          </span>
+          {b.served && <Badge tone="ok">Handed out</Badge>}
+        </p>
+        <p className="text-muted">
+          Signed by {commonName(b.signer.subject)}, issued by {commonName(b.signer.issuer)}
+        </p>
+        <p className="text-xs text-muted">
+          Thumbprint <Mono className="break-all">{b.signer.thumbprint}</Mono>
+        </p>
+        <p className="text-xs">
+          {b.signer.timestamped ? (
+            <span className="text-muted">Timestamped: stays valid after the certificate expires on {formatDate(b.signer.notAfter)}.</span>
+          ) : expired ? (
+            <span className="text-danger">
+              Not timestamped, and the certificate expired on {formatDate(b.signer.notAfter)}: Windows no longer trusts this signature. Sign it again with a
+              timestamp.
+            </span>
+          ) : (
+            <span className="text-warn">
+              Not timestamped: Windows stops trusting this signature when the certificate expires on {formatDate(b.signer.notAfter)}. Sign with a timestamp
+              server.
+            </span>
+          )}
+        </p>
+        <p className="text-xs text-muted">
+          Uploaded <span title={formatDateTime(b.uploadedAt)}>{formatRelative(b.uploadedAt)}</span>
+          {b.uploadedBy && <> by {b.uploadedBy}</>}
+        </p>
+      </div>
+      <Button size="sm" variant="ghost" className="shrink-0" icon={<Trash2 className="size-3.5" aria-hidden />} onClick={onRemove}>
+        Remove
+      </Button>
+    </li>
   );
 }

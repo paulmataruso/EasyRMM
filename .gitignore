@@ -3,6 +3,8 @@
 /dist/
 /build/
 *.exe
+# Small signed test programs the Authenticode reader is tested against.
+!/server/internal/agents/authenticode/testdata/*.exe
 *.msi
 *.deb
 *.rpm
