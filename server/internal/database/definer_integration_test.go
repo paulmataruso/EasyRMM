@@ -328,6 +328,10 @@ func TestDefinerSearchPathMigration(t *testing.T) {
 	// stays, and up says what to run.
 	down()
 	must(`ALTER DATABASE ` + inst.Name + ` OWNER TO CURRENT_USER`)
+	// The public schema belongs to the database's owner, so an installation
+	// under another owner grants easyrmm_owner what the later migrations
+	// need to create there, as a superuser would by hand.
+	must(`GRANT CREATE ON SCHEMA public TO easyrmm_owner`)
 	log = up()
 	if s := state(); s != kept {
 		t.Errorf("after up under another owner: %s", s)

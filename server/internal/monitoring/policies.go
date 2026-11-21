@@ -29,7 +29,31 @@ const (
 	KindCPU     = "cpu"
 	KindMemory  = "memory"
 	KindDisk    = "disk"
+	// KindDiskHealth watches each disk's health with one of the checks
+	// below (ADR-0065).
+	KindDiskHealth = "disk_health"
 )
+
+// Disk health checks (Policy.CheckName).
+const (
+	// CheckFailing: the disk's reading is failing. No threshold.
+	CheckFailing = "failing"
+	// CheckErrors: reallocated sectors plus NVMe media errors at or above a
+	// count.
+	CheckErrors = "errors"
+	// CheckPending: pending plus offline-uncorrectable sectors at or above
+	// a count.
+	CheckPending = "pending"
+	// CheckWear: rated endurance used at or above a percentage.
+	CheckWear = "wear"
+	// CheckTemperature: every reading of the policy's minutes at or above
+	// a temperature in °C, or the drive's own limit without one.
+	CheckTemperature = "temperature"
+)
+
+// DiskMinutes is the reading interval: a temperature check watches at
+// least this long, and the other disk checks take it as their minutes.
+const DiskMinutes = 30
 
 // Severities.
 const (
@@ -57,8 +81,12 @@ type Policy struct {
 	Name             string     `json:"name"`
 	Description      string     `json:"description"`
 	Kind             string     `json:"kind"`
+	// CheckName is the disk health check, nil for the other kinds.
+	CheckName *string `json:"checkName"`
 	// Threshold is the percentage for processor, memory and disk; nil for
-	// offline.
+	// offline. For disk health, the count, percentage or °C the check
+	// takes: nil for failing, and for a temperature check that uses each
+	// drive's own limit.
 	Threshold *int   `json:"threshold"`
 	Minutes   int    `json:"minutes"`
 	Severity  string `json:"severity"`
@@ -99,7 +127,7 @@ func canAt(c access.Caller, perm rbac.Permission, org, site uuid.UUID, below boo
 }
 
 const policyColumns = `p.id, p.organization_id, coalesce(o.name, ''), p.site_id, coalesce(si.name, ''),
-	p.name, p.description, p.kind, p.threshold, p.minutes, p.severity, p.enabled,
+	p.name, p.description, p.kind, p.check_name, p.threshold, p.minutes, p.severity, p.enabled,
 	(SELECT count(*) FROM alerts a WHERE a.policy_id = p.id AND a.status <> 'resolved'),
 	p.created_at, p.updated_at`
 
@@ -110,7 +138,7 @@ const policyFrom = ` FROM alert_policies p
 func scanPolicy(row pgx.Row) (*Policy, error) {
 	var p Policy
 	if err := row.Scan(&p.ID, &p.OrganizationID, &p.OrganizationName, &p.SiteID, &p.SiteName,
-		&p.Name, &p.Description, &p.Kind, &p.Threshold, &p.Minutes, &p.Severity, &p.Enabled,
+		&p.Name, &p.Description, &p.Kind, &p.CheckName, &p.Threshold, &p.Minutes, &p.Severity, &p.Enabled,
 		&p.ActiveAlerts, &p.CreatedAt, &p.UpdatedAt); err != nil {
 		return nil, err
 	}
@@ -216,6 +244,7 @@ type PolicyInput struct {
 	Name           string     `json:"name"`
 	Description    string     `json:"description"`
 	Kind           string     `json:"kind"`
+	CheckName      *string    `json:"checkName"`
 	Threshold      *int       `json:"threshold"`
 	Minutes        int        `json:"minutes"`
 	Severity       string     `json:"severity"`
@@ -224,27 +253,33 @@ type PolicyInput struct {
 }
 
 // PolicyPatch changes a policy; nil fields stay as they are. A policy does
-// not move between levels. Changing to Offline drops the threshold.
+// not move between levels. Changing to Offline, or to the failing check,
+// drops the threshold; changing away from disk health drops the check.
 type PolicyPatch struct {
 	Name        *string `json:"name"`
 	Description *string `json:"description"`
 	Kind        *string `json:"kind"`
+	CheckName   *string `json:"checkName"`
 	Threshold   *int    `json:"threshold"`
-	Minutes     *int    `json:"minutes"`
-	Severity    *string `json:"severity"`
-	Enabled     *bool   `json:"enabled"`
+	// DriveLimit, true, has a temperature check use each drive's own limit
+	// and drops the threshold.
+	DriveLimit *bool   `json:"driveLimit"`
+	Minutes    *int    `json:"minutes"`
+	Severity   *string `json:"severity"`
+	Enabled    *bool   `json:"enabled"`
 }
 
 // condition is what a policy watches and how.
 type condition struct {
 	name, description, kind, severity string
+	checkName                         *string
 	threshold                         *int
 	minutes                           int
 	enabled                           bool
 }
 
 func validKind(k string) bool {
-	return k == KindOffline || k == KindCPU || k == KindMemory || k == KindDisk
+	return k == KindOffline || k == KindCPU || k == KindMemory || k == KindDisk || k == KindDiskHealth
 }
 
 func (cd *condition) validate() error {
@@ -255,15 +290,45 @@ func (cd *condition) validate() error {
 	f.Check(cd.severity == SeverityWarning || cd.severity == SeverityCritical, "severity", "Choose warning or critical.")
 	switch {
 	case !validKind(cd.kind):
-		f.Add("kind", "Choose offline, processor, memory or disk.")
+		f.Add("kind", "Choose offline, processor, memory, disk or disk health.")
+	case cd.kind == KindDiskHealth:
+		cd.validateDisk(f)
 	case cd.kind == KindOffline:
+		cd.checkName = nil
 		cd.threshold = nil
 		f.Check(cd.minutes >= MinOfflineMinutes && cd.minutes <= MaxMinutes, "minutes", "Use 3 to 1,440 minutes.")
 	default:
+		cd.checkName = nil
 		f.Check(cd.threshold != nil && *cd.threshold >= 1 && *cd.threshold <= 100, "threshold", "Use a percentage from 1 to 100.")
 		f.Check(cd.minutes >= 1 && cd.minutes <= MaxMinutes, "minutes", "Use 1 to 1,440 minutes.")
 	}
 	return f.Err()
+}
+
+// validateDisk checks a disk health policy (ADR-0065, "Alerts"): a check,
+// and the threshold it takes. Minutes apply to temperature only; the other
+// checks take the reading interval.
+func (cd *condition) validateDisk(f apperr.Fields) {
+	check := ""
+	if cd.checkName != nil {
+		check = *cd.checkName
+	}
+	inRange := cd.threshold != nil && *cd.threshold >= 1 && *cd.threshold <= 100
+	switch check {
+	case CheckFailing:
+		cd.threshold, cd.minutes = nil, DiskMinutes
+	case CheckErrors, CheckPending:
+		cd.minutes = DiskMinutes
+		f.Check(inRange, "threshold", "Use a count from 1 to 100.")
+	case CheckWear:
+		cd.minutes = DiskMinutes
+		f.Check(inRange, "threshold", "Use a percentage from 1 to 100.")
+	case CheckTemperature:
+		f.Check(cd.threshold == nil || inRange, "threshold", "Use 1 to 100 °C, or the drive's own limit.")
+		f.Check(cd.minutes >= DiskMinutes && cd.minutes <= MaxMinutes, "minutes", "Use 30 to 1,440 minutes.")
+	default:
+		f.Add("checkName", "Choose failing, errors, pending, wear or temperature.")
+	}
 }
 
 // CreatePolicy adds a policy at the level the input names.
@@ -283,23 +348,27 @@ func (s *Service) CreatePolicy(ctx context.Context, c access.Caller, in PolicyIn
 	}
 	cd := condition{
 		name: cleanText(in.Name, false), description: cleanText(in.Description, true),
-		kind: in.Kind, severity: in.Severity, threshold: in.Threshold, minutes: in.Minutes, enabled: in.Enabled == nil || *in.Enabled,
+		kind: in.Kind, checkName: in.CheckName, severity: in.Severity, threshold: in.Threshold, minutes: in.Minutes,
+		enabled: in.Enabled == nil || *in.Enabled,
 	}
 	if err := cd.validate(); err != nil {
 		return nil, err
 	}
 	var id uuid.UUID
 	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `INSERT INTO alert_policies (organization_id, site_id, name, description, kind, threshold, minutes, severity, enabled, created_by, updated_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10) RETURNING id`,
-			nullUUID(org), nullUUID(site), cd.name, cd.description, cd.kind, cd.threshold, cd.minutes, cd.severity, cd.enabled, nullUUID(c.Actor.ID)).Scan(&id)
+		err := tx.QueryRow(ctx, `INSERT INTO alert_policies (organization_id, site_id, name, description, kind, check_name, threshold, minutes, severity, enabled,
+				created_by, updated_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11) RETURNING id`,
+			nullUUID(org), nullUUID(site), cd.name, cd.description, cd.kind, cd.checkName, cd.threshold, cd.minutes, cd.severity, cd.enabled,
+			nullUUID(c.Actor.ID)).Scan(&id)
 		if err != nil {
 			return err
 		}
 		return s.audit.Write(ctx, tx, audit.Event{
 			Actor: c.Actor, Action: "alert_policy.create", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "alert_policy", TargetID: id.String(),
-			Details: map[string]any{"name": cd.name, "kind": cd.kind, "threshold": cd.threshold, "minutes": cd.minutes, "severity": cd.severity, "enabled": cd.enabled},
+			Details: map[string]any{"name": cd.name, "kind": cd.kind, "checkName": cd.checkName, "threshold": cd.threshold, "minutes": cd.minutes,
+				"severity": cd.severity, "enabled": cd.enabled},
 		})
 	})
 	if err != nil {
@@ -319,7 +388,7 @@ func (s *Service) UpdatePolicy(ctx context.Context, c access.Caller, id uuid.UUI
 			return err
 		}
 		cd := condition{
-			name: cur.Name, description: cur.Description, kind: cur.Kind, severity: cur.Severity,
+			name: cur.Name, description: cur.Description, kind: cur.Kind, checkName: cur.CheckName, severity: cur.Severity,
 			threshold: cur.Threshold, minutes: cur.Minutes, enabled: cur.Enabled,
 		}
 		if p.Name != nil {
@@ -331,8 +400,14 @@ func (s *Service) UpdatePolicy(ctx context.Context, c access.Caller, id uuid.UUI
 		if p.Kind != nil {
 			cd.kind = *p.Kind
 		}
+		if p.CheckName != nil {
+			cd.checkName = p.CheckName
+		}
 		if p.Threshold != nil {
 			cd.threshold = p.Threshold
+		}
+		if p.DriveLimit != nil && *p.DriveLimit {
+			cd.threshold = nil
 		}
 		if p.Minutes != nil {
 			cd.minutes = *p.Minutes
@@ -346,9 +421,9 @@ func (s *Service) UpdatePolicy(ctx context.Context, c access.Caller, id uuid.UUI
 		if err := cd.validate(); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE alert_policies SET name = $2, description = $3, kind = $4, threshold = $5, minutes = $6,
-				severity = $7, enabled = $8, updated_by = $9 WHERE id = $1`,
-			id, cd.name, cd.description, cd.kind, cd.threshold, cd.minutes, cd.severity, cd.enabled, nullUUID(c.Actor.ID)); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE alert_policies SET name = $2, description = $3, kind = $4, check_name = $5, threshold = $6,
+				minutes = $7, severity = $8, enabled = $9, updated_by = $10 WHERE id = $1`,
+			id, cd.name, cd.description, cd.kind, cd.checkName, cd.threshold, cd.minutes, cd.severity, cd.enabled, nullUUID(c.Actor.ID)); err != nil {
 			return err
 		}
 		changes := policyChanges(cur, &cd)
@@ -387,7 +462,10 @@ func policyChanges(cur *Policy, cd *condition) map[string]any {
 	if cd.kind != cur.Kind {
 		changes["kind"] = change[string]{cur.Kind, cd.kind}
 	}
-	if !sameInt(cd.threshold, cur.Threshold) {
+	if !same(cd.checkName, cur.CheckName) {
+		changes["checkName"] = change[*string]{cur.CheckName, cd.checkName}
+	}
+	if !same(cd.threshold, cur.Threshold) {
 		changes["threshold"] = change[*int]{cur.Threshold, cd.threshold}
 	}
 	if cd.minutes != cur.Minutes {
@@ -402,7 +480,7 @@ func policyChanges(cur *Policy, cd *condition) map[string]any {
 	return changes
 }
 
-func sameInt(a, b *int) bool {
+func same[T comparable](a, b *T) bool {
 	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
 
