@@ -200,14 +200,19 @@ The fix this ADR needs first writes that list.
   they are the way in when DNS fails (ADR-0016), and agents enrolled
   through them stay on them (their EasyPatch agents, on the old name,
   move).
-* **The new pair must be trusted and reachable first**, as ADR-0055
-  defines them (5b3): this server holds a Let's Encrypt certificate for
-  both names and has reached itself through them, and the daily check or a
-  browser has confirmed it recently. ADR-0055 allows one added pair on an
-  IP install; this ADR lets a DNS install add one the same way, for a
-  move. The MeshCentral name must be on the same site as the console's (as
-  `validateMesh` requires) and contain a dot (MeshCentral's LAN-only rule
-  above).
+* **The new pair must be trusted and reachable first.** For names, as
+  ADR-0055 defines them (5b3): this server holds a Let's Encrypt
+  certificate for both and has reached itself through them, and the
+  daily check or a browser has confirmed it recently. ADR-0055 allows one
+  added pair on an IP install; this ADR lets a DNS install add one the
+  same way, for a move. For an IP address, which no public authority
+  certifies, trusted means served with a certificate from EasyRMM's
+  internal authority, the trust agents on an IP install already use
+  (ADR-0016; 5b1 keeps it for addresses), and reachable means the server
+  has reached itself through it, as ADR-0055 checks a name. Step 1's gate
+  checks whichever applies. The MeshCentral name must be on the same
+  site as the console's (as `validateMesh` requires) and contain a dot
+  (MeshCentral's LAN-only rule above).
 * **Nobody can move EasyRMM's agents to a server that does not hold the
   job key.** Each agent moves only after it has checked, from its own
   network, that the new address answers with a job key signature over a
@@ -227,13 +232,20 @@ The fix this ADR needs first writes that list.
   first start of slice 4's build: from that server's record ("Names in
   `.env`"), which slice 1 began keeping, so a `.env` edited just before
   the upgrade is not taken for the pair agents use. With no record, it
-  is taken from `.env` only when every origin recorded for a device seen
-  in the last 30 days (the origin of its signed requests, ADR-0055) is
-  one the server serves with that `.env`, or no device has been seen.
-  Otherwise nothing is adopted: an alert and a banner name the origins
-  agents use and the pair `.env` names, the server serves `.env`'s pair
-  as it does today, and a super administrator confirms the initial pair,
-  with step-up, or the operator puts the earlier lines back in `.env`.
+  is taken from `.env` only when no device has been seen in the last 30
+  days, or every such device has a recorded origin (the origin of its
+  signed requests, ADR-0055) that the server serves with that `.env`; a
+  device seen with no recorded origin counts as not matching. Otherwise
+  nothing is adopted until a super administrator, with step-up, chooses
+  one of two pairs with **Confirm**: `.env`'s, or the **agents' pair**,
+  the console origin most of those devices use with, as its MeshCentral
+  name, the `cert` in MeshCentral's current `config.json` (read before
+  this start would write it, and left as it is until then). Until then
+  the server serves `.env`'s pair as it does today and the origins
+  recent devices use as agent routes, refuses moves and offers, and
+  shows an alert and a banner naming both pairs. Choosing the agents'
+  pair leaves `.env` naming another pair, which is then offered as
+  below.
 * **The move generation**, `moveGeneration`, a number kept beside it,
   changes with every step 1 or 2, a **Move back**'s included, and never
   goes backwards, even across a restore: each new value is the larger of
@@ -340,8 +352,11 @@ install command, sign-in) until step 4, and serves agents until step 5.
   where it was. It reports them, signed, on `POST /api/agent/v1/move` at
   its current address, a path of its own as removal reports are
   (ADR-0050), so no heartbeat field depends on the server's level. A
-  confirmation that does not verify is audited and raises an alert: it
-  means the new name reaches another party from that device.
+  server that answers `/move` with `404` (an older one, or one rolled
+  back) gets nothing more: the agent drops the report and goes on, with
+  no retry loop (ADR-0009). A confirmation that does not verify is
+  audited and raises an alert: it means the new name reaches another
+  party from that device.
 * **Agents that cannot move**: builds that have not reported
   `move.easyrmm` are never sent one (and would ignore it: answers are
   read leniently). Step 1 is refused
@@ -478,7 +493,10 @@ they follow.
   name, which can only happen once the provider accepts that redirect URI.
   The page shows, for each provider, the exact URI to register and **Test
   at rmm.example.com**, which runs a sign-in there. Any real sign-in that
-  completes there confirms it too. The old name stays confirmed.
+  completes there confirms it too. The old name stays confirmed. When
+  slice 6 brings this in, each enabled provider starts out confirmed at
+  the current primary, the one name its redirect URI was registered for
+  until then.
 * **Authentik** (amends [ADR-0044](0044-authentik-when-chosen.md)):
   * **The server writes the console's names** into
     `<data root>/authentik/names/`, one file each: `primary` and, from
@@ -508,19 +526,31 @@ they follow.
     the instance's context over the file's (`Importer` in
     `authentik/blueprints/v1/importer.py`), and the blueprint reads the
     values with `!Context`, as it reads `public_url` today
-    (`docker/authentik/blueprints/easyrmm.yaml`, whose `!Env
-    EASYRMM_PUBLIC_URL` stays as the file's default until the first
-    apply). The worker so never reads a file the server can write,
-    applies the same values when it re-applies the blueprint for reasons
-    of its own (a new blueprint file), and records a failure in the
-    instance's status.
+    (`docker/authentik/blueprints/easyrmm.yaml`). The worker so never
+    reads a file the server can write, applies the same values when it
+    re-applies the blueprint for reasons of its own (a new blueprint
+    file), and records a failure in the instance's status.
+  * **Only the context sets them.** The file's `context` loses its
+    `public_url: !Env EASYRMM_PUBLIC_URL`, so no apply ever takes these
+    values from `.env`. The redirect URIs, the enrollment flow's last
+    redirect and the launch link move out of the entries that create the
+    provider, the stage and the application into entries of their own,
+    with the same identifiers, only those attributes, and `conditions:
+    [!Context public_url]`. Until `authentik-setup` has written the
+    context, those entries are skipped (`check_all_conditions_match`,
+    `importer.py`) and an existing object is updated only in the
+    attributes given (`partial`, same file), so the values the instance
+    already holds are kept: an upgrade's first apply by the worker
+    changes nothing there. On a new install the worker creates the
+    objects without them, and `authentik-setup`'s first reconcile, once
+    the blueprint exists, adds them.
   * **The blueprint** chooses the whole `redirect_uris` list, because
     `!If` as a list item leaves a `null` item (`If.resolve`): `!If
     [!Context old_url, [<old entry>, <primary entry>], [<primary
     entry>]]`; an absent `old_url` resolves to `None`
     (`Context.resolve`), which `!If` takes as false. The enrollment
     flow's last redirect (`target_static`) and the application's
-    `meta_launch_url` read `!Context public_url`, as they do today.
+    `meta_launch_url` read `!Context public_url`.
   * **`authentik-setup` stays running** (`restart: unless-stopped`),
     since Authentik's worker applies a blueprint again only when the
     blueprint file changes (Context). It **reconciles** at every start,
@@ -538,15 +568,21 @@ they follow.
     start (step 6: `docker compose up -d --remove-orphans --wait`, every
     service healthy within 20 minutes) would then roll every upgrade with
     Authentik back. So the compose change that makes it long-running
-    (slice 6) also gives it a check of its own: its loop touches
-    `/tmp/easyrmm-setup-alive` (its `/tmp` is the tmpfs of
-    `x-authentik-hardening`) after each reconcile, whether it applied or
-    failed, and the check passes while that file is under 2 minutes old,
-    so the service is healthy once its first reconcile has run.
-    `start_period` is 15 minutes, its wait for the blueprint
-    (`WAIT_SECONDS` in `docker/authentik/setup.py`), within ADR-0052's 20.
-    A failed apply shows in the console (below), not in the health, so a
-    bad names file cannot roll an upgrade back.
+    (slice 6) also gives it a check of its own, against a liveness tick.
+    Its loop ticks every 30 seconds and touches
+    `/tmp/easyrmm-setup-alive` at each tick (its `/tmp` is the tmpfs of
+    `x-authentik-hardening`); the check passes while that file is under 2
+    minutes old. Nothing in the loop blocks between ticks: the wait for
+    the blueprint (up to `WAIT_SECONDS` in `docker/authentik/setup.py`)
+    is a check made at each tick, and an apply is sent, recorded as
+    pending in `names-status.json`, and its result read from the
+    instance's status at the following ticks (an apply with no result
+    after 10 minutes is recorded as failed and sent again at the next
+    reconcile). So the service is healthy within seconds of starting,
+    while it may still wait for the blueprint, far inside ADR-0052's 20
+    minutes; `start_period` is 1 minute. Whether the values are applied
+    shows in the console (below), not in the health, so neither a slow
+    first start nor a bad names file can roll an upgrade back.
   * **Failures show** in the instance's status and in EasyRMM's console:
     `authentik-setup` writes its last result (the values applied, when,
     or the error) to `names-status.json` in `<data root>/authentik/status/`,
@@ -716,8 +752,12 @@ pair an install starts with.
   * Rows not seen for 30 days are ignored, and the page offers to
     **Forget** them (audited).
   * Two live server instances that name the same ID raise an alert: a
-    data directory was cloned. The guide says to delete the clone's
-    `server-id` and restart it.
+    data directory was cloned. A `server_instances` row counts as live
+    only when it was seen in the last 2 minutes, and the alert needs both
+    rows refreshed after the later of the two started, so a restarted
+    server's last row never counts against it. Command-line subcommands
+    (`names`, `tls reset`, `recover`) never register an instance. The
+    guide says to delete the clone's `server-id` and restart it.
   * A record that cannot be written is logged, retried every minute and
     alerted; nothing is offered from that server's `.env` until it is
     written.
@@ -726,10 +766,22 @@ pair an install starts with.
   new host, a change during a move. When a server's `.env` names a pair
   other than the primary, the server, in one transaction, records it and
   opens an alert and the banner **Move to the pair in `.env`** (audited as
-  `name_move.env_offer`). It serves both the primary and the pair `.env`
-  names, so agents on either keep working; MeshCentral keeps the
-  primary's name, as before step 2 of any move. Today that edit strands
-  every agent; with this it strands none.
+  `name_move.env_offer`). Today that edit strands every agent; with this
+  it strands none.
+* **What is served while `.env` is only offered**: the pair `.env` names
+  is served as an **agent route only**, so agents on it keep working;
+  browsers there are redirected to the primary, as ADR-0055 does for an
+  added name that is no longer trusted. Everything in the table under
+  "The name elsewhere" stays on the primary: the relying party ID, the
+  authenticator issuer, links in email, install commands, the single
+  sign-on callback, the audit forwarder's `HOSTNAME`, `recover`'s link,
+  Authentik's `primary`, and MeshCentral's name. From slice 4,
+  `configureWebAuthn`, `enrollapi.New`, `auth.Config.PublicURL`,
+  `auditfwd.New`, `recover` and the others there read the primary, not
+  `EASYRMM_PUBLIC_URL`. The primary keeps its certificate source
+  (ADR-0055): in `acme` mode it stays in autocert's host policy; in
+  `manual` mode the offer warns when the certificate files no longer
+  cover it.
 * **The move starts only when someone chooses it**: in the console, with
   step-up, or on the host with `docker compose exec server easyrmm-server
   names move --to-env` (host access is the authority there, so no
@@ -765,8 +817,9 @@ pair an install starts with.
   EasyRMM's primary name from EasyRMM instead, and the setting is removed
   once nothing reads it (ADR-0048's rule).
 * **Moving to another IP address of this server** works the same way, when
-  `EASYRMM_IP_ADDRESSES` lists both: an address the host has lost takes
-  its agents with it unless they moved first.
+  `EASYRMM_IP_ADDRESSES` lists both, with the trust of an IP target ("What
+  a move is"): an address the host has lost takes its agents with it
+  unless they moved first.
 
 ### Precedence over ADR-0055
 * **`.env` names a name ADR-0055 added**: ADR-0055's rule comes first (the
@@ -898,8 +951,11 @@ pair an install starts with.
   than the primary: the pair, the server, and **Move to the pair in
   `.env`** (step-up), or **Move back** when it is a move's old pair;
   offered once no move is in progress otherwise.
-* A banner when no initial pair could be adopted (What a move is), with
-  the origins agents use, the pair `.env` names and **Confirm** (step-up).
+* A banner when no initial pair could be adopted ("What a move is"):
+  "Agents use <origin> (MeshCentral <cert>); `.env` names <pair>. Until
+  you confirm which pair EasyRMM starts from, both are served and no move
+  can start." **Confirm** (step-up) offers **Use `.env`'s pair** and **Use
+  the agents' pair**.
 * The servers on the database with their ID, `.env` pair and last seen;
   **Forget** on those not seen for 30 days.
 * Authentik's last apply (`names-status.json`) on the move's page and in
@@ -910,7 +966,8 @@ pair an install starts with.
   progress, each step's state and the counts.
 * `POST /api/v1/settings/names/moves` (`to`; **Move to the pair in
   `.env`** is this call with that pair), `POST
-  /api/v1/settings/names/initial` (**Confirm**), `DELETE
+  /api/v1/settings/names/initial` (**Confirm**, `{"pair": "env"}` or
+  `{"pair": "agents"}`, the latter as shown in `GET`), `DELETE
   /api/v1/settings/names/servers/{id}` (**Forget**), and on the move `POST
   …/steps/{remote-access|browsers|remove}`, `POST …/back`; `anyway: true`
   for the overrides; step-up as above. `POST
@@ -981,6 +1038,7 @@ any other.
     included), an `issuedAt` not later than the last applied, an untrusted
     key, a key from before a rotation's cut-over with ADR-0057's ring;
   * the check following no redirect, and a `404` counted as a failure;
+    a `404` from `/move` dropped once, with no retry;
   * the switch waiting for running work, writing `agent.json` and
     `address.json` before the restart, and `address.json` surviving a
     `SaveConfig` that knows nothing of it;
@@ -1019,8 +1077,9 @@ any other.
   * `.env` with **two servers on one database**: different `.env`s do not
     undo each other; a changed `.env` never starts a move, at that start
     or any later one: it is recorded with the alert, the banner and
-    `name_move.env_offer` in one transaction, both pairs are served (a
-    device on each keeps checking in), and the move starts only from
+    `name_move.env_offer` in one transaction, the `.env` pair is served
+    as an agent route (a device on each pair keeps checking in), and the
+    move starts only from
     **Move to the pair in `.env`** with step-up or from `names move
     --to-env`, each through step 1's gates (a device unable to move, a
     key on a DNS install before slice 7, `hold`), with the old pair the
@@ -1034,12 +1093,27 @@ any other.
     `server_env_pairs`); a database restored from before a `.env` change,
     with that `.env` kept, offers it and starts nothing; rows not seen for
     30 days ignored and forgotten; two live instances with one ID raise
-    the alert;
+    the alert, while a restart's old row, a row older than 2 minutes and
+    a command-line subcommand do not;
   * the initial pair, at slice 4's first start: from the record slice 1
     wrote, also when `.env` was edited just before the upgrade; with no
     record, from `.env` when the recorded origins of recent devices
-    match it, and otherwise the alert, the banner and **Confirm** with
-    step-up; the initial pair stays the primary until a move;
+    match it; a recent device with no recorded origin, or one on another
+    origin, leaves it unadopted: both pairs served (a device on the
+    agents' origin keeps checking in), MeshCentral's `config.json` not
+    rewritten, moves and offers refused, until **Confirm** with step-up
+    picks `.env`'s pair or the agents' pair (its MeshCentral name taken
+    from that `config.json`); the initial pair stays the primary until a
+    move;
+  * while `.env` is only offered: its pair answers agents and redirects
+    browsers to the primary; the relying party ID, issuer, email links,
+    install commands, single sign-on callback, audit `HOSTNAME`,
+    `recover`'s link and Authentik's `primary` all name the primary; in
+    `acme` mode the primary stays in the host policy, and in `manual`
+    mode a certificate that no longer covers it is warned about;
+  * an IP-to-IP move passing step 1 with the internal authority's
+    certificate and reachability, and refused when the address is not
+    reachable;
   * `tls reset` during a move and after one; a new name that stops being
     trusted;
   * link matching across names; WebAuthn credentials under two relying
@@ -1119,7 +1193,11 @@ any other.
   written to the instance's context and applied; a change made while it
   was stopped is applied at its start, before it watches; one missed by
   the watch is applied at the 5-minute reconcile; a failed apply shows in
-  `names-status.json`.
+  `names-status.json`; with a fake clock, the liveness file stays fresh
+  while it waits for the blueprint and while an apply is pending, and an
+  apply with no result after 10 minutes is recorded as failed; with no
+  context written, the conditional entries are skipped and the provider,
+  stage and application keep their values.
 * **Single sign-on and Authentik**: the Authentik bundle test
   (`scripts/e2e/authentik.sh`) gains a move: without restarting Authentik,
   the provider's redirect URIs gain the new name's, its enrollment
@@ -1131,12 +1209,15 @@ any other.
   exits, so it waits instead for the service to be running and
   `names-status.json` to report the values applied, and fails when the
   service has exited or reports an error. It also checks the service's
-  own healthcheck: `healthy` within its start period, and `unhealthy`
-  when its loop is stopped.
+  own healthcheck: `healthy` within its 1-minute start period, while the
+  first start still waits for the blueprint, and `unhealthy` when its
+  loop is stopped.
 * **Upgrading with Authentik**: ADR-0052's upgrade test gains a case with
   `--with-authentik`, so that the held start's `--wait` passes with the
   long-running `authentik-setup` healthy, and the upgrade is confirmed,
-  not rolled back.
+  not rolled back. The provider keeps its redirect URI, the stage and
+  the application their values, through the worker's first apply of the
+  new blueprint, before `authentik-setup` writes the context.
 * **Rollback**: the guard's own tests are the amendment's. Here, ADR-0052's
   upgrade test gains a real agent: after a confirmed upgrade, a name added
   and step 1 taken, **Roll back** is refused with the message;
@@ -1184,11 +1265,14 @@ Each merges, is verified on its own, and leaves nothing unused.
    cannot.
 4. **The move of agents** (step 1 and **Move back**): `name_moves`, the
    move generation, steps 1 and 2 under the move lock with the `hold`
-   file checked inside it, the primary, a DNS install
-   adding a name, the signed instruction for both agents and the build
+   file checked inside it, the primary and every reader of the name
+   taking it instead of `EASYRMM_PUBLIC_URL`, an IP target's trust, a
+   DNS install adding a name, the signed instruction for both agents and
+   the build
    that parses it, which first reports `move.easyrmm` and
-   `move.easypatch`, the failure reports, `.env` offered per server (the
-   banner, `names move --to-env`, the initial pair and **Confirm**,
+   `move.easypatch`, the failure reports, `.env` offered per server (an
+   agent route only, the banner, `names move --to-env`, the initial pair
+   and **Confirm**,
    **Forget**, the shared-ID alert), `setup.sh --upgrade`'s warning, the
    precedence over ADR-0055, link matching and install instructions from
    EasyRMM's names, the install commands' list on the page, the engine's
@@ -1198,9 +1282,12 @@ Each merges, is verified on its own, and leaves nothing unused.
    the contract test.
 5. **MeshCentral's move** (step 2), and the code-signing check above.
 6. **Sign-in and browsers** (steps 3 and 4): redirect URIs per name,
-   confirmation, Authentik's names files, the blueprint's context, the
+   confirmation, with each enabled provider starting out confirmed at
+   the current primary, Authentik's names files, the blueprint's context
+   and its conditional entries (no `!Env` left for these values), the
    long-running `authentik-setup` that validates and reconciles them,
-   with its own healthcheck (a requirement of ADR-0052's held start),
+   with its liveness tick and own healthcheck (a requirement of
+   ADR-0052's held start),
    `names-status.json` in the console, the Authentik bundle test's
    readiness and health checks, the upgrade test with Authentik, the
    redirect.
@@ -1230,8 +1317,9 @@ Slices 1 to 6 complete the IP-to-name case.
   they trusted one authority for the address.
 * MeshAgents follow MeshCentral's name whatever changes it; remote access
   to a computer is interrupted for about a heartbeat at step 2.
-* A hand edit of the names in `.env` no longer strands agents: both pairs
-  are served, and the console or a host command offers the move.
+* A hand edit of the names in `.env` no longer strands agents: its pair
+  is served to agents beside the primary, and the console or a host
+  command starts the move when someone chooses it.
 * The updater cannot roll back across a move's step 1 or 2 without
   `--strand-agents`; onto a version from before this ADR that leaves each
   moved computer to be uninstalled and enrolled again, as a new device.
