@@ -55,10 +55,10 @@ user".
 * **Which certificate a connection gets** (`edge.certificates`). In
   `internal` mode, the authority's, for every connection. Otherwise a DNS
   server name gets the mode's source; a connection without one (an IP
-  address) gets the internal authority, except MeshCentral reading its
-  own certificate from this host (`fromThisHost`), which gets the
-  MeshCentral name's. In `manual` mode the file must also cover
-  Authentik's and the imported names (`covers`).
+  address) gets the internal authority, except a connection from this
+  host (`fromThisHost`), which gets the MeshCentral name's. In `manual`
+  mode the file must also cover Authentik's and the imported names
+  (`covers`).
 * **One authority certificate for every internal origin.** The authority
   issues a single certificate for the names and addresses of the origins
   marked internal (`internalAddresses` in
@@ -100,11 +100,19 @@ user".
     and reads `certUrl` again, at most once every two minutes, then
     disconnects the held agents so they reconnect, but only if the hash
     it read changed (`meshagent.js` and `updateProxyCertificates` in
-    `meshcentral.js`). EasyRMM sets `certUrl` to its own listener without
-    a server name (`EASYRMM_MESH_CERT_URL`, `defaultCertURL`) and rewrites
-    MeshCentral's `config.json` only when it changes; MeshCentral's start
-    script restarts it then (`docker/meshcentral/start.sh`). A second
-    change within those two minutes leaves agents held until MeshCentral
+    `meshcentral.js`). EasyRMM sets `certUrl` to its own HTTPS listener
+    on loopback (`EASYRMM_MESH_CERT_URL`, by default `defaultCertURL`:
+    `https://127.0.0.1:443`, or MeshCentral's port). MeshCentral dials
+    the URL's host and port (443 when it names none) with the server
+    name set to its own name, `settings.cert` (`loadCertificate` in
+    `certoperations.js`, called from `updateProxyCertificates`), which
+    EasyRMM sets to MeshCentral's host name (`Render`); a `file:` URL is
+    read from disk instead. So on a DNS install the read arrives with
+    MeshCentral's name as its server name and is answered as for that
+    name, not by the loopback rule. EasyRMM rewrites MeshCentral's
+    `config.json` only when it changes; MeshCentral's start script
+    restarts it then (`docker/meshcentral/start.sh`). A second change
+    within those two minutes leaves agents held until MeshCentral
     restarts (ADR-0014; `docs/deployment/docker.md`).
   * *The server itself* reaches Authentik's name through its own edge,
     trusting the system's roots and, in `internal` mode, its authority
@@ -308,8 +316,19 @@ CertMagic replaces `autocert` for the names above:
   never reached. The staging configuration of the trial order keeps its
   own account the same way. Registration, the import and the start of the
   certificate service establish it, and the service refuses to make an
-  attempt when it does not hold. A test proves standard input is never
-  read and `DefaultACME.Agreed` never changes.
+  attempt when it does not hold.
+* **The precondition holds as CertMagic checks it, not only as EasyRMM
+  does.** CertMagic lists `acme/<CA>/users` without recursing and keeps
+  only entries that `Stat` reports as not terminal: the account's
+  *folder* key, not the files in it (`mostRecentAccountEmail` in
+  `account.go`). A key/value storage that listed only leaf keys would
+  pass EasyRMM's own check and still make CertMagic prompt. So
+  `tls_storage`'s `List` returns, for a non-recursive listing, the
+  immediate children of the prefix, folders included, and its `Stat`
+  reports a key with keys under it as not terminal, as CertMagic's
+  `Storage` contract asks. The test that standard input is never read and
+  `DefaultACME.Agreed` never changes runs against the PostgreSQL storage,
+  not an in-memory one.
 * **The Subscriber Agreement** is accepted by the operator: at install by
   choosing `acme` (setup.sh prints the link), in the console by **Agree
   and get certificates** (5b2).
@@ -350,8 +369,9 @@ every attempt and CertMagic carries it out:
 * **`tls_certificates` holds, per name**, the next attempt allowed, the
   failed validations in the last hour, the time it started failing, the
   last error, the certificate's serial, validity and ARI window, and, for
-  MeshCentral's name, the time of MeshCentral's last read of `certUrl`
-  (below).
+  MeshCentral's name, the certificate waiting to be applied and when it
+  became ready (below). MeshCentral's last read is kept per server
+  instance, in a row of its own for each.
 * **The scheduler** runs every minute in one server at a time (an
   advisory lock), takes the names that need a certificate or a renewal
   (CertMagic answers whether one is needed: ARI's window, or a third of
@@ -425,8 +445,10 @@ start of ARI's window, or two thirds of the lifetime) to expiry.
   "failing since …" with the CA's error and its fix; expired.
 * **A warning** when a name has had no certificate for an hour (waiting
   for DNS or failing; `.env` names and added names alike), when a renewal
-  has failed for a quarter of *W* or 24 hours, whichever comes first, and
-  when an added name's reachability fails (5b3).
+  has failed for a quarter of *W* or 24 hours, whichever comes first,
+  when a new certificate for MeshCentral's name is still not applied
+  past its 15-minute cap (below), and when an added name's reachability
+  fails (5b3).
 * **Critical** when less than a quarter of *W* is left (about 7 days of a
   90-day certificate, 4 of a 45-day one), or a renewal fails after the CA
   moved its ARI window earlier, as it does before revoking.
@@ -455,12 +477,29 @@ start of ARI's window, or two thirds of the lifetime) to expiry.
 MeshAgents follow the certificate EasyRMM serves for MeshCentral's name
 only through MeshCentral's reads of `certUrl`, so:
 
-* **The read gets exactly what agents get.** A connection from this host
-  without a server name gets the certificate the edge serves for
-  MeshCentral's name at that moment, in every mode, `internal` included
-  (today `internal` mode answers it with the authority before looking).
-  One function chooses a name's certificate, the loopback rule calls it
-  with MeshCentral's name, and both change in the same atomic swap.
+* **A listener of its own for MeshCentral's reads.** `certUrl` points
+  at a dedicated listener: its own port, bound to `127.0.0.1` and never
+  published, used by nothing but MeshCentral. Whatever server name it is
+  sent, it serves exactly the certificate the edge serves MeshAgents for
+  MeshCentral's name at that moment, in every mode in which EasyRMM
+  terminates TLS (`acme`, `manual`, `internal`), from the same function
+  and in the same atomic swap; it completes the handshake and closes. It
+  records each handshake as one of MeshCentral's reads. Handshakes on the
+  main listeners never count, so a local agent, a container on the host's
+  network or a monitoring probe connecting there is not taken for
+  MeshCentral. Nothing else is configured to use the dedicated port; a
+  local process that connected to it anyway could only make a swap wait,
+  never past the cap below.
+* **The existing paths change with it.** `defaultCertURL` becomes this
+  listener's URL in those three modes, `internal` included, so `internal`
+  mode no longer answers MeshCentral's read from its single authority
+  certificate on the main listener. The main listeners' loopback rule
+  (`fromThisHost` in `edge.certificates`) goes, since nothing needs it
+  any more. `EASYRMM_MESH_CERT_URL` keeps its meaning in `offload` mode,
+  where the proxy serves the certificate and EasyRMM swaps nothing; in
+  the other modes a value that is not this listener is ignored, with a
+  warning in the log and on the Certificates page, since EasyRMM could
+  not see the reads.
 * **A swap waits until 3 minutes after MeshCentral's last read.**
   MeshCentral throttles its reads, not EasyRMM's swaps: a read within
   2 minutes of the previous one returns at once, and a held agent is
@@ -468,16 +507,22 @@ only through MeshCentral's reads of `certUrl`, so:
   (`updateProxyCertificates` in `meshcentral.js`, `meshagent.js`). A swap
   shortly after a read would leave agents that reconnect held until
   another mismatched agent happens to connect after the throttle ends,
-  which in a small fleet can take hours. So the edge records each of
-  MeshCentral's reads (the loopback handshake without a server name that
-  `fromThisHost` identifies), stores its time in `tls_certificates` so a
-  restart does not forget it, and applies a new certificate for that name
-  only once 3 minutes have passed since the last read, whatever causes
-  the change: a renewal, a move, the fallback at expiry, **Retry now**,
-  `tls reset`, another server's `NOTIFY`. The first agent that sees the
-  new certificate then makes MeshCentral read it at once. The wait never
-  serves a certificate past its expiry. The console also refuses a second
-  move of that name within 10 minutes.
+  which in a small fleet can take hours. So a new certificate for that
+  name, whatever causes it (a renewal, a move, the fallback at expiry,
+  **Retry now**, `tls reset`, another server's `NOTIFY`), is applied
+  only once 3 minutes have passed since the last read the listener
+  recorded. The time of the last read is stored per server instance
+  (each server's MeshCentral reads its own listener), so a restart does
+  not forget it. The first agent that sees the new certificate then
+  makes MeshCentral read it at once.
+* **The wait is capped.** A new certificate is applied at most 15
+  minutes after it is ready, reads or not; at once when ARI signals that
+  the certificate served will be revoked (its window moved into the
+  past); and never later than the served certificate's expiry. The
+  Certificates page shows the serial actually served, and the one
+  waiting with the time it became ready; an alert opens if a swap is
+  still pending past the cap. The console also refuses a second move of
+  that name within 10 minutes.
 * **An IP-only install's MeshAgents** use the IP address, whose
   certificate 5b never changes (5b3).
 * **An added remote-access name joins `allowedOrigin`** (5b3): the
@@ -565,9 +610,13 @@ only when a move asks for it.
 * **Checked again whenever it could change**: when a name's served or
   fallback chain changes (a renewal, another intermediate, the authority
   issuing again), when a device's build changes (an update or a
-  rollback, which the heartbeat reports), and at a device's first
-  heartbeat on a name whose source is not `.env`'s (a new install), the
-  device is asked to verify both the chain served and the fallback's.
+  rollback, which the heartbeat reports), and when a device on a name
+  whose source is not `.env`'s (a new install) first sends a heartbeat
+  that reports the capability (below, Protocol; a process's first
+  heartbeat cannot, since it carries only level-1 fields), the device is
+  asked to verify both the chain served and the fallback's. The server
+  keeps asking, at each heartbeat that reports the capability, until a
+  fallback result is recorded for that device and name.
   The page and each device's page show the results; a device that fails
   the fallback's is shown as **unprotected**: it would be cut off if the
   name fell back at expiry or by `tls reset`, and the expiry alert lists
@@ -833,7 +882,11 @@ it. 5b2 builds it.
   * the ID token's issuer and subject (`iss` and `sub`) must be the
     provider identity linked to the session's user;
   * its `state` and `nonce` are created for this step-up and this
-    session, and accepted once;
+    session and kept on the session's row (`sessions`, in PostgreSQL:
+    `server/migrations/00001_core.sql`), and consumed once by a
+    conditional `UPDATE … RETURNING` that clears them, so the step-up
+    works, and cannot be replayed, whichever server the provider sends the
+    browser back to;
   * the provider must still be marked as trusted to enforce MFA when the
     token arrives;
   * any mismatch is a failed step-up, audited and counted as below.
@@ -953,10 +1006,16 @@ BIND run in containers on **host networking only**, never on a bridge:
 The tests:
 
 * **Unit**: the seal's binding and the re-seal at start; certificate
-  choice per source in each of the four modes, the loopback rule
-  included; MeshCentral's read rule (a read at T makes a swap at T + 1
-  minute wait until T + 3 minutes, whatever its cause, across a restart,
-  never past expiry); thresholds computed from the lifetime;
+  choice per source in each of the four modes; MeshCentral's listener
+  (in each mode it serves what MeshAgents get for MeshCentral's name,
+  whatever server name it is sent, and records only its own handshakes;
+  a loopback handshake without a server name on a main listener is not
+  a read); MeshCentral's read rule (a read at T makes a swap at T + 1
+  minute wait until T + 3 minutes, whatever its cause, across a restart;
+  reads every minute still swap 15 minutes after the certificate became
+  ready; an ARI revocation signal swaps at once; never past expiry);
+  `tls_storage`'s listing and `Stat` as CertMagic's account lookup uses
+  them; thresholds computed from the lifetime;
   the scheduler, the gate (an attempt not due, during a hold, over the
   budget, not started by the scheduler) and **Retry now**'s refusal; an
   order and a renewal with no email, with standard input a pipe the test
@@ -997,9 +1056,13 @@ The tests:
   * **Renewal with a short-lived certificate**: 600-second certificates,
     with CertMagic's `RenewCheckInterval` and the scheduler's interval
     set to 10 seconds by test-only settings. A new serial is served for
-    every name; MeshCentral logs that it loaded the new certificate, each
-    swap of its name at least 3 minutes after its last read (the edge's
-    log); MeshAgent reconnects and a session opens again.
+    every name. For MeshCentral's name the test checks the real read:
+    MeshCentral's log shows it loaded the new certificate from the
+    dedicated listener's URL, the listener recorded that read, the swap
+    came at least 3 minutes after the read before it and at most 15
+    minutes after the certificate was ready, and the Certificates page
+    shows the served serial. MeshAgent reconnects and a session opens
+    again.
   * **The failure alert**: validation of the console's name made to fail
     (BIND answers another address). The warning opens a quarter of the
     renewal window after the first failure, with "failing" as its reason;
@@ -1022,7 +1085,8 @@ The tests:
     working after each move; a move back refused for an EasyPatch agent
     installed without the authority goes through after **Reinstall
     patching agents**; an agent installed after a move reports the
-    fallback's chain at its first heartbeat; `tls reset`.
+    fallback's chain from its first heartbeat that reports the
+    capability; `tls reset`.
   * 5b3: the IP install at `https://127.0.0.1` adds a name; the agent on
     the IP address keeps working and the IP's certificate is unchanged; a
     remote session opens from the name, on its remote-access name; a
@@ -1098,6 +1162,9 @@ The tests:
   another party for every install, and ZeroSSL needs an account;
   certificates keep weeks of validity through a Let's Encrypt outage, and
   the alert covers it.
+* **`certUrl` as a file.** MeshCentral reads a `file:` URL from disk
+  (`loadCertificate`), but EasyRMM could not see when it reads, which the
+  wait needs.
 * **TLS mode from the console.** `offload` and trusted proxies belong to
   the host's setup; a per-name choice gives the same result without the
   server rewriting its own configuration.

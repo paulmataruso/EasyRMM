@@ -399,8 +399,10 @@ MeshCentral origin but the primary one need, is fixed separately (branch
   `easyrmm-server tls check`. Settings → **Certificates** shows each name;
   alerts as fractions of each certificate's lifetime, and after an hour
   without a certificate, on every console origin and through F2's sender
-  behind one interface. MeshCentral's certificate changes only 3 minutes
-  after MeshCentral last read it, and that read gets what agents get.
+  behind one interface. MeshCentral reads its certificate from a
+  loopback listener of its own, which serves what agents get; a new one
+  is applied 3 minutes after MeshCentral's last read, and within 15
+  minutes of being ready.
 * **5b1. Agent trust**, released first: a trust instruction signed with
   the job key carries the chain a source will serve; the agent verifies
   it on the device and widens its trust (system roots and its CA file)
