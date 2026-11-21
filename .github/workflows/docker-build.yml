@@ -40,8 +40,10 @@ jobs:
           persist-credentials: false
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       # Both platforms, with BuildKit's SBOM and provenance, as they will be
-      # pushed: the tests below and in ci.yml run the amd64 image from this
-      # layout, and nothing builds the image again.
+      # pushed: the checks below and ci.yml's jobs use the images in this
+      # layout, and nothing builds the image again. Both are scanned and
+      # their agents checked; only the amd64 one runs (the runner has no
+      # arm64 emulation).
       - name: Build image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -55,7 +57,9 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: mode=max
           sbom: true
-      - name: Load the amd64 image for the checks
+      # The digest is the layout's index's, which pushing it keeps; the jobs
+      # that load the image later check they have this one.
+      - name: Load both images for the checks
         id: layout
         run: |
           digest=$(tar -xOf easyrmm-server.oci.tar index.json | jq -r '.manifests[0].digest')
@@ -63,17 +67,38 @@ jobs:
             echo "::error::no image index in the layout: $digest"
             exit 1
           fi
-          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar linux/amd64 easyrmm-server:ci
+          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$digest" linux/amd64 easyrmm-server:ci
+          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$digest" linux/arm64 easyrmm-server:ci-arm64
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Image runs and reports its version
         env:
           VERSION: ${{ inputs.version }}
         run: |
           docker run --rm easyrmm-server:ci version | grep -qF "$VERSION"
-      - name: Scan image (Trivy)
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      # The agents a release builds (scripts/release/agents.sh) are the bytes
+      # both images hand out, which ADR-0049's signed agents need.
+      - name: Both images' agents are the ones a release builds
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          scripts/release/agents.sh "$VERSION" "$RUNNER_TEMP/agents"
+          scripts/release/check-agents.sh easyrmm-server:ci "$RUNNER_TEMP/agents"
+          scripts/release/check-agents.sh easyrmm-server:ci-arm64 "$RUNNER_TEMP/agents"
+      - name: Scan the amd64 image (Trivy)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: easyrmm-server:ci
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Scan the arm64 image (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: easyrmm-server:ci-arm64
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
@@ -99,7 +124,9 @@ jobs:
         with:
           name: easyrmm-server-image
       - name: Load image
-        run: scripts/ci/load-oci-image.sh easyrmm-server.oci.tar linux/amd64 easyrmm-server:ci
+        env:
+          DIGEST: ${{ needs.build.outputs.digest }}
+        run: scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$DIGEST" linux/amd64 easyrmm-server:ci
       - name: Prepare host (setup script, manual TLS with a test certificate)
         working-directory: deploy
         run: |

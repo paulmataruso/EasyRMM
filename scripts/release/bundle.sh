@@ -4,7 +4,7 @@
 #
 #   easyrmm-<version>-deploy.tar.gz    the Compose deployment, pinned to this version's images
 #   easyrmm-<version>-manifest.json    its version, commit, bundle digest and images (manifest.sh)
-#   easyrmm-agent-<os>-<arch>[.exe]    the agents (the server image carries the same ones: check-agents.sh)
+#   easyrmm-agent-<os>-<arch>[.exe]    the agents (agents.sh; the server image carries the same ones)
 #   SHA256SUMS
 #
 #   EASYRMM_IMAGE_PIN=ghcr.io/<owner>/easyrmm-server:1.2.3@sha256:<digest> \
@@ -113,21 +113,7 @@ tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --format=g
   > "$out/$name-manifest.json"
 
 # --- Agents -------------------------------------------------------------------
-# Built exactly as docker/server/Dockerfile builds the agents the server hands
-# out (-buildvcs=false: no commit stamped in), so that the release's files are
-# the same bytes: an operator signs the release's Windows agent and the server
-# accepts it only if it matches its own build (ADR-0049).
-build() { # os arch suffix [GOARM]
-  CGO_ENABLED=0 GOOS=$1 GOARCH=$2 GOARM=${4:-} "$go" -C "$root" build -trimpath -buildvcs=false \
-    -ldflags "-s -w -X main.Version=$version" \
-    -o "$out/easyrmm-agent-$1-$2$3" ./agent/cmd/easyrmm-agent
-}
-build windows amd64 .exe
-build windows arm64 .exe
-build linux amd64 ""
-build linux arm64 ""
-build linux arm "" 7
-build linux 386 ""
+GO=$go "$root/scripts/release/agents.sh" "$version" "$out"
 
 # --- Checksums ----------------------------------------------------------------
 sums=$(cd "$out" && find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | xargs sha256sum)

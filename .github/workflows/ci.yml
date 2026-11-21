@@ -327,8 +327,10 @@ jobs:
           name: easyrmm-server-image
       - name: Load the server image CI built
         if: needs.docker.result == 'success'
+        env:
+          DIGEST: ${{ needs.docker.outputs.digest }}
         run: |
-          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar linux/amd64 easyrmm-server:ci
+          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$DIGEST" linux/amd64 easyrmm-server:ci
           rm easyrmm-server.oci.tar
           echo "EASYRMM_BUNDLE_SERVER_IMAGE=easyrmm-server:ci" >> "$GITHUB_ENV"
       - name: Install, enroll, scan and patch through the bundle
@@ -382,8 +384,10 @@ jobs:
         with:
           name: easyrmm-server-image
       - name: Load the server image CI built
+        env:
+          DIGEST: ${{ needs.docker.outputs.digest }}
         run: |
-          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar linux/amd64 easyrmm-server:ci
+          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$DIGEST" linux/amd64 easyrmm-server:ci
           rm easyrmm-server.oci.tar
       - name: Install, enroll, scan and patch with the engine of ${{ needs.version.outputs.release }}
         env:
@@ -439,8 +443,10 @@ jobs:
           name: easyrmm-server-image
       - name: Load the server image CI built
         if: needs.docker.result == 'success'
+        env:
+          DIGEST: ${{ needs.docker.outputs.digest }}
         run: |
-          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar linux/amd64 easyrmm-server:ci
+          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$DIGEST" linux/amd64 easyrmm-server:ci
           rm easyrmm-server.oci.tar
           echo "EASYRMM_AUTHENTIK_SERVER_IMAGE=easyrmm-server:ci" >> "$GITHUB_ENV"
       - name: Invite, sign in with a second factor, refuse and recover through Authentik
@@ -485,8 +491,10 @@ jobs:
         with:
           name: easyrmm-server-image
       - name: Load the server image CI built
+        env:
+          DIGEST: ${{ needs.docker.outputs.digest }}
         run: |
-          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar linux/amd64 easyrmm-server:ci
+          scripts/ci/load-oci-image.sh easyrmm-server.oci.tar "$DIGEST" linux/amd64 easyrmm-server:ci
           rm easyrmm-server.oci.tar
       - name: Build and check the bundle and its manifest
         env:
