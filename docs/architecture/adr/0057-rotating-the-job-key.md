@@ -10,7 +10,9 @@
   check: devices left on a lost key, the record of issued instructions,
   the updater's rollback (its first release, the hold, other hosts), a
   shorter declared transition, the authority replaced in two phases, and
-  the patching engine's part of a leaked backup set.
+  the patching engine's part of a leaked backup set. The updater's
+  rollback then moved into ADR-0052 as its "Rollback guards", decided in
+  review so that ADR-0057 and ADR-0061 share one mechanism.
 * Builds on: [ADR-0009](0009-agent-protocol.md) (amended, PR #52: how the
   protocol evolves), [ADR-0015](0015-enrollment-and-meshagent-delivery.md)
   (signed requests, MeshAgent's signed downloads),
@@ -23,9 +25,9 @@
 * Amends: [ADR-0017](0017-scripts-and-jobs.md), "Signing" and
   "Consequences": the agent follows a signed hand-over instead of refusing
   every other key, and a lost key alone means re-pinning, not re-enrolling;
-  [ADR-0052](0052-the-host-updater.md), "Rollback": what the updater
-  records and refuses, a requirement written here for the updater being
-  built.
+  [ADR-0052](0052-the-host-updater.md): its new section "Rollback
+  guards", shared with ADR-0061, holds what the updater records with each
+  backup and refuses.
 * Part of [the feature plan](../feature-plan.md): F0. F1 (signed settings),
   feature 8 (the WebSocket channel) and 5c (moving to a new name) depend
   on it.
@@ -443,8 +445,8 @@ once, when a request arrives (`Handler` in `server/internal/updater/hold.go`
 on `feat/server-hold`), and refreshes it every second, so a request
 admitted just before the hold may still be running. Such a change
 therefore either commits before the updater can read the ring under the
-same lock, or finds the file inside the lock and is refused (The updater's
-rollback, below). The host commands take the same path.
+same lock, or finds the file inside the lock and is refused (ADR-0052,
+"Rollback guards"). The host commands take the same path.
 
 **When a rotation ends** is separate from the devices it has not reached.
 A planned rotation, or one for a move, ends when it is finished; a rotation
@@ -852,83 +854,32 @@ pace (above). Step 6 takes as long as the channels it uses, by hand.
   fail. Removing such a device skips the uninstall instruction it could not
   verify and goes as **Remove anyway** does (ADR-0050).
 
-### The updater's rollback (a requirement on ADR-0052)
-ADR-0052 refuses a rollback across a cut-over ("Rollback"). The host
-updater is being built now; this is what it must do, and ADR-0052 is
-amended when it does.
+### The updater's rollback (ADR-0052, "Rollback guards")
+ADR-0052's rollback guards, written into ADR-0052 with this ADR and shared
+with ADR-0061, refuse a rollback after a confirmed upgrade when the live
+floor is above the newest job key generation the backup holds, and say
+how: what each backup records, the hold, the single-host rule, the locks,
+the refusals, the one override (`--strand-agents`, on the host) and what
+it strands. This ADR provides what they read and adds:
 
-* **When it ships.** With the second slice of this ADR, which first allows
-  a cut-over, or before it: the second slice does not merge before an
-  updater with the record and the refusal is released.
-* **What a backup records.** At step 3 of an upgrade, when every other
-  service has stopped and PostgreSQL has not yet, the updater reads the
-  highest generation whose seed the database holds (1 for a database
-  without `job_keys`, whose `settings` key becomes generation 1) and keeps
-  it with the backup. If it cannot read it, it records "unknown". The
-  upgrade that brings the first updater with the record is backed up by
-  the updater before it (ADR-0052: the backup is step 4, and the updater
-  replaces itself only at step 7), so that backup has no record; the rule
-  below lets it roll back, since no cut-over can have happened before
-  slice 2.
-* **A rollback during an upgrade** (a failure after step 3) is never
-  blocked: the new version was held throughout (ADR-0052), so nothing can
-  have been cut over, and ADR-0052 allows PostgreSQL not to start then.
-* **A rollback after a confirmed upgrade** first writes `hold`
-  (`/run/easyrmm-updater/hold` in the server, PR #51: the server looks
-  every second and then answers `503` everywhere but its health checks),
-  and waits until the server's `/readyz` says it is held. It then reads,
-  in one transaction that takes the ring's advisory lock (One lock for
-  every change to the ring, above), so that a change admitted before the
-  hold has committed and none can follow:
-  * the newest generation that has been cut over to, the **floor** (1 for
-    a database without `job_keys`);
-  * the server instances seen in the last 2 minutes that the hold has not
-    reached (`server_instances`, above: a server on another host shares
-    the database but not this host's `hold`), and the database connections
-    named plain `easyrmm-server` (servers from before this ADR, which
-    record nothing).
-
-  It decides:
-  * a floor of 1 goes ahead whatever the backup recorded: no device has
-    ever been cut over, and every backup holds generation 1 or the
-    `settings` key that becomes it;
-  * a floor above the backup's generation, or a backup without one (from
-    an updater before the record, or "unknown"), or a floor that cannot be
-    read, is refused: "Agents moved to a signing key made after this
-    backup, on <time>; restoring it would leave them unable to accept
-    anything from the server", or, without a generation, that the updater
-    cannot tell whether restoring would do so;
-  * any instance the hold has not reached is refused too: "A server on
-    another host shares this database; it would keep changing the ring
-    during the rollback." A rollback that is safe for rotations is a
-    single-host one; with several hosts, the operator stops the others
-    first;
-  * otherwise it goes ahead; when the live ring held a newer key than the
-    backup, its record says that devices that moved keep trusting that key
-    until the next rotation's cut-over.
-
-  On a refusal `hold` is removed, and nothing was stopped.
-* **`--strand-agents`**, on the host only, rolls back anyway; the record
-  says so. A restored server of this ADR shows the devices that need
-  re-pinning. A restored version from before this ADR shows nothing: it
-  has no ring, no reports and no states, and a job it sends a moved device
-  just fails. So the guide has the operator re-pin every device with this
-  ADR's agent by policy, with `trust-key --force 1:<key>` and the key the
-  restored server holds, since that version cannot tell which devices
-  moved; devices on an older build never moved and need nothing.
-* **Why the updater reads the database.** The plan's rule is that the
-  updater trusts nothing the server writes beyond a version number
-  ([feature-plan.md](../feature-plan.md), "What the reviews changed"). This
-  departs from it by two values, read by a fixed `psql` query that the
-  updater runs as PostgreSQL's own user in the `postgres` container,
-  parsed as integers and nothing else: the floor, and the count of
-  instances the hold has not reached. They decide only between the
-  rollback the operator asked for and a refusal, which the host can
-  override; they never make the updater do anything else.
-* The updater's status gains the backup's generation, so the console shows
-  that **Roll back** is gone, and why, before anyone tries; the console's
-  dialog for a rotation for a compromise, and `finish --now` on the host,
-  say so before they end it.
+* **When it ships.** The second slice, which first allows a cut-over, does
+  not merge before an updater with the guards is released.
+* **What they read**: the floor (What the server offers each device),
+  whose generations never go backwards (One ring); `server_instances`,
+  which records whether each server is held (Several servers); and the
+  ring's advisory lock, inside which every change to the ring checks
+  `hold` again (One lock for every change to the ring).
+* **A rollback that goes ahead** while the live ring held a newer key than
+  the backup (one started after the backup and not yet cut over to):
+  its record says that the devices that moved keep trusting that key
+  until the next rotation's cut-over, which moves them (Orphaned keys).
+* **After `--strand-agents`**, devices that moved are re-pinned as the
+  guards say. Onto a version from before this ADR, which shows none of
+  them, the key to give is `1:<key>`, the restored server's `jobKey`.
+* The updater's status carries the backup's generation, so the console
+  shows that **Roll back** is gone, and why, before anyone tries; the
+  console's dialog for a rotation for a compromise, and `finish --now` on
+  the host, say so before they end it.
 * Because of the 24-hour minimum, only a rotation for a compromise, or one
   finished early from the host, can make a rollback impossible.
 
@@ -1277,11 +1228,10 @@ them; 10,000 records per rotation would bury the ones above. Forwarding
     agent reaches the restored server (which shows the newer key as
     unknown), is moved back to that server's build, and runs a script.
     Then an upgrade again, a rotation finished with `--now`, and **Roll
-    back** refused with nothing stopped; a backup without a generation
-    refused the same way, unless the floor is generation 1, which rolls
-    back (the release that brings the recording updater); refused while
-    another instance, not held, is recorded; `--strand-agents` rolling
-    back anyway.
+    back** refused by ADR-0052's guards with nothing stopped (their own
+    tests cover each refusal); a backup taken during an overlap rolled
+    back after the cut-over, the agent running a script; `--strand-agents`
+    rolling back anyway, and `trust-key --force` bringing the agent back.
   * **A rollback during an overlap, then a new rotation**: a planned
     rotation started, the agent moved to both keys, **Roll back** (allowed:
     nothing was cut over); the restored server shows the newer key as
@@ -1314,7 +1264,7 @@ them; 10,000 records per rotation would bury the ones above. Forwarding
 ## Slices
 Two of them depend on work not merged yet. Slice 1's rollback test needs
 the host updater, being built on `feat/updater` (ADR-0052), and slice 2
-needs that updater released with the record and the refusal (above).
+needs that updater released with ADR-0052's rollback guards.
 Slice 2's API needs step-up authentication, which ADR-0055's slice 5b2
 builds, so slice 2 does not merge before 5b2 either.
 
@@ -1338,8 +1288,8 @@ builds, so slice 2 does not merge before 5b2 either.
    way; the floor's change made an event every server sees, on which
    ADR-0059's channel, when it is built, sends `closing` (`refresh`),
    tested there; the bundle test. Not merged before a released updater
-   records the generation and refuses (above); its API needs ADR-0055's
-   step-up (5b2).
+   has ADR-0052's rollback guards; its API needs ADR-0055's step-up
+   (5b2).
 3. **Console**: the page, the devices' states, the re-pin helper; the
    bundle test through the console.
 4. **Restore and incidents**: the `incident` host commands (the
@@ -1372,9 +1322,8 @@ builds, so slice 2 does not merge before 5b2 either.
   from before this ADR need a reinstall or a hand edit.
 * Backups from before a rotation stop restoring a working fleet once it is
   cut over to. Finishing asks for a newer backup, and the updater refuses
-  such a rollback, reading two integers from the database to do so. A
-  rollback that is safe for rotations is a single-host one: it is refused
-  while a server on another host shares the database.
+  such a rollback, and any while a server on another host shares the
+  database (ADR-0052, "Rollback guards").
 * Old keys stay sealed in the database while any device may need them,
   and a lost key's seed stays until it is recovered.
 * A server from before this ADR cannot start against a migrated database,

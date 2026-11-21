@@ -15,6 +15,8 @@
   updates), [ADR-0044](0044-authentik-when-chosen.md) (Authentik's files)
   and the Docker deployment ([docker.md](../../deployment/docker.md)).
 * Part of [the feature plan](../feature-plan.md): F3 and feature 4.
+* Amended 2026-11-21: "Rollback guards", decided in review for
+  [ADR-0057](0057-rotating-the-job-key.md) and ADR-0061.
 
 ## Context
 An upgrade is run by hand on the server
@@ -248,7 +250,137 @@ and the attempt ends with the reason.
 * **Collectors** may receive audit records again, with the same IDs and
   contents: forwarding resumes from the backup's position. Records of the
   discarded version keep IDs no later record reuses.
-* Refused across a job key rotation's cut-over (ADR to come, plan F0).
+* Refused across a job key cut-over or a name move, by the rollback
+  guards (next section).
+
+### Rollback guards (amended 2026-11-21)
+*Decided in review, so that ADR-0057 (rotating the job key) and ADR-0061
+(moving to a new name) share one mechanism; both cite this section. It
+ships before whichever comes first of ADR-0057's slice 2 and ADR-0061's
+slice 4, the first slices that move agents.*
+
+A rollback after a confirmed upgrade restores a database from before
+everything done since. Two things done since leave agents unable to work
+with the restored server: a job key cut-over, after which moved agents
+trust no key the restored server holds, and step 1 or 2 of a name move,
+after which moved agents use an address it may not answer. Each is counted
+by a value in the database, and the updater refuses a rollback that would
+go back across either.
+
+* **The values.** For each, what a backup records, what is read live,
+  and its **baseline**, the value of a database in which nothing of the
+  kind has happened:
+  * **The job key.** The backup records `jobKeyGeneration`, the newest
+    generation whose seed the database holds. The live value is the
+    floor, the generation of the newest key cut over to (ADR-0057). A
+    restored server that holds the floor's key can sign for every device
+    that moved, so only a floor above every key the backup holds is a
+    problem: a backup taken during a rotation's overlap and restored after
+    its cut-over works (ADR-0057's restore table), and recording the
+    backup's floor instead would refuse it. Both are 1 for a database
+    without `job_keys`, whose `settings` key becomes generation 1.
+    Baseline 1.
+  * **A move.** `moveGeneration`, recorded and read live: ADR-0061's move
+    generation, kept with `name_moves` and defined there; 0 for a database
+    without `name_moves`. Baseline 0.
+* **They never go backwards, even across a restore.** Each new value is
+  the larger of the time in milliseconds and the last value plus one;
+  for the job key also above any generation a device reports within
+  `MaxSkew` (ADR-0057, "One ring"). A restored database holds an older
+  last value, but the clock has moved on, so a value made after a restore
+  is above the values the restore lost, and a later state never shows a
+  value a backup holds for an earlier one. For the job key, devices'
+  reports of the lost values lift it too. A server whose clock is more
+  than 5 minutes off cannot talk to agents (ADR-0057).
+* **What a backup records.** At step 3, once every other service has
+  stopped and before PostgreSQL does, the updater runs one fixed `psql`
+  query, as PostgreSQL's own user in the `postgres` container, which
+  returns both values. It keeps `{jobKeyGeneration, moveGeneration}` with
+  the backup. A value that is absent or does not parse as an integer is
+  recorded as unknown. The upgrade that brings the first updater with the
+  guards is backed up by the updater before it (step 4 is the running
+  updater's; it replaces itself at step 7), so that backup has no record:
+  both values unknown.
+* **A rollback during an upgrade** (any failure after step 3) is never
+  refused: the new version was held throughout and moved no agent, and
+  PostgreSQL may not start.
+* **A rollback after a confirmed upgrade**, in this order:
+  1. `hold` is written. It holds a running server too: new requests get
+     `503`, and requests in progress finish (PR #51).
+  2. The updater waits, up to 30 seconds, until every server instance
+     seen in the last 2 minutes reports that it is held
+     (`server_instances`, ADR-0057: each server records it at once when it
+     enters or leaves a hold). It refuses while one does not, which
+     includes every server on another host, since `hold` is this host's
+     file, and while a database connection named plain `easyrmm-server`
+     is open (a server from before ADR-0057, which records nothing). A
+     guarded rollback is a single-host one: with several hosts, the
+     operator stops the others first.
+  3. In one transaction that takes, in this fixed order, the job key
+     ring's advisory lock and then the name move's, it reads the floor
+     and the move generation and counts again the servers not held.
+     Every change to either value takes its lock first and then checks
+     `hold` again inside it, by looking at the file, not at the flag the
+     server refreshes every second: ADR-0057's changes to the ring, and
+     ADR-0061's steps 1 and 2, **Move back** included. So a change
+     admitted before the hold has either committed by the time of this
+     read, or finds `hold` and is refused.
+  4. It decides, below. On a refusal `hold` is removed, and nothing was
+     stopped.
+* **Refusals**, the same for both values, each with its reason:
+  * the live value is above the backup's (for the job key, the floor
+    above the newest key the backup holds);
+  * the backup's value is unknown (no record, or unreadable at step 3)
+    and the live value is above its baseline;
+  * the live value cannot be read.
+
+  The reasons: for the job key, "Agents moved to a signing key made after
+  this backup, on <time>; restoring it would leave them unable to accept
+  anything from the server"; for a move, "Agents moved to a new address
+  after this backup, on <time>; restoring it would leave them unable to
+  reach the server"; for an unknown or unreadable value, that the updater
+  cannot tell whether restoring would do so; for another server, that it
+  shares this database and would keep changing it during the rollback.
+  Otherwise the rollback goes ahead.
+* **One override.** `--strand-agents`, on the host only (never through a
+  request), rolls back despite every refusal. It first lists each refusal
+  it overrides and what each strands (below), and asks for confirmation.
+  Its record in the status directory and its audit record list the same.
+* **What a forced rollback strands, and what it costs:**
+  * **Across a job key cut-over**: devices that moved trust only keys the
+    restored server never held. A restored version with ADR-0057 shows
+    them as *Needs re-pinning*; one from before it shows nothing, so the
+    operator re-pins every device that runs ADR-0057's agent. Each is
+    re-pinned with `easyrmm-agent trust-key --force <generation>:<key>`
+    (ADR-0057), through MeshCentral's terminal, policy tools or at the
+    computer. The device keeps its identity and history. The cost: a
+    command per device, run outside EasyRMM.
+  * **Across step 1 or 2 of a name move**: onto a version with ADR-0061,
+    agents that moved fall back to their previous address after an hour
+    of failures (ADR-0061); the cost is that hour. Onto a version from
+    before ADR-0061 they are stranded: that server answers ADR-0061's
+    check with `404`, so neither their fall-back nor `set-server` can pass
+    it, and their MeshAgents, on the new MeshCentral name, cannot be
+    reached for a terminal. The only way back is to uninstall the agent
+    and enroll it again with the restored server's install command,
+    through policy tools or at the computer. Each comes back as a new
+    device (ADR-0024): a new identity, its history left with the old
+    record, and its EasyPatch agent enrolled again. The cost: a reinstall
+    per device, and every device's history split in two.
+  * **Past another server**: the servers on other hosts keep running
+    against the restored database, and can change the ring or move names
+    during and after the restore. Stop them first.
+* **The updater's status** carries the backup's record (both values, or
+  unknown), so the console, which knows the live values, hides **Roll
+  back**, with the reason, before anyone tries.
+* **Why the updater reads the database.** The plan's rule is that the
+  updater trusts nothing the server writes beyond a version number
+  ([feature-plan.md](../feature-plan.md), "What the reviews changed"). The
+  guards depart from it by one fixed query whose answers are parsed as
+  integers and nothing else: the two values and the count of servers not
+  held. They decide only between the rollback the operator asked for and
+  a refusal, which the host can override; they never make the updater do
+  anything else.
 
 ### Downtime and alerts
 From step 3 to step 7 nothing answers: a backup and a start, minutes on
@@ -316,6 +448,15 @@ Production installs upgrade when someone chooses to.
 * **Requests**: links, named pipes, directories, other owners, oversized
   files, malformed versions, lower versions and versions outside the
   channel, each refused.
+* **The rollback guards**, in the upgrade job, from the first slice that
+  moves agents: each refusal for each value (above the backup's; unknown
+  in the backup with the live value above its baseline, and at the
+  baseline allowed; unreadable); a change to the ring or a move step
+  racing the hold, either committed before the read or refused inside the
+  lock; a recorded instance not held, and a connection named plain
+  `easyrmm-server`, each refused; `--strand-agents` listing every refusal
+  it overrode, in its confirmation, its status record and its audit
+  record. ADR-0057 and ADR-0061 test what their agents do after each.
 * **The updater updating itself**, from the second release that has one.
 * Then the owner's test instance on the edge channel.
 
@@ -330,7 +471,10 @@ Production installs upgrade when someone chooses to.
 * An upgrade has minutes of downtime, as a manual one does; offline
   alerts no longer fire for it, or for any restart.
 * A rollback after a confirmed upgrade loses what was written since; it
-  is offered for 24 hours and says what it loses.
+  is offered for 24 hours and says what it loses. It is refused across a
+  job key cut-over or a name move, and while a server on another host
+  shares the database; `--strand-agents` overrides that on the host, at
+  the cost the rollback guards state.
 * The server gains `hold` and the offline rule; the engine gains a hold on
   its automatic agent updates and the presence rule, in a release;
   `main`'s publishing moves to the end of CI; release tags are limited to

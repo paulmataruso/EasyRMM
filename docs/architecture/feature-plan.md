@@ -24,6 +24,8 @@ requests and its own changelog entries.
 
 * **Trust.** The host updater no longer trusts anything the server
   writes beyond a version number, and never writes where the server can.
+  One exception, decided in review: its rollback guards (ADR-0052) read a
+  few integers from the database, which can only refuse a rollback.
   Agents do not pin TLS keys, so everything new that reaches an agent
   (settings, a new address, WebSocket messages) is signed, not just sent
   over TLS. Moving agents to a new name became an ADR of its own. The job
@@ -117,12 +119,13 @@ the patching engine's notification credentials, which the incident page
 replaces; EasyRMM's own authority is replaced in two phases, both
 authorities first, so no agent is cut off. The updater refuses a rollback
 whose backup lacks a key agents were cut over to, and one while a server
-on another host shares the database; that ships with the second slice or
-before, and the second slice also waits for ADR-0055's step-up. Tested
-with real agents on the host's network through a rotation, one offline
-across it, one from before the change, and restores across it. The first
-slice (agents that can follow, and flags for keys and instructions the
-server never issued) can ship before the rest of step 9.
+on another host shares the database (ADR-0052's rollback guards, shared
+with 5c); they ship with the second slice or before, and the second
+slice also waits for ADR-0055's step-up. Tested with real agents on the
+host's network through a rotation, one offline across it, one from before
+the change, and restores across it. The first slice (agents that can
+follow, and flags for keys and instructions the server never issued) can
+ship before the rest of step 9.
 
 ### F1. Signed settings that reach the agent
 Proposed in [ADR-0058](adr/0058-signed-settings-that-reach-the-agent.md),
@@ -245,8 +248,10 @@ last job of `main`'s CI), stops the deployment, copies the whole data root,
 runs the new `setup.sh --upgrade`, starts the new version held (answering
 only its health check), and confirms, or restores the copy and starts the
 previous version. A rollback after a confirmed upgrade restores that copy
-too, for 24 hours, and says what it loses. The server can only ask, through
-a file the updater validates, and reads the updater's status read-only.
+too, for 24 hours, and says what it loses; it is refused across a job key
+cut-over or a name move (ADR-0052's rollback guards, shared by F0 and 5c),
+unless the host overrides it. The server can only ask, through a file the
+updater validates, and reads the updater's status read-only.
 Edge builds are published only after the whole of CI passes, with versions
 that sort (`v1.0.0-rc.4.edge.<run>.<attempt>`).
 
