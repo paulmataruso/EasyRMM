@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { AlertEntry } from "../../api/types";
+import type { AlertEntry, AlertPolicy, DiskCheck } from "../../api/types";
 import { baseRoutes, installFakeApi, noContent, ok, sessionView, type FakeRequest } from "../../test/fakeApi";
 import { alertEntry, alertPolicy, device, org, site } from "../../test/fixtures";
 import { renderApp, renderWithProviders } from "../../test/render";
-import { conditionText, formatMinutes, resolutionText, valueText } from "./alertText";
+import { conditionText, formatMinutes, resolutionText, risingHint, valueText } from "./alertText";
 import { DeviceAlertsCard } from "./DeviceAlertsCard";
 
 const location = () => screen.getByTestId("location").textContent;
@@ -281,6 +281,302 @@ describe("alert policies", () => {
     await user.click(within(confirm).getByRole("button", { name: "Delete policy" }));
     await waitFor(() => expect(server.callsTo("DELETE /alert-policies/:id")).toHaveLength(1));
     expect(await screen.findByText("Deleted Device offline.")).toBeInTheDocument();
+  });
+});
+
+describe("disk health alerts (ADR-0065)", () => {
+  const LABEL = "PhysicalDrive1 · Samsung SSD 870 EVO 1TB";
+  const FAILING = alertEntry("a5", "Disk failing", {
+    kind: "disk_health",
+    checkName: "failing",
+    threshold: null,
+    minutes: 30,
+    value: 1,
+    lastValue: 1,
+    subject: "0123456789abcdef0123456789abcdef",
+    subjectLabel: LABEL,
+    detail: "SMART status: threshold exceeded",
+  });
+  const ERRORS = alertEntry("a6", "Disk errors", {
+    kind: "disk_health",
+    checkName: "errors",
+    threshold: 1,
+    minutes: 30,
+    severity: "warning",
+    value: 3,
+    lastValue: 3,
+    subject: "fedcba9876543210fedcba9876543210",
+    subjectLabel: "sda · ST4000VN008",
+    detail: "Reallocated sectors 3",
+  });
+  const GONE = alertEntry("a7", "Disk failing", {
+    ...FAILING,
+    id: "a7",
+    status: "resolved",
+    resolution: "subject_gone",
+    resolvedAt: "2026-11-15T10:00:00Z",
+  });
+
+  it("describes each check, its value and why it resolved", () => {
+    const c = (checkName: DiskCheck, threshold: number | null, minutes = 30) => conditionText({ kind: "disk_health", checkName, threshold, minutes });
+    expect(c("failing", null)).toBe("A disk's own verdict is failing");
+    expect(c("errors", 5)).toBe("A disk with 5 or more reallocated sectors and media errors");
+    expect(c("pending", 1)).toBe("A disk with 1 or more pending and uncorrectable sectors");
+    expect(c("wear", 90)).toBe("A disk with 90% or more of its rated endurance used");
+    expect(c("temperature", null, 60)).toBe("A disk at or over its own temperature limit for 1 hour");
+    expect(c("temperature", 55, 30)).toBe("A disk at 55 °C or more for 30 minutes");
+    // A check or a kind a newer server knows keeps its name.
+    expect(c("smart_trend" as DiskCheck, 1)).toBe("Disk health: smart_trend");
+    expect(conditionText({ kind: "disk_health", threshold: null, minutes: 30 })).toBe("Disk health");
+    expect(conditionText({ kind: "battery" as never, threshold: null, minutes: 30 })).toBe("battery");
+
+    const v = (checkName: DiskCheck, lastValue: number) => valueText({ kind: "disk_health", checkName, lastValue });
+    expect(v("failing", 1)).toBe("Failing");
+    expect(v("failing", 0)).toBe("Not failing");
+    expect(v("errors", 3)).toBe("3 errors");
+    expect(v("errors", 1)).toBe("1 error");
+    expect(v("pending", 8)).toBe("8 sectors");
+    expect(v("wear", 91.2)).toBe("91% used");
+    expect(v("temperature", 61)).toBe("61 °C");
+    expect(v("smart_trend" as DiskCheck, 4)).toBe("4");
+
+    expect(resolutionText({ resolution: "subject_gone" })).toBe("The disk is gone: missing 14 days and no longer in the inventory");
+    expect(resolutionText({ resolution: "replaced" as never })).toBe("replaced");
+
+    // Counts that only rise: acknowledge rather than resolve.
+    expect(risingHint(ERRORS)).toMatch(/^This count only rises: acknowledge this alert rather than resolve it/);
+    expect(risingHint({ ...ERRORS, checkName: "wear", status: "acknowledged" })).toMatch(/^Wear only rises/);
+    expect(risingHint({ ...ERRORS, checkName: "pending" })).toBeNull();
+    expect(risingHint({ ...ERRORS, status: "resolved" })).toBeNull();
+    expect(risingHint(FAILING)).toBeNull();
+    expect(risingHint(DISK)).toBeNull();
+  });
+
+  it("lists disk alerts with their disk, what holds, and why a gone disk's alert resolved", async () => {
+    const server = installFakeApi({ ...routes([FAILING, ERRORS]), "GET /alerts": (r: FakeRequest) => ok({ items: r.query.get("status") === "all" ? [GONE] : [FAILING, ERRORS] }) });
+    renderApp("/alerts");
+    const table = await screen.findByRole("table");
+    const [failing, errors] = within(table).getAllByRole("row").slice(1);
+    expect(within(failing!).getByText(LABEL)).toBeInTheDocument();
+    expect(within(failing!).getByText("SMART status: threshold exceeded")).toBeInTheDocument();
+    expect(within(failing!).getByText("A disk's own verdict is failing")).toBeInTheDocument();
+    expect(within(failing!).getByText("Failing")).toBeInTheDocument();
+    expect(within(failing!).queryByText(/only rises/)).not.toBeInTheDocument();
+    expect(within(errors!).getByText("sda · ST4000VN008")).toBeInTheDocument();
+    expect(within(errors!).getByText("Reallocated sectors 3")).toBeInTheDocument();
+    expect(within(errors!).getByText("3 errors")).toBeInTheDocument();
+    expect(within(errors!).getByText(/^This count only rises: acknowledge this alert rather than resolve it/)).toBeInTheDocument();
+    expect(within(errors!).getAllByRole("button", { name: "Resolve Disk errors on DB-01" })[0]).toHaveAttribute("title", expect.stringMatching(/only rises/));
+
+    await userEvent.setup().selectOptions(screen.getByLabelText("Show"), "all");
+    await waitFor(() => expect(server.callsTo("GET /alerts").at(-1)?.query.get("status")).toBe("all"));
+    expect((await screen.findAllByText(/The disk is gone: missing 14 days and no longer in the inventory/)).length).toBeGreaterThan(0);
+  });
+
+  it("shows a disk alert's disk on the device's page and the dashboard", async () => {
+    installFakeApi(routes([ERRORS]));
+    const { unmount } = renderWithProviders(<DeviceAlertsCard deviceId="d1" />);
+    expect(await screen.findByText("sda · ST4000VN008")).toBeInTheDocument();
+    expect(screen.getByText("Reallocated sectors 3")).toBeInTheDocument();
+    expect(screen.getByText("3 errors")).toBeInTheDocument();
+    expect(screen.getByText(/^This count only rises/)).toBeInTheDocument();
+    unmount();
+
+    installFakeApi({
+      ...routes([FAILING]),
+      "GET /auth/session": ok(ADMIN),
+      "GET /alerts/summary": ok({ active: 1, critical: 1, warning: 0, acknowledged: 0, devices: 1 }),
+      "GET /users": ok({ items: [] }),
+      "GET /audit": ok({ items: [] }),
+    });
+    renderApp("/");
+    const card = (await screen.findByRole("heading", { name: "Needs attention" })).closest("section") as HTMLElement;
+    expect(await within(card).findByText(new RegExp(`${LABEL} · `))).toBeInTheDocument();
+  });
+
+  describe("policies", () => {
+    function adminRoutes(policies = [alertPolicy("p1", "High processor use")] as AlertPolicy[]) {
+      return { ...routes(), "GET /auth/session": ok(ADMIN), "GET /alert-policies": ok({ items: policies }) };
+    }
+    /** Opens a new policy for disk health, on the policies page rendered once per test. */
+    async function newPolicy(user: ReturnType<typeof userEvent.setup>) {
+      if (!screen.queryByRole("tab", { name: "Policies" })) renderApp("/alerts?tab=policies");
+      await screen.findByRole("button", { name: "Edit High processor use" });
+      await user.click(screen.getByRole("button", { name: "New policy" }));
+      const dialog = await screen.findByRole("dialog", { name: "New alert policy" });
+      await user.type(within(dialog).getByLabelText(/Name/), "Disks");
+      await user.selectOptions(within(dialog).getByLabelText("Watch for"), "disk_health");
+      return dialog;
+    }
+
+    it("adds a failing check, which takes no threshold and no minutes", async () => {
+      const user = userEvent.setup();
+      const server = installFakeApi({ ...adminRoutes(), "POST /alert-policies": (r) => ({ status: 201, body: alertPolicy("p9", (r.body as { name: string }).name) }) });
+      const dialog = await newPolicy(user);
+      expect(within(dialog).getByLabelText("Check")).toHaveValue("failing");
+      expect(within(within(dialog).getByLabelText("Check")).getAllByRole("option").map((o) => o.textContent)).toEqual([
+        "Disk failing",
+        "Reallocated sectors and media errors",
+        "Pending and uncorrectable sectors",
+        "Wear",
+        "Temperature",
+      ]);
+      expect(within(dialog).queryByLabelText("At or above")).not.toBeInTheDocument();
+      expect(within(dialog).queryByLabelText("For")).not.toBeInTheDocument();
+      expect(within(dialog).getByText(/^The drive's own verdict: SMART status threshold exceeded/)).toBeInTheDocument();
+      await user.click(within(dialog).getByRole("radio", { name: "Critical" }));
+      expect(within(dialog).getByText("Raises a critical alert on any device when: a disk's own verdict is failing.")).toBeInTheDocument();
+      await user.click(within(dialog).getByRole("button", { name: "Add policy" }));
+      await waitFor(() => expect(server.callsTo("POST /alert-policies")).toHaveLength(1));
+      expect(server.call("POST /alert-policies").body).toEqual({
+        organizationId: null,
+        siteId: null,
+        name: "Disks",
+        description: "",
+        kind: "disk_health",
+        checkName: "failing",
+        threshold: null,
+        minutes: 30,
+        severity: "critical",
+        enabled: true,
+      });
+    });
+
+    it("adds the counting checks with the threshold each takes", async () => {
+      const user = userEvent.setup();
+      const server = installFakeApi({ ...adminRoutes(), "POST /alert-policies": (r) => ({ status: 201, body: alertPolicy("p9", (r.body as { name: string }).name) }) });
+      const dialog = await newPolicy(user);
+      await user.selectOptions(within(dialog).getByLabelText("Check"), "errors");
+      const threshold = within(dialog).getByLabelText("At or above");
+      expect(threshold).toHaveValue(1);
+      expect(within(dialog).getByText("sectors and errors")).toBeInTheDocument();
+      expect(within(dialog).queryByLabelText("For")).not.toBeInTheDocument();
+      expect(within(dialog).getByText(/These counts only rise.*acknowledge it rather than resolve it/)).toBeInTheDocument();
+      await user.clear(threshold);
+      await user.type(threshold, "0");
+      await user.click(within(dialog).getByRole("button", { name: "Add policy" }));
+      expect(within(dialog).getByText("Use a count from 1 to 100.")).toBeInTheDocument();
+      expect(server.callsTo("POST /alert-policies")).toHaveLength(0);
+      await user.clear(threshold);
+      await user.type(threshold, "5");
+      expect(within(dialog).getByText("Raises a warning alert on any device when: a disk with 5 or more reallocated sectors and media errors.")).toBeInTheDocument();
+      await user.click(within(dialog).getByRole("button", { name: "Add policy" }));
+      await waitFor(() => expect(server.callsTo("POST /alert-policies")).toHaveLength(1));
+      expect(server.call("POST /alert-policies").body).toMatchObject({ kind: "disk_health", checkName: "errors", threshold: 5, minutes: 30 });
+
+      server.on("POST /alert-policies", (r) => ({ status: 201, body: alertPolicy("p10", (r.body as { name: string }).name) }));
+      const again = await newPolicy(user);
+      await user.selectOptions(within(again).getByLabelText("Check"), "pending");
+      expect(within(again).getByLabelText("At or above")).toHaveValue(1);
+      expect(within(again).getByText("sectors")).toBeInTheDocument();
+      await user.selectOptions(within(again).getByLabelText("Check"), "wear");
+      const wear = within(again).getByLabelText("At or above");
+      expect(wear).toHaveValue(90);
+      expect(within(again).getByText("% used")).toBeInTheDocument();
+      await user.clear(wear);
+      await user.type(wear, "101");
+      await user.click(within(again).getByRole("button", { name: "Add policy" }));
+      expect(within(again).getByText("Use a percentage from 1 to 100.")).toBeInTheDocument();
+      await user.clear(wear);
+      await user.type(wear, "80");
+      await user.click(within(again).getByRole("button", { name: "Add policy" }));
+      await waitFor(() => expect(server.callsTo("POST /alert-policies")).toHaveLength(2));
+      expect(server.call("POST /alert-policies", 1).body).toMatchObject({ checkName: "wear", threshold: 80, minutes: 30 });
+    });
+
+    it("adds a temperature check by the drive's own limit or a temperature, over at least 30 minutes", async () => {
+      const user = userEvent.setup();
+      const server = installFakeApi({ ...adminRoutes(), "POST /alert-policies": (r) => ({ status: 201, body: alertPolicy("p9", (r.body as { name: string }).name) }) });
+      const dialog = await newPolicy(user);
+      await user.selectOptions(within(dialog).getByLabelText("Check"), "temperature");
+      expect(within(dialog).getByLabelText("At or above")).toHaveValue("limit");
+      expect(within(dialog).queryByLabelText("Temperature")).not.toBeInTheDocument();
+      const minutes = within(dialog).getByLabelText("For");
+      expect(minutes).toHaveValue(60);
+      expect(within(dialog).getByText(/each drive's own temperature limit; a drive that reports no limit is not checked/)).toBeInTheDocument();
+      expect(within(dialog).getByText("Raises a warning alert on any device when: a disk at or over its own temperature limit for 1 hour.")).toBeInTheDocument();
+      await user.click(within(dialog).getByRole("button", { name: "Add policy" }));
+      await waitFor(() => expect(server.callsTo("POST /alert-policies")).toHaveLength(1));
+      expect(server.call("POST /alert-policies").body).toMatchObject({ kind: "disk_health", checkName: "temperature", threshold: null, minutes: 60 });
+
+      server.on("POST /alert-policies", (r) => ({ status: 201, body: alertPolicy("p10", (r.body as { name: string }).name) }));
+      const again = await newPolicy(user);
+      await user.selectOptions(within(again).getByLabelText("Check"), "temperature");
+      await user.selectOptions(within(again).getByLabelText("At or above"), "degrees");
+      const degrees = within(again).getByLabelText("Temperature");
+      expect(degrees).toHaveValue(60);
+      await user.clear(degrees);
+      await user.type(degrees, "55");
+      const span = within(again).getByLabelText("For");
+      await user.clear(span);
+      await user.type(span, "20");
+      await user.click(within(again).getByRole("button", { name: "Add policy" }));
+      expect(within(again).getByText("Use 30 to 1,440 minutes.")).toBeInTheDocument();
+      await user.clear(span);
+      await user.type(span, "45");
+      expect(within(again).getByText("Raises a warning alert on any device when: a disk at 55 °C or more for 45 minutes.")).toBeInTheDocument();
+      await user.clear(degrees);
+      await user.click(within(again).getByRole("button", { name: "Add policy" }));
+      expect(within(again).getByText("Use 1 to 100 °C, or the drive's own limit.")).toBeInTheDocument();
+      await user.type(degrees, "55");
+      await user.click(within(again).getByRole("button", { name: "Add policy" }));
+      await waitFor(() => expect(server.callsTo("POST /alert-policies")).toHaveLength(2));
+      expect(server.call("POST /alert-policies", 1).body).toMatchObject({ checkName: "temperature", threshold: 55, minutes: 45 });
+    });
+
+    it("switches a temperature check to the drive's own limit with driveLimit, which a null threshold cannot say", async () => {
+      const user = userEvent.setup();
+      const hot = alertPolicy("p3", "Disk too hot", { kind: "disk_health", checkName: "temperature", threshold: 55, minutes: 60 });
+      const failing = alertPolicy("p4", "Disk failing", { kind: "disk_health", checkName: "failing", threshold: null, minutes: 30, severity: "critical" });
+      const server = installFakeApi({
+        ...adminRoutes([hot, failing]),
+        "PATCH /alert-policies/:id": (r) => ok({ ...hot, ...(r.body as object) }),
+      });
+      renderApp("/alerts?tab=policies");
+      const table = await screen.findByRole("table");
+      expect(within(table).getAllByText("A disk at 55 °C or more for 1 hour").length).toBeGreaterThan(0);
+      expect(within(table).getAllByText("A disk's own verdict is failing").length).toBeGreaterThan(0);
+
+      await user.click(screen.getByRole("button", { name: "Edit Disk too hot" }));
+      let dialog = await screen.findByRole("dialog", { name: "Edit Disk too hot" });
+      expect(within(dialog).getByLabelText("Watch for")).toHaveValue("disk_health");
+      expect(within(dialog).getByLabelText("Check")).toHaveValue("temperature");
+      expect(within(dialog).getByLabelText("At or above")).toHaveValue("degrees");
+      expect(within(dialog).getByLabelText("Temperature")).toHaveValue(55);
+      await user.selectOptions(within(dialog).getByLabelText("At or above"), "limit");
+      await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(server.callsTo("PATCH /alert-policies/:id")).toHaveLength(1));
+      expect(server.call("PATCH /alert-policies/:id").body).toEqual({
+        name: "Disk too hot",
+        description: "",
+        kind: "disk_health",
+        checkName: "temperature",
+        threshold: null,
+        driveLimit: true,
+        minutes: 60,
+        severity: "warning",
+        enabled: true,
+      });
+
+      // A failing check sends no driveLimit, and moving a policy to another kind drops its check.
+      await user.click(await screen.findByRole("button", { name: "Edit Disk failing" }));
+      dialog = await screen.findByRole("dialog", { name: "Edit Disk failing" });
+      expect(within(dialog).getByLabelText("Check")).toHaveValue("failing");
+      expect(within(dialog).queryByLabelText("At or above")).not.toBeInTheDocument();
+      await user.selectOptions(within(dialog).getByLabelText("Watch for"), "memory");
+      expect(within(dialog).getByLabelText("At or above")).toHaveValue(95);
+      await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(server.callsTo("PATCH /alert-policies/:id")).toHaveLength(2));
+      expect(server.call("PATCH /alert-policies/:id", 1).body).toEqual({
+        name: "Disk failing",
+        description: "",
+        kind: "memory",
+        threshold: 95,
+        minutes: 30,
+        severity: "critical",
+        enabled: true,
+      });
+    });
   });
 });
 
