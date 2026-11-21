@@ -1,6 +1,10 @@
 # ADR-0052: Upgrading EasyRMM with an updater on the host
 
-* Status: Accepted (2026-11-21, revised after review). Not implemented yet.
+* Status: Accepted (2026-11-21, revised after review). The server's side
+  is implemented: `hold` and the offline rule (both amended 2026-11-21,
+  below; the rule only delays openings). So is the engine's, its hold on
+  automatic agent updates and its presence rule, which ship in its next
+  release. The updater is not built yet.
 * Builds on: [releasing](../../development/releasing.md) (releases, their
   attestations and manifest), [ADR-0027](0027-agent-updates.md) (agent
   updates), [ADR-0044](0044-authentik-when-chosen.md) (Authentik's files)
@@ -163,6 +167,18 @@ and the attempt ends with the reason.
   edge, and Authentik's and MeshCentral's names get `503` with
   `Retry-After`. The server reads it before it opens its listeners, and
   follows it while it runs. Without the updater nothing is held.
+  *Amended 2026-11-21, with the implementation:* ACME's HTTP-01
+  challenges on port 80 are still answered, so that a certificate can be
+  issued or renewed during a held start; they come from the certificate
+  authority, not from agents or people, and change nothing in the
+  database. The rest, as built: the server looks at the file every
+  second (`EASYRMM_UPDATER_STATUS_DIR`, `/run/easyrmm-updater`), and is
+  held when it cannot tell (any error but the file's absence). Its health
+  check (`/readyz` on loopback) passes while it is held, as
+  `docker compose up --wait` needs, and says that it is held. Requests in
+  progress when a running server becomes held finish, and connections
+  already upgraded (remote sessions) stay: the updater holds only a server
+  it is about to start.
 * **Requests** (feature 4b): `<data root>/updater/requests/`, mounted
   read-write into the server only. A request is one file,
   `{"id", "action": "upgrade"|"rollback", "version", "by"}`. The updater
@@ -240,6 +256,17 @@ monitor gets the same rule from its worker's start, in a release, with
 15 minutes for its agents' longest backoff (revised when the engine
 implemented it: with 5, an engine agent that waited out its backoff could
 still be marked offline).
+
+*Amended 2026-11-21, with the implementation:* the rule only delays
+openings. The serving start plus 5 minutes holds back opening a new
+offline alert, and nothing else: an alert already open stays open until
+its device checks in, and resolving uses the device's real last check-in,
+so a restart or a hold neither resolves an open alert nor opens it again.
+As built: the start is when the server opens its listeners, after its
+migrations, not when its process starts, which can be minutes earlier;
+while it is held it serves no agents, so no new offline alert opens.
+Agents add up to a tenth to their 5-minute backoff as jitter, which the
+shortest offline policy (3 minutes) covers.
 
 ### Seeing it
 `easyrmm-updater status` on the host, and journald for each attempt.

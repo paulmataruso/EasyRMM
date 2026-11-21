@@ -23,6 +23,19 @@ const EvaluateInterval = time.Minute
 // MinRetention is the shortest time resolved alerts are kept.
 const MinRetention = 24 * time.Hour
 
+// AgentGrace is how long after the server begins serving agents a device
+// still counts as seen by offline policies: the longest an EasyRMM agent
+// waits between attempts to reach the server (agent/runner's MaxRetry).
+// With jitter an agent may wait a tenth longer, which the shortest offline
+// policy, MinOfflineMinutes, covers. A restart or an upgrade then raises no
+// offline alert (ADR-0052).
+const AgentGrace = 5 * time.Minute
+
+// Serving tells when the server last began serving agents (when its
+// listeners opened, or when a hold by the updater ended), and false while
+// it serves none.
+type Serving func() (since time.Time, serving bool)
+
 // Service manages policies and alerts.
 type Service struct {
 	db        *database.DB
@@ -30,11 +43,31 @@ type Service struct {
 	retention time.Duration
 	log       *slog.Logger
 	now       func() time.Time
+	serving   Serving
 }
 
 // New builds the service. retention is how long resolved alerts are kept.
+// Until FollowServing says otherwise, the server began serving agents now.
 func New(db *database.DB, auditLog *audit.Logger, retention time.Duration, log *slog.Logger) *Service {
-	return &Service{db: db, audit: auditLog, retention: max(retention, MinRetention), log: log, now: time.Now}
+	started := time.Now()
+	return &Service{db: db, audit: auditLog, retention: max(retention, MinRetention), log: log, now: time.Now,
+		serving: func() (time.Time, bool) { return started, true }}
+}
+
+// FollowServing makes offline policies count a device as seen no earlier
+// than AgentGrace after the moment f gives, and open no alert while the
+// server serves no agents. Call it before Run.
+func (s *Service) FollowServing(f Serving) { s.serving = f }
+
+// seenFloor is the earliest moment a device counts as seen when an offline
+// policy decides whether to open an alert: AgentGrace after the server
+// began serving agents, or after now while it serves none.
+func (s *Service) seenFloor(now time.Time) time.Time {
+	since, serving := s.serving()
+	if !serving {
+		since = now
+	}
+	return since.Add(AgentGrace)
 }
 
 // Run evaluates the policies every minute and removes resolved alerts past

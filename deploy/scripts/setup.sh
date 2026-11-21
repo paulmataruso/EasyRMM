@@ -436,6 +436,7 @@ if [[ $(id -u) -ne 0 ]]; then
   echo "  ${data_root}/meshcentral-config (owner 65532:65532, mode 700)" >&2
   echo "  ${data_root}/meshcentral/{data,files,backups} (owner 65532:65532, mode 700)" >&2
   echo "  ${data_root}/easypatch/{keys,winget} (owner 1654:1654, mode 700)" >&2
+  echo "  ${data_root}/updater/status (owner root, mode 755)" >&2
   exit 0
 fi
 install -d -m 0755 "$data_root"
@@ -456,6 +457,10 @@ install -d -m 0755 "$data_root/easypatch"
 for d in keys winget; do
   install -d -m 0700 -o 1654 -g 1654 "$data_root/easypatch/$d"
 done
+# The updater's status (ADR-0052): root's alone. The server and the engine's
+# worker mount it read-only; while its hold file exists the server answers
+# its health check and nothing else.
+install -d -m 0755 -o root -g root "$data_root/updater" "$data_root/updater/status"
 echo "Data directories ready under ${data_root}."
 if [[ "$with_authentik" == true ]]; then
   authentik_files

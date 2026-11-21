@@ -22,6 +22,11 @@
 #  5. The engine on loopback refuses missing, forged, expired, replayed and
 #     out-of-scope statements, and the edge does not reach its API
 #     (server/internal/easypatch/bundle_test.go).
+#  6. The updater's hold (ADR-0052): setup.sh --upgrade made its status
+#     directory, root's with mode 755; the server and the engine's worker
+#     mount it read-only and, as their own users, see the hold file; a
+#     server started held is healthy for `docker compose up --wait` while
+#     its edge answers 503, until the hold file goes.
 #
 # Needs Docker, Go, the .NET SDK (for the test agent packages), Playwright's
 # Chromium (npx playwright install chromium in web/), root or sudo, and ports
@@ -116,7 +121,7 @@ docker build -q -t "$host_image" "$root/scripts/e2e/bundle-host" > /dev/null
 # bundle's .env.example names.
 srv_before=$(test -e /srv/easyrmm && echo yes || echo no)
 as_root sed -i 's/^EASYRMM_VERSION=.*/EASYRMM_VERSION=9.9.9-bundle-test/' "$deploy/.env.example"
-as_root rm -rf "$work/data/meshcentral/backups"
+as_root rm -rf "$work/data/meshcentral/backups" "$work/data/updater"
 (cd "$deploy" && as_root ./scripts/setup.sh --upgrade > /dev/null < /dev/null)
 as_root grep -qx 'EASYRMM_VERSION=9.9.9-bundle-test' "$deploy/.env" ||
   { echo "setup.sh --upgrade did not set the bundle's server version" >&2; exit 1; }
@@ -186,4 +191,43 @@ echo "Checking the engine's refusals ..."
 key=$(as_root sed -n 's/^EASYRMM_PATCHING_KEY=//p' "$deploy/.env")
 (cd "$root" && EASYRMM_BUNDLE_ENGINE_URL=http://127.0.0.1:18180 EASYRMM_BUNDLE_ENGINE_KEY=$key EASYRMM_BUNDLE_URL=$public \
   EASYRMM_BUNDLE_SPKI=$spki go test -tags bundle -count=1 -run TestBundleGateway ./server/internal/easypatch/)
+
+# --- The updater's hold -----------------------------------------------------------
+echo "Checking the updater's hold ..."
+status=$work/data/updater/status
+[ "$(as_root stat -c '%U %a' "$status")" = "root 755" ] ||
+  { echo "setup.sh --upgrade did not make $status root's, mode 755" >&2; exit 1; }
+for service in server easypatch-worker; do
+  mount=$(as_root docker inspect -f '{{range .Mounts}}{{if eq .Destination "/run/easyrmm-updater"}}{{.Source}} {{.RW}}{{end}}{{end}}' \
+    "$(compose ps -q "$service")")
+  [ "$mount" = "$status false" ] ||
+    { echo "$service mounts the updater's status as '$mount', want '$status false'" >&2; exit 1; }
+done
+# answer URL: the status code, and whether Retry-After came with it.
+answer() {
+  rm -f "$work/headers"
+  curl -sk -o /dev/null -D "$work/headers" -w '%{http_code}' "$1" || true
+  if grep -qi '^retry-after:' "$work/headers" 2> /dev/null; then printf ' retry-after'; fi
+}
+as_root touch "$status/hold"
+compose up -d --no-deps --force-recreate --wait --wait-timeout 300 server > /dev/null
+# The server, as its own user, sees the file through its mount, and so does
+# the engine's worker.
+[ "$(as_root docker top "$(compose ps -q server)" -eo pid,uid | awk 'NR > 1 { print $2 }' | sort -u | paste -sd ' ' -)" = 65532 ] ||
+  { echo "the server does not run as 65532" >&2; exit 1; }
+[ "$(curl -fsS http://127.0.0.1:18081/readyz)" = "ready, held by the updater" ] ||
+  { echo "the server started held does not say so" >&2; exit 1; }
+[ "$(compose exec -T easypatch-worker sh -c 'id -u && ls /run/easyrmm-updater' | paste -sd ' ' -)" = "1654 hold" ] ||
+  { echo "the engine's worker, as 1654, does not see the hold file through its mount" >&2; exit 1; }
+for url in "$public/api/v1/health" "$public/" "https://127.0.0.1:4443/" "http://127.0.0.1/"; do
+  got=$(answer "$url")
+  [ "$got" = "503 retry-after" ] || { echo "$url while held: $got, want 503 with Retry-After" >&2; exit 1; }
+done
+as_root rm "$status/hold"
+for _ in $(seq 1 20); do
+  [ "$(answer "$public/api/v1/health")" = 200 ] && break
+  sleep 1
+done
+[ "$(answer "$public/api/v1/health")" = 200 ] || { echo "the server still answers 503 after the hold" >&2; exit 1; }
+echo "The hold: held from its start and healthy, every listener 503 with Retry-After, then served again."
 echo "The bundle test passed."
