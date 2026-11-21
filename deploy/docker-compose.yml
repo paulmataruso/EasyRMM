@@ -193,6 +193,9 @@ services:
       # The server writes MeshCentral's configuration here (it holds the
       # shared login key); MeshCentral mounts it read-only.
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/meshcentral-config:/var/lib/easyrmm-meshcentral
+      # The updater's status (ADR-0052), root's: while its hold file exists
+      # the server answers its health check and nothing else.
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/updater/status:/run/easyrmm-updater:ro
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
@@ -347,6 +350,8 @@ services:
       # API creates.
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/keys:/app/keys:ro
       - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/easypatch/winget:/app/winget
+      # The updater's status (ADR-0052), root's, read-only.
+      - ${EASYRMM_DATA_ROOT:-/srv/easyrmm}/updater/status:/run/easyrmm-updater:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:18181/health"]
       interval: 30s

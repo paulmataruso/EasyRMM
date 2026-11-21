@@ -211,7 +211,7 @@ func TestAgentEnrollmentAPI(t *testing.T) {
 	f := facts("web-01")
 	f.OS = "Debian GNU/Linux 13.1 (trixie)"
 	hb, err := ac.Heartbeat(ctx, agentproto.HeartbeatRequest{Facts: f})
-	if err != nil || hb.HeartbeatSeconds != 60 || hb.MeshAgent.Available {
+	if err != nil || hb.HeartbeatSeconds != 60 || hb.MeshAgent.Available || hb.Protocol != agentproto.Protocol {
 		t.Fatalf("heartbeat = %+v, %v", hb, err)
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/devices/"+enr.DeviceID, nil, &dev)
@@ -252,9 +252,23 @@ func TestAgentEnrollmentAPI(t *testing.T) {
 	wantStatus(t, h.raw("POST", agentproto.PathHeartbeat, body, "Bearer x"), http.StatusUnauthorized, "agent_unauthorized")
 	wantStatus(t, h.raw("POST", agentproto.PathHeartbeat, []byte(`{"facts":{}}`), sign(key, enr.DeviceID, time.Now())), http.StatusUnauthorized, "agent_unauthorized")
 	// The body is part of the signature, and must be the protocol's JSON.
-	odd := []byte(`{"facts":{"hostname":"x"},"extra":1}`)
-	s, _ := agentproto.Sign(key, enr.DeviceID, "POST", agentproto.PathHeartbeat, odd, time.Now())
+	// Fields this server does not know are ignored: a newer agent sends them
+	// after a rollback (ADR-0009, "Evolving the protocol").
+	var newer map[string]any
+	if err := json.Unmarshal(body, &newer); err != nil {
+		t.Fatal(err)
+	}
+	newer["fieldFromALaterRelease"] = map[string]any{"enabled": true}
+	newer["facts"].(map[string]any)["factFromALaterRelease"] = 1
+	later, _ := json.Marshal(newer)
+	s, _ := agentproto.Sign(key, enr.DeviceID, "POST", agentproto.PathHeartbeat, later, time.Now())
+	wantStatus(t, h.raw("POST", agentproto.PathHeartbeat, later, s), http.StatusOK, "")
+	odd := []byte(`{"facts":"not an object"}`)
+	s, _ = agentproto.Sign(key, enr.DeviceID, "POST", agentproto.PathHeartbeat, odd, time.Now())
 	wantStatus(t, h.raw("POST", agentproto.PathHeartbeat, odd, s), http.StatusBadRequest, "bad_request")
+	two := []byte(`{"facts":{}} {"facts":{}}`)
+	s, _ = agentproto.Sign(key, enr.DeviceID, "POST", agentproto.PathHeartbeat, two, time.Now())
+	wantStatus(t, h.raw("POST", agentproto.PathHeartbeat, two, s), http.StatusBadRequest, "bad_request")
 	big := bytes.Repeat([]byte("x"), agentproto.MaxBody+1)
 	wantStatus(t, h.raw("POST", agentproto.PathHeartbeat, big, good), http.StatusRequestEntityTooLarge, "body_too_large")
 	wantStatus(t, h.raw("GET", "/api/agent/v1/nothing", nil, ""), http.StatusNotFound, "not_found")

@@ -89,10 +89,10 @@ func TestServeHealth(t *testing.T) {
 	addr := freeAddr(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- serveHealth(ctx, addr, inst.DB, discard()) }()
-	for _, p := range []string{"/healthz", "/readyz"} {
+	go func() { done <- serveHealth(ctx, addr, inst.DB, notHeld(t), discard()) }()
+	for p, want := range map[string]string{"/healthz": "ok\n", "/readyz": "ready\n"} {
 		resp, body := get(t, &http.Client{}, "http://"+addr+p, addr)
-		if resp.StatusCode != http.StatusOK || body == "" {
+		if resp.StatusCode != http.StatusOK || body != want {
 			t.Fatalf("%s: %d %q", p, resp.StatusCode, body)
 		}
 	}
@@ -105,7 +105,7 @@ func TestServeHealth(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("serveHealth: %v", err)
 	}
-	if err := serveHealth(context.Background(), "256.0.0.1:1", nil, discard()); err == nil {
+	if err := serveHealth(context.Background(), "256.0.0.1:1", nil, notHeld(t), discard()); err == nil {
 		t.Fatal("bad listen address accepted")
 	}
 }

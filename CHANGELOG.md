@@ -43,6 +43,23 @@ All notable changes to this project are documented here. The format follows
   directories under `.env`'s data root (rerunning `setup.sh` without
   `--data-root` used the default one), and issues no Authentik invitation.
   The upgrade guide now uses it (ADR-0052).
+- **The server can be held by the updater** (ADR-0052's server side; the
+  updater itself is not built yet). `setup.sh` makes
+  `${EASYRMM_DATA_ROOT}/updater/status`, root's with mode 755, which the
+  server and the engine's worker mount read-only at
+  `/run/easyrmm-updater`. While a file
+  named `hold` exists there, the server answers its health check and
+  nothing else: the console, the API, agents, the engine's agents and
+  Authentik's and MeshCentral's names get `503` with `Retry-After`; ACME's
+  challenges are still answered. The server reads it before it opens its
+  listeners and looks again every second; its health check passes while
+  held and says so.
+- **Restarts and upgrades raise no offline alerts.** Offline policies
+  count every device as seen no earlier than 5 minutes after the server
+  began serving agents (its start, or the end of a hold), the longest
+  agents wait between attempts. The rule only delays openings: an offline
+  alert already open stays open, and resolves only when its device checks
+  in.
 - **Edge builds.** Every build of `main` that passes CI is published as a
   version: `v1.0.0-rc.4.edge.412.1` after a release candidate,
   `v1.0.1-edge.415.1` after a release. The server image the tests ran is
@@ -110,6 +127,12 @@ All notable changes to this project are documented here. The format follows
   from the release's file would not have matched the server's own build
   (ADR-0049). Both now build with `-buildvcs=false`; built from a clone, the
   two are identical for Linux and Windows.
+- **Agents keep working when a server is rolled back.** The server now ignores
+  request fields it does not know, instead of refusing the request, and says
+  in each heartbeat answer which protocol level it speaks (2). Agents will
+  send fields added by later releases only to servers of level 2 or higher,
+  so an agent that updated before a rollback is never cut off (ADR-0009,
+  "Evolving the protocol"). Malformed requests are still refused.
 - `deploy/.env.example` lists `EASYRMM_ACME_DIRECTORY`, which the Compose
   file already passed to the server.
 - Taking the database down past migration 12 removed no software jobs:

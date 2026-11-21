@@ -245,6 +245,7 @@ func (s *Service) signUninstall(id, deviceID uuid.UUID) (*agentproto.SignedUnins
 // last RetiredRetry. Nothing about the device is recorded.
 func (s *Service) RetiredHeartbeat(ctx context.Context, d *Device) (*agentproto.HeartbeatResponse, error) {
 	out := &agentproto.HeartbeatResponse{
+		Protocol:         agentproto.Protocol,
 		HeartbeatSeconds: int(HeartbeatInterval.Seconds()),
 		JobKey:           s.jobKey,
 	}

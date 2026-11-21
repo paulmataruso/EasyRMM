@@ -39,6 +39,9 @@ func newFixture(t *testing.T) *fixture {
 	inst := testdb.New(t)
 	f := &fixture{t: t, ctx: context.Background(), db: inst.DB}
 	f.svc = New(inst.DB, audit.New(inst.DB, nil), 30*24*time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// A server that has served agents for a day: devices count as seen when
+	// they last checked in (TestOfflineAfterStart tests the start).
+	f.svc.FollowServing(func() (time.Time, bool) { return time.Now().Add(-24 * time.Hour), true })
 	f.acme = f.id(`INSERT INTO organizations (name) VALUES ('Acme') RETURNING id`)
 	f.hq = f.id(`INSERT INTO sites (organization_id, name) VALUES ($1, 'HQ') RETURNING id`, f.acme)
 	f.branch = f.id(`INSERT INTO sites (organization_id, name) VALUES ($1, 'Branch') RETURNING id`, f.acme)
@@ -485,6 +488,97 @@ func TestEvaluate(t *testing.T) {
 	f.exec(`DELETE FROM alert_policies WHERE id = $1`, o2.ID)
 	if r := f.evaluate(); r.Resolved != 2 || f.lastResolution(mesh) != "policy_deleted" {
 		t.Fatalf("orphaned alert: %+v", r)
+	}
+}
+
+// TestOfflineAfterStart: offline policies count a device as seen no earlier
+// than AgentGrace after the server began serving agents, at its start or
+// when a hold ended, so that neither a restart nor an upgrade raises an
+// offline alert (ADR-0052).
+func TestOfflineAfterStart(t *testing.T) {
+	f := newFixture(t)
+	f.exec(`UPDATE alert_policies SET enabled = false`)
+	f.policy(f.super, PolicyInput{Name: "Offline", Kind: KindOffline, Minutes: MinOfflineMinutes, Severity: SeverityCritical})
+	long := f.device(f.acme, f.hq, "long-gone", 24*60)
+	wait := AgentGrace + MinOfflineMinutes*time.Minute
+
+	// A service just made: the server began serving agents now.
+	fresh := New(f.db, audit.New(f.db, nil), 30*24*time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if r, err := fresh.Evaluate(f.ctx); err != nil || r.Opened != 0 {
+		t.Fatalf("at the start: %+v %v", r, err)
+	}
+	fresh.now = func() time.Time { return time.Now().Add(wait) }
+	if r, err := fresh.Evaluate(f.ctx); err != nil || r.Opened != 1 {
+		t.Fatalf("the grace and the policy's minutes after the start: %+v %v", r, err)
+	}
+	f.exec(`DELETE FROM alerts`)
+
+	start := time.Now()
+	since, serving := start, true
+	f.svc.FollowServing(func() (time.Time, bool) { return since, serving })
+	at := func(d time.Duration) Result {
+		t.Helper()
+		f.svc.now = func() time.Time { return start.Add(d) }
+		return f.evaluate()
+	}
+	if r := at(0); r.Opened != 0 {
+		t.Fatalf("at the start: %+v", r)
+	}
+	if r := at(wait - time.Second); r.Opened != 0 {
+		t.Fatalf("a moment before the grace and the policy's minutes: %+v", r)
+	}
+	if r := at(wait); r.Opened != 1 {
+		t.Fatalf("the grace and the policy's minutes after the start: %+v", r)
+	}
+	// The alert says how long the device has been away, not the wait.
+	open := f.alertOn(long, "Offline")
+	if open == nil || open.Value < 24*60+7 || open.Value > 24*60+9 {
+		t.Fatalf("alert = %+v", open)
+	}
+	// The rule only delays openings: the alert open before a restart or a
+	// hold stays the same open alert, neither resolved nor opened again.
+	same := func(when string) {
+		t.Helper()
+		if a := f.alertOn(long, "Offline"); a == nil || a.ID != open.ID || a.Status != StatusOpen ||
+			f.count(`SELECT count(*) FROM alerts WHERE device_id = $1`, long) != 1 {
+			t.Fatalf("%s: the open alert is %+v, of %d", when, a, f.count(`SELECT count(*) FROM alerts WHERE device_id = $1`, long))
+		}
+	}
+
+	// A restart: the alert already open stays open.
+	since = start.Add(wait + time.Minute)
+	if r := at(wait + time.Minute); r.Resolved != 0 || r.Opened != 0 {
+		t.Fatalf("after a restart: %+v", r)
+	}
+	same("after a restart")
+
+	// Held by the updater: no device counts as unseen, however long.
+	recent := f.device(f.acme, f.hq, "recent", 0)
+	serving = false
+	if r := at(time.Hour); r.Opened != 0 || r.Resolved != 0 {
+		t.Fatalf("held: %+v", r)
+	}
+	same("while held")
+	// The hold ends: the start moves forward, and the wait begins again.
+	since, serving = start.Add(2*time.Hour), true
+	if r := at(2*time.Hour + wait - time.Second); r.Opened != 0 || r.Resolved != 0 {
+		t.Fatalf("a moment before the wait after the hold: %+v", r)
+	}
+	same("after the hold")
+	if r := at(2*time.Hour + wait); r.Opened != 1 || r.Resolved != 0 || f.alertOn(recent, "Offline") == nil {
+		t.Fatalf("the wait after the hold: %+v", r)
+	}
+	same("when another device's alert opens")
+
+	// Another restart; within its grace the device checks in, by its real
+	// last check-in: then, and only then, its alert resolves.
+	since = start.Add(3 * time.Hour)
+	f.exec(`UPDATE devices SET agent_last_seen_at = $2 WHERE id = $1`, long, start.Add(3*time.Hour+time.Minute))
+	if r := at(3*time.Hour + time.Minute); r.Resolved != 1 || r.Opened != 0 || f.alertOn(long, "Offline") != nil || f.lastResolution(long) != "cleared" {
+		t.Fatalf("the device checked in: %+v %q", r, f.lastResolution(long))
+	}
+	if f.alertOn(recent, "Offline") == nil {
+		t.Fatal("the other device's alert resolved without a check-in")
 	}
 }
 
