@@ -40,6 +40,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/inventoryapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/removalapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/reportsapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/ssoapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/tenancyapi"
@@ -184,6 +185,9 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
 	d.EasyPatch = easypatch.New(db, auditLog, Version, log)
+	// A removed device's EasyPatch agent is told to uninstall itself at once,
+	// not at the next reconcile pass (ADR-0050).
+	d.Agents.OnRemoved(d.EasyPatch.Kick)
 	// The patch reports read patching through it.
 	d.Reports.UsePatching(d.EasyPatch)
 	if err := usePatchingEngine(cfg, d, log); err != nil {
@@ -361,6 +365,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	easypatchapi.New(d.EasyPatch).Register(mux)
 	ssoapi.New(d.SSO, d.Sessions, cfg.PublicURL).Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
+	removalapi.New(d.Agents, d.Devices).Register(mux)
 	mux.Handle("GET /api/v1/health", httpapi.Handle(func(w http.ResponseWriter, _ *http.Request) error {
 		httpapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": Version})
 		return nil

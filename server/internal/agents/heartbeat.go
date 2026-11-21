@@ -24,7 +24,10 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		return nil, apperr.Invalid("facts", err.Error())
 	}
 	linked := false
-	var update *agentproto.SignedUpdate
+	var (
+		update    *agentproto.SignedUpdate
+		uninstall *agentproto.SignedUninstall
+	)
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		// The name follows the hostname until someone renames the device.
 		tag, err := tx.Exec(ctx, `UPDATE devices SET
@@ -43,6 +46,11 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 			if linked, err = s.link(ctx, tx, d, f, ip); err != nil {
 				return err
 			}
+		}
+		// A device being removed gets nothing but its uninstall
+		// instruction (ADR-0050).
+		if uninstall, err = s.uninstallFor(ctx, tx, d); err != nil || uninstall != nil {
+			return err
 		}
 		// The update is an extra: when settling it fails, the heartbeat
 		// still counts.
@@ -75,6 +83,7 @@ func (s *Service) Heartbeat(ctx context.Context, d *Device, ip netip.Addr, req a
 		MeshAgent:        agentproto.MeshAgentInfo{Available: available},
 		JobKey:           s.jobKey,
 		Update:           update,
+		Uninstall:        uninstall,
 	}, nil
 }
 
@@ -104,6 +113,9 @@ func (s *Service) link(ctx context.Context, tx pgx.Tx, d *Device, f facts, ip ne
 		// MeshCentral has not reported the node yet; its next device sync
 		// confirms or undoes the link.
 		_, err = tx.Exec(ctx, `UPDATE devices SET mesh_node_id = $2, mesh_agent_type = NULL, remote_online = false WHERE id = $1`, d.ID, f.meshNode)
+		if err == nil {
+			err = keepNode(ctx, tx, d, f.meshNode)
+		}
 		return err == nil, err
 	case err != nil:
 		return false, err
@@ -131,6 +143,9 @@ func (s *Service) link(ctx context.Context, tx pgx.Tx, d *Device, f facts, ip ne
 		d.ID, f.meshNode, agentType, online, lastSeen); err != nil {
 		return false, err
 	}
+	if err := keepNode(ctx, tx, d, f.meshNode); err != nil {
+		return false, err
+	}
 	err = s.audit.Write(ctx, tx, audit.Event{
 		Actor:  audit.Actor{Type: audit.ActorAgent, ID: d.ID, Label: f.hostname, SourceIP: ip},
 		Action: "device.remote_link", Outcome: audit.Success,
@@ -138,4 +153,12 @@ func (s *Service) link(ctx context.Context, tx pgx.Tx, d *Device, f facts, ip ne
 		Details: details,
 	})
 	return err == nil, err
+}
+
+// keepNode lets a device linked to a MeshAgent node keep it when the node
+// belonged to a device removed from the same site (ADR-0050): the computer
+// was enrolled again, so its MeshAgent is not to be uninstalled.
+func keepNode(ctx context.Context, tx pgx.Tx, d *Device, node string) error {
+	_, err := tx.Exec(ctx, `UPDATE retired_devices SET mesh_node_id = NULL WHERE mesh_node_id = $1 AND site_id = $2`, node, d.SiteID)
+	return err
 }

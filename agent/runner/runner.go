@@ -51,9 +51,21 @@ type EasyPatch interface {
 	Start(ctx context.Context, s *agentproto.SignedEasyPatchInstall)
 }
 
+// Removal uninstalls the agent when the server says so (package removal,
+// ADR-0050).
+type Removal interface {
+	// Apply acts on a heartbeat answer's uninstall instruction. True means
+	// the agent must stop and uninstall itself in this process; otherwise
+	// an uninstaller runs outside the agent's service, or nothing does.
+	Apply(ctx context.Context, u *agentproto.SignedUninstall) bool
+}
+
 // ErrRestart ends Run when the agent must restart into another build of
 // itself.
 var ErrRestart = errors.New("runner: the agent must restart into another build")
+
+// ErrRemoved ends Run when the agent must uninstall itself in this process.
+var ErrRemoved = errors.New("runner: the agent must uninstall itself")
 
 // Runner runs an enrolled agent.
 type Runner struct {
@@ -74,6 +86,8 @@ type Runner struct {
 	Update Updater
 	// EasyPatch installs the EasyPatch agent (ADR-0031); nil never does.
 	EasyPatch EasyPatch
+	// Removal uninstalls the agent (ADR-0050); nil never does.
+	Removal Removal
 
 	// Timing, shortened by tests.
 	MinRetry    time.Duration // first retry after a failure (5 s)
@@ -122,7 +136,8 @@ func (r *Runner) defaults() {
 }
 
 // Run sends heartbeats until ctx ends, or returns ErrRestart when the
-// agent must restart into another build.
+// agent must restart into another build, ErrRemoved when it must uninstall
+// itself.
 func (r *Runner) Run(ctx context.Context) error {
 	r.defaults()
 	if r.Mesh != nil && r.Mesh.Installed() {
@@ -132,9 +147,9 @@ func (r *Runner) Run(ctx context.Context) error {
 		}
 	}
 	for {
-		wait, restart := r.beat(ctx)
-		if restart {
-			return ErrRestart
+		wait, err := r.beat(ctx)
+		if err != nil && ctx.Err() == nil {
+			return err
 		}
 		select {
 		case <-ctx.Done():
@@ -145,8 +160,8 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 // beat sends one heartbeat and acts on the answer. It returns how long to
-// wait before the next one, or that the agent must restart.
-func (r *Runner) beat(ctx context.Context) (time.Duration, bool) {
+// wait before the next one, or ErrRestart, ErrRemoved or ctx's error.
+func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 	f := r.Facts()
 	if r.Mesh != nil && r.Mesh.Installed() {
 		id, err := r.Mesh.NodeID(ctx)
@@ -170,12 +185,12 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, bool) {
 	resp, err := r.Client.Heartbeat(ctx, req)
 	if err != nil {
 		if ctx.Err() != nil {
-			return 0, false
+			return 0, ctx.Err()
 		}
 		if r.Update != nil && r.Update.Unreached() {
-			return 0, true
+			return 0, ErrRestart
 		}
-		return r.failed(err), false
+		return r.failed(err), nil
 	}
 	r.failures = 0
 	if r.Update != nil {
@@ -186,12 +201,20 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, bool) {
 	}
 	r.status.LastHeartbeat = time.Now().UTC()
 	r.status.LastError, r.status.LastErrorAt = "", time.Time{}
-	if r.Inventory != nil {
-		r.syncInventory(ctx, resp.InventoryHash)
-	}
 	next := jitter(time.Duration(resp.HeartbeatSeconds) * time.Second)
 	if next <= 0 {
 		next = jitter(time.Minute)
+	}
+	if resp.Uninstall != nil {
+		// The device is being removed: nothing else is done (ADR-0050).
+		r.save()
+		if r.Removal != nil && r.Removal.Apply(ctx, resp.Uninstall) {
+			return 0, ErrRemoved
+		}
+		return next, nil
+	}
+	if r.Inventory != nil {
+		r.syncInventory(ctx, resp.InventoryHash)
 	}
 	if r.Mesh != nil {
 		switch {
@@ -216,10 +239,10 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, bool) {
 	}
 	if r.Update != nil && r.Update.Apply(ctx, resp.Update) {
 		r.save()
-		return 0, true
+		return 0, ErrRestart
 	}
 	r.save()
-	return next, false
+	return next, nil
 }
 
 // syncInventory collects the inventory when it is due and uploads it when

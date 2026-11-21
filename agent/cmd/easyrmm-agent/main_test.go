@@ -63,6 +63,10 @@ func newHarness(t *testing.T) *harness {
 			h.calls = append(h.calls, name+" "+strings.Join(args, " "))
 			return []byte("active\n"), nil
 		}},
+		command: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			h.calls = append(h.calls, name+" "+strings.Join(args, " "))
+			return nil, nil
+		},
 		isRoot: func() bool { return true }, hasServices: func() bool { return true },
 	}
 	return h

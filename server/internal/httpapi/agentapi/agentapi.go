@@ -98,6 +98,9 @@ type EasyPatchInstalls interface {
 // EasyPatch to prepare an install.
 const easyPatchWait = 45 * time.Second
 
+// removedWait bounds recording an agent's removal report.
+const removedWait = 30 * time.Second
+
 // installers are an origin's install scripts.
 type installers struct{ sh, ps1 []byte }
 
@@ -195,7 +198,8 @@ func (a *API) WithEasyPatch(ep EasyPatchInstalls) *API {
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("POST "+agentproto.PathEnroll, httpapi.Handle(a.enroll))
-	mux.Handle("POST "+agentproto.PathHeartbeat, httpapi.Handle(a.signed(a.heartbeat)))
+	mux.Handle("POST "+agentproto.PathHeartbeat, httpapi.Handle(a.signedFor(agentproto.MaxBody, nil, true, a.heartbeat)))
+	mux.Handle("POST "+agentproto.PathRemoved, httpapi.Handle(a.signedFor(agentproto.MaxBody, nil, true, a.removed)))
 	mux.Handle("GET "+agentproto.PathMeshAgent, httpapi.Handle(a.signed(a.meshAgent)))
 	mux.Handle("GET "+agentproto.PathMeshSettings, httpapi.Handle(a.signed(a.meshSettings)))
 	if a.jobs != nil {
@@ -244,6 +248,8 @@ var (
 		Message: "This device has no such job run."}
 	errBadResult = &httpapi.Error{Status: http.StatusBadRequest, Code: "result_invalid",
 		Message: "The job result is not valid."}
+	errBadReport = &httpapi.Error{Status: http.StatusBadRequest, Code: "report_invalid",
+		Message: "The removal report is not valid."}
 	errBadInventory = &httpapi.Error{Status: http.StatusBadRequest, Code: "inventory_invalid",
 		Message: "The inventory is not valid JSON."}
 	errTooFrequent = &httpapi.Error{Status: http.StatusTooManyRequests, Code: "rate_limited",
@@ -268,6 +274,7 @@ func mapError(err error) error {
 		agents.ErrMeshUnavailable: errMeshUnavailable,
 		jobs.ErrRunNotFound:       errRunNotFound,
 		jobs.ErrBadResult:         errBadResult,
+		agents.ErrBadReport:       errBadReport,
 		inventory.ErrBadInventory: errBadInventory,
 	} {
 		if errors.Is(err, from) {
@@ -396,6 +403,13 @@ func (a *API) signedLimit(limit int64, h signedHandler) httpapi.HandlerFunc {
 // enrolled device, or a device that has used up its allowance, is refused
 // without reading what it sends.
 func (a *API) signedWith(limit int64, extra *auth.KeyedLimiter, h signedHandler) httpapi.HandlerFunc {
+	return a.signedFor(limit, extra, false, h)
+}
+
+// signedFor is signedWith that, with retired, also serves the agents of
+// devices removed by force (ADR-0050). Other routes answer them as unknown
+// devices.
+func (a *API) signedFor(limit int64, extra *auth.KeyedLimiter, retired bool, h signedHandler) httpapi.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		p, err := a.svc.BeginSigned(r.Context(), r.Header.Get("Authorization"))
 		if err != nil {
@@ -419,6 +433,9 @@ func (a *API) signedWith(limit int64, extra *auth.KeyedLimiter, h signedHandler)
 		}
 		if !a.requests.Allow(key) || (extra != nil && !extra.Allow(key)) {
 			return errTooFrequent
+		}
+		if d.Retired && !retired {
+			return errUnknownDevice
 		}
 		return h(w, r, d, body)
 	}
@@ -449,6 +466,14 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 	if err := decode(r, body, &in); err != nil {
 		return err
 	}
+	if d.Retired {
+		out, err := a.svc.RetiredHeartbeat(r.Context(), d)
+		if err != nil {
+			return mapError(err)
+		}
+		httpapi.WriteJSON(w, http.StatusOK, out)
+		return nil
+	}
 	out, err := a.svc.Heartbeat(r.Context(), d, httpapi.ClientIP(r), in)
 	if err != nil {
 		return mapError(err)
@@ -466,7 +491,7 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 			out.InventoryHash = "unknown" // never equal to an agent's hash, so it uploads
 		}
 	}
-	if a.ep != nil {
+	if a.ep != nil && out.Uninstall == nil {
 		// Settled to the end even if the agent hangs up, so an attempt is
 		// never left half recorded.
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), easyPatchWait)
@@ -474,6 +499,23 @@ func (a *API) heartbeat(w http.ResponseWriter, r *http.Request, d *agents.Device
 		cancel()
 	}
 	httpapi.WriteJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// removed takes an agent's report on uninstalling itself (ADR-0050).
+func (a *API) removed(w http.ResponseWriter, r *http.Request, d *agents.Device, body []byte) error {
+	var in agentproto.RemovedReport
+	if err := decode(r, body, &in); err != nil {
+		return err
+	}
+	// Recorded to the end even if the agent hangs up: it may be deleting
+	// itself.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), removedWait)
+	defer cancel()
+	if err := a.svc.Removed(ctx, d, httpapi.ClientIP(r), in); err != nil {
+		return mapError(err)
+	}
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 

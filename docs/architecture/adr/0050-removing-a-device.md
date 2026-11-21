@@ -1,6 +1,6 @@
 # ADR-0050: Removing a device
 
-* Status: Accepted (2026-11-21). Not implemented yet.
+* Status: Accepted (2026-11-21).
 * Refines: [ADR-0015](0015-enrollment-and-meshagent-delivery.md) (the
   agents a device carries) and [ADR-0031](0031-easypatch-agent-install.md)
   (the EasyPatch agent EasyRMM installs).
@@ -22,8 +22,10 @@ A device is up to three things, each with its own agent:
 * **MeshCentral's node**, with MeshAgent. While the node exists, EasyRMM's
   sync lists it. MeshCentral's `removedevices` deletes a node and
   disconnects its agent, but a MeshAgent still installed creates the node
-  again when it reconnects to its device group; `uninstallagent` has a
-  connected MeshAgent remove itself, and answers nothing.
+  again when it reconnects to its device group. `uninstallagent` answers
+  nothing, and a connected MeshAgent acts on it only when it runs as the
+  service MeshCentral's own installer makes; the MeshAgent EasyRMM's agent
+  runs (`easyrmm-meshagent` on Linux, or its child process) ignores it.
 * **The patching engine's endpoint**, with the EasyPatch agent. EasyRMM
   already removes those: `easypatch_removals` has the engine send the agent
   an uninstall job and revokes the endpoint if the agent has not gone after
@@ -46,38 +48,52 @@ for ever.
   signed with the job key, bound to the device, valid for minutes, under
   its own signature context. A job could not carry it: scripts stop with
   the agent.
-* **The agent uninstalls from outside its service.** It copies itself to a
-  temporary place and starts that copy detached, with `uninstall` and the
-  instruction: as a transient systemd unit on Linux (as the EasyPatch agent
-  does), as a process outside the service on Windows. The copy stops and
-  removes the service and MeshAgent, then sends EasyRMM a signed report
-  with the device key: removed, or what failed. Then it deletes the state
-  and itself. A *removed* report is the confirmation; a failure shows on
-  the device with **Remove anyway**.
+* **The agent uninstalls from outside its service.** It saves the
+  instruction in its state folder and starts `easyrmm-agent uninstall
+  --removal` with it: as a transient systemd unit on Linux (as the EasyPatch
+  agent does), as a detached process outside the service's job on Windows.
+  An agent with no service (a container, Linux without systemd) does the
+  same in its own process once it has stopped. The uninstaller checks the
+  instruction again, removes the service, then MeshAgent, sends EasyRMM a
+  signed report with the device key, and deletes the state and the agent's
+  files; Windows deletes the running executable at the next restart. If
+  the service cannot be removed, it reports what failed and starts the
+  service again. A *removed* report is the confirmation, even of a removal
+  cancelled meanwhile; a failure shows on the device, with **Ask again**
+  and **Remove anyway**.
 * **The EasyPatch agent is removed when the device is deleted,** by the
   path that exists: the delete adds its endpoint to `easypatch_removals`,
   the engine sends the agent an uninstall job, and revokes the endpoint if
   the agent has not gone after the grace period. A cancelled removal
   leaves patching untouched.
 * **MeshCentral's node is removed** when the device is deleted, after its
-  MeshAgent was, so it does not come back as discovered.
+  MeshAgent was, so it does not come back as discovered. A connected
+  MeshAgent is first asked to uninstall itself, up to three times a minute
+  apart; then the node is removed regardless.
 * **Force removal.** When the device does not confirm, because it is off,
   gone or its uninstall failed, **Remove anyway** deletes it at once and
   removes its node. EasyRMM keeps the device's id, its agent's public key
   and its MeshAgent node for 90 days. If that EasyRMM agent comes back, its
   heartbeat is answered with the uninstall instruction instead of
-  `device_unknown`; if that MeshAgent comes back, MeshCentral is told to
-  uninstall it and remove its node again. Either way the computer cleans
-  itself up. A device enrolled since then that reports the same MeshAgent
-  node keeps it.
+  `device_unknown`, and the agent removes itself and MeshAgent as above; a
+  failure is asked again after an hour. If that MeshAgent comes back
+  without it, its node is never listed and is removed again, at most once
+  an hour: a node that returns belongs to a MeshAgent MeshCentral cannot
+  uninstall. A device enrolled since then in the same site that reports
+  the same MeshAgent node keeps it.
 * **Devices only MeshCentral knows** (discovered, no EasyRMM agent) are
-  removed the same way: MeshCentral uninstalls MeshAgent if it is
-  connected, the node is removed, and it is kept for 90 days.
+  removed at once, the same way: MeshCentral asks a connected MeshAgent to
+  uninstall itself, which one installed with MeshCentral's installer does,
+  the node is removed, and it is kept for 90 days.
 * **Endpoints only the patching engine has.** The patching overview's list
-  of endpoints with no EasyRMM device gets **Remove**, through
-  `easypatch_removals` as for a deleted device.
-* **Audited**: the request, its cancellation, the confirmation, and a forced
-  removal, each with the device's name and who asked.
+  of endpoints with no EasyRMM device gets **Remove** (`device.retire` in
+  the organization), through `easypatch_removals` as for a deleted device.
+  The engine lists active endpoints only, so it leaves the list once the
+  agent has gone or the endpoint is revoked.
+* **Audited**: the request, its cancellation, a failure the agent reports,
+  the removal (confirmed or forced), a removed agent's cleanup, and the
+  removal of a patching-only endpoint, each with the device's name and who
+  asked.
 
 ## Consequences
 * A decommissioned computer leaves the console with its agents removed, in
@@ -88,8 +104,9 @@ for ever.
   patching engine keeps the endpoint's history, revoked.
 * Agents older than this release cannot follow the instruction. Their
   devices are removed by force, and `easyrmm-agent uninstall` cleans them
-  up locally. A MeshAgent they installed is still uninstalled through
-  MeshCentral when it connects.
+  up locally. MeshCentral cannot uninstall the MeshAgent they run; while it
+  stays, its node is removed whenever it comes back, at most once an hour,
+  for 90 days.
 * A computer that stays off for more than 90 days after a forced removal
   keeps its agents; they get `device_unknown` from then on, and someone
   uninstalls them there.

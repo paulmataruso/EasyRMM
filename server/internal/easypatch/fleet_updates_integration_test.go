@@ -522,3 +522,63 @@ func TestRestartStatements(t *testing.T) {
 		t.Fatalf("endpoint read's statement: %+v", st)
 	}
 }
+
+// TestRemoveEndpoint: an endpoint no device is linked to is removed from
+// the patching overview; its agent is told to uninstall itself (ADR-0050).
+func TestRemoveEndpoint(t *testing.T) {
+	f := newFleetFixture(t)
+	ctx := f.ctx
+	_, err := f.unconfigured().RemoveEndpoint(ctx, f.admin, f.eStray.ID)
+	wantErr(t, err, apperr.KindConflict, "easypatch_not_configured")
+
+	// A technician sees it and may not remove it; the reader neither.
+	fl, err := f.svc.Fleet(ctx, f.tech, FleetQuery{})
+	if err != nil || len(fl.Unmatched) != 1 || fl.Unmatched[0].CanRemove || fl.Unmatched[0].Removal != nil {
+		t.Fatalf("technician: %+v, %v", fl.Unmatched, err)
+	}
+	_, err = f.svc.RemoveEndpoint(ctx, f.tech, f.eStray.ID)
+	wantErr(t, err, apperr.KindForbidden, "forbidden")
+	_, err = f.svc.RemoveEndpoint(ctx, f.reader, f.eStray.ID)
+	wantErr(t, err, apperr.KindForbidden, "forbidden")
+	// Someone who does not see the organization whole does not find it.
+	_, err = f.svc.RemoveEndpoint(ctx, f.siteTech, f.eStray.ID)
+	wantErr(t, err, apperr.KindNotFound, "not_found")
+	_, err = f.svc.RemoveEndpoint(ctx, f.orgAdmin, uuid.New())
+	wantErr(t, err, apperr.KindNotFound, "not_found")
+	// A device's endpoint goes with the device.
+	_, err = f.svc.RemoveEndpoint(ctx, f.orgAdmin, f.eWeb.ID)
+	wantErr(t, err, apperr.KindConflict, "endpoint_linked")
+
+	// The organization's administrator removes it.
+	if fl, err := f.svc.Fleet(ctx, f.orgAdmin, FleetQuery{}); err != nil || len(fl.Unmatched) != 1 || !fl.Unmatched[0].CanRemove {
+		t.Fatalf("administrator: %+v, %v", fl.Unmatched, err)
+	}
+	e, err := f.svc.RemoveEndpoint(ctx, f.orgAdmin, f.eStray.ID)
+	if err != nil || e.Hostname != "stray-01" || e.OrganizationID != f.acme || e.Removal == nil || e.Removal.State != "pending" ||
+		e.Removal.Reason != RemovalDeleted {
+		t.Fatalf("remove: %+v, %v", e, err)
+	}
+	if st := f.lastStatement("GET", "/api/v1/endpoints/"+f.eStray.ID.String()); st.Role != RoleReadOnly || st.Name != "otto@example.com" {
+		t.Errorf("statement %+v", st)
+	}
+	if _, err := f.svc.RemoveEndpoint(ctx, f.orgAdmin, f.eStray.ID); err != nil {
+		t.Errorf("asking again: %v", err)
+	}
+	if n := f.count(`SELECT count(*) FROM audit_log WHERE action = 'patch.endpoint_remove' AND target_id = $1`, f.eStray.ID.String()); n != 1 {
+		t.Errorf("audited %d times", n)
+	}
+	fl, err = f.svc.Fleet(ctx, f.tech, FleetQuery{})
+	if err != nil || len(fl.Unmatched) != 1 || fl.Unmatched[0].Removal == nil {
+		t.Fatalf("listed: %+v, %v", fl.Unmatched, err)
+	}
+
+	// The reconciler has the agent uninstall itself.
+	if res := f.reconcile(); res.Uninstalls != 1 || len(uninstallJobs(f.engine, f.eStray.ID)) != 1 {
+		t.Fatalf("reconcile: %+v", res)
+	}
+
+	// An endpoint the engine no longer patches cannot be removed.
+	f.engine.Set(func() { f.eStray.Status = "Revoked" })
+	_, err = f.svc.RemoveEndpoint(ctx, f.orgAdmin, f.eStray.ID)
+	wantErr(t, err, apperr.KindConflict, "endpoint_inactive")
+}

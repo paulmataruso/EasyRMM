@@ -102,6 +102,11 @@ const ACTIONS: Record<string, string> = {
   "device.software_action": "Software action",
   "device.agent_update": "Updated agent",
   "device.agent_update_request": "Asked for an agent update",
+  "device.removal_request": "Asked to remove device",
+  "device.removal_cancel": "Cancelled device removal",
+  "device.removal_failed": "Agent could not remove itself",
+  "device.remove": "Removed device",
+  "device.retired_cleanup": "Removed agent of a removed device",
   "agent_updates.update": "Changed agent update settings",
   "agent_updates.request_all": "Asked to update every outdated agent",
   "report.export": "Downloaded report",
@@ -126,6 +131,7 @@ const ACTIONS: Record<string, string> = {
   "patch.retry": "Retried patch job",
   "patch.stop": "Stopped patching",
   "patch.allow": "Allowed patching again",
+  "patch.endpoint_remove": "Removed a patching-only endpoint",
   "patch.exclude": "Excluded an update",
   "patch.include": "Included an update again",
   "patch.remove_update": "Requested an update removal",
@@ -237,7 +243,19 @@ export const REMOTE_KIND_NAMES: Record<RemoteKind, string> = {
 };
 
 /** Online, offline, or no agent at all. */
-export function DeviceStatusBadge({ device }: { device: Pick<Device, "online" | "agent" | "remoteAgent"> }) {
+export function DeviceStatusBadge({ device }: { device: Pick<Device, "online" | "agent" | "remoteAgent" | "removal"> }) {
+  if (device.removal) {
+    const failed = device.removal.error !== "";
+    return (
+      <Badge
+        tone={failed ? "danger" : "warn"}
+        icon={<Dot tone={failed ? "danger" : "warn"} />}
+        title={failed ? `The agent could not uninstall itself: ${device.removal.error}` : "Waiting for the agent to uninstall itself."}
+      >
+        {failed ? "Removal failed" : "Removing"}
+      </Badge>
+    );
+  }
   if (!device.agent && !device.remoteAgent) {
     return (
       <Badge tone="neutral" title="No agent has connected for this device.">

@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
+	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/agentapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
@@ -110,6 +112,9 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 	js := jobs.New(r.db, r.audit, jobKey, 24*time.Hour, r.log)
 	t.Cleanup(js.Close)
 	svc.SetJobKey(js.PublicKey())
+	// The job key also signs uninstall instructions (ADR-0050); no builds
+	// to update to.
+	svc.SetUpdates(&agents.Builds{}, jobKey)
 	invs := inventory.New(r.db, 24*time.Hour, r.log)
 	server := r.serveAgentAPI(svc, js, invs)
 	tok, err := svc.CreateToken(r.ctx, r.sys, hq.ID, agents.TokenInput{Name: "End to end", ExpiresInDays: 1})
@@ -274,5 +279,57 @@ func TestEnrolledAgentEndToEnd(t *testing.T) {
 	})
 	if d, err := r.dev.Get(r.ctx, tech, dev.ID); err != nil || d.Agent == nil {
 		t.Errorf("enrolled device after stopping: %+v, %v", d, err)
+	}
+
+	// Removed from the console (ADR-0050): started again, the agent gets the
+	// instruction with its heartbeat. With no service to leave, it removes
+	// MeshAgent and itself in its own process, reports, and exits; the
+	// device is deleted, and MeshCentral forgets its node.
+	docker(t, "start", name)
+	r.waitFor(2*time.Minute, "both agents to be back", func() bool {
+		d, err := r.dev.Get(r.ctx, tech, dev.ID)
+		return err == nil && d.Agent != nil && d.Agent.Online && d.RemoteOnline
+	})
+	if st, err := svc.RequestRemoval(r.ctx, r.sys, dev.ID); err != nil || st != agents.RemovalAsked {
+		t.Fatalf("asking for the removal: %q %v", st, err)
+	}
+	r.waitFor(2*time.Minute, "the agent to remove itself and the device to go", func() bool {
+		_, err := r.dev.Get(r.ctx, tech, dev.ID)
+		return errors.Is(err, apperr.ErrNotFound)
+	})
+	if n := r.count(`SELECT count(*) FROM audit_log WHERE action = 'device.remove' AND device_id = $1 AND actor_type = 'agent'
+			AND details->>'confirmed' = 'true'`, dev.ID); n != 1 {
+		t.Errorf("removal audit records = %d", n)
+	}
+	r.waitFor(time.Minute, "the agent's container to exit", func() bool {
+		return strings.TrimSpace(docker(t, "inspect", "-f", "{{.State.Status}}", name)) == "exited"
+	})
+	if code := strings.TrimSpace(docker(t, "inspect", "-f", "{{.State.ExitCode}}", name)); code != "0" {
+		t.Errorf("the agent exited with %s", code)
+	}
+	if logs := docker(t, "logs", "--tail", "20", name); !strings.Contains(logs, "EasyRMM agent removed on the server's instruction.") {
+		t.Errorf("agent output:\n%s", logs)
+	}
+	left := docker(t, "run", "--rm", "--user", "65534:65534", "-v", dir+":/agent", image, "sh", "-c",
+		"ls -A /agent/root/var/lib/easyrmm-agent /agent/root/usr/local/lib/easyrmm-agent 2>/dev/null; true")
+	if strings.TrimSpace(left) != "" {
+		t.Errorf("left on the computer:\n%s", left)
+	}
+	r.waitFor(3*time.Minute, "MeshCentral to forget the node", func() bool {
+		return r.count(`SELECT count(*) FROM retired_devices WHERE device_id = $1 AND mesh_node_id = $2 AND mesh_removed_at IS NOT NULL`,
+			dev.ID, dev.MeshNodeID) == 1
+	})
+	nodes, err := r.mesh.Nodes(r.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(nodes, func(n meshcentral.Node) bool { return n.ID == dev.MeshNodeID }) {
+		t.Error("the node is still in MeshCentral")
+	}
+	if err := r.svc.SyncDevices(r.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := r.dev.List(r.ctx, tech, devices.Query{}); err != nil || len(list) != 0 {
+		t.Errorf("devices after the removal: %d %v", len(list), err)
 	}
 }

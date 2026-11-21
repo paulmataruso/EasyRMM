@@ -279,6 +279,21 @@ func (c *Client) Result(ctx context.Context, runID string, r agentproto.ResultRe
 	return resp.Body.Close()
 }
 
+// Removed reports how uninstalling the agent on the server's instruction
+// went (ADR-0050).
+func (c *Client) Removed(ctx context.Context, r agentproto.RemovedReport) error {
+	body, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	resp, err := c.do(ctx, http.MethodPost, agentproto.PathRemoved, body, true)
+	if err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+	return resp.Body.Close()
+}
+
 // call sends a request and decodes its JSON answer into dst.
 func (c *Client) call(ctx context.Context, method, target string, body []byte, sign bool, dst any) error {
 	return c.callLimit(ctx, method, target, body, sign, dst, 1<<20)

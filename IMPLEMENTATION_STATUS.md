@@ -16,14 +16,16 @@ Statuses:
 
 A visible interface alone never counts as Implemented.
 
-Last updated: 2026-11-20.
+Last updated: 2026-11-21.
 
 Where things were verified, besides the automated tests:
 
 * **The real deployment**: installed from the published 1.0.0-rc.1 release
   bundle on a Linux host with two DNS names and Let's Encrypt certificates,
-  then upgraded in place to 1.0.0-rc.2. Two Windows Server 2025 and two
-  Linux computers are enrolled.
+  then upgraded in place to 1.0.0-rc.2 and 1.0.0-rc.3 (patching engine
+  1.12.0). Two Windows Server 2025 and two Linux computers are enrolled; on
+  each upgrade their agents and EasyPatch agents updated themselves and
+  kept reporting.
 * **Real Windows machines**: Windows Server 2025 machines, in a test
   deployment and in the real deployment.
 * **A test deployment**: one addressed by IP, with Linux test machines
@@ -82,6 +84,7 @@ Where things were verified, besides the automated tests:
 | MeshAgent install and correlation: the agent installs MeshAgent with its site's settings and the server links the node to the device; a node no device claims waits two minutes before it is listed as discovered | Complete | End to end, including a remote session to the enrolled device and offline detection; the two-minute wait by an integration test. | The wait on real machines (it keeps an approved device from showing twice). |
 | Coordinated agent updates: a few devices at a time (**Settings → Agent updates**) or one device from its page; signed instructions naming the build's SHA-256; rollback when a new build crashes or cannot reach the server ([guide](docs/deployment/agents.md#updating-agents), ADR-0027) | Complete | Unit, integration and console tests; on a test deployment, two Linux agents updated one at a time, and a crashing build was undone and reported. On real Windows machines, two agents updated within two minutes, with MeshAgent and the EasyPatch agent still running. On the real deployment's upgrade, all four agents (Windows and Linux) updated within minutes and kept reporting. | A crashing build undone on Windows. |
 | Uninstall: `easyrmm-agent uninstall` removes the agent, MeshAgent and their state; the device stays listed as offline ([guide](docs/deployment/agents.md#uninstalling)) | Tested | Agent unit tests. | — |
+| Removing a device: **Remove** on its page has its agents uninstall themselves with a signed instruction and deletes the device when the agent confirms; a failure shows why, with **Ask again**, **Remove anyway** and **Keep the device**; a device removed by force that comes back within 90 days still cleans itself up; MeshCentral forgets its node; **Remove** for endpoints only the patching engine has ([guide](docs/deployment/agents.md#removing-a-device), ADR-0050) | Complete | Unit tests; PostgreSQL integration and HTTP API tests (permissions, cancelling, failure reports, forced removal and a returning agent, replays); the real agent in a container removed itself and MeshAgent on the instruction and the device was deleted; a real MeshAgent's node removed from MeshCentral and kept out of the device list when it returned; the bundle test removes the Debian machine from the console, after which EasyRMM's agent, MeshAgent and the EasyPatch agent's package are gone from it; console tests. | On Windows; on the real deployment. |
 | Devices list and device page: enrolled and MeshCentral-discovered devices, filters, a device tree by organization and site with quick connect, recent remote sessions | Complete | Console tests; a browser end-to-end test shows devices and remote access honestly when MeshCentral is not running. | — |
 
 ## Monitoring and automation

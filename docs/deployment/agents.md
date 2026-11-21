@@ -350,7 +350,44 @@ sudo easyrmm-agent uninstall
 
 This stops and removes both services, MeshAgent and the agent's state. The
 device stays listed in the console as offline; its history is kept. To enroll
-the computer again, install it with a new token.
+the computer again, install it with a new token. To take the device out of
+the console too, remove it there instead.
+
+## Removing a device
+
+**Remove** on a device's page takes a computer out of EasyRMM with its
+agents ([ADR-0050](../architecture/adr/0050-removing-a-device.md)). It
+needs the Site Administrator role or above for the device's site.
+
+1. EasyRMM asks the device's agent to uninstall itself. The device shows
+   *Removing* until the agent confirms; the page says whether the agent
+   has had the instruction yet. An agent gets it with its next heartbeat,
+   within a minute while it is online, or when the computer is next on.
+2. The agent starts its uninstaller outside its service: a systemd unit
+   of its own on Linux (`easyrmm-agent-removal-…`), a separate process on
+   Windows. The uninstaller removes the agent's service, MeshAgent, the
+   agent's state and its program, and tells EasyRMM.
+3. EasyRMM deletes the device, with its alerts, inventory, measurements and
+   script history. The audit log keeps what happened. The patching engine
+   has the EasyPatch agent uninstall itself, and MeshCentral forgets the
+   device.
+
+While the device waits, **Keep the device** cancels the removal. If the
+agent cannot remove its service, the device shows why and keeps working;
+**Ask again** once that is fixed. **Remove now** or **Remove anyway**
+deletes the device at once, without waiting: for a computer that is gone
+for good, or one whose agent is from a release before device removal and
+cannot follow the instruction (run `easyrmm-agent uninstall` on that one). If a computer
+removed this way comes back within 90 days, its agent is told to uninstall
+itself then.
+
+A device with no EasyRMM agent, found through MeshCentral, is removed at
+once: MeshCentral asks its MeshAgent to uninstall itself and forgets it.
+
+Endpoints only the patching engine has, listed on **Patching → Overview**
+under *In the patching engine, with no EasyRMM device*, have **Remove** too:
+their EasyPatch agent uninstalls itself when it next checks in, and the
+engine stops patching the endpoint after 7 days if it does not.
 
 ## Serving the agents
 

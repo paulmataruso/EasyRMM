@@ -34,7 +34,7 @@ func TestBeatUpdates(t *testing.T) {
 
 	// A failure is reported with the heartbeat; an answer without an
 	// instruction still reaches Apply, as nil.
-	if _, restart := r.beat(ctx); restart {
+	if _, err := r.beat(ctx); err != nil {
 		t.Fatal("restart without an update")
 	}
 	if got := s.heartbeats[0].Update; got == nil || got.ID != "a1" || got.Error != "boom" {
@@ -47,7 +47,7 @@ func TestBeatUpdates(t *testing.T) {
 	// An instruction is handed over; a build in place restarts the agent.
 	s.update = `{"payload":"cA==","signature":"cw=="}`
 	u.report, u.restart = nil, true
-	if _, restart := r.beat(ctx); !restart {
+	if _, err := r.beat(ctx); !errors.Is(err, ErrRestart) {
 		t.Fatal("no restart after the update")
 	}
 	if got := u.applied[1]; got == nil || got.Payload != "cA==" || got.Signature != "cw==" {
@@ -62,11 +62,11 @@ func TestBeatUpdates(t *testing.T) {
 
 	// A failed heartbeat may undo a new build on probation.
 	s.status, s.code = http.StatusBadGateway, "x"
-	if _, restart := r.beat(ctx); restart || u.unreached != 1 {
-		t.Errorf("restart %v, unreached %d", restart, u.unreached)
+	if _, err := r.beat(ctx); err != nil || u.unreached != 1 {
+		t.Errorf("err %v, unreached %d", err, u.unreached)
 	}
 	u.undo = true
-	if _, restart := r.beat(ctx); !restart {
+	if _, err := r.beat(ctx); !errors.Is(err, ErrRestart) {
 		t.Error("no restart after undoing the update")
 	}
 }
@@ -90,7 +90,9 @@ func TestBeatEasyPatch(t *testing.T) {
 	ctx := context.Background()
 	// The status goes with every heartbeat; an answer without an
 	// instruction still reaches Start, as nil.
-	r.beat(ctx)
+	if _, err := r.beat(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if got := s.heartbeats[0].EasyPatch; got == nil || got.Busy != "b1" || got.Last == nil || got.Last.ID != "a0" || !got.Last.OK {
 		t.Errorf("reported %+v", got)
 	}
@@ -98,13 +100,17 @@ func TestBeatEasyPatch(t *testing.T) {
 		t.Errorf("started %v", ep.started)
 	}
 	s.easyPatch = `{"payload":"cA==","signature":"cw=="}`
-	r.beat(ctx)
+	if _, err := r.beat(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if got := ep.started[1]; got == nil || got.Payload != "cA==" || got.Signature != "cw==" {
 		t.Errorf("started %+v", got)
 	}
 	// Without an installer the heartbeat says nothing about EasyPatch.
 	r.EasyPatch = nil
-	r.beat(ctx)
+	if _, err := r.beat(ctx); err != nil {
+		t.Fatal(err)
+	}
 	if got := s.heartbeats[2].EasyPatch; got != nil {
 		t.Errorf("reported %+v without an installer", got)
 	}

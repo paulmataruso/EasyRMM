@@ -982,6 +982,41 @@ func TestEasyPatchAPI(t *testing.T) {
 			t.Errorf("%s %s with an array: %d %s", c.method, c.path, r.status, r.body)
 		}
 	}
+
+	// An endpoint only the engine has is removed from the patching overview
+	// (ADR-0050); one linked to a device goes with its device instead.
+	old := ep.AddEndpoint(epOrg, "old-pc", "S-9", "0A0B-0C0D-0E0F-1011")
+	removePath := "/api/v1/patching/endpoints/" + old.ID.String() + "/remove"
+	wantStatus(t, viewer.do("POST", removePath, nil), http.StatusForbidden, "forbidden")
+	wantStatus(t, admin.do("POST", "/api/v1/patching/endpoints/nope/remove", nil), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, admin.do("POST", "/api/v1/patching/endpoints/"+uuid.NewString()+"/remove", nil), http.StatusNotFound, "not_found")
+	wantStatus(t, admin.do("POST", "/api/v1/patching/endpoints/"+endpoint.ID.String()+"/remove", nil), http.StatusConflict, "endpoint_linked")
+	type removable struct {
+		ID        string `json:"id"`
+		Hostname  string `json:"hostname"`
+		CanRemove bool   `json:"canRemove"`
+		Removal   *struct {
+			Reason string `json:"reason"`
+			State  string `json:"state"`
+		} `json:"removal"`
+	}
+	var removed removable
+	admin.expect(http.StatusOK, "POST", removePath, nil, &removed)
+	if removed.ID != old.ID.String() || removed.Hostname != "old-pc" || !removed.CanRemove || removed.Removal == nil ||
+		removed.Removal.Reason != "deleted" || removed.Removal.State != "pending" {
+		t.Fatalf("removed: %+v", removed)
+	}
+	var overview struct {
+		Unmatched []removable `json:"unmatched"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/devices", nil, &overview)
+	if len(overview.Unmatched) != 1 || overview.Unmatched[0].ID != old.ID.String() || overview.Unmatched[0].Removal == nil {
+		t.Fatalf("unmatched: %+v", overview.Unmatched)
+	}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/devices", nil, &overview)
+	if len(overview.Unmatched) != 1 || overview.Unmatched[0].CanRemove {
+		t.Errorf("the viewer's unmatched: %+v", overview.Unmatched)
+	}
 }
 
 // TestEasyPatchAgentInstallAPI installs the EasyPatch agent through the

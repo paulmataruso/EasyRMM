@@ -109,7 +109,9 @@ func TestBeatSendsMetricsAndSyncsTheInventory(t *testing.T) {
 func TestBeatWithoutCollectors(t *testing.T) {
 	s := &server{}
 	r := newRunner(t, s, nil)
-	r.beat(context.Background())
+	if _, err := r.beat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if len(s.heartbeats) != 1 || s.heartbeats[0].Metrics != nil || len(s.uploads) != 0 {
 		t.Errorf("heartbeats %+v uploads %d", s.heartbeats, len(s.uploads))
 	}

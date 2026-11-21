@@ -296,6 +296,26 @@ export interface Device {
   canUpdateAgent: boolean;
   /** The caller may install and remove software here (software.manage), on Windows or Linux with the agent (ADR-0028). */
   canManageSoftware: boolean;
+  /** The caller may remove the device (device.retire; ADR-0050). */
+  canRemove: boolean;
+  /** The removal under way, while the device waits for its agent to uninstall itself (ADR-0050). */
+  removal: DeviceRemoval | null;
+}
+
+/** A device's removal, while its agent has not confirmed it (ADR-0050). */
+export interface DeviceRemoval {
+  requestedAt: string;
+  /** When a heartbeat answer first carried the instruction; null until the agent checks in. */
+  sentAt: string | null;
+  /** The agent could not uninstall itself: when it said so, and why. */
+  reportedAt: string | null;
+  error: string;
+}
+
+/** What asking to remove a device did: the device waits for its agent, or had none and is gone. */
+export interface DeviceRemovalResult {
+  status: "asked" | "removed";
+  device?: Device;
 }
 
 export interface DeviceAgent {
@@ -1109,7 +1129,12 @@ export interface PatchFleet {
 }
 
 /** An EasyPatch endpoint with no EasyRMM device; organizationId and organizationName are EasyRMM's. */
-export type PatchUnmatchedEndpoint = PatchEndpoint;
+export interface PatchUnmatchedEndpoint extends PatchEndpoint {
+  /** The caller may remove it (device.retire in its organization; ADR-0050). */
+  canRemove: boolean;
+  /** Its agent is being asked to uninstall itself. */
+  removal?: AgentRemoval;
+}
 
 /** One update across the devices in a scope (Patching → Updates). */
 export interface PatchFleetUpdate {

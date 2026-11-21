@@ -274,6 +274,18 @@ keep only their hash and cannot be shown again.
 | `enrollment_tokens.token_sealed` | A deployment token's secret, sealed (additional data: `enrollment_token:` and the token's id); NULL for tokens made before. The service shows it only while the token is active, after checking it against `token_hash`, and audits every reveal |
 | `approval_tokens.token_sealed` | The same for an approval token (additional data: `approval_token:` and its id) |
 
+## Removing devices (migration 00025)
+
+A device's removal waits for its agent to confirm; a device removed is
+remembered for 90 days, so that its agents still clean up if the computer
+comes back (ADR-0050).
+
+| Table | Notes |
+|---|---|
+| `device_removals` | One row per device whose removal waits for its agent: the removal's id (named in the signed instruction and the agent's report), when it was asked and by whom, when a heartbeat answer first carried the instruction, and when the agent reported that it could not remove itself, with why (up to 500 characters). Asking again replaces the row with a new id; cancelling deletes it; it goes with its device. Read and changed through the device's row-level security; heartbeats run at platform scope |
+| `retired_devices` | A device deleted in the last 90 days that had an agent key or a MeshAgent node: its id, organization, site and name; the agent's Ed25519 public key while the agent has not confirmed removing itself (an agent signing with it is answered with the uninstall instruction only), its report; the MeshCentral node, until a device enrolled since in the same site reports it, and the cleanup of that node: when last tried, how many times its MeshAgent was asked to uninstall itself, when the node was removed, and the last error. Deleted when they expire. Any scope may insert one (the removal runs in the caller's scope); read, changed and deleted with platform scope only |
+| `retired_agent_nonces` | Nonces of signed requests from removed devices' agents, as `agent_nonces` for enrolled ones. Platform scope only |
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

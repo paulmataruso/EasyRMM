@@ -181,6 +181,20 @@ func (c *Client) Nodes(ctx context.Context) ([]Node, error) {
 	return out, nil
 }
 
+// RemoveDevice deletes a device from MeshCentral, with its events and
+// links, and disconnects its MeshAgent. A MeshAgent still installed creates
+// the device again when it reconnects to its group.
+func (c *Client) RemoveDevice(ctx context.Context, nodeID string) error {
+	_, err := c.call(ctx, "removedevices", map[string]any{"nodeids": []string{nodeID}})
+	return err
+}
+
+// UninstallAgent asks a device's MeshAgent to uninstall itself. MeshCentral
+// passes it on only while MeshAgent is connected, and answers nothing.
+func (c *Client) UninstallAgent(ctx context.Context, nodeID string) error {
+	return c.send(ctx, "uninstallagent", map[string]any{"nodeids": []string{nodeID}})
+}
+
 // IsAlreadyExists reports MeshCentral's "already exists" failures, which a
 // retried create may legitimately hit.
 func IsAlreadyExists(err error) bool {

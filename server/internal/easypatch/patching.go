@@ -170,8 +170,8 @@ type PatchingStop struct {
 
 // AgentRemoval is EasyRMM removing a device's EasyPatch agent.
 type AgentRemoval struct {
-	// Reason is opted_out (patching stopped) or moved (to another
-	// organization).
+	// Reason is deleted (its device, or the endpoint, was removed),
+	// opted_out (patching stopped) or moved (to another organization).
 	Reason string `json:"reason"`
 	// State is pending (not sent yet) or uninstalling.
 	State       string    `json:"state"`
@@ -277,6 +277,10 @@ type UnmatchedEndpoint struct {
 	// OrganizationID and OrganizationName are EasyRMM's.
 	OrganizationID   uuid.UUID `json:"organizationId"`
 	OrganizationName string    `json:"organizationName"`
+	// CanRemove says the caller may remove the endpoint (ADR-0050).
+	CanRemove bool `json:"canRemove"`
+	// Removal is its removal under way.
+	Removal *AgentRemoval `json:"removal,omitempty"`
 }
 
 // maxUnmatched is how many unmatched endpoints the patching list holds.
@@ -418,6 +422,7 @@ func (s *Service) unmatched(ctx context.Context, c access.Caller, cl *Client, or
 		return nil
 	}
 	matched := map[uuid.UUID]bool{}
+	var removals map[uuid.UUID]*AgentRemoval
 	err = s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT endpoint_id FROM easypatch_devices WHERE endpoint_id = ANY($1)`, ids)
 		if err != nil {
@@ -430,7 +435,11 @@ func (s *Service) unmatched(ctx context.Context, c access.Caller, cl *Client, or
 			}
 			matched[id] = true
 		}
-		return rows.Err()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		removals, err = endpointRemovals(ctx, tx, ids)
+		return err
 	})
 	if err != nil {
 		return err
@@ -439,7 +448,8 @@ func (s *Service) unmatched(ctx context.Context, c access.Caller, cl *Client, or
 		var list []UnmatchedEndpoint
 		for id, e := range fetched[ep] {
 			if !matched[id] {
-				list = append(list, UnmatchedEndpoint{Endpoint: e, OrganizationID: linked[ep].id, OrganizationName: linked[ep].name})
+				list = append(list, UnmatchedEndpoint{Endpoint: e, OrganizationID: linked[ep].id, OrganizationName: linked[ep].name,
+					CanRemove: c.Can(rbac.PermDeviceRetire, rbac.Org(linked[ep].id)), Removal: removals[id]})
 			}
 		}
 		slices.SortFunc(list, func(a, b UnmatchedEndpoint) int { return strings.Compare(a.Hostname, b.Hostname) })

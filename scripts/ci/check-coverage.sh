@@ -66,6 +66,9 @@ floors=(
   "server/internal/netguard                95"
   # Agent updates: they replace the program every endpoint runs.
   "server/internal/httpapi/agentupdatesapi 90"
+  # Removing devices: it deletes a device and has its agents uninstall
+  # themselves (ADR-0050).
+  "server/internal/httpapi/removalapi      90"
   # Remote access: the MeshCentral client, and the service and gateway that
   # decide who reaches MeshCentral.
   "server/internal/meshcentral             85"
@@ -81,6 +84,7 @@ floors=(
   "agent/cmd/easyrmm-agent                 75"
   "agent/jobs                              80"
   "agent/update                            80"
+  "agent/removal                           85"
   "agent/easypatch                         85"
   "agent/inventory                         90"
   "agent/metrics                           90"

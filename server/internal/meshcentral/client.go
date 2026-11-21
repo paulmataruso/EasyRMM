@@ -318,39 +318,10 @@ func str(raw json.RawMessage) string {
 func (c *Client) call(ctx context.Context, action string, fields map[string]any) (map[string]json.RawMessage, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.callTimeout)
 	defer cancel()
-	c.mu.Lock()
-	ready := c.ready
-	c.mu.Unlock()
-	select {
-	case <-ready:
-	case <-ctx.Done():
-		return nil, ErrUnavailable
-	}
-
-	id := "easyrmm-" + strconv.FormatUint(c.seq.Add(1), 10)
-	cmd := make(map[string]any, len(fields)+3)
-	for k, v := range fields {
-		cmd[k] = v
-	}
-	cmd["action"], cmd["responseid"], cmd["tag"] = action, id, id
-	body, err := json.Marshal(cmd)
+	ch := make(chan reply, 1)
+	id, err := c.write(ctx, action, fields, ch)
 	if err != nil {
 		return nil, err
-	}
-	ch := make(chan reply, 1)
-	c.mu.Lock()
-	conn := c.conn
-	if conn == nil {
-		c.mu.Unlock()
-		return nil, ErrUnavailable
-	}
-	c.pending[id] = ch
-	c.mu.Unlock()
-	if err := conn.Write(ctx, websocket.MessageText, body); err != nil {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	select {
 	case r := <-ch:
@@ -367,6 +338,58 @@ func (c *Client) call(ctx context.Context, action string, fields map[string]any)
 		c.mu.Unlock()
 		return nil, fmt.Errorf("meshcentral: %s: no reply: %w", action, ctx.Err())
 	}
+}
+
+// send sends a command MeshCentral answers nothing to. If the connection
+// is down it waits for it to come back until ctx (or the call timeout) ends.
+func (c *Client) send(ctx context.Context, action string, fields map[string]any) error {
+	ctx, cancel := context.WithTimeout(ctx, c.callTimeout)
+	defer cancel()
+	_, err := c.write(ctx, action, fields, nil)
+	return err
+}
+
+// write sends a command once the connection is ready, with its
+// correlation id. A reply, if any, goes to ch; nil expects none.
+func (c *Client) write(ctx context.Context, action string, fields map[string]any, ch chan reply) (string, error) {
+	c.mu.Lock()
+	ready := c.ready
+	c.mu.Unlock()
+	select {
+	case <-ready:
+	case <-ctx.Done():
+		return "", ErrUnavailable
+	}
+
+	id := "easyrmm-" + strconv.FormatUint(c.seq.Add(1), 10)
+	cmd := make(map[string]any, len(fields)+3)
+	for k, v := range fields {
+		cmd[k] = v
+	}
+	cmd["action"], cmd["responseid"], cmd["tag"] = action, id, id
+	body, err := json.Marshal(cmd)
+	if err != nil {
+		return "", err
+	}
+	c.mu.Lock()
+	conn := c.conn
+	if conn == nil {
+		c.mu.Unlock()
+		return "", ErrUnavailable
+	}
+	if ch != nil {
+		c.pending[id] = ch
+	}
+	c.mu.Unlock()
+	if err := conn.Write(ctx, websocket.MessageText, body); err != nil {
+		if ch != nil {
+			c.mu.Lock()
+			delete(c.pending, id)
+			c.mu.Unlock()
+		}
+		return "", fmt.Errorf("%w: %w", ErrUnavailable, err)
+	}
+	return id, nil
 }
 
 // redactedError hides secrets in a wrapped error's message, keeping the chain
