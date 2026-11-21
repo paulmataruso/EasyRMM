@@ -35,7 +35,6 @@ type Job struct {
 	ScriptName     string     `json:"scriptName"`
 	Shell          string     `json:"shell"`
 	SHA256         string     `json:"sha256"`
-	Args           []string   `json:"args"`
 	TimeoutSeconds int        `json:"timeoutSeconds"`
 	ExpiresAt      time.Time  `json:"expiresAt"`
 	CreatedBy      string     `json:"createdBy"`
@@ -48,8 +47,19 @@ type Job struct {
 	// Body and Runs are filled in by GetJob only.
 	Body string `json:"body,omitempty"`
 	Runs []*Run `json:"runs,omitempty"`
+	// JobDetail is filled in by GetJob only.
+	*JobDetail
 	// CanCancel says whether the caller may cancel a run still open.
 	CanCancel bool `json:"canCancel"`
+}
+
+// JobDetail is what the job's page needs about its arguments. Their values
+// come from ReadArguments only, never with a job (ADR-0063).
+type JobDetail struct {
+	ArgCount int `json:"argCount"`
+	// CanViewArguments says whether the caller holds job.view_sensitive at
+	// the site of one of the runs they can see.
+	CanViewArguments bool `json:"canViewArguments"`
 }
 
 // Run is one device's part of a job.
@@ -72,16 +82,30 @@ type Run struct {
 	FinishedAt       *time.Time `json:"finishedAt"`
 	ExitCode         *int       `json:"exitCode"`
 	Error            string     `json:"error"`
-	StdoutTruncated  bool       `json:"stdoutTruncated"`
-	StderrTruncated  bool       `json:"stderrTruncated"`
 	CancelRequested  bool       `json:"cancelRequested"`
-	// Output is filled in by GetRun only.
-	Stdout *string `json:"stdout,omitempty"`
-	Stderr *string `json:"stderr,omitempty"`
-	// Job is filled in by GetRun only.
+	// Job and RunDetail are filled in by GetRun only.
 	Job *Job `json:"job,omitempty"`
+	*RunDetail
 
 	CanCancel bool `json:"canCancel"`
+}
+
+// RunDetail is what the run's page needs about its output. The output
+// itself comes from ReadOutput only, never with a run (ADR-0063).
+type RunDetail struct {
+	// CanViewOutput says whether the caller holds job.view_sensitive at
+	// the run's site.
+	CanViewOutput bool `json:"canViewOutput"`
+	// OutputState is there only when CanViewOutput is.
+	*OutputState
+}
+
+// OutputState says whether a run has output to read, without reading it.
+type OutputState struct {
+	StdoutBytes int `json:"stdoutBytes"`
+	StderrBytes int `json:"stderrBytes"`
+	// OutputRemovedAt is when retention or a person removed the output.
+	OutputRemovedAt *time.Time `json:"outputRemovedAt"`
 }
 
 func (r *Run) open() bool {
@@ -90,7 +114,7 @@ func (r *Run) open() bool {
 
 const runColumns = `r.id, r.job_id, r.device_id, d.name, r.organization_id, o.name, r.site_id, si.name, j.script_name,
 	r.status, r.created_at, r.expires_at, r.sent_at, r.deliveries, r.started_at, r.finished_at, r.exit_code, r.error,
-	r.stdout_truncated, r.stderr_truncated, r.cancel_requested_at IS NOT NULL`
+	r.cancel_requested_at IS NOT NULL`
 
 const runFrom = ` FROM job_runs r
 	JOIN jobs j ON j.id = r.job_id
@@ -102,7 +126,7 @@ func scanRun(row pgx.Row, extra ...any) (*Run, error) {
 	var r Run
 	dst := append([]any{&r.ID, &r.JobID, &r.DeviceID, &r.DeviceName, &r.OrganizationID, &r.OrganizationName, &r.SiteID, &r.SiteName, &r.ScriptName,
 		&r.Status, &r.CreatedAt, &r.ExpiresAt, &r.SentAt, &r.Deliveries, &r.StartedAt, &r.FinishedAt, &r.ExitCode, &r.Error,
-		&r.StdoutTruncated, &r.StderrTruncated, &r.CancelRequested}, extra...)
+		&r.CancelRequested}, extra...)
 	if err := row.Scan(dst...); err != nil {
 		return nil, err
 	}
@@ -426,12 +450,14 @@ type JobQuery struct {
 	Kind string
 }
 
-const jobColumns = `j.id, j.kind, j.software, j.hardening, j.script_id, j.script_name, j.shell, encode(j.body_sha256, 'hex'), j.args, j.timeout_seconds,
+// jobColumns leaves out the arguments: the server's database role cannot
+// read them (ADR-0063).
+const jobColumns = `j.id, j.kind, j.software, j.hardening, j.script_id, j.script_name, j.shell, encode(j.body_sha256, 'hex'), j.timeout_seconds,
 	j.expires_at, j.created_by_label, j.created_at`
 
 // jobDest is where jobColumns are scanned into.
 func jobDest(j *Job) []any {
-	return []any{&j.ID, &j.Kind, &j.Software, &j.Hardening, &j.ScriptID, &j.ScriptName, &j.Shell, &j.SHA256, &j.Args, &j.TimeoutSeconds,
+	return []any{&j.ID, &j.Kind, &j.Software, &j.Hardening, &j.ScriptID, &j.ScriptName, &j.Shell, &j.SHA256, &j.TimeoutSeconds,
 		&j.ExpiresAt, &j.CreatedBy, &j.CreatedAt}
 }
 
@@ -440,9 +466,6 @@ func scanJob(row pgx.Row, extra ...any) (*Job, error) {
 	dst := append(jobDest(&j), extra...)
 	if err := row.Scan(dst...); err != nil {
 		return nil, err
-	}
-	if j.Args == nil {
-		j.Args = []string{}
 	}
 	return &j, nil
 }
@@ -540,14 +563,15 @@ func (s *Service) GetJob(ctx context.Context, c access.Caller, id uuid.UUID) (*J
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		var body string
 		var err error
-		j, err = scanJob(tx.QueryRow(ctx, `SELECT `+jobColumns+`, j.body FROM jobs j WHERE j.id = $1`, id), &body)
+		detail := &JobDetail{}
+		j, err = scanJob(tx.QueryRow(ctx, `SELECT `+jobColumns+`, j.body, j.arg_count FROM jobs j WHERE j.id = $1`, id), &body, &detail.ArgCount)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.NotFound()
 		}
 		if err != nil {
 			return err
 		}
-		j.Body = body
+		j.Body, j.JobDetail = body, detail
 		rows, err := tx.Query(ctx, `SELECT `+runColumns+runFrom+` WHERE r.job_id = $1 ORDER BY lower(d.name), r.id`, id)
 		if err != nil {
 			return err
@@ -564,6 +588,7 @@ func (s *Service) GetJob(ctx context.Context, c access.Caller, id uuid.UUID) (*J
 			}
 			s.decorateRun(c, r)
 			j.CanCancel = j.CanCancel || r.CanCancel
+			detail.CanViewArguments = detail.CanViewArguments || c.Can(rbac.PermJobViewSensitive, rbac.Site(r.OrganizationID, r.SiteID))
 			j.Runs = append(j.Runs, r)
 		}
 		return rows.Err()
@@ -632,35 +657,39 @@ func (s *Service) ListRuns(ctx context.Context, c access.Caller, q RunQuery) ([]
 	return out, err
 }
 
-// GetRun returns a run with its output and its job.
+// GetRun returns a run with its job, and whether its output can be read.
 func (s *Service) GetRun(ctx context.Context, c access.Caller, id uuid.UUID) (*Run, error) {
 	var r *Run
+	state := &OutputState{}
 	err := s.db.ReadTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		var stdout, stderr, body string
+		var body string
 		var err error
 		job := &Job{}
-		dst := append(append([]any{&stdout, &stderr}, jobDest(job)...), &body)
-		r, err = scanRun(tx.QueryRow(ctx, `SELECT `+runColumns+`, r.stdout, r.stderr, `+jobColumns+`, j.body`+runFrom+` WHERE r.id = $1`, id), dst...)
+		dst := append(append([]any{&state.StdoutBytes, &state.StderrBytes, &state.OutputRemovedAt}, jobDest(job)...), &body)
+		r, err = scanRun(tx.QueryRow(ctx, `SELECT `+runColumns+`, r.stdout_bytes, r.stderr_bytes, r.output_removed_at, `+jobColumns+`, j.body`+
+			runFrom+` WHERE r.id = $1`, id), dst...)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return apperr.NotFound()
 		}
 		if err != nil {
 			return err
 		}
-		if job.Args == nil {
-			job.Args = []string{}
-		}
 		job.Body = body
-		r.Stdout, r.Stderr, r.Job = &stdout, &stderr, job
+		r.Job = job
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	if !c.Can(rbac.PermJobView, rbac.Site(r.OrganizationID, r.SiteID)) {
+	at := rbac.Site(r.OrganizationID, r.SiteID)
+	if !c.Can(rbac.PermJobView, at) {
 		return nil, apperr.NotFound()
 	}
 	s.decorateRun(c, r)
+	r.RunDetail = &RunDetail{CanViewOutput: c.Can(rbac.PermJobViewSensitive, at)}
+	if r.CanViewOutput {
+		r.OutputState = state
+	}
 	return r, nil
 }
 

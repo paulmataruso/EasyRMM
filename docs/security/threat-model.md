@@ -206,4 +206,12 @@ their own rights, and EasyRMM narrows what reaches them.
   API instance.
 * The engine's encryption keys, like the database, are unencrypted on the
   host; root there can read the webhook secrets.
+* A script's output and a job's arguments are plain text in the database
+  and its backups, for `EASYRMM_JOB_OUTPUT_RETENTION` and
+  `EASYRMM_JOB_RETENTION`. Holders of `job.view_sensitive` (Technicians
+  and above) read them through the console, each read recorded; the
+  server's database role cannot select them directly
+  ([ADR-0063](../architecture/adr/0063-who-sees-job-output-and-arguments.md)).
+  Whoever can run scripts at a site can print a secret again, and the
+  agent's journal holds a run's output on the device until it is reported.
 * What the [security review](security-review.md) did not cover.

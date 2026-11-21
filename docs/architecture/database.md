@@ -8,7 +8,7 @@ automatically at server start-up (goose, advisory-locked).
 | Role | Login | Purpose |
 |---|---|---|
 | `easyrmm_owner` | yes | Owns all objects; used only to run migrations |
-| `easyrmm_app` | yes | Runtime role: `SELECT/INSERT/UPDATE/DELETE` on application tables, `SELECT` on `audit_log`, `EXECUTE` on audit functions. Cannot alter tables or disable row-level security |
+| `easyrmm_app` | yes | Runtime role: `SELECT/INSERT/UPDATE/DELETE` on application tables, `SELECT` on `audit_log`, `EXECUTE` on audit functions. Cannot alter tables or disable row-level security. Since migration 00028 it cannot select `job_runs.stdout`, `job_runs.stderr` or `jobs.args`: their other columns are granted one by one, so **a column added to `job_runs` or `jobs` later needs its own `GRANT SELECT (column)`** |
 
 The Docker deployment creates both roles and the database on first start
 (`docker/postgres/init/`). For an external PostgreSQL, run the same script as
@@ -306,6 +306,25 @@ on each device (ADR-0051).
 | `jobs.body` | Up to 512 KiB, for EasyRMM's own scripts; a library script stays at most 64 KiB |
 | `device_hardening_checks` | One row per device a hardening job reported on: the platform as the script read it (distribution, version, family, container, and whether apply is supported there), the job and when it ran. Kept from the run that started last. Goes with its device |
 | `device_hardening` | One row per device and module: its state (`in_place`, `partly`, `not_in_place`, `not_applicable`, `managed_elsewhere`, `not_supported`, `half_applied`, `failed`), the finding (a reason, what is missing, what apply would change, and the firewall's ports), the job and when it ran. A later job that covers the module replaces it. Read through the device's row-level security; written from job results at platform scope |
+
+## Who sees job output and arguments (migration 00028)
+
+A run's output and a job's arguments can hold secrets; they are read only
+with `job.view_sensitive`, each read audited, and output is kept for less
+time than the job (ADR-0063).
+
+| Table, column or function | Notes |
+|---|---|
+| Column privileges | `easyrmm_app` holds `SELECT` on every column of `job_runs` but `stdout` and `stderr`, and on every column of `jobs` but `args`. A query that names them, selects `*`, refers to the whole row or returns them is refused (`42501`). `INSERT` and `UPDATE` are unchanged, so starting a job, a result and the purge still write them |
+| `job_runs.stdout_bytes`, `stderr_bytes` | Generated (stored): the size of each stream in bytes, so a run says whether it printed anything without reading what |
+| `job_runs.output_stored_at` | When the output arrived; NULL while there is none. Retention counts from it. Backfilled from `finished_at` for output kept before |
+| `job_runs.output_removed_at` | When the output was removed, by retention or by a person; set only on runs that had output (`job_runs_output_removed`: never both set). A result that arrives later for such a run (a *No result* run reporting late) records its status but stores no output |
+| `jobs.arg_count` | Generated (stored): how many arguments the job has |
+| `job_runs_output_stored_idx` | Partial index on `output_stored_at` for the hourly purge, which empties output older than `EASYRMM_JOB_OUTPUT_RETENTION` |
+| `easyrmm_job_run_output(…)` | `SECURITY DEFINER`. Given a run, the caller's `job.view` and `job.view_sensitive` scopes and who asks, it checks access, appends the audit record (`job_run.output_view`, or `denied`) in the caller's transaction, and returns the output. Answers `not_found`, `forbidden`, `run_open`, `output_removed`, `empty` or `ok` |
+| `easyrmm_job_arguments(…)` | The same for a job's arguments: one `job.arguments_view` record per organization of the runs the caller may read (under the site when they share one) |
+| `easyrmm_job_delivery_args(device, runs)` | `SECURITY DEFINER`, platform scope only: the arguments of a device's runs being delivered, for the agent's poll. Not audited: the device is the one that runs them |
+| `easyrmm_job_refusal(…)` | Appends a refused read as `denied`, at most once per caller, action, target and organization in 10 minutes and 20 per caller in 10 minutes, so a refused caller cannot flood the log. Serialized per caller with a transaction advisory lock, so the bound holds across server processes. Called only by the two read functions |
 
 ## Backups
 

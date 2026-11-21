@@ -73,10 +73,10 @@ func TestSoftwareAPI(t *testing.T) {
 	}
 
 	var job struct {
-		ID         string   `json:"id"`
-		Kind       string   `json:"kind"`
-		ScriptName string   `json:"scriptName"`
-		Args       []string `json:"args"`
+		ID         string `json:"id"`
+		Kind       string `json:"kind"`
+		ScriptName string `json:"scriptName"`
+		ArgCount   int    `json:"argCount"`
 		Software   *struct {
 			Action, Manager, Package, Version string
 		} `json:"software"`
@@ -84,7 +84,7 @@ func TestSoftwareAPI(t *testing.T) {
 	}
 	tech.expect(http.StatusCreated, "POST", path, map[string]any{"deviceIds": []string{device}, "action": "install", "manager": "system", "package": "jq"}, &job)
 	if job.Kind != "software" || job.ScriptName != "Install jq" || job.Total != 1 || job.Software == nil ||
-		job.Software.Package != "jq" || job.Software.Manager != "system" || !slices.Equal(job.Args, []string{"install", "jq"}) {
+		job.Software.Package != "jq" || job.Software.Manager != "system" || job.ArgCount != 2 {
 		t.Errorf("job %+v", job)
 	}
 

@@ -8,6 +8,47 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **Read-Only users no longer see what scripts printed or the arguments
+  they were given, and every read is recorded.** A run's output and a
+  job's argument values can hold a recovery password, a token or a key.
+  Until now everyone with `job.view`, Read-Only included, could read them
+  on the run's and the job's pages, and nothing recorded who did
+  ([ADR-0063](docs/architecture/adr/0063-who-sees-job-output-and-arguments.md)).
+  Now:
+  - a new permission, `job.view_sensitive`, held by Technicians and above
+    where their role is, opens them. Read-Only still sees every job and
+    run, its status, exit code, error and timings, the script as run and
+    how many arguments it had; the console says *Hidden: needs permission
+    to see job output* where the output would be;
+  - output and argument values leave every job and run answer of the API,
+    for everyone, and come only from `GET /api/v1/job-runs/{id}/output`
+    and `GET /api/v1/jobs/{id}/arguments`. Each read is recorded in the
+    audit log (*Viewed job output*, *Viewed job arguments*) in the same
+    transaction, super administrators' included; a refused read is
+    recorded as denied, at most once per user and run in 10 minutes. The
+    server's database role can no longer select them directly. Scripts
+    that read `stdout`, `stderr` or `args` from the run and job answers
+    move to the new endpoints; `/api/v1` has no written compatibility
+    policy, and the console is its only client in this repository;
+  - output is kept for `EASYRMM_JOB_OUTPUT_RETENTION`, 30 days by default
+    (or `EASYRMM_JOB_RETENTION` when that is shorter), counted from when it
+    arrived; the job and its runs stay for `EASYRMM_JOB_RETENTION`. **The
+    first purge after the upgrade empties output that arrived more than 30
+    days before.** Set `EASYRMM_JOB_OUTPUT_RETENTION=2160h` to keep 90 days
+    as before;
+  - **Remove output** on a run's page empties its output at once, for
+    Technicians and above, recorded as *Removed job output*;
+  - a refused hardening result no longer quotes a module name from the
+    script's output in the run's error or the server's log.
+
+  Reads before the upgrade left no record. Treat a secret that a job
+  printed, or that was passed as an argument, within the job retention
+  before the upgrade as seen by every Read-Only user of its site, and
+  change it. For BitLocker, add a new recovery password, then remove the
+  old one. A console tab left open across the upgrade can go blank on a
+  job's page, and says "Nothing was written" on a run's page, until it is
+  reloaded. From this release on, a console page that fails to render
+  offers **Reload** instead of going blank.
 - **The Windows agent checks its state folder before reading it.** Any
   user may create folders under ProgramData, and the agent protected
   `%ProgramData%\EasyRMM\Agent` only when it saved an enrollment. A

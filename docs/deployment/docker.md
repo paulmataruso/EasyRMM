@@ -252,7 +252,8 @@ Authentik holds, `authentik-setup` applies nothing.
 | Variable | Default | Meaning |
 |---|---|---|
 | `EASYRMM_AUDIT_RETENTION` | `8760h` (365 days) | How long audit records are kept; at least `720h` (30 days). While [audit forwarding](../operations/audit-forwarding.md) is on, records the collector has not received are kept longer |
-| `EASYRMM_JOB_RETENTION` | `2160h` (90 days) | How long finished jobs and their script output are kept; at least `24h`. See [Scripts and jobs](../operations/scripts-and-jobs.md) |
+| `EASYRMM_JOB_RETENTION` | `2160h` (90 days) | How long finished jobs, their runs and their arguments are kept; at least `24h`. See [Scripts and jobs](../operations/scripts-and-jobs.md#retention) |
+| `EASYRMM_JOB_OUTPUT_RETENTION` | `720h` (30 days), or `EASYRMM_JOB_RETENTION` when that is shorter | How long a run's output is kept after it arrived; then it is emptied and the run kept. At least `24h` and at most `EASYRMM_JOB_RETENTION`. See [Who sees output and arguments](../operations/scripts-and-jobs.md#who-sees-output-and-arguments) |
 | `EASYRMM_METRICS_RETENTION` | `168h` (7 days) | How long per-minute device measurements are kept for charts; at least `24h`. See [Inventory and health](../operations/inventory.md) |
 | `EASYRMM_ALERT_RETENTION` | `2160h` (90 days) | How long resolved alerts are kept; at least `24h`. See [Alerts](../operations/alerts.md) |
 

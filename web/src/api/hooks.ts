@@ -18,18 +18,36 @@ export interface ApiQueryOptions<T = unknown> {
   refetchInterval?: number | false | ((data: T | undefined) => number | false);
   keepPrevious?: boolean;
   staleTime?: number;
+  /** A key of its own instead of the path's, so that invalidating the path's prefix leaves the query alone. */
+  key?: QueryKey;
+  /** False: not asked again when the window regains focus. */
+  refetchOnWindowFocus?: boolean;
+  /** How long the result is kept once no page uses it; 0 drops it when the page closes. */
+  gcTime?: number;
 }
 
 export function useApi<T>(path: string | null, params?: QueryParams, options: ApiQueryOptions<T> = {}): UseQueryResult<T> {
   const interval = options.refetchInterval;
   return useQuery<T>({
-    queryKey: path ? keyFor(path, params) : ["__disabled__"],
+    queryKey: path ? (options.key ?? keyFor(path, params)) : ["__disabled__"],
     queryFn: ({ signal }) => api.get<T>(path as string, params, signal),
     enabled: path !== null && (options.enabled ?? true),
     refetchInterval: typeof interval === "function" ? (query) => interval(query.state.data) : interval,
     placeholderData: options.keepPrevious ? keepPreviousData : undefined,
     staleTime: options.staleTime,
+    // Left out unless given, so the client's defaults hold.
+    ...(options.refetchOnWindowFocus !== undefined && { refetchOnWindowFocus: options.refetchOnWindowFocus }),
+    ...(options.gcTime !== undefined && { gcTime: options.gcTime }),
   });
+}
+
+/**
+ * Options for a read that is audited on the server (ADR-0063): asked once while the page is open, never again on
+ * focus, and not kept once the page closes. The key is outside the path's prefix, so refreshing the run or the job
+ * does not ask again.
+ */
+export function auditedRead(key: QueryKey): ApiQueryOptions {
+  return { key, refetchOnWindowFocus: false, gcTime: 0, staleTime: Infinity };
 }
 
 /** Shared by every list without data yet, so `items` keeps one identity across renders (safe as a memo dependency). */

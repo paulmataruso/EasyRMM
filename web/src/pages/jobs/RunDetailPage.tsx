@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router";
-import { CircleStop } from "lucide-react";
+import type { UseQueryResult } from "@tanstack/react-query";
+import { CircleStop, Trash2 } from "lucide-react";
 import { api } from "../../api/client";
-import { useApi, useApiMutation } from "../../api/hooks";
-import type { JobRun, RunStatus } from "../../api/types";
+import { auditedRead, useApi, useApiMutation } from "../../api/hooks";
+import type { JobRun, JobRunOutput, RunStatus } from "../../api/types";
+import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Alert, Button, Card, ErrorState, KeyValueList, PageHeader, Spinner } from "../../components/ui";
@@ -31,16 +33,33 @@ function waitingFor(r: JobRun): string | null {
   return null;
 }
 
+/** Whether a finished run has output the caller may read: then the page asks for it, once. */
+function hasOutput(r: JobRun | undefined): boolean {
+  return Boolean(r?.canViewOutput && !isOpen(r.status) && !r.outputRemovedAt && (r.stdoutBytes ?? 0) + (r.stderrBytes ?? 0) > 0);
+}
+
 export function RunDetailPage() {
   const { runId = "" } = useParams();
   const toast = useToast();
+  const { can } = useAuth();
   const run = useApi<JobRun>(`/job-runs/${runId}`, undefined, { refetchInterval: (d) => (d && isOpen(d.status) ? 2_000 : false) });
+  // Each read of the output is audited, so it is asked for once, apart from the run (ADR-0063). Once the run says
+  // the output was removed, the query is left and dropped.
+  const output = useApi<JobRunOutput>(hasOutput(run.data) ? `/job-runs/${runId}/output` : null, undefined, auditedRead(["job-output", runId]));
   const [stopping, setStopping] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const stop = useApiMutation(() => api.post<JobRun>(`/job-runs/${runId}/cancel`), {
     invalidate: ["/jobs", "/job-runs"],
     onSuccess: (r) => {
       setStopping(false);
       toast.success(r.status === "canceled" ? "Canceled before it started." : "Stopping the script on the device.");
+    },
+  });
+  const remove = useApiMutation(() => api.del<JobRun>(`/job-runs/${runId}/output`), {
+    invalidate: ["/job-runs"],
+    onSuccess: () => {
+      setRemoving(false);
+      toast.success("The run's output was removed.");
     },
   });
 
@@ -50,6 +69,7 @@ export function RunDetailPage() {
   const took = runElapsed(r);
   const open = isOpen(r.status);
   const waiting = waitingFor(r);
+  const removable = hasOutput(r) && can("job.manage");
 
   return (
     <>
@@ -94,15 +114,18 @@ export function RunDetailPage() {
       )}
 
       <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
-        <Card title="Output" className="min-w-0 xl:col-span-2">
-          {open ? (
-            <p className="text-sm text-muted">The device sends the script&rsquo;s output when it ends.</p>
-          ) : (
-            <div className="flex flex-col gap-4">
-              <OutputView title="Standard output" text={r.stdout} truncated={r.stdoutTruncated} emptyLabel="Nothing was written to standard output." />
-              <OutputView title="Standard error" text={r.stderr} truncated={r.stderrTruncated} emptyLabel="Nothing was written to standard error." />
-            </div>
-          )}
+        <Card
+          title="Output"
+          className="min-w-0 xl:col-span-2"
+          actions={
+            removable && (
+              <Button size="sm" variant="danger-ghost" icon={<Trash2 className="size-3.5" aria-hidden />} onClick={() => setRemoving(true)}>
+                Remove output
+              </Button>
+            )
+          }
+        >
+          <RunOutput run={r} open={open} output={output} />
         </Card>
         <Card title="Details">
           <KeyValueList
@@ -146,6 +169,56 @@ export function RunDetailPage() {
           ? "The script is stopped on the device, within seconds when it is online. Whatever it already changed stays changed."
           : "It has not started, so it is canceled at once and never runs."}
       </ConfirmDialog>
+      <ConfirmDialog
+        open={removing}
+        onClose={() => setRemoving(false)}
+        onConfirm={() => remove.mutate()}
+        title="Remove this run's output?"
+        confirmLabel="Remove output"
+        tone="danger"
+        loading={remove.isPending}
+        error={remove.error}
+      >
+        The output is emptied for everyone, and the audit log records that you removed it. Backups made before keep it.
+      </ConfirmDialog>
     </>
+  );
+}
+
+/** The Output card's content: hidden, removed, empty, or what the run printed. */
+function RunOutput({ run: r, open, output }: { run: JobRun; open: boolean; output: UseQueryResult<JobRunOutput> }) {
+  if (open) return <p className="text-sm text-muted">The device sends the script&rsquo;s output when it ends.</p>;
+  if (!r.canViewOutput) {
+    return (
+      <p className="text-sm text-muted">
+        Hidden: needs permission to see job output (<code className="font-mono text-xs">job.view_sensitive</code>).
+      </p>
+    );
+  }
+  if (r.outputRemovedAt) {
+    return (
+      <p className="text-sm text-muted">
+        The output was removed <span title={formatDateTime(r.outputRemovedAt)}>{formatRelative(r.outputRemovedAt)}</span>, by retention or by someone who
+        could read it.
+      </p>
+    );
+  }
+  if (!hasOutput(r)) {
+    return (
+      <div className="flex flex-col gap-4">
+        <OutputView title="Standard output" text="" truncated={false} emptyLabel="Nothing was written to standard output." />
+        <OutputView title="Standard error" text="" truncated={false} emptyLabel="Nothing was written to standard error." />
+      </div>
+    );
+  }
+  if (output.isPending) return <Spinner label="Loading output…" />;
+  if (output.isError) return <ErrorState error={output.error} onRetry={() => void output.refetch()} />;
+  const o = output.data;
+  return (
+    <div className="flex flex-col gap-4">
+      <OutputView title="Standard output" text={o.stdout} truncated={o.stdoutTruncated} emptyLabel="Nothing was written to standard output." />
+      <OutputView title="Standard error" text={o.stderr} truncated={o.stderrTruncated} emptyLabel="Nothing was written to standard error." />
+      <p className="text-xs text-muted">Opening a run&rsquo;s output is recorded in the audit log.</p>
+    </div>
   );
 }
