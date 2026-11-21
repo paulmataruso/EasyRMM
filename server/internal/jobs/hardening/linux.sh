@@ -93,6 +93,8 @@ FW_UNIT_FILE=/etc/systemd/system/$FW_UNIT
 F2B_FILE=/etc/fail2ban/jail.d/easyrmm-hardening.local
 SYSCTL_FILE=/etc/sysctl.d/60-easyrmm-hardening.conf
 AUDIT_FILE=/etc/audit/rules.d/60-easyrmm-hardening.rules
+# Where augenrules keeps the rules it replaces.
+AUDIT_PREV=/etc/audit/audit.rules.prev
 # Written when the audit module installs auditd, and only then: the packages
 # that installation added. Shared with log collection (ADR-0060), so outside
 # hardening's own state: whoever removes auditd last removes them and it.
@@ -3414,15 +3416,25 @@ apply_audit() {
 		did 'auditd runs and starts at boot'
 	fi
 	text_has "$M_TODO" -x rules || return 0
+	# Put back on a failure: the rules file first, then the rules loaded
+	# again, then $AUDIT_PREV, where augenrules keeps the rules it
+	# replaces, gone if this apply made it.
+	aa_prev=no
+	if [ ! -e "$AUDIT_PREV" ]; then
+		aa_prev=yes
+		tx_push "rm -f $AUDIT_PREV"
+	fi
+	tx_push audit_load
 	if ! write_own "$AUDIT_FILE" 0640 "$(audit_rules)$nl"; then
 		abort "$AUDIT_FILE could not be written"
 		return
 	fi
+	# Undo removes $AUDIT_PREV where this apply made it.
+	[ "$aa_prev" = no ] || rec_has gen "$AUDIT_PREV" || rec_add "gen$tab$AUDIT_PREV"
 	if audit_immutable; then
 		did "Wrote $AUDIT_FILE; the loaded rules are immutable, so these load at the next restart (and undo cannot unload them before one)"
 		return
 	fi
-	tx_push audit_load
 	if ! audit_load || ! t 20 auditctl -l 2>/dev/null | grep -q 'key=easyrmm-hardening-'; then
 		abort 'augenrules --load did not load the rules'
 		return
@@ -3436,6 +3448,8 @@ undo_audit_after() {
 		elif ! audit_load; then
 			left 'the audit rules loaded now: augenrules --load failed'
 		fi
+		# Loading them made $AUDIT_PREV again, after the record removed it.
+		! rec_has gen "$AUDIT_PREV" || rm -f "$AUDIT_PREV"
 	fi
 	# auditd, if EasyRMM installed it and no other rules file needs it. An
 	# auditd that was there before is never removed.
@@ -3621,6 +3635,10 @@ initramfs_update() {
 	esac
 	[ "$iu_rc" -eq 0 ]
 }
+# initramfs_put_back: a rollback's rebuild, after the file is back, where
+# the run began one (IU_TRIED).
+# shellcheck disable=SC2329 # tx_rollback runs it, from the stack
+initramfs_put_back() { [ "$IU_TRIED" = no ] || initramfs_update; }
 # initramfs_holds FILE: whether the initramfs of a kernel, one
 # initramfs_update rebuilds, holds FILE.
 initramfs_holds() {
@@ -3637,6 +3655,11 @@ initramfs_holds() {
 
 apply_usb_storage() {
 	text_has "$M_TODO" -x usb-storage || return 0
+	# Put back on a failure: the file first, then the initramfs rebuilt
+	# again if this run began rebuilding it (a failure part way can leave
+	# some kernels' rebuilt).
+	IU_TRIED=no
+	tx_push initramfs_put_back
 	if ! write_own "$USB_FILE" 0644 "$(modprobe_file usb-storage)$nl"; then
 		abort "$USB_FILE could not be written"
 		return
@@ -3647,7 +3670,7 @@ apply_usb_storage() {
 		abort "modprobe does not read $USB_FILE as expected"
 		return
 	fi
-	tx_push initramfs_update
+	IU_TRIED=yes
 	if ! initramfs_update; then
 		abort "the initramfs could not be rebuilt: $IU_ERR"
 		return
@@ -3766,11 +3789,12 @@ apply_shared_memory() {
 		refuse "findmnt --verify found errors in the new /etc/fstab: $(printf '%s\n' "$as_new" | grep -i error | head -n 1)"
 		return
 	fi
+	# Put back on a failure: /etc/fstab first, then systemd reloads it.
+	tx_push daemon_reload
 	if ! write_edit /etc/fstab; then
 		abort '/etc/fstab could not be changed'
 		return
 	fi
-	tx_push daemon_reload
 	daemon_reload
 	did 'Mounted /dev/shm nodev,nosuid,noexec in /etc/fstab'
 	am_before=$(mount_options /dev/shm)
