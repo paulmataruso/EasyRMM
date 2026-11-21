@@ -240,7 +240,7 @@ and the attempt ends with the reason.
 *Amended 2026-11-21, with the implementation:*
 * **Set up** carries `.env` across with `EASYRMM_IMAGE` set as well as
   `EASYRMM_VERSION`: the manifest names the server by repository, tag and
-  digest (`docs/architecture/edge-manifest.md`), and the two make that
+  digest ([the manifest](../edge-manifest.md)), and the two make that
   reference. After `setup.sh --upgrade` the updater sets both again and
   checks `docker compose config --images` against the manifest.
 * **Start held** starts the services Compose restarts with

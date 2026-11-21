@@ -256,8 +256,8 @@ with a certificate that:
 
 Then the bundle must match the manifest's SHA-256, and the images the
 deployment runs must be exactly the manifest's, by digest.
-`docs/architecture/edge-manifest.md`, with edge publishing, has the
-details. Releases come from their GitHub release, edge builds from
+[Edge builds and the release manifest](../architecture/edge-manifest.md)
+has the details. Releases come from their GitHub release, edge builds from
 `ghcr.io/paulmataruso/easyrmm-deploy`.
 
 ## Removing it
