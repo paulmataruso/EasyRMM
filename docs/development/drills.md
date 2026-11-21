@@ -21,6 +21,8 @@ have.
 ```bash
 sudo scripts/drill/backup-restore.sh /tmp/easyrmm-drill
 sudo scripts/drill/backup-restore.sh --authentik /tmp/easyrmm-drill-authentik
+sudo scripts/drill/backup-restore.sh --in-place /tmp/easyrmm-drill-in-place
+sudo scripts/drill/backup-restore.sh --authentik --in-place /tmp/easyrmm-drill-both
 ```
 
 1. It deploys a source host and gives it real state: first-run setup, an
@@ -58,6 +60,20 @@ Authentik's flow API. After the restore it also checks that:
   publishes to EasyRMM;
 * `akadmin`'s password file is the backup's, owned by Authentik's user, and
   still opens `akadmin`.
+
+With `--in-place`, with or without `--authentik`, the drill restores over
+the running deployment instead, in its own checkout, with the steps in
+[Restore in place](../operations/backup-restore.md#restore-in-place). It
+stops the deployment, sets the data root and `.env` aside, restores, and
+makes the same checks. It then checks that:
+* the set-aside data root, PostgreSQL's data with it, is as it was when the
+  deployment stopped: every entry's owner, mode, size and time, and every
+  file's contents; the set-aside `.env` too;
+* the guide's way back works: the restored deployment set aside, the
+  set-aside one put back and started, the same checks pass again, and
+  what changed after the backup is back: the site and, with
+  `--authentik`, the Authentik user. The agent, which ran a job on the
+  restored deployment, runs another on the one put back.
 
 It prints each step to `report.txt` in the working directory, with the
 stack's output in `compose.log`.

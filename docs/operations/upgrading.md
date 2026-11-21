@@ -98,12 +98,14 @@ pages, watch them on **Settings → Agent updates**, then switch back to
 ## Going back
 
 Migrations do not run backwards, so the previous release cannot run on the
-upgraded database:
-1. Stop the stack: `sudo docker compose down`.
-2. Restore the backup from before the upgrade with the previous release's
-   files, as in [Backup and restore](backup-restore.md#restore-onto-a-new-host),
-   with Authentik's database and directory when you have Authentik.
-   Everything done after the backup is lost.
+upgraded database. Restore the backup from before the upgrade over the
+upgraded deployment, as in
+[Restore in place](backup-restore.md#restore-in-place), with the previous
+release's files: from a clone, `git checkout` the previous tag once the
+deployment is stopped; from a bundle, restore in the previous release's
+`deploy/` directory. With Authentik, its database and directory come back
+too. Everything done after the backup is lost. The upgraded deployment is
+set aside, not deleted, and is the way back if the restore fails.
 
 Agents that already updated keep the new build until the server tells them
 otherwise. With **Automatically**, the restored server puts its own build

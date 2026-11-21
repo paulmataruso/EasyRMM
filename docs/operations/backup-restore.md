@@ -90,7 +90,11 @@ checkout with the steps below, and checks:
 With `--authentik` it installs with Authentik, makes the administrator in
 Authentik from `setup.sh`'s invitation, and also checks that they sign in
 through Authentik again as the same user, to the same account, and that the
-key signing EasyRMM's ID tokens is unchanged.
+key signing EasyRMM's ID tokens is unchanged. With `--in-place` it restores
+over the running deployment instead, as in
+[Restore in place](#restore-in-place), checks that the set-aside data root
+is unchanged, then puts it back and checks that what changed after the
+backup returns.
 
 Its first run, on 16 November 2026, found that the guide's database
 commands failed and that a fresh deployment did not start; both are fixed. A run on 19 November 2026, after the patching engine joined every
@@ -100,6 +104,10 @@ and restored Authentik's database and directory with the steps above and
 passed ([Drills](../development/drills.md#runs)).
 
 ## Restore onto a new host
+
+These steps expect an empty data root and an empty PostgreSQL. On a host
+that still has the deployment, set it aside first, as in
+[Restore in place](#restore-in-place).
 
 1. Install Docker, then clone the repository at the same release or unpack
    that release's deployment bundle ([Upgrading](upgrading.md) describes
@@ -183,3 +191,105 @@ passed ([Drills](../development/drills.md#runs)).
    `GET /api/v1/audit/verify` returns `checked` and, if the chain is broken,
    `firstBadId`. With Authentik, sign in through it: the same people sign
    in with the same passwords and second factors.
+
+## Restore in place
+
+To restore over a deployment still on the host, to go back after an
+upgrade ([Upgrading](upgrading.md#going-back)) or to undo a mistake, set
+the deployment aside first, then restore as onto a new host. The restore
+steps expect an empty data root and an empty PostgreSQL. PostgreSQL keeps
+its data in the data root, in `/srv/easyrmm/postgres`, so setting the data
+root aside empties both. Nothing is deleted: the set-aside deployment is
+the way back if the restore fails.
+
+The steps run in the `deploy/` directory you restore in: the deployment's
+own or, to go back from a bundle, the previous release's beside it.
+Setting aside is a rename and takes no space, but the restore needs room
+for the restored data next to the set-aside data (`sudo du -sh
+/srv/easyrmm` shows how much).
+
+1. Stop the deployment, in the `deploy/` directory it runs from:
+
+   ```bash
+   sudo docker compose down
+   sudo docker compose ps -a    # lists nothing
+   ```
+
+   Never `down -v`, which removes volumes too: the restore needs only the
+   containers gone. `down` lets PostgreSQL shut down cleanly, so the
+   set-aside database starts again as it stopped.
+
+2. Set aside the data root, and `.env` in the directory you restore in,
+   under one timestamp:
+
+   ```bash
+   cd /path/to/easyrmm/deploy    # the directory you restore in
+   aside=$(date -u +%Y%m%dT%H%M%SZ)
+   sudo mv /srv/easyrmm /srv/easyrmm.before-restore-$aside
+   sudo mv .env .env.before-restore-$aside
+   echo $aside                   # the way back needs it
+   ```
+
+   A rename keeps every file with its owner and mode. Never delete the
+   set-aside data root or `.env` during the restore. Together they are the
+   whole deployment, encryption key included: protect them as you protect
+   backups.
+
+   If `/srv/easyrmm` is a mount point of its own (`mountpoint
+   /srv/easyrmm` says so), it cannot be renamed. Set aside what it holds
+   instead, into a directory on the same file system:
+
+   ```bash
+   sudo mkdir /srv/easyrmm/before-restore-$aside
+   sudo find /srv/easyrmm -mindepth 1 -maxdepth 1 ! -name '*-restore-*' \
+       -exec mv -t /srv/easyrmm/before-restore-$aside {} +
+   ```
+
+3. Restore as in [Restore onto a new host](#restore-onto-a-new-host),
+   from restoring the files in step 1, in the same directory, with the
+   release files the backup was made with. With `manual` TLS and the
+   certificate files in the data root (`/srv/easyrmm/tls`), they went
+   aside with it; copy them back if they are still current. Everything
+   done after the backup is lost.
+
+4. If the restore fails, put the set-aside deployment back, in the
+   directory you restored in:
+
+   ```bash
+   sudo docker compose down
+   sudo mv /srv/easyrmm /srv/easyrmm.failed-restore-$aside
+   sudo mv .env .env.failed-restore-$aside
+   sudo mv /srv/easyrmm.before-restore-$aside /srv/easyrmm
+   sudo mv .env.before-restore-$aside .env
+   ```
+
+   With a mount point, in place of the two `mv` of `/srv/easyrmm`:
+
+   ```bash
+   sudo mkdir /srv/easyrmm/failed-restore-$aside
+   sudo find /srv/easyrmm -mindepth 1 -maxdepth 1 ! -name '*-restore-*' \
+       -exec mv -t /srv/easyrmm/failed-restore-$aside {} +
+   sudo find /srv/easyrmm/before-restore-$aside -mindepth 1 -maxdepth 1 \
+       -exec mv -t /srv/easyrmm {} +
+   sudo rmdir /srv/easyrmm/before-restore-$aside
+   ```
+
+   Then start it with the release files it ran with. If you restored with
+   an earlier release's, first `git checkout` the tag it ran (from a
+   clone), or change to its own `deploy/` directory (from a bundle):
+
+   ```bash
+   sudo docker compose up -d
+   ```
+
+   It starts as it stopped in step 1, with the same database and `.env`.
+   Keep the failed restore to find out what went wrong.
+
+5. Once the restored deployment works and you will not go back, delete
+   the set-aside data root and `.env`:
+
+   ```bash
+   sudo rm -rf /srv/easyrmm.before-restore-<timestamp>
+   # With a mount point: sudo rm -rf /srv/easyrmm/before-restore-<timestamp>
+   sudo rm .env.before-restore-<timestamp>
+   ```
