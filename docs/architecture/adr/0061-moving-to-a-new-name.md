@@ -208,9 +208,13 @@ The fix this ADR needs first writes that list.
   same way, for a move. For an IP address, which no public authority
   certifies, trusted means served with a certificate from EasyRMM's
   internal authority, the trust agents on an IP install already use
-  (ADR-0016; 5b1 keeps it for addresses), and reachable means the server
-  has reached itself through it, as ADR-0055 checks a name. Step 1's gate
-  checks whichever applies. The MeshCentral name must be on the same
+  (ADR-0016; 5b1 keeps it for addresses). It counts as reachable when a
+  browser loaded the console through it in the last 24 hours, or when
+  the server reached itself through it; that self-check needs hairpin
+  NAT, which ADR-0055 only warns about, so when neither holds step 1
+  warns and does not refuse. Nothing depends on that check for safety:
+  each agent's own `/address` check decides whether it moves. Step 1's
+  gate checks whichever applies. The MeshCentral name must be on the same
   site as the console's (as `validateMesh` requires) and contain a dot
   (MeshCentral's LAN-only rule above).
 * **Nobody can move EasyRMM's agents to a server that does not hold the
@@ -237,15 +241,32 @@ The fix this ADR needs first writes that list.
   signed requests, ADR-0055) that the server serves with that `.env`; a
   device seen with no recorded origin counts as not matching. Otherwise
   nothing is adopted until a super administrator, with step-up, chooses
-  one of two pairs with **Confirm**: `.env`'s, or the **agents' pair**,
-  the console origin most of those devices use with, as its MeshCentral
-  name, the `cert` in MeshCentral's current `config.json` (read before
-  this start would write it, and left as it is until then). Until then
-  the server serves `.env`'s pair as it does today and the origins
-  recent devices use as agent routes, refuses moves and offers, and
-  shows an alert and a banner naming both pairs. Choosing the agents'
-  pair leaves `.env` naming another pair, which is then offered as
-  below.
+  with **Confirm** between `.env`'s pair and an **agents' pair**:
+  * **The agents' MeshCentral name.** At that start the server reads
+    `cert` and `aliasPort` from MeshCentral's existing `config.json`
+    once, before rendering it, and stores them in the database. With no
+    `config.json` (remote access never on, or the folder lost), the
+    agents' pairs use `.env`'s MeshCentral name, and the banner says so.
+  * **The candidates**: each console origin the devices seen in the last
+    30 days use, leaving out addresses IP access serves anyway (unless
+    the public URL is itself an IP address), with its device count. Each
+    is paired with that MeshCentral name and checked as `validateMesh`
+    and MeshCentral's dot rule check a pair; one that fails is listed
+    with the reason and cannot be chosen. When the devices are split,
+    every candidate is listed.
+  * **Until Confirm**: `config.json` is rendered as at every start
+    (`Render` and `WriteConfig` in `server/internal/meshcentral`, with
+    the `allowedOrigin` fix), with `cert`, `aliasPort` and `certUrl`'s
+    port pinned to the stored MeshCentral name, and `allowedOrigin` and
+    the framing origins built from every origin served. The server
+    serves `.env`'s console as it does today, the candidates' console
+    origins as agent routes, and the stored MeshCentral name with its
+    route and a certificate from its source (ADR-0055), so MeshAgents
+    and `certUrl`'s read keep working. It refuses moves and offers, and
+    shows an alert and a banner naming the pairs.
+  * Choosing an agents' pair leaves `.env` naming another pair, which is
+    then offered as below; choosing `.env`'s releases the pin, and
+    MeshAgents follow MeshCentral's name by slice 3's rule.
 * **The move generation**, `moveGeneration`, a number kept beside it,
   changes with every step 1 or 2, a **Move back**'s included, and never
   goes backwards, even across a restore: each new value is the larger of
@@ -359,10 +380,13 @@ install command, sign-in) until step 4, and serves agents until step 5.
   party from that device.
 * **Agents that cannot move**: builds that have not reported
   `move.easyrmm` are never sent one (and would ignore it: answers are
-  read leniently). Step 1 is refused
-  while a device seen in the last 30 days on an old address runs one, or
-  trusts only its CA file and would not trust the new name's certificate
-  (5b1). The page lists them, offers **Update these agents** (ADR-0027's
+  read leniently). Step 1 is refused while a device seen in the last 30
+  days on an old address runs one, or would not trust the target's
+  certificate by what it trusts (5b1): one that trusts only its CA file,
+  on a move to a name with a public certificate, or one that trusts only
+  the system's roots, such as the agents of an `acme` install, on a move
+  to an IP address served by the internal authority. The page lists
+  them, offers **Update these agents** (ADR-0027's
   rollout) and, with step-up, **Start anyway**, for the agents the rollout
   cannot reach: those that cannot update themselves (ADR-0027), and
   rollouts set to *When asked* or *Off*. The list is kept with the move.
@@ -557,7 +581,12 @@ they follow.
     before it watches anything, and every 5 minutes: it compares the
     validated files with the instance's context and applies on any
     difference. Between those it watches the names directory and
-    reconciles on a change. So changes made while it waited for the
+    reconciles on a change. After an apply succeeds, the reconcile also
+    reads Authentik's objects, the provider's `redirect_uris`, the
+    stage's `target_static` and the application's `meta_launch_url`, and
+    sends the apply again when they differ from the context: an earlier
+    apply sent again and committed last cannot leave stale values. So
+    changes made while it waited for the
     blueprint (up to 15 minutes at a first start), while the server
     started, or while it was down are applied too. Its loop also picks up
     a pending invitation, since `setup.sh --new-invitation` followed by
@@ -578,11 +607,14 @@ they follow.
     pending in `names-status.json`, and its result read from the
     instance's status at the following ticks (an apply with no result
     after 10 minutes is recorded as failed and sent again at the next
-    reconcile). So the service is healthy within seconds of starting,
-    while it may still wait for the blueprint, far inside ADR-0052's 20
-    minutes; `start_period` is 1 minute. Whether the values are applied
-    shows in the console (below), not in the health, so neither a slow
-    first start nor a bad names file can roll an upgrade back.
+    reconcile). When `WAIT_SECONDS` runs out with no blueprint, it
+    records the error in `names-status.json`, from which the server
+    raises an alert, and keeps ticking and checking. So the service is
+    healthy within seconds of starting, while it may still wait for the
+    blueprint, far inside ADR-0052's 20 minutes; `start_period` is 1
+    minute. Whether the values are applied shows in the console (below),
+    not in the health, so neither a slow first start nor a bad names file
+    can roll an upgrade back.
   * **Failures show** in the instance's status and in EasyRMM's console:
     `authentik-setup` writes its last result (the values applied, when,
     or the error) to `names-status.json` in `<data root>/authentik/status/`,
@@ -778,10 +810,13 @@ pair an install starts with.
   Authentik's `primary`, and MeshCentral's name. From slice 4,
   `configureWebAuthn`, `enrollapi.New`, `auth.Config.PublicURL`,
   `auditfwd.New`, `recover` and the others there read the primary, not
-  `EASYRMM_PUBLIC_URL`. The primary keeps its certificate source
-  (ADR-0055): in `acme` mode it stays in autocert's host policy; in
-  `manual` mode the offer warns when the certificate files no longer
-  cover it.
+  `EASYRMM_PUBLIC_URL`, and so do `defaultCertURL`
+  (`server/internal/config/config.go`: `certUrl`'s port comes from the
+  primary), `Origins` (`server/internal/config/origins.go`) and the
+  target of `AgentHost`'s redirect (`server/internal/app/app.go`). The
+  primary keeps its certificate source (ADR-0055): in `acme` mode it
+  stays in autocert's host policy; in `manual` mode the offer warns when
+  the certificate files no longer cover it.
 * **The move starts only when someone chooses it**: in the console, with
   step-up, or on the host with `docker compose exec server easyrmm-server
   names move --to-env` (host access is the authority there, so no
@@ -952,10 +987,13 @@ pair an install starts with.
   `.env`** (step-up), or **Move back** when it is a move's old pair;
   offered once no move is in progress otherwise.
 * A banner when no initial pair could be adopted ("What a move is"):
-  "Agents use <origin> (MeshCentral <cert>); `.env` names <pair>. Until
-  you confirm which pair EasyRMM starts from, both are served and no move
-  can start." **Confirm** (step-up) offers **Use `.env`'s pair** and **Use
-  the agents' pair**.
+  "Agents use <origin> (<count> devices)[, <origin> (<count> devices)…],
+  with MeshCentral at <cert>; `.env` names <pair>. Until you confirm
+  which pair EasyRMM starts from, all are served and no move can start."
+  When there was no `config.json`, it says that the agents' pairs use
+  `.env`'s MeshCentral name. **Confirm** (step-up) offers **Use `.env`'s
+  pair** and **Use <origin>** for each candidate that passes the checks;
+  the others are shown with the reason.
 * The servers on the database with their ID, `.env` pair and last seen;
   **Forget** on those not seen for 30 days.
 * Authentik's last apply (`names-status.json`) on the move's page and in
@@ -967,7 +1005,8 @@ pair an install starts with.
 * `POST /api/v1/settings/names/moves` (`to`; **Move to the pair in
   `.env`** is this call with that pair), `POST
   /api/v1/settings/names/initial` (**Confirm**, `{"pair": "env"}` or
-  `{"pair": "agents"}`, the latter as shown in `GET`), `DELETE
+  `{"pair": "agents", "origin": "<origin>"}`, one of the candidates `GET`
+  lists with their device counts, MeshCentral name and checks), `DELETE
   /api/v1/settings/names/servers/{id}` (**Forget**), and on the move `POST
   …/steps/{remote-access|browsers|remove}`, `POST …/back`; `anyway: true`
   for the overrides; step-up as above. `POST
@@ -1099,12 +1138,20 @@ any other.
     wrote, also when `.env` was edited just before the upgrade; with no
     record, from `.env` when the recorded origins of recent devices
     match it; a recent device with no recorded origin, or one on another
-    origin, leaves it unadopted: both pairs served (a device on the
-    agents' origin keeps checking in), MeshCentral's `config.json` not
-    rewritten, moves and offers refused, until **Confirm** with step-up
-    picks `.env`'s pair or the agents' pair (its MeshCentral name taken
-    from that `config.json`); the initial pair stays the primary until a
-    move;
+    origin, leaves it unadopted until **Confirm** with step-up: `cert`
+    and `aliasPort` read once from the existing `config.json` and
+    stored, `config.json` rendered with them pinned and `allowedOrigin`
+    and framing from every origin served, the stored MeshCentral name
+    served with its certificate (a MeshAgent on it stays connected and
+    `certUrl`'s read gets that certificate), every candidate origin
+    served to agents (a device on each keeps checking in), moves and
+    offers refused; candidates leave out IP-access addresses on a DNS
+    install, carry their device counts when the devices are split, and
+    one that fails `validateMesh` or the dot rule cannot be chosen; with
+    no `config.json`, the candidates use `.env`'s MeshCentral name;
+    **Confirm** takes `.env`'s pair (the pin released, MeshAgents
+    following) or a candidate (`.env` then offered); the initial pair
+    stays the primary until a move;
   * while `.env` is only offered: its pair answers agents and redirects
     browsers to the primary; the relying party ID, issuer, email links,
     install commands, single sign-on callback, audit `HOSTNAME`,
@@ -1112,8 +1159,11 @@ any other.
     `acme` mode the primary stays in the host policy, and in `manual`
     mode a certificate that no longer covers it is warned about;
   * an IP-to-IP move passing step 1 with the internal authority's
-    certificate and reachability, and refused when the address is not
-    reachable;
+    certificate and a browser's load in the last 24 hours, or the
+    self-check; with neither, step 1 warns and goes ahead, and an agent
+    whose `/address` check fails there stays; step 1 refused for a device
+    that would not trust the target's certificate (an `acme` install's
+    agent, trusting the system's roots, on a move to an IP address);
   * `tls reset` during a move and after one; a new name that stops being
     trusted;
   * link matching across names; WebAuthn credentials under two relying
@@ -1197,7 +1247,10 @@ any other.
   while it waits for the blueprint and while an apply is pending, and an
   apply with no result after 10 minutes is recorded as failed; with no
   context written, the conditional entries are skipped and the provider,
-  stage and application keep their values.
+  stage and application keep their values; after an apply, objects that
+  differ from the context (a stale apply committed last) make it send
+  again; `WAIT_SECONDS` running out is recorded as an error while the
+  loop keeps ticking.
 * **Single sign-on and Authentik**: the Authentik bundle test
   (`scripts/e2e/authentik.sh`) gains a move: without restarting Authentik,
   the provider's redirect URIs gain the new name's, its enrollment
