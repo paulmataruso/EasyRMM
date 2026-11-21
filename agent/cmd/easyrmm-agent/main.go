@@ -129,16 +129,19 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 }
 
 // openStore checks the agent's state folder before a command reads or
-// writes anything in it (state.Open), and logs what the check moved aside.
+// writes anything in it (state.Open), and logs what the check changed.
 // Each command calls it once it knows it may run; the store refuses
 // everything until then.
 func (e *env) openStore() error {
 	if e.store.Dir() != "" {
 		return nil
 	}
-	s, aside, err := state.Open(e.paths)
-	for _, p := range aside {
+	s, checked, err := state.Open(e.paths)
+	for _, p := range checked.Aside {
 		e.log.Warn("the agent did not make this in its state folder, or cannot trust it: it was moved aside and is not read", "moved_to", p)
+	}
+	for _, p := range checked.Reprotected {
+		e.log.Warn("this folder of the agent's had another access list; it was set back to the agent's own", "folder", p)
 	}
 	if err != nil {
 		return err

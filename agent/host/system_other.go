@@ -36,7 +36,7 @@ func Protect(dir string) error {
 
 // checkState does nothing: only root reaches the state folder, and Load
 // checks the key's mode.
-func checkState(string, string, [][]string) ([]string, error) { return nil, nil }
+func checkState(string, string, [][]string) (StateCheck, error) { return StateCheck{}, nil }
 
 // RemoveExecutable deletes an installed program. later is true when it can
 // only be deleted at the next restart, which happens on Windows only.

@@ -268,6 +268,65 @@ func TestInstallIgnoresAnUntrustedFile(t *testing.T) {
 	})
 }
 
+// setACL gives p the access list sddl describes, as its own.
+func setACL(t *testing.T, p, sddl string) {
+	t.Helper()
+	sd, err := windows.SecurityDescriptorFromString(sddl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(p, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
+		t.Fatalf("setting the access list of %s: %v", p, err)
+	}
+}
+
+// TestInstallSetsBackAnAccessList: a state folder whose access list lets
+// Users read keeps the enrollment, and gets the agent's own list back,
+// which the agent logs; one that lets Users write takes the enrollment
+// aside, since they could have changed it in place. So does a
+// configuration that lets them write.
+func TestInstallSetsBackAnAccessList(t *testing.T) {
+	const protected = "D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
+	for _, c := range []struct {
+		name, file, sddl string
+		kept             bool
+	}{
+		{"Users may read the folder", "", protected + "(A;OICI;FR;;;BU)", true},
+		{"Users may write the folder", "", protected + "(A;OICI;FW;;;BU)", false},
+		{"Users may write the configuration", "agent.json", "D:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FW;;;BU)", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, srv, log := windowsHarness(t)
+			h.install(t, srv.URL)
+			dir := h.e.paths.State()
+			setACL(t, filepath.Join(dir, c.file), c.sddl)
+			out := h.install(t, srv.URL)
+			if kept := strings.Contains(out, "Already enrolled"); kept != c.kept {
+				t.Errorf("install: %q", out)
+			}
+			if c.kept {
+				noneMovedAside(t, h)
+				if !strings.Contains(log.String(), "set back") {
+					t.Errorf("nothing logged: %s", log)
+				}
+				return
+			}
+			moved := dir + `.untrusted-*`
+			if c.file != "" {
+				moved = filepath.Join(moved, c.file)
+			}
+			if m, _ := filepath.Glob(moved); len(m) != 1 {
+				t.Errorf("moved aside: %v", m)
+			}
+		})
+	}
+}
+
 // TestInstallIgnoresJunctionsAndMarkers: a junction at jobs or easypatch,
 // or an update marker someone else made, is moved aside; the enrollment
 // stays, and what the junctions pointed to is not touched, also when the

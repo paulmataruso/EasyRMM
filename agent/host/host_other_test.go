@@ -41,8 +41,8 @@ func TestExec(t *testing.T) {
 func TestCheckStateElsewhere(t *testing.T) {
 	p := Paths{Root: t.TempDir()}
 	layout := [][]string{{"agent.json"}, {filepath.Join("logs", "*")}}
-	if aside, err := p.CheckState(layout); err != nil || len(aside) != 0 {
-		t.Fatalf("check: %v, moved aside %v", err, aside)
+	if c, err := p.CheckState(layout); err != nil || len(c.Aside) != 0 || len(c.Reprotected) != 0 {
+		t.Fatalf("check: %v, changed %+v", err, c)
 	}
 	if _, err := os.Stat(p.State()); !os.IsNotExist(err) {
 		t.Errorf("the check made the state folder: %v", err)
@@ -56,8 +56,8 @@ func TestCheckStateElsewhere(t *testing.T) {
 	if err := os.Symlink(t.TempDir(), filepath.Join(p.State(), "logs", "linked")); err != nil {
 		t.Fatal(err)
 	}
-	if aside, err := p.CheckState(layout); err != nil || len(aside) != 0 {
-		t.Fatalf("check: %v, moved aside %v", err, aside)
+	if c, err := p.CheckState(layout); err != nil || len(c.Aside) != 0 || len(c.Reprotected) != 0 {
+		t.Fatalf("check: %v, changed %+v", err, c)
 	}
 	for _, f := range []string{"agent.json", filepath.Join("logs", "linked")} {
 		if _, err := os.Lstat(filepath.Join(p.State(), f)); err != nil {

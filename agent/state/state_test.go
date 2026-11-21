@@ -15,9 +15,9 @@ import (
 // open opens the store of a state folder under a test's own root.
 func open(t *testing.T) Store {
 	t.Helper()
-	s, aside, err := Open(host.Paths{Root: t.TempDir()})
-	if err != nil || len(aside) != 0 {
-		t.Fatalf("open: %v, moved aside %v", err, aside)
+	s, checked, err := Open(host.Paths{Root: t.TempDir()})
+	if err != nil || len(checked.Aside) != 0 {
+		t.Fatalf("open: %v, moved aside %v", err, checked.Aside)
 	}
 	return s
 }

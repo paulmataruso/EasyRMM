@@ -18,15 +18,20 @@ All notable changes to this project are documented here. The format follows
   agent checks:
   - that every folder from ProgramData down is a plain folder that the
     system or an administrator made;
-  - that the state folder has only its own access list;
+  - that no one but the system, administrators and TrustedInstaller may
+    change the state folder or what it holds;
   - that each file it reads or writes there is a plain file with a single
-    link, owned by the system or an administrator. This covers the
-    enrollment, key, status, job journal, log, update marker and EasyPatch
-    downloads.
+    link, owned by the system or an administrator, that no one else may
+    change. This covers the enrollment, key, status, job journal, log,
+    update marker and EasyPatch downloads.
 
   A folder that fails is moved aside, as `<name>.untrusted-<time>`, and made
   anew. A file that fails is moved aside, and the configuration and the key
-  go together. The agent never reads what it moved aside: it carries on as
+  go together. A state folder whose access list differs from the agent's
+  own, but lets no one else change anything, such as one with entries in
+  another order, an extra entry for administrators, or one that lets users
+  read, keeps its enrollment: the agent sets its own list back and logs a
+  warning. The agent never reads what it moved aside: it carries on as
   not enrolled, and an install enrolls anew. The scripts' working folders,
   which the check leaves out, are emptied when the agent starts. On
   Windows, `easyrmm-agent status` now needs an administrator. Linux is

@@ -75,13 +75,13 @@ var layout = [][]string{
 // Open returns the store of the agent's state folder, p.State(), once the
 // folder is safe to read: on Windows, what the agent did not make there, or
 // cannot trust, is moved aside first and never read (host.Paths.CheckState).
-// aside lists where it went.
-func Open(p host.Paths) (s Store, aside []string, err error) {
-	aside, err = p.CheckState(layout)
+// checked tells what the check changed.
+func Open(p host.Paths) (s Store, checked host.StateCheck, err error) {
+	checked, err = p.CheckState(layout)
 	if err != nil {
-		return Store{}, aside, fmt.Errorf("checking the agent's state folder %s: %w", p.State(), err)
+		return Store{}, checked, fmt.Errorf("checking the agent's state folder %s: %w", p.State(), err)
 	}
-	return Store{dir: p.State()}, aside, nil
+	return Store{dir: p.State()}, checked, nil
 }
 
 // errNotOpened stops a store that Open did not make.

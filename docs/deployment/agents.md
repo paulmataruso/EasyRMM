@@ -219,7 +219,7 @@ On Windows:
 | Path | What |
 |---|---|
 | `%ProgramFiles%\EasyRMM\Agent\easyrmm-agent.exe` | The agent, run by the **EasyRMM Agent** service (`EasyRMMAgent`) as LocalSystem, started automatically and restarted by Windows if it stops |
-| `%ProgramData%\EasyRMM\Agent\` | Its state: `agent.json`, `device.key`, `status.json` and `jobs\`, as on Linux. The folder is readable only by SYSTEM and Administrators. The agent checks it before reading it: a folder or file that another account made, or a link, is moved aside as `<name>.untrusted-<time>` and never read |
+| `%ProgramData%\EasyRMM\Agent\` | Its state: `agent.json`, `device.key`, `status.json` and `jobs\`, as on Linux. The folder is readable only by SYSTEM and Administrators. The agent checks it before reading it: a folder or file that another account made or may change, or a link, is moved aside as `<name>.untrusted-<time>` and never read; another access list that lets no other account change anything is set back, with a warning in the log |
 | `%ProgramData%\EasyRMM\Agent\logs\agent.log` | The agent's log (10 MiB, then `agent.log.1`) |
 | `%ProgramFiles%\EasyRMM\MeshAgent\` | MeshAgent, run by the **EasyRMM MeshAgent** service (`EasyRMMMeshAgent`), separate from any other MeshCentral's agent on the computer |
 
