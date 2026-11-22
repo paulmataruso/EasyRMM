@@ -35,6 +35,7 @@ server.
 | **MeshAgent** (installed beside the agent) | What MeshCentral needs to open remote desktop, terminal and file sessions that technicians start; MeshCentral's own device information | Remote access, through the MeshCentral server in the same deployment |
 | **EasyPatch agent** (patching) | Operating system and hardware details, Windows Update settings, available, installed and failed updates, installed applications (for application updates on Windows), whether a restart is pending, and the **number** of signed-in users (not their names), to decide when to restart | Patching and patch reports |
 | **Server and console** | Accounts of the people who use the console: name, email address, a password hash, second-factor secrets (encrypted) and security keys' public keys; their sign-in sessions with IP address and browser; an audit log of who did what, from where, including remote sessions | Signing in, permissions and accountability |
+| **The customer record** (typed in by technicians) | For each customer organization: its main phone, email, website and business hours, and each site's address and hours. Contacts, the customer's staff: name, job title, email, office and mobile phone, a note, and whether they are the primary, secondary or emergency contact | Reaching the right person at a customer, and knowing when they are open |
 
 **In the browser** the console sets only the cookies needed to sign in
 (the session, a short-lived single sign-on cookie and the remote-access
@@ -48,6 +49,16 @@ Only Technicians and above of the device's organization or site can read
 them, and every read is recorded in the audit log; Read-Only users see that
 a script ran and how it ended, not what it printed
 ([Scripts and jobs](docs/operations/scripts-and-jobs.md#who-sees-output-and-arguments)).
+
+**Contacts** are people at the operator's customers who do not use
+EasyRMM: the software never contacts them, and they cannot sign in. Only
+people with `doc.view` at the customer's organization, or at the contact's
+site, can read them; a site's people see that site's contacts and not the
+organization's own. The audit log records that a contact was added,
+changed or deleted, and which fields changed, but not the contact's name
+or the values. Contacts are kept until someone deletes them, or deletes
+their site or organization, and can be exported with the **Contacts**
+report ([The customer record](docs/operations/customer-record.md)).
 
 **Retention** is up to the operator: metrics, alerts, job output, jobs and
 the audit log are kept for the periods set in the deployment's `.env`

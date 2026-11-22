@@ -4,6 +4,7 @@ import type {
   AlertEntry,
   AlertPolicy,
   AuditEntry,
+  Contact,
   Device,
   DeviceGroup,
   DeviceMetrics,
@@ -14,6 +15,7 @@ import type {
   MetricSample,
   MetricsHistory,
   Organization,
+  Place,
   RoleView,
   RunStatus,
   Script,
@@ -25,7 +27,25 @@ import type {
 const T = "2026-11-01T10:00:00Z";
 
 export function org(id: string, name: string, extra: Partial<Organization> = {}): Organization {
-  return { id, name, timezone: "UTC", notes: "", siteCount: 0, canManage: true, canRename: true, createdAt: T, updatedAt: T, ...extra };
+  return {
+    id,
+    name,
+    timezone: "UTC",
+    notes: "",
+    siteCount: 0,
+    canManage: true,
+    canRename: true,
+    createdAt: T,
+    updatedAt: T,
+    mainPhone: "",
+    mainEmail: "",
+    website: "",
+    businessHours: null,
+    afterHoursNote: "",
+    openNow: null,
+    canManageDocumentation: true,
+    ...extra,
+  };
 }
 
 export function site(id: string, organizationId: string, name: string, extra: Partial<Site> = {}): Site {
@@ -35,14 +55,50 @@ export function site(id: string, organizationId: string, name: string, extra: Pa
     organizationName: "Northwind Traders",
     name,
     timezone: "Europe/London",
-    address: "",
     notes: "",
     deviceGroupCount: 0,
     canManage: true,
     createdAt: T,
     updatedAt: T,
+    address: "",
+    addressLine1: "",
+    addressLine2: "",
+    city: "",
+    region: "",
+    postalCode: "",
+    countryCode: "",
+    businessHours: null,
+    afterHoursNote: "",
+    openNow: null,
+    hoursFromOrganization: false,
+    canManageDocumentation: true,
     ...extra,
   };
+}
+
+export function contact(id: string, name: string, extra: Partial<Contact> = {}): Contact {
+  return {
+    id,
+    organizationId: "o1",
+    siteId: null,
+    siteName: "",
+    name,
+    jobTitle: "",
+    email: "",
+    officePhone: "",
+    mobilePhone: "",
+    note: "",
+    priority: "none",
+    emergency: false,
+    createdAt: T,
+    updatedAt: T,
+    canManage: true,
+    ...extra,
+  };
+}
+
+export function place(id: string, siteId: string, name: string, extra: Partial<Place> = {}): Place {
+  return { id, organizationId: "o1", siteId, parentId: null, kind: "building", name, depth: 1, createdAt: T, updatedAt: T, ...extra };
 }
 
 export function group(id: string, siteId: string, name: string, extra: Partial<DeviceGroup> = {}): DeviceGroup {

@@ -59,6 +59,14 @@ export const REPORTS: ReportInfo[] = [
     filters: ["alerts"],
   },
   {
+    name: "contacts",
+    label: "Contacts",
+    description: "The customers' contacts, organization by organization: who to call, how, and who is primary or for emergencies.",
+    permission: "doc.view",
+    filters: ["search"],
+    search: { label: "Contact", placeholder: "Name or email" },
+  },
+  {
     name: "patch-compliance",
     label: "Patch compliance",
     description:

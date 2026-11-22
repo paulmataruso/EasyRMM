@@ -1,7 +1,8 @@
 # ADR-0066: Customer documentation and asset records
 
-* Status: Accepted (2026-11-21, after an independent review). Not
-  implemented.
+* Status: Accepted (2026-11-21, after an independent review). Slice 1,
+  PR 1 of 3 implemented: [the customer record](#the-customer-record)
+  ([guide](../../operations/customer-record.md)).
 * Requirements: feature 4, "Customer Documentation and Asset Records",
   of the owner's
   [requirements of 2026-11-21](../requirements/2026-11-21-msp-features.md#4-customer-documentation-and-asset-records).

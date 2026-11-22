@@ -107,18 +107,18 @@ func (e *env) entries(prefix string) []audit.Entry {
 	return out
 }
 
-func wantCode(t *testing.T, err error, kind apperr.Kind, code, what string) *apperr.Error {
+func wantCode(t *testing.T, err error, kind apperr.Kind, code, what string) {
 	t.Helper()
 	ae, ok := apperr.As(err)
 	if !ok || ae.Kind != kind || (code != "" && ae.Code != code) {
 		t.Fatalf("%s: got %v, want kind %d %s", what, err, kind, code)
 	}
-	return ae
 }
 
 func wantField(t *testing.T, err error, field, what string) {
 	t.Helper()
-	if ae := wantCode(t, err, apperr.KindInvalid, "", what); ae.Fields[field] == "" {
+	wantCode(t, err, apperr.KindInvalid, "", what)
+	if ae, _ := apperr.As(err); ae.Fields[field] == "" {
 		t.Fatalf("%s: fields %v, want %q", what, ae.Fields, field)
 	}
 }

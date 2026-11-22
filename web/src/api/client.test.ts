@@ -63,6 +63,20 @@ describe("request", () => {
     const error = await api.post("/organizations", { name: "x" }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ status: 409, code: "conflict", message: "That name is taken.", fields: { name: "Choose another name." } });
+    expect((error as ApiError).counts).toBeNull();
+  });
+
+  it("keeps the counts a refused deletion names, and sends them back as query parameters", async () => {
+    const server = installFakeApi({
+      "DELETE /sites/:id": (r) =>
+        r.query.has("contacts")
+          ? { status: 204 }
+          : { status: 409, body: { error: { code: "documentation_exists", message: "Confirm.", counts: { contacts: 2, places: 0 } } } },
+    });
+    const error = (await api.del("/sites/s1").catch((e: unknown) => e)) as ApiError;
+    expect(error.counts).toEqual({ contacts: 2, places: 0 });
+    await api.del("/sites/s1", error.counts ?? {});
+    expect(server.call("DELETE /sites/:id", 1).query.toString()).toBe("contacts=2&places=0");
   });
 
   it("falls back to a generic message when the body is not the envelope", async () => {
