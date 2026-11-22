@@ -431,6 +431,44 @@ All notable changes to this project are documented here. The format follows
   kept for resets people ask for, and other mail stops at 80%. Every
   change and test is audited (`mail_server.*`), from and to. See
   [Mail](docs/operations/mail.md).
+- **Signing in to Microsoft 365 with an application** (ADR-0053, slice 2),
+  ahead of Microsoft turning password sign-in to Exchange Online's SMTP
+  off by default at the end of December 2026. The mail server signs in
+  with an Entra application's token (`AUTH XOAUTH2`, only over STARTTLS or
+  TLS) to the sender's mailbox, from the application's tenant ID, client
+  ID and client secret, or its certificate and RSA private key. Set it in
+  the console (Settings → Notifications → Mail server, which fills in
+  `smtp.office365.com`), in `.env` (`EASYRMM_SMTP_AUTH=microsoft365`, the
+  IDs, and the secret or key only in files named by
+  `EASYRMM_SMTP_CLIENT_*_FILE`), or with `setup.sh --smtp-tenant-id` and
+  the other `--smtp-*` options, which copy the secret or key into
+  `${EASYRMM_DATA_ROOT}/secrets` (`root:65532`, 0750 and 0440) and may be
+  given alone on an existing `.env`. The secret and the key are sealed and
+  never returned; tokens are kept in memory until 5 minutes before they
+  expire and never logged. Microsoft's and Exchange's refusals are
+  explained: SMTP AUTH off for the tenant or the mailbox, security
+  defaults, a missing permission or service principal, a wrong secret, and
+  sending over the rate: a password reset someone asked for is tried again
+  a minute later, and an invitation or password link comes back to the
+  administrator at once (the replies' texts come from Microsoft's
+  documentation, not yet checked against a real tenant). The certificate
+  must be PEM certificates alone, and only they are stored. `setup.sh`
+  leaves the settings it keeps as `.env` has them, writes `.env` whole and
+  renames it into place, and refuses a data root others can change, a
+  linked `secrets` directory, hard-linked files in it, and a `$` in a mail
+  setting (Compose reads it as a variable). **While an
+  application signs in, the patching engine is given no mail server, so
+  patching sends no email or monthly reports** until a later release; the
+  mail server page, Settings → Patching (Notifications and Reports),
+  Reports → Monthly patch reports, a report's failed email and the log say
+  so. For patching's email meanwhile, use a relay or a password. See
+  [Mail](docs/operations/mail.md#microsoft-365).
+- **`easyrmm-server mail check`** connects to the mail server in force
+  and signs in, getting a token first with an application, and quits
+  without sending; it prints the answer and exits 1 on failure. The server
+  runs the same check at start, after every change and daily, logs it, and
+  the mail server page shows the last one, with the application's
+  certificate and its end date, warned of from 30 days before.
 - **Active alerts pulse in red in the console.** On a device's page,
   every active alert in the **Alerts** card pulses slowly in red (a
   resolved one never does), and the card's title shows how many are
@@ -516,6 +554,19 @@ All notable changes to this project are documented here. The format follows
 - **`.env`'s SMTP password and sender's name are checked** against the
   lengths the patching engine takes. Longer, EasyRMM still starts and
   sends, logs an error and shows it on the Mail server page.
+- **A key rotation no longer makes servers say their mail server differs
+  from the patching engine's.** The record of the mail server given to the
+  engine is kept under each secret key, and servers compare under a key
+  they have in common. A server that waits for another's change of the
+  engine's mail settings tries again at its next pass, counting no failure
+  and never removing the engine's mail server for it. One account's
+  password emails are now limited exactly as the guide says, however old
+  its earlier emails: before, emails over a day old were left out, which let
+  an account get about two more a day.
+- **`docker-compose.yml` mounts `${EASYRMM_DATA_ROOT}/secrets`** read-only
+  in the server, and `setup.sh` (`--upgrade` included) creates it,
+  `root:65532` with mode 0750. Back it up with `.env`
+  ([Backup and restore](docs/operations/backup-restore.md)).
 - **Password reset checks the address's limit before anything else**, and
   whether reset is offered is kept for five seconds, so requests anyone
   may send seldom reach the database. A reset takes its room under the

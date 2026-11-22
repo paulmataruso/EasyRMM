@@ -22,6 +22,10 @@
 # or takes them from --authentik-hostname and --admin-email, and prints the
 # administrator's invitation link. --new-invitation prints another.
 #
+# --smtp-host, --smtp-from and the other --smtp-* options set the mail
+# server, a Microsoft 365 application's sign-in included (ADR-0053; see
+# scripts/setup-mail.sh). With an existing .env they may be given alone.
+#
 # --upgrade, run in a new release's deploy/ directory with the deployment's
 # .env copied in, takes every setting from that .env (no other options but
 # --no-updater, and nothing is asked), sets the release's server version,
@@ -42,6 +46,8 @@
 set -euo pipefail
 
 self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+# shellcheck source-path=SCRIPTDIR source=setup-mail.sh
+. "${self%/*}/setup-mail.sh"
 cd "$(dirname "$0")/.."
 
 hostname=""
@@ -87,6 +93,7 @@ while [[ $# -gt 0 ]]; do
     --admin-email) admin_email="${2:-}"; shift 2 ;;
     --new-invitation) new_invitation=true; shift ;;
     --upgrade) upgrade=true; shift ;;
+    --smtp-*) mail_option "$1" "${2:-}" || { echo "unknown option: $1" >&2; usage 2; }; shift 2 ;;
     # The one option --upgrade takes along: the updater runs it so.
     --no-updater) install_updater=false; nargs=$((nargs - 1)); shift ;;
     --auto-upgrade) auto_upgrade=true; shift ;;
@@ -196,7 +203,10 @@ updater_lock() {
     die "an updater attempt is running (easyrmm-updater status): setup.sh changes nothing while one does. Run it again once it has ended."
 }
 [[ $(id -u) -ne 0 ]] || updater_lock
-[[ ! -e .env ]] || check_env .env
+if [[ -e .env ]]; then
+  [[ -r .env ]] || die "cannot read .env: run setup.sh with sudo"
+  check_env .env
+fi
 
 # --- Authentik (--with-authentik, --new-invitation; ADR-0044) -----------------
 # Authentik as everyone's sign-in. Its services are in docker-compose.yml
@@ -397,6 +407,10 @@ valid_ipv4='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
 valid_ipv6='^[0-9a-f]*:[0-9a-f:.]*$'
 hostname="${hostname,,}"
 mesh_hostname="${mesh_hostname,,}"
+if [[ -z "$hostname" && $mail_args -gt 0 && $mail_args -eq $nargs ]]; then
+  mail_only
+  exit 0
+fi
 [[ -n "$hostname" ]] || die "--hostname is required"
 url_host="$hostname"
 is_ip=false
@@ -438,6 +452,7 @@ for f in "$cert_file" "$key_file"; do
   [[ -z "$f" || "$f" =~ ^/[A-Za-z0-9_./-]+$ ]] || die "certificate paths must be absolute paths inside the container (letters, digits, _ . / - only)"
 done
 command -v openssl >/dev/null || die "openssl is required"
+[[ $mail_args -eq 0 ]] || mail_validate
 
 if [[ -e .env ]]; then
   echo ".env already exists; leaving it unchanged."
@@ -530,6 +545,7 @@ fi
 if [[ "$with_authentik" == true ]]; then
   authentik_env
 fi
+[[ $mail_args -eq 0 ]] || mail_env
 
 if [[ "$upgrade" == true ]]; then
   # A release's bundle names its server image in .env.example; a clone's
@@ -637,6 +653,7 @@ if [[ $(id -u) -ne 0 ]]; then
   echo "  ${data_root}/meshcentral/{data,files,backups} (owner 65532:65532, mode 700)" >&2
   echo "  ${data_root}/easypatch/{keys,winget} (owner 1654:1654, mode 700)" >&2
   echo "  ${data_root}/updater/status (owner root, mode 755)" >&2
+  echo "  ${data_root}/secrets (owner root:65532, mode 750)" >&2
   exit 0
 fi
 install -d -m 0755 "$data_root"
@@ -661,7 +678,10 @@ done
 # worker mount it read-only; while its hold file exists the server answers
 # its health check and nothing else.
 install -d -m 0755 -o root -g root "$data_root/updater" "$data_root/updater/status"
+# Secrets kept out of .env (ADR-0053), as tls/ is: the server only reads them.
+mail_secrets_dir
 echo "Data directories ready under ${data_root}."
+[[ $mail_args -eq 0 ]] || mail_files
 [[ "$install_updater" != true ]] || updater_install
 if [[ "$with_authentik" == true ]]; then
   authentik_files

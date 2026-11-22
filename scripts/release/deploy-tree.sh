@@ -3,7 +3,8 @@
 # layout so docker-compose.yml's relative mounts resolve and the install
 # commands are the same as from a clone (cd deploy):
 #
-#   deploy/                 docker-compose.yml, .env.example, scripts/setup.sh,
+#   deploy/                 docker-compose.yml, .env.example, scripts/setup.sh (with
+#                           scripts/setup-mail.sh, which it reads),
 #                           scripts/import-easypatch.sh, and the host updater's
 #                           systemd units in updater/ (bundle.sh adds the updater)
 #   docker/                 the PostgreSQL, MeshCentral and Authentik files it mounts
@@ -28,7 +29,7 @@ mkdir -p "$dir/deploy/scripts" "$dir/deploy/updater" "$dir/docker/postgres/init"
   "$dir/docker/authentik/blueprints" "$dir/docs/deployment" "$dir/docs/operations"
 cp "$root/LICENSE.md" "$root/LICENSING.md" "$root/CHANGELOG.md" "$dir/"
 cp "$root/deploy/docker-compose.yml" "$root/deploy/.env.example" "$dir/deploy/"
-cp "$root/deploy/scripts/setup.sh" "$root/deploy/scripts/import-easypatch.sh" "$dir/deploy/scripts/"
+cp "$root/deploy/scripts/setup.sh" "$root/deploy/scripts/setup-mail.sh" "$root/deploy/scripts/import-easypatch.sh" "$dir/deploy/scripts/"
 cp "$root/deploy/updater/easyrmm-updater.service" "$root/deploy/updater/easyrmm-updater.timer" "$dir/deploy/updater/"
 cp "$root/docker/postgres/init/"*.sh "$dir/docker/postgres/init/"
 cp "$root/docker/postgres/easypatch-db-init.sh" "$dir/docker/postgres/"

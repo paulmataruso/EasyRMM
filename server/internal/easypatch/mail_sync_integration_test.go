@@ -5,7 +5,9 @@ package easypatch
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -15,8 +17,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 )
 
 // logBuffer is a log that tests read while services write it.
@@ -128,16 +132,17 @@ func TestOneServerGivesTheEngineItsMailServer(t *testing.T) {
 		t.Fatalf("the switch is lost: %v", m)
 	}
 
-	// The database holds a keyed digest, never the mail server: without the
-	// key, the password cannot be guessed from it.
-	var digest []byte
+	// The database holds a keyed digest per key, never the mail server:
+	// without the key, the password cannot be guessed from it.
+	var digests map[string]string
 	if err := f.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT digest FROM mail_engine_given`).Scan(&digest)
+		return tx.QueryRow(ctx, `SELECT digests FROM mail_engine_given`).Scan(&digests)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(mailDigest(a, mailKey), digest) || bytes.Equal(mailDigest(b, mailKey), digest) ||
-		bytes.Equal(mailDigest(a, bytes.Repeat([]byte{8}, 32)), digest) || bytes.Contains(digest, []byte("pw-a")) {
+	digest, _ := hex.DecodeString(digests["k1"])
+	if len(digests) != 1 || !bytes.Equal(mailDigest(a, mailKey[0].Raw), digest) || bytes.Equal(mailDigest(b, mailKey[0].Raw), digest) ||
+		bytes.Equal(mailDigest(a, bytes.Repeat([]byte{8}, 32)), digest) || strings.Contains(fmt.Sprint(digests), "pw-a") {
 		t.Fatal("the record is not a keyed digest of the mail server given")
 	}
 
@@ -416,7 +421,173 @@ func TestEngineMailNeedsTheDigestKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := New(f.db, audit.New(f.db, nil), "1.0.0", slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err := svc.UseEngine(client, Mail(func(context.Context) (MailConfig, error) { return MailConfig{}, nil }, mailKey[:16])); err == nil {
-		t.Fatal("a short key was taken")
+	for name, keys := range map[string][]secrets.Key{"none": nil, "a short key": {{ID: "k1", Raw: mailKey[0].Raw[:16]}},
+		"a key without an ID": {{Raw: mailKey[0].Raw}}} {
+		if err := svc.UseEngine(client, Mail(func(context.Context) (MailConfig, error) { return MailConfig{}, nil }, keys)); err == nil {
+			t.Fatalf("%s was taken", name)
+		}
+	}
+}
+
+// Another server holding the engine's mail settings past mailLockWait is
+// "try later": the pass says so, counts no failure, and never removes the
+// engine's mail server for it, however many passes it lasts; the webhook
+// switch answers a conflict to try again.
+func TestEngineMailBusyIsNotAFailure(t *testing.T) {
+	f := newFleetFixture(t)
+	cfg := MailConfig{Host: "smtp.example.com", Port: 587, Username: "rmm", Password: "pw", FromAddress: "rmm@example.com", Security: "starttls"}
+	f.svc = f.engineService(f.engine, Mail(func(context.Context) (MailConfig, error) { return cfg, nil }, mailKey))
+	f.reconcile()
+	e := f.svc.engine
+	if e.mailLockWait != mailLockTimeout || mailLockTimeout <= 2*mailCallTimeout {
+		t.Fatalf("a change waits %s for another's, which may take %s", e.mailLockWait, 2*mailCallTimeout)
+	}
+	e.mailLockWait = 200 * time.Millisecond
+	held, err := pgx.Connect(f.ctx, f.superDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close(f.ctx)
+	tx, err := held.Begin(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(f.ctx, `SELECT pg_advisory_xact_lock($1)`, int64(lockEngineMailChange)); err != nil {
+		t.Fatal(err)
+	}
+	puts := len(f.engine.RequestsTo("PUT", mailSettingsPath))
+	for range mailFailLimit + 2 {
+		var res ReconcileResult
+		f.svc.syncMail(f.ctx, e.client, &res)
+		if len(res.Problems) != 1 || !strings.Contains(res.Problems[0], "tries again at its next pass") {
+			t.Fatalf("a pass, the lock held: %v", res.Problems)
+		}
+	}
+	if e.mailFailures != 0 || f.svc.mailProblem() != "" {
+		t.Fatalf("%d failures counted, problem %q", e.mailFailures, f.svc.mailProblem())
+	}
+	if m := f.engine.Mail(); m["smtpHost"] != cfg.Host || len(f.engine.RequestsTo("PUT", mailSettingsPath)) != puts {
+		t.Fatalf("the engine's mail server was changed or removed: %v", m)
+	}
+	_, err = f.svc.SetNotificationSettings(f.ctx, f.admin, NotificationSettings{AllowPrivateNetworkWebhooks: true})
+	var ae *apperr.Error
+	if !errors.As(err, &ae) || ae.Kind != apperr.KindConflict || !strings.Contains(ae.Error(), "Try again") {
+		t.Fatalf("the switch: %v", err)
+	}
+	if err := tx.Commit(f.ctx); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := f.svc.SetNotificationSettings(f.ctx, f.admin, NotificationSettings{AllowPrivateNetworkWebhooks: true}); err != nil || !v.AllowPrivateNetworkWebhooks {
+		t.Fatalf("the lock free: %+v, %v", v, err)
+	}
+}
+
+// During a rotation of the secret key, servers with the new key and the
+// old one as previous, and servers still with the old one, find a key in
+// common and agree; a server with none of the leader's keys says it cannot
+// tell, rather than that its mail server differs.
+func TestEngineMailDigestAcrossAKeyRotation(t *testing.T) {
+	f := newFleetFixture(t)
+	ctx := f.ctx
+	cfg := MailConfig{Host: "smtp.example.com", Port: 587, Username: "rmm", Password: "pw", FromAddress: "rmm@example.com", Security: "starttls"}
+	k2 := secrets.Key{ID: "k2", Raw: bytes.Repeat([]byte{10}, 32)}
+	k3 := secrets.Key{ID: "k3", Raw: bytes.Repeat([]byte{11}, 32)}
+	source := func(keys []secrets.Key) EngineOption {
+		return Mail(func(context.Context) (MailConfig, error) { return cfg, nil }, keys)
+	}
+	var logOld, logNew, logOther logBuffer
+	old := f.engineServiceLog(f.engine, slog.New(slog.NewTextHandler(&logOld, nil)), source(mailKey))
+	rotated := f.engineServiceLog(f.engine, slog.New(slog.NewTextHandler(&logNew, nil)), source([]secrets.Key{k2, mailKey[0]}))
+	other := f.engineServiceLog(f.engine, slog.New(slog.NewTextHandler(&logOther, nil)), source([]secrets.Key{k3}))
+	for _, s := range []*Service{old, rotated, other} {
+		t.Cleanup(s.stopLeadingMail)
+	}
+	pass := func(s *Service) {
+		t.Helper()
+		var res ReconcileResult
+		s.syncMail(ctx, s.engine.client, &res)
+		if len(res.Problems) > 0 {
+			t.Fatal(res.Problems)
+		}
+	}
+	// The old server leads, with k1 alone; the rotated one compares with k1.
+	pass(old)
+	pass(rotated)
+	pass(other)
+	if rotated.mailProblem() != "" || logNew.count("level=ERROR") != 0 {
+		t.Fatalf("the rotated server: %q", rotated.mailProblem())
+	}
+	if other.mailProblem() != mailNoCommonKey || logOther.count("cannot tell") != 1 {
+		t.Fatalf("a server without the key: %q", other.mailProblem())
+	}
+	// The rotated one leads, recording under k2 and k1; the old one still
+	// compares with k1.
+	old.stopLeadingMail()
+	pass(rotated)
+	var digests map[string]string
+	if err := f.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT digests FROM mail_engine_given`).Scan(&digests)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(digests) != 2 || digests["k1"] == "" || digests["k2"] == "" || digests["k1"] == digests["k2"] {
+		t.Fatalf("digests %v", digests)
+	}
+	pass(old)
+	if old.mailProblem() != "" || logOld.count("level=ERROR") != 0 {
+		t.Fatalf("the old server: %q", old.mailProblem())
+	}
+}
+
+// While EasyRMM's mail server signs in with a Microsoft 365 application,
+// the engine is given none, whatever the rest of it is; Settings →
+// Patching says why, and so does the log, once per change.
+func TestEngineMailWithheld(t *testing.T) {
+	f := newFleetFixture(t)
+	const why = "EasyRMM's mail server signs in with a Microsoft 365 application."
+	var mu sync.Mutex
+	cfg := MailConfig{Host: "smtp.example.com", Port: 587, Username: "rmm", Password: "pw", FromAddress: "rmm@example.com", Security: "starttls"}
+	var logs logBuffer
+	f.svc = f.engineServiceLog(f.engine, slog.New(slog.NewTextHandler(&logs, nil)),
+		Mail(func(context.Context) (MailConfig, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			return cfg, nil
+		}, mailKey))
+	t.Cleanup(f.svc.stopLeadingMail)
+	pass := func() {
+		t.Helper()
+		var res ReconcileResult
+		f.svc.syncMail(f.ctx, f.svc.engine.client, &res)
+		if len(res.Problems) > 0 {
+			t.Fatal(res.Problems)
+		}
+	}
+	pass()
+	if m := f.engine.Mail(); m["smtpHost"] != cfg.Host {
+		t.Fatalf("with a password: %v", m)
+	}
+	mu.Lock()
+	cfg = MailConfig{Host: "smtp.office365.com", Port: 587, Username: "rmm@example.com", FromAddress: "rmm@example.com", Security: "starttls", Withheld: why}
+	mu.Unlock()
+	pass()
+	if m := f.engine.Mail(); m["smtpHost"] != nil || m["smtpPassword"] != "" || m["smtpUsername"] != nil {
+		t.Fatalf("withheld: %v", m)
+	}
+	v, err := f.svc.Notifications(f.ctx, f.admin)
+	if err != nil || v.Mail.Withheld != why || v.Mail.Host != "" || v.Mail.Problem != "" {
+		t.Fatalf("view %+v, %v", v.Mail, err)
+	}
+	if logs.count("the engine has no mail server: "+why) != 1 {
+		t.Fatal("not logged")
+	}
+	// The webhook switch keeps it withheld; a pass after finds nothing to do.
+	puts := len(f.engine.RequestsTo("PUT", mailSettingsPath))
+	if v, err := f.svc.SetNotificationSettings(f.ctx, f.admin, NotificationSettings{AllowPrivateNetworkWebhooks: true}); err != nil || v.Mail.Host != "" {
+		t.Fatalf("the switch: %+v, %v", v.Mail, err)
+	}
+	pass()
+	if logs.count("the engine has no mail server") != 1 || len(f.engine.RequestsTo("PUT", mailSettingsPath)) != puts+1 {
+		t.Fatal("given again without a change")
 	}
 }

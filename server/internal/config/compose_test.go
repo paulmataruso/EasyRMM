@@ -148,6 +148,10 @@ var fixedInCompose = map[string]string{
 	"EASYRMM_PATCHING":             "not a setting: the engine in this deployment always runs",
 	"EASYRMM_AUTHENTIK_UPSTREAM":   "where the authentik-server service listens (TestComposeListeners checks they agree)",
 	"EASYRMM_UPDATER_STATUS_DIR":   "where the server service mounts the updater's status directory (TestComposeUpdaterStatus checks they agree)",
+	// Read only to be refused: these are taken from their files alone.
+	"EASYRMM_SMTP_CLIENT_SECRET": "refused: the secret is read only from EASYRMM_SMTP_CLIENT_SECRET_FILE",
+	"EASYRMM_SMTP_CLIENT_CERT":   "refused: the certificate is read only from EASYRMM_SMTP_CLIENT_CERT_FILE",
+	"EASYRMM_SMTP_CLIENT_KEY":    "refused: the key is read only from EASYRMM_SMTP_CLIENT_KEY_FILE",
 }
 
 func TestInterpolate(t *testing.T) {

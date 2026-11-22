@@ -76,6 +76,26 @@ func Load(t testing.TB) Env {
 	return e
 }
 
+// CA is the certificate the TLS servers present, PEM, for a TestMain to
+// trust as a system root (m365test.Trust), as a public mail server's would
+// be; nil without make test-mail.
+func CA() []byte {
+	dir := os.Getenv(DirEnv)
+	if dir == "" {
+		return nil
+	}
+	var e Env
+	b, err := os.ReadFile(filepath.Join(dir, "env.json"))
+	if err != nil || json.Unmarshal(b, &e) != nil {
+		return nil
+	}
+	ca, err := os.ReadFile(e.CA)
+	if err != nil {
+		return nil
+	}
+	return ca
+}
+
 // Mailpit is one test SMTP server, seen from one test.
 type Mailpit struct {
 	t        testing.TB

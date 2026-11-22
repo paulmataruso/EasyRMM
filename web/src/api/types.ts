@@ -676,7 +676,28 @@ export interface AuditForwardingTest {
 
 /** STARTTLS required, TLS from the first byte, or none (only to a relay on this machine). */
 export type MailSecurity = "starttls" | "tls" | "none";
-export type MailSignIn = "none" | "password";
+export type MailSignIn = "none" | "password" | "microsoft365";
+/** How a Microsoft 365 application proves itself: a client secret, or a certificate with its private key. */
+export type MailCredential = "secret" | "certificate";
+
+export interface MailCertificate {
+  subject: string;
+  /** SHA-1, in hexadecimal, as Entra shows it under Certificates & secrets. */
+  thumbprint: string;
+  notBefore: string;
+  notAfter: string;
+}
+
+/** The Entra application a mail server signs in with (ADR-0053, slice 2). Its secret and key are never shown. */
+export interface MailApplication {
+  tenantId: string;
+  clientId: string;
+  credential: MailCredential;
+  secretSet: boolean;
+  certificate?: MailCertificate;
+  /** The certificate has ended, or ends within 30 days. */
+  certificateWarning?: string;
+}
 
 export interface MailServer {
   host: string;
@@ -686,10 +707,18 @@ export interface MailServer {
   username: string;
   /** A password is stored; it is never shown. */
   passwordSet: boolean;
+  application?: MailApplication;
   fromAddress: string;
   fromName: string;
   updatedAt?: string;
   updatedBy?: string;
+}
+
+/** The server's last check of the mail server in force: it connected and signed in, and sent nothing. */
+export interface MailCheck {
+  at: string;
+  ok: boolean;
+  message: string;
 }
 
 export interface MailServerView {
@@ -699,6 +728,10 @@ export interface MailServerView {
   console?: MailServer;
   /** What of .env's mail server the patching engine will not take; EasyRMM still sends with it. */
   envProblem?: string;
+  /** Why the patching engine is given no mail server: an application signs in to the one in force. */
+  engineWithheld?: string;
+  /** This server's last check of the mail server in force, absent until one has run since the last change. */
+  check?: MailCheck;
   limits: {
     perMinute: number;
     perDay: number;
@@ -745,6 +778,16 @@ export interface MailServerInput {
   password: string;
   fromAddress: string;
   fromName: string;
+  /** With signIn microsoft365: the application. */
+  tenantId?: string;
+  clientId?: string;
+  credential?: MailCredential;
+  /** Write-only; empty keeps the stored one while the host, port, security, tenant, application and credential stay the same. */
+  clientSecret?: string;
+  /** PEM; empty keeps the stored one, as the secret. */
+  certificate?: string;
+  /** PEM, write-only; empty keeps the stored one, as the secret, or the stored key for a renewed certificate. */
+  certificateKey?: string;
 }
 
 export interface MailServerTestInput {
@@ -1977,6 +2020,11 @@ export interface PatchMonthlyReportList {
   canGenerate: string[];
 }
 
+/** Whether the patching engine can email reports: withheld says why not while a Microsoft 365 application signs in. */
+export interface PatchReportsMail {
+  withheld?: string;
+}
+
 export interface PatchReportSchedule {
   organizationId: string;
   organizationName: string;
@@ -2266,7 +2314,16 @@ export interface PatchNotifications {
    * The mail server email channels send through: EasyRMM's, given to EasyPatch at start and after every change. problem says why
    * EasyRMM could not give it, after several tries in a row, which removed the engine's.
    */
-  mail: { host: string; port: number; security: string; fromAddress: string; fromName: string; problem?: string };
+  mail: {
+    host: string;
+    port: number;
+    security: string;
+    fromAddress: string;
+    fromName: string;
+    problem?: string;
+    /** Why the engine is given no mail server although EasyRMM has one: a Microsoft 365 application signs in to it (ADR-0053). */
+    withheld?: string;
+  };
   allowPrivateNetworkWebhooks: boolean;
 }
 

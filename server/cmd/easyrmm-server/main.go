@@ -3,6 +3,7 @@
 //	easyrmm-server                   run the server (default)
 //	easyrmm-server migrate           apply database migrations and exit
 //	easyrmm-server recover [--email] print a one-time sign-in link for a super administrator
+//	easyrmm-server mail check        sign in to the mail server in force, sending nothing
 //	easyrmm-server healthcheck       exit 0 when the local server is ready
 //	easyrmm-server version           print the version
 package main
@@ -17,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -45,8 +47,10 @@ func run(args []string) int {
 	case "serve", "migrate", "import-easypatch":
 	case "recover":
 		return recoverCommand(args[1:], os.Stdout, os.Stderr)
+	case "mail":
+		return mailCommand(args[1:], os.Stdout, os.Stderr)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q (expected serve, migrate, import-easypatch, recover, healthcheck or version)\n", cmd)
+		fmt.Fprintf(os.Stderr, "unknown command %q (expected serve, migrate, import-easypatch, recover, mail, healthcheck or version)\n", cmd)
 		return 2
 	}
 
@@ -117,6 +121,34 @@ func recoverCommand(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 	if err := app.Recover(ctx, cfg, log, *email, stdout); err != nil {
 		fmt.Fprintf(stderr, "recover: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// mailCommand checks the mail server in force (ADR-0053): it connects and
+// signs in, getting a token first when a Microsoft 365 application signs
+// in, and quits without sending; it prints the answer, and exits 1 when it
+// failed.
+//
+//	docker compose exec server easyrmm-server mail check
+func mailCommand(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 1 || args[0] != "check" {
+		fmt.Fprintln(stderr, "usage: easyrmm-server mail check")
+		return 2
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(stderr, "configuration error:\n%v\n", err)
+		return 1
+	}
+	log := app.NewLogger(cfg.LogFormat, "warn")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	if err := app.MailCheck(ctx, cfg, log, stdout); err != nil {
+		fmt.Fprintf(stderr, "mail check: %s\n", strings.TrimPrefix(err.Error(), "mailer: "))
 		return 1
 	}
 	return 0

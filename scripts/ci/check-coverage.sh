@@ -66,6 +66,9 @@ floors=(
   # and password resets going (ADR-0053).
   "server/internal/mailserver              88"
   "server/internal/httpapi/mailserverapi   90"
+  # Microsoft 365's tokens: an application's secret or private key signs
+  # them in to every mailbox it is given.
+  "server/internal/m365                    90"
   # Reports: their CSV exports take tenants' data out of EasyRMM.
   "server/internal/reports                 90"
   "server/internal/httpapi/reportsapi      90"
