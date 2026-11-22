@@ -160,7 +160,16 @@ func TestHardeningExposureOnWindows(t *testing.T) {
 		Since                       time.Time
 	}
 	var got struct{ Limited, Full exposure }
-	hardeningFunctions(t, `ConvertTo-Json -Compress -Depth 4 @{ Limited = Get-ErExposure -Limit 5; Full = Get-ErExposure }`, &got)
+	// Windows writes the events a moment after the sign-ins fail; the last
+	// user's are the last written.
+	hardeningFunctions(t, `$deadline = (Get-Date).AddSeconds(60)
+while ((Get-Date) -lt $deadline) {
+    $last = @(Get-WinEvent -FilterHashtable @{ LogName = 'Security'; Id = 4625; StartTime = (Get-Date).AddMinutes(-10) } -MaxEvents 50 -ErrorAction SilentlyContinue |
+        Where-Object { [string]$_.Properties[5].Value -eq 'easyrmm-few-`+suffix+`' })
+    if ($last.Count -ge 3) { break }
+    Start-Sleep -Milliseconds 500
+}
+ConvertTo-Json -Compress -Depth 4 @{ Limited = Get-ErExposure -Limit 5; Full = Get-ErExposure }`, &got)
 	t.Logf("%+v", got)
 	l, f := got.Limited, got.Full
 	if !l.Read || !f.Read {

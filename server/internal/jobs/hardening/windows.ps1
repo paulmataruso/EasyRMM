@@ -508,12 +508,17 @@ function Get-ErMpStatus {
 }
 
 # Get-ErServiceState: a service's status and start type, telling a service
-# that is not installed from one that could not be read.
+# that is not installed from one that could not be read. Windows
+# PowerShell gives an empty start type, not an error, where the service's
+# configuration may not be queried.
 function Get-ErServiceState {
     param([string]$Name)
     try {
         $s = Get-Service -Name $Name -ErrorAction Stop
-        return @{ Installed = $true; Read = $true; Status = [string]$s.Status; StartType = [string]$s.StartType }
+        $status = [string]$s.Status
+        $start = [string]$s.StartType
+        if (-not $status -or -not $start) { return @{ Installed = $true; Read = $false; Error = 'its status or start type could not be read' } }
+        return @{ Installed = $true; Read = $true; Status = $status; StartType = $start }
     } catch {
         if ($_.FullyQualifiedErrorId -like 'NoServiceFoundForGivenName*') { return @{ Installed = $false; Read = $true } }
         return @{ Installed = $true; Read = $false; Error = $_.Exception.Message }
