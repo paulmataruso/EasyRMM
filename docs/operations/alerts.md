@@ -157,13 +157,15 @@ Select an alert's name, on the **Alerts** page, in a device's **Alerts**
 card, under **Needs attention** or in a disk's panel, for everything
 EasyRMM recorded about it. The card has its own address (`?alert=` and
 the alert's ID on the page you were on), so you can send it to someone
-who can see the alert; the browser's **Back** closes it.
+who can see the alert. **Close** and Escape close it, however you
+reached it, as does the browser's **Back** when you opened it from a
+list.
 
 | Section | Shows |
 |---|---|
 | **Summary** | Severity, state and kind; the device (and whether it is online now), its site and organization, each linked; for disk health, the disk and what holds |
-| **Why it opened** | The condition the alert opened under, its policy (linked, with its scope and description, and the condition it has now if it changed since), the value when it opened and the latest. For an offline alert, when the device was last seen |
-| **Measurements** | Processor, memory and disk use alerts: the measurement from the policy's minutes before the alert opened until it resolved (or now), with the threshold as a dashed line and the time it was open shaded. **Show as a table** lists the points. Measurements are kept for `EASYRMM_METRICS_RETENTION` (7 days by default), so an older alert has none |
+| **Why it opened** | The condition the alert opened under, its policy by name (with its scope and description, and the condition it has now if it changed since; the **Policies** tab lists every policy), the value when it opened and the latest. For an offline alert, when the device was last seen |
+| **Measurements** | Processor, memory and disk use alerts: the measurement from the policy's minutes before the alert opened until it resolved (or now), with the threshold as a dashed line and the time it was open shaded. **Show as a table** lists the points. Measurements are kept for `EASYRMM_METRICS_RETENTION` (7 days by default): for an alert older than that, the chart starts at the oldest measurement kept and says that earlier ones are no longer kept |
 | **The disk** and **Facts** | Disk health alerts: the disk's state now and its facts, as its panel on the **Hardware** tab shows them |
 | **Times** | When it opened, how long it has been or was open, when it was acknowledged and by whom, and when and how it resolved |
 | **What it means** and **What to do next** | What holds while it is active, what to check, and links to the device's tabs that show more |
@@ -233,7 +235,7 @@ not exist.
 | `GET /api/v1/alerts/summary` | `alert.view` | Active, critical, warning and acknowledged counts, and how many devices have an active alert |
 | `GET /api/v1/alerts/devices` | `alert.view` | Each device with an active alert: its active and critical counts |
 | `GET /api/v1/alerts/{id}` | `alert.view` | One alert, with `canManage` |
-| `GET /api/v1/alerts/{id}/metrics` | `alert.view` and `device.view` on the device | A processor, memory or disk use alert's measurement: `metric`, `threshold`, `from` and `to` (the policy's minutes before it opened until it resolved or now, with a quarter of that either side, at least 15 minutes and at most 6 hours, never past now), `bucketSeconds` (1 minute to 1 day, so at most 240 points) and `samples` (`at`, the average `value`). `409 alert_has_no_metrics` for offline and disk health alerts |
+| `GET /api/v1/alerts/{id}/metrics` | `alert.view` and `device.view` on the device | A processor, memory or disk use alert's measurement: `metric`, `threshold`, `from` and `to` (the policy's minutes before it opened until it resolved or now, with a quarter of that either side, at least 15 minutes and at most 6 hours; never before the oldest measurement kept, `EASYRMM_METRICS_RETENTION` ago, and never past now), `trimmed` (`true` when `from` is later than that window's start because earlier measurements are no longer kept), `bucketSeconds` (the narrowest width from 1 minute to 1 day, or whole days past that, that gives at most 240 points for any window) and `samples` (`at`, the average `value`). `409 alert_has_no_metrics` for offline and disk health alerts |
 | `POST /api/v1/alerts/{id}/acknowledge`, `…/resolve` | `alert.manage` | Acknowledges or resolves it; `409 alert_resolved` once resolved |
 | `GET`, `POST /api/v1/alert-policies`; `GET`, `PATCH`, `DELETE …/{id}` | `monitoring.view`; `monitoring.manage` to change | The policies that apply to the caller |
 

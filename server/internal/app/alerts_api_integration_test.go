@@ -174,6 +174,7 @@ func TestAlertsAPI(t *testing.T) {
 		Threshold     *int
 		From, To      string
 		BucketSeconds int
+		Trimmed       *bool
 		Samples       []struct {
 			At    string
 			Value float64
@@ -181,7 +182,8 @@ func TestAlertsAPI(t *testing.T) {
 	}
 	for _, c := range []*client{admin, viewer} {
 		c.expect(http.StatusOK, "GET", "/api/v1/alerts/"+disk.ID+"/metrics", nil, &metrics)
-		if metrics.Metric != "disk" || *metrics.Threshold != 90 || metrics.BucketSeconds != 60 || len(metrics.Samples) == 0 || metrics.Samples[0].Value != 96 {
+		if metrics.Metric != "disk" || *metrics.Threshold != 90 || metrics.BucketSeconds != 60 || metrics.Trimmed == nil || *metrics.Trimmed ||
+			len(metrics.Samples) == 0 || metrics.Samples[0].Value != 96 {
 			t.Fatalf("disk alert's measurements %+v", metrics)
 		}
 	}

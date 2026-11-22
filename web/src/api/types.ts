@@ -1325,6 +1325,8 @@ export interface AlertMetrics {
   from: string;
   to: string;
   bucketSeconds: number;
+  /** The window starts later than the alert's: earlier measurements are no longer kept. */
+  trimmed: boolean;
   samples: { at: string; value: number }[];
 }
 

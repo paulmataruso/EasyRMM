@@ -1,6 +1,7 @@
 // An alert's card: everything recorded about one alert, opened from wherever alerts are listed (alertLink.tsx). Each
 // section shows only what the server records; nothing here is inferred.
-import { useId, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
+import { Info } from "lucide-react";
 import { Link, useSearchParams } from "react-router";
 import { ApiError } from "../../api/client";
 import { useApi, useList } from "../../api/hooks";
@@ -26,12 +27,24 @@ export function AlertCard() {
   const alert = useApi<AlertEntry>(id ? `/alerts/${encodeURIComponent(id)}` : null, undefined, { refetchInterval: 30_000 });
   const actions = useAlertAction();
   const a = alert.data;
+  // Another alert opened from the card's history replaces the link that opened it, so the card's title, which stays,
+  // takes the focus. Opening the card from a page leaves focus to the dialog.
+  const title = useRef<HTMLSpanElement>(null);
+  const shown = useRef("");
+  useEffect(() => {
+    if (shown.current !== "" && id !== "" && shown.current !== id) title.current?.focus();
+    shown.current = id;
+  }, [id]);
   return (
     <Dialog
       open={id !== ""}
       onClose={close}
       size="lg"
-      title={a?.name ?? "Alert"}
+      title={
+        <span ref={title} tabIndex={-1} className="rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
+          {a?.name ?? "Alert"}
+        </span>
+      }
       description={a ? `${KIND_NAMES[a.kind] ?? a.kind} on ${a.deviceName}` : undefined}
       footer={
         <>
@@ -40,7 +53,13 @@ export function AlertCard() {
         </>
       }
     >
-      {alert.isPending ? <Spinner /> : alert.isError ? <ErrorState error={alert.error} onRetry={() => void alert.refetch()} compact /> : <AlertDetail alert={alert.data} />}
+      {alert.isPending ? (
+        <Spinner />
+      ) : alert.isError ? (
+        <ErrorState error={alert.error} onRetry={() => void alert.refetch()} compact />
+      ) : (
+        <AlertDetail alert={alert.data} />
+      )}
     </Dialog>
   );
 }
@@ -48,7 +67,7 @@ export function AlertCard() {
 const MEASURED = new Set<AlertEntry["kind"]>(["cpu", "memory", "disk"]);
 
 /** Every section of an alert's card. */
-export function AlertDetail({ alert: a }: { alert: AlertEntry }) {
+function AlertDetail({ alert: a }: { alert: AlertEntry }) {
   const device = useApi<Device>(`/devices/${a.deviceId}`, undefined, { refetchInterval: 30_000 });
   return (
     <div className="flex flex-col gap-6">
@@ -152,10 +171,9 @@ function WhyItOpened({ alert: a, device }: { alert: AlertEntry; device?: Device 
     ) : !visible ? (
       muted("Your role cannot see alert policies")
     ) : p ? (
+      // The console has no page for one policy: the Policies tab lists them all.
       <span>
-        <Link to="/alerts?tab=policies" className={linkClass}>
-          {p.name}
-        </Link>
+        <span className="font-medium break-words">{p.name}</span>
         <span className="text-muted">
           {" "}
           · {policyScope(p)}
@@ -201,13 +219,10 @@ function Measurements({ alert: a }: { alert: AlertEntry }) {
   const m = useApi<AlertMetrics>(`/alerts/${a.id}/metrics`, undefined, { refetchInterval: resolved ? false : 60_000 });
   const label = METRIC_LABELS[a.kind as AlertMetrics["metric"]] ?? KIND_NAMES[a.kind];
   const series: TimeSeries<AlertMetrics["samples"][number]>[] = [{ key: "value", label, color: "var(--series-1)", value: (p) => p.value }];
-  const hidden = m.error instanceof ApiError && (m.error.status === 404 || m.error.status === 403);
   return (
     <Section title="Measurements">
       {m.isPending ? (
         <Spinner />
-      ) : hidden ? (
-        <p className="text-sm text-muted">Your role cannot see this device's measurements.</p>
       ) : m.isError ? (
         <ErrorState error={m.error} onRetry={() => void m.refetch()} compact />
       ) : (
@@ -224,12 +239,20 @@ function Measurements({ alert: a }: { alert: AlertEntry }) {
             reference={m.data.threshold !== null ? { value: m.data.threshold, label: `Threshold ${m.data.threshold}%` } : undefined}
             band={{ from: a.openedAt, to: a.resolvedAt, label: resolved ? "While the alert was open" : "Alert open" }}
           />
+          {m.data.trimmed && (
+            <p className="flex items-start gap-1.5 text-xs">
+              <Info className="mt-px size-3.5 shrink-0 text-muted" aria-hidden />
+              <span>
+                Earlier measurements are no longer kept, so the chart starts at <time dateTime={m.data.from}>{formatDateTime(m.data.from)}</time>, after
+                the alert&apos;s own start.
+              </span>
+            </p>
+          )}
           <p className="text-xs text-muted">
-            From {formatMinutes(a.minutes)} before the alert opened until {resolved ? "it resolved" : "now"}, with some time either side.{" "}
+            From {formatMinutes(a.minutes)} before the alert opened until {resolved ? "it resolved" : "now"}, with some time either side
+            {m.data.trimmed ? ", as far as measurements are kept" : ""}.{" "}
             {m.data.bucketSeconds >= 120 ? `Each point is the average over ${formatDuration(m.data.bucketSeconds)}. ` : ""}
-            {m.data.samples.length === 0
-              ? "Measurements are kept for 7 days unless the server is set otherwise, so an older alert has none."
-              : "Gaps are periods the device sent no measurements."}
+            {m.data.samples.length > 0 && "Gaps are periods the device sent no measurements."}
           </p>
         </>
       )}
@@ -348,7 +371,7 @@ function Guide({ alert: a }: { alert: AlertEntry }) {
 }
 
 /** How many of a policy's alerts on the device the card lists. */
-export const HISTORY_LIMIT = 20;
+const HISTORY_LIMIT = 20;
 
 function History({ alert: a }: { alert: AlertEntry }) {
   const list = useList<AlertEntry>(

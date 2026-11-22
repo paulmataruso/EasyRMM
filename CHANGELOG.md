@@ -274,7 +274,8 @@ All notable changes to this project are documented here. The format follows
   the time it was open; for disk health, the disk's facts; its times and
   acknowledgement; what it means and what to do next; the policy's other
   alerts on the device; and the raw JSON to copy. The card has its own
-  address, and **Back** closes it. The API adds
+  address; **Close**, Escape and **Back** close it. An alert older than
+  the measurements kept charts what is kept, and says so. The API adds
   `GET /api/v1/alerts/{id}/metrics`, and `policyId` and `subject` filters
   on `GET /api/v1/alerts`. See
   [An alert's card](docs/operations/alerts.md#an-alerts-card).

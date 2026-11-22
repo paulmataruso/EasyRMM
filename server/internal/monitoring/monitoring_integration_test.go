@@ -41,7 +41,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	inst := testdb.New(t)
 	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, dsn: inst.SuperDSN}
-	f.svc = New(inst.DB, audit.New(inst.DB, nil), 30*24*time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	f.svc = New(inst.DB, audit.New(inst.DB, nil), 30*24*time.Hour, 7*24*time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	// A server that has served agents for a day: devices count as seen when
 	// they last checked in (TestOfflineAfterStart tests the start).
 	f.svc.FollowServing(func() (time.Time, bool) { return time.Now().Add(-24 * time.Hour), true })
@@ -528,7 +528,7 @@ func TestOfflineAfterStart(t *testing.T) {
 	wait := AgentGrace + MinOfflineMinutes*time.Minute
 
 	// A service just made: the server began serving agents now.
-	fresh := New(f.db, audit.New(f.db, nil), 30*24*time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	fresh := New(f.db, audit.New(f.db, nil), 30*24*time.Hour, 7*24*time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if r, err := fresh.Evaluate(f.ctx); err != nil || r.Opened != 0 {
 		t.Fatalf("at the start: %+v %v", r, err)
 	}
@@ -867,6 +867,33 @@ func TestAlertDetail(t *testing.T) {
 	if _, err := f.svc.AlertMetrics(f.ctx, f.super, offline); !conflict(err, "alert_has_no_metrics") {
 		t.Fatalf("offline alert: %v", err)
 	}
+	// An alert opened before the oldest measurement kept (7 days here) charts
+	// only what is kept, and says so, even while an older measurement waits
+	// to be pruned.
+	old := f.id(`INSERT INTO alerts (policy_id, device_id, name, kind, threshold, minutes, severity, value, last_value, status, opened_at, resolved_at, resolution)
+		SELECT id, $1, name, kind, threshold, minutes, severity, 95, 91, 'resolved', now() - interval '10 days', now() - interval '1 hour', 'cleared'
+		FROM alert_policies WHERE kind = 'disk' RETURNING id`, pc)
+	f.exec(`INSERT INTO device_metric_samples (device_id, at, cpu_percent, memory_percent, swap_percent, disk_percent, load1)
+		VALUES ($1, now() - interval '8 days', 5, 20, 0, 50, 0.5), ($1, now() - interval '6 days', 5, 20, 0, 60, 0.5)`, pc)
+	m, err = f.svc.AlertMetrics(f.ctx, hqTech, old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept := time.Now().Add(-7 * 24 * time.Hour); !m.Trimmed || m.From.Before(kept.Add(-time.Minute)) || m.From.After(kept) || m.BucketSeconds != 3600 {
+		t.Fatalf("old alert's window: %+v", m)
+	}
+	values := map[float64]bool{}
+	for _, p := range m.Samples {
+		values[p.Value] = true
+	}
+	if values[50] || !values[60] || !values[97] || len(m.Samples) > maxPoints {
+		t.Fatalf("old alert's measurements: %+v", m.Samples)
+	}
+	if m, err := f.svc.AlertMetrics(f.ctx, hqTech, disk.ID); err != nil || m.Trimmed {
+		t.Fatalf("a recent alert is not trimmed: %+v %v", m, err)
+	}
+	f.exec(`DELETE FROM alerts WHERE id = $1`, old)
+	f.exec(`DELETE FROM device_metric_samples WHERE device_id = $1 AND at < now() - interval '1 day'`, pc)
 
 	// The policy's earlier openings on the device: resolved by hand while
 	// the condition holds, it opens again.

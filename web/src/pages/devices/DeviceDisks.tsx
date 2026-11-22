@@ -425,7 +425,7 @@ function DiskAlertItem({ alert: a }: { alert: DiskAlert }) {
   return (
     <li className="alert-active-pulse alert-active-pulse--row flex items-start justify-between gap-3 px-3 py-2.5 text-sm">
       <span className="min-w-0">
-        <AlertLink id={a.id} label={`${a.name}, details`} title="Show the alert's details" className="block font-medium break-words hover:text-accent">
+        <AlertLink id={a.id} label={`${a.name}, details`} title="Show the alert's details" className="block font-medium break-words hover:underline">
           {a.name}
         </AlertLink>
         <span className="block text-xs text-muted">

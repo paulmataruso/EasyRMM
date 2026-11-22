@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AlertEntry, AlertMetrics, AlertPolicy, DiskCheck } from "../../api/types";
 import { baseRoutes, fail, installFakeApi, ok, sessionView, type FakeHandler, type FakeReply } from "../../test/fakeApi";
@@ -57,6 +57,7 @@ function metrics(extra: Partial<AlertMetrics> = {}): AlertMetrics {
     from: new Date(start).toISOString(),
     to: "2026-11-01T13:00:00Z",
     bucketSeconds: 60,
+    trimmed: false,
     samples: Array.from({ length: 30 }, (_, i) => ({ at: new Date(start + i * 60_000).toISOString(), value: 90 + (i % 8) })),
     ...extra,
   };
@@ -126,6 +127,28 @@ describe("an alert's card", () => {
     await waitFor(() => expect(location()).toBe("/alerts?status=all"));
   });
 
+  it("opened from a link, closes from an alert in its history too", async () => {
+    const user = userEvent.setup();
+    const before = alertEntry("a0", "Disk almost full", { status: "resolved", openedAt: "2026-10-30T08:00:00Z", resolvedAt: "2026-10-30T08:45:00Z", resolution: "cleared" });
+    installFakeApi(routes([DISK, before]));
+    const dialog = await openCard("/alerts?alert=a1", "Disk almost full");
+    await user.click(await within(section(dialog, "History")).findByRole("link", { name: /^Opened / }));
+    await waitFor(() => expect(location()).toBe("/alerts?alert=a0"));
+    expect(await within(section(dialog, "Times")).findByText("Open for")).toBeInTheDocument();
+    await user.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
+    await waitFor(() => expect(location()).toBe("/alerts"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("closes on Escape", async () => {
+    installFakeApi(routes([DISK]));
+    const dialog = await openCard("/alerts?status=all&alert=a1", "Disk almost full");
+    // The browser turns Escape on a modal dialog into its cancel event; jsdom has no modal dialogs, so the test sends it.
+    fireEvent(dialog, new Event("cancel", { cancelable: true }));
+    await waitFor(() => expect(location()).toBe("/alerts?status=all"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("says so when the alert is not found", async () => {
     installFakeApi(routes([]));
     const dialog = await openCard("/alerts?alert=nope", "Alert");
@@ -143,7 +166,12 @@ describe("an alert's card", () => {
   it("is linked from the device page's alerts", async () => {
     installFakeApi(routes([DISK]));
     renderWithProviders(<DeviceAlertsCard deviceId="d1" />, "/devices/d1");
-    expect(await screen.findByRole("link", { name: "Disk almost full, details" })).toHaveAttribute("href", "/devices/d1?alert=a1");
+    const link = await screen.findByRole("link", { name: "Disk almost full, details" });
+    expect(link).toHaveAttribute("href", "/devices/d1?alert=a1");
+    // On a pulsing row, hover underlines and keeps the pulse's colours, which hold 4.5:1 in every state; the accent
+    // on the row's red tint would not.
+    expect(link).toHaveClass("hover:underline");
+    expect(link.className).not.toMatch(/hover:text-/);
   });
 
   it("is linked from the dashboard", async () => {
@@ -173,7 +201,9 @@ describe("an alert's card, section by section", () => {
     const dialog = await openCard("/alerts?alert=a1", "Disk almost full");
     const why = section(dialog, "Why it opened");
     expect(within(why).getByText("A disk 90% full or more for 5 minutes")).toBeInTheDocument();
-    expect(await within(why).findByRole("link", { name: "Disk almost full" })).toHaveAttribute("href", "/alerts?tab=policies");
+    // The console has no page for one policy, so its name is plain text.
+    expect(await within(why).findByText("Disk almost full", { selector: "span.font-medium" })).toBeInTheDocument();
+    expect(within(why).queryByRole("link")).not.toBeInTheDocument();
     expect(within(why).getByText("· Every device")).toBeInTheDocument();
     expect(within(why).getByText("Free space before the database stops.")).toBeInTheDocument();
     expect(within(why).getByText("93%")).toBeInTheDocument();
@@ -238,13 +268,25 @@ describe("an alert's card, section by section", () => {
     installFakeApi(routes([CPU], { "GET /alerts/:id/metrics": ok(metrics({ samples: [], bucketSeconds: 300 })) }));
     const dialog = await openCard("/alerts?alert=a2", "High processor use");
     expect(await within(dialog).findByText("No measurements in this period.")).toBeInTheDocument();
-    expect(within(dialog).getByText(/Each point is the average over 5 min\. Measurements are kept for 7 days/)).toBeInTheDocument();
+    const measurements = section(dialog, "Measurements");
+    expect(within(measurements).getByText(/Each point is the average over 5 min\.$/)).toBeInTheDocument();
+    expect(within(measurements).queryByText(/no longer kept/)).not.toBeInTheDocument();
   });
 
-  it("says when the role cannot see the device's measurements", async () => {
+  it("says on the chart when earlier measurements are no longer kept", async () => {
+    const from = "2026-11-15T12:00:00Z";
+    installFakeApi(routes([CPU], { "GET /alerts/:id/metrics": ok(metrics({ trimmed: true, from, to: "2026-11-22T12:00:00Z", bucketSeconds: 3600 })) }));
+    const dialog = await openCard("/alerts?alert=a2", "High processor use");
+    const measurements = section(dialog, "Measurements");
+    const note = await within(measurements).findByText(/^Earlier measurements are no longer kept, so the chart starts at/);
+    expect(within(note).getByText((_, el) => el?.tagName === "TIME")).toHaveAttribute("dateTime", from);
+    expect(within(measurements).getByText(/with some time either side, as far as measurements are kept\./)).toBeInTheDocument();
+  });
+
+  it("shows an error, not a reason, when the measurements cannot be read", async () => {
     installFakeApi(routes([CPU], { "GET /alerts/:id/metrics": fail(404, "not_found", "Not found.") }));
     const dialog = await openCard("/alerts?alert=a2", "High processor use");
-    expect(await within(dialog).findByText("Your role cannot see this device's measurements.")).toBeInTheDocument();
+    expect(await within(section(dialog, "Measurements")).findByText("Not found")).toBeInTheDocument();
   });
 
   it("asks for no measurements for offline and disk health alerts", async () => {
@@ -339,11 +381,15 @@ describe("an alert's card, section by section", () => {
     const q = server.callsTo("GET /alerts").find((c) => c.query.get("policyId"))!.query;
     expect([q.get("deviceId"), q.get("policyId"), q.get("subject"), q.get("limit")]).toEqual(["d1", "p1", null, "20"]);
 
-    // An earlier one opens over this one; closing goes back to the page, past both.
+    // An earlier one opens over this one, and its title takes the focus from the link, which is gone; closing goes back
+    // to the page, past both.
     await user.click(within(items[1]!).getByRole("link"));
     await waitFor(() => expect(location()).toBe("/alerts?alert=a0"));
     dialog = await screen.findByRole("dialog", { name: "Disk almost full" });
     expect(await within(section(dialog, "Times")).findByText("Open for")).toBeInTheDocument();
+    const title = within(dialog).getByRole("heading", { level: 2 });
+    expect(title.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toHaveTextContent("Disk almost full");
     await user.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
     await waitFor(() => expect(location()).toBe("/alerts"));
   });
@@ -377,7 +423,11 @@ describe("an alert's card, section by section", () => {
     await user.click(within(details).getByText("Raw details (JSON)"));
     expect(details).toHaveAttribute("open");
     expect(JSON.parse(details.querySelector("pre")!.textContent!)).toEqual(DISK);
-    expect(within(details).getByRole("button", { name: "Copy" })).toBeInTheDocument();
+    // Copy puts the same JSON on the clipboard.
+    await user.click(within(details).getByRole("button", { name: "Copy" }));
+    expect(await within(details).findByRole("button", { name: "Copied" })).toBeInTheDocument();
+    const copied = await navigator.clipboard.readText();
+    expect(copied).toBe(JSON.stringify(DISK, null, 2));
   });
 
   it("wraps a very long disk name and detail", async () => {

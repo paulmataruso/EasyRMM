@@ -225,7 +225,11 @@ describe("a disk's panel", () => {
     expect(within(alerts).getByRole("listitem")).toHaveClass("alert-active-pulse", "alert-active-pulse--row");
     expect(within(alerts).getByTitle("1 active alert")).toHaveClass("alert-active-pulse");
     // The alert's name opens its card over the device's page.
-    expect(within(alerts).getByRole("link", { name: "Disk failing, details" })).toHaveAttribute("href", "/devices/d1?tab=hardware&alert=a9");
+    const link = within(alerts).getByRole("link", { name: "Disk failing, details" });
+    expect(link).toHaveAttribute("href", "/devices/d1?tab=hardware&alert=a9");
+    // The row pulses: hover underlines and keeps the pulse's colours.
+    expect(link).toHaveClass("hover:underline");
+    expect(link.className).not.toMatch(/hover:text-/);
     expect(within(alerts).getByText("Critical")).toBeInTheDocument();
     expect(within(alerts).getByRole("link", { name: "The device's alerts" })).toHaveAttribute("href", "/alerts?deviceId=d1&status=all");
 
