@@ -152,7 +152,11 @@ All notable changes to this project are documented here. The format follows
   vendor's filtering platform provider). A value a Group Policy object
   deletes is Group Policy's. Where EasyRMM cannot tell, the setting is
   *check only*, with the reason, a record that could not be read
-  included. On a computer enrolled in an MDM every value no other owner
+  included. What the check could not read is never taken for an answer:
+  such a setting is *unknown* with the error, a module none of whose
+  settings could be read (or whose Defender or BitLocker state could not
+  be) *failed*, and a role or join Windows did not report *unknown*, which
+  makes the computer check only. On a computer enrolled in an MDM every value no other owner
   holds is *check only*, until the MDM reader is proven on an
   Intune-enrolled computer. The accounts module reports whether the
   computer is exposed: failed sign-ins from public addresses, or 10 or

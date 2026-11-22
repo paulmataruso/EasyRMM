@@ -243,7 +243,11 @@ are the only changes a check makes. A check never creates the folder.
 * TLS 1.0 and 1.1 on build 26100 and later are *unknown* where no value
   is set: Microsoft's pages disagree on whether they are off by default.
 
+## Troubleshooting
 
+| What you see | What to check |
+|---|---|
+| No **Hardening** tab | The device is not Linux, or has no EasyRMM agent |
 | No **Run check…** | You do not hold `script.run` on the device |
 | A run *Failed*: "The script finished, but its output does not end with a result." | The script stopped before its last line: the run's output shows where (it needs `job.view_sensitive`) |
 | A run *Timed out* | The check took more than 30 minutes, which a computer under heavy load can. Run it again, or check fewer modules |
@@ -251,5 +255,9 @@ are the only changes a check makes. A check never creates the folder.
 | Every Windows module *Not supported*, naming `%ProgramData%\EasyRMM\Hardening` | Someone other than SYSTEM or Administrators owns it or may write to it, or it is a link. Remove it as an administrator; nothing in it was trusted |
 | Every Windows module *Not supported*, naming Constrained Language Mode | App Control for Business or AppLocker restricts PowerShell on the computer. EasyRMM does not work around it |
 | Windows settings *Check only*, reason `group_policy_record_off` | Group Policy's *Turn off Resultant Set of Policy logging* is set, or the record could not be read: EasyRMM cannot tell what Group Policy sets |
-| Windows settings *Check only*, reason `unreadable` | A record EasyRMM needs could not be read (the platform's notes say which: the MDM enrolments, Group Policy's histories or the local policy file, Security Center, the filtering platform, Defender's status). Check the computer's health; EasyRMM does not guess the owner |
+| Windows settings *Check only*, reason `unreadable` | A record EasyRMM needs could not be read (the platform's notes say which: the MDM enrolments, Group Policy's histories, the local policy file or its switch, a policy value, DSC's or OSConfig's record, Security Center, the filtering platform, Defender's status), or Windows did not report the computer's role or join (shown as *unknown*). Check the computer's health; EasyRMM does not guess the owner |
+| A Windows setting *Unknown*, with an error in its note | The script could not read its value (an access list on a registry key, a log or WMI provider that did not answer). A value that cannot be read is never taken as not set |
+| A Windows module *Failed*: "None of its settings could be read." | Every setting the module counts is *unknown*: their notes give the errors |
+| `defender` and `asr` *Failed*: "Microsoft Defender Antivirus did not report its status" | Defender's service runs, but `Get-MpComputerStatus` failed with the error shown. They are *not applicable* only where the service is not installed or not running |
+| `bitlocker` *Failed*: "BitLocker's state could not be read" | BitLocker's WMI provider is there but its read failed with the error shown; *not applicable* means its provider is absent |
 | Firewall settings *Check only*, reason `other_firewall` | On a server, another vendor's filtering platform provider filters inbound traffic (the notes name it): another firewall may manage the computer's firewall |

@@ -360,7 +360,16 @@ reason above for its not naming CIS recommendations.
   in two steps (what the first step started, and when), and each change
   with its time, which log collection reads (see Audit policy). The format
   stays `EASYRMM-HARDENING-RESULT-V1`: the script and the server ship
-  together.
+  together. **As built in W1, decided in review:** what the script could
+  not read is never taken for an answer. A role or join Windows did not
+  report is *unknown*, an enrolment that could not be read is null, and
+  such a computer is check only (`unreadable`); a setting whose value
+  could not be read (a registry value, Defender's preferences, a log, a
+  WMI provider's answer) is *unknown* with the error, never *not set* and
+  so in place or not; a module none of whose settings could be read, or
+  whose state could not be (Defender's status, BitLocker's), *failed*
+  with the reason. *Not installed* is said only where the feature's
+  service, WMI namespace or class is absent.
 * **Only tighter**, as on Linux: a value stricter than EasyRMM's is left
   (UAC that asks for credentials stays; a lockout threshold of 3 stays 3).
 * **One change at a time on a device.** ADR-0017 lets the agent run four
@@ -560,11 +569,16 @@ returns exactly one of three results:
   see OSConfig below), another vendor's firewall on a server (added in
   W1, for the firewall's values; see Another antivirus or firewall
   below), a record the reader needs that could not be read (added in W1:
-  the MDM enrolments, for every value; the preferences' history or the
-  local Group Policy object's `Registry.pol`, for registry values; the
-  audit extension's history or copy, for audit subcategories; Security
-  Center or the filtering platform, for antivirus or firewall values;
-  Defender's status, for values Tamper Protection guards), a policy value
+  the MDM enrolments, DSC's meta configuration or OSConfig's record of
+  its scenarios, for every value; the preferences' history, the local
+  Group Policy object's `Registry.pol`, whether domain policy turns local
+  policy off, or the policy value itself, for registry values; the audit
+  extension's history or copy, or `SCENoApplyLegacyAuditPolicy`, for
+  audit subcategories; the installation type, Security Center or the
+  filtering platform, for antivirus or firewall values; Defender for
+  Endpoint's onboarding state, for Defender's values; Defender's status,
+  for values Tamper Protection guards; a read that fails is never taken
+  as a value that is absent), a policy value
   (under a `Policies` key) that none of these explains and EasyRMM did
   not write (a tool the reader does not know), and *owner unknown* (a
   value EasyRMM set that was set back twice). The list grows
@@ -644,7 +658,12 @@ and Group Policy objects (see Testing). What it reads, owner by owner:
   so the reader's proof shows that the bridge, read as Local System,
   shows the MDM's values. Group Policy wins over MDM unless the MDM set `MDMWinsOverGP`,
   which "doesn't apply for all settings, such as attack surface reduction
-  (ASR) rules in Windows 10", and the reader reads that too. Microsoft's
+  (ASR) rules in Windows 10", and the reader reads that too. **As built
+  in W1, decided in review:** the reader lets `MDMWinsOverGP` hand a
+  value to the MDM for every Policy CSP policy except attack surface
+  reduction rules, whose Group Policy rule still wins; where
+  `MDMWinsOverGP` cannot be read, the MDM may win, and Group Policy's
+  value is *cannot tell*. Microsoft's
   class reference gives "None supported" as the minimum server, so an
   MDM-enrolled server is check only. The reader's proof on an
   Intune-enrolled Windows 11 moved out of W1, decided in review: it waits
@@ -721,7 +740,11 @@ and Group Policy objects (see Testing). What it reads, owner by owner:
   OSConfig's names to values. *Set by OSConfig* is not shown until then.
   On the same guest, with that baseline applied, the reader listed the
   scenario and gave `osconfig` for every value Group Policy did not hold;
-  without the module, it gave none. **Amended in W1, decided in review:**
+  without the module, it gave none. That run used the reader as it was
+  before the review's fixes; on a rebuilt domain the same baseline (341
+  settings) gave the same answers from the reader at 3d8bfb6, after them,
+  and its `check all` gave 28 settings *check only*, each with `osconfig`
+  (docs/development/machine-tests.md). **Amended in W1, decided in review:**
   the reader runs as SYSTEM, so it imports the module only by its full
   path, from Program Files' or System32's module folder, and only where no
   one but SYSTEM, Administrators and TrustedInstaller owns or may change
@@ -1773,7 +1796,10 @@ As in ADR-0051, with Windows' places and tools:
       `AsSystem` tests passed on both, and `TestQueryDomainAsSystem` named
       each policy's owner, and *cannot tell* with Group Policy's record
       off (see docs/development/machine-tests.md). OSConfig's baseline was
-      applied there too (see OSConfig, above).
+      applied there too (see OSConfig, above). That first run was before
+      the review's fixes; the domain was rebuilt and the scenario run
+      again at 3d8bfb6, after the second review's, with the same results.
+      The reader's tests that expect no domain policy skip there.
     * What CI should do: build the images in each run on GitHub's Ubuntu
       runners with KVM, in jobs that run on pushes to `main` and on a
       schedule, never for pull requests, and never cached; extend

@@ -151,26 +151,46 @@ W1 ran it on a Proxmox VE host with Windows Server 2025's evaluation media:
    cross-compiled (`GOOS=windows go test -c`), run as LocalSystem through
    `run-as-system.ps1`. On the member they run with `EASYRMM_TEST_DOMAIN=1`
    as well, which runs `TestQueryDomainAsSystem`: each owner the reader
-   names must be the policy the script made.
+   names must be the policy the script made. The reader's tests that
+   expect no domain policy (`TestQueryAsSystem`, and the planted MDM,
+   local Group Policy object, DSC, Azure machine configuration and
+   OSConfig owners) skip on a computer in a domain, where the domain's
+   policies hold the values they ask about and its preference items make
+   the rest *cannot tell*.
 4. With `EasyRMM-W1-RSoPOff` linked and the member refreshed, the same
    test expects *cannot tell* with `group_policy_record_off`. Windows
    keeps the last record in WMI after it is turned off; the reader must
    not use it.
+5. On the member, OSConfig's module from the PowerShell Gallery and its
+   member-server baseline, then the reader and `check all` again; then
+   the member back to the snapshot taken before.
 
-What the guests showed, on 2026-11-22:
+W1 ran it twice on 2026-11-22. The first run, between about 02:00 and
+03:30 UTC, used the reader and the script as they were before the
+review's fixes (c27b0b4 and after). The domain was rebuilt
+and the scenario run again at 3d8bfb6, whose reader and hardening script
+are those of 5682775, the second review's fixes:
 
-| Scenario | Result |
+| Scenario | At 3d8bfb6 |
 |---|---|
-| Reader and hardening `AsSystem` tests, member and controller | Passed |
+| Hardening `AsSystem` tests, member and controller | Passed (the first try found that the unreadable-keys test took UAC's setting as missing on Server Core, where UAC's module does not apply; fixed in 3d8bfb6) |
+| Reader `AsSystem` tests, member and controller | Passed: Defender for Endpoint's onboarding and another vendor's firewall; the tests that expect no domain policy skip (the first try ran them, and the domain's policies held their values, as they should) |
 | `TestQueryDomainAsSystem`, every policy linked | Passed: each policy named, Default Domain Policy's too |
-| The same with the record turned off | Passed, after the reader stopped reading the old record |
-| `EasyRMM-W1-Preferences` unlinked | Its history is emptied and the reason `group_policy_preferences` goes (the test, which expects it linked, fails as it should) |
-| Advanced audit policy | `gpresult /x` names the extension without its settings; the reader takes them from the extension's own record |
-| OSConfig's member-server baseline applied | See ADR-0054, OSConfig |
+| The same with the record turned off | Passed |
+| OSConfig's member-server baseline applied (module 1.4.16, scenario 2610.2, 341 settings) | The reader listed the scenario and gave `osconfig` for every value Group Policy did not hold, Group Policy's owner for the rest; `check all` gave 28 settings *check only*, each with `osconfig`; the hardening `AsSystem` tests passed |
+
+The first run alone showed two more: with `EasyRMM-W1-Preferences`
+unlinked its history is emptied and the reason `group_policy_preferences`
+goes (the domain test, which expects it linked, fails as it should); and
+`gpresult /x` names the advanced audit policy extension without its
+settings, so the reader takes them from the extension's own record.
 
 `server/internal/jobs/testdata/windows-hardening-check.txt` is the
-member's `check all` output from that run; the server's integration tests
-read it.
+member's `check all` output from the run at 3d8bfb6, before OSConfig;
+the server's integration tests read it. Its accounts module reads the
+Security log back to 16:26 UTC, after the run: the log's first records
+were written while the new guest's clock ran 8 hours ahead, before its
+time zone and time were set.
 
 Delete the guests when done: the evaluation media expire after 180 days,
 and a domain left running holds memory others need.
