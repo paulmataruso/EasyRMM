@@ -160,13 +160,32 @@ func TestUpdateValidates(t *testing.T) {
 		_, err := f.svc.Update(f.ctx, f.admin, in)
 		fieldErr(t, err, field)
 	}
-	for _, host := range []string{"smtp.example.com/x", "https://smtp.example.com", "smtp.example.com:587", "-bad.example.com"} {
+	// The engine's limits, in UTF-16 code units: 512 for the password, 100
+	// for the sender's name.
+	for field, mutate := range map[string]func(*Input){
+		"password": func(in *Input) { in.Password = strings.Repeat("😀", 257) },
+		"fromName": func(in *Input) { in.FromName = strings.Repeat("😀", 51) },
+	} {
+		in := f.input()
+		mutate(&in)
+		_, err := f.svc.Update(f.ctx, f.admin, in)
+		fieldErr(t, err, field)
+	}
+	// A host too long, or an address with a zone, is a 400, never the
+	// database's refusal.
+	for _, host := range []string{"smtp.example.com/x", "https://smtp.example.com", "smtp.example.com:587", "-bad.example.com", "fe80::1%eth0",
+		"::1%" + strings.Repeat("z", 300), strings.Repeat("a.", 127) + "com"} {
 		in := f.input()
 		in.Host = host
 		_, err := f.svc.Update(f.ctx, f.admin, in)
 		fieldErr(t, err, "host")
 	}
 	in := f.input()
+	in.Password, in.FromName = strings.Repeat("😀", 256), strings.Repeat("😀", 50)
+	if _, err := f.svc.Update(f.ctx, f.admin, in); err != nil {
+		t.Fatalf("at the limits: %v", err)
+	}
+	in = f.input()
 	in.SignIn, in.Password = SignInNone, ""
 	_, err := f.svc.Update(f.ctx, f.admin, in)
 	fieldErr(t, err, "username")
@@ -178,10 +197,16 @@ func TestUpdateValidates(t *testing.T) {
 	if v := f.get(); v.Console.Host != "::1" {
 		t.Fatalf("host %q", v.Console.Host)
 	}
+	// Signing in no longer removes the stored password, and says so.
+	details := f.str(`SELECT details::text FROM audit_log WHERE action = 'mail_server.update' ORDER BY id DESC LIMIT 1`)
+	if !strings.Contains(details, `"passwordChanged": true`) || !strings.Contains(details, `"signIn": {"to": "none", "from": "password"}`) {
+		t.Fatalf("audit details %s", details)
+	}
 }
 
 // The console's mail server is in force at once; its password is sealed,
-// never shown, and kept only while the host and user name stay the same.
+// never shown, and kept only while the host, the port, the security and
+// the user name stay the same.
 func TestUpdateKeepsThePasswordSealed(t *testing.T) {
 	f := newFixture(t, nil)
 	v, err := f.svc.Update(f.ctx, f.admin, f.input())
@@ -199,7 +224,8 @@ func TestUpdateKeepsThePasswordSealed(t *testing.T) {
 		t.Fatalf("sealed %q", sealed)
 	}
 	details := f.str(`SELECT details::text FROM audit_log WHERE action = 'mail_server.update'`)
-	if strings.Contains(details, f.mp.Password) || !strings.Contains(details, `"passwordChanged": true`) {
+	if strings.Contains(details, f.mp.Password) || !strings.Contains(details, `"passwordChanged": true`) ||
+		!strings.Contains(details, `"host": {"to": "`+f.mp.Host+`", "from": ""}`) {
 		t.Fatalf("audit details %s", details)
 	}
 	if !f.svc.Available(f.ctx) {
@@ -219,16 +245,25 @@ func TestUpdateKeepsThePasswordSealed(t *testing.T) {
 	if cfg, _ := f.svc.InForce(f.ctx); cfg.Password != f.mp.Password || cfg.FromName != "RMM" {
 		t.Fatalf("in force %+v", cfg)
 	}
-	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'mail_server.update' AND details->>'passwordChanged' = 'false'`); n != "1" {
+	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'mail_server.update' AND details->>'passwordChanged' = 'false'
+		AND details->'fromName' = '{"from": "EasyRMM", "to": "RMM"}'`); n != "1" {
 		t.Fatalf("%s updates without a password change", n)
 	}
-	// Never sent to another server, or for another user.
-	in.Host = "localhost"
-	_, err = f.svc.Update(f.ctx, f.admin, in)
-	fieldErr(t, err, "password")
-	in.Host, in.Username = f.mp.Host, "someone-else"
-	_, err = f.svc.Update(f.ctx, f.admin, in)
-	fieldErr(t, err, "password")
+	// Never sent to another server, port or user, nor over other security.
+	for name, mutate := range map[string]func(*Input){
+		"host":     func(in *Input) { in.Host = "localhost" },
+		"port":     func(in *Input) { in.Port++ },
+		"security": func(in *Input) { in.Security = mailer.StartTLS },
+		"username": func(in *Input) { in.Username = "someone-else" },
+	} {
+		changed := in
+		mutate(&changed)
+		_, err = f.svc.Update(f.ctx, f.admin, changed)
+		var ae *apperr.Error
+		if !errors.As(err, &ae) || !strings.Contains(ae.Fields["password"], "the server, the port, the security and the user name") {
+			t.Fatalf("another %s keeps the password: %v", name, err)
+		}
+	}
 
 	// A password sealed with another key is reported, not used.
 	other, err := New(f.db, f.audit, newSealer(t), nil, f.svc.log)
@@ -279,7 +314,8 @@ func TestEnvWins(t *testing.T) {
 	if _, err := f.svc.Update(f.ctx, f.admin, f.input()); !errors.Is(err, ErrFromEnv) {
 		t.Fatalf("update: %v", err)
 	}
-	if _, err := f.svc.Delete(f.ctx, f.admin); !errors.Is(err, ErrFromEnv) {
+	// Nothing in the console to remove.
+	if _, err := f.svc.Delete(f.ctx, f.admin); !errors.Is(err, apperr.ErrNotFound) {
 		t.Fatalf("delete: %v", err)
 	}
 	in := f.input()
@@ -302,6 +338,28 @@ func TestEnvWins(t *testing.T) {
 	}
 	if src := f.str(`SELECT details->>'source' FROM audit_log WHERE action = 'mail_server.test'`); src != FromEnv {
 		t.Fatalf("source %q", src)
+	}
+
+	// The console's mail server, saved before .env set one, can still be
+	// removed with its stored password; .env's stays in force.
+	sealed, err := f.sealer.Seal([]byte("old-password"), passwordAD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.exec(`UPDATE mail_server SET host = 'smtp.old.example.com', port = 587, security = 'starttls', sign_in = 'password', username = 'old',
+		password_sealed = $1, from_address = 'old@example.com'`, sealed)
+	if v := f.get(); v.InForce != FromEnv || v.Console == nil || v.Console.Host != "smtp.old.example.com" {
+		t.Fatalf("view %+v", v)
+	}
+	v, err = f.svc.Delete(f.ctx, f.admin)
+	if err != nil || v.InForce != FromEnv || v.Console != nil || f.str(`SELECT password_sealed FROM mail_server`) != "" {
+		t.Fatalf("removing the console's: %+v %v", v, err)
+	}
+	if d := f.str(`SELECT details::text FROM audit_log WHERE action = 'mail_server.delete'`); !strings.Contains(d, `"inForce": false`) {
+		t.Fatalf("delete audit %s", d)
+	}
+	if !f.svc.Available(f.ctx) {
+		t.Fatal(".env's mail server is no longer available")
 	}
 
 	// .env's mail server is checked at start.
@@ -365,7 +423,9 @@ func TestTestMessage(t *testing.T) {
 		t.Fatal("testing saved the form")
 	}
 	details := f.str(`SELECT details::text FROM audit_log WHERE action = 'mail_server.test' AND outcome = 'success'`)
-	if !strings.Contains(details, to) || strings.Contains(details, f.mp.Password) || !strings.Contains(details, `"source": "console"`) {
+	if !strings.Contains(details, to) || strings.Contains(details, f.mp.Password) || !strings.Contains(details, `"source": "console"`) ||
+		!strings.Contains(details, `"signIn": "password"`) || !strings.Contains(details, `"username": "`+f.mp.Username+`"`) ||
+		!strings.Contains(details, `"fromAddress": "`+f.mp.From+`"`) || !strings.Contains(details, `"fromName": "EasyRMM"`) {
 		t.Fatalf("details %s", details)
 	}
 	if v := f.get(); v.Usage.LastMinute != 1 || v.Usage.LastDay != 1 || v.Usage.AccountLastDay != 0 {

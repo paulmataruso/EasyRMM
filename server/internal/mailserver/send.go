@@ -431,7 +431,13 @@ func (s *Service) Test(ctx context.Context, actor audit.Actor, in TestInput) (Te
 	}
 	out := m.Send(ctx, msg, []string{in.To}, s.gate(charge{kind: kindOther}))[0]
 	res := TestResult{OK: out.Err == nil}
-	details := map[string]any{"to": in.To, "source": source, "host": cfg.Host, "port": cfg.Port, "security": cfg.Security}
+	// The sender as it went, never the password.
+	signIn := SignInNone
+	if cfg.Username != "" {
+		signIn = SignInPassword
+	}
+	details := map[string]any{"to": in.To, "source": source, "host": cfg.Host, "port": cfg.Port, "security": cfg.Security,
+		"signIn": signIn, "username": cfg.Username, "fromAddress": cfg.FromAddress, "fromName": cfg.FromName}
 	outcome := audit.Success
 	if res.OK {
 		res.Message = fmt.Sprintf("Sent. %s took the message for %s and answered: %s", m.Address(), in.To, out.Reply)

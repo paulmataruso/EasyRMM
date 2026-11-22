@@ -34,7 +34,14 @@ export function NotificationsTab() {
     <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
       <div className="space-y-5 xl:col-span-2">
         <InForce view={v} />
-        {v.inForce === "env" && v.env ? <EnvServer server={v.env} /> : <MailServerForm view={v} />}
+        {v.inForce === "env" && v.env ? (
+          <>
+            <EnvServer server={v.env} />
+            {v.console && <UnusedConsoleServer server={v.console} />}
+          </>
+        ) : (
+          <MailServerForm view={v} />
+        )}
       </div>
       <Limits view={v} />
     </div>
@@ -69,6 +76,47 @@ function EnvServer({ server }: { server: MailServer }) {
       <div className="mt-4 border-t border-line pt-4">
         <TestMessage input={() => undefined} />
       </div>
+    </Card>
+  );
+}
+
+/**
+ * The console's mail server, saved before .env set one: unused while .env's is in force. Removing it deletes its stored
+ * password and changes nothing that is sent.
+ */
+function UnusedConsoleServer({ server }: { server: MailServer }) {
+  const toast = useToast();
+  const [removing, setRemoving] = useState(false);
+  const remove = useApiMutation(() => api.del<MailServerView>(PATH), {
+    invalidate: [PATH, "/audit"],
+    onSuccess: () => {
+      setRemoving(false);
+      toast.success("The console's mail server is removed. .env's stays in force.");
+    },
+  });
+  return (
+    <Card title="Saved in the console, not in use">
+      <p className="mb-3 text-sm text-muted">
+        This mail server was saved here before .env set one. It is not used while .env&apos;s is in force, and would be again if EASYRMM_SMTP_HOST were removed from .env.
+      </p>
+      <KeyValueList narrow items={serverItems(server)} />
+      <div className="mt-4 flex justify-end border-t border-line pt-4">
+        <Button type="button" variant="danger" icon={<Trash2 className="size-3.5" aria-hidden />} onClick={() => setRemoving(true)}>
+          Remove
+        </Button>
+      </div>
+      <ConfirmDialog
+        open={removing}
+        onClose={() => setRemoving(false)}
+        onConfirm={() => remove.mutate(undefined)}
+        title="Remove the console's mail server?"
+        confirmLabel="Remove"
+        tone="danger"
+        loading={remove.isPending}
+        error={remove.error}
+      >
+        Its settings and stored password are deleted. This does not change the mail server in force: .env&apos;s stays, and mail goes on as before.
+      </ConfirmDialog>
     </Card>
   );
 }
@@ -113,9 +161,14 @@ function MailServerForm({ view }: { view: MailServerView }) {
   const [removing, setRemoving] = useState(false);
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }));
   const password = form.signIn === "password";
-  // A stored password is kept only while the host and the user name stay the same.
+  // A stored password is kept only while the host, the port, the security and the user name stay the same.
   const keepsPassword =
-    !!stored?.passwordSet && stored.host.toLowerCase() === form.host.trim().toLowerCase() && stored.username === form.username.trim() && password;
+    !!stored?.passwordSet &&
+    stored.host.toLowerCase() === form.host.trim().toLowerCase() &&
+    stored.port === Number(form.port) &&
+    stored.security === form.security &&
+    stored.username === form.username.trim() &&
+    password;
 
   const input = (): MailServerInput => ({
     host: form.host.trim(),
@@ -206,8 +259,15 @@ function MailServerForm({ view }: { view: MailServerView }) {
               onChange={(e) => set("password", e.target.value)}
               error={err("password")}
               autoComplete="new-password"
+              maxLength={512}
               placeholder={keepsPassword ? "Stored" : ""}
-              hint={keepsPassword ? "A password is stored, encrypted. Leave this empty to keep it." : "Stored encrypted and never shown again."}
+              hint={
+                keepsPassword
+                  ? "A password is stored, encrypted. Leave this empty to keep it."
+                  : stored?.passwordSet
+                    ? "Enter it again: the stored one is kept only for the same server, port, security and user name."
+                    : "Stored encrypted and never shown again."
+              }
             />
           </div>
         )}
@@ -223,7 +283,14 @@ function MailServerForm({ view }: { view: MailServerView }) {
             spellCheck={false}
             required
           />
-          <TextField label="Sender's name" value={form.fromName} onChange={(e) => set("fromName", e.target.value)} error={err("fromName")} hint="Shown with the address." />
+          <TextField
+            label="Sender's name"
+            value={form.fromName}
+            onChange={(e) => set("fromName", e.target.value)}
+            error={err("fromName")}
+            hint="Shown with the address."
+            maxLength={100}
+          />
         </div>
 
         <InlineError error={save.error} fields={FIELDS} />

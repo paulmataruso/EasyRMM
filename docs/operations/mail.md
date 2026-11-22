@@ -49,11 +49,14 @@ server**.
    encrypted connection or to loopback), or not at all for a relay that
    takes mail by the sender's address. The password is stored encrypted
    with the server's secret key (`EASYRMM_SECRET_KEY`) and never shown or
-   returned again. To keep it, leave the field empty: it is kept while the
-   server and the user name stay the same. Changing either asks for it
-   again.
+   returned again; it is at most 512 characters, as the patching engine,
+   which gets it too, allows. To keep it, leave the field empty: it is
+   kept while the server, the port, the security and the user name stay
+   the same, so that it never goes to another server or over another
+   kind of connection. Changing any of them asks for it again.
 4. **Send from** and **Sender's name**: the address messages come from,
-   and the name shown with it (by default `EasyRMM`). The mail server must
+   and the name shown with it (by default `EasyRMM`, at most 100
+   characters). The mail server must
    let the signed-in user send as that address.
 5. **Send test message** sends a short message, in EasyRMM's own words,
    with the settings as they are in the form, saved or not, to the address
@@ -69,6 +72,11 @@ server**.
 **Remove** clears the console's mail server and its stored password.
 Invitations and password links then come back to the administrator, and
 password reset stops being offered.
+
+While `.env`'s mail server is in force, the page still shows a mail server
+saved in the console before, as **Saved in the console, not in use**. Its
+**Remove** deletes those settings and the stored password, and changes
+nothing that is sent: `.env`'s mail server stays in force.
 
 Mail server errors name the host only. A mail server's reply is shown to
 super administrators on the test message and in the server's log.
@@ -146,10 +154,11 @@ Each change is in the audit log, under **Mail server**:
 
 | Action | When |
 |--------|------|
-| `mail_server.update` | The console's mail server is set or changed: the settings saved, and whether the password changed (never the password) |
-| `mail_server.delete` | The console's mail server is removed |
+| `mail_server.update` | The console's mail server is set or changed: each setting from and to, and whether the password changed, by a new one or the stored one removed (never the password) |
+| `mail_server.delete` | The console's mail server is removed, and whether it was in force (not while `.env`'s was) |
 | `mail_server.limits_update` | The limits are changed, from and to |
-| `mail_server.test` | A test message: to whom, through which server, from `.env` or the console, and the error when it did not go |
+| `mail_server.test` | A test message: to whom, through which server, from `.env` or the console, as which sender (address, name, sign-in and user name; never the password), and the error when it did not go |
+| `user.invite`, `user.password_link` (denied) | An invitation or a password link refused under the limits on account mail, with the limit; at most once a minute per administrator and limit |
 
 ## API
 Super administrators (`settings.manage` on the platform):
@@ -157,8 +166,8 @@ Super administrators (`settings.manage` on the platform):
 | Route | Does |
 |-------|------|
 | `GET /api/v1/settings/mail-server` | Which mail server is in force (`env`, `console` or `none`), `.env`'s and the console's (without passwords: `passwordSet` says whether one is stored), the limits and their usage |
-| `PUT /api/v1/settings/mail-server` | Sets the console's mail server; an empty `password` keeps the stored one while `host` and `username` stay the same. `409 mail_server_from_env` while `.env` sets one |
-| `DELETE /api/v1/settings/mail-server` | Removes the console's mail server. `409 mail_server_from_env` while `.env` sets one |
+| `PUT /api/v1/settings/mail-server` | Sets the console's mail server; an empty `password` keeps the stored one while `host`, `port`, `security` and `username` stay the same. `409 mail_server_from_env` while `.env` sets one |
+| `DELETE /api/v1/settings/mail-server` | Removes the console's mail server and its stored password; `404` when there is none. Allowed while `.env` sets one, which stays in force |
 | `PUT /api/v1/settings/mail-server/limits` | `perMinute` (1 to 10,000) and `perDay` (1 to 1,000,000, at least `perMinute`) |
 | `POST /api/v1/settings/mail-server/test` | `to`, and `server` with the form's settings to test them before saving (refused with `409` while `.env` sets the mail server). `429 test_rate_limited` with `Retry-After` within 30 seconds of the last test |
 

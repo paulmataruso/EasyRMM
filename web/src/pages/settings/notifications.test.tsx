@@ -93,7 +93,7 @@ describe("mail server settings", () => {
     expect(await screen.findByText("Saved. EasyRMM sends mail through smtp.example.com.")).toBeInTheDocument();
   });
 
-  it("keeps the stored password only for the same server and user, and removes the mail server", async () => {
+  it("keeps the stored password only for the same server, port, security and user, and removes the mail server", async () => {
     const user = userEvent.setup();
     const server = installFakeApi({
       ...routes(CONSOLE),
@@ -113,11 +113,23 @@ describe("mail server settings", () => {
     await waitFor(() => expect(server.callsTo("PUT /settings/mail-server")).toHaveLength(1));
     expect(server.callsTo("PUT /settings/mail-server")[0]!.body).toMatchObject({ host: "smtp.example.com", password: "" });
 
+    // Another port or security: the stored password does not go with it.
+    await user.clear(main().getByLabelText(/^Port/));
+    await user.type(main().getByLabelText(/^Port/), "2525");
+    expect(main().getByLabelText(/^Password/)).not.toHaveAttribute("placeholder", "Stored");
+    expect(main().getByText(/Enter it again: the stored one is kept only for the same server, port, security and user name/)).toBeInTheDocument();
+    await user.clear(main().getByLabelText(/^Port/));
+    await user.type(main().getByLabelText(/^Port/), "587");
+    expect(main().getByLabelText(/^Password/)).toHaveAttribute("placeholder", "Stored");
+    await user.selectOptions(main().getByLabelText(/^Security/), "tls");
+    expect(main().getByLabelText(/^Password/)).not.toHaveAttribute("placeholder", "Stored");
+    await user.selectOptions(main().getByLabelText(/^Security/), "starttls");
+    expect(main().getByLabelText(/^Password/)).toHaveAttribute("placeholder", "Stored");
+
     // Another server: the stored password does not go with it.
     await user.clear(main().getByLabelText(/^Server/));
     await user.type(main().getByLabelText(/^Server/), "smtp.other.example");
     expect(main().getByLabelText(/^Password/)).not.toHaveAttribute("placeholder", "Stored");
-    expect(main().getByText("Stored encrypted and never shown again.")).toBeInTheDocument();
 
     // Without signing in, no user name or password is sent.
     await user.selectOptions(main().getByLabelText(/^Sign in/), "none");
@@ -152,6 +164,24 @@ describe("mail server settings", () => {
     await user.click(main().getByRole("button", { name: "Send test message" }));
     expect(await main().findByText("Test message sent")).toBeInTheDocument();
     expect(server.callsTo("POST /settings/mail-server/test")[0]!.body).toEqual({ to: "ops@example.com" });
+  });
+
+  it("removes the console's mail server while .env's is in force, which changes nothing that is sent", async () => {
+    const user = userEvent.setup();
+    const env: MailServerView = { ...NONE, inForce: "env", env: { ...STORED, host: "relay.example.com", port: 25, signIn: "none", username: "", passwordSet: false } };
+    const server = installFakeApi({ ...routes({ ...env, console: STORED }), "DELETE /settings/mail-server": ok(env) });
+    renderApp("/settings?tab=notifications");
+
+    expect(await screen.findByRole("heading", { name: "Notifications", level: 1 })).toBeInTheDocument();
+    const card = (await main().findByRole("heading", { name: "Saved in the console, not in use" })).closest("section")!;
+    expect(within(card).getByText(/It is not used while .env's is in force/)).toBeInTheDocument();
+    expect(main().getByText("smtp.example.com:587")).toBeInTheDocument();
+    await user.click(main().getByRole("button", { name: "Remove" }));
+    const dialog = await screen.findByRole("dialog", { name: "Remove the console's mail server?" });
+    expect(within(dialog).getByText(/This does not change the mail server in force: .env's stays/)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(server.callsTo("DELETE /settings/mail-server")).toHaveLength(1));
+    expect(await screen.findByText("The console's mail server is removed. .env's stays in force.")).toBeInTheDocument();
   });
 
   it("sets the limits and shows how much of them is used", async () => {

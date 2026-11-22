@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
-	"unicode/utf8"
+	"unicode/utf16"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -317,8 +317,9 @@ type Input struct {
 	SignIn   string `json:"signIn"`
 	Username string `json:"username"`
 	// Password is write-only. Left empty, the stored one is kept while the
-	// host and the user name stay the same: a stored password never goes
-	// to a server it was not entered for.
+	// host, the port, the security and the user name stay the same: a
+	// stored password never goes to a server, or over a connection, it was
+	// not entered for.
 	Password    string `json:"password"`
 	FromAddress string `json:"fromAddress"`
 	FromName    string `json:"fromName"`
@@ -326,13 +327,13 @@ type Input struct {
 
 var hostLabel = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$`)
 
-// validHost accepts an IP address or a DNS name.
+// validHost accepts an IP address, without a zone, or a DNS name.
 func validHost(h string) bool {
-	if _, err := netip.ParseAddr(h); err == nil {
-		return true
-	}
 	if h == "" || len(h) > 253 {
 		return false
+	}
+	if a, err := netip.ParseAddr(h); err == nil {
+		return a.Zone() == ""
 	}
 	for _, l := range strings.Split(strings.TrimSuffix(h, "."), ".") {
 		if !hostLabel.MatchString(l) {
@@ -342,9 +343,32 @@ func validHost(h string) bool {
 	return true
 }
 
+// The longest password and sender's name, in UTF-16 code units, as the
+// patching engine, which gets them too, counts characters.
+const (
+	maxPassword = 512
+	maxFromName = 100
+)
+
+// utf16Len is the length of s in UTF-16 code units.
+func utf16Len(s string) int {
+	n := 0
+	for _, r := range s {
+		n += utf16.RuneLen(r)
+	}
+	return n
+}
+
+// keepsPassword reports whether in may keep stored's password: it signs in
+// to the same host, on the same port, with the same security, as the same
+// user.
+func keepsPassword(in *Input, stored *row) bool {
+	return stored != nil && stored.signIn == SignInPassword && strings.EqualFold(stored.host, in.Host) && stored.port == in.Port &&
+		stored.security == in.Security && stored.username == in.Username
+}
+
 // check validates in, cleaning it, and works out the mailer's configuration,
-// using the stored password when in gives none and the host and user name
-// are unchanged.
+// using the stored password when in gives none and keepsPassword allows.
 func (s *Service) check(in *Input, stored *row) (mailer.Config, error) {
 	f := apperr.Fields{}
 	in.Host = strings.TrimSpace(in.Host)
@@ -379,16 +403,17 @@ func (s *Service) check(in *Input, stored *row) (mailer.Config, error) {
 		}
 		switch {
 		case in.Password != "":
-			f.Check(len(in.Password) <= 1024 && !strings.ContainsAny(in.Password, "\x00\r\n"), "password", "Enter a password of at most 1,024 characters, on one line.")
+			f.Check(utf16Len(in.Password) <= maxPassword && !strings.ContainsAny(in.Password, "\x00\r\n"), "password",
+				"Enter a password of at most 512 characters, on one line.")
 			cfg.Username, cfg.Password = in.Username, in.Password
-		case stored != nil && stored.signIn == SignInPassword && strings.EqualFold(stored.host, in.Host) && stored.username == in.Username:
+		case keepsPassword(in, stored):
 			pw, err := s.sealer.Open(stored.sealed, passwordAD)
 			if err != nil {
 				f.Add("password", "The stored password cannot be opened with this server's secret key. Enter it again.")
 			}
 			cfg.Username, cfg.Password = in.Username, string(pw)
 		default:
-			f.Add("password", "Enter the password. A stored password is kept only while the host and the user name stay the same.")
+			f.Add("password", "Enter the password. A stored password is kept only while the server, the port, the security and the user name stay the same.")
 		}
 	default:
 		f.Add("signIn", "Choose to sign in with a password, or not at all.")
@@ -399,7 +424,7 @@ func (s *Service) check(in *Input, stored *row) (mailer.Config, error) {
 	case !mailer.BareAddress(in.FromAddress):
 		f.Add("fromAddress", "Enter one email address, such as rmm@example.com, without a name.")
 	}
-	f.Check(utf8.RuneCountInString(in.FromName) <= 100 && !strings.ContainsFunc(in.FromName, unicode.IsControl), "fromName",
+	f.Check(utf16Len(in.FromName) <= maxFromName && !strings.ContainsFunc(in.FromName, unicode.IsControl), "fromName",
 		"Enter a name of at most 100 characters, on one line.")
 	return cfg, f.Err()
 }
@@ -437,10 +462,16 @@ func (s *Service) Update(ctx context.Context, actor audit.Actor, in Input) (View
 			in.Host, in.Port, in.Security, in.SignIn, in.Username, sealed, in.FromAddress, in.FromName, actorID(actor)); err != nil {
 			return err
 		}
+		// From and to, as for the limits; never the password, only whether
+		// it changed: a new one, or the stored one removed.
+		change := func(from, to any) map[string]any { return map[string]any{"from": from, "to": to} }
 		return s.audit.Write(ctx, tx, audit.Event{Actor: actor, Action: "mail_server.update", Outcome: audit.Success,
 			TargetType: "mail_server", TargetID: net.JoinHostPort(in.Host, strconv.Itoa(in.Port)),
-			Details: map[string]any{"host": in.Host, "port": in.Port, "security": in.Security, "signIn": in.SignIn, "username": in.Username,
-				"fromAddress": in.FromAddress, "fromName": in.FromName, "passwordChanged": in.Password != ""}})
+			Details: map[string]any{"host": change(stored.host, in.Host), "port": change(stored.port, in.Port),
+				"security": change(stored.security, in.Security), "signIn": change(stored.signIn, in.SignIn),
+				"username": change(stored.username, in.Username), "fromAddress": change(stored.fromAddress, in.FromAddress),
+				"fromName":        change(stored.fromName, in.FromName),
+				"passwordChanged": in.Password != "" || (stored.sealed != "" && sealed == "")}})
 	})
 	if err != nil {
 		return View{}, err
@@ -449,11 +480,10 @@ func (s *Service) Update(ctx context.Context, actor audit.Actor, in Input) (View
 	return s.Get(ctx)
 }
 
-// Delete removes the console's mail server; the limits stay.
+// Delete removes the console's mail server and its stored password; the
+// limits stay. While .env's mail server is in force it may still be
+// removed, which changes nothing that is sent.
 func (s *Service) Delete(ctx context.Context, actor audit.Actor) (View, error) {
-	if s.env != nil {
-		return View{}, ErrFromEnv
-	}
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		stored, err := loadRow(ctx, tx, true)
 		if err != nil {
@@ -468,7 +498,7 @@ func (s *Service) Delete(ctx context.Context, actor audit.Actor) (View, error) {
 		}
 		return s.audit.Write(ctx, tx, audit.Event{Actor: actor, Action: "mail_server.delete", Outcome: audit.Success,
 			TargetType: "mail_server", TargetID: net.JoinHostPort(stored.host, strconv.Itoa(stored.port)),
-			Details: map[string]any{"host": stored.host, "port": stored.port}})
+			Details: map[string]any{"host": stored.host, "port": stored.port, "inForce": s.env == nil}})
 	})
 	if err != nil {
 		return View{}, err

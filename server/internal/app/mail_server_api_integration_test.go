@@ -208,7 +208,9 @@ func TestMailServerFromEnv(t *testing.T) {
 	}
 	form := map[string]any{"host": mp.Host, "port": mp.Port, "security": "none", "signIn": "none", "fromAddress": mp.From}
 	wantStatus(t, admin.do("PUT", base, form), http.StatusConflict, "mail_server_from_env")
-	wantStatus(t, admin.do("DELETE", base, nil), http.StatusConflict, "mail_server_from_env")
+	// Nothing saved in the console to remove; removing it would not change
+	// the mail server in force.
+	wantStatus(t, admin.do("DELETE", base, nil), http.StatusNotFound, "not_found")
 	wantStatus(t, admin.do("POST", base+"/test", map[string]any{"to": mp.Address("a"), "server": form}), http.StatusConflict, "mail_server_from_env")
 	admin.expect(http.StatusOK, "PUT", base+"/limits", map[string]any{"perMinute": 20, "perDay": 500}, &v)
 	if v.Limits.PerMinute != 20 {
