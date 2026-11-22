@@ -39,7 +39,7 @@ func TestWindowsHardeningJobs(t *testing.T) {
 		job.Body != windowsHardeningScript || job.ScriptName != "Check Windows hardening (every module)" || job.ArgCount != len(wantArgs) {
 		t.Errorf("job %+v", job)
 	}
-	resp, err := f.svc.Poll(f.ctx, win)
+	resp, err := f.svc.Poll(f.ctx, win, nil)
 	if err != nil || len(resp.Jobs) != 1 {
 		t.Fatalf("poll %+v, %v", resp, err)
 	}
