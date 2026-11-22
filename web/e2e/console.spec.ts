@@ -1012,6 +1012,12 @@ test("Update all now for a site installs every available update, and restarts th
   const job = page.getByRole("dialog").getByRole("region", { name: "Restart after the install" });
   await expect(job).toContainText("Restart asked for");
   await expect(job).toContainText("Restart asked for once the install finished.");
+  // The job in full: how it started, from EasyRMM's audit log; the device; its updates, with the engine's details.
+  const detail = page.getByRole("dialog");
+  await expect(detail.getByRole("region", { name: "How it started" })).toContainText("A request for every device in Contoso Dental Group / Downtown clinic");
+  await expect(detail.getByRole("region", { name: "Device" })).toContainText("dt-reception-01");
+  await expect(detail.getByRole("region", { name: "Updates" })).toContainText("On the device now");
+  await expect(detail.getByRole("region", { name: "Timeline" })).toContainText("Finished");
   await page.getByRole("dialog").getByRole("button", { name: "Close" }).last().click();
   await expect(page.getByRole("dialog")).toBeHidden();
 });

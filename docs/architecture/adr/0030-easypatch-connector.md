@@ -253,3 +253,71 @@ The owner asked, on 2026-11-22, in these words:
 * The audit names the site or organization, the scope, the presets and the
   counts.
 
+
+## A job in full (amended 2026-11-22)
+
+The owner asked, on 2026-11-22, in these words:
+
+> And on the patch jobs page, can you please be more verbose when I select a
+> job. Its not very detailed.
+
+What follows was decided in review.
+
+* **What the engine keeps of a job**, and EasyRMM already reads: its type,
+  status, how it started (manual, scheduled, system) and who asked, its
+  times (requested, not before, sent, accepted, started, last progress,
+  finished, gives up), its progress, its error code and message, whether its
+  updates need a restart, its counts, the job it retries; each update's
+  title, KB, classification, status, why it was skipped, Windows Update's
+  result code, error code and message, restart needed, progress and times;
+  and the endpoint's events during the job. Its job records also keep the
+  request's payload, a summary, who asked by id and a retry count, which its
+  API does not return; it keeps no output of a patch job. Nothing of use is
+  dropped by the connector (only the organization's name in the engine and
+  the events' endpoint and job ids, which EasyRMM has), so **the engine and
+  the connector are unchanged**, and so is the contract test.
+* **What EasyRMM adds**, each from where it is known, never guessed:
+  * *How it started*, from EasyRMM's audit record naming the job
+    (`details.jobId`, not a cancellation): who, when, as what, and for an
+    install, as part of which Patch all (with its request id, shared by its
+    devices' jobs), which updates, whether feature upgrades were included,
+    when it was scheduled for. A restart EasyRMM asked for after an install
+    is shown as EasyRMM's, linked to the install. A job with no record says
+    so: started by the device's patch policy, by the engine, or in the
+    engine itself.
+  * *The device*, from EasyRMM (its organization, site, operating system
+    and EasyRMM agent version) and from the engine's endpoint (its
+    operating system and build, whether it still gets security updates, the
+    EasyPatch agent's version and whether it is outdated, online and last
+    check-in, a restart pending). When the engine cannot be read, the
+    device says so.
+  * *Each update's facts*, from the engine's lists of the endpoint's updates,
+    those still to install and those installed (two reads per job, whatever
+    its size): KB numbers or the package and the version it replaces, MSRC
+    severity, size, release date, CVEs, whether CISA lists them as exploited
+    and its due date, the advisories, the support link. An update on
+    neither list is shown as no longer listed; when the lists cannot be
+    read, the job says so rather than showing nothing. Each update also
+    shows its state on the device now, which may differ from the job's
+    (an update that failed in the job may have installed since).
+  * *What an error code means*: a Windows Update HRESULT, whatever form the
+    agent reported it in, is shown in hex with EasyRMM's explanation and
+    what to try, for the codes the engine itself describes; any other is an
+    "unknown code". A code that is not an HRESULT (`apt_exit_100`) is shown
+    as reported, beside the agent's message.
+* **No logs**: the engine stores no output of patch jobs, so there is none
+  to show; ADR-0063 is about script jobs' output and does not apply.
+* **Layout**: a summary at the top (status, result, how long, restart
+  needed, the error), then how it started, the device, the restart after
+  the install, the updates with their totals, and a timeline merging the
+  job's times with the engine's events (its queued and started events
+  left out, as the job's own times say the same). Long lists show their
+  first entries (25 updates, 20 timeline entries, 5 CVEs an update) and the
+  rest on request.
+* **Reads** (decided in review): the job refreshes every 4 seconds while
+  it runs, reading only the job; what the engine knows of its updates
+  comes from two lists of the device's updates, so it is read apart
+  (`GET /api/v1/patching/jobs/{id}/facts`), once per opening, and again
+  only when the job lists more updates. How the job started is looked for
+  in the audit trail within 15 minutes either side of the job's creation,
+  not at any time since.

@@ -16,7 +16,7 @@ import type {
   RestartPlan,
 } from "../../api/types";
 import { baseRoutes, fail, installFakeApi, noContent, ok, sessionView, unreportedRoutes, type FakeHandler, type FakeReply } from "../../test/fakeApi";
-import { device } from "../../test/fixtures";
+import { device, patchJobDevice } from "../../test/fixtures";
 import { renderApp, renderWithProviders } from "../../test/render";
 import { activityText, maintenanceText, requester } from "./patchText";
 import { RestartDialog } from "./PatchDialogs";
@@ -394,6 +394,7 @@ describe("patching page", () => {
       deviceId: "d1",
       deviceName: "WEB-01",
       canManage: true,
+      ...patchJobDevice(),
     };
     const server = installFakeApi(
       patchingRoutes({
@@ -410,6 +411,7 @@ describe("patching page", () => {
           ],
         }),
         "GET /patching/jobs/:id": ok(detail),
+        "GET /patching/jobs/:id/facts": ok({ updateFacts: {}, updateFactsError: null }),
         "POST /patching/jobs/:id/cancel": ok({
           ...detail,
           summary: {
@@ -443,6 +445,9 @@ describe("patching page", () => {
     await user.click(within(dialog).getByRole("button", { name: "Cancel job" }));
     await waitFor(() => expect(server.callsTo("POST /patching/jobs/:id/cancel")).toHaveLength(1));
     expect(server.call("POST /patching/jobs/:id/cancel").params.id).toBe("j1");
+    // The job is read again after the cancellation; what the engine knows of its updates is not.
+    await waitFor(() => expect(server.callsTo("GET /patching/jobs/:id").length).toBeGreaterThan(1));
+    expect(server.callsTo("GET /patching/jobs/:id/facts")).toHaveLength(1);
   });
 
   it("restarts the chosen devices whose restart is pending, leaving out servers not ticked", async () => {
@@ -593,6 +598,7 @@ describe("patching page", () => {
       deviceId: "d1",
       deviceName: "WEB-01",
       canManage: true,
+      ...patchJobDevice(),
     });
     const server = installFakeApi(
       patchingRoutes({
@@ -683,6 +689,7 @@ describe("patching page", () => {
           deviceId: "d1",
           deviceName: "WEB-01",
           canManage: true,
+          ...patchJobDevice(),
         } satisfies PatchJobDetail),
       }),
     );
@@ -711,6 +718,7 @@ describe("patching page", () => {
           deviceId: "d1",
           deviceName: "WEB-01",
           canManage: false,
+          ...patchJobDevice(),
         } satisfies PatchJobDetail),
       }),
     );

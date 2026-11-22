@@ -333,6 +333,26 @@ All notable changes to this project are documented here. The format follows
   server neither loses nor repeats it. The install's job shows the choice
   and what became of it. See
   [Restart after the install](docs/operations/patching.md#restart-after-the-install).
+- **A patch job in full** (ADR-0030, amended 2026-11-22). Opening a job
+  under **Patching → Jobs**, or from a device, now shows a summary (status,
+  result, how long it took, whether the device needs a restart to finish,
+  the engine's error with what its code means), how it started (who, as
+  what, as part of which Patch all and with which updates, from EasyRMM's
+  audit log; a retry links the job it runs again), the device (linked, its
+  organization and site, its operating system and build and whether it
+  still gets security updates, both agents' versions, online and last
+  check-in, a pending restart), each update (KB or package and the version
+  it replaces, classification, severity, size, release date, CVEs, whether
+  CISA lists it as exploited and by when it must be fixed, its advisories,
+  its error, its state on the device now) with totals, and a timeline of
+  the job's times and the engine's events. A Windows Update error code is
+  shown in hex with what it means and what to try, or as an unknown code.
+  Long lists show their first entries and the rest on request. The engine
+  keeps no output of patch jobs, so there is no log to show. The job's
+  answer in the API gains `device` and `origin`; what the engine knows of
+  its updates is read once, apart, from
+  `GET /api/v1/patching/jobs/{id}/facts` (`updateFacts`,
+  `updateFactsError`). See [Jobs](docs/operations/patching.md#jobs).
 - **Disk health** (ADR-0065, slice 1). The EasyRMM agent reads each disk's
   own health record every 30 minutes, NVMe's health log and ATA's SMART
   with a fixed list of read-only commands, on Windows and Linux, and sends

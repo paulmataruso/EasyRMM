@@ -15,6 +15,7 @@ import type {
   MetricSample,
   MetricsHistory,
   Organization,
+  PatchJobDetail,
   Place,
   RoleView,
   RunStatus,
@@ -422,4 +423,20 @@ export function alertEntry(id: string, name: string, extra: Partial<AlertEntry> 
     canManage: true,
     ...extra,
   };
+}
+
+/** What a patch job's detail adds to the job: its device as EasyRMM and the engine know it, and nothing more. */
+export function patchJobDevice(extra: Partial<Pick<PatchJobDetail, "device" | "origin">> = {}) {
+  return {
+    device: {
+      organizationName: "Northwind Traders",
+      siteName: "Head office",
+      platform: "linux" as const,
+      os: "Debian GNU/Linux 13 (trixie)",
+      agentVersion: "0.6.0",
+      endpoint: null,
+    },
+    origin: null,
+    ...extra,
+  } satisfies Pick<PatchJobDetail, "device" | "origin">;
 }

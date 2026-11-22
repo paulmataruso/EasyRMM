@@ -1,6 +1,5 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState } from "react";
 import { Link } from "react-router";
-import { RotateCcw } from "lucide-react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { api, errorMessage } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
@@ -9,9 +8,6 @@ import type {
   PatchActionResult,
   PatchAvailablePlan,
   PatchInstallPreview,
-  PatchJobDetail,
-  PatchJobView,
-  PatchRestartAfter,
   PatchTargets,
   RestartInput,
   RestartMode,
@@ -19,17 +15,15 @@ import type {
 } from "../../api/types";
 import { Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
-import { Alert, Badge, Button, ErrorState, InlineError, Input, KeyValueList, Spinner } from "../../components/ui";
-import { formatDateTime, formatRelative, formatSize, plural } from "../../lib/format";
-import { canRetry, categoryLabel, isActiveJob, jobOutcome, jobTypeLabel, PatchJobBadge, requester, skipReasonText, triggerLabel } from "./patchText";
+import { Alert, Button, ErrorState, InlineError, Input, Spinner } from "../../components/ui";
+import { formatRelative, formatSize, plural } from "../../lib/format";
+import { categoryLabel, skipReasonText } from "./patchText";
 import {
   ExpiryField,
   localInput,
   MAX_ALWAYS,
   MAX_BULK,
-  minutesText,
   PlanLists,
-  RESTART_MODES,
   RestartModeFields,
   ServerTicks,
   splitPlan,
@@ -798,232 +792,3 @@ export function RestartDialog({
   );
 }
 
-const RESTART_STATES: Record<PatchRestartAfter["state"], { label: string; tone: "info" | "ok" | "neutral" | "danger" }> = {
-  waiting: { label: "Waiting for the install to finish", tone: "info" },
-  done: { label: "Restart asked for", tone: "ok" },
-  skipped: { label: "Not restarted", tone: "neutral" },
-  failed: { label: "Restart refused", tone: "danger" },
-};
-
-/** The restart asked for with an install: the choice, how users are treated, and what became of it. */
-function RestartAfterView({ r, onJob }: { r: PatchRestartAfter; onJob: (id: string) => void }) {
-  const mode = RESTART_MODES.find((m) => m.value === r.mode)?.label ?? r.mode;
-  const how =
-    r.mode === "Countdown" && r.countdownMinutes
-      ? `${mode}, after ${minutesText(r.countdownMinutes)}`
-      : r.mode === "PromptWithDeadline" && r.deadlineMinutes
-        ? `${mode}, within ${minutesText(r.deadlineMinutes)}`
-        : mode;
-  const state = RESTART_STATES[r.state] ?? { label: r.state, tone: "neutral" as const };
-  const link = (id: string, text: string) => (
-    <button type="button" className="rounded-sm text-left text-accent hover:underline" onClick={() => onJob(id)}>
-      {text}
-    </button>
-  );
-  const items: [string, ReactNode][] = [
-    ["Asked for", r.condition === "Always" ? "Restart when done" : "Restart if the updates need it"],
-    ["Signed-in users", how],
-    ...(r.expiresAfterMinutes ? [["If offline", `Wait ${minutesText(r.expiresAfterMinutes)}`] as [string, ReactNode]] : []),
-    ...(r.server ? [["Server", "Ticked by name to restart"] as [string, ReactNode]] : []),
-    [
-      "State",
-      <span key="state" className="flex flex-col items-start gap-0.5">
-        <Badge tone={state.tone}>{state.label}</Badge>
-        {r.message && <span className="text-muted">{r.message}</span>}
-      </span>,
-    ],
-    ...(r.restartJobId ? [["Restart job", link(r.restartJobId, "The restart after the install")] as [string, ReactNode]] : []),
-    ...(r.midwayJobId ? [["Restart to go on", link(r.midwayJobId, "The restart the install waited for")] as [string, ReactNode]] : []),
-    ...(r.requestedAt
-      ? [["Requested", `${formatDateTime(r.requestedAt)}${r.requestedBy ? ` by ${requester(r.requestedBy)}` : ""}`] as [string, ReactNode]]
-      : []),
-  ];
-  return (
-    <section aria-label="Restart after the install">
-      <h3 className="mb-1.5 text-xs font-medium text-muted">Restart after the install</h3>
-      <KeyValueList narrow items={items} />
-    </section>
-  );
-}
-
-/** How far a running job has got, as the agent reports it. */
-function JobProgress({ percent }: { percent: number }) {
-  const p = Math.max(0, Math.min(100, percent));
-  return (
-    <div role="progressbar" aria-label="Progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={p} className="h-1.5 overflow-hidden rounded-full bg-line">
-      <div className="h-full rounded-full bg-accent transition-[width] duration-500 motion-reduce:transition-none" style={{ width: `${p}%` }} />
-    </div>
-  );
-}
-
-/**
- * One EasyPatch job: its updates and what happened, refreshing while it runs; cancellable, or run again once
- * finished, where the caller may. A retry is a new job, which onJob opens.
- */
-export function PatchJobDialog({ jobId, onClose, onJob }: { jobId: string | null; onClose: () => void; onJob: (id: string) => void }) {
-  const toast = useToast();
-  const job = useApi<PatchJobDetail>(jobId ? `/patching/jobs/${jobId}` : null, undefined, {
-    refetchInterval: (data) => (data && !isActiveJob(data.summary) ? false : 4_000),
-  });
-  const cancel = useApiMutation(() => api.post<PatchJobDetail>(`/patching/jobs/${jobId}/cancel`), {
-    invalidate: PATCH_KEYS,
-    onSuccess: (j) => toast.success(isActiveJob(j.summary) ? "Asked the device to stop." : "Job cancelled."),
-  });
-  const retry = useApiMutation(() => api.post<PatchJobView>(`/patching/jobs/${jobId}/retry`), {
-    invalidate: PATCH_KEYS,
-    onSuccess: (j) => {
-      toast.success("Retry queued.");
-      onJob(j.id);
-    },
-  });
-  useEffect(() => {
-    cancel.reset();
-    retry.reset();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset when another job opens
-  }, [jobId]);
-  const d = job.data;
-  const s = d?.summary;
-  const outcome = s ? jobOutcome(s) : "";
-
-  return (
-    <Dialog
-      open={jobId !== null}
-      onClose={onClose}
-      size="lg"
-      title={s ? `${jobTypeLabel(s.type)} on ${d.deviceName}` : "Patch job"}
-      footer={
-        <>
-          {d?.canManage && s && isActiveJob(s) && !s.cancelRequested && (
-            <Button variant="danger-ghost" loading={cancel.isPending} onClick={() => cancel.mutate()}>
-              Cancel job
-            </Button>
-          )}
-          {d?.canManage && s && canRetry(s) && (
-            <Button icon={<RotateCcw className="size-4" aria-hidden />} loading={retry.isPending} onClick={() => retry.mutate()}>
-              Retry
-            </Button>
-          )}
-          <Button onClick={onClose}>Close</Button>
-        </>
-      }
-    >
-      {job.isPending ? (
-        <Spinner />
-      ) : job.isError ? (
-        <ErrorState error={job.error} onRetry={() => void job.refetch()} compact />
-      ) : (
-        s && (
-          <div className="space-y-4">
-            <InlineError error={cancel.error ?? retry.error} />
-            {s.errorMessage && (
-              <Alert tone="danger" title="The patching engine reported an error">
-                {s.errorMessage}
-                {s.errorCode && <span className="block text-xs text-muted">{s.errorCode}</span>}
-              </Alert>
-            )}
-            {s.cancelRequested && isActiveJob(s) && (
-              <Alert tone="info" title="Cancellation requested">
-                {d.cancelRequestedAt ? `Asked ${formatRelative(d.cancelRequestedAt)}. ` : ""}The device stops at its next check-in or the next safe point.
-              </Alert>
-            )}
-            {s.timedOut && (
-              <Alert tone="warn" title="The job ran out of time">
-                The device stopped reporting progress, so the patching engine gave up on it.
-              </Alert>
-            )}
-            {isActiveJob(s) && s.progressPercent !== null && <JobProgress percent={s.progressPercent} />}
-            <KeyValueList
-              narrow
-              items={[
-                ["Status", <PatchJobBadge key="s" job={s} />],
-                ...(s.progressMessage && isActiveJob(s) ? [["Now", s.progressMessage] as [string, string]] : []),
-                ...(outcome ? [["Result", outcome] as [string, string]] : []),
-                ...(d.notBefore ? [["Starts", formatDateTime(d.notBefore)] as [string, string]] : []),
-                [
-                  "Requested",
-                  <span key="r">
-                    {formatDateTime(s.createdAt)}{" "}
-                    <span className="text-muted">{s.trigger === "Manual" ? `by ${requester(s.requestedBy)}` : triggerLabel(s.trigger).toLowerCase()}</span>
-                  </span>,
-                ],
-                ...(d.retryOfJobId
-                  ? [
-                      [
-                        "Runs again",
-                        <button key="retry" type="button" className="rounded-sm text-left text-accent hover:underline" onClick={() => onJob(d.retryOfJobId!)}>
-                          The earlier job
-                        </button>,
-                      ] as [string, ReactNode],
-                    ]
-                  : []),
-                ...(d.restartFor
-                  ? [
-                      [
-                        "Restart after",
-                        <button key="for" type="button" className="rounded-sm text-left text-accent hover:underline" onClick={() => onJob(d.restartFor!)}>
-                          The install job
-                        </button>,
-                      ] as [string, ReactNode],
-                    ]
-                  : []),
-                // A queued job waits for its device until then.
-                ...(s.status === "Queued" ? [["Gives up at", formatDateTime(s.expiresAt)] as [string, string]] : []),
-                ...(d.deliveredAt
-                  ? [
-                      [
-                        "Sent to the device",
-                        d.deliveryCount > 1 ? `${formatDateTime(d.deliveredAt)} (${d.deliveryCount.toLocaleString()} times)` : formatDateTime(d.deliveredAt),
-                      ] as [string, string],
-                    ]
-                  : []),
-                ...(s.startedAt ? [["Started", formatDateTime(s.startedAt)] as [string, string]] : []),
-                ...(s.completedAt ? [["Finished", formatDateTime(s.completedAt)] as [string, string]] : []),
-                ...(s.rebootRequired ? [["Restart", "Needed to finish"] as [string, string]] : []),
-              ]}
-            />
-            {d.restartAfter && <RestartAfterView r={d.restartAfter} onJob={onJob} />}
-            {d.items.length > 0 && (
-              <div>
-                <h3 className="mb-1.5 text-xs font-medium text-muted">Updates</h3>
-                <ul className="divide-y divide-line rounded-md border border-line">
-                  {d.items.map((it) => (
-                    <li key={it.updateGuid} className="flex items-start justify-between gap-3 px-3 py-2 text-sm">
-                      <span className="min-w-0">
-                        <span className="block break-words">{it.title}</span>
-                        <span className="text-xs text-muted">
-                          {categoryLabel(it.category)}
-                          {it.skipReason && ` · ${it.skipReason}`}
-                          {it.errorMessage && <span className="text-danger"> · {it.errorMessage}</span>}
-                        </span>
-                      </span>
-                      <Badge tone={it.status === "Succeeded" ? "ok" : it.status === "Failed" ? "danger" : "neutral"}>
-                        {it.status}
-                        {it.installPercent !== null && it.status === "Installing" ? ` · ${it.installPercent}%` : ""}
-                        {it.downloadPercent !== null && it.status === "Downloading" ? ` · ${it.downloadPercent}%` : ""}
-                      </Badge>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-            {d.events.length > 0 && (
-              <div>
-                <h3 className="mb-1.5 text-xs font-medium text-muted">Events</h3>
-                <ol className="space-y-1 text-sm">
-                  {d.events.map((e) => (
-                    <li key={e.id} className="flex gap-3">
-                      <span className="shrink-0 text-xs whitespace-nowrap text-muted tabular-nums" title={formatDateTime(e.createdAt)}>
-                        {formatRelative(e.createdAt)}
-                      </span>
-                      <span className={e.severity === "Error" ? "text-danger" : e.severity === "Warning" ? "text-warn" : undefined}>{e.message}</span>
-                    </li>
-                  ))}
-                </ol>
-              </div>
-            )}
-          </div>
-        )
-      )}
-    </Dialog>
-  );
-}

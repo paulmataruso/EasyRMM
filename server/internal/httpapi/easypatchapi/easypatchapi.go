@@ -51,6 +51,7 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/patching/devices/{id}/jobs", a.deviceJobs)
 	r("GET /api/v1/patching/jobs", a.jobs)
 	r("GET /api/v1/patching/jobs/{id}", a.job)
+	r("GET /api/v1/patching/jobs/{id}/facts", a.jobFacts)
 	r("POST /api/v1/patching/jobs/{id}/cancel", a.cancelJob)
 	r("POST /api/v1/patching/jobs/{id}/retry", a.retryJob)
 	r("POST /api/v1/patching/scan", a.scan)
@@ -253,6 +254,15 @@ func (a *API) job(w http.ResponseWriter, r *http.Request) error {
 	}
 	j, err := a.svc.Job(r.Context(), httpapi.Caller(r), id)
 	return ok(w, j, err)
+}
+
+func (a *API) jobFacts(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	f, err := a.svc.JobFacts(r.Context(), httpapi.Caller(r), id)
+	return ok(w, f, err)
 }
 
 func (a *API) cancelJob(w http.ResponseWriter, r *http.Request) error {

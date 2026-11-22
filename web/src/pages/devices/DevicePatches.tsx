@@ -8,12 +8,12 @@ import { useUrlState } from "../../lib/urlState";
 import {
   AgentInstallDialog,
   InstallDialog,
-  PatchJobDialog,
   RestartDialog,
   StopPatchingDialog,
   useAllowPatching,
   useScan,
 } from "../patching/PatchDialogs";
+import { PatchJobDialog } from "../patching/PatchJobDialog";
 import {
   categoryLabel,
   ComplianceBadge,
