@@ -35,10 +35,14 @@ func TestStorePackage(t *testing.T) {
 		version, arch string
 		preview, ok   bool
 	}{
-		"Microsoft.PowerShell_7.6.10.0_x64__8wekyb3d8bbwe":        {"7.6.10.0", agentproto.ArchX64, false, true},
-		"Microsoft.PowerShell_7.6.10.0_arm64__8wekyb3d8bbwe":      {"7.6.10.0", agentproto.ArchARM64, false, true},
-		"microsoft.powershell_7.4.13.0_X86__8wekyb3d8bbwe":        {"7.4.13.0", agentproto.ArchX86, false, true},
-		"Microsoft.PowerShellPreview_7.7.0.5_x64__8wekyb3d8bbwe":  {"7.7.0.5", agentproto.ArchX64, true, true},
+		"Microsoft.PowerShell_7.6.10.0_x64__8wekyb3d8bbwe":       {"7.6.10.0", agentproto.ArchX64, false, true},
+		"Microsoft.PowerShell_7.6.10.0_arm64__8wekyb3d8bbwe":     {"7.6.10.0", agentproto.ArchARM64, false, true},
+		"microsoft.powershell_7.4.13.0_X86__8wekyb3d8bbwe":       {"7.4.13.0", agentproto.ArchX86, false, true},
+		"Microsoft.PowerShellPreview_7.7.0.5_x64__8wekyb3d8bbwe": {"7.7.0.5", agentproto.ArchX64, true, true},
+		// What winget installs for 7.6 (an LTS release) by default.
+		"Microsoft.PowerShell-LTS_7.6.10.0_x64__8wekyb3d8bbwe":    {"7.6.10.0", agentproto.ArchX64, false, true},
+		"Microsoft.PowerShell-LTS_7.6.10.0_arm64__8wekyb3d8bbwe":  {"7.6.10.0", agentproto.ArchARM64, false, true},
+		"Microsoft.PowerShell-Extra_7.6.10.0_x64__8wekyb3d8bbwe":  {},
 		"Microsoft.PowerShell_7.6.10.0_riscv__8wekyb3d8bbwe":      {"7.6.10.0", "", false, true},
 		"Microsoft.PowerShell_7.6.10.0_neutral_~_8wekyb3d8bbwe":   {},
 		"Microsoft.PowerShell_7.6.10.0_x64__0000000000000":        {},

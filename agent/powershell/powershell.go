@@ -33,9 +33,10 @@ func installFolder(name string) (major int, preview, ok bool) {
 
 // storePackages are the folders of PowerShell's Microsoft Store (MSIX)
 // packages in <Program Files>\WindowsApps:
-// Microsoft.PowerShell_7.6.0.0_x64__8wekyb3d8bbwe, or
-// Microsoft.PowerShellPreview_… for previews.
-var storePackages = regexp.MustCompile(`^(?i)Microsoft\.PowerShell(Preview)?_([0-9.]+)_([a-z0-9]+)__8wekyb3d8bbwe$`)
+// Microsoft.PowerShell_7.6.0.0_x64__8wekyb3d8bbwe,
+// Microsoft.PowerShell-LTS_… for a long-term release's package (which
+// winget installs for 7.6), or Microsoft.PowerShellPreview_… for previews.
+var storePackages = regexp.MustCompile(`^(?i)Microsoft\.PowerShell(Preview|-LTS)?_([0-9.]+)_([a-z0-9]+)__8wekyb3d8bbwe$`)
 
 // storePackage reads a Store package's folder name.
 func storePackage(name string) (version, arch string, preview, ok bool) {
@@ -51,7 +52,7 @@ func storePackage(name string) (version, arch string, preview, ok bool) {
 	case "x86":
 		arch = agentproto.ArchX86
 	}
-	return m[2], arch, m[1] != "", true
+	return m[2], arch, strings.EqualFold(m[1], "Preview"), true
 }
 
 // productVersion is the version in a version resource's ProductVersion,

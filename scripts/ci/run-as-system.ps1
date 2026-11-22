@@ -29,7 +29,8 @@ $lines = @('@echo off', 'setlocal')
 foreach ($e in $Environment) { $lines += "set `"$e`"" }
 $lines += "cd /d `"$WorkingDirectory`""
 $lines += "`"$Program`" " + (($Arguments | ForEach-Object { "`"$_`"" }) -join ' ') + " > `"$output`" 2>&1"
-$lines += "echo %ERRORLEVEL%> `"$exitFile`""
+# The redirection comes first: "echo 1> file" would redirect handle 1.
+$lines += "> `"$exitFile`" echo %ERRORLEVEL%"
 Set-Content -Path $commands -Value $lines -Encoding Ascii
 
 $name = 'EasyRMM test ' + [guid]::NewGuid().ToString('N')

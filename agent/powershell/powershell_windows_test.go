@@ -26,7 +26,8 @@ import (
 // scheduled task with EASYRMM_TEST_SYSTEM set, on a runner where PowerShell
 // 7 was installed from Microsoft's MSI, Microsoft's x86 ZIP unpacked into
 // Program Files (x86) (EASYRMM_TEST_PWSH_X86) and the Store package
-// installed by winget (EASYRMM_TEST_PWSH_STORE). As an administrator they
+// installed by winget, or as winget would where the runner has none
+// (EASYRMM_TEST_PWSH_STORE). As an administrator they
 // would test something else: the account the agent runs as is trusted too.
 
 // systemTest skips a test unless it may run, and fails one that is not
@@ -135,7 +136,7 @@ func TestDiscoverAsSystem(t *testing.T) {
 
 	store := os.Getenv("EASYRMM_TEST_PWSH_STORE")
 	if store == "" {
-		t.Fatal("EASYRMM_TEST_PWSH_STORE is not set (the Store package's pwsh.exe, installed by winget)")
+		t.Fatal("EASYRMM_TEST_PWSH_STORE is not set (the Store package's pwsh.exe)")
 	}
 	found = false
 	for _, p := range list {

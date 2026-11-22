@@ -1,7 +1,7 @@
 # ADR-0064: Remote PowerShell management
 
-* Status: Accepted (2026-11-21, after an independent review). Not
-  implemented.
+* Status: Accepted (2026-11-21, after an independent review). Slice 1
+  implemented (PRs #88, #90).
 * One part is the owner's (2026-11-21): the owner chose MeshCentral's
   terminal with session-level audit, so typed input is not recorded
   ([Interactive sessions](#interactive-sessions)). Everything else
@@ -9,8 +9,8 @@
 * Amends: [ADR-0017](0017-scripts-and-jobs.md): a `pwsh` shell beside
   `powershell`; one-off commands beside the library; output while a run
   is open; targets chosen by organization, site or group; the program
-  that ran recorded on each run. It gains an *Amended by ADR-0064* line
-  when this is implemented.
+  that ran recorded on each run. It has an *Amended by ADR-0064* line
+  since slice 1.
 * Builds on: [ADR-0009](0009-agent-protocol.md) (its section "Evolving
   the protocol"), [ADR-0014](0014-remote-access-gateway-and-device-discovery.md)
   and [ADR-0033](0033-relays-bound-to-grants.md) (the remote-access
@@ -274,8 +274,10 @@ asks for the MSI, and PowerShell 7.7 has no MSI.
 * **Store installs are reported, not used.** A PowerShell installed from
   the Microsoft Store, or from its MSIX package, is in
   `Program Files\WindowsApps`, in a folder named for the package
-  (`Microsoft.PowerShell_<version>_<architecture>__8wekyb3d8bbwe`, or
-  `Microsoft.PowerShellPreview_…` for previews), owned by TrustedInstaller
+  (`Microsoft.PowerShell_<version>_<architecture>__8wekyb3d8bbwe`,
+  `Microsoft.PowerShell-LTS_…` for a long-term release's package, or
+  `Microsoft.PowerShellPreview_…` for previews; the LTS name added in
+  slice 1, as winget's MSIX for 7.6 is that package), owned by TrustedInstaller
   and closed to users. The agent lists those folders, reports each as
   *found, not used (Store install)* with its version, and never runs it:
   * Microsoft installs it for one user ("There is no option to install it
