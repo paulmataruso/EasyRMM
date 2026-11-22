@@ -268,7 +268,8 @@ func scriptKeepsWhatPurgeRemoves(t *testing.T, c *scriptContainer) {
 	c.sh(t, "rm -rf "+stateDir+" /var/log/audit && dpkg -i /tmp/"+name+".deb >/dev/null && echo 'a line of the trail' >>/var/log/audit/audit.log")
 	c.record(t, "sudo", "pkg\t"+c.token(t, name))
 	m := scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "sudo"), HardeningUndo, []string{"sudo"}), "sudo")
-	want := []string{"Removed the packages it installed: " + name + "; the configuration files, logs and data of " + name + " stay (removed, not purged: apt-get purge " + name + " removes them)"}
+	want := []string{"Removed the packages it installed: " + name,
+		"The configuration files, logs and data of " + name + " stay (removed, not purged: apt-get purge " + name + " removes them)"}
 	if m.Outcome != HardeningUndone || !slices.Equal(m.Done, want) {
 		t.Errorf("undo of an installed package: %+v, want %q", m, want)
 	}

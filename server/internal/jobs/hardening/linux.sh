@@ -2791,7 +2791,7 @@ tx_rollback() {
 			case $tr_rc in
 			0)
 				tr_k=$(pkg_kept "$PKG_REMOVED")
-				[ -z "$tr_k" ] || TX_LEFT="${TX_LEFT:+$TX_LEFT; }${tr_k#; }"
+				[ -z "$tr_k" ] || TX_LEFT="${TX_LEFT:+$TX_LEFT; }$tr_k"
 				;;
 			1) TX_LEFT="${TX_LEFT:+$TX_LEFT; }the packages it installed ($tr_p) stay, because removing them would remove other packages too" ;;
 			*) TX_LEFT="${TX_LEFT:+$TX_LEFT; }the packages it installed ($tr_p) stay: the package manager could not remove them$(pkg_why)" ;;
@@ -3523,7 +3523,8 @@ pkg_remove() {
 	}
 }
 # pkg_kept NAMES: what removing the packages NAMES (one word, separated by
-# spaces) left, for the result: nothing, or "; " and what. dpkg keeps a
+# spaces) left, for the result: nothing, or what (a line of its own, as a
+# result's line holds 300 characters). dpkg keeps a
 # package removed, not purged, as "rc" where its purge would delete
 # something (configuration files, a postrm script); one it forgot left
 # nothing to purge. rpm -e leaves the files a package did not ship.
@@ -3534,10 +3535,15 @@ pkg_kept() {
 		# shellcheck disable=SC2016,SC2086 # dpkg-query's fields; names, one word each
 		pk_rc=$(dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' $1 2>/dev/null |
 			awk '$1 == "rc" { printf "%s%s", s, $2; s = " " }')
-		[ -z "$pk_rc" ] || printf '; the configuration files, logs and data of %s stay (removed, not purged: apt-get purge %s removes them)' "$pk_rc" "$pk_rc"
+		[ -z "$pk_rc" ] || printf 'the configuration files, logs and data of %s stay (removed, not purged: apt-get purge %s removes them)' "$pk_rc" "$pk_rc"
 		;;
-	*) printf '; the files they did not ship (logs, data) stay, and configuration files changed since as .rpmsave' ;;
+	*) printf 'the files the removed packages did not ship (logs, data) stay, and their configuration files changed since as .rpmsave' ;;
 	esac
+}
+# did_kept NAMES: says what removing the packages NAMES left (pkg_kept).
+did_kept() {
+	dk_k=$(pkg_kept "$1")
+	[ -z "$dk_k" ] || did "$(printf '%.1s' "$dk_k" | tr '[:lower:]' '[:upper:]')${dk_k#?}"
 }
 # pkg_remove_alone TOKEN...: removes the packages the tokens (PKG_TOKEN)
 # name that are still installed as the installation left them, if that
@@ -3756,21 +3762,23 @@ undo_unit() {
 	if [ "$AUDIT_UNDO" = yes ] && [ "$1" = auditd.service ] && [ -f "$AUDITD_MARKER" ] && marker_has_auditd; then
 		return 0
 	fi
+	# A unit that came with a package undo removed: a link that systemctl
+	# enable made for it, which removing the package does not take away
+	# where the package did not make it (Ubuntu 22.04's fail2ban), points
+	# nowhere: it goes. The unit may still be there, generated from an
+	# init script the package keeps as a configuration file.
+	if [ "$2" = not-found ]; then
+		for ut_l in /etc/systemd/system/*.wants/"$1" /etc/systemd/system/*.requires/"$1"; do
+			[ -L "$ut_l" ] && [ ! -e "$ut_l" ] || continue
+			tx_push "ln -s $(readlink "$ut_l") $ut_l"
+			rm -f "$ut_l" && did "Removed $ut_l, a link to $1, gone with its package"
+		done
+	fi
 	ut_now=$(unit_states "$1")
 	ut_ne=${ut_now% *}
 	ut_na=${ut_now#* }
-	# A unit whose package undo removed is gone, as it was. A link that
-	# systemctl enable made for it, which removing the package does not
-	# take away where the package did not make it (Ubuntu 22.04's
-	# fail2ban), points nowhere: it goes.
+	# A unit whose package undo removed is gone, as it was.
 	if [ "$ut_ne" = not-found ]; then
-		if [ "$2" = not-found ]; then
-			for ut_l in /etc/systemd/system/*.wants/"$1" /etc/systemd/system/*.requires/"$1"; do
-				[ -L "$ut_l" ] && [ ! -e "$ut_l" ] || continue
-				tx_push "ln -s $(readlink "$ut_l") $ut_l"
-				rm -f "$ut_l" && did "Removed $ut_l, a link to $1, gone with its package"
-			done
-		fi
 		unit_gone "$1"
 		return 0
 	fi
@@ -3818,7 +3826,8 @@ undo_pkg() {
 	pkg_remove_alone "$@" && up_rc=0 || up_rc=$?
 	case $up_rc in
 	0)
-		[ -z "$PKG_REMOVED" ] || did "Removed the packages it installed: $PKG_REMOVED$(pkg_kept "$PKG_REMOVED")"
+		[ -z "$PKG_REMOVED" ] || did "Removed the packages it installed: $PKG_REMOVED"
+		did_kept "$PKG_REMOVED"
 		pkg_back_did
 		;;
 	1) left "the packages it installed ($up_names), because removing them would remove other packages too" ;;
@@ -4539,7 +4548,8 @@ undo_audit_after() {
 	0)
 		rm -f "$AUDITD_MARKER"
 		rmdir "${AUDITD_MARKER%/*}" 2>/dev/null
-		did "Removed the packages EasyRMM installed for auditd${PKG_REMOVED:+: $PKG_REMOVED}, and $AUDITD_MARKER$(pkg_kept "$PKG_REMOVED")"
+		did "Removed the packages EasyRMM installed for auditd${PKG_REMOVED:+: $PKG_REMOVED}, and $AUDITD_MARKER"
+		did_kept "$PKG_REMOVED"
 		pkg_back_did
 		;;
 	1) left "auditd, which EasyRMM installed: removing its packages ($ua_pk) would remove other packages too" ;;

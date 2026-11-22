@@ -493,7 +493,7 @@ func (m *hardeningMachine) purgeKept(before string, undone []string) {
 	}
 	for _, name := range kept {
 		if !slices.ContainsFunc(undone, func(d string) bool {
-			_, list, ok := strings.Cut(d, "; the configuration files, logs and data of ")
+			list, ok := strings.CutPrefix(d, "The configuration files, logs and data of ")
 			list, _, _ = strings.Cut(list, " stay (removed, not purged: apt-get purge ")
 			return ok && slices.Contains(strings.Fields(list), name)
 		}) {

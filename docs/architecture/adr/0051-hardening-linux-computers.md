@@ -344,7 +344,13 @@ or Kubernetes installed later.
   says nothing more of it. On RHEL and Fedora, `rpm -e` leaves the files a
   package did not ship (its logs, its data) and keeps a configuration file
   changed since installation as `.rpmsave`, and the result says so. The
-  record and the marker no longer list configuration files.
+  record and the marker no longer list configuration files. As CI's
+  machines then found on Ubuntu 22.04, a package removed, not purged, can
+  keep an init script (a configuration file) from which systemd still
+  makes its unit, so a link `systemctl enable` made for the unit, which
+  points at the unit file the package took away, now goes whether or not
+  the unit is still there. What a removal keeps is a line of the result
+  of its own, since a line holds 300 characters.
   *Amended 2026-11-22,* as CI's machines found: on Ubuntu 22.04,
   aide-common depends on a mailx, and bsd-mailx, apt's choice, on a mail
   server, which would listen, so AIDE comes with mailutils, which needs
