@@ -595,6 +595,9 @@ func TestEnvLikeCompose(t *testing.T) {
 		{line: `EASYRMM_SMTP_FROM="EasyRMM <rmm@example.com>"  # the sender`, key: from, want: "EasyRMM <rmm@example.com>"},
 		{line: `EASYRMM_SMTP_FROM=EasyRMM <rmm@example.com> # the sender`, key: from, want: "EasyRMM <rmm@example.com>"},
 		{line: `EASYRMM_SMTP_FROM="Ops \"Night\" Desk <rmm@example.com>"`, key: from, want: `Ops "Night" Desk <rmm@example.com>`},
+		{line: `EASYRMM_SMTP_FROM="Smith & Jones IT <rmm@example.com>"`, key: from, want: "Smith & Jones IT <rmm@example.com>"},
+		{line: `EASYRMM_SMTP_FROM="Ops \\ \x Desk <rmm@example.com>"`, key: from, want: `Ops \ \x Desk <rmm@example.com>`},
+		{line: `EASYRMM_SMTP_FROM='O\'Brien \ IT <rmm@example.com>'`, key: from, want: `O'Brien \ IT <rmm@example.com>`},
 		{line: `EASYRMM_SMTP_PASSWORD='p#ss w$rd'`, key: password, want: "p#ss w$rd"},
 		{line: `EASYRMM_SMTP_PASSWORD=p#ss\w0rd`, key: password, want: `p#ss\w0rd`},
 		{line: `EASYRMM_SMTP_PASSWORD="a\\b$$c"`, key: password, want: `a\b$c`},
@@ -626,8 +629,9 @@ func TestEnvLikeCompose(t *testing.T) {
 		}
 		got, err := setupEnv(t, t.TempDir(), env, c.key)
 		switch {
-		// setup.sh reads EASYRMM_DATA_ROOT, not the mail server.
-		case c.shErr == "" && (err != nil || c.key == root && got != c.want):
+		// setup.sh reads EASYRMM_DATA_ROOT, and setup-mail.sh the sender;
+		// neither reads Compose's ${...} or $$.
+		case c.shErr == "" && (err != nil || (c.key == root || c.key == from) && got != c.want):
 			t.Errorf("%q: setup.sh: %q, %v", c.line, got, err)
 		case c.shErr != "" && (err == nil || !strings.Contains(err.Error(), c.shErr)):
 			t.Errorf("%q: setup.sh: %q, %v, want %q", c.line, got, err, c.shErr)
@@ -642,6 +646,19 @@ func TestEnvLikeCompose(t *testing.T) {
 	}
 	if noCompose != nil {
 		t.Logf("no docker compose here: %v", noCompose)
+	}
+	// setup-mail.sh writes a sender with a name in double quotes, as Compose
+	// reads it: setup.sh reads it back as Compose does, and the updater
+	// carries the line into a new deployment as written.
+	sender := "EASYRMM_SMTP_FROM=\"Smith & Jones IT <rmm@example.com>\"\n"
+	if got, err := setupEnv(t, t.TempDir(), sender, from); err != nil || got != "Smith & Jones IT <rmm@example.com>" {
+		t.Errorf("setup.sh reads the sender %q, %v", got, err)
+	}
+	if got := envValue([]byte(sender), from); got != "Smith & Jones IT <rmm@example.com>" {
+		t.Errorf("the updater reads the sender %q", got)
+	}
+	if carried, err := setEnv([]byte(sender+"EASYRMM_VERSION=v1.0.0\n"), "EASYRMM_VERSION", "v1.1.0"); err != nil || string(carried) != sender+"EASYRMM_VERSION=v1.1.0\n" {
+		t.Errorf("carried across: %q, %v", carried, err)
 	}
 	// What setup.sh reads, it checks; and the release's .env.example passes.
 	script := readFile(t, "../../../deploy/scripts/setup.sh")

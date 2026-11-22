@@ -139,14 +139,26 @@ check_env() {
   done < "$file"
 }
 # env_value KEY [FILE]: KEY's value in .env, or FILE, read as check_env
-# reads it (the last, if KEY is there twice).
+# reads it (the last, if KEY is there twice). In quotes, a backslash before
+# the quote or, in double quotes, before a backslash is taken off, as Compose
+# does; Compose's ${...} and $$ are not read.
 env_value() {
-  local value
+  local value quote out=''
   value=$(sed -n "s/^$1=//p" "${2:-.env}" | tail -n 1)
   value=${value#"${value%%[![:blank:]]*}"}
   case "$value" in
-    \"*) value=${value#\"}; value=${value%%\"*} ;;
-    \'*) value=${value#\'}; value=${value%%\'*} ;;
+    \"*|\'*)
+      quote=${value:0:1}
+      value=${value:1}
+      while [[ -n "$value" && "${value:0:1}" != "$quote" ]]; do
+        if [[ "${value:0:1}" == \\ && ( "${value:1:1}" == "$quote" || ( "$quote" == \" && "${value:1:1}" == \\ ) ) ]]; then
+          value=${value:1}
+        fi
+        out+=${value:0:1}
+        value=${value:1}
+      done
+      value=$out
+      ;;
     *) value=${value%% #*}; value=${value%"${value##*[![:blank:]]}"} ;;
   esac
   printf '%s\n' "$value"
