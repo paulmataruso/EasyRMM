@@ -76,7 +76,7 @@ two alerts, and acknowledging one leaves the other open.
 | **Errors** | Reallocated sectors plus NVMe media errors are at or above the count | A count, 1 to 100 | Below the count |
 | **Pending** | Pending plus offline-uncorrectable sectors are at or above the count | A count, 1 to 100 | Below the count |
 | **Wear** | Rated endurance used is at or above the percentage | 1 to 100% | Below it |
-| **Temperature** | Every reading of the policy's minutes (30 to 1,440, at least two readings) is at or above the temperature | 1 to 100 °C, or each drive's own limit | At least 5 °C below it |
+| **Temperature** | Every reading of the policy's minutes (60 to 1,440, at least two readings) is at or above the temperature | 1 to 100 °C, or each drive's own limit | At least 5 °C below it |
 
 * Only **complete readings** count: readings that read the drive's own
   verdict and the facts the check watches. A disk that was asleep, timed

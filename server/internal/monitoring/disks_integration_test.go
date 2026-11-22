@@ -256,24 +256,28 @@ func TestDiskTemperatureAlerts(t *testing.T) {
 	if r := f.evaluate(); r.Opened != 0 {
 		t.Fatalf("opened on one reading")
 	}
-	// A reading below it before the policy's hour does not count; one
-	// within the hour keeps it closed.
-	cool := func(ago string) {
+	// Earlier readings, 30 minutes apart as the agent reads: one before
+	// the policy's hour does not count; one within the hour below the
+	// limit keeps it closed.
+	earlier := func(ago string, c int) {
 		f.exec(`INSERT INTO device_disk_health_samples (device_id, disk_key, at, state, judged, temperature, temperature_limit)
-			SELECT device_id, disk_key, now() - interval '`+ago+`', 'healthy', true, 69, 70 FROM device_disk_health WHERE device_id = $1`, dev)
+			SELECT device_id, disk_key, now() - $2::interval, 'healthy', true, $3, 70 FROM device_disk_health WHERE device_id = $1`, dev, ago, c)
 	}
-	cool("61 minutes")
-	cool("30 minutes")
-	f.report(dev, hot(73))
+	earlier("61 minutes", 74)
+	earlier("30 minutes", 69)
 	if r := f.evaluate(); r.Opened != 0 {
 		t.Fatalf("opened with a reading below the limit in the window")
 	}
-	f.exec(`DELETE FROM device_disk_health_samples WHERE device_id = $1 AND temperature = 69 AND at > now() - interval '60 minutes'`, dev)
+	// The two readings of the hour, 30 minutes apart, both at or above the
+	// limit: at 60 minutes, the shortest a temperature policy takes, the
+	// window holds them both.
+	f.exec(`DELETE FROM device_disk_health_samples WHERE device_id = $1 AND temperature = 69`, dev)
+	earlier("30 minutes", 74)
 	if r := f.evaluate(); r.Opened != 1 {
 		t.Fatalf("every reading of the hour at or above the limit: %+v", r)
 	}
 	a := f.diskAlert(dev, "Disk too hot", "nvme0n1 · Example NVMe 1TB")
-	if a == nil || a.Value != 73 || a.Detail != "73 °C; the drive's own limit 70 °C" || a.Threshold != nil || a.Minutes != 60 {
+	if a == nil || a.Value != 72 || a.Detail != "72 °C; the drive's own limit 70 °C" || a.Threshold != nil || a.Minutes != MinTemperatureMinutes {
 		t.Fatalf("temperature alert %+v", a)
 	}
 	// 66 °C is not 5 °C below the limit; 65 °C twice is.
@@ -288,7 +292,10 @@ func TestDiskTemperatureAlerts(t *testing.T) {
 	}
 
 	// A threshold in °C applies to a drive without a limit of its own.
-	if _, err := f.svc.UpdatePolicy(f.ctx, f.super, *a.PolicyID, PolicyPatch{Threshold: ref(50), Minutes: ref(30)}); err != nil {
+	if _, err := f.svc.UpdatePolicy(f.ctx, f.super, *a.PolicyID, PolicyPatch{Minutes: ref(MinTemperatureMinutes - 1)}); !invalid(err, "minutes") {
+		t.Errorf("59 minutes: %v", err)
+	}
+	if _, err := f.svc.UpdatePolicy(f.ctx, f.super, *a.PolicyID, PolicyPatch{Threshold: ref(50), Minutes: ref(90)}); err != nil {
 		t.Fatal(err)
 	}
 	warm := ataDisk("sda", "A1", agentproto.SMARTPassed, 0, 0)
@@ -402,6 +409,10 @@ func TestDiskPolicies(t *testing.T) {
 		"wear without a percent":  {in(ref(CheckWear), nil, 30), "threshold"},
 		"temperature over 100":    {in(ref(CheckTemperature), ref(120), 60), "threshold"},
 		"temperature for 10 mins": {in(ref(CheckTemperature), nil, 10), "minutes"},
+		// 30 minutes, the reading interval, holds one reading: a check that
+		// needs two could never open.
+		"temperature for 30 mins": {in(ref(CheckTemperature), nil, 30), "minutes"},
+		"temperature for 59 mins": {in(ref(CheckTemperature), nil, 59), "minutes"},
 	} {
 		if _, err := f.svc.CreatePolicy(f.ctx, f.super, c.in); !invalid(err, c.field) {
 			t.Errorf("%s: %v", name, err)
@@ -419,8 +430,11 @@ func TestDiskPolicies(t *testing.T) {
 	if _, err := f.svc.UpdatePolicy(f.ctx, f.super, p.ID, PolicyPatch{Kind: ref(KindDiskHealth)}); !invalid(err, "checkName") {
 		t.Errorf("disk health without a check: %v", err)
 	}
-	up, err = f.svc.UpdatePolicy(f.ctx, f.super, p.ID, PolicyPatch{Kind: ref(KindDiskHealth), CheckName: ref(CheckTemperature), Minutes: ref(45)})
-	if err != nil || *up.CheckName != CheckTemperature || *up.Threshold != 90 || up.Minutes != 45 {
+	if _, err := f.svc.UpdatePolicy(f.ctx, f.super, p.ID, PolicyPatch{Kind: ref(KindDiskHealth), CheckName: ref(CheckTemperature), Minutes: ref(59)}); !invalid(err, "minutes") {
+		t.Errorf("to temperature for 59 minutes: %v", err)
+	}
+	up, err = f.svc.UpdatePolicy(f.ctx, f.super, p.ID, PolicyPatch{Kind: ref(KindDiskHealth), CheckName: ref(CheckTemperature), Minutes: ref(60)})
+	if err != nil || *up.CheckName != CheckTemperature || *up.Threshold != 90 || up.Minutes != 60 {
 		t.Fatalf("to temperature: %+v %v", up, err)
 	}
 	// Both changes of check are audited as such.

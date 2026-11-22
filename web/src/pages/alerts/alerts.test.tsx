@@ -509,19 +509,25 @@ describe("disk health alerts (ADR-0065)", () => {
       await user.type(degrees, "55");
       const span = within(again).getByLabelText("For");
       await user.clear(span);
-      await user.type(span, "20");
+      await user.type(span, "30");
       await user.click(within(again).getByRole("button", { name: "Add policy" }));
-      expect(within(again).getByText("Use 30 to 1,440 minutes.")).toBeInTheDocument();
+      // 30 minutes, the reading interval, holds one reading, and the check needs two.
+      expect(within(again).getByText("Use 60 to 1,440 minutes.")).toBeInTheDocument();
       await user.clear(span);
-      await user.type(span, "45");
-      expect(within(again).getByText("Raises a warning alert on any device when: a disk at 55 °C or more for 45 minutes.")).toBeInTheDocument();
+      await user.type(span, "59");
+      await user.click(within(again).getByRole("button", { name: "Add policy" }));
+      expect(within(again).getByText("Use 60 to 1,440 minutes.")).toBeInTheDocument();
+      expect(span).toHaveAttribute("min", "60");
+      await user.clear(span);
+      await user.type(span, "75");
+      expect(within(again).getByText("Raises a warning alert on any device when: a disk at 55 °C or more for 75 minutes.")).toBeInTheDocument();
       await user.clear(degrees);
       await user.click(within(again).getByRole("button", { name: "Add policy" }));
       expect(within(again).getByText("Use 1 to 100 °C, or the drive's own limit.")).toBeInTheDocument();
       await user.type(degrees, "55");
       await user.click(within(again).getByRole("button", { name: "Add policy" }));
       await waitFor(() => expect(server.callsTo("POST /alert-policies")).toHaveLength(2));
-      expect(server.call("POST /alert-policies", 1).body).toMatchObject({ checkName: "temperature", threshold: 55, minutes: 45 });
+      expect(server.call("POST /alert-policies", 1).body).toMatchObject({ checkName: "temperature", threshold: 55, minutes: 75 });
     });
 
     it("switches a temperature check to the drive's own limit with driveLimit, which a null threshold cannot say", async () => {

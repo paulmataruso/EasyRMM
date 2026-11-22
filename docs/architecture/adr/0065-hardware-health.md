@@ -1056,7 +1056,10 @@ numbers.
   The existing threshold column (1 to 100) fits all five; its `CHECK`
   that only `offline` has no threshold gains `failing` and the
   temperature check's *drive's own limit*. Minutes apply to temperature
-  only (at least 30, the reading interval).
+  only: at least 60, two reading intervals, so that the window holds the
+  two readings the check needs. *(Amended 2026-11-22, decided in review:
+  first at least 30, the reading interval, at which readings 30 minutes
+  apart never both fell in the window and the check could never open.)*
 * **Pending sectors are judged apart** from reallocated ones because
   they go down: smartd's manual says the count of pending sectors
   drops "when all pending sectors have been reallocated or could be

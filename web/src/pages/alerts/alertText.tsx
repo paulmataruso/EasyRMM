@@ -25,9 +25,9 @@ export const CHECK_NAMES: Record<DiskCheck, string> = {
 
 export const CHECKS: DiskCheck[] = ["failing", "errors", "pending", "wear", "temperature"];
 
-/** Limits the server enforces (monitoring/policies.go). Disks are read every 30 minutes, so a temperature check watches
- * at least that long. */
-export const POLICY_LIMITS = { name: 200, description: 2000, maxMinutes: 1440, minOfflineMinutes: 3, minDiskMinutes: 30 };
+/** Limits the server enforces (monitoring/policies.go). Disks are read every 30 minutes (diskMinutes, which the checks
+ * other than temperature take), so a temperature check watches at least two readings' worth. */
+export const POLICY_LIMITS = { name: 200, description: 2000, maxMinutes: 1440, minOfflineMinutes: 3, diskMinutes: 30, minTemperatureMinutes: 60 };
 
 /** "15 minutes", "1 hour", "90 minutes". */
 export function formatMinutes(m: number): string {

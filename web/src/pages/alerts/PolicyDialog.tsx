@@ -47,8 +47,8 @@ function checkHelp(check: DiskCheck, driveLimit: boolean): string {
       return "The percentage of its rated endurance a disk has used, 1 to 100. Wear only rises, so the alert stays until the disk is replaced or the threshold is raised: acknowledge it rather than resolve it.";
     case "temperature":
       return driveLimit
-        ? "Every reading in that time, at least two, at or over each drive's own temperature limit; a drive that reports no limit is not checked. It resolves after two readings 5 °C below the limit. Disks are read every 30 minutes: 30 to 1,440 minutes."
-        : "Every reading in that time, at least two, at or above the temperature. It resolves after two readings 5 °C below it. Disks are read every 30 minutes: 30 to 1,440 minutes.";
+        ? "Every reading in that time, at least two, at or over each drive's own temperature limit; a drive that reports no limit is not checked. It resolves after two readings 5 °C below the limit. Disks are read every 30 minutes, so that time is 60 to 1,440 minutes."
+        : "Every reading in that time, at least two, at or above the temperature. It resolves after two readings 5 °C below it. Disks are read every 30 minutes, so that time is 60 to 1,440 minutes.";
   }
 }
 
@@ -169,11 +169,11 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
   const showMinutes = !diskHealth || temperature;
   const thresholdN = Number(threshold);
   const minutesN = Number(minutes);
-  const minMinutes = offline ? POLICY_LIMITS.minOfflineMinutes : temperature ? POLICY_LIMITS.minDiskMinutes : 1;
+  const minMinutes = offline ? POLICY_LIMITS.minOfflineMinutes : temperature ? POLICY_LIMITS.minTemperatureMinutes : 1;
   const validThreshold = noThreshold || (Number.isInteger(thresholdN) && thresholdN >= 1 && thresholdN <= 100);
   const validMinutes = !showMinutes || (Number.isInteger(minutesN) && minutesN >= minMinutes && minutesN <= POLICY_LIMITS.maxMinutes);
   const sentThreshold = noThreshold ? null : thresholdN;
-  const sentMinutes = showMinutes ? minutesN : POLICY_LIMITS.minDiskMinutes;
+  const sentMinutes = showMinutes ? minutesN : POLICY_LIMITS.diskMinutes;
 
   /** Chooses a disk health check, with its default threshold (and an hour for a temperature check). */
   function chooseCheck(c: DiskCheck) {
@@ -181,7 +181,7 @@ export function PolicyDialog({ open, onClose, policy }: { open: boolean; onClose
     setThreshold(String(CHECK_THRESHOLD[c]));
     if (c === "temperature") {
       setDriveLimit(true);
-      if (!(Number(minutes) >= POLICY_LIMITS.minDiskMinutes)) setMinutes("60");
+      if (!(Number(minutes) >= POLICY_LIMITS.minTemperatureMinutes)) setMinutes(String(POLICY_LIMITS.minTemperatureMinutes));
     }
     edited("checkName");
     edited("threshold");

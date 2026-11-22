@@ -51,9 +51,15 @@ const (
 	CheckTemperature = "temperature"
 )
 
-// DiskMinutes is the reading interval: a temperature check watches at
-// least this long, and the other disk checks take it as their minutes.
+// DiskMinutes is the reading interval, which the disk checks other than
+// temperature take as their minutes.
 const DiskMinutes = 30
+
+// MinTemperatureMinutes is the shortest a temperature check watches: two
+// reading intervals, so that its window holds the two readings it needs.
+// With 30 minutes, readings 30 minutes apart never both fell in the window,
+// and the check could never open.
+const MinTemperatureMinutes = 2 * DiskMinutes
 
 // Severities.
 const (
@@ -325,7 +331,7 @@ func (cd *condition) validateDisk(f apperr.Fields) {
 		f.Check(inRange, "threshold", "Use a percentage from 1 to 100.")
 	case CheckTemperature:
 		f.Check(cd.threshold == nil || inRange, "threshold", "Use 1 to 100 °C, or the drive's own limit.")
-		f.Check(cd.minutes >= DiskMinutes && cd.minutes <= MaxMinutes, "minutes", "Use 30 to 1,440 minutes.")
+		f.Check(cd.minutes >= MinTemperatureMinutes && cd.minutes <= MaxMinutes, "minutes", "Use 60 to 1,440 minutes.")
 	default:
 		f.Add("checkName", "Choose failing, errors, pending, wear or temperature.")
 	}

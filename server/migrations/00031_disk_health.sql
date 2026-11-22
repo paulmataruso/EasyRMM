@@ -131,8 +131,9 @@ GRANT SELECT, INSERT, DELETE ON device_disk_health_samples TO easyrmm_app;
 -- check_name says what a disk_health policy watches (check is a reserved
 -- word). Its threshold is a count for errors and pending, a percentage for
 -- wear and degrees Celsius for temperature, where none means the drive's
--- own limit; failing has none. Minutes apply to temperature, at least the
--- reading interval.
+-- own limit; failing has none. Minutes apply to temperature, at least two
+-- reading intervals so that its window holds two readings; the other checks
+-- take the reading interval.
 ALTER TABLE alert_policies
     DROP CONSTRAINT alert_policies_kind_check,
     DROP CONSTRAINT alert_policies_check1,
@@ -144,7 +145,8 @@ ALTER TABLE alert_policies
         WHEN check_name = 'failing' THEN threshold IS NULL
         WHEN check_name = 'temperature' THEN true
         ELSE threshold IS NOT NULL END),
-    ADD CONSTRAINT alert_policies_disk_minutes CHECK (kind <> 'disk_health' OR minutes >= 30);
+    ADD CONSTRAINT alert_policies_disk_minutes CHECK (kind <> 'disk_health'
+        OR minutes >= CASE check_name WHEN 'temperature' THEN 60 ELSE 30 END);
 
 DROP TRIGGER alert_policies_touch ON alert_policies;
 CREATE TRIGGER alert_policies_touch
