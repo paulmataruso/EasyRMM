@@ -17,6 +17,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/m365"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 )
 
@@ -234,8 +235,11 @@ type counts struct {
 	// organization's administrators' mail in the last 24 hours.
 	admin, organization         int
 	adminWait, organizationWait float64
-	// accountAges: the ages, in seconds, of the password emails to the
-	// account in the last 24 hours, oldest first.
+	// accountFull: when the account's bucket, from the password emails
+	// that left mail_sends, is full again, in seconds from now; -Inf
+	// without one. accountAges: the ages, in seconds, of the password
+	// emails to the account still in mail_sends, oldest first.
+	accountFull float64
 	accountAges []float64
 	// resetsHour: resets people asked for in the last hour, everywhere;
 	// orgResetsHour, to the organization's accounts.
@@ -272,8 +276,18 @@ func readCounts(ctx context.Context, tx pgx.Tx, ch charge) (counts, error) {
 	if err != nil || ch.account == nil {
 		return c, err
 	}
+	// The bucket carried from the emails folded out of mail_sends, then
+	// every email still in it, of any age: an email leaves mail_sends only
+	// as it is folded into the bucket (foldAccounts), so the two together
+	// are every email the account was sent.
+	c.accountFull = math.Inf(-1)
+	err = tx.QueryRow(ctx, `SELECT extract(epoch FROM full_at - clock_timestamp())::float8 FROM mail_account_buckets WHERE account_id = $1`,
+		ch.account).Scan(&c.accountFull)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return c, err
+	}
 	rows, err := tx.Query(ctx, `SELECT extract(epoch FROM clock_timestamp() - sent_at)::float8 FROM mail_sends
-		WHERE account_id = $1 AND sent_at > clock_timestamp() - interval '24 hours' ORDER BY sent_at`, ch.account)
+		WHERE account_id = $1 ORDER BY sent_at`, ch.account)
 	if err != nil {
 		return c, err
 	}
@@ -281,18 +295,65 @@ func readCounts(ctx context.Context, tx pgx.Tx, ch charge) (counts, error) {
 	return c, err
 }
 
-// accountRoomIn is how long, in seconds, until an account whose password
-// emails are ages old (oldest first) may be sent another, at burst at
-// once and then one every every seconds; 0 when it may now. It is a token
+// accountRoomIn is how long, in seconds, until an account may be sent
+// another password email, at burst at once and then one every every
+// seconds; 0 when it may now. full is when its bucket, from the emails no
+// longer in mail_sends, is full again, in seconds from now (-Inf for
+// none); ages are the ages of the others, oldest first. It is a token
 // bucket, worked out from the emails themselves (the generic cell rate
 // algorithm): each email moves the time the bucket is full again on by
 // every, from then or from when it was sent, whichever is later.
-func accountRoomIn(ages []float64, burst int, every float64) float64 {
-	full := math.Inf(-1) // seconds from now; negative is past
+func accountRoomIn(full float64, ages []float64, burst int, every float64) float64 {
 	for _, a := range ages {
 		full = max(full, -a) + every
 	}
 	return max(0, full-float64(burst-1)*every)
+}
+
+// foldAccounts folds the password emails leaving mail_sends, oldest first,
+// into their accounts' buckets, exactly as accountRoomIn counts them, so
+// that the limit per account holds past the 24 hours mail_sends keeps; and
+// drops buckets that no longer change anything: full more than 24 hours
+// ago, before any email still in mail_sends was sent. Call it under
+// lockMail, as it deletes the rows it folds.
+func foldAccounts(ctx context.Context, tx pgx.Tx, every time.Duration) error {
+	rows, err := tx.Query(ctx, `WITH aged AS (
+			DELETE FROM mail_sends WHERE sent_at <= clock_timestamp() - interval '24 hours' RETURNING account_id, sent_at)
+		SELECT account_id, sent_at FROM aged WHERE account_id IS NOT NULL ORDER BY account_id, sent_at`)
+	if err != nil {
+		return err
+	}
+	type sent struct {
+		account uuid.UUID
+		at      time.Time
+	}
+	aged, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (sent, error) {
+		var s sent
+		return s, r.Scan(&s.account, &s.at)
+	})
+	if err != nil {
+		return err
+	}
+	for i := 0; i < len(aged); {
+		account := aged[i].account
+		var full time.Time
+		err := tx.QueryRow(ctx, `SELECT full_at FROM mail_account_buckets WHERE account_id = $1`, account).Scan(&full)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		for ; i < len(aged) && aged[i].account == account; i++ {
+			if aged[i].at.After(full) {
+				full = aged[i].at
+			}
+			full = full.Add(every)
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO mail_account_buckets (account_id, full_at) VALUES ($1, $2)
+			ON CONFLICT (account_id) DO UPDATE SET full_at = excluded.full_at`, account, full); err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec(ctx, `DELETE FROM mail_account_buckets WHERE full_at <= clock_timestamp() - interval '24 hours'`)
+	return err
 }
 
 // refusal says which limit stops a message, nil when none does.
@@ -304,7 +365,7 @@ func (c counts) refusal(ch charge) *LimitError {
 		return le
 	}
 	admin, reset := ch.kind == kindAdmin, ch.kind == kindReset
-	accountIn := accountRoomIn(c.accountAges, l.AccountBurst, float64(l.AccountEveryMinutes*60))
+	accountIn := accountRoomIn(c.accountFull, c.accountAges, l.AccountBurst, float64(l.AccountEveryMinutes*60))
 	switch {
 	case admin && c.admin >= l.AdminPerHour:
 		return refuse(mailer.LimitAdmin, c.adminWait)
@@ -335,7 +396,9 @@ func (s *Service) tryTake(ctx context.Context, ch charge) (int64, *LimitError, e
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(lockMail)); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM mail_sends WHERE sent_at <= clock_timestamp() - interval '24 hours'`); err != nil {
+		// Emails a day old leave mail_sends, into their accounts' buckets.
+		// The per-account rate is the same at every day's limit.
+		if err := foldAccounts(ctx, tx, time.Duration(accountLimits(0).AccountEveryMinutes)*time.Minute); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM mail_waits WHERE until <= clock_timestamp()`); err != nil {
@@ -385,7 +448,9 @@ func (s *Service) Room(ctx context.Context, by mailer.AccountMail) error {
 // counted against by, as SendAccountMail would, before the message is
 // made: a password reset's link is made only when it can be sent, since
 // each new one ends the last. A limit that stops it is a *LimitError. The
-// reservation is sent, or released, once.
+// reservation is sent, or released, once. Its message, sent after the
+// request for it has been answered, is tried once more a minute later
+// when the mail server refuses it for its rate.
 func (s *Service) Reserve(ctx context.Context, by mailer.AccountMail) (mailer.Reservation, error) {
 	id, err := s.take(ctx, accountCharge(by))
 	if err != nil {
@@ -431,6 +496,7 @@ func (r *reservation) Send(ctx context.Context, to string, msg mailer.Message) e
 	if cfg == nil {
 		return ErrNoMailServer
 	}
+	cfg.RateRetry = r.s.rateRetry
 	m, err := mailer.New(*cfg)
 	if err != nil {
 		return err
@@ -503,6 +569,9 @@ func (s *Service) SendAccountMail(ctx context.Context, to string, msg mailer.Mes
 	if cfg == nil {
 		return ErrNoMailServer
 	}
+	// Not tried again for the mail server's rate: an administrator's
+	// request waits for this, and the link comes back to them with the
+	// reason at once (decided in review).
 	m, err := mailer.New(*cfg)
 	if err != nil {
 		return err
@@ -547,12 +616,13 @@ func (s *Service) Test(ctx context.Context, actor audit.Actor, in TestInput) (Te
 	}
 	source := FromConsole
 	var cfg *mailer.Config
+	var app *m365.Credentials
 	switch {
 	case s.env != nil:
 		if in.Server != nil {
 			return TestResult{}, ErrFromEnv
 		}
-		source, cfg = FromEnv, s.env
+		source, cfg, app = FromEnv, s.env, s.envApp
 	case in.Server != nil:
 		var stored *row
 		if err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
@@ -566,10 +636,10 @@ func (s *Service) Test(ctx context.Context, actor audit.Actor, in TestInput) (Te
 		if err != nil {
 			return TestResult{}, err
 		}
-		cfg = &c
+		cfg, app = &c.cfg, c.app
 	default:
 		var err error
-		if cfg, err = s.InForce(ctx); err != nil {
+		if cfg, app, err = s.inForce(ctx); err != nil {
 			return TestResult{}, err
 		}
 		if cfg == nil {
@@ -589,13 +659,17 @@ func (s *Service) Test(ctx context.Context, actor audit.Actor, in TestInput) (Te
 	}
 	out := m.Send(ctx, msg, []string{in.To}, s.gate(charge{kind: kindOther}))[0]
 	res := TestResult{OK: out.Err == nil}
-	// The sender as it went, never the password.
+	// The sender as it went, never the password, the secret or the key.
 	signIn := SignInNone
 	if cfg.Username != "" {
 		signIn = SignInPassword
 	}
 	details := map[string]any{"to": in.To, "source": source, "host": cfg.Host, "port": cfg.Port, "security": cfg.Security,
 		"signIn": signIn, "username": cfg.Username, "fromAddress": cfg.FromAddress, "fromName": cfg.FromName}
+	if app != nil {
+		details["signIn"], details["username"] = SignInMicrosoft365, ""
+		details["tenantId"], details["clientId"], details["credential"] = app.TenantID, app.ClientID, app.Kind()
+	}
 	outcome := audit.Success
 	if res.OK {
 		res.Message = fmt.Sprintf("Sent. %s took the message for %s and answered: %s", m.Address(), in.To, out.Reply)

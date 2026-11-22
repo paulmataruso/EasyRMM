@@ -107,7 +107,7 @@ export function AuditTab() {
                       )}
                     </td>
                     <td className="whitespace-nowrap" title={e.action}>
-                      {actionLabel(e.action)}
+                      {actionLabel(e.action, e.details)}
                     </td>
                     <td className="max-w-56 break-words">{auditTarget(e)}</td>
                     <td className="hidden text-sm md:table-cell">

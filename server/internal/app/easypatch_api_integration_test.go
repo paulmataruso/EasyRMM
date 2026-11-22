@@ -877,6 +877,13 @@ func TestEasyPatchAPI(t *testing.T) {
 	if !strings.Contains(string(r.body), "Settings → Notifications → Mail server") {
 		t.Errorf("without a mail server: %s", r.body)
 	}
+	// Whether the engine can email reports, for the pages that email them:
+	// it can try, with no application signing in.
+	var reportsMail map[string]any
+	viewer.expect(http.StatusOK, "GET", "/api/v1/patching/reports/mail", nil, &reportsMail)
+	if len(reportsMail) != 0 {
+		t.Fatalf("reports' mail: %v", reportsMail)
+	}
 	wantStatus(t, viewer.do("DELETE", "/api/v1/patching/reports/monthly/"+monthly.ID, nil), http.StatusForbidden, "forbidden")
 	admin.expect(http.StatusNoContent, "DELETE", "/api/v1/patching/reports/monthly/"+monthly.ID, nil, nil)
 	for _, c := range []struct{ method, path string }{

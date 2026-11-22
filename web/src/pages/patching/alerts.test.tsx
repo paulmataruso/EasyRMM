@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type {
   AuditEntry,
@@ -18,7 +18,7 @@ import { baseRoutes, fail, installFakeApi, noContent, ok, sessionView, type Fake
 import { org } from "../../test/fixtures";
 import { renderApp } from "../../test/render";
 import { deliveryError } from "./Notifications";
-import { acknowledgedBy, thresholdText } from "./patchAlertText";
+import { acknowledgedBy, RULE_KIND_ORDER, RULE_KINDS, thresholdText } from "./patchAlertText";
 
 // EasyPatch's alerts under Patching → Alerts, and its alert rules and notification channels under Settings → Patching.
 
@@ -211,6 +211,178 @@ describe("Patching → Alerts", () => {
     expect(await main().findByText("No alerts match")).toBeInTheDocument();
     await user.click(main().getByRole("button", { name: "Clear filters" }));
     expect(await main().findByText("Nothing needs attention")).toBeInTheDocument();
+  });
+});
+
+describe("a patching alert's card", () => {
+  const section = (dialog: HTMLElement, name: string) => within(dialog).getByRole("region", { name });
+  const value = (scope: HTMLElement, term: string) => within(scope).getByText(term).nextElementSibling as HTMLElement;
+
+  async function openCard(title: string, path = "/patching?tab=alerts") {
+    const user = userEvent.setup();
+    await open(path);
+    const button = await main().findByRole("button", { name: `${title}, details` });
+    await user.click(button);
+    return { user, button, dialog: await screen.findByRole("dialog", { name: title }) };
+  }
+
+  it("shows everything the row records about a device's alert, and acknowledges it", async () => {
+    let acknowledged = false;
+    const server = installFakeApi(
+      patchingRoutes(TECH, {
+        "GET /patching/alerts": () =>
+          ok({ items: acknowledged ? ALERTS.map((a) => (a.id === "a1" ? { ...a, status: "Acknowledged", acknowledgedBy: "easyrmm:me@example.com", acknowledgedAt: ago(0), canAcknowledge: false } : a)) : ALERTS, capped: false }),
+        "POST /patching/alerts/acknowledge": () => {
+          acknowledged = true;
+          return ok({ acknowledged: 1 });
+        },
+      }),
+    );
+    const title = "WEB-01 misses an update for an exploited vulnerability";
+    const { user, button, dialog } = await openCard(title);
+    expect(within(dialog).getByText("Exploited vulnerability unpatched · WEB-01")).toBeInTheDocument();
+    expect(within(dialog).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual(["Summary", "Times", "What it means", "What to do next"]);
+
+    const summary = section(dialog, "Summary");
+    expect(within(summary).getByText("Critical")).toBeInTheDocument();
+    expect(within(summary).getByText("Open")).toBeInTheDocument();
+    expect(within(summary).getByRole("link", { name: "WEB-01" })).toHaveAttribute("href", "/devices/d1?tab=patches");
+    expect(within(summary).getByRole("link", { name: "Acme" })).toHaveAttribute("href", "/organizations/o1");
+    expect(value(summary, "Rule")).toHaveTextContent("Exploited, Acme servers");
+    expect(value(summary, "Details")).toHaveTextContent("KB5044284 fixes CVE-2026-1234.");
+
+    const times = section(dialog, "Times");
+    expect(value(times, "Open so far")).toHaveTextContent("5 h");
+    expect(value(times, "Cause last found")).toHaveTextContent("(1 hour ago)");
+    expect(value(times, "Acknowledged")).toHaveTextContent("Not acknowledged");
+    expect(value(times, "Resolved")).toHaveTextContent(/^Not yet/);
+
+    expect(within(section(dialog, "What it means")).getByText(/Known Exploited Vulnerabilities catalog/)).toBeInTheDocument();
+    const next = section(dialog, "What to do next");
+    expect(within(next).getAllByRole("listitem")).toHaveLength(3);
+    expect(within(next).getByRole("link", { name: "The device's Patches tab" })).toHaveAttribute("href", "/devices/d1?tab=patches");
+
+    // The row itself, as JSON to copy.
+    const details = within(dialog).getByText("Raw details (JSON)").closest("details")!;
+    await user.click(within(details).getByText("Raw details (JSON)"));
+    expect(JSON.parse(details.querySelector("pre")!.textContent!)).toEqual(ALERTS[0]);
+    await user.click(within(details).getByRole("button", { name: "Copy" }));
+    expect(await navigator.clipboard.readText()).toBe(JSON.stringify(ALERTS[0], null, 2));
+
+    // Acknowledged from the card, it shows the row as the list loads it again.
+    await user.click(within(dialog).getByRole("button", { name: `Acknowledge ${title}` }));
+    expect(server.call("POST /patching/alerts/acknowledge").body).toEqual({ alertIds: ["a1"] });
+    await waitFor(() => expect(value(section(dialog, "Times"), "Acknowledged")).toHaveTextContent(/by me@example\.com$/));
+    expect(within(section(dialog, "Summary")).getByText("Acknowledged")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: `Acknowledge ${title}` })).not.toBeInTheDocument();
+
+    await user.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(button).toHaveFocus();
+  });
+
+  it("shows an alert acknowledged from the card once the Open filter no longer lists it", async () => {
+    let acknowledged = false;
+    installFakeApi(
+      patchingRoutes(TECH, {
+        "GET /patching/alerts": () => ok({ items: acknowledged ? ALERTS.filter((a) => a.id !== "a2") : ALERTS, capped: false }),
+        "POST /patching/alerts/acknowledge": () => {
+          acknowledged = true;
+          return ok({ acknowledged: 1 });
+        },
+      }),
+    );
+    const title = "DB-01 has been offline for 26 hours";
+    const { user, dialog } = await openCard(title, "/patching?tab=alerts&show=open");
+    await user.click(within(dialog).getByRole("button", { name: `Acknowledge ${title}` }));
+    await waitFor(() => expect(value(section(dialog, "Times"), "Acknowledged")).toHaveTextContent(/by alex@example\.com$/));
+    expect(within(section(dialog, "Summary")).getByText("Acknowledged")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: `Acknowledge ${title}` })).not.toBeInTheDocument();
+    expect(within(main().getByRole("table", { name: "Patching alerts" })).queryByText(title)).not.toBeInTheDocument();
+  });
+
+  it("says in the card why acknowledging failed", async () => {
+    installFakeApi(patchingRoutes(TECH, { "POST /patching/alerts/acknowledge": fail(503, "easypatch_unavailable", "EasyPatch did not answer.") }));
+    const title = "DB-01 has been offline for 26 hours";
+    const { user, dialog } = await openCard(title);
+    await user.click(within(dialog).getByRole("button", { name: `Acknowledge ${title}` }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("EasyPatch did not answer.");
+    // Opening the card again starts without it.
+    await user.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
+    await user.click(main().getByRole("button", { name: `${title}, details` }));
+    expect(within(await screen.findByRole("dialog", { name: title })).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("closes when a link in it leads elsewhere on the page", async () => {
+    installFakeApi(patchingRoutes(TECH));
+    const { user, dialog } = await openCard("2 updates Acme needs are on hold");
+    await user.click(within(section(dialog, "What to do next")).getByRole("link", { name: "Acme's patching alerts" }));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/patching?tab=alerts&organizationId=o1"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows an organization's own alert, with where to look", async () => {
+    installFakeApi(patchingRoutes(TECH));
+    const { dialog } = await openCard("2 updates Acme needs are on hold");
+    expect(within(dialog).getByText("Update on hold · Acme, the whole organization")).toBeInTheDocument();
+    const summary = section(dialog, "Summary");
+    expect(value(summary, "Covers")).toHaveTextContent("The whole organization");
+    expect(within(summary).queryByText("Device")).not.toBeInTheDocument();
+    expect(within(summary).queryByText("Details")).not.toBeInTheDocument();
+    const next = section(dialog, "What to do next");
+    expect(within(next).getByRole("link", { name: "Acme's patching alerts" })).toHaveAttribute("href", "/patching?tab=alerts&organizationId=o1");
+    expect(within(next).getByRole("link", { name: "Patching → Updates" })).toHaveAttribute("href", "/patching?tab=updates&organizationId=o1");
+    // Only those who may acknowledge it see the button.
+    expect(within(dialog).queryByRole("button", { name: /^Acknowledge/ })).not.toBeInTheDocument();
+  });
+
+  it("shows an endpoint with no EasyRMM device, and who acknowledged it", async () => {
+    installFakeApi(patchingRoutes(TECH));
+    const { dialog } = await openCard("KIOSK-7 has waited 9 days for a restart");
+    const summary = section(dialog, "Summary");
+    expect(value(summary, "Endpoint")).toHaveTextContent("KIOSK-7 · no EasyRMM device");
+    expect(within(summary).getByText("Info")).toBeInTheDocument();
+    expect(value(section(dialog, "Times"), "Acknowledged")).toHaveTextContent(/\(2 hours ago\) by otto@example\.com$/);
+    expect(within(section(dialog, "What to do next")).getByText(/Restart the device with Restart…/)).toBeInTheDocument();
+  });
+
+  it("shows a resolved alert whose rule was deleted, and a type EasyRMM does not know", async () => {
+    const resolved = alert("a5", {
+      title: "WEB-02 has been offline for 30 hours",
+      ruleId: null,
+      ruleName: null,
+      status: "Resolved",
+      openedAt: ago(5),
+      resolvedAt: ago(3),
+      deviceId: "d5",
+      deviceName: "WEB-02",
+    });
+    const unknown = alert("a6", { title: "Something new", ruleType: "SomethingNew" as never, ruleName: "New rule" });
+    installFakeApi(patchingRoutes(TECH, { "GET /patching/alerts": ok({ items: [resolved, unknown], capped: false }) }));
+    const { user, dialog } = await openCard("WEB-02 has been offline for 30 hours");
+    expect(value(section(dialog, "Summary"), "Rule")).toHaveTextContent("Deleted");
+    expect(within(section(dialog, "Summary")).getByText("Resolved")).toBeInTheDocument();
+    const times = section(dialog, "Times");
+    expect(value(times, "Open for")).toHaveTextContent("2 h");
+    expect(value(times, "Resolved")).toHaveTextContent("(3 hours ago)");
+    await user.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await user.click(main().getByRole("button", { name: "Something new, details" }));
+    const other = await screen.findByRole("dialog", { name: "Something new" });
+    expect(within(other).getByText("SomethingNew · Acme, the whole organization")).toBeInTheDocument();
+    expect(within(section(other, "What it means")).getByText(/does not know this type of rule/)).toBeInTheDocument();
+    expect(within(section(other, "What to do next")).getAllByRole("listitem")).toHaveLength(1);
+  });
+
+  it("gives next steps for every type of rule", async () => {
+    for (const type of RULE_KIND_ORDER) {
+      installFakeApi(patchingRoutes(TECH, { "GET /patching/alerts": ok({ items: [alert(`x-${type}`, { ruleType: type, title: `Alert of ${type}` })], capped: false }) }));
+      const { dialog } = await openCard(`Alert of ${type}`);
+      expect(within(section(dialog, "What it means")).getByText(RULE_KINDS[type].about)).toBeInTheDocument();
+      expect(within(section(dialog, "What to do next")).getAllByRole("listitem").length).toBeGreaterThanOrEqual(2);
+      cleanup();
+    }
   });
 });
 
@@ -558,6 +730,20 @@ describe("Settings → Patching → Notifications", () => {
     expect(within(table).getAllByText("No mail server")).toHaveLength(1);
     expect(main().getByRole("checkbox", { name: "Allow webhooks to private network addresses" })).toBeChecked();
     expect(main().queryByText("The patching engine does not have EasyRMM's mail server")).not.toBeInTheDocument();
+  });
+
+  it("says the engine has no mail server while a Microsoft 365 application signs in to EasyRMM's", async () => {
+    const withheld = "EasyRMM's mail server signs in with a Microsoft 365 application, which the patching engine cannot do.";
+    installFakeApi(
+      settingsRoutes(SUPER, { "GET /patching/notifications": ok({ channels: CHANNELS, mail: { ...MAIL, host: "", port: 0, withheld }, allowPrivateNetworkWebhooks: false }) }),
+    );
+    await open("/settings?tab=patching&view=notifications");
+    const alert = (await main().findByText("Patching sends no email: the engine has no mail server")).closest<HTMLElement>(".rounded-md")!;
+    // The server's reason, as it is, without a promise of its own.
+    expect(alert.textContent?.replace(/\s+/g, " ").trim()).toBe(`Patching sends no email: the engine has no mail server${withheld}`);
+    expect(within(alert).queryByText(/sign-in for the patching engine/)).not.toBeInTheDocument();
+    // Instead of the warning that there is no mail server at all; the email channel's badge stays.
+    expect(main().getAllByText("No mail server")).toHaveLength(1);
   });
 
   it("says why the engine does not have EasyRMM's mail server", async () => {

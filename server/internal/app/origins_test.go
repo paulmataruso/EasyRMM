@@ -262,7 +262,7 @@ func TestCertificateChoice(t *testing.T) {
 // MeshCentral on another of the same address, both with a certificate from
 // the internal CA that a client trusting the CA accepts.
 func TestEdgeInternalTLS(t *testing.T) {
-	consoleAddr, meshAddr, httpAddr := freeAddr(t), freeAddr(t), freeAddr(t)
+	consoleAddr, meshAddr, httpAddr := reserveAddr(t), reserveAddr(t), reserveAddr(t)
 	_, consolePort, _ := net.SplitHostPort(consoleAddr)
 	_, meshPort, _ := net.SplitHostPort(meshAddr)
 	cfg := testConfig(t)

@@ -319,6 +319,7 @@ func (s *Service) MonthlyReports(ctx context.Context, c access.Caller, org uuid.
 		return MonthlyReportList{}, err
 	}
 	out := MonthlyReportList{Items: []MonthlyReportView{}, CanGenerate: []uuid.UUID{}}
+	withheld := s.mailWithheld(ctx)
 	for _, o := range orgs {
 		p, err := cl.MonthlyReports(s.as(ctx, c, RoleReadOnly, o.ep), o.ep, 1)
 		if err != nil {
@@ -327,6 +328,7 @@ func (s *Service) MonthlyReports(ctx context.Context, c access.Caller, org uuid.
 		}
 		manage := c.Can(rbac.PermPatchManage, rbac.Org(o.id))
 		for _, m := range p.Items {
+			m.LastError = deliveryError(m.LastError, withheld)
 			out.Items = append(out.Items, MonthlyReportView{MonthlyReport: m, OrganizationID: o.id, OrganizationName: o.name, CanManage: manage})
 		}
 		out.Capped = out.Capped || p.TotalCount > len(p.Items)
@@ -514,6 +516,43 @@ func validRecipients(in []string, required bool) ([]string, error) {
 	return out, nil
 }
 
+// noMailServer says why a report is not emailed when EasyRMM has no mail
+// server.
+const noMailServer = "EasyRMM has no mail server to send reports with. A super administrator sets one under Settings → Notifications → Mail server."
+
+// engineNoMailServer is the error the engine records on a report it could
+// not email for want of a mail server (its NotificationTransport).
+const engineNoMailServer = "SMTP is not configured (Settings → Notifications)."
+
+// deliveryError is a report's last delivery error in EasyRMM's terms: the
+// engine's want of a mail server is EasyRMM's, or the engine's being given
+// none while a Microsoft 365 application signs in (withheld).
+func deliveryError(lastError, withheld string) string {
+	switch {
+	case lastError != engineNoMailServer:
+		return lastError
+	case withheld != "":
+		return withheld
+	}
+	return noMailServer
+}
+
+// ReportMail is whether the patching engine can email reports: Withheld
+// says why not while a Microsoft 365 application signs in to EasyRMM's mail
+// server.
+type ReportMail struct {
+	Withheld string `json:"withheld,omitempty"`
+}
+
+// ReportsMail says whether the patching engine can email reports, for the
+// pages that email them.
+func (s *Service) ReportsMail(ctx context.Context, c access.Caller) (ReportMail, error) {
+	if !c.CanAnywhere(rbac.PermReportView) || !c.CanAnywhere(rbac.PermPatchView) {
+		return ReportMail{}, apperr.Forbidden()
+	}
+	return ReportMail{Withheld: s.mailWithheld(ctx)}, nil
+}
+
 // mailError explains the engine refusing to email a report, in EasyRMM's
 // terms: EasyRMM's own mail server sends it.
 func (s *Service) mailError(ctx context.Context, err error) error {
@@ -524,7 +563,10 @@ func (s *Service) mailError(ctx context.Context, err error) error {
 	}
 	switch e.Code {
 	case "smtp_not_configured":
-		return apperr.Conflict("mail_not_configured", "EasyRMM has no mail server to send reports with. A super administrator sets one under Settings → Notifications → Mail server.")
+		if why := s.mailWithheld(ctx); why != "" {
+			return apperr.Conflict("mail_withheld", why)
+		}
+		return apperr.Conflict("mail_not_configured", noMailServer)
 	case "smtp_not_encrypted":
 		return apperr.Conflict("mail_not_encrypted", "Reports are emailed only over STARTTLS or TLS, and EasyRMM's mail server sends without encryption.")
 	case "report_too_large":

@@ -14,6 +14,8 @@ import { useUrlState } from "../../lib/urlState";
 import { PatchAllButton } from "../patching/PatchAllButton";
 import { PolicyPanel } from "../patching/PolicyEditor";
 import { TagsField } from "../patching/Tags";
+import { ContactsPanel, KeyContactsCard } from "./Contacts";
+import { addressLines, confirmedCounts, OpenNowBadge, OrganizationDetailsDialog, OrganizationRecord } from "./CustomerRecord";
 import { OrganizationFormDialog } from "./OrganizationsPage";
 import { SiteFormDialog } from "./SiteFormDialog";
 
@@ -28,14 +30,21 @@ export function OrganizationDetailPage() {
   const org = useApi<Organization>(`/organizations/${id}`);
   const sites = useList<Site>(`/organizations/${id}/sites`);
   const [editing, setEditing] = useState(false);
+  const [editingDetails, setEditingDetails] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const addingSite = url.get("newSite") === "1";
   // The Patch policy tab shows once EasyPatch is set up (ADR-0030).
   const patching = useApi<PatchStatus>(can("patch.view") ? "/patching" : null, undefined, { staleTime: 60_000 });
   const patched = patching.data?.configured === true;
-  const tab = patched && url.get("tab") === "patch-policy" ? "patch-policy" : "overview";
+  const documented = can("doc.view");
+  const tabs = [
+    { id: "overview", label: "Overview" },
+    { id: "contacts", label: "Contacts", hidden: !documented },
+    { id: "patch-policy", label: "Patch policy", hidden: !patched },
+  ];
+  const tab = tabs.find((t) => t.id === url.get("tab") && !t.hidden)?.id ?? "overview";
 
-  const remove = useApiMutation(() => api.del(`/organizations/${id}`), {
+  const remove = useApiMutation((confirmed: Record<string, number> | undefined) => api.del(`/organizations/${id}`, confirmed), {
     invalidate: ["/organizations", "/sites", "/audit"],
     onSuccess: () => {
       toast.success(`Organization “${org.data?.name}” deleted.`);
@@ -80,20 +89,27 @@ export function OrganizationDetailPage() {
         }
       />
 
-      {patched && (
-        <Tabs
-          tabs={[
-            { id: "overview", label: "Overview" },
-            { id: "patch-policy", label: "Patch policy" },
-          ]}
-          active={tab}
-          onChange={(t) => url.set({ tab: t === "overview" ? null : t })}
-        />
+      {tabs.some((t) => t.id !== "overview" && !t.hidden) && (
+        <Tabs tabs={tabs} active={tab} onChange={(t) => url.set({ tab: t === "overview" ? null : t, after: null })} />
       )}
 
       {tab === "patch-policy" && (
         <div role="tabpanel" aria-labelledby="tab-patch-policy">
           <PolicyPanel level="organization" id={o.id} intro={<TagsField level="organization" id={o.id} />} />
+        </div>
+      )}
+
+      {tab === "contacts" && (
+        <div role="tabpanel" aria-labelledby="tab-contacts">
+          <ContactsPanel
+            organizationId={o.id}
+            levels={[
+              ...(o.canManageDocumentation ? [{ id: null, name: "The organization" }] : []),
+              ...sites.items.filter((s) => s.canManageDocumentation).map((s) => ({ id: s.id, name: s.name })),
+            ]}
+            after={url.get("after")}
+            onPage={(after) => url.set({ after })}
+          />
         </div>
       )}
 
@@ -155,7 +171,16 @@ export function OrganizationDetailPage() {
                             >
                               {s.name}
                             </Link>
-                            {s.address && <p className="max-w-52 truncate text-xs text-muted sm:max-w-md">{s.address}</p>}
+                            {s.openNow !== null && (
+                              <span className="ml-2 align-middle">
+                                <OpenNowBadge openNow={s.openNow} />
+                              </span>
+                            )}
+                            {addressLines(s).length > 0 && (
+                              <address className="max-w-52 truncate text-xs not-italic text-muted sm:max-w-md" title={addressLines(s).join(", ")}>
+                                {addressLines(s).join(", ")}
+                              </address>
+                            )}
                           </td>
                           <td className="hidden whitespace-nowrap sm:table-cell">{s.timezone}</td>
                           <td className="text-right tabular-nums">{s.deviceGroupCount}</td>
@@ -171,6 +196,26 @@ export function OrganizationDetailPage() {
             )}
           </Card>
 
+          <div className="flex flex-col gap-5">
+          {documented && (
+            <Card
+              title={
+                <span className="flex items-center gap-2">
+                  Contact information <OpenNowBadge openNow={o.openNow} />
+                </span>
+              }
+              actions={
+                o.canManageDocumentation && (
+                  <Button size="sm" icon={<Pencil className="size-3.5" aria-hidden />} onClick={() => setEditingDetails(true)}>
+                    Edit
+                  </Button>
+                )
+              }
+            >
+              <OrganizationRecord organization={o} />
+            </Card>
+          )}
+          {documented && <KeyContactsCard organizationId={o.id} />}
           <Card title="Details">
             <KeyValueList
               narrow
@@ -188,10 +233,12 @@ export function OrganizationDetailPage() {
               </Link>
             )}
           </Card>
+          </div>
         </div>
       )}
 
       <OrganizationFormDialog open={editing} organization={o} onClose={() => setEditing(false)} onSaved={() => setEditing(false)} />
+      {o.canManageDocumentation && <OrganizationDetailsDialog open={editingDetails} organization={o} onClose={() => setEditingDetails(false)} />}
       <SiteFormDialog
         open={addingSite && o.canManage}
         organizationId={o.id}
@@ -204,17 +251,17 @@ export function OrganizationDetailPage() {
           setDeleting(false);
           remove.reset();
         }}
-        onConfirm={() => remove.mutate(undefined)}
+        onConfirm={() => remove.mutate(confirmedCounts(remove.error))}
         title="Delete organization"
-        confirmLabel="Delete organization"
+        confirmLabel={confirmedCounts(remove.error) ? "Delete organization and contacts" : "Delete organization"}
         tone="danger"
         loading={remove.isPending}
         error={remove.error}
         confirmText={o.name}
       >
         <p>
-          This permanently deletes <strong>{o.name}</strong>. An organization must have no sites before it can be deleted. Its audit
-          history is kept.
+          This permanently deletes <strong>{o.name}</strong>. An organization must have no sites before it can be deleted. Its contacts
+          are deleted with it once you confirm them. Its audit history is kept.
         </p>
       </ConfirmDialog>
     </>

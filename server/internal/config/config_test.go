@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/paulmataruso/easyrmm/server/internal/m365/m365test"
 )
 
 var testKey = base64.StdEncoding.EncodeToString(make([]byte, 32))
@@ -426,5 +428,136 @@ func TestPatchingMode(t *testing.T) {
 				t.Fatalf("error %v, want one containing %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestSMTPSignIn: EASYRMM_SMTP_AUTH, a password by default with a user
+// name, as before it; a Microsoft 365 application, its secret or
+// certificate and key read only from files (ADR-0053, slice 2).
+func TestSMTPSignIn(t *testing.T) {
+	now := time.Now()
+	certPEM, keyPEM := m365test.AppCertificate(t, now.Add(-time.Hour), now.Add(365*24*time.Hour))
+	files := map[string]string{
+		"/run/secrets/easyrmm/smtp-client-secret": m365test.Secret + "\n",
+		"/run/secrets/easyrmm/smtp-client.crt":    certPEM,
+		"/run/secrets/easyrmm/smtp-client.key":    keyPEM,
+		"/run/secrets/easyrmm/other.key":          m365test.OtherKey(),
+		"/run/secrets/easyrmm/two-lines":          m365test.Secret + "\nmore\n",
+		"/run/secrets/easyrmm/empty":              "",
+	}
+	read := func(p string) ([]byte, error) {
+		if v, ok := files[p]; ok {
+			return []byte(v), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	mail := func(extra map[string]string) map[string]string {
+		m := base()
+		m["EASYRMM_SMTP_HOST"], m["EASYRMM_SMTP_FROM"] = "smtp.office365.com", m365test.Mailbox
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	app := func(extra map[string]string) map[string]string {
+		m := mail(map[string]string{"EASYRMM_SMTP_AUTH": "microsoft365", "EASYRMM_SMTP_TENANT_ID": m365test.TenantID,
+			"EASYRMM_SMTP_CLIENT_ID": m365test.ClientID})
+		for k, v := range extra {
+			if v == "-" {
+				delete(m, k)
+			} else {
+				m[k] = v
+			}
+		}
+		return m
+	}
+
+	// As before: a user name signs in with its password; none without one,
+	// a password alone ignored, as it was; blank, as from Compose, is the
+	// default.
+	for _, c := range []struct {
+		env  map[string]string
+		want string
+	}{
+		{mail(nil), SMTPAuthNone},
+		{mail(map[string]string{"EASYRMM_SMTP_PASSWORD": "pw"}), SMTPAuthNone},
+		{mail(map[string]string{"EASYRMM_SMTP_USERNAME": "rmm", "EASYRMM_SMTP_PASSWORD": "pw", "EASYRMM_SMTP_AUTH": " "}), SMTPAuthPassword},
+		{mail(map[string]string{"EASYRMM_SMTP_USERNAME": "rmm", "EASYRMM_SMTP_AUTH": "password", "EASYRMM_SMTP_TENANT_ID": "",
+			"EASYRMM_SMTP_CLIENT_SECRET_FILE": ""}), SMTPAuthPassword},
+	} {
+		c2, err := LoadFrom(env(c.env), read)
+		if err != nil || c2.SMTP.Auth != c.want {
+			t.Fatalf("%v: %v, %v", c.env, c2, err)
+		}
+		if a, err := c2.SMTP.SMTPApplication(); a != nil || err != nil {
+			t.Fatalf("an application without microsoft365: %v, %v", a, err)
+		}
+	}
+
+	// A secret, from its file, its line ending dropped.
+	c, err := LoadFrom(env(app(map[string]string{"EASYRMM_SMTP_CLIENT_SECRET_FILE": "/run/secrets/easyrmm/smtp-client-secret"})), read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := c.SMTP.SMTPApplication()
+	if err != nil || a.TenantID != m365test.TenantID || a.ClientID != m365test.ClientID || a.Secret != m365test.Secret || a.Certificate != nil {
+		t.Fatalf("secret: %+v, %v", a, err)
+	}
+	// A certificate and its key; a domain name for the tenant.
+	c, err = LoadFrom(env(app(map[string]string{"EASYRMM_SMTP_TENANT_ID": "contoso.example.com",
+		"EASYRMM_SMTP_CLIENT_CERT_FILE": "/run/secrets/easyrmm/smtp-client.crt", "EASYRMM_SMTP_CLIENT_KEY_FILE": "/run/secrets/easyrmm/smtp-client.key",
+		"EASYRMM_SMTP_TLS": "implicit", "EASYRMM_SMTP_PORT": "465"})), read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err = c.SMTP.SMTPApplication()
+	if err != nil || a.Secret != "" || a.Certificate == nil || a.Certificate.PEM != certPEM || a.TenantID != "contoso.example.com" {
+		t.Fatalf("certificate: %+v, %v", a, err)
+	}
+
+	secret := map[string]string{"EASYRMM_SMTP_CLIENT_SECRET_FILE": "/run/secrets/easyrmm/smtp-client-secret"}
+	with := func(extra map[string]string) map[string]string {
+		m := app(secret)
+		for k, v := range extra {
+			if v == "-" {
+				delete(m, k)
+			} else {
+				m[k] = v
+			}
+		}
+		return m
+	}
+	for name, c := range map[string]struct {
+		env  map[string]string
+		want string
+	}{
+		"an unknown way":              {mail(map[string]string{"EASYRMM_SMTP_AUTH": "oauth"}), "must be none, password or microsoft365"},
+		"none with a user name":       {mail(map[string]string{"EASYRMM_SMTP_AUTH": "none", "EASYRMM_SMTP_USERNAME": "rmm"}), "takes no EASYRMM_SMTP_USERNAME"},
+		"password without a name":     {mail(map[string]string{"EASYRMM_SMTP_AUTH": "password"}), "needs EASYRMM_SMTP_USERNAME"},
+		"half an application":         {mail(map[string]string{"EASYRMM_SMTP_TENANT_ID": m365test.TenantID}), "read only with EASYRMM_SMTP_AUTH=microsoft365"},
+		"a password and a secret":     {mail(map[string]string{"EASYRMM_SMTP_USERNAME": "rmm", "EASYRMM_SMTP_CLIENT_SECRET_FILE": "/run/secrets/easyrmm/smtp-client-secret"}), "read only with"},
+		"no host":                     {with(map[string]string{"EASYRMM_SMTP_HOST": "-"}), "needs EASYRMM_SMTP_HOST"},
+		"no tenant":                   {with(map[string]string{"EASYRMM_SMTP_TENANT_ID": "-"}), "EASYRMM_SMTP_TENANT_ID is required"},
+		"a bad tenant":                {with(map[string]string{"EASYRMM_SMTP_TENANT_ID": "not a tenant"}), "the tenant's ID"},
+		"no client":                   {with(map[string]string{"EASYRMM_SMTP_CLIENT_ID": "-"}), "EASYRMM_SMTP_CLIENT_ID is required"},
+		"a bad client":                {with(map[string]string{"EASYRMM_SMTP_CLIENT_ID": "rmm-app"}), "a GUID"},
+		"a user name too":             {with(map[string]string{"EASYRMM_SMTP_USERNAME": "rmm"}), "remove EASYRMM_SMTP_USERNAME"},
+		"a password too":              {with(map[string]string{"EASYRMM_SMTP_PASSWORD": "pw"}), "remove EASYRMM_SMTP_USERNAME and EASYRMM_SMTP_PASSWORD"},
+		"no encryption":               {with(map[string]string{"EASYRMM_SMTP_TLS": "none"}), "a token is sent only over TLS"},
+		"no credential":               {app(nil), "needs EASYRMM_SMTP_CLIENT_SECRET_FILE"},
+		"the secret itself":           {with(map[string]string{"EASYRMM_SMTP_CLIENT_SECRET": m365test.Secret}), "EASYRMM_SMTP_CLIENT_SECRET is not read"},
+		"the key itself":              {with(map[string]string{"EASYRMM_SMTP_CLIENT_KEY": "x"}), "EASYRMM_SMTP_CLIENT_KEY is not read"},
+		"an unreadable secret":        {with(map[string]string{"EASYRMM_SMTP_CLIENT_SECRET_FILE": "/run/secrets/easyrmm/missing"}), "EASYRMM_SMTP_CLIENT_SECRET_FILE: file does not exist"},
+		"an empty secret":             {with(map[string]string{"EASYRMM_SMTP_CLIENT_SECRET_FILE": "/run/secrets/easyrmm/empty"}), "the client secret is empty"},
+		"a secret on two lines":       {with(map[string]string{"EASYRMM_SMTP_CLIENT_SECRET_FILE": "/run/secrets/easyrmm/two-lines"}), "not one line"},
+		"a secret and a certificate":  {with(map[string]string{"EASYRMM_SMTP_CLIENT_CERT_FILE": "/run/secrets/easyrmm/smtp-client.crt", "EASYRMM_SMTP_CLIENT_KEY_FILE": "/run/secrets/easyrmm/smtp-client.key"}), "not both"},
+		"a certificate without a key": {app(map[string]string{"EASYRMM_SMTP_CLIENT_CERT_FILE": "/run/secrets/easyrmm/smtp-client.crt"}), "go together"},
+		"a key without a certificate": {app(map[string]string{"EASYRMM_SMTP_CLIENT_KEY_FILE": "/run/secrets/easyrmm/smtp-client.key"}), "go together"},
+		"another key":                 {app(map[string]string{"EASYRMM_SMTP_CLIENT_CERT_FILE": "/run/secrets/easyrmm/smtp-client.crt", "EASYRMM_SMTP_CLIENT_KEY_FILE": "/run/secrets/easyrmm/other.key"}), "EASYRMM_SMTP_CLIENT_CERT_FILE and EASYRMM_SMTP_CLIENT_KEY_FILE:"},
+		"an unreadable key":           {app(map[string]string{"EASYRMM_SMTP_CLIENT_CERT_FILE": "/run/secrets/easyrmm/smtp-client.crt", "EASYRMM_SMTP_CLIENT_KEY_FILE": "/run/secrets/easyrmm/missing"}), "EASYRMM_SMTP_CLIENT_KEY_FILE: file does not exist"},
+	} {
+		if _, err := LoadFrom(env(c.env), read); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

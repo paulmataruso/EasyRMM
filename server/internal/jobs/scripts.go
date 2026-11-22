@@ -40,6 +40,10 @@ type Script struct {
 	Name             string     `json:"name"`
 	Description      string     `json:"description"`
 	Shell            string     `json:"shell"`
+	// PwshFallback lets a pwsh script run in Windows PowerShell 5.1 where
+	// no usable PowerShell 7 is found; without it the run fails there
+	// (ADR-0064). Always false for other shells.
+	PwshFallback bool `json:"pwshFallback"`
 	// Body is filled in by Get only.
 	Body           string    `json:"body,omitempty"`
 	SHA256         string    `json:"sha256"`
@@ -93,7 +97,7 @@ func covers(org, site, devOrg, devSite uuid.UUID) bool {
 }
 
 const scriptColumns = `sc.id, sc.organization_id, coalesce(o.name, ''), sc.site_id, coalesce(si.name, ''),
-	sc.name, sc.description, sc.shell, encode(sha256(convert_to(sc.body, 'UTF8')), 'hex'), octet_length(sc.body),
+	sc.name, sc.description, sc.shell, sc.pwsh_fallback, encode(sha256(convert_to(sc.body, 'UTF8')), 'hex'), octet_length(sc.body),
 	sc.timeout_seconds, sc.created_at, sc.updated_at`
 
 const scriptFrom = ` FROM scripts sc
@@ -103,7 +107,7 @@ const scriptFrom = ` FROM scripts sc
 func scanScript(row pgx.Row, extra ...any) (*Script, error) {
 	var sc Script
 	dst := append([]any{&sc.ID, &sc.OrganizationID, &sc.OrganizationName, &sc.SiteID, &sc.SiteName,
-		&sc.Name, &sc.Description, &sc.Shell, &sc.SHA256, &sc.Size,
+		&sc.Name, &sc.Description, &sc.Shell, &sc.PwshFallback, &sc.SHA256, &sc.Size,
 		&sc.TimeoutSeconds, &sc.CreatedAt, &sc.UpdatedAt}, extra...)
 	if err := row.Scan(dst...); err != nil {
 		return nil, err
@@ -239,6 +243,7 @@ type ScriptInput struct {
 	Name           string     `json:"name"`
 	Description    string     `json:"description"`
 	Shell          string     `json:"shell"`
+	PwshFallback   bool       `json:"pwshFallback"`
 	Body           string     `json:"body"`
 	TimeoutSeconds int        `json:"timeoutSeconds"`
 }
@@ -246,9 +251,11 @@ type ScriptInput struct {
 // ScriptPatch changes a script; nil fields stay as they are. A script does
 // not move between levels.
 type ScriptPatch struct {
-	Name           *string `json:"name"`
-	Description    *string `json:"description"`
-	Shell          *string `json:"shell"`
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Shell       *string `json:"shell"`
+	// PwshFallback is reset when the shell changes from pwsh without it.
+	PwshFallback   *bool   `json:"pwshFallback"`
 	Body           *string `json:"body"`
 	TimeoutSeconds *int    `json:"timeoutSeconds"`
 }
@@ -258,11 +265,12 @@ func normalizeBody(b string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(b, "\r\n", "\n"), "\r", "\n")
 }
 
-func validateScript(f apperr.Fields, name, description, shell, body string, timeout int) {
+func validateScript(f apperr.Fields, name, description, shell string, fallback bool, body string, timeout int) {
 	f.Check(name != "", "name", "Enter a name.")
 	f.Check(utf8.RuneCountInString(name) <= MaxName, "name", "Use at most 200 characters.")
 	f.Check(utf8.RuneCountInString(description) <= MaxDescription, "description", "Use at most 2,000 characters.")
-	f.Check(agentproto.ValidShell(shell), "shell", "Choose PowerShell, cmd, bash, sh or python3.")
+	f.Check(agentproto.ValidShell(shell), "shell", "Choose Windows PowerShell 5.1, PowerShell 7, cmd, bash, sh or python3.")
+	f.Check(!fallback || shell == agentproto.ShellPwsh, "pwshFallback", "Only a PowerShell 7 script can fall back to Windows PowerShell 5.1.")
 	switch {
 	case strings.TrimSpace(body) == "":
 		f.Add("body", "Enter the script.")
@@ -300,22 +308,27 @@ func (s *Service) CreateScript(ctx context.Context, c access.Caller, in ScriptIn
 		in.TimeoutSeconds = DefaultTimeout
 	}
 	f := apperr.Fields{}
-	validateScript(f, name, description, in.Shell, body, in.TimeoutSeconds)
+	validateScript(f, name, description, in.Shell, in.PwshFallback, body, in.TimeoutSeconds)
 	if err := f.Err(); err != nil {
 		return nil, err
 	}
+	details := map[string]any{"name": name, "shell": in.Shell, "sha256": bodyHash(body), "timeoutSeconds": in.TimeoutSeconds}
+	if in.Shell == agentproto.ShellPwsh {
+		details["pwshFallback"] = in.PwshFallback
+	}
 	var id uuid.UUID
 	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `INSERT INTO scripts (organization_id, site_id, name, description, shell, body, timeout_seconds, created_by, updated_by)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING id`,
-			nullUUID(org), nullUUID(site), name, description, in.Shell, body, in.TimeoutSeconds, nullUUID(c.Actor.ID)).Scan(&id)
+		err := tx.QueryRow(ctx, `INSERT INTO scripts (organization_id, site_id, name, description, shell, pwsh_fallback, body, timeout_seconds,
+				created_by, updated_by)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) RETURNING id`,
+			nullUUID(org), nullUUID(site), name, description, in.Shell, in.PwshFallback, body, in.TimeoutSeconds, nullUUID(c.Actor.ID)).Scan(&id)
 		if err != nil {
 			return err
 		}
 		return s.audit.Write(ctx, tx, audit.Event{
 			Actor: c.Actor, Action: "script.create", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "script", TargetID: id.String(),
-			Details: map[string]any{"name": name, "shell": in.Shell, "sha256": bodyHash(body), "timeoutSeconds": in.TimeoutSeconds},
+			Details: details,
 		})
 	})
 	if err != nil {
@@ -331,7 +344,7 @@ func (s *Service) UpdateScript(ctx context.Context, c access.Caller, id uuid.UUI
 		if err != nil {
 			return err
 		}
-		name, description, shell, body, timeout := cur.Name, cur.Description, cur.Shell, cur.Body, cur.TimeoutSeconds
+		name, description, shell, fallback, body, timeout := cur.Name, cur.Description, cur.Shell, cur.PwshFallback, cur.Body, cur.TimeoutSeconds
 		if p.Name != nil {
 			name = cleanText(*p.Name, false)
 		}
@@ -341,6 +354,12 @@ func (s *Service) UpdateScript(ctx context.Context, c access.Caller, id uuid.UUI
 		if p.Shell != nil {
 			shell = *p.Shell
 		}
+		switch {
+		case p.PwshFallback != nil:
+			fallback = *p.PwshFallback
+		case shell != agentproto.ShellPwsh:
+			fallback = false
+		}
 		if p.Body != nil {
 			body = normalizeBody(*p.Body)
 		}
@@ -348,12 +367,13 @@ func (s *Service) UpdateScript(ctx context.Context, c access.Caller, id uuid.UUI
 			timeout = *p.TimeoutSeconds
 		}
 		f := apperr.Fields{}
-		validateScript(f, name, description, shell, body, timeout)
+		validateScript(f, name, description, shell, fallback, body, timeout)
 		if err := f.Err(); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE scripts SET name = $2, description = $3, shell = $4, body = $5, timeout_seconds = $6, updated_by = $7
-			WHERE id = $1`, id, name, description, shell, body, timeout, nullUUID(c.Actor.ID)); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE scripts SET name = $2, description = $3, shell = $4, pwsh_fallback = $5, body = $6, timeout_seconds = $7,
+				updated_by = $8
+			WHERE id = $1`, id, name, description, shell, fallback, body, timeout, nullUUID(c.Actor.ID)); err != nil {
 			return err
 		}
 		changes := map[string]any{}
@@ -365,6 +385,9 @@ func (s *Service) UpdateScript(ctx context.Context, c access.Caller, id uuid.UUI
 		}
 		if shell != cur.Shell {
 			changes["shell"] = map[string]string{"from": cur.Shell, "to": shell}
+		}
+		if fallback != cur.PwshFallback {
+			changes["pwshFallback"] = map[string]bool{"from": cur.PwshFallback, "to": fallback}
 		}
 		if body != cur.Body {
 			changes["sha256"] = map[string]string{"from": cur.SHA256, "to": bodyHash(body)}

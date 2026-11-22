@@ -193,6 +193,23 @@ describe("section navigation", () => {
     expect(await screen.findByRole("button", { name: "Show alerts on every device" })).toBeInTheDocument();
   });
 
+  it("pulses the name of a device with an active critical alert in red", async () => {
+    const counts: DeviceAlertCount[] = [
+      { deviceId: "d1", organizationId: "o1", siteId: "s1", active: 1, critical: 0 },
+      { deviceId: "d2", organizationId: "o1", siteId: "s2", active: 2, critical: 1 },
+    ];
+    installFakeApi({ ...routes(), "GET /alerts/devices": ok({ items: counts }) });
+    renderApp("/alerts?organizationId=o1&siteId=s2&deviceId=d2");
+    const tree = await screen.findByRole("tree", { name: "Alerts: organizations, sites and devices" });
+    const front = within(tree).getByRole("treeitem", { name: "FRONT-DESK, offline, 2 active alerts, 1 critical" });
+    expect(within(front).getByText("FRONT-DESK")).toHaveClass("alert-active-pulse", "alert-active-pulse--sidebar");
+    // The chosen row rests in white (index.css), so the name must sit directly in it.
+    expect(within(front).getByText("FRONT-DESK").parentElement).toBe(front);
+    expect(front).toHaveAttribute("aria-selected", "true");
+    const db = within(tree).getByRole("treeitem", { name: "DB-01, online, 1 active alert" });
+    expect(within(db).getByText("DB-01")).not.toHaveClass("alert-active-pulse");
+  });
+
   it("narrows the script library to the shared library, an organization or a site", async () => {
     const user = userEvent.setup();
     const scripts = [script("sc1", "Disk usage"), script("sc2", "Restart spooler", { level: "site", organizationId: "o1", siteId: "s1" })];

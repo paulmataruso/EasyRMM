@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import { BellOff, CheckCheck, X } from "lucide-react";
 import { api } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
@@ -10,6 +10,7 @@ import { useToast } from "../../components/Toast";
 import { Button, Card, cx, EmptyState, ErrorState, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
+import { PatchAlertCard } from "./PatchAlertCard";
 import { PatchAlertState, PatchSeverityBadge, RULE_KIND_ORDER, RULE_KINDS, SEVERITIES } from "./patchAlertText";
 import { FilterSelect } from "./patchText";
 
@@ -32,7 +33,8 @@ const SHOW = [
 export function PatchAlerts() {
   const url = useUrlState();
   const toast = useToast();
-  const { can } = useAuth();
+  const { can, session } = useAuth();
+  const location = useLocation();
   const organizationId = url.get("organizationId");
   const show = url.get("show");
   const severity = url.get("severity");
@@ -67,6 +69,25 @@ export function PatchAlerts() {
     },
   });
   const device = deviceId ? items.find((a) => a.deviceId === deviceId)?.deviceName : null;
+  // The alert whose card is open: its row as the list last loaded it, or as the card last knew it once the list no
+  // longer has it (acknowledged under the Open filter, say). The card stays open only on the address it opened on, so
+  // a link in it that leads elsewhere on this page closes it.
+  const [card, setCard] = useState<PatchAlert | null>(null);
+  const [openOn, setOpenOn] = useState<string | null>(null);
+  const shown = card ? (items.find((a) => a.id === card.id) ?? card) : null;
+  const acknowledgeShown = () => {
+    if (!shown) return;
+    acknowledge.mutate([shown.id], {
+      // EasyPatch answers with a count only: one means it is acknowledged now, by this user.
+      onSuccess: (r) =>
+        setCard({
+          ...shown,
+          canAcknowledge: false,
+          ...(r.acknowledged > 0 ? { status: "Acknowledged" as const, acknowledgedAt: new Date().toISOString(), acknowledgedBy: session?.user.email ?? null } : {}),
+        }),
+    });
+  };
+  const cardError = shown && acknowledge.isError && acknowledge.variables?.length === 1 && acknowledge.variables[0] === shown.id ? acknowledge.error.message : null;
 
   return (
     <>
@@ -182,6 +203,11 @@ export function PatchAlerts() {
                       })
                     }
                     onAcknowledge={() => acknowledge.mutate([a.id])}
+                    onOpen={() => {
+                      setCard(a);
+                      setOpenOn(location.key);
+                      acknowledge.reset();
+                    }}
                     busy={acknowledge.isPending}
                   />
                 ))}
@@ -196,6 +222,14 @@ export function PatchAlerts() {
           )}
         </>
       )}
+      <PatchAlertCard
+        alert={shown}
+        open={openOn === location.key}
+        onClose={() => setOpenOn(null)}
+        onAcknowledge={acknowledgeShown}
+        busy={acknowledge.isPending}
+        error={cardError}
+      />
     </>
   );
 }
@@ -227,12 +261,14 @@ function Where({ a }: { a: PatchAlert }) {
   );
 }
 
-function AlertRow({ alert: a, showSelect, selected, onSelect, onAcknowledge, busy }: {
+function AlertRow({ alert: a, showSelect, selected, onSelect, onAcknowledge, onOpen, busy }: {
   alert: PatchAlert;
   showSelect: boolean;
   selected: boolean;
   onSelect: (on: boolean) => void;
   onAcknowledge: () => void;
+  /** Opens the alert's card. */
+  onOpen: () => void;
   busy: boolean;
 }) {
   return (
@@ -245,7 +281,15 @@ function AlertRow({ alert: a, showSelect, selected, onSelect, onAcknowledge, bus
       <td>
         <div className="flex flex-col items-start gap-1">
           <PatchSeverityBadge severity={a.severity} />
-          <span className="max-w-xl font-medium">{a.title}</span>
+          <button
+            type="button"
+            onClick={onOpen}
+            aria-label={`${a.title}, details`}
+            title="Show the alert's details"
+            className="max-w-xl rounded-sm text-left font-medium break-words hover:text-accent"
+          >
+            {a.title}
+          </button>
           {a.details && <span className="max-w-xl text-xs whitespace-pre-line text-muted">{a.details}</span>}
           <span className="text-xs text-muted">
             {RULE_KINDS[a.ruleType]?.label ?? a.ruleType}

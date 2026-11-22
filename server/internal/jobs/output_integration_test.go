@@ -31,13 +31,14 @@ const (
 // finish delivers, starts and ends a device's queued run with output.
 func (f *fixture) finish(device, run uuid.UUID, stdout, stderr string) {
 	f.t.Helper()
-	if _, err := f.svc.Poll(f.ctx, device); err != nil {
+	if _, err := f.svc.Poll(f.ctx, device, nil); err != nil {
 		f.t.Fatal(err)
 	}
 	if st, err := f.svc.Start(f.ctx, device, run); err != nil || !st.Proceed {
 		f.t.Fatalf("start %+v %v", st, err)
 	}
-	if err := f.svc.Result(f.ctx, device, run, agentproto.ResultRequest{Status: StatusSucceeded, ExitCode: ptr(0), Stdout: stdout, Stderr: stderr}); err != nil {
+	if err := f.svc.Result(f.ctx, device, run, agentproto.ResultRequest{Status: StatusSucceeded, ExitCode: ptr(0), Stdout: stdout, Stderr: stderr,
+		Interpreter: &agentproto.Interpreter{Path: "/bin/sh"}}); err != nil {
 		f.t.Fatal(err)
 	}
 }
@@ -409,7 +410,7 @@ func TestOutputRetentionAndRemoval(t *testing.T) {
 	}
 	lose := func(run uuid.UUID) {
 		t.Helper()
-		if _, err := f.svc.Poll(f.ctx, pc); err != nil {
+		if _, err := f.svc.Poll(f.ctx, pc, nil); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := f.svc.Start(f.ctx, pc, run); err != nil {

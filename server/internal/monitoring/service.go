@@ -15,6 +15,7 @@ import (
 
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/inventory"
 )
 
 // EvaluateInterval is how often the server evaluates the policies.
@@ -41,16 +42,20 @@ type Service struct {
 	db        *database.DB
 	audit     *audit.Logger
 	retention time.Duration
-	log       *slog.Logger
-	now       func() time.Time
-	serving   Serving
+	// metricsKept is how long devices' measurements are kept, as inventory
+	// prunes them: an alert's chart starts no earlier.
+	metricsKept time.Duration
+	log         *slog.Logger
+	now         func() time.Time
+	serving     Serving
 }
 
-// New builds the service. retention is how long resolved alerts are kept.
-// Until FollowServing says otherwise, the server began serving agents now.
-func New(db *database.DB, auditLog *audit.Logger, retention time.Duration, log *slog.Logger) *Service {
+// New builds the service. retention is how long resolved alerts are kept,
+// metricsKept how long devices' measurements are. Until FollowServing says
+// otherwise, the server began serving agents now.
+func New(db *database.DB, auditLog *audit.Logger, retention, metricsKept time.Duration, log *slog.Logger) *Service {
 	started := time.Now()
-	return &Service{db: db, audit: auditLog, retention: max(retention, MinRetention), log: log, now: time.Now,
+	return &Service{db: db, audit: auditLog, retention: max(retention, MinRetention), metricsKept: max(metricsKept, inventory.MinRetention), log: log, now: time.Now,
 		serving: func() (time.Time, bool) { return started, true }}
 }
 

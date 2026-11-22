@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
-import { PageFrame } from "../lib/lazyPage";
+import { lazyPage, PageFrame } from "../lib/lazyPage";
 import { Bell, Building2, FileBarChart, FileCode2, LayoutDashboard, ListChecks, LogOut, Menu, Monitor, Moon, Settings, ShieldCheck, Sun, UserCircle, X } from "lucide-react";
 import { useApi, useWaitingDevices } from "../api/hooks";
 import type { AlertSummary } from "../api/types";
@@ -10,6 +10,7 @@ import { applyTheme, getStoredTheme, storeTheme, type Theme } from "../lib/theme
 import { SectionNav } from "../nav/SectionNav";
 import { SECTION_PERMISSION, sectionFor, type SectionId } from "../nav/sections";
 import { sidebarWidth } from "../nav/width";
+import { ALERT_PARAM } from "../pages/alerts/alertLink";
 import { cx } from "./ui";
 
 interface NavItem {
@@ -72,6 +73,9 @@ export function Logo({ className, onDark = false, large = false }: { className?:
   );
 }
 
+/** An alert's card, over any page that lists alerts (?alert=<id>); fetched the first time one opens. */
+export const AlertCard = lazyPage(() => import("../pages/alerts/AlertDetail").then((m) => m.AlertCard));
+
 /** The main menu item that leads to each section. */
 const SECTION_HOME: Record<SectionId, string> = {
   organizations: "/organizations",
@@ -94,6 +98,9 @@ export function AppLayout() {
   const focused = useCallback(() => setFocusNext(null), []);
 
   useEffect(() => setMobileOpen(false), [location.pathname, location.search]);
+  // Once an alert's card has opened it stays mounted, so that closing it hands focus back to the link that opened it.
+  const [alertCard, setAlertCard] = useState(false);
+  if (!alertCard && can("alert.view") && new URLSearchParams(location.search).has(ALERT_PARAM)) setAlertCard(true);
   const pageSection = sectionFor(location.pathname);
   const allowed = ((): boolean => {
     switch (pageSection) {
@@ -279,6 +286,11 @@ export function AppLayout() {
             <div className="mx-auto max-w-[1440px]">
               <PageFrame>
                 <Outlet />
+                {alertCard && (
+                  <Suspense fallback={null}>
+                    <AlertCard />
+                  </Suspense>
+                )}
               </PageFrame>
             </div>
           </main>

@@ -38,6 +38,25 @@ type fixture struct {
 	mp      *testmail.Mailpit
 	admin   audit.Actor
 	changes int
+	log     logBuffer
+}
+
+// logBuffer is a log tests read while the service writes it.
+type logBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (l *logBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *logBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 func newSealer(t *testing.T) *secrets.Sealer {
@@ -53,11 +72,11 @@ func newSealer(t *testing.T) *secrets.Sealer {
 	return s
 }
 
-func newFixture(t *testing.T, env *mailer.Config) *fixture {
+func newFixture(t *testing.T, env *mailer.Config, opts ...Option) *fixture {
 	t.Helper()
 	inst := testdb.New(t)
 	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, audit: audit.New(inst.DB, nil), sealer: newSealer(t), mp: testmail.New(t)}
-	svc, err := New(inst.DB, f.audit, f.sealer, env, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc, err := New(inst.DB, f.audit, f.sealer, env, slog.New(slog.NewTextHandler(&f.log, nil)), opts...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -987,9 +1006,82 @@ func TestAccountRoomIn(t *testing.T) {
 		for i, a := range c.ages {
 			ages[i] = a * 60
 		}
-		if got := accountRoomIn(ages, 3, every) / 60; math.Abs(got-c.want) > 0.001 {
+		if got := accountRoomIn(math.Inf(-1), ages, 3, every) / 60; math.Abs(got-c.want) > 0.001 {
 			t.Errorf("%s: %.2f minutes, want %.2f", c.name, got, c.want)
 		}
+	}
+	// A bucket carried from older emails counts as those emails did.
+	if got := accountRoomIn(40*60, []float64{0}, 3, every) / 60; math.Abs(got-20) > 0.001 {
+		t.Errorf("a bucket full in 40 minutes, and one now: %.2f minutes", got)
+	}
+	if got := accountRoomIn(-3600, []float64{0, 0}, 3, every) / 60; got != 0 {
+		t.Errorf("a bucket full an hour ago: %.2f minutes", got)
+	}
+}
+
+// The account's limit holds past the 24 hours mail_sends keeps: emails
+// leaving it are folded into the account's bucket, which counts them as
+// they were, so that sliding past a burst gives the account nothing more.
+// Here, three at once 25 hours ago, then one every 20 minutes and one more
+// now: counted whole, the next may go in 40 minutes; counted over the last
+// 24 hours alone, at once.
+func TestAccountBucketPastTheDay(t *testing.T) {
+	f := newFixture(t, nil)
+	alice := uuid.New()
+	var agesMin []float64
+	for range 3 {
+		agesMin = append(agesMin, 1500)
+	}
+	for m := 1480.0; m >= 0; m -= 20 {
+		agesMin = append(agesMin, m)
+	}
+	agesMin = append(agesMin, 0)
+	ages := make([]float64, len(agesMin))
+	var window []float64
+	for i, m := range agesMin {
+		ages[i] = m * 60
+		f.resetSends(1, time.Duration(m)*time.Minute, alice, uuid.Nil)
+		if m < 24*60 {
+			window = append(window, m*60)
+		}
+	}
+	l := accountLimits(9000)
+	every := float64(l.AccountEveryMinutes * 60)
+	if whole, day := accountRoomIn(math.Inf(-1), ages, l.AccountBurst, every), accountRoomIn(math.Inf(-1), window, l.AccountBurst, every); math.Abs(whole/60-40) > 0.1 || day != 0 {
+		t.Fatalf("the test's emails: %.1f minutes counted whole, %.1f over the day", whole/60, day/60)
+	}
+	room := func(step string) {
+		t.Helper()
+		var le *LimitError
+		if err := f.svc.Room(f.ctx, mailer.AccountMail{Self: true, Account: alice}); !errors.As(err, &le) || le.Code != mailer.LimitAccount ||
+			le.RetryAfter < 39*time.Minute || le.RetryAfter > 41*time.Minute {
+			t.Fatalf("%s: %v", step, err)
+		}
+	}
+	// Before and after another message folds the day-old ones away.
+	room("before the fold")
+	if _, err := f.svc.take(f.ctx, otherMail); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.str(`SELECT count(*)::text FROM mail_sends WHERE account_id = $1 AND sent_at <= clock_timestamp() - interval '24 hours'`, alice); n != "0" {
+		t.Fatalf("%s day-old emails left", n)
+	}
+	if n := f.str(`SELECT count(*)::text FROM mail_account_buckets WHERE account_id = $1`, alice); n != "1" {
+		t.Fatalf("%s buckets", n)
+	}
+	room("after the fold")
+	var le *LimitError
+	if _, err := f.svc.take(f.ctx, accountCharge(mailer.AccountMail{Self: true, Account: alice})); !errors.As(err, &le) || le.Code != mailer.LimitAccount {
+		t.Fatalf("taken: %v", err)
+	}
+	// A bucket whose time is more than a day past changes nothing, and goes.
+	bob := uuid.New()
+	f.exec(`INSERT INTO mail_account_buckets (account_id, full_at) VALUES ($1, clock_timestamp() - interval '25 hours')`, bob)
+	if _, err := f.svc.take(f.ctx, otherMail); err != nil {
+		t.Fatal(err)
+	}
+	if n := f.str(`SELECT count(*)::text FROM mail_account_buckets WHERE account_id = $1`, bob); n != "0" {
+		t.Fatal("a spent bucket was kept")
 	}
 }
 

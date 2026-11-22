@@ -58,6 +58,15 @@ function report(name: ReportName, extra: Partial<Report> = {}): Report {
       ],
       rows: [["2026-11-16T10:00:00Z", "WEB-01", "Disk nearly full"]],
     },
+    contacts: {
+      title: "Contacts",
+      columns: [
+        { key: "organization", label: "Organization", type: "text" },
+        { key: "name", label: "Name", type: "text" },
+        { key: "emergency", label: "Emergency", type: "bool" },
+      ],
+      rows: [["Northwind Traders", "Pat Example", true]],
+    },
     "patch-compliance": {
       title: "Patch compliance",
       columns: [

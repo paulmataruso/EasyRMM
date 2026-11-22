@@ -816,6 +816,8 @@ const AGENT = {
   lastSeenAt: T,
   enrolledAt: T,
   update: null,
+  accepts: null,
+  powerShell7: null,
 };
 const WEB = device("d1", "WEB-01", {
   platform: "linux",

@@ -100,7 +100,7 @@ func enrollAt(t *testing.T, h *harness, admin *client, site, name string) enroll
 func (e enrolled) runIt(t *testing.T, stdout string) string {
 	t.Helper()
 	ctx := context.Background()
-	poll, err := e.ac.Poll(ctx)
+	poll, err := e.ac.Poll(ctx, nil)
 	if err != nil || len(poll.Jobs) != 1 {
 		t.Fatalf("poll %+v %v", poll, err)
 	}

@@ -166,8 +166,9 @@ Used by features 7, 9, 12 and 8's actions. Built by feature 7.
   * **kept out of the Jobs list** by default.
 * **On ADR-0054's amendments.** ADR-0054 amends ADR-0017 with its W2:
   a batch ID, retention per kind, one audit row per organization per
-  batch, and runs the server can cancel. ADR-0054 is accepted; its W1 is
-  in review (PR #92) and no W1 code is on `main`. W2 comes before feature 7 in the
+  batch, and runs the server can cancel. ADR-0054 is accepted; its W1
+  (check, PR #92) is built but for the MDM proof, which waits for a
+  tenant; W2 is not started. W2 comes before feature 7 in the
   [order](#order), so F2 extends those per kind and does not add a
   second set; if the order changes, whichever is built first builds
   them and the other extends them.
