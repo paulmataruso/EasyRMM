@@ -21,9 +21,20 @@ import (
 // engine knows of each of its updates on that device. The engine keeps no
 // output of a patch job, so there is none to show.
 
-// originSlack is how much earlier than the engine's clock says a job was
-// created its audit record may be: the two clocks may differ.
-const originSlack = time.Hour
+// originSlack is how far from the job's creation, as the engine's clock
+// has it, the audit record that started it may be: EasyRMM records it once
+// the engine has answered, or, for a restart after an install, once a
+// claim left behind is settled, minutes later; and the two clocks may
+// differ.
+const originSlack = 15 * time.Minute
+
+// JobFacts is what the engine knows of each of a job's updates on its
+// device, by update GUID (an update absent is no longer listed for it),
+// and UpdateFactsError, why that could not be read.
+type JobFacts struct {
+	UpdateFacts      map[uuid.UUID]UpdateFacts `json:"updateFacts"`
+	UpdateFactsError *string                   `json:"updateFactsError"`
+}
 
 // JobDevice is the device a job ran on.
 type JobDevice struct {
@@ -96,7 +107,7 @@ type UpdateFacts struct {
 func (s *Service) jobView(ctx context.Context, c access.Caller, cl *Client, j JobDetail, d deviceRow) (JobDetailView, error) {
 	j.Items, j.Events = orEmpty(j.Items), orEmpty(j.Events)
 	v := JobDetailView{JobDetail: j, DeviceID: d.id, DeviceName: d.name, CanManage: c.Can(rbac.PermPatchManage, d.resource()),
-		Device: JobDevice{OrganizationName: d.organizationName, SiteName: d.siteName, Platform: d.platform}, UpdateFacts: map[uuid.UUID]UpdateFacts{}}
+		Device: JobDevice{OrganizationName: d.organizationName, SiteName: d.siteName, Platform: d.platform}}
 	var err error
 	if v.RestartAfter, v.RestartFor, err = s.restartAfter(ctx, c, j.Summary.ID); err != nil {
 		return JobDetailView{}, err
@@ -110,22 +121,14 @@ func (s *Service) jobView(ctx context.Context, c access.Caller, cl *Client, j Jo
 	if v.Origin, err = s.origin(ctx, d.id, j.Summary); err != nil {
 		return JobDetailView{}, err
 	}
-	rctx := s.as(ctx, c, RoleReadOnly, orgOf(d)...)
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		e, err := cl.Endpoint(rctx, j.Summary.EndpointID)
-		if err != nil {
-			s.noteError(err)
-			return
-		}
-		v.Device.Endpoint = &JobEndpoint{Hostname: e.Summary.Hostname, OperatingSystem: e.Summary.OperatingSystem, OSBuild: e.Summary.OSBuild,
-			OSSupportStatus: e.Summary.OSSupportStatus, AgentVersion: e.Summary.AgentVersion, AgentOutdated: e.Summary.AgentOutdated,
-			Online: e.Summary.IsOnline, LastCheckInAt: e.Summary.LastCheckInAt, RebootPending: e.Summary.RebootPending}
-	})
-	if len(j.Items) > 0 {
-		v.UpdateFacts, v.UpdateFactsError = s.updateFacts(rctx, cl, j)
+	e, err := cl.Endpoint(s.as(ctx, c, RoleReadOnly, orgOf(d)...), j.Summary.EndpointID)
+	if err != nil {
+		s.noteError(err)
+		return v, nil
 	}
-	wg.Wait()
+	v.Device.Endpoint = &JobEndpoint{Hostname: e.Summary.Hostname, OperatingSystem: e.Summary.OperatingSystem, OSBuild: e.Summary.OSBuild,
+		OSSupportStatus: e.Summary.OSSupportStatus, AgentVersion: e.Summary.AgentVersion, AgentOutdated: e.Summary.AgentOutdated,
+		Online: e.Summary.IsOnline, LastCheckInAt: e.Summary.LastCheckInAt, RebootPending: e.Summary.RebootPending}
 	return v, nil
 }
 
@@ -171,8 +174,9 @@ func (s *Service) origin(ctx context.Context, device uuid.UUID, j Job) (*JobOrig
 	var details map[string]any
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT action, actor_label, actor_type = 'system', occurred_at, details FROM audit_log
-			WHERE device_id = $1 AND occurred_at >= $2 AND action LIKE 'patch.%' AND action <> 'patch.cancel' AND details->>'jobId' = $3
-			ORDER BY occurred_at LIMIT 1`, device, j.CreatedAt.Add(-originSlack), j.ID.String()).Scan(&o.Action, &o.By, &o.System, &o.At, &details)
+			WHERE device_id = $1 AND occurred_at BETWEEN $2 AND $3 AND action LIKE 'patch.%' AND action <> 'patch.cancel' AND details->>'jobId' = $4
+			ORDER BY occurred_at LIMIT 1`, device, j.CreatedAt.Add(-originSlack), j.CreatedAt.Add(originSlack), j.ID.String()).
+			Scan(&o.Action, &o.By, &o.System, &o.At, &details)
 	})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):

@@ -681,13 +681,10 @@ type JobDetailView struct {
 	RestartAfter *RestartAfterView `json:"restartAfter"`
 	RestartFor   *uuid.UUID        `json:"restartFor"`
 	// Device is the device as EasyRMM and the engine know it; Origin, how
-	// EasyRMM started the job (nil when it did not); UpdateFacts, what the
-	// engine knows of the job's updates on the device, and
-	// UpdateFactsError, why that could not be read.
-	Device           JobDevice                 `json:"device"`
-	Origin           *JobOrigin                `json:"origin"`
-	UpdateFacts      map[uuid.UUID]UpdateFacts `json:"updateFacts"`
-	UpdateFactsError *string                   `json:"updateFactsError"`
+	// EasyRMM started the job (nil when it did not). What the engine knows
+	// of the job's updates is read apart (JobFacts), once.
+	Device JobDevice  `json:"device"`
+	Origin *JobOrigin `json:"origin"`
 }
 
 // linkedDevices reads the linked devices of the given endpoints that the
@@ -849,6 +846,21 @@ func (s *Service) Job(ctx context.Context, c access.Caller, id uuid.UUID) (JobDe
 		return JobDetailView{}, err
 	}
 	return s.jobView(ctx, c, cl, j, d)
+}
+
+// JobFacts reads what the engine knows of a job's updates on its device, for
+// a caller who may see the job. It reads the engine's lists of the device's
+// updates, so it is asked for once, not with each refresh of the job.
+func (s *Service) JobFacts(ctx context.Context, c access.Caller, id uuid.UUID) (JobFacts, error) {
+	j, d, _, cl, err := s.job(ctx, c, id)
+	if err != nil {
+		return JobFacts{}, err
+	}
+	f := JobFacts{UpdateFacts: map[uuid.UUID]UpdateFacts{}}
+	if len(j.Items) > 0 {
+		f.UpdateFacts, f.UpdateFactsError = s.updateFacts(s.as(ctx, c, RoleReadOnly, orgOf(d)...), cl, j)
+	}
+	return f, nil
 }
 
 // CancelJob cancels a job of a device the caller may manage patching of.

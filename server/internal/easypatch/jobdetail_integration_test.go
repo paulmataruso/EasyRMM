@@ -6,9 +6,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/easypatch/eptest"
 )
 
@@ -38,9 +40,16 @@ func TestJobDetail(t *testing.T) {
 		f.e1.InstalledItems = []map[string]any{earlier}
 	})
 
+	// The job, as each refresh reads it: not the engine's lists of the
+	// device's updates.
+	lists := func() int {
+		return len(f.ep.RequestsTo("GET", "/api/v1/endpoints/"+f.e1.ID.String()+"/updates")) +
+			len(f.ep.RequestsTo("GET", "/api/v1/endpoints/"+f.e1.ID.String()+"/installed-updates"))
+	}
+	before := lists()
 	d, err := f.svc.Job(ctx, f.tech, job)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || lists() != before {
+		t.Fatalf("job: %d lists read, %v", lists()-before, err)
 	}
 	dev := d.Device
 	if dev.OrganizationName != "Acme" || dev.SiteName != "HQ" || dev.OS != "Debian GNU/Linux 13 (trixie)" || dev.AgentVersion == nil ||
@@ -52,18 +61,20 @@ func TestJobDetail(t *testing.T) {
 		o.PatchAll != nil || o.RequestID != nil {
 		t.Fatalf("origin: %+v", o)
 	}
-	if len(d.Items) != 3 || d.UpdateFactsError != nil || len(d.UpdateFacts) != 2 {
-		t.Fatalf("items: %+v, facts %+v, %v", d.Items, d.UpdateFacts, d.UpdateFactsError)
+	// What the engine knows of its updates, read once, apart.
+	facts, err := f.svc.JobFacts(ctx, f.tech, job)
+	if err != nil || len(d.Items) != 3 || facts.UpdateFactsError != nil || len(facts.UpdateFacts) != 2 || lists() != before+2 {
+		t.Fatalf("items: %+v, facts %+v, %v, %v", d.Items, facts.UpdateFacts, facts.UpdateFactsError, err)
 	}
-	s := d.UpdateFacts[guidOf(t, security)]
+	s := facts.UpdateFacts[guidOf(t, security)]
 	if s.MsrcSeverity != "Critical" || !slices.Equal(s.KbNumbers, []string{"5070001"}) || len(s.CveIDs) != 2 || !s.KnownExploited ||
 		s.KevDueDate != "2026-12-01" || s.SizeBytes == nil || s.Package == nil || s.State != "Missing" {
 		t.Fatalf("security: %+v", s)
 	}
-	if e := d.UpdateFacts[guidOf(t, earlier)]; e.State != "Installed" || len(e.CveIDs) != 1 {
+	if e := facts.UpdateFacts[guidOf(t, earlier)]; e.State != "Installed" || len(e.CveIDs) != 1 {
 		t.Fatalf("earlier: %+v", e)
 	}
-	if _, ok := d.UpdateFacts[guidOf(t, gone)]; ok {
+	if _, ok := facts.UpdateFacts[guidOf(t, gone)]; ok {
 		t.Fatal("an update no longer listed has facts")
 	}
 
@@ -75,10 +86,27 @@ func TestJobDetail(t *testing.T) {
 		}
 	})
 	d, err = f.svc.Job(ctx, f.tech, job)
-	if err != nil || d.UpdateFactsError == nil || len(d.UpdateFacts) != 1 || d.Device.Endpoint != nil || d.Device.OS == "" {
-		t.Fatalf("unread: %+v, %v, %v", d.UpdateFacts, d.UpdateFactsError, err)
+	if err != nil || d.Device.Endpoint != nil || d.Device.OS == "" {
+		t.Fatalf("unread endpoint: %+v, %v", d.Device, err)
+	}
+	facts, err = f.svc.JobFacts(ctx, f.tech, job)
+	if err != nil || facts.UpdateFactsError == nil || len(facts.UpdateFacts) != 1 {
+		t.Fatalf("unread: %+v, %v, %v", facts.UpdateFacts, facts.UpdateFactsError, err)
 	}
 	f.ep.Set(func() { f.ep.LoseReply = nil })
+	_, err = f.svc.JobFacts(ctx, f.outsider, job)
+	wantErr(t, err, apperr.KindNotFound, "")
+
+	// The record that started it is looked for near when the engine created
+	// the job, not at any time since.
+	f.ep.AgeJob(job, 10*time.Minute)
+	if d, err = f.svc.Job(ctx, f.tech, job); err != nil || d.Origin == nil {
+		t.Fatalf("ten minutes: %+v, %v", d.Origin, err)
+	}
+	f.ep.AgeJob(job, 2*time.Hour)
+	if d, err = f.svc.Job(ctx, f.tech, job); err != nil || d.Origin != nil {
+		t.Fatalf("two hours: %+v, %v", d.Origin, err)
+	}
 
 	// A retry names the job it runs again.
 	f.ep.SetJobStatus(job, "Failed")
@@ -120,8 +148,11 @@ func TestJobDetailOrigins(t *testing.T) {
 		t.Fatal(err)
 	}
 	d, err := f.svc.Job(ctx, f.tech, own)
-	if err != nil || d.Origin != nil || len(d.UpdateFacts) != 0 || d.UpdateFactsError != nil {
+	if err != nil || d.Origin != nil {
 		t.Fatalf("engine's own: %+v, %v", d.Origin, err)
+	}
+	if facts, err := f.svc.JobFacts(ctx, f.tech, own); err != nil || len(facts.UpdateFacts) != 0 || facts.UpdateFactsError != nil {
+		t.Fatalf("engine's own facts: %+v, %v", facts, err)
 	}
 
 	// The restart after an install: EasyRMM's own.

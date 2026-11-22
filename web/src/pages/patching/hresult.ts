@@ -65,7 +65,7 @@ const MEANINGS: Record<string, CodeMeaning> = {
     advice: "Often a .NET or Defender update: install it again, or repair the product it updates.",
   },
   "0x80070BC2": { meaning: "A restart is needed to finish.", advice: "Restart the device." },
-  "0x80070BC9": { meaning: "An earlier operation needs a restart before this update can install.", advice: "Restart the device, then install again." },
+  "0x80070BC9": { meaning: "The operation failed; a restart is needed to roll back the changes.", advice: "Restart the device, then install again." },
   "0x80072EE2": { meaning: "The connection to the update server timed out." },
   "0x80072EE7": { meaning: "The update server's name could not be resolved.", advice: "Check the device's DNS." },
   "0x80072EFD": { meaning: "No connection to the update server could be made." },

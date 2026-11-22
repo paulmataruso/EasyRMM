@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { PatchJobDetail, PatchJobItem, PatchJobUpdateFacts, PatchJobView } from "../../api/types";
+import type { PatchJobDetail, PatchJobFacts, PatchJobItem, PatchJobUpdateFacts, PatchJobView } from "../../api/types";
 import { baseRoutes, installFakeApi, ok, sessionView } from "../../test/fakeApi";
 import { renderWithProviders } from "../../test/render";
 import { CVES_SHOWN, EVENTS_SHOWN, PatchJobDialog, UPDATES_SHOWN } from "./PatchJobDialog";
@@ -82,7 +82,10 @@ function facts(extra: Partial<PatchJobUpdateFacts> = {}): PatchJobUpdateFacts {
   };
 }
 
-function detail(extra: Partial<PatchJobDetail> = {}): PatchJobDetail {
+/** A job as the dialog shows it: its detail, and what the engine knows of its updates, read apart. */
+type Shown = PatchJobDetail & PatchJobFacts;
+
+function detail(extra: Partial<Shown> = {}): Shown {
   return {
     summary: job(),
     installMode: "Selected",
@@ -128,9 +131,10 @@ function detail(extra: Partial<PatchJobDetail> = {}): PatchJobDetail {
 let shown: { unmount: () => void } | null = null;
 
 /** Opens a job in the dialog, closing the one open before. */
-async function open(d: PatchJobDetail, onJob: (id: string) => void = () => {}) {
+async function open(d: Shown, onJob: (id: string) => void = () => {}) {
   shown?.unmount();
-  installFakeApi({ ...baseRoutes(TECH), "GET /patching/jobs/:id": ok(d) });
+  const { updateFacts, updateFactsError, ...rest } = d;
+  installFakeApi({ ...baseRoutes(TECH), "GET /patching/jobs/:id": ok(rest), "GET /patching/jobs/:id/facts": ok({ updateFacts, updateFactsError }) });
   shown = renderWithProviders(<PatchJobDialog jobId={d.summary.id} onClose={() => {}} onJob={onJob} />);
   const dialog = await screen.findByRole("dialog", { name: /on WEB-01$/ });
   await within(dialog).findByRole("region", { name: "Summary" });
@@ -313,11 +317,13 @@ describe("a patch job in full", () => {
       events: [
         { id: 2, type: "JobFinished", severity: "Error", message: "Install updates failed: 1 update failed.", createdAt: "2026-11-22T10:14:31Z" },
         { id: 1, type: "JobStarted", severity: "Info", message: "Install updates started.", createdAt: "2026-11-22T10:02:01Z" },
+        { id: 0, type: "JobQueued", severity: "Info", message: "Install updates queued by tess@example.com.", createdAt: T0 },
       ],
       summary: job({ status: "Failed" }),
     });
     const timeline = region(await open(d), "Timeline");
-    // Each entry: when, then what.
+    // Each entry: when, then what; the engine's queued and started events, which say again what the job's own times
+    // say, are left out.
     const entries = within(timeline)
       .getAllByRole("listitem")
       .map((li) => li.querySelector("span")?.textContent);
@@ -327,7 +333,6 @@ describe("a patch job in full", () => {
       "Sent to the device",
       "The device accepted it",
       "Started",
-      "Install updates started.",
       "Failed",
       "Install updates failed: 1 update failed.",
     ]);

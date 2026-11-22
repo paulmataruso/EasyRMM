@@ -191,8 +191,10 @@ All notable changes to this project are documented here. The format follows
   shown in hex with what it means and what to try, or as an unknown code.
   Long lists show their first entries and the rest on request. The engine
   keeps no output of patch jobs, so there is no log to show. The job's
-  answer in the API gains `device`, `origin`, `updateFacts` and
-  `updateFactsError`. See [Jobs](docs/operations/patching.md#jobs).
+  answer in the API gains `device` and `origin`; what the engine knows of
+  its updates is read once, apart, from
+  `GET /api/v1/patching/jobs/{id}/facts` (`updateFacts`,
+  `updateFactsError`). See [Jobs](docs/operations/patching.md#jobs).
 - **Disk health** (ADR-0065, slice 1). The EasyRMM agent reads each disk's
   own health record every 30 minutes, NVMe's health log and ATA's SMART
   with a fixed list of read-only commands, on Windows and Linux, and sends

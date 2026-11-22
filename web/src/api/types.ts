@@ -2366,7 +2366,11 @@ export interface PatchJobDetail {
   device: PatchJobDevice;
   /** How EasyRMM started the job, from its audit log; null when it did not, or the record is gone. */
   origin: PatchJobOrigin | null;
-  /** What the engine knows of each of the job's updates on the device, by update GUID; an update absent is no longer listed. */
+}
+
+/** What the engine knows of a job's updates on its device (GET /patching/jobs/{id}/facts), read once, apart from the job. */
+export interface PatchJobFacts {
+  /** By update GUID; an update absent is no longer listed for the device. */
   updateFacts: Record<string, PatchJobUpdateFacts>;
   /** Why updateFacts could not be read, when they could not. */
   updateFactsError: string | null;

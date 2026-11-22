@@ -3,7 +3,7 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PatchActionResult, PatchAvailablePlan, PatchFleet, PatchJobDetail, PatchJobView, PatchScope, RestartPlan } from "../../api/types";
 import { baseRoutes, installFakeApi, ok, sessionView, type FakeHandler, type FakeReply } from "../../test/fakeApi";
-import { org, patchJobFacts, site } from "../../test/fixtures";
+import { org, patchJobDevice, site } from "../../test/fixtures";
 import { renderApp, renderWithProviders } from "../../test/render";
 import { InstallDialog, RestartDialog } from "./PatchDialogs";
 import { PatchJobDialog } from "./PatchJobDialog";
@@ -732,7 +732,7 @@ describe("a job's restart after its install", () => {
       deviceId: "d1",
       deviceName: "WEB-01",
       canManage: true,
-      ...patchJobFacts(),
+      ...patchJobDevice(),
       ...extra,
     };
   }

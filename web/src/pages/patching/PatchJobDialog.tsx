@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { ExternalLink, RotateCcw } from "lucide-react";
 import { api } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
-import type { PatchJob, PatchJobDetail, PatchJobItem, PatchJobUpdateFacts, PatchJobView, PatchRestartAfter } from "../../api/types";
+import type { PatchJob, PatchJobDetail, PatchJobFacts, PatchJobItem, PatchJobUpdateFacts, PatchJobView, PatchRestartAfter } from "../../api/types";
 import { Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Alert, Badge, Button, ErrorState, InlineError, KeyValueList, Mono, Spinner } from "../../components/ui";
@@ -37,8 +37,17 @@ export const CVES_SHOWN = 5;
  */
 export function PatchJobDialog({ jobId, onClose, onJob }: { jobId: string | null; onClose: () => void; onJob: (id: string) => void }) {
   const toast = useToast();
+  // The job's status refreshes every 4 seconds while it runs; what the engine knows of its updates (two lists of the
+  // device's updates) is read once per opening, and again only if the job comes to list more updates.
   const job = useApi<PatchJobDetail>(jobId ? `/patching/jobs/${jobId}` : null, undefined, {
     refetchInterval: (data) => (data && !isActiveJob(data.summary) ? false : 4_000),
+  });
+  const itemCount = job.data?.items.length ?? 0;
+  const facts = useApi<PatchJobFacts>(jobId && itemCount > 0 ? `/patching/jobs/${jobId}/facts` : null, undefined, {
+    key: ["patching-job-facts", jobId, itemCount],
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
   });
   const cancel = useApiMutation(() => api.post<PatchJobDetail>(`/patching/jobs/${jobId}/cancel`), {
     invalidate: PATCH_KEYS,
@@ -93,7 +102,7 @@ export function PatchJobDialog({ jobId, onClose, onJob }: { jobId: string | null
             <JobOrigin d={d} onJob={onJob} />
             <JobDevice d={d} />
             {d.restartAfter && <RestartAfterView r={d.restartAfter} onJob={onJob} />}
-            {d.items.length > 0 && <JobUpdates d={d} />}
+            {d.items.length > 0 && <JobUpdates d={d} facts={facts.data} factsError={facts.error} />}
             <JobTimeline d={d} />
           </div>
         )
@@ -423,14 +432,17 @@ const RESULT_CODES: Record<number, string> = {
   5: "Stopped before it finished",
 };
 
-/** The job's updates: totals, then each with what the patching engine knows of it. */
-function JobUpdates({ d }: { d: PatchJobDetail }) {
+/**
+ * The job's updates: totals, then each with what the patching engine knows of it (facts, undefined until read;
+ * factsError when they could not be).
+ */
+function JobUpdates({ d, facts, factsError }: { d: PatchJobDetail; facts: PatchJobFacts | undefined; factsError: Error | null }) {
   const [all, setAll] = useState(false);
   const counts = new Map<string, number>();
   for (const it of d.items) counts.set(it.status, (counts.get(it.status) ?? 0) + 1);
-  const sizes = d.items.map((it) => d.updateFacts[it.updateGuid]?.sizeBytes ?? null);
-  const known = sizes.filter((n): n is number => n !== null);
-  const exploited = d.items.filter((it) => d.updateFacts[it.updateGuid]?.knownExploited).length;
+  const known = facts ? d.items.map((it) => facts.updateFacts[it.updateGuid]?.sizeBytes ?? null).filter((n): n is number => n !== null) : [];
+  const exploited = facts ? d.items.filter((it) => facts.updateFacts[it.updateGuid]?.knownExploited).length : 0;
+  const unread = factsError ? factsError.message : (facts?.updateFactsError ?? null);
   const restart = d.items.filter((it) => it.rebootRequired).length;
   const shown = all ? d.items : d.items.slice(0, UPDATES_SHOWN);
   return (
@@ -453,14 +465,14 @@ function JobUpdates({ d }: { d: PatchJobDetail }) {
         {exploited > 0 && <li className="text-danger">{plural(exploited, "update")} fixing exploited flaws</li>}
         {restart > 0 && <li>{plural(restart, "update")} need a restart</li>}
       </ul>
-      {d.updateFactsError && (
+      {unread !== null && (
         <Alert tone="warn" title="The patching engine's details of these updates could not be read" className="mb-2">
-          {d.updateFactsError}
+          {unread}
         </Alert>
       )}
       <ul className="divide-y divide-line rounded-md border border-line">
         {shown.map((it) => (
-          <UpdateRow key={it.updateGuid} it={it} facts={d.updateFacts[it.updateGuid]} unread={d.updateFactsError !== null} />
+          <UpdateRow key={it.updateGuid} it={it} facts={facts?.updateFacts[it.updateGuid]} unread={!facts || unread !== null} />
         ))}
       </ul>
       {!all && d.items.length > UPDATES_SHOWN && <ShowAll total={d.items.length} what="updates" onClick={() => setAll(true)} />}
@@ -558,6 +570,9 @@ const FINISHED: Record<string, string> = {
 };
 
 /** What happened to the job, in order: EasyRMM's and the engine's times, and the engine's events. */
+/** The engine's events the job's own times already show: queued (its creation) and started. */
+const REPEATED_EVENTS = new Set(["JobQueued", "JobStarted"]);
+
 function timeline(d: PatchJobDetail): Moment[] {
   const s = d.summary;
   const m: Moment[] = [{ at: s.createdAt, text: s.trigger === "Manual" ? `Requested by ${requester(s.requestedBy)}` : `Requested ${triggerLabel(s.trigger).toLowerCase()}` }];
@@ -571,7 +586,8 @@ function timeline(d: PatchJobDetail): Moment[] {
     const failed = s.status === "Failed" || s.status === "Expired";
     m.push({ at: s.completedAt, text: FINISHED[s.status] ?? s.status, tone: failed ? "danger" : undefined });
   }
-  for (const e of d.events) {
+  // The engine's queued and started events say again what the job's own times above say.
+  for (const e of d.events.filter((x) => !REPEATED_EVENTS.has(x.type))) {
     m.push({ at: e.createdAt, text: e.message, tone: e.severity === "Error" ? "danger" : e.severity === "Warning" ? "warn" : undefined });
   }
   return m.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));

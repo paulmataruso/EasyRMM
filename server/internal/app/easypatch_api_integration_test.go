@@ -281,9 +281,19 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching/jobs/"+jobs.Items[0].ID, nil, &job)
 	if job.DeviceName != "web-01" || job.Summary.Status != "Queued" || job.Device.OrganizationName == "" || job.Device.Platform == "" ||
-		job.Device.Endpoint == nil || job.Device.Endpoint.Hostname == "" || job.UpdateFacts == nil {
+		job.Device.Endpoint == nil || job.Device.Endpoint.Hostname == "" || job.UpdateFacts != nil {
 		t.Fatalf("job: %+v", job)
 	}
+	// What the engine knows of the job's updates is read apart, once.
+	var facts struct {
+		UpdateFacts      map[string]json.RawMessage `json:"updateFacts"`
+		UpdateFactsError *string                    `json:"updateFactsError"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/patching/jobs/"+jobs.Items[0].ID+"/facts", nil, &facts)
+	if facts.UpdateFacts == nil || facts.UpdateFactsError != nil {
+		t.Fatalf("facts: %+v", facts)
+	}
+	wantStatus(t, admin.do("GET", "/api/v1/patching/jobs/nope/facts", nil), http.StatusNotFound, "not_found")
 	wantStatus(t, admin.do("GET", "/api/v1/patching/jobs/nope", nil), http.StatusNotFound, "not_found")
 	wantStatus(t, admin.do("POST", "/api/v1/patching/jobs/nope/cancel", nil), http.StatusNotFound, "not_found")
 	admin.expect(http.StatusOK, "POST", "/api/v1/patching/jobs/"+jobs.Items[0].ID+"/cancel", nil, &job)

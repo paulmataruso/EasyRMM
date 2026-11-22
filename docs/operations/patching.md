@@ -430,7 +430,12 @@ Open a job to see it in full; it refreshes while it runs.
   job says so. The first 25 updates are shown, the rest on request.
 * **Timeline**: when the job was requested, sent to the device (and how
   many times), accepted, started, asked to cancel and finished, in order
-  with the engine's events; the first 20 entries, the rest on request.
+  with the engine's other events; the first 20 entries, the rest on
+  request.
+
+A running job refreshes every 4 seconds. The details of its updates are
+read once when the job opens, as they come from the engine's lists of the
+device's updates.
 
 The engine keeps no output of patch jobs, so there is no log to show.
 

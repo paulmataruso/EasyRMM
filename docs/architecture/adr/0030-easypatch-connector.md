@@ -310,6 +310,14 @@ What follows was decided in review.
 * **Layout**: a summary at the top (status, result, how long, restart
   needed, the error), then how it started, the device, the restart after
   the install, the updates with their totals, and a timeline merging the
-  job's times with the engine's events. Long lists show their first
-  entries (25 updates, 20 timeline entries, 5 CVEs an update) and the rest
-  on request.
+  job's times with the engine's events (its queued and started events
+  left out, as the job's own times say the same). Long lists show their
+  first entries (25 updates, 20 timeline entries, 5 CVEs an update) and the
+  rest on request.
+* **Reads** (decided in review): the job refreshes every 4 seconds while
+  it runs, reading only the job; what the engine knows of its updates
+  comes from two lists of the device's updates, so it is read apart
+  (`GET /api/v1/patching/jobs/{id}/facts`), once per opening, and again
+  only when the job lists more updates. How the job started is looked for
+  in the audit trail within 15 minutes either side of the job's creation,
+  not at any time since.

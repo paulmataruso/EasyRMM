@@ -471,6 +471,16 @@ func (s *Server) duplicateRestart(endpoint uuid.UUID) *Job {
 	return nil
 }
 
+// AgeJob moves a job's creation back by d, as for a job created that long
+// ago.
+func (s *Server) AgeJob(id uuid.UUID, d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if j := s.job(id); j != nil {
+		j.CreatedAt = j.CreatedAt.Add(-d)
+	}
+}
+
 // AddJob adds a job the engine started on its own, as a policy's schedule
 // (trigger Scheduled) or the engine (System) does.
 func (s *Server) AddJob(endpoint uuid.UUID, typ, trigger string) uuid.UUID {

@@ -32,6 +32,8 @@ describe("error codes", () => {
       advice: "Check the device's DNS and proxy settings.",
     });
     expect(explainCode("-2147023293")).toMatchObject({ kind: "known", hex: "0x80070643" });
+    // ERROR_FAIL_REBOOT_REQUIRED: the operation failed, and a restart rolls it back.
+    expect(explainCode("0x80070BC9")).toMatchObject({ kind: "known", meaning: "The operation failed; a restart is needed to roll back the changes." });
   });
 
   it("says which codes it does not know, and whether they are Windows Update's", () => {
