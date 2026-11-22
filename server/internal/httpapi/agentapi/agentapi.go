@@ -30,6 +30,7 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/agents"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
+	"github.com/paulmataruso/easyrmm/server/internal/hardware"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
@@ -56,19 +57,21 @@ type API struct {
 	caDER   []byte
 	jobs    *jobs.Service
 	inv     *inventory.Service
+	hw      *hardware.Service
 	ep      EasyPatchInstalls
 	log     *slog.Logger
 
 	// Per-device limits on signed requests.
 	requests    *auth.KeyedLimiter
 	inventories *auth.KeyedLimiter
+	hardware    *auth.KeyedLimiter
 	pollMu      sync.Mutex
 	polls       map[uuid.UUID]int
 }
 
 // What one device may send. An agent sends a heartbeat a minute, keeps one
-// job poll open, a start and a result for each job, and an inventory when it
-// changes (collected hourly); a device that sends far more is refused with
+// job poll open, a start and a result for each job, an inventory when it
+// changes (collected hourly) and a hardware report every 30 minutes; a device that sends far more is refused with
 // 429 and backs off. Limits are spent only once a request's signature is
 // verified, so requests naming someone else's device cannot use up its
 // allowance.
@@ -77,6 +80,8 @@ const (
 	requestBurst   = 120
 	inventoryEvery = 10 * time.Minute
 	inventoryBurst = 6
+	hardwareEvery  = 10 * time.Minute
+	hardwareBurst  = 6
 	maxPolls       = 4
 	// maxTracked bounds the devices the limits remember; idle ones are
 	// forgotten first.
@@ -124,6 +129,7 @@ func New(svc *agents.Service, builds *agents.Builds, addresses []Address, ca []b
 	a := &API{svc: svc, builds: builds, scripts: map[string]installers{}, ca: ca, log: log,
 		requests:    auth.NewKeyedLimiter(requestEvery, requestBurst, maxTracked),
 		inventories: auth.NewKeyedLimiter(inventoryEvery, inventoryBurst, maxTracked),
+		hardware:    auth.NewKeyedLimiter(hardwareEvery, hardwareBurst, maxTracked),
 		polls:       map[uuid.UUID]int{},
 	}
 	if ca != nil {
@@ -188,6 +194,12 @@ func (a *API) WithInventory(inv *inventory.Service) *API {
 	return a
 }
 
+// WithHardware stores hardware reports in hw (ADR-0065).
+func (a *API) WithHardware(hw *hardware.Service) *API {
+	a.hw = hw
+	return a
+}
+
 // WithEasyPatch has heartbeats carry EasyPatch agent installs (ADR-0031).
 func (a *API) WithEasyPatch(ep EasyPatchInstalls) *API {
 	a.ep = ep
@@ -209,6 +221,9 @@ func (a *API) Handler() http.Handler {
 	}
 	if a.inv != nil {
 		mux.Handle("POST "+agentproto.PathInventory, httpapi.Handle(a.signedWith(agentproto.MaxInventoryBody, a.inventories, a.inventory)))
+	}
+	if a.hw != nil {
+		mux.Handle("POST "+agentproto.PathHardware, httpapi.Handle(a.signedWith(agentproto.MaxHardwareBody, a.hardware, a.hardwareReport)))
 	}
 	mux.Handle("GET /api/agent/v1/install.sh", httpapi.Handle(a.installer))
 	mux.Handle("GET /api/agent/v1/install.ps1", httpapi.Handle(a.installer))
@@ -252,6 +267,8 @@ var (
 		Message: "The removal report is not valid."}
 	errBadInventory = &httpapi.Error{Status: http.StatusBadRequest, Code: "inventory_invalid",
 		Message: "The inventory is not valid JSON."}
+	errBadHardware = &httpapi.Error{Status: http.StatusBadRequest, Code: "hardware_invalid",
+		Message: "The hardware report is not valid JSON."}
 	errTooFrequent = &httpapi.Error{Status: http.StatusTooManyRequests, Code: "rate_limited",
 		Message: "This device is sending requests more often than an agent does. Try again shortly."}
 	errTooManyPolls = &httpapi.Error{Status: http.StatusTooManyRequests, Code: "rate_limited",
@@ -276,6 +293,7 @@ func mapError(err error) error {
 		jobs.ErrBadResult:         errBadResult,
 		agents.ErrBadReport:       errBadReport,
 		inventory.ErrBadInventory: errBadInventory,
+		hardware.ErrBadReport:     errBadHardware,
 	} {
 		if errors.Is(err, from) {
 			return to
@@ -542,6 +560,18 @@ func (a *API) inventory(w http.ResponseWriter, r *http.Request, d *agents.Device
 		return mapError(err)
 	}
 	httpapi.WriteJSON(w, http.StatusOK, agentproto.InventoryResponse{Hash: hash})
+	return nil
+}
+
+// hardwareReport stores a device's hardware report (ADR-0065).
+func (a *API) hardwareReport(w http.ResponseWriter, r *http.Request, d *agents.Device, body []byte) error {
+	if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		return &httpapi.Error{Status: http.StatusUnsupportedMediaType, Code: "unsupported_media_type", Message: "Send the request body as application/json."}
+	}
+	if err := a.hw.Record(r.Context(), d.ID, body); err != nil {
+		return mapError(err)
+	}
+	w.WriteHeader(http.StatusNoContent)
 	return nil
 }
 

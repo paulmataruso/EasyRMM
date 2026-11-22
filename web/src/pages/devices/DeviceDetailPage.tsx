@@ -136,7 +136,7 @@ export function DeviceDetailPage() {
           ) : inventory.isError ? (
             <ErrorState error={inventory.error} onRetry={() => void inventory.refetch()} />
           ) : (
-            <HardwarePanel data={inventory.data} />
+            <HardwarePanel data={inventory.data} device={d} />
           )}
         </div>
       )}

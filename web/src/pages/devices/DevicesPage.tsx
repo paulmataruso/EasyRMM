@@ -1,6 +1,6 @@
-import { useId, useRef } from "react";
+import { useId, useMemo, useRef } from "react";
 import { Link, useNavigate } from "react-router";
-import { Monitor, Plus } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Monitor, Plus } from "lucide-react";
 import { useApi, useList, usePrefetch } from "../../api/hooks";
 import type { Device, RemoteAccessStatus } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
@@ -10,6 +10,8 @@ import { Alert, buttonClasses, EmptyState, ErrorState, Field, PageHeader, Select
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { useUrlState } from "../../lib/urlState";
+import { DiskHealthCell } from "./DeviceDisks";
+import { deviceDiskHealth, DISK_FILTERS } from "./diskHealthText";
 import { HardeningCell } from "./hardeningParts";
 import { FILTERS } from "./hardeningText";
 import { platformName } from "./platform";
@@ -28,7 +30,9 @@ export function DevicesPage() {
   const siteId = url.get("siteId");
   const status = url.get("status");
   const hardening = url.get("hardening");
-  const filtered = Boolean(search || organizationId || siteId || status || hardening);
+  const diskHealth = url.get("diskHealth");
+  const sort = parseSort(url.get("sort"));
+  const filtered = Boolean(search || organizationId || siteId || status || hardening || diskHealth);
 
   const params = {
     q: search || undefined,
@@ -36,8 +40,11 @@ export function DevicesPage() {
     siteId: siteId || undefined,
     status: status || undefined,
     hardening: hardening || undefined,
+    diskHealth: diskHealth || undefined,
   };
   const list = useList<Device>("/devices", params, { refetchInterval: 30_000, keepPrevious: true });
+  // The server lists by name; sorting by disk health keeps that order among devices with the same label.
+  const devices = useMemo(() => sortDevices(list.items, sort), [list.items, sort]);
   const canEnroll = can("enrollment.manage");
   const addLink = (
     <Link to={siteId ? `/devices/add?siteId=${encodeURIComponent(siteId)}` : "/devices/add"} className={buttonClasses("primary")}>
@@ -49,6 +56,9 @@ export function DevicesPage() {
   useRowKeys(tableRef, (link) => link.dataset.id && prefetch(`/devices/${link.dataset.id}`));
   // Hardening covers Linux (ADR-0051): its column shows when the list has a Linux device.
   const linux = list.items.some((d) => d.platform === "linux");
+  // Disk health comes from the EasyRMM agent (ADR-0065): its column shows when the list has a device with one, or when
+  // it filters or sorts by it.
+  const showDiskHealth = Boolean(diskHealth) || sort !== null || list.items.some((d) => d.agent !== null || d.diskHealth !== null);
 
   return (
     <>
@@ -64,6 +74,7 @@ export function DevicesPage() {
         <SiteSelect organizationId={organizationId} value={siteId} onChange={(v) => url.set({ siteId: v })} />
         <StatusSelect value={status} onChange={(v) => url.set({ status: v })} />
         <HardeningSelect value={hardening} onChange={(v) => url.set({ hardening: v })} />
+        <DiskHealthSelect value={diskHealth} onChange={(v) => url.set({ diskHealth: v })} />
       </Toolbar>
 
       {list.isPending ? (
@@ -93,11 +104,16 @@ export function DevicesPage() {
                     <th className="hidden md:table-cell">Organization / site</th>
                     <th className="hidden lg:table-cell">Operating system</th>
                     <th className="hidden sm:table-cell">Last seen</th>
+                    {showDiskHealth && (
+                      <th className="hidden lg:table-cell" aria-sort={sort === "worst" ? "ascending" : sort === "best" ? "descending" : "none"}>
+                        <SortButton sort={sort} onChange={(next) => url.set({ sort: next })} />
+                      </th>
+                    )}
                     {linux && <th className="hidden lg:table-cell">Hardening</th>}
                   </tr>
                 </thead>
                 <tbody>
-                  {list.items.map((d) => (
+                  {devices.map((d) => (
                     <tr key={d.id} className="cursor-pointer" onClick={() => navigate(`/devices/${d.id}`)} onMouseEnter={() => prefetch(`/devices/${d.id}`)}>
                       <td>
                         <Link
@@ -127,6 +143,11 @@ export function DevicesPage() {
                       <td className="hidden whitespace-nowrap text-muted sm:table-cell" title={formatDateTime(d.lastSeenAt)}>
                         {d.online ? "Now" : formatRelative(d.lastSeenAt)}
                       </td>
+                      {showDiskHealth && (
+                        <td className="hidden whitespace-nowrap lg:table-cell">
+                          <DiskHealthCell device={d} />
+                        </td>
+                      )}
                       {linux && (
                         <td className="hidden whitespace-nowrap lg:table-cell">
                           <HardeningCell device={d} />
@@ -182,6 +203,56 @@ function HardeningSelect({ value, onChange }: { value: string; onChange: (v: str
         ))}
       </Select>
     </Field>
+  );
+}
+
+/** Devices by their disks' health (ADR-0065). Unavailable and Unsupported find a device with any disk in that state. */
+function DiskHealthSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const id = useId();
+  return (
+    <Field label="Disk health" htmlFor={id} className="min-w-40">
+      <Select id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">Any disk health</option>
+        {DISK_FILTERS.map((f) => (
+          <option key={f.value} value={f.value}>
+            {f.label}
+          </option>
+        ))}
+      </Select>
+    </Field>
+  );
+}
+
+/** The list's order by disk health: worst first, best first, or none (by name). */
+type DiskSort = "worst" | "best" | null;
+
+/** ?sort=diskHealth lists the worst first; ?sort=-diskHealth the best. */
+function parseSort(v: string): DiskSort {
+  return v === "diskHealth" ? "worst" : v === "-diskHealth" ? "best" : null;
+}
+
+/** Devices by their disk health's rank (failing, warning, unknown, unavailable, healthy, unsupported, not reported),
+ * keeping the server's order by name among equals. */
+export function sortDevices(items: Device[], sort: DiskSort): Device[] {
+  if (!sort) return items;
+  const sign = sort === "worst" ? 1 : -1;
+  return [...items].sort((a, b) => sign * (deviceDiskHealth(a.diskHealth).rank - deviceDiskHealth(b.diskHealth).rank));
+}
+
+/** The disk health column's header: each press goes from the name's order to worst first, best first, and back. */
+function SortButton({ sort, onChange }: { sort: DiskSort; onChange: (next: string | null) => void }) {
+  const next = sort === null ? "diskHealth" : sort === "worst" ? "-diskHealth" : null;
+  const Icon = sort === "worst" ? ArrowDown : sort === "best" ? ArrowUp : ArrowUpDown;
+  return (
+    <button
+      type="button"
+      onClick={() => onChange(next)}
+      title={next === "diskHealth" ? "Sort by disk health, worst first" : next === "-diskHealth" ? "Sort by disk health, best first" : "Sort by name"}
+      className="inline-flex items-center gap-1 rounded-sm font-[inherit] hover:text-fg"
+    >
+      Disk health
+      <Icon className="size-3.5" aria-hidden />
+    </button>
   );
 }
 
