@@ -211,16 +211,20 @@ All notable changes to this project are documented here. The format follows
   host, port, STARTTLS, TLS or none (only to a relay on the same machine),
   signing in with a password or not at all, and the sender's address and
   name. The password is sealed with `EASYRMM_SECRET_KEY`, write-only, and
-  kept while the host and user name stay the same. It applies at once,
-  without a restart: to invitations, password resets, whether password
-  reset is offered, and the patching engine, which EasyRMM now gives the
-  mail server on every change rather than once per start. `EASYRMM_SMTP_*`
-  in `.env` still works and wins: the console then shows it read-only.
-  **Send test message** tries the form's settings, saved or not, one every
-  30 seconds, and shows the mail server's answer. **Limits**, 30 messages
-  a minute and 9,000 a day by default, hold across servers; invitations
-  and password resets go first. Every change and test is audited
-  (`mail_server.*`). See [Mail](docs/operations/mail.md).
+  kept while the host, port, security and user name stay the same. It
+  applies at once, without a restart: to invitations, password resets,
+  whether password reset is offered, and the patching engine, which
+  EasyRMM now gives the mail server on every change rather than once per
+  start. `EASYRMM_SMTP_*` in `.env` still works and wins: the console then
+  shows it read-only, and a mail server saved in the console before can
+  still be removed. **Send test message** tries the form's settings, saved
+  or not, one every 30 seconds, and shows the mail server's answer without
+  repeating what a server that is not a mail server said. **Limits**, 30
+  messages a minute and 9,000 a day by default, hold across servers:
+  invitations and password resets go first, the last 10% of the day is
+  kept for resets people ask for, and other mail stops at 80%. Every
+  change and test is audited (`mail_server.*`), from and to. See
+  [Mail](docs/operations/mail.md).
 
 ### Changed
 
@@ -231,6 +235,19 @@ All notable changes to this project are documented here. The format follows
   checks as EasyRMM's other outbound connections. When an invitation's or
   password link's email does not go, the console now says why: no mail
   server, or the mail server did not take it.
+- **Invitations and password links administrators email are limited**:
+  60 an hour per administrator, 500 a day per organization, and a password
+  link counts against the limit on password emails to one account that
+  password reset has. Past one, the invitation or link is refused with
+  `429` and a message that says when to try again, and the refusal is
+  audited. Without a mail server, links come back as before, unlimited.
+- **The patching engine's mail server comes from EasyRMM alone**: a mail
+  server set in the engine itself is overwritten within a minute, and
+  when EasyRMM cannot give the engine its own three passes in a row, the
+  engine's is removed and Patching → Notifications says why.
+- **Password reset checks the address's limit before anything else**, and
+  whether reset is offered is kept for five seconds, so requests anyone
+  may send seldom reach the database.
 
 - **CI and releases build the server image once.** Both platforms, amd64
   and arm64, are scanned and their agents checked against a release's

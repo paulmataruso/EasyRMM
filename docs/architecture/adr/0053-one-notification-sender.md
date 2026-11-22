@@ -398,7 +398,13 @@ What exists, and what it means here:
   platform. **Account mail goes first**: invitations, password resets and
   other mail to people's own accounts go through the same limiter, so
   they count, but ahead of every notification, and notifications stop at
-  90% of the day's budget, so the rest is always there for them.
+  80% of the day's budget, so the rest is always there for them. Of that
+  rest, invitations and password links administrators send stop at 90%,
+  at 60 an hour per administrator and 500 a day per organization, so the
+  last 10% is always there for password resets people ask for, whatever
+  one tenant's administrators send (decided in review of #82, which
+  found that one organization's administrator could use up every
+  tenant's resets).
 * **The mail server's circuit**: after 5 failures in a row to connect or
   sign in, notification email pauses for 1 minute, doubling to 15, with one
   message tried at a time; attempts are not counted while paused (the 24
@@ -696,7 +702,14 @@ channels now, its syslog destinations with log forwarding later.
     it.
 * **The engine follows at once**: until slice 6 retires its email,
   `syncMail` gives the engine the mail server in force at start **and on
-  every change**, not once per start. The engine signs in with a password
+  every change**, not once per start. EasyRMM is its one source (decided
+  in review of #82): each pass compares the engine's mail settings with
+  EasyRMM's and gives them again on any difference, so one set in the
+  engine is overwritten; the engine's webhook switch, which its settings
+  carry, is changed with EasyRMM's mail server in force, under the same
+  lock, never with the engine's copy; and after three failed passes in a
+  row the engine's mail server is removed, and Settings → Patching says
+  why. The engine signs in with a password
   only, so while the mail server signs in with an application, `syncMail`
   gives the engine none, as when EasyRMM has none (`Mail`, `engine.go`):
   patching's email and monthly reports stop until slice 6. While an

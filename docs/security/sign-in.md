@@ -128,7 +128,11 @@ started before EasyRMM recorded this have none.
 account, and answers before looking it up; the e-mail goes out afterwards,
 so the time taken reveals nothing either. Each account gets at most three
 reset e-mails at once and then one every 20 minutes, however many addresses
-ask. A reset link works once, for 30 minutes (`EASYRMM_PASSWORD_RESET_TTL`),
+ask; a password link an administrator emails counts against the same
+limit, and is refused with `429` past it. Administrators' invitations and
+password links are also limited to 60 an hour each and 500 a day per
+organization, and stop before the last 10% of the mail server's day, which
+is kept for resets people ask for ([Mail](../operations/mail.md)). A reset link works once, for 30 minutes (`EASYRMM_PASSWORD_RESET_TTL`),
 and only the newest link works. Someone invited who has not chosen a
 password yet is sent a new invitation link instead, valid for 72 hours.
 

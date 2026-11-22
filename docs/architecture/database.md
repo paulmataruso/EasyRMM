@@ -12,7 +12,24 @@ automatically at server start-up (goose, advisory-locked).
 
 The Docker deployment creates both roles and the database on first start
 (`docker/postgres/init/`). For an external PostgreSQL, run the same script as
-a superuser. **`easyrmm_owner` should own the database**: migration 00029
+a superuser.
+
+**`easyrmm_owner` must be able to create tables in the `public` schema.**
+Every migration that adds a table needs it. Since PostgreSQL 15, `public`
+belongs to `pg_database_owner`, so only the database's owner, or a role
+granted it, may create there. Two ways:
+
+* **`easyrmm_owner` owns the database** (recommended; the Docker
+  deployment's `docker/postgres/init/10-easyrmm.sh` creates it so):
+  `ALTER DATABASE easyrmm OWNER TO easyrmm_owner;` as a superuser.
+* **Another role owns it**, and `easyrmm_owner` is granted `CREATE` on
+  `public`: as that owner or a superuser, connected to the database,
+  `GRANT USAGE, CREATE ON SCHEMA public TO easyrmm_owner;`.
+
+Without either, the first migration that creates a table fails with
+`permission denied for schema public`, and the server does not start.
+
+**`easyrmm_owner` should own the database** in any case: migration 00029
 revokes `TEMPORARY` from `easyrmm_app` and `PUBLIC`, which only the
 database's owner can do. Under any other owner it skips the revoke and
 the server logs a warning, `database migration: database … is not owned
@@ -21,7 +38,8 @@ by easyrmm_owner`, whose hint gives the statements to run as a superuser:
 `ALTER DATABASE easyrmm OWNER TO easyrmm_owner;`. When `easyrmm_app` still
 holds `TEMPORARY` after the revoke, through a grant by another role or a
 role it belongs to, the warning says so and how to find and revoke it.
-The server starts either way.
+The server starts either way: under another owner with `CREATE` on `public`
+granted, every migration runs, and 00029 warns with the statements to run.
 
 ## Tenant isolation (row-level security)
 
