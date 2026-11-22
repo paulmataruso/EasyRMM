@@ -2,7 +2,12 @@ package agentproto
 
 import (
 	"encoding/json"
+	"math"
+	"reflect"
+	"slices"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestFacts(t *testing.T) {
@@ -56,6 +61,56 @@ func TestDiskNotReadLeavesFactsOut(t *testing.T) {
 		string(m["smartStatus"]) != `{"state":"unsupported","reason":"not_kept"}` || m["temperature"] != nil {
 		t.Errorf("read disk %s", b)
 	}
+}
+
+// The largest report an agent sends, MaxListed disks with every fact at its
+// longest and a full attribute table, fits in MaxHardwareBody.
+func TestLargestReportFits(t *testing.T) {
+	longest := ""
+	for r := range reasons {
+		if len(r) > len(longest) {
+			longest = r
+		}
+	}
+	fact := Read(math.MinInt64)
+	if b, n := mustJSON(t, fact), mustJSON(t, NotRead(FactUnavailable, longest)); len(n) > len(b) {
+		fact = NotRead(FactUnavailable, longest)
+	}
+	threshold := uint8(math.MaxUint8)
+	d := DiskHealth{
+		Name: "PhysicalDrive63", Model: strings.Repeat("M", 40), Serial: strings.Repeat("S", 20), State: FactRead,
+		Reason: longest, Detail: strings.Repeat("d", MaxHardwareDetail), Protocol: ProtocolNVMe, Route: "adapter",
+		ReadAt: time.Date(2026, 12, 31, 23, 59, 59, 999999999, time.FixedZone("", -11*3600)),
+	}
+	facts := []*Fact{&d.CriticalWarning, &d.SMARTStatus, &d.Thresholds, &d.Temperature, &d.TemperatureLimit, &d.Wear,
+		&d.AvailableSpare, &d.AvailableSpareThreshold, &d.MediaErrors, &d.ReallocatedSectors, &d.PendingSectors,
+		&d.UncorrectableSectors, &d.DriveErrors, &d.PowerOnHours, &d.DataWritten, &d.UnsafeShutdowns, &d.PowerMode}
+	for _, f := range facts {
+		*f = fact
+	}
+	for range MaxAttributes {
+		d.Attributes = append(d.Attributes, Attribute{ID: math.MaxUint8, Flags: math.MaxUint16, Value: math.MaxUint8,
+			Worst: math.MaxUint8, Threshold: &threshold, Raw: 1<<48 - 1})
+	}
+	r := HardwareReport{Disks: slices.Repeat([]DiskHealth{d}, MaxListed)}
+	if b := mustJSON(t, r); len(b) > MaxHardwareBody {
+		t.Errorf("the largest report is %d bytes, over %d", len(b), MaxHardwareBody)
+	} else {
+		t.Logf("the largest report: %d bytes of %d", len(b), MaxHardwareBody)
+	}
+	// Every fact field is in the list above.
+	if n := reflect.TypeFor[DiskHealth]().NumField(); n != 9+len(facts)+1 {
+		t.Errorf("DiskHealth has %d fields; update the list of facts", n)
+	}
+}
+
+func mustJSON(t *testing.T, v any) []byte {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }
 
 // A report from a later agent, with a fact this release does not know,

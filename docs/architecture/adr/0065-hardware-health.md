@@ -15,6 +15,11 @@
   report that leaves the disk out and never after it, and the rule as
   first written would never have resolved the alert. See *Disks that
   disappear*.
+* Amended 2026-11-22, decided in review while slice 1 was built: the
+  sizes measured, and the hardware report's body limit raised from 256
+  to 512 KiB, because the largest report an agent can build (64 disks,
+  each fact and the attribute table at their longest) is 267 KiB. See
+  *Size*.
 * Nothing here was decided by the owner. Everything marked as decided
   was decided in review, and the owner can overturn it; the
   [owner questions](#owner-questions) list what is the owner's.
@@ -937,11 +942,15 @@ numbers.
   heartbeat, which stays small and whose failures stay as they are;
   **not in the hashed inventory**, whose hash would then change every
   half hour and send up to 4 MiB again.
-* **Size.** About 0.8 KiB for an NVMe disk and 2.5 KiB for an ATA disk
-  with 30 attributes (estimates, measured in slice 1); at most 64
-  disks, so the body limit is 256 KiB. The heartbeat gains nothing; the
+* **Size.** About 1.0 KiB for an NVMe disk and 3.1 KiB for an ATA disk
+  with 30 attributes (measured in slice 1 from `tools/agentsim`'s
+  reports; first estimated at 0.8 and 2.5 KiB); at most 64 disks, so
+  the body limit is 512 KiB. *(Amended 2026-11-22, decided in review:
+  first 256 KiB, but the largest report an agent can build, 64 disks
+  with every fact and the attribute table at their longest, is 267 KiB;
+  a test holds it under the limit.)* The heartbeat gains nothing; the
   inventory gains about 40 bytes a disk. A device with two disks sends
-  about 5 KiB every 30 minutes, 240 KiB a day; 10,000 devices send
+  about 4 KiB every 30 minutes, 200 KiB a day; 10,000 devices send
   about 5.6 reports a second, against 167 heartbeats a second.
 * **A limit per device** beside the existing ones: one report in 10
   minutes with bursts of 6, as inventories have.

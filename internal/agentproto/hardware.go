@@ -12,8 +12,10 @@ const (
 	// it answers 404, and the agent drops that reading.
 	PathHardware = "/api/agent/v1/hardware"
 	// MaxHardwareBody is the largest hardware report the server reads: at
-	// most MaxListed disks of a few KiB each.
-	MaxHardwareBody = 256 << 10
+	// most MaxListed disks of about 3 KiB each, and 267 KiB when every one
+	// has every fact and its attribute table at their longest (ADR-0065,
+	// Size, as amended).
+	MaxHardwareBody = 512 << 10
 	// MaxAttributes is the most ATA SMART attributes a disk lists: the
 	// attribute table has 30 entries.
 	MaxAttributes = 30
