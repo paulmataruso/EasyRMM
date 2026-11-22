@@ -73,9 +73,12 @@ type Service struct {
 	db     *database.DB
 	audit  *audit.Logger
 	sealer *secrets.Sealer
-	// env is .env's mail server, nil when EASYRMM_SMTP_HOST is not set.
-	env *mailer.Config
-	log *slog.Logger
+	// env is .env's mail server, nil when EASYRMM_SMTP_HOST is not set;
+	// envProblem what the patching engine will not take of it, "" when
+	// nothing.
+	env        *mailer.Config
+	envProblem string
+	log        *slog.Logger
 
 	// available caches Available for availableFor, so that the sign-in
 	// page and reset requests, which anyone may send, seldom reach the
@@ -96,12 +99,36 @@ const availableFor = 5 * time.Second
 // New builds the service. env is .env's mail server, or nil; it is checked
 // here, so that the server does not start with a mail server it cannot use.
 func New(db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer, env *mailer.Config, log *slog.Logger) (*Service, error) {
+	s := &Service{db: db, audit: auditLog, sealer: sealer, env: env, log: log}
 	if env != nil {
 		if _, err := mailer.New(*env); err != nil {
 			return nil, fmt.Errorf("EASYRMM_SMTP_*: %w", err)
 		}
+		// Longer than the console allows, as the engine counts: EasyRMM
+		// still sends with it, so that a deployment that had it keeps
+		// working, but the engine cannot be given it.
+		s.envProblem = envProblem(env)
+		if s.envProblem != "" {
+			log.Error("mail server: " + s.envProblem)
+		}
 	}
-	return &Service{db: db, audit: auditLog, sealer: sealer, env: env, log: log}, nil
+	return s, nil
+}
+
+// envProblem says what of .env's mail server is longer than the patching
+// engine takes, "" when nothing is.
+func envProblem(c *mailer.Config) string {
+	var long []string
+	if utf16Len(c.Password) > maxPassword {
+		long = append(long, fmt.Sprintf("EASYRMM_SMTP_PASSWORD is longer than %d characters", maxPassword))
+	}
+	if utf16Len(c.FromName) > maxFromName {
+		long = append(long, fmt.Sprintf("the sender's name in EASYRMM_SMTP_FROM is longer than %d characters", maxFromName))
+	}
+	if len(long) == 0 {
+		return ""
+	}
+	return strings.Join(long, ", and ") + ", the most the patching engine takes. EasyRMM sends with it, but the patching engine cannot be given this mail server, so patching sends no email or reports. Shorten it in .env and restart EasyRMM."
 }
 
 // OnChange registers f, called after every change of the console's mail
@@ -167,6 +194,9 @@ type View struct {
 	Console *Server `json:"console,omitempty"`
 	Limits  Limits  `json:"limits"`
 	Usage   Usage   `json:"usage"`
+	// EnvProblem is what of .env's mail server the patching engine will
+	// not take, "" when nothing.
+	EnvProblem string `json:"envProblem,omitempty"`
 }
 
 // row is the stored settings.
@@ -246,7 +276,7 @@ func (s *Service) Get(ctx context.Context) (View, error) {
 	})
 	switch {
 	case s.env != nil:
-		v.InForce, v.Env = FromEnv, envServer(s.env)
+		v.InForce, v.Env, v.EnvProblem = FromEnv, envServer(s.env), s.envProblem
 	case v.Console != nil:
 		v.InForce = FromConsole
 	default:

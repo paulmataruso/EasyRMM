@@ -370,6 +370,39 @@ func TestEnvWins(t *testing.T) {
 	}
 }
 
+// .env's password and sender's name, longer than the patching engine
+// takes, do not stop EasyRMM from starting or sending: the server logs it
+// at start, and the console shows it.
+func TestEnvLongerThanTheEngineTakes(t *testing.T) {
+	inst := testdb.New(t)
+	var logged strings.Builder
+	log := slog.New(slog.NewTextHandler(&logged, nil))
+	env := &mailer.Config{Host: "localhost", Port: 25, Security: mailer.None, Username: "rmm", Password: strings.Repeat("😀", 257),
+		FromAddress: "rmm@example.com", FromName: strings.Repeat("😀", 51)}
+	svc, err := New(inst.DB, audit.New(inst.DB, nil), newSealer(t), env, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := svc.Get(context.Background())
+	want := "EASYRMM_SMTP_PASSWORD is longer than 512 characters, and the sender's name in EASYRMM_SMTP_FROM is longer than 100 characters, the most the patching engine takes."
+	if err != nil || !strings.HasPrefix(v.EnvProblem, want) || !strings.Contains(logged.String(), "level=ERROR") ||
+		!strings.Contains(logged.String(), "EASYRMM_SMTP_PASSWORD is longer than 512") {
+		t.Fatalf("view %q %v; logged %s", v.EnvProblem, err, logged.String())
+	}
+	if cfg, err := svc.InForce(context.Background()); err != nil || cfg.Password != env.Password {
+		t.Fatalf("in force: %v", err)
+	}
+	// At the limits, nothing to say.
+	logged.Reset()
+	env.Password, env.FromName = strings.Repeat("😀", 256), strings.Repeat("😀", 50)
+	if svc, err = New(inst.DB, audit.New(inst.DB, nil), newSealer(t), env, log); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := svc.Get(context.Background()); v.EnvProblem != "" || logged.Len() != 0 {
+		t.Fatalf("at the limits: %q %s", v.EnvProblem, logged.String())
+	}
+}
+
 func TestLimitsValidateAndAudit(t *testing.T) {
 	f := newFixture(t, nil)
 	for _, tc := range []struct {
