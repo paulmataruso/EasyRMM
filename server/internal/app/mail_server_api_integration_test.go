@@ -42,6 +42,7 @@ type mailServerView struct {
 		LastMinute     int `json:"lastMinute"`
 		LastDay        int `json:"lastDay"`
 		AccountLastDay int `json:"accountLastDay"`
+		AdminDayLimit  int `json:"adminDayLimit"`
 		OtherDayLimit  int `json:"otherDayLimit"`
 	} `json:"usage"`
 }
@@ -78,7 +79,8 @@ func TestMailServerAPI(t *testing.T) {
 
 	var v mailServerView
 	admin.expect(http.StatusOK, "GET", base, nil, &v)
-	if v.InForce != "none" || v.Console != nil || v.Env != nil || v.Limits.PerMinute != 30 || v.Limits.PerDay != 9000 || v.Usage.OtherDayLimit != 8100 {
+	if v.InForce != "none" || v.Console != nil || v.Env != nil || v.Limits.PerMinute != 30 || v.Limits.PerDay != 9000 || v.Usage.AdminDayLimit != 8100 ||
+		v.Usage.OtherDayLimit != 7200 {
 		t.Fatalf("at first: %+v", v)
 	}
 	if resetAvailable(t, h) {
@@ -147,7 +149,8 @@ func TestMailServerAPI(t *testing.T) {
 	// The limits.
 	wantStatus(t, admin.do("PUT", base+"/limits", map[string]any{"perMinute": 0, "perDay": 10}), http.StatusUnprocessableEntity, "validation_failed")
 	admin.expect(http.StatusOK, "PUT", base+"/limits", map[string]any{"perMinute": 10, "perDay": 100}, &v)
-	if v.Limits.PerMinute != 10 || v.Limits.PerDay != 100 || v.Usage.LastDay != 2 || v.Usage.AccountLastDay != 1 || v.Usage.OtherDayLimit != 90 {
+	if v.Limits.PerMinute != 10 || v.Limits.PerDay != 100 || v.Usage.LastDay != 2 || v.Usage.AccountLastDay != 1 || v.Usage.AdminDayLimit != 90 ||
+		v.Usage.OtherDayLimit != 80 {
 		t.Fatalf("limits: %+v", v)
 	}
 
