@@ -162,8 +162,10 @@ All notable changes to this project are documented here. The format follows
     row per disk and day for `EASYRMM_HARDWARE_RETENTION` (new; `17520h`,
     730 days, by default, at least the metrics retention). About 0.3 MiB
     per disk in the database and its backups.
-  - **Each disk's firmware revision** is in the inventory. Every device
-    uploads its inventory once after its agent is updated.
+  - **Each disk's firmware revision** is in the inventory, and on Linux a
+    SATA disk's whole model (40 characters, where the kernel's listing
+    holds the first 16). Every device uploads its inventory once after
+    its agent is updated.
 - **`setup.sh --upgrade`** prepares an upgrade with the deployment's own
   settings, all read from `.env`: the options it was installed with are not
   given again and nothing is asked. It sets the release's server version
