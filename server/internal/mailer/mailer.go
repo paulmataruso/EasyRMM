@@ -10,6 +10,7 @@
 package mailer
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/base64"
@@ -18,10 +19,12 @@ import (
 	"io"
 	"net"
 	"net/mail"
+	"net/netip"
 	"net/smtp"
 	"net/textproto"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -64,8 +67,9 @@ type Config struct {
 type SMTP struct {
 	cfg  Config
 	from *mail.Address
-	// dial is replaceable in tests.
-	dial func(ctx context.Context, network, addr string) (net.Conn, error)
+	// dialer connects; dial is its DialContext, replaceable in tests.
+	dialer *net.Dialer
+	dial   func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // Loopback reports whether host names this machine: localhost, or a
@@ -108,7 +112,27 @@ func New(cfg Config) (*SMTP, error) {
 		cfg.Timeout = DefaultTimeout
 	}
 	d := &net.Dialer{Timeout: cfg.Timeout, Control: netguard.Control}
-	return &SMTP{cfg: cfg, from: &mail.Address{Name: cfg.FromName, Address: cfg.FromAddress}, dial: d.DialContext}, nil
+	if cfg.Security == None {
+		d.Control = loopbackOnly
+	}
+	return &SMTP{cfg: cfg, from: &mail.Address{Name: cfg.FromName, Address: cfg.FromAddress}, dialer: d, dial: d.DialContext}, nil
+}
+
+// loopbackOnly is the dialer's check without encryption: the address
+// actually dialed, after the name is resolved, must be loopback, whatever
+// the name said.
+func loopbackOnly(network, address string, c syscall.RawConn) error {
+	if err := netguard.Control(network, address, c); err != nil {
+		return err
+	}
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	if a, err := netip.ParseAddr(host); err != nil || !a.Unmap().IsLoopback() {
+		return fmt.Errorf("unencrypted SMTP is only allowed to a relay on loopback, and %s is not", host)
+	}
+	return nil
 }
 
 // Address is the mail server's host and port.
@@ -164,7 +188,7 @@ func FirstError(outs []Outcome) error {
 
 // ReplyError is the mail server refusing a command, with its reply.
 type ReplyError struct {
-	// Step is what was refused: "greeting", "hello", "sign-in", "sender",
+	// Step is what was refused: "hello", "STARTTLS", "sign-in", "sender",
 	// "recipient", "message".
 	Step string
 	Code int
@@ -197,6 +221,40 @@ func reply(step string, err error) error {
 		return &ReplyError{Step: step, Code: te.Code, Text: te.Msg}
 	}
 	return &stepError{step: "mailer: " + step, err: err}
+}
+
+// peekConn reads through r, which has looked ahead at the greeting.
+type peekConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (c *peekConn) Read(p []byte) (int, error) { return c.r.Read(p) }
+
+// smtpReply reports whether b begins as an SMTP reply does: three digits,
+// then a space or a hyphen.
+func smtpReply(b []byte) bool {
+	for _, d := range b[:3] {
+		if d < '0' || d > '9' {
+			return false
+		}
+	}
+	return b[3] == ' ' || b[3] == '-'
+}
+
+// greeting is a greeting that is not SMTP's 220. What the other end said is
+// not repeated: whatever answers on a host and port a test message names,
+// the error shows only whether it is a mail server.
+func greeting(addr string, err error) error {
+	var te *textproto.Error
+	var pe textproto.ProtocolError
+	switch {
+	case errors.As(err, &te):
+		return fmt.Errorf("mailer: %s is not an SMTP server, or not one taking mail: it greeted with %d, not 220", addr, te.Code)
+	case errors.As(err, &pe):
+		return fmt.Errorf("mailer: %s is not an SMTP server: it did not greet as one", addr)
+	}
+	return &stepError{step: "mailer: waiting for the greeting of " + addr, err: err}
 }
 
 // Send sends msg to each recipient as a message of its own, in one session,
@@ -332,9 +390,19 @@ func (m *SMTP) open(ctx context.Context) (*session, error) {
 		}
 		conn = tc
 	}
-	c, err := smtp.NewClient(conn, m.cfg.Host)
+	// An SMTP greeting begins with three digits and a space or a hyphen;
+	// anything else is not read further, nor waited on.
+	pc := &peekConn{Conn: conn, r: bufio.NewReader(conn)}
+	head, err := pc.r.Peek(4)
+	switch {
+	case err != nil:
+		return fail(&stepError{step: "mailer: waiting for the greeting of " + addr, err: err})
+	case !smtpReply(head):
+		return fail(fmt.Errorf("mailer: %s is not an SMTP server: it did not greet as one", addr))
+	}
+	c, err := smtp.NewClient(pc, m.cfg.Host)
 	if err != nil {
-		return fail(reply("greeting", err))
+		return fail(greeting(addr, err))
 	}
 	s := &session{m: m, conn: conn, c: c, stop: stop}
 	if err := c.Hello(localName); err != nil {

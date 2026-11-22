@@ -36,7 +36,9 @@ server**.
      is refused, never used without encryption.
    * **TLS** (port 465): TLS from the first byte.
    * **None**: only to a relay on the same machine (`localhost` or a
-     loopback address), such as a local Postfix that relays onwards.
+     loopback address), such as a local Postfix that relays onwards. The
+     address actually connected to must be loopback too, so a `localhost`
+     that resolves elsewhere is refused.
 
    EasyRMM checks the mail server's certificate against the authorities
    the server's image trusts, and uses TLS 1.2 or later. A mail server with
@@ -168,6 +170,7 @@ Super administrators (`settings.manage` on the platform):
 | An invitation shows its link with "The mail server did not take the message" | Send a test message to the same address: it says which step failed. The server's log has the mail server's reply |
 | Password reset is not on the sign-in page | No mail server is in force |
 | The test message fails at the certificate | The mail server's certificate is not from a public authority, or does not name the host entered. Use the name on the certificate |
+| `is not an SMTP server` | Something else answers on that host and port (what it said is not shown). Check the port: 587 for STARTTLS, 465 for TLS |
 | `does not offer STARTTLS` | The port is for TLS from the first byte (465), or the server offers no encryption. Choose TLS, or a relay on the same machine |
 | Sign-in refused (`535`) | The user name or password, and that the mailbox may sign in over SMTP. Exchange Online is retiring passwords over SMTP ([ADR-0053](../architecture/adr/0053-one-notification-sender.md)); a relay on the same machine is the way until signing in with an application comes |
 | `Not sent: the limit of … messages a day is reached` | Raise the limit, or wait until the oldest of them is 24 hours old |

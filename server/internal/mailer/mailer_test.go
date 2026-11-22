@@ -11,10 +11,14 @@ import (
 	"mime/quotedprintable"
 	"net"
 	"net/mail"
+	"net/netip"
 	"net/textproto"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 // These tests need no mail server: they cover the configuration, the
@@ -306,6 +310,18 @@ func TestSendWithoutConnecting(t *testing.T) {
 	if !strings.Contains(outs[0].Err.Error(), "invalid recipient") || !errors.Is(outs[1].Err, refuse) || gated != 1 {
 		t.Fatalf("outcomes %+v, gate asked %d times", outs, gated)
 	}
+	// A recipient carrying a line break, which would add a command to the
+	// session, is refused before anything is sent.
+	for _, to := range []string{"a@example.org\r\nRCPT TO:<b@example.org>", "a@example.org\nRCPT TO:<b@example.org>",
+		"\"a\r\nRCPT TO:<b@example.org>\"@example.org", "A <a@example.org>\r\nRCPT TO:<b@example.org>"} {
+		outs = m.Send(context.Background(), Message{Subject: "s", Text: "t"}, []string{to}, func(context.Context) (func(), error) {
+			t.Fatalf("gate asked for %q", to)
+			return nil, nil
+		})
+		if outs[0].Err == nil || !strings.Contains(outs[0].Err.Error(), "invalid recipient") {
+			t.Fatalf("%q: %+v", to, outs[0])
+		}
+	}
 	if !errors.Is(FirstError(outs), outs[0].Err) || FirstError([]Outcome{{To: "a"}}) != nil {
 		t.Fatal("FirstError")
 	}
@@ -369,6 +385,208 @@ func TestSendTimeoutAndCancel(t *testing.T) {
 	outs = m.Send(context.Background(), Message{Subject: "s", Text: "t"}, []string{"a@example.org"}, nil)
 	if outs[0].Err == nil || !strings.Contains(outs[0].Err.Error(), "connecting to 127.0.0.1:") {
 		t.Fatalf("outcome %+v", outs[0])
+	}
+}
+
+// banner accepts connections and greets each with line.
+func banner(t *testing.T, line string) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = io.WriteString(c, line+"\r\n")
+			t.Cleanup(func() { _ = c.Close() })
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// Whatever answers on the host and port a test message names, the error
+// says only whether it is a mail server, never what it said.
+func TestGreetingThatIsNotSMTP(t *testing.T) {
+	for line, want := range map[string]string{
+		"SSH-2.0-OpenSSH_9.6 internal-build-7":      "is not an SMTP server: it did not greet as one",
+		"HTTP/1.1 400 Bad Request internal-build-7": "is not an SMTP server: it did not greet as one",
+		"554 internal-build-7 no SMTP service here": "it greeted with 554, not 220",
+		"421 internal-build-7 too busy":             "it greeted with 421, not 220",
+		"099 internal-build-7":                      "is not an SMTP server: it did not greet as one",
+		"220-internal-build-7, and no more":         "waiting for the greeting of 127.0.0.1:",
+	} {
+		m, _ := New(cfg(func(c *Config) { c.Port, c.Timeout = banner(t, line), time.Second }))
+		outs := m.Send(context.Background(), Message{Subject: "s", Text: "t"}, []string{"a@example.org"}, nil)
+		err := outs[0].Err
+		if err == nil || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "internal-build-7") {
+			t.Errorf("%q: %v", line, err)
+		}
+	}
+}
+
+// recorder is an SMTP server on loopback that offers PLAIN sign-in but not
+// STARTTLS, and records every line it receives.
+type recorder struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (r *recorder) serve(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				tc := textproto.NewConn(c)
+				_ = tc.PrintfLine("220 recorder ESMTP")
+				for {
+					line, err := tc.ReadLine()
+					if err != nil {
+						return
+					}
+					r.mu.Lock()
+					r.lines = append(r.lines, line)
+					r.mu.Unlock()
+					switch cmd := strings.ToUpper(strings.Fields(line + " x")[0]); cmd {
+					case "EHLO":
+						_ = tc.PrintfLine("250-recorder\r\n250-AUTH PLAIN LOGIN\r\n250 8BITMIME")
+					case "QUIT":
+						_ = tc.PrintfLine("221 bye")
+						return
+					default:
+						_ = tc.PrintfLine("250 ok")
+					}
+				}
+			}()
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// In STARTTLS mode, a server that does not offer it never sees the
+// credentials, nor anything of the message.
+func TestNoSignInWithoutSTARTTLS(t *testing.T) {
+	var r recorder
+	port := r.serve(t)
+	m, err := New(cfg(func(c *Config) { c.Port, c.Security, c.Username, c.Password = port, StartTLS, "rmm", "secret-password" }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outs := m.Send(context.Background(), Message{Subject: "private subject", Text: "private text"}, []string{"a@example.org"}, nil)
+	if outs[0].Err == nil || !strings.Contains(outs[0].Err.Error(), "does not offer STARTTLS") {
+		t.Fatalf("outcome %+v", outs[0])
+	}
+	plain := base64.StdEncoding.EncodeToString([]byte("\x00rmm\x00secret-password"))
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.lines) != 1 || !strings.HasPrefix(r.lines[0], "EHLO ") {
+		t.Fatalf("the server received %q", r.lines)
+	}
+	for _, l := range r.lines {
+		if strings.Contains(l, plain) || strings.Contains(l, "secret-password") || strings.Contains(strings.ToUpper(l), "AUTH") {
+			t.Fatalf("the server received %q", l)
+		}
+	}
+}
+
+// fakeDNS is a DNS server on loopback that answers name's A record with
+// addr and nothing else, and a resolver that asks it.
+func fakeDNS(t *testing.T, name string, addr netip.Addr) *net.Resolver {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = pc.Close() })
+	go func() {
+		buf := make([]byte, 512)
+		for {
+			n, from, err := pc.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			var p dnsmessage.Parser
+			h, err := p.Start(buf[:n])
+			if err != nil {
+				continue
+			}
+			q, err := p.Question()
+			if err != nil {
+				continue
+			}
+			rcode := dnsmessage.RCodeSuccess
+			if !strings.EqualFold(q.Name.String(), name+".") {
+				rcode = dnsmessage.RCodeNameError
+			}
+			b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: h.ID, Response: true, Authoritative: true, RCode: rcode})
+			_ = b.StartQuestions()
+			_ = b.Question(q)
+			_ = b.StartAnswers()
+			if rcode == dnsmessage.RCodeSuccess && q.Type == dnsmessage.TypeA {
+				_ = b.AResource(dnsmessage.ResourceHeader{Name: q.Name, Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET, TTL: 60},
+					dnsmessage.AResource{A: addr.As4()})
+			}
+			if out, err := b.Finish(); err == nil {
+				_, _ = pc.WriteTo(out, from)
+			}
+		}
+	}()
+	return &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "udp", pc.LocalAddr().String())
+	}}
+}
+
+// Without encryption, the address actually dialed must be loopback,
+// whatever the name: a name that resolves elsewhere is refused before
+// anything is sent.
+func TestPlainDialsOnlyLoopback(t *testing.T) {
+	m, err := New(cfg(func(c *Config) { c.Host, c.Timeout = "localhost", 2*time.Second }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// As if localhost resolved to another machine.
+	m.cfg.Host = "relay.example.test"
+	m.dialer.Resolver = fakeDNS(t, "relay.example.test", netip.MustParseAddr("192.0.2.25"))
+	outs := m.Send(context.Background(), Message{Subject: "s", Text: "t"}, []string{"a@example.org"}, nil)
+	if outs[0].Err == nil || !strings.Contains(outs[0].Err.Error(), "only allowed to a relay on loopback, and 192.0.2.25 is not") {
+		t.Fatalf("outcome %+v", outs[0])
+	}
+	// A name that resolves to loopback is dialed.
+	port := banner(t, "220 relay ESMTP")
+	m, _ = New(cfg(func(c *Config) { c.Host, c.Port, c.Timeout = "localhost", port, 2*time.Second }))
+	m.cfg.Host = "relay.example.test"
+	m.dialer.Resolver = fakeDNS(t, "relay.example.test", netip.MustParseAddr("127.0.0.1"))
+	conn, err := m.dial(context.Background(), "tcp", m.Address())
+	if err != nil {
+		t.Fatalf("dialing a name on loopback: %v", err)
+	}
+	_ = conn.Close()
+	// The check itself, on the addresses dialed.
+	for addr, ok := range map[string]bool{"127.0.0.1:25": true, "127.0.0.53:25": true, "[::1]:25": true, "[::ffff:127.0.0.1]:25": true,
+		"10.0.0.5:25": false, "[2001:db8::1]:25": false, "169.254.169.254:25": false} {
+		if err := loopbackOnly("tcp", addr, nil); (err == nil) != ok {
+			t.Errorf("%s: %v", addr, err)
+		}
+	}
+	// With encryption, the platform's usual check: other addresses are fine.
+	m, _ = New(cfg(func(c *Config) { c.Host, c.Security = "smtp.example.com", StartTLS }))
+	if err := m.dialer.Control("tcp", "192.0.2.25:587", nil); err != nil {
+		t.Fatalf("STARTTLS to another machine: %v", err)
 	}
 }
 

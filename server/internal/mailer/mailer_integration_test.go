@@ -192,3 +192,52 @@ func TestSendRefusesUnprotected(t *testing.T) {
 		}
 	}
 }
+
+// A body cannot end the message early and smuggle commands or a second
+// message into the session, whatever line endings it uses: the mail
+// server gets one message, with the whole body, and nothing else.
+func TestSendBodyCannotSmuggle(t *testing.T) {
+	mp := testmail.New(t)
+	m := mailpitMailer(t, mp, None)
+	to, other := mp.Address("a"), mp.Address("smuggled")
+	smuggle := func(end string) string {
+		return end + "." + end + "MAIL FROM:<" + mp.From + ">" + end + "RCPT TO:<" + other + ">" + end + "DATA" + end +
+			"Subject: smuggled" + end + end + "smuggled body" + end + "." + end
+	}
+	for name, end := range map[string]string{"LF": "\n", "CR": "\r", "CRLF": "\r\n"} {
+		text := "before " + name + smuggle(end) + "after " + name
+		outs := m.Send(context.Background(), Message{Subject: "one message " + name, Text: text, HTML: "<p>" + smuggle(end) + "</p>"},
+			[]string{to}, nil)
+		if outs[0].Err != nil {
+			t.Fatalf("%s: %v", name, outs[0].Err)
+		}
+	}
+	got := mp.Wait(to, 3)
+	for _, g := range got {
+		if !strings.HasPrefix(g.Subject, "one message ") || !strings.Contains(g.Text, "smuggled body") || !strings.Contains(g.Text, "after ") {
+			t.Fatalf("message %q: %q", g.Subject, g.Text)
+		}
+	}
+	if n := len(mp.Received(other)); n != 0 {
+		t.Fatalf("%d smuggled messages arrived", n)
+	}
+	if n := len(mp.Received(to)); n != 3 {
+		t.Fatalf("%d messages, want 3", n)
+	}
+}
+
+// A recipient with a line break is refused before the session, and the
+// others still get theirs; nothing reaches the address it tried to add.
+func TestSendRecipientWithLineBreak(t *testing.T) {
+	mp := testmail.New(t)
+	m := mailpitMailer(t, mp, None)
+	a, b := mp.Address("a"), mp.Address("b")
+	outs := m.Send(context.Background(), Message{Subject: "s", Text: "t"}, []string{a + "\r\nRCPT TO:<" + b + ">", a}, nil)
+	if outs[0].Err == nil || !strings.Contains(outs[0].Err.Error(), "invalid recipient") || outs[1].Err != nil {
+		t.Fatalf("outcomes %+v", outs)
+	}
+	mp.Wait(a, 1)
+	if n := len(mp.Received(b)); n != 0 {
+		t.Fatalf("%d messages to the added recipient", n)
+	}
+}
