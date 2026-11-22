@@ -2540,6 +2540,10 @@ check_integrity() {
 #   pkg TOKEN...                 the packages an installation added, each
 #                                with its version and install time (PKG_TOKEN)
 #   conffile PACKAGE PATH MD5    a configuration file of one, as installed
+#   pkgdir TOKENS PATH MODE OWNER MODE-AFTER OWNER-AFTER
+#       a directory under /etc that was there before the installation of
+#       TOKENS (the pkg record's, as one field) and that it gave another
+#       mode or owner (UID:GID); put back once its packages are gone
 #   stream PATH ORIGINAL ORIGINAL-SHA256 AFTER-SHA256
 #       a dnf module stream's file an installation made or changed
 #   pending PACKAGE...           an installation that did not finish
@@ -2581,8 +2585,13 @@ PKG_STUCK=
 # and what it found and did.
 M_RECOV=
 M_RECOV_WHY=
-# The packages pkg_install added, as tokens (PKG_TOKEN).
+# The packages pkg_install added, as tokens (PKG_TOKEN), and the pkgdir
+# records of the directories that installation changed (pkg_dirs).
 PKG_NEW=
+PKG_DIRS=
+# After pkg_remove_alone: the directories it put back (pkg_dirs_back), one
+# a line, for did.
+PKG_DIRS_BACK=
 # The packages dpkg had left half installed that its recovery configured.
 M_RECOV_PKGS=
 # After pkg_remove_alone: what it left and why, one a line; whether a
@@ -3230,6 +3239,7 @@ pkg_install() {
 	need_time "$PKG_INSTALL_MIN" "install $*" || return 1
 	intent || return 1
 	pkg_names >"$TX_DIR/before" && pkg_names rc >"$TX_DIR/rc" || return 1
+	pkg_dirs >"$TX_DIR/dirs-before"
 	pkg_streams_before
 	rec_add "pending$tab$*"
 	pi_rc=0
@@ -3270,10 +3280,17 @@ pkg_install() {
 	# python36, for fail2ban): recorded before the packages, so that undo
 	# puts it back after removing them, and only if it removed them all.
 	pkg_streams_after
+	PKG_DIRS=
 	if [ -n "$PKG_NEW" ]; then
+		pkg_dirs >"$TX_DIR/dirs-after"
+		PKG_DIRS=$(awk -v t="$tab" -v k="$PKG_NEW" '
+			{ p = substr($0, length($1) + length($2) + 3) }
+			FILENAME == ARGV[1] { b[p] = $1 t $2; next }
+			(p in b) && b[p] != $1 t $2 { print "pkgdir" t k t p t b[p] t $1 t $2 }' "$TX_DIR/dirs-before" "$TX_DIR/dirs-after")
 		rec_add "pkg$tab$PKG_NEW"
 		# shellcheck disable=SC2046,SC2086 # tokens and names, one word each
 		pkg_conffiles $(pkg_token_names $PKG_NEW) >>"$MANIFEST"
+		[ -z "$PKG_DIRS" ] || printf '%s\n' "$PKG_DIRS" >>"$MANIFEST"
 		tx_push "pkg_remove_alone $PKG_NEW"
 	fi
 	[ "$pi_rc" -eq 0 ] || {
@@ -3283,6 +3300,21 @@ pkg_install() {
 }
 # pkg_token_names TOKEN...: the packages' names, one a line.
 pkg_token_names() { printf '%s\n' "$@" | cut -d/ -f1; }
+# pkg_dirs: the directories under /etc, two levels down, not links, as
+# "MODE UID:GID PATH", one a line: pkg_install compares them before and
+# after an installation. rpm gives a directory a package ships the
+# package's mode and owner, though it was there before (audit-rules makes
+# /etc/audit 0750), and leaves them when it removes the package. A glob,
+# not find.
+pkg_dirs() {
+	set --
+	for pd_d in /etc/*/ /etc/*/*/; do
+		pd_d=${pd_d%/}
+		case $pd_d in *"$tab"* | *"$nl"*) continue ;; esac
+		[ -d "$pd_d" ] && [ ! -L "$pd_d" ] && set -- "$@" "$pd_d"
+	done
+	[ $# -eq 0 ] || stat -c '%a %u:%g %n' -- "$@" 2>/dev/null
+}
 
 # dnf's module streams: the files under /etc/dnf/modules.d that say which
 # stream of a module is enabled (or disabled); none on Debian and Ubuntu. A
@@ -3429,6 +3461,8 @@ pkg_remove_alone() {
 	pa_have=
 	pa_purge=
 	pa_conf=
+	pa_kept=no
+	PKG_DIRS_BACK=
 	pa_now=$(pkg_names)
 	for pa_t in "$@"; do
 		pa_n=${pa_t%%/*}
@@ -3443,6 +3477,7 @@ pkg_remove_alone() {
 				pkg_note "the package $pa_n, installed again since apply"
 			fi
 			PKG_KEPT=yes
+			pa_kept=yes
 			continue
 		fi
 		pa_have="$pa_have $pa_n"
@@ -3454,7 +3489,10 @@ pkg_remove_alone() {
 			pa_purge="$pa_purge,$pa_n"
 		fi
 	done
-	[ -n "$pa_have" ] || return 0
+	if [ -z "$pa_have" ]; then
+		[ "$pa_kept" = yes ] || pkg_dirs_back "$*"
+		return 0
+	fi
 	if ! need_time "$PKG_REMOVE_MIN" "remove$pa_have"; then
 		PKG_KEPT=yes
 		return 3
@@ -3471,10 +3509,48 @@ pkg_remove_alone() {
 		return 2
 	fi
 	PKG_REMOVED=${pa_have# }
+	[ "$pa_kept" = yes ] || pkg_dirs_back "$*"
 	[ -z "$pa_conf" ] || pkg_note "${pa_conf#"$nl"}"
 	return 0
 }
 pkg_note() { PKG_NOTES="${PKG_NOTES:+$PKG_NOTES$nl}$1"; }
+# pkg_dirs_back TOKENS: once none of an installation's packages is left,
+# puts back the mode and owner of each directory it changed (pkgdir
+# records in PKG_CONF_SRC for TOKENS, as one word) that is as it left
+# them. PKG_DIRS_BACK says what it put back, PKG_NOTES what it left.
+pkg_dirs_back() {
+	awk -F "$tab" -v k="$1" '$1 == "pkgdir" && $2 == k && NF == 7 { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 }' \
+		"${PKG_CONF_SRC:-$MANIFEST}" >"$TX_DIR/pkgdirs" 2>/dev/null || return 0
+	while IFS=$tab read -r pb_p pb_m pb_o pb_ma pb_oa; do
+		case $pb_p in /*) ;; *) continue ;; esac
+		# Modes and owners as stat wrote them: words chmod and chown get.
+		printf '%s %s %s %s\n' "$pb_m" "$pb_o" "$pb_ma" "$pb_oa" | grep -Eqx '[0-7]{3,4} [0-9]+:[0-9]+ [0-7]{3,4} [0-9]+:[0-9]+' || continue
+		[ -d "$pb_p" ] && [ ! -L "$pb_p" ] || continue
+		pb_now=$(stat -c '%a %u:%g' "$pb_p") || continue
+		[ "$pb_now" != "$pb_m $pb_o" ] || continue
+		if [ "$pb_now" != "$pb_ma $pb_oa" ]; then
+			pkg_note "the mode and owner of $pb_p, changed since apply"
+			continue
+		fi
+		pb_what=
+		[ "$pb_ma" = "$pb_m" ] || pb_what=", mode $(printf '%04o' "0$pb_ma") back to $(printf '%04o' "0$pb_m")"
+		[ "$pb_oa" = "$pb_o" ] || pb_what="$pb_what, owner $pb_oa back to $pb_o"
+		# Five digits: GNU chmod keeps a directory's set-group-ID bit unless
+		# told.
+		if chown "$pb_o" "$pb_p" && chmod "$(printf '%05o' "0$pb_m")" "$pb_p"; then
+			PKG_DIRS_BACK="${PKG_DIRS_BACK:+$PKG_DIRS_BACK$nl}$pb_p:${pb_what#,}"
+		else
+			pkg_note "the mode and owner of $pb_p, which could not be put back"
+		fi
+	done <"$TX_DIR/pkgdirs"
+}
+# pkg_dirs_did: says what pkg_dirs_back put back.
+pkg_dirs_did() {
+	pd_oifs=$IFS
+	IFS=$nl
+	for pd_l in $PKG_DIRS_BACK; do did "$pd_l"; done
+	IFS=$pd_oifs
+}
 # pkg_conf_changed NAME: the package's configuration files that are not as
 # apply recorded them (conffile records in PKG_CONF_SRC), separated by
 # commas. One removed since counts as unchanged: nothing of it is left to
@@ -3575,14 +3651,11 @@ undo_sysctl() {
 	fi
 }
 undo_unit() {
-	if [ "$AUDIT_UNDO" = yes ] && [ "$1" = auditd.service ]; then
-		# Installed by EasyRMM: removed with its packages, or kept.
-		[ ! -f "$AUDITD_MARKER" ] || return 0
-		ut_fo=$(audit_foreign)
-		if [ -n "$ut_fo" ]; then
-			left "auditd running and starting at boot: other rules files need it ($ut_fo)"
-			return 0
-		fi
+	# auditd, installed by EasyRMM: removed with its packages, or kept. A
+	# marker that names only audit-rules (auditd was there before, without
+	# it) leaves the unit to go back as any other.
+	if [ "$AUDIT_UNDO" = yes ] && [ "$1" = auditd.service ] && [ -f "$AUDITD_MARKER" ] && marker_has_auditd; then
+		return 0
 	fi
 	ut_now=$(unit_states "$1")
 	ut_ne=${ut_now% *}
@@ -3621,6 +3694,13 @@ undo_unit() {
 		fi
 	fi
 	[ "$ut_e$ut_a" != -- ] || return 0
+	if [ "$AUDIT_UNDO" = yes ] && [ "$1" = auditd.service ]; then
+		ut_fo=$(audit_foreign)
+		if [ -n "$ut_fo" ]; then
+			left "auditd running and starting at boot: other rules files need it ($ut_fo)"
+			return 0
+		fi
+	fi
 	tx_push "unit_put $1 $ut_now"
 	unit_put "$1" "$ut_e" "$ut_a"
 	did "$1 back to $(unit_states "$1" | sed 's/ /, /')"
@@ -3638,7 +3718,10 @@ undo_pkg() {
 	PKG_CONF_SRC=$MANIFEST
 	pkg_remove_alone "$@" && up_rc=0 || up_rc=$?
 	case $up_rc in
-	0) [ -z "$PKG_REMOVED" ] || did "Removed the packages it installed: $PKG_REMOVED" ;;
+	0)
+		[ -z "$PKG_REMOVED" ] || did "Removed the packages it installed: $PKG_REMOVED"
+		pkg_dirs_did
+		;;
 	1) left "the packages it installed ($up_names), because removing them would remove other packages too" ;;
 	2) left "the packages it installed ($up_names): the package manager could not remove them$(pkg_why)" ;;
 	# Kept, with the record, for an undo once the package database works
@@ -3751,7 +3834,7 @@ undo_records() {
 			undo_pkg "$@"
 			;;
 		# Read by undo_pkg.
-		conffile:4) ;;
+		conffile:4 | pkgdir:7) ;;
 		stream:5) undo_stream "$2" "$3" "$4" "$5" ;;
 		pending:2) left "the packages of an installation that was interrupted ($2): remove them by hand if they are not wanted" ;;
 		table:3) undo_table "$3" ;;
@@ -4186,7 +4269,7 @@ audit_rules() {
 }
 audit_immutable() { t 20 auditctl -s 2>/dev/null | grep -q '^enabled 2'; }
 # audit_foreign: the rules files in /etc/audit/rules.d that keep auditd,
-# separated by spaces: all but those the audit package shipped, unchanged.
+# separated by spaces: all but those auditd's packages shipped, unchanged.
 # Undo asks after removing hardening's own, so that one counts only when
 # undo left it (an administrator changed it).
 audit_foreign() {
@@ -4197,8 +4280,11 @@ audit_foreign() {
 	done
 	printf '%s' "${fo_list# }"
 }
-# audit_shipped PATH: whether the audit package shipped PATH and it is as
+# audit_shipped PATH: whether auditd's packages shipped PATH and it is as
 # shipped (dpkg's MD5 of its configuration files, RPM's SHA-256 digests).
+# audit 4's audit-rules ships /etc/audit/rules.d/audit.rules without
+# contents (a ghost) and makes it when it is installed, a copy of the base
+# rules it ships under /usr/share/audit-rules: as that copy, it is shipped.
 audit_shipped() {
 	case $FAMILY in
 	debian)
@@ -4207,14 +4293,18 @@ audit_shipped() {
 		[ ${#ah_sum} -eq 32 ] && [ "$(md5sum <"$1" | cut -c1-32)" = "$ah_sum" ]
 		;;
 	*)
-		ah_sum=$(t 30 rpm -q --qf '[%{FILENAMES} %{FILEDIGESTS}\n]' audit 2>/dev/null | awk -v f="$1" '$1 == f { print $2 }')
+		ah_sum=$(t 30 rpm -q --qf '[%{FILENAMES} %{FILEDIGESTS}\n]' audit audit-rules 2>/dev/null | awk -v f="$1" '
+			$1 == f && $2 != "" { s = $2 }
+			$1 == "/usr/share/audit-rules/10-base-config.rules" { b = $2 }
+			END { if (s == "" && f == "/etc/audit/rules.d/audit.rules") s = b; print s }')
 		[ ${#ah_sum} -eq 64 ] && [ "$(sha256sum <"$1" | cut -c1-64)" = "$ah_sum" ]
 		;;
 	esac
 }
 # audit_mark TOKEN...: the marker, after the audit module installed auditd:
 # the packages, as tokens (PKG_TOKEN), then their configuration files
-# (pkg_conffiles). Written only into a directory of root's alone (marker_dir_ok).
+# (pkg_conffiles) and the directories the installation changed (PKG_DIRS).
+# Written only into a directory of root's alone (marker_dir_ok).
 audit_mark() {
 	mk_dir=${AUDITD_MARKER%/*}
 	if [ ! -e "$mk_dir" ] && [ ! -L "$mk_dir" ]; then
@@ -4227,7 +4317,8 @@ audit_mark() {
 	# shellcheck disable=SC2086 # package names, one word each
 	{
 		printf '# EasyRMM hardening (ADR-0051) installed auditd with these packages. Whoever removes\n# auditd last (when no other rules file needs it) removes them and this file.\n%s\n' "$*" &&
-			pkg_conffiles $mk_names
+			pkg_conffiles $mk_names &&
+			if [ -n "$PKG_DIRS" ]; then printf '%s\n' "$PKG_DIRS"; fi
 	} >"$AUDITD_MARKER.new" && mv -f "$AUDITD_MARKER.new" "$AUDITD_MARKER"
 }
 # marker_dir_ok: whether the marker's directory is a directory, not a
@@ -4242,7 +4333,10 @@ marker_dir_ok() {
 	return 0
 }
 # marker_tokens: the marker's package tokens, one a line.
-marker_tokens() { sed -n '/^#/d; /^conffile	/d; p' "$AUDITD_MARKER" 2>/dev/null | tr ' ' '\n' | grep .; }
+marker_tokens() { sed -n '/^#/d; /^conffile	/d; /^pkgdir	/d; p' "$AUDITD_MARKER" 2>/dev/null | tr ' ' '\n' | grep .; }
+# marker_has_auditd: whether the marker's packages hold auditd (auditd on
+# Debian and Ubuntu, audit elsewhere).
+marker_has_auditd() { marker_tokens | cut -d/ -f1 | grep -Eqx 'auditd(:[a-z0-9]+)?|audit\.[A-Za-z0-9_]+'; }
 audit_load() { t 120 augenrules --load >/dev/null 2>&1; }
 
 apply_audit() {
@@ -4350,6 +4444,7 @@ undo_audit_after() {
 		rm -f "$AUDITD_MARKER"
 		rmdir "${AUDITD_MARKER%/*}" 2>/dev/null
 		did "Removed the packages EasyRMM installed for auditd${PKG_REMOVED:+: $PKG_REMOVED}, and $AUDITD_MARKER"
+		pkg_dirs_did
 		;;
 	1) left "auditd, which EasyRMM installed: removing its packages ($ua_pk) would remove other packages too" ;;
 	2) left "auditd, which EasyRMM installed: the package manager could not remove its packages ($ua_pk)$(pkg_why)" ;;

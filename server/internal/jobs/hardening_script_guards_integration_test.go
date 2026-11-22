@@ -518,3 +518,97 @@ func scriptStreams(t *testing.T, c *scriptContainer) {
 	}
 	c.sh(t, "test -f "+stream+" && rm -rf "+stateDir+" "+stream)
 }
+
+// scriptPackageDirs: a directory under /etc that was there before an
+// installation, and that the installation gave another mode or owner (rpm
+// gives a directory a package ships the package's: audit-rules makes
+// /etc/audit 0750), gets them back once its packages are gone: in the
+// rollback of a failed apply, and in undo, from the module's record and
+// from the auditd marker. One changed since is left. A package whose
+// maintainer script changes them stands in. Debian and Ubuntu.
+func scriptPackageDirs(t *testing.T, c *scriptContainer) {
+	if !c.has(t, "dpkg-deb") {
+		return
+	}
+	const name, dir, marker = "easyrmm-test-dirs", "/etc/easyrmm-test-dir", "/var/lib/easyrmm/auditd-installed"
+	c.buildDeb(t, name, "", "/DEBIAN/postinst #!/bin/sh\\nchmod 0750 "+dir+" && chown 0:4 "+dir+"\\n")
+	fresh := func() {
+		c.sh(t, "rm -rf "+stateDir+" "+dir+" /var/lib/easyrmm && { dpkg --purge "+name+" >/dev/null 2>&1; true; } && mkdir -m 0755 "+dir)
+	}
+	install := func() string {
+		fresh()
+		c.sh(t, "dpkg -i /tmp/"+name+".deb >/dev/null")
+		return c.token(t, name)
+	}
+	modes := func(what, want string) {
+		t.Helper()
+		if got := strings.TrimSpace(c.sh(t, "stat -c '%a %u:%g' "+dir)); got != want {
+			t.Errorf("%s after %s: %s, want %s", dir, what, got, want)
+		}
+	}
+
+	fresh()
+	c.standIn(t, "apt-get", `*" update "*) exit 0 ;;`+"\n"+
+		`*" install "*) dpkg -i /tmp/`+name+`.deb >/dev/null; echo "E: stopped by the test" >&2; exit 100 ;;`)
+	m := scriptModule(t, parseScriptOutcome(t, c.script(t, "apply", "integrity"), HardeningApply, []string{"integrity"}), "integrity")
+	c.sh(t, "rm -f /usr/local/sbin/apt-get")
+	if m.Outcome != HardeningOutcomeFailed || m.OutcomeReason != "AIDE could not be installed: E: stopped by the test; what this run changed was put back." {
+		t.Errorf("a failed apply whose installation changed a directory: %+v", m)
+	}
+	modes("the rollback", "755 0:0")
+
+	record := func(token string) string { return "pkgdir\t" + token + "\t" + dir + "\t755\t0:0\t750\t0:4" }
+	token := install()
+	c.record(t, "sudo", "pkg\t"+token, record(token))
+	c.sh(t, "chmod 0700 "+dir)
+	m = scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "sudo"), HardeningUndo, []string{"sudo"}), "sudo")
+	want := []string{"Removed the packages it installed: " + name, "Left as it is: the mode and owner of " + dir + ", changed since apply"}
+	if m.Outcome != HardeningPartlyUndone || !slices.Equal(m.Done, want) {
+		t.Errorf("undo after the directory changed: %+v, want %q", m, want)
+	}
+	modes("undo", "700 0:4")
+
+	token = install()
+	c.sh(t, "mkdir -m 0755 /var/lib/easyrmm && printf '# a marker\\n%s\\n%s\\n' '"+token+"' '"+record(token)+"' >"+marker)
+	c.record(t, "audit", "dir\t/tmp/easyrmm-test-audit")
+	m = scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "audit"), HardeningUndo, []string{"audit"}), "audit")
+	want = []string{"Removed the packages EasyRMM installed for auditd: " + name + ", and " + marker, dir + ": mode 0750 back to 0755, owner 0:4 back to 0:0"}
+	if m.Outcome != HardeningUndone || !slices.Equal(m.Done, want) {
+		t.Errorf("undo of audit by the marker: %+v, want %q", m, want)
+	}
+	modes("undo of audit", "755 0:0")
+	c.sh(t, "! dpkg-query -W "+name+" >/dev/null 2>&1 && test ! -e "+marker+" && rm -rf "+stateDir+" "+dir+" /tmp/"+name+".deb")
+}
+
+// scriptAuditRulesBase: audit 4's audit-rules ships
+// /etc/audit/rules.d/audit.rules without contents and makes it when it is
+// installed, a copy of the base rules it ships: as that copy, it keeps
+// auditd no more than a file auditd's packages shipped does. Changed, it
+// keeps auditd. A stand-in rpm answers for audit and audit-rules, and the
+// marker names audit-rules, not installed here. RHEL and Fedora.
+func scriptAuditRulesBase(t *testing.T, c *scriptContainer) {
+	if !c.has(t, "rpm") || c.has(t, "dpkg") {
+		return
+	}
+	const rules, marker = "/etc/audit/rules.d/audit.rules", "/var/lib/easyrmm/auditd-installed"
+	const token = "audit-rules.x86_64/4.2.1-3.el10/1"
+	c.sh(t, "test ! -e /etc/audit && mkdir -p /etc/audit/rules.d && printf -- '-D\\n-b 8192\\n' >"+rules)
+	sum := strings.TrimSpace(c.sh(t, "sha256sum <"+rules+" | cut -c1-64"))
+	c.standIn(t, "rpm", `*" audit audit-rules "*) printf '%s \n%s %s\n' `+rules+` /usr/share/audit-rules/10-base-config.rules `+sum+`; exit 0 ;;`)
+	undo := func() HardeningModuleResult {
+		c.sh(t, "rm -rf "+stateDir+" /var/lib/easyrmm && mkdir -m 0755 /var/lib/easyrmm && printf '# a marker\\n%s\\n' '"+token+"' >"+marker)
+		c.record(t, "audit", "dir\t/tmp/easyrmm-test-audit")
+		return scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "audit"), HardeningUndo, []string{"audit"}), "audit")
+	}
+
+	m := undo()
+	if want := []string{"Removed the packages EasyRMM installed for auditd, and " + marker}; m.Outcome != HardeningUndone || !slices.Equal(m.Done, want) {
+		t.Errorf("undo with audit-rules' base rules: %+v, want %q", m, want)
+	}
+	c.sh(t, "echo '-w /etc/hosts -p wa -k test' >>"+rules)
+	m = undo()
+	if want := []string{"Left as it is: auditd, which EasyRMM installed: other rules files need it (" + rules + "); " + marker + " stays, for whoever removes the last of them"}; m.Outcome != HardeningPartlyUndone || !slices.Equal(m.Done, want) {
+		t.Errorf("undo with audit-rules' base rules changed: %+v, want %q", m, want)
+	}
+	c.sh(t, "rm -rf /usr/local/sbin/rpm /etc/audit /var/lib/easyrmm "+stateDir)
+}

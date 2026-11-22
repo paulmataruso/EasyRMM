@@ -169,7 +169,10 @@ installed: one upgraded or installed again since stays. On Debian and
 Ubuntu it purges a package only while its configuration files are as
 installed; it removes one whose files someone changed, and keeps those
 files. A package an installation upgraded as a dependency stays upgraded.
-Files that a program apply started made (AIDE's database, the audit rules'
+A directory under `/etc` that was there before and that an installation
+gave another mode or owner (on AlmaLinux 10, audit-rules makes
+`/etc/audit` 0750) gets them back once that installation's packages are
+gone, if they are still as it left them. Files that a program apply started made (AIDE's database, the audit rules'
 backup) go only as they were made. Undo of the firewall alone is refused
 while fail2ban, which bans with it, is applied: the result names fail2ban
 (`undoWith`); undo both. It rebuilds the initramfs after taking out
@@ -183,8 +186,9 @@ options. Without the agent, undo runs on the computer itself, as root:
 When the audit module installs auditd, it writes
 `/var/lib/easyrmm/auditd-installed`, with the packages that installation
 added. Undo removes auditd only while that file is there and no rules file
-is left in `/etc/audit/rules.d/` but those the package shipped, unchanged;
-the file goes with it. A rules file of anyone else's (log collection's among
+is left in `/etc/audit/rules.d/` but those its packages shipped, unchanged
+(audit-rules' `audit.rules`, which it makes from its base rules when it is
+installed, counts as shipped); the file goes with it. A rules file of anyone else's (log collection's among
 them) keeps auditd installed and running, and the file stays, so that
 whoever removes the last of those rules files can remove auditd. An auditd
 that was installed before apply gets no such file and is never removed.

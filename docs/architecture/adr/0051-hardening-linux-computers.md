@@ -326,7 +326,20 @@ or Kubernetes installed later.
   out, so the audit module installs it with `audit`; and the time module
   reads a running service by its own name, not an alias's
   (`chronyd.service` is `chrony.service`'s on Ubuntu 26.04, and
-  `systemctl is-enabled` answers `alias` for it). *Amended 2026-11-22
+  `systemctl is-enabled` answers `alias` for it). And on AlmaLinux 10,
+  whose image has `audit` without `audit-rules`: `audit-rules` makes
+  `/etc/audit/rules.d/audit.rules` when it is installed, a copy of the base
+  rules it ships (the package lists the file without contents), so that
+  copy, unchanged, counts as shipped and does not keep auditd; a marker
+  that names `audit-rules` alone leaves auditd's unit to go back as any
+  other unit does; and rpm gives a directory a package ships the
+  package's mode and owner though it was there before (`audit-rules` made
+  `/etc/audit` 0750) and leaves them when it removes the package, so an
+  installation records each directory under `/etc`, two levels down, that
+  was there before and that it changed, and the directory gets its mode
+  and owner back once all of that installation's packages are gone (by
+  undo, or by the rollback of a failed apply), if they are still as the
+  installation left them; otherwise the result says it was left. *Amended 2026-11-22
   (decided in review):* the stream's file goes after the packages, not
   before, and only when all of them went; a stream file that was there
   before and that the installation changed is put back as it was.

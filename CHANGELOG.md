@@ -204,7 +204,9 @@ All notable changes to this project are documented here. The format follows
   it, fails an area whose package step lacks the time it needs, and does
   not run the areas after it (*Not run*). Canceling a run stops the step it
   is in. Undo removes only packages still at the version apply installed,
-  keeps their configuration files where someone changed them, removes
+  keeps their configuration files where someone changed them, gives a
+  directory an installation changed its mode and owner back once that
+  installation's packages are gone, removes
   generated files only as they were made, keeps symbolic links and SELinux
   labels, and refuses the firewall alone while fail2ban bans with it; an
   installation never removes a package; fail2ban's bans stop growing at a
