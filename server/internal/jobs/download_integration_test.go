@@ -393,31 +393,48 @@ func TestRecordedReadsNeedTheirRecord(t *testing.T) {
 		wantKind(t, what, read(), apperr.KindForbidden, "")
 	}
 
-	// The day is the database's. A record written a day ago no longer
-	// allows the read although the server's clock is set back to its time:
-	// the server passes no time to the read.
-	f.at = time.Now().Add(-25 * time.Hour)
-	old, err := f.svc.OutputArchive(f.ctx, tech, job.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = f.svc.recordedOutput(f.ctx, tech, runA, old.included[runA])
-	wantKind(t, "a record a day old", err, apperr.KindForbidden, "")
-	// A record up to 5 minutes ahead of the database's clock is within the
-	// skew allowed between the two clocks; one further ahead is refused.
-	for ahead, ok := range map[time.Duration]bool{2 * time.Minute: true, 10 * time.Minute: false} {
-		f.at = time.Now().Add(ahead)
+	// The day is the database's, and so is the record's time: a server
+	// whose clock is a day behind or an hour ahead of the database's still
+	// gets an archive whose reads are allowed.
+	for _, skew := range []time.Duration{-25 * time.Hour, time.Hour} {
+		f.at = time.Now().Add(skew)
 		arc, err := f.svc.OutputArchive(f.ctx, tech, job.ID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		f.at = time.Now()
-		_, err = f.svc.recordedOutput(f.ctx, tech, runA, arc.included[runA])
+		var off int64
+		if err := f.db.ReadTx(f.ctx, database.System, func(tx pgx.Tx) error {
+			return tx.QueryRow(f.ctx, `SELECT extract(epoch FROM clock_timestamp() - occurred_at)::bigint FROM audit_log WHERE id = $1`,
+				arc.included[runA]).Scan(&off)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if off < 0 || off > 60 {
+			t.Errorf("the server %s off: the record is %ds behind the database's clock", skew, off)
+		}
+		if out, err := f.svc.recordedOutput(f.ctx, tech, runA, arc.included[runA]); err != nil || out.Stdout != outMarker {
+			t.Errorf("the server %s off: %+v %v", skew, out, err)
+		}
+	}
+	// A record a day old by the database's clock no longer allows the
+	// read; one up to 5 minutes ahead of it, as after the database's clock
+	// is set back, does; one further ahead does not. Such records are
+	// written here as the archive writes them, at the times wanted.
+	for when, ok := range map[time.Duration]bool{-25 * time.Hour: false, 2 * time.Minute: true, 10 * time.Minute: false} {
+		var id int64
+		if err := f.db.InTx(f.ctx, database.System, func(tx pgx.Tx) error {
+			return tx.QueryRow(f.ctx, `SELECT easyrmm_audit_append(clock_timestamp() + $1 * interval '1 second', 'user', $2, 'tech',
+				NULL, NULL, NULL, 'job_run.output_view', 'job_run', $3, 'success', NULL, '', '{"download": "zip"}'::jsonb)`,
+				int64(when/time.Second), tech.Actor.ID, runA.String()).Scan(&id)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		_, err := f.svc.recordedOutput(f.ctx, tech, runA, id)
 		if ok && err != nil {
-			t.Errorf("a record %s ahead: %v", ahead, err)
+			t.Errorf("a record %s from now: %v", when, err)
 		}
 		if !ok {
-			wantKind(t, "a record "+ahead.String()+" ahead", err, apperr.KindForbidden, "")
+			wantKind(t, "a record "+when.String()+" from now", err, apperr.KindForbidden, "")
 		}
 	}
 	f.at = time.Now().Add(-time.Hour)

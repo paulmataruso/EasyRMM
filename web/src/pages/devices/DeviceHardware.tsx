@@ -1,19 +1,19 @@
 import type { ReactNode } from "react";
-import type { DeviceInventory, Disk, Inventory, PowerShellInstall } from "../../api/types";
+import type { Device, DeviceInventory, Inventory, PowerShellInstall } from "../../api/types";
 import { UsageMeter } from "../../components/Meter";
 import { Badge, Card, EmptyState, KeyValueList, Mono, TableWrap } from "../../components/ui";
 import { formatDateTime, formatRelative, formatSize, plural } from "../../lib/format";
 import { installName, NOT_REPORTED } from "../scripts/scriptText";
+import { DisksCard } from "./DeviceDisks";
 import { byFullness, percentOf } from "./DeviceHealth";
 
 const VIRTUALIZATION: Record<string, string> = { container: "Container", vm: "Virtual machine" };
-const DISK_KINDS: Record<Disk["kind"], string> = { "": "Unknown", ssd: "SSD", hdd: "Hard disk", nvme: "NVMe SSD" };
 
 const none = <span className="text-muted">Not reported</span>;
 const or = (v: string | number | null | undefined): ReactNode => (v === "" || v === 0 || v === null || v === undefined ? none : v);
 
-/** What the agent last reported about the machine: hardware, storage, filesystems and network. */
-export function HardwarePanel({ data }: { data: DeviceInventory }) {
+/** What the agent last reported about the machine: hardware, storage with each disk's health, filesystems and network. */
+export function HardwarePanel({ data, device }: { data: DeviceInventory; device: Pick<Device, "id" | "agent"> }) {
   const inv = data.inventory;
   if (!inv) {
     return (
@@ -52,7 +52,7 @@ export function HardwarePanel({ data }: { data: DeviceInventory }) {
         </Card>
       </div>
       {inv.os.id === "windows" && <PowerShellCard installs={inv.powerShell} />}
-      <DisksCard disks={inv.disks} />
+      <DisksCard device={device} disks={inv.disks} />
       {data.metrics && data.metrics.filesystems.length > 0 && <FilesystemsCard data={data} />}
       <NetworkCard inv={inv} />
     </div>
@@ -156,46 +156,6 @@ function InstallState({ install: i, chosen }: { install: PowerShellInstall; chos
       {i.blocked ? <Badge tone="danger">Found, not usable</Badge> : <Badge tone="warn">Not used</Badge>}
       {i.reason && <span className="mt-1 block text-xs break-words text-muted">{i.reason}</span>}
     </>
-  );
-}
-
-function DisksCard({ disks }: { disks: Disk[] }) {
-  return (
-    <Card title="Disks" padded={false}>
-      {disks.length === 0 ? (
-        <EmptyState title="No disks reported" compact>
-          Containers and some virtual machines do not show their disks to the agent.
-        </EmptyState>
-      ) : (
-        <TableWrap className="rounded-none border-0">
-          <table className="table-base">
-            <thead>
-              <tr>
-                <th scope="col">Disk</th>
-                <th scope="col">Model</th>
-                <th scope="col">Type</th>
-                <th scope="col" className="text-right">Size</th>
-                <th scope="col" className="hidden sm:table-cell">Serial number</th>
-              </tr>
-            </thead>
-            <tbody>
-              {disks.map((d) => (
-                <tr key={d.name}>
-                  <td className="font-medium whitespace-nowrap">
-                    {d.name}
-                    {d.removable && <Badge className="ml-2">Removable</Badge>}
-                  </td>
-                  <td>{d.model || <span className="text-muted">—</span>}</td>
-                  <td className="whitespace-nowrap">{DISK_KINDS[d.kind] ?? d.kind}</td>
-                  <td className="text-right whitespace-nowrap tabular-nums">{formatSize(d.sizeBytes)}</td>
-                  <td className="hidden sm:table-cell">{d.serial ? <Mono>{d.serial}</Mono> : <span className="text-muted">—</span>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </TableWrap>
-      )}
-    </Card>
   );
 }
 

@@ -269,8 +269,8 @@ func TestJobDownloadsAPI(t *testing.T) {
 	}
 }
 
-// TestJobOutputZipLimit: one person may download six jobs' archives a
-// minute; the seventh is answered 429 with Retry-After before anything is
+// TestJobOutputZipLimit: one person may download six jobs' archives at
+// once; the seventh is answered 429 with Retry-After before anything is
 // recorded, and another person is not held back (ADR-0064).
 func TestJobOutputZipLimit(t *testing.T) {
 	h := newHarness(t, false)

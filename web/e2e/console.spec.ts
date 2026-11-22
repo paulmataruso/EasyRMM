@@ -1,7 +1,7 @@
 // The technician console, end to end, against a real server and database: first-run setup,
 // mandatory two-factor enrollment, tenancy, invitations, scoped access, device enrollment, a
-// hardening check through the device's agent, who sees a script's output and arguments, and the
-// audit trail.
+// hardening check through the device's agent, who sees a script's output and arguments, a failing
+// disk's health and alert, and the audit trail.
 // The suite is one ordered story because each step builds on the server state of the last.
 
 import { readFileSync } from "node:fs";
@@ -541,6 +541,121 @@ test("a script's output and arguments reach only those who may see them, and eve
   await expect(exported.filter({ hasText: TECH.email })).toHaveCount(1);
   await expect(exported.filter({ hasText: READER.email })).toHaveCount(1);
   await expect(page.getByText(MARKER)).toHaveCount(0);
+});
+
+/** An NVMe drive's reading as the agent reports it (agentproto.DiskHealth): critical warning bit 3, media read-only. */
+function failingDisk(readAt: string) {
+  const read = (value: number) => ({ state: "read", value });
+  const notKept = { state: "unsupported", reason: "not_kept" };
+  return {
+    name: "nvme0n1",
+    model: "Samsung SSD 990 PRO 2TB",
+    serial: "S7DNNJ0X000001",
+    state: "read",
+    protocol: "nvme",
+    route: "nvme",
+    readAt,
+    criticalWarning: read(8),
+    smartStatus: notKept,
+    thresholds: notKept,
+    temperature: read(40),
+    temperatureLimit: read(70),
+    wear: read(3),
+    availableSpare: read(100),
+    availableSpareThreshold: read(10),
+    mediaErrors: read(0),
+    reallocatedSectors: notKept,
+    pendingSectors: notKept,
+    uncorrectableSectors: notKept,
+    driveErrors: read(0),
+    powerOnHours: read(1200),
+    dataWritten: read(5_000_000),
+    unsafeShutdowns: read(4),
+    powerMode: notKept,
+  };
+}
+
+test("a failing disk shows on the device and across the fleet, opens an alert, and a Read-Only user sees it", async ({ browser }) => {
+  // The server evaluates alert policies once a minute.
+  test.slow();
+  const page = admin;
+  // The agent's inventory with the drive's firmware (ADR-0065), then the drive's reading.
+  await agent.inventory({
+    system: { manufacturer: "Dell Inc.", model: "OptiPlex 7010", serial: "", biosVendor: "", biosVersion: "", biosDate: "", virtualization: "" },
+    cpu: { model: "Intel(R) Core(TM) i5-13500", sockets: 1, cores: 14, threads: 20 },
+    memoryBytes: 16 * 1024 ** 3,
+    os: { name: "Debian GNU/Linux 13 (trixie)", id: "debian", version: "13", kernel: "6.12.38+deb13-amd64", timezone: "America/New_York" },
+    disks: [
+      {
+        name: "nvme0n1",
+        model: "Samsung SSD 990 PRO 2TB",
+        serial: "S7DNNJ0X000001",
+        sizeBytes: 2_000_398_934_016,
+        kind: "nvme",
+        removable: false,
+        firmware: { state: "read", value: "4B2QJXD7" },
+      },
+    ],
+    interfaces: [],
+    gateways: [],
+    dnsServers: [],
+    packageManager: "dpkg",
+    packages: [],
+  });
+  await agent.hardware({ disks: [failingDisk(new Date().toISOString())] });
+
+  // The device's Disks card: firmware, and health with what made it fail.
+  await page.goto(`/devices/${agent.deviceId}?tab=hardware`);
+  const disks = page.getByRole("heading", { name: "Disks" }).locator("xpath=ancestor::section[1]");
+  const disk = disks.getByRole("row", { name: /nvme0n1/ });
+  await expect(disk).toContainText("4B2QJXD7");
+  await expect(disk).toContainText("Failing, last read");
+  await expect(disk).toContainText("NVMe critical warning: media read-only");
+  await disk.getByRole("button", { name: "nvme0n1" }).click();
+  const panel = page.getByRole("dialog", { name: "nvme0n1" });
+  await expect(panel.getByRole("table", { name: "Facts" }).getByRole("row", { name: /Critical warning/ })).toContainText("Failing: NVMe critical warning");
+  await expect(panel.getByRole("table", { name: "Facts" }).getByRole("row", { name: /Pending sectors/ })).toContainText("Unsupported: the drive does not keep this");
+  await expect(panel.getByRole("table", { name: "Last 30 days" })).toContainText("Failing");
+  await panel.getByRole("button", { name: "Close" }).click();
+
+  // Across the fleet: the Devices list's column, and its filter on the server.
+  await page.goto("/devices");
+  const row = page.getByRole("row", { name: /dt-reception-01/ });
+  await expect(row).toContainText("Failing");
+  await page.getByLabel("Disk health").selectOption({ label: "Failing" });
+  await expect(page).toHaveURL(/\/devices\?diskHealth=failing$/);
+  await expect(row).toBeVisible();
+  await page.getByLabel("Disk health").selectOption({ label: "Healthy" });
+  await expect(page.getByText("No devices match these filters")).toBeVisible();
+  await page.getByLabel("Disk health").selectOption({ label: "Not reported" });
+  await expect(page.getByText("No devices match these filters")).toBeVisible();
+  await page.getByLabel("Disk health").selectOption({ label: "Any disk health" });
+  await expect(row).toBeVisible();
+
+  // The shared Disk failing policy, on from the start, opens one alert for the disk at the next evaluation; the page
+  // asks every 30 seconds.
+  await page.goto("/alerts");
+  const alert = page.getByRole("row", { name: /Disk failing/ });
+  await expect(alert).toBeVisible({ timeout: 100_000 });
+  await expect(alert).toContainText("nvme0n1 · Samsung SSD 990 PRO 2TB");
+  await expect(alert).toContainText("NVMe critical warning: media read-only");
+  await expect(alert).toContainText("A disk's own verdict is failing");
+  await expect(alert).toContainText("dt-reception-01");
+
+  // A Read-Only user of the organization sees the disk's health, its facts and its alert.
+  const readerContext = await browser.newContext();
+  const reader = await readerContext.newPage();
+  await reader.goto(`/devices/${agent.deviceId}?tab=hardware`);
+  await signIn(reader, READER);
+  await reader.getByLabel(/^Verification code/).fill(await nextCode(reader, READER.email));
+  await reader.getByRole("button", { name: "Verify" }).click();
+  const readerDisk = reader.getByRole("heading", { name: "Disks" }).locator("xpath=ancestor::section[1]").getByRole("row", { name: /nvme0n1/ });
+  await expect(readerDisk).toContainText("Failing, last read");
+  await readerDisk.getByRole("button", { name: "nvme0n1" }).click();
+  const readerPanel = reader.getByRole("dialog", { name: "nvme0n1" });
+  await expect(readerPanel.getByRole("table", { name: "Facts" })).toContainText("Media read-only");
+  await expect(readerPanel.getByRole("region", { name: "Open alerts" })).toContainText("Disk failing");
+  await readerContext.close();
 });
 
 test("a PowerShell 7 script runs only once the agent says it can, and its run names the version used", async ({ browser }) => {

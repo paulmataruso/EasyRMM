@@ -154,13 +154,16 @@ Each output download is a read like opening the run's page: it needs
   you may not read it meanwhile, is listed as *Removed*, without its
   files. A run that printed nothing has empty files and no record. The
   records let the archive read the output for a day; the database's clock
-  decides.
-* **Six archives a minute.** Each person may download six jobs' archives
-  at once, then one every 10 seconds. Another is answered *429 Too Many
-  Requests* with `Retry-After: 10` before anything is read or recorded;
-  the browser shows that download as failed, and it works again a few
-  seconds later. Each archive writes up to 500 audit records, which is
-  what the limit bounds.
+  dates them and decides.
+* **Six archives at once, then one every 10 seconds.** Each person may
+  download six jobs' archives at once, then one every 10 seconds: up to 11
+  in the first minute, and six a minute after that. Another is answered
+  *429 Too Many Requests* with `Retry-After: 10` before anything is read
+  or recorded; the browser shows that download as failed, and it works
+  again a few seconds later. Each archive writes up to 500 audit records,
+  which is what the limit bounds. Each server process keeps the limit in
+  memory: restarting the server starts it again, and with several servers
+  each allows that much.
 * **Refusals.** Someone without `job.view_sensitive` anywhere in the job is
   refused the archive, recorded as *Denied* on the job under each
   organization of the runs they see, within the bound above.

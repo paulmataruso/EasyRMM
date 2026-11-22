@@ -196,6 +196,7 @@ function ActiveAlertsCard({ total }: { total: number }) {
                   {a.deviceName}
                 </Link>
                 <span className="block text-xs text-muted">
+                  {a.kind === "disk_health" && a.subjectLabel && <>{a.subjectLabel} · </>}
                   <span className="tabular-nums">{valueText(a)}</span> ·{" "}
                   <span title={formatDateTime(a.openedAt)}>opened {formatRelative(a.openedAt)}</span>
                   {a.status === "acknowledged" && " · acknowledged"}

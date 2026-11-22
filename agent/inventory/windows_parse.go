@@ -75,11 +75,15 @@ const (
 // storageDevice is what a STORAGE_DEVICE_DESCRIPTOR says about a disk.
 type storageDevice struct {
 	Model, Serial string
-	Bus           uint32
-	Removable     bool
+	// Revision is the product revision: the drive's firmware.
+	Revision  string
+	Bus       uint32
+	Removable bool
 }
 
-// parseStorageDescriptor reads a STORAGE_DEVICE_DESCRIPTOR.
+// parseStorageDescriptor reads a STORAGE_DEVICE_DESCRIPTOR: the offsets of
+// the vendor (12), product (16), product revision (20) and serial number
+// (24), each 0 when there is none, and the bus type (28).
 func parseStorageDescriptor(b []byte) (storageDevice, bool) {
 	if len(b) < 36 {
 		return storageDevice{}, false
@@ -98,6 +102,7 @@ func parseStorageDescriptor(b []byte) (storageDevice, bool) {
 	d := storageDevice{
 		Model:     strings.TrimSpace(at(12) + " " + at(16)),
 		Serial:    strings.Trim(at(24), " ."),
+		Revision:  at(20),
 		Bus:       binary.LittleEndian.Uint32(b[28:]),
 		Removable: b[10] != 0,
 	}

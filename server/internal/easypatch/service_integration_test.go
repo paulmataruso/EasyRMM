@@ -36,6 +36,8 @@ type fixture struct {
 	acme, hq, branch uuid.UUID
 	globex, plant    uuid.UUID
 	admin            access.Caller
+	// superDSN connects to the test database as the superuser.
+	superDSN string
 }
 
 // newFixture is EasyRMM on the patching engine as eptest serves it, with
@@ -43,7 +45,7 @@ type fixture struct {
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	inst := testdb.New(t)
-	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, ep: eptest.NewEngine(t, reconcileKey)}
+	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, ep: eptest.NewEngine(t, reconcileKey), superDSN: inst.SuperDSN}
 	f.svc = f.engineService(f.ep)
 	f.acme = f.id(`INSERT INTO organizations (name) VALUES ('Acme') RETURNING id`)
 	f.hq = f.id(`INSERT INTO sites (organization_id, name) VALUES ($1, 'HQ') RETURNING id`, f.acme)

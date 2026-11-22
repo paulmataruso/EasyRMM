@@ -8,7 +8,7 @@ Authentik (`setup.sh --with-authentik`). All are needed to restore.
 | Database | PostgreSQL in the `postgres` container | Everything: tenants, devices, users, audit log |
 | The patching engine's database | `easypatch`, in the same PostgreSQL | Patching: each device's update state and history, policies, holds, jobs, alerts, reports, and the EasyPatch agents' credentials. Without it, every EasyPatch agent has to be reinstalled and patch history is lost |
 | `/srv/easyrmm/easypatch/keys` | The engine's data-protection keys | They decrypt the engine's stored mail and webhook credentials. Without them, notification channels have to be set up again |
-| `deploy/.env` | Next to `docker-compose.yml` | **The encryption key** (`EASYRMM_SECRET_KEY`) and database passwords. The database's secrets are sealed with the key, among them authenticator-app secrets, MeshCentral's service account, the single sign-on and audit-forwarding credentials, the internal certificate authority agents trust and the job-signing key they pinned. Without it, authenticator apps stop working (recovery codes and security keys still do) and every agent has to be reinstalled. With Authentik, it also holds Authentik's settings and secrets: `COMPOSE_PROFILES=authentik`, `EASYRMM_AUTHENTIK_HOSTNAME`, `EASYRMM_AUTHENTIK_ADMIN_EMAIL`, `EASYRMM_AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_SECRET_KEY` and `AUTHENTIK_DB_PASSWORD` |
+| `deploy/.env` | Next to `docker-compose.yml` | **The encryption key** (`EASYRMM_SECRET_KEY`) and database passwords. The database's secrets are sealed with the key, among them authenticator-app secrets, MeshCentral's service account, the single sign-on and audit-forwarding credentials, the console's mail server password, the internal certificate authority agents trust and the job-signing key they pinned. Without it, authenticator apps stop working (recovery codes and security keys still do) and every agent has to be reinstalled. With Authentik, it also holds Authentik's settings and secrets: `COMPOSE_PROFILES=authentik`, `EASYRMM_AUTHENTIK_HOSTNAME`, `EASYRMM_AUTHENTIK_ADMIN_EMAIL`, `EASYRMM_AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_SECRET_KEY` and `AUTHENTIK_DB_PASSWORD` |
 | `/srv/easyrmm/server` | Data directory | The ACME account and certificates (`acme` mode); empty in the other modes |
 | `/srv/easyrmm/tls` (`EASYRMM_TLS_DIR`) | `manual` TLS only | Your certificate and key. Back them up wherever you manage certificates, or include the directory here |
 | `/srv/easyrmm/meshcentral` | MeshCentral's data | **MeshCentral's server identity** (the keys its agents trust), its device records and the downloaded agent binaries. Without it, every remote-access agent has to be reinstalled |
@@ -35,6 +35,13 @@ has no other files to back up.
 Store backups encrypted and off the host. The `.env` file and the database
 dump together give full control of every managed device: protect them
 accordingly.
+
+The database dump grows with what the database keeps. At the defaults, the
+largest shares are the measurements kept for charts, about 1 GiB for 1,000
+devices ([Inventory and health](inventory.md#retention-and-size)), and disk
+health history, about 0.6 GiB for 1,000 devices with two disks each
+([Disk health](disk-health.md#history-and-retention)). The dump is
+compressed, so it is usually smaller than the database.
 
 ## Back up
 

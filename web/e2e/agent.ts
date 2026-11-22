@@ -1,6 +1,6 @@
 // An enrolled device's EasyRMM agent, as far as the suite needs one: it signs its requests the way the real agent does
 // (internal/agentproto: Ed25519 over the method, target, time, a nonce and the body's SHA-256), so the server cannot tell
-// it apart, and asks for work, starts it and reports its result.
+// it apart, asks for work, starts it and reports its result, and reports its inventory and its disks' health.
 
 import { createHash, generateKeyPairSync, randomBytes, sign, type KeyObject } from "node:crypto";
 import type { APIRequestContext } from "@playwright/test";
@@ -71,14 +71,22 @@ export class Agent {
     return jobs.map((j) => JSON.parse(Buffer.from(j.payload, "base64").toString("utf8")) as JobPayload);
   }
 
-  /** Uploads the device's inventory (agentproto.Inventory). */
-  async inventory(inventory: object): Promise<void> {
-    await this.post("/api/agent/v1/inventory", inventory);
-  }
-
   /** Whether the server lets the run start now. */
   async start(runId: string): Promise<boolean> {
     return ((await (await this.post(`/api/agent/v1/jobs/${runId}/start`, {})).json()) as { proceed: boolean }).proceed;
+  }
+
+  /** Sends the device's inventory (agentproto.Inventory), as the agent does at start and when it changes. */
+  async inventory(inventory: unknown): Promise<void> {
+    await this.post("/api/agent/v1/inventory", inventory);
+  }
+
+  /**
+   * Sends a hardware report (agentproto.HardwareReport, ADR-0065): each disk's facts as read, each fact
+   * `{state, reason?, value?}` with state read, unknown, unsupported or unavailable. The server judges them.
+   */
+  async hardware(report: { disks: unknown[] }): Promise<void> {
+    await this.post("/api/agent/v1/hardware", report);
   }
 
   /** Reports that the run ended with exit code 0 and this output, and the program it started when given. */

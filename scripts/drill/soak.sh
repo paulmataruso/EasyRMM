@@ -5,8 +5,9 @@
 #   sudo scripts/drill/soak.sh WORKDIR [DEVICES] [DURATION]
 #
 # DEVICES (2000) simulated agents enroll, then for DURATION (1h) each sends
-# a heartbeat with metrics every minute, uploads its inventory once, and
-# holds a job long poll open, each over its own TLS connection. Meanwhile,
+# a heartbeat with metrics every minute, uploads its inventory once, sends
+# its disks' health every 30 minutes, and holds a job long poll open, each
+# over its own TLS connection. Meanwhile,
 # every minute, the drill:
 # - lists the online devices as the console does, and times it;
 # - samples the containers' CPU and memory and the database's size.

@@ -1,6 +1,11 @@
 # ADR-0018: Inventory and telemetry
 
-* Status: Accepted (2026-11-16).
+* Status: Accepted (2026-11-16). Amended by
+  [ADR-0065](0065-hardware-health.md): a hardware report of its own beside
+  the hashed inventory, every 30 minutes, with each disk's health; each
+  disk's firmware in the inventory; and the rule that every new fact
+  carries its state (read, unknown, unsupported or unavailable) and a
+  reason.
 
 ## Context
 Technicians need to know what a device is before they touch it: its

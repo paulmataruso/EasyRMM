@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { describeUserAgent, formatDateTime, formatDuration, formatNumber, formatRelative, formatSize, parseDate, plural, timeZones } from "./format";
+import {
+  describeUserAgent,
+  formatDateTime,
+  formatDuration,
+  formatNumber,
+  formatRelative,
+  formatShortDate,
+  formatShortDateTime,
+  formatSize,
+  parseDate,
+  plural,
+  timeZones,
+} from "./format";
 
 describe("parseDate", () => {
   it("treats Go's zero time and garbage as missing", () => {
@@ -12,6 +24,21 @@ describe("parseDate", () => {
   it("renders a dash for missing dates", () => {
     expect(formatDateTime(null)).toBe("—");
     expect(formatDateTime("0001-01-01T00:00:00Z")).toBe("—");
+  });
+});
+
+describe("short dates", () => {
+  const now = new Date("2026-11-15T12:00:00Z");
+  it("give the year only when it is not this year's", () => {
+    expect(formatShortDateTime("2026-05-02T14:30:00Z", now)).toBe(
+      new Date("2026-05-02T14:30:00Z").toLocaleString(undefined, { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }),
+    );
+    expect(formatShortDateTime("2026-05-02T14:30:00Z", now)).not.toContain("2026");
+    expect(formatShortDateTime("2025-05-02T14:30:00Z", now)).toContain("2025");
+    expect(formatShortDate("2026-05-03T12:00:00Z", now)).toBe(new Date("2026-05-03T12:00:00Z").toLocaleDateString(undefined, { day: "numeric", month: "short" }));
+    expect(formatShortDate("2024-05-03T12:00:00Z", now)).toContain("2024");
+    expect(formatShortDateTime(null)).toBe("—");
+    expect(formatShortDate("0001-01-01T00:00:00Z")).toBe("—");
   });
 });
 

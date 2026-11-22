@@ -15,7 +15,7 @@ only have MeshAgent show neither.
 | Physical machine, virtual machine or container | Memory and swap (page files on Windows) in use |
 | Processor model, sockets, cores and threads; memory size | Load averages (1, 5 and 15 minutes; Linux only) |
 | Operating system, version, kernel or Windows build, and time zone | Time since start, number of processes |
-| Physical disks: model, type (SSD, NVMe, hard disk), size, serial number | Size and space used of each local filesystem |
+| Physical disks: model, type (SSD, NVMe, hard disk), size, serial number, firmware revision | Size and space used of each local filesystem |
 | Network interfaces with MAC and IP addresses and link speed, default gateways, DNS servers | |
 | Installed programs on Windows, with their publisher; installed packages from dpkg, RPM, apk or pacman on Linux (up to 20,000) | |
 
@@ -33,6 +33,9 @@ On **Linux** it reads the files the kernel and the package manager keep
 systems it runs `rpm -qa`.
 
 On both, it runs nothing else and changes nothing.
+
+Each disk's health (SMART and NVMe) is read every 30 minutes and sent on
+its own, not with the inventory: see [Disk health](disk-health.md).
 
 Inventory is collected when the agent starts and every hour. The agent
 sends it only when it differs from what the server already holds, which the
@@ -59,8 +62,9 @@ The device page has three tabs once the agent has reported:
   a day and 30 minutes for a week. A gap means the device did not check in.
   **Show as a table** lists the values. The arrow keys move along the chart
   when it has focus.
-* **Hardware**: system, operating system, disks, every filesystem with its
-  use, and the network.
+* **Hardware**: system, operating system, disks with their firmware and
+  [health](disk-health.md#in-the-console), every filesystem with its use,
+  and the network.
 * **Software**: the installed packages, filtered as you type.
 
 Installed software is listed per device only; the console has no

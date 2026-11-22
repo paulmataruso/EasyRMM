@@ -12,7 +12,24 @@ automatically at server start-up (goose, advisory-locked).
 
 The Docker deployment creates both roles and the database on first start
 (`docker/postgres/init/`). For an external PostgreSQL, run the same script as
-a superuser. **`easyrmm_owner` should own the database**: migration 00029
+a superuser.
+
+**`easyrmm_owner` must be able to create tables in the `public` schema.**
+Every migration that adds a table needs it. Since PostgreSQL 15, `public`
+belongs to `pg_database_owner`, so only the database's owner, or a role
+granted it, may create there. Two ways:
+
+* **`easyrmm_owner` owns the database** (recommended; the Docker
+  deployment's `docker/postgres/init/10-easyrmm.sh` creates it so):
+  `ALTER DATABASE easyrmm OWNER TO easyrmm_owner;` as a superuser.
+* **Another role owns it**, and `easyrmm_owner` is granted `CREATE` on
+  `public`: as that owner or a superuser, connected to the database,
+  `GRANT USAGE, CREATE ON SCHEMA public TO easyrmm_owner;`.
+
+Without either, the first migration that creates a table fails with
+`permission denied for schema public`, and the server does not start.
+
+**`easyrmm_owner` should own the database** in any case: migration 00029
 revokes `TEMPORARY` from `easyrmm_app` and `PUBLIC`, which only the
 database's owner can do. Under any other owner it skips the revoke and
 the server logs a warning, `database migration: database … is not owned
@@ -21,7 +38,8 @@ by easyrmm_owner`, whose hint gives the statements to run as a superuser:
 `ALTER DATABASE easyrmm OWNER TO easyrmm_owner;`. When `easyrmm_app` still
 holds `TEMPORARY` after the revoke, through a grant by another role or a
 role it belongs to, the warning says so and how to find and revoke it.
-The server starts either way.
+The server starts either way: under another owner with `CREATE` on `public`
+granted, every migration runs, and 00029 warns with the statements to run.
 
 ## Tenant isolation (row-level security)
 
@@ -331,8 +349,8 @@ time than the job (ADR-0063).
 | `jobs.arg_count` | How many arguments the job has, set the same way by the `jobs_arg_count` trigger (`easyrmm_jobs_arg_count()`). The migration fills in the sizes and counts of existing rows with one `UPDATE` each instead of rewriting the tables |
 | `job_runs_output_stored_idx` | Partial index on `output_stored_at` for the hourly purge, which empties output older than `EASYRMM_JOB_OUTPUT_RETENTION` |
 | `easyrmm_job_run_output(…)` | `SECURITY DEFINER`. Given a run, what is downloaded (`download`: `stdout`, `stderr` or `json`, or NULL for the console's page; since migration 00032), the caller's `job.view` and `job.view_sensitive` scopes and who asks, it checks access, appends the audit record (`job_run.output_view`, with `download` in its details, or `denied`) in the caller's transaction, and returns the output. Answers `not_found`, `forbidden`, `run_open`, `output_removed`, `empty` or `ok` |
-| `easyrmm_job_output_zip(…)` | `SECURITY DEFINER` (migration 00032). For a job's output archive: locks the runs the caller sees in the order canceling a job does (device name, then run), appends one `job_run.output_view` record with `download` `zip` for each finished run the caller may read whose output is there and not empty, and returns those runs with their record's id, and the empty ones without one. A caller who sees runs and may read none is refused, recorded as `denied` within `easyrmm_job_refusal`'s bound. Answers `not_found`, `forbidden` or `ok` |
-| `easyrmm_job_run_output_recorded(…)` | `SECURITY DEFINER` (migration 00032). Returns one run's output for the archive, in a short transaction of its own, only against the record `easyrmm_job_output_zip` wrote: a successful `zip` read of that run by the same caller, at most a day old and at most 5 minutes ahead by the database's clock (`clock_timestamp()`; it takes no time from the server). It checks the caller's scopes again and records nothing. Answers `not_found`, `forbidden`, `output_removed` or `ok` |
+| `easyrmm_job_output_zip(…)` | `SECURITY DEFINER` (migration 00032). For a job's output archive: locks the runs the caller sees in the order canceling a job does (device name, then run), appends one `job_run.output_view` record with `download` `zip`, dated by the database's clock (`clock_timestamp()`), for each finished run the caller may read whose output is there and not empty, and returns those runs with their record's id, and the empty ones without one. A caller who sees runs and may read none is refused, recorded as `denied` within `easyrmm_job_refusal`'s bound. Answers `not_found`, `forbidden` or `ok` |
+| `easyrmm_job_run_output_recorded(…)` | `SECURITY DEFINER` (migration 00032). Returns one run's output for the archive, in a short transaction of its own, only against the record `easyrmm_job_output_zip` wrote: a successful `zip` read of that run by the same caller, at most a day old and at most 5 minutes ahead by the database's clock (`clock_timestamp()`, which dated the record; it takes no time from the server, and the 5 minutes allow for that clock being set back). It checks the caller's scopes again and records nothing. Answers `not_found`, `forbidden`, `output_removed` or `ok` |
 | `easyrmm_job_arguments(…)` | The same for a job's arguments: one `job.arguments_view` record per organization of the runs the caller may read (under the site when they share one) |
 | `easyrmm_job_delivery_args(device, runs)` | `SECURITY DEFINER`, platform scope only: the arguments of a device's runs being delivered, for the agent's poll. Not audited: the device is the one that runs them |
 | `easyrmm_job_refusal(…)` | Appends a refused read as `denied`, at most once per caller, action, target and organization in 10 minutes and 20 per caller in 10 minutes, so a refused caller cannot flood the log. After 20, a caller's further refusals in those 10 minutes are not recorded. Serialized per caller with a transaction advisory lock, so the bound holds across server processes. Called only by the read functions: `easyrmm_job_run_output`, `easyrmm_job_arguments` and `easyrmm_job_output_zip` |
@@ -356,6 +374,33 @@ so **a new `SECURITY DEFINER` function must end its `search_path` with
 `easyrmm_app` and `PUBLIC` (see Roles for when it cannot): the server never
 creates temporary tables, and the install scripts no longer grant it.
 Warnings a migration raises reach the server's log with their hints.
+
+## The mail server in the console (migration 00030)
+
+The mail server super administrators set in the console, and the limits on
+the mail EasyRMM sends through whichever mail server is in force
+(ADR-0053, [Mail](../operations/mail.md)).
+
+| Table | Notes |
+|---|---|
+| `mail_server` | Always one row (`id` is always true), so the limits hold before anyone sets them. The console's mail server, if any (an empty `host` means none): port, security (`starttls`, `tls`, or `none`, which the service allows only to loopback), how it signs in (`none` or `password`), the user name, the password sealed with `EASYRMM_SECRET_KEY` (additional data: the column), the sender's address and name, and who changed it and when. The limits, 30 a minute and 9,000 a day by default, with who changed them and when; and when the last test message went (one every 30 seconds). `.env`'s mail server is never stored. Platform scope only |
+| `mail_sends` | One row per message sent, or being sent, in the last 24 hours: when, and its `kind`: `reset` for a password reset the person asked for, which may use the whole day's limit; `admin` for an invitation or a password link an administrator sent (`sent_by`), which stops at 90% of it; `other`, which stops at 80%. Invitations and password emails record the `account_id` they went to and its `organization_id` (null for none or several, and for admin mail when a super administrator sent it), which the limits per account, per organization and per administrator count ([Mail](../operations/mail.md#limits-on-invitations-and-password-emails)). Taken under an advisory lock across servers; a message the mail server refuses is removed again, and rows older than 24 hours are deleted. No foreign keys: a row outlives a deleted user or organization for at most a day. `easyrmm_app` cannot change a row. Platform scope only |
+| `mail_engine_given` | One row: an HMAC-SHA-256 of the mail server the patching engine is given, keyed by a key derived from `EASYRMM_SECRET_KEY`, by the one of EasyRMM's servers that gives it (under a session advisory lock), and when it was recorded; never the mail server or its password. The other servers compare theirs with it. Platform scope only |
+| `mail_waits` | One row per message to someone's own account waiting for room under the minute's limit, on any server, until when it gives up: other mail stands back while one waits. Removed when the wait ends; a row a stopped server leaves runs out at `until` and is deleted. Platform scope only |
+
+## Disk health (migration 00031)
+
+What agents read from each disk every 30 minutes, judged by the server's
+rules, and disk health alerts with one alert per disk (ADR-0065).
+
+| Table, column or function | Notes |
+|---|---|
+| `device_disk_health` | The latest reading of each disk a device reported, keyed by device and `disk_key`. The reading's own `state` (`healthy`, `warning`, `failing`, `unknown`, `unsupported`, `unavailable`), `reason` code and `detail`, when the agent read it and when the server received it; `protocol`, `route`, the judged `facts` and ATA `attributes` (JSON arrays) from the latest reading that read the disk (`facts_at`), so a sleeping disk keeps its last values; `judged_level`, `judged_reason`, `judged_detail` and `judged_at` from the last reading that read the drive's verdict, which later readings that could not tell do not overwrite; `missing_since`, set by a report that leaves the disk out and cleared by one that lists it. `unstable`: the identity comes from the name, for want of a serial. Read through the device's row-level security; written at platform scope by the agent API and the evaluator. Goes with its device |
+| `device_disk_health_samples` | One row per disk and reading: the state, whether the verdict was read (`judged`), temperature and the drive's limit, wear, reallocated, media error, pending, uncorrectable and drive error counts, and power-on hours. BRIN index on the time. Readings older than `EASYRMM_METRICS_RETENTION` are thinned hourly to one `daily` row per disk and UTC day (the day's worst state, highest temperature, last counts and wear), kept for `EASYRMM_HARDWARE_RETENTION` (730 days by default). Samples outlive a disk's row when it is gone, until their retention; they go with their device |
+| `easyrmm_disk_key(name, model, serial)` | A disk's identity: the first 16 bytes of the SHA-256 of `disk\nmodel\nserial`, in hex, or of `name\nname` without a serial. The agent API computes every reported disk's identity with it, so the definition is kept in one place, beside the data |
+| `easyrmm_disk_state(missing_since, state, judged_level, judged_at)` | What the console shows for a disk: `unknown` when missing; the latest reading's `unsupported` or `unavailable`; the last judged `failing` or `warning`, however old; `healthy` when judged so within 2 hours; else `unknown`. The Devices list sums it per device |
+| `alert_policies.check_name` | The disk health check (`failing`, `errors`, `pending`, `wear`, `temperature`) of a `disk_health` policy, NULL for the other kinds. `failing` takes no threshold, `temperature` may take none (each drive's own limit), the others need one; a `disk_health` policy watches at least 30 minutes, the reading interval, and a `temperature` one at least 60, so that its window holds two readings. The migration adds five shared policies, only *Disk failing* enabled; a name already taken at platform level is tried once with " (disk health)" appended |
+| `alerts.check_name`, `subject`, `subject_label`, `detail` | The check, the disk's identity, its name for people (never the serial) and what holds. `subject` is `''` for the other kinds; the partial unique index `alerts_active_key` is now on (policy, device, subject), so each disk has its own alert and the other kinds still have one per policy and device. Resolution `subject_gone`: the disk has been missing for 14 days, so no hardware report since has listed it; its `device_disk_health` row goes with it |
 
 ## PowerShell 7 (migrations 00033 and 00034)
 

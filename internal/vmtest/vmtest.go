@@ -74,6 +74,42 @@ type Options struct {
 	// systemd has finished starting the machine: 10 minutes with KVM and
 	// 45 without when zero.
 	BootTimeout time.Duration
+	// Disks are emulated disks beside the boot disk, for tests of the
+	// disks' own interfaces (the agent's hardware reader).
+	Disks []Disk
+}
+
+// Disk kinds.
+const (
+	// DiskNVMe is an NVMe controller (-device nvme) with one namespace.
+	DiskNVMe = "nvme"
+	// DiskSATA is a disk (ide-hd) on an AHCI controller (-device ahci),
+	// which the guest's kernel drives through libata.
+	DiskSATA = "sata"
+)
+
+// Disk is an emulated disk, backed by a sparse file of 64 MiB in the
+// machine's directory.
+type Disk struct {
+	// ID names the device, for QOMSet: letters, digits, "-" and "_".
+	ID   string
+	Kind string
+	// Model replaces QEMU's own model ("QEMU HARDDISK") of a SATA disk.
+	// QEMU's NVMe controller, up to 10.2 at least, has no such property,
+	// so an NVMe disk with a model is refused.
+	Model  string
+	Serial string
+}
+
+// QOMSet sets a property of one of the machine's devices, as QMP's
+// qom-set does: how a test changes what an emulated device reports, such
+// as an NVMe controller's smart_critical_warning.
+func (vm *VM) QOMSet(id, property string, value any) error {
+	_, err := vm.qmp.execute("qom-set", map[string]any{"path": "/machine/peripheral/" + id, "property": property, "value": value})
+	if err != nil {
+		return fmt.Errorf("%s: %w", vm.image.Name, err)
+	}
+	return nil
 }
 
 // VM is a running machine. Its methods may be called concurrently; the
@@ -208,6 +244,9 @@ func (vm *VM) start(ctx context.Context, base, accel string, opts Options) error
 		forward:  opts.Forward,
 	}
 
+	if vm.m.disks, err = diskFiles(vm.dir, opts.Disks); err != nil {
+		return err
+	}
 	size, err := virtualSize(ctx, base)
 	if err != nil {
 		return err

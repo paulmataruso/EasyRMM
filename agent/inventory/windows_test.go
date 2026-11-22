@@ -41,3 +41,21 @@ func TestCollectWindows(t *testing.T) {
 		t.Errorf("PowerShell %+v", ps)
 	}
 }
+
+// TestStorageWindows: every disk has its bus type and a firmware fact with
+// its state; the inventory lists the same disks.
+func TestStorageWindows(t *testing.T) {
+	st := Collector{}.Storage()
+	if len(st.Disks) == 0 {
+		t.Fatal("no disks (needs an administrator)")
+	}
+	for _, d := range st.Disks {
+		t.Logf("%s: bus %d, model %q, firmware %+v", d.Name, d.Bus, d.Model, *d.Firmware)
+		if d.Bus == 0 || d.Firmware.State == "" || (d.Firmware.State == "read") != (d.Firmware.Value != "") {
+			t.Errorf("%s: bus %d, firmware %+v", d.Name, d.Bus, *d.Firmware)
+		}
+	}
+	if inv := (Collector{}).Collect(context.Background()); len(inv.Disks) != len(st.Disks) {
+		t.Errorf("the inventory lists %d disks, the storage listing %d", len(inv.Disks), len(st.Disks))
+	}
+}

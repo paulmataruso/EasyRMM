@@ -44,6 +44,35 @@ func TestInventory(t *testing.T) {
 	}
 }
 
+// The hardware report names the inventory's disks, as the agent's does, and
+// is about the size ADR-0065 estimated: logged for the record.
+func TestHardware(t *testing.T) {
+	r, inv := hardware(7), inventory(7, "sim-00008", 0)
+	if len(r.Disks) != len(inv.Disks) {
+		t.Fatalf("%d disks reported, %d in the inventory", len(r.Disks), len(inv.Disks))
+	}
+	total := 0
+	for i, d := range r.Disks {
+		if d.Name != inv.Disks[i].Name || d.Model != inv.Disks[i].Model || d.Serial != inv.Disks[i].Serial {
+			t.Errorf("disk %d: %s %q %q, inventory %+v", i, d.Name, d.Model, d.Serial, inv.Disks[i])
+		}
+		b, err := json.Marshal(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("%s (%s, %d attributes): %d bytes", d.Name, d.Protocol, len(d.Attributes), len(b))
+		total += len(b)
+	}
+	body, _ := json.Marshal(r)
+	t.Logf("report: %d bytes", len(body))
+	if len(body) < total || len(body) > 8<<10 {
+		t.Errorf("report of %d bytes", len(body))
+	}
+	if r.Disks[1].Attributes[0].Threshold == r.Disks[1].Attributes[1].Threshold {
+		t.Error("attributes share a threshold")
+	}
+}
+
 func TestState(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sim.json")
 	ids, err := loadState(path)

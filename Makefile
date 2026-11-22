@@ -25,12 +25,15 @@ TEST_OIDC_DIR ?= $(or $(TMPDIR),/tmp)/easyrmm-testoidc
 # kind of job on (ADR-0009, ADR-0064), and where its build goes.
 RELEASE_BEFORE ?= easyrmm-v1.0.0-rc.4
 RELEASE_BEFORE_AGENT ?= $(or $(TMPDIR),/tmp)/easyrmm-agent-$(RELEASE_BEFORE)
+# The SMTP server mail is tested against (ADR-0053).
+MAILPIT_IMAGE ?= axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+TEST_MAIL_DIR ?= $(or $(TMPDIR),/tmp)/easyrmm-testmail
 # Machine tests (internal/vmtest; ADR-0051): where the cloud images and the
 # running machines' disks go (gigabytes, so not a small /tmp), the packages
 # with vm-tagged tests, how many machines boot at once, and how long the
 # whole run may take (without KVM each boot takes minutes).
 VM_CACHE ?= /var/tmp/easyrmm-vmtest
-VM_PACKAGES ?= ./internal/vmtest/ ./server/internal/jobs/
+VM_PACKAGES ?= ./internal/vmtest/ ./server/internal/jobs/ ./agent/hardware/
 VM_PARALLEL ?= 2
 VM_TEST_TIMEOUT ?= 3h
 
@@ -94,9 +97,21 @@ test-oidc: ## Start a disposable Dex (OpenID Connect provider) for single sign-o
 test-oidc-stop: ## Stop the test Dex
 	DEX_IMAGE=$(DEX_IMAGE) ./scripts/test-oidc.sh stop
 
+.PHONY: test-mail
+test-mail: ## Start disposable Mailpit SMTP servers for mail tests (host networking)
+	MAILPIT_IMAGE=$(MAILPIT_IMAGE) EASYRMM_TEST_MAIL_DIR=$(TEST_MAIL_DIR) ./scripts/test-mail.sh
+
+.PHONY: test-mail-stop
+test-mail-stop: ## Stop the test Mailpit servers
+	MAILPIT_IMAGE=$(MAILPIT_IMAGE) ./scripts/test-mail.sh stop
+
 .PHONY: print-test-agent-image
 print-test-agent-image:
 	@echo $(TEST_AGENT_IMAGE)
+
+.PHONY: print-mailpit-image
+print-mailpit-image:
+	@echo $(MAILPIT_IMAGE)
 
 .PHONY: print-test-hardening-images
 print-test-hardening-images:
@@ -107,7 +122,7 @@ agent-release-before: ## Build the Linux agent of the release before, which the 
 	GO=$(GO) ./scripts/ci/build-release-before.sh $(RELEASE_BEFORE) $(RELEASE_BEFORE_AGENT)
 
 .PHONY: test-integration
-test-integration: agent-release-before ## Go unit + integration tests against PostgreSQL, MeshCentral and Dex, with coverage gates
+test-integration: agent-release-before ## Go unit + integration tests against PostgreSQL, MeshCentral, Dex and Mailpit, with coverage gates
 	EASYRMM_TEST_DATABASE_URL="$${EASYRMM_TEST_DATABASE_URL:-$(TEST_DB_URL)}" \
 	EASYRMM_TEST_MESH_DIR="$${EASYRMM_TEST_MESH_DIR:-$(TEST_MESH_DIR)/config}" \
 	EASYRMM_TEST_MESH_URL="$${EASYRMM_TEST_MESH_URL:-$(TEST_MESH_URL)}" \
@@ -115,6 +130,7 @@ test-integration: agent-release-before ## Go unit + integration tests against Po
 	EASYRMM_TEST_HARDENING_IMAGES="$${EASYRMM_TEST_HARDENING_IMAGES:-$(TEST_HARDENING_IMAGES)}" \
 	EASYRMM_TEST_OIDC_DIR="$${EASYRMM_TEST_OIDC_DIR:-$(TEST_OIDC_DIR)}" \
 	EASYRMM_TEST_AGENT_RELEASE_BEFORE="$(RELEASE_BEFORE_AGENT)" \
+	EASYRMM_TEST_MAIL_DIR="$${EASYRMM_TEST_MAIL_DIR:-$(TEST_MAIL_DIR)}" \
 		$(GO) test -race -count=1 -tags integration -covermode=atomic -coverpkg=./... -coverprofile=coverage.txt ./...
 	./scripts/ci/check-coverage.sh coverage.txt
 

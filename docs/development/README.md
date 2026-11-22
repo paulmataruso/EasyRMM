@@ -30,7 +30,8 @@ Tests sit beside the code they test: `*_test.go`, `*_integration_test.go`,
 * The .NET SDK pinned in `easypatch/global.json`, for the patching engine
   and the EasyPatch agent.
 * Docker with the Compose plugin: the integration, contract and end-to-end
-  tests start real PostgreSQL, MeshCentral and OpenID Connect containers.
+  tests start real PostgreSQL, MeshCentral, OpenID Connect and Mailpit (SMTP)
+  containers.
 
 ## Building and testing
 
@@ -40,6 +41,7 @@ From the repository root:
 make test-db                 # disposable PostgreSQL 18 on 127.0.0.1:55432
 make test-mesh               # disposable MeshCentral for the remote-access tests
 make test-oidc               # disposable Dex (OpenID Connect provider) for the single sign-on tests
+make test-mail               # disposable Mailpit SMTP servers (plain, STARTTLS, TLS) for the mail tests
 export EASYRMM_TEST_DATABASE_URL='postgres://postgres:easyrmm-test-only@127.0.0.1:55432/postgres?sslmode=disable'
 make check                   # format, vet, lint, unit and integration tests, coverage floors
 make web-test                # console typecheck and unit tests

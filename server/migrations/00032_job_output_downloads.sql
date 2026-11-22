@@ -118,6 +118,12 @@ DECLARE
     r record;
     seen boolean;
     allowed boolean;
+    -- The records of the reads are dated by the database's clock, which
+    -- easyrmm_job_run_output_recorded checks them against: a server whose
+    -- clock is ahead of the database's cannot date them out of their day.
+    -- A refusal keeps the server's time, as easyrmm_job_refusal's bound
+    -- counts by it.
+    at_db timestamptz := clock_timestamp();
 BEGIN
     SELECT jb.script_name AS script, jb.kind AS kind INTO j FROM public.jobs jb WHERE jb.id = p_job;
     IF NOT FOUND THEN
@@ -179,7 +185,7 @@ BEGIN
             RETURN QUERY SELECT 'ok'::text, r.id, NULL::bigint;
             CONTINUE;
         END IF;
-        RETURN QUERY SELECT 'ok'::text, r.id, public.easyrmm_audit_append(p_at, p_actor_type, p_actor_id, p_actor_label,
+        RETURN QUERY SELECT 'ok'::text, r.id, public.easyrmm_audit_append(at_db, p_actor_type, p_actor_id, p_actor_label,
             r.org, r.site, r.device, 'job_run.output_view', 'job_run', r.id::text, 'success', p_source_ip, p_user_agent,
             jsonb_build_object('device', r.device_name, 'jobId', p_job::text, 'script', j.script, 'kind', j.kind,
                 'download', 'zip', 'stdoutBytes', r.out_bytes, 'stderrBytes', r.err_bytes));
@@ -193,10 +199,10 @@ GRANT EXECUTE ON FUNCTION easyrmm_job_output_zip(uuid, boolean, uuid[], uuid[], 
 -- One run's output, read for a job's download after easyrmm_job_output_zip
 -- recorded it: only against that record, which must be a successful
 -- job_run.output_view of this run, with download zip, by this caller, at
--- most a day old by the database's clock (clock_timestamp(); the server
--- passes no time, so it cannot extend the day), and no more than 5 minutes
--- ahead of it, the skew allowed between the server's clock and the
--- database's. The caller must still see the run and may still read it. The
+-- most a day old by the database's clock (clock_timestamp(), which dated
+-- the record too; the server passes no time, so it cannot extend the day),
+-- and no more than 5 minutes ahead of it, should that clock be set back
+-- after the record. The caller must still see the run and may still read it. The
 -- result is not_found, forbidden, output_removed (removed after the
 -- record) or ok with the output. Nothing is recorded: the record was
 -- written, and committed, before the download began.
