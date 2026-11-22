@@ -273,10 +273,16 @@ func openATA(path string, wake bool) (ataDevice, error) {
 	if err != nil {
 		return nil, err
 	}
-	var on int32
-	r, _, _ := procGetDevicePowerState.Call(uintptr(q), uintptr(unsafe.Pointer(&on)))
+	// on is heap-allocated and pinned for the call, as every buffer the
+	// agent hands the kernel is.
+	on := new(int32)
+	var pin runtime.Pinner
+	pin.Pin(on)
+	r, _, _ := procGetDevicePowerState.Call(uintptr(q), uintptr(unsafe.Pointer(on)))
+	runtime.KeepAlive(on)
+	pin.Unpin()
 	_ = windows.CloseHandle(q)
-	if r != 0 && on == 0 && !wake {
+	if r != 0 && *on == 0 && !wake {
 		return nil, errAsleep
 	}
 	h, err := open(path, windows.GENERIC_READ|windows.GENERIC_WRITE, 0)
@@ -316,8 +322,16 @@ func (s *syncCall) run(h windows.Handle, buf []byte, ready chan<- error) {
 	if err != nil {
 		return
 	}
+	// The buffer, allocated before its address is taken, is pinned for
+	// the call: ATA_PASS_THROUGH_EX finds its data by an offset from the
+	// buffer's start, never by a pointer, and the call takes the buffer as
+	// a pointer the garbage collector sees.
+	var pin runtime.Pinner
+	pin.Pin(&buf[0])
 	n := uint32(len(buf)) //nolint:gosec // at most 48 + 4,096 bytes
 	err = windows.DeviceIoControl(h, ioctlATAPassThrough, &buf[0], n, &buf[0], n, &n, nil)
+	runtime.KeepAlive(buf)
+	pin.Unpin()
 	s.mu.Lock()
 	s.finished, s.n, s.err = true, n, err
 	_ = windows.CloseHandle(th)

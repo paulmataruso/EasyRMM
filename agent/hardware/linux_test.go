@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"testing"
 	"time"
 	"unsafe"
@@ -94,6 +95,96 @@ func TestRefusedBeforeTheSystemCall(t *testing.T) {
 	if sg.route() != "sg" || nvme.route() != "nvme" {
 		t.Error("routes")
 	}
+}
+
+// growStack uses about n bytes of the goroutine's stack, so that Go moves
+// the stack to a larger one.
+//
+//go:noinline
+func growStack(n int) byte {
+	var pad [1024]byte
+	pad[n%len(pad)] = byte(n)
+	if n <= len(pad) {
+		return pad[0]
+	}
+	return growStack(n-len(pad)) ^ pad[n%len(pad)]
+}
+
+// TestTransportsSurviveStackGrowth: the kernel's stand-in moves the calling
+// goroutine's stack before it reads the request and writes the answer, as
+// a stack growth between building a request and its system call would. The
+// answer must arrive in the buffers the transport then reads: an address
+// kept as an integer would still point into the old stack, and the answer
+// would be lost, or written over another goroutine's stack.
+func TestTransportsSurviveStackGrowth(t *testing.T) {
+	// No collection meanwhile: a collection raises the size new goroutines'
+	// stacks start at, after which the stand-in's growth might not move one.
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	regs := ataRegisters{count: 0xFF, lbaMid: 0x4F, lbaHigh: 0xC2, status: 0x50}
+	saved := ioctl
+	t.Cleanup(func() { ioctl = saved })
+	ioctl = func(_ int, req uintptr, arg unsafe.Pointer) (uintptr, unix.Errno) {
+		growStack(1 << 20)
+		switch req {
+		case sgIO:
+			h := (*sgIOHdr)(arg)
+			if cdb := unsafe.Slice((*byte)(h.cmdp), h.cmdLen); cdb[0] != ataPassThrough16 {
+				return 0, unix.EIO
+			}
+			if h.dxferp != nil {
+				fill(unsafe.Slice((*byte)(h.dxferp), h.dxferLen))
+				h.status = scsiGood
+				return 0, 0
+			}
+			h.sbLenWr = uint8(copy(unsafe.Slice((*byte)(h.sbp), h.mxSbLen), descriptorSense(senseRecoveredError, 0, 0x1D, regs))) //nolint:gosec // at most 64
+			h.status = scsiCheckCondition
+		case nvmeIoctlAdminCmd:
+			cmd := (*nvmeAdminCmd)(arg)
+			fill(unsafe.Slice((*byte)(*(*unsafe.Pointer)(unsafe.Pointer(&cmd.addr))), cmd.dataLen)) // little-endian: the low word is the address
+		default:
+			return 0, unix.ENOTTY
+		}
+		return 0, 0
+	}
+	// Each call on a goroutine of its own, whose stack starts small.
+	on := func(f func()) {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			f()
+		}()
+		<-done
+	}
+	sg, nvme := &linuxSG{fd: -1}, &linuxNVMe{fd: -1}
+	for range 20 {
+		on(func() {
+			if b, _, err := sg.ata(smartReadData); err != nil || !filled(b, 512) {
+				t.Errorf("SG_IO data: %v", err)
+			}
+		})
+		on(func() {
+			if _, r, err := sg.ata(ataPowerMode); err != nil || r == nil || *r != regs {
+				t.Errorf("SG_IO sense: %+v, %v", r, err)
+			}
+		})
+		on(func() {
+			if b, err := nvme.nvme(nvmeHealthLog); err != nil || !filled(b, 512) {
+				t.Errorf("NVMe data: %v", err)
+			}
+		})
+	}
+}
+
+func fill(b []byte) {
+	for i := range b {
+		b[i] = byte(i*7 + 1)
+	}
+}
+
+func filled(b []byte, n int) bool {
+	want := make([]byte, n)
+	fill(want)
+	return string(b) == string(want)
 }
 
 // TestLinuxTransportsOnFiles opens a regular file as each device: the open

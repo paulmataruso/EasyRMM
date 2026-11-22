@@ -134,6 +134,14 @@ func openFailure(path string, err error) *failure {
 	return ioError("opening %s: %v", path, err)
 }
 
+// ioctl is the system call: a variable so that a test can stand in for the
+// kernel (TestTransportsSurviveStackGrowth). arg's object, and every buffer
+// it points to, must be pinned by the caller.
+var ioctl = func(fd int, req uintptr, arg unsafe.Pointer) (uintptr, unix.Errno) {
+	r, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), req, uintptr(arg)) //nolint:gosec // fd is an open descriptor
+	return r, errno
+}
+
 func openFD(path string) (int, error) {
 	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
@@ -143,7 +151,9 @@ func openFD(path string) (int, error) {
 }
 
 // nvmeAdminCmd is the kernel's struct nvme_admin_cmd (72 bytes on every
-// architecture).
+// architecture). Its addr is a __u64 on every architecture, so it cannot be
+// an unsafe.Pointer on 32-bit ones: it holds the address of a buffer pinned
+// for the call.
 type nvmeAdminCmd struct {
 	opcode      uint8
 	flags       uint8
@@ -188,15 +198,24 @@ func (d *linuxNVMe) nvme(c nvmeCommand) ([]byte, error) {
 	if err := checkNVMe(c); err != nil {
 		return nil, err
 	}
+	// Every buffer is allocated, then pinned, before its address is taken:
+	// a pinned object neither moves nor is freed until Unpin, so the
+	// address the kernel is given stays the buffer's.
 	buf := make([]byte, c.length)
-	cmd := nvmeAdminCmd{
-		opcode: c.opcode, nsid: c.nsid, addr: uint64(uintptr(unsafe.Pointer(&buf[0]))), dataLen: c.length, //nolint:gosec // the ioctl takes the buffer's address; buf is kept alive below
+	cmd := &nvmeAdminCmd{
+		opcode: c.opcode, nsid: c.nsid, dataLen: c.length,
 		cdw10: c.cdw10, cdw11: c.cdw11, cdw12: c.cdw12, cdw13: c.cdw13, cdw14: c.cdw14, cdw15: c.cdw15,
 		// 0: the admin queue's own timeout, so that a slow controller is
 		// not reset by the agent.
 		timeoutMS: 0,
 	}
-	status, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(d.fd), nvmeIoctlAdminCmd, uintptr(unsafe.Pointer(&cmd))) //nolint:gosec // the ioctl's documented structure
+	var pin runtime.Pinner
+	defer pin.Unpin()
+	pin.Pin(cmd)
+	pin.Pin(&buf[0])
+	cmd.addr = uint64(uintptr(unsafe.Pointer(&buf[0]))) //nolint:gosec // the ioctl takes the address as a __u64; buf is pinned
+	status, errno := ioctl(d.fd, nvmeIoctlAdminCmd, unsafe.Pointer(cmd))
+	runtime.KeepAlive(cmd)
 	runtime.KeepAlive(buf)
 	switch {
 	case errno == unix.EACCES || errno == unix.EPERM:
@@ -214,7 +233,8 @@ func (d *linuxNVMe) nvme(c nvmeCommand) ([]byte, error) {
 }
 
 // sgIOHdr is the kernel's struct sg_io_hdr: 88 bytes on 64-bit
-// architectures, 64 on 32-bit ones.
+// architectures, 64 on 32-bit ones. Its pointers are unsafe.Pointer, which
+// the garbage collector sees, never addresses kept as integers.
 type sgIOHdr struct {
 	interfaceID    int32
 	dxferDirection int32
@@ -222,13 +242,13 @@ type sgIOHdr struct {
 	mxSbLen        uint8
 	iovecCount     uint16
 	dxferLen       uint32
-	dxferp         uintptr
-	cmdp           uintptr
-	sbp            uintptr
+	dxferp         unsafe.Pointer
+	cmdp           unsafe.Pointer
+	sbp            unsafe.Pointer
 	timeout        uint32
 	flags          uint32
 	packID         int32
-	usrPtr         uintptr
+	usrPtr         unsafe.Pointer
 	status         uint8
 	maskedStatus   uint8
 	msgStatus      uint8
@@ -268,19 +288,30 @@ func (d *linuxSG) ata(c ataCommand) ([]byte, *ataRegisters, error) {
 	if err := checkATA(c); err != nil {
 		return nil, nil, err
 	}
+	// Every buffer is allocated, then pinned, before its address is taken,
+	// as in nvme.
 	cdb := cdb16(c)
 	senseBuf := make([]byte, senseLen)
 	var data []byte
-	h := sgIOHdr{
-		interfaceID: 'S', dxferDirection: sgDxferNone, cmdLen: 16, mxSbLen: senseLen,
-		cmdp: uintptr(unsafe.Pointer(&cdb[0])), sbp: uintptr(unsafe.Pointer(&senseBuf[0])), //nolint:gosec // the ioctl takes the buffers' addresses; they are kept alive below
-		timeout: uint32(sgTimeout / time.Millisecond),
-	}
 	if c.length > 0 {
 		data = make([]byte, c.length)
-		h.dxferDirection, h.dxferLen, h.dxferp = sgDxferFromDev, c.length, uintptr(unsafe.Pointer(&data[0])) //nolint:gosec // as above
 	}
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(d.fd), sgIO, uintptr(unsafe.Pointer(&h))) //nolint:gosec // the ioctl's documented structure
+	h := &sgIOHdr{
+		interfaceID: 'S', dxferDirection: sgDxferNone, cmdLen: 16, mxSbLen: senseLen,
+		timeout: uint32(sgTimeout / time.Millisecond),
+	}
+	var pin runtime.Pinner
+	defer pin.Unpin()
+	pin.Pin(h)
+	pin.Pin(&cdb[0])
+	pin.Pin(&senseBuf[0])
+	h.cmdp, h.sbp = unsafe.Pointer(&cdb[0]), unsafe.Pointer(&senseBuf[0])
+	if data != nil {
+		pin.Pin(&data[0])
+		h.dxferDirection, h.dxferLen, h.dxferp = sgDxferFromDev, c.length, unsafe.Pointer(&data[0])
+	}
+	_, errno := ioctl(d.fd, sgIO, unsafe.Pointer(h))
+	runtime.KeepAlive(h)
 	runtime.KeepAlive(cdb)
 	runtime.KeepAlive(senseBuf)
 	runtime.KeepAlive(data)
