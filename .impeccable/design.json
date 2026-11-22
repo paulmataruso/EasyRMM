@@ -540,7 +540,7 @@
       {
         "name": "alert-active-pulse",
         "value": "1.8s ease-in-out infinite, text colour (and a soft tint) from normal to danger and back",
-        "purpose": "Active alerts and devices with an active critical alert; under three flashes a second."
+        "purpose": "Active alerts and devices with an active critical alert; under three flashes a second. Stop flashing (per browser, data-alert-flash=off on the root) holds it still at danger, as reduced motion does."
       },
       {
         "name": "reduced-motion",

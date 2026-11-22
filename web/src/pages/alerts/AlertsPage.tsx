@@ -9,7 +9,7 @@ import { Badge, Button, cx, EmptyState, ErrorState, Field, PageHeader, Select, S
 import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
 import { AlertActions, useAlertAction } from "./AlertActions";
-import { conditionText, DiskSubject, policyScope, resolutionText, risingHint, SeverityBadge, valueText } from "./alertText";
+import { AlertFlashToggle, conditionText, DiskSubject, policyScope, resolutionText, risingHint, SeverityBadge, valueText } from "./alertText";
 import { PolicyDialog, useCanWritePolicies } from "./PolicyDialog";
 
 export function AlertsPage() {
@@ -30,12 +30,16 @@ export function AlertsPage() {
             : "Policies decide what raises an alert. Shared policies cover every device; organization and site policies cover only theirs."
         }
         actions={
-          tab === "policies" && canWrite ? (
-            <Button variant="primary" onClick={() => setEditing("new")}>
-              <Plus className="size-4" aria-hidden />
-              New policy
-            </Button>
-          ) : undefined
+          tab === "policies" ? (
+            canWrite ? (
+              <Button variant="primary" onClick={() => setEditing("new")}>
+                <Plus className="size-4" aria-hidden />
+                New policy
+              </Button>
+            ) : undefined
+          ) : (
+            <AlertFlashToggle />
+          )
         }
       />
       <Tabs

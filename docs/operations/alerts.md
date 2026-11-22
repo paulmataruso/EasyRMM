@@ -156,10 +156,11 @@ In the console:
 So that what needs attention stands out while the console is open all
 day, these pulse slowly between their normal colour and red:
 
-* On a device's page, every **active** alert in its **Alerts** card (open
-  or acknowledged; a resolved alert never pulses), and the number of
-  active alerts beside the card's title. Each alert keeps its severity
-  badge, so the pulse means *active*, not *critical*.
+* On a device's page, every **active** alert (open or acknowledged) in its
+  **Alerts** card, and the number of active alerts beside the card's
+  title; and the same in a disk's panel on the **Hardware** tab, under
+  **Open alerts**. Each alert keeps its severity badge, so the pulse means
+  *active*, not *critical*.
 * On the **Alerts** page, the name of a device that has an active
   **critical** alert, in every row of that device, whatever the page is
   showing. The name carries the critical icon beside it.
@@ -173,6 +174,14 @@ icon and the counts say the same in words, and screen readers hear them
 once, not on every pulse. With **reduce motion** turned on in the
 operating system or browser, nothing pulses: the same places show a
 steady red instead.
+
+The pulse lasts as long as the alert, so anyone can stop it: **Stop
+flashing** at the top of the **Alerts** page, or beside **History** on a
+device's **Alerts** card, holds every pulse in the same steady red, and
+**Flash active alerts** starts it again. The choice applies everywhere in
+the console and is kept in this browser, as the theme is (the console has
+no per-user preferences yet); another browser, or a cleared one, flashes
+again.
 
 ## Who can do what
 

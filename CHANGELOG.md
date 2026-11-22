@@ -260,8 +260,11 @@ All notable changes to this project are documented here. The format follows
   name of a device with an active critical alert pulses too, with the
   critical icon beside it. One cycle takes 1.8 seconds, only text colour
   and a soft tint change, every state keeps 4.5:1 contrast in both themes,
-  and with reduce motion turned on the red holds still. Severity badges,
-  icons and counts keep saying the same in words. See
+  and with reduce motion turned on the red holds still. **Stop flashing**,
+  on the Alerts page and a device's Alerts card, holds it still in this
+  browser too. A disk's panel on the Hardware tab pulses and counts its
+  open alerts the same way. Severity badges, icons and counts keep saying
+  the same in words. See
   [What pulses in red](docs/operations/alerts.md#what-pulses-in-red).
 
 ### Changed

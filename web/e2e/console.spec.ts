@@ -599,6 +599,13 @@ test("a failing disk shows on the device and across the fleet, opens an alert, a
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(name).toHaveCSS("animation-name", "none");
   await page.emulateMedia({ reducedMotion: null });
+  // Anyone can stop it, and this browser remembers; the red then holds still.
+  await page.getByRole("button", { name: "Stop flashing" }).click();
+  await expect(name).toHaveCSS("animation-name", "none");
+  await page.reload();
+  await expect(name).toHaveCSS("animation-name", "none");
+  await page.getByRole("button", { name: "Flash active alerts" }).click();
+  await expect(name).toHaveCSS("animation-name", "alert-active-pulse");
 
   // On the device's page, the alert's row pulses and the Alerts card counts it.
   await page.goto(`/devices/${agent.deviceId}`);
@@ -618,6 +625,7 @@ test("a failing disk shows on the device and across the fleet, opens an alert, a
   const readerPanel = reader.getByRole("dialog", { name: "nvme0n1" });
   await expect(readerPanel.getByRole("table", { name: "Facts" })).toContainText("Media read-only");
   await expect(readerPanel.getByRole("region", { name: "Open alerts" })).toContainText("Disk failing");
+  await expect(readerPanel.getByRole("region", { name: "Open alerts" }).getByRole("listitem")).toHaveClass(/\balert-active-pulse\b/);
   await readerContext.close();
 });
 

@@ -253,8 +253,10 @@
    device with an active critical alert pulse slowly between their normal colour and danger red: one cycle every 1.8
    seconds, far under three flashes a second (WCAG 2.3.1), on text, a soft fill and a thin edge only. Every state of
    the pulse keeps 4.5:1 contrast in both themes. Red is never the only sign: the places that pulse also carry an icon
-   and words (the severity, the count, "critical"). Under reduced motion the red holds still. The animation is visual
-   only and never announced. A place sets its own colours with the custom properties. */
+   and words (the severity, the count, "critical"). The pulse lasts as long as the alert, so anyone can stop it
+   (WCAG 2.2.2): Stop flashing, on the Alerts page and a device's Alerts card, holds the red still in this browser
+   (lib/alertFlash.ts), as reduced motion does. The animation is visual only and never announced. A place sets its
+   own colours with the custom properties. */
 .alert-active-pulse {
   --alert-pulse-rest: var(--fg);
   --alert-pulse-red: var(--danger);
@@ -293,6 +295,13 @@
     color: var(--alert-pulse-red);
     background-color: var(--alert-pulse-fill);
   }
+}
+
+/* Flashing stopped from the console: the same steady red emphasis as under reduced motion. */
+:root[data-alert-flash='off'] .alert-active-pulse {
+  animation: none;
+  color: var(--alert-pulse-red);
+  background-color: var(--alert-pulse-fill);
 }
 
 @media (prefers-reduced-motion: reduce) {

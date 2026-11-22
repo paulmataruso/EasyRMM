@@ -1,7 +1,8 @@
 // Words and badges for alert policies and alerts (ADR-0019; disk health, ADR-0065).
-import { OctagonAlert, TriangleAlert } from "lucide-react";
+import { OctagonAlert, Pause, Play, TriangleAlert } from "lucide-react";
 import type { AlertEntry, AlertKind, AlertPolicy, AlertResolution, AlertSeverity, DiskCheck } from "../../api/types";
-import { Badge } from "../../components/ui";
+import { Badge, Button } from "../../components/ui";
+import { useAlertFlash } from "../../lib/alertFlash";
 import { formatDuration, plural } from "../../lib/format";
 
 export const KIND_NAMES: Record<AlertKind, string> = {
@@ -109,11 +110,6 @@ export function risingHint(a: Pick<AlertEntry, "kind" | "checkName" | "status">)
     : "This count only rises: acknowledge this alert rather than resolve it, or it opens again within a minute. It resolves when the disk is replaced or the policy's threshold is raised.";
 }
 
-/** An alert is active until it resolves; acknowledging one leaves it active. */
-export function isActive(a: Pick<AlertEntry, "status">): boolean {
-  return a.status !== "resolved";
-}
-
 export const RESOLUTIONS: Record<AlertResolution, string> = {
   cleared: "Condition cleared",
   manual: "Resolved",
@@ -147,6 +143,37 @@ export function SeverityBadge({ severity }: { severity: AlertSeverity }) {
     <Badge tone="warn" icon={<TriangleAlert className="size-3" aria-hidden />}>
       Warning
     </Badge>
+  );
+}
+
+/** How many alerts are active, beside a list's title and pulsing with them; "100+" past the first page. */
+export function ActiveCount({ count, more = false }: { count: number; more?: boolean }) {
+  const label = more ? `More than ${plural(count, "active alert")}` : plural(count, "active alert");
+  return (
+    <span
+      title={label}
+      className="alert-active-pulse alert-active-pulse--filled min-w-5 rounded-full px-1.5 text-center text-xs leading-5 font-semibold tabular-nums"
+    >
+      {count.toLocaleString()}
+      {more && "+"}{" "}
+      <span className="sr-only">active</span>
+    </span>
+  );
+}
+
+/** Stops the pulse of active alerts in this browser, or starts it again (lib/alertFlash.ts). */
+export function AlertFlashToggle() {
+  const [on, set] = useAlertFlash();
+  return (
+    <Button
+      size="sm"
+      variant="ghost"
+      icon={on ? <Pause className="size-3.5" aria-hidden /> : <Play className="size-3.5" aria-hidden />}
+      title={on ? "Hold active alerts in steady red, in this browser" : "Pulse active alerts in red again, in this browser"}
+      onClick={() => set(!on)}
+    >
+      {on ? "Stop flashing" : "Flash active alerts"}
+    </Button>
   );
 }
 

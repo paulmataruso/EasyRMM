@@ -1,12 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AlertEntry, AlertPolicy, DiskCheck } from "../../api/types";
 import { baseRoutes, installFakeApi, noContent, ok, sessionView, type FakeRequest } from "../../test/fakeApi";
 import { alertEntry, alertPolicy, device, org, site } from "../../test/fixtures";
 import { renderApp, renderWithProviders } from "../../test/render";
+import { applyAlertFlash, getStoredAlertFlash } from "../../lib/alertFlash";
 import { conditionText, formatMinutes, resolutionText, risingHint, valueText } from "./alertText";
 import { DeviceAlertsCard } from "./DeviceAlertsCard";
 
@@ -628,11 +629,14 @@ describe("alerts elsewhere", () => {
 });
 
 describe("active alerts pulse in red", () => {
-  const RESOLVED = alertEntry("a9", "Memory use", { kind: "memory", status: "resolved", resolution: "cleared", resolvedAt: "2026-11-01T11:00:00Z" });
   const rowOf = (name: string) => screen.getByText(name).closest("li") as HTMLElement;
+  afterEach(() => {
+    vi.restoreAllMocks();
+    applyAlertFlash(true);
+  });
 
-  it("pulses each active alert on the device's page and counts them, and never a resolved one", async () => {
-    installFakeApi(routes([DISK, CPU, RESOLVED]));
+  it("pulses each of a device's active alerts and counts them", async () => {
+    installFakeApi(routes([DISK, CPU]));
     renderWithProviders(<DeviceAlertsCard deviceId="d1" />);
     expect(await screen.findByText("Disk almost full")).toBeInTheDocument();
     // Open and acknowledged alerts are both active; the severity keeps its own badge beside the pulse.
@@ -640,7 +644,6 @@ describe("active alerts pulse in red", () => {
     expect(within(rowOf("Disk almost full")).getByText("Critical")).toBeInTheDocument();
     expect(rowOf("High processor use")).toHaveClass("alert-active-pulse");
     expect(within(rowOf("High processor use")).getByText("Warning")).toBeInTheDocument();
-    expect(rowOf("Memory use")).not.toHaveClass("alert-active-pulse");
     // The title counts the active ones, in words for screen readers, and pulses with them.
     const heading = screen.getByRole("heading", { name: "Alerts 2 active" });
     const count = within(heading).getByTitle("2 active alerts");
@@ -657,12 +660,57 @@ describe("active alerts pulse in red", () => {
     expect(screen.getByTitle("More than 1 active alert")).toBeInTheDocument();
   });
 
-  it("shows no count while a device has no active alerts", async () => {
-    installFakeApi(routes([RESOLVED]));
+  it("shows no count, and no switch, while a device has no active alerts", async () => {
+    installFakeApi(routes([]));
     renderWithProviders(<DeviceAlertsCard deviceId="d1" />);
-    expect(await screen.findByText("Memory use")).toBeInTheDocument();
+    expect(await screen.findByText("No active alerts")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Alerts" })).toBeInTheDocument();
     expect(document.querySelector(".alert-active-pulse")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Stop flashing" })).not.toBeInTheDocument();
+  });
+
+  it("stops flashing from a device's Alerts card, in this browser, and starts again", async () => {
+    const user = userEvent.setup();
+    installFakeApi(routes([DISK]));
+    renderWithProviders(<DeviceAlertsCard deviceId="d1" />);
+    await user.click(await screen.findByRole("button", { name: "Stop flashing" }));
+    // The rows keep their class: the stylesheet holds them in steady red.
+    expect(document.documentElement).toHaveAttribute("data-alert-flash", "off");
+    expect(window.localStorage.getItem("easyrmm.alertFlash")).toBe("off");
+    expect(rowOf("Disk almost full")).toHaveClass("alert-active-pulse");
+    await user.click(screen.getByRole("button", { name: "Flash active alerts" }));
+    expect(document.documentElement).not.toHaveAttribute("data-alert-flash");
+    expect(window.localStorage.getItem("easyrmm.alertFlash")).toBeNull();
+    expect(screen.getByRole("button", { name: "Stop flashing" })).toBeInTheDocument();
+  });
+
+  it("stops flashing from the Alerts page, and keeps the choice for the next visit", async () => {
+    const user = userEvent.setup();
+    installFakeApi(routes());
+    renderApp("/alerts");
+    await user.click(await screen.findByRole("button", { name: "Stop flashing" }));
+    expect(document.documentElement).toHaveAttribute("data-alert-flash", "off");
+    expect(getStoredAlertFlash()).toBe(false);
+    // Another tab's choice applies here too.
+    window.localStorage.removeItem("easyrmm.alertFlash");
+    window.dispatchEvent(new StorageEvent("storage", { key: "easyrmm.alertFlash" }));
+    expect(await screen.findByRole("button", { name: "Stop flashing" })).toBeInTheDocument();
+    expect(document.documentElement).not.toHaveAttribute("data-alert-flash");
+  });
+
+  it("stops flashing for the page when the browser keeps nothing", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("blocked", "SecurityError");
+    });
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new DOMException("blocked", "SecurityError");
+    });
+    installFakeApi(routes([DISK]));
+    renderWithProviders(<DeviceAlertsCard deviceId="d1" />);
+    await user.click(await screen.findByRole("button", { name: "Stop flashing" }));
+    expect(document.documentElement).toHaveAttribute("data-alert-flash", "off");
+    expect(getStoredAlertFlash()).toBe(true);
   });
 
   it("pulses a device's name on the alerts page only while it has an active critical alert", async () => {
@@ -701,5 +749,7 @@ describe("active alerts pulse in red", () => {
     expect([...keyframes.matchAll(/([a-z-]+):/g)].map((m) => m[1])).toEqual(["color", "background-color", "color", "background-color"]);
     const reduced = /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
     expect(reduced).toMatch(/\.alert-active-pulse \{\s*animation: none;\s*color: var\(--alert-pulse-red\);/);
+    // Stopped from the console, the same steady red (WCAG 2.2.2).
+    expect(css).toMatch(/\n:root\[data-alert-flash='off'\] \.alert-active-pulse \{\s*animation: none;\s*color: var\(--alert-pulse-red\);\s*background-color: var\(--alert-pulse-fill\);/);
   });
 });
