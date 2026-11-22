@@ -228,9 +228,8 @@ All notable changes to this project are documented here. The format follows
   directories under `.env`'s data root (rerunning `setup.sh` without
   `--data-root` used the default one), and issues no Authentik invitation.
   The upgrade guide now uses it (ADR-0052).
-- **The server can be held by the updater** (ADR-0052's server side; the
-  updater itself is not built yet). `setup.sh` makes
-  `${EASYRMM_DATA_ROOT}/updater/status`, root's with mode 755, which the
+- **The server can be held by the updater** (ADR-0052's server side).
+  `setup.sh` makes `${EASYRMM_DATA_ROOT}/updater/status`, root's with mode 755, which the
   server and the engine's worker mount read-only at
   `/run/easyrmm-updater`. While a file
   named `hold` exists there, the server answers its health check and
@@ -260,6 +259,58 @@ All notable changes to this project are documented here. The format follows
   major version and Authentik. A release also publishes the Sigstore
   bundle of its attestation beside the manifest, so that verifying needs
   no GitHub API.
+- **The host updater, `easyrmm-updater`** (ADR-0052, feature 4a). Run as
+  root, `setup.sh` installs it with a systemd service and a timer (hourly,
+  and five minutes after the host starts),
+  configured in `/etc/easyrmm/updater.conf` (`--no-updater` installs
+  none; `--auto-upgrade` turns automatic upgrades on, which are off
+  otherwise). `easyrmm-updater upgrade [version]` verifies the release or
+  edge build against its Sigstore attestation for this repository's
+  workflow, checks the bundle and every image against its manifest, pulls
+  while the server runs, stops it, backs up the data root (PostgreSQL's
+  whole cluster with it, so Authentik's database too where it is
+  installed) and the deployment, checking each copy against its source,
+  sets the new bundle up with its `setup.sh --upgrade`,
+  starts it held and confirms it; when the new version does not start, it
+  restores the backup and records the rollback in the audit log.
+  `easyrmm-updater rollback` undoes a confirmed upgrade within 24 hours,
+  after saying what it loses; `status` and `check` change nothing. A
+  version whose manifest names a required upgrade stop (`upgradeFrom`)
+  above the lowest of the running server's version, `.env`'s, the
+  updater's record and the updater's own is refused before anything
+  stops, naming the version to install first; automatic upgrades install
+  that stop first, and never go below the highest of the first three. An
+  attempt cut short (killed, or the host restarted) is finished by the
+  next run from what it recorded, which is on the disk before each step
+  begins. A command of its killed by a signal brings the previous version
+  back at once without counting against the version, and the updater's
+  own process ending during the stop or the backup is finished so by the
+  next run; after two attempts at one version cut short so, automatic
+  upgrades wait for an operator, and `status` says why, so that no version
+  takes the server down every night. A step it cannot record from step 5 on, a command
+  killed once a stop was asked for, or bringing the previous version back
+  cut short, stops it where it is, the server held, for the next run.
+  systemd's stop (`KillMode=mixed`) and Ctrl-C reach the updater alone,
+  which runs on to the attempt's end for up to 30 minutes. After a
+  rollback that failed the updater does nothing until it is run with
+  `--deployment-repaired`. It refuses, before anything stops, a data root
+  holding links at its top, links anywhere that lead out of it (a mount's
+  way included) or mount points, a host without room on each disk for
+  everything that goes on it, a `.env` it could read otherwise than
+  Compose does or that sets a Compose setting but `COMPOSE_PROFILES`,
+  another Compose file beside `docker-compose.yml`, and a volume a backup
+  would not hold. `.env` is read by Compose's rules, by the updater and
+  `setup.sh` alike, so a quoted value, such as a sender with a name
+  (`EASYRMM_SMTP_FROM="EasyRMM <rmm@example.com>"`), is read as Compose
+  reads it. A version that ran out of room once the deployment stopped
+  waits for an operator, and `status` says how many bytes it was short.
+  Run as root, `setup.sh` holds the updater's lock for its whole run, and
+  changes nothing while an attempt runs. The updater unpacks bundles into
+  `/opt/easyrmm`, root's, through links only root can change, and removes
+  only those. Each
+  bundle carries it; a clone builds it with `make updater`. Guide:
+  [the host updater](docs/operations/updater.md). The console's requests
+  (feature 4b) come later.
 - **Hardening checks for Linux computers** (ADR-0051, its first part). A
   technician can have the agent on a Linux device check 14 areas: SSH,
   the firewall, fail2ban, kernel settings, audit rules, file permissions,

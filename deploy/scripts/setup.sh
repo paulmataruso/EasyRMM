@@ -23,9 +23,18 @@
 # administrator's invitation link. --new-invitation prints another.
 #
 # --upgrade, run in a new release's deploy/ directory with the deployment's
-# .env copied in, takes every setting from that .env (no other options, and
-# nothing is asked), sets the release's server version, lists settings the
-# release adds, and gives the data directories their owners (ADR-0052).
+# .env copied in, takes every setting from that .env (no other options but
+# --no-updater, and nothing is asked), sets the release's server version,
+# lists settings the release adds, and gives the data directories their
+# owners (ADR-0052).
+#
+# Run as root, setup.sh installs the host updater (ADR-0052;
+# docs/operations/updater.md): /usr/local/sbin/easyrmm-updater from
+# deploy/updater/ (a release's bundle carries it; a clone builds it with
+# `make updater`), its systemd units, and /etc/easyrmm/updater.conf naming
+# this deployment. --no-updater installs none. --auto-upgrade turns its
+# automatic upgrades on (they are off unless something turns them on).
+# While an updater attempt runs, setup.sh, run as root, changes nothing.
 #
 # An existing .env is never overwritten (its secrets protect existing data):
 # setup.sh only adds secrets that later versions need and it lacks, and
@@ -51,6 +60,8 @@ authentik_hostname=""
 admin_email=""
 new_invitation=false
 upgrade=false
+install_updater=true
+auto_upgrade=false
 nargs=$#
 
 usage() {
@@ -76,14 +87,116 @@ while [[ $# -gt 0 ]]; do
     --admin-email) admin_email="${2:-}"; shift 2 ;;
     --new-invitation) new_invitation=true; shift ;;
     --upgrade) upgrade=true; shift ;;
+    # The one option --upgrade takes along: the updater runs it so.
+    --no-updater) install_updater=false; nargs=$((nargs - 1)); shift ;;
+    --auto-upgrade) auto_upgrade=true; shift ;;
     -h|--help) usage 0 ;;
     *) echo "unknown option: $1" >&2; usage 2 ;;
   esac
 done
 
 die() { echo "error: $*" >&2; exit 1; }
-# env_value KEY: KEY's value in .env (the last, if it is there twice).
-env_value() { sed -n "s/^$1=//p" .env | tail -n 1; }
+
+# --- .env (docs/operations/updater.md#env) -----------------------------------
+# setup.sh reads .env by Compose's rules, as the host updater does: blank
+# lines, comments, and KEY=value lines, KEY at the start of the line. A value
+# is unquoted, ending at a " #" that starts a comment, the blanks around it
+# trimmed; or in single or double quotes, which end on the same line, a
+# backslash escaping the character after it, and nothing but blanks and a
+# comment after them. check_env refuses what Compose would read otherwise,
+# and, in the settings setup.sh reads (env_read), a backslash, a $ or a
+# quote, which env_value does not read as Compose does.
+env_read=" EASYRMM_PUBLIC_URL EASYRMM_MESH_PUBLIC_URL EASYRMM_TLS_MODE EASYRMM_ACME_EMAIL EASYRMM_TRUSTED_PROXIES EASYRMM_TLS_CERT_FILE EASYRMM_TLS_KEY_FILE EASYRMM_DATA_ROOT EASYRMM_IP_ACCESS EASYRMM_IP_ADDRESSES COMPOSE_PROFILES EASYRMM_AUTHENTIK_HOSTNAME EASYRMM_AUTHENTIK_ADMIN_EMAIL EASYRMM_EASYPATCH_HOSTNAME EASYRMM_VERSION "
+check_env() {
+  local LC_ALL=C file=$1 n=0 line key value
+  local control=$'[\001-\010\013-\037\177]'
+  local blank='^[[:blank:]]*(#.*)?$'
+  local setting='^([A-Za-z_][A-Za-z0-9_]*)=[[:blank:]]*(.*)$'
+  local double='^"(([^"\\]|\\.)*)"[[:blank:]]*(#.*)?$'
+  local single="^'(([^'\\\\]|\\\\.)*)'[[:blank:]]*(#.*)?\$"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    n=$((n + 1))
+    [[ ! "$line" =~ $control ]] || die "$file line $n holds a control character (a Windows line end?): setup.sh reads .env with Unix line ends only"
+    [[ ! "$line" =~ $blank ]] || continue
+    [[ "$line" =~ $setting ]] ||
+      die "$file line $n is not KEY=value at the start of the line: setup.sh does not read export, spaces around the key or other forms Compose takes"
+    key=${BASH_REMATCH[1]}
+    value=${BASH_REMATCH[2]}
+    [[ "$value" != $'\xc2\x85'* && "$value" != $'\xc2\xa0'* ]] || die "$file line $n: ${key}'s value starts with a blank other than a space or a tab"
+    case "$value" in
+      \"*|\'*)
+        [[ "$value" =~ $double || "$value" =~ $single ]] ||
+          die "$file line $n: ${key}'s quoted value does not end on its line, or text follows its closing quote: write it on one line, its closing quote followed by nothing but a comment"
+        value=${BASH_REMATCH[1]}
+        ;;
+      *)
+        value=${value%% #*}
+        value=${value%"${value##*[![:blank:]]}"}
+        ;;
+    esac
+    [[ "$env_read" != *" $key "* || "$value" != *[\\\$\"\']* ]] ||
+      die "$file line $n: ${key}'s value holds a backslash, a \$ or a quote, which setup.sh does not read as Compose does"
+  done < "$file"
+}
+# env_value KEY [FILE]: KEY's value in .env, or FILE, read as check_env
+# reads it (the last, if KEY is there twice). In quotes, a backslash before
+# the quote or, in double quotes, before a backslash is taken off, as Compose
+# does, and any other backslash kept, as Compose keeps it; but in double
+# quotes Compose also decodes \a \b \f \n \r \t \v \$ and \0 (octal), which
+# env_value refuses rather than misreads. Compose's ${...} and $$ are not
+# read: check_env refuses a $ in what setup.sh reads.
+env_value() {
+  local value quote out='' decoded="abfnrtv\$0"
+  value=$(sed -n "s/^$1=//p" "${2:-.env}" | tail -n 1)
+  value=${value#"${value%%[![:blank:]]*}"}
+  case "$value" in
+    \"*|\'*)
+      quote=${value:0:1}
+      value=${value:1}
+      while [[ -n "$value" && "${value:0:1}" != "$quote" ]]; do
+        if [[ "$quote" == \" && "${value:0:1}" == \\ && -n "${value:1:1}" && "$decoded" == *"${value:1:1}"* ]]; then
+          die "${2:-.env}: $1's double-quoted value holds \\${value:1:1}, which Compose reads as another character and setup.sh does not read: write the character itself, or quote the value with single quotes (docs/operations/updater.md#env)"
+        fi
+        if [[ "${value:0:1}" == \\ && ( "${value:1:1}" == "$quote" || ( "$quote" == \" && "${value:1:1}" == \\ ) ) ]]; then
+          value=${value:1}
+        fi
+        out+=${value:0:1}
+        value=${value:1}
+      done
+      value=$out
+      ;;
+    *) value=${value%% #*}; value=${value%"${value##*[![:blank:]]}"} ;;
+  esac
+  printf '%s\n' "$value"
+}
+
+# --- The updater's lock (ADR-0052) -------------------------------------------
+# Run as root, setup.sh holds the host updater's lock for its whole run: an
+# attempt changes .env, the data root and the updater's own files itself,
+# so setup.sh changes nothing while one runs. The updater runs a new
+# version's setup.sh --upgrade --no-updater under its lock and hands it
+# over, open, as EASYRMM_UPDATER_LOCK_FD: setup.sh takes it again, which
+# succeeds at once (a lock belongs to the open file, not to the process),
+# and never releases it, so neither waits for the other. Without an
+# updater's state directory, no updater runs here, unless this run installs
+# it.
+updater_state=/var/lib/easyrmm-updater
+updater_lock() {
+  local fd
+  if [[ -n "${EASYRMM_UPDATER_LOCK_FD:-}" ]]; then
+    fd=$EASYRMM_UPDATER_LOCK_FD
+    [[ "$fd" =~ ^[0-9]+$ && /proc/self/fd/$fd -ef "${updater_state}/lock" ]] ||
+      die "EASYRMM_UPDATER_LOCK_FD=${fd} is not the updater's lock, ${updater_state}/lock"
+  else
+    [[ -d "$updater_state" || "$install_updater" == true ]] || return 0
+    [[ -d "$updater_state" ]] || install -d -m 0700 -o root -g root "$updater_state"
+    exec {fd}>> "${updater_state}/lock"
+  fi
+  flock -n "$fd" ||
+    die "an updater attempt is running (easyrmm-updater status): setup.sh changes nothing while one does. Run it again once it has ended."
+}
+[[ $(id -u) -ne 0 ]] || updater_lock
+[[ ! -e .env ]] || check_env .env
 
 # --- Authentik (--with-authentik, --new-invitation; ADR-0044) -----------------
 # Authentik as everyone's sign-in. Its services are in docker-compose.yml
@@ -125,13 +238,13 @@ authentik_env() {
   fill_secret AUTHENTIK_SECRET_KEY "$(openssl rand -hex 50)"
   fill_secret AUTHENTIK_DB_PASSWORD "$(openssl rand -hex 32)"
   local profiles
-  profiles=$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -n 1)
+  profiles=$(env_value COMPOSE_PROFILES)
   case ",$profiles," in
     *,authentik,*) ;;
     ,,) set_setting COMPOSE_PROFILES authentik ;;
     *) set_setting COMPOSE_PROFILES "$profiles,authentik" ;;
   esac
-  echo "Sign-in: Authentik at https://${authentik_hostname} (COMPOSE_PROFILES=$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -n 1))."
+  echo "Sign-in: Authentik at https://${authentik_hostname} (COMPOSE_PROFILES=$(env_value COMPOSE_PROFILES))."
 }
 
 # authentik_put writes its input to a file in one of Authentik's
@@ -242,7 +355,7 @@ fi
 # --upgrade: the options the deployment was installed with, read back from
 # the .env that install wrote.
 if [[ "$upgrade" == true ]]; then
-  [[ $nargs -eq 1 ]] || die "--upgrade takes no other options: every setting comes from .env"
+  [[ $nargs -eq 1 ]] || die "--upgrade takes no other options but --no-updater: every setting comes from .env"
   [[ $(id -u) -eq 0 ]] || die "--upgrade needs root (sudo)"
   [[ -e .env ]] || die "--upgrade needs the deployment's .env here: copy it from the release you are upgrading from"
   url=$(env_value EASYRMM_PUBLIC_URL)
@@ -363,10 +476,14 @@ fi
 # leaves it alone otherwise. Secrets later versions need reach an older .env
 # this way without touching the ones that protect existing data.
 fill_secret() {
-  if grep -q "^$1=." .env; then
+  local value
+  # Not in a condition: env_value's refusal stops setup.sh rather than
+  # leave a secret it could not read to be replaced.
+  value=$(env_value "$1")
+  if [[ -n "$value" ]]; then
     return
-  elif grep -q "^$1=\$" .env; then
-    sed -i "s|^$1=\$|$1=$2|" .env
+  elif grep -q "^$1=" .env; then
+    sed -i "s|^$1=.*|$1=$2|" .env
   else
     printf '%s=%s\n' "$1" "$2" >> .env
   fi
@@ -390,7 +507,7 @@ if grep -q '^EASYRMM_PATCHING=' .env; then
   sed -i '/^EASYRMM_PATCHING=/d' .env
   echo "Removed EASYRMM_PATCHING from .env: patching always runs in this deployment."
 fi
-profiles=$(sed -n 's/^COMPOSE_PROFILES=//p' .env | tail -n 1)
+profiles=$(env_value COMPOSE_PROFILES)
 if [[ ",$profiles," == *,patching,* ]]; then
   profiles=$(printf '%s\n' "${profiles//,/$'\n'}" | grep -vx patching | paste -sd , - || true)
   if [[ -n "$profiles" ]]; then
@@ -403,7 +520,7 @@ fi
 # EasyPatch on the same server (ADR-0035) is gone (ADR-0046). Empty settings
 # are tidied away; a name is left for the operator, and the server refuses
 # to start with it.
-if [[ -n "$(sed -n 's/^EASYRMM_EASYPATCH_HOSTNAME=//p' .env | tail -n 1)" ]]; then
+if [[ -n "$(env_value EASYRMM_EASYPATCH_HOSTNAME)" ]]; then
   echo "EASYRMM_EASYPATCH_HOSTNAME is set: EasyPatch on this server is replaced by the patching engine." >&2
   echo "EasyRMM does not start while it is set. Remove it, then import that EasyPatch (docs/operations/import-easypatch.md)." >&2
 elif grep -q '^EASYRMM_EASYPATCH_' .env; then
@@ -417,7 +534,7 @@ fi
 if [[ "$upgrade" == true ]]; then
   # A release's bundle names its server image in .env.example; a clone's
   # says latest, and the version is the operator's to set.
-  version=$(sed -n 's/^EASYRMM_VERSION=//p' .env.example | tail -n 1)
+  version=$(env_value EASYRMM_VERSION .env.example)
   if [[ -n "$version" && "$version" != latest ]]; then
     set_setting EASYRMM_VERSION "$version"
     echo "EASYRMM_VERSION=${version}: this release's server image."
@@ -426,6 +543,89 @@ if [[ "$upgrade" == true ]]; then
   fi
   added=$(comm -13 <(grep -o '^[A-Z0-9_]*=' .env | sort -u) <(grep -o '^[A-Z0-9_]*=' .env.example | sort -u) | tr -d = | paste -sd ' ' -)
   [[ -z "$added" ]] || echo "Settings in .env.example that .env lacks (copy any you need): ${added}"
+fi
+
+# --- The host updater (ADR-0052) -------------------------------------------
+# updater_install installs easyrmm-updater, its units and its configuration
+# for this deployment, as root. Each file is written beside its place and
+# renamed into it. An existing configuration keeps every setting but the
+# deployment (this directory), and automatic upgrades with --auto-upgrade.
+# setup.sh holds the updater's lock (updater_lock): an attempt rewrites
+# updater.conf, and replaces the updater and its units, itself.
+updater_conf=/etc/easyrmm/updater.conf
+updater_install() {
+  local arch bin deployment tmp auto
+  case "$(uname -m)" in
+    x86_64) arch=amd64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+    *)
+      echo "The updater: there is none for $(uname -m); not installed."
+      return
+      ;;
+  esac
+  bin="updater/easyrmm-updater-linux-${arch}"
+  if [[ ! -f "$bin" ]]; then
+    echo "The updater: $(pwd)/${bin} is missing (a Git clone builds it with make updater); not installed."
+    return
+  fi
+  if [[ ! -d /run/systemd/system ]]; then
+    echo "The updater: this host does not run systemd; not installed."
+    return
+  fi
+  deployment=$(pwd -P)
+  if [[ ! "$deployment" =~ ^/[A-Za-z0-9_./+@-]*$ ]]; then
+    echo "The updater: it takes a deployment directory of letters, digits and ._+@-/ only, not ${deployment}; not installed."
+    return
+  fi
+  updater_put 0755 "$bin" /usr/local/sbin/easyrmm-updater
+  updater_put 0644 updater/easyrmm-updater.service /etc/systemd/system/easyrmm-updater.service
+  updater_put 0644 updater/easyrmm-updater.timer /etc/systemd/system/easyrmm-updater.timer
+  [[ -d /etc/easyrmm ]] || install -d -m 0755 -o root -g root /etc/easyrmm
+  tmp=$(mktemp /etc/easyrmm/.updater.conf.XXXXXX)
+  if [[ -f "$updater_conf" && ! -L "$updater_conf" ]]; then
+    awk -v d="$deployment" -v auto="$auto_upgrade" '
+      /^[ \t]*deployment[ \t]*=/ { print "deployment = " d; seen_d = 1; next }
+      auto == "true" && /^[ \t]*auto_upgrade[ \t]*=/ { print "auto_upgrade = yes"; seen_a = 1; next }
+      { print }
+      END {
+        if (!seen_d) print "deployment = " d
+        if (auto == "true" && !seen_a) print "auto_upgrade = yes"
+      }' "$updater_conf" > "$tmp"
+  else
+    auto=no
+    [[ "$auto_upgrade" != true ]] || auto=yes
+    cat > "$tmp" <<CONF
+# The EasyRMM host updater (docs/operations/updater.md). Root's, mode 600:
+# the server never writes it.
+deployment = ${deployment}
+# stable (full releases), pre-release (also release candidates) or edge
+# (also builds of main, for test instances).
+channel = stable
+# The hourly timer upgrades to the newest version of the channel, in the
+# hours given (the host's time zone, from-to: 2-5 is 02:00 to 05:00).
+auto_upgrade = ${auto}
+auto_upgrade_hours = 2-5
+backup_dir = /var/backups/easyrmm-updater
+CONF
+  fi
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$updater_conf"
+  systemctl daemon-reload
+  systemctl enable --now easyrmm-updater.timer > /dev/null 2>&1 ||
+    echo "The updater: systemctl could not start easyrmm-updater.timer." >&2
+  auto=$(sed -n 's/^[ \t]*auto_upgrade[ \t]*=[ \t]*//p' "$updater_conf" | tail -n 1)
+  echo "The updater: installed as /usr/local/sbin/easyrmm-updater, configured in ${updater_conf}" \
+    "(automatic upgrades: ${auto:-no}). See docs/operations/updater.md."
+}
+
+# updater_put MODE SOURCE TARGET: SOURCE to TARGET, root's, renamed into place.
+updater_put() {
+  install -m "$1" -o root -g root "$2" "${3%/*}/.${3##*/}.new"
+  mv -f "${3%/*}/.${3##*/}.new" "$3"
+}
+
+if [[ $(id -u) -ne 0 && "$install_updater" == true ]]; then
+  echo "Not running as root: the updater (easyrmm-updater) is not installed. Run setup.sh with sudo to install it." >&2
 fi
 
 if [[ $(id -u) -ne 0 ]]; then
@@ -462,6 +662,7 @@ done
 # its health check and nothing else.
 install -d -m 0755 -o root -g root "$data_root/updater" "$data_root/updater/status"
 echo "Data directories ready under ${data_root}."
+[[ "$install_updater" != true ]] || updater_install
 if [[ "$with_authentik" == true ]]; then
   authentik_files
   if [[ "$upgrade" != true ]]; then

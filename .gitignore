@@ -13,6 +13,9 @@
 coverage*.txt
 coverage*.html
 
+# The host updater a clone builds (make updater) for setup.sh to install
+/deploy/updater/easyrmm-updater-linux-*
+
 # Go
 /vendor/
 go.work
