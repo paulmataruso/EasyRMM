@@ -12,7 +12,7 @@ import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useRowKeys } from "../../lib/rowKeys";
 import { CodeView, JobStateBadge, RunStatusBadge, StatusBreakdown } from "../scripts/parts";
 import { RunScriptDialog } from "../scripts/RunScriptDialog";
-import { formatElapsed, formatSeconds, runElapsed, SHELL_NAMES } from "../scripts/scriptText";
+import { fallbackText, formatElapsed, formatSeconds, programText, runElapsed, SHELL_NAMES } from "../scripts/scriptText";
 import { SoftwareDialog } from "../software/SoftwareDialog";
 import { MANAGERS, VERBS } from "../software/softwareText";
 
@@ -164,6 +164,7 @@ function scriptDetails(j: Job, args: ReactNode): Row[] {
       ),
     ],
     ["Shell", SHELL_NAMES[j.shell] ?? j.shell],
+    ...(j.shell === "pwsh" ? [["Without PowerShell 7", fallbackText(j.pwshFallback)] as Row] : []),
     ["Arguments", args],
   ];
 }
@@ -299,6 +300,7 @@ function RunsTable({ jobId, runs }: { jobId: string; runs: JobRun[] }) {
             <th>Device</th>
             <th>Status</th>
             <th className="hidden sm:table-cell">Exit code</th>
+            <th className="hidden xl:table-cell">Program</th>
             <th className="hidden md:table-cell">Took</th>
             <th className="hidden lg:table-cell">Finished</th>
           </tr>
@@ -328,6 +330,10 @@ function RunsTable({ jobId, runs }: { jobId: string; runs: JobRun[] }) {
                   <RunStatusBadge status={r.status} cancelRequested={r.cancelRequested} />
                 </td>
                 <td className="hidden font-mono text-xs tabular-nums sm:table-cell">{r.exitCode ?? <span className="font-sans text-sm text-muted">—</span>}</td>
+                <td className="hidden text-muted xl:table-cell" title={r.program?.path}>
+                  {programText(r) ?? "—"}
+                  {r.program?.fallback && <span className="block text-xs text-subtle">PowerShell 7 not found</span>}
+                </td>
                 <td className="hidden whitespace-nowrap text-muted tabular-nums md:table-cell">{took === null ? "—" : formatElapsed(took)}</td>
                 <td className="hidden whitespace-nowrap text-muted lg:table-cell" title={formatDateTime(r.finishedAt)}>
                   {r.finishedAt ? formatRelative(r.finishedAt) : "—"}

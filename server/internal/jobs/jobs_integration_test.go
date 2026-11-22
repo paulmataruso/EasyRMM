@@ -353,7 +353,7 @@ func TestJobFromCreationToResult(t *testing.T) {
 	polled := make(chan *agentproto.PollResponse, 1)
 	f.svc.pollWait = 10 * time.Second
 	go func() {
-		resp, err := f.svc.Poll(f.ctx, pc)
+		resp, err := f.svc.Poll(f.ctx, pc, nil)
 		if err != nil {
 			t.Error(err)
 		}
@@ -396,15 +396,15 @@ func TestJobFromCreationToResult(t *testing.T) {
 	}
 
 	// Not delivered again while it is fresh; another device gets nothing.
-	if again, _ := f.svc.Poll(f.ctx, pc); len(again.Jobs) != 0 {
+	if again, _ := f.svc.Poll(f.ctx, pc, nil); len(again.Jobs) != 0 {
 		t.Error("delivered twice at once")
 	}
-	if other, _ := f.svc.Poll(f.ctx, f.device(f.hq, "HQ-PC-02", "linux")); len(other.Jobs) != 0 {
+	if other, _ := f.svc.Poll(f.ctx, f.device(f.hq, "HQ-PC-02", "linux"), nil); len(other.Jobs) != 0 {
 		t.Error("another device got the job")
 	}
 	// Delivered again when it was not started in time.
 	f.exec(`UPDATE job_runs SET sent_at = now() - interval '3 minutes' WHERE id = $1`, run.ID)
-	if again, _ := f.svc.Poll(f.ctx, pc); len(again.Jobs) != 1 {
+	if again, _ := f.svc.Poll(f.ctx, pc, nil); len(again.Jobs) != 1 {
 		t.Error("not delivered again")
 	}
 
@@ -508,7 +508,7 @@ func TestJobsRefuseDevicesTheScriptOrCallerCannotReach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fieldErr(t, try(super, JobInput{ScriptID: ps.ID, DeviceIDs: []uuid.UUID{winPC, hqPC}}), "deviceIds", "PowerShell scripts run on Windows; HQ-PC is not a Windows device")
+	fieldErr(t, try(super, JobInput{ScriptID: ps.ID, DeviceIDs: []uuid.UUID{winPC, hqPC}}), "deviceIds", "Windows PowerShell 5.1 scripts run on Windows; HQ-PC is not a Windows device")
 	batch, err := f.svc.CreateScript(f.ctx, super, ScriptInput{Name: "Batch", Shell: "cmd", Body: "ipconfig /all", TimeoutSeconds: 60})
 	if err != nil {
 		t.Fatalf("a cmd script: %v", err)
@@ -517,7 +517,7 @@ func TestJobsRefuseDevicesTheScriptOrCallerCannotReach(t *testing.T) {
 	fieldErr(t, try(super, JobInput{ScriptID: batch.ID, DeviceIDs: []uuid.UUID{winPC}, Args: []string{"fine", `%CMDCMDLINE:~-1% & whoami & rem `}}), "args", "Argument 2 contains %")
 	fieldErr(t, try(super, JobInput{ScriptID: batch.ID, DeviceIDs: []uuid.UUID{winPC}, Args: []string{`say "hi"`}}), "args", "Argument 1")
 	_, err = f.svc.CreateScript(f.ctx, super, ScriptInput{Name: "Zsh", Shell: "zsh", Body: "echo", TimeoutSeconds: 60})
-	fieldErr(t, err, "shell", "PowerShell, cmd")
+	fieldErr(t, err, "shell", "Windows PowerShell 5.1, PowerShell 7, cmd")
 	fieldErr(t, try(hqTech, JobInput{ScriptID: shared.ID, DeviceIDs: []uuid.UUID{hqPC, plantPC}}), "deviceIds", "1 device does not exist")
 	fieldErr(t, try(branchViewer, JobInput{ScriptID: shared.ID, DeviceIDs: []uuid.UUID{hqPC, branchPC}}), "deviceIds", "cannot run scripts on BRANCH-PC")
 	fieldErr(t, try(hqTech, JobInput{ScriptID: globexScript.ID, DeviceIDs: []uuid.UUID{hqPC}}), "scriptId", "does not exist")
@@ -631,7 +631,7 @@ func TestCancelExpireAndLose(t *testing.T) {
 	status := func(dev uuid.UUID) string { return f.str(`SELECT status FROM job_runs WHERE device_id = $1`, dev) }
 
 	// A: running, then canceled: the agent is told and reports.
-	_, _ = f.svc.Poll(f.ctx, a)
+	_, _ = f.svc.Poll(f.ctx, a, nil)
 	if st, _ := f.svc.Start(f.ctx, a, runOf(a)); !st.Proceed {
 		t.Fatal("A did not start")
 	}
@@ -639,11 +639,11 @@ func TestCancelExpireAndLose(t *testing.T) {
 	if err != nil || r.Status != StatusRunning || !r.CancelRequested || r.CanCancel {
 		t.Fatalf("cancel running %+v %v", r, err)
 	}
-	resp, _ := f.svc.Poll(f.ctx, a)
+	resp, _ := f.svc.Poll(f.ctx, a, nil)
 	if len(resp.Cancel) != 1 || resp.Cancel[0] != runOf(a).String() {
 		t.Errorf("cancel not delivered: %+v", resp)
 	}
-	if resp, _ := f.svc.Poll(f.ctx, a); len(resp.Cancel) != 0 {
+	if resp, _ := f.svc.Poll(f.ctx, a, nil); len(resp.Cancel) != 0 {
 		t.Error("cancel repeated at once")
 	}
 	if st, _ := f.svc.Start(f.ctx, a, runOf(a)); st.Proceed {
@@ -654,7 +654,7 @@ func TestCancelExpireAndLose(t *testing.T) {
 	}
 
 	// B: delivered but not started, then canceled: it never starts.
-	_, _ = f.svc.Poll(f.ctx, b)
+	_, _ = f.svc.Poll(f.ctx, b, nil)
 	if _, err := f.svc.CancelRun(f.ctx, super, runOf(b)); err != nil {
 		t.Fatal(err)
 	}
@@ -664,11 +664,11 @@ func TestCancelExpireAndLose(t *testing.T) {
 
 	// C: never picked up: expires.
 	f.exec(`UPDATE job_runs SET expires_at = now() - interval '1 second' WHERE device_id = $1`, c)
-	if resp, _ := f.svc.Poll(f.ctx, c); len(resp.Jobs) != 0 {
+	if resp, _ := f.svc.Poll(f.ctx, c, nil); len(resp.Jobs) != 0 {
 		t.Error("an expired run was delivered")
 	}
 	// D: started but silent past its deadline: lost, until a late result.
-	_, _ = f.svc.Poll(f.ctx, d)
+	_, _ = f.svc.Poll(f.ctx, d, nil)
 	_, _ = f.svc.Start(f.ctx, d, runOf(d))
 	f.exec(`UPDATE job_runs SET deadline_at = now() - interval '1 second' WHERE device_id = $1`, d)
 	swept, err := f.svc.Sweep(f.ctx)
@@ -707,7 +707,7 @@ func TestStartingAnExpiredRunAndClosingPolls(t *testing.T) {
 	if _, err := f.svc.CreateJob(f.ctx, super, JobInput{ScriptID: sc.ID, DeviceIDs: []uuid.UUID{pc}}); err != nil {
 		t.Fatal(err)
 	}
-	resp, _ := f.svc.Poll(f.ctx, pc)
+	resp, _ := f.svc.Poll(f.ctx, pc, nil)
 	run := f.id(`SELECT id FROM job_runs WHERE device_id = $1`, pc)
 	f.exec(`UPDATE job_runs SET expires_at = now() - interval '1 second' WHERE id = $1`, run)
 	if st, _ := f.svc.Start(f.ctx, pc, run); st.Proceed || f.str(`SELECT status FROM job_runs WHERE id = $1`, run) != StatusExpired {
@@ -721,7 +721,7 @@ func TestStartingAnExpiredRunAndClosingPolls(t *testing.T) {
 	f.svc.pollWait = time.Minute
 	done := make(chan struct{})
 	go func() {
-		_, _ = f.svc.Poll(f.ctx, pc)
+		_, _ = f.svc.Poll(f.ctx, pc, nil)
 		close(done)
 	}()
 	time.Sleep(100 * time.Millisecond)
@@ -735,7 +735,7 @@ func TestStartingAnExpiredRunAndClosingPolls(t *testing.T) {
 	ctx, cancel := context.WithCancel(f.ctx)
 	cancel()
 	f.svc.hub = newHub()
-	if _, err := f.svc.Poll(ctx, pc); !errors.Is(err, context.Canceled) {
+	if _, err := f.svc.Poll(ctx, pc, nil); !errors.Is(err, context.Canceled) {
 		t.Errorf("canceled poll: %v", err)
 	}
 }

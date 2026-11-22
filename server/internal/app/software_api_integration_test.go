@@ -88,7 +88,7 @@ func TestSoftwareAPI(t *testing.T) {
 		t.Errorf("job %+v", job)
 	}
 
-	poll, err := ac.Poll(ctx)
+	poll, err := ac.Poll(ctx, nil)
 	if err != nil || len(poll.Jobs) != 1 {
 		t.Fatalf("poll %+v %v", poll, err)
 	}

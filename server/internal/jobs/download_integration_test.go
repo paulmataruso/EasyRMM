@@ -101,6 +101,9 @@ func TestDownloadingOneRun(t *testing.T) {
 			t.Errorf("json %s = %v", k, doc[k])
 		}
 	}
+	if p, _ := doc["program"].(map[string]any); p == nil || p["path"] != "/bin/sh" || len(p) != 1 {
+		t.Errorf("json program = %v", doc["program"])
+	}
 	if n := f.downloads(run, DownloadJSON); n != 1 {
 		t.Errorf("json recorded %d times", n)
 	}
@@ -262,11 +265,12 @@ func TestDownloadingAJobsOutput(t *testing.T) {
 		t.Errorf("files %v", keysOf(files))
 	}
 	rows := csvRows(t, files["runs.csv"])
-	if got := strings.Join(rows[0], ","); got != "Device,Organization,Site,Status,Exit code,Error,Queued (UTC),Started (UTC),Finished (UTC),Run,Output,Folder" {
+	if got := strings.Join(rows[0], ","); got != "Device,Organization,Site,Status,Exit code,Error,Queued (UTC),Started (UTC),Finished (UTC),"+
+		"Program,Program version,Program architecture,Program path,Run,Output,Folder" {
 		t.Errorf("header %s", got)
 	}
 	state := outputStates(t, files)
-	if rows[1][0] != "'=HQ-01" || rows[1][3] != "Succeeded" || rows[1][11] != strings.TrimSuffix(dir, "/") {
+	if rows[1][0] != "'=HQ-01" || rows[1][3] != "Succeeded" || rows[1][9] != "sh" || rows[1][12] != "/bin/sh" || rows[1][15] != strings.TrimSuffix(dir, "/") {
 		t.Errorf("the loud run's row: %q", rows[1])
 	}
 	for name, want := range map[string]string{
@@ -329,7 +333,7 @@ func outputStates(t *testing.T, files map[string]string) map[string]string {
 	t.Helper()
 	state := map[string]string{}
 	for _, r := range csvRows(t, files["runs.csv"])[1:] {
-		state[r[0]] = r[10]
+		state[r[0]] = r[14]
 	}
 	return state
 }
@@ -481,7 +485,7 @@ func TestJobResultsCSV(t *testing.T) {
 	}
 	rows := csvRows(t, string(got.Body))
 	if len(rows) != 3 || rows[1][0] != "'@HQ-01" || rows[1][3] != "Succeeded" || rows[1][4] != "0" || rows[2][0] != "BR-01" || rows[2][3] != "Queued" ||
-		rows[2][4] != "" || rows[1][9] != f.runOn(job, hq).String() {
+		rows[2][4] != "" || rows[1][13] != f.runOn(job, hq).String() {
 		t.Errorf("rows %q", rows)
 	}
 	// One record for Acme, the organization of both runs, at no one site.

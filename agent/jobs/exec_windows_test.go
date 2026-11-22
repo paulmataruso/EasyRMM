@@ -39,6 +39,11 @@ func TestPowerShell(t *testing.T) {
 	if res.Status != agentproto.RunSucceeded || strings.TrimSpace(res.Stdout) != "ok" {
 		t.Errorf("success: %+v", res)
 	}
+	// The result names what ran (ADR-0064).
+	if i := res.Interpreter; i == nil || i.Edition != agentproto.EditionDesktop || !strings.HasPrefix(i.Version, "5.1.") || i.Arch == "" ||
+		!strings.EqualFold(i.Path, filepath.Join(systemRoot(), `System32\WindowsPowerShell\v1.0\powershell.exe`)) || i.Fallback {
+		t.Errorf("program %+v", i)
+	}
 }
 
 func TestCmd(t *testing.T) {
@@ -49,6 +54,10 @@ func TestCmd(t *testing.T) {
 	}
 	if !strings.Contains(res.Stdout, "out:one|two words") || !strings.Contains(res.Stderr, "err") {
 		t.Errorf("stdout %q, stderr %q", res.Stdout, res.Stderr)
+	}
+	// cmd's result names its path only.
+	if i := res.Interpreter; i == nil || *i != (agentproto.Interpreter{Path: filepath.Join(systemRoot(), `System32\cmd.exe`)}) {
+		t.Errorf("program %+v", i)
 	}
 	res = Execute(context.Background(), winPayload(agentproto.ShellCmd, "echo x", `a"b`), root)
 	if res.Status != agentproto.RunFailed || !strings.Contains(res.Error, "double quotes") {
@@ -65,7 +74,7 @@ func TestCmd(t *testing.T) {
 		t.Error("an argument ran a command of its own")
 	}
 	res = Execute(context.Background(), winPayload(agentproto.ShellBash, "echo x"), root)
-	if res.Status != agentproto.RunFailed || !strings.Contains(res.Error, "do not run on Windows") {
+	if res.Status != agentproto.RunFailed || res.Error != "Bash scripts do not run on Windows." || res.Interpreter != nil {
 		t.Errorf("bash on Windows: %+v", res)
 	}
 }

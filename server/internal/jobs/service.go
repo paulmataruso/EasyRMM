@@ -153,9 +153,15 @@ type Swept struct {
 func (s *Service) Sweep(ctx context.Context) (Swept, error) {
 	var out Swept
 	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE job_runs SET status = 'expired', finished_at = now(),
-				error = 'The device did not pick up the job before it expired.'
-			WHERE status IN ('queued', 'sent') AND expires_at <= now()`)
+		// A run held for a capability says which (ADR-0064); only job.pwsh
+		// is required today.
+		tag, err := tx.Exec(ctx, `UPDATE job_runs r SET status = 'expired', finished_at = now(),
+				error = CASE `+heldSQL+`
+					WHEN 'unable' THEN 'The device''s agent cannot run PowerShell 7 scripts, so the run waited until it expired. Update the agent.'
+					WHEN 'unreported' THEN 'The device''s agent did not say whether it can run PowerShell 7 scripts before the run expired. Update the agent if this happens again.'
+					ELSE 'The device did not pick up the job before it expired.' END
+			FROM jobs j, devices d
+			WHERE j.id = r.job_id AND d.id = r.device_id AND r.status IN ('queued', 'sent') AND r.expires_at <= now()`)
 		if err != nil {
 			return err
 		}

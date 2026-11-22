@@ -256,6 +256,8 @@ const agent = (update: AgentUpdate | null): DeviceAgent => ({
   lastSeenAt: "2026-11-01T10:00:00Z",
   enrolledAt: "2026-10-01T09:00:00Z",
   update,
+  accepts: null,
+  powerShell7: null,
 });
 
 function deviceRoutes(update: AgentUpdate | null, canUpdateAgent = true, extra: Record<string, unknown> = {}) {

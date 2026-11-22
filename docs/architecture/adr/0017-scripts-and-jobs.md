@@ -6,7 +6,12 @@
   a job's argument values need `job.view_sensitive` and come from endpoints
   of their own, each read audited; output is kept for
   `EASYRMM_JOB_OUTPUT_RETENTION` (30 days by default) and can be removed at
-  once.
+  once. Amended by
+  [ADR-0064](0064-remote-powershell-management.md): a `pwsh` shell
+  (PowerShell 7) beside `powershell`, which may fall back to Windows
+  PowerShell 5.1 where its script allows; the program each run used
+  recorded on it; the poll's `accepts` list deciding which jobs an agent
+  gets; and downloads of a run's output and a job's results.
 
 ## Context
 Phase 7 brings automation: technicians run scripts on devices and read what

@@ -44,7 +44,7 @@ func newFakeServer() *fakeServer {
 	}
 }
 
-func (f *fakeServer) Poll(ctx context.Context) (*agentproto.PollResponse, error) {
+func (f *fakeServer) Poll(ctx context.Context, _ []string) (*agentproto.PollResponse, error) {
 	select {
 	case p := <-f.polls:
 		return p, nil
@@ -343,9 +343,10 @@ func TestWorkerReportsAgainAndRecoversAfterARestart(t *testing.T) {
 	h.stop()
 
 	// A journal left by an agent that stopped mid-run, and one with an
-	// unreported result.
+	// unreported result, which names the program it ran (ADR-0064).
 	j := journal{dir: filepath.Join(dir, "journal")}
-	finished := agentproto.ResultRequest{Status: agentproto.RunSucceeded, Stdout: "earlier"}
+	ran := agentproto.Interpreter{Edition: agentproto.EditionDesktop, Version: "5.1.26100.1", Arch: agentproto.ArchX64, Path: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, Fallback: true}
+	finished := agentproto.ResultRequest{Status: agentproto.RunSucceeded, Stdout: "earlier", Interpreter: &ran}
 	for _, r := range []record{
 		{RunID: run1, JobID: "j", State: stateStarted},
 		{RunID: run2, JobID: "j", State: stateFinished, Result: &finished},
@@ -368,8 +369,8 @@ func TestWorkerReportsAgainAndRecoversAfterARestart(t *testing.T) {
 	if got[run1].Status != agentproto.RunFailed || got[run1].Error != "The agent restarted while the script ran." {
 		t.Errorf("interrupted run %+v", got[run1])
 	}
-	if got[run2].Stdout != "earlier" {
-		t.Errorf("unreported result %+v", got[run2])
+	if got[run2].Stdout != "earlier" || got[run2].Interpreter == nil || *got[run2].Interpreter != ran {
+		t.Errorf("unreported result %+v, program %+v", got[run2], got[run2].Interpreter)
 	}
 	// The received-only run is left for redelivery: it runs when it comes again.
 	h.srv.polls <- &agentproto.PollResponse{Jobs: []agentproto.SignedJob{h.job(run3, "echo again")}}

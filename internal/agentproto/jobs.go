@@ -42,6 +42,10 @@ func PathJobResult(runID string) string { return "/api/agent/v1/jobs/" + runID +
 const (
 	// ShellPowerShell is Windows PowerShell 5.1, built into Windows.
 	ShellPowerShell = "powershell"
+	// ShellPwsh is PowerShell 7: the newest usable machine-wide install the
+	// agent finds (ADR-0064). Only an agent whose poll accepts CapJobPwsh
+	// is sent one.
+	ShellPwsh = "pwsh"
 	// ShellCmd is the Windows command prompt: the script runs as a .cmd
 	// batch file.
 	ShellCmd     = "cmd"
@@ -51,7 +55,7 @@ const (
 )
 
 // Shells lists every shell, in the order the console offers them.
-var Shells = []string{ShellPowerShell, ShellCmd, ShellBash, ShellSh, ShellPython3}
+var Shells = []string{ShellPowerShell, ShellPwsh, ShellCmd, ShellBash, ShellSh, ShellPython3}
 
 // ValidShell reports whether s is a known shell.
 func ValidShell(s string) bool {
@@ -61,13 +65,37 @@ func ValidShell(s string) bool {
 // ShellPlatforms says which device platforms a shell runs on.
 func ShellPlatforms(shell string) []string {
 	switch shell {
-	case ShellPowerShell, ShellCmd:
+	case ShellPowerShell, ShellPwsh, ShellCmd:
 		return []string{"windows"}
 	case ShellSh, ShellBash, ShellPython3:
 		return []string{"linux"}
 	}
 	return nil
 }
+
+// ShellRequires lists the job capabilities (PollRequest.Accepts) an agent
+// must accept to be sent a job in the shell: none for the shells every
+// agent runs.
+func ShellRequires(shell string) []string {
+	if shell == ShellPwsh {
+		return []string{CapJobPwsh}
+	}
+	return []string{}
+}
+
+// Job capabilities an agent lists in PollRequest.Accepts (ADR-0064).
+const (
+	// CapJobPwsh is the pwsh shell, JobPayload.PwshFallback and
+	// ResultRequest.Interpreter.
+	CapJobPwsh = "job.pwsh"
+)
+
+// MaxAccepts bounds the capabilities a poll lists, and MaxAcceptLen each
+// one's length.
+const (
+	MaxAccepts   = 32
+	MaxAcceptLen = 64
+)
 
 // Run statuses an agent reports.
 const (
@@ -78,7 +106,14 @@ const (
 )
 
 // PollRequest asks for work.
-type PollRequest struct{}
+type PollRequest struct {
+	// Accepts lists the job capabilities this build takes (CapJobPwsh…):
+	// a general list, for every instruction a poll may bring. Added after
+	// protocol level 2 (ADR-0009): the agent sends it only while its last
+	// heartbeat answer was of level 2 or higher. Nil (absent) says nothing
+	// and leaves what the server keeps; an empty list says "none".
+	Accepts []string `json:"accepts,omitzero"`
+}
 
 // PollResponse carries new jobs and the runs to stop.
 type PollResponse struct {
@@ -110,6 +145,11 @@ type JobPayload struct {
 	TimeoutSeconds int       `json:"timeoutSeconds"`
 	IssuedAt       time.Time `json:"issuedAt"`
 	ExpiresAt      time.Time `json:"expiresAt"`
+	// PwshFallback lets a pwsh script run in Windows PowerShell 5.1 where
+	// no usable PowerShell 7 is found; without it the run fails there. Only
+	// for ShellPwsh, so only to an agent that accepts CapJobPwsh: a build
+	// before it refuses the field (ADR-0009).
+	PwshFallback bool `json:"pwshFallback,omitempty"`
 }
 
 // StartResponse says whether the agent may run the job.
@@ -130,7 +170,50 @@ type ResultRequest struct {
 	Error           string    `json:"error"`
 	StartedAt       time.Time `json:"startedAt,omitzero"`
 	FinishedAt      time.Time `json:"finishedAt,omitzero"`
+	// Interpreter is the program the agent started, read from it just
+	// before (ADR-0064); nil when nothing was started. Added after protocol
+	// level 2: sent only to a server of level 2 or higher.
+	Interpreter *Interpreter `json:"interpreter,omitempty"`
 }
+
+// Editions of PowerShell, as $PSVersionTable.PSEdition names them.
+const (
+	// EditionDesktop is Windows PowerShell 5.1.
+	EditionDesktop = "Desktop"
+	// EditionCore is PowerShell 7 and later.
+	EditionCore = "Core"
+)
+
+// Architectures of a program, from its PE header.
+const (
+	ArchX64   = "x64"
+	ArchARM64 = "arm64"
+	ArchX86   = "x86"
+)
+
+// Interpreter is the program a run started. cmd and the Linux shells give
+// the path only.
+type Interpreter struct {
+	// Edition is EditionDesktop or EditionCore for PowerShell, else empty.
+	Edition string `json:"edition,omitempty"`
+	// Version is the product version, with a prerelease label for a
+	// preview (7.6.0-preview.4); for Windows PowerShell, the registry's
+	// major and minor with its engine's build and revision, as
+	// $PSVersionTable.PSVersion gives it.
+	Version string `json:"version,omitempty"`
+	// Arch is ArchX64, ArchARM64 or ArchX86, from the program's PE header.
+	Arch string `json:"arch,omitempty"`
+	Path string `json:"path"`
+	// Fallback says a pwsh script ran in Windows PowerShell 5.1, as it
+	// allows, because no usable PowerShell 7 was found.
+	Fallback bool `json:"fallback,omitempty"`
+}
+
+// Bounds of an Interpreter's text, as the server keeps it.
+const (
+	MaxInterpreterVersion = 64
+	MaxInterpreterPath    = 520
+)
 
 const jobSigContext = "EASYRMM-JOB-SIG-V1\n"
 
@@ -181,7 +264,7 @@ func VerifyJob(key ed25519.PublicKey, j SignedJob, deviceID string, now time.Tim
 	}
 	switch {
 	case p.V != JobPayloadVersion || p.RunID == "" || p.JobID == "" || !ValidShell(p.Shell) || p.Script == "" ||
-		p.TimeoutSeconds < 1 || p.TimeoutSeconds > 4*3600:
+		p.TimeoutSeconds < 1 || p.TimeoutSeconds > 4*3600 || p.PwshFallback && p.Shell != ShellPwsh:
 		return p, ErrJobMalformed
 	case p.DeviceID != deviceID:
 		return p, ErrJobDevice
