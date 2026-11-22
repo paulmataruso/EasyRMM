@@ -119,6 +119,7 @@ type Runner struct {
 	lastInstall time.Time
 	inv         []byte // the inventory's JSON, as hashed and uploaded
 	invHash     string
+	invNew      bool // inv has the fields added after protocol level 2
 	invAt       time.Time
 	invFailed   time.Time
 	invStale    atomic.Bool
@@ -279,16 +280,23 @@ func (r *Runner) beat(ctx context.Context) (time.Duration, error) {
 }
 
 // syncInventory collects the inventory when it is due and uploads it when
-// the server's copy differs.
+// the server's copy differs. The fields added after protocol level 2
+// (powerShell, ADR-0064) are left out while the server's last answer was of
+// a lower level (ADR-0009), and the inventory is collected again when that
+// changes.
 func (r *Runner) syncInventory(ctx context.Context, serverHash string) {
-	if stale := r.invStale.Swap(false); r.inv == nil || stale || time.Since(r.invAt) >= r.InventoryEvery {
+	newFields := r.Client.Level() >= 2
+	if stale := r.invStale.Swap(false); r.inv == nil || stale || newFields != r.invNew || time.Since(r.invAt) >= r.InventoryEvery {
 		inv := r.Inventory(ctx)
+		if !newFields {
+			inv.PowerShell = nil
+		}
 		b, err := json.Marshal(inv)
 		if err != nil {
 			r.Log.Error("encoding the inventory failed", "error", err)
 			return
 		}
-		r.inv, r.invHash, r.invAt = b, inv.Hash(), time.Now()
+		r.inv, r.invHash, r.invNew, r.invAt = b, inv.Hash(), newFields, time.Now()
 	}
 	if serverHash == r.invHash {
 		return

@@ -1,10 +1,13 @@
 package agentproto
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -71,6 +74,8 @@ func TestMalformedJobsAreRefused(t *testing.T) {
 		"timeout":  func(p *JobPayload) { p.TimeoutSeconds = 0 },
 		"too long": func(p *JobPayload) { p.TimeoutSeconds = 4*3600 + 1 },
 		"no run":   func(p *JobPayload) { p.RunID = "" },
+		// The fallback is pwsh's alone.
+		"fallback": func(p *JobPayload) { p.Shell, p.PwshFallback = ShellPowerShell, true },
 	} {
 		p := testPayload(now)
 		mutate(&p)
@@ -90,6 +95,91 @@ func TestMalformedJobsAreRefused(t *testing.T) {
 	}
 }
 
+// releaseBeforePayload is JobPayload as 1.0.0-rc.4 declares it, the
+// release before ADR-0064: its agents decode a job into it, refusing
+// unknown fields.
+type releaseBeforePayload struct {
+	V              int       `json:"v"`
+	RunID          string    `json:"runId"`
+	JobID          string    `json:"jobId"`
+	DeviceID       string    `json:"deviceId"`
+	Shell          string    `json:"shell"`
+	Script         string    `json:"script"`
+	Args           []string  `json:"args"`
+	TimeoutSeconds int       `json:"timeoutSeconds"`
+	IssuedAt       time.Time `json:"issuedAt"`
+	ExpiresAt      time.Time `json:"expiresAt"`
+}
+
+func strictDecode(b []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
+}
+
+// TestPwshJobs: a pwsh job with its fallback verifies now, while the field
+// would be refused by the release before's strict decoder, which is why
+// the server sends it only to agents that accept job.pwsh. Every other job
+// encodes exactly as before.
+func TestPwshJobs(t *testing.T) {
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	now := time.Now().UTC()
+	p := testPayload(now)
+	p.Shell, p.PwshFallback = ShellPwsh, true
+	sj, err := SignJob(priv, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := VerifyJob(pub, sj, "dev-1", now); err != nil || got.Shell != ShellPwsh || !got.PwshFallback {
+		t.Fatalf("a pwsh job: %+v %v", got, err)
+	}
+	raw, _ := base64.StdEncoding.DecodeString(sj.Payload)
+	if err := strictDecode(raw, &releaseBeforePayload{}); err == nil {
+		t.Error("the release before would take pwshFallback")
+	}
+	for _, shell := range []string{ShellPowerShell, ShellCmd, ShellBash} {
+		p := testPayload(now)
+		p.Shell = shell
+		b, err := json.Marshal(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(b, []byte("pwshFallback")) || strictDecode(b, &releaseBeforePayload{}) != nil {
+			t.Errorf("a %s job changed for the release before: %s", shell, b)
+		}
+	}
+}
+
+// TestNewRequestFields: accepts is absent when nil and present when empty;
+// interpreter and powerShell are absent when not set, so a body without
+// them is what the release before sent.
+func TestNewRequestFields(t *testing.T) {
+	for _, c := range []struct {
+		v    any
+		want string
+	}{
+		{PollRequest{}, `{}`},
+		{PollRequest{Accepts: []string{}}, `{"accepts":[]}`},
+		{PollRequest{Accepts: []string{CapJobPwsh}}, `{"accepts":["job.pwsh"]}`},
+	} {
+		if b, err := json.Marshal(c.v); err != nil || string(b) != c.want {
+			t.Errorf("%#v = %s %v, want %s", c.v, b, err, c.want)
+		}
+	}
+	b, _ := json.Marshal(ResultRequest{Status: RunSucceeded})
+	if bytes.Contains(b, []byte("interpreter")) {
+		t.Errorf("a result without an interpreter: %s", b)
+	}
+	b, _ = json.Marshal(ResultRequest{Status: RunSucceeded, Interpreter: &Interpreter{Path: `C:\Windows\System32\cmd.exe`}})
+	if !bytes.Contains(b, []byte(`"interpreter":{"path":"C:\\Windows\\System32\\cmd.exe"}`)) {
+		t.Errorf("a result with a path only: %s", b)
+	}
+	b, _ = json.Marshal(Inventory{})
+	if bytes.Contains(b, []byte("powerShell")) {
+		t.Errorf("an inventory without PowerShell: %s", b)
+	}
+}
+
 func TestJobKeysAndShells(t *testing.T) {
 	pub, _, _ := ed25519.GenerateKey(rand.Reader)
 	got, err := DecodeKey(EncodeKey(pub))
@@ -106,11 +196,21 @@ func TestJobKeysAndShells(t *testing.T) {
 			t.Errorf("shell %s", s)
 		}
 	}
-	if ShellPlatforms(ShellPowerShell)[0] != "windows" || ShellPlatforms(ShellCmd)[0] != "windows" || ShellPlatforms(ShellBash)[0] != "linux" {
+	if ShellPlatforms(ShellPowerShell)[0] != "windows" || ShellPlatforms(ShellPwsh)[0] != "windows" || ShellPlatforms(ShellCmd)[0] != "windows" ||
+		ShellPlatforms(ShellBash)[0] != "linux" {
 		t.Error("shell platforms")
 	}
-	if ValidShell("zsh") || ShellPlatforms("pwsh") != nil {
+	if ValidShell("zsh") || ShellPlatforms("pwsh7") != nil {
 		t.Error("an unknown shell is accepted")
+	}
+	for _, s := range Shells {
+		want := []string{}
+		if s == ShellPwsh {
+			want = []string{CapJobPwsh}
+		}
+		if got := ShellRequires(s); !slices.Equal(got, want) || got == nil {
+			t.Errorf("ShellRequires(%s) = %#v", s, got)
+		}
 	}
 	if PathJobStart("r1") != "/api/agent/v1/jobs/r1/start" || PathJobResult("r1") != "/api/agent/v1/jobs/r1/result" {
 		t.Error("job paths")

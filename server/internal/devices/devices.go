@@ -36,6 +36,18 @@ type Agent struct {
 	// Update is where the agent stands against the build the server serves
 	// for its platform; nil when the server serves none.
 	Update *AgentUpdate `json:"update"`
+	// Accepts is what the agent's build last said its polls accept, such as
+	// job.pwsh (ADR-0064); nil when the build it runs has not said.
+	Accepts []string `json:"accepts"`
+	// PowerShell7 says whether its last inventory listed a usable
+	// PowerShell 7; nil when the inventory listed no PowerShell installs
+	// (an agent too old to look, or not Windows).
+	PowerShell7 *bool `json:"powerShell7"`
+	// PowerShell7Blocked says why a pwsh run fails there, without falling
+	// back to Windows PowerShell, when the inventory listed no usable
+	// PowerShell 7 but a blocked one (agentproto.PowerShellInstall.Blocked,
+	// ADR-0064); empty otherwise.
+	PowerShell7Blocked string `json:"powerShell7Blocked,omitempty"`
 
 	// The update the server holds for the agent, if any.
 	updateState, updateTarget string
@@ -247,7 +259,9 @@ var columns = `d.id, d.organization_id, o.name, d.site_id, s.name, d.device_grou
 	coalesce(d.agent_sha256, ''), coalesce(u.state, ''), coalesce(u.target_sha256, ''), coalesce(u.attempts, 0),
 	coalesce(u.error, ''), coalesce(u.requested, false),
 	rm.requested_at, rm.sent_at, rm.reported_at, coalesce(rm.error, ''),
-	hc.checked_at, coalesce(hs.states, '{}'), ds.label, coalesce(ds.states, '{}')`
+	hc.checked_at, coalesce(hs.states, '{}'),
+	CASE WHEN d.agent_accepts_build IS NOT DISTINCT FROM coalesce(d.agent_sha256, d.agent_version) THEN d.agent_accepts END,
+	d.powershell7, coalesce(d.powershell7_blocked, ''), ds.label, coalesce(ds.states, '{}')`
 
 // from joins what the columns read. hs counts the device's hardening
 // modules by state, as {"in_place": 9, "partly": 1}; ds its disks by the
@@ -295,7 +309,7 @@ func scan(row pgx.Row) (*Device, error) {
 		&enrolledAt, &a.Version, &a.Arch, &a.LastSeenAt, &a.Online,
 		&a.SHA256, &a.updateState, &a.updateTarget, &u.Attempts, &u.Error, &u.Requested,
 		&asked, &rm.SentAt, &rm.ReportedAt, &rm.Error,
-		&checkedAt, &states, &diskLabel, &diskStates)
+		&checkedAt, &states, &a.Accepts, &a.PowerShell7, &a.PowerShell7Blocked, &diskLabel, &diskStates)
 	if err != nil {
 		return nil, err
 	}

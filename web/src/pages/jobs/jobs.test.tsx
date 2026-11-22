@@ -8,7 +8,7 @@ import { renderApp } from "../../test/render";
 
 const location = () => screen.getByTestId("location").textContent;
 
-const AGENT = { version: "1.4.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null };
+const AGENT = { version: "1.4.0", arch: "amd64", sha256: "", online: true, lastSeenAt: "2026-11-01T10:00:00Z", enrolledAt: "2026-10-01T09:00:00Z", update: null, accepts: null, powerShell7: null };
 
 const TECHNICIAN = sessionView({
   isSuperAdmin: false,
@@ -402,6 +402,90 @@ describe("jobs", () => {
     // A run that has not ended has no output to read.
     expect(server.callsTo("GET /job-runs/:id/output")).toEqual([]);
   });
+
+  it("shows the program each run used to everyone who sees the job, and says when it was not reported", async () => {
+    const pwsh = { edition: "Core" as const, version: "7.6.10", arch: "x64" as const, path: "C:\\Program Files\\PowerShell\\7\\pwsh.exe" };
+    const desktop = { edition: "Desktop" as const, version: "5.1.26100.7019", arch: "x64" as const, path: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe" };
+    const seven = job("j7", "Uptime", {
+      shell: "pwsh",
+      pwshFallback: true,
+      runs: [
+        jobRun("r1", "d1", "PC-01", "succeeded", { program: pwsh }),
+        jobRun("r2", "d2", "PC-02", "succeeded", { program: { ...desktop, fallback: true } }),
+        jobRun("r3", "d3", "PC-03", "failed"), // an agent of the release before
+        jobRun("r4", "d4", "PC-04", "failed", { exitCode: null, error: "PowerShell 7 is not installed on this device. The script was not run." }),
+      ],
+    });
+    let run = jobRun("r1", "d1", "PC-01", "succeeded", { program: pwsh, canViewOutput: false, job: seven });
+    const server = installFakeApi({
+      ...baseRoutes(READ_ONLY),
+      "GET /jobs/:id": ok(seven),
+      "GET /job-runs/:id": () => ok(run),
+    });
+    const { unmount } = renderApp("/jobs/j7");
+    const table = await screen.findByRole("table");
+    const rows = within(table).getAllByRole("row");
+    expect(within(rows[1]!).getByText("PowerShell 7.6.10, 64-bit")).toHaveAttribute("title", pwsh.path);
+    expect(within(rows[2]!).getByText("Windows PowerShell 5.1.26100.7019, 64-bit")).toBeInTheDocument();
+    expect(within(rows[2]!).getByText("PowerShell 7 not found")).toBeInTheDocument();
+    expect(within(rows[3]!).getByText("Not reported by this agent's version")).toBeInTheDocument();
+    expect(within(rows[4]!).getAllByText("—").length).toBeGreaterThan(0);
+    // The job says what the script does without PowerShell 7.
+    expect(screen.getByText("PowerShell 7")).toBeInTheDocument();
+    expect(screen.getByText("Without PowerShell 7")).toBeInTheDocument();
+    expect(screen.getByText("Runs in Windows PowerShell 5.1")).toBeInTheDocument();
+    unmount();
+
+    // The run's page: the program and its path, to Read-Only too, without reading the output.
+    renderApp("/jobs/j7/runs/r1");
+    expect(await screen.findByText("PowerShell 7.6.10, 64-bit")).toBeInTheDocument();
+    expect(screen.getByText(pwsh.path)).toBeInTheDocument();
+    unmount();
+    run = jobRun("r2", "d2", "PC-02", "succeeded", { program: { ...desktop, fallback: true }, canViewOutput: false, job: seven });
+    renderApp("/jobs/j7/runs/r2");
+    expect(await screen.findByText("Windows PowerShell 5.1.26100.7019, 64-bit")).toBeInTheDocument();
+    expect(screen.getByText("PowerShell 7 was not found, and this script allows Windows PowerShell.")).toBeInTheDocument();
+    unmount();
+    run = jobRun("r3", "d3", "PC-03", "failed", { canViewOutput: false, job: seven });
+    renderApp("/jobs/j7/runs/r3");
+    expect(await screen.findByText("Not reported by this agent's version")).toBeInTheDocument();
+    expect(server.calls.filter((c) => c.path.endsWith("/output"))).toEqual([]);
+  });
+
+  it("says why a PowerShell 7 run is not sent", async () => {
+    let held: "unable" | "unreported" = "unable";
+    installFakeApi({
+      ...baseRoutes(TECHNICIAN),
+      "GET /job-runs/:id": () => ok(jobRun("r4", "d4", "PC-04", "queued", { held, job: job("j7", "Uptime", { shell: "pwsh" }) })),
+    });
+    const { unmount } = renderApp("/jobs/j7/runs/r4");
+    expect(await screen.findByText(/The device's agent says it cannot run PowerShell 7 scripts, so the run is not sent\. Update the agent/)).toBeInTheDocument();
+    expect(screen.queryByText(/Waiting for PC-04 to pick it up/)).not.toBeInTheDocument();
+    unmount();
+    held = "unreported";
+    const second = renderApp("/jobs/j7/runs/r4");
+    expect(await screen.findByText(/has not yet said whether it can run PowerShell 7 scripts, so the run is not sent/)).toBeInTheDocument();
+    second.unmount();
+  });
+
+  it("says why a delivered PowerShell 7 run does not start after the agent changed versions", async () => {
+    let held: "unable" | "unreported" | undefined = "unable";
+    installFakeApi({
+      ...baseRoutes(TECHNICIAN),
+      "GET /job-runs/:id": () => ok(jobRun("r5", "d5", "PC-05", "sent", { held, job: job("j7", "Uptime", { shell: "pwsh" }) })),
+    });
+    const { unmount } = renderApp("/jobs/j7/runs/r5");
+    expect(await screen.findByText(/The device took the script, but its agent has since changed to a version that cannot run PowerShell 7 scripts, so the run will not start\./)).toBeInTheDocument();
+    expect(screen.queryByText(/about to start/)).not.toBeInTheDocument();
+    unmount();
+    held = "unreported";
+    const second = renderApp("/jobs/j7/runs/r5");
+    expect(await screen.findByText(/has since changed versions and has not yet said whether it can run PowerShell 7 scripts, so the run is not sent again until it does\./)).toBeInTheDocument();
+    second.unmount();
+    held = undefined;
+    renderApp("/jobs/j7/runs/r5");
+    expect(await screen.findByText("PC-05 has the script and is about to start it.")).toBeInTheDocument();
+  });
 });
 
 describe("scripts on the device page", () => {
@@ -462,6 +546,28 @@ describe("scripts on the device page", () => {
     await user.selectOptions(select, "Patch everything");
     expect(await within(dialog).findByText("This script installs system updates itself")).toBeInTheDocument();
     expect(within(dialog).getByText(/Line 2 upgrades every package/)).toBeInTheDocument();
+  });
+
+  it("warns before running a PowerShell 7 script on a device that reported none", async () => {
+    const user = userEvent.setup();
+    const pc = device("d2", "PC-02", { platform: "windows", agent: { ...AGENT, accepts: ["job.pwsh"], powerShell7: false }, canRunScripts: true });
+    installFakeApi({
+      ...baseRoutes(TECHNICIAN),
+      ...unreportedRoutes(),
+      "GET /devices/:id": ok(pc),
+      "GET /job-runs": ok({ items: [] }),
+      "GET /scripts": ok({ items: [script("sc1", "Services", { shell: "powershell" }), script("sc7", "Uptime", { shell: "pwsh" })] }),
+      "GET /scripts/:id": (r) => ok(r.params.id === "sc7" ? script("sc7", "Uptime", { shell: "pwsh", body: "x" }) : script("sc1", "Services", { shell: "powershell", body: "x" })),
+    });
+    renderApp("/devices/d2");
+    await user.click(await screen.findByRole("button", { name: "Run script" }));
+    const dialog = await screen.findByRole("dialog", { name: "Run a script" });
+    const select = await within(dialog).findByLabelText(/^Script/);
+    await user.selectOptions(select, "Services");
+    expect(within(dialog).queryByText(/reported no usable PowerShell 7/)).not.toBeInTheDocument();
+    await user.selectOptions(select, "Uptime");
+    expect(within(dialog).getByText(/PowerShell 7, stops after/)).toBeInTheDocument();
+    expect(within(dialog).getByText("The device reported no usable PowerShell 7 at its last inventory; this script fails there.")).toBeInTheDocument();
   });
 
   it("explains why a device cannot run scripts, and hides scripts from roles without them", async () => {
