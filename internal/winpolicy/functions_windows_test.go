@@ -375,14 +375,11 @@ ConvertTo-Json -Compress -Depth 4 @($out | ForEach-Object { @{ result = $_.Resul
 		t.Errorf("under MDMWinsOverGP: %+v, want Group Policy's rule and the MDM's Defender policy", asr)
 	}
 
-	// Security Center's products: on a server, where Windows has no
-	// Security Center, a real failure; on a workstation, the stand-in sends
-	// Get-CimInstance to a computer that does not exist.
+	// Security Center's products, where it does not answer (stand-in:
+	// Get-CimInstance is sent to a computer that does not exist).
 	var products unreadRecord
 	runFunctions(t, r, `$c = New-ErPolicyContext ''
-if ((Get-ErRegistryValue 'HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion' 'InstallationType').Data -eq 'Client') {
-    $PSDefaultParameterValues['Get-CimInstance:ComputerName'] = 'easyrmm-no-such-host.invalid'
-}
+$PSDefaultParameterValues['Get-CimInstance:ComputerName'] = 'easyrmm-no-such-host.invalid'
 Read-ErSecurityProducts $c
 ConvertTo-Json -Compress @{ Unreadable = $c.Unreadable; Notes = @($c.Notes) }`, &products)
 	if !products.Unreadable["antivirus"] || !products.Unreadable["firewall"] || !products.hasNote("Security Center did not list") {
@@ -413,15 +410,15 @@ ConvertTo-Json -Compress -Depth 4 $out`, &wfp)
 		}
 	}
 
-	// Defender's status, where its module cannot be loaded (the PowerShell
-	// modules limited to an empty folder): whether Tamper Protection is on
-	// is not known, so real-time protection is cannot_tell (unreadable).
+	// Defender's status, where Defender does not answer (stand-in: its CIM
+	// cmdlet is given a session to a computer that does not exist): whether
+	// Tamper Protection is on is not known, so real-time protection is
+	// cannot_tell (unreadable).
 	var tamper struct {
 		unreadRecord
 		Realtime answer
 	}
-	runFunctions(t, r, `foreach ($n in 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Utility', 'CimCmdlets') { Import-Module $n }
-$env:PSModulePath = '`+t.TempDir()+`'
+	runFunctions(t, r, `$PSDefaultParameterValues['Get-MpComputerStatus:CimSession'] = New-CimSession -ComputerName 'easyrmm-no-such-host.invalid' -SkipTestConnection
 $c = Get-ErPolicyContext ''
 $a = Resolve-ErRegistryOwner $c 'HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Real-Time Protection' 'DisableRealtimeMonitoring' 'Defender/AllowRealtimeMonitoring' -Defender -Product antivirus -Tamper
 ConvertTo-Json -Compress -Depth 4 @{ Unreadable = $c.Unreadable; Notes = @($c.Notes); Realtime = @{ result = $a.Result; reasons = @($a.Reasons) } }`, &tamper)

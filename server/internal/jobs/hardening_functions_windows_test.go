@@ -206,6 +206,9 @@ ConvertTo-Json -Compress -Depth 4 @{ Limited = Get-ErExposure -Limit 5; Full = G
 const (
 	standInCim      = `$PSDefaultParameterValues['Get-CimInstance:ComputerName'] = 'easyrmm-no-such-host.invalid'` + "\n"
 	standInWinEvent = `$PSDefaultParameterValues['Get-WinEvent:ComputerName'] = 'easyrmm-no-such-host.invalid'` + "\n"
+	// Defender's cmdlets are CIM cmdlets: they take a session, here one to
+	// that computer, made without testing it.
+	standInMp = `$PSDefaultParameterValues['Get-MpComputerStatus:CimSession'] = New-CimSession -ComputerName 'easyrmm-no-such-host.invalid' -SkipTestConnection` + "\n"
 )
 
 // hardeningGlobals sets what the script sets before its modules run, on
@@ -321,10 +324,11 @@ ConvertTo-Json -Compress -Depth 8 @{ Modules = $modules; Settings = $one }`, &go
 }
 
 // TestHardeningDefenderUnreadableOnWindows: where Microsoft Defender does
-// not report its status (here its module cannot be loaded: the PowerShell
-// modules are limited to an empty folder), its modules failed while its
-// service runs; they are not applicable only where it is not installed or
-// not running.
+// not report its status (stand-in: Get-MpComputerStatus is sent to a
+// computer that does not exist; Windows PowerShell 5.1 loads Defender's
+// module from its own folder whatever PSModulePath says), its modules failed
+// while its service runs; they are not applicable only where it is not
+// installed or not running.
 func TestHardeningDefenderUnreadableOnWindows(t *testing.T) {
 	type gate struct{ State, Reason string }
 	var got struct {
@@ -334,9 +338,7 @@ func TestHardeningDefenderUnreadableOnWindows(t *testing.T) {
 			Status          string
 		}
 	}
-	hardeningFunctions(t, `foreach ($n in 'Microsoft.PowerShell.Management', 'Microsoft.PowerShell.Utility', 'CimCmdlets') { Import-Module $n }
-$env:PSModulePath = '`+t.TempDir()+`'
-`+hardeningGlobals+`$ErPlatform = @{ Client = $false; Build = 26100; Role = 'member_server' }
+	hardeningFunctions(t, standInMp+hardeningGlobals+`$ErPlatform = @{ Client = $false; Build = 26100; Role = 'member_server' }
 ConvertTo-Json -Compress @{
     Defender = Get-ErModuleGate 'defender' $m
     Asr = Get-ErModuleGate 'asr' $m
