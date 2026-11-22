@@ -57,6 +57,7 @@ export const REASONS: Record<string, string> = {
   bad_checksum: "the answer's checksum was wrong",
   bad_answer: "the answer was too short or malformed",
   agent_error: "the agent failed reading it",
+  other_disk: "another disk answered under this name",
   not_kept: "the drive does not keep this",
   not_valid: "the drive holds no valid value for this now",
   not_exposed: "the operating system does not show this",

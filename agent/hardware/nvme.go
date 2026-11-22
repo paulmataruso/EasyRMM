@@ -3,6 +3,7 @@ package hardware
 import (
 	"encoding/binary"
 
+	"github.com/paulmataruso/easyrmm/agent/inventory"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -56,15 +57,21 @@ func u128(b []byte) int64 {
 	return int64(lo)
 }
 
-// parseIdentifyController reads Identify Controller (4,096 bytes; figure
-// 275) for WCTEMP, the warning composite temperature threshold, in kelvins:
-// 0 means the drive reports none. The drive's model and serial are not
-// read here: a reading names the disk as the inventory does.
-func parseIdentifyController(b []byte) (uint16, error) {
+// nvmeIdentity is what the agent reads of Identify Controller (4,096
+// bytes; figure 275): the serial number (SN, bytes 23:04), to check the
+// drive is the disk the inventory lists, and WCTEMP (bytes 267:266), the
+// warning composite temperature threshold in kelvins, 0 when the drive
+// reports none. A reading still names the disk as the inventory does.
+type nvmeIdentity struct {
+	serial  string
+	warning uint16
+}
+
+func parseIdentifyController(b []byte) (nvmeIdentity, error) {
 	if len(b) != 4096 {
-		return 0, badAnswer("NVMe Identify Controller: %d bytes, want 4096", len(b))
+		return nvmeIdentity{}, badAnswer("NVMe Identify Controller: %d bytes, want 4096", len(b))
 	}
-	return binary.LittleEndian.Uint16(b[266:268]), nil
+	return nvmeIdentity{serial: inventory.Printable(b[4:24]), warning: binary.LittleEndian.Uint16(b[266:268])}, nil
 }
 
 // celsius converts a temperature in kelvins, as NVMe gives it, to whole
@@ -106,18 +113,19 @@ func readNVMe(d nvmeDevice) (agentproto.DiskHealth, error) {
 	if fatal(err) {
 		return h, err
 	}
-	var warning uint16
+	var id nvmeIdentity
 	if err == nil {
-		warning, err = parseIdentifyController(data)
+		id, err = parseIdentifyController(data)
 	}
+	h.Serial = id.serial
 	switch {
 	case err != nil:
 		h.TemperatureLimit = asFailure(err).fact()
-	case warning == 0:
+	case id.warning == 0:
 		// "No warning temperature threshold value is reported."
 		h.TemperatureLimit = notKept
 	default:
-		h.TemperatureLimit = agentproto.Read(celsius(warning))
+		h.TemperatureLimit = agentproto.Read(celsius(id.warning))
 	}
 	return h, nil
 }

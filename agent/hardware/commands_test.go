@@ -91,7 +91,7 @@ func hex(v int) string {
 // a time, and expects the result refused, unless it is itself a command of
 // the list (a Device Statistics read of another length or page).
 func TestCommandList(t *testing.T) {
-	if len(ataNames) != 21 || len(nvmeNames) != 2 {
+	if len(ataNames) != 20 || len(nvmeNames) != 2 {
 		t.Fatalf("%d ATA and %d NVMe commands on the list", len(ataNames), len(nvmeNames))
 	}
 	for c, name := range ataNames {
@@ -164,7 +164,7 @@ func TestCommandsNotListed(t *testing.T) {
 			refuse("READ LOG EXT "+hex(v), readLogExt(op, 0))
 		}
 		switch op {
-		case statsList, statsRotating, statsErrors, statsTemperature, statsSolidState:
+		case statsList, statsRotating, statsTemperature, statsSolidState:
 		default:
 			refuse("Device Statistics page "+hex(v), readLogExt(logDeviceStatistics, op))
 		}

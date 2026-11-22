@@ -27,7 +27,7 @@ func TestFacts(t *testing.T) {
 }
 
 func TestKnownReason(t *testing.T) {
-	for _, r := range []string{ReasonContainer, ReasonUSBBridge, ReasonTimedOutRecently, ReasonNotKept, ReasonStale, ReasonInvalidReport} {
+	for _, r := range []string{ReasonContainer, ReasonUSBBridge, ReasonTimedOutRecently, ReasonOtherDisk, ReasonNotKept, ReasonStale, ReasonInvalidReport} {
 		if !KnownReason(r) {
 			t.Errorf("%s is not known", r)
 		}

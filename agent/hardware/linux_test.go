@@ -219,6 +219,44 @@ func TestLinuxTransportsOnFiles(t *testing.T) {
 	}
 }
 
+// TestOpenSGSuspended: a disk whose SCSI device the kernel has
+// runtime-suspended is asleep and not opened, so no command reaches it,
+// unless wake; an active one is opened. /dev/sda is a file here, so
+// opening succeeds wherever it is tried.
+func TestOpenSGSuspended(t *testing.T) {
+	root := t.TempDir()
+	dev := filepath.Join(root, "dev/sda")
+	write(t, dev, "")
+	status := filepath.Join(root, "sys/block/sda/device/power/runtime_status")
+	for _, tc := range []struct {
+		status string
+		wake   bool
+		asleep bool
+	}{
+		{"", false, false},
+		{"suspended\n", false, true},
+		{"suspended\n", true, false},
+		{"active\n", false, false},
+		{"suspending\n", false, false},
+	} {
+		if tc.status != "" {
+			write(t, status, tc.status)
+		}
+		d, err := openSG(dev, tc.wake)
+		if tc.asleep {
+			if !is(err, agentproto.ReasonAsleep) || d != nil {
+				t.Errorf("%q, wake %v: %v", tc.status, tc.wake, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%q, wake %v: %v", tc.status, tc.wake, err)
+			continue
+		}
+		d.close()
+	}
+}
+
 // sysfsTree constructs a sysfs and /dev for planLinux (not captured from a
 // machine): sda behind an AHCI controller (libata), sdb behind a USB
 // bridge (uas), sdc a logical volume of a MegaRAID controller, sdd a SAS

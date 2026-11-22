@@ -102,11 +102,7 @@ func ataPassThrough(c ataCommand) []byte {
 	le := binary.LittleEndian
 	b := make([]byte, ataPassThroughSize+int(c.length))
 	le.PutUint16(b[0:], ataPassThroughSize)
-	var f, n [2]byte
-	var l [8]byte
-	le.PutUint16(f[:], c.features)
-	le.PutUint16(n[:], c.count)
-	le.PutUint64(l[:], c.lba)
+	f, n, l := taskFileBytes(c)
 	var flags uint16
 	if c.proto == ataPIODataIn {
 		flags |= ataFlagsDataIn
@@ -120,25 +116,47 @@ func ataPassThrough(c ataCommand) []byte {
 	le.PutUint16(b[2:], flags)
 	le.PutUint32(b[8:], c.length)
 	le.PutUint32(b[12:], ataTimeoutSeconds)
-	cur := b[40:48]
-	cur[0], cur[1], cur[2], cur[3], cur[4] = f[0], n[0], l[0], l[1], l[2]
-	cur[5], cur[6] = c.device, c.command
+	cur := taskFile(c)
+	copy(b[40:48], cur[:])
 	return b
+}
+
+// taskFileBytes are a command's features, count and LBA, little-endian.
+func taskFileBytes(c ataCommand) (f, n [2]byte, l [8]byte) {
+	le := binary.LittleEndian
+	le.PutUint16(f[:], c.features)
+	le.PutUint16(n[:], c.count)
+	le.PutUint64(l[:], c.lba)
+	return f, n, l
+}
+
+// taskFile is a command's CurrentTaskFile as sent: features, count, LBA
+// low, mid and high, device and command, then a reserved byte.
+func taskFile(c ataCommand) [8]byte {
+	f, n, l := taskFileBytes(c)
+	return [8]byte{f[0], n[0], l[0], l[1], l[2], c.device, c.command}
 }
 
 // ataAnswer reads a pass-through's answer from the n bytes returned: the
 // data read after the structure, or, for a non-data command, the device's
-// registers, which the port driver puts in CurrentTaskFile.
+// registers, which the port driver puts in CurrentTaskFile. Registers with
+// BSY set, or exactly as they were sent, are not the device's but a driver
+// that did not return them: no registers, as on a Linux path without them.
+// SMART RETURN STATUS then gives no verdict and CHECK POWER MODE no mode,
+// so the disk is neither passed nor taken for asleep.
 func ataAnswer(c ataCommand, b []byte, n uint32) ([]byte, *ataRegisters, error) {
 	if n < ataPassThroughSize || int(n) > len(b) {
 		return nil, nil, badAnswer("ATA pass-through: %d bytes returned", n)
 	}
 	cur := b[40:48]
 	r := &ataRegisters{err: cur[0], count: cur[1], lbaLow: cur[2], lbaMid: cur[3], lbaHigh: cur[4], device: cur[5], status: cur[6]}
+	if sent := taskFile(c); r.status&ataStatusBusy != 0 || bytes.Equal(cur[:7], sent[:7]) {
+		r = nil
+	}
 	switch {
-	case r.aborted():
+	case r != nil && r.aborted():
 		return nil, nil, deviceRefused("the drive aborted the command (error %02Xh, status %02Xh)", r.err, r.status)
-	case r.status&ataStatusErr != 0:
+	case r != nil && r.status&ataStatusErr != 0:
 		return nil, nil, ioError("ATA error %02Xh, status %02Xh", r.err, r.status)
 	case c.proto == ataPIODataIn:
 		if int(n) < ataPassThroughSize+int(c.length) {

@@ -4,6 +4,7 @@ package hardware
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -399,6 +400,96 @@ func TestReadPaths(t *testing.T) {
 	before := devs.opened("nvme0")
 	if _, err := r.readTarget(tgt, false, w); !is(err, agentproto.ReasonAccessDenied) || devs.opened("nvme0") != before {
 		t.Errorf("fatal: %v", err)
+	}
+}
+
+// ataSerial puts a serial number in IDENTIFY DEVICE's words 10 to 19: two
+// characters a word, the first in the high byte, padded with spaces.
+func ataSerial(id []byte, s string) []byte {
+	f := []byte(fmt.Sprintf("%-20s", s))
+	for i := 0; i < 20; i += 2 {
+		id[20+i], id[21+i] = f[i+1], f[i]
+	}
+	return id
+}
+
+// nvmeSerial puts a serial number in Identify Controller's SN, bytes 23:04,
+// padded with spaces.
+func nvmeSerial(id []byte, s string) []byte {
+	copy(id[4:24], fmt.Sprintf("%-20s", s))
+	return id
+}
+
+// TestReadOtherDisk: a drive whose own serial is not the one the inventory
+// lists for the name is another disk: not read, and nothing of it is
+// reported as the listed disk's. A drive with the listed serial is read,
+// and one or the other side without a serial is not compared.
+func TestReadOtherDisk(t *testing.T) {
+	root := machineTree(t, map[string]string{
+		"sys/block/sda/device/serial":                           "WD-A1\n",
+		"sys/block/sdb/device/serial":                           "WD-B2\n",
+		"sys/devices/pci0000:00/0000:00:01.0/nvme/nvme0/serial": "N1  \n",
+	}, "nvme0n1", "nvme0n2", "sda", "sdb", "sdc")
+	devs := newDevices(t, root)
+	drive := func(serial string) func(bool) (ataDevice, error) {
+		return func(bool) (ataDevice, error) {
+			d := failingDrive(t)
+			d.answers[ataIdentify] = answer{data: ataSerial(identifyBytes(true, true, false), serial)}
+			return d, nil
+		}
+	}
+	devs.ata["sda"] = drive("WD-A1")
+	devs.ata["sdb"] = drive("WD-C3")
+	devs.ata["sdc"] = drive("WD-D4") // listed without a serial
+	nvmeID := nvmeSerial(identifyControllerBytes(343), "N9")
+	devs.nvme["nvme0"] = func() nvmeDevice {
+		return nvmeDrive(t, healthLogBytes(0, 310, 100, 10, 3, map[int]uint64{128: 1000}), nvmeID)
+	}
+	r, _ := newReader(root, devs)
+	report := r.Read(context.Background())
+	for _, name := range []string{"sda", "sdc"} {
+		if h := byName(report, name); h.State != agentproto.FactRead {
+			t.Errorf("%s: %s %s", name, h.State, h.Reason)
+		}
+	}
+	for name, proto := range map[string]string{"sdb": agentproto.ProtocolATA, "nvme0n1": agentproto.ProtocolNVMe, "nvme0n2": agentproto.ProtocolNVMe} {
+		h := byName(report, name)
+		if h.State != agentproto.FactUnknown || h.Reason != agentproto.ReasonOtherDisk || h.Protocol != proto || h.Route != "fake" ||
+			h.SMARTStatus.State != "" || h.Temperature.State != "" || len(h.Attributes) != 0 {
+			t.Errorf("%s: %+v", name, h)
+		}
+	}
+	if h := byName(report, "sdb"); h.Serial != "WD-B2" {
+		t.Errorf("sdb is named as the inventory lists it: %q", h.Serial)
+	}
+	// The drive it is listed as answers again: read.
+	nvmeSerial(nvmeID, "N1")
+	if h := byName(r.Read(context.Background()), "nvme0n1"); h.State != agentproto.FactRead {
+		t.Errorf("nvme0n1 again: %s %s", h.State, h.Reason)
+	}
+}
+
+func TestSameDisk(t *testing.T) {
+	for _, tc := range []struct {
+		listed, read string
+		same         bool
+	}{
+		{"WD-A1", "WD-A1", true},
+		{"WD-A1", "  WD-A1\x00\x00", true},
+		{"S4EV NB0M", "S4EV  NB0M", true},
+		{"WD-A1", "WD-B2", false},
+		{"WD-A1", "wd-a1", false},
+		{"", "WD-B2", true},
+		{"WD-A1", "", true},
+		{"0025_3852_81B0_5A6A", "S4EVNB0M123456", true},
+		{"0025_3852_81B0_5A6A_0025_3852_81B0_5A6A", "S4EVNB0M123456", true},
+		{"0025_3852_81B0", "S4EVNB0M123456", false},
+		{"0025_3852_81B0_5A6G", "S4EVNB0M123456", false},
+		{"0025_3852_81B0_5A6A5", "S4EVNB0M123456", false},
+	} {
+		if err := sameDisk(tc.listed, tc.read); (err == nil) != tc.same || (err != nil && !is(err, agentproto.ReasonOtherDisk)) {
+			t.Errorf("%q, %q: %v", tc.listed, tc.read, err)
+		}
 	}
 }
 

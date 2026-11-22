@@ -3,6 +3,7 @@ package hardware
 import (
 	"encoding/binary"
 
+	"github.com/paulmataruso/easyrmm/agent/inventory"
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 )
 
@@ -19,6 +20,9 @@ type ataIdentity struct {
 	// word 83's bits 15:14 are 01); smartOn: it is enabled (word 85 bit 0,
 	// valid when word 87's are 01).
 	smart, smartOn bool
+	// serial is the serial number (words 10 to 19), to check the drive is
+	// the disk the inventory lists.
+	serial string
 }
 
 // word reads 16-bit word n of an ATA structure.
@@ -38,6 +42,7 @@ func parseIdentify(b []byte) (ataIdentity, error) {
 	return ataIdentity{
 		smart:   validWord(b, 83) && word(b, 82)&1 != 0,
 		smartOn: validWord(b, 87) && word(b, 85)&1 != 0,
+		serial:  inventory.ATAString(b[20:40]),
 	}, nil
 }
 
@@ -242,6 +247,7 @@ func readATA(d ataDevice, wake bool) (agentproto.DiskHealth, error) {
 		return h, err
 	}
 	id, err := parseIdentify(data)
+	h.Serial = id.serial
 	switch {
 	case err != nil:
 		return h, err
@@ -317,13 +323,16 @@ func readATA(d ataDevice, wake bool) (agentproto.DiskHealth, error) {
 	}
 	raw := func(r uint64) int64 { return int64(r) } //nolint:gosec // 48 bits
 	low := func(r uint64) int64 { return int64(r & 0xFF) }
+	// Attribute 9's hours are its raw value's low 24 bits: some makers keep
+	// minutes or milliseconds in the bytes above. Shown, never judged.
+	low24 := func(r uint64) int64 { return int64(r & 0xFF_FFFF) }
 	h.Temperature = firstRead(stats.fact(statsTemperature, statTemperature, signedByte), attr(194, low), attr(190, low))
 	h.TemperatureLimit = stats.fact(statsTemperature, statTemperatureLimit, signedByte)
 	h.Wear = stats.fact(statsSolidState, statPercentageUsed, lowByte)
 	h.ReallocatedSectors = firstRead(attr(5, raw), stats.fact(statsRotating, statReallocated, lowDword))
 	h.PendingSectors = attr(197, raw)
 	h.UncorrectableSectors = attr(198, raw)
-	h.PowerOnHours = attr(9, raw)
+	h.PowerOnHours = attr(9, low24)
 	return h, nil
 }
 

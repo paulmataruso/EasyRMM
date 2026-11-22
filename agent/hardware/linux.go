@@ -270,9 +270,22 @@ const (
 // linuxSG is a SCSI disk's block device, for SG_IO.
 type linuxSG struct{ fd int }
 
-// openSG opens a disk for SG_IO. Linux tells a sleeping disk by CHECK
-// POWER MODE alone, so wake is not needed here.
-func openSG(path string, _ bool) (ataDevice, error) {
+// suspended reports whether the kernel's runtime power management has
+// suspended the disk at path, planLinux's <root>/dev/<name>: its SCSI
+// device's power/runtime_status.
+func suspended(path string) bool {
+	root := filepath.Dir(filepath.Dir(path))
+	return readSys(filepath.Join(root, "sys/block", filepath.Base(path), "device/power/runtime_status")) == "suspended"
+}
+
+// openSG opens a disk for SG_IO. A disk the kernel has runtime-suspended
+// is asleep, and is not opened unless wake: any command, CHECK POWER MODE
+// included, would resume it first. A disk that spun down by its own timer
+// is told by CHECK POWER MODE.
+func openSG(path string, wake bool) (ataDevice, error) {
+	if !wake && suspended(path) {
+		return nil, errAsleep
+	}
 	fd, err := openFD(path)
 	if err != nil {
 		return nil, err

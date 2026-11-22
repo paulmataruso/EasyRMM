@@ -48,6 +48,7 @@ const AGENT_REASONS = [
   "bad_checksum",
   "bad_answer",
   "agent_error",
+  "other_disk",
   "not_kept",
   "not_valid",
   "not_exposed",

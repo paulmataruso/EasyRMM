@@ -531,10 +531,10 @@ domain-controller role).
   `raid_controller`, `storage_driver`, `container`, `smart_off`,
   `usb_bridge`, `protocol_not_read`, `not_kept`, `asleep`, `timeout`,
   `timed_out_recently`, `io_error`, `access_denied`, `bad_checksum`,
-  `agent_error`, `stale`, `missing`, `invalid_report` and the like),
-  shown in words by the console. The health report may add a short
-  detail (a Windows error number); the inventory never does, so its
-  hash stays stable.
+  `agent_error`, `other_disk`, `stale`, `missing`, `invalid_report` and
+  the like), shown in words by the console. The health report may add
+  a short detail (a Windows error number); the inventory never does, so
+  its hash stays stable.
 * **Old fields keep the old rule.** The inventory's existing fields
   stay as they are, empty when unread; changing their encoding would
   break every older server. New facts follow this rule.
@@ -755,7 +755,7 @@ page not listed, and expects every one refused.
 | SMART READ ATTRIBUTE THRESHOLDS (B0h, D1h) | As READ DATA | The fallback verdict only (*What is read*) |
 | SMART RETURN STATUS (B0h, DAh) | LBA mid 4Fh, LBA high C2h; every other field 0; non-data; registers returned | The drive's verdict |
 | SMART READ LOG (B0h, D5h) | LBA mid 4Fh, LBA high C2h; log address (LBA low) 00h or 01h with count 1, or 04h with count 1 to 8 as the directory gives its size; PIO data-in | 00h, the SMART log directory: which logs exist and how long. 01h, the summary error log: the drive's error count. 04h, Device Statistics, where only this directory lists it |
-| READ LOG EXT (2Fh) | Log address 00h, page 0; or 04h, page 00h, 03h, 04h, 05h or 07h; count 1; features 0; PIO data-in; 48-bit | 00h, the general-purpose log directory. 04h, Device Statistics: the list of pages, rotating media, general errors, temperature, solid state |
+| READ LOG EXT (2Fh) | Log address 00h, page 0; or 04h, page 00h, 03h, 05h or 07h; count 1; features 0; PIO data-in; 48-bit | 00h, the general-purpose log directory. 04h, Device Statistics: the list of pages, rotating media, temperature, solid state |
 
 * **ATA PASS-THROUGH (16) only, never (12).** Operation code A1h,
   PASS-THROUGH (12), is also BLANK, an MMC command for optical drives
@@ -845,7 +845,7 @@ and a disk may need its spin-up time to answer. So:
 | Pending sectors | — | Attribute 197 | Yes, apart from reallocated ones |
 | Uncorrectable sectors | — | Attribute 198 | Yes, with pending ones |
 | Reported drive errors | Number of error information log entries (bytes 191:176) | The summary SMART error log's count, bytes 452–453 | Reported |
-| Power-on hours | Health log | Attribute 9 | Reported |
+| Power-on hours | Health log | Attribute 9, its raw value's low 24 bits (amended 2026-11-22, decided in review: some makers keep minutes or milliseconds above them) | Reported |
 | Data written | Data units written, in thousands of 512-byte units | — | Reported |
 | Unsafe shutdowns | Health log | — | Reported |
 | Every attribute | — | ID, flags, value, worst, threshold, raw (48 bits) | Pre-fail ones in the verdict |
@@ -921,8 +921,11 @@ numbers.
 * **On a goroutine of its own**, not in the heartbeat's loop, so a slow
   disk never delays a heartbeat.
 * **Sleeping disks are not woken.** An ATA disk that Windows'
-  `GetDevicePowerState` says is not working, or that CHECK POWER MODE
-  says is in standby, is skipped: *unknown* (`asleep`), and the server
+  `GetDevicePowerState` says is not working, that Linux's runtime power
+  management has suspended (its SCSI device's `power/runtime_status` is
+  `suspended`, where any command, CHECK POWER MODE included, would resume
+  it first; amended 2026-11-22, decided in review), or that CHECK POWER
+  MODE says is in standby, is skipped: *unknown* (`asleep`), and the server
   keeps showing its last values with their time (and its level, if it
   was failing or warning). After 24 hours of
   skipping, the agent reads it once, waking it, so a disk that always
@@ -969,6 +972,18 @@ numbers.
   for alerts is made on the server: the first 16 bytes of the SHA-256 of
   the drive's model and serial, in hex; a disk without a serial gets
   one from its name, marked as unstable.
+* **The agent checks the drive is the disk listed** (amended
+  2026-11-22, decided in review). A reading names the disk as the
+  inventory does, so a name that now leads to another disk (disks added,
+  removed or renumbered since the listing) would give that disk's health
+  to this one. The drive's own serial, Identify Controller's SN or
+  IDENTIFY DEVICE's words 10 to 19, is compared with the listing's,
+  spaces squeezed; on a mismatch the disk is *unknown* (`other_disk`),
+  with nothing it read. A serial missing on either side is not compared,
+  nor is a listed serial in the form Windows' storage stack gives some
+  NVMe drives instead of theirs, the namespace's EUI-64 or NGUID in
+  groups of four hex digits (`0025_3852_81B0_5A6A`); that form is from
+  public reports, *to be confirmed* on a real Windows NVMe drive.
 
 ### Disk firmware in the inventory (F1's first part)
 *Decided in review.*
@@ -1515,6 +1530,13 @@ this order, each when its inputs exist.
   deadline. A VHD attached in the job (FileBackedVirtual) is reported
   *unsupported* (whether the runner allows attaching one is *to be
   confirmed*).
+  *Amended 2026-11-22, decided in review:* slice 1's step runs as the
+  runner's elevated administrator, not LocalSystem, on
+  `windows-latest` only. The runner's two disks are Azure virtual NVMe
+  disks, which the NVMe path reads; they are not drives. The test also
+  passes on a driver's refusal, so it does not by itself show a read.
+  `IOCTL_ATA_PASS_THROUGH` and `GetDevicePowerState` have not completed
+  a successful call anywhere yet.
 * **Windows machines under KVM**, when ADR-0054's W1 builds them: QEMU's
   NVMe and AHCI disks under Windows' own `stornvme` and `storahci`, read
   through both IOCTLs: stand-ins for real drives, named so.

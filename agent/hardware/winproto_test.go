@@ -218,4 +218,47 @@ func TestATAAnswer(t *testing.T) {
 			t.Errorf("%d bytes returned: %v", n, err)
 		}
 	}
+	// Registers with BSY set mean nothing: no registers, not an error.
+	b = answer(smartReturnStatus, [8]byte{0, 0, 0, 0x4F, 0xC2, 0xA0, 0xD0}, nil)
+	if _, r, err := ataAnswer(smartReturnStatus, b, uint32(len(b))); err != nil || r != nil {
+		t.Errorf("busy: %v %+v", err, r)
+	}
+	b = answer(readLogExt(logDirectory, 0), [8]byte{0x04, 0, 0, 0, 0, 0, 0x81}, id)
+	if data, r, err := ataAnswer(readLogExt(logDirectory, 0), b, uint32(len(b))); err != nil || r != nil || string(data) != string(id) {
+		t.Errorf("busy with data: %v %+v", err, r)
+	}
+}
+
+// echoingDriver is a port driver that leaves CurrentTaskFile as it was
+// sent: each command goes through the real IOCTL buffer and its parser,
+// with the data a drive would read.
+type echoingDriver struct{ drive *fakeATA }
+
+func (d echoingDriver) ata(c ataCommand) ([]byte, *ataRegisters, error) {
+	b := ataPassThrough(c)
+	data, _, err := d.drive.ata(c)
+	if err != nil {
+		return nil, nil, err
+	}
+	copy(b[ataPassThroughSize:], data)
+	return ataAnswer(c, b, uint32(len(b)))
+}
+
+func (echoingDriver) route() string { return "fake" }
+func (echoingDriver) close()        {}
+
+// TestReadATAEchoedRegisters: through a driver that returns the registers
+// as they were sent, SMART RETURN STATUS's would read as passing and CHECK
+// POWER MODE's count 0 as standby. Neither is taken: the verdict is left to
+// the thresholds and the disk is read, not skipped as asleep.
+func TestReadATAEchoedRegisters(t *testing.T) {
+	h, err := readATA(echoingDriver{failingDrive(t)}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFacts(t, h, map[string]agentproto.Fact{
+		"PowerMode":   notRead(agentproto.FactUnknown, agentproto.ReasonBadAnswer),
+		"SMARTStatus": notRead(agentproto.FactUnavailable, agentproto.ReasonStorageDriver),
+		"Thresholds":  read(5), "ReallocatedSectors": read(1832), "Temperature": read(41),
+	})
 }

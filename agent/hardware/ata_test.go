@@ -60,7 +60,8 @@ func itoa(v int64) string {
 var failingAttrs = []attr{
 	{id: 1, flags: 0x000F, value: 100, worst: 100, threshold: 6},
 	{id: 5, flags: 0x0033, value: 5, worst: 5, raw: 1832, threshold: 10},
-	{id: 9, flags: 0x0032, value: 60, worst: 60, raw: 35210},
+	// 35,210 hours in the low 24 bits, with something else above them.
+	{id: 9, flags: 0x0032, value: 60, worst: 60, raw: 0x0A0B_0C00_898A},
 	{id: 194, flags: 0x0022, value: 36, worst: 50, raw: 0x0014_0028_0024, threshold: 0},
 	{id: 197, flags: 0x0012, value: 100, worst: 100, raw: 16},
 	{id: 198, flags: 0x0010, value: 100, worst: 100, raw: 3, noThresh: true},

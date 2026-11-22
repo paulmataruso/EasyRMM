@@ -145,12 +145,11 @@ func readLogExt(address, page uint8) ataCommand {
 	return ataCommand{command: ataReadLogExt, count: 1, lba: uint64(address) | uint64(page)<<8, proto: ataPIODataIn, ext: true, length: 512}
 }
 
-// Device Statistics pages: the list of pages, rotating media, general
-// errors, temperature and solid state.
+// Device Statistics pages the reader uses: the list of pages, rotating
+// media, temperature and solid state.
 const (
 	statsList        = 0x00
 	statsRotating    = 0x03
-	statsErrors      = 0x04
 	statsTemperature = 0x05
 	statsSolidState  = 0x07
 )
@@ -170,7 +169,7 @@ var ataNames = func() map[ataCommand]string {
 	for n := uint16(1); n <= 8; n++ {
 		m[smartReadLog(logDeviceStatistics, n)] = fmt.Sprintf("SMART READ LOG 04h, %d sectors", n)
 	}
-	for _, p := range []uint8{statsList, statsRotating, statsErrors, statsTemperature, statsSolidState} {
+	for _, p := range []uint8{statsList, statsRotating, statsTemperature, statsSolidState} {
 		m[readLogExt(logDeviceStatistics, p)] = fmt.Sprintf("READ LOG EXT 04h page %02Xh", p)
 	}
 	return m

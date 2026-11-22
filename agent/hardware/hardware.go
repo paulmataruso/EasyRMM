@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -144,6 +145,9 @@ func (r *Reader) Read(ctx context.Context) agentproto.HardwareReport {
 	for _, j := range due {
 		wg.Go(func() {
 			h, err := r.read(ctx, j)
+			if err == nil {
+				err = sameDisk(st.Disks[j.disks[0]].Serial, h.Serial)
+			}
 			r.remember(j, err)
 			if err != nil {
 				f := asFailure(err)
@@ -198,6 +202,37 @@ func (r *Reader) remember(j *job, err error) {
 	}
 }
 
+// sameDisk fails a reading whose drive gives a serial number other than
+// the one the inventory lists: the disk's name now leads to another disk
+// (disks added, removed or renumbered since the listing), and the health
+// read is not this disk's. A target's disks all list the serial its key
+// holds. A serial missing on either side cannot be compared, nor can the
+// form Windows gives some NVMe drives in place of their serial.
+func sameDisk(listed, read string) error {
+	l, d := inventory.Printable([]byte(listed)), inventory.Printable([]byte(read))
+	if l == "" || d == "" || l == d || namespaceID(l) {
+		return nil
+	}
+	return fail(agentproto.FactUnknown, agentproto.ReasonOtherDisk, "")
+}
+
+// namespaceID reports whether a listed serial is a namespace's EUI-64 or
+// NGUID, in groups of four hex digits joined by underscores
+// ("0025_3852_81B0_5A6A"), which Windows' storage stack gives some NVMe
+// drives as their serial number.
+func namespaceID(s string) bool {
+	groups := strings.Split(s, "_")
+	if len(groups) != 4 && len(groups) != 8 {
+		return false
+	}
+	for _, g := range groups {
+		if len(g) != 4 || strings.Trim(g, "0123456789ABCDEFabcdef") != "" {
+			return false
+		}
+	}
+	return true
+}
+
 // failedRead are the reasons of a read that failed, which on a virtual
 // machine make the disk unsupported (virtual_machine), for hypervisors the
 // list of emulated models does not name. A timeout, a refused access, a
@@ -211,7 +246,7 @@ var failedRead = map[string]bool{
 // protocol and route it answered on.
 var answered = map[string]bool{
 	agentproto.ReasonAsleep: true, agentproto.ReasonNoSMART: true, agentproto.ReasonSMARTOff: true,
-	agentproto.ReasonDeviceRefused: true,
+	agentproto.ReasonDeviceRefused: true, agentproto.ReasonOtherDisk: true,
 }
 
 // virtualMachine reports whether the inventory names the machine as a

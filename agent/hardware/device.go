@@ -43,7 +43,7 @@ type platform struct {
 	plan func(root string, d inventory.ListedDisk) (*failure, target)
 	// openNVMe and openATA open a target's path for one protocol. openATA
 	// fails with errAsleep, unless wake, where the system tells a sleeping
-	// disk before any command (Windows).
+	// disk before any command (Windows; Linux, a disk runtime-suspended).
 	openNVMe func(path string) (nvmeDevice, error)
 	openATA  func(path string, wake bool) (ataDevice, error)
 }
@@ -55,8 +55,9 @@ type ataRegisters struct {
 
 // ATA status and error bits.
 const (
-	ataStatusErr = 0x01
-	ataErrorAbrt = 0x04
+	ataStatusErr  = 0x01
+	ataStatusBusy = 0x80
+	ataErrorAbrt  = 0x04
 )
 
 // aborted reports whether the device aborted the command: ERR in the

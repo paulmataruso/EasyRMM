@@ -70,6 +70,9 @@ reading is *Unknown*.
   attribute values alone.
 * Vendors' own wear attributes are not read yet: a SATA SSD without ATA's
   Device Statistics page shows wear as *Unsupported*.
+* A SATA disk's **power-on hours** are attribute 9's raw value's low 24
+  bits; some makers keep minutes or milliseconds in the bytes above, which
+  the attribute table shows whole. They are shown, never judged.
 
 ## Reasons
 
@@ -79,13 +82,14 @@ holds (*Pending sectors 8*).
 
 | Shown | Means |
 |---|---|
-| *Unknown: asleep, not woken* | The disk was in standby and was not spun up. A disk asleep for a day is read once anyway |
+| *Unknown: asleep, not woken* | The disk was in standby, or suspended by Linux's power management, and was not spun up. A disk asleep for a day is read once anyway |
 | *Unknown: timed out* | The disk did not answer within the operating system's timeout |
 | *Unknown: timed out in the last 24 hours, left alone until then* | After a timeout, the agent leaves the disk alone for a day |
 | *Unknown: an I/O error* | The query failed |
 | *Unknown: the answer's checksum was wrong* | The answer could not be trusted |
 | *Unknown: the answer was too short or malformed* | The same |
 | *Unknown: the agent failed reading it* | The agent failed reading the answer; please report it |
+| *Unknown: another disk answered under this name* | The drive that answered gives a serial number other than the one listed for the disk: disks were added, removed or renumbered since the agent listed them. Nothing it read is shown as this disk's. Usually the next reading |
 | *Unknown: the drive's verdict could not be read* | Neither the SMART status nor the attributes against their thresholds could be read |
 | *Unknown: the drive holds no valid value for this now* | The drive keeps this statistic but holds no valid value now |
 | *Unknown: not read for over 2 hours* | A healthy disk not read since; *not read since …* on the disk |

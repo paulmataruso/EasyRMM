@@ -91,6 +91,10 @@ const (
 	ReasonBadAnswer = "bad_answer"
 	// The agent failed reading it: a panic in a parser (unknown).
 	ReasonAgentError = "agent_error"
+	// The drive that answered gives a serial number other than the one the
+	// inventory lists for the disk: its name now leads to another disk
+	// (unknown).
+	ReasonOtherDisk = "other_disk"
 	// The drive does not keep this fact (unsupported).
 	ReasonNotKept = "not_kept"
 	// The drive keeps this statistic but holds no valid value for it now
@@ -119,7 +123,7 @@ var reasons = map[string]bool{
 	ReasonMemoryCard: true, ReasonRAIDController: true, ReasonStorageDriver: true, ReasonDeviceRefused: true,
 	ReasonProtocolNotRead: true, ReasonUSBBridge: true, ReasonNoSMART: true, ReasonSMARTOff: true,
 	ReasonAsleep: true, ReasonTimeout: true, ReasonTimedOutRecently: true, ReasonIOError: true,
-	ReasonAccessDenied: true, ReasonBadChecksum: true, ReasonBadAnswer: true, ReasonAgentError: true,
+	ReasonAccessDenied: true, ReasonBadChecksum: true, ReasonBadAnswer: true, ReasonAgentError: true, ReasonOtherDisk: true,
 	ReasonNotKept: true, ReasonNotValid: true, ReasonNotExposed: true, ReasonNoVerdict: true,
 	ReasonStale: true, ReasonMissing: true, ReasonInvalidReport: true,
 }

@@ -26,15 +26,18 @@ func parseVPD89(b []byte) ([]byte, bool) {
 // DEVICE data. ATA strings hold two characters a word, the first in the
 // word's high byte.
 func ataIdentityStrings(id []byte) (serial, firmware, model string) {
-	return ataString(id[20:40]), ataString(id[46:54]), ataString(id[54:94])
+	return ATAString(id[20:40]), ATAString(id[46:54]), ATAString(id[54:94])
 }
 
-func ataString(b []byte) string {
+// ATAString is an ATA string field as Printable text: two characters a
+// word, the first in the word's high byte. The disk health reader takes a
+// drive's serial with it, as the inventory does.
+func ATAString(b []byte) string {
 	s := make([]byte, 0, len(b))
 	for i := 0; i+1 < len(b); i += 2 {
 		s = append(s, b[i+1], b[i])
 	}
-	return printable(s)
+	return Printable(s)
 }
 
 // parseVPD80 reads the Unit Serial Number VPD page (80h): its length at
@@ -44,11 +47,11 @@ func parseVPD80(b []byte) string {
 		return ""
 	}
 	n := min(int(binary.BigEndian.Uint16(b[2:4])), len(b)-4)
-	return printable(b[4 : 4+n])
+	return Printable(b[4 : 4+n])
 }
 
-// printable keeps a field's printable ASCII, its spaces squeezed.
-func printable(b []byte) string {
+// Printable keeps a field's printable ASCII, its spaces squeezed.
+func Printable(b []byte) string {
 	s := strings.Map(func(r rune) rune {
 		if r < 0x20 || r > 0x7E {
 			return ' '
