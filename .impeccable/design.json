@@ -385,6 +385,20 @@
         "theme": "light",
         "pairedWith": "sidebar-active"
       },
+      "sidebar-danger": {
+        "role": "status",
+        "displayName": "Sidebar Danger (dark)",
+        "cssVar": "--sidebar-danger",
+        "theme": "dark",
+        "pairedWith": "sidebar-danger-light"
+      },
+      "sidebar-danger-light": {
+        "role": "status",
+        "displayName": "Sidebar Danger (light)",
+        "cssVar": "--sidebar-danger",
+        "theme": "light",
+        "pairedWith": "sidebar-danger"
+      },
       "series-1": {
         "role": "chart",
         "displayName": "Series 1, blue (dark)",
@@ -524,8 +538,13 @@
         "purpose": "Buttons, inputs, tabs, nav items."
       },
       {
+        "name": "alert-active-pulse",
+        "value": "1.8s ease-in-out infinite, text colour (and a soft tint) from normal to danger and back",
+        "purpose": "Active alerts and devices with an active critical alert; under three flashes a second."
+      },
+      {
         "name": "reduced-motion",
-        "value": "toast and dock animations none; all transitions 0ms",
+        "value": "toast and dock animations none; all transitions 0ms; the alert pulse holds still at danger",
         "purpose": "prefers-reduced-motion: reduce."
       }
     ],

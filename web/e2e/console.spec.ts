@@ -588,6 +588,22 @@ test("a failing disk shows on the device and across the fleet, opens an alert, a
   await expect(alert).toContainText("NVMe critical warning: media read-only");
   await expect(alert).toContainText("A disk's own verdict is failing");
   await expect(alert).toContainText("dt-reception-01");
+  // The alert is critical, so the device's name pulses in red, with the critical icon and words for screen readers;
+  // in the menu's alerts tree too. The pulse is a slow colour change, and holds still under reduced motion.
+  const name = alert.getByRole("link", { name: "dt-reception-01, active critical alert" });
+  await expect(name).toHaveClass(/\balert-active-pulse\b/);
+  await expect(name).toHaveCSS("animation-name", "alert-active-pulse");
+  await expect(name).toHaveCSS("animation-duration", "1.8s");
+  const tree = page.getByRole("tree", { name: "Alerts: organizations, sites and devices" });
+  await expect(tree.getByRole("treeitem", { name: /^dt-reception-01, .*1 critical$/ }).getByText("dt-reception-01")).toHaveClass(/\balert-active-pulse\b/);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(name).toHaveCSS("animation-name", "none");
+  await page.emulateMedia({ reducedMotion: null });
+
+  // On the device's page, the alert's row pulses and the Alerts card counts it.
+  await page.goto(`/devices/${agent.deviceId}`);
+  const card = page.getByRole("heading", { name: /^Alerts \d+ active$/ }).locator("xpath=ancestor::section[1]");
+  await expect(card.getByRole("listitem").filter({ hasText: "Disk failing" })).toHaveClass(/\balert-active-pulse\b/);
 
   // A Read-Only user of the organization sees the disk's health, its facts and its alert.
   const readerContext = await browser.newContext();

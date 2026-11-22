@@ -29,6 +29,7 @@ colors:
   sidebar: "#080b12"
   sidebar-fg: "#a3aec0"
   sidebar-active: "#172033"
+  sidebar-danger: "#f87171"
   # Chart series (EasyRMM addition), validated for colour-vision deficiency in this order
   series-1: "#3987e5"
   series-2: "#d95926"
@@ -60,6 +61,7 @@ colors:
   sidebar-light: "#0f172a"
   sidebar-fg-light: "#cbd5e1"
   sidebar-active-light: "#1e293b"
+  sidebar-danger-light: "#f87171"
   series-1-light: "#2a78d6"
   series-2-light: "#eb6834"
   series-3-light: "#1baf7a"
@@ -270,6 +272,7 @@ One restrained blue accent over cool slate neutrals, with four semantic status t
 - **Line / Line Strong** (line, line-strong): every border and divider.
 - **Foreground / Muted / Subtle** (fg, muted, subtle): primary text; secondary text, labels and table heads; hints, placeholders, empty-state icons.
 - **Navy Sidebar** (sidebar, sidebar-fg, sidebar-active): the sidebar is dark in both themes; active and hovered items sit on sidebar-active with white text.
+- **Sidebar Danger** (sidebar-danger, EasyRMM addition): danger red for text on the navy sidebar, the same in both themes, 4.5:1 or more on sidebar and sidebar-active, where the light theme's danger is not.
 
 ### Chart series (EasyRMM addition)
 - **Series 1 / 2 / 3** (series-1, series-2, series-3): blue, orange and aqua lines in charts, in that order only, each its own step per theme. The three pass a colour-vision-deficiency check against each other on both surfaces (ΔE ≥ 9 for every pair). Light aqua is under 3:1 on white, so every chart keeps a legend and a data table. Series colours mark lines and legend keys, never text, and never status: a value running out wears warn or danger, not a series colour. 
@@ -395,6 +398,9 @@ Centered, quiet: a subtle 32px icon, a medium fg title and muted body, optional 
 
 ### Device tree dock (EasyRMM addition)
 A **Tree** toggle (pressed state in accent-soft with a 40% accent border) in the devices pages' header opens a 20rem dock at the right of the page: surface, line border on its left, no shadow, entering over 180ms (12px slide, none under reduced motion). It holds a header (title, Collapse all, close), a filter with a live count, an **All devices** row, and the WAI-ARIA tree of organizations, sites and devices: 28px rows indented 16px a level, chevrons, building, pin and status-dot icons, online/total counts in muted tabular figures, the row for the page's organization, site or device in accent-soft and medium weight. From `lg` it sits beside the page and is remembered in the browser; below `lg` it opens over the page as a drawer with a scrim and closes after a choice.
+
+### Active alerts pulse (EasyRMM addition)
+One class, `alert-active-pulse` in `web/src/index.css`, marks what needs attention: an active alert's row in the device page's Alerts card (with `--row`: a steady 3px danger edge on its left and a danger-soft tint at the peak), the count of active alerts beside that card's title (with `--filled`), and the name of a device with an active critical alert on the Alerts page and in the menu's alerts tree (with `--sidebar`, sidebar-fg to sidebar-danger, white on the chosen row). It eases text colour, and a tint where there is one, from the normal colour to danger and back over 1.8s: never more than three flashes a second (WCAG 2.3.1), never a large area, 4.5:1 or more in every state of both themes. Red is never the only sign: the severity badge, the critical icon or the count says the same in words, and nothing announces the pulse. Under reduced motion it holds still at the red state.
 
 ### Code and script output (EasyRMM addition)
 Scripts and their output are the content of the scripts and jobs pages, so they are shown as code, never restyled as prose.

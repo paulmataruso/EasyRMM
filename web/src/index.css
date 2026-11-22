@@ -35,6 +35,9 @@
   --sidebar: #0f172a;
   --sidebar-fg: #cbd5e1;
   --sidebar-active: #1e293b;
+  /* Danger red on the navy sidebar, which is dark in both themes (EasyRMM addition): 4.5:1 or more on sidebar and
+     sidebar-active, where --danger in the light theme is not. */
+  --sidebar-danger: #f87171;
   /* Chart series (EasyRMM addition): validated for colour-vision deficiency on --surface,
      in this order only. Slot 3 is under 3:1 here, so charts keep a legend and a data table. */
   --series-1: #2a78d6;
@@ -70,6 +73,7 @@
   --sidebar: #080b12;
   --sidebar-fg: #a3aec0;
   --sidebar-active: #172033;
+  --sidebar-danger: #f87171;
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-3: #199e70;
@@ -102,6 +106,7 @@
   --color-sidebar: var(--sidebar);
   --color-sidebar-fg: var(--sidebar-fg);
   --color-sidebar-active: var(--sidebar-active);
+  --color-sidebar-danger: var(--sidebar-danger);
   --color-series-1: var(--series-1);
   --color-series-2: var(--series-2);
   --color-series-3: var(--series-3);
@@ -244,11 +249,64 @@
   animation: popover-in 120ms ease-out;
 }
 
+/* Active alerts (EasyRMM addition). An active alert's row, the count of a device's active alerts, and the name of a
+   device with an active critical alert pulse slowly between their normal colour and danger red: one cycle every 1.8
+   seconds, far under three flashes a second (WCAG 2.3.1), on text, a soft fill and a thin edge only. Every state of
+   the pulse keeps 4.5:1 contrast in both themes. Red is never the only sign: the places that pulse also carry an icon
+   and words (the severity, the count, "critical"). Under reduced motion the red holds still. The animation is visual
+   only and never announced. A place sets its own colours with the custom properties. */
+.alert-active-pulse {
+  --alert-pulse-rest: var(--fg);
+  --alert-pulse-red: var(--danger);
+  --alert-pulse-fill: transparent;
+  animation: alert-active-pulse 1.8s ease-in-out infinite;
+}
+
+/* A count: its pill fills with soft red at the peak. */
+.alert-active-pulse--filled {
+  --alert-pulse-fill: var(--danger-soft);
+}
+
+/* A row: a soft red fill at the peak, and a thin red edge on its left that holds still. */
+.alert-active-pulse--row {
+  --alert-pulse-fill: var(--danger-soft);
+  box-shadow: inset 3px 0 0 var(--danger);
+}
+
+/* On the navy sidebar: its own text colour at rest (white on the chosen row) and its own red. */
+.alert-active-pulse--sidebar {
+  --alert-pulse-rest: var(--sidebar-fg);
+  --alert-pulse-red: var(--sidebar-danger);
+}
+
+[aria-selected='true'] > .alert-active-pulse--sidebar {
+  --alert-pulse-rest: white;
+}
+
+@keyframes alert-active-pulse {
+  0%,
+  100% {
+    color: var(--alert-pulse-rest);
+    background-color: transparent;
+  }
+  50% {
+    color: var(--alert-pulse-red);
+    background-color: var(--alert-pulse-fill);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .toast-enter,
   .nav-enter,
   .popover-enter {
     animation: none;
+  }
+
+  /* Steady red emphasis in place of the pulse. */
+  .alert-active-pulse {
+    animation: none;
+    color: var(--alert-pulse-red);
+    background-color: var(--alert-pulse-fill);
   }
 
   * {

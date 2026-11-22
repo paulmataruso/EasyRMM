@@ -109,6 +109,11 @@ export function risingHint(a: Pick<AlertEntry, "kind" | "checkName" | "status">)
     : "This count only rises: acknowledge this alert rather than resolve it, or it opens again within a minute. It resolves when the disk is replaced or the policy's threshold is raised.";
 }
 
+/** An alert is active until it resolves; acknowledging one leaves it active. */
+export function isActive(a: Pick<AlertEntry, "status">): boolean {
+  return a.status !== "resolved";
+}
+
 export const RESOLUTIONS: Record<AlertResolution, string> = {
   cleared: "Condition cleared",
   manual: "Resolved",

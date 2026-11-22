@@ -151,6 +151,29 @@ In the console:
 * The dashboard counts active alerts and lists the most pressing ones,
   critical first, under **Needs attention**.
 
+### What pulses in red
+
+So that what needs attention stands out while the console is open all
+day, these pulse slowly between their normal colour and red:
+
+* On a device's page, every **active** alert in its **Alerts** card (open
+  or acknowledged; a resolved alert never pulses), and the number of
+  active alerts beside the card's title. Each alert keeps its severity
+  badge, so the pulse means *active*, not *critical*.
+* On the **Alerts** page, the name of a device that has an active
+  **critical** alert, in every row of that device, whatever the page is
+  showing. The name carries the critical icon beside it.
+* In the menu's **Alerts** tree, the name of a device that has an active
+  critical alert, beside its red count.
+
+The pulse takes 1.8 seconds, well under the three flashes a second that
+can trigger seizures, and changes only text colour and a soft tint, never
+a large area. Red is never the only sign: the severity badge, the critical
+icon and the counts say the same in words, and screen readers hear them
+once, not on every pulse. With **reduce motion** turned on in the
+operating system or browser, nothing pulses: the same places show a
+steady red instead.
+
 ## Who can do what
 
 | Permission | Allows | Roles |
