@@ -192,8 +192,32 @@ refused "$d" "go together" --smtp-client-cert-file "$creds/app.crt"
 refused "$d" "must be an email address" --smtp-from "not an address"
 refused "$d" "must be a port" --smtp-port 70000
 refused "$d" "--smtp-host must be" --smtp-host "smtp example com"
+# A $ given: Compose would read it in .env as a variable.
+# shellcheck disable=SC2016 # The $ are for .env, not the shell.
+{
+  refused "$d" '--smtp-from has a $: a $ in .env is read by Compose as a variable; leave it out of the address' --smtp-from 'rmm$x@m365.example.com'
+  refused "$d" '--smtp-host has a $' --smtp-host 'smtp${X}.example.com'
+  refused "$d" '--smtp-tenant-id has a $' --smtp-tenant-id '$TENANT'
+}
 cmp -s "$work/env.before" "$d/deploy/.env" || fail "refusals changed .env"
 cmp -s "$creds/app.key" "$data/secrets/smtp-client.key" || fail "refusals changed the key"
+
+# A $ kept from .env: Compose reads $$ as one $ and $NAME or ${NAME} as a
+# variable, which setup.sh and the updater do not. Refused, naming the
+# setting, and .env left as it was.
+cp -p "$d/deploy/.env" "$work/env.saved"
+# shellcheck disable=SC2016 # The $ are .env's, not the shell's.
+for line in 'EASYRMM_SMTP_FROM="Smith $$ Jones <third@m365.example.com>"' 'EASYRMM_SMTP_HOST=${SMTP_RELAY}' \
+  'EASYRMM_SMTP_PORT=$PORT' 'EASYRMM_SMTP_TENANT_ID=$TENANT' 'EASYRMM_SMTP_AUTH=${AUTH:-microsoft365}' \
+  'EASYRMM_SMTP_TLS=$TLS' 'EASYRMM_SMTP_CLIENT_CERT_FILE=$CERT'; do
+  key=${line%%=*}
+  { grep -v "^$key=" "$work/env.saved"; printf '%s\n' "$line"; } > "$work/env.dollar"
+  cp "$work/env.dollar" "$d/deploy/.env"
+  refused "$d" "$key in .env has a \$: a \$ in .env is read by Compose as a variable; leave it out" --smtp-client-id "$CLIENT"
+  [[ $key != EASYRMM_SMTP_FROM ]] || grep -qF "leave it out of the sender's name" "$d/err" || fail "$key with a \$: $(cat "$d/err")"
+  cmp -s "$work/env.dollar" "$d/deploy/.env" || fail "$key with a \$: .env changed"
+done
+cp -p "$work/env.saved" "$d/deploy/.env"
 
 # --- Root, and --upgrade's owners and modes -----------------------------------
 chmod 0644 "$d/deploy/.env"

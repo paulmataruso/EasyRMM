@@ -259,8 +259,11 @@ read-only at `/run/secrets/easyrmm`, and `.env` names them by their paths
 there, never holding them. So that root changes nothing outside the data
 root, `setup.sh` refuses a data root that is not root's or that others can
 write to, a `secrets` that is a symbolic link, and a file in it with
-another link (a hard link to a file elsewhere). It changes only the mail
-settings that differ: a setting kept from `.env` stays as it is written
+another link (a hard link to a file elsewhere). It refuses a `$` in a mail
+setting, given or kept in `.env` (the sender's name included): Compose
+reads `$NAME`, `${NAME}` and `$$` in `.env` as variables, so `setup.sh`,
+the updater and Compose would read different values. It changes only the
+mail settings that differ: a setting kept from `.env` stays as it is written
 there, quotes and comments included, and `.env` is written whole beside
 the old one and renamed over it, never half written:
 

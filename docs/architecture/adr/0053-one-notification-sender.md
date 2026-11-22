@@ -1588,7 +1588,10 @@ nothing to apply to.
   renamed into place, with its owner and mode; a certificate file with a
   key or text beside the certificate refused; a data root others can
   change, a linked `secrets/` and a hard-linked file in it refused, with
-  nothing outside changed (decided in review of #97).
+  nothing outside changed; a `$` in a mail setting, given or kept in
+  `.env`, refused, naming the setting, since Compose reads it as a
+  variable and `setup.sh` and the updater do not (decided in review of
+  #97).
 * **HTTP API and console**: permissions for each route; the console's
   tests for every view.
 * **Agent**: the notices' reasons from systemd's state (Linux), from the

@@ -277,7 +277,8 @@ All notable changes to this project are documented here. The format follows
   must be PEM certificates alone, and only they are stored. `setup.sh`
   leaves the settings it keeps as `.env` has them, writes `.env` whole and
   renames it into place, and refuses a data root others can change, a
-  linked `secrets` directory, and hard-linked files in it. **While an
+  linked `secrets` directory, hard-linked files in it, and a `$` in a mail
+  setting (Compose reads it as a variable). **While an
   application signs in, the patching engine is given no mail server, so
   patching sends no email or monthly reports** until a later release; the
   mail server page, Settings → Patching (Notifications and Reports),

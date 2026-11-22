@@ -170,6 +170,14 @@ mail_check_certificate() {
   fi
 }
 
+# mail_no_dollar WHAT VALUE [OF] dies when VALUE has a $. In .env, Compose
+# reads $NAME and ${NAME} as variables and $$ as one $, which setup.sh's
+# env_value and the updater do not: refused, so that all three read the
+# same value. A sender's name with a $ is rare.
+mail_no_dollar() {
+  [[ "$2" != *'$'* ]] || die "${1} has a \$: a \$ in .env is read by Compose as a variable; leave it out${3:+ of $3}"
+}
+
 # mail_validate checks the --smtp-* options against what .env has, before
 # anything is written, and decides the mail settings: mail_app says a
 # Microsoft 365 application signs in; mail_credential is secret,
@@ -179,6 +187,16 @@ mail_validate() {
   if [[ -n "$smtp_tenant_id$smtp_client_id$smtp_secret_file$smtp_cert_file$smtp_key_file" ]]; then
     [[ $(id -u) -eq 0 ]] || die "the --smtp-tenant-id, --smtp-client-* options need root (sudo): the secret or key goes into ${data_root}/secrets"
   fi
+  # No $ in what is given, nor in what is read back from .env.
+  mail_no_dollar --smtp-host "$smtp_host"
+  mail_no_dollar --smtp-port "$smtp_port"
+  mail_no_dollar --smtp-from "$smtp_from" "the address"
+  mail_no_dollar --smtp-tenant-id "$smtp_tenant_id"
+  mail_no_dollar --smtp-client-id "$smtp_client_id"
+  local key
+  for key in EASYRMM_SMTP_AUTH EASYRMM_SMTP_TLS; do
+    mail_no_dollar "${key} in .env" "$(mail_env_value "$key")"
+  done
   if [[ -n "$smtp_tenant_id$smtp_client_id$smtp_secret_file$smtp_cert_file$smtp_key_file" || "$(mail_env_value EASYRMM_SMTP_AUTH)" == microsoft365 ]]; then
     mail_app=true
   fi
@@ -192,6 +210,10 @@ mail_validate() {
   smtp_port=${smtp_port:-$(mail_env_value EASYRMM_SMTP_PORT)}
   smtp_port=${smtp_port:-587}
   smtp_from=${smtp_from:-$(mail_env_value EASYRMM_SMTP_FROM)}
+  # What was given had none, so a $ now came from .env.
+  mail_no_dollar "EASYRMM_SMTP_HOST in .env" "$smtp_host"
+  mail_no_dollar "EASYRMM_SMTP_PORT in .env" "$smtp_port"
+  mail_no_dollar "EASYRMM_SMTP_FROM in .env" "$smtp_from" "the sender's name"
   if [[ "$mail_app" == true ]]; then
     smtp_host=${smtp_host:-smtp.office365.com}
   fi
@@ -203,6 +225,11 @@ mail_validate() {
   mail_secrets_safe
   smtp_tenant_id=${smtp_tenant_id:-$(mail_env_value EASYRMM_SMTP_TENANT_ID)}
   smtp_client_id=${smtp_client_id:-$(mail_env_value EASYRMM_SMTP_CLIENT_ID)}
+  mail_no_dollar "EASYRMM_SMTP_TENANT_ID in .env" "$smtp_tenant_id"
+  mail_no_dollar "EASYRMM_SMTP_CLIENT_ID in .env" "$smtp_client_id"
+  for key in EASYRMM_SMTP_CLIENT_SECRET_FILE EASYRMM_SMTP_CLIENT_CERT_FILE EASYRMM_SMTP_CLIENT_KEY_FILE; do
+    mail_no_dollar "${key} in .env" "$(mail_env_value "$key")"
+  done
   [[ -n "$smtp_tenant_id" ]] || die "--smtp-tenant-id is required: the Directory (tenant) ID from the application's Overview page in Entra"
   [[ "$smtp_tenant_id" =~ $mail_guid || ( ${#smtp_tenant_id} -le 253 && "$smtp_tenant_id" =~ $mail_domain ) ]] ||
     die "--smtp-tenant-id must be the tenant's ID (a GUID) or one of its domain names, such as contoso.onmicrosoft.com"
