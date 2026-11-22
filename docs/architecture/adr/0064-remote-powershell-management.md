@@ -21,7 +21,7 @@
   [ADR-0047](0047-tokens-shown-again.md) (a read and its audit record in
   one transaction), and these proposed ADRs:
   [ADR-0054](0054-hardening-windows-computers-and-servers.md)
-  (`AllSigned` and Constrained Language Mode; the Windows test machines
+  (accepted since, on 2026-11-22; `AllSigned` and Constrained Language Mode; the Windows test machines
   and runners), [ADR-0055](0055-lets-encrypt-in-one-step.md#step-up-authentication)
   (step-up authentication), [ADR-0057](0057-rotating-the-job-key.md)
   (the job key ring), [ADR-0058](0058-signed-settings-that-reach-the-agent.md)

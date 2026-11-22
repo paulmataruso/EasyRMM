@@ -5,9 +5,9 @@
   feasibility and order), ADR-0051 one; Draft 2 was checked against all
   four by a fourth reviewer, who found 37 of 60 findings fully answered
   and some new problems; this draft answers the rest. Feature 9 was added
-  the same day, after those reviews; its ADR (ADR-0054) is proposed, had
-  one independent review, and was revised after it and after that
-  review's check.
+  the same day, after those reviews; its ADR (ADR-0054) was accepted on
+  2026-11-22 after independent reviews; its W1, the check, is in review
+  as PR #92.
 * Scope: the work the owner asked for on 2026-11-20 and 2026-11-21:
   1. Operators sign the Windows agent (ADR-0049).
   2. Hardening Linux computers (ADR-0051).
@@ -623,8 +623,8 @@ an inspecting proxy, NGINX and a server restart, 5,000 connections and
 host of the owner's instance, which `soak.sh` would have to stop).
 
 ### 9. Hardening Windows computers and servers (ADR-0054)
-The ADR is proposed, had one independent review and was revised after it
-and after that review's check. It reuses feature 2's job kind, modes,
+The ADR was accepted on 2026-11-22 after independent reviews; its W1,
+the check, is in review as PR #92. It reuses feature 2's job kind, modes,
 results, permission and console; the agent does not change.
 
 * **Basis**: values from Microsoft's security baselines for the
