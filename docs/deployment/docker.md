@@ -7,7 +7,7 @@ listen on loopback; only the server's TLS edge listens publicly.
 | Container | Listens on | Data |
 |---|---|---|
 | `postgres` | `127.0.0.1:15432` | `/srv/easyrmm/postgres` |
-| `server` | `:443`, `:80` (optional), `127.0.0.1:18081` (health) | `/srv/easyrmm/server`; `/srv/easyrmm/updater/status`, read-only ([the updater's](#held-by-the-updater)) |
+| `server` | `:443`, `:80` (optional), `127.0.0.1:18081` (health) | `/srv/easyrmm/server`; `/srv/easyrmm/updater/status`, read-only ([the updater's](#held-by-the-updater)); `/srv/easyrmm/secrets`, read-only at `/run/secrets/easyrmm` (a Microsoft 365 application's secret or key for mail, [Mail](../operations/mail.md#microsoft-365)) |
 | `meshcentral` | `127.0.0.1:14430` | `/srv/easyrmm/meshcentral` (its data), `/srv/easyrmm/meshcentral-config` (configuration written by the server) |
 | `easypatch-api` | `127.0.0.1:18180` | `/srv/easyrmm/easypatch/keys`, `/srv/easyrmm/easypatch/winget`; its database `easypatch` in `postgres` |
 | `easypatch-worker` | `127.0.0.1:18181` (health) | The same, keys read-only; `/srv/easyrmm/updater/status`, read-only |
@@ -46,12 +46,23 @@ sudo docker compose logs -f server
 ```
 
 Without git, download `easyrmm-v<version>-deploy.tar.gz` from a release
-instead, unpack it, and run the same commands from its `deploy/` directory;
-its `.env.example` already names that release's image.
+instead, unpack it as root into a directory only root can write, and run
+the same commands from its `deploy/` directory; its `.env.example` already
+names that release's image:
+
+```bash
+sudo install -d -m 0755 /opt/easyrmm
+sudo tar -xzf easyrmm-v<version>-deploy.tar.gz -C /opt/easyrmm
+cd /opt/easyrmm/easyrmm-v<version>/deploy
+```
 
 `setup.sh` writes `deploy/.env` (mode 600) with freshly generated database
 passwords and the encryption key, and creates the data directories with the
 ownership the containers expect. It never overwrites an existing `.env`.
+Run as root, it also installs the [host updater](../operations/updater.md),
+which upgrades the deployment and rolls it back; `--no-updater` installs
+none. A bundle carries the updater; from a clone, build it first with
+`make updater` (Go needed), or `setup.sh` says it is missing and goes on.
 
 When the server starts with an empty database it writes a one-time **setup
 token** to `/srv/easyrmm/server/setup-token` and logs where it is. Open

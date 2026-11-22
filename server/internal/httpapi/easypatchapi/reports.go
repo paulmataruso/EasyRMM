@@ -24,6 +24,12 @@ func (a *API) registerReports(r func(string, httpapi.HandlerFunc)) {
 	r("DELETE /api/v1/patching/reports/monthly/{id}", a.deleteReport)
 	r("GET /api/v1/patching/report-schedules", a.reportSchedules)
 	r("PUT /api/v1/patching/report-schedules/{id}", a.setReportSchedule)
+	r("GET /api/v1/patching/reports/mail", a.reportsMail)
+}
+
+func (a *API) reportsMail(w http.ResponseWriter, r *http.Request) error {
+	m, err := a.svc.ReportsMail(r.Context(), httpapi.Caller(r))
+	return ok(w, m, err)
 }
 
 func (a *API) trend(w http.ResponseWriter, r *http.Request) error {

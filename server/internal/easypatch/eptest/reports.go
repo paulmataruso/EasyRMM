@@ -46,6 +46,8 @@ type ReportInfo struct {
 	DeliveryStatus         string
 	Recipients             []string
 	QueuedAt               *time.Time
+	// LastError is why emailing it last failed.
+	LastError string
 }
 
 // ScheduleInfo is an organization's monthly report schedule.
@@ -99,6 +101,18 @@ func (s *Server) MonthlyReports() []ReportInfo {
 		out = append(out, *r)
 	}
 	return out
+}
+
+// FailDelivery has emailing report id fail for good, with lastError, as
+// the engine records a delivery it gives up on.
+func (s *Server) FailDelivery(id uuid.UUID, lastError string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, r := range s.reports {
+		if r.ID == id {
+			r.DeliveryStatus, r.LastError = "Failed", lastError
+		}
+	}
 }
 
 // Schedule is an organization's monthly report schedule, if it has one.
@@ -182,7 +196,7 @@ func (s *Server) reportDTO(rep *ReportInfo) map[string]any {
 		"periodEnd": rep.PeriodEnd, "monthToDate": rep.MonthToDate, "scheduled": false, "generatedAt": rep.GeneratedAt,
 		"generatedBy": nullable(rep.GeneratedBy), "fileName": fmt.Sprintf("patch-report-%s.pdf", rep.PeriodStart[:7]),
 		"sizeBytes": len(rep.PDF), "sha256": strings.Repeat("0", 64), "deliveryStatus": status, "recipients": orEmpty(rep.Recipients),
-		"attempts": 0, "queuedAt": rep.QueuedAt, "sentAt": nil, "lastError": nil}
+		"attempts": 0, "queuedAt": rep.QueuedAt, "sentAt": nil, "lastError": nullable(rep.LastError)}
 }
 
 func orEmpty(s []string) []string {
@@ -322,7 +336,7 @@ func (s *Server) sendReport(w http.ResponseWriter, rep *ReportInfo, body map[str
 		return
 	}
 	now := time.Now().UTC()
-	rep.DeliveryStatus, rep.Recipients, rep.QueuedAt = "Pending", to, &now
+	rep.DeliveryStatus, rep.Recipients, rep.QueuedAt, rep.LastError = "Pending", to, &now, ""
 	reply(w, 200, s.reportDTO(rep))
 }
 

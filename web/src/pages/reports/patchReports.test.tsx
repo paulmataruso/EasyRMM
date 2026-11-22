@@ -122,9 +122,13 @@ function routes(session = MANAGER, extra: Record<string, unknown> = {}) {
     "GET /patching/reports/trend": ok(trend()),
     "GET /patching/reports/monthly": ok({ items: [monthly()], capped: false, canGenerate: ["o1"] } satisfies PatchMonthlyReportList),
     "GET /patching/report-schedules": ok([schedule()]),
+    "GET /patching/reports/mail": ok({}),
     ...extra,
   } as Parameters<typeof installFakeApi>[0];
 }
+
+const WITHHELD =
+  "EasyRMM's mail server signs in with a Microsoft 365 application, which the patching engine cannot do: the engine is given no mail server, so patching sends no email and no monthly reports until a later release moves them to EasyRMM.";
 
 describe("patch reports", () => {
   it("offers the patch reports only with the patching engine", async () => {
@@ -260,11 +264,43 @@ describe("patch reports", () => {
     const table = await screen.findByRole("table", { name: "Monthly patch reports" });
     expect(within(table).getByText("Scheduled")).toBeInTheDocument();
     expect(within(table).getByText(/^Emailed/)).toHaveAttribute("title", "cfo@example.com");
-    expect(within(table).getByText("Email failed")).toHaveAttribute("title", "Mailbox unavailable");
+    // Why it failed is shown, not only on hover.
+    expect(within(table).getByText("Email failed")).toBeInTheDocument();
+    expect(within(table).getByText("Mailbox unavailable")).toBeInTheDocument();
     expect(within(table).getByText("Sending")).toBeInTheDocument();
     expect(within(table).queryByRole("button", { name: "Email" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Make a report" })).not.toBeInTheDocument();
     expect(screen.getByText(/Only the newest reports are listed/)).toBeInTheDocument();
+  });
+
+  it("says why reports are not emailed while a Microsoft 365 application signs in", async () => {
+    const user = userEvent.setup();
+    installFakeApi(
+      routes(MANAGER, {
+        "GET /patching/reports/mail": ok({ withheld: WITHHELD }),
+        "GET /patching/reports/monthly": ok({
+          items: [monthly({ deliveryStatus: "Failed", scheduled: true, lastError: WITHHELD })],
+          capped: false,
+          canGenerate: ["o1"],
+        }),
+      }),
+    );
+    renderApp("/reports?report=patch-monthly");
+    const table = await screen.findByRole("table", { name: "Monthly patch reports" });
+    const alert = (await screen.findByText("Reports are not emailed: the patching engine has no mail server")).closest(".rounded-md")!;
+    expect(within(alert as HTMLElement).getByText(WITHHELD)).toBeInTheDocument();
+    // The scheduled report's failure says why.
+    expect(within(table).getByText(WITHHELD)).toBeInTheDocument();
+    await user.click(within(table).getByRole("button", { name: "Email" }));
+    const email = await screen.findByRole("dialog", { name: "Email this report" });
+    expect(within(email).getByText("Reports are not emailed: the patching engine has no mail server")).toBeInTheDocument();
+  });
+
+  it("says nothing of the engine's mail otherwise", async () => {
+    installFakeApi(routes(MANAGER));
+    renderApp("/reports?report=patch-monthly");
+    await screen.findByRole("table", { name: "Monthly patch reports" });
+    expect(screen.queryByText(/the patching engine has no mail server/)).not.toBeInTheDocument();
   });
 
   it("says when there are no monthly reports", async () => {
@@ -348,6 +384,14 @@ describe("report schedules", () => {
     expect(within(table).getByText("Europe/London")).toBeInTheDocument();
     expect(within(table).queryByRole("button")).not.toBeInTheDocument();
     expect(screen.getByText(/emailed through EasyRMM's mail server/)).toBeInTheDocument();
+  });
+
+  it("says why scheduled reports are not emailed while a Microsoft 365 application signs in", async () => {
+    installFakeApi(routes(MANAGER, { "GET /patching/reports/mail": ok({ withheld: WITHHELD }) }));
+    renderApp("/settings?tab=patching&view=reports");
+    await screen.findByRole("table", { name: "Monthly report schedules" });
+    const alert = (await screen.findByText("Reports are not emailed: the patching engine has no mail server")).closest(".rounded-md")!;
+    expect(within(alert as HTMLElement).getByText(WITHHELD)).toBeInTheDocument();
   });
 
   it("says when there is no organization to schedule", async () => {

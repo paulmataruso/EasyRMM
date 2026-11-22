@@ -48,7 +48,8 @@ export function selfPatching(shell: Shell, body: string): SelfPatchingLine[] {
   let inBlockComment = false;
   lines.forEach((raw, i) => {
     let line = raw.replace(/\r$/, "");
-    if (shell === "powershell") {
+    const powerShell = shell === "powershell" || shell === "pwsh";
+    if (powerShell) {
       // <# … #> block comments.
       if (inBlockComment) {
         const end = line.indexOf("#>");
@@ -65,7 +66,7 @@ export function selfPatching(shell: Shell, body: string): SelfPatchingLine[] {
     }
     const code = shell === "cmd" ? cmdCode(line) : stripComment(line);
     if (!code.trim()) return;
-    const what = shell === "powershell" || shell === "cmd" ? windowsLine(code) : shell === "python3" ? pythonLine(code) : shellLine(code);
+    const what = powerShell || shell === "cmd" ? windowsLine(code) : shell === "python3" ? pythonLine(code) : shellLine(code);
     if (what) found.push({ line: i + 1, text: cut(raw.trim()), what });
   });
   return found;

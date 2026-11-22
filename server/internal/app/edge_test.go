@@ -65,18 +65,6 @@ func wantHeld(t *testing.T, what string, resp httpResult, body string) {
 	}
 }
 
-// freeAddr returns a loopback address with a port that was free a moment ago.
-func freeAddr(t *testing.T) string {
-	t.Helper()
-	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := ln.Addr().String()
-	_ = ln.Close()
-	return addr
-}
-
 func TestKnownHostAndHostOnly(t *testing.T) {
 	cfg := testConfig(t)
 	for host, want := range map[string]bool{
@@ -345,7 +333,12 @@ func noRedirect() *http.Client {
 func TestEdgeOffload(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.TLSMode = config.TLSOffload
-	cfg.ListenOffload = freeAddr(t)
+	cfg.ListenOffload = reserveAddr(t)
+	// Nobody else can take a reserved port before the edge listens on it.
+	if ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", cfg.ListenOffload); err == nil {
+		_ = ln.Close()
+		t.Fatal("another listener took the reserved port")
+	}
 	stop := runEdge(t, &edge{cfg: cfg, handler: okHandler(), hold: notHeld(t), log: discard()})
 	_, body := get(t, noRedirect(), "http://"+cfg.ListenOffload+"/", "rmm.test")
 	if body != "edge-ok" {
@@ -358,8 +351,8 @@ func TestEdgeManualTLS(t *testing.T) {
 	cfg := testConfig(t)
 	cfg.TLSMode = config.TLSManual
 	cfg.CertFile, cfg.KeyFile, _ = writeCert(t, t.TempDir(), "rmm.test")
-	cfg.ListenHTTPS = freeAddr(t)
-	cfg.ListenHTTP = freeAddr(t)
+	cfg.ListenHTTPS = reserveAddr(t)
+	cfg.ListenHTTP = reserveAddr(t)
 	stop := runEdge(t, &edge{cfg: cfg, handler: okHandler(), hold: notHeld(t), log: discard()})
 
 	c := noRedirect()
@@ -417,8 +410,8 @@ func TestEdgeACMEServesChallengesAndRedirects(t *testing.T) {
 	cfg.TLSMode = config.TLSAcme
 	cfg.ACMEEmail = "ops@rmm.test"
 	cfg.ACMEDirectory = "https://127.0.0.1:1/directory" // never contacted by this test
-	cfg.ListenHTTPS = freeAddr(t)
-	cfg.ListenHTTP = freeAddr(t)
+	cfg.ListenHTTPS = reserveAddr(t)
+	cfg.ListenHTTP = reserveAddr(t)
 	stop := runEdge(t, &edge{cfg: cfg, handler: okHandler(), hold: notHeld(t), log: discard()})
 	resp, _ := get(t, noRedirect(), "http://"+cfg.ListenHTTP+"/x", "mesh.rmm.test")
 	if resp.StatusCode != http.StatusPermanentRedirect || !strings.HasPrefix(resp.Header.Get("Location"), "https://mesh.rmm.test:") {
@@ -436,7 +429,7 @@ func TestEdgeACMEServesChallengesAndRedirects(t *testing.T) {
 // 503 with Retry-After: HTTPS, MeshCentral's port and the redirects on
 // port 80, but not ACME's challenges (ADR-0052).
 func TestEdgeHeld(t *testing.T) {
-	consoleAddr, meshAddr, httpAddr := freeAddr(t), freeAddr(t), freeAddr(t)
+	consoleAddr, meshAddr, httpAddr := reserveAddr(t), reserveAddr(t), reserveAddr(t)
 	_, consolePort, _ := net.SplitHostPort(consoleAddr)
 	_, meshPort, _ := net.SplitHostPort(meshAddr)
 	cfg := testConfig(t)
@@ -460,8 +453,8 @@ func TestEdgeHeld(t *testing.T) {
 	acmeCfg.TLSMode = config.TLSAcme
 	acmeCfg.ACMEEmail = "ops@rmm.test"
 	acmeCfg.ACMEDirectory = "https://127.0.0.1:1/directory" // never contacted by this test
-	acmeCfg.ListenHTTPS = freeAddr(t)
-	acmeCfg.ListenHTTP = freeAddr(t)
+	acmeCfg.ListenHTTPS = reserveAddr(t)
+	acmeCfg.ListenHTTP = reserveAddr(t)
 	stop = runEdge(t, &edge{cfg: acmeCfg, handler: okHandler(), hold: held(t), log: discard()})
 	defer stop()
 	resp, body = get(t, noRedirect(), "http://"+acmeCfg.ListenHTTP+"/x", "rmm.test")

@@ -38,7 +38,7 @@ func TestSoftwareJobs(t *testing.T) {
 	}
 
 	// The agent gets EasyRMM's script, signed, with the package as an argument.
-	resp, err := f.svc.Poll(f.ctx, lnx)
+	resp, err := f.svc.Poll(f.ctx, lnx, nil)
 	if err != nil || len(resp.Jobs) != 1 {
 		t.Fatalf("poll %+v, %v", resp, err)
 	}

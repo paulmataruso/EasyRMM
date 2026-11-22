@@ -469,6 +469,19 @@ export interface DeviceAgent {
   enrolledAt: string;
   /** Where the agent stands against the server's build; null when the server has none for its platform. */
   update: AgentUpdate | null;
+  /**
+   * The job capabilities the agent's build said it takes, with its polls (ADR-0064): "job.pwsh" for PowerShell 7 scripts.
+   * Null when the build it runs now has not said, as an agent of a release before this one never does.
+   */
+  accepts: string[] | null;
+  /** Whether the last inventory listed a usable PowerShell 7; null when it listed no PowerShell (an older agent, or none yet). */
+  powerShell7: boolean | null;
+  /**
+   * Where no PowerShell 7 is usable but one is blocked, why: what it would load fails the agent's check, or a file of it is
+   * open in another program, has more than one hard link or could not be checked, and PowerShell 7 scripts fail there without
+   * falling back to Windows PowerShell 5.1 (ADR-0064). Absent otherwise.
+   */
+  powerShell7Blocked?: string;
 }
 
 /**
@@ -767,7 +780,28 @@ export interface AuditForwardingTest {
 
 /** STARTTLS required, TLS from the first byte, or none (only to a relay on this machine). */
 export type MailSecurity = "starttls" | "tls" | "none";
-export type MailSignIn = "none" | "password";
+export type MailSignIn = "none" | "password" | "microsoft365";
+/** How a Microsoft 365 application proves itself: a client secret, or a certificate with its private key. */
+export type MailCredential = "secret" | "certificate";
+
+export interface MailCertificate {
+  subject: string;
+  /** SHA-1, in hexadecimal, as Entra shows it under Certificates & secrets. */
+  thumbprint: string;
+  notBefore: string;
+  notAfter: string;
+}
+
+/** The Entra application a mail server signs in with (ADR-0053, slice 2). Its secret and key are never shown. */
+export interface MailApplication {
+  tenantId: string;
+  clientId: string;
+  credential: MailCredential;
+  secretSet: boolean;
+  certificate?: MailCertificate;
+  /** The certificate has ended, or ends within 30 days. */
+  certificateWarning?: string;
+}
 
 export interface MailServer {
   host: string;
@@ -777,10 +811,18 @@ export interface MailServer {
   username: string;
   /** A password is stored; it is never shown. */
   passwordSet: boolean;
+  application?: MailApplication;
   fromAddress: string;
   fromName: string;
   updatedAt?: string;
   updatedBy?: string;
+}
+
+/** The server's last check of the mail server in force: it connected and signed in, and sent nothing. */
+export interface MailCheck {
+  at: string;
+  ok: boolean;
+  message: string;
 }
 
 export interface MailServerView {
@@ -790,6 +832,10 @@ export interface MailServerView {
   console?: MailServer;
   /** What of .env's mail server the patching engine will not take; EasyRMM still sends with it. */
   envProblem?: string;
+  /** Why the patching engine is given no mail server: an application signs in to the one in force. */
+  engineWithheld?: string;
+  /** This server's last check of the mail server in force, absent until one has run since the last change. */
+  check?: MailCheck;
   limits: {
     perMinute: number;
     perDay: number;
@@ -836,6 +882,16 @@ export interface MailServerInput {
   password: string;
   fromAddress: string;
   fromName: string;
+  /** With signIn microsoft365: the application. */
+  tenantId?: string;
+  clientId?: string;
+  credential?: MailCredential;
+  /** Write-only; empty keeps the stored one while the host, port, security, tenant, application and credential stay the same. */
+  clientSecret?: string;
+  /** PEM; empty keeps the stored one, as the secret. */
+  certificate?: string;
+  /** PEM, write-only; empty keeps the stored one, as the secret, or the stored key for a renewed certificate. */
+  certificateKey?: string;
 }
 
 export interface MailServerTestInput {
@@ -861,7 +917,7 @@ export interface RemoteAccessStatus {
 
 // Scripts and jobs (ADR-0017) --------------------------------------------------------------------
 
-export type Shell = "powershell" | "cmd" | "bash" | "sh" | "python3";
+export type Shell = "powershell" | "pwsh" | "cmd" | "bash" | "sh" | "python3";
 /** Where a script can run: everywhere, in one organization, or in one site. */
 export type ScriptLevel = "shared" | "organization" | "site";
 
@@ -875,6 +931,8 @@ export interface Script {
   name: string;
   description: string;
   shell: Shell;
+  /** A PowerShell 7 script that may run in Windows PowerShell 5.1 where no usable PowerShell 7 is found (ADR-0064). */
+  pwshFallback: boolean;
   /** Only in the response for one script. */
   body?: string;
   sha256: string;
@@ -893,11 +951,12 @@ export interface ScriptInput {
   name: string;
   description: string;
   shell: Shell;
+  pwshFallback: boolean;
   body: string;
   timeoutSeconds: number;
 }
 
-export type ScriptPatch = Partial<Pick<ScriptInput, "name" | "description" | "shell" | "body" | "timeoutSeconds">>;
+export type ScriptPatch = Partial<Pick<ScriptInput, "name" | "description" | "shell" | "pwshFallback" | "body" | "timeoutSeconds">>;
 
 export type RunStatus = "queued" | "sent" | "running" | "succeeded" | "failed" | "timed_out" | "canceled" | "expired" | "lost";
 
@@ -913,6 +972,8 @@ export interface Job {
   scriptId: string | null;
   scriptName: string;
   shell: Shell;
+  /** The script's fallback setting, copied into the job. */
+  pwshFallback: boolean;
   sha256: string;
   timeoutSeconds: number;
   /** When devices that have not picked the job up stop being waited for. */
@@ -930,6 +991,11 @@ export interface Job {
   argCount?: number;
   /** Whether the caller may read the values: they hold job.view_sensitive where one of the runs they see is. */
   canViewArguments?: boolean;
+  /**
+   * Only in the response for one job: whether GET /jobs/{id}/output.zip would hold something, a finished run the caller
+   * sees at a site where they hold job.view_sensitive (ADR-0064).
+   */
+  canDownloadOutput?: boolean;
   canCancel: boolean;
 }
 
@@ -953,6 +1019,13 @@ export interface JobRun {
   exitCode: number | null;
   error: string;
   cancelRequested: boolean;
+  /** The program the agent started, as it reported it (ADR-0064); null when it reported none, as older agents do. */
+  program: RunProgram | null;
+  /**
+   * Why a queued run is not delivered: "unable" when the device's agent said it cannot run it, "unreported" when the build
+   * it runs has not said. Absent otherwise.
+   */
+  held?: "unable" | "unreported";
   /** The job is only in the response for one run. */
   job?: Job;
   /**
@@ -967,6 +1040,17 @@ export interface JobRun {
   stderrBytes?: number;
   outputRemovedAt?: string | null;
   canCancel: boolean;
+}
+
+/** The program a run started (agentproto.Interpreter). cmd and the Linux shells report the path only. */
+export interface RunProgram {
+  /** PowerShell only. */
+  edition?: "Desktop" | "Core";
+  version?: string;
+  arch?: "x64" | "arm64" | "x86";
+  path: string;
+  /** A PowerShell 7 script ran in Windows PowerShell 5.1, as it allows, since no usable PowerShell 7 was found. */
+  fallback?: boolean;
 }
 
 /** What a run printed (GET /job-runs/{id}/output). */
@@ -1046,6 +1130,20 @@ export interface HardeningPorts {
   unknown?: string[];
 }
 
+/** Failed sign-ins in a Windows computer's Security log (ADR-0054, Accounts). */
+export interface HardeningExposure {
+  /** Failed sign-ins from public addresses, or 10 or more for one account within 15 minutes. */
+  exposed: boolean;
+  /** The failed sign-ins from public addresses: the accounts tried and the addresses. */
+  accounts: string[];
+  addresses: string[];
+  /** Accounts with 10 or more failed sign-ins within 15 minutes. */
+  bursts?: string[];
+  /** How far back the log was read; null, with sinceReason, where the oldest record read is dated after the check. */
+  since: string | null;
+  sinceReason?: string;
+}
+
 /** One module as the job that last covered it found it. */
 export interface HardeningModule {
   module: string;
@@ -1057,6 +1155,8 @@ export interface HardeningModule {
   changes?: string[];
   /** The firewall's only. */
   ports?: HardeningPorts;
+  /** Windows' accounts module only. */
+  exposure?: HardeningExposure;
   /** Null once the job is deleted. */
   jobId: string | null;
   checkedAt: string;
@@ -1252,7 +1352,33 @@ export interface Inventory {
   dnsServers: string[];
   packageManager: "" | "windows" | "dpkg" | "rpm" | "apk" | "pacman";
   packageCount: number;
+  /**
+   * Windows PowerShell and the PowerShell 7 installs the agent found (ADR-0064), Windows PowerShell first, then the one a
+   * PowerShell 7 script runs in. Absent from an agent that reports none: a Linux agent, or one too old to report them.
+   */
+  powerShell?: PowerShellInstall[];
   receivedAt: string;
+}
+
+/** A PowerShell the agent found (agentproto.PowerShellInstall). */
+export interface PowerShellInstall {
+  edition: "Desktop" | "Core";
+  version: string;
+  arch: "" | "x64" | "arm64" | "x86";
+  path: string;
+  preview?: boolean;
+  /** A Microsoft Store (MSIX) install: reported, never run. */
+  store?: boolean;
+  /** Whether a script may run in it; otherwise reason says why not. */
+  usable: boolean;
+  reason?: string;
+  /**
+   * Not usable, and not passed over for Windows PowerShell 5.1: what it would load, its module folders or configuration,
+   * fails the agent's check, or a file of it is open in another program, or it (or the folder installs are in) could not be
+   * read or checked. A run moves to another install only where one passes every check; otherwise it fails, and does not
+   * fall back to Windows PowerShell 5.1.
+   */
+  blocked?: boolean;
 }
 
 export interface Filesystem {
@@ -1419,6 +1545,19 @@ export interface AlertEntry {
   resolvedBy?: string;
   resolution?: AlertResolution;
   canManage: boolean;
+}
+
+/** The measurement a processor, memory or disk use alert watches, around its window (GET /alerts/{id}/metrics): from
+ * the policy's minutes before it opened until it resolved or now, with some time either side. */
+export interface AlertMetrics {
+  metric: "cpu" | "memory" | "disk";
+  threshold: number | null;
+  from: string;
+  to: string;
+  bucketSeconds: number;
+  /** The window starts later than the alert's: earlier measurements are no longer kept. */
+  trimmed: boolean;
+  samples: { at: string; value: number }[];
 }
 
 /** Active alerts on one device (GET /alerts/devices), for the alerts tree. */
@@ -1985,6 +2124,11 @@ export interface PatchMonthlyReportList {
   canGenerate: string[];
 }
 
+/** Whether the patching engine can email reports: withheld says why not while a Microsoft 365 application signs in. */
+export interface PatchReportsMail {
+  withheld?: string;
+}
+
 export interface PatchReportSchedule {
   organizationId: string;
   organizationName: string;
@@ -2274,7 +2418,16 @@ export interface PatchNotifications {
    * The mail server email channels send through: EasyRMM's, given to EasyPatch at start and after every change. problem says why
    * EasyRMM could not give it, after several tries in a row, which removed the engine's.
    */
-  mail: { host: string; port: number; security: string; fromAddress: string; fromName: string; problem?: string };
+  mail: {
+    host: string;
+    port: number;
+    security: string;
+    fromAddress: string;
+    fromName: string;
+    problem?: string;
+    /** Why the engine is given no mail server although EasyRMM has one: a Microsoft 365 application signs in to it (ADR-0053). */
+    withheld?: string;
+  };
   allowPrivateNetworkWebhooks: boolean;
 }
 

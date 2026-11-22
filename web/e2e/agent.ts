@@ -17,9 +17,28 @@ export interface JobPayload {
   jobId: string;
   deviceId: string;
   shell: string;
+  /** A PowerShell 7 script that may run in Windows PowerShell 5.1 (ADR-0064). */
+  pwshFallback?: boolean;
   script: string;
   args: string[];
   timeoutSeconds: number;
+}
+
+/** The program a run started, as the agent reports it with the result (agentproto.Interpreter). */
+export interface Interpreter {
+  edition?: "Desktop" | "Core";
+  version?: string;
+  arch?: "x64" | "arm64" | "x86";
+  path: string;
+  fallback?: boolean;
+}
+
+/** A PowerShell the agent found, as its inventory lists it (agentproto.PowerShellInstall). */
+export interface PowerShellInstall extends Interpreter {
+  edition: "Desktop" | "Core";
+  version: string;
+  usable: boolean;
+  reason?: string;
 }
 
 export class Agent {
@@ -43,9 +62,12 @@ export class Agent {
     return response;
   }
 
-  /** The jobs waiting for the device. The server holds the poll open for a while when there are none. */
-  async poll(): Promise<JobPayload[]> {
-    const { jobs } = (await (await this.post("/api/agent/v1/jobs/poll", {})).json()) as { jobs: { payload: string }[] };
+  /**
+   * The jobs waiting for the device. The server holds the poll open for a while when there are none. accepts lists the
+   * job capabilities this agent's build takes ("job.pwsh"); without it the device's last list stands (ADR-0064).
+   */
+  async poll(accepts?: string[]): Promise<JobPayload[]> {
+    const { jobs } = (await (await this.post("/api/agent/v1/jobs/poll", accepts ? { accepts } : {})).json()) as { jobs: { payload: string }[] };
     return jobs.map((j) => JSON.parse(Buffer.from(j.payload, "base64").toString("utf8")) as JobPayload);
   }
 
@@ -67,8 +89,8 @@ export class Agent {
     await this.post("/api/agent/v1/hardware", report);
   }
 
-  /** Reports that the run ended with exit code 0 and this output. */
-  async succeeded(runId: string, stdout: string): Promise<void> {
+  /** Reports that the run ended with exit code 0 and this output, and the program it started when given. */
+  async succeeded(runId: string, stdout: string, interpreter?: Interpreter): Promise<void> {
     const now = new Date().toISOString();
     await this.post(`/api/agent/v1/jobs/${runId}/result`, {
       status: "succeeded",
@@ -80,6 +102,7 @@ export class Agent {
       error: "",
       startedAt: now,
       finishedAt: now,
+      ...(interpreter ? { interpreter } : {}),
     });
   }
 }

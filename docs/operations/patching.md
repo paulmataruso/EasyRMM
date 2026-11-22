@@ -371,6 +371,18 @@ whose patching you see; an organization's own alerts, and those of
 endpoints with no EasyRMM device, only when you see the whole
 organization. `?deviceId=` shows one device's alerts.
 
+Select an alert's title for its card: what the alert is (severity, state,
+type and rule, or *Deleted* when the rule was deleted), its device
+(linked to the device's Patches tab), endpoint or organization, the
+engine's details, when it opened, how long it has been open, when the
+engine last found its cause, who acknowledged it and when it resolved,
+what the type of rule means, what to do next with a link to the device's
+Patches tab (or the organization's patching alerts, and Patching →
+Updates for an update on hold), and the alert as JSON to copy. The engine
+has no address for one alert, so the card shows the alert's row as the
+list last loaded it, kept up to date while the list refreshes, and
+**Acknowledge** is in the card too.
+
 **Acknowledge** says someone is on it: the alert stays until the engine
 resolves it, shows who acknowledged it and when, and is no longer counted
 on the overview. Select several to acknowledge them together. You can
@@ -619,6 +631,9 @@ the one that also sends invitations and password resets: the console's
 (Settings → **Notifications** → Mail server) or `.env`'s `EASYRMM_SMTP_*`
 settings, which win when `EASYRMM_SMTP_HOST` is set ([Mail](mail.md)). It
 gives it at start and again at once after every change, without a restart.
+While a Microsoft 365 application signs in to that mail server, the engine,
+which cannot sign in that way, is given none, and Settings → **Patching** →
+Notifications says so ([Mail](mail.md#microsoft-365)).
 Without a mail server, **Email** and schedules say that EasyRMM has no mail
 server to send reports with. The engine sends reports only over STARTTLS
 or TLS, so a mail server without encryption is refused for reports.

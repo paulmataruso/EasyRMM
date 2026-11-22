@@ -1,17 +1,47 @@
 # ADR-0054: Hardening Windows computers and servers
 
-* Status: Proposed (2026-11-21), revised after its independent review and
-  again after that review's check, the same day. Not implemented.
+* Status: Accepted (2026-11-22, after an independent review and its check). W1, check, built in #92, except what needs real computers EasyRMM's tests do not have, which moved out of W1 (see Slices): the MDM reader's proof on an Intune-enrolled Windows 11, which waits for a tenant, and reading what Defender for Endpoint's security settings management, Configuration Manager's baselines and DSC's configurations cover; until then each makes the computer check only. W2 and W3 not started.
+* Revised (2026-11-21) after its independent review and again after that
+  review's check. On acceptance, brought up to date with the ADRs merged
+  since (ADR-0060, and ADR-0063 to ADR-0068), each where it touches this
+  ADR; where one changes something decided here, the section says so.
+* Amends: [ADR-0017](0017-scripts-and-jobs.md), with W2: batch IDs, job
+  retention per kind, one audit row per organization per daily batch, and
+  runs the server cancels (see [The job](#the-job)).
 * Builds on: [ADR-0051](0051-hardening-linux-computers.md) (the `hardening`
   job, its modes, results, permission and console),
   [ADR-0017](0017-scripts-and-jobs.md) (scripts and jobs),
+  [ADR-0063](0063-who-sees-job-output-and-arguments.md) (implemented: who
+  sees a run's output and a job's arguments, and how long output is kept),
   [ADR-0028](0028-software-deployment.md) (a fixed script compiled into the
   server, its input as arguments) and [ADR-0020](0020-windows-agent.md)
   (the Windows agent).
-* Shares with log collection's ADR (ADR-0060, proposed): Windows audit
-  policy, which log collection sets from one table that this ADR's check
-  compares against, and the reader of who owns a setting (*policy
-  ownership*), built once, in this ADR's W1, for both.
+* Shares with [ADR-0060](0060-collecting-logs.md) (log collection;
+  proposed, not implemented): Windows audit policy, which log collection
+  sets from one table that this ADR's check compares against, and the
+  reader of who owns a setting (*policy ownership*), built once, in this
+  ADR's W1, for both.
+* Used by later ADRs, each accepted; none implemented except ADR-0065's
+  slice 1 (PR #86):
+  * [ADR-0067](0067-remote-registry-editor.md) (the registry editor, and
+    F2): before a write it shows W1's ownership reader's answer and
+    whether W2's manifest lists the value; F2 extends W2's job amendments
+    per kind; and it amends [One change at a time](#the-job) so that
+    registry changes take the same lock.
+  * [ADR-0068](0068-remote-event-viewer.md) (the event viewer): before a
+    change to a log's settings it shows W1's reader's answer; its queries
+    use the server's cancel, as F2 extends it; and it amends One change
+    at a time so that `eventlog_manage` takes the same lock.
+  * [ADR-0064](0064-remote-powershell-management.md) (remote PowerShell),
+    [ADR-0065](0065-hardware-health.md) (hardware health), ADR-0067 and
+    ADR-0068 leave their Windows paths that CI's runners cannot show
+    unverified until this ADR's Windows machines under KVM, or real
+    computers, show them (see [Testing](#testing)). ADR-0064's, ADR-0067's
+    and ADR-0068's Windows test jobs run as LocalSystem through a
+    scheduled task, as this ADR's tests do.
+
+  This ADR gains an *Amended by* line for ADR-0067 and for ADR-0068 when
+  each is implemented, as they say.
 
 ## Context
 Most computers an MSP manages run Windows. The owner asked for automatic
@@ -308,6 +338,10 @@ reason above for its not naming CIS recommendations.
   Bypass -File`, as LocalSystem, inside a job object). No PowerShell 7, no
   modules installed from the PowerShell Gallery, no `Add-Type` (it
   compiles C# at run time and is refused in Constrained Language Mode).
+  [ADR-0064](0064-remote-powershell-management.md) adds a `pwsh` shell
+  that runs PowerShell 7 where it is installed; EasyRMM's own hardening
+  script keeps the `powershell` shell, Windows PowerShell 5.1, as
+  ADR-0064 says.
   Language-neutral throughout: accounts and groups by SID (Administrators
   `S-1-5-32-544`, the Guest account by its RID, 501, the built-in
   Administrator by 500), audit subcategories by GUID, event fields by their
@@ -326,7 +360,24 @@ reason above for its not naming CIS recommendations.
   in two steps (what the first step started, and when), and each change
   with its time, which log collection reads (see Audit policy). The format
   stays `EASYRMM-HARDENING-RESULT-V1`: the script and the server ship
-  together.
+  together. **As built in W1, decided in review:** what the script could
+  not read is never taken for an answer. A role or join Windows did not
+  report is *unknown*, an enrolment that could not be read is null, and
+  such a computer is check only (`unreadable`); what turns on whether the
+  computer is a domain controller (the settings they are exempt from, the
+  audit subcategories set only on them, whether a running Print Spooler
+  counts) is then *unknown* too, never taken as not one. A setting whose
+  value could not be read (a registry value, Defender's preferences, a
+  log, a WMI provider's answer, an audit subcategory auditpol's backup
+  lacks) is *unknown* with the error, never *not set* and so in place or
+  not; a registry key its parent lists that will not open is a read that
+  failed, not an absent key, and an auditpol backup not in its form is
+  none. A module none of whose settings could be read, or whose state
+  could not be (Defender's status, BitLocker's), *failed* with the
+  reason. *Not installed* is said only where the feature's service, WMI
+  namespace or class is absent: a service Get-Service does not find by
+  name is checked against Windows' list of services, since Get-Service
+  answers the same for one it could not query.
 * **Only tighter**, as on Linux: a value stricter than EasyRMM's is left
   (UAC that asks for credentials stays; a lockout threshold of 3 stays 3).
 * **One change at a time on a device.** ADR-0017 lets the agent run four
@@ -334,7 +385,11 @@ reason above for its not naming CIS recommendations.
   not send one while another hardening, software or patch job for that
   device is queued or running, and holds those until it ends, so that a
   feature removal and an update never run together. ADR-0051's jobs get
-  the same when it is next amended.
+  the same when it is next amended. ADR-0067 and ADR-0068 extend the lock,
+  once they are built, to registry changes (`registry_change`) and to a
+  log's settings and clearing (`eventlog_manage`): none runs beside a
+  hardening apply or undo on the same device; their reads never wait for
+  it.
 * **A daily check** on every device where EasyRMM's values are in place,
   so that an owner that arrives later is seen (see Managed elsewhere). It
   is an ordinary signed `hardening` job in `check` mode, never apply or
@@ -361,6 +416,16 @@ reason above for its not naming CIS recommendations.
     with one row per organization per daily batch instead of one
     `device.script_run` per run; and the server may cancel a run itself,
     as above.
+  * **Since then.** [ADR-0063](0063-who-sees-job-output-and-arguments.md)
+    keeps a run's output for `EASYRMM_JOB_OUTPUT_RETENTION` (30 days by
+    default) and leaves retention per kind to the first kind that needs
+    it: its purge then gains the kind in its condition and a time per
+    kind. [ADR-0067](0067-remote-registry-editor.md)'s F2 extends these
+    amendments per kind and adds no second set, and ADR-0068's queries
+    use the server's cancel as F2 extends it. **Changed by ADR-0067**: if
+    F2 is built before W2, F2 builds job retention per kind and the
+    server's cancel, and W2 extends them. The MSP plan's order has W2
+    first (its step 8; F2 is step 15).
 
 ### Before anything changes
 The script first checks, and stops with every module *not supported* and
@@ -390,8 +455,14 @@ in a place the unreadable owner may write, which depends on the reason:
   can set (registry policy values, security policy, audit policy).
 * **Group Policy registry preference items**: every registry value, since
   a preference item can set any.
-* **MDM, until its reader is proven**: every setting this ADR writes for
-  which the Policy CSP has a policy (W1 lists them).
+* **MDM, until its reader is proven**: every setting no other owner
+  holds. **As built in W1, decided in review:** until the reader is
+  proven it cannot tell which of them an MDM sets, so every such value is
+  *cannot tell* (`mdm`), with the Policy CSP policy shown beside it where
+  there is one: DeviceLock, LocalPoliciesSecurityOptions and Audit for
+  security settings and audit subcategories, the policy W1's table names
+  for each registry setting, and none for the firewall's settings, which
+  are the Firewall CSP's, not the Policy CSP's.
 * **Defender for Endpoint's security settings management**: Defender's,
   attack surface reduction's and the firewall's values.
 * **A Configuration Manager client**: Defender's policy key, where its
@@ -424,9 +495,13 @@ If Group Policy sets PowerShell's execution policy to `AllSigned`, the
 script does not start at all: Group Policy "overrides the execution
 policies set in PowerShell in all scopes". The job fails with PowerShell's
 message, which the server recognises and shows as *Group Policy allows only
-signed scripts*. This is true of every PowerShell job EasyRMM runs today;
-signing EasyRMM's scripts depends on code signing, which is on hold (see
-Open questions).
+signed scripts*, in its own words, quoting nothing from the output
+([ADR-0063](0063-who-sees-job-output-and-arguments.md)). This is true of
+every PowerShell job EasyRMM runs, in either edition (ADR-0064). ADR-0067's
+and ADR-0068's builtins, Go code in the agent, are not stopped by it,
+though ADR-0067's owner warning, which runs this ADR's reader, then says
+*cannot tell*. Signing EasyRMM's scripts depends on code signing, which is
+on hold (see Open questions).
 
 ### Managed elsewhere
 A setting that another owner holds is never written. The check lists it
@@ -471,6 +546,19 @@ a setting is written once, in W1, as a PowerShell script in a Go package
 of its own (`internal/winpolicy`, beside `internal/agentproto`). The
 server includes it in the hardening script; the agent carries the same file
 for *Configure logging*, which builds no reader of its own (ADR-0060).
+ADR-0067's registry editor and ADR-0068's log settings show its answer
+before a change: ADR-0067's `registry` builtin starts the agent's copy as a
+child process of its own, with the values' paths in a file, and shows
+*cannot tell* where PowerShell cannot run it. W1 builds the reader so that
+it can be started that way. As built in W1: `internal/winpolicy`'s
+`Query()` is the reader followed by `query.ps1`, started as
+`powershell.exe -File <script> <request file>`; the request names registry
+values under HKLM (with the Policy CSP policy that sets each, if any),
+security settings by their security template names and audit
+subcategories by GUID, at most 1000 in all; it prints one line,
+`EASYRMM-WINPOLICY-V1` and the answers in the request's order, and exits
+with 3 where it cannot run (no administrator, or not Full Language Mode),
+which the caller shows as *cannot tell*.
 For each registry value, security setting and audit subcategory it
 returns exactly one of three results:
 
@@ -485,10 +573,23 @@ returns exactly one of three results:
   items, MDM until its reader is proven, Defender for Endpoint's security
   settings management (for Defender, attack surface reduction and
   firewall values), a Configuration Manager client, DSC correcting drift,
-  Azure machine configuration, a policy value (under a `Policies` key)
-  that none of these explains and EasyRMM did not write (a tool the
-  reader does not know), and *owner unknown* (a value EasyRMM set that
-  was set back twice). The list grows
+  Azure machine configuration, an active OSConfig scenario (added in W1,
+  see OSConfig below), another vendor's firewall on a server (added in
+  W1, for the firewall's values; see Another antivirus or firewall
+  below), a record the reader needs that could not be read (added in W1:
+  the MDM enrolments, DSC's meta configuration or OSConfig's record of
+  its scenarios, for every value; the preferences' history, the local
+  Group Policy object's `Registry.pol`, whether domain policy turns local
+  policy off, or the policy value itself, for registry values; the audit
+  extension's history or copy, or `SCENoApplyLegacyAuditPolicy`, for
+  audit subcategories; the installation type, Security Center or the
+  filtering platform, for antivirus or firewall values; Defender for
+  Endpoint's onboarding state, for Defender's values; Defender's status,
+  for values Tamper Protection guards; a read that fails is never taken
+  as a value that is absent), a policy value
+  (under a `Policies` key) that none of these explains and EasyRMM did
+  not write (a tool the reader does not know), and *owner unknown* (a
+  value EasyRMM set that was set back twice). The list grows
   only by amending this ADR, and each reason is a fixed code that both
   features show.
 
@@ -504,22 +605,55 @@ and Group Policy objects (see Testing). What it reads, owner by owner:
   `gpresult /scope computer /x` is a cross-check, the source of the
   policy's name, and the source of advanced audit policy, which Group
   Policy applies through an extension of its own rather than as registry
-  policy (W1 confirms this against a domain policy). Whether Windows
-  records the resultant set of policy on a computer in a workgroup, where
-  only local Group Policy applies, is settled in W1; if it does not, the
-  local Group Policy object's `Registry.pol` is read instead.
+  policy (W1 confirms this against a domain policy). **Found in W1,
+  decided in review:** on a Server 2025 domain member, `gpresult /x`
+  named the advanced audit extension and none of its settings, though
+  `auditpol` showed them applied. So the reader also reads that
+  extension's own record: the policies in its history under
+  `Group Policy\History\{F3CCC681-…}`, and the merged copy it keeps in
+  `%SystemRoot%\security\audit\audit.csv`, for the subcategories
+  `gpresult` did not report; with no policy in the history, the copy is
+  not Group Policy's. The copy does not say which policy set which
+  subcategory, so with two such policies both are named. A history that
+  cannot be read, or one that lists policies while the copy is missing or
+  cannot be read, makes audit subcategories *cannot tell*
+  (`unreadable`). **As built in W1, decided in review:** whether Windows
+  records the local Group Policy object's values in the resultant set of
+  policy on a computer in a workgroup was not settled (on GitHub's
+  workgroup runners the record named the local object, but `gpupdate`
+  did not apply a `Registry.pol` written by hand), so the reader reads
+  the local object's `Registry.pol` itself, which holds either way, with
+  every other Group Policy object outranking it, unless domain policy
+  turns local policy processing off. A value Group Policy deletes
+  (`**del.`, `**delvals.`, `**DeleteValues` or `**DeleteKeys` in a
+  `Registry.pol`, or an entry the resultant set of policy marks deleted)
+  is Group Policy's, with the value *deleted*. Where subcategories do not
+  override categories (`SCENoApplyLegacyAuditPolicy` 0; Windows' default,
+  with the value absent, is that they do), a legacy audit category's
+  policy holds each of its subcategories.
   * **Its record turned off.** Group Policy's *Turn off Resultant Set of
     Policy logging* (`RSoPLogging` 0) stops Windows recording what it
     applied, so the reader cannot tell who owns what. The reader detects
     the value, and the computer gets check only, with the reason. W1 tests
     whether `gpresult` still reports anything then; nothing is assumed.
+    **Found in W1, decided in review:** with the policy linked and
+    applied, WMI still held the last record written before it, naming
+    policies as if current. So with the record off the reader reads
+    neither that record nor `gpresult`, which reports from it; the
+    extensions' own histories (preferences, audit) are still read.
+    Unlinking the policy brought the record back on the next refresh.
   * **Group Policy Preferences.** Registry items set through preferences
     are applied by a different extension. Microsoft documents how
     registry-based policy appears in the resultant set of policy, not how
     preference items do. W1 finds how to read them, on the test domain
     with a Group Policy object that sets registry preference items; until
     that reading is proven, a computer whose Group Policy carries registry
-    preference items gets check only.
+    preference items gets check only. **As built in W1:** the reader finds
+    them by the preferences extension's history (and `gpresult`'s
+    registry settings), not per value, so every registry value not held
+    by registry policy is *cannot tell* with `group_policy_preferences`
+    while that history has an entry. Unlinking the test's preferences
+    policy emptied the history and the reason went.
 * **MDM** (Intune and others through the Policy CSP): the **MDM Bridge WMI
   provider** (`root\cimv2\mdm\dmmap`), read as Local System, the agent's
   account. **Ownership comes from the Policy CSP's `Config` node** (the
@@ -529,14 +663,29 @@ and Group Policy objects (see Testing). What it reads, owner by owner:
   policies from all providers": a value in `Result` alone may have come
   from Group Policy and is not taken as MDM's. Microsoft notes of `Config`
   that "A query from a different caller could provide a different value",
-  so W1 proves that the bridge, read as Local System, shows the MDM's
-  values. Group Policy wins over MDM unless the MDM set `MDMWinsOverGP`,
+  so the reader's proof shows that the bridge, read as Local System,
+  shows the MDM's values. Group Policy wins over MDM unless the MDM set `MDMWinsOverGP`,
   which "doesn't apply for all settings, such as attack surface reduction
-  (ASR) rules in Windows 10", and the reader reads that too. Microsoft's
+  (ASR) rules in Windows 10", and the reader reads that too. **As built
+  in W1, decided in review:** the reader lets `MDMWinsOverGP` hand a
+  value to the MDM for every Policy CSP policy except attack surface
+  reduction rules, whose Group Policy rule still wins; where
+  `MDMWinsOverGP` cannot be read, the MDM may win, and Group Policy's
+  value is *cannot tell*. Microsoft's
   class reference gives "None supported" as the minimum server, so an
-  MDM-enrolled server is check only. W1 proves the reader on an
-  Intune-enrolled Windows 11 (see Open questions); until then, a computer
-  enrolled in MDM gets check only.
+  MDM-enrolled server is check only. The reader's proof on an
+  Intune-enrolled Windows 11 moved out of W1, decided in review: it waits
+  for a tenant (see Open questions and Slices); until then, a computer
+  enrolled in MDM gets check only. What counts as enrolled, decided in
+  review in W1: an enrolment under `HKLM\SOFTWARE\Microsoft\Enrollments`
+  that is enrolled (`EnrollmentState` 1) and records the discovery service
+  it was found through (`DiscoveryServiceFullURL`). Windows keeps
+  enrolments of its own under the same key (providers *Local Authority*,
+  *Deploy Authority*, *Cloud Authority*, *WMI_Bridge_SCCM_Server*, and
+  some with no provider; all seen on an evaluation Windows Server 2025
+  that was never enrolled), and these are not an MDM. The reader not yet
+  proven, the setting's MDM values (`Config`, `Result` and the winning
+  provider) are shown beside its *cannot tell*.
 * **Microsoft Defender for Endpoint's security settings management**,
   which applies Intune's antivirus, attack surface reduction, EDR and
   firewall policies to computers not enrolled in Intune. Microsoft
@@ -544,25 +693,38 @@ and Group Policy objects (see Testing). What it reads, owner by owner:
   (`HKLM\SOFTWARE\Microsoft\SenseCM\EnrollmentStatus`), but not the value
   that means enrolled. W1 settles it on a real device; until then, on a
   computer onboarded to Defender for Endpoint, `defender`, `asr` and
-  `firewall` are check only.
+  `firewall` are check only. **As built in W1:** onboarding is detected
+  and those values are *cannot tell*; settling it moved out of W1 (see
+  Slices).
 * **Configuration Manager**: its configuration baselines can be deployed
   with "Remediate noncompliant rules when supported", which "Automatically
   remediates any rules that are noncompliant for Windows Management
   Instrumentation (WMI), the registry, scripts". W1 finds how to detect
   the client and read which values its remediating baselines cover; until
   then, a computer with the Configuration Manager client gets check only.
+  **As built in W1:** the client is detected by its service (`CcmExec`)
+  and every value is *cannot tell*; reading its baselines moved out of W1
+  (see Slices).
 * **PowerShell DSC**, built into Windows PowerShell 5.1:
   `Get-DscLocalConfigurationManager` shows the configuration mode, and in
   `ApplyAndAutoCorrect`, when the computer drifts, DSC "re-applies the
   current configuration" (checked every 15 minutes by default). W1 reads
   the applied configuration's resources; until then, a computer in
-  `ApplyAndAutoCorrect` with a configuration gets check only.
+  `ApplyAndAutoCorrect` with a configuration gets check only. **As built
+  in W1:** that mode with a current configuration is detected and every
+  value is *cannot tell*; reading the resources moved out of W1 (see
+  Slices).
 * **Azure machine configuration**: on an Azure Arc server the
   `GCArcService` service "Audits and enforces Azure machine configuration
   policies on the machine" (on Azure virtual machines an extension does),
   and an `ApplyAndAutoCorrect` assignment corrects drift, checked every 15
   minutes. No documented local way to read the assignments was found, so
-  a computer running it gets check only until W1 finds one.
+  a computer running it gets check only until W1 finds one. **As built in
+  W1, decided in review:** it is known by its services (`GCArcService`
+  on Arc, the extension's `GCService` on Azure virtual machines), which
+  only an administrator can register, not by the extension's folder under
+  `C:\Packages`, which a standard user can make where `C:\Packages` is
+  missing.
 * **OSConfig** (Windows Server 2025): a baseline applied through OSConfig
   with drift control is corrected "through a refresh task" (every four
   hours by default, according to Microsoft's announcement). Microsoft
@@ -573,7 +735,33 @@ and Group Policy objects (see Testing). What it reads, owner by owner:
   reader asks it (`Get-OSConfigDesiredConfiguration`), using the
   computer's own copy, which EasyRMM never installs; where it is not, no
   baseline was applied through it on that computer. W1 tests both on a
-  Server 2025 guest.
+  Server 2025 guest. **Amended in W1, decided in review:** on that guest
+  (module 1.4.16 from the PowerShell Gallery, scenario
+  `SecurityBaseline\WindowsServer\2025\MemberServer` 2610.2 applied with
+  its defaults: 343 settings, drift control on, every four hours),
+  OSConfig names its settings (`AfdDisableAddressSharing`) and its output
+  gives no registry path for any of them. So the reader cannot name
+  OSConfig as one value's owner. It lists the active scenarios with
+  `Get-OSConfigMetadata` (status *Active*; the read-only
+  `SecuredCoreState` sets nothing), and while one is active, every value
+  is *cannot tell* with the reason `osconfig`, until a table maps
+  OSConfig's names to values. *Set by OSConfig* is not shown until then.
+  On the same guest, with that baseline applied, the reader listed the
+  scenario and gave `osconfig` for every value Group Policy did not hold;
+  without the module, it gave none. That run used the reader as it was
+  before the review's fixes; on a rebuilt domain the same baseline (341
+  settings) gave the same answers from the reader at 3d8bfb6, after them,
+  and its `check all` gave 28 settings *check only*, each with `osconfig`
+  (docs/development/machine-tests.md). **Amended in W1, decided in review:**
+  the reader runs as SYSTEM, so it imports the module only by its full
+  path, from Program Files' or System32's module folder, and only where no
+  one but SYSTEM, Administrators and TrustedInstaller owns or may change
+  that folder, the folders above it up to the module folder, or anything
+  in it, and none of them is a junction or link; never by name through
+  `PSModulePath`. A copy found only elsewhere, one that fails that check,
+  or OSConfig's own registry record of a scenario
+  (`HKLM\SOFTWARE\Microsoft\OSConfig\Metadata`) without the module
+  makes every value *cannot tell* (`osconfig`).
 * **Microsoft Defender's own guards**: Tamper Protection blocks changes to
   real-time protection, behaviour monitoring, cloud protection and more
   ("changes made through a management tool, including Group Policy, might
@@ -587,7 +775,18 @@ and Group Policy objects (see Testing). What it reads, owner by owner:
 * **Another antivirus or firewall** (see Microsoft Defender and Firewall
   below). On workstations Windows Security Center names them; Microsoft
   says Security Center is not supported on server versions of Windows, so
-  on servers they are found by their services and drivers.
+  on servers they are found by their services and drivers. **As built in
+  W1, decided in review:** on servers, another firewall is found by its
+  Windows Filtering Platform provider (`netsh wfp show state`): a provider
+  that is not Windows' own (no built-in key, no Windows service, not
+  named for Microsoft) with filters at the inbound layers (connections
+  accepted, ports listened on, inbound packets) makes the firewall's
+  values *cannot tell* (`other_firewall`), never *not in place*. Another
+  antivirus on a server shows through Defender's own running mode
+  (passive, or not running), which the `defender` and `asr` modules
+  read. The reader
+  applies another product's and Tamper Protection's ownership itself, so
+  `Query()` answers with them too.
 * **Remote Desktop's own record**: the Terminal Services WMI provider
   reports, for NLA, the security layer and the encryption level, whether
   Group Policy sets each.
@@ -829,7 +1028,7 @@ cite, and whether they meet the rule, is in the next section.
 | `winrm` | WinRM's client and service: no Basic authentication, no unencrypted traffic, no Digest (client), no stored RunAs credentials (service). These are Windows' defaults; where Basic or unencrypted traffic is on (someone turned it on, often for Ansible or a monitoring tool) it is left and reported, unless the option `winrm-basic-off` is given. WinRM is never stopped and its listeners never removed | Yes |
 | `printing` | Only administrators install print drivers (the baseline's setting), drivers are never downloaded over HTTP, no printing over HTTP; on domain controllers the Print Spooler stopped and disabled (Microsoft: "domain controllers and Active Directory admin systems need to have the Print spooler service disabled"); on other servers only with the option `spooler-off`. On any server, domain controllers included, the spooler is left, and the result says why, where the server shares a printer, has the Print Server role or is a Remote Desktop session host. Never on workstations. Breaks: users adding a printer whose driver is not installed yet; on domain controllers, the spooler's pruning of stale print queue objects from Active Directory, which Microsoft calls the trade-off of disabling it (they must then be pruned some other way) | Yes |
 | `features` | Removes, where installed, the Telnet and TFTP clients, Simple TCP/IP Services and the Peer Name Resolution Protocol (payload kept), never applied while a restart is pending. An FTP server or Fax server is reported, never removed: it may be there on purpose (the STIG allows FTP where "required by the organization"). Breaks: someone using the Telnet client to test ports | Yes |
-| `tls` | Schannel: SSL 2.0 and 3.0 and TLS 1.0 and 1.1 off for clients and servers (a restart). Microsoft's own pages disagree on whether TLS 1.0 and 1.1 are already off on Server 2025 and Windows 11 24H2; the check reads what is in effect. Breaks: older SQL Server clients and drivers, older .NET programs, devices and line-of-business software that speak only TLS 1.0 | No |
+| `tls` | Schannel: SSL 2.0 and 3.0 and TLS 1.0 and 1.1 off for clients and servers (a restart). Microsoft's own pages disagree on whether TLS 1.0 and 1.1 are already off on Server 2025 and Windows 11 24H2; the check reads what is in effect, and where no value is set on build 26100 or later it reports *unknown* (decided in review in W1). SSL 2.0 and 3.0 with no value set are taken as off. Breaks: older SQL Server clients and drivers, older .NET programs, devices and line-of-business software that speak only TLS 1.0 | No |
 | `audit` | Report only: see **Audit policy** below | (report) |
 | `device-guard` | Report only: whether virtualization-based security, memory integrity (HVCI) and Credential Guard are running. Turning them on needs hardware and firmware support and a restart, cannot be undone remotely when locked in UEFI, and Credential Guard is not recommended on domain controllers | (report) |
 | `bitlocker` | Report only: whether the system volume is protected; by which protectors (TPM only, TPM and PIN, and others), so whether a PIN is asked before Windows starts, and the minimum PIN length policy sets (the Windows 11 STIG's rules ask for a PIN of at least six digits); whether a recovery password exists. Turning BitLocker on before its recovery key is kept somewhere can lose data; escrowing keys is a feature of its own | (report) |
@@ -926,6 +1125,17 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
   password spraying would lock the MSP's own accounts out, the ones its
   Remote Desktop sessions ([ADR-0026](0026-rdp-sessions.md)) use included.
   The result names the accounts and addresses and how far the log reached.
+  **As built in W1:** the scan reads at most 5,000 failed sign-ins,
+  newest first; where it stops there, how far it reached is the oldest
+  one it read. Account names are cleaned of control and format
+  characters, and sign-ins without one are not counted; the server
+  cleans or drops such text again rather than refusing the result.
+  **Decided in review:** where the oldest record read is dated after the
+  check, it was written while the computer's clock was wrong (the test
+  domain's member showed it), and its time says nothing of how far the
+  log reaches: the result gives no time (`since` null) but why
+  (`sinceReason`), which W3's console shows in place of a time. A record
+  dated before the check keeps its time.
 * **The Guest account disabled**, blank passwords usable only at the
   console.
 * **Never touched**: any other account. The module never disables,
@@ -1003,9 +1213,11 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
   they listen on little.
 * **Managed elsewhere**: a firewall policy from Group Policy, MDM or
   Defender for Endpoint; on workstations, a firewall product registered
-  with Windows Security Center; on servers, a firewall product found by its
-  services or by another vendor's Windows Filtering Platform providers
-  (from what `netsh wfp show state` writes; W1 confirms what it lists).
+  with Windows Security Center; on servers, another vendor's Windows
+  Filtering Platform provider with inbound filters (from what
+  `netsh wfp show state` writes). **As built in W1:** on a server that
+  makes the firewall's values *cannot tell* (`other_firewall`), never
+  *not in place*; the provider is named in the notes, not as an owner.
 * On most computers the firewall is already on and blocking; the module
   matters where someone turned it off, typically on servers.
 
@@ -1261,11 +1473,11 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
 
 ### Audit policy
 **Log collection owns Windows audit policy.** Its *Configure logging*
-(`logs.configure`, ADR-0060, proposed) sets the advanced audit
-subcategories, `SCENoApplyLegacyAuditPolicy` (subcategories override
-categories), command lines in process creation events, PowerShell script
-block logging and the event logs' sizes, from the agent, leaving what an
-owner holds; domain controllers only when chosen
+(`logs.configure`, ADR-0060, proposed and not implemented) sets the
+advanced audit subcategories, `SCENoApplyLegacyAuditPolicy` (subcategories
+override categories), command lines in process creation events,
+PowerShell script block logging and the event logs' sizes, from the
+agent, leaving what an owner holds; domain controllers only when chosen
 (`logs.configure.domainControllers`). Hardening sets none of these, so
 the two never fight over a value or over whose undo puts it back.
 
@@ -1375,7 +1587,9 @@ As in ADR-0051, with Windows' places and tools:
   platform is now check only or the reader *cannot tell*, leaving every
   value in the unreadable owner's place (see Before anything changes). A
   successful undo consumes the record; the next apply takes a fresh one.
-  Applying twice changes nothing the second time.
+  Applying twice changes nothing the second time. ADR-0067's registry
+  editor, before a write, shows whether this manifest lists the value, and
+  warns that changing it leaves hardening's undo for that value.
 * **Firewall settings that were not configured** in the local store
   (Windows' defaults) are put back as not configured, never written as an
   explicit *Block* or *Allow*. Microsoft documents `NotConfigured` as
@@ -1449,7 +1663,9 @@ As in ADR-0051, with Windows' places and tools:
   2022 and 2019, Desktop Experience and Server Core; Windows Server 2016
   until its extended support ends (13 January 2027 on its lifecycle page;
   Microsoft's FAQ gives a different date in one place). A newer build is
-  *not supported on this version* until tested, as on Linux.
+  *not supported on this version* until tested, as on Linux. Windows 11
+  Enterprise LTSC, serviced on dates of its own and not listed here, is
+  check only until tested (decided in review in W1).
 * **ARM64** waits for the agent's ARM64 build to have run on a real
   Windows ARM64 computer, which IMPLEMENTATION_STATUS.md lists as not yet
   verified, as well as for the `windows-11-arm` runner's results.
@@ -1478,6 +1694,10 @@ As in ADR-0051, with Windows' places and tools:
 * As for other jobs, every device needs the permission, an EasyRMM agent
   and a supported platform, or nothing runs. Viewing results needs
   `device.view`.
+* **A run's raw output and a job's argument values** need
+  `job.view_sensitive` (Technicians and above,
+  [ADR-0063](0063-who-sees-job-output-and-arguments.md)); a device's
+  findings, and a job's mode, modules and options, do not.
 
 ### The rest
 * **Audit**: `device.hardening`, with the mode, modules, options and job;
@@ -1509,12 +1729,20 @@ As in ADR-0051, with Windows' places and tools:
 * **CI's Windows runners**, from the first module on. For this public
   repository GitHub provides `windows-2025` and `windows-2022` (x64) and
   `windows-11-arm` (Windows 11 Enterprise on ARM64), each with 4 CPUs and
-  16 GB. The hardening tests are `OnWindows` Go tests like the software
-  scripts', in a matrix over those three labels; the existing *Agent tests
-  on Windows* job keeps its tests and its `windows-latest`. The script runs
-  as LocalSystem, as the agent's service would run it, through a scheduled
-  task. For each module: check, apply, check, apply again (no change),
-  undo, check, with every recorded value as before.
+  16 GB. The hardening tests are Go tests named `AsSystem`, in a job of
+  their own, *Windows hardening as LocalSystem*, in a matrix over those
+  three labels; the existing *Agent tests on Windows* job keeps its tests
+  and its `windows-latest`. The test binary runs as LocalSystem through a
+  scheduled task, with ADR-0064's harness (`scripts/ci/run-as-system.ps1`),
+  and starts the script with Windows PowerShell 5.1 and the agent's
+  arguments, as the agent's service would. Decided in review in W1: an
+  `OnWindows` name, as the software scripts' tests have, would also run
+  them in *Agent tests on Windows* as the runner's administrator. For each module: check, apply, check, apply again (no change),
+  undo, check, with every recorded value as before. ADR-0064's Windows
+  test job (the MSP plan's step 6, before W1), ADR-0067's and ADR-0068's
+  run the agent's own tests the same way, as LocalSystem through a
+  scheduled task, each in a job of its own over `windows-latest` and
+  `windows-11-arm`.
 * **What runners cannot show**: restarts; domains and Group Policy from a
   domain; traffic from outside; MDM; and whatever the runner images change
   themselves. `Configure-WindowsDefender.ps1` "Disables Windows Defender"
@@ -1556,6 +1784,58 @@ As in ADR-0051, with Windows' places and tools:
     virtualization-based security inside a nested guest probably cannot
     run. The fallback is a self-hosted runner the owner provides, or the
     same scenarios run by hand on the owner's machines and recorded.
+  * **Decided in W1, in review:** Windows guests work under KVM with the
+    devices above; GitHub's runners are not tried yet. Shown on a Proxmox
+    VE host (KVM and QEMU) the owner runs, not as a runner:
+    * The media: Windows Server 2025's evaluation ISO (build 26100.1742,
+      6,014,152,704 bytes, SHA-256 `d0ef4502…b23d`, which Microsoft
+      publishes nowhere we found) downloads with no form, cookie or
+      sign-in from the link `go.microsoft.com/fwlink/?linkid=2293312`.
+      The evaluation centre's own button asks for a name, company, email
+      and phone first; that the link is the one the form gives is not
+      confirmed. Its setup programs carry valid Microsoft signatures
+      (checked inside a guest, against that guest's own trust store). The
+      terms found say the evaluation "expires in 180 days" and "must be
+      activated over the internet in the first 10 days"; the licence in
+      the image has no evaluation clause and points to `aka.ms/useterms`,
+      which could not be read by script. **Whether the terms allow
+      automated testing is still not settled.**
+    * Unattended installs (SeaBIOS, an AHCI disk, an e1000e card, 2 CPUs,
+      2 GiB, no virtio drivers) took 15 minutes each; the domain
+      controller's AD DS role 12, its promotion 7 and its restart 7; the
+      member's join under 2. OpenSSH Server, a Windows capability, drove
+      the guests; the serial-port runner service is not built.
+    * The domain scenario: a domain controller and a member, with the
+      policies of `internal/winpolicy/testdata/domain-gpos.ps1`. The
+      `AsSystem` tests passed on both, and `TestQueryDomainAsSystem` named
+      each policy's owner, and *cannot tell* with Group Policy's record
+      off (see docs/development/machine-tests.md). OSConfig's baseline was
+      applied there too (see OSConfig, above). That first run ended at
+      e1ad681, before the review's fixes; the domain was rebuilt and the
+      scenario run again at 3d8bfb6, after the second review's, with the
+      same results.
+      The reader's tests that expect no domain policy skip there.
+    * What CI should do: build the images in each run on GitHub's Ubuntu
+      runners with KVM, in jobs that run on pushes to `main` and on a
+      schedule, never for pull requests, and never cached; extend
+      `internal/vmtest` to Windows with the serial-port service. Not built
+      or run on GitHub yet: a domain takes about 45 minutes to build on 2
+      CPUs before any test, and the evaluation's terms must be settled
+      first. Until then the domain scenarios run on the owner's Proxmox
+      with the committed scripts, and are recorded.
+    * The Proxmox host is not made a self-hosted runner: GitHub advises
+      against self-hosted runners for public repositories, since a fork's
+      pull request can run code on them.
+  * **Other ADRs wait for these machines.** ADR-0064, ADR-0065, ADR-0067
+    and ADR-0068 plan Windows tests on them: Windows with and without
+    PowerShell 7, `AllSigned` from Group Policy and Constrained Language
+    Mode (ADR-0064); QEMU's NVMe and AHCI disks under Windows' own drivers
+    (ADR-0065); Group Policy setting a value back, a domain account's
+    hive and App Control (ADR-0067); a domain account's SID, event
+    forwarding between two machines, Sysmon's events and Group Policy
+    setting a log's size (ADR-0068). The MSP plan builds feature 12's pair
+    of domain controllers in the same harness. So W1's decision, or its
+    fallback, decides how those are verified too.
 * **Scenarios, one or more per guard**, as in ADR-0051:
   * Persistence, first of all (see How settings are written): on Server
     2016, Server 2025 and Windows 11 domain members, every administrative
@@ -1682,6 +1962,10 @@ As in ADR-0051, with Windows' places and tools:
   questions).
 
 ## Slices
+The [MSP plan's order](../feature-plan-msp.md#order), decided in review,
+places W1, W2 and W3 at its steps 7, 8 and 9: after F0 (ADR-0063) and
+remote PowerShell's slice 1, and before notifications.
+
 * **W1, check.** The script's skeleton (platform, role, language mode, the
   Hardening folder's check as in PR #61, the manifest and its lock file,
   the JSON result); the ownership reader in `internal/winpolicy`
@@ -1690,12 +1974,23 @@ As in ADR-0051, with Windows' places and tools:
   Endpoint, Configuration Manager, DSC, Azure machine configuration,
   OSConfig, Tamper Protection, other antivirus and firewalls) and
   ADR-0060's audit table as data beside it, for log
-  collection to reuse; `check` for every module; on the server, the
+  collection to reuse, and startable as ADR-0067 starts it (see Policy
+  ownership); `check` for every module; on the server, the
   Windows platform, module names, options and result fields, and the
   related-controls tables with the tool that generates them; the static
   checks and the runner matrix in check mode; the KVM decision, proved
-  with one Server image and the domain scenario, or recorded with why not;
-  the MDM reader on a real Intune-enrolled Windows 11.
+  with one Server image and the domain scenario, or recorded with why not
+  (ADR-0064, ADR-0065, ADR-0067 and ADR-0068 wait for it too).
+  **Moved out of W1, decided in review:** what needs real computers
+  EasyRMM's tests do not have. The MDM reader's proof on a real
+  Intune-enrolled Windows 11 waits for an Intune tenant (see Open
+  questions) and is done when one is available; until then a computer
+  enrolled in an MDM is check only, with every value no other owner holds
+  *cannot tell* (`mdm`). Reading what Defender for Endpoint's security
+  settings management, Configuration Manager's remediating baselines and
+  DSC's configurations cover is done when a computer with each is
+  available (the tenant's licence for the first); until then each is
+  detected and makes the computer check only.
 * **W2, apply and undo**, module by module, each with its runner tests and,
   where it needs a restart, a domain, Defender active or outside traffic,
   its machine test (or recorded hand test) before the next. First the
@@ -1706,9 +2001,10 @@ As in ADR-0051, with Windows' places and tools:
   `name-resolution`, `smb`, `ntlm`, `uac`, `firewall`, `rdp`,
   `smb-signing`, `lsa-protection`, `tls`; the report-only modules have no
   apply. With them: the undo copy of the script; the harvest, with the
-  first two-step module; the daily check, with `defender`; one change at
-  a time on the server; each change and its time in the result, for log
-  collection.
+  first two-step module; the daily check and its amendments to ADR-0017,
+  with `defender` (extending what F2 built, if F2 came first: see The
+  job); one change at a time on the server; each change and its time in
+  the result, for log collection.
 * **W3, the console.** Linux hardening's H3 (a device's **Hardening** tab,
   the fleet column and filter, apply and undo from **Jobs**) with Windows'
   modules: their risks and options, the owner of each setting managed
@@ -1769,10 +2065,20 @@ As in ADR-0051, with Windows' places and tools:
 * Where Group Policy allows only signed scripts or App Control constrains
   PowerShell, nothing runs, as for every PowerShell job today. An EDR may
   stop the script unless the MSP allows it by its hash.
+* W1 and W2 carry more than hardening: ADR-0067's registry writes and
+  ADR-0068's log settings use the ownership reader, and registry changes
+  and `eventlog_manage` the device lock; F2 extends W2's job amendments;
+  log collection's *Configure logging* waits for the reader; and the
+  Windows paths of ADR-0064, ADR-0065, ADR-0067 and ADR-0068 that the
+  runners cannot show stay unverified until the Windows machines under
+  KVM, or real computers, show them.
 * The script follows Windows releases, Microsoft's baselines and DISA's
   STIG releases; each new build is tested before apply is allowed on it.
 
 ## Open questions for the owner
+Until the owner answers these, this ADR's proposed defaults apply; most of
+them only matter at W2 (apply).
+
 * **CIS.** Buy the CIS SecureSuite Product Vendor Membership (from $6,000
   a year at the lowest revenue band, "Subject to change") and have the
   feature certified every year before it is sold, distributed or marketed,
@@ -1794,7 +2100,8 @@ As in ADR-0051, with Windows' places and tools:
   workstations* and the Essential Eight's pages by hand, so that their
   licence can be read and the modules related to them for Australian
   customers?
-* **An Intune tenant** for W1's MDM reader and the real-computer tests
+* **An Intune tenant** for the MDM reader's proof (moved out of W1) and
+  the real-computer tests
   (and, if licensed, Defender for Endpoint, to settle its security
   settings management)?
 * **The test domain**: besides the Server 2025 domain controller, a
@@ -1802,7 +2109,9 @@ As in ADR-0051, with Windows' places and tools:
   NTLMv1, for the NTLM guard; in the KVM machines or on the owner's?
 * **A self-hosted runner** for the Windows guests, since their images may
   not be cached where pull requests can restore them and building them on
-  GitHub's runners in each run may prove too slow?
+  GitHub's runners in each run may prove too slow? The same guests now
+  carry the Windows machine tests of ADR-0064, ADR-0065, ADR-0067 and
+  ADR-0068 (see Testing).
 * **LGPO.exe on a hosted runner**: its terms allow use "on your devices
   to develop and test your programs". Does a GitHub-hosted runner count
   as one of "your devices"? Until that is answered, the persistence
@@ -1813,8 +2122,14 @@ As in ADR-0051, with Windows' places and tools:
 * **Check only for computers with Configuration Manager, DSC or Azure
   machine configuration** until their readers exist: acceptable, or should
   those readers come first?
-* **Order**: this plan puts the work after the updater's edge channel;
-  sooner, straight after Linux hardening?
+* **The evaluation media's terms** (https://aka.ms/useterms): do they
+  allow test machines built from Microsoft's evaluation media, by script,
+  on CI or on the owner's own server? W1's machine tests used them on the
+  owner's Proxmox server; the terms have not been read against that use.
+* **Order**: the MSP plan's order, decided in review, puts W1 to W3 at
+  its steps 7 to 9, after the updater's edge channel (step 4), F0
+  (step 5) and remote PowerShell's slice 1 (step 6); sooner, straight
+  after Linux hardening?
 
 ## References
 CIS:

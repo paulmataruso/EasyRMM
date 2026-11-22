@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { MailServer, MailServerInput, MailServerTestInput, MailServerView } from "../../api/types";
+import type { MailCertificate, MailServer, MailServerInput, MailServerTestInput, MailServerView } from "../../api/types";
 import { baseRoutes, fail, installFakeApi, ok, sessionView } from "../../test/fakeApi";
 import { renderApp } from "../../test/render";
 import { whyNotEmailed } from "./mailProblem";
@@ -254,5 +254,128 @@ describe("mail server settings", () => {
     expect(whyNotEmailed("not_sent", "sam@example.com")).toBe("The mail server did not take the message, so send it to sam@example.com yourself.");
     const reason = "This account has been emailed as many password emails as one account may: 3 at once, then one every 20 minutes. Another can be emailed in 20 minutes.";
     expect(whyNotEmailed("not_sent", "sam@example.com", reason)).toBe(`It was not emailed: ${reason} Send it to sam@example.com yourself.`);
+  });
+});
+
+const WITHHELD =
+  "EasyRMM's mail server signs in with a Microsoft 365 application, which the patching engine cannot do: the engine is given no mail server, so patching sends no email and no monthly reports until a later release moves them to EasyRMM. For patching's email meanwhile, send through a relay, or sign in with a password.";
+const TENANT = "00000000-0000-4000-8000-00000000a001";
+const CLIENT = "00000000-0000-4000-8000-00000000c001";
+const CERT: MailCertificate = {
+  subject: "CN=EasyRMM mail",
+  thumbprint: "0123456789ABCDEF0123456789ABCDEF01234567",
+  notBefore: new Date(Date.now() - 86_400_000).toISOString(),
+  notAfter: new Date(Date.now() + 12 * 86_400_000).toISOString(),
+};
+const APP: MailServerView = {
+  ...NONE,
+  inForce: "console",
+  engineWithheld: WITHHELD,
+  console: {
+    ...STORED,
+    host: "smtp.office365.com",
+    signIn: "microsoft365",
+    username: "",
+    passwordSet: false,
+    application: { tenantId: TENANT, clientId: CLIENT, credential: "certificate", secretSet: false, certificate: CERT, certificateWarning: "The application's certificate expires on 4 December 2026, in 12 days." },
+  },
+  check: { at: new Date(Date.now() - 60_000).toISOString(), ok: true, message: "Connected to smtp.office365.com:587 (STARTTLS) and signed in to rmm@example.com with a Microsoft 365 application's token: 235 2.7.0 Authentication successful" },
+};
+
+describe("a Microsoft 365 application", () => {
+  it("is offered with Exchange Online's server, warned of before it is saved, and saved without the engine's email", async () => {
+    const user = userEvent.setup();
+    const saved: MailServerView = { ...APP, check: undefined, console: { ...APP.console!, application: { tenantId: TENANT, clientId: CLIENT, credential: "secret", secretSet: true } } };
+    const server = installFakeApi({ ...routes(), "PUT /settings/mail-server": ok(saved) });
+    renderApp("/settings?tab=notifications");
+    expect(await screen.findByRole("heading", { name: "Notifications", level: 1 })).toBeInTheDocument();
+
+    expect(await main().findByText("No mail server")).toBeInTheDocument();
+    expect(main().queryByText("Patching's email stops while an application signs in")).not.toBeInTheDocument();
+    await user.selectOptions(main().getByLabelText(/^Sign in/), "microsoft365");
+    // Exchange Online's client submission, and never without encryption.
+    expect(main().getByLabelText(/^Server/)).toHaveValue("smtp.office365.com");
+    expect(main().getByLabelText(/^Port/)).toHaveValue("587");
+    expect(main().getByLabelText(/^Security/)).toHaveValue("starttls");
+    expect(main().getByRole("option", { name: "None (a relay on this machine)" })).toBeDisabled();
+    expect(main().queryByLabelText(/^User name/)).not.toBeInTheDocument();
+    // Warned before the choice is saved.
+    const warning = main().getByText("Patching's email stops while an application signs in").closest<HTMLElement>(".rounded-md")!;
+    expect(within(warning).getByText(/it is given no mail server: patching sends no email and no monthly reports/)).toBeInTheDocument();
+    expect(main().getByText(/Invitations, password resets go through it/)).toBeInTheDocument();
+
+    await user.type(main().getByLabelText(/^Directory \(tenant\) ID/), TENANT);
+    await user.type(main().getByLabelText(/^Application \(client\) ID/), CLIENT);
+    await user.type(main().getByLabelText(/^Client secret/), "  STAND-IN~secret  ");
+    await user.type(main().getByLabelText(/^Send from/), "rmm@example.com");
+    await user.click(main().getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.callsTo("PUT /settings/mail-server")).toHaveLength(1));
+    expect(server.callsTo("PUT /settings/mail-server")[0]!.body).toEqual({
+      host: "smtp.office365.com",
+      port: 587,
+      security: "starttls",
+      signIn: "microsoft365",
+      username: "",
+      password: "",
+      fromAddress: "rmm@example.com",
+      fromName: "EasyRMM",
+      tenantId: TENANT,
+      clientId: CLIENT,
+      credential: "secret",
+      clientSecret: "STAND-IN~secret",
+      certificate: "",
+      certificateKey: "",
+    } satisfies MailServerInput);
+    expect(await screen.findByText("Saved. EasyRMM sends mail through smtp.office365.com.")).toBeInTheDocument();
+  });
+
+  it("shows the stored application, its certificate's end, the standing warning and the last check, and keeps what is stored", async () => {
+    const user = userEvent.setup();
+    const server = installFakeApi({ ...routes(APP), "PUT /settings/mail-server": ok(APP) });
+    renderApp("/settings?tab=notifications");
+    expect(await screen.findByRole("heading", { name: "Notifications", level: 1 })).toBeInTheDocument();
+
+    const standing = (await main().findByText("Patching sends no email")).closest<HTMLElement>(".rounded-md")!;
+    expect(within(standing).getByText(WITHHELD)).toBeInTheDocument();
+    const check = main().getByText("The mail server passed this server's check").closest<HTMLElement>(".rounded-md")!;
+    expect(within(check).getByText(/signed in to rmm@example\.com with a Microsoft 365 application's token/)).toBeInTheDocument();
+    expect(within(check).getByText("docker compose exec server easyrmm-server mail check")).toBeInTheDocument();
+    const ending = main().getByText("The application's certificate ends soon").closest<HTMLElement>(".rounded-md")!;
+    expect(within(ending).getByText(/in 12 days/)).toBeInTheDocument();
+    expect(main().getByText(CERT.thumbprint)).toBeInTheDocument();
+    expect(main().getByText(/A key is stored, encrypted/)).toBeInTheDocument();
+
+    // The stored certificate and key go with the same tenant only.
+    await user.click(main().getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(server.callsTo("PUT /settings/mail-server")).toHaveLength(1));
+    expect(server.callsTo("PUT /settings/mail-server")[0]!.body).toMatchObject({ credential: "certificate", certificate: "", certificateKey: "", clientSecret: "" });
+    await user.clear(main().getByLabelText(/^Directory \(tenant\) ID/));
+    await user.type(main().getByLabelText(/^Directory \(tenant\) ID/), "contoso.example.com");
+    expect(main().queryByText(CERT.thumbprint)).not.toBeInTheDocument();
+    expect(main().getByText(/The certificate's RSA private key/)).toBeInTheDocument();
+    // A secret instead: none is stored.
+    await user.selectOptions(main().getByLabelText(/^Credential/), "secret");
+    expect(main().getByLabelText(/^Client secret/)).not.toHaveAttribute("placeholder", "Stored");
+  });
+
+  it("says when the check failed, and when the certificate has ended", async () => {
+    const ended: MailServerView = {
+      ...APP,
+      inForce: "env",
+      console: undefined,
+      env: { ...APP.console!, updatedAt: undefined, application: { ...APP.console!.application!, certificate: { ...CERT, notAfter: new Date(Date.now() - 86_400_000).toISOString() }, certificateWarning: "The application's certificate cannot sign in: it expired." } },
+      check: { at: new Date().toISOString(), ok: false, message: "signing in to smtp.office365.com:587 with a Microsoft 365 application: 535 5.7.139 Authentication unsuccessful, SmtpClientAuthentication is disabled for the Tenant." },
+    };
+    installFakeApi(routes(ended));
+    renderApp("/settings?tab=notifications");
+    expect(await screen.findByRole("heading", { name: "Notifications", level: 1 })).toBeInTheDocument();
+
+    const failed = (await main().findByText("This server's check of the mail server failed")).closest<HTMLElement>('[role="alert"]')!;
+    expect(within(failed).getByText(/SmtpClientAuthentication is disabled for the Tenant/)).toBeInTheDocument();
+    expect(main().getByText("The application's certificate cannot sign in")).toBeInTheDocument();
+    expect(main().getByText(/to .*, with a Microsoft 365 application's token/)).toBeInTheDocument();
+    expect(main().getByText(TENANT)).toBeInTheDocument();
+    // .env's alert no longer promises the engine's email.
+    expect(main().getByText(/invitations, password resets go through it/)).toBeInTheDocument();
   });
 });

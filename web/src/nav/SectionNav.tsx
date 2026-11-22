@@ -26,7 +26,7 @@ import {
   SlidersHorizontal,
   UsersRound,
 } from "lucide-react";
-import { useList, useOrganizations, usePrefetch, useSites, useWaitingDevices } from "../api/hooks";
+import { useDeviceAlertCounts, useList, useOrganizations, usePrefetch, useSites, useWaitingDevices } from "../api/hooks";
 import type { Device, DeviceAlertCount, Permission, Script } from "../api/types";
 import { useAuth } from "../auth/AuthContext";
 import { cx, Dot, ErrorState, Spinner } from "../components/ui";
@@ -190,7 +190,7 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
   const orgs = useOrganizations();
   const sites = useSites();
   const devices = useList<Device>(wantsDevices ? "/devices" : null, undefined, { refetchInterval: 30_000 });
-  const alertCounts = useList<DeviceAlertCount>(section === "alerts" ? "/alerts/devices" : null, undefined, { refetchInterval: 30_000 });
+  const alertCounts = useDeviceAlertCounts(section === "alerts");
   const scripts = useList<Script>(section === "scripts" ? "/scripts" : null);
 
   const [query, setQuery] = useState("");
@@ -609,7 +609,10 @@ function SectionTree({ section, onWidth }: { section: Exclude<SectionId, "settin
                           <Dot tone={node.online ? "ok" : "neutral"} />
                         </span>
                       )}
-                      <span className="min-w-0 flex-1 truncate">{node.name}</span>
+                      {/* A device with an active critical alert pulses in red; its red count and its label say so too. */}
+                      <span className={cx("min-w-0 flex-1 truncate", d && section === "alerts" && (byDevice.get(d.id)?.critical ?? 0) > 0 && "alert-active-pulse alert-active-pulse--sidebar")}>
+                        {node.name}
+                      </span>
                       <BadgeView badge={badge} />
                       {quick && (
                         <button

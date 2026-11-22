@@ -7,6 +7,7 @@ import { Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, Card, EmptyState, ErrorState, InlineError, SelectField, Spinner, TableWrap, TextareaField } from "../../components/ui";
 import { addresses } from "../reports/PatchReports";
+import { ReportMailAlert } from "../reports/ReportMailAlert";
 
 // Settings → Patching → Report schedules: on a day of each month, EasyPatch makes each
 // organization's report of the month before and emails it.
@@ -35,6 +36,7 @@ export function ReportSchedules() {
         emailed through EasyRMM&apos;s mail server, which a super administrator sets under Settings → Notifications → Mail server. Reports made on a schedule are listed under
         Reports → Monthly patch reports.
       </p>
+      <ReportMailAlert className="mx-4 mt-3" />
       {list.data.length === 0 ? (
         <EmptyState title="No organizations to schedule" compact icon={<CalendarClock className="size-8" aria-hidden />}>
           Schedules belong to organizations in the patching engine whose patching you see as a whole.

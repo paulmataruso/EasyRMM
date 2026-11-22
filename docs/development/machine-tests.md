@@ -103,3 +103,101 @@ the hardening script or its server side, `go.mod` or the `Makefile`
 change, and on the merge queue and manual runs.
 Images are kept between runs with `actions/cache`; a failed job uploads
 the serial console log.
+
+## Windows
+
+Hardening Windows computers ([ADR-0054](../architecture/adr/0054-hardening-windows-computers-and-servers.md#testing))
+is tested in two places. CI's job *Windows hardening as LocalSystem*
+(`backend-tests.yml`) runs the Go tests named `AsSystem` on GitHub's
+`windows-2025`, `windows-2022` and `windows-11-arm` runners, each test
+binary started as LocalSystem by `scripts/ci/run-as-system.ps1`:
+
+* `internal/winpolicy` (`query_windows_test.go`): the ownership reader
+  started on its own with a request file, as the agent will start it.
+* `internal/winpolicy` (`planted_windows_test.go`): owners the runners do
+  not have, planted as each leaves its sign and removed afterwards, with
+  the reader's answer before and after: an MDM enrolment (and one that
+  cannot be read), the audit policy extension's history and copy, the
+  local Group Policy object's `Registry.pol`, another vendor's filtering
+  platform provider with an inbound filter (in a dynamic session, which
+  Windows removes when it ends), a stand-in for OSConfig's module in Program
+  Files, in a folder Users may change and outside the trusted folders,
+  and Azure machine configuration's service.
+* `server/internal/jobs` (`hardening_windows_test.go`): the hardening
+  script's `check all`, its result read as the server reads it, and the
+  Hardening folder's refusals; and every value of the registry keys check
+  reads, the security policy (`secedit /export`) and the audit policy
+  (`auditpol /backup`), the same before and after `check all`.
+
+CI's job *Agent tests on Windows* runs the tests named `OnWindows` as the
+runner's administrator: the reader's functions and the hardening
+script's one by one (`functions_windows_test.go`,
+`hardening_functions_windows_test.go`), on what is hard to make in a
+whole run: `Registry.pol` files, filtering platform states, text with
+control characters, a service that cannot be read, registry links to keys
+that do not exist, auditpol backups not in its form, a computer whose
+role Windows does not report, and failed sign-ins (made with
+`LogonUser`) for the exposure rule.
+
+Runners have no domain, so the domain scenario runs on Windows guests
+under KVM, not on GitHub yet (ADR-0054 says why, and what CI should do).
+W1 ran it on a Proxmox VE host with Windows Server 2025's evaluation media:
+
+1. Two guests, each with 2 CPUs, 2 GiB, an AHCI disk and an e1000e card,
+   installed unattended with Server Core. One is promoted to a test
+   forest's domain controller; the other joins it.
+2. On the controller, as a Domain Admin,
+   `internal/winpolicy/testdata/domain-gpos.ps1` makes and links the
+   test's policies; then `gpupdate /target:computer /force` on the member.
+3. On the member and on the controller, both `AsSystem` test binaries,
+   cross-compiled (`GOOS=windows go test -c`), run as LocalSystem through
+   `run-as-system.ps1`. On the member they run with `EASYRMM_TEST_DOMAIN=1`
+   as well, which runs `TestQueryDomainAsSystem`: each owner the reader
+   names must be the policy the script made. The reader's tests that
+   expect no domain policy (`TestQueryAsSystem`, and the planted MDM,
+   local Group Policy object, DSC, Azure machine configuration and
+   OSConfig owners) skip on a computer in a domain, where the domain's
+   policies hold the values they ask about and its preference items make
+   the rest *cannot tell*.
+4. With `EasyRMM-W1-RSoPOff` linked and the member refreshed, the same
+   test expects *cannot tell* with `group_policy_record_off`. Windows
+   keeps the last record in WMI after it is turned off; the reader must
+   not use it.
+5. On the member, OSConfig's module from the PowerShell Gallery and its
+   member-server baseline, then the reader and `check all` again; then
+   the member back to the snapshot taken before.
+
+W1 ran it twice on 2026-11-22. The first run, between about 02:00 and
+03:50 UTC, built its tests from the work in progress, fixing what it
+found as it went; its last builds were of e1ad681's reader, hardening
+script and tests, unchanged until the first review's fixes (c27b0b4).
+The domain was rebuilt
+and the scenario run again at 3d8bfb6, whose reader and hardening script
+are those of 5682775, the second review's fixes:
+
+| Scenario | At 3d8bfb6 |
+|---|---|
+| Hardening `AsSystem` tests, member and controller | Passed (the first try found that the unreadable-keys test took UAC's setting as missing on Server Core, where UAC's module does not apply; fixed in 3d8bfb6) |
+| Reader `AsSystem` tests, member and controller | Passed: Defender for Endpoint's onboarding and another vendor's firewall; the tests that expect no domain policy skip (the first try ran them, and the domain's policies held their values, as they should) |
+| `TestQueryDomainAsSystem`, every policy linked | Passed: each policy named, Default Domain Policy's too |
+| The same with the record turned off | Passed |
+| OSConfig's member-server baseline applied (module 1.4.16, scenario 2610.2, 341 settings) | The reader listed the scenario and gave `osconfig` for every value Group Policy did not hold, Group Policy's owner for the rest; `check all` gave 28 settings *check only*, each with `osconfig`; the hardening `AsSystem` tests passed |
+
+The first run alone showed two more: with `EasyRMM-W1-Preferences`
+unlinked its history is emptied and the reason `group_policy_preferences`
+goes (the domain test, which expects it linked, fails as it should); and
+`gpresult /x` names the advanced audit policy extension without its
+settings, so the reader takes them from the extension's own record.
+
+`server/internal/jobs/testdata/windows-hardening-check.txt` is the
+member's `check all` output from the run at 3d8bfb6, before OSConfig;
+the server's integration tests read it. Its accounts module reads the
+Security log back to 16:26 UTC, after the run: the log's first records
+were written while the new guest's clock ran 8 hours ahead, before its
+time zone and time were set. The script now gives no time where the
+oldest record read is dated after the check, but why (`sinceReason`);
+the fixture, from before that change, keeps the time it gave, which the
+server still accepts.
+
+Delete the guests when done: the evaluation media expire after 180 days,
+and a domain left running holds memory others need.

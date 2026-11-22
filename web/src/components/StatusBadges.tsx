@@ -124,6 +124,7 @@ const ACTIONS: Record<string, string> = {
   "job.cancel": "Stopped script run",
   "job_run.output_view": "Viewed job output",
   "job.arguments_view": "Viewed job arguments",
+  "job.results_export": "Downloaded job results",
   "job_run.output_remove": "Removed job output",
   "alert_policy.create": "Added alert policy",
   "alert_policy.update": "Changed alert policy",
@@ -184,7 +185,9 @@ const ACTIONS: Record<string, string> = {
   "patch.notifications_update": "Changed patching notification settings",
 };
 
-export function actionLabel(action: string): string {
+/** An action's name; with the entry's details, a read of job output that was a download says so (ADR-0064). */
+export function actionLabel(action: string, details?: Record<string, unknown> | null): string {
+  if (action === "job_run.output_view" && typeof details?.download === "string") return "Downloaded job output";
   return ACTIONS[action] ?? action;
 }
 

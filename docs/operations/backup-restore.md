@@ -11,6 +11,7 @@ Authentik (`setup.sh --with-authentik`). All are needed to restore.
 | `deploy/.env` | Next to `docker-compose.yml` | **The encryption key** (`EASYRMM_SECRET_KEY`) and database passwords. The database's secrets are sealed with the key, among them authenticator-app secrets, MeshCentral's service account, the single sign-on and audit-forwarding credentials, the console's mail server password, the internal certificate authority agents trust and the job-signing key they pinned. Without it, authenticator apps stop working (recovery codes and security keys still do) and every agent has to be reinstalled. With Authentik, it also holds Authentik's settings and secrets: `COMPOSE_PROFILES=authentik`, `EASYRMM_AUTHENTIK_HOSTNAME`, `EASYRMM_AUTHENTIK_ADMIN_EMAIL`, `EASYRMM_AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_SECRET_KEY` and `AUTHENTIK_DB_PASSWORD` |
 | `/srv/easyrmm/server` | Data directory | The ACME account and certificates (`acme` mode); empty in the other modes |
 | `/srv/easyrmm/tls` (`EASYRMM_TLS_DIR`) | `manual` TLS only | Your certificate and key. Back them up wherever you manage certificates, or include the directory here |
+| `/srv/easyrmm/secrets` | With a Microsoft 365 application in `.env` only | **The application's client secret, or its certificate and private key** (`setup.sh --smtp-*`, [Mail](mail.md#microsoft-365)), which `.env` names by path and never holds. Without them the server does not start until they are given again (a new secret or certificate from Entra). Owned `root:65532`: the directory mode 750, the files 440. Protect the backup as you protect `.env` |
 | `/srv/easyrmm/meshcentral` | MeshCentral's data | **MeshCentral's server identity** (the keys its agents trust), its device records and the downloaded agent binaries. Without it, every remote-access agent has to be reinstalled |
 | Authentik's database | `authentik`, in the same PostgreSQL, with Authentik only | **Everyone's sign-in**: Authentik's users with their passwords and second factors, its flows, the provider EasyRMM signs in through, and the key pair that signs EasyRMM's ID tokens |
 | `/srv/easyrmm/authentik` | With Authentik only | The password of Authentik's own administrator, `akadmin` (`secrets/`), the files uploaded to Authentik, such as icons (`data/`), and `setup.sh`'s record that it issued the first invitation (`invitation-issued`) |
@@ -65,6 +66,8 @@ tar -C /srv/easyrmm -czf /var/backups/easyrmm/server-$ts.tgz server
 tar -C /srv/easyrmm -czf /var/backups/easyrmm/easypatch-keys-$ts.tgz easypatch/keys
 # With manual TLS, unless your certificates are backed up elsewhere:
 # tar -C /srv/easyrmm -czf /var/backups/easyrmm/tls-$ts.tgz tls
+# The mail server's Microsoft 365 secret or key, from .env's setup.sh --smtp-*:
+tar -C /srv/easyrmm -czf /var/backups/easyrmm/secrets-$ts.tgz secrets
 
 # With Authentik (setup.sh --with-authentik made its directory): its
 # database, the same way, and its directory. Skipped without Authentik.
@@ -121,14 +124,16 @@ that still has the deployment, set it aside first, as in
 1. Install Docker, then clone the repository at the same release or unpack
    that release's deployment bundle ([Upgrading](upgrading.md) describes
    both). Restore `deploy/.env`, `/srv/easyrmm/server`,
-   `/srv/easyrmm/meshcentral`, `/srv/easyrmm/easypatch/keys`, with
-   Authentik `/srv/easyrmm/authentik`, and with `manual` TLS your
-   certificate files.
+   `/srv/easyrmm/meshcentral`, `/srv/easyrmm/easypatch/keys`,
+   `/srv/easyrmm/secrets`, with Authentik `/srv/easyrmm/authentik`, and
+   with `manual` TLS your certificate files.
    Keep the ownership `setup.sh` gives them: `65532:65532`, mode 700, for
    `server` and for the `data`, `files` and `backups` directories inside
    `meshcentral`; `1654:1654`, mode 700, for `easypatch/keys`;
    `1000:1000` (Authentik's user), mode 700, for the `data`, `secrets` and
-   `invitations` directories inside `authentik` and the files in them.
+   `invitations` directories inside `authentik` and the files in them;
+   `root:65532`, mode 750, for `secrets` and mode 440 for the files in it
+   (`setup.sh` gives them these again).
    Extracting as root with `tar --numeric-owner` keeps them by number;
    without it, tar goes by name, and another host can give a name, such as
    uid 1000's, another number:
@@ -137,7 +142,7 @@ that still has the deployment, set it aside first, as in
    sudo tar -C /path/to/easyrmm/deploy -xzf /var/backups/easyrmm/env-<timestamp>.tgz
    sudo mkdir -p /srv/easyrmm
    # Without Authentik, leave out authentik.
-   for part in server meshcentral easypatch-keys authentik; do
+   for part in server meshcentral easypatch-keys secrets authentik; do
        sudo tar --numeric-owner -C /srv/easyrmm \
            -xzf /var/backups/easyrmm/$part-<timestamp>.tgz
    done

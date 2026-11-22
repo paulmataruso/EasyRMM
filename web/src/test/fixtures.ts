@@ -207,6 +207,7 @@ export function script(id: string, name: string, extra: Partial<Script> = {}): S
     name,
     description: "",
     shell: "bash",
+    pwshFallback: false,
     sha256: "a".repeat(64),
     size: 120,
     timeoutSeconds: 300,
@@ -246,6 +247,7 @@ export function jobRun(id: string, deviceId: string, deviceName: string, status:
     exitCode: status === "succeeded" ? 0 : status === "failed" ? 2 : null,
     error: "",
     cancelRequested: false,
+    program: null,
     canCancel: !finished,
     ...extra,
   };
@@ -260,6 +262,7 @@ export function job(id: string, scriptName: string, extra: Partial<Job> = {}): J
     scriptId: "sc1",
     scriptName,
     shell: "bash",
+    pwshFallback: false,
     sha256: "a".repeat(64),
     timeoutSeconds: 300,
     expiresAt: "2026-11-02T10:00:00Z",

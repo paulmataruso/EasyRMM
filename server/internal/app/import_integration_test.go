@@ -73,7 +73,7 @@ Note: Organization "Away": its time zone "Nowhere/Else" is not one EasyRMM knows
 		"migration URL": func(c *config.Config) { c.DatabaseMigrationURL = "postgres://%zz" },
 		"database URL":  func(c *config.Config) { c.DatabaseURL = "postgres://%zz" },
 		"key":           func(c *config.Config) { c.Patching.Key = []byte{1} },
-		"engine URL":    func(c *config.Config) { c.Patching.URL = "ftp://" + freeAddr(t) },
+		"engine URL":    func(c *config.Config) { c.Patching.URL = "ftp://" + unusedAddr(t) },
 		"refused":       func(c *config.Config) { c.Patching.Key = bytes.Repeat([]byte{8}, 32) },
 	} {
 		c := *cfg
@@ -89,7 +89,7 @@ Note: Organization "Away": its time zone "Nowhere/Else" is not one EasyRMM knows
 	}
 
 	// The engine unreachable: refused before anything changes.
-	cfg.Patching.URL = "http://" + freeAddr(t)
+	cfg.Patching.URL = "http://" + unusedAddr(t)
 	short, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if err := ImportEasyPatch(short, cfg, discard(), &out); err == nil {

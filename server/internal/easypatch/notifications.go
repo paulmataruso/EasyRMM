@@ -2,6 +2,7 @@ package easypatch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -357,6 +358,9 @@ type MailView struct {
 	// after several tries in a row, which removed the engine's; "" when it
 	// could.
 	Problem string `json:"problem,omitempty"`
+	// Withheld says why the engine is given no mail server although
+	// EasyRMM has one: it signs in with a Microsoft 365 application.
+	Withheld string `json:"withheld,omitempty"`
 }
 
 // NotificationsView is EasyPatch's notification channels, the mail server
@@ -390,7 +394,20 @@ func (s *Service) Notifications(ctx context.Context, c access.Caller) (Notificat
 	}
 	return NotificationsView{Channels: orEmpty(channels), AllowPrivateNetworkWebhooks: m.AllowPrivateNetworkWebhooks,
 		Mail: MailView{Host: m.SMTPHost, Port: m.SMTPPort, Security: m.SMTPSecurity, FromAddress: m.FromAddress, FromName: m.FromName,
-			Problem: s.mailProblem()}}, nil
+			Problem: s.mailProblem(), Withheld: s.mailWithheld(ctx)}}, nil
+}
+
+// mailWithheld is why the engine is given no mail server although this
+// server has one, "" when it is given it or EasyRMM's cannot be read.
+func (s *Service) mailWithheld(ctx context.Context) string {
+	if s.engine == nil || s.engine.mail == nil {
+		return ""
+	}
+	cfg, err := s.engine.mail(ctx)
+	if err != nil {
+		return ""
+	}
+	return cfg.Withheld
 }
 
 // NotificationSettings is what EasyRMM changes of EasyPatch's notification
@@ -443,6 +460,9 @@ func (s *Service) setPrivateWebhooks(ctx context.Context, c access.Caller, cl *C
 				e.mailProblem = problem
 				e.mu.Unlock()
 			} else {
+				if in.Withheld != "" {
+					in = MailConfig{Withheld: in.Withheld}
+				}
 				cfg = &in
 			}
 		}
@@ -472,6 +492,8 @@ func (s *Service) setPrivateWebhooks(ctx context.Context, c access.Caller, cl *C
 	case engineErr != nil:
 		s.noteError(engineErr)
 		return epError(engineErr)
+	case errors.Is(err, errEngineMailBusy):
+		return apperr.Conflict("engine_mail_busy", "Another of EasyRMM's servers is changing the patching engine's mail settings. Try again in a moment.")
 	case err != nil:
 		return err
 	case !changed:

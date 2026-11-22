@@ -51,7 +51,19 @@ func TestLeader(t *testing.T) {
 	}
 	other.Close()
 
-	// Given up: the other takes it.
+	// Given up: the other takes it at once, every time. The lock is
+	// released before its connection closes, so a try straight after the
+	// close never finds it held by a session still ending.
+	for i := range 50 {
+		a.Close()
+		if !lead(b) || lead(a) {
+			t.Fatalf("not handed over at once (%d)", i)
+		}
+		b.Close()
+		if !lead(a) {
+			t.Fatalf("not handed back at once (%d)", i)
+		}
+	}
 	a.Close()
 	if !lead(b) || lead(a) {
 		t.Fatal("not handed over")

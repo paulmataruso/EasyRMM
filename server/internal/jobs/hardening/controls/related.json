@@ -1,0 +1,674 @@
+{
+  "sources": [
+    {
+      "name": "DISA STIG: Microsoft Windows 11",
+      "version": "V2R11",
+      "date": "2026-09-30",
+      "url": "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_11_V2R11_STIG.zip"
+    },
+    {
+      "name": "DISA STIG: Microsoft Windows Server 2025",
+      "version": "V1R4",
+      "date": "2026-09-30",
+      "url": "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_Server_2025_V1R4_STIG.zip"
+    },
+    {
+      "name": "DISA STIG: Microsoft Defender Antivirus",
+      "version": "V2R10",
+      "date": "2026-09-30",
+      "url": "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Defender_Antivirus_V2R10_STIG.zip"
+    },
+    {
+      "name": "DISA STIG: Microsoft Windows Defender Firewall with Advanced Security",
+      "version": "V2R2",
+      "date": "2023-11-09",
+      "url": "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_MS_Windows_Defender_Firewall_V2R2_STIG.zip"
+    },
+    {
+      "name": "DISA Control Correlation Identifier (CCI) list",
+      "version": "2025-01-23",
+      "date": "2025-01-23",
+      "url": "https://dl.dod.cyber.mil/wp-content/uploads/stigs/zip/U_CCI_List.zip"
+    },
+    {
+      "name": "NIST SP 800-53 Rev. 5 catalog (OSCAL)",
+      "version": "5.2.0",
+      "date": "2026-10-22",
+      "url": "https://raw.githubusercontent.com/usnistgov/oscal-content/f0de6d8d8c059d374f15e0ae07508d82e370fc1d/nist.gov/SP800-53/rev5/json/NIST_SP-800-53_rev5_catalog.json"
+    },
+    {
+      "name": "NIST SP 800-171 Rev. 2, Appendix D (mapping to SP 800-53 Rev. 4)",
+      "version": "Rev. 2",
+      "date": "2020-02",
+      "url": "https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-171r2.pdf",
+      "note": "The mapping tables are included for informational purposes and do not impart additional security requirements beyond those requirements defined in Chapter Three."
+    },
+    {
+      "name": "NIST SP 800-171 Rev. 3 catalog (OSCAL), source controls",
+      "version": "1.1.0",
+      "date": "2026-10-22",
+      "url": "https://raw.githubusercontent.com/usnistgov/oscal-content/f0de6d8d8c059d374f15e0ae07508d82e370fc1d/nist.gov/SP800-171/rev3/json/NIST_SP800-171_rev3_catalog.json"
+    },
+    {
+      "name": "NIST OLIR crosswalk 800-53-Rev5-to-ISO 27001-2022 (Annex A numbers)",
+      "version": "1.0.0",
+      "date": "2023-11-13",
+      "url": "https://csrc.nist.gov/csrc/media/Projects/olir/documents/submissions/sp800-53r5-to-iso-27001-mapping-2022-OLIR-2023-10-12-UPDATED.xlsx",
+      "note": "Organizations should not assume security requirement and control equivalency based solely on the mapping tables herein since there is always some degree of subjectivity in the mapping analysis because the mappings are not always one-to-one and may not be completely equivalent."
+    }
+  ],
+  "modules": [
+    {
+      "module": "accounts",
+      "sp80053R5": [
+        {
+          "id": "AC-7",
+          "title": "Unsuccessful Logon Attempts"
+        },
+        {
+          "id": "CM-6",
+          "title": "Configuration Settings"
+        },
+        {
+          "id": "IA-5",
+          "title": "Authenticator Management"
+        },
+        {
+          "id": "IA-8",
+          "title": "Identification and Authentication (Non-organizational Users)"
+        }
+      ],
+      "sp800171R2": [
+        "3.1.8",
+        "3.4.1",
+        "3.4.2",
+        "3.5.7",
+        "3.5.8",
+        "3.5.9",
+        "3.5.10"
+      ],
+      "sp800171R3": [
+        "03.01.08",
+        "03.04.02",
+        "03.05.07"
+      ],
+      "iso27001": [
+        "A.5.16",
+        "A.5.17",
+        "A.8.5",
+        "A.8.9"
+      ]
+    },
+    {
+      "module": "firewall",
+      "sp80053R5": [
+        {
+          "id": "AC-4",
+          "title": "Information Flow Enforcement"
+        },
+        {
+          "id": "AU-5",
+          "title": "Response to Audit Logging Process Failures"
+        },
+        {
+          "id": "AU-12",
+          "title": "Audit Record Generation"
+        },
+        {
+          "id": "CM-6",
+          "title": "Configuration Settings"
+        },
+        {
+          "id": "CM-7",
+          "title": "Least Functionality"
+        },
+        {
+          "id": "SC-5",
+          "title": "Denial-of-service Protection"
+        },
+        {
+          "id": "SC-7",
+          "title": "Boundary Protection"
+        }
+      ],
+      "sp800171R2": [
+        "3.1.3",
+        "3.3.1",
+        "3.3.2",
+        "3.3.4",
+        "3.4.1",
+        "3.4.2",
+        "3.4.6"
+      ],
+      "sp800171R3": [
+        "03.01.03",
+        "03.03.03",
+        "03.03.04",
+        "03.04.02",
+        "03.04.06"
+      ],
+      "iso27001": [
+        "A.5.14",
+        "A.8.9",
+        "A.8.15",
+        "A.8.16",
+        "A.8.19",
+        "A.8.20",
+        "A.8.22",
+        "A.8.23"
+      ]
+    },
+    {
+      "module": "defender",
+      "sp80053R5": [
+        {
+          "id": "CM-6",
+          "title": "Configuration Settings"
+        },
+        {
+          "id": "CM-7",
+          "title": "Least Functionality"
+        },
+        {
+          "id": "SC-18",
+          "title": "Mobile Code"
+        },
+        {
+          "id": "SI-3",
+          "title": "Malicious Code Protection"
+        }
+      ],
+      "sp800171R2": [
+        "3.4.1",
+        "3.4.2",
+        "3.4.6",
+        "3.14.1",
+        "3.14.2",
+        "3.14.3",
+        "3.14.4",
+        "3.14.5"
+      ],
+      "sp800171R3": [
+        "03.04.02",
+        "03.04.06",
+        "03.14.02"
+      ],
+      "iso27001": [
+        "A.8.7",
+        "A.8.9",
+        "A.8.19"
+      ]
+    },
+    {
+      "module": "asr",
+      "sp80053R5": [
+        {
+          "id": "SC-18",
+          "title": "Mobile Code"
+        }
+      ],
+      "sp800171R2": [],
+      "sp800171R3": [],
+      "iso27001": []
+    },
+    {
+      "module": "smb",
+      "sp80053R5": [
+        {
+          "id": "CM-7",
+          "title": "Least Functionality"
+        },
+        {
+          "id": "IA-5",
+          "title": "Authenticator Management"
+        }
+      ],
+      "sp800171R2": [
+        "3.4.6",
+        "3.5.7",
+        "3.5.8",
+        "3.5.9",
+        "3.5.10"
+      ],
+      "sp800171R3": [
+        "03.04.06",
+        "03.05.07"
+      ],
+      "iso27001": [
+        "A.5.16",
+        "A.5.17",
+        "A.8.19"
+      ]
+    },
+    {
+      "module": "smb-signing",
+      "sp80053R5": [
+        {
+          "id": "CM-6",
+          "title": "Configuration Settings"
+        },
+        {
+          "id": "SC-8",
+          "title": "Transmission Confidentiality and Integrity"
+        }
+      ],
+      "sp800171R2": [
+        "3.4.1",
+        "3.4.2",
+        "3.13.8"
+      ],
+      "sp800171R3": [
+        "03.04.02",
+        "03.13.08"
+      ],
+      "iso27001": [
+        "A.5.10",
+        "A.5.14",
+        "A.5.33",
+        "A.8.9",
+        "A.8.20",
+        "A.8.26"
+      ]
+    },
+    {
+      "module": "ntlm",
+      "sp80053R5": [
+        {
+          "id": "CM-6",
+          "title": "Configuration Settings"
+        },
+        {
+          "id": "IA-5",
+          "title": "Authenticator Management"
+        }
+      ],
+      "sp800171R2": [
+        "3.4.1",
+        "3.4.2",
+        "3.5.7",
+        "3.5.8",
+        "3.5.9",
+        "3.5.10"
+      ],
+      "sp800171R3": [
+        "03.04.02",
+        "03.05.07"
+      ],
+      "iso27001": [
+        "A.5.16",
+        "A.5.17",
+        "A.8.9"
+      ]
+    },
+    {
+      "module": "wdigest",
+      "sp80053R5": [
+        {
+          "id": "CM-7",
+          "title": "Least Functionality"
+        }
+      ],
+      "sp800171R2": [
+        "3.4.6"
+      ],
+      "sp800171R3": [
+        "03.04.06"
+      ],
+      "iso27001": [
+        "A.8.19"
+      ]
+    },
+    {
+      "module": "lsa-protection",
+      "sp80053R5": [],
+      "sp800171R2": [],
+      "sp800171R3": [],
+      "iso27001": []
+    },
+    {
+      "module": "name-resolution",
+      "sp80053R5": [
+        {
+          "id": "SC-5",
+          "title": "Denial-of-service Protection"
+        }
+      ],
+      "sp800171R2": [],
+      "sp800171R3": [],
+      "iso27001": []
+    },
+    {
+      "module": "powershell",
+      "sp80053R5": [
+        {
+          "id": "CM-7",
+          "title": "Least Functionality"
+        }
+      ],
+      "sp800171R2": [
+        "3.4.6"
+      ],
+      "sp800171R3": [
+        "03.04.06"
+      ],
+      "iso27001": [
+        "A.8.19"
+      ]
+    },
+    {
+      "module": "rdp",
+      "sp80053R5": [
+        {
+          "id": "AC-17",
+          "title": "Remote Access"
+        },
+        {
+          "id": "IA-11",
+          "title": "Re-authentication"
+        },
+        {
+          "id": "SC-11",
+          "title": "Trusted Path"
+        }
+      ],
+      "sp800171R2": [
+        "3.1.13"
+      ],
+      "sp800171R3": [
+        "03.05.01"
+      ],
+      "iso27001": [
+        "A.5.14",
+        "A.6.7"
+      ]
+    },
+    {
+      "module": "uac",
+      "sp80053R5": [
+        {
+          "id": "CM-11",
+          "title": "User-installed Software"
+        },
+        {
+          "id": "IA-11",
+          "title": "Re-authentication"
+        },
+        {
+          "id": "SC-3",
+          "title": "Security Function Isolation"
+        },
+        {
+          "id": "SC-11",
+          "title": "Trusted Path"
+        }
+      ],
+      "sp800171R2": [],
+      "sp800171R3": [
+        "03.05.01"
+      ],
+      "iso27001": [
+        "A.8.19"
+      ]
+    },
+    {
+      "module": "autoplay",
+      "sp80053R5": [
+        {
+          "id": "CM-7",
+          "title": "Least Functionality"
+        }
+      ],
+      "sp800171R2": [
+        "3.4.7"
+      ],
+      "sp800171R3": [],
+      "iso27001": [
+        "A.8.19"
+      ]
+    },
+    {
+      "module": "anonymous",
+      "sp80053R5": [
+        {
+          "id": "AC-6",
+          "title": "Least Privilege"
+        },
+        {
+          "id": "CM-6",
+          "title": "Configuration Settings"
+        },
+        {
+          "id": "SC-4",
+          "title": "Information in Shared System Resources"
+        }
+      ],
+      "sp800171R2": [
+        "3.1.7",
+        "3.4.1",
+        "3.4.2",
+        "3.13.4"
+      ],
+      "sp800171R3": [
+        "03.01.07",
+        "03.04.02",
+        "03.13.04"
+      ],
+      "iso27001": [
+        "A.5.15",
+        "A.8.2",
+        "A.8.9",
+        "A.8.18"
+      ]
+    },
+    {
+      "module": "winrm",
+      "sp80053R5": [
+        {
+          "id": "IA-11",
+          "title": "Re-authentication"
+        },
+        {
+          "id": "MA-4",
+          "title": "Nonlocal Maintenance"
+        },
+        {
+          "id": "SC-11",
+          "title": "Trusted Path"
+        }
+      ],
+      "sp800171R2": [
+        "3.7.5"
+      ],
+      "sp800171R3": [
+        "03.05.01",
+        "03.07.05"
+      ],
+      "iso27001": []
+    },
+    {
+      "module": "printing",
+      "sp80053R5": [
+        {
+          "id": "CM-7",
+          "title": "Least Functionality"
+        }
+      ],
+      "sp800171R2": [
+        "3.4.6"
+      ],
+      "sp800171R3": [
+        "03.04.06"
+      ],
+      "iso27001": [
+        "A.8.19"
+      ]
+    },
+    {
+      "module": "features",
+      "sp80053R5": [
+        {
+          "id": "CM-7",
+          "title": "Least Functionality"
+        }
+      ],
+      "sp800171R2": [
+        "3.4.6"
+      ],
+      "sp800171R3": [
+        "03.04.06"
+      ],
+      "iso27001": [
+        "A.8.19"
+      ]
+    },
+    {
+      "module": "tls",
+      "sp80053R5": [],
+      "sp800171R2": [],
+      "sp800171R3": [],
+      "iso27001": []
+    },
+    {
+      "module": "audit",
+      "sp80053R5": [
+        {
+          "id": "AC-2",
+          "title": "Account Management"
+        },
+        {
+          "id": "AC-6",
+          "title": "Least Privilege"
+        },
+        {
+          "id": "AC-17",
+          "title": "Remote Access"
+        },
+        {
+          "id": "AU-3",
+          "title": "Content of Audit Records"
+        },
+        {
+          "id": "AU-4",
+          "title": "Audit Log Storage Capacity"
+        },
+        {
+          "id": "AU-9",
+          "title": "Protection of Audit Information"
+        },
+        {
+          "id": "AU-12",
+          "title": "Audit Record Generation"
+        },
+        {
+          "id": "CM-5",
+          "title": "Access Restrictions for Change"
+        },
+        {
+          "id": "MA-3",
+          "title": "Maintenance Tools"
+        },
+        {
+          "id": "SI-11",
+          "title": "Error Handling"
+        }
+      ],
+      "sp800171R2": [
+        "3.1.7",
+        "3.1.12",
+        "3.3.1",
+        "3.3.2",
+        "3.3.8"
+      ],
+      "sp800171R3": [
+        "03.01.07",
+        "03.03.02",
+        "03.03.03",
+        "03.03.08"
+      ],
+      "iso27001": [
+        "A.5.14",
+        "A.5.15",
+        "A.5.16",
+        "A.5.18",
+        "A.5.28",
+        "A.5.33",
+        "A.6.7",
+        "A.8.2",
+        "A.8.4",
+        "A.8.6",
+        "A.8.9",
+        "A.8.15",
+        "A.8.18",
+        "A.8.19",
+        "A.8.31",
+        "A.8.32"
+      ]
+    },
+    {
+      "module": "device-guard",
+      "sp80053R5": [
+        {
+          "id": "CM-6",
+          "title": "Configuration Settings"
+        }
+      ],
+      "sp800171R2": [
+        "3.4.1",
+        "3.4.2"
+      ],
+      "sp800171R3": [
+        "03.04.02"
+      ],
+      "iso27001": [
+        "A.8.9"
+      ]
+    },
+    {
+      "module": "bitlocker",
+      "sp80053R5": [
+        {
+          "id": "IA-8",
+          "title": "Identification and Authentication (Non-organizational Users)"
+        },
+        {
+          "id": "SC-28",
+          "title": "Protection of Information at Rest"
+        }
+      ],
+      "sp800171R2": [
+        "3.13.16"
+      ],
+      "sp800171R3": [
+        "03.08.05",
+        "03.13.08"
+      ],
+      "iso27001": [
+        "A.5.10",
+        "A.5.16",
+        "A.5.33"
+      ]
+    },
+    {
+      "module": "laps",
+      "sp80053R5": [
+        {
+          "id": "IA-5",
+          "title": "Authenticator Management"
+        }
+      ],
+      "sp800171R2": [
+        "3.5.7",
+        "3.5.8",
+        "3.5.9",
+        "3.5.10"
+      ],
+      "sp800171R3": [
+        "03.05.07"
+      ],
+      "iso27001": [
+        "A.5.16",
+        "A.5.17"
+      ]
+    }
+  ]
+}

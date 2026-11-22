@@ -8,7 +8,8 @@ import type { Device, Disk, DiskAlert, DiskHealth, DiskHealthDetail } from "../.
 import { Dialog } from "../../components/Dialog";
 import { Badge, Card, Dot, EmptyState, ErrorState, KeyValueList, Mono, Spinner, TableWrap } from "../../components/ui";
 import { formatDateTime, formatRelative, formatSize } from "../../lib/format";
-import { CHECK_NAMES, SeverityBadge } from "../alerts/alertText";
+import { AlertLink } from "../alerts/alertLink";
+import { ActiveCount, CHECK_NAMES, SeverityBadge } from "../alerts/alertText";
 import {
   ATTRIBUTES,
   deviceDiskHealth,
@@ -215,7 +216,6 @@ function DiskPanelBody({ deviceId, disk: d, firmware, detail }: {
   firmware?: Disk;
   detail: UseQueryResult<DiskHealthDetail>;
 }) {
-  const factsId = useId();
   const attributesId = useId();
   const historyId = useId();
   const alertsId = useId();
@@ -243,40 +243,7 @@ function DiskPanelBody({ deviceId, disk: d, firmware, detail }: {
         ]}
       />
 
-      <section aria-labelledby={factsId} className="flex flex-col gap-2">
-        <h3 id={factsId} className="text-sm font-semibold">
-          Facts
-        </h3>
-        {d.facts.length === 0 ? (
-          <p className="text-sm text-muted">No facts read yet.</p>
-        ) : (
-          <TableWrap>
-            <table className="table-base" aria-labelledby={factsId}>
-              <thead>
-                <tr>
-                  <th scope="col">Fact</th>
-                  <th scope="col">Value</th>
-                  <th scope="col">State</th>
-                </tr>
-              </thead>
-              <tbody>
-                {d.facts.map((f) => {
-                  const t = factText(f);
-                  return (
-                    <tr key={f.name}>
-                      <td>{t.label}</td>
-                      <td className="tabular-nums">{t.value}</td>
-                      <td>
-                        <StateMark state={f.state} reason={f.reason} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </TableWrap>
-        )}
-      </section>
+      <DiskFacts facts={d.facts} />
 
       {d.attributes.length > 0 && (
         <section aria-labelledby={attributesId} className="flex flex-col gap-2">
@@ -349,8 +316,9 @@ function DiskPanelBody({ deviceId, disk: d, firmware, detail }: {
       {detail.data && detail.data.alerts !== null && (
         <section aria-labelledby={alertsId} className="flex flex-col gap-2">
           <div className="flex items-baseline justify-between gap-2">
-            <h3 id={alertsId} className="text-sm font-semibold">
-              Open alerts
+            <h3 id={alertsId} className="flex items-center gap-2 text-sm font-semibold">
+              {"Open alerts "}
+              {detail.data.alerts.length > 0 && <ActiveCount count={detail.data.alerts.length} />}
             </h3>
             <Link to={`/alerts?deviceId=${deviceId}&status=all`} className="text-xs text-accent hover:underline">
               The device's alerts
@@ -359,7 +327,8 @@ function DiskPanelBody({ deviceId, disk: d, firmware, detail }: {
           {detail.data.alerts.length === 0 ? (
             <p className="text-sm text-muted">No open alerts on this disk.</p>
           ) : (
-            <ul className="divide-y divide-line rounded-lg border border-line">
+            // Each is active, so each pulses as on the Overview's Alerts card (index.css, "Active alerts").
+            <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line">
               {detail.data.alerts.map((a) => (
                 <DiskAlertItem key={a.id} alert={a} />
               ))}
@@ -368,6 +337,47 @@ function DiskPanelBody({ deviceId, disk: d, firmware, detail }: {
         </section>
       )}
     </div>
+  );
+}
+
+/** A disk's facts from its latest reading that read them, each with its state: the disk's panel and an alert's card. */
+export function DiskFacts({ facts }: { facts: DiskHealth["facts"] }) {
+  const factsId = useId();
+  return (
+    <section aria-labelledby={factsId} className="flex flex-col gap-2">
+      <h3 id={factsId} className="text-sm font-semibold">
+        Facts
+      </h3>
+      {facts.length === 0 ? (
+        <p className="text-sm text-muted">No facts read yet.</p>
+      ) : (
+        <TableWrap>
+          <table className="table-base" aria-labelledby={factsId}>
+            <thead>
+              <tr>
+                <th scope="col">Fact</th>
+                <th scope="col">Value</th>
+                <th scope="col">State</th>
+              </tr>
+            </thead>
+            <tbody>
+              {facts.map((f) => {
+                const t = factText(f);
+                return (
+                  <tr key={f.name}>
+                    <td>{t.label}</td>
+                    <td className="tabular-nums">{t.value}</td>
+                    <td>
+                      <StateMark state={f.state} reason={f.reason} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </TableWrap>
+      )}
+    </section>
   );
 }
 
@@ -413,9 +423,11 @@ function HistoryTable({ days, labelledBy }: { days: DiskHealthDetail["history"];
 function DiskAlertItem({ alert: a }: { alert: DiskAlert }) {
   const check = Object.hasOwn(CHECK_NAMES, a.checkName) ? CHECK_NAMES[a.checkName as keyof typeof CHECK_NAMES] : a.checkName;
   return (
-    <li className="flex items-start justify-between gap-3 px-3 py-2.5 text-sm">
+    <li className="alert-active-pulse alert-active-pulse--row flex items-start justify-between gap-3 px-3 py-2.5 text-sm">
       <span className="min-w-0">
-        <span className="block font-medium">{a.name}</span>
+        <AlertLink id={a.id} label={`${a.name}, details`} title="Show the alert's details" className="block font-medium break-words hover:underline">
+          {a.name}
+        </AlertLink>
         <span className="block text-xs text-muted">
           {check}
           {a.detail && <> · {a.detail}</>}

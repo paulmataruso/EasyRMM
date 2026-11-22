@@ -313,45 +313,388 @@ func match(dir, name string) ([]string, error) {
 
 // trustedEntry reports whether p is a plain file with a single link, or a
 // plain folder, that a trusted account owns and no one else may change
-// (othersMayChange). It looks at p itself, never through a link. What it
-// may not look at is not trusted: only its owner can have kept the system
-// and administrators out.
+// (entryProblem).
 func trustedEntry(p string) (bool, error) {
+	why, err := entryProblem(p, false, false)
+	return why == "" && err == nil, err
+}
+
+// entryProblem says why p fails the test of trustedEntry, or "" when it
+// passes (inspect). exclusive is inspect's.
+func entryProblem(p string, links, exclusive bool) (string, error) {
+	h, why, err := inspect(p, links, exclusive)
+	if h != 0 {
+		_ = windows.CloseHandle(h)
+	}
+	return why, err
+}
+
+// The storage reparse points that leave a file a plain file, which Windows
+// reads as it would without them: files compressed by its overlay filter
+// (compact /exe, IO_REPARSE_TAG_WOF) and by data deduplication
+// (IO_REPARSE_TAG_DEDUP). Every other tag is a link, a junction, a
+// placeholder or something the agent does not know (ADR-0064). Where the
+// overlay filter runs, as on CI's runners, it hides its reparse point, and
+// a compressed file reads as a plain file before its tag is looked at.
+const (
+	reparseWOF   = 0x80000017
+	reparseDedup = 0x80000013
+)
+
+// reparseRefused reports whether a reparse point with tag makes an entry
+// fail the check: always for a folder, and for a file unless the tag is
+// one of the two above.
+func reparseRefused(tag uint32, folder bool) bool {
+	return folder || (tag != reparseWOF && tag != reparseDedup)
+}
+
+const (
+	inspectAccess = windows.FILE_READ_ATTRIBUTES | windows.READ_CONTROL
+	inspectFlags  = windows.FILE_FLAG_OPEN_REPARSE_POINT | windows.FILE_FLAG_BACKUP_SEMANTICS
+	shareAll      = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE
+)
+
+// openEntry opens p itself, never through a link, to check it. Not
+// exclusive, it opens p sharing everything, as the agent's own state is
+// checked: the agent may hold its own files open. Exclusive, it opens p to
+// read it, sharing it for reading only. That open fails while anyone else
+// holds p open to write or delete it, or without sharing it; while it
+// stays open, no one else may open p to write or delete it. Where it fails
+// so, busy is true and p is opened sharing everything, which checks a
+// folder as well: what holds a folder open does not change what the folder
+// allows.
+func openEntry(p string, exclusive bool) (h windows.Handle, busy bool, err error) {
 	name, err := windows.UTF16PtrFromString(p)
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
-	h, err := windows.CreateFile(name, windows.FILE_READ_ATTRIBUTES|windows.READ_CONTROL,
-		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE, nil, windows.OPEN_EXISTING,
-		windows.FILE_FLAG_OPEN_REPARSE_POINT|windows.FILE_FLAG_BACKUP_SEMANTICS, 0)
+	if !exclusive {
+		h, err = windows.CreateFile(name, inspectAccess, shareAll, nil, windows.OPEN_EXISTING, inspectFlags, 0)
+		return h, false, err
+	}
+	h, err = windows.CreateFile(name, windows.FILE_READ_DATA|inspectAccess, windows.FILE_SHARE_READ, nil, windows.OPEN_EXISTING, inspectFlags, 0)
+	if errors.Is(err, windows.ERROR_SHARING_VIOLATION) {
+		busy = true
+		h, err = windows.CreateFile(name, inspectAccess, shareAll, nil, windows.OPEN_EXISTING, inspectFlags, 0)
+	}
+	return h, busy, err
+}
+
+// inspect checks p as trustedEntry does: it must be a plain file with a
+// single link (any number, with links) or a plain folder, that a trusted
+// account owns and no one else may change (writer). Exclusive, a file must
+// also not be open in another program that may write it (openEntry): an
+// access list fixed afterwards does not close what was opened before it
+// was (ADR-0064). A file compressed by
+// Windows or by deduplication is a plain file. It looks at p itself,
+// never through a link. What it may not look at fails: only its owner can
+// have kept the system and administrators out. Where p passes, the handle
+// it checked p through is returned open, for the caller to close: for a
+// file, no one else may write or delete it while that stays open.
+func inspect(p string, links, exclusive bool) (windows.Handle, string, error) {
+	h, busy, err := openEntry(p, exclusive)
 	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
-		return false, nil
+		return 0, "cannot be read by the agent", nil
 	}
 	if err != nil {
-		return false, &fs.PathError{Op: "open", Path: p, Err: err}
+		return 0, "", &fs.PathError{Op: "open", Path: p, Err: err}
+	}
+	why, err := handleProblem(h, p, links, busy)
+	if why != "" || err != nil {
+		_ = windows.CloseHandle(h)
+		return 0, why, err
+	}
+	return h, "", nil
+}
+
+// handleProblem is inspect's test of the entry h is open to.
+func handleProblem(h windows.Handle, p string, links, busy bool) (string, error) {
+	var info windows.ByHandleFileInformation
+	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
+		return "", &fs.PathError{Op: "stat", Path: p, Err: err}
+	}
+	folder := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
+	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		tag, err := reparseTag(h)
+		if err != nil {
+			return "", &fs.PathError{Op: "read the reparse tag of", Path: p, Err: err}
+		}
+		if reparseRefused(tag, folder) {
+			return "is a link, junction or other reparse point", nil
+		}
+	}
+	if !folder && !links && info.NumberOfLinks != 1 {
+		return fmt.Sprintf(linksReason, info.NumberOfLinks), nil
+	}
+	acl, why, err := ownerAndList(h, p)
+	if why != "" || err != nil {
+		return why, err
+	}
+	if who, ok := writer(acl, folder); ok {
+		return "can be changed by " + nameOf(who), nil
+	}
+	if busy && !folder {
+		return busyReason, nil
+	}
+	return "", nil
+}
+
+// busyReason is why a file that passes but is open in another program,
+// to write it or without sharing it, fails an exclusive check (openEntry).
+const busyReason = "is open in another program that may write to it"
+
+// linksReason is why a file with more than one hard link fails a check
+// that allows it one only (handleProblem), with how many it has.
+const linksReason = "has %d hard links"
+
+// reparseTag is the tag of the reparse point h is open to.
+func reparseTag(h windows.Handle) (uint32, error) {
+	var info struct{ FileAttributes, ReparseTag uint32 }
+	err := windows.GetFileInformationByHandleEx(h, windows.FileAttributeTagInfo, (*byte)(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info))) //nolint:gosec // a small struct's size
+	return info.ReparseTag, err
+}
+
+// ownerAndList reads the access list of what h is open to, and says why
+// that fails where its owner is not trusted or it has no list.
+func ownerAndList(h windows.Handle, p string) ([]aclEntry, string, error) {
+	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		return nil, "", &fs.PathError{Op: "read the owner and access list of", Path: p, Err: err}
+	}
+	owner, _, err := sd.Owner()
+	if err != nil {
+		return nil, "", err
+	}
+	if owner == nil {
+		return nil, "has no owner", nil
+	}
+	if !trusted(owner) {
+		return nil, "is owned by " + accountName(owner), nil
+	}
+	acl, ok, err := accessList(sd)
+	if err != nil {
+		return nil, "", &fs.PathError{Op: "read the access list of", Path: p, Err: err}
+	}
+	if !ok {
+		return nil, "can be changed by everyone: it has no access list", nil
+	}
+	return acl, "", nil
+}
+
+// nameOf names the SID an access list entry names, or says that the entry
+// names one in a way the agent does not read.
+func nameOf(who string) string {
+	if who == "" {
+		return "someone an access list entry names in a way the agent does not read"
+	}
+	sid, err := windows.StringToSid(who)
+	if err != nil {
+		return who
+	}
+	return accountName(sid)
+}
+
+// accountName names an account as Windows does (BUILTIN\Users), or by its
+// SID when it has no name.
+func accountName(sid *windows.SID) string {
+	account, domain, _, err := sid.LookupAccount("")
+	switch {
+	case err != nil || account == "":
+		return sid.String()
+	case domain == "":
+		return account
+	}
+	return domain + `\` + account
+}
+
+// Untrusted is an entry that fails the test of trustedEntry, and why.
+type Untrusted struct {
+	Path string
+	// Reason completes a sentence about the entry: "can be changed by
+	// BUILTIN\Users".
+	Reason string
+	// Busy says the entry failed only for being open in another program
+	// that may write to it, or that let no one else open it (openEntry):
+	// anyone who may read a file can do that, so it says nothing of who
+	// may change the file.
+	Busy bool
+	// Linked says the entry failed only for having more than one hard link.
+	// Which Windows builds let a user who may only read a file link to it
+	// is not confirmed, so neither does that say who may change the file.
+	Linked bool
+}
+
+func (u *Untrusted) Error() string { return u.Path + " " + u.Reason }
+
+func untrusted(p, why string) *Untrusted {
+	var n uint32
+	_, err := fmt.Sscanf(why, linksReason, &n)
+	linked := err == nil && why == fmt.Sprintf(linksReason, n)
+	return &Untrusted{Path: p, Reason: why, Busy: why == busyReason, Linked: linked}
+}
+
+// CheckTree checks root and everything in it at any depth as trustedEntry
+// checks an entry of the agent's state, each before what it holds, and
+// never through a link (ADR-0064: a PowerShell install and its module
+// folders). links allows files more than one link: in System32 Windows
+// keeps many of its own files as hard links into its component store. It
+// returns an *Untrusted for the first entry that fails, or another error
+// when one could not be read.
+func CheckTree(root string, links bool) error {
+	held, err := CheckTreeHolding(root, links, nil)
+	held.Close()
+	return err
+}
+
+// Held is files a check keeps open: until it is closed no one else may
+// write or delete them.
+type Held struct{ handles []windows.Handle }
+
+// Close lets the files go. A nil Held holds nothing.
+func (h *Held) Close() {
+	if h == nil {
+		return
+	}
+	for _, x := range h.handles {
+		_ = windows.CloseHandle(x)
+	}
+	h.handles = nil
+}
+
+// CheckTreeHolding checks root as CheckTree does, and keeps open the files
+// hold names, through the handles they were checked through, so that
+// nothing changes them between their check and their use: ADR-0064 holds a
+// PowerShell install's program and libraries until the run's process is
+// created. On failure nothing is held.
+func CheckTreeHolding(root string, links bool, hold func(path string) bool) (*Held, error) {
+	held := &Held{}
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		h, why, err := inspect(p, links, true)
+		if err != nil {
+			return err
+		}
+		if why != "" {
+			return untrusted(p, why)
+		}
+		if hold != nil && !d.IsDir() && hold(p) {
+			held.handles = append(held.handles, h)
+			return nil
+		}
+		return windows.CloseHandle(h)
+	})
+	if err != nil {
+		held.Close()
+		return nil, err
+	}
+	return held, nil
+}
+
+// CheckEntry checks one entry as CheckTree does, without what it holds.
+func CheckEntry(p string, links bool) error {
+	why, err := entryProblem(p, links, true)
+	if err != nil {
+		return err
+	}
+	if why != "" {
+		return untrusted(p, why)
+	}
+	return nil
+}
+
+// CheckAbove checks p and the folders above it, up to its drive's root,
+// for what would let anyone but the administration put another folder in
+// p's place (ADR-0064: a PowerShell install and each module folder). Each
+// folder on the way that exists, p included, must not be a link or
+// junction, must have a trusted owner, and must not let others delete or
+// rename it, nor change its access list or owner (replaceRights); each
+// folder above p must not let others delete what it holds (replaceInRights).
+// Where p, or a folder on the way to it, does not exist, the nearest one
+// that does must not let others add a folder to it (createInRights),
+// unless it is the drive's root, which lets every user add a folder; a
+// drive's root is held only to replaceInRights. What p holds is not
+// checked here. It returns an *Untrusted for the first folder that fails.
+func CheckAbove(p string) error {
+	p = filepath.Clean(p)
+	child, childExists := p, false
+	if _, err := os.Lstat(p); err == nil {
+		childExists = true
+		if why, err := folderProblem(p, replaceRights); why != "" || err != nil {
+			return untrustedOr(p, why, err)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	for {
+		parent := filepath.Dir(child)
+		if parent == child {
+			return nil
+		}
+		if _, err := os.Lstat(parent); errors.Is(err, fs.ErrNotExist) {
+			child = parent
+			continue
+		} else if err != nil {
+			return err
+		}
+		rights := replaceInRights
+		if filepath.Dir(parent) != parent {
+			rights |= replaceRights
+			if !childExists {
+				rights |= createInRights
+			}
+		}
+		if why, err := folderProblem(parent, rights); why != "" || err != nil {
+			return untrustedOr(parent, why, err)
+		}
+		child, childExists = parent, true
+	}
+}
+
+func untrustedOr(p, why string, err error) error {
+	if err != nil {
+		return err
+	}
+	return &Untrusted{Path: p, Reason: why}
+}
+
+// folderProblem says why the folder p fails CheckAbove's test for rights,
+// or "" when it passes.
+func folderProblem(p string, rights uint32) (string, error) {
+	name, err := windows.UTF16PtrFromString(p)
+	if err != nil {
+		return "", err
+	}
+	h, err := windows.CreateFile(name, inspectAccess, shareAll, nil, windows.OPEN_EXISTING, inspectFlags, 0)
+	if errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+		return "cannot be read by the agent", nil
+	}
+	if err != nil {
+		return "", &fs.PathError{Op: "open", Path: p, Err: err}
 	}
 	defer func() { _ = windows.CloseHandle(h) }()
 	var info windows.ByHandleFileInformation
 	if err := windows.GetFileInformationByHandle(h, &info); err != nil {
-		return false, &fs.PathError{Op: "stat", Path: p, Err: err}
+		return "", &fs.PathError{Op: "stat", Path: p, Err: err}
 	}
-	folder := info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY != 0
-	if info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 || !folder && info.NumberOfLinks != 1 {
-		return false, nil
+	switch {
+	case info.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0:
+		return "is a link, junction or other reparse point", nil
+	case info.FileAttributes&windows.FILE_ATTRIBUTE_DIRECTORY == 0:
+		return "is not a folder", nil
 	}
-	sd, err := windows.GetSecurityInfo(h, windows.SE_FILE_OBJECT, windows.OWNER_SECURITY_INFORMATION|windows.DACL_SECURITY_INFORMATION)
-	if err != nil {
-		return false, &fs.PathError{Op: "read the owner and access list of", Path: p, Err: err}
+	acl, why, err := ownerAndList(h, p)
+	if why != "" || err != nil {
+		return why, err
 	}
-	owner, _, err := sd.Owner()
-	if err != nil || owner == nil || !trusted(owner) {
-		return false, err
+	if who, ok := grantee(acl, rights&^createInRights, false); ok {
+		return "can be replaced, or what it holds deleted, by " + nameOf(who), nil
 	}
-	others, err := othersMayChange(sd, folder)
-	if err != nil {
-		return false, &fs.PathError{Op: "read the access list of", Path: p, Err: err}
+	if who, ok := grantee(acl, rights&createInRights, false); ok {
+		return "lets " + nameOf(who) + " create folders in it", nil
 	}
-	return !others, nil
+	return "", nil
 }
 
 // plainFolder reports whether fi is a folder and not a link, junction or

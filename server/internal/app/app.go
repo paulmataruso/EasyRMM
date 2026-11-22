@@ -6,8 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"net/mail"
 	"net/url"
@@ -133,7 +133,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 		return nil, err
 	}
 	auditLog := audit.New(db, time.Now)
-	mailSvc, err := mailserver.New(db, auditLog, sealer, envMail(cfg.SMTP), log)
+	mailSvc, err := newMail(db, auditLog, sealer, cfg.SMTP, log)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +201,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Agents.SetJobKey(d.Jobs.PublicKey())
 	d.Inventory = inventory.New(db, cfg.MetricsRetention, log)
 	d.Hardware = hardware.New(db, cfg.MetricsRetention, cfg.HardwareRetention, log)
-	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, log)
+	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, cfg.MetricsRetention, log)
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
 	d.EasyPatch = easypatch.New(db, auditLog, Version, log)
@@ -262,10 +262,11 @@ func usePatchingEngine(cfg *config.Config, d *Deps, sealer *secrets.Sealer, log 
 		opts = append(opts, easypatch.AgentHostnames(p.AgentHostnames))
 	}
 	// The engine emails through EasyRMM's mail server in force, which
-	// reaches it within seconds of every change (ADR-0053). Its digest,
-	// which EasyRMM's servers compare theirs with, is keyed by a key of its
-	// own, derived from the secret key.
-	mailKey, err := sealer.DeriveKey("easyrmm engine mail digest v1")
+	// reaches it within seconds of every change (ADR-0053), unless a
+	// Microsoft 365 application signs in to it, which the engine cannot.
+	// Its digests, which EasyRMM's servers compare theirs with, are keyed
+	// by keys of their own, derived from each secret key.
+	mailKeys, err := sealer.DeriveKeys("easyrmm engine mail digest v1")
 	if err != nil {
 		return err
 	}
@@ -274,9 +275,12 @@ func usePatchingEngine(cfg *config.Config, d *Deps, sealer *secrets.Sealer, log 
 		if err != nil || m == nil {
 			return easypatch.MailConfig{}, err
 		}
+		if mailserver.WithholdsFromEngine(m) {
+			return easypatch.MailConfig{Withheld: mailserver.EngineWithheld}, nil
+		}
 		return easypatch.MailConfig{Host: m.Host, Port: m.Port, Username: m.Username, Password: m.Password, FromAddress: m.FromAddress,
 			FromName: m.FromName, Security: m.Security}, nil
-	}, mailKey))
+	}, mailKeys))
 	if err := d.EasyPatch.UseEngine(engine, opts...); err != nil {
 		return fmt.Errorf("patching engine: %w", err)
 	}
@@ -286,6 +290,54 @@ func usePatchingEngine(cfg *config.Config, d *Deps, sealer *secrets.Sealer, log 
 	d.Tenancy.OnChange(d.EasyPatch.Kick)
 	d.Mail.OnChange(d.EasyPatch.Kick)
 	return nil
+}
+
+// m365Authority is where Microsoft 365 applications ask for tokens:
+// Microsoft's identity platform, unless a test sets its stand-in's.
+var m365Authority string
+
+// newMail builds the mail server's service: .env's mail server, signing in
+// with .env's Microsoft 365 application when it has one, or the console's.
+func newMail(db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer, c config.SMTPConfig, log *slog.Logger) (*mailserver.Service, error) {
+	app, err := c.SMTPApplication()
+	if err != nil {
+		return nil, fmt.Errorf("EASYRMM_SMTP_*: %w", err)
+	}
+	var opts []mailserver.Option
+	if app != nil {
+		opts = append(opts, mailserver.EnvApplication(app))
+	}
+	if m365Authority != "" {
+		opts = append(opts, mailserver.Authority(m365Authority))
+	}
+	return mailserver.New(db, auditLog, sealer, envMail(c), log, opts...)
+}
+
+// MailCheck checks the mail server in force as the running server does and
+// prints its answer: it connects and signs in, getting a token first when
+// a Microsoft 365 application signs in, and quits without sending.
+//
+//	docker compose exec server easyrmm-server mail check
+func MailCheck(ctx context.Context, cfg *config.Config, log *slog.Logger, out io.Writer) error {
+	sealer, err := secrets.NewSealer(cfg.SecretKeys...)
+	if err != nil {
+		return err
+	}
+	db, err := database.Open(ctx, cfg.DatabaseURL, database.PoolOptions{MaxConns: 2})
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	svc, err := newMail(db, audit.New(db, time.Now), sealer, cfg.SMTP, log)
+	if err != nil {
+		return err
+	}
+	answer, err := svc.Check(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(out, answer)
+	return err
 }
 
 // envMail is .env's mail server (EASYRMM_SMTP_*), nil without
@@ -585,6 +637,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	wg.Go(func() { deps.Monitoring.Run(ctx) })
 	wg.Go(func() { deps.AuditFwd.Run(ctx) })
 	wg.Go(func() { deps.EasyPatch.Run(ctx) })
+	// The mail server in force: checked at start, after changes and daily,
+	// signing in without sending; its answer is logged and in the console.
+	wg.Go(func() { deps.Mail.Run(ctx) })
 	// Waiting job polls end with the server, not 25 seconds later.
 	wg.Go(func() {
 		<-ctx.Done()
@@ -658,7 +713,7 @@ func serveHealth(ctx context.Context, addr string, db *database.DB, hold *update
 		_, _ = w.Write([]byte("ready\n"))
 	})
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", addr)
+	ln, err := listen(ctx, addr)
 	if err != nil {
 		return fmt.Errorf("health listener: %w", err)
 	}

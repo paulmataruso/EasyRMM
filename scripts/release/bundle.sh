@@ -105,6 +105,26 @@ if grep -q 'EASYPATCH_IMAGE\|EASYPATCH_VERSION\|\.\./easypatch' "$compose" || [ 
   echo "bundle: docker-compose.yml still names the engine without its digest" >&2
   exit 1
 fi
+# The host updater (ADR-0052) for each architecture the deployment runs on,
+# beside its systemd units (deploy-tree.sh): setup.sh installs the one for
+# its host. A build with the test-only tag updatertest trusts a test's
+# Sigstore instance instead of Sigstore's: never in a bundle.
+case " ${GOFLAGS:-} " in
+  *updatertest*)
+    echo "bundle: GOFLAGS names the updatertest tag, which only the updater's tests use" >&2
+    exit 1
+    ;;
+esac
+for arch in amd64 arm64; do
+  updater=$dir/deploy/updater/easyrmm-updater-linux-$arch
+  CGO_ENABLED=0 GOOS=linux GOARCH=$arch "$go" -C "$root" build -trimpath -buildvcs=false \
+    -ldflags "-s -w -X main.Version=$version" -o "$updater" ./updater/cmd/easyrmm-updater
+  if "$go" version -m "$updater" | grep -q 'updatertest'; then
+    echo "bundle: $updater was built with the updatertest tag" >&2
+    exit 1
+  fi
+  chmod 0755 "$updater"
+done
 tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --format=gnu \
   -C "$stage" -cf - "$name" | gzip -n -9 > "$out/$name-deploy.tar.gz"
 
