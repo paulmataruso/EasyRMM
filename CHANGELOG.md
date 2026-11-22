@@ -334,6 +334,11 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- When one EasyRMM server gives up giving the patching engine its mail
+  server (it stops, or a reset hands the work over), it now releases its
+  lead before closing the connection that held it. Before, another server
+  trying straight after could still find the lead held, while PostgreSQL
+  ended the closed session, and wait a whole pass to take over.
 - **Remote sessions work from every address the server answers on.**
   MeshCentral accepted a session's control connection only from a page on
   its own name, so it closed every session started from a console reached
