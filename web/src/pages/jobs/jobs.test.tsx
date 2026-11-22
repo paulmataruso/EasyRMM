@@ -214,7 +214,7 @@ describe("jobs", () => {
     expect(screen.getByText("The script exited with code 2.")).toBeInTheDocument();
     // Output keeps its spacing and line breaks.
     expect((await screen.findByText(/\/dev\/sda1/)).textContent).toBe("Filesystem  Size\n/dev/sda1   20G\n");
-    expect(screen.getByText("Opening a run’s output is recorded in the audit log.")).toBeInTheDocument();
+    expect(screen.getByText("Opening or downloading a run’s output is recorded in the audit log, each time.")).toBeInTheDocument();
     expect(screen.getByText(/its middle was left out/)).toBeInTheDocument();
     expect(screen.getByText("Nothing was written to standard error.")).toBeInTheDocument();
     expect(screen.getByText(/\(2 times\)/)).toBeInTheDocument();
@@ -229,6 +229,67 @@ describe("jobs", () => {
     await waitFor(() => expect(server.callsTo("GET /job-runs/:id")).toHaveLength(2));
     expect(server.callsTo("GET /job-runs/:id/output")).toHaveLength(1);
     act(() => focusManager.setFocused(undefined));
+  });
+
+  it("offers each stream and the run as files, through the audited downloads", async () => {
+    const server = installFakeApi({
+      ...baseRoutes(TECHNICIAN),
+      "GET /job-runs/:id": ok(
+        jobRun("r2", "d2", "PRINT-02", "failed", { canViewOutput: true, stdoutBytes: 9, stderrBytes: 0, outputRemovedAt: null, job: job("j1", "Disk usage") }),
+      ),
+      "GET /job-runs/:id/output": ok({ stdout: `${MARKER}\n`, stderr: "", stdoutTruncated: false, stderrTruncated: false }),
+    });
+    renderApp("/jobs/j1/runs/r2");
+    expect(await screen.findByText(MARKER)).toBeInTheDocument();
+    // Beside Copy on a stream that has something; the empty stream offers neither.
+    expect(screen.getByRole("link", { name: "Download standard output" })).toHaveAttribute("href", "/api/v1/job-runs/r2/output?download=stdout");
+    expect(screen.queryByRole("link", { name: "Download standard error" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Download run" })).toHaveAttribute("href", "/api/v1/job-runs/r2/output?download=json");
+    for (const name of ["Download standard output", "Download run"]) expect(screen.getByRole("link", { name })).toHaveAttribute("download");
+    // The links are the downloads: the page itself read the output once.
+    expect(server.callsTo("GET /job-runs/:id/output")).toHaveLength(1);
+  });
+
+  it("offers a run that printed nothing as a file, and no download where it cannot work", async () => {
+    const quiet = jobRun("r1", "d1", "PRINT-01", "succeeded", { canViewOutput: true, stdoutBytes: 0, stderrBytes: 0, outputRemovedAt: null, job: job("j1", "Disk usage") });
+    const runs: Record<string, ReturnType<typeof jobRun>> = {
+      r1: quiet,
+      r2: { ...quiet, id: "r2", outputRemovedAt: "2026-11-01T10:05:00Z" },
+      r3: { ...quiet, id: "r3", canViewOutput: false },
+      r4: jobRun("r4", "d1", "PRINT-01", "running", { canViewOutput: true, job: job("j1", "Disk usage") }),
+    };
+    installFakeApi({ ...baseRoutes(TECHNICIAN), "GET /job-runs/:id": (r) => ok(runs[r.params.id!]) });
+    const { unmount } = renderApp("/jobs/j1/runs/r1");
+    expect(await screen.findByText("Nothing was written to standard output.")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Download run" })).toHaveAttribute("href", "/api/v1/job-runs/r1/output?download=json");
+    expect(screen.queryByRole("link", { name: /Download standard/ })).not.toBeInTheDocument();
+    unmount();
+    for (const [id, says] of [
+      ["r2", /The output was removed/],
+      ["r3", /Hidden: needs permission to see job output/],
+      ["r4", /sends the script’s output when it ends/],
+    ] as const) {
+      const view = renderApp(`/jobs/j1/runs/${id}`);
+      expect(await screen.findByText(says)).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: /^Download/ })).not.toBeInTheDocument();
+      view.unmount();
+    }
+  });
+
+  it("offers a job's results to everyone who sees it, and its output only where it can be read", async () => {
+    const done = { ...RUNNING_JOB, finished: true, canCancel: false, canViewArguments: false, runs: [jobRun("r1", "d1", "PRINT-01", "succeeded")] };
+    installFakeApi({
+      ...baseRoutes(TECHNICIAN),
+      "GET /jobs/:id": (r) => ok({ ...done, id: r.params.id!, canDownloadOutput: r.params.id === "j1" }),
+      "GET /scripts/:id": fail(404, "not_found", "Not found."),
+    });
+    const { unmount } = renderApp("/jobs/j1");
+    expect(await screen.findByRole("link", { name: "Download output (ZIP)" })).toHaveAttribute("href", "/api/v1/jobs/j1/output.zip");
+    expect(screen.getByRole("link", { name: "Download results (CSV)" })).toHaveAttribute("href", "/api/v1/jobs/j1/runs.csv");
+    unmount();
+    renderApp("/jobs/j9");
+    expect(await screen.findByRole("link", { name: "Download results (CSV)" })).toHaveAttribute("href", "/api/v1/jobs/j9/runs.csv");
+    expect(screen.queryByRole("link", { name: "Download output (ZIP)" })).not.toBeInTheDocument();
   });
 
   it("says when a run printed nothing, without reading its output", async () => {
@@ -299,6 +360,8 @@ describe("jobs", () => {
       "GET /organizations": ok({ items: [] }),
       "GET /audit": ok({
         items: [
+          auditEntry(5, "job.results_export", { targetType: "job", targetId: "j1", details: { script: "Backup check", rows: 3 } }),
+          auditEntry(4, "job_run.output_view", { targetType: "job_run", targetId: "r3", details: { device: "PRINT-03", script: "Disk usage", download: "zip" } }),
           auditEntry(3, "job_run.output_remove", { targetType: "job_run", targetId: "r2", details: { device: "PRINT-02", script: "Disk usage" } }),
           auditEntry(2, "job.arguments_view", { targetType: "job", targetId: "j1", details: { script: "Disk usage", argCount: 2 } }),
           auditEntry(1, "job_run.output_view", { targetType: "job_run", targetId: "r2", outcome: "denied", details: { device: "PRINT-02", script: "Disk usage" } }),
@@ -309,6 +372,10 @@ describe("jobs", () => {
     expect(await screen.findByText("Removed job output")).toBeInTheDocument();
     expect(screen.getByText("Viewed job arguments")).toBeInTheDocument();
     expect(screen.getByText("Viewed job output")).toBeInTheDocument();
+    expect(screen.getByText("Downloaded job output")).toBeInTheDocument();
+    expect(screen.getByText("Disk usage on PRINT-03")).toBeInTheDocument();
+    expect(screen.getByText("Downloaded job results")).toBeInTheDocument();
+    expect(screen.getByText("Backup check")).toBeInTheDocument();
     expect(screen.getAllByText("Disk usage on PRINT-02")).toHaveLength(2);
     expect(screen.getByText("Disk usage")).toBeInTheDocument();
     // job_run is an area of its own: the server matches action prefixes at the dot.

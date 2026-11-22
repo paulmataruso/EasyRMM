@@ -60,6 +60,10 @@ type JobDetail struct {
 	// CanViewArguments says whether the caller holds job.view_sensitive at
 	// the site of one of the runs they can see.
 	CanViewArguments bool `json:"canViewArguments"`
+	// CanDownloadOutput says whether the job's output archive would hold
+	// something: a finished run the caller sees, at a site where they hold
+	// job.view_sensitive (ADR-0064).
+	CanDownloadOutput bool `json:"canDownloadOutput"`
 }
 
 // Run is one device's part of a job.
@@ -591,7 +595,9 @@ func (s *Service) GetJob(ctx context.Context, c access.Caller, id uuid.UUID) (*J
 			}
 			s.decorateRun(c, r)
 			j.CanCancel = j.CanCancel || r.CanCancel
-			detail.CanViewArguments = detail.CanViewArguments || c.Can(rbac.PermJobViewSensitive, rbac.Site(r.OrganizationID, r.SiteID))
+			sensitive := c.Can(rbac.PermJobViewSensitive, rbac.Site(r.OrganizationID, r.SiteID))
+			detail.CanViewArguments = detail.CanViewArguments || sensitive
+			detail.CanDownloadOutput = detail.CanDownloadOutput || (sensitive && !r.open())
 			j.Runs = append(j.Runs, r)
 		}
 		return rows.Err()

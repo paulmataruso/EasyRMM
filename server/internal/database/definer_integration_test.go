@@ -29,7 +29,9 @@ var definerFunctions = []string{
 	"easyrmm_audit_verify(bigint,integer)",
 	"easyrmm_job_arguments(uuid,boolean,uuid[],uuid[],boolean,uuid[],uuid[],timestamp with time zone,text,uuid,text,inet,text)",
 	"easyrmm_job_delivery_args(uuid,uuid[])",
-	"easyrmm_job_run_output(uuid,boolean,uuid[],uuid[],boolean,uuid[],uuid[],timestamp with time zone,text,uuid,text,inet,text)",
+	"easyrmm_job_output_zip(uuid,boolean,uuid[],uuid[],boolean,uuid[],uuid[],timestamp with time zone,text,uuid,text,inet,text)",
+	"easyrmm_job_run_output(uuid,text,boolean,uuid[],uuid[],boolean,uuid[],uuid[],timestamp with time zone,text,uuid,text,inet,text)",
+	"easyrmm_job_run_output_recorded(uuid,bigint,uuid,timestamp with time zone,boolean,uuid[],uuid[],boolean,uuid[],uuid[])",
 	"easyrmm_purge_audit(interval)",
 }
 
@@ -211,13 +213,16 @@ func TestTemporaryObjectsCannotReachTheOwner(t *testing.T) {
 
 	const actor = `'user', '00000000-0000-0000-0000-0000000000f1', 'tester', NULL, 'test'`
 	for _, c := range []struct{ sql, want string }{
-		{`SELECT result FROM easyrmm_job_run_output('00000000-0000-0000-0000-0000000000e1', true, NULL, NULL, true, NULL, NULL, now(), ` + actor + `)`, "ok"},
-		{`SELECT result FROM easyrmm_job_run_output('00000000-0000-0000-0000-0000000000e1', true, NULL, NULL, false, NULL, NULL, now(), ` + actor + `)`, "forbidden"},
+		{`SELECT result FROM easyrmm_job_run_output('00000000-0000-0000-0000-0000000000e1', NULL, true, NULL, NULL, true, NULL, NULL, now(), ` + actor + `)`, "ok"},
+		{`SELECT result FROM easyrmm_job_run_output('00000000-0000-0000-0000-0000000000e1', 'json', true, NULL, NULL, false, NULL, NULL, now(), ` + actor + `)`, "forbidden"},
+		{`SELECT string_agg(result || ':' || (record_id IS NOT NULL)::text, ',') FROM easyrmm_job_output_zip('00000000-0000-0000-0000-0000000000d1', true, NULL, NULL, true, NULL, NULL, now(), ` + actor + `)`, "ok:true"},
+		{`SELECT result FROM easyrmm_job_output_zip('00000000-0000-0000-0000-0000000000d1', true, NULL, NULL, false, NULL, NULL, now(), ` + actor + `)`, "forbidden"},
+		{`SELECT result FROM easyrmm_job_run_output_recorded('00000000-0000-0000-0000-0000000000e1', 0, '00000000-0000-0000-0000-0000000000f1', now(), true, NULL, NULL, true, NULL, NULL)`, "forbidden"},
 		{`SELECT result FROM easyrmm_job_arguments('00000000-0000-0000-0000-0000000000d1', true, NULL, NULL, true, NULL, NULL, now(), ` + actor + `)`, "ok"},
 		{`SELECT result FROM easyrmm_job_arguments('00000000-0000-0000-0000-0000000000d1', true, NULL, NULL, false, NULL, NULL, now(), ` + actor + `)`, "forbidden"},
 		{`SELECT array_to_string(run_args, ',') FROM easyrmm_job_delivery_args('00000000-0000-0000-0000-00000000000c', ARRAY['00000000-0000-0000-0000-0000000000e2']::uuid[])`, "c"},
 		{`SELECT (easyrmm_audit_append(now(), 'system', NULL, 'tester', NULL, NULL, NULL, 'test.planted', 'test', 'x', 'success', NULL, 'test', '{}') > 0)::text`, "true"},
-		{`SELECT checked || '/' || coalesce(first_bad_id::text, 'intact') FROM easyrmm_audit_verify(0, 1000)`, "5/intact"},
+		{`SELECT checked || '/' || coalesce(first_bad_id::text, 'intact') FROM easyrmm_audit_verify(0, 1000)`, "7/intact"},
 		{`SELECT easyrmm_purge_audit('30 days')::text`, "0"},
 	} {
 		got, ran := asApp(c.sql)
@@ -325,9 +330,12 @@ func TestDefinerSearchPathMigration(t *testing.T) {
 	}
 
 	// Another role owns the database: the functions are pinned, TEMPORARY
-	// stays, and up says what to run.
+	// stays, and up says what to run. public then belongs to that role, so
+	// easyrmm_owner creates in it by a grant, as it must in any such
+	// deployment to have migrated at all; later migrations need it.
 	down()
 	must(`ALTER DATABASE ` + inst.Name + ` OWNER TO CURRENT_USER`)
+	must(`GRANT CREATE ON SCHEMA public TO easyrmm_owner`)
 	log = up()
 	if s := state(); s != kept {
 		t.Errorf("after up under another owner: %s", s)
@@ -340,6 +348,7 @@ func TestDefinerSearchPathMigration(t *testing.T) {
 	}
 
 	must(`ALTER DATABASE ` + inst.Name + ` OWNER TO easyrmm_owner`)
+	must(`REVOKE CREATE ON SCHEMA public FROM easyrmm_owner`)
 	down()
 	if s := state(); s != before {
 		t.Errorf("after down again: %s", s)

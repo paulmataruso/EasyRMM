@@ -717,6 +717,11 @@ export interface Job {
   argCount?: number;
   /** Whether the caller may read the values: they hold job.view_sensitive where one of the runs they see is. */
   canViewArguments?: boolean;
+  /**
+   * Only in the response for one job: whether GET /jobs/{id}/output.zip would hold something, a finished run the caller
+   * sees at a site where they hold job.view_sensitive (ADR-0064).
+   */
+  canDownloadOutput?: boolean;
   canCancel: boolean;
 }
 

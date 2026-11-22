@@ -261,7 +261,7 @@ function RecentActivity({ className }: { className?: string }) {
                     {formatRelative(e.occurredAt)}
                   </td>
                   <td className="max-w-48 truncate">{e.actorLabel || <span className="text-muted">{e.actorType}</span>}</td>
-                  <td className="whitespace-nowrap">{actionLabel(e.action)}</td>
+                  <td className="whitespace-nowrap">{actionLabel(e.action, e.details)}</td>
                   <td className="max-w-56 truncate text-muted">{auditTarget(e)}</td>
                   <td className="text-right">
                     <OutcomeBadge outcome={e.outcome} />

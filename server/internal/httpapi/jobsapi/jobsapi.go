@@ -4,6 +4,7 @@ package jobsapi
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
@@ -34,6 +35,8 @@ func (a *API) Register(mux *http.ServeMux) {
 	r("GET /api/v1/devices/{id}/hardening", a.deviceHardening)
 	r("GET /api/v1/jobs/{id}", a.getJob)
 	r("GET /api/v1/jobs/{id}/arguments", a.jobArguments)
+	r("GET /api/v1/jobs/{id}/output.zip", a.jobOutputZip)
+	r("GET /api/v1/jobs/{id}/runs.csv", a.jobResultsCSV)
 	r("POST /api/v1/jobs/{id}/cancel", a.cancelJob)
 	r("GET /api/v1/job-runs", a.listRuns)
 	r("GET /api/v1/job-runs/{id}", a.getRun)
@@ -269,17 +272,83 @@ func (a *API) getRun(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// runOutput returns what a run printed, each read audited (ADR-0063).
+// runOutput returns what a run printed, each read audited (ADR-0063), or,
+// with ?download=stdout, stderr or json, a file of it (ADR-0064).
 func (a *API) runOutput(w http.ResponseWriter, r *http.Request) error {
 	id, err := httpapi.PathID(r)
 	if err != nil {
 		return err
+	}
+	if q := r.URL.Query(); q.Has("download") {
+		f, err := a.svc.DownloadOutput(r.Context(), httpapi.Caller(r), id, q.Get("download"))
+		if err != nil {
+			return err
+		}
+		contentType := "text/plain; charset=utf-8"
+		if q.Get("download") == jobs.DownloadJSON {
+			contentType = "application/json; charset=utf-8"
+		}
+		writeFile(w, f, contentType)
+		return nil
 	}
 	out, err := a.svc.ReadOutput(r.Context(), httpapi.Caller(r), id)
 	if err != nil {
 		return err
 	}
 	httpapi.WriteJSON(w, http.StatusOK, out)
+	return nil
+}
+
+// writeFile sends a download. Its name is letters, digits, '.', '_', '-'
+// (jobs.fileName) and its body what a script printed, never rendered: an
+// attachment, of a text or JSON type, under nosniff and the console's CSP.
+func writeFile(w http.ResponseWriter, f *jobs.File, contentType string) {
+	h := w.Header()
+	h.Set("Content-Type", contentType)
+	h.Set("Content-Disposition", `attachment; filename="`+f.Name+`"`)
+	h.Set("Content-Length", strconv.Itoa(len(f.Body)))
+	h.Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(f.Body) //nolint:gosec // an attachment of a text, CSV or JSON type, sent with nosniff: never rendered as a page
+}
+
+// jobOutputZip sends a job's output as a ZIP archive. Every run's read is
+// recorded, and committed, before the first byte is sent (ADR-0064).
+func (a *API) jobOutputZip(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	arc, err := a.svc.OutputArchive(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	h := w.Header()
+	h.Set("Content-Type", "application/zip")
+	h.Set("Content-Disposition", `attachment; filename="`+arc.Name+`"`)
+	h.Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	if err := arc.Write(r.Context(), w); err != nil {
+		// The answer has begun: break it off, so the client sees a failed
+		// download rather than a short archive.
+		httpapi.LoggerFrom(r.Context()).Warn("sending a job's output archive failed", "error", err, "job_id", id)
+		panic(http.ErrAbortHandler)
+	}
+	return nil
+}
+
+// jobResultsCSV sends a job's results without output, recorded as an
+// export (ADR-0064).
+func (a *API) jobResultsCSV(w http.ResponseWriter, r *http.Request) error {
+	id, err := httpapi.PathID(r)
+	if err != nil {
+		return err
+	}
+	f, err := a.svc.ResultsCSV(r.Context(), httpapi.Caller(r), id)
+	if err != nil {
+		return err
+	}
+	writeFile(w, f, "text/csv; charset=utf-8")
 	return nil
 }
 
