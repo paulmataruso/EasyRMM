@@ -641,17 +641,18 @@ func TestEmailLink(t *testing.T) {
 	to := e.mp.Address("person")
 	letter := mailer.Letter{Subject: "You have been invited to EasyRMM", Before: []string{"Welcome."},
 		Link: &mailer.Link{Label: "Set up your account", URL: "https://rmm.example.com/welcome#token=abc"}}
-	if got := e.svc.EmailLink(ctx, to, letter); got != "" {
+	by := mailer.AccountMail{Admin: uuid.New()}
+	if got := e.svc.EmailLink(ctx, to, letter, by); got != "" {
 		t.Fatalf("EmailLink: %q", got)
 	}
 	if sent := e.mp.Wait(to, 1); sent[0].Subject != letter.Subject || !strings.Contains(sent[0].HTML, `href="https://rmm.example.com/welcome#token=abc"`) {
 		t.Fatalf("e-mail %+v", sent[0])
 	}
-	if got := e.svc.EmailLink(ctx, testmail.Refused, letter); got != auth.MailNotSent {
+	if got := e.svc.EmailLink(ctx, testmail.Refused, letter, by); got != auth.MailNotSent {
 		t.Fatalf("EmailLink to a refused recipient: %q", got)
 	}
 	letter.Link.URL = "javascript:alert(1)"
-	if got := e.svc.EmailLink(ctx, to, letter); got != auth.MailNotSent {
+	if got := e.svc.EmailLink(ctx, to, letter, by); got != auth.MailNotSent {
 		t.Fatalf("EmailLink with a bad link: %q", got)
 	}
 	if len(e.mp.Received(to)) != 1 {
@@ -674,7 +675,7 @@ func TestPasswordResetWithoutMailerAndWithWeakPassword(t *testing.T) {
 		t.Fatalf("want ErrResetUnavailable, got %v", err)
 	}
 	letter := mailer.Letter{Subject: "s", Link: &mailer.Link{Label: "x", URL: "https://rmm.example.com/welcome#token=x"}}
-	if got := svc.EmailLink(ctx, "x@example.com", letter); got != auth.MailNotConfigured {
+	if got := svc.EmailLink(ctx, "x@example.com", letter, mailer.AccountMail{}); got != auth.MailNotConfigured {
 		t.Fatalf("EmailLink without a mailer: %q", got)
 	}
 	// A mail server service with no mail server set: none in force.
@@ -683,11 +684,29 @@ func TestPasswordResetWithoutMailerAndWithWeakPassword(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc = auth.NewService(inst.DB, audit.New(inst.DB, nil), hasher, sealer, none, auth.DefaultConfig())
-	if svc.ResetAvailable(ctx) || svc.EmailLink(ctx, "x@example.com", letter) != auth.MailNotConfigured {
+	if svc.ResetAvailable(ctx) || svc.EmailLink(ctx, "x@example.com", letter, mailer.AccountMail{}) != auth.MailNotConfigured {
 		t.Fatal("reset reported available without a mail server")
 	}
 	if err := svc.RequestPasswordReset(ctx, "x@example.com", meta); !errors.Is(err, auth.ErrResetUnavailable) {
 		t.Fatalf("want ErrResetUnavailable, got %v", err)
+	}
+	// The address's limit comes before the database: past it, the answer
+	// is the limit, not whether reset is available.
+	for range 20 {
+		if err := svc.RequestPasswordReset(ctx, "x@example.com", meta); errors.Is(err, auth.ErrRateLimited) {
+			break
+		} else if !errors.Is(err, auth.ErrResetUnavailable) {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.RequestPasswordReset(ctx, "x@example.com", meta); !errors.Is(err, auth.ErrRateLimited) {
+		t.Fatalf("past the address's limit: %v", err)
+	}
+	// Nothing limits links that come back to the administrator.
+	for range 5 {
+		if err := svc.AdminLinkRoom(ctx, mailer.AccountMail{Admin: uuid.New()}, uuid.New()); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	e := newEnv(t, nil)

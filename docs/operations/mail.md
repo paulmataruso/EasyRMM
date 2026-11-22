@@ -60,7 +60,9 @@ server**.
    (connection, STARTTLS, certificate, sign-in, sender, recipient). One
    test message goes every 30 seconds across the platform.
 6. **Save**. Invitations and password resets use it from the next message,
-   on every server, and password reset is offered on the sign-in page.
+   on every server, and password reset is offered on the sign-in page
+   (within five seconds on EasyRMM's other servers, which keep the answer
+   that long).
 
 **Remove** clears the console's mail server and its stored password.
 Invitations and password links then come back to the administrator, and
@@ -77,11 +79,34 @@ minute and the last 24 hours, across all of EasyRMM's servers. By default
 a minute and stops a mailbox that sends to more than 10,000 recipients in
 24 hours. Set your own mail server's limits.
 
-* **Invitations and password resets go first.** They may use the whole
-  day's limit, and wait up to a minute for room under the minute's.
-* **Other mail** (today, the test message) does not wait, stops at 90% of
-  the day's limit so that the rest is kept for invitations and password
-  resets, and stands back while an invitation or reset is waiting.
+* **Invitations and password resets go first.** They wait up to a minute
+  for room under the minute's limit, and other mail on every server
+  stands back while one waits.
+* **Password resets people ask for** may use the whole day's limit.
+* **Invitations and password links administrators send** stop at 90% of
+  the day's limit, so that the last 10% is kept for resets people ask for
+  whatever administrators send. They are also limited, whatever the
+  mail server's limits:
+  * **60 an hour per administrator**: one a minute for an hour is more than
+    anyone inviting a team or sending links by hand needs, and it stops a
+    script or a stolen session at 1,440 a day.
+  * **500 a day per organization**, counting the account's organization,
+    whoever sends: enough to bring on a customer of several hundred people
+    in a day, and under 6% of the default 9,000 a day, so that no customer
+    can use up the platform's mail.
+  * **The account's own limit**: a password link counts against the limit
+    password reset has on one account (three, then one every 20 minutes),
+    which the person's own resets share.
+
+  Past one of them, the invitation or link is refused before anything is
+  made (`429` with `admin_mail_limited`, `organization_mail_limited` or
+  `account_mail_limited`, and a message that says when to try again), and
+  the refusal is in the audit log, at most once a minute per administrator
+  and limit. Without a mail server, links come back to the administrator
+  and nothing limits them.
+* **Other mail** (today, the test message) does not wait, and stops at 80%
+  of the day's limit, so that the rest is kept for invitations and password
+  resets.
 * A message the mail server refuses does not count.
 * The page shows the last minute's and the last 24 hours' counts, and how
   many of them were invitations and password resets.
@@ -146,6 +171,7 @@ Super administrators (`settings.manage` on the platform):
 | `does not offer STARTTLS` | The port is for TLS from the first byte (465), or the server offers no encryption. Choose TLS, or a relay on the same machine |
 | Sign-in refused (`535`) | The user name or password, and that the mailbox may sign in over SMTP. Exchange Online is retiring passwords over SMTP ([ADR-0053](../architecture/adr/0053-one-notification-sender.md)); a relay on the same machine is the way until signing in with an application comes |
 | `Not sent: the limit of … messages a day is reached` | Raise the limit, or wait until the oldest of them is 24 hours old |
+| An invitation or a password link is refused with "the most one administrator may" or "the most one organization may" | The limits on administrators' account mail (see [Limits](#limits)); the message says when to try again. Without a mail server, links come back instead |
 | Patching's email does not arrive but test messages do | Settings → Patching → Notifications shows the engine's mail server, or why the engine has none; check the channel's last message there |
 | A mail server set in the patching engine went back | EasyRMM is the mail server's one source and overwrites the engine's within a minute. Set it under Settings → Notifications |
 

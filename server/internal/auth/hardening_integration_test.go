@@ -12,8 +12,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 )
 
 func (e *env) userInt(t *testing.T, id uuid.UUID, column string) int {
@@ -176,6 +178,51 @@ func TestResetEmailIsLimitedPerAccount(t *testing.T) {
 	}
 	if denied := e.audits(t, "auth.password_reset_request", "denied"); len(denied) != 2 || denied[0]["reason"] != "rate_limited" {
 		t.Fatalf("limited requests not audited: %v", denied)
+	}
+}
+
+// An administrator's password links count against the same limit on one
+// account as resets the person asks for, and against the mail server's
+// limits on one administrator: past either, the link is refused with a 429
+// before it is made.
+func TestAdminLinksAreLimited(t *testing.T) {
+	e := newEnv(t, func(c *auth.Config) { c.RequireMFA = false })
+	ctx := context.Background()
+	id := e.createUser(t, "linked@example.com")
+	by := mailer.AccountMail{Admin: uuid.New()}
+	for range 3 {
+		if err := e.svc.AdminLinkRoom(ctx, by, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := e.svc.AdminLinkRoom(ctx, by, id)
+	var ae *apperr.Error
+	if !errors.Is(err, auth.ErrAccountMailLimited) || !errors.As(err, &ae) || ae.Kind != apperr.KindTooMany {
+		t.Fatalf("a fourth link: %v", err)
+	}
+	// The person's own reset is limited with them.
+	if err := e.svc.RequestPasswordReset(ctx, "linked@example.com", meta); err != nil {
+		t.Fatal(err)
+	}
+	e.svc.Wait()
+	if len(e.mp.Received("linked@example.com")) != 0 {
+		t.Fatal("a reset past the account's limit was sent")
+	}
+	if denied := e.audits(t, "auth.password_reset_request", "denied"); len(denied) != 1 {
+		t.Fatalf("denied: %v", denied)
+	}
+	// A new account has no such limit, but the administrator's hour has.
+	if err := e.svc.AdminLinkRoom(ctx, by, uuid.Nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `INSERT INTO mail_sends (kind, sent_by) SELECT 'admin', $1 FROM generate_series(1, 60)`, by.Admin)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.svc.AdminLinkRoom(ctx, by, uuid.Nil); !errors.As(err, &ae) || ae.Code != "admin_mail_limited" {
+		t.Fatalf("past the administrator's hour: %v", err)
 	}
 }
 

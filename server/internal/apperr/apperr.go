@@ -19,6 +19,7 @@ const (
 	KindForbidden                   // the caller may see the object but not perform the action
 	KindConflict                    // the request conflicts with current state
 	KindUnavailable                 // a dependency the request needs is temporarily unavailable
+	KindTooMany                     // the caller has reached a limit; trying later may succeed
 )
 
 // Error is a user-facing error.
@@ -62,6 +63,12 @@ func Conflict(code, msg string) *Error {
 // remote-access server.
 func Unavailable(code, msg string) *Error {
 	return &Error{Kind: KindUnavailable, Code: code, Message: msg}
+}
+
+// TooMany builds an error for a limit the caller has reached, with a
+// stable code and a message that says when to try again.
+func TooMany(code, msg string) *Error {
+	return &Error{Kind: KindTooMany, Code: code, Message: msg}
 }
 
 // Invalid builds a validation error for a single field.

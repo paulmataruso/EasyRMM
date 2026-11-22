@@ -120,13 +120,17 @@ type Service struct {
 	auth   *auth.Service
 	hasher *auth.Hasher
 	now    func() time.Time
+	// refusals bounds the audit records of invitations and password links
+	// refused under the limits on account mail: one a minute per
+	// administrator and limit, so that refusals cannot flood the audit log.
+	refusals *auth.KeyedLimiter
 
 	onChange func()
 }
 
 // New builds the service.
 func New(db *database.DB, auditLog *audit.Logger, authSvc *auth.Service, hasher *auth.Hasher) *Service {
-	return &Service{db: db, audit: auditLog, auth: authSvc, hasher: hasher, now: time.Now}
+	return &Service{db: db, audit: auditLog, auth: authSvc, hasher: hasher, now: time.Now, refusals: auth.NewKeyedLimiter(time.Minute, 1, 10_000)}
 }
 
 // OnChange registers a function called after changes that affect remote
@@ -490,6 +494,12 @@ func (s *Service) Invite(ctx context.Context, c access.Caller, in InviteInput, m
 	if err != nil {
 		return nil, err
 	}
+	org, site := auditOrg(grants)
+	by := mailer.AccountMail{Admin: s.callerID(c), Organization: org}
+	if err := s.auth.AdminLinkRoom(ctx, by, uuid.Nil); err != nil {
+		s.refused(ctx, c, "user.invite", org, site, "", map[string]any{"email": email}, err)
+		return nil, err
+	}
 	var id uuid.UUID
 	var link string
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
@@ -506,7 +516,6 @@ func (s *Service) Invite(ctx context.Context, c access.Caller, in InviteInput, m
 		if link, err = s.auth.IssueInviteToken(ctx, tx, id, meta); err != nil {
 			return err
 		}
-		org, site := auditOrg(grants)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.invite", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(),
 			Details: map[string]any{"email": email, "assignments": describe(grants)}})
@@ -521,11 +530,29 @@ func (s *Service) Invite(ctx context.Context, c access.Caller, in InviteInput, m
 			"Open this link within " + auth.DurationWords(auth.InviteTTL) + " to choose your password and set up two-factor sign-in:"},
 		Link:  &mailer.Link{Label: "Set up your account", URL: link},
 		After: []string{"If you were not expecting this, you can ignore this message."},
-	}))
+	}, by))
 	if res.User, err = s.Get(ctx, c, id); err != nil {
 		return nil, err
 	}
 	return res, nil
+}
+
+// refused records an invitation or a password link refused under the
+// limits on account mail, at most one a minute per administrator and limit.
+func (s *Service) refused(ctx context.Context, c access.Caller, action string, org, site uuid.UUID, target string, details map[string]any, err error) {
+	limit := "rate_limited"
+	if ae, ok := apperr.As(err); ok {
+		limit = ae.Code
+	}
+	if !s.refusals.Allow(c.Actor.ID.String() + " " + limit) {
+		return
+	}
+	details["reason"], details["limit"] = "rate_limited", limit
+	ev := audit.Event{Actor: c.Actor, Action: action, Outcome: audit.Denied, OrganizationID: org, SiteID: site, Details: details}
+	if target != "" {
+		ev.TargetType, ev.TargetID = "user", target
+	}
+	_ = s.audit.Record(ctx, ev)
 }
 
 // UpdateProfile changes a user's display name.
@@ -727,9 +754,23 @@ func (s *Service) ResetMFA(ctx context.Context, c access.Caller, id uuid.UUID) (
 // for users who never set a password). It is e-mailed when mail is
 // configured; otherwise it is returned for the administrator to deliver.
 func (s *Service) IssuePasswordLink(ctx context.Context, c access.Caller, id uuid.UUID, meta auth.RequestMeta) (*InviteResult, error) {
+	// Room under the limits on account mail, before the link is made. The
+	// transaction below checks again that the caller may send one.
+	target, err := s.Get(ctx, c, id)
+	if err != nil {
+		return nil, err
+	}
+	org, site := auditOrg(target.all)
+	by := mailer.AccountMail{Admin: s.callerID(c), Organization: org}
+	if target.CanManage && !target.IsSelf && target.Status == "active" {
+		if err := s.auth.AdminLinkRoom(ctx, by, id); err != nil {
+			s.refused(ctx, c, "user.password_link", org, site, id.String(), map[string]any{"email": target.Email}, err)
+			return nil, err
+		}
+	}
 	var link, email string
 	var invite bool
-	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
+	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		u, err := s.loadForChange(ctx, tx, c, id)
 		if err != nil {
 			return err
@@ -769,7 +810,7 @@ func (s *Service) IssuePasswordLink(ctx context.Context, c access.Caller, id uui
 		}
 	}
 	res := &InviteResult{}
-	res.emailed(link, s.auth.EmailLink(context.WithoutCancel(ctx), email, l))
+	res.emailed(link, s.auth.EmailLink(context.WithoutCancel(ctx), email, l, by))
 	if res.User, err = s.Get(ctx, c, id); err != nil {
 		return nil, err
 	}

@@ -261,6 +261,20 @@ describe("users and invitations", () => {
     expect(await within(form).findAllByText("You cannot grant a role above your own.")).toHaveLength(1);
   });
 
+  it("says when the limits on account mail refuse an invitation", async () => {
+    const user = userEvent.setup();
+    const message = "You have emailed 60 invitations and password links in the last hour, the most one administrator may. Try again in 12 minutes.";
+    installFakeApi({ ...routes, "POST /users": fail(429, "admin_mail_limited", message) });
+    renderApp("/settings?invite=1");
+    const form = await dialog("Invite user");
+    await user.type(within(form).getByLabelText(/^Email/), "riley@example.com");
+    await user.type(within(form).getByLabelText(/^Name/), "Riley Chen");
+    await user.selectOptions(await within(form).findByLabelText("Role"), "technician");
+    await user.selectOptions(within(form).getByLabelText("Organization"), "o1");
+    await user.click(within(form).getByRole("button", { name: "Send invitation" }));
+    expect(await within(form).findByText(message)).toBeInTheDocument();
+  });
+
   it("offers super administrator only to super administrators", async () => {
     installFakeApi({
       ...routes,

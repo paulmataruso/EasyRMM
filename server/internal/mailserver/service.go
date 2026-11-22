@@ -14,7 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -77,12 +77,21 @@ type Service struct {
 	env *mailer.Config
 	log *slog.Logger
 
-	// accountWaiting counts account mail waiting for room under the
-	// minute's limit: other mail stands back meanwhile.
-	accountWaiting atomic.Int32
+	// available caches Available for availableFor, so that the sign-in
+	// page and reset requests, which anyone may send, seldom reach the
+	// database; a change on this server clears it, and changes counts the
+	// changes, so that an answer read before one is not kept after it.
+	availableMu sync.Mutex
+	availableAt time.Time
+	available   bool
+	changes     int
 
 	onChange []func()
 }
+
+// availableFor is how long Available's answer is kept. A change made on
+// another server is seen within it.
+const availableFor = 5 * time.Second
 
 // New builds the service. env is .env's mail server, or nil; it is checked
 // here, so that the server does not start with a mail server it cannot use.
@@ -100,6 +109,10 @@ func New(db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer, env *m
 func (s *Service) OnChange(f func()) { s.onChange = append(s.onChange, f) }
 
 func (s *Service) changed() {
+	s.availableMu.Lock()
+	s.availableAt = time.Time{}
+	s.changes++
+	s.availableMu.Unlock()
 	for _, f := range s.onChange {
 		f()
 	}
@@ -121,12 +134,16 @@ type Server struct {
 }
 
 // Limits are the messages a minute and a day sent through the mail server
-// in force.
+// in force, and the fixed limits on administrators' account mail.
 type Limits struct {
 	PerMinute int        `json:"perMinute"`
 	PerDay    int        `json:"perDay"`
 	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
 	UpdatedBy string     `json:"updatedBy,omitempty"`
+	// AdminPerHour and OrganizationPerDay are AdminPerHour and
+	// OrganizationPerDay, for the console to show.
+	AdminPerHour       int `json:"adminPerHour"`
+	OrganizationPerDay int `json:"organizationPerDay"`
 }
 
 // Usage is the messages sent in the last minute and the last 24 hours, and
@@ -135,8 +152,10 @@ type Usage struct {
 	LastMinute     int `json:"lastMinute"`
 	LastDay        int `json:"lastDay"`
 	AccountLastDay int `json:"accountLastDay"`
-	// OtherDayLimit is where mail other than account mail stops: 90% of
-	// the day's limit.
+	// AdminDayLimit is where administrators' invitations and password links
+	// stop, 90% of the day's limit; OtherDayLimit where other mail stops,
+	// 80%. Password resets people ask for may use the whole day.
+	AdminDayLimit int `json:"adminDayLimit"`
 	OtherDayLimit int `json:"otherDayLimit"`
 }
 
@@ -220,7 +239,8 @@ func (s *Service) Get(ctx context.Context) (View, error) {
 			return err
 		}
 		v.Console = r.server()
-		v.Limits = Limits{PerMinute: r.perMinute, PerDay: r.perDay, UpdatedAt: r.limitsUpdatedAt}
+		v.Limits = Limits{PerMinute: r.perMinute, PerDay: r.perDay, UpdatedAt: r.limitsUpdatedAt, AdminPerHour: AdminPerHour,
+			OrganizationPerDay: OrganizationPerDay}
 		if r.limitsUpdatedBy != nil {
 			v.Limits.UpdatedBy = *r.limitsUpdatedBy
 		}
@@ -258,12 +278,19 @@ func (s *Service) InForce(ctx context.Context) (*mailer.Config, error) {
 }
 
 // Available reports whether a mail server is in force, for password reset
-// to offer itself. A failure to read the settings is logged and reads as
-// none.
+// to offer itself, as read within availableFor. A failure to read the
+// settings is logged and reads as none, and is not kept.
 func (s *Service) Available(ctx context.Context) bool {
 	if s.env != nil {
 		return true
 	}
+	s.availableMu.Lock()
+	if !s.availableAt.IsZero() && time.Since(s.availableAt) < availableFor {
+		defer s.availableMu.Unlock()
+		return s.available
+	}
+	changes := s.changes
+	s.availableMu.Unlock()
 	var host string
 	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT host FROM mail_server`).Scan(&host)
@@ -274,6 +301,11 @@ func (s *Service) Available(ctx context.Context) bool {
 		}
 		return false
 	}
+	s.availableMu.Lock()
+	if s.changes == changes {
+		s.availableAt, s.available = time.Now(), host != ""
+	}
+	s.availableMu.Unlock()
 	return host != ""
 }
 

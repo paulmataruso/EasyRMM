@@ -105,6 +105,8 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 			status = http.StatusConflict
 		case apperr.KindUnavailable:
 			status = http.StatusServiceUnavailable
+		case apperr.KindTooMany:
+			status = http.StatusTooManyRequests
 		}
 		if status != http.StatusInternalServerError {
 			WriteJSON(w, status, ErrorBody{Error: ErrorDetail{Code: ae.Code, Message: ae.Message, Fields: ae.Fields}})

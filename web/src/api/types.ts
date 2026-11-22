@@ -666,13 +666,23 @@ export interface MailServerView {
   inForce: "env" | "console" | "none";
   env?: MailServer;
   console?: MailServer;
-  limits: { perMinute: number; perDay: number; updatedAt?: string; updatedBy?: string };
+  limits: {
+    perMinute: number;
+    perDay: number;
+    updatedAt?: string;
+    updatedBy?: string;
+    /** Fixed: the invitations and password links one administrator may email an hour, and one organization's accounts get a day. */
+    adminPerHour: number;
+    organizationPerDay: number;
+  };
   usage: {
     lastMinute: number;
     lastDay: number;
     /** Of the last 24 hours' messages, invitations and password resets. */
     accountLastDay: number;
-    /** Where mail other than account mail stops: 90% of the day's limit. */
+    /** Where administrators' invitations and password links stop: 90% of the day's limit. Password resets people ask for may use all of it. */
+    adminDayLimit: number;
+    /** Where other mail stops: 80% of the day's limit. */
     otherDayLimit: number;
   };
 }

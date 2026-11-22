@@ -79,6 +79,7 @@ func TestWriteErrorAppErrKinds(t *testing.T) {
 		{apperr.Forbidden(), http.StatusForbidden, "forbidden"},
 		{apperr.Conflict("busy", "It is busy."), http.StatusConflict, "busy"},
 		{apperr.Unavailable("remote_unavailable", "Down."), http.StatusServiceUnavailable, "remote_unavailable"},
+		{apperr.TooMany("admin_mail_limited", "Try again later."), http.StatusTooManyRequests, "admin_mail_limited"},
 	}
 	for _, c := range cases {
 		rec := httptest.NewRecorder()

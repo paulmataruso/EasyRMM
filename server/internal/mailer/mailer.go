@@ -25,6 +25,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
+
 	"github.com/paulmataruso/easyrmm/server/internal/netguard"
 )
 
@@ -120,6 +122,19 @@ func BareAddress(s string) bool {
 	}
 	a, err := mail.ParseAddress(s)
 	return err == nil && a.Name == "" && a.Address == s
+}
+
+// AccountMail says whom a message to someone's own account is counted
+// against, under the mail server's limits (ADR-0053).
+type AccountMail struct {
+	// Self: the person asked for it themselves (a password reset), so it
+	// may use the share of the day's limit kept for that alone.
+	Self bool
+	// Admin is the administrator who sent it (an invitation, a password
+	// link); Organization the organization of the account it goes to,
+	// uuid.Nil for none or several.
+	Admin        uuid.UUID
+	Organization uuid.UUID
 }
 
 // Gate is asked before each message is sent. It may wait for room under a

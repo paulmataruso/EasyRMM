@@ -378,8 +378,9 @@ function Limits({ view }: { view: MailServerView }) {
           counted. The defaults, 30 a minute and 9,000 a day, stay under Exchange Online&apos;s limits; set your own mail server&apos;s.
         </p>
         <p>
-          Invitations and password resets go first: they may use the whole day, and wait up to a minute for room. Other mail stops at {formatNumber(usage.otherDayLimit)}, 90% of
-          the day&apos;s limit.
+          Invitations and password resets go first, and wait up to a minute for room. Password resets people ask for may use the whole day. Invitations and password links
+          administrators send stop at {formatNumber(usage.adminDayLimit)}, 90% of the day&apos;s limit, at {formatNumber(limits.adminPerHour)} an hour per administrator, and at{" "}
+          {formatNumber(limits.organizationPerDay)} a day per organization. Other mail stops at {formatNumber(usage.otherDayLimit)}, 80%.
         </p>
         {limits.updatedAt && (
           <p className="text-xs">

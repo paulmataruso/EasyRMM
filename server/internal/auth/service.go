@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
@@ -101,8 +102,13 @@ func DefaultConfig() Config {
 type Mailer interface {
 	// Available reports whether a mail server is in force.
 	Available(ctx context.Context) bool
-	// SendAccountMail sends msg to one person, ahead of other mail.
-	SendAccountMail(ctx context.Context, to string, msg mailer.Message) error
+	// SendAccountMail sends msg to one person, ahead of other mail,
+	// counted against by.
+	SendAccountMail(ctx context.Context, to string, msg mailer.Message, by mailer.AccountMail) error
+	// AdminRoom says whether an administrator's invitation or password
+	// link has room under the limits on one administrator and one
+	// organization: nil, or an error that says when to try again.
+	AdminRoom(ctx context.Context, by mailer.AccountMail) error
 }
 
 // RequestMeta describes the client making a request.
@@ -1083,18 +1089,44 @@ const (
 	MailNotSent = "not_sent"
 )
 
-// EmailLink sends l to the owner of an account, as account mail. It returns
-// "" when the mail server took it, and otherwise why not (MailNotConfigured
-// or MailNotSent), so that the administrator can deliver the link another
-// way; a failure is logged, never shown, since the mail server's reply is
-// for super administrators.
-func (s *Service) EmailLink(ctx context.Context, to string, l mailer.Letter) string {
+// ErrAccountMailLimited is an administrator's password link to an account
+// that has had several password emails in a short time, whoever asked for
+// them: the limit self-service reset has (resetLimit).
+var ErrAccountMailLimited = apperr.TooMany("account_mail_limited",
+	"This account has been emailed several password links in a short time. Try again in 20 minutes.")
+
+// AdminLinkRoom says whether an administrator may email an invitation or a
+// password link now, before it is made: under the mail server's limits on
+// one administrator and one organization (by), and, for an existing
+// account (not uuid.Nil), under the limit on password emails to one
+// account that self-service reset has too. Without a mail server in force,
+// the link comes back to the administrator, and nothing limits it. It
+// returns nil, or a 429 error that says when to try again.
+func (s *Service) AdminLinkRoom(ctx context.Context, by mailer.AccountMail, account uuid.UUID) error {
+	if s.mailer == nil || !s.mailer.Available(ctx) {
+		return nil
+	}
+	if err := s.mailer.AdminRoom(ctx, by); err != nil {
+		return err
+	}
+	if account != uuid.Nil && !s.resetLimit.Allow(account.String()) {
+		return ErrAccountMailLimited
+	}
+	return nil
+}
+
+// EmailLink sends l to the owner of an account, as account mail counted
+// against by. It returns "" when the mail server took it, and otherwise why
+// not (MailNotConfigured or MailNotSent), so that the administrator can
+// deliver the link another way; a failure is logged, never shown, since the
+// mail server's reply is for super administrators.
+func (s *Service) EmailLink(ctx context.Context, to string, l mailer.Letter, by mailer.AccountMail) string {
 	if s.mailer == nil || !s.mailer.Available(ctx) {
 		return MailNotConfigured
 	}
 	msg, err := l.Message()
 	if err == nil {
-		err = s.mailer.SendAccountMail(ctx, to, msg)
+		err = s.mailer.SendAccountMail(ctx, to, msg, by)
 	}
 	if err != nil {
 		s.log.Error("account e-mail failed", "subject", l.Subject, "error", oneLine(err.Error()))
@@ -1116,11 +1148,12 @@ func oneLine(s string) string {
 // account exists. Each account gets at most a few links an hour, however
 // many addresses ask.
 func (s *Service) RequestPasswordReset(ctx context.Context, email string, meta RequestMeta) error {
-	if !s.ResetAvailable(ctx) {
-		return ErrResetUnavailable
-	}
+	// The limit first: whether reset is available reads the database.
 	if meta.IP.IsValid() && !s.ipLimit.Allow("reset:"+LimitKey(meta.IP)) {
 		return ErrRateLimited
+	}
+	if !s.ResetAvailable(ctx) {
+		return ErrResetUnavailable
 	}
 	email = normaliseEmail(email)
 	if email == "" || len(email) > 254 {
@@ -1196,7 +1229,7 @@ func (s *Service) sendResetLink(ctx context.Context, email string, meta RequestM
 	if err != nil {
 		return err
 	}
-	return s.mailer.SendAccountMail(ctx, email, msg)
+	return s.mailer.SendAccountMail(ctx, email, msg, mailer.AccountMail{Self: true})
 }
 
 // DurationWords says d in words for a message: "30 minutes", "72 hours".

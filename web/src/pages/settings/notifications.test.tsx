@@ -8,8 +8,8 @@ import { whyNotEmailed } from "./mailProblem";
 
 const NONE: MailServerView = {
   inForce: "none",
-  limits: { perMinute: 30, perDay: 9000 },
-  usage: { lastMinute: 0, lastDay: 0, accountLastDay: 0, otherDayLimit: 8100 },
+  limits: { perMinute: 30, perDay: 9000, adminPerHour: 60, organizationPerDay: 500 },
+  usage: { lastMinute: 0, lastDay: 0, accountLastDay: 0, adminDayLimit: 8100, otherDayLimit: 7200 },
 };
 
 const STORED: MailServer = {
@@ -25,7 +25,7 @@ const STORED: MailServer = {
   updatedBy: "alex@example.com",
 };
 
-const CONSOLE: MailServerView = { ...NONE, inForce: "console", console: STORED, usage: { lastMinute: 2, lastDay: 1234, accountLastDay: 12, otherDayLimit: 8100 } };
+const CONSOLE: MailServerView = { ...NONE, inForce: "console", console: STORED, usage: { lastMinute: 2, lastDay: 1234, accountLastDay: 12, adminDayLimit: 8100, otherDayLimit: 7200 } };
 
 function routes(view: MailServerView = NONE) {
   return {
@@ -162,7 +162,7 @@ describe("mail server settings", () => {
         const b = r.body as { perMinute: number; perDay: number };
         return b.perDay < b.perMinute
           ? fail(422, "validation_failed", "Some fields need attention.", { perDay: "Allow at least as many messages a day as a minute." })
-          : ok({ ...CONSOLE, limits: { ...b, updatedAt: new Date().toISOString(), updatedBy: "alex@example.com" } });
+          : ok({ ...CONSOLE, limits: { ...CONSOLE.limits, ...b, updatedAt: new Date().toISOString(), updatedBy: "alex@example.com" } });
       },
     });
     renderApp("/settings?tab=notifications");
@@ -171,7 +171,8 @@ describe("mail server settings", () => {
     expect(await main().findByText("1,234 of 9,000")).toBeInTheDocument();
     expect(main().getByText("2 of 30")).toBeInTheDocument();
     expect(main().getByText(/12 invitations and password resets/)).toBeInTheDocument();
-    expect(main().getByText(/Other mail stops at 8,100, 90% of the day/)).toBeInTheDocument();
+    expect(main().getByText(/administrators send stop at 8,100, 90% of the day's limit, at 60 an hour per administrator, and at 500 a day per organization/)).toBeInTheDocument();
+    expect(main().getByText(/Other mail stops at 7,200, 80%/)).toBeInTheDocument();
 
     await user.clear(main().getByLabelText(/^A minute/));
     await user.type(main().getByLabelText(/^A minute/), "100");
