@@ -100,6 +100,6 @@ Deny everything else inbound. Outbound: 443 to Let's Encrypt (ACME); 443
 to the patching engine's update and vulnerability feeds and to GitHub
 (winget), listed in
 [Docker deployment](../deployment/docker.md#patching-engine); SMTP to your
-relay if e-mail notifications are enabled; and 443 to `github.com` (GitHub
+mail server, when one is set ([Mail](../operations/mail.md)); and 443 to `github.com` (GitHub
 releases) when MeshCentral first starts, to download its agent binaries
 (about 120 MiB, kept in its data directory afterwards).

@@ -524,9 +524,9 @@ func (s *Service) mailError(ctx context.Context, err error) error {
 	}
 	switch e.Code {
 	case "smtp_not_configured":
-		return apperr.Conflict("mail_not_configured", "EasyRMM has no mail server to send reports with. Set EASYRMM_SMTP_HOST and the other EASYRMM_SMTP_ settings, then restart EasyRMM.")
+		return apperr.Conflict("mail_not_configured", "EasyRMM has no mail server to send reports with. A super administrator sets one under Settings → Notifications → Mail server.")
 	case "smtp_not_encrypted":
-		return apperr.Conflict("mail_not_encrypted", "Reports are emailed only over STARTTLS or TLS, and EASYRMM_SMTP_TLS is none.")
+		return apperr.Conflict("mail_not_encrypted", "Reports are emailed only over STARTTLS or TLS, and EasyRMM's mail server sends without encryption.")
 	case "report_too_large":
 		return apperr.Conflict("report_too_large", "The report is larger than 15 MB, too large to email: download it instead.")
 	case "no_recipients":

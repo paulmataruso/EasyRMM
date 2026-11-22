@@ -363,6 +363,16 @@ start-up under an advisory lock, so several servers starting at once cannot
 race. They only run forward, so take a backup first
 ([backup-restore.md](../operations/backup-restore.md)).
 
+EasyRMM reaches PostgreSQL directly, as the compose file has it. A pooler
+between them must keep each session on one connection to PostgreSQL
+(PgBouncer's `pool_mode = session`): **a pooler in transaction mode, such
+as PgBouncer's `pool_mode = transaction`, is not supported**. Advisory
+locks held by a session belong to the connection to PostgreSQL, and
+EasyRMM's servers choose the one that gives the patching engine its mail
+server with one ([Mail](../operations/mail.md#the-patching-engine)); behind
+such a pooler, the lock would go to whichever session used that
+connection next.
+
 ### Held by the updater
 
 `/srv/easyrmm/updater/status` belongs to root (mode 755): `setup.sh`

@@ -7,6 +7,7 @@ import { AgentUpdatesTab } from "./AgentUpdatesTab";
 import { AuditForwardingTab } from "./AuditForwardingTab";
 import { AuditTab } from "./AuditTab";
 import { EasyPatchTab } from "./EasyPatchTab";
+import { NotificationsTab } from "./NotificationsTab";
 import { PatchingTab } from "./PatchingTab";
 import { RemoteAccessTab } from "./RemoteAccessTab";
 import { SingleSignOnTab } from "./SingleSignOnTab";
@@ -17,6 +18,7 @@ const SUBTITLES: Record<string, string> = {
   audit: "Everything people, agents and the platform did, in a tamper-evident log.",
   remote: "The MeshCentral service behind remote desktop, terminal and files.",
   "agent-updates": "Keep every EasyRMM agent on the build this server ships, a few devices at a time.",
+  notifications: "The mail server EasyRMM sends invitations, password resets and the patching engine's email through, and how much mail it sends.",
   forwarding: "A copy of every audit record, sent as it is written to your syslog server or SIEM.",
   easypatch: "The patching engine in this deployment, the organizations where EasyRMM installs its agent automatically, and devices it cannot match.",
   patching:
@@ -50,6 +52,7 @@ export function SettingsPage() {
       {part.id === "audit" && <AuditTab />}
       {part.id === "remote" && <RemoteAccessTab />}
       {part.id === "agent-updates" && <AgentUpdatesTab />}
+      {part.id === "notifications" && <NotificationsTab />}
       {part.id === "forwarding" && <AuditForwardingTab />}
       {part.id === "easypatch" && <EasyPatchTab />}
       {part.id === "patching" && <PatchingTab />}

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 )
@@ -79,6 +80,7 @@ func TestWriteErrorAppErrKinds(t *testing.T) {
 		{apperr.Forbidden(), http.StatusForbidden, "forbidden"},
 		{apperr.Conflict("busy", "It is busy."), http.StatusConflict, "busy"},
 		{apperr.Unavailable("remote_unavailable", "Down."), http.StatusServiceUnavailable, "remote_unavailable"},
+		{apperr.TooMany("admin_mail_limited", "Try again later.", 90*time.Second), http.StatusTooManyRequests, "admin_mail_limited"},
 	}
 	for _, c := range cases {
 		rec := httptest.NewRecorder()
@@ -91,8 +93,33 @@ func TestWriteErrorAppErrKinds(t *testing.T) {
 		}
 	}
 
-	// An apperr with an unknown kind is an internal error.
+	// Every 429 says when to try again: as long as the limit says, in whole
+	// seconds rounded up, or a minute when it does not say.
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{apperr.TooMany("admin_mail_limited", "Later.", 90*time.Second), "90"},
+		{apperr.TooMany("admin_mail_limited", "Later.", 1500*time.Millisecond), "2"},
+		{apperr.TooMany("limited", "Later.", 0), "60"},
+		{ErrTooMany, "10"},
+		{&Error{Status: http.StatusTooManyRequests, Code: "limited", Message: "Later."}, "60"},
+		{&Error{Status: http.StatusTooManyRequests, Code: "limited", Message: "Later.", RetryAfter: 5 * time.Minute}, "300"},
+	} {
+		rec := httptest.NewRecorder()
+		WriteError(rec, req, c.err)
+		if got := rec.Header().Get("Retry-After"); rec.Code != http.StatusTooManyRequests || got != c.want {
+			t.Errorf("%v: %d, Retry-After %q, want %q", c.err, rec.Code, got, c.want)
+		}
+	}
 	rec := httptest.NewRecorder()
+	WriteError(rec, req, apperr.Conflict("busy", "It is busy."))
+	if rec.Header().Get("Retry-After") != "" {
+		t.Error("a 409 has Retry-After")
+	}
+
+	// An apperr with an unknown kind is an internal error.
+	rec = httptest.NewRecorder()
 	WriteError(rec, req, &apperr.Error{Kind: 99, Code: "weird", Message: "secret detail"})
 	if rec.Code != http.StatusInternalServerError || strings.Contains(rec.Body.String(), "secret detail") {
 		t.Fatalf("unknown kind: %d %s", rec.Code, rec.Body.String())

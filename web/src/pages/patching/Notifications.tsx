@@ -30,7 +30,7 @@ const KINDS: Record<PatchDelivery["kind"], string> = {
 
 /** EasyPatch's reason a message failed; its words for no mail server point at its own console, so EasyRMM's replace them. */
 export function deliveryError(error: string): string {
-  return error.startsWith("SMTP is not configured") ? "EasyRMM has no mail server: set EASYRMM_SMTP_HOST and restart EasyRMM." : error;
+  return error.startsWith("SMTP is not configured") ? "EasyRMM has no mail server: a super administrator sets one under Settings → Notifications → Mail server." : error;
 }
 
 function destination(c: PatchChannel): string {
@@ -390,16 +390,21 @@ function Delivery({ view }: { view: PatchNotifications }) {
   return (
     <Card title="Email and webhooks">
       <div className="flex flex-col gap-4 text-sm">
+        {mail.problem && (
+          <Alert tone="danger" title="The patching engine does not have EasyRMM's mail server">
+            EasyRMM could not give it to the engine several times in a row, so the engine&apos;s mail server is removed and email channels and monthly reports do not send
+            until it can. EasyRMM tries again every minute. The last try: {mail.problem}
+          </Alert>
+        )}
         {mail.host ? (
           <p className="max-w-3xl">
             Email channels send through EasyRMM&apos;s mail server, <Mono>{`${mail.host}:${mail.port}`}</Mono> ({SECURITY[mail.security] ?? mail.security}),
-            from {mail.fromName ? `${mail.fromName} <${mail.fromAddress}>` : mail.fromAddress}. EasyRMM&apos;s <Mono className="whitespace-nowrap">EASYRMM_SMTP_</Mono> settings set it, and
-            EasyRMM gives it to the patching engine each time it starts.
+            from {mail.fromName ? `${mail.fromName} <${mail.fromAddress}>` : mail.fromAddress}. A super administrator sets it under Settings → Notifications → Mail server, and
+            EasyRMM gives it to the patching engine at start and after every change.
           </p>
         ) : (
           <Alert tone="warn" title="No mail server">
-            EasyRMM has no mail server, so email channels cannot send. Set <Mono className="whitespace-nowrap">EASYRMM_SMTP_HOST</Mono> and the other <Mono className="whitespace-nowrap">EASYRMM_SMTP_</Mono> settings,
-            then restart EasyRMM.
+            EasyRMM has no mail server, so email channels cannot send. A super administrator sets one under Settings → Notifications → Mail server.
           </Alert>
         )}
         <div className="flex flex-col gap-1">

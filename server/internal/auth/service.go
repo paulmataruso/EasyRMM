@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/netip"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,8 +22,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 )
@@ -93,10 +96,22 @@ func DefaultConfig() Config {
 	}
 }
 
-// Mailer sends plain-text e-mail. When nil, self-service password reset is
-// disabled and administrators issue reset links instead.
+// Mailer sends mail to people's own accounts: invitations and password
+// resets (ADR-0053). Without a mail server in force, self-service password
+// reset is off and administrators deliver links themselves.
 type Mailer interface {
-	Send(ctx context.Context, to, subject, body string) error
+	// Available reports whether a mail server is in force.
+	Available(ctx context.Context) bool
+	// SendAccountMail sends msg to one person, ahead of other mail,
+	// counted against by; a limit that stops it is a mailer.Limited.
+	SendAccountMail(ctx context.Context, to string, msg mailer.Message, by mailer.AccountMail) error
+	// Room says whether account mail counted against by has room under
+	// the limits now: nil, a mailer.Limited naming the limit reached, or
+	// an error reading them.
+	Room(ctx context.Context, by mailer.AccountMail) error
+	// Reserve takes room under the limits for one message counted against
+	// by, before it is made; a limit that stops it is a mailer.Limited.
+	Reserve(ctx context.Context, by mailer.AccountMail) (mailer.Reservation, error)
 }
 
 // RequestMeta describes the client making a request.
@@ -175,9 +190,7 @@ type Service struct {
 	now      func() time.Time
 	ipLimit  *KeyedLimiter
 	mfaLimit *KeyedLimiter
-	// resetLimit caps reset e-mail per account, whoever asks for it.
-	resetLimit *KeyedLimiter
-	log        *slog.Logger
+	log      *slog.Logger
 	// background tracks reset e-mail still being sent.
 	background sync.WaitGroup
 	// wa is nil when security keys and passkeys are unavailable (ADR-0032).
@@ -192,9 +205,7 @@ func NewService(db *database.DB, auditLog *audit.Logger, hasher *Hasher, sealer 
 		// 10 attempts at once, then one every 6 seconds, per client address.
 		ipLimit:  NewKeyedLimiter(6*time.Second, 10, 100_000),
 		mfaLimit: NewKeyedLimiter(6*time.Second, 10, 100_000),
-		// Three at once, then one every 20 minutes.
-		resetLimit: NewKeyedLimiter(20*time.Minute, 3, 100_000),
-		log:        slog.Default(),
+		log:      slog.Default(),
 	}
 	s.configureWebAuthn()
 	return s
@@ -237,8 +248,11 @@ func (s *Service) lockout(failures, threshold int) time.Duration {
 // Config returns the active policy.
 func (s *Service) Config() Config { return s.cfg }
 
-// ResetAvailable reports whether self-service password reset can send mail.
-func (s *Service) ResetAvailable() bool { return s.mailer != nil }
+// ResetAvailable reports whether self-service password reset can send
+// mail: whether a mail server is in force now.
+func (s *Service) ResetAvailable(ctx context.Context) bool {
+	return s.mailer != nil && s.mailer.Available(ctx)
+}
 
 // NewToken returns 256 bits of randomness encoded for use in a cookie or
 // URL, and its SHA-256 hash for storage.
@@ -1065,21 +1079,85 @@ func (s *Service) issueToken(ctx context.Context, tx pgx.Tx, userID uuid.UUID, t
 	return strings.TrimRight(s.cfg.PublicURL, "/") + path + "#token=" + token, nil
 }
 
-// Mailer returns the configured mailer, or nil.
-func (s *Service) Mailer() Mailer { return s.mailer }
+// Why a link was not emailed, as EmailLink says it.
+const (
+	// MailNotConfigured: there is no mail server in force.
+	MailNotConfigured = "no_mail_server"
+	// MailNotSent: the mail server did not take the message, or the limits
+	// did not let it go.
+	MailNotSent = "not_sent"
+)
+
+// AdminLinkRoom says whether an administrator may email an invitation or a
+// password link now, before it is made: nil, or a 429 error that says when
+// to try again, only for the administrator's own limit. Any other limit
+// (the organization's, the account's, the day's) does not stop the link:
+// it is made, and comes back unsent with the reason (EmailLink), so that
+// no one else can keep an administrator from helping someone. Without a
+// mail server in force, the link comes back to the administrator, and
+// nothing limits it.
+func (s *Service) AdminLinkRoom(ctx context.Context, by mailer.AccountMail) error {
+	if s.mailer == nil || !s.mailer.Available(ctx) {
+		return nil
+	}
+	err := s.mailer.Room(ctx, by)
+	var lim mailer.Limited
+	if !errors.As(err, &lim) {
+		return err
+	}
+	if lim.LimitCode() == mailer.LimitAdmin {
+		return apperr.TooMany(lim.LimitCode(), lim.Error(), lim.RetryIn())
+	}
+	// Another limit: the link is made, and EmailLink says why it is not
+	// sent.
+	return nil
+}
+
+// EmailLink sends l to the owner of an account, as account mail counted
+// against by. It returns "" when the mail server took it, and otherwise why
+// not (MailNotConfigured or MailNotSent), with the limit that stopped it in
+// words when one did, so that the administrator can deliver the link
+// another way; any other failure is logged, never shown, since the mail
+// server's reply is for super administrators.
+func (s *Service) EmailLink(ctx context.Context, to string, l mailer.Letter, by mailer.AccountMail) (problem, reason string) {
+	if s.mailer == nil || !s.mailer.Available(ctx) {
+		return MailNotConfigured, ""
+	}
+	msg, err := l.Message()
+	if err == nil {
+		err = s.mailer.SendAccountMail(ctx, to, msg, by)
+	}
+	if err == nil {
+		return "", ""
+	}
+	var lim mailer.Limited
+	if errors.As(err, &lim) {
+		return MailNotSent, lim.Error()
+	}
+	s.log.Error("account e-mail failed", "subject", l.Subject, "error", oneLine(err.Error()))
+	return MailNotSent, ""
+}
+
+// oneLine keeps a logged value on one line: a mail error can carry the
+// address someone typed, or the mail server's reply.
+func oneLine(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r", " "), "\n", " ")
+}
 
 // RequestPasswordReset e-mails a reset link if the address belongs to an
 // active account. It always appears to succeed, and it answers before
 // looking the address up: the lookup and the e-mail happen in the
 // background, so how long the answer takes says nothing about whether the
-// account exists. Each account gets at most a few links an hour, however
-// many addresses ask.
+// account exists. The mail server's limits on resets hold across servers:
+// a few an hour to one account, however many addresses ask, and limits per
+// organization and on the whole platform (mailserver.AccountLimits).
 func (s *Service) RequestPasswordReset(ctx context.Context, email string, meta RequestMeta) error {
-	if s.mailer == nil {
-		return ErrResetUnavailable
-	}
+	// The limit first: whether reset is available reads the database.
 	if meta.IP.IsValid() && !s.ipLimit.Allow("reset:"+LimitKey(meta.IP)) {
 		return ErrRateLimited
+	}
+	if !s.ResetAvailable(ctx) {
+		return ErrResetUnavailable
 	}
 	email = normaliseEmail(email)
 	if email == "" || len(email) > 254 {
@@ -1100,25 +1178,48 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string, meta R
 // sendResetLink issues and e-mails the link. An invited user who has not
 // chosen a password yet gets a new invitation link instead, valid as long
 // as invitations are, so a reset requested by someone else does not cut
-// their invitation short.
+// their invitation short. Room under the limits is taken before the link
+// is made, since a new link ends the last: a link is made only when it can
+// be sent. No step holds a connection while it waits for another, so that
+// many requests for one address cannot drain the pool.
 func (s *Service) sendResetLink(ctx context.Context, email string, meta RequestMeta) error {
-	var link string
-	var invited bool
-	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		var userID uuid.UUID
-		var hasPassword bool
-		err := tx.QueryRow(ctx, `SELECT id, password_hash IS NOT NULL FROM users WHERE email = $1 AND status = 'active' FOR UPDATE`, email).
-			Scan(&userID, &hasPassword)
+	var userID, org uuid.UUID
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1 AND status = 'active'`, email).Scan(&userID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		event := audit.Event{Actor: userActor(userID, email, meta), Action: "auth.password_reset_request", TargetType: "user", TargetID: userID.String()}
-		if !s.resetLimit.Allow(userID.String()) {
-			event.Outcome, event.Details = audit.Denied, map[string]any{"reason": "rate_limited"}
-			return s.audit.Write(ctx, tx, event)
+		org, err = AccountOrganization(ctx, tx, userID)
+		return err
+	})
+	if err != nil || userID == uuid.Nil {
+		return err
+	}
+	by := mailer.AccountMail{Self: true, Account: userID, Organization: org}
+	event := audit.Event{Actor: userActor(userID, email, meta), Action: "auth.password_reset_request", TargetType: "user", TargetID: userID.String()}
+	room, err := s.mailer.Reserve(ctx, by)
+	var lim mailer.Limited
+	if errors.As(err, &lim) {
+		event.Outcome, event.Details = audit.Denied, map[string]any{"reason": "rate_limited", "limit": lim.LimitCode()}
+		return s.audit.Record(ctx, event)
+	}
+	if err != nil {
+		return err
+	}
+	defer room.Release()
+	var link string
+	var invited bool
+	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		var hasPassword bool
+		err := tx.QueryRow(ctx, `SELECT password_hash IS NOT NULL FROM users WHERE id = $1 AND status = 'active' FOR UPDATE`, userID).Scan(&hasPassword)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
 		}
 		invited = !hasPassword
 		if invited {
@@ -1135,16 +1236,58 @@ func (s *Service) sendResetLink(ctx context.Context, email string, meta RequestM
 	if err != nil || link == "" {
 		return err
 	}
-	if invited {
-		body := "Someone asked to reset the password of your EasyRMM account, which is not set up yet.\n\n" +
-			"Open this link within " + InviteTTL.String() + " to choose your password and finish setting it up:\n\n" + link + "\n\n" +
-			"Earlier invitation links no longer work. If you were not expecting this, you can ignore this message.\n"
-		return s.mailer.Send(ctx, email, "Finish setting up your EasyRMM account", body)
+	l := mailer.Letter{
+		Subject: "Reset your EasyRMM password",
+		Before: []string{"A password reset was requested for your EasyRMM account.",
+			"Open this link within " + DurationWords(s.cfg.PasswordResetTTL) + " to choose a new password:"},
+		Link:  &mailer.Link{Label: "Choose a new password", URL: link},
+		After: []string{"If you did not request this, you can ignore this message. Your password has not changed."},
 	}
-	body := "A password reset was requested for your EasyRMM account.\n\n" +
-		"Open this link within " + s.cfg.PasswordResetTTL.String() + " to choose a new password:\n\n" + link + "\n\n" +
-		"If you did not request this, you can ignore this message. Your password has not changed.\n"
-	return s.mailer.Send(ctx, email, "Reset your EasyRMM password", body)
+	if invited {
+		l = mailer.Letter{
+			Subject: "Finish setting up your EasyRMM account",
+			Before: []string{"Someone asked to reset the password of your EasyRMM account, which is not set up yet.",
+				"Open this link within " + DurationWords(InviteTTL) + " to choose your password and finish setting it up:"},
+			Link:  &mailer.Link{Label: "Finish setting up", URL: link},
+			After: []string{"Earlier invitation links no longer work. If you were not expecting this, you can ignore this message."},
+		}
+	}
+	msg, err := l.Message()
+	if err != nil {
+		return err
+	}
+	return room.Send(ctx, email, msg)
+}
+
+// AccountOrganization is the organization whose limits an account's mail
+// counts against, as rbac.Placement places the account's roles, and as
+// audit records about it are placed.
+func AccountOrganization(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `SELECT role, coalesce(organization_id, '00000000-0000-0000-0000-000000000000'),
+		coalesce(site_id, '00000000-0000-0000-0000-000000000000') FROM role_assignments WHERE user_id = $1`, userID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	as, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (rbac.Assignment, error) {
+		var a rbac.Assignment
+		err := r.Scan(&a.Role, &a.OrganizationID, &a.SiteID)
+		return a, err
+	})
+	org, _ := rbac.Placement(as)
+	return org, err
+}
+
+// DurationWords says d in words for a message: "30 minutes", "72 hours".
+func DurationWords(d time.Duration) string {
+	switch {
+	case d%time.Hour == 0 && d >= 2*time.Hour:
+		return strconv.Itoa(int(d/time.Hour)) + " hours"
+	case d == time.Hour:
+		return "1 hour"
+	case d%time.Minute == 0 && d > time.Minute:
+		return strconv.Itoa(int(d/time.Minute)) + " minutes"
+	}
+	return d.String()
 }
 
 // CompletePasswordReset sets a new password using a reset token. All of the
