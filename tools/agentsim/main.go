@@ -413,10 +413,10 @@ func hardware(n int) agentproto.HardwareReport {
 		MediaErrors: notKept, ReallocatedSectors: read(0), PendingSectors: read(0), UncorrectableSectors: read(0), DriveErrors: read(0),
 		PowerOnHours: read(int64(30000 + n%1000)), DataWritten: notKept, UnsafeShutdowns: notKept, PowerMode: read(0xFF),
 	}
-	for i := range agentproto.MaxAttributes {
-		threshold := uint8(i % 60)
+	for i := range uint8(agentproto.MaxAttributes) {
+		threshold := i
 		ata.Attributes = append(ata.Attributes, agentproto.Attribute{
-			ID: uint8(i + 1), Flags: uint16(0x32 | i%2), Value: 100, Worst: 99, Threshold: &threshold, Raw: uint64(i) * 1_000_003,
+			ID: i + 1, Flags: 0x32 | uint16(i%2), Value: 100, Worst: 99, Threshold: &threshold, Raw: uint64(i) * 1_000_003,
 		})
 	}
 	return agentproto.HardwareReport{Disks: []agentproto.DiskHealth{nvme, ata}}
