@@ -339,7 +339,12 @@ or Kubernetes installed later.
   was there before and that it changed, and the directory gets its mode
   and owner back once all of that installation's packages are gone (by
   undo, or by the rollback of a failed apply), if they are still as the
-  installation left them; otherwise the result says it was left. *Amended 2026-11-22
+  installation left them; otherwise the result says it was left. rpm
+  also leaves the files a package lists without contents (its ghosts,
+  which its scriptlets make: `audit-rules`' two `audit.rules`), so an
+  installation records each one under `/etc`, three levels down, that it
+  made, and it goes once that installation's packages are gone, with the
+  directory the installation made it in, if it is still as made. *Amended 2026-11-22
   (decided in review):* the stream's file goes after the packages, not
   before, and only when all of them went; a stream file that was there
   before and that the installation changed is put back as it was.

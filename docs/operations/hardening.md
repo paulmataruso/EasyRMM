@@ -172,7 +172,9 @@ files. A package an installation upgraded as a dependency stays upgraded.
 A directory under `/etc` that was there before and that an installation
 gave another mode or owner (on AlmaLinux 10, audit-rules makes
 `/etc/audit` 0750) gets them back once that installation's packages are
-gone, if they are still as it left them. Files that a program apply started made (AIDE's database, the audit rules'
+gone, if they are still as it left them; so do files under `/etc` that
+installing the packages made and that removing them leaves (audit-rules'
+`audit.rules` files), only as made. Files that a program apply started made (AIDE's database, the audit rules'
 backup) go only as they were made. Undo of the firewall alone is refused
 while fail2ban, which bans with it, is applied: the result names fail2ban
 (`undoWith`); undo both. It rebuilds the initramfs after taking out

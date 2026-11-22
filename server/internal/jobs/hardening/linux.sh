@@ -2544,6 +2544,11 @@ check_integrity() {
 #       a directory under /etc that was there before the installation of
 #       TOKENS (the pkg record's, as one field) and that it gave another
 #       mode or owner (UID:GID); put back once its packages are gone
+#   pkgfile TOKENS PATH SHA256 DIR
+#       a file under /etc that installation made, which its packages list
+#       without contents (rpm's ghosts) and so leave when they go; DIR is
+#       the directory it made the file in ("-": one there before). Both
+#       go, as made, once its packages are gone
 #   stream PATH ORIGINAL ORIGINAL-SHA256 AFTER-SHA256
 #       a dnf module stream's file an installation made or changed
 #   pending PACKAGE...           an installation that did not finish
@@ -2586,12 +2591,13 @@ PKG_STUCK=
 M_RECOV=
 M_RECOV_WHY=
 # The packages pkg_install added, as tokens (PKG_TOKEN), and the pkgdir
-# records of the directories that installation changed (pkg_dirs).
+# and pkgfile records of what else that installation changed (pkg_dirs,
+# pkg_ghosts).
 PKG_NEW=
-PKG_DIRS=
-# After pkg_remove_alone: the directories it put back (pkg_dirs_back), one
-# a line, for did.
-PKG_DIRS_BACK=
+PKG_MADE=
+# After pkg_remove_alone: what it put back or removed of those
+# (pkg_made_back), one a line, for did.
+PKG_BACK=
 # The packages dpkg had left half installed that its recovery configured.
 M_RECOV_PKGS=
 # After pkg_remove_alone: what it left and why, one a line; whether a
@@ -3240,6 +3246,7 @@ pkg_install() {
 	intent || return 1
 	pkg_names >"$TX_DIR/before" && pkg_names rc >"$TX_DIR/rc" || return 1
 	pkg_dirs >"$TX_DIR/dirs-before"
+	pkg_etc_paths >"$TX_DIR/paths-before"
 	pkg_streams_before
 	rec_add "pending$tab$*"
 	pi_rc=0
@@ -3280,17 +3287,20 @@ pkg_install() {
 	# python36, for fail2ban): recorded before the packages, so that undo
 	# puts it back after removing them, and only if it removed them all.
 	pkg_streams_after
-	PKG_DIRS=
+	PKG_MADE=
 	if [ -n "$PKG_NEW" ]; then
 		pkg_dirs >"$TX_DIR/dirs-after"
-		PKG_DIRS=$(awk -v t="$tab" -v k="$PKG_NEW" '
+		PKG_MADE=$(
+			awk -v t="$tab" -v k="$PKG_NEW" '
 			{ p = substr($0, length($1) + length($2) + 3) }
 			FILENAME == ARGV[1] { b[p] = $1 t $2; next }
-			(p in b) && b[p] != $1 t $2 { print "pkgdir" t k t p t b[p] t $1 t $2 }' "$TX_DIR/dirs-before" "$TX_DIR/dirs-after")
+			(p in b) && b[p] != $1 t $2 { print "pkgdir" t k t p t b[p] t $1 t $2 }' "$TX_DIR/dirs-before" "$TX_DIR/dirs-after"
+			pkg_ghosts
+		)
 		rec_add "pkg$tab$PKG_NEW"
 		# shellcheck disable=SC2046,SC2086 # tokens and names, one word each
 		pkg_conffiles $(pkg_token_names $PKG_NEW) >>"$MANIFEST"
-		[ -z "$PKG_DIRS" ] || printf '%s\n' "$PKG_DIRS" >>"$MANIFEST"
+		[ -z "$PKG_MADE" ] || printf '%s\n' "$PKG_MADE" >>"$MANIFEST"
 		tx_push "pkg_remove_alone $PKG_NEW"
 	fi
 	[ "$pi_rc" -eq 0 ] || {
@@ -3314,6 +3324,30 @@ pkg_dirs() {
 		[ -d "$pd_d" ] && [ ! -L "$pd_d" ] && set -- "$@" "$pd_d"
 	done
 	[ $# -eq 0 ] || stat -c '%a %u:%g %n' -- "$@" 2>/dev/null
+}
+# pkg_etc_paths: what is under /etc, three levels down, one a line.
+pkg_etc_paths() { printf '%s\n' /etc/* /etc/*/* /etc/*/*/*; }
+# pkg_ghosts: after an installation (PKG_NEW), pkgfile records of the files
+# under /etc, three levels down, that its packages list without contents
+# (rpm's ghosts, flag 64: their scripts make them, as audit-rules makes
+# /etc/audit/rules.d/audit.rules and audit.rules) and that were not there
+# before it (pkg_etc_paths): rpm leaves them when it removes the packages.
+# dpkg has none.
+pkg_ghosts() {
+	[ "$FAMILY" != debian ] || return 0
+	# shellcheck disable=SC2046,SC2086 # package names, one word each
+	t 60 rpm -q --qf '[%{FILEFLAGS} %{FILENAMES}\n]' $(pkg_token_names $PKG_NEW) 2>/dev/null |
+		awk '$1 ~ /^[0-9]+$/ && int($1 / 64) % 2 == 1 { print substr($0, length($1) + 2) }' |
+		while IFS= read -r pg_f; do
+			# Three levels down at most, as pkg_etc_paths lists.
+			case $pg_f in /etc/*/*/*/* | *"$tab"*) continue ;; /etc/?*) ;; *) continue ;; esac
+			[ -f "$pg_f" ] && [ ! -L "$pg_f" ] || continue
+			! grep -qxF -- "$pg_f" "$TX_DIR/paths-before" || continue
+			pg_d=${pg_f%/*}
+			! grep -qxF -- "$pg_d" "$TX_DIR/paths-before" || pg_d=-
+			[ "$pg_d" != /etc ] || pg_d=-
+			printf 'pkgfile%s%s%s%s%s%s%s%s\n' "$tab" "$PKG_NEW" "$tab" "$pg_f" "$tab" "$(sha "$pg_f")" "$tab" "$pg_d"
+		done
 }
 
 # dnf's module streams: the files under /etc/dnf/modules.d that say which
@@ -3462,7 +3496,7 @@ pkg_remove_alone() {
 	pa_purge=
 	pa_conf=
 	pa_kept=no
-	PKG_DIRS_BACK=
+	PKG_BACK=
 	pa_now=$(pkg_names)
 	for pa_t in "$@"; do
 		pa_n=${pa_t%%/*}
@@ -3490,7 +3524,7 @@ pkg_remove_alone() {
 		fi
 	done
 	if [ -z "$pa_have" ]; then
-		[ "$pa_kept" = yes ] || pkg_dirs_back "$*"
+		[ "$pa_kept" = yes ] || pkg_made_back "$*"
 		return 0
 	fi
 	if ! need_time "$PKG_REMOVE_MIN" "remove$pa_have"; then
@@ -3509,15 +3543,35 @@ pkg_remove_alone() {
 		return 2
 	fi
 	PKG_REMOVED=${pa_have# }
-	[ "$pa_kept" = yes ] || pkg_dirs_back "$*"
+	[ "$pa_kept" = yes ] || pkg_made_back "$*"
 	[ -z "$pa_conf" ] || pkg_note "${pa_conf#"$nl"}"
 	return 0
 }
 pkg_note() { PKG_NOTES="${PKG_NOTES:+$PKG_NOTES$nl}$1"; }
-# pkg_dirs_back TOKENS: once none of an installation's packages is left,
-# puts back the mode and owner of each directory it changed (pkgdir
-# records in PKG_CONF_SRC for TOKENS, as one word) that is as it left
-# them. PKG_DIRS_BACK says what it put back, PKG_NOTES what it left.
+# pkg_made_back TOKENS: once none of an installation's packages is left,
+# removes the files it made that they left, then puts back the directories
+# it changed (pkgfile and pkgdir records in PKG_CONF_SRC for TOKENS, as one
+# word), each only as it left them. PKG_BACK says what it did, PKG_NOTES
+# what it left.
+pkg_made_back() {
+	awk -F "$tab" -v k="$1" '$1 == "pkgfile" && $2 == k && NF == 5 { print $3 "\t" $4 "\t" $5 }' \
+		"${PKG_CONF_SRC:-$MANIFEST}" >"$TX_DIR/pkgfiles" 2>/dev/null || return 0
+	while IFS=$tab read -r pf_f pf_s pf_d; do
+		case $pf_f in /etc/*) ;; *) continue ;; esac
+		[ -f "$pf_f" ] && [ ! -L "$pf_f" ] || continue
+		if [ "$(sha "$pf_f")" != "$pf_s" ]; then
+			pkg_note "$pf_f, which installing the packages made, changed since"
+			continue
+		fi
+		rm -f "$pf_f" || continue
+		PKG_BACK="${PKG_BACK:+$PKG_BACK$nl}Removed $pf_f, which installing the packages made"
+		case $pf_d in /etc/*)
+			rmdir "$pf_d" 2>/dev/null && PKG_BACK="$PKG_BACK${nl}Removed $pf_d"
+			;;
+		esac
+	done <"$TX_DIR/pkgfiles"
+	pkg_dirs_back "$1"
+}
 pkg_dirs_back() {
 	awk -F "$tab" -v k="$1" '$1 == "pkgdir" && $2 == k && NF == 7 { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 }' \
 		"${PKG_CONF_SRC:-$MANIFEST}" >"$TX_DIR/pkgdirs" 2>/dev/null || return 0
@@ -3538,17 +3592,17 @@ pkg_dirs_back() {
 		# Five digits: GNU chmod keeps a directory's set-group-ID bit unless
 		# told.
 		if chown "$pb_o" "$pb_p" && chmod "$(printf '%05o' "0$pb_m")" "$pb_p"; then
-			PKG_DIRS_BACK="${PKG_DIRS_BACK:+$PKG_DIRS_BACK$nl}$pb_p:${pb_what#,}"
+			PKG_BACK="${PKG_BACK:+$PKG_BACK$nl}$pb_p:${pb_what#,}"
 		else
 			pkg_note "the mode and owner of $pb_p, which could not be put back"
 		fi
 	done <"$TX_DIR/pkgdirs"
 }
-# pkg_dirs_did: says what pkg_dirs_back put back.
-pkg_dirs_did() {
+# pkg_back_did: says what pkg_made_back did.
+pkg_back_did() {
 	pd_oifs=$IFS
 	IFS=$nl
-	for pd_l in $PKG_DIRS_BACK; do did "$pd_l"; done
+	for pd_l in $PKG_BACK; do did "$pd_l"; done
 	IFS=$pd_oifs
 }
 # pkg_conf_changed NAME: the package's configuration files that are not as
@@ -3720,7 +3774,7 @@ undo_pkg() {
 	case $up_rc in
 	0)
 		[ -z "$PKG_REMOVED" ] || did "Removed the packages it installed: $PKG_REMOVED"
-		pkg_dirs_did
+		pkg_back_did
 		;;
 	1) left "the packages it installed ($up_names), because removing them would remove other packages too" ;;
 	2) left "the packages it installed ($up_names): the package manager could not remove them$(pkg_why)" ;;
@@ -3834,7 +3888,7 @@ undo_records() {
 			undo_pkg "$@"
 			;;
 		# Read by undo_pkg.
-		conffile:4 | pkgdir:7) ;;
+		conffile:4 | pkgdir:7 | pkgfile:5) ;;
 		stream:5) undo_stream "$2" "$3" "$4" "$5" ;;
 		pending:2) left "the packages of an installation that was interrupted ($2): remove them by hand if they are not wanted" ;;
 		table:3) undo_table "$3" ;;
@@ -4303,7 +4357,7 @@ audit_shipped() {
 }
 # audit_mark TOKEN...: the marker, after the audit module installed auditd:
 # the packages, as tokens (PKG_TOKEN), then their configuration files
-# (pkg_conffiles) and the directories the installation changed (PKG_DIRS).
+# (pkg_conffiles) and what else the installation changed (PKG_MADE).
 # Written only into a directory of root's alone (marker_dir_ok).
 audit_mark() {
 	mk_dir=${AUDITD_MARKER%/*}
@@ -4318,7 +4372,7 @@ audit_mark() {
 	{
 		printf '# EasyRMM hardening (ADR-0051) installed auditd with these packages. Whoever removes\n# auditd last (when no other rules file needs it) removes them and this file.\n%s\n' "$*" &&
 			pkg_conffiles $mk_names &&
-			if [ -n "$PKG_DIRS" ]; then printf '%s\n' "$PKG_DIRS"; fi
+			if [ -n "$PKG_MADE" ]; then printf '%s\n' "$PKG_MADE"; fi
 	} >"$AUDITD_MARKER.new" && mv -f "$AUDITD_MARKER.new" "$AUDITD_MARKER"
 }
 # marker_dir_ok: whether the marker's directory is a directory, not a
@@ -4333,7 +4387,7 @@ marker_dir_ok() {
 	return 0
 }
 # marker_tokens: the marker's package tokens, one a line.
-marker_tokens() { sed -n '/^#/d; /^conffile	/d; /^pkgdir	/d; p' "$AUDITD_MARKER" 2>/dev/null | tr ' ' '\n' | grep .; }
+marker_tokens() { sed -n '/^#/d; /^conffile	/d; /^pkgdir	/d; /^pkgfile	/d; p' "$AUDITD_MARKER" 2>/dev/null | tr ' ' '\n' | grep .; }
 # marker_has_auditd: whether the marker's packages hold auditd (auditd on
 # Debian and Ubuntu, audit elsewhere).
 marker_has_auditd() { marker_tokens | cut -d/ -f1 | grep -Eqx 'auditd(:[a-z0-9]+)?|audit\.[A-Za-z0-9_]+'; }
@@ -4444,7 +4498,7 @@ undo_audit_after() {
 		rm -f "$AUDITD_MARKER"
 		rmdir "${AUDITD_MARKER%/*}" 2>/dev/null
 		did "Removed the packages EasyRMM installed for auditd${PKG_REMOVED:+: $PKG_REMOVED}, and $AUDITD_MARKER"
-		pkg_dirs_did
+		pkg_back_did
 		;;
 	1) left "auditd, which EasyRMM installed: removing its packages ($ua_pk) would remove other packages too" ;;
 	2) left "auditd, which EasyRMM installed: the package manager could not remove its packages ($ua_pk)$(pkg_why)" ;;

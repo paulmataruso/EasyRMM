@@ -612,3 +612,24 @@ func scriptAuditRulesBase(t *testing.T, c *scriptContainer) {
 	}
 	c.sh(t, "rm -rf /usr/local/sbin/rpm /etc/audit /var/lib/easyrmm "+stateDir)
 }
+
+// scriptPackageFiles: a file an installation made that its packages leave
+// when they go (rpm's ghosts, such as audit-rules' audit.rules files,
+// which its scriptlet makes) goes once they are gone, with the directory
+// the installation made it in, and only as made: one changed since is
+// left. The record names a package already gone.
+func scriptPackageFiles(t *testing.T, c *scriptContainer) {
+	const dir, made, other = "/etc/easyrmm-test-made", "/etc/easyrmm-test-made/made.rules", "/etc/easyrmm-test-other.conf"
+	const token = "easyrmm-test-gone/1/1"
+	c.sh(t, "rm -rf "+stateDir+" "+dir+" && mkdir "+dir+" && echo made >"+made+" && echo made >"+other)
+	sum := strings.TrimSpace(c.sh(t, "sha256sum <"+made+" | cut -c1-64"))
+	c.record(t, "sudo", "pkg\t"+token, "pkgfile\t"+token+"\t"+made+"\t"+sum+"\t"+dir, "pkgfile\t"+token+"\t"+other+"\t"+sum+"\t-")
+	c.sh(t, "echo changed >>"+other)
+	m := scriptModule(t, parseScriptOutcome(t, c.script(t, "undo", "sudo"), HardeningUndo, []string{"sudo"}), "sudo")
+	want := []string{"Removed " + made + ", which installing the packages made", "Removed " + dir,
+		"Left as it is: " + other + ", which installing the packages made, changed since"}
+	if m.Outcome != HardeningPartlyUndone || !slices.Equal(m.Done, want) {
+		t.Errorf("undo of files an installation made: %+v, want %q", m, want)
+	}
+	c.sh(t, "test ! -e "+dir+" && test -f "+other+" && rm -rf "+other+" "+stateDir)
+}

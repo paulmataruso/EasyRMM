@@ -71,6 +71,7 @@ func TestCheckInContainers(t *testing.T) {
 			scriptFirewallNeedsFail2ban(t, c)
 			scriptUSBFstab(t, c)
 			scriptPackageDirs(t, c)
+			scriptPackageFiles(t, c)
 			scriptAuditRulesBase(t, c)
 			scriptPackageRecovery(t, c)
 			scriptDanglingUnitLink(t, c)
