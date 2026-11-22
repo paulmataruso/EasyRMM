@@ -375,8 +375,13 @@ and inventory say of PowerShell 7 (ADR-0064).
 exclusive lock briefly without reading their rows; new and changed rows are
 checked at once. 00034, in a transaction of its own, validates them (`SHARE
 UPDATE EXCLUSIVE`, which lets the server read and write the tables
-meanwhile) and fills `powershell7` from the inventories already stored, as
-an agent sends its inventory only when it changes. 00034's down leaves the
+meanwhile) and fills `powershell7` and `powershell7_blocked` from the
+inventories already stored, as the server writes them with each inventory:
+an agent sends its inventory only when it changes, and 00033's down drops
+the columns while the inventories stay. It reads each stored inventory once,
+in one statement, rewrites no table, and writes and locks only the devices
+whose flags change; on an upgrade from before 00033 no inventory lists
+PowerShell, and it writes nothing. 00034's down leaves the
 checks validated; 00033's down removes them with the columns and deletes
 `pwsh` scripts and jobs.
 

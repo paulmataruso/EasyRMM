@@ -239,9 +239,12 @@ func configModulePath(b []byte) (string, error) {
 }
 
 // expand replaces each %NAME% in s with the variable's value from lookup,
-// as PowerShell expands a configured module path; an unknown name is left
-// as it is.
-func expand(s string, lookup func(string) (string, bool)) string {
+// as Windows' ExpandEnvironmentStrings does for PowerShell 7 when it reads
+// a configured module path. A name lookup does not know, or an empty one,
+// is an error: Windows would leave it and carry on from its closing % as if
+// that opened another name, and the agent checks only what it can expand
+// as Windows does. A % with no other after it stays, as Windows leaves it.
+func expand(s string, lookup func(string) (string, bool)) (string, error) {
 	var b strings.Builder
 	for {
 		i := strings.IndexByte(s, '%')
@@ -253,15 +256,55 @@ func expand(s string, lookup func(string) (string, bool)) string {
 			break
 		}
 		name := s[i+1 : i+1+j]
-		if v, ok := lookup(name); ok && name != "" {
-			b.WriteString(s[:i] + v)
-		} else {
-			b.WriteString(s[:i+2+j])
+		v, ok := lookup(name)
+		if name == "" || !ok {
+			return "", fmt.Errorf("%%%s%%, which the agent does not expand: a run's environment does not set it, or each run sets its own", name)
 		}
+		b.WriteString(s[:i] + v)
 		s = s[i+2+j:]
 	}
 	b.WriteString(s)
-	return b.String()
+	return b.String(), nil
+}
+
+// PerRun reports whether a run's environment sets the variable name for
+// each run (TEMP, TMP and EASYRMM_*, ignoring case as Windows does) rather
+// than taking it from the agent's: a run's environment is built by it, and
+// a configured module path may not name such a variable, as the inventory
+// checks without a run.
+func PerRun(name string) bool {
+	u := strings.ToUpper(name)
+	return u == "TEMP" || u == "TMP" || strings.HasPrefix(u, "EASYRMM_")
+}
+
+// runEnv is what a PowerShell run's environment sets over the agent's: a
+// module path of Windows PowerShell's two folders, which PowerShell 7 puts
+// its own three before, and PowerShell 7's telemetry and update check off.
+func runEnv(windowsPS []string) []string {
+	return []string{
+		"PSModulePath=" + strings.Join(windowsPS, ";"),
+		"POWERSHELL_TELEMETRY_OPTOUT=1",
+		"POWERSHELL_UPDATECHECK=Off",
+	}
+}
+
+// runLookup looks a variable up as a run's environment has it: from set,
+// what the run sets over the agent's environment, then from agent, the
+// agent's own (os.LookupEnv, which ignores case on Windows). A variable
+// each run sets for itself (PerRun), or a name with "=" (Windows' hidden
+// per-drive folders, which a run does not get), is not known.
+func runLookup(set []string, agent func(string) (string, bool)) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		if name == "" || strings.Contains(name, "=") || PerRun(name) {
+			return "", false
+		}
+		for i := len(set) - 1; i >= 0; i-- {
+			if k, v, _ := strings.Cut(set[i], "="); strings.EqualFold(k, name) {
+				return v, true
+			}
+		}
+		return agent(name)
+	}
 }
 
 // NotFound is the error of a pwsh run without a usable PowerShell 7: where

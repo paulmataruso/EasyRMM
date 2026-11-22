@@ -50,14 +50,15 @@ func installLike(t *testing.T) string {
 func wantUntrusted(t *testing.T, what string, err error, path, reason string) {
 	t.Helper()
 	var u *Untrusted
-	if !errors.As(err, &u) || !strings.EqualFold(u.Path, path) || u.Reason != reason {
-		t.Errorf("%s: %v, want %s %s", what, err, path, reason)
+	if !errors.As(err, &u) || !strings.EqualFold(u.Path, path) || u.Reason != reason || u.Busy != (reason == busyReason) {
+		t.Errorf("%s: %+v (%v), want %s %s", what, u, err, path, reason)
 	}
 }
 
 // TestCheckTreeFindsWriters: a file held open by a program that may write
 // to it fails the check, as an access list fixed afterwards would not stop
-// that program; a reader that shares the file does not.
+// that program, and so does one a reader holds without sharing it; both are
+// busy. A reader that shares the file does not fail it.
 func TestCheckTreeFindsWriters(t *testing.T) {
 	elevated(t)
 	dir := installLike(t)
@@ -85,6 +86,13 @@ func TestCheckTreeFindsWriters(t *testing.T) {
 		t.Errorf("as state: %q %v", why, err)
 	}
 	_ = w.Close()
+	name, _ := windows.UTF16PtrFromString(dll)
+	h, err := windows.CreateFile(name, windows.GENERIC_READ, 0, nil, windows.OPEN_EXISTING, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantUntrusted(t, "with a reader that shares nothing", CheckTree(dir, false), dll, "is open in another program that may write to it")
+	_ = windows.CloseHandle(h)
 	if err := CheckTree(dir, false); err != nil {
 		t.Errorf("the writer closed: %v", err)
 	}
@@ -100,8 +108,8 @@ func TestCheckTreeHolding(t *testing.T) {
 		return strings.EqualFold(filepath.Ext(p), ".dll") || strings.EqualFold(filepath.Base(p), "pwsh.exe")
 	}
 	held, err := CheckTreeHolding(dir, false, isHeld)
-	if err != nil || held.Len() != 3 {
-		t.Fatalf("held %d: %v", held.Len(), err)
+	if err != nil || len(held.handles) != 3 {
+		t.Fatalf("held %+v: %v", held, err)
 	}
 	for _, f := range []string{"pwsh.exe", "a.dll", filepath.Join("lib", "b.dll")} {
 		p := filepath.Join(dir, f)

@@ -354,10 +354,17 @@ func (c *checked) release() {
 // files pass but whose module folders or configuration fail is marked
 // blocked, not usable, and that failure is returned: a run that would have
 // used it fails, without the fallback, since Windows PowerShell loads from
-// Windows PowerShell's folders too. hold keeps the install's program and
-// libraries open while the result is used (checkInstall).
+// Windows PowerShell's folders too. So is one with a file open in another
+// program (host.Untrusted.Busy): anyone who may read a file can hold it so,
+// and could otherwise choose where scripts run. hold keeps the install's
+// program and libraries open while the result is used (checkInstall).
 func check(p *agentproto.PowerShellInstall, hold bool) (*checked, error) {
 	held, err := checkInstall(p.Path, hold)
+	var u *host.Untrusted
+	if errors.As(err, &u) && u.Busy {
+		p.Usable, p.Blocked, p.Reason = false, true, u.Path+" "+u.Reason+busySuffix
+		return nil, err
+	}
 	if err != nil {
 		p.Usable, p.Reason = false, untrustedReason(err)
 		return nil, nil
@@ -401,29 +408,91 @@ func checkInstall(pwsh string, hold bool) (*host.Held, error) {
 // checkModules checks what a run of the PowerShell 7 in psHome loads from
 // outside its install: its configuration, and the folders it may load
 // modules from (moduleFolders), each with the folders above it
-// (host.CheckAbove) and, where it exists, everything in it. It returns the
+// (host.CheckAbove) and, where it exists, everything in it, and the folders
+// of the Windows PowerShell session it starts for a module only Windows
+// PowerShell can load (windowsPowerShellFolders). It returns PowerShell 7's
 // folders, and Windows PowerShell's two, which a run's PSModulePath names.
 func checkModules(psHome string) (all, windowsPS []string, err error) {
 	all, windowsPS, err = moduleFolders(psHome)
 	if err != nil {
 		return nil, nil, err
 	}
-	for _, m := range all {
+	_, own, err := windowsPowerShellFolders()
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, m := range append(slices.Clone(all), own) {
 		if within(m, psHome) {
 			continue // checked with the install
 		}
-		// Windows keeps the modules it puts in Windows PowerShell's two
-		// folders as hard links into its component store (WinSxS), as seen
-		// on CI's runners; nowhere else are hard links allowed.
-		links := slices.ContainsFunc(windowsPS, func(w string) bool { return strings.EqualFold(filepath.Clean(m), filepath.Clean(w)) })
-		if err := host.CheckAbove(m); err != nil {
-			return nil, nil, fmt.Errorf("PowerShell 7 would load modules from %s, and %w", m, err)
-		}
-		if err := checkIfThere(m, links); err != nil {
+		if err := checkFolder(m, windowsPS); err != nil {
 			return nil, nil, fmt.Errorf("PowerShell 7 would load modules from %s, and %w", m, err)
 		}
 	}
 	return all, windowsPS, nil
+}
+
+// checkFolder checks a module folder with the folders above it
+// (host.CheckAbove) and, where it exists, everything in it. Windows keeps
+// the modules it puts in Windows PowerShell's two folders as hard links into
+// its component store (WinSxS), as seen on CI's runners; nowhere else are
+// hard links allowed.
+func checkFolder(m string, windowsPS []string) error {
+	links := slices.ContainsFunc(windowsPS, func(w string) bool { return strings.EqualFold(filepath.Clean(m), filepath.Clean(w)) })
+	if err := host.CheckAbove(m); err != nil {
+		return err
+	}
+	return checkIfThere(m, links)
+}
+
+// windowsPowerShellFolders are the module folders of a Windows PowerShell
+// 5.1 process the agent starts, as the fallback of a pwsh script or as
+// PowerShell 7's compatibility session: Program Files' and System32's,
+// which its PSModulePath names (given), and the account's own
+// (Documents\WindowsPowerShell\Modules), which Windows PowerShell may add to
+// what it is given (ADR-0064).
+func windowsPowerShellFolders() (given []string, own string, err error) {
+	docs, err := windows.KnownFolderPath(windows.FOLDERID_Documents, windows.KF_FLAG_DONT_VERIFY)
+	if err != nil {
+		return nil, "", fmt.Errorf("finding the account's Documents folder: %w", err)
+	}
+	programFiles, err := windows.KnownFolderPath(windows.FOLDERID_ProgramFiles, windows.KF_FLAG_DEFAULT)
+	if err != nil {
+		return nil, "", fmt.Errorf("finding Program Files: %w", err)
+	}
+	given = []string{filepath.Join(programFiles, "WindowsPowerShell", "Modules"), filepath.Join(system32(), `WindowsPowerShell\v1.0\Modules`)}
+	return given, filepath.Join(docs, "WindowsPowerShell", "Modules"), nil
+}
+
+// Fallback is what a pwsh script that allows it runs in where no PowerShell
+// 7 is usable: Windows PowerShell 5.1, with the module folders it may load
+// from checked as a pwsh run's are (ADR-0064).
+type Fallback struct {
+	// Modules are the folders checked: the account's own and the two its
+	// PSModulePath names.
+	Modules []string
+	// Env sets PSModulePath to Windows PowerShell's two folders, as for
+	// PowerShell 7's compatibility session, so that the system
+	// environment's PSModulePath and what it names are not used.
+	Env []string
+}
+
+// ForFallback checks the module folders of Windows PowerShell as the
+// fallback of a pwsh script, and returns them with the environment that
+// limits it to them; a folder that fails is an error, and the script does
+// not run.
+func ForFallback() (*Fallback, error) {
+	given, own, err := windowsPowerShellFolders()
+	if err != nil {
+		return nil, err
+	}
+	all := append([]string{own}, given...)
+	for _, m := range all {
+		if err := checkFolder(m, given); err != nil {
+			return nil, fmt.Errorf("Windows PowerShell would load modules from %s, and %w", m, err) //nolint:staticcheck // ST1005: a name
+		}
+	}
+	return &Fallback{Modules: all, Env: []string{"PSModulePath=" + strings.Join(given, ";")}}, nil
 }
 
 // checkIfThere checks a folder and what it holds when it exists.
@@ -442,6 +511,10 @@ func untrustedReason(err error) string {
 	}
 	return "Could not be checked: " + err.Error() + "."
 }
+
+// busySuffix ends the reason of an install with a file open in another
+// program.
+const busySuffix = ": not used while it is, since anyone who may read the file can hold it so. Close that program or restart the computer. Scripts that allow Windows PowerShell 5.1 do not run in it instead."
 
 // blockedReason says why an install whose own files pass is not used:
 // what a run of it would load does not.
@@ -483,9 +556,10 @@ func (r *Run) Release() { r.held.Close() }
 // ForRun chooses the PowerShell 7 a pwsh run uses from roots: the first, in
 // the order a run prefers them, that passes check, its program and
 // libraries held open until Release. It returns a *NotFound when no
-// install is usable, which a script may fall back from, and another error
-// when an install whose own files pass would load from a folder, or read a
-// configuration, that fails, which it may not.
+// install is usable, which a script may fall back from (ForFallback), and
+// another error when an install whose own files pass would load from a
+// folder, or read a configuration, that fails, or has a file open in another
+// program, which it may not.
 func ForRun(roots []string) (*Run, error) {
 	start := time.Now()
 	list := candidates(roots, nativeArch())
@@ -508,13 +582,9 @@ func ForRun(roots []string) (*Run, error) {
 		return &Run{
 			Interpreter: agentproto.Interpreter{Edition: p.Edition, Version: p.Version, Arch: p.Arch, Path: p.Path},
 			Modules:     c.modules,
-			Env: []string{
-				"PSModulePath=" + strings.Join(c.windowsPS, ";"),
-				"POWERSHELL_TELEMETRY_OPTOUT=1",
-				"POWERSHELL_UPDATECHECK=Off",
-			},
-			Took: time.Since(start),
-			held: c.held,
+			Env:         runEnv(c.windowsPS),
+			Took:        time.Since(start),
+			held:        c.held,
 		}, nil
 	}
 	if blocked != nil {
@@ -551,15 +621,19 @@ func moduleFolders(psHome string) (all, windowsPS []string, err error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("finding Program Files: %w", err)
 	}
-	user, err := configured(filepath.Join(docs, "PowerShell", "powershell.config.json"), filepath.Join(docs, "PowerShell", "Modules"))
+	windowsPS, _, err = windowsPowerShellFolders()
 	if err != nil {
 		return nil, nil, err
 	}
-	shared, err := configured(filepath.Join(psHome, "powershell.config.json"), filepath.Join(programFiles, "PowerShell", "Modules"))
+	lookup := runLookup(runEnv(windowsPS), os.LookupEnv)
+	user, err := configured(filepath.Join(docs, "PowerShell", "powershell.config.json"), filepath.Join(docs, "PowerShell", "Modules"), lookup)
 	if err != nil {
 		return nil, nil, err
 	}
-	windowsPS = []string{filepath.Join(programFiles, "WindowsPowerShell", "Modules"), filepath.Join(system32(), `WindowsPowerShell\v1.0\Modules`)}
+	shared, err := configured(filepath.Join(psHome, "powershell.config.json"), filepath.Join(programFiles, "PowerShell", "Modules"), lookup)
+	if err != nil {
+		return nil, nil, err
+	}
 	all = append(append(append(user, shared...), filepath.Join(psHome, "Modules")), windowsPS...)
 	return all, windowsPS, nil
 }
@@ -569,8 +643,9 @@ func moduleFolders(psHome string) (all, windowsPS []string, err error) {
 // there could name any folder, so its folder and those above it are
 // checked whether it exists or not, and the file before it is read. A
 // folder the file names must exist: one that does not could be made later
-// by whoever may (ADR-0064).
-func configured(file, def string) ([]string, error) {
+// by whoever may (ADR-0064). Its variables are expanded from lookup, a
+// run's environment (runLookup), as PowerShell 7 expands them in the run.
+func configured(file, def string, lookup func(string) (string, bool)) ([]string, error) {
 	fail := func(err error) error {
 		return fmt.Errorf("PowerShell 7 would read its configuration from %s, and %w", file, err)
 	}
@@ -602,8 +677,12 @@ func configured(file, def string) ([]string, error) {
 	if p == "" {
 		return []string{def}, nil
 	}
+	p, err = expand(p, lookup)
+	if err != nil {
+		return nil, fmt.Errorf("%s names a module folder with %w", file, err)
+	}
 	var out []string
-	for f := range strings.SplitSeq(expand(p, os.LookupEnv), ";") {
+	for f := range strings.SplitSeq(p, ";") {
 		if f = strings.TrimSpace(f); f == "" {
 			continue
 		}

@@ -366,19 +366,30 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
     fixed can still write it. The check opens each file of the install and
     of the module folders to read while denying others writes; that open
     fails while another program holds the file open to write or delete,
-    and the install is then *found, not used*: "… is open in another
-    program that may write to it". For a run, `pwsh.exe` and the install's
-    libraries (`.dll`) stay open that way from their check until Windows
-    has created the run's process (`CreateProcess` returned), so no one
-    can write, replace or delete them in between; then the agent lets go.
-    After fixing an install's permissions, restart the computer: a restart
-    closes every handle opened before the fix. Not claimed: a writable
-    mapping of a file made before the fix, whose handle was then closed;
-    that open does not see it, and no test shows otherwise. The open has a
-    cost: a user who may read a file may also open it denying everyone
-    else, and while they hold it the check fails. That stops `pwsh` runs,
-    or makes them fall back, for as long as they hold it; it gives them no
-    way to change what runs.
+    or without sharing it: "… is open in another program that may write
+    to it". For a run, `pwsh.exe` and the install's libraries (`.dll`)
+    stay open that way from their check until Windows has created the
+    run's process (`CreateProcess` returned), so no one can write,
+    replace or delete them in between; then the agent lets go. That is
+    before the process has loaded its libraries, which it does after it
+    starts: for a library, the hold covers the check and the start, not
+    the load, and a file changed after the agent let go is what the
+    files' access lists, checked, allow, that is the administrators.
+    After fixing an install's permissions, restart the computer: a
+    restart closes every handle opened before the fix. Not claimed, and
+    covered by that restart only: a writable mapping of a file made
+    before the fix, whose handle was then closed; and a handle opened
+    with `WRITE_DAC` or `WRITE_OWNER` before the fix, which can change
+    the file's access list or owner again without write access, so the
+    sharing test does not see it. Neither is detected, and no test shows
+    otherwise. The open has a cost: a user who may read a file may also
+    open it denying everyone else, and while they hold it the check
+    fails. *Amended after the second review of PR #90 (decided in
+    review):* the install is then *blocked*, not *found, not used*, and
+    its runs fail without falling back, whatever the script allows: a
+    user who could make runs fall back could choose where SYSTEM's
+    scripts run. While they hold the file, `pwsh` runs on that computer
+    fail; it gives them no way to change what runs.
   * **Files Windows compresses or deduplicates** are reparse points whose
     tag says so: `IO_REPARSE_TAG_WOF` (`compact /exe`, Windows' own
     compression) and `IO_REPARSE_TAG_DEDUP` (Data Deduplication). A file
@@ -434,6 +445,15 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
     runs the same checks, so the inventory reports the install as blocked
     with the reason (`blocked`, below), the Hardware tab says *found, not
     usable*, and the run dialog warns that the script fails there;
+  * *amended after the second review of PR #90 (decided in review):* a
+    `powershell.config.json`'s module path is expanded as PowerShell 7
+    expands it, with Windows' `ExpandEnvironmentStrings`, from the
+    environment the run gets: the agent's, without what each run sets for
+    itself, with the run's `PSModulePath` and PowerShell variables over
+    it. A variable that environment does not set fails the check, naming
+    it, where Windows would leave it as it is and read on from its closing
+    `%`; so does one each run sets for itself (`TEMP`, `TMP`,
+    `EASYRMM_*`), as the inventory checks without a run;
   * **Windows PowerShell's compatibility session.** A module that only
     Windows PowerShell can load (`ServerManager`, `AppLocker`, …) is
     loaded by PowerShell 7 in a `powershell.exe` 5.1 process of its own
@@ -450,7 +470,19 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
   * folders other products added to the machine's `PSModulePath` are
     left out. A script that needs a module from one imports it by its
     full path, in the script, where its reviewer sees it. The guide says
-    so.
+    so;
+  * **the fallback's module path.** *Amended after the second review of
+    PR #90 (decided in review):* a `pwsh` script that falls back runs
+    Windows PowerShell 5.1 with `PSModulePath` set to Windows PowerShell's
+    two folders, as the compatibility session has it, not with the
+    agent's own, which names the machine's `PSModulePath` and SYSTEM's.
+    Before it starts, those two and SYSTEM's own
+    `Documents\WindowsPowerShell\Modules`, which Windows PowerShell may add
+    to what it is given, are checked as a `pwsh` run's folders are, and
+    the same folder is checked for a `pwsh` run's compatibility session;
+    one that fails fails the script ("Windows PowerShell would load
+    modules from …; the script was not run"). So no fallback sees a
+    module path the check did not cover.
 
   Refusing every `pwsh` run while some folder in the machine's
   `PSModulePath` is open to users was weighed and not chosen: a run
@@ -1241,8 +1273,9 @@ sessions*).
 * **The computer's own environment, for every run but `pwsh`.**
   `powershell`, `cmd` and the Linux shells get the system's `PATH`, and
   Windows PowerShell its `PSModulePath`, as today, so no existing script
-  changes; a `pwsh` script that falls back runs the same way. `pwsh` runs
-  get their own module path of checked folders, but the system's `PATH`,
+  changes. `pwsh` runs, and *after the second review of PR #90* a `pwsh`
+  script that falls back, get their own module path of checked folders,
+  but the system's `PATH`,
   since scripts call installed programs (`winget`, `choco`, vendors'
   tools) by name from folders installers add. A folder on the `PATH`, or
   on Windows PowerShell's module path, that users can write lets them
@@ -1478,9 +1511,11 @@ endpoint its downloads use.
   * live output sent and skipped from a real script that prints faster
     than 32 KiB in 2 seconds;
   * *added after the review of PR #90:* a library of the copy held open
-    to write makes it *found, not used*, and a run falls back from it; a
-    run holds `pwsh.exe` and the libraries, writes refused, until it lets
-    go; the copy compressed with `compact /c /exe:xpress4k` is still
+    to write makes it *blocked* (*after the second review*; before, *found,
+    not used*), and `pwsh.dll` held open with no sharing, by the test's
+    own process standing in for a user's, makes a run that allows the
+    fallback fail without starting anything; a run holds `pwsh.exe` and
+    the libraries, writes refused, until it lets go; the copy compressed with `compact /c /exe:xpress4k` is still
     used; a configured module folder that does not exist, one whose
     parent Users may empty, and SYSTEM's own `powershell.config.json`
     opened to Users each make the copy *blocked*, and the run fails
@@ -1488,7 +1523,12 @@ endpoint its downloads use.
     *found, not used*, as one of the install's own files; a
     folder opened to Users in Windows PowerShell's or PowerShell 7's
     shared module folder fails a run that allows the fallback; the
-    compatibility session's module path. The statements of
+    compatibility session's module path; *after the second review*, the
+    fallback's module path, and the compatibility session's, holding only
+    folders the agent checked, both with the runner's `PSModulePath` and
+    with Windows' default one, and a folder opened to Users in Windows
+    PowerShell's folder in Program Files failing the fallback. The
+    statements of
     `agent/powershell/powershell_windows.go` that the two test binaries
     run are measured from their coverage profiles, and the job fails below
     a floor of 82% (`backend-tests.yml`; both runners measured 83.2% of

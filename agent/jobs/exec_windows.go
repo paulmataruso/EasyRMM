@@ -46,8 +46,10 @@ var pwshRoots = powershell.Roots
 // its install and module folders checked, and its program and libraries
 // held open until the run's process is created (ADR-0064). Where none is
 // usable a pwsh script runs in Windows PowerShell 5.1 if it allows that,
-// recorded as a fallback, and fails if not; where an install passes but
-// what it would load does not, the script fails either way.
+// recorded as a fallback, with a module path of checked folders only
+// (fallback), and fails if not; where an install is blocked, its own files
+// passing but what it would load failing, or a file of it open in another
+// program, the script fails either way.
 func interpreter(p agentproto.JobPayload) (program, error) {
 	switch p.Shell {
 	case agentproto.ShellPowerShell:
@@ -66,9 +68,7 @@ func interpreter(p agentproto.JobPayload) (program, error) {
 		run, err := powershell.ForRun(roots)
 		var missing *powershell.NotFound
 		if errors.As(err, &missing) && p.PwshFallback {
-			prog, err := desktop()
-			prog.info.Fallback = true
-			return prog, err
+			return fallback()
 		}
 		if err != nil {
 			return program{}, err
@@ -76,6 +76,24 @@ func interpreter(p agentproto.JobPayload) (program, error) {
 		return program{path: run.Interpreter.Path, info: run.Interpreter, env: run.Env, release: run.Release}, nil
 	}
 	return program{}, fmt.Errorf("%s scripts do not run on Windows", p.Shell)
+}
+
+// fallback is Windows PowerShell 5.1 for a pwsh script that allows it, its
+// module folders checked as a pwsh run's are and its PSModulePath set to
+// them (powershell.ForFallback): the agent's own, which names the system
+// environment's folders, is not what a pwsh script was checked to load.
+func fallback() (program, error) {
+	prog, err := desktop()
+	if err != nil {
+		return program{}, err
+	}
+	f, err := powershell.ForFallback()
+	if err != nil {
+		return program{}, fmt.Errorf("%w; the script was not run", err)
+	}
+	prog.info.Fallback = true
+	prog.env = f.Env
+	return prog, nil
 }
 
 // desktop is Windows PowerShell 5.1.
@@ -89,13 +107,12 @@ func desktop() (program, error) {
 
 // environment is the agent's own environment, which as a service is
 // Windows' system environment, without EasyRMM's settings, with TEMP in
-// the run's directory and the job's ids.
+// the run's directory and the job's ids: what powershell.PerRun names is
+// set for each run.
 func environment(p agentproto.JobPayload, home string) []string {
 	var env []string
 	for _, kv := range os.Environ() {
-		k, _, _ := strings.Cut(kv, "=")
-		switch u := strings.ToUpper(k); {
-		case k == "", u == "TEMP", u == "TMP", strings.HasPrefix(u, "EASYRMM_"):
+		if k, _, _ := strings.Cut(kv, "="); k == "" || powershell.PerRun(k) {
 			continue
 		}
 		env = append(env, kv)

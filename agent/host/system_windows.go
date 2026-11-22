@@ -434,10 +434,14 @@ func handleProblem(h windows.Handle, p string, links, busy bool) (string, error)
 		return "can be changed by " + nameOf(who), nil
 	}
 	if busy && !folder {
-		return "is open in another program that may write to it", nil
+		return busyReason, nil
 	}
 	return "", nil
 }
+
+// busyReason is why a file that passes but is open in another program,
+// to write it or without sharing it, fails an exclusive check (openEntry).
+const busyReason = "is open in another program that may write to it"
 
 // reparseTag is the tag of the reparse point h is open to.
 func reparseTag(h windows.Handle) (uint32, error) {
@@ -505,9 +509,18 @@ type Untrusted struct {
 	// Reason completes a sentence about the entry: "can be changed by
 	// BUILTIN\Users".
 	Reason string
+	// Busy says the entry failed only for being open in another program
+	// that may write to it, or that let no one else open it (openEntry):
+	// anyone who may read a file can do that, so it says nothing of who
+	// may change the file.
+	Busy bool
 }
 
 func (u *Untrusted) Error() string { return u.Path + " " + u.Reason }
+
+func untrusted(p, why string) *Untrusted {
+	return &Untrusted{Path: p, Reason: why, Busy: why == busyReason}
+}
 
 // CheckTree checks root and everything in it at any depth as trustedEntry
 // checks an entry of the agent's state, each before what it holds, and
@@ -525,14 +538,6 @@ func CheckTree(root string, links bool) error {
 // Held is files a check keeps open: until it is closed no one else may
 // write or delete them.
 type Held struct{ handles []windows.Handle }
-
-// Len is how many files are held.
-func (h *Held) Len() int {
-	if h == nil {
-		return 0
-	}
-	return len(h.handles)
-}
 
 // Close lets the files go. A nil Held holds nothing.
 func (h *Held) Close() {
@@ -561,7 +566,7 @@ func CheckTreeHolding(root string, links bool, hold func(path string) bool) (*He
 			return err
 		}
 		if why != "" {
-			return &Untrusted{Path: p, Reason: why}
+			return untrusted(p, why)
 		}
 		if hold != nil && !d.IsDir() && hold(p) {
 			held.handles = append(held.handles, h)
@@ -583,7 +588,7 @@ func CheckEntry(p string, links bool) error {
 		return err
 	}
 	if why != "" {
-		return &Untrusted{Path: p, Reason: why}
+		return untrusted(p, why)
 	}
 	return nil
 }

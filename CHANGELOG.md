@@ -182,11 +182,14 @@ All notable changes to this project are documented here. The format follows
   plain files. A run holds `pwsh.exe` and the install's libraries open,
   unwritable, until its process is created. After fixing an install's
   permissions, restart the computer. An install whose module folders or
-  configuration fail is *found, not usable*, and its runs fail without
-  falling back to Windows PowerShell 5.1, which loads from the same
-  module folders. Migration 00033 adds the shell and the new columns, its
-  checks unvalidated; migration 00034 validates them and fills each
-  device's PowerShell 7 flag from its stored inventory
+  configuration fail, or with a file open in another program, is *found,
+  not usable*, and its runs fail without falling back to Windows
+  PowerShell 5.1, which loads from the same module folders. A script that
+  falls back runs Windows PowerShell with a module path of checked folders
+  only, never the computer's. Migration 00033 adds the shell and the new
+  columns, its checks unvalidated; migration 00034 validates them and
+  fills each device's PowerShell 7 flag and blocked reason from its stored
+  inventory
   ([guide](docs/operations/scripts-and-jobs.md#powershell-7)).
 - **Every run records the program it used**: edition, version,
   architecture and path, read from the file just before it starts, and

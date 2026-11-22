@@ -218,15 +218,60 @@ func TestExpand(t *testing.T) {
 	lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
 	for in, want := range map[string]string{
 		`%ProgramData%\Modules;%X%`:  `C:\ProgramData\Modules;x`,
-		`%Unknown%\Modules`:          `%Unknown%\Modules`,
 		`100%`:                       `100%`,
-		`%%X%`:                       `%%X%`,
 		`a%X%b%X`:                    `axb%X`,
 		`C:\Program Files\Modules`:   `C:\Program Files\Modules`,
 		`%ProgramData%%ProgramData%`: `C:\ProgramDataC:\ProgramData`,
 	} {
-		if got := expand(in, lookup); got != want {
-			t.Errorf("%q: %q, want %q", in, got, want)
+		if got, err := expand(in, lookup); err != nil || got != want {
+			t.Errorf("%q: %q %v, want %q", in, got, err, want)
+		}
+	}
+	// What Windows would leave, and then read on from as another name, is
+	// refused, naming it.
+	for in, name := range map[string]string{
+		`%Unknown%\Modules`: "%Unknown%",
+		`%Unknown%X%`:       "%Unknown%",
+		`%%X%`:              "%%",
+		`a%X%b%Y%`:          "%Y%",
+	} {
+		if got, err := expand(in, lookup); err == nil || !strings.HasPrefix(err.Error(), name+", which the agent does not expand") {
+			t.Errorf("%q: %q %v", in, got, err)
+		}
+	}
+}
+
+func TestPerRun(t *testing.T) {
+	for name, want := range map[string]bool{
+		"TEMP": true, "tmp": true, "Temp": true, "EASYRMM_JOB_ID": true, "easyrmm_x": true,
+		"TEMPDIR": false, "PATH": false, "ProgramData": false, "XEASYRMM_": false,
+	} {
+		if PerRun(name) != want {
+			t.Errorf("%s: %v", name, !want)
+		}
+	}
+}
+
+// TestRunLookup: a run's environment as the configured module path sees
+// it: what the run sets over the agent's, ignoring case, then the agent's;
+// never what each run sets for itself, nor a name with "=".
+func TestRunLookup(t *testing.T) {
+	agent := map[string]string{"PSModulePath": `C:\Machine`, "ProgramData": `C:\ProgramData`, "TEMP": `C:\Windows\TEMP`, "=C:": `C:\`}
+	lookup := runLookup(runEnv([]string{`C:\A`, `C:\B`}), func(k string) (string, bool) { v, ok := agent[k]; return v, ok })
+	for name, want := range map[string]string{
+		"PSModulePath":                `C:\A;C:\B`,
+		"psmodulepath":                `C:\A;C:\B`,
+		"POWERSHELL_TELEMETRY_OPTOUT": "1",
+		"POWERSHELL_UPDATECHECK":      "Off",
+		"ProgramData":                 `C:\ProgramData`,
+	} {
+		if got, ok := lookup(name); !ok || got != want {
+			t.Errorf("%s: %q %v, want %q", name, got, ok, want)
+		}
+	}
+	for _, name := range []string{"TEMP", "TMP", "EASYRMM_RUN_ID", "=C:", "", "Unset"} {
+		if got, ok := lookup(name); ok {
+			t.Errorf("%s: %q", name, got)
 		}
 	}
 }

@@ -305,23 +305,28 @@ standard user can change:
   users create folders, as `C:\` does by default.
 * **No one may be writing them**: a program that opened a file to write
   before its permissions were fixed could still change it, so a file open
-  in another program that may write to it fails the check. From the check
-  until Windows has created the run's process, the agent holds `pwsh.exe`
-  and the install's libraries open so that no one can change them.
+  in another program that may write to it, or that it holds so that no one
+  else may, fails the check. From the check until Windows has created the
+  run's process, the agent holds `pwsh.exe` and the install's libraries
+  open so that no one can change them; the process loads its libraries
+  after that, from files only administrators may change.
 
 An install that fails is not used, and the device says which file and why.
 **After fixing permissions, restart the computer**: a program that opened a
-file before the fix keeps what it opened until it closes it, and a restart
-closes everything. A user who can read a file can also hold it open so that
-the check fails; that stops PowerShell 7 runs on the device while they hold
-it (or makes them fall back), and gives them no way to change what runs.
+file before the fix keeps what it opened until it closes it, including a
+handle that may change the file's permissions or owner, which the check
+cannot see, and a restart closes everything. A user who can read a file can
+also hold it open so that the check fails; the install is then *Found, not
+usable* (below), so PowerShell 7 runs fail on the device while they hold it,
+without falling back, and they gain no way to change what runs.
 
 A device's **Hardware** tab lists Windows PowerShell and every PowerShell 7
 the agent found: the one PowerShell 7 scripts run in, and why each other is
 not used. An agent of an earlier release reports none and says so.
 
 **Found, not usable**: an install whose own files pass, while a module
-folder or configuration file its runs would read does not, is *blocked*.
+folder or configuration file its runs would read does not, or with a file
+open in another program, is *blocked*.
 PowerShell 7 scripts fail there, **and do not fall back to Windows
 PowerShell 5.1 even where the script allows it**: Windows PowerShell loads
 from Windows PowerShell's module folders too, so a folder that fails would
@@ -358,7 +363,14 @@ Each `pwsh` script says what happens on a device with no usable PowerShell
   `ConvertFrom-Json`, web requests) change what it does without an error.
   It does not apply where PowerShell 7 is found but blocked (above): the
   run fails with "PowerShell 7 would load modules from …; the script was
-  not run." or "PowerShell 7 would read its configuration from …".
+  not run.", "PowerShell 7 would read its configuration from …" or "… is
+  open in another program that may write to it; the script was not run."
+  Windows PowerShell gets the module path a PowerShell 7 run gives its
+  Windows PowerShell session (below), not the computer's `PSModulePath`;
+  its module folders, and the system account's own
+  `Documents\WindowsPowerShell\Modules`, are checked first, and one that
+  fails stops the script: "Windows PowerShell would load modules from …;
+  the script was not run."
 
 The setting is part of the script, copied into each job; whoever runs the
 script sees it and cannot change it. A job is not refused because a
@@ -406,7 +418,9 @@ script.ps1 <arguments>` and three changes to the environment:
 * **Modules** load from five checked folders only. PowerShell 7 builds its
   module path from the system account's own folder, `Program
   Files\PowerShell\Modules` (or what the install's `powershell.config.json`
-  names, which must exist), its own `Modules` and Windows PowerShell's two,
+  names, which must exist; `%variables%` there must be set in the run's
+  environment, and not be `TEMP`, `TMP` or `EASYRMM_…`, which each run
+  sets for itself), its own `Modules` and Windows PowerShell's two,
   in `Program Files` and `System32`; the agent checks each like the
   install, and sets `PSModulePath` to Windows PowerShell's two, so the
   system environment's `PSModulePath` and anything it names are not used.
@@ -486,7 +500,8 @@ kept. The audit log keeps its own record of every run for
 | A PowerShell script ends with code 1 and its error in standard error | The script threw an error that nothing caught. Check standard error; `$ErrorActionPreference = 'Stop'` at the top makes every error stop the script |
 | *Failed* with "PowerShell 7 is not installed on this device" or "No PowerShell 7 on this device can run scripts" | No usable PowerShell 7 was found. The device's **Hardware** tab lists what the agent found and why each is not used. Install the MSI (a Store install is not run), or let the script fall back to Windows PowerShell 5.1 if it was written for both |
 | "… can be changed by …: not used" on the device or the run | A file or folder of the install lets someone other than administrators change it. Restore the install's permissions (reinstalling the MSI does), then restart the computer |
-| "… is open in another program that may write to it: not used" | A program holds that file open to write it, or holds it so that no one else may. Close it, or restart the computer |
+| "… is open in another program that may write to it: not used while it is" on the Hardware tab, or *Failed* with "… is open in another program that may write to it; the script was not run." | A program holds that file open to write it, or holds it so that no one else may. Close it, or restart the computer. Scripts that allow Windows PowerShell 5.1 do not run in it meanwhile |
+| *Failed* with "Windows PowerShell would load modules from …; the script was not run." | A script that allows Windows PowerShell 5.1 fell back, and one of Windows PowerShell's module folders lets someone other than administrators change it. Fix what the reason names as below, then restart the computer |
 | *Found, not usable* on the Hardware tab, or *Failed* with "PowerShell 7 would read its configuration from …" or "… names the module folder …, which does not exist" | What a PowerShell 7 run would load fails the check, so it fails there even for scripts that allow Windows PowerShell 5.1. Fix what the reason names (for a folder the configuration names, create it as an administrator or remove it from `powershell.config.json`), then restart the computer |
 | "… can be replaced, or what it holds deleted, by …" or "… lets … create folders in it" | A folder above the install or a module folder lets someone else replace it. As an administrator, remove that account's right (`icacls "<the folder named>" /remove:g "<the account named>"`), or for an owner, make Administrators the owner (`icacls "<the folder named>" /setowner *S-1-5-32-544`), then restart the computer |
 | *Failed* with "PowerShell 7 would load modules from …, and … can be changed by …; the script was not run" | A module some installer put in one of the module folders lets users change it, so any user could change what a SYSTEM script loads. Remove that module, or, as an administrator, give it the folder's permissions back: `icacls "<the folder named>" /reset /T` and `icacls "<the folder named>" /setowner *S-1-5-32-544 /T`. GitHub's Windows runner images ship `ImageHelpers` this way |

@@ -162,7 +162,7 @@ func TestDiscoverAsSystem(t *testing.T) {
 // TestUntrustedInstallAsSystem: a copy of the runner's install in a Program
 // Files of its own passes the whole check; a file deep in it that Users may
 // change, or a junction in it, makes it found, not used, naming the entry,
-// and a run never starts it.
+// and a run never starts it; a library open to write makes it blocked.
 func TestUntrustedInstallAsSystem(t *testing.T) {
 	systemTest(t)
 	roots, err := Roots()
@@ -244,8 +244,9 @@ func TestUntrustedInstallAsSystem(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A library held open by a program that may write to it: found, not
-	// used, and a run falls back where the script allows it. The largest,
+	// A library held open by a program that may write to it: found and
+	// blocked, and a run fails even where the script allows Windows
+	// PowerShell, as anyone who may read a file can hold it so. The largest,
 	// which Windows compresses below.
 	dll, size := "", int64(0)
 	if err := filepath.WalkDir(install, func(p string, d fs.DirEntry, err error) error {
@@ -266,10 +267,10 @@ func TestUntrustedInstallAsSystem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := find(); p.Usable || p.Blocked || p.Reason != dll+" is open in another program that may write to it: not used, since what it runs and loads must be changeable by administrators only." {
+	if p := find(); p.Usable || !p.Blocked || p.Reason != dll+" is open in another program that may write to it"+busySuffix {
 		t.Errorf("with %s open to write: %+v", dll, p)
 	}
-	if _, err := ForRun([]string{root}); !errors.As(err, &missing) {
+	if _, err := ForRun([]string{root}); err == nil || errors.As(err, &missing) || err.Error() != dll+" is open in another program that may write to it; the script was not run" {
 		t.Errorf("a run with a library open to write: %v", err)
 	}
 	_ = w.Close()
