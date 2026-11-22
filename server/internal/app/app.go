@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"os"
 	"strconv"
@@ -41,6 +42,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/hardwareapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/inventoryapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/jobsapi"
+	"github.com/paulmataruso/easyrmm/server/internal/httpapi/mailserverapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/remoteapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/removalapi"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi/reportsapi"
@@ -50,6 +52,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/inventory"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
+	"github.com/paulmataruso/easyrmm/server/internal/mailserver"
 	"github.com/paulmataruso/easyrmm/server/internal/meshcentral"
 	"github.com/paulmataruso/easyrmm/server/internal/monitoring"
 	"github.com/paulmataruso/easyrmm/server/internal/pki"
@@ -99,6 +102,9 @@ type Deps struct {
 	// Reports reads devices, software and alerts into tables (ADR-0029).
 	Reports  *reports.Service
 	AuditFwd *auditfwd.Service
+	// Mail is the mail server: .env's or the console's, its limits and
+	// account mail (ADR-0053).
+	Mail *mailserver.Service
 	// EasyPatch connects patching to an EasyPatch server (ADR-0030).
 	EasyPatch *easypatch.Service
 	// SSO is single sign-on with OpenID Connect (ADR-0034).
@@ -117,12 +123,16 @@ type Deps struct {
 }
 
 // Build constructs the services over an open database.
-func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.Mailer, log *slog.Logger) (*Deps, error) {
+func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.Logger) (*Deps, error) {
 	sealer, err := secrets.NewSealer(cfg.SecretKeys...)
 	if err != nil {
 		return nil, err
 	}
 	auditLog := audit.New(db, time.Now)
+	mailSvc, err := mailserver.New(db, auditLog, sealer, envMail(cfg.SMTP), log)
+	if err != nil {
+		return nil, err
+	}
 	hasher := auth.NewHasher(auth.DefaultArgon2Params, cfg.ArgonMaxParallel)
 	ac := auth.DefaultConfig()
 	ac.RequireMFA = cfg.RequireMFA
@@ -131,7 +141,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	ac.PasswordResetTTL = cfg.PasswordResetTTL
 	ac.PublicURL = cfg.PublicURL.String()
 	ac.Issuer = "EasyRMM (" + cfg.PublicURL.Hostname() + ")"
-	authSvc := auth.NewService(db, auditLog, hasher, sealer, mail, ac)
+	authSvc := auth.NewService(db, auditLog, hasher, sealer, mailSvc, ac)
 	authSvc.SetLogger(log)
 	var consoles []string
 	for _, o := range cfg.Origins() {
@@ -152,7 +162,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	}
 	d := &Deps{
 		DB: db, Audit: auditLog, Auth: authSvc, Sessions: sessions,
-		Tenancy: tenancy.New(db, auditLog), Users: usersSvc, Setup: setup,
+		Tenancy: tenancy.New(db, auditLog), Users: usersSvc, Setup: setup, Mail: mailSvc,
 	}
 	if cfg.NeedsInternalCA() {
 		ca, err := pki.Load(ctx, db, sealer)
@@ -196,7 +206,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 	d.Agents.OnRemoved(d.EasyPatch.Kick)
 	// The patch reports read patching through it.
 	d.Reports.UsePatching(d.EasyPatch)
-	if err := usePatchingEngine(cfg, d, log); err != nil {
+	if err := usePatchingEngine(cfg, d, sealer, log); err != nil {
 		return nil, err
 	}
 	d.SSO = sso.New(db, auditLog, sealer, d.Auth, cfg.PublicURL)
@@ -227,7 +237,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, mail auth.M
 // buildRemote assembles the MeshCentral integration.
 // usePatchingEngine gives d.EasyPatch the patching engine in this
 // deployment, on loopback (ADR-0038).
-func usePatchingEngine(cfg *config.Config, d *Deps, log *slog.Logger) error {
+func usePatchingEngine(cfg *config.Config, d *Deps, sealer *secrets.Sealer, log *slog.Logger) error {
 	p := cfg.Patching
 	signer, err := easypatch.NewSigner(p.Key)
 	if err != nil {
@@ -247,17 +257,49 @@ func usePatchingEngine(cfg *config.Config, d *Deps, log *slog.Logger) error {
 	if len(p.AgentHostnames) > 0 {
 		opts = append(opts, easypatch.AgentHostnames(p.AgentHostnames))
 	}
-	// The engine emails monthly reports through EasyRMM's mail server.
-	opts = append(opts, easypatch.Mail(easypatch.MailConfig{Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, Username: cfg.SMTP.Username,
-		Password: cfg.SMTP.Password, From: cfg.SMTP.From, TLS: cfg.SMTP.TLS}))
+	// The engine emails through EasyRMM's mail server in force, which
+	// reaches it within seconds of every change (ADR-0053). Its digest,
+	// which EasyRMM's servers compare theirs with, is keyed by a key of its
+	// own, derived from the secret key.
+	mailKey, err := sealer.DeriveKey("easyrmm engine mail digest v1")
+	if err != nil {
+		return err
+	}
+	opts = append(opts, easypatch.Mail(func(ctx context.Context) (easypatch.MailConfig, error) {
+		m, err := d.Mail.InForce(ctx)
+		if err != nil || m == nil {
+			return easypatch.MailConfig{}, err
+		}
+		return easypatch.MailConfig{Host: m.Host, Port: m.Port, Username: m.Username, Password: m.Password, FromAddress: m.FromAddress,
+			FromName: m.FromName, Security: m.Security}, nil
+	}, mailKey))
 	if err := d.EasyPatch.UseEngine(engine, opts...); err != nil {
 		return fmt.Errorf("patching engine: %w", err)
 	}
 	log.Info("patching: the engine in this deployment", "url", p.URL)
 	// Organization and site changes reach the engine within seconds
-	// (ADR-0040).
+	// (ADR-0040), and so do the mail server's.
 	d.Tenancy.OnChange(d.EasyPatch.Kick)
+	d.Mail.OnChange(d.EasyPatch.Kick)
 	return nil
+}
+
+// envMail is .env's mail server (EASYRMM_SMTP_*), nil without
+// EASYRMM_SMTP_HOST. EASYRMM_SMTP_FROM may carry a name, as
+// "EasyRMM <rmm@example.com>"; EASYRMM_SMTP_TLS calls TLS from the first
+// byte implicit.
+func envMail(c config.SMTPConfig) *mailer.Config {
+	if c.Host == "" {
+		return nil
+	}
+	m := &mailer.Config{Host: c.Host, Port: c.Port, Username: c.Username, Password: c.Password, FromAddress: c.From, Security: c.TLS}
+	if a, err := mail.ParseAddress(c.From); err == nil {
+		m.FromAddress, m.FromName = a.Address, a.Name
+	}
+	if c.TLS == "implicit" {
+		m.Security = mailer.TLS
+	}
+	return m
 }
 
 func buildRemote(ctx context.Context, cfg *config.Config, d *Deps, sealer *secrets.Sealer, log *slog.Logger) error {
@@ -380,6 +422,7 @@ func Handler(cfg *config.Config, d *Deps, log *slog.Logger) (http.Handler, error
 	alertsapi.New(d.Monitoring).Register(mux)
 	reportsapi.New(d.Reports).Register(mux)
 	auditfwdapi.New(d.AuditFwd).Register(mux)
+	mailserverapi.New(d.Mail).Register(mux)
 	easypatchapi.New(d.EasyPatch).Register(mux)
 	ssoapi.New(d.SSO, d.Sessions, cfg.PublicURL).Register(mux)
 	agentupdatesapi.New(d.Agents, d.Devices).Register(mux)
@@ -496,23 +539,14 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	defer db.Close()
 
-	var mail auth.Mailer
-	if cfg.SMTP.Host != "" {
-		m, err := mailer.New(mailer.Config{
-			Host: cfg.SMTP.Host, Port: cfg.SMTP.Port, Username: cfg.SMTP.Username,
-			Password: cfg.SMTP.Password, From: cfg.SMTP.From, TLS: cfg.SMTP.TLS,
-		})
-		if err != nil {
-			return err
-		}
-		mail = m
-	} else {
-		log.Info("e-mail is not configured: self-service password reset is disabled and administrators deliver invitation links themselves")
-	}
-
-	deps, err := Build(ctx, cfg, db, mail, log)
+	deps, err := Build(ctx, cfg, db, log)
 	if err != nil {
 		return err
+	}
+	if cfg.SMTP.Host != "" {
+		log.Info("e-mail: the mail server is EASYRMM_SMTP_HOST's, from .env, which wins over the console", "host", cfg.SMTP.Host)
+	} else if !deps.Mail.Available(ctx) {
+		log.Info("e-mail: no mail server; until a super administrator sets one under Settings → Notifications → Mail server, password reset is off and administrators deliver invitation links themselves")
 	}
 	h, err := Handler(cfg, deps, log)
 	if err != nil {

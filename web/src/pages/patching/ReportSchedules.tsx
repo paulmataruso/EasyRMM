@@ -32,7 +32,7 @@ export function ReportSchedules() {
     <Card title="Monthly report schedules" padded={false}>
       <p className="max-w-3xl px-4 pt-3 text-sm text-muted">
         On the day you choose, each organization&apos;s report of the month before is made and emailed to its recipients. Reports are
-        emailed through EasyRMM&apos;s mail server, set with the EASYRMM_SMTP_ settings. Reports made on a schedule are listed under
+        emailed through EasyRMM&apos;s mail server, which a super administrator sets under Settings → Notifications → Mail server. Reports made on a schedule are listed under
         Reports → Monthly patch reports.
       </p>
       {list.data.length === 0 ? (

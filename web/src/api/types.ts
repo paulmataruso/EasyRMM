@@ -227,7 +227,14 @@ export interface InviteResult {
   user?: User;
   link?: string;
   emailed: boolean;
+  /** Why the link was not emailed, when it was not. */
+  mailProblem?: MailProblem;
+  /** The limit that stopped it, in words, when one did. */
+  mailReason?: string;
 }
+
+/** Why a link was not emailed: there is no mail server, or it did not take the message. */
+export type MailProblem = "no_mail_server" | "not_sent";
 
 export interface RoleView {
   role: Role;
@@ -648,6 +655,92 @@ export interface AuditForwardingInput {
 }
 
 export interface AuditForwardingTest {
+  ok: boolean;
+  message: string;
+}
+
+// The mail server (ADR-0053) ---------------------------------------------------------------------
+
+/** STARTTLS required, TLS from the first byte, or none (only to a relay on this machine). */
+export type MailSecurity = "starttls" | "tls" | "none";
+export type MailSignIn = "none" | "password";
+
+export interface MailServer {
+  host: string;
+  port: number;
+  security: MailSecurity;
+  signIn: MailSignIn;
+  username: string;
+  /** A password is stored; it is never shown. */
+  passwordSet: boolean;
+  fromAddress: string;
+  fromName: string;
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export interface MailServerView {
+  /** Where the mail server in force comes from: .env (which wins), the console, or nowhere. */
+  inForce: "env" | "console" | "none";
+  env?: MailServer;
+  console?: MailServer;
+  /** What of .env's mail server the patching engine will not take; EasyRMM still sends with it. */
+  envProblem?: string;
+  limits: {
+    perMinute: number;
+    perDay: number;
+    updatedAt?: string;
+    updatedBy?: string;
+    /** The limits on invitations and password emails, which follow the day's limit. */
+    account: AccountMailLimits;
+  };
+  usage: {
+    lastMinute: number;
+    lastDay: number;
+    /** Of the last 24 hours' messages, invitations and password resets. */
+    accountLastDay: number;
+    /** Where administrators' invitations and password links stop: 90% of the day's limit. Password resets people ask for may use all of it. */
+    adminDayLimit: number;
+    /** Where other mail stops: 80% of the day's limit. */
+    otherDayLimit: number;
+  };
+}
+
+/** Each is the smaller of a fixed number and a share of the day's limit (ADR-0053). */
+export interface AccountMailLimits {
+  /** Invitations and password links one administrator may email an hour. */
+  adminPerHour: number;
+  /** Invitations and password links administrators other than super administrators may email to one organization's accounts a day. */
+  organizationPerDay: number;
+  /** Password emails, resets people ask for and administrators' links together, to one account: this many at once, */
+  accountBurst: number;
+  /** then one every this many minutes. */
+  accountEveryMinutes: number;
+  /** Password resets people ask for, on the whole platform, an hour. */
+  resetsPerHour: number;
+  /** Password resets people ask for, to one organization's accounts, an hour. No limit a day holds resets. */
+  organizationResetsPerHour: number;
+}
+
+export interface MailServerInput {
+  host: string;
+  port: number;
+  security: MailSecurity;
+  signIn: MailSignIn;
+  username: string;
+  /** Write-only; empty keeps the stored one while the host, port, security and user name stay the same. */
+  password: string;
+  fromAddress: string;
+  fromName: string;
+}
+
+export interface MailServerTestInput {
+  to: string;
+  /** The form as it stands; absent tests the mail server in force. */
+  server?: MailServerInput;
+}
+
+export interface MailServerTest {
   ok: boolean;
   message: string;
 }
@@ -2073,8 +2166,11 @@ export interface PatchDeliveryPage {
 
 export interface PatchNotifications {
   channels: PatchChannel[];
-  /** The mail server email channels send through: EasyRMM's, given to EasyPatch at each start. */
-  mail: { host: string; port: number; security: string; fromAddress: string; fromName: string };
+  /**
+   * The mail server email channels send through: EasyRMM's, given to EasyPatch at start and after every change. problem says why
+   * EasyRMM could not give it, after several tries in a row, which removed the engine's.
+   */
+  mail: { host: string; port: number; security: string; fromAddress: string; fromName: string; problem?: string };
   allowPrivateNetworkWebhooks: boolean;
 }
 

@@ -27,6 +27,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/mailer"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -91,6 +92,31 @@ type InviteResult struct {
 	// administrator can deliver it another way.
 	Link    string `json:"link,omitempty"`
 	Emailed bool   `json:"emailed"`
+	// MailProblem says why the link was not e-mailed: no_mail_server, or
+	// not_sent when the mail server did not take it or a limit stopped it.
+	MailProblem string `json:"mailProblem,omitempty"`
+	// MailReason is the limit that stopped it, in words, when one did.
+	MailReason string `json:"mailReason,omitempty"`
+}
+
+// emailed records how e-mailing link went: problem and reason are
+// EmailLink's answer.
+func (r *InviteResult) emailed(link, problem, reason string) {
+	r.Emailed, r.MailProblem, r.MailReason = problem == "", problem, reason
+	if !r.Emailed {
+		r.Link = link
+	}
+}
+
+// accountMail is whom an administrator's invitation or password link to
+// account counts against: the caller, and the account's organization org,
+// except for a super administrator, whom only their own limit counts.
+func (s *Service) accountMail(c access.Caller, account, org uuid.UUID) mailer.AccountMail {
+	by := mailer.AccountMail{Admin: s.callerID(c), Account: account, Organization: org}
+	if c.Principal != nil && c.Principal.IsSuperAdmin() {
+		by.Organization = uuid.Nil
+	}
+	return by
 }
 
 // ListQuery filters the user list.
@@ -108,13 +134,17 @@ type Service struct {
 	auth   *auth.Service
 	hasher *auth.Hasher
 	now    func() time.Time
+	// refusals bounds the audit records of invitations and password links
+	// refused under the limits on account mail: one a minute per
+	// administrator and limit, so that refusals cannot flood the audit log.
+	refusals *auth.KeyedLimiter
 
 	onChange func()
 }
 
 // New builds the service.
 func New(db *database.DB, auditLog *audit.Logger, authSvc *auth.Service, hasher *auth.Hasher) *Service {
-	return &Service{db: db, audit: auditLog, auth: authSvc, hasher: hasher, now: time.Now}
+	return &Service{db: db, audit: auditLog, auth: authSvc, hasher: hasher, now: time.Now, refusals: auth.NewKeyedLimiter(time.Minute, 1, 10_000)}
 }
 
 // OnChange registers a function called after changes that affect remote
@@ -438,22 +468,6 @@ func describe(as []rbac.Assignment) []map[string]any {
 	return out
 }
 
-// auditOrg picks the organization an event about this user belongs to, so
-// organization administrators see it in their audit log.
-func auditOrg(as []rbac.Assignment) (org, site uuid.UUID) {
-	if len(as) == 1 {
-		return as[0].OrganizationID, as[0].SiteID
-	}
-	var o uuid.UUID
-	for _, a := range as {
-		if o != uuid.Nil && a.OrganizationID != o {
-			return uuid.Nil, uuid.Nil
-		}
-		o = a.OrganizationID
-	}
-	return o, uuid.Nil
-}
-
 func (s *Service) callerID(c access.Caller) uuid.UUID {
 	if c.Principal == nil {
 		return uuid.Nil
@@ -478,6 +492,11 @@ func (s *Service) Invite(ctx context.Context, c access.Caller, in InviteInput, m
 	if err != nil {
 		return nil, err
 	}
+	org, site := rbac.Placement(grants)
+	if err := s.auth.AdminLinkRoom(ctx, s.accountMail(c, uuid.Nil, org)); err != nil {
+		s.refused(ctx, c, "user.invite", org, site, "", map[string]any{"email": email}, err)
+		return nil, err
+	}
 	var id uuid.UUID
 	var link string
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
@@ -494,7 +513,6 @@ func (s *Service) Invite(ctx context.Context, c access.Caller, in InviteInput, m
 		if link, err = s.auth.IssueInviteToken(ctx, tx, id, meta); err != nil {
 			return err
 		}
-		org, site := auditOrg(grants)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.invite", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(),
 			Details: map[string]any{"email": email, "assignments": describe(grants)}})
@@ -503,21 +521,39 @@ func (s *Service) Invite(ctx context.Context, c access.Caller, in InviteInput, m
 		return nil, err
 	}
 	res := &InviteResult{}
-	if m := s.auth.Mailer(); m != nil {
-		body := "You have been invited to EasyRMM by " + c.Actor.Label + ".\n\n" +
-			"Open this link within " + auth.InviteTTL.String() + " to choose your password and set up two-factor sign-in:\n\n" +
-			link + "\n\nIf you were not expecting this, you can ignore this message.\n"
-		if err := m.Send(context.WithoutCancel(ctx), email, "You have been invited to EasyRMM", body); err == nil {
-			res.Emailed = true
-		}
-	}
-	if !res.Emailed {
-		res.Link = link
-	}
+	problem, reason := s.auth.EmailLink(context.WithoutCancel(ctx), email, mailer.Letter{
+		Subject: "You have been invited to EasyRMM",
+		Before: []string{"You have been invited to EasyRMM by " + c.Actor.Label + ".",
+			"Open this link within " + auth.DurationWords(auth.InviteTTL) + " to choose your password and set up two-factor sign-in:"},
+		Link:  &mailer.Link{Label: "Set up your account", URL: link},
+		After: []string{"If you were not expecting this, you can ignore this message."},
+	}, s.accountMail(c, id, org))
+	res.emailed(link, problem, reason)
 	if res.User, err = s.Get(ctx, c, id); err != nil {
 		return nil, err
 	}
 	return res, nil
+}
+
+// refused records an invitation or a password link refused under the
+// limits on account mail, or because they could not be read, at most one a
+// minute per administrator and limit (or error).
+func (s *Service) refused(ctx context.Context, c access.Caller, action string, org, site uuid.UUID, target string, details map[string]any, err error) {
+	outcome, key := audit.Failure, "error"
+	if ae, ok := apperr.As(err); ok && ae.Kind == apperr.KindTooMany {
+		outcome, key = audit.Denied, ae.Code
+		details["reason"], details["limit"] = "rate_limited", ae.Code
+	} else {
+		details["error"] = "the limits on account mail could not be read"
+	}
+	if !s.refusals.Allow(c.Actor.ID.String() + " " + key) {
+		return
+	}
+	ev := audit.Event{Actor: c.Actor, Action: action, Outcome: outcome, OrganizationID: org, SiteID: site, Details: details}
+	if target != "" {
+		ev.TargetType, ev.TargetID = "user", target
+	}
+	_ = s.audit.Record(ctx, ev)
 }
 
 // UpdateProfile changes a user's display name.
@@ -536,7 +572,7 @@ func (s *Service) UpdateProfile(ctx context.Context, c access.Caller, id uuid.UU
 		if _, err := tx.Exec(ctx, `UPDATE users SET display_name = $2 WHERE id = $1`, id, name); err != nil {
 			return err
 		}
-		org, site := auditOrg(u.all)
+		org, site := rbac.Placement(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.update", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(),
 			Details: map[string]any{"displayName": name, "previousDisplayName": u.DisplayName}})
@@ -601,7 +637,7 @@ func (s *Service) SetAssignments(ctx context.Context, c access.Caller, id uuid.U
 		if err := insertAssignments(ctx, tx, id, s.callerID(c), grants); err != nil {
 			return err
 		}
-		org, site := auditOrg(append(slices.Clone(remove), grants...))
+		org, site := rbac.Placement(append(slices.Clone(remove), grants...))
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.roles_change", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(),
 			Details: map[string]any{"email": u.Email, "removed": describe(remove), "granted": describe(grants)}})
@@ -652,7 +688,7 @@ func (s *Service) SetStatus(ctx context.Context, c access.Caller, id uuid.UUID, 
 		if status == "disabled" {
 			action = "user.disable"
 		}
-		org, site := auditOrg(u.all)
+		org, site := rbac.Placement(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: action, Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(), Details: map[string]any{"email": u.Email}})
 	})
@@ -673,7 +709,7 @@ func (s *Service) Unlock(ctx context.Context, c access.Caller, id uuid.UUID) (*U
 		if _, err := tx.Exec(ctx, `UPDATE users SET failed_logins = 0, mfa_failed_attempts = 0, locked_until = NULL WHERE id = $1`, id); err != nil {
 			return err
 		}
-		org, site := auditOrg(u.all)
+		org, site := rbac.Placement(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.unlock", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(), Details: map[string]any{"email": u.Email}})
 	})
@@ -705,7 +741,7 @@ func (s *Service) ResetMFA(ctx context.Context, c access.Caller, id uuid.UUID) (
 		if err := auth.RevokeAllSessions(ctx, tx, id, uuid.Nil, "mfa_reset"); err != nil {
 			return err
 		}
-		org, site := auditOrg(u.all)
+		org, site := rbac.Placement(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.mfa_reset", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(), Details: map[string]any{"email": u.Email, "securityKeys": keys.RowsAffected()}})
 	})
@@ -719,9 +755,23 @@ func (s *Service) ResetMFA(ctx context.Context, c access.Caller, id uuid.UUID) (
 // for users who never set a password). It is e-mailed when mail is
 // configured; otherwise it is returned for the administrator to deliver.
 func (s *Service) IssuePasswordLink(ctx context.Context, c access.Caller, id uuid.UUID, meta auth.RequestMeta) (*InviteResult, error) {
+	// Room under the limits on account mail, before the link is made. The
+	// transaction below checks again that the caller may send one.
+	target, err := s.Get(ctx, c, id)
+	if err != nil {
+		return nil, err
+	}
+	org, site := rbac.Placement(target.all)
+	by := s.accountMail(c, id, org)
+	if target.CanManage && !target.IsSelf && target.Status == "active" {
+		if err := s.auth.AdminLinkRoom(ctx, by); err != nil {
+			s.refused(ctx, c, "user.password_link", org, site, id.String(), map[string]any{"email": target.Email}, err)
+			return nil, err
+		}
+	}
 	var link, email string
 	var invite bool
-	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
+	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		u, err := s.loadForChange(ctx, tx, c, id)
 		if err != nil {
 			return err
@@ -738,7 +788,7 @@ func (s *Service) IssuePasswordLink(ctx context.Context, c access.Caller, id uui
 		if err != nil {
 			return err
 		}
-		org, site := auditOrg(u.all)
+		org, site := rbac.Placement(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.password_link", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(),
 			Details: map[string]any{"email": u.Email, "invite": invite}})
@@ -746,21 +796,23 @@ func (s *Service) IssuePasswordLink(ctx context.Context, c access.Caller, id uui
 	if err != nil {
 		return nil, err
 	}
+	l := mailer.Letter{
+		Subject: "Reset your EasyRMM password",
+		Before:  []string{"An administrator (" + c.Actor.Label + ") sent you a link to choose a new EasyRMM password:"},
+		Link:    &mailer.Link{Label: "Choose a new password", URL: link},
+		After:   []string{"It expires soon. If you were not expecting this, contact your administrator."},
+	}
+	if invite {
+		l = mailer.Letter{
+			Subject: "You have been invited to EasyRMM",
+			Before: []string{"You have been invited to EasyRMM by " + c.Actor.Label + ".",
+				"Open this link within " + auth.DurationWords(auth.InviteTTL) + " to choose your password:"},
+			Link: &mailer.Link{Label: "Set up your account", URL: link},
+		}
+	}
 	res := &InviteResult{}
-	if m := s.auth.Mailer(); m != nil {
-		subject, body := "Reset your EasyRMM password", "An administrator ("+c.Actor.Label+") sent you a link to choose a new EasyRMM password:\n\n"+link+
-			"\n\nIt expires soon. If you were not expecting this, contact your administrator.\n"
-		if invite {
-			subject, body = "You have been invited to EasyRMM", "You have been invited to EasyRMM by "+c.Actor.Label+".\n\n"+
-				"Open this link within "+auth.InviteTTL.String()+" to choose your password:\n\n"+link+"\n"
-		}
-		if err := m.Send(context.WithoutCancel(ctx), email, subject, body); err == nil {
-			res.Emailed = true
-		}
-	}
-	if !res.Emailed {
-		res.Link = link
-	}
+	problem, reason := s.auth.EmailLink(context.WithoutCancel(ctx), email, l, by)
+	res.emailed(link, problem, reason)
 	if res.User, err = s.Get(ctx, c, id); err != nil {
 		return nil, err
 	}
@@ -782,7 +834,7 @@ func (s *Service) Delete(ctx context.Context, c access.Caller, id uuid.UUID) err
 		if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, id); err != nil {
 			return err
 		}
-		org, site := auditOrg(u.all)
+		org, site := rbac.Placement(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.delete", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(), Details: map[string]any{"email": u.Email}})
 	})

@@ -437,6 +437,9 @@ func (s *Service) forget(ctx context.Context, deviceID uuid.UUID) error {
 // every minute and when Kick asks, and the server every ten minutes, until
 // ctx ends.
 func (s *Service) Run(ctx context.Context) {
+	// Stopping, this server stops giving the engine its mail server, so
+	// that another takes it over at its next pass.
+	defer s.stopLeadingMail()
 	links := time.NewTicker(time.Minute)
 	defer links.Stop()
 	server := time.NewTicker(10 * time.Minute)

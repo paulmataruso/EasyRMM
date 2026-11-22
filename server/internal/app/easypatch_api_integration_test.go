@@ -784,7 +784,7 @@ func TestEasyPatchAPI(t *testing.T) {
 	send := "/api/v1/patching/reports/monthly/" + monthly.ID + "/send"
 	r = admin.do("POST", send, map[string]any{"recipients": []string{"cfo@example.com"}})
 	wantStatus(t, r, http.StatusConflict, "mail_not_configured")
-	if !strings.Contains(string(r.body), "EASYRMM_SMTP_HOST") {
+	if !strings.Contains(string(r.body), "Settings → Notifications → Mail server") {
 		t.Errorf("without a mail server: %s", r.body)
 	}
 	wantStatus(t, viewer.do("DELETE", "/api/v1/patching/reports/monthly/"+monthly.ID, nil), http.StatusForbidden, "forbidden")
