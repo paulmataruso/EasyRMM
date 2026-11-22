@@ -38,8 +38,8 @@
     `log.view_sensitive` as well when the query asked for sensitive
     data, as ADR-0063 foresaw ("The output endpoint would then ask for
     both").
-  * ADR-0067 (the registry editor, accepted, pull request #85, not
-    merged when this was written, so cited without a link): F2 gains a
+  * [ADR-0067](0067-remote-registry-editor.md) (the registry editor,
+    accepted): F2 gains a
     second permission a kind may require when its input says so, a
     definer function that builds a query's next page from its stored
     input and result, and in slice 5 a file a run may hand back.
