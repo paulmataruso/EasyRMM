@@ -188,7 +188,9 @@ All notable changes to this project are documented here. The format follows
   not usable*, and its runs fail without falling back to Windows
   PowerShell 5.1, which loads from the same module folders. A script that
   falls back runs Windows PowerShell with a module path of checked folders
-  only, never the computer's. Migration 00033 adds the shell and the new
+  only, never the computer's, written so that Windows PowerShell adds no
+  folder of its own (with Windows' default `PSModulePath`, CI's runners
+  showed it adding a relative one). Migration 00033 adds the shell and the new
   columns, its checks unvalidated; migration 00034 validates them and
   fills each device's PowerShell 7 flag and blocked reason from its stored
   inventory
