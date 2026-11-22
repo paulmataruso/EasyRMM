@@ -13,8 +13,11 @@ import (
 )
 
 // How often one person may download a job's output archive (ADR-0064): six
-// at once, then one every 10 seconds, so six a minute. Each archive appends
-// up to 500 audit records under the audit chain's lock.
+// at once, then one every 10 seconds, so up to 11 in the first minute and
+// six a minute after that. Each archive appends up to 500 audit records
+// under the audit chain's lock. The limit is kept by each server process,
+// in memory: a restart starts it again, and each of several servers keeps
+// its own.
 const (
 	zipBurst = 6
 	zipEvery = 10 * time.Second
@@ -22,8 +25,7 @@ const (
 	zipCallers = 10000
 )
 
-// errTooManyZips answers a seventh archive within a minute, with
-// Retry-After.
+// errTooManyZips answers an archive beyond the limit, with Retry-After.
 var errTooManyZips = &httpapi.Error{Status: http.StatusTooManyRequests, Code: "rate_limited",
 	Message: "You have downloaded several jobs' output in the last minute. Wait a few seconds and try again."}
 
@@ -334,8 +336,9 @@ func writeFile(w http.ResponseWriter, f *jobs.File, contentType string) {
 
 // jobOutputZip sends a job's output as a ZIP archive. Every run's read is
 // recorded, and committed, before the first byte is sent (ADR-0064). Each
-// person may ask for six a minute (zipBurst, zipEvery); a request beyond
-// that is answered 429 before anything is read or recorded.
+// person may ask for six at once, then one every 10 seconds (zipBurst,
+// zipEvery); a request beyond that is answered 429 before anything is read
+// or recorded.
 func (a *API) jobOutputZip(w http.ResponseWriter, r *http.Request) error {
 	id, err := httpapi.PathID(r)
 	if err != nil {

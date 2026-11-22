@@ -150,8 +150,10 @@ All notable changes to this project are documented here. The format follows
   downloaded, in the same transaction. The archive records every run it
   holds and commits those records before the first byte is sent; if they
   cannot be written nothing is sent, and output removed in between is
-  listed as removed. Each person may download six archives a minute;
-  another is answered 429 with `Retry-After`. The results need only
+  listed as removed. Each person may download six archives at once, then
+  one every 10 seconds (up to 11 in the first minute, six a minute after,
+  counted by each server process); another is answered 429 with
+  `Retry-After`. The results need only
   `job.view`, are recorded as
   *Downloaded job results* (`job.results_export`), and neutralize formula
   cells as reports do. API: `GET /api/v1/job-runs/{id}/output?download=stdout|stderr|json`,
