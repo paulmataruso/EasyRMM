@@ -534,6 +534,10 @@ SSHD_T_ERR=
 sshd_run_t() {
 	SSHD_T=$(t 30 sshd -T 2>/dev/null)
 	SSHD_T_RC=$?
+	# Keys in lower case: OpenSSH 10.5 (Fedora 45) prints them as the
+	# configuration file spells them (Port, PermitRootLogin), earlier
+	# releases in lower case.
+	SSHD_T=$(printf '%s\n' "$SSHD_T" | awk '{ print tolower($1) substr($0, length($1) + 1) }')
 }
 # sshd_effective: runs sshd -T once; fails if it failed (SSHD_T_ERR says why).
 sshd_effective() {
@@ -556,7 +560,7 @@ sshd_effective() {
 	fi
 	[ "$SSHD_T_RC" -eq 0 ]
 }
-# sshd_val KEY: the first value of KEY in sshd -T's output (keys are lower case).
+# sshd_val KEY: the first value of KEY (in lower case) in sshd -T's output.
 sshd_val() { printf '%s\n' "$SSHD_T" | sed -n "s/^$1 //p" | head -n 1; }
 # sshd_vals KEY: every value of KEY, one a line.
 sshd_vals() { printf '%s\n' "$SSHD_T" | sed -n "s/^$1 //p"; }
