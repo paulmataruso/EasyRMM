@@ -1166,11 +1166,12 @@ function Test-ErAuditLogs {
 # 10 or more within 15 minutes, which the lockout would have locked. An
 # exposed computer gets no lockout unless lockout-exposed is given. Since is
 # how far back the log was read: 7 days, the log's oldest event, or the
-# oldest event read where the scan stopped at Limit. Read is false, with
-# the error, where the log could not be read.
+# oldest event read where the scan stopped at Limit (Get-ErLogReach). Read
+# is false, with the error, where the log could not be read.
 function Get-ErExposure {
     param([int]$Limit = 5000)
-    $since = (Get-Date).AddDays(-7)
+    $now = Get-Date
+    $since = $now.AddDays(-7)
     $read = Get-ErEvents @{ FilterHashtable = @{ LogName = 'Security'; Id = 4625; StartTime = $since }; MaxEvents = $Limit }
     if (-not $read.Read) { return @{ Read = $false; Error = $read.Error } }
     $events = $read.Events
@@ -1207,14 +1208,28 @@ function Get-ErExposure {
         if (-not $first.Read) { return @{ Read = $false; Error = $first.Error } }
         $reach = $(if ($first.Events.Count -gt 0 -and $first.Events[0].TimeCreated -gt $since) { $first.Events[0].TimeCreated } else { $since })
     }
+    $r = Get-ErLogReach $reach $now
     return @{
         Read = $true
         Exposed = $addresses.Count -gt 0 -or $bursts.Count -gt 0
         Accounts = @($accounts.Keys | Sort-Object | Select-Object -First 10)
         Addresses = @($addresses.Keys | Sort-Object | Select-Object -First 10)
         Bursts = @($bursts | Sort-Object | Select-Object -First 10)
-        Since = $reach.ToUniversalTime().ToString('o')
+        Since = $r.Since
+        SinceReason = $r.SinceReason
     }
+}
+
+# Get-ErLogReach: how far back the log was read, from the time of the
+# oldest record read and the check's own. A record dated after the check
+# was written while the computer's clock was wrong: its time says nothing
+# of how far back the log goes, so Since is null, with why.
+function Get-ErLogReach {
+    param([datetime]$Reach, [datetime]$Now)
+    if ($Reach.ToUniversalTime() -gt $Now.ToUniversalTime()) {
+        return @{ Since = $null; SinceReason = 'The oldest record read is dated after this check: the computer''s clock was wrong when it was written.' }
+    }
+    return @{ Since = $Reach.ToUniversalTime().ToString('o'); SinceReason = '' }
 }
 
 # ConvertTo-ErPublicAddress: an address outside the private, loopback,
@@ -1300,6 +1315,7 @@ function Get-ErModuleGate {
                 $Module.notes += "The Security log could not be read for failed sign-ins: $($x.Error)"
             } else {
                 $Module.exposure = @{ exposed = $x.Exposed; accounts = $x.Accounts; addresses = $x.Addresses; bursts = $x.Bursts; since = $x.Since }
+                if ($x.SinceReason) { $Module.exposure.sinceReason = $x.SinceReason }
                 if ($x.Exposed -and -not (Test-ErOption 'lockout-exposed')) {
                     $Module.notes += 'Failed sign-ins from public addresses, or 10 or more for one account within 15 minutes: apply sets no lockout here unless lockout-exposed is given.'
                 }

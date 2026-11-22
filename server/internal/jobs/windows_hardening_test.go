@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"encoding/json"
 	"regexp"
 	"slices"
 	"strings"
@@ -299,6 +300,17 @@ func TestParseWindowsHardeningResult(t *testing.T) {
 	} else if w := r.Platform.Windows; w.Role != "unknown" || w.Joined != "unknown" || w.MDM != nil {
 		t.Errorf("an unread role, join and enrolment: %+v", w)
 	}
+	// The Security log's oldest record read, dated after the check: how far
+	// back the log was read is not known, and the result says why.
+	const sinceGood = `"since":"2026-11-15T10:00:00.0000000Z"`
+	const clockAhead = `"sinceReason":"The oldest record read is dated after this check: the computer's clock was wrong when it was written."`
+	if r, err := parseHardeningResult(windowsLine(windowsPlatform, strings.Replace(good, sinceGood, `"since":null,`+clockAhead, 1)), h); err != nil {
+		t.Errorf("since not known: %v", err)
+	} else if e := r.Modules[0].Exposure; e.Since != nil || !strings.HasPrefix(e.SinceReason, "The oldest record read is dated after this check") {
+		t.Errorf("since not known: %+v", e)
+	} else if b, err := json.Marshal(e); err != nil || !strings.Contains(string(b), `"since":null,"sinceReason":"The oldest`) {
+		t.Errorf("since not known, as the API gives it: %s, %v", b, err)
+	}
 
 	bad := map[string]struct{ platform, modules string }{
 		"a Linux platform":          {`{"id":"ubuntu","versionId":"24.04","family":"debian","container":"none","support":"full"}`, good},
@@ -317,6 +329,8 @@ func TestParseWindowsHardeningResult(t *testing.T) {
 		"an unknown setting reason": {windowsPlatform, strings.Replace(good, `"reasons":["mdm"]`, `"reasons":["intune"]`, 1)},
 		"a managed state":           {windowsPlatform, strings.Replace(good, `"value":"7","state":"managed_elsewhere"}`, `"value":"7","state":"partly"}`, 1)},
 		"a bad time":                {windowsPlatform, strings.Replace(good, "2026-11-15T10:00:00.0000000Z", "last week", 1)},
+		"no time and no reason":     {windowsPlatform, strings.Replace(good, sinceGood, `"since":null`, 1)},
+		"a time and a reason":       {windowsPlatform, strings.Replace(good, sinceGood, sinceGood+","+clockAhead, 1)},
 		"exposure elsewhere":        {windowsPlatform, strings.Replace(good, `"module":"wdigest","state":"not_in_place",`, `"module":"wdigest","state":"not_in_place","exposure":{"exposed":false,"accounts":[],"addresses":[],"since":"2026-11-15T10:00:00Z"},`, 1)},
 		"ports on Windows":          {windowsPlatform, strings.Replace(good, `"module":"wdigest","state":"not_in_place",`, `"module":"wdigest","state":"not_in_place","ports":{"tcp":["22"]},`, 1)},
 		"an omission":               {windowsPlatform, strings.Replace(good, `"module":"wdigest","state":"not_in_place",`, `"module":"wdigest","state":"not_in_place","settingsOmitted":"some",`, 1)},

@@ -200,6 +200,41 @@ ConvertTo-Json -Compress -Depth 4 @{ Limited = Get-ErExposure -Limit 5; Full = G
 	}
 }
 
+// TestHardeningLogReachOnWindows: where the oldest record read is dated
+// after the check (written while the computer's clock was wrong), how far
+// back the log was read has no time, but why; a record dated before the
+// check, or at the same moment, gives its time.
+func TestHardeningLogReachOnWindows(t *testing.T) {
+	var got []struct {
+		Since       *time.Time
+		SinceReason string
+	}
+	hardeningFunctions(t, `$now = Get-Date
+ConvertTo-Json -Compress @(
+    (Get-ErLogReach $now.AddHours(8) $now),
+    (Get-ErLogReach $now.ToUniversalTime().AddMinutes(1) $now),
+    (Get-ErLogReach $now.AddDays(-2) $now),
+    (Get-ErLogReach $now $now)
+)`, &got)
+	t.Logf("%+v", got)
+	if len(got) != 4 {
+		t.Fatalf("%d answers", len(got))
+	}
+	for i, g := range got[:2] {
+		if g.Since != nil || g.SinceReason != "The oldest record read is dated after this check: the computer's clock was wrong when it was written." {
+			t.Errorf("a record dated after the check (%d): since %v, reason %q", i, g.Since, g.SinceReason)
+		}
+	}
+	for i, g := range got[2:] {
+		if g.Since == nil || g.SinceReason != "" || g.Since.After(time.Now()) {
+			t.Errorf("a record dated before the check (%d): since %v, reason %q", i, g.Since, g.SinceReason)
+		}
+	}
+	if s := got[2].Since; s != nil && time.Since(*s) < 47*time.Hour {
+		t.Errorf("2 days back, since %v", s)
+	}
+}
+
 // Stand-ins for a read that fails: where nothing on the computer can make
 // Windows' own provider fail without breaking the computer, the cmdlet is
 // sent to a computer that does not exist, and fails as a read does.

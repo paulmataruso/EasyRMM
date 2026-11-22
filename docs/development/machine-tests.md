@@ -190,7 +190,10 @@ member's `check all` output from the run at 3d8bfb6, before OSConfig;
 the server's integration tests read it. Its accounts module reads the
 Security log back to 16:26 UTC, after the run: the log's first records
 were written while the new guest's clock ran 8 hours ahead, before its
-time zone and time were set.
+time zone and time were set. The script now gives no time where the
+oldest record read is dated after the check, but why (`sinceReason`);
+the fixture, from before that change, keeps the time it gave, which the
+server still accepts.
 
 Delete the guests when done: the evaluation media expire after 180 days,
 and a domain left running holds memory others need.

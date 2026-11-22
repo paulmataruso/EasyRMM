@@ -1122,6 +1122,12 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
   one it read. Account names are cleaned of control and format
   characters, and sign-ins without one are not counted; the server
   cleans or drops such text again rather than refusing the result.
+  **Decided in review:** where the oldest record read is dated after the
+  check, it was written while the computer's clock was wrong (the test
+  domain's member showed it), and its time says nothing of how far the
+  log reaches: the result gives no time (`since` null) but why
+  (`sinceReason`), which W3's console shows in place of a time. A record
+  dated before the check keeps its time.
 * **The Guest account disabled**, blank passwords usable only at the
   console.
 * **Never touched**: any other account. The module never disables,

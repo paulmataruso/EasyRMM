@@ -190,8 +190,10 @@ and Administrators can open, and removes it.
   back as it reaches up to 7 days, shows failed sign-ins from public
   addresses or 10 or more for one account within 15 minutes; the accounts
   and addresses, and how far back the log was read (at most 5,000 failed
-  sign-ins, newest first). Apply will set no lockout on an exposed
-  computer unless `lockoutExposed` is given.
+  sign-ins, newest first). Where the oldest record read is dated after
+  the check, the computer's clock was wrong when it was written: `since`
+  is then null and `sinceReason` says so. Apply will set no lockout on an
+  exposed computer unless `lockoutExposed` is given.
 * **Each setting**: its value, what EasyRMM wants, and its state: *in
   place*; *not in place* (apply would change it); *managed elsewhere*
   (another owner holds it, named under `managed` with its policy and

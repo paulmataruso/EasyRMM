@@ -503,7 +503,11 @@ type HardeningExposure struct {
 	Bursts []string `json:"bursts"`
 	// Since is how far back the log was read: 7 days, the log's oldest
 	// event, or the oldest event read where the scan stopped at its limit.
-	Since string `json:"since"`
+	// It is null, with SinceReason, where that event is dated after the
+	// check: written while the computer's clock was wrong, its time says
+	// nothing of how far back the log goes.
+	Since       *string `json:"since"`
+	SinceReason string  `json:"sinceReason,omitempty"`
 }
 
 var settingStates = []string{
@@ -621,6 +625,7 @@ func (r *hardeningResult) tidyWindows() {
 		if e := m.Exposure; e != nil {
 			e.Accounts = tidyTexts(e.Accounts, 64)
 			e.Bursts = tidyTexts(e.Bursts, 64)
+			e.SinceReason = tidyText(e.SinceReason, maxFindingText)
 			e.Addresses = slices.DeleteFunc(e.Addresses, func(a string) bool {
 				_, err := netip.ParseAddr(a)
 				return err != nil
@@ -663,7 +668,12 @@ func (f WindowsFinding) validWindows(module string) bool {
 			len(e.Bursts) > maxExposureItems {
 			return false
 		}
-		if _, err := time.Parse(time.RFC3339Nano, e.Since); err != nil {
+		// A time, or why there is none; never both.
+		if e.Since == nil {
+			if e.SinceReason == "" {
+				return false
+			}
+		} else if _, err := time.Parse(time.RFC3339Nano, *e.Since); err != nil || e.SinceReason != "" {
 			return false
 		}
 	}
