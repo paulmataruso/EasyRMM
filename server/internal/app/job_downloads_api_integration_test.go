@@ -268,3 +268,60 @@ func TestJobDownloadsAPI(t *testing.T) {
 		}
 	}
 }
+
+// TestJobOutputZipLimit: one person may download six jobs' archives a
+// minute; the seventh is answered 429 with Retry-After before anything is
+// recorded, and another person is not held back (ADR-0064).
+func TestJobOutputZipLimit(t *testing.T) {
+	h := newHarness(t, false)
+	admin, _ := setUp(t, h)
+	acme := orgID(t, admin, "Acme")
+	var hq idObj
+	admin.expect(http.StatusCreated, "POST", "/api/v1/organizations/"+acme+"/sites", map[string]string{"name": "HQ", "timezone": "UTC"}, &hq)
+	pc := enrollAt(t, h, admin, hq.ID, "hq-01")
+	invite(t, h, admin, "tess@acme.example", []map[string]any{{"role": "technician", "organizationId": acme, "siteId": hq.ID}})
+	tech := h.client()
+	tech.signIn("tess@acme.example", "a long and unusual passphrase", "")
+
+	var sc scriptView
+	admin.expect(http.StatusCreated, "POST", "/api/v1/scripts", map[string]any{"name": "Collect", "shell": "bash", "body": "echo"}, &sc)
+	var job jobView
+	admin.expect(http.StatusCreated, "POST", "/api/v1/jobs", map[string]any{"scriptId": sc.ID, "deviceIds": []string{pc.id}}, &job)
+	pc.runIt(t, "hq "+outputMarker+"\n")
+
+	path := "/api/v1/jobs/" + job.ID + "/output.zip"
+	for i := range 6 {
+		if r := tech.do("GET", path, nil); r.status != http.StatusOK {
+			t.Fatalf("archive %d: %d %.200s", i+1, r.status, r.body)
+		}
+	}
+	r := tech.do("GET", path, nil)
+	wantStatus(t, r, http.StatusTooManyRequests, "rate_limited")
+	if got := r.header.Get("Retry-After"); got != "10" {
+		t.Errorf("Retry-After %q", got)
+	}
+	if strings.Contains(string(r.body), outputMarker) {
+		t.Error("a refused archive holds output")
+	}
+	if r := admin.do("GET", path, nil); r.status != http.StatusOK {
+		t.Errorf("another person's archive: %d %.200s", r.status, r.body)
+	}
+
+	var l struct {
+		Items []struct {
+			Action     string         `json:"action"`
+			ActorLabel string         `json:"actorLabel"`
+			Details    map[string]any `json:"details"`
+		} `json:"items"`
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/audit?limit=500", nil, &l)
+	n := 0
+	for _, e := range l.Items {
+		if e.Action == "job_run.output_view" && e.ActorLabel == "tess@acme.example" && e.Details["download"] == "zip" {
+			n++
+		}
+	}
+	if n != 6 {
+		t.Errorf("%d archive records for the technician, want 6", n)
+	}
+}

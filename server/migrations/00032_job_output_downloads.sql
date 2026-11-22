@@ -8,7 +8,8 @@
 --   finished run of a job the caller may read, and names them;
 -- * easyrmm_job_run_output_recorded then hands out one of those runs'
 --   output, in a short transaction of its own, against the record of its
---   read: only to the caller it records, for that run, and for a day.
+--   read: only to the caller it records, for that run, and for a day by the
+--   database's clock.
 
 -- +goose Up
 DROP FUNCTION easyrmm_job_run_output(uuid, boolean, uuid[], uuid[], boolean, uuid[], uuid[], timestamptz, text, uuid, text, inet, text);
@@ -150,11 +151,18 @@ BEGIN
         RETURN;
     END IF;
     -- The runs the caller sees keep their state until the transaction ends,
-    -- so the server reads them as they were chosen here.
-    PERFORM 1 FROM public.job_runs jr
-      WHERE jr.job_id = p_job
-        AND public.easyrmm_job_scope_covers(p_view_all, p_view_orgs, p_view_sites, jr.organization_id, jr.site_id)
-        FOR SHARE;
+    -- so the server reads them as they were chosen here. They are locked in
+    -- the order canceling a job locks them (by device name, then run), so
+    -- a download and a cancel of the same job never wait on each other.
+    PERFORM 1 FROM (
+        SELECT jr.id
+          FROM public.job_runs jr
+          JOIN public.devices d ON d.id = jr.device_id
+         WHERE jr.job_id = p_job
+           AND public.easyrmm_job_scope_covers(p_view_all, p_view_orgs, p_view_sites, jr.organization_id, jr.site_id)
+         ORDER BY lower(d.name), jr.id
+           FOR SHARE OF jr
+    ) locked;
     FOR r IN
         SELECT jr.id, jr.organization_id AS org, jr.site_id AS site, jr.device_id AS device, d.name AS device_name,
                jr.stdout_bytes AS out_bytes, jr.stderr_bytes AS err_bytes, jr.output_stored_at AS stored
@@ -185,25 +193,29 @@ GRANT EXECUTE ON FUNCTION easyrmm_job_output_zip(uuid, boolean, uuid[], uuid[], 
 -- One run's output, read for a job's download after easyrmm_job_output_zip
 -- recorded it: only against that record, which must be a successful
 -- job_run.output_view of this run, with download zip, by this caller, at
--- most a day before p_at. The caller must still see the run and may still
--- read it. The result is not_found, forbidden, output_removed (removed
--- after the record) or ok with the output. Nothing is recorded: the record
--- was written, and committed, before the download began.
+-- most a day old by the database's clock (clock_timestamp(); the server
+-- passes no time, so it cannot extend the day), and no more than 5 minutes
+-- ahead of it, the skew allowed between the server's clock and the
+-- database's. The caller must still see the run and may still read it. The
+-- result is not_found, forbidden, output_removed (removed after the
+-- record) or ok with the output. Nothing is recorded: the record was
+-- written, and committed, before the download began.
 -- +goose StatementBegin
 CREATE FUNCTION easyrmm_job_run_output_recorded(
-    p_run uuid, p_record bigint, p_actor_id uuid, p_at timestamptz,
+    p_run uuid, p_record bigint, p_actor_id uuid,
     p_view_all boolean, p_view_orgs uuid[], p_view_sites uuid[],
     p_read_all boolean, p_read_orgs uuid[], p_read_sites uuid[]
 ) RETURNS TABLE (result text, out_text text, err_text text, out_cut boolean, err_cut boolean)
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE
     r record;
+    now_db timestamptz := clock_timestamp();
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM public.audit_log a
                     WHERE a.id = p_record AND a.action = 'job_run.output_view' AND a.outcome = 'success'
                       AND a.target_type = 'job_run' AND a.target_id = p_run::text
                       AND a.actor_id IS NOT DISTINCT FROM p_actor_id AND a.details->>'download' = 'zip'
-                      AND a.occurred_at > p_at - interval '1 day' AND a.occurred_at <= p_at + interval '5 minutes') THEN
+                      AND a.occurred_at > now_db - interval '1 day' AND a.occurred_at <= now_db + interval '5 minutes') THEN
         RETURN QUERY SELECT 'forbidden'::text, NULL::text, NULL::text, NULL::boolean, NULL::boolean;
         RETURN;
     END IF;
@@ -229,11 +241,11 @@ BEGIN
 END
 $$;
 -- +goose StatementEnd
-REVOKE ALL ON FUNCTION easyrmm_job_run_output_recorded(uuid, bigint, uuid, timestamptz, boolean, uuid[], uuid[], boolean, uuid[], uuid[]) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION easyrmm_job_run_output_recorded(uuid, bigint, uuid, timestamptz, boolean, uuid[], uuid[], boolean, uuid[], uuid[]) TO easyrmm_app;
+REVOKE ALL ON FUNCTION easyrmm_job_run_output_recorded(uuid, bigint, uuid, boolean, uuid[], uuid[], boolean, uuid[], uuid[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION easyrmm_job_run_output_recorded(uuid, bigint, uuid, boolean, uuid[], uuid[], boolean, uuid[], uuid[]) TO easyrmm_app;
 
 -- +goose Down
-DROP FUNCTION easyrmm_job_run_output_recorded(uuid, bigint, uuid, timestamptz, boolean, uuid[], uuid[], boolean, uuid[], uuid[]);
+DROP FUNCTION easyrmm_job_run_output_recorded(uuid, bigint, uuid, boolean, uuid[], uuid[], boolean, uuid[], uuid[]);
 DROP FUNCTION easyrmm_job_output_zip(uuid, boolean, uuid[], uuid[], boolean, uuid[], uuid[], timestamptz, text, uuid, text, inet, text);
 DROP FUNCTION easyrmm_job_run_output(uuid, text, boolean, uuid[], uuid[], boolean, uuid[], uuid[], timestamptz, text, uuid, text, inet, text);
 -- As 00028 created it.

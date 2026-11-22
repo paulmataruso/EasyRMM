@@ -370,7 +370,8 @@ func (s *Service) OutputArchive(ctx context.Context, c access.Caller, id uuid.UU
 var errRecordedRemoved = errors.New("jobs: the output was removed after its read was recorded")
 
 // recordedOutput reads one run's output for the archive, in a transaction
-// of its own, against the record of its read.
+// of its own, against the record of its read, which the database holds to
+// a day by its own clock.
 func (s *Service) recordedOutput(ctx context.Context, c access.Caller, run uuid.UUID, record int64) (*Output, error) {
 	view, read := scopeOf(c, rbac.PermJobView), scopeOf(c, rbac.PermJobViewSensitive)
 	var result string
@@ -378,8 +379,8 @@ func (s *Service) recordedOutput(ctx context.Context, c access.Caller, run uuid.
 	var outCut, errCut *bool
 	err := s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT result, out_text, err_text, out_cut, err_cut
-			FROM easyrmm_job_run_output_recorded($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-			run, record, nullUUID(c.Actor.ID), s.audit.Stamp(c.Actor).At, view.All, view.Orgs, view.Sites, read.All, read.Orgs, read.Sites).
+			FROM easyrmm_job_run_output_recorded($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			run, record, nullUUID(c.Actor.ID), view.All, view.Orgs, view.Sites, read.All, read.Orgs, read.Sites).
 			Scan(&result, &stdout, &stderr, &outCut, &errCut)
 	})
 	switch {
@@ -405,7 +406,9 @@ const (
 // Write writes the archive to w. Each run's output is read in a short
 // transaction of its own, closed before its files are written, so a slow
 // client holds no database connection. A run whose output was removed
-// after its record is listed as removed in runs.csv, without its files.
+// after its record, that was purged, or that moved out of the caller's
+// reach meanwhile, is listed as removed in runs.csv, without its files:
+// the caller could read it when the download began.
 func (a *OutputArchive) Write(ctx context.Context, w io.Writer) error {
 	zw := zip.NewWriter(w)
 	now := time.Now().UTC()
@@ -429,11 +432,8 @@ func (a *OutputArchive) Write(ctx context.Context, w io.Writer) error {
 			var err error
 			out, err = a.s.recordedOutput(ctx, a.c, r.RunID, record)
 			switch {
-			case errors.Is(err, errRecordedRemoved):
+			case errors.Is(err, errRecordedRemoved), errors.Is(err, apperr.ErrNotFound), errors.Is(err, apperr.ErrForbidden):
 				state[r.RunID] = archiveRemoved
-				continue
-			case errors.Is(err, apperr.ErrNotFound), errors.Is(err, apperr.ErrForbidden):
-				state[r.RunID] = archiveHidden
 				continue
 			case err != nil:
 				return err

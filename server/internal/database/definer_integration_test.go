@@ -31,7 +31,7 @@ var definerFunctions = []string{
 	"easyrmm_job_delivery_args(uuid,uuid[])",
 	"easyrmm_job_output_zip(uuid,boolean,uuid[],uuid[],boolean,uuid[],uuid[],timestamp with time zone,text,uuid,text,inet,text)",
 	"easyrmm_job_run_output(uuid,text,boolean,uuid[],uuid[],boolean,uuid[],uuid[],timestamp with time zone,text,uuid,text,inet,text)",
-	"easyrmm_job_run_output_recorded(uuid,bigint,uuid,timestamp with time zone,boolean,uuid[],uuid[],boolean,uuid[],uuid[])",
+	"easyrmm_job_run_output_recorded(uuid,bigint,uuid,boolean,uuid[],uuid[],boolean,uuid[],uuid[])",
 	"easyrmm_purge_audit(interval)",
 }
 
@@ -217,7 +217,7 @@ func TestTemporaryObjectsCannotReachTheOwner(t *testing.T) {
 		{`SELECT result FROM easyrmm_job_run_output('00000000-0000-0000-0000-0000000000e1', 'json', true, NULL, NULL, false, NULL, NULL, now(), ` + actor + `)`, "forbidden"},
 		{`SELECT string_agg(result || ':' || (record_id IS NOT NULL)::text, ',') FROM easyrmm_job_output_zip('00000000-0000-0000-0000-0000000000d1', true, NULL, NULL, true, NULL, NULL, now(), ` + actor + `)`, "ok:true"},
 		{`SELECT result FROM easyrmm_job_output_zip('00000000-0000-0000-0000-0000000000d1', true, NULL, NULL, false, NULL, NULL, now(), ` + actor + `)`, "forbidden"},
-		{`SELECT result FROM easyrmm_job_run_output_recorded('00000000-0000-0000-0000-0000000000e1', 0, '00000000-0000-0000-0000-0000000000f1', now(), true, NULL, NULL, true, NULL, NULL)`, "forbidden"},
+		{`SELECT result FROM easyrmm_job_run_output_recorded('00000000-0000-0000-0000-0000000000e1', 0, '00000000-0000-0000-0000-0000000000f1', true, NULL, NULL, true, NULL, NULL)`, "forbidden"},
 		{`SELECT result FROM easyrmm_job_arguments('00000000-0000-0000-0000-0000000000d1', true, NULL, NULL, true, NULL, NULL, now(), ` + actor + `)`, "ok"},
 		{`SELECT result FROM easyrmm_job_arguments('00000000-0000-0000-0000-0000000000d1', true, NULL, NULL, false, NULL, NULL, now(), ` + actor + `)`, "forbidden"},
 		{`SELECT array_to_string(run_args, ',') FROM easyrmm_job_delivery_args('00000000-0000-0000-0000-00000000000c', ARRAY['00000000-0000-0000-0000-0000000000e2']::uuid[])`, "c"},

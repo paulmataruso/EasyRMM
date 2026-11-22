@@ -5,18 +5,38 @@ package jobsapi
 import (
 	"net/http"
 	"strconv"
+	"time"
 
+	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 	"github.com/paulmataruso/easyrmm/server/internal/jobs"
 )
 
+// How often one person may download a job's output archive (ADR-0064): six
+// at once, then one every 10 seconds, so six a minute. Each archive appends
+// up to 500 audit records under the audit chain's lock.
+const (
+	zipBurst = 6
+	zipEvery = 10 * time.Second
+	// zipCallers bounds the people the limit remembers.
+	zipCallers = 10000
+)
+
+// errTooManyZips answers a seventh archive within a minute, with
+// Retry-After.
+var errTooManyZips = &httpapi.Error{Status: http.StatusTooManyRequests, Code: "rate_limited",
+	Message: "You have downloaded several jobs' output in the last minute. Wait a few seconds and try again."}
+
 // API serves the script and job routes.
 type API struct {
-	svc *jobs.Service
+	svc  *jobs.Service
+	zips *auth.KeyedLimiter
 }
 
 // New builds the API.
-func New(svc *jobs.Service) *API { return &API{svc: svc} }
+func New(svc *jobs.Service) *API {
+	return &API{svc: svc, zips: auth.NewKeyedLimiter(zipEvery, zipBurst, zipCallers)}
+}
 
 // Register mounts the routes. Every route requires a fully signed-in session.
 func (a *API) Register(mux *http.ServeMux) {
@@ -313,13 +333,20 @@ func writeFile(w http.ResponseWriter, f *jobs.File, contentType string) {
 }
 
 // jobOutputZip sends a job's output as a ZIP archive. Every run's read is
-// recorded, and committed, before the first byte is sent (ADR-0064).
+// recorded, and committed, before the first byte is sent (ADR-0064). Each
+// person may ask for six a minute (zipBurst, zipEvery); a request beyond
+// that is answered 429 before anything is read or recorded.
 func (a *API) jobOutputZip(w http.ResponseWriter, r *http.Request) error {
 	id, err := httpapi.PathID(r)
 	if err != nil {
 		return err
 	}
-	arc, err := a.svc.OutputArchive(r.Context(), httpapi.Caller(r), id)
+	c := httpapi.Caller(r)
+	if !a.zips.Allow(c.Actor.ID.String()) {
+		w.Header().Set("Retry-After", strconv.Itoa(int(zipEvery/time.Second)))
+		return errTooManyZips
+	}
+	arc, err := a.svc.OutputArchive(r.Context(), c, id)
 	if err != nil {
 		return err
 	}

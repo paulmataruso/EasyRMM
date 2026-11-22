@@ -149,8 +149,17 @@ Each output download is a read like opening the run's page: it needs
   nothing is sent. Runs at sites where you lack `job.view_sensitive` are
   listed in `runs.csv` as *Hidden: needs permission to see job output*,
   without their files. A run whose output is removed between the records
-  and its turn in the archive is listed as *Removed*, without its files.
-  A run that printed nothing has empty files and no record.
+  and its turn in the archive, or that is purged or moved to a site where
+  you may not read it meanwhile, is listed as *Removed*, without its
+  files. A run that printed nothing has empty files and no record. The
+  records let the archive read the output for a day; the database's clock
+  decides.
+* **Six archives a minute.** Each person may download six jobs' archives
+  at once, then one every 10 seconds. Another is answered *429 Too Many
+  Requests* with `Retry-After: 10` before anything is read or recorded;
+  the browser shows that download as failed, and it works again a few
+  seconds later. Each archive writes up to 500 audit records, which is
+  what the limit bounds.
 * **Refusals.** Someone without `job.view_sensitive` anywhere in the job is
   refused the archive, recorded as *Denied* on the job under each
   organization of the runs they see, within the bound above.

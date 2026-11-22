@@ -150,7 +150,9 @@ All notable changes to this project are documented here. The format follows
   downloaded, in the same transaction. The archive records every run it
   holds and commits those records before the first byte is sent; if they
   cannot be written nothing is sent, and output removed in between is
-  listed as removed. The results need only `job.view`, are recorded as
+  listed as removed. Each person may download six archives a minute;
+  another is answered 429 with `Retry-After`. The results need only
+  `job.view`, are recorded as
   *Downloaded job results* (`job.results_export`), and neutralize formula
   cells as reports do. API: `GET /api/v1/job-runs/{id}/output?download=stdout|stderr|json`,
   `GET /api/v1/jobs/{id}/output.zip` and `GET /api/v1/jobs/{id}/runs.csv`

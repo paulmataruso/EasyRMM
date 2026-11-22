@@ -344,7 +344,7 @@ func keysOf(m map[string]string) []string {
 
 // TestRecordedReadsNeedTheirRecord reads a run's output for an archive
 // only against a record of its read: the same run, by the same caller, of
-// a zip download, within a day.
+// a zip download, within a day by the database's clock.
 func TestRecordedReadsNeedTheirRecord(t *testing.T) {
 	f := newFixture(t)
 	super := f.user("super@example.com", rbac.Assignment{Role: rbac.RoleSuperAdmin})
@@ -385,15 +385,38 @@ func TestRecordedReadsNeedTheirRecord(t *testing.T) {
 		"another caller":    func() error { _, err := f.svc.recordedOutput(f.ctx, other, runA, recA); return err },
 		"the page's record": func() error { _, err := f.svc.recordedOutput(f.ctx, tech, runA, pageRecord); return err },
 		"no record":         func() error { _, err := f.svc.recordedOutput(f.ctx, tech, runA, recA+1000); return err },
-		"a day later": func() error {
-			f.at = time.Now().Add(23 * time.Hour)
-			defer func() { f.at = time.Now().Add(-time.Hour) }()
-			_, err := f.svc.recordedOutput(f.ctx, tech, runA, recA)
-			return err
-		},
 	} {
 		wantKind(t, what, read(), apperr.KindForbidden, "")
 	}
+
+	// The day is the database's. A record written a day ago no longer
+	// allows the read although the server's clock is set back to its time:
+	// the server passes no time to the read.
+	f.at = time.Now().Add(-25 * time.Hour)
+	old, err := f.svc.OutputArchive(f.ctx, tech, job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.svc.recordedOutput(f.ctx, tech, runA, old.included[runA])
+	wantKind(t, "a record a day old", err, apperr.KindForbidden, "")
+	// A record up to 5 minutes ahead of the database's clock is within the
+	// skew allowed between the two clocks; one further ahead is refused.
+	for ahead, ok := range map[time.Duration]bool{2 * time.Minute: true, 10 * time.Minute: false} {
+		f.at = time.Now().Add(ahead)
+		arc, err := f.svc.OutputArchive(f.ctx, tech, job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.at = time.Now()
+		_, err = f.svc.recordedOutput(f.ctx, tech, runA, arc.included[runA])
+		if ok && err != nil {
+			t.Errorf("a record %s ahead: %v", ahead, err)
+		}
+		if !ok {
+			wantKind(t, "a record "+ahead.String()+" ahead", err, apperr.KindForbidden, "")
+		}
+	}
+	f.at = time.Now().Add(-time.Hour)
 	// The caller's permission is checked again at the read.
 	viewer := f.user("viewer@example.com", rbac.Assignment{Role: rbac.RoleReadOnly, OrganizationID: f.acme})
 	viewer.Actor.ID = tech.Actor.ID
