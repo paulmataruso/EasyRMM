@@ -192,7 +192,13 @@ All notable changes to this project are documented here. The format follows
   installed it, for log collection to share. An area that fails part way
   is put back as it was, but for packages it installed that cannot be
   removed, which it names; a job that is killed leaves the area half
-  applied, which a later apply finishes and undo reverses. Undo also runs
+  applied, which a later apply finishes and undo reverses. A package step
+  cut short no longer fails every later one: before each, apply and undo
+  finish an interrupted dpkg (`dpkg --configure -a`) or, on RHEL 8, an rpm
+  database a killed rpm left needing recovery, once no other package
+  manager is using it; the area's result and the audit log record it, and
+  an area whose recovery fails, or that waited five minutes for another
+  package manager, fails and says why. Undo also runs
   on the computer without the agent:
   `sh /var/lib/easyrmm-hardening/easyrmm-hardening.sh undo all`. Each
   device's latest result now carries, per area, what apply or undo did and

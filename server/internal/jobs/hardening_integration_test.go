@@ -261,16 +261,46 @@ func TestHardeningJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.svc.now = func() time.Time { return time.Now().Add(3 * time.Minute) }
+	// The undo found dpkg interrupted, and recovered it first: kept with
+	// the module, and audited as the agent's.
+	const recovery = "dpkg was interrupted: dpkg --configure -a put it right before the package step"
 	finish(lnx, runOf(undone, lnx), HardeningResultPrefix+`{"version":1,"mode":"undo","platform":`+platform+`,"modules":[`+
-		`{"module":"ssh","state":"partly","missing":["LoginGraceTime 30"],"outcome":"undone","done":["Removed 00-easyrmm-hardening.conf"]}]}`)
+		`{"module":"ssh","state":"partly","missing":["LoginGraceTime 30"],"outcome":"undone","done":["Removed 00-easyrmm-hardening.conf"],`+
+		`"packageRecovery":{"outcome":"recovered","reason":"`+recovery+`"}}]}`)
 	h, _ = f.svc.DeviceHardening(f.ctx, viewer, lnx)
 	if len(h.Modules) != 2 || h.Modules[0].Outcome != HardeningUndone || h.Modules[0].Recorded || h.Modules[0].State != HardeningPartly ||
-		h.Modules[1].Outcome != HardeningSkipped || *h.Modules[1].JobID != applied.ID {
+		h.Modules[1].Outcome != HardeningSkipped || *h.Modules[1].JobID != applied.ID ||
+		h.Modules[0].PackageRecovery == nil || h.Modules[0].PackageRecovery.Reason != recovery {
 		t.Errorf("after undo: %+v", h)
 	}
 	audited = f.str(`SELECT details::text FROM audit_log WHERE action = 'device.hardening' AND details->>'jobId' = $1`, undone.ID.String())
 	if !strings.Contains(audited, `"mode": "undo"`) {
 		t.Errorf("undo audit %s", audited)
+	}
+	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'device.package_recovery'`); n != "1" {
+		t.Errorf("%s package recovery audit records, want the undo's alone", n)
+	}
+	audited = f.str(`SELECT concat_ws(' ', actor_type, actor_id, actor_label, outcome, target_type, target_id = $2, details->>'jobId' = $3,
+			details->>'mode', details->>'family', details->'modules'->0->>'module', details->'modules'->0->>'outcome',
+			details->'modules'->0->>'reason' = $4)
+		FROM audit_log WHERE action = 'device.package_recovery' AND device_id = $1`, lnx, runOf(undone, lnx).String(), undone.ID.String(), recovery)
+	if want := "agent " + lnx.String() + " HQ-LNX success job_run t t undo debian ssh recovered t"; audited != want {
+		t.Errorf("package recovery audit %q, want %q", audited, want)
+	}
+
+	// A recovery that failed fails the module, and its audit record.
+	stuck, err := f.svc.CreateHardeningJob(f.ctx, siteAdmin, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: HardeningApply, Modules: []string{"fail2ban"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.svc.now = func() time.Time { return time.Now().Add(4 * time.Minute) }
+	const why = "dpkg was interrupted, and dpkg --configure -a did not put it right: it did not finish in 600 seconds and was stopped"
+	finish(lnx, runOf(stuck, lnx), HardeningResultPrefix+`{"version":1,"mode":"apply","platform":`+platform+`,"modules":[`+
+		`{"module":"fail2ban","state":"not_in_place","outcome":"failed","outcomeReason":"fail2ban could not be installed: `+why+`.",`+
+		`"packageRecovery":{"outcome":"failed","reason":"`+why+`"}}]}`)
+	if got := f.str(`SELECT outcome || ' ' || (details->'modules'->0->>'reason' = $2) FROM audit_log
+			WHERE action = 'device.package_recovery' AND details->>'jobId' = $1`, stuck.ID.String(), why); got != "failure true" {
+		t.Errorf("a failed package recovery's audit record: %q", got)
 	}
 
 	// Removing a device removes what was found on it.

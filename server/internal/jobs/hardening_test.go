@@ -224,8 +224,18 @@ func TestParseHardeningOutcomes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m := r.Modules[0]; m.Outcome != HardeningPartlyUndone || m.Recorded {
+	if m := r.Modules[0]; m.Outcome != HardeningPartlyUndone || m.Recorded || m.PackageRecovery != nil {
 		t.Errorf("undo %+v", m)
+	}
+	recovered := map[string]any{"outcome": "recovered", "reason": "dpkg was interrupted: dpkg --configure -a put it right before the package step"}
+	r, err = parseHardeningResult(line("undo", map[string]any{
+		"module": "ssh", "state": "in_place", "outcome": "undone", "packageRecovery": recovered,
+	}), undo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := r.Modules[0].PackageRecovery; p == nil || p.Outcome != HardeningRecovered || p.Reason != recovered["reason"] {
+		t.Errorf("a package recovery: %+v", p)
 	}
 	long := strings.Repeat("x", maxFindingText+1)
 	for name, c := range map[string]struct {
@@ -243,6 +253,19 @@ func TestParseHardeningOutcomes(t *testing.T) {
 		"an empty step": {apply, line("apply", map[string]any{"module": "ssh", "state": "in_place", "outcome": "applied", "done": []string{""}})},
 		"too many steps": {apply, line("apply", map[string]any{
 			"module": "ssh", "state": "in_place", "outcome": "applied", "done": slices.Repeat([]string{"x"}, maxFindingItems+1),
+		})},
+		"a package recovery in a check": {
+			Hardening{Mode: HardeningCheck, Modules: []string{"ssh"}},
+			line("check", map[string]any{"module": "ssh", "state": "in_place", "packageRecovery": recovered}),
+		},
+		"an unknown package recovery outcome": {apply, line("apply", map[string]any{
+			"module": "ssh", "state": "in_place", "outcome": "applied", "packageRecovery": map[string]any{"outcome": "skipped", "reason": "x"},
+		})},
+		"a package recovery without a reason": {apply, line("apply", map[string]any{
+			"module": "ssh", "state": "in_place", "outcome": "applied", "packageRecovery": map[string]any{"outcome": "recovered"},
+		})},
+		"a package recovery's reason too long": {apply, line("apply", map[string]any{
+			"module": "ssh", "state": "failed", "outcome": "failed", "packageRecovery": map[string]any{"outcome": "failed", "reason": long},
 		})},
 	} {
 		if _, err := parseHardeningResult(c.out, c.job); !errors.Is(err, errHardeningResult) {

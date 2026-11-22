@@ -190,6 +190,22 @@ A job stopped, or out of its 30 minutes, in the middle of a module leaves it
 Installing packages on a slow computer takes a while, so apply fewer
 modules at a time there.
 
+A package step cut short can leave the package database unusable, so that
+every later one fails: dpkg *interrupted* on Debian and Ubuntu, and on Red
+Hat Enterprise Linux 8 and its rebuilds an rpm database that answers
+`DB_RUNRECOVERY`. Before each package step, apply and undo check for that.
+While another process still uses the database (apt, unattended-upgrades,
+dnf), they wait for it as apt waits for its lock, five minutes, and never
+touch it; if it is still there, the module fails and names it. Otherwise
+they recover the database: `dpkg --configure -a`, non-interactive, keeping
+changed configuration files, for at most ten minutes; on RHEL 8, removing
+the database's environment files, `/var/lib/rpm/__db.*`, which rpm makes
+again (the database itself is in other files). The module's finding records it
+(`packageRecovery`: `recovered` or `failed`, with why), **Done** says so,
+and the audit log records it as *Package database recovery*, by the
+device's agent. A recovery that fails fails the module with its reason; an
+undo that fails this way keeps its record, so it can be run again.
+
 ## Troubleshooting
 
 | What you see | What to check |
@@ -200,4 +216,5 @@ modules at a time there.
 | A run *Timed out* | The check took more than 30 minutes, which a computer under heavy load can. Run it again, or check fewer modules |
 | A module *Not applicable* in a container | The host owns what it hardens. Check the host |
 | A module *Half applied* | An apply or undo was stopped part way. Apply the module again to finish it, or undo it |
+| A module *Failed*: "dpkg was interrupted, and … still held its lock" | Another package manager was running. Let it finish, then run the apply or undo again |
 | An undo *Partly undone* | Something changed since apply; **Done** says what was left and why. Put those back by hand if you need to |

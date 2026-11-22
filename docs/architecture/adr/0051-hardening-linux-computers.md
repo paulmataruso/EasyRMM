@@ -293,7 +293,31 @@ or Kubernetes installed later.
 * **Interruptions.** The job can be killed (timeout, cancel). Each module
   writes its intent to its manifest before changing anything and marks it
   done after; a later check reports a module left half-applied, and undo
-  reverses what was recorded.
+  reverses what was recorded. *Amended 2026-11-22 (decided in review):* a
+  package step cut short leaves the package database unusable, and every
+  later package step then fails: dpkg is left interrupted, on which apt
+  refuses everything until `dpkg --configure -a` runs; and on RHEL 8, an
+  rpm killed while it writes leaves its Berkeley DB environment failing
+  every rpm and dnf command (`DB_RUNRECOVERY`). So before each package step
+  of apply and undo the script checks the database. While a process still
+  uses it (holds `/var/lib/dpkg/lock-frontend` or `lock`, or has rpm's
+  environment mapped), it waits as apt waits for its lock, 5 minutes, and
+  never touches it; then the module fails, naming the process. Otherwise it
+  recovers the database: `dpkg --configure -a`, with
+  `DEBIAN_FRONTEND=noninteractive`, keeping changed configuration files,
+  for at most 10 minutes (what one step left, inside a job of 30 minutes
+  that the step it guards needs too; a recovery stopped there is resumed by
+  the next run); on RHEL 8, removing the environment, `/var/lib/rpm/__db.*`,
+  which rpm makes again (the database is in other files; `rpm --rebuilddb`
+  fails on such a database too). Each module's result records it in a
+  field of its own, `packageRecovery` (recovered or failed, and why), and a
+  recovery that fails fails the module with its reason, once: later
+  package steps of the run fail with it. An undo that fails this way puts
+  back what it changed and keeps the record. RHEL 9 and Fedora keep rpm's
+  database in SQLite, which a killed rpm leaves usable (the next command
+  finds a package it was removing still installed), and need nothing;
+  `yum-complete-transaction` is yum 3's (RHEL 7), and dnf has no
+  transaction to finish.
 * **Without the agent.** Apply and undo (not check, which writes nothing)
   copy the script to `/var/lib/easyrmm-hardening/easyrmm-hardening.sh`,
   so that undo can be
@@ -345,7 +369,10 @@ later ADR.
 
 ### The rest
 * **Audit**: `device.hardening` for each device, with the mode, modules,
-  options and job.
+  options and job. *Amended 2026-11-22 (decided in review):* and
+  `device.package_recovery`, by the device's agent, when a run's result
+  reports a package database recovery: each module's outcome and reason,
+  the mode and the job; a failure when one failed.
 * **API**: `POST /api/v1/jobs/hardening`; `GET /api/v1/devices/{id}/hardening`.
   Devices report `canHarden` and `canCheckHardening`.
 * **Benchmarks.** Settings name the DISA STIG rule they follow, by its ID,

@@ -20,6 +20,7 @@ import (
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
+	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/devices"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
@@ -325,7 +326,26 @@ type HardeningFinding struct {
 	// Recorded: EasyRMM's record of applying the module is on the
 	// computer, so undo can reverse it.
 	Recorded bool `json:"recorded,omitempty"`
+	// PackageRecovery: before a package step, the apply or undo found the
+	// package database left unusable by a step stopped part way, and
+	// recovered it (ADR-0051).
+	PackageRecovery *HardeningPackageRecovery `json:"packageRecovery,omitempty"`
 }
+
+// HardeningPackageRecovery is a package database recovered before a
+// package step: dpkg --configure -a after an interrupted dpkg, or on RHEL 8
+// rpm's database environment removed after an rpm killed while it wrote.
+type HardeningPackageRecovery struct {
+	// Outcome is recovered or failed; Reason says what was found and done.
+	Outcome string `json:"outcome"`
+	Reason  string `json:"reason"`
+}
+
+// Outcomes of a package database recovery.
+const (
+	HardeningRecovered      = "recovered"
+	HardeningRecoveryFailed = "failed"
+)
 
 // Outcomes of apply and undo.
 const (
@@ -423,6 +443,9 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 			return fail("module " + m.Module + " has no outcome of " + r.Mode)
 		case !m.valid(m.Module == "firewall"):
 			return fail("module " + m.Module + "'s findings are not within their limits")
+		case m.PackageRecovery != nil && (r.Mode == HardeningCheck ||
+			!slices.Contains([]string{HardeningRecovered, HardeningRecoveryFailed}, m.PackageRecovery.Outcome)):
+			return fail("module " + m.Module + " reports a package recovery that is not described as expected")
 		}
 		seen[m.Module] = true
 	}
@@ -443,6 +466,9 @@ func (f HardeningFinding) valid(firewall bool) bool {
 		lists = append(lists, f.Ports.TCP, f.Ports.UDP, f.Ports.Docker, f.Ports.Unknown)
 	}
 	if !shortText(f.Reason, maxFindingText) || !shortText(f.OutcomeReason, maxFindingText) {
+		return false
+	}
+	if p := f.PackageRecovery; p != nil && (p.Reason == "" || !shortText(p.Reason, maxFindingText)) {
 		return false
 	}
 	for _, l := range lists {
@@ -500,7 +526,37 @@ func (s *Service) recordHardening(ctx context.Context, tx pgx.Tx, device, run, j
 			return err
 		}
 	}
-	return nil
+	return s.auditPackageRecovery(ctx, tx, device, run, job, r)
+}
+
+// auditPackageRecovery records, as the device's agent, a package database
+// that an apply or undo recovered, or failed to, before a package step
+// (ADR-0051): a change the job did not name.
+func (s *Service) auditPackageRecovery(ctx context.Context, tx pgx.Tx, device, run, job uuid.UUID, r *hardeningResult) error {
+	var modules []map[string]string
+	outcome := audit.Success
+	for _, m := range r.Modules {
+		if p := m.PackageRecovery; p != nil {
+			modules = append(modules, map[string]string{"module": m.Module, "outcome": p.Outcome, "reason": p.Reason})
+			if p.Outcome == HardeningRecoveryFailed {
+				outcome = audit.Failure
+			}
+		}
+	}
+	if len(modules) == 0 {
+		return nil
+	}
+	var org, site uuid.UUID
+	var name string
+	if err := tx.QueryRow(ctx, `SELECT organization_id, site_id, name FROM devices WHERE id = $1`, device).
+		Scan(&org, &site, &name); err != nil {
+		return err
+	}
+	return s.audit.Write(ctx, tx, audit.Event{
+		Actor: audit.Actor{Type: audit.ActorAgent, ID: device, Label: name}, Action: "device.package_recovery",
+		Outcome: outcome, OrganizationID: org, SiteID: site, DeviceID: device, TargetType: "job_run", TargetID: run.String(),
+		Details: map[string]any{"jobId": job.String(), "mode": r.Mode, "family": r.Platform.Family, "modules": modules},
+	})
 }
 
 // DeviceHardening is what the last hardening jobs found on a device.

@@ -57,6 +57,7 @@ func TestCheckInContainers(t *testing.T) {
 			scriptFailures(t, c)
 			scriptPackagesLeft(t, c)
 			scriptRollbackLeaves(t, c)
+			scriptPackageRecovery(t, c)
 			scriptPlatforms(t, c)
 		})
 	}
@@ -627,6 +628,153 @@ func scriptRollbackLeaves(t *testing.T, c *scriptContainer) {
 		t.Errorf("the package the stand-in installed: %q", got)
 	}
 	c.sh(t, "dpkg --purge easyrmm-test-pkg >/dev/null && rm -rf "+stateDir+" /tmp/easyrmm-test-pkg /tmp/easyrmm-test-pkg.deb")
+}
+
+// scriptPackageRecovery: a package step that finds the package database
+// left unusable by one stopped part way recovers it first, unless another
+// process still uses it, which is waited for and never touched (ADR-0051).
+// Undo of a record naming a package runs while a process uses the
+// database, in a copy of the script that waits 6 seconds for it rather
+// than 300, and is refused; then, once that process is gone, it recovers
+// the database and removes the package. Where dpkg-deb can build a package
+// offline (Debian and Ubuntu), apply recovers before installing, too; where
+// rpm keeps its database in Berkeley DB (RHEL 8), an rpm killed while it
+// writes leaves it unusable. Elsewhere nothing needs recovering.
+func scriptPackageRecovery(t *testing.T, c *scriptContainer) {
+	switch {
+	case c.has(t, "dpkg-deb"):
+		scriptDpkgRecovery(t, c)
+	case c.has(t, "rpm") && strings.TrimSpace(c.sh(t, "test -e /var/lib/rpm/Packages && echo bdb; true")) == "bdb":
+		scriptRpmRecovery(t, c)
+	default:
+		t.Log("rpm keeps its database in SQLite here: no package database to recover")
+	}
+}
+
+// recoveryUndo records PKG as installed by the sudo module, and runs undo
+// of it with SCRIPT (the script, or the copy that waits less).
+func (c *scriptContainer) recoveryUndo(t *testing.T, script, pkg string) HardeningModuleResult {
+	t.Helper()
+	c.sh(t, "rm -rf "+stateDir+" && mkdir -p "+stateDir+"/modules/sudo && printf 'format 1\\npkg\\t%s\\n' "+pkg+" >"+stateDir+
+		"/modules/sudo/manifest && date >"+stateDir+"/modules/sudo/done")
+	out, errOut, code := c.run(t, "sh", script, "undo", "sudo")
+	if code != 0 {
+		t.Fatalf("undo sudo: exit %d\nstdout:\n%s\nstderr:\n%s", code, out, errOut)
+	}
+	return scriptModule(t, parseScriptOutcome(t, out, HardeningUndo, []string{"sudo"}), "sudo")
+}
+
+// shortWait is a copy of the script that waits 6 seconds for a process
+// using the package database.
+const shortWait = "/tmp/easyrmm-short-wait.sh"
+
+func (c *scriptContainer) writeShortWait(t *testing.T) {
+	t.Helper()
+	c.sh(t, "sed 's/^PKG_LOCK_WAIT=300$/PKG_LOCK_WAIT=6/' "+scriptPath+" >"+shortWait+" && grep -q '^PKG_LOCK_WAIT=6$' "+shortWait)
+}
+
+// wantRefused: undo while PID, named NAME, used the package database.
+func wantRefused(t *testing.T, m HardeningModuleResult, pkg, what, name, pid, use string) {
+	t.Helper()
+	want := "the packages it installed (" + pkg + ") could not be removed: " + what + ", and " + name + " (PID " + pid + ") still " + use + " after "
+	if m.Outcome != HardeningOutcomeFailed || !strings.HasPrefix(m.OutcomeReason, want) ||
+		!strings.HasSuffix(m.OutcomeReason, " seconds; it was left to finish; what this run changed was put back.") ||
+		!m.Recorded || m.PackageRecovery != nil {
+		t.Errorf("undo while %s used the package database: %+v, want a failure starting %q", name, m, want)
+	}
+}
+
+// wantRecovered: undo that recovered the database and removed PKG.
+func wantRecovered(t *testing.T, m HardeningModuleResult, pkg, why string) {
+	t.Helper()
+	if m.Outcome != HardeningUndone || m.Recorded || m.PackageRecovery == nil ||
+		*m.PackageRecovery != (HardeningPackageRecovery{Outcome: HardeningRecovered, Reason: why}) ||
+		!slices.Contains(m.Done, why) || !slices.Contains(m.Done, "Removed the packages it installed: "+pkg) {
+		t.Errorf("undo after the package database was left unusable: %+v", m)
+	}
+}
+
+func scriptDpkgRecovery(t *testing.T, c *scriptContainer) {
+	// The package's postinst waits while /tmp/easyrmm-test-hold exists.
+	c.sh(t, "rm -rf "+stateDir+" /tmp/easyrmm-test-pkg && mkdir -p /tmp/easyrmm-test-pkg/DEBIAN && "+
+		"printf 'Package: easyrmm-test-pkg\\nVersion: 1\\nArchitecture: all\\nMaintainer: EasyRMM tests <tests@example.invalid>\\nDescription: a stand-in\\n' "+
+		">/tmp/easyrmm-test-pkg/DEBIAN/control && "+
+		"printf '#!/bin/sh\\nwhile [ -e /tmp/easyrmm-test-hold ]; do sleep 1; done\\n' >/tmp/easyrmm-test-pkg/DEBIAN/postinst && "+
+		"chmod 0755 /tmp/easyrmm-test-pkg/DEBIAN/postinst && dpkg-deb --build /tmp/easyrmm-test-pkg /tmp/easyrmm-test-pkg.deb >/dev/null && "+
+		"dpkg -i /tmp/easyrmm-test-pkg.deb >/dev/null")
+	pkg := strings.TrimSpace(c.sh(t, "dpkg-query -W -f='${binary:Package}' easyrmm-test-pkg"))
+	// hold starts installing the package again, stopped in its postinst:
+	// dpkg runs, holding its locks; the PID of that dpkg. (The pattern
+	// [.] keeps grep from finding its own command line.)
+	hold := func() string {
+		c.sh(t, "touch /tmp/easyrmm-test-hold")
+		docker(t, "exec", "-d", c.name, "dpkg", "-i", "/tmp/easyrmm-test-pkg.deb")
+		c.waitUntil(t, "grep -qs 'easyrmm-test-pkg[.]postinst' /proc/[0-9]*/cmdline", "the postinst to run")
+		return strings.TrimSpace(c.sh(t, `for p in /proc/[0-9]*; do [ "$(cat $p/stat 2>/dev/null | cut -d' ' -f2-3)" != "(dpkg) S" ] || echo ${p#/proc/}; done`))
+	}
+	// interrupt kills that dpkg part way, as a time limit does, and lets
+	// its postinst end: dpkg is interrupted, and apt refuses every step.
+	interrupt := func(pid string) {
+		c.sh(t, "kill -9 "+pid+" && rm -f /tmp/easyrmm-test-hold")
+		c.waitUntil(t, "! grep -qs 'easyrmm-test-pkg[.]postinst' /proc/[0-9]*/cmdline", "the postinst to end")
+		if out, errOut, code := c.run(t, "apt-get", "check"); code == 0 || !strings.Contains(out+errOut, "dpkg was interrupted") {
+			t.Fatalf("apt-get check after dpkg was killed: exit %d\n%s%s", code, out, errOut)
+		}
+	}
+	const why = "dpkg was interrupted: dpkg --configure -a put it right before the package step"
+
+	pid := hold()
+	c.writeShortWait(t)
+	wantRefused(t, c.recoveryUndo(t, shortWait, pkg), pkg, "dpkg was interrupted", "dpkg", pid, "held its lock")
+	// The dpkg that held the lock still runs, in its postinst.
+	c.sh(t, "grep -qs 'easyrmm-test-pkg[.]postinst' /proc/[0-9]*/cmdline && test \"$(cut -d' ' -f3 /proc/"+pid+"/stat)\" = S")
+	interrupt(pid)
+	wantRecovered(t, c.recoveryUndo(t, scriptPath, pkg), pkg, why)
+	c.sh(t, "! dpkg-query -W easyrmm-test-pkg >/dev/null 2>&1 && apt-get check >/dev/null")
+	c.wantGone(t, stateDir)
+
+	// Apply recovers before it installs: a stand-in apt-get, first in the
+	// script's PATH, then fails to install AIDE.
+	interrupt(hold())
+	c.sh(t, "printf '%s\\n' '#!/bin/sh' 'case \" $* \" in' "+
+		`'*" update "*) exit 0 ;;' '*" install "*) echo "E: stopped by the test" >&2; exit 100 ;;' `+
+		"'esac' 'exec /usr/bin/apt-get \"$@\"' >/usr/local/sbin/apt-get && chmod 0755 /usr/local/sbin/apt-get")
+	m := scriptModule(t, parseScriptOutcome(t, c.script(t, "apply", "integrity"), HardeningApply, []string{"integrity"}), "integrity")
+	c.sh(t, "rm -f /usr/local/sbin/apt-get")
+	if m.Outcome != HardeningOutcomeFailed || m.OutcomeReason != "AIDE could not be installed: E: stopped by the test; what this run changed was put back." ||
+		m.PackageRecovery == nil || *m.PackageRecovery != (HardeningPackageRecovery{Outcome: HardeningRecovered, Reason: why}) || m.Recorded {
+		t.Errorf("apply after dpkg was interrupted: %+v", m)
+	}
+	c.sh(t, "apt-get check >/dev/null && dpkg --purge easyrmm-test-pkg >/dev/null && rm -rf "+stateDir+" "+shortWait+
+		" /tmp/easyrmm-test-pkg /tmp/easyrmm-test-pkg.deb")
+}
+
+func scriptRpmRecovery(t *testing.T, c *scriptContainer) {
+	// rootfiles: a package nothing needs, of five files.
+	const pkg = "rootfiles.noarch"
+	c.sh(t, "rpm -q rootfiles >/dev/null && rpm -e --test rootfiles")
+	// An rpm removing tzdata (some 1,900 files) is killed as soon as it
+	// has its database open, as a time limit does: every rpm and dnf
+	// command fails after it.
+	c.sh(t, `rpm -e --nodeps tzdata >/dev/null 2>&1 & p=$!; i=0
+		until grep -qs '/var/lib/rpm/__db\.' /proc/$p/maps; do i=$((i + 1)); [ $i -lt 20000 ] || exit 1; done
+		kill -9 $p; wait $p; true`)
+	if out, errOut, code := c.run(t, "rpm", "-q", "rpm"); code == 0 || !strings.Contains(out+errOut, "DB_RUNRECOVERY") {
+		t.Fatalf("rpm -q after rpm was killed: exit %d\n%s%s", code, out, errOut)
+	}
+	// Another process has the database's environment open.
+	docker(t, "exec", "-d", c.name, "/usr/libexec/platform-python", "-c",
+		"import mmap, time; f = open('/var/lib/rpm/__db.001', 'rb'); m = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ); time.sleep(600)")
+	c.waitUntil(t, "grep -qs '/var/lib/rpm/__db\\.001' /proc/[0-9]*/maps", "the environment to be mapped")
+	pid := strings.TrimSpace(c.sh(t, "grep -l '/var/lib/rpm/__db\\.001' /proc/[0-9]*/maps | cut -d/ -f3"))
+	c.writeShortWait(t)
+	const what = "rpm's database needed recovering (DB_RUNRECOVERY)"
+	wantRefused(t, c.recoveryUndo(t, shortWait, pkg), pkg, what, "platform-python", pid, "had it open")
+	c.sh(t, "kill -9 "+pid)
+	c.waitUntil(t, "! grep -qs '/var/lib/rpm/__db\\.001' /proc/[0-9]*/maps", "the environment to be let go")
+	wantRecovered(t, c.recoveryUndo(t, scriptPath, pkg), pkg, what+": removing /var/lib/rpm/__db.* put it right before the package step")
+	c.sh(t, "! rpm -q rootfiles >/dev/null && rpm -q tzdata >/dev/null && dnf -q -C check && rm -f "+shortWait)
+	c.wantGone(t, stateDir)
 }
 
 type scriptContainer struct {

@@ -2319,6 +2319,21 @@ TX_N=0
 TX_HAD=no
 PKG_REFRESHED=no
 PKG_ERR=
+# How long a package step waits for another package manager to finish
+# (apt's DPkg::Lock::Timeout), in seconds.
+PKG_LOCK_WAIT=300
+# How long dpkg --configure -a may take to finish a dpkg run stopped part
+# way (pkg_ready): what one step left, inside a job of 30 minutes that the
+# step it guards needs too. A recovery stopped at its limit is resumed by
+# the next run.
+PKG_RECOVER_LIMIT=600
+# Why the package database stays unusable, once a recovery failed in this
+# run: later package steps fail with it rather than wait or try again.
+PKG_STUCK=
+# The module's package database recovery (pkg_ready): recovered or failed,
+# and what it found and did.
+M_RECOV=
+M_RECOV_WHY=
 # The packages pkg_install added (NAME=rc: configuration files were left
 # from an earlier removal).
 PKG_NEW=
@@ -2653,7 +2668,7 @@ pkg_failed() {
 	case $1 in
 	124 | 137)
 		PKG_ERR="the package manager did not finish in $2 minutes and was stopped"
-		[ "$FAMILY" != debian ] || PKG_ERR="$PKG_ERR (dpkg --configure -a finishes what it left)"
+		[ "$FAMILY" != debian ] || PKG_ERR="$PKG_ERR (the next package step runs dpkg --configure -a to finish what it left)"
 		;;
 	*)
 		PKG_ERR=$(grep -E '^E: |^[Ee]rror|No match|^Problem' "$TX_DIR/pkg.log" | head -n 1 | cut -c1-160)
@@ -2661,18 +2676,141 @@ pkg_failed() {
 		;;
 	esac
 }
+
+# The package database, left unusable by a package step stopped part way
+# (by its time limit, or the job's), fails every later step:
+# * dpkg leaves its journal of status changes in /var/lib/dpkg/updates, on
+#   which apt refuses everything ("dpkg was interrupted, you must manually
+#   run 'dpkg --configure -a'"). A dpkg that runs keeps one too.
+# * rpm on RHEL 8, killed while it writes, leaves its Berkeley DB
+#   database's environment (/var/lib/rpm/__db.*: locks and caches, not the
+#   database) failing every rpm and dnf command (DB_RUNRECOVERY) until those
+#   files are removed, and rpm makes them again; rpm --rebuilddb fails too.
+#   RHEL 9 and Fedora keep the database in SQLite, which a killed rpm leaves
+#   usable: the next rpm or dnf command runs, and finds a package it was
+#   removing still installed. Nothing there needs recovering.
+pkgdb_interrupted() {
+	case $FAMILY in
+	debian)
+		for pk_f in /var/lib/dpkg/updates/*; do
+			case ${pk_f##*/} in *[!0-9]*) ;; *) return 0 ;; esac
+		done
+		return 1
+		;;
+	*)
+		[ -e /var/lib/rpm/__db.001 ] || return 1
+		pk_out=$(t 60 rpm -q rpm 2>&1) && return 1
+		text_has "$pk_out" -F DB_RUNRECOVERY
+		;;
+	esac
+}
+# pkgdb_users: the processes using the package database now, "NAME (PID
+# N)", separated by commas: those holding dpkg's locks (apt and dpkg lock
+# them with fcntl, which /proc/locks lists by inode, and keep them open),
+# or with rpm's database environment mapped.
+pkgdb_users() {
+	case $FAMILY in
+	debian)
+		for pu_f in /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock; do
+			pu_i=$(stat -c %i "$pu_f" 2>/dev/null) || continue
+			awk -v i="$pu_i" '$2 != "->" && $5 ~ /^[0-9]+$/ { n = split($6, d, ":"); if (d[n] == i) print $5 }' /proc/locks 2>/dev/null |
+				while read -r pu_p; do
+					for pu_d in /proc/"$pu_p"/fd/*; do
+						if [ "$(readlink "$pu_d" 2>/dev/null)" = "$pu_f" ]; then
+							printf '%s\n' "$pu_p"
+							break
+						fi
+					done
+				done
+		done
+		;;
+	*) grep -l '/var/lib/rpm/__db\.' /proc/[0-9]*/maps 2>/dev/null | cut -d/ -f3 ;;
+	esac | sort -un | while read -r pu_p; do
+		printf '%s (PID %s)\n' "$(cat "/proc/$pu_p/comm" 2>/dev/null)" "$pu_p"
+	done | tr '\n' ',' | sed -e 's/,$//' -e 's/,/, /g'
+}
+# pkg_ready: before a package step, recovers a package database left
+# unusable (pkgdb_interrupted). A process still using it (apt,
+# unattended-upgrades, dnf) is waited for as apt waits for its lock, and
+# never touched. Once none is, dpkg --configure -a finishes what dpkg left,
+# keeping changed configuration files; on RHEL 8 the environment's files
+# go. M_RECOV says that recovery ran, and how it ended. Returns 1 (PKG_ERR
+# says why) while the database stays unusable.
+pkg_ready() {
+	pkgdb_interrupted || return 0
+	if [ -n "$PKG_STUCK" ]; then
+		PKG_ERR=$PKG_STUCK
+		return 1
+	fi
+	case $FAMILY in
+	debian)
+		py_what='dpkg was interrupted'
+		py_fix='dpkg --configure -a'
+		py_use='held its lock'
+		;;
+	*)
+		py_what="rpm's database needed recovering (DB_RUNRECOVERY)"
+		py_fix='removing /var/lib/rpm/__db.*'
+		py_use='had it open'
+		;;
+	esac
+	py_w=0
+	while py_u=$(pkgdb_users) && [ -n "$py_u" ]; do
+		if [ "$py_w" -ge "$PKG_LOCK_WAIT" ]; then
+			PKG_STUCK="$py_what, and $py_u still $py_use after $py_w seconds; it was left to finish"
+			PKG_ERR=$PKG_STUCK
+			return 1
+		fi
+		sleep 5
+		py_w=$((py_w + 5))
+		# What used it may have recovered it (unattended-upgrades runs
+		# dpkg --configure -a).
+		pkgdb_interrupted || return 0
+	done
+	: >"$TX_DIR/pkg.log"
+	case $FAMILY in
+	debian)
+		py_lim=$PKG_RECOVER_LIMIT
+		t "$py_lim" env DEBIAN_FRONTEND=noninteractive dpkg --force-confdef --force-confold --configure -a </dev/null
+		;;
+	*)
+		py_lim=60
+		rm -f /var/lib/rpm/__db.[0-9]* && t "$py_lim" rpm -q rpm
+		;;
+	esac >"$TX_DIR/pkg.log" 2>&1 && py_rc=0 || py_rc=$?
+	if [ "$py_rc" -eq 0 ]; then
+		M_RECOV=recovered
+		M_RECOV_WHY="$py_what: $py_fix put it right before the package step"
+		did "$M_RECOV_WHY"
+		return 0
+	fi
+	case $py_rc in
+	124 | 137) py_why="it did not finish in $py_lim seconds and was stopped" ;;
+	*)
+		py_why=$(grep -E '^(dpkg: |E: |error)' "$TX_DIR/pkg.log" | head -n 1 | cut -c1-160)
+		[ -n "$py_why" ] || py_why=$(tail -n 1 "$TX_DIR/pkg.log" | cut -c1-160)
+		;;
+	esac
+	M_RECOV=failed
+	PKG_STUCK="$py_what, and $py_fix did not put it right: $py_why"
+	M_RECOV_WHY=$PKG_STUCK
+	PKG_ERR=$PKG_STUCK
+	return 1
+}
+
 # pkg_install PACKAGE...: installs them, refreshing the package lists first,
 # and records every package that installation added: NAME=rc for one whose
 # configuration files were left from an earlier removal, which undo keeps.
 pkg_install() {
-	intent || return 1
 	PKG_ERR=
+	pkg_ready || return 1
+	intent || return 1
 	pkg_names >"$TX_DIR/before" && pkg_names rc >"$TX_DIR/rc" || return 1
 	rec_add "pending$tab$*"
 	pi_rc=0
 	if [ "$PKG_REFRESHED" = no ]; then
 		case $FAMILY in
-		debian) t 600 apt-get -q -o DPkg::Lock::Timeout=300 update ;;
+		debian) t 600 apt-get -q -o DPkg::Lock::Timeout="$PKG_LOCK_WAIT" update ;;
 		*) t 600 dnf -q -y makecache ;;
 		esac >"$TX_DIR/pkg.log" 2>&1 || pi_rc=1
 		PKG_REFRESHED=yes
@@ -2684,7 +2822,7 @@ pkg_install() {
 	if [ "$pi_rc" -eq 0 ]; then
 		case $FAMILY in
 		debian)
-			t 1500 env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout=300 --no-install-recommends \
+			t 1500 env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout="$PKG_LOCK_WAIT" --no-install-recommends \
 				-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "$@"
 			;;
 		*) t 1500 dnf -q -y --setopt=install_weak_deps=False install "$@" ;;
@@ -2746,7 +2884,7 @@ pkg_remove() {
 	pr_min=15
 	case $FAMILY in
 	debian)
-		t 900 env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout=300 remove "$@" || pr_rc=$?
+		t 900 env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout="$PKG_LOCK_WAIT" remove "$@" || pr_rc=$?
 		# The purge gets the installation's limit: aide-common's undoes, one
 		# file at a time, what its configuration did.
 		if [ "$pr_rc" -eq 0 ] && [ -n "$pr_purge" ]; then
@@ -2764,8 +2902,12 @@ pkg_remove() {
 }
 # pkg_remove_alone PACKAGE...: removes those still installed (NAME=rc:
 # keeping its configuration files), if that removes nothing else. Returns 1
-# when it would have, 2 when the package manager failed (PKG_ERR says why).
+# when it would have, 2 when the package manager failed, 3 when the package
+# database could not be used (PKG_ERR says why): first, as on RHEL 8 rpm
+# lists nothing until it is recovered.
 pkg_remove_alone() {
+	PKG_ERR=
+	pkg_ready || return 3
 	pa_have=
 	pa_purge=
 	pa_now=$(pkg_names)
@@ -2920,7 +3062,9 @@ undo_pkg() {
 	case $up_rc in
 	0) [ -z "$PKG_REMOVED" ] || did "Removed the packages it installed: $PKG_REMOVED" ;;
 	1) left "the packages it installed ($*), because removing them would remove other packages too" ;;
-	*) left "the packages it installed ($*): the package manager could not remove them$(pkg_why)" ;;
+	2) left "the packages it installed ($*): the package manager could not remove them$(pkg_why)" ;;
+	# Kept, with the record, for an undo once the package database works.
+	*) abort "the packages it installed ($*) could not be removed$(pkg_why)" daemon_reload ;;
 	esac
 }
 undo_table() {
@@ -2986,6 +3130,8 @@ undo_records() {
 		mount:4) undo_mount "$2" "$3" "$4" ;;
 		*) left "a record this script does not know ($1)" ;;
 		esac
+		# A package step that failed the undo (undo_pkg) put back the rest.
+		[ -z "$M_OUTCOME" ] || break
 		IFS=$nl
 		set -f
 	done
@@ -3517,7 +3663,8 @@ undo_audit_after() {
 		did "Removed the packages EasyRMM installed for auditd${PKG_REMOVED:+: $PKG_REMOVED}, and $AUDITD_MARKER"
 		;;
 	1) left "auditd, which EasyRMM installed: removing its packages (${ua_pk% }) would remove other packages too" ;;
-	*) left "auditd, which EasyRMM installed: the package manager could not remove its packages (${ua_pk% })$(pkg_why)" ;;
+	2) left "auditd, which EasyRMM installed: the package manager could not remove its packages (${ua_pk% })$(pkg_why)" ;;
+	*) abort "the packages EasyRMM installed for auditd (${ua_pk% }) could not be removed$(pkg_why)" audit_load ;;
 	esac
 }
 
@@ -4025,6 +4172,10 @@ finish_change() {
 	keep "O_$fc_v" "$fc_out"
 	keep "W_$fc_v" "$fc_why"
 	keep "D_$fc_v" "$fc_done"
+	keep "PR_$fc_v" "$M_RECOV"
+	keep "PW_$fc_v" "$M_RECOV_WHY"
+	M_RECOV=
+	M_RECOV_WHY=
 	say "$CUR: $fc_out. $fc_why"
 }
 
@@ -4127,7 +4278,7 @@ undo_module() {
 		audit) AUDIT_UNDO=yes ;;
 		esac
 		undo_records
-		case $1 in
+		[ -n "$M_OUTCOME" ] || case $1 in
 		ssh) undo_ssh_after ;;
 		firewall) undo_firewall_after ;;
 		fail2ban) undo_fail2ban_after ;;
@@ -4315,6 +4466,9 @@ render_module() {
 		[ -z "$rm_a" ] || rm_out="$rm_out,\"outcomeReason\":$(jstr "$rm_a" 300)"
 		rm_a=$(jarr "$(kept "D_$rm_v")" "$2" "$3" yes)
 		[ -z "$rm_a" ] || rm_out="$rm_out,\"done\":$rm_a"
+		# The package database's recovery before a package step (pkg_ready).
+		rm_a=$(kept "PR_$rm_v")
+		[ -z "$rm_a" ] || rm_out="$rm_out,\"packageRecovery\":{\"outcome\":\"$rm_a\",\"reason\":$(jstr "$(kept "PW_$rm_v")" 300)}"
 	fi
 	[ "$(kept "RC_$rm_v")" != yes ] || rm_out="$rm_out,\"recorded\":true"
 	printf '%s}' "$rm_out"
