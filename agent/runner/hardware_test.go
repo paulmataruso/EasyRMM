@@ -34,26 +34,32 @@ func TestHardwareTiming(t *testing.T) {
 }
 
 // TestHardwareLoop: the first reading after HardwareFirst, then one every
-// HardwareEvery and its jitter, each sent once.
+// HardwareEvery and its jitter, each sent once. The loop is stopped from
+// inside the fourth reading, so where it stops never depends on the
+// machine's speed: that reading, cut short by the stop, is not sent.
 func TestHardwareLoop(t *testing.T) {
 	s := &server{}
 	r := newRunner(t, s, nil)
 	r.HardwareFirst, r.HardwareEvery, r.HardwareJitter = 40*time.Millisecond, 60*time.Millisecond, 20*time.Millisecond
+	const readings = 4
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	var mu sync.Mutex
 	var at []time.Time
 	r.Hardware = func(context.Context) agentproto.HardwareReport {
 		mu.Lock()
 		defer mu.Unlock()
 		at = append(at, time.Now())
+		if len(at) == readings {
+			cancel()
+		}
 		return report("sda")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
-	defer cancel()
 	start := time.Now()
 	r.hardwareLoop(ctx)
 	mu.Lock()
 	defer mu.Unlock()
-	if len(at) < 2 || at[0].Sub(start) < r.HardwareFirst {
+	if len(at) != readings || at[0].Sub(start) < r.HardwareFirst {
 		t.Fatalf("%d readings, the first after %v", len(at), at[0].Sub(start))
 	}
 	for i := 1; i < len(at); i++ {
@@ -63,7 +69,7 @@ func TestHardwareLoop(t *testing.T) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.hardware) != len(at) || s.hardware[0].Disks[0].Name != "sda" {
+	if len(s.hardware) != readings-1 || s.hardware[0].Disks[0].Name != "sda" {
 		t.Errorf("%d readings, %d sent: %+v", len(at), len(s.hardware), s.hardware)
 	}
 }

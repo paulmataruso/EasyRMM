@@ -61,7 +61,7 @@ and Active Directory health. None of them is built.
   safe for computers nobody is logged in to.
 * **Hardening Windows computers and servers** the same way
   ([ADR-0054](docs/architecture/adr/0054-hardening-windows-computers-and-servers.md),
-  proposed): check, apply and undo modules such as the firewall, account
+  accepted 2026-11-22; its W1, the check, is in review as PR #92): check, apply and undo modules such as the firewall, account
   lockout, Microsoft Defender and attack surface reduction, SMBv1, NTLM,
   LSA protection, Remote Desktop and UAC, with values from Microsoft's
   security baselines and each setting cited by its DISA STIG rule. Each

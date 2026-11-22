@@ -21,7 +21,8 @@
   sets from one table that this ADR's check compares against, and the
   reader of who owns a setting (*policy ownership*), built once, in this
   ADR's W1, for both.
-* Used by later ADRs, each accepted and not implemented:
+* Used by later ADRs, each accepted; none implemented except ADR-0065's
+  slice 1 (PR #86):
   * [ADR-0067](0067-remote-registry-editor.md) (the registry editor, and
     F2): before a write it shows W1's ownership reader's answer and
     whether W2's manifest lists the value; F2 extends W2's job amendments
@@ -2003,6 +2004,10 @@ them only matter at W2 (apply).
 * **Check only for computers with Configuration Manager, DSC or Azure
   machine configuration** until their readers exist: acceptable, or should
   those readers come first?
+* **The evaluation media's terms** (https://aka.ms/useterms): do they
+  allow test machines built from Microsoft's evaluation media, by script,
+  on CI or on the owner's own server? W1's machine tests used them on the
+  owner's Proxmox server; the terms have not been read against that use.
 * **Order**: the MSP plan's order, decided in review, puts W1 to W3 at
   its steps 7 to 9, after the updater's edge channel (step 4), F0
   (step 5) and remote PowerShell's slice 1 (step 6); sooner, straight
