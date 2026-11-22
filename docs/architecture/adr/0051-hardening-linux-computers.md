@@ -317,6 +317,9 @@ the kernel, its modules, the audit subsystem, mandatory access control,
 `/dev/shm` and the clock belong to the host: `kernel` (except the network
 settings, which are the container's own), `kernel-modules`, `usb-storage`,
 `time`, `audit`, `mac` and `shared-memory` report *not applicable*.
+*Amended 2026-11-22:* where `systemd-detect-virt` does not know Docker and
+says `none` (systemd 239, RHEL 8), the files Docker and Podman leave
+(`/.dockerenv`, `/run/.containerenv`) say.
 
 ### Platforms
 Apply and undo run on the versions this script has been tested on, listed

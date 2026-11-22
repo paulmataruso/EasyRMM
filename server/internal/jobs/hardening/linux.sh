@@ -404,7 +404,9 @@ detect_container() {
 	if have systemd-detect-virt; then
 		dc_v=$(systemd-detect-virt --container 2>/dev/null)
 		case $dc_v in
-		'') ;;
+		# none from systemd 239 (RHEL 8) too, which does not know Docker:
+		# the files below say.
+		'' | none) ;;
 		container-other)
 			if [ -e /run/.containerenv ]; then
 				printf podman
