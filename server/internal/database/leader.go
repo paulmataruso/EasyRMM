@@ -105,10 +105,20 @@ func (l *Leader) keepalive(ctx context.Context) error {
 	return nil
 }
 
-// Close gives up the lead, if this server has it.
+// Close gives up the lead, if this server has it. The lock is released
+// before its connection closes: PostgreSQL ends a closed connection's
+// session, and the lock with it, only after the close has returned here,
+// so another server trying straight after could otherwise still find it
+// held.
 func (l *Leader) Close() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.conn != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), leaderPing)
+		// A connection that no longer answers took the lock with it.
+		_, _ = l.conn.Exec(ctx, `SELECT pg_advisory_unlock($1)`, l.key)
+		cancel()
+	}
 	l.drop()
 }
 

@@ -166,8 +166,8 @@ Used by features 7, 9, 12 and 8's actions. Built by feature 7.
   * **kept out of the Jobs list** by default.
 * **On ADR-0054's amendments.** ADR-0054 amends ADR-0017 with its W2:
   a batch ID, retention per kind, one audit row per organization per
-  batch, and runs the server can cancel. ADR-0054 is proposed and not
-  started: no W1 code is on `main`. W2 comes before feature 7 in the
+  batch, and runs the server can cancel. ADR-0054 is accepted; its W1 is
+  in review (PR #92) and no W1 code is on `main`. W2 comes before feature 7 in the
   [order](#order), so F2 extends those per kind and does not add a
   second set; if the order changes, whichever is built first builds
   them and the other extends them.
@@ -983,7 +983,7 @@ review).
 ### 8. BitLocker management
 
 **What exists.**
-* Nothing reads BitLocker. ADR-0054 (proposed, not started) plans a
+* Nothing reads BitLocker. ADR-0054 (accepted; W1 in review) plans a
   report-only `bitlocker` module for the **system volume only**: whether it
   is protected, by which protectors, the PIN policy, and whether a recovery
   password exists. No percentage, method, other volumes or suspension.
@@ -1994,7 +1994,7 @@ As the earlier plan's [harnesses](feature-plan.md#test-harnesses-to-build),
 with these for the twelve:
 
 * **Windows Server and client VMs on KVM**: the earlier plan's *Windows
-  machines under KVM*, which ADR-0054's W1 (not started) decides can run
+  machines under KVM*, which ADR-0054's W1 (in review, PR #92) decides can run
   on CI or needs a self-hosted runner or recorded hand tests. Used by
   features 6 (with and without PowerShell 7), 7, 8, 9, 10's Windows paths,
   11, 12 and 2. A virtual TPM (swtpm) for BitLocker, as ADR-0054 plans.
@@ -2037,9 +2037,9 @@ Let's Encrypt, the name move behind log collection).
 **Where the earlier plan stands** (2026-11-21): step 3's Linux hardening
 has H1 (#49) and H3 (#55) merged, and **H2, ADR-0051's apply and undo, is
 being built now** on `feat/linux-hardening-h2`; step 4's updater 4a is
-open as pull request #70; **step 5, Windows hardening (ADR-0054), is not
-started**: the ADR is proposed and no W1 code is on `main`. Its W1, W2
-and W3 are placed below by their dependencies.
+open as pull request #70; **step 5, Windows hardening (ADR-0054), has W1 in
+review** (PR #92): the ADR is accepted (2026-11-22) and no W1 code is on
+`main` yet. Its W1, W2 and W3 are placed below by their dependencies.
 
 **ADR-0053's slices 1 and 2 are built now, beside steps 3 to 9**
 (decided in review, 2026-11-21): Microsoft turns password sign-in to
@@ -2074,7 +2074,7 @@ need nothing, go ahead of it.
 | 4 | Updater 4a with the edge channel (earlier step 4), open as PR #70 | Earlier | Unchanged |
 | 5 | F0: ADR-0063, job output and arguments | This | A hole in shipped code, so before new features, as the earlier plan's fixes (its step 2) were; needs nothing |
 | 6 | 6 Remote PowerShell, slice 1 | This | Small and independent; improves the job pipeline the rest use |
-| 7 | Windows hardening W1: check, the ownership reader, the runner matrix and the decision on Windows machines under KVM (earlier step 5) | Earlier | **Not started.** Kept before notifications, as the earlier plan has it; needs and needed by: above |
+| 7 | Windows hardening W1: check, the ownership reader, the runner matrix and the decision on Windows machines under KVM (earlier step 5) | Earlier | **In review (PR #92).** Kept before notifications, as the earlier plan has it; needs and needed by: above |
 | 8 | Windows hardening W2: apply and undo (earlier step 5) | Earlier | **Not started.** After W1; stays with it, as the earlier plan has it |
 | 9 | Windows hardening W3: the console (earlier step 5) | Earlier | **Not started.** After W2 |
 | 10 | Notifications: ADR-0053 with device alert rules, its slices 1 to 7 (earlier step 6) | Earlier | Before the first new alert kind (step 12), so each kind is built into its rules rather than added later; its windows are built without the purpose column, which feature 11 adds (step 22); its slice 7's planned restarts are what features 11, 3 and 5 rely on |
@@ -2182,7 +2182,7 @@ the same order, and only the dependencies above still hold.
   decided, with the on-host protection the keystore's ADR chooses; the
   server sees a key's plaintext in memory at escrow's check and at a
   read; script and terminal rights still reach online devices' keys.
-* **Proposed ADRs this plan builds on** (0053, 0054, 0055, 0058, 0060)
+* **Proposed ADRs this plan builds on** (0053, 0055, 0058, 0060)
   may change in review; each feature's ADR follows them, and the
   amendments above are made in those ADRs, not around them.
 * **Windows unverified** until the Windows harnesses exist: every Windows
