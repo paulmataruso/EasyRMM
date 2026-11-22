@@ -881,7 +881,7 @@ func TestAccountMailLimits(t *testing.T) {
 	}
 	res, err := e.svc.IssuePasswordLink(ctx, oa, existing, meta)
 	if err != nil || res.Emailed || res.Link == "" || res.MailProblem != auth.MailNotSent ||
-		!strings.HasPrefix(res.MailReason, "This account has been emailed 3 password emails in the last hour") {
+		!strings.HasPrefix(res.MailReason, "This account has been emailed as many password emails as one account may: 3 at once, then one every 20 minutes.") {
 		t.Fatalf("a fourth link: %+v %v", res, err)
 	}
 	if len(e.mp.Received("old@acme.example")) != 3 {
@@ -979,6 +979,60 @@ func TestAccountMailLimits(t *testing.T) {
 	for range 5 {
 		if res, err := none.svc.IssuePasswordLink(ctx, noneAdmin, target, meta); err != nil || res.Link == "" {
 			t.Fatalf("link without a mail server: %+v %v", res, err)
+		}
+	}
+}
+
+// A reset someone asks for and an administrator's password link place
+// the account in the same organization, with one function: the reset's
+// limits count against the organization the link's audit record names.
+func TestResetsAndLinksPlaceAccountsAlike(t *testing.T) {
+	e := newEnv(t, true)
+	ctx := context.Background()
+	e.tenants(t)
+	super := e.caller(t, e.user(t, "super@msp.example", false, rbac.Assignment{Role: rbac.RoleSuperAdmin}))
+	cases := map[string][]rbac.Assignment{
+		"none@example.com":       nil,
+		"org@example.com":        {orgRole(rbac.RoleTechnician, e.orgA)},
+		"site@example.com":       {siteRole(rbac.RoleTechnician, e.orgA, e.siteA)},
+		"sites@example.com":      {siteRole(rbac.RoleTechnician, e.orgA, e.siteA), siteRole(rbac.RoleReadOnly, e.orgA, e.siteA2)},
+		"orgs@example.com":       {orgRole(rbac.RoleTechnician, e.orgA), orgRole(rbac.RoleReadOnly, e.orgB)},
+		"platform@example.com":   {rbac.Assignment{Role: rbac.RoleSuperAdmin}, orgRole(rbac.RoleTechnician, e.orgB)},
+		"organdsite@example.com": {orgRole(rbac.RoleReadOnly, e.orgB), siteRole(rbac.RoleTechnician, e.orgB, e.siteB)},
+	}
+	want := map[string]uuid.UUID{"org@example.com": e.orgA, "site@example.com": e.orgA, "sites@example.com": e.orgA, "organdsite@example.com": e.orgB}
+	i := 0
+	for email, as := range cases {
+		i++
+		id := e.user(t, email, false, as...)
+		if _, err := e.svc.IssuePasswordLink(ctx, super, id, meta); err != nil {
+			t.Fatalf("%s: %v", email, err)
+		}
+		m := auth.RequestMeta{IP: netip.AddrFrom4([4]byte{198, 51, 100, byte(100 + i)}), UserAgent: "go-test"}
+		if err := e.auth.RequestPasswordReset(ctx, email, m); err != nil {
+			t.Fatal(err)
+		}
+		e.auth.Wait()
+		var linkOrg, resetOrg *uuid.UUID
+		e.scalar(t, `SELECT organization_id FROM audit_log WHERE action = 'user.password_link' AND target_id = $1`, &linkOrg, id.String())
+		e.scalar(t, `SELECT organization_id FROM mail_sends WHERE kind = 'reset' AND account_id = $1`, &resetOrg, id)
+		var direct uuid.UUID
+		if err := e.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+			var err error
+			direct, err = auth.AccountOrganization(ctx, tx, id)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		get := func(p *uuid.UUID) uuid.UUID {
+			if p == nil {
+				return uuid.Nil
+			}
+			return *p
+		}
+		if get(linkOrg) != want[email] || get(resetOrg) != want[email] || direct != want[email] {
+			t.Errorf("%s: the link's audit names %v, the reset counts against %v, AccountOrganization %v; want %v",
+				email, get(linkOrg), get(resetOrg), direct, want[email])
 		}
 	}
 }

@@ -109,6 +109,9 @@ type Mailer interface {
 	// the limits now: nil, a mailer.Limited naming the limit reached, or
 	// an error reading them.
 	Room(ctx context.Context, by mailer.AccountMail) error
+	// Reserve takes room under the limits for one message counted against
+	// by, before it is made; a limit that stops it is a mailer.Limited.
+	Reserve(ctx context.Context, by mailer.AccountMail) (mailer.Reservation, error)
 }
 
 // RequestMeta describes the client making a request.
@@ -1175,34 +1178,45 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string, meta R
 // sendResetLink issues and e-mails the link. An invited user who has not
 // chosen a password yet gets a new invitation link instead, valid as long
 // as invitations are, so a reset requested by someone else does not cut
-// their invitation short.
+// their invitation short. Room under the limits is taken before the link
+// is made, since a new link ends the last: a link is made only when it can
+// be sent. No step holds a connection while it waits for another, so that
+// many requests for one address cannot drain the pool.
 func (s *Service) sendResetLink(ctx context.Context, email string, meta RequestMeta) error {
-	var link string
-	var invited bool
-	var by mailer.AccountMail
-	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		var userID uuid.UUID
-		var hasPassword bool
-		err := tx.QueryRow(ctx, `SELECT id, password_hash IS NOT NULL FROM users WHERE email = $1 AND status = 'active' FOR UPDATE`, email).
-			Scan(&userID, &hasPassword)
+	var userID, org uuid.UUID
+	err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `SELECT id FROM users WHERE email = $1 AND status = 'active'`, email).Scan(&userID)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		org, err := accountOrganization(ctx, tx, userID)
-		if err != nil {
-			return err
-		}
-		by = mailer.AccountMail{Self: true, Account: userID, Organization: org}
-		event := audit.Event{Actor: userActor(userID, email, meta), Action: "auth.password_reset_request", TargetType: "user", TargetID: userID.String()}
-		// Under the limits, before a link is made: a new one ends the last.
-		err = s.mailer.Room(ctx, by)
-		var lim mailer.Limited
-		if errors.As(err, &lim) {
-			event.Outcome, event.Details = audit.Denied, map[string]any{"reason": "rate_limited", "limit": lim.LimitCode()}
-			return s.audit.Write(ctx, tx, event)
+		org, err = AccountOrganization(ctx, tx, userID)
+		return err
+	})
+	if err != nil || userID == uuid.Nil {
+		return err
+	}
+	by := mailer.AccountMail{Self: true, Account: userID, Organization: org}
+	event := audit.Event{Actor: userActor(userID, email, meta), Action: "auth.password_reset_request", TargetType: "user", TargetID: userID.String()}
+	room, err := s.mailer.Reserve(ctx, by)
+	var lim mailer.Limited
+	if errors.As(err, &lim) {
+		event.Outcome, event.Details = audit.Denied, map[string]any{"reason": "rate_limited", "limit": lim.LimitCode()}
+		return s.audit.Record(ctx, event)
+	}
+	if err != nil {
+		return err
+	}
+	defer room.Release()
+	var link string
+	var invited bool
+	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+		var hasPassword bool
+		err := tx.QueryRow(ctx, `SELECT password_hash IS NOT NULL FROM users WHERE id = $1 AND status = 'active' FOR UPDATE`, userID).Scan(&hasPassword)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
 		}
 		if err != nil {
 			return err
@@ -1242,27 +1256,25 @@ func (s *Service) sendResetLink(ctx context.Context, email string, meta RequestM
 	if err != nil {
 		return err
 	}
-	return s.mailer.SendAccountMail(ctx, email, msg, by)
+	return room.Send(ctx, email, msg)
 }
 
-// accountOrganization is the organization whose limits an account's mail
-// counts against: the one organization of all its roles, or uuid.Nil when
-// it has roles in none or several, as audit records place it.
-func accountOrganization(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (uuid.UUID, error) {
-	rows, err := tx.Query(ctx, `SELECT organization_id FROM role_assignments WHERE user_id = $1`, userID)
+// AccountOrganization is the organization whose limits an account's mail
+// counts against, as rbac.Placement places the account's roles, and as
+// audit records about it are placed.
+func AccountOrganization(ctx context.Context, tx pgx.Tx, userID uuid.UUID) (uuid.UUID, error) {
+	rows, err := tx.Query(ctx, `SELECT role, coalesce(organization_id, '00000000-0000-0000-0000-000000000000'),
+		coalesce(site_id, '00000000-0000-0000-0000-000000000000') FROM role_assignments WHERE user_id = $1`, userID)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	orgs, err := pgx.CollectRows(rows, pgx.RowTo[*uuid.UUID])
-	if err != nil || len(orgs) == 0 {
-		return uuid.Nil, err
-	}
-	for _, o := range orgs {
-		if o == nil || *o != *orgs[0] {
-			return uuid.Nil, nil
-		}
-	}
-	return *orgs[0], nil
+	as, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (rbac.Assignment, error) {
+		var a rbac.Assignment
+		err := r.Scan(&a.Role, &a.OrganizationID, &a.SiteID)
+		return a, err
+	})
+	org, _ := rbac.Placement(as)
+	return org, err
 }
 
 // DurationWords says d in words for a message: "30 minutes", "72 hours".

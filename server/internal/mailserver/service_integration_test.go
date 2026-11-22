@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -123,7 +124,7 @@ func TestNoMailServerAtFirst(t *testing.T) {
 		t.Fatalf("view %+v", v)
 	}
 	if v.Limits.PerMinute != 30 || v.Limits.PerDay != 9000 || v.Limits.Account != (AccountLimits{AdminPerHour: 60, OrganizationPerDay: 500,
-		AccountPerHour: 3, AccountPerDay: 10, ResetsPerHour: 30, OrganizationResetsPerHour: 10, OrganizationResetsPerDay: 90}) ||
+		AccountBurst: 3, AccountEveryMinutes: 20, ResetsPerHour: 30, OrganizationResetsPerHour: 10}) ||
 		v.Usage != (Usage{AdminDayLimit: 8100, OtherDayLimit: 7200}) {
 		t.Fatalf("limits %+v, usage %+v", v.Limits, v.Usage)
 	}
@@ -530,6 +531,74 @@ func TestAccountMail(t *testing.T) {
 	}
 }
 
+// Room reserved before a message is made counts as the message would, and
+// is given back when the message is not sent: released, refused by the
+// mail server, or with no mail server to send it. A reservation is used
+// once.
+func TestReserve(t *testing.T) {
+	f := newFixture(t, nil)
+	if _, err := f.svc.Update(f.ctx, f.admin, f.input()); err != nil {
+		t.Fatal(err)
+	}
+	alice := uuid.New()
+	by := mailer.AccountMail{Self: true, Account: alice}
+	count := func() string { return f.str(`SELECT count(*)::text FROM mail_sends WHERE account_id = $1`, alice) }
+	msg, _ := mailer.Letter{Subject: "Reset your EasyRMM password", Link: &mailer.Link{Label: "Choose", URL: "https://rmm.example.com/r#t"}}.Message()
+
+	r, err := f.svc.Reserve(f.ctx, by)
+	if err != nil || count() != "1" {
+		t.Fatalf("reserved: %v, %s counted", err, count())
+	}
+	r.Release()
+	r.Release()
+	if count() != "0" {
+		t.Fatalf("released: %s counted", count())
+	}
+	if err := r.Send(f.ctx, f.mp.Address("alice"), msg); err == nil {
+		t.Fatal("a released reservation sent")
+	}
+
+	to := f.mp.Address("alice")
+	if r, err = f.svc.Reserve(f.ctx, by); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Send(f.ctx, to, msg); err != nil {
+		t.Fatal(err)
+	}
+	r.Release()
+	if got := f.mp.Wait(to, 1)[0]; got.Subject != msg.Subject || count() != "1" {
+		t.Fatalf("sent %+v, %s counted", got, count())
+	}
+	if err := r.Send(f.ctx, to, msg); err == nil {
+		t.Fatal("a reservation sent twice")
+	}
+
+	// Refused by the mail server: given back.
+	if r, err = f.svc.Reserve(f.ctx, by); err != nil {
+		t.Fatal(err)
+	}
+	var re *mailer.ReplyError
+	if err := r.Send(f.ctx, testmail.Refused, msg); !errors.As(err, &re) || count() != "1" {
+		t.Fatalf("refused: %v, %s counted", err, count())
+	}
+	// No mail server: given back.
+	if r, err = f.svc.Reserve(f.ctx, by); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.svc.Delete(f.ctx, f.admin); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Send(f.ctx, to, msg); !errors.Is(err, ErrNoMailServer) || count() != "1" {
+		t.Fatalf("no mail server: %v, %s counted", err, count())
+	}
+	// A limit stops it before anything is made.
+	f.resetSends(2, time.Minute, alice, uuid.Nil)
+	var le *LimitError
+	if _, err := f.svc.Reserve(f.ctx, by); !errors.As(err, &le) || le.Code != mailer.LimitAccount {
+		t.Fatalf("past the account's limit: %v", err)
+	}
+}
+
 // Whether a mail server is in force is kept for a few seconds, so that the
 // sign-in page and reset requests seldom reach the database: a change on
 // this server is seen at once, one on another server within availableFor.
@@ -870,15 +939,16 @@ func TestAdminLimits(t *testing.T) {
 // Every limit on account mail but an account's is the smaller of a number
 // and a share of the day's limit, and at least one, so that a low day's
 // limit keeps them small: one administrator at it all day uses at most 16%
-// of the day, one organization's administrators 5.6%, one organization's
-// resets 1%, and resets everywhere, all day, 8%, under the 10% kept for
-// them (once the day allows one reset an hour, from 300 a day).
+// of the day, one organization's administrators 5.6%, and resets
+// everywhere, all day, 8%, under the 10% kept for them, one organization's
+// a third of that (once the day allows one reset an hour, from 300 a day).
+// No limit a day holds resets.
 func TestAccountLimitsFollowTheDay(t *testing.T) {
 	for perDay, want := range map[int]AccountLimits{
-		9000:    {AdminPerHour: 60, OrganizationPerDay: 500, AccountPerHour: 3, AccountPerDay: 10, ResetsPerHour: 30, OrganizationResetsPerHour: 10, OrganizationResetsPerDay: 90},
-		500:     {AdminPerHour: 3, OrganizationPerDay: 27, AccountPerHour: 3, AccountPerDay: 10, ResetsPerHour: 1, OrganizationResetsPerHour: 1, OrganizationResetsPerDay: 5},
-		100_000: {AdminPerHour: 60, OrganizationPerDay: 500, AccountPerHour: 3, AccountPerDay: 10, ResetsPerHour: 60, OrganizationResetsPerHour: 20, OrganizationResetsPerDay: 100},
-		1:       {AdminPerHour: 1, OrganizationPerDay: 1, AccountPerHour: 3, AccountPerDay: 10, ResetsPerHour: 1, OrganizationResetsPerHour: 1, OrganizationResetsPerDay: 1},
+		9000:    {AdminPerHour: 60, OrganizationPerDay: 500, AccountBurst: 3, AccountEveryMinutes: 20, ResetsPerHour: 30, OrganizationResetsPerHour: 10},
+		500:     {AdminPerHour: 3, OrganizationPerDay: 27, AccountBurst: 3, AccountEveryMinutes: 20, ResetsPerHour: 1, OrganizationResetsPerHour: 1},
+		100_000: {AdminPerHour: 60, OrganizationPerDay: 500, AccountBurst: 3, AccountEveryMinutes: 20, ResetsPerHour: 60, OrganizationResetsPerHour: 20},
+		1:       {AdminPerHour: 1, OrganizationPerDay: 1, AccountBurst: 3, AccountEveryMinutes: 20, ResetsPerHour: 1, OrganizationResetsPerHour: 1},
 	} {
 		if got := accountLimits(perDay); got != want {
 			t.Errorf("at %d a day: %+v, want %+v", perDay, got, want)
@@ -886,11 +956,50 @@ func TestAccountLimitsFollowTheDay(t *testing.T) {
 	}
 	for perDay := 300; perDay <= 1_000_000; perDay += 7 {
 		l := accountLimits(perDay)
-		if 24*l.AdminPerHour*100 > perDay*16 || l.OrganizationPerDay*18 > perDay || l.OrganizationResetsPerDay*100 > perDay ||
-			24*l.ResetsPerHour*100 > perDay*8 || l.OrganizationResetsPerHour != max(1, l.ResetsPerHour/3) {
+		if 24*l.AdminPerHour*100 > perDay*16 || l.OrganizationPerDay*18 > perDay || 24*l.ResetsPerHour*100 > perDay*8 ||
+			l.OrganizationResetsPerHour != max(1, l.ResetsPerHour/3) {
 			t.Fatalf("at %d a day: %+v", perDay, l)
 		}
 	}
+}
+
+// The account's limit is a token bucket worked out from its emails: three
+// at once, then one every 20 minutes, however long it goes on.
+func TestAccountRoomIn(t *testing.T) {
+	const every = 1200.0
+	for _, c := range []struct {
+		name string
+		ages []float64 // minutes, oldest first
+		want float64   // minutes
+	}{
+		{"none", nil, 0},
+		{"two at once", []float64{0, 0}, 0},
+		{"three at once", []float64{0, 0, 0}, 20},
+		{"three, five minutes ago", []float64{5, 5, 5}, 15},
+		{"three, 21 minutes ago", []float64{21, 21, 21}, 0},
+		{"three 21 minutes ago, and one now", []float64{21, 21, 21, 0}, 19},
+		{"three an hour ago", []float64{60, 60, 60}, 0},
+		{"one every 20 minutes, all day", everyFor(20, 72), 0},
+		{"four in 30 minutes", everyFor(10, 4), 10},
+		{"one every 21 minutes, all day", everyFor(21, 68), 0},
+	} {
+		ages := make([]float64, len(c.ages))
+		for i, a := range c.ages {
+			ages[i] = a * 60
+		}
+		if got := accountRoomIn(ages, 3, every) / 60; math.Abs(got-c.want) > 0.001 {
+			t.Errorf("%s: %.2f minutes, want %.2f", c.name, got, c.want)
+		}
+	}
+}
+
+// everyFor is n emails, one every m minutes, the last now; oldest first.
+func everyFor(m float64, n int) []float64 {
+	out := make([]float64, n)
+	for i := range out {
+		out[i] = float64(n-1-i) * m
+	}
+	return out
 }
 
 // Resets people ask for are limited per account (with administrators'
@@ -914,8 +1023,8 @@ func TestResetLimits(t *testing.T) {
 		return limited(t, err)
 	}
 
-	// One account: three an hour, from either server, an administrator's
-	// link among them; then neither goes.
+	// One account: three at once, from either server, an administrator's
+	// link among them; then neither goes, for 20 minutes.
 	alice := uuid.New()
 	link := accountCharge(mailer.AccountMail{Admin: f.admin.ID, Account: alice, Organization: acme})
 	if reset(0, alice, acme) != "" || reset(1, alice, acme) != "" || limited(t, second(other.take(f.ctx, link))) != "" {
@@ -923,19 +1032,29 @@ func TestResetLimits(t *testing.T) {
 	}
 	var le *LimitError
 	_, err = f.svc.take(f.ctx, accountCharge(mailer.AccountMail{Self: true, Account: alice, Organization: acme}))
-	if !errors.As(err, &le) || le.Code != mailer.LimitAccount || !le.Hour || le.RetryAfter <= 59*time.Minute ||
-		le.Error() != "This account has been emailed 3 password emails in the last hour, the most one account may; more can be emailed in 60 minutes." {
+	if !errors.As(err, &le) || le.Code != mailer.LimitAccount || le.RetryAfter <= 19*time.Minute || le.RetryAfter > 20*time.Minute ||
+		le.Error() != "This account has been emailed as many password emails as one account may: 3 at once, then one every 20 minutes. Another can be emailed in 20 minutes." {
 		t.Fatalf("a fourth reset: %v", err)
 	}
 	if got := limited(t, second(f.svc.take(f.ctx, link))); got != mailer.LimitAccount {
 		t.Fatalf("a fourth, an administrator's link: %s", got)
 	}
-	// Ten a day.
+	// Then one every 20 minutes, and no limit a day: thirty-five over the
+	// day, one every 40 minutes, leave room.
 	f.exec(`DELETE FROM mail_sends`)
-	f.resetSends(10, 2*time.Hour, alice, acme)
-	if err := f.svc.Room(f.ctx, mailer.AccountMail{Self: true, Account: alice, Organization: acme}); !errors.As(err, &le) ||
-		le.Code != mailer.LimitAccount || le.Hour || !strings.Contains(le.Error(), "10 password emails in the last 24 hours") {
-		t.Fatalf("an eleventh in a day: %v", err)
+	f.resetSends(3, 21*time.Minute, alice, acme)
+	if got := reset(0, alice, acme); got != "" {
+		t.Fatalf("20 minutes on: %s", got)
+	}
+	if got := reset(1, alice, acme); got != mailer.LimitAccount {
+		t.Fatalf("a second 20 minutes on: %s", got)
+	}
+	f.exec(`DELETE FROM mail_sends`)
+	for i := range 35 {
+		f.resetSends(1, time.Duration(40*(i+1))*time.Minute, alice, acme)
+	}
+	if err := f.svc.Room(f.ctx, mailer.AccountMail{Self: true, Account: alice, Organization: acme}); err != nil {
+		t.Fatalf("after 35 in a day, one every 40 minutes: %v", err)
 	}
 
 	// One organization: ten an hour, however many accounts and servers;
@@ -961,12 +1080,18 @@ func TestResetLimits(t *testing.T) {
 	if got := reset(0, uuid.New(), uuid.Nil); got != mailer.LimitOrganizationResets {
 		t.Fatalf("an eleventh outside organizations: %s", got)
 	}
-	// Ninety a day.
-	f.exec(`DELETE FROM mail_sends`)
-	f.resetSends(90, 2*time.Hour, uuid.Nil, acme)
 	if err := f.svc.Room(f.ctx, mailer.AccountMail{Self: true, Account: uuid.New(), Organization: acme}); !errors.As(err, &le) ||
-		le.Code != mailer.LimitOrganizationResets || !strings.Contains(le.Error(), "(10 an hour, 90 a day)") {
-		t.Fatalf("Acme's day: %v", err)
+		le.Code != mailer.LimitOrganizationResets ||
+		le.Error() != "Password resets to this organization's accounts reach their limit of 10 an hour; more can be sent in 60 minutes." {
+		t.Fatalf("Acme's hour: %v", err)
+	}
+	// No limit a day: a day of Acme's hours leaves room an hour on.
+	f.exec(`DELETE FROM mail_sends`)
+	for h := range 23 {
+		f.resetSends(10, time.Duration(h+1)*time.Hour+time.Minute, uuid.Nil, acme)
+	}
+	if err := f.svc.Room(f.ctx, mailer.AccountMail{Self: true, Account: uuid.New(), Organization: acme}); err != nil {
+		t.Fatalf("after a day of Acme's hours: %v", err)
 	}
 
 	// The platform: thirty an hour, whatever the organizations; neither

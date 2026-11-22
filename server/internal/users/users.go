@@ -468,22 +468,6 @@ func describe(as []rbac.Assignment) []map[string]any {
 	return out
 }
 
-// auditOrg picks the organization an event about this user belongs to, so
-// organization administrators see it in their audit log.
-func auditOrg(as []rbac.Assignment) (org, site uuid.UUID) {
-	if len(as) == 1 {
-		return as[0].OrganizationID, as[0].SiteID
-	}
-	var o uuid.UUID
-	for _, a := range as {
-		if o != uuid.Nil && a.OrganizationID != o {
-			return uuid.Nil, uuid.Nil
-		}
-		o = a.OrganizationID
-	}
-	return o, uuid.Nil
-}
-
 func (s *Service) callerID(c access.Caller) uuid.UUID {
 	if c.Principal == nil {
 		return uuid.Nil
@@ -508,7 +492,7 @@ func (s *Service) Invite(ctx context.Context, c access.Caller, in InviteInput, m
 	if err != nil {
 		return nil, err
 	}
-	org, site := auditOrg(grants)
+	org, site := rbac.Placement(grants)
 	if err := s.auth.AdminLinkRoom(ctx, s.accountMail(c, uuid.Nil, org)); err != nil {
 		s.refused(ctx, c, "user.invite", org, site, "", map[string]any{"email": email}, err)
 		return nil, err
@@ -588,7 +572,7 @@ func (s *Service) UpdateProfile(ctx context.Context, c access.Caller, id uuid.UU
 		if _, err := tx.Exec(ctx, `UPDATE users SET display_name = $2 WHERE id = $1`, id, name); err != nil {
 			return err
 		}
-		org, site := auditOrg(u.all)
+		org, site := rbac.Placement(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.update", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(),
 			Details: map[string]any{"displayName": name, "previousDisplayName": u.DisplayName}})
@@ -653,7 +637,7 @@ func (s *Service) SetAssignments(ctx context.Context, c access.Caller, id uuid.U
 		if err := insertAssignments(ctx, tx, id, s.callerID(c), grants); err != nil {
 			return err
 		}
-		org, site := auditOrg(append(slices.Clone(remove), grants...))
+		org, site := rbac.Placement(append(slices.Clone(remove), grants...))
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.roles_change", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(),
 			Details: map[string]any{"email": u.Email, "removed": describe(remove), "granted": describe(grants)}})
@@ -704,7 +688,7 @@ func (s *Service) SetStatus(ctx context.Context, c access.Caller, id uuid.UUID, 
 		if status == "disabled" {
 			action = "user.disable"
 		}
-		org, site := auditOrg(u.all)
+		org, site := rbac.Placement(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: action, Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(), Details: map[string]any{"email": u.Email}})
 	})
@@ -725,7 +709,7 @@ func (s *Service) Unlock(ctx context.Context, c access.Caller, id uuid.UUID) (*U
 		if _, err := tx.Exec(ctx, `UPDATE users SET failed_logins = 0, mfa_failed_attempts = 0, locked_until = NULL WHERE id = $1`, id); err != nil {
 			return err
 		}
-		org, site := auditOrg(u.all)
+		org, site := rbac.Placement(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.unlock", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(), Details: map[string]any{"email": u.Email}})
 	})
@@ -757,7 +741,7 @@ func (s *Service) ResetMFA(ctx context.Context, c access.Caller, id uuid.UUID) (
 		if err := auth.RevokeAllSessions(ctx, tx, id, uuid.Nil, "mfa_reset"); err != nil {
 			return err
 		}
-		org, site := auditOrg(u.all)
+		org, site := rbac.Placement(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.mfa_reset", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(), Details: map[string]any{"email": u.Email, "securityKeys": keys.RowsAffected()}})
 	})
@@ -777,7 +761,7 @@ func (s *Service) IssuePasswordLink(ctx context.Context, c access.Caller, id uui
 	if err != nil {
 		return nil, err
 	}
-	org, site := auditOrg(target.all)
+	org, site := rbac.Placement(target.all)
 	by := s.accountMail(c, id, org)
 	if target.CanManage && !target.IsSelf && target.Status == "active" {
 		if err := s.auth.AdminLinkRoom(ctx, by); err != nil {
@@ -804,7 +788,7 @@ func (s *Service) IssuePasswordLink(ctx context.Context, c access.Caller, id uui
 		if err != nil {
 			return err
 		}
-		org, site := auditOrg(u.all)
+		org, site := rbac.Placement(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.password_link", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(),
 			Details: map[string]any{"email": u.Email, "invite": invite}})
@@ -850,7 +834,7 @@ func (s *Service) Delete(ctx context.Context, c access.Caller, id uuid.UUID) err
 		if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, id); err != nil {
 			return err
 		}
-		org, site := auditOrg(u.all)
+		org, site := rbac.Placement(u.all)
 		return s.audit.Write(ctx, tx, audit.Event{Actor: c.Actor, Action: "user.delete", Outcome: audit.Success,
 			OrganizationID: org, SiteID: site, TargetType: "user", TargetID: id.String(), Details: map[string]any{"email": u.Email}})
 	})

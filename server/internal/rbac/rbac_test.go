@@ -310,3 +310,37 @@ func TestCanAnywhereAndInOrg(t *testing.T) {
 		t.Error("nil principal granted something")
 	}
 }
+
+func TestPlacement(t *testing.T) {
+	super := Assignment{Role: RoleSuperAdmin}
+	adminA := Assignment{Role: RoleOrgAdmin, OrganizationID: orgA}
+	techA1 := Assignment{Role: RoleTechnician, OrganizationID: orgA, SiteID: siteA1}
+	techA2 := Assignment{Role: RoleTechnician, OrganizationID: orgA, SiteID: siteA2}
+	techB1 := Assignment{Role: RoleTechnician, OrganizationID: orgB, SiteID: siteB1}
+	for _, c := range []struct {
+		name      string
+		as        []Assignment
+		org, site uuid.UUID
+	}{
+		{"none", nil, uuid.Nil, uuid.Nil},
+		{"the platform", []Assignment{super}, uuid.Nil, uuid.Nil},
+		{"an organization", []Assignment{adminA}, orgA, uuid.Nil},
+		{"a site", []Assignment{techA1}, orgA, siteA1},
+		{"two sites of one organization", []Assignment{techA1, techA2}, orgA, uuid.Nil},
+		{"the organization and a site of it", []Assignment{adminA, techA1}, orgA, uuid.Nil},
+		{"two organizations", []Assignment{adminA, techB1}, uuid.Nil, uuid.Nil},
+		{"the platform, then an organization", []Assignment{super, adminA}, uuid.Nil, uuid.Nil},
+		{"an organization, then the platform", []Assignment{adminA, super}, uuid.Nil, uuid.Nil},
+	} {
+		org, site := Placement(c.as)
+		if org != c.org || site != c.site {
+			t.Errorf("%s: %v %v, want %v %v", c.name, org, site, c.org, c.site)
+		}
+		// The order does not matter.
+		if len(c.as) > 1 {
+			if org, _ := Placement([]Assignment{c.as[1], c.as[0]}); org != c.org {
+				t.Errorf("%s, the other way round: %v", c.name, org)
+			}
+		}
+	}
+}

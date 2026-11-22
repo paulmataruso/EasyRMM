@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/netip"
 	"strings"
 	"testing"
@@ -15,9 +17,11 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
+	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/mailer"
+	"github.com/paulmataruso/easyrmm/server/internal/mailserver"
 )
 
 func (e *env) userInt(t *testing.T, id uuid.UUID, column string) int {
@@ -187,6 +191,51 @@ func TestResetEmailIsLimitedPerAccount(t *testing.T) {
 	}
 }
 
+// No path holds a connection while it waits for another: resets for one
+// address, more at once than the pool has connections, leave the pool
+// free for everything else, and the limit on the account still holds.
+func TestResetsDoNotDrainThePool(t *testing.T) {
+	e := newEnv(t, func(c *auth.Config) { c.RequireMFA = false })
+	ctx := context.Background()
+	e.createUser(t, "busy@example.com")
+	small, err := database.Open(ctx, e.dsn, database.PoolOptions{MaxConns: 3, AfterConnectSQL: "SET ROLE easyrmm_app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(small.Close)
+	log := audit.New(small, nil)
+	mail, err := mailserver.New(small, log, e.sealer, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := auth.NewService(small, log, e.hasher, e.sealer, mail, e.cfg)
+	for i := range 12 {
+		m := auth.RequestMeta{IP: netip.AddrFrom4([4]byte{198, 51, 100, byte(i)}), UserAgent: "go-test"}
+		if err := svc.RequestPasswordReset(ctx, "busy@example.com", m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// While they run, anything else on the pool is answered at once.
+	for range 10 {
+		start := time.Now()
+		qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		var one int
+		err := small.ReadTx(qctx, database.System, func(tx pgx.Tx) error { return tx.QueryRow(qctx, `SELECT 1`).Scan(&one) })
+		cancel()
+		if err != nil || time.Since(start) > 2*time.Second {
+			t.Fatalf("the pool is drained: %v after %s", err, time.Since(start))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	svc.Wait()
+	if sent := e.mp.Received("busy@example.com"); len(sent) != 3 {
+		t.Fatalf("sent %d, want 3", len(sent))
+	}
+	if denied := e.audits(t, "auth.password_reset_request", "denied"); len(denied) != 9 {
+		t.Fatalf("denied %d, want 9", len(denied))
+	}
+}
+
 // Resets to one organization's accounts are limited together, across
 // servers and client addresses, so that someone who knows, or made, many
 // of its addresses cannot spend the platform's mail; other organizations'
@@ -267,7 +316,7 @@ func TestAdminLinksAreLimited(t *testing.T) {
 		t.Fatalf("a fourth link is refused: %v", err)
 	}
 	got, why := e.svc.EmailLink(ctx, "linked@example.com", letter, by)
-	if got != auth.MailNotSent || !strings.HasPrefix(why, "This account has been emailed 3 password emails in the last hour") {
+	if got != auth.MailNotSent || !strings.HasPrefix(why, "This account has been emailed as many password emails as one account may: 3 at once, then one every 20 minutes.") {
 		t.Fatalf("a fourth link: %q %q", got, why)
 	}
 	// The person's own reset is limited with them.

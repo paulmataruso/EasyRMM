@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -40,21 +42,22 @@ type AccountLimits struct {
 	// other than super administrators, email to one organization's accounts
 	// in 24 hours. The smaller of 500 and an 18th (5.6%) of the day.
 	OrganizationPerDay int `json:"organizationPerDay"`
-	// AccountPerHour and AccountPerDay: password emails, resets people ask
-	// for and administrators' links together, to one account.
-	AccountPerHour int `json:"accountPerHour"`
-	AccountPerDay  int `json:"accountPerDay"`
+	// AccountBurst and AccountEveryMinutes: password emails to one
+	// account, resets people ask for and administrators' links together:
+	// AccountBurst at once, then one every AccountEveryMinutes.
+	AccountBurst        int `json:"accountBurst"`
+	AccountEveryMinutes int `json:"accountEveryMinutes"`
 	// ResetsPerHour: password resets people ask for, on the whole platform,
 	// in an hour. The smaller of 60 and a 300th of the day: kept up all day,
 	// 8% of it, less than the 10% kept for them.
 	ResetsPerHour int `json:"resetsPerHour"`
-	// OrganizationResetsPerHour and OrganizationResetsPerDay: password
-	// resets people ask for, to one organization's accounts (accounts in no
-	// one organization counting together as one): a third of the
-	// platform's hour, so that the rest is there for the others, and the
-	// smaller of 100 and 1% of the day.
+	// OrganizationResetsPerHour: password resets people ask for, to one
+	// organization's accounts (accounts in no one organization counting
+	// together as one), in an hour: a third of the platform's hour, so that
+	// the rest is there for the others. No limit a day holds resets, so
+	// that no one can keep them refused longer than an hour after they
+	// stop asking.
 	OrganizationResetsPerHour int `json:"organizationResetsPerHour"`
-	OrganizationResetsPerDay  int `json:"organizationResetsPerDay"`
 }
 
 // accountLimits are the limits on account mail at a day's limit of perDay.
@@ -64,11 +67,10 @@ func accountLimits(perDay int) AccountLimits {
 	return AccountLimits{
 		AdminPerHour:              share(60, 150),
 		OrganizationPerDay:        share(500, 18),
-		AccountPerHour:            3,
-		AccountPerDay:             10,
+		AccountBurst:              3,
+		AccountEveryMinutes:       20,
 		ResetsPerHour:             resets,
 		OrganizationResetsPerHour: max(1, resets/3),
-		OrganizationResetsPerDay:  share(100, 100),
 	}
 }
 
@@ -132,8 +134,6 @@ type LimitError struct {
 	PerDay     int
 	Limits     AccountLimits
 	RetryAfter time.Duration
-	// Hour: the account's limit an hour reached, rather than a day.
-	Hour bool
 }
 
 // LimitCode names the limit reached.
@@ -151,15 +151,11 @@ func (e *LimitError) Error() string {
 		return fmt.Sprintf("This organization's accounts have been emailed %s invitations and password links in the last 24 hours, the most one organization may; more can be emailed in %s.",
 			thousands(e.Limits.OrganizationPerDay), waitWords(e.RetryAfter))
 	case mailer.LimitAccount:
-		n, in := e.Limits.AccountPerDay, "24 hours"
-		if e.Hour {
-			n, in = e.Limits.AccountPerHour, "hour"
-		}
-		return fmt.Sprintf("This account has been emailed %d password emails in the last %s, the most one account may; more can be emailed in %s.",
-			n, in, waitWords(e.RetryAfter))
+		return fmt.Sprintf("This account has been emailed as many password emails as one account may: %d at once, then one every %d minutes. Another can be emailed in %s.",
+			e.Limits.AccountBurst, e.Limits.AccountEveryMinutes, waitWords(e.RetryAfter))
 	case mailer.LimitOrganizationResets:
-		return fmt.Sprintf("Password resets to this organization's accounts reach their limit (%d an hour, %s a day); more can be sent in %s.",
-			e.Limits.OrganizationResetsPerHour, thousands(e.Limits.OrganizationResetsPerDay), waitWords(e.RetryAfter))
+		return fmt.Sprintf("Password resets to this organization's accounts reach their limit of %d an hour; more can be sent in %s.",
+			e.Limits.OrganizationResetsPerHour, waitWords(e.RetryAfter))
 	case mailer.LimitResets:
 		return fmt.Sprintf("Password resets reach the limit of %d an hour; more can be sent in %s.", e.Limits.ResetsPerHour, waitWords(e.RetryAfter))
 	case mailer.LimitDay:
@@ -238,13 +234,13 @@ type counts struct {
 	// organization's administrators' mail in the last 24 hours.
 	admin, organization         int
 	adminWait, organizationWait float64
-	// accountHour and accountDay: password emails to the account.
-	accountHour, accountDay         int
-	accountHourWait, accountDayWait float64
+	// accountAges: the ages, in seconds, of the password emails to the
+	// account in the last 24 hours, oldest first.
+	accountAges []float64
 	// resetsHour: resets people asked for in the last hour, everywhere;
-	// orgResetsHour and orgResetsDay, to the organization's accounts.
-	resetsHour, orgResetsHour, orgResetsDay             int
-	resetsHourWait, orgResetsHourWait, orgResetsDayWait float64
+	// orgResetsHour, to the organization's accounts.
+	resetsHour, orgResetsHour         int
+	resetsHourWait, orgResetsHourWait float64
 	// waiting: account mail is waiting for room, on some server.
 	waiting bool
 }
@@ -268,16 +264,35 @@ func readCounts(ctx context.Context, tx pgx.Tx, ch charge) (counts, error) {
 			`+n(`true`, `1 minute`)+`,
 			`+n(`kind = 'admin' AND sent_by IS NOT DISTINCT FROM $1`, `1 hour`)+`,
 			`+n(`kind = 'admin' AND organization_id = $2`, `24 hours`)+`,
-			`+n(`account_id = $3`, `1 hour`)+`,
-			`+n(`account_id = $3`, `24 hours`)+`,
 			`+n(`kind = 'reset'`, `1 hour`)+`,
 			`+n(`kind = 'reset' AND organization_id IS NOT DISTINCT FROM $2`, `1 hour`)+`,
-			`+n(`kind = 'reset' AND organization_id IS NOT DISTINCT FROM $2`, `24 hours`)+`,
 			EXISTS (SELECT 1 FROM mail_waits WHERE until > clock_timestamp())
-		FROM mail_sends`, ch.admin, ch.organization, ch.account).Scan(&c.day, &c.minute, &c.minuteWait, &c.admin, &c.adminWait,
-		&c.organization, &c.organizationWait, &c.accountHour, &c.accountHourWait, &c.accountDay, &c.accountDayWait,
-		&c.resetsHour, &c.resetsHourWait, &c.orgResetsHour, &c.orgResetsHourWait, &c.orgResetsDay, &c.orgResetsDayWait, &c.waiting)
+		FROM mail_sends`, ch.admin, ch.organization).Scan(&c.day, &c.minute, &c.minuteWait, &c.admin, &c.adminWait,
+		&c.organization, &c.organizationWait, &c.resetsHour, &c.resetsHourWait, &c.orgResetsHour, &c.orgResetsHourWait, &c.waiting)
+	if err != nil || ch.account == nil {
+		return c, err
+	}
+	rows, err := tx.Query(ctx, `SELECT extract(epoch FROM clock_timestamp() - sent_at)::float8 FROM mail_sends
+		WHERE account_id = $1 AND sent_at > clock_timestamp() - interval '24 hours' ORDER BY sent_at`, ch.account)
+	if err != nil {
+		return c, err
+	}
+	c.accountAges, err = pgx.CollectRows(rows, pgx.RowTo[float64])
 	return c, err
+}
+
+// accountRoomIn is how long, in seconds, until an account whose password
+// emails are ages old (oldest first) may be sent another, at burst at
+// once and then one every every seconds; 0 when it may now. It is a token
+// bucket, worked out from the emails themselves (the generic cell rate
+// algorithm): each email moves the time the bucket is full again on by
+// every, from then or from when it was sent, whichever is later.
+func accountRoomIn(ages []float64, burst int, every float64) float64 {
+	full := math.Inf(-1) // seconds from now; negative is past
+	for _, a := range ages {
+		full = max(full, -a) + every
+	}
+	return max(0, full-float64(burst-1)*every)
 }
 
 // refusal says which limit stops a message, nil when none does.
@@ -289,18 +304,14 @@ func (c counts) refusal(ch charge) *LimitError {
 		return le
 	}
 	admin, reset := ch.kind == kindAdmin, ch.kind == kindReset
+	accountIn := accountRoomIn(c.accountAges, l.AccountBurst, float64(l.AccountEveryMinutes*60))
 	switch {
 	case admin && c.admin >= l.AdminPerHour:
 		return refuse(mailer.LimitAdmin, c.adminWait)
-	case ch.account != nil && c.accountHour >= l.AccountPerHour:
-		le.Hour = true
-		return refuse(mailer.LimitAccount, c.accountHourWait)
-	case ch.account != nil && c.accountDay >= l.AccountPerDay:
-		return refuse(mailer.LimitAccount, c.accountDayWait)
+	case ch.account != nil && accountIn > 0:
+		return refuse(mailer.LimitAccount, accountIn)
 	case admin && ch.organization != nil && c.organization >= l.OrganizationPerDay:
 		return refuse(mailer.LimitOrganization, c.organizationWait)
-	case reset && c.orgResetsDay >= l.OrganizationResetsPerDay:
-		return refuse(mailer.LimitOrganizationResets, c.orgResetsDayWait)
 	case reset && c.orgResetsHour >= l.OrganizationResetsPerHour:
 		return refuse(mailer.LimitOrganizationResets, c.orgResetsHourWait)
 	case reset && c.resetsHour >= l.ResetsPerHour:
@@ -368,6 +379,73 @@ func (s *Service) Room(ctx context.Context, by mailer.AccountMail) error {
 		return refused
 	}
 	return nil
+}
+
+// Reserve takes room under the limits for one message of account mail
+// counted against by, as SendAccountMail would, before the message is
+// made: a password reset's link is made only when it can be sent, since
+// each new one ends the last. A limit that stops it is a *LimitError. The
+// reservation is sent, or released, once.
+func (s *Service) Reserve(ctx context.Context, by mailer.AccountMail) (mailer.Reservation, error) {
+	id, err := s.take(ctx, accountCharge(by))
+	if err != nil {
+		return nil, err
+	}
+	return &reservation{s: s, id: id}, nil
+}
+
+// reservation is room under the limits taken for one message.
+type reservation struct {
+	s    *Service
+	id   int64
+	mu   sync.Mutex
+	used bool
+}
+
+// claim uses the reservation, once.
+func (r *reservation) claim() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	used := r.used
+	r.used = true
+	return !used
+}
+
+// Send sends msg to one person through the mail server in force, in the
+// room reserved; the room is given back when the mail server does not
+// take it.
+func (r *reservation) Send(ctx context.Context, to string, msg mailer.Message) error {
+	if !r.claim() {
+		return errors.New("mailserver: the room reserved for this message was used")
+	}
+	gave := false
+	defer func() {
+		if !gave {
+			r.s.untake(r.id)
+		}
+	}()
+	cfg, err := r.s.InForce(ctx)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		return ErrNoMailServer
+	}
+	m, err := mailer.New(*cfg)
+	if err != nil {
+		return err
+	}
+	return mailer.FirstError(m.Send(ctx, msg, []string{to}, func(context.Context) (func(), error) {
+		gave = true
+		return func() { r.s.untake(r.id) }, nil
+	}))
+}
+
+// Release gives the room back, unless the message was sent.
+func (r *reservation) Release() {
+	if r.claim() {
+		r.s.untake(r.id)
+	}
 }
 
 // wait records account mail waiting for room for up to d, so that other

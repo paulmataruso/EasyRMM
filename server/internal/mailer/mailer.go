@@ -175,6 +175,14 @@ type Limited interface {
 	RetryIn() time.Duration
 }
 
+// Reservation is room under the limits taken for one message of account
+// mail before it is made: Send sends it in that room, or Release gives
+// the room back. Either is done once; the other then does nothing.
+type Reservation interface {
+	Send(ctx context.Context, to string, msg Message) error
+	Release()
+}
+
 // The limits a message can reach, as Limited names them.
 const (
 	// LimitAdmin: the administrator's own, an hour.
@@ -185,7 +193,7 @@ const (
 	// LimitAccount: password emails to one account, whoever asks.
 	LimitAccount = "account_mail_limited"
 	// LimitOrganizationResets: password resets people ask for, to one
-	// organization's accounts.
+	// organization's accounts, an hour.
 	LimitOrganizationResets = "organization_resets_limited"
 	// LimitResets: password resets people ask for, on the whole platform,
 	// an hour.

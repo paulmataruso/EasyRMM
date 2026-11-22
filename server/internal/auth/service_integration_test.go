@@ -39,7 +39,9 @@ type env struct {
 	hasher *auth.Hasher
 	sealer *secrets.Sealer
 	cfg    auth.Config
-	now    time.Time
+	// dsn connects to the test database as the superuser.
+	dsn string
+	now time.Time
 	// mail sends through mp, a real SMTP server (Mailpit).
 	mail *mailserver.Service
 	mp   *testmail.Mailpit
@@ -74,7 +76,7 @@ func newEnv(t *testing.T, mutate func(*auth.Config)) *env {
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	e := &env{db: inst.DB, audit: audit.New(inst.DB, nil), now: time.Now(), sealer: sealer, cfg: cfg}
+	e := &env{db: inst.DB, audit: audit.New(inst.DB, nil), now: time.Now(), sealer: sealer, cfg: cfg, dsn: inst.SuperDSN}
 	e.mail, e.mp = newMail(t, inst.DB, e.audit, sealer)
 	e.hasher = auth.NewHasher(auth.Argon2Params{MemoryKiB: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLen: 16, KeyLen: 32}, 4)
 	e.svc = auth.NewService(inst.DB, e.audit, e.hasher, sealer, e.mail, cfg)
