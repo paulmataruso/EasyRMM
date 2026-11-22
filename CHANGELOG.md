@@ -382,9 +382,10 @@ All notable changes to this project are documented here. The format follows
   engine's is removed and Patching → Notifications says why. With several
   servers, one at a time gives it; another whose mail server differs logs
   an error and says so, rather than giving the engine its own in turn.
-  A server whose connection to PostgreSQL died without a word is noticed
-  in about 30 seconds, and another takes over; a pooler in transaction
-  mode (PgBouncer's) is not supported. Servers compare theirs with a
+  A server that stops gives the work up at once, and another takes over
+  at its next pass; a server whose connection to PostgreSQL died without
+  a word is noticed in about 30 seconds, and another takes over; a
+  pooler in transaction mode (PgBouncer's) is not supported. Servers compare theirs with a
   keyed HMAC of the one given, from which the password cannot be
   guessed, and change the engine's mail settings one at a time. The
   webhook switch no longer fails when EasyRMM's mail server cannot be

@@ -155,7 +155,7 @@ What exists, and what it means here:
   `easyrmm-` keys in its check, generates the rules per computer (a watch
   on `sshd_config.d` only where it exists), and on undo keeps auditd
   while another `*-easyrmm-*.rules` file exists, after which its record of
-  having installed auditd is gone. ADR-0054 (proposed, being revised)
+  having installed auditd is gone. ADR-0054 (accepted 2026-11-22)
   makes its `audit` module report only and leaves Windows audit policy to
   this feature; as decided in its review, it compares against this ADR's
   audit table and builds, in its slice W1, the one reader of who owns a

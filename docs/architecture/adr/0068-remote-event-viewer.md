@@ -44,7 +44,7 @@
     definer function that builds a query's next page from its stored
     input and result, and in slice 5 a file a run may hand back.
   * [ADR-0054](0054-hardening-windows-computers-and-servers.md#the-job)
-    (proposed): "one change at a time on a device" covers
+    (accepted 2026-11-22): "one change at a time on a device" covers
     `eventlog_manage`.
 * Builds on: [ADR-0007](0007-hash-chained-audit-log.md) (the audit log),
   [ADR-0009](0009-agent-protocol.md#evolving-the-protocol-amended-2026-11-21)
