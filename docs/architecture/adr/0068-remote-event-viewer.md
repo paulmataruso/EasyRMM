@@ -1,9 +1,20 @@
 # ADR-0068: Remote Windows event viewer and event log management
 
-* Status: Proposed (2026-11-21). Not implemented.
+* Status: Accepted (2026-11-21, after an independent review). Not
+  implemented.
 * Nothing here was decided by the owner. Everything marked as decided was
   decided in review, and the owner can overturn it; the
   [owner questions](#owner-questions) list what is the owner's.
+* Revised after an independent review (2026-11-21): the Security log's
+  settings take the permission that clears it and only *overwrite as
+  needed*, since a full Security log can stop a computer; slice 5's
+  check on the server is bounded and runs in the background; Technicians'
+  on-demand view of sign-in and process events is stated as a change to
+  ADR-0060's privacy terms; cancelling reaches the query inside the
+  child; the cursor notices a cleared log; the server reads each event
+  from its XML and drops a text match it had to redact; the sensitive
+  list gains three fields; one size budget per encoded line; clear
+  backups and exports are sized and capped. Each is in its section.
 * Amends, each gaining an *Amended by ADR-0068* line when this is
   implemented:
   * [ADR-0017](0017-scripts-and-jobs.md): the job kinds
@@ -11,19 +22,27 @@
     `eventlog_export`.
   * [ADR-0060](0060-collecting-logs.md) (proposed): its classification of
     sensitive fields and `log.view_sensitive` are built here first, as
-    the plan asks; the list gains PowerShell's module logging fields and
-    the *Windows PowerShell* log ([Sensitive data](#sensitive-data)); its
-    Logs tab gains *On the computer*; a log cleared through EasyRMM still
-    opens its *Log cleared* alert ([Clearing a log](#clearing-a-log)).
+    the plan asks; the list gains PowerShell's module logging fields, the
+    *Windows PowerShell* log and three fields of other providers
+    ([Sensitive data](#sensitive-data)); `log.view_sensitive` also opens
+    the Security log on demand, beside command lines and scripts; its
+    [Privacy](0060-collecting-logs.md#privacy) section and
+    [PRIVACY.md](../../../PRIVACY.md) say that Technicians see one
+    computer's sign-in and process events outside the Security log on
+    demand, without sensitive fields
+    ([Permissions](#permissions)); its Logs tab gains *On the computer*;
+    a log cleared through EasyRMM still opens its *Log cleared* alert
+    ([Clearing a log](#clearing-a-log)).
   * [ADR-0063](0063-who-sees-job-output-and-arguments.md): its refusal
     bound counts `eventlog.refused`; a result read asks for
     `log.view_sensitive` as well when the query asked for sensitive
     data, as ADR-0063 foresaw ("The output endpoint would then ask for
     both").
-  * ADR-0067 (the registry editor, accepted on its branch
-    `docs/adr-0067-registry` and not merged, so cited without a link):
-    F2 gains a second permission a kind may require when its input says
-    so, and in slice 5 a file a run may hand back.
+  * ADR-0067 (the registry editor, accepted, pull request #85, not
+    merged when this was written, so cited without a link): F2 gains a
+    second permission a kind may require when its input says so, a
+    definer function that builds a query's next page from its stored
+    input and result, and in slice 5 a file a run may hand back.
   * [ADR-0054](0054-hardening-windows-computers-and-servers.md#the-job)
     (proposed): "one change at a time on a device" covers
     `eventlog_manage`.
@@ -36,7 +55,10 @@
   [ADR-0064](0064-remote-powershell-management.md#older-agents-and-the-poll)
   (the poll's `accepts`; Windows tests as LocalSystem),
   [ADR-0065](0065-hardware-health.md#the-five-states-f1s-rule) (the words
-  for states), ADR-0067's F2 (kinds with an input and a result, the
+  for states),
+  [ADR-0066](0066-customer-documentation-and-assets.md#attachments-and-diagrams)
+  (files kept in PostgreSQL in chunks, downloads recorded first, a limit
+  for the deployment), ADR-0067's F2 (kinds with an input and a result, the
   `builtin` executor, the quick lane), and these proposed ADRs:
   [ADR-0055](0055-lets-encrypt-in-one-step.md#step-up-authentication)
   (step-up), [ADR-0060](0060-collecting-logs.md) (the event model, the
@@ -76,12 +98,14 @@
      run and the text's length rather than the text (ADR-0067's rule).
   8. **Management slices** (channel settings, `.evtx` export, clearing)
      that the plan's slices do not have, from the requirement's title.
-  9. **The sensitive list grows**: PowerShell's module logging (4103) and
-     the *Windows PowerShell* log, which ADR-0060 does not collect by
-     default and which on-demand queries reach.
+  9. **The sensitive list grows**: PowerShell's module logging (4103),
+     the *Windows PowerShell* log, Shell-Core's run-key commands, Sysmon
+     13's registry data and BITS' URLs, which ADR-0060 does not collect
+     by default and which on-demand queries reach.
 
 ## Context
-Each repository claim was checked at `main` `6e977bd`.
+Each repository claim was checked at `main` `b674a7f` (since `6e977bd`,
+only ADR-0066 and the index changed).
 
 ### What exists
 * **No event log feature.** No Go code calls the Event Log API, and no
@@ -317,18 +341,21 @@ first assumed:
 | Executor | `builtin` (`eventlog`) | `builtin` (`eventlog`) | `builtin` (`eventlog`) |
 | Input and result kept | 1 hour (the hourly purge empties them within 2) | `EASYRMM_JOB_OUTPUT_RETENTION` (30 days by default) | the file 24 hours; input and result 1 hour |
 | Job and runs kept | 7 days | `EASYRMM_JOB_RETENTION` (90 days by default) | 7 days |
-| Input and result read by | the person who asked, holding `eventlog.view` and `job.view_sensitive` at the device's site, and `log.view_sensitive` in its organization when the query asked for sensitive data | holders of `eventlog.manage` and `job.view_sensitive` at the device's site | the person who asked, holding `eventlog.view`, `job.view_sensitive` and `log.view_sensitive` |
+| Input and result read by | the person who asked, holding `eventlog.view` and `job.view_sensitive` at the device's site, and `log.view_sensitive` in its organization when the query asked for sensitive data | holders of `eventlog.manage` (for the Security log, `eventlog.clear_security`) and `job.view_sensitive` at the device's site | the person who asked, holding `eventlog.view` and `job.view_sensitive` at the device's site, and `log.view_sensitive` for a `.evtx` file or JSON lines that asked for sensitive data |
 | Each read recorded | no: only the asker reads it, and the query's record covers it | no: it holds settings, never events | the download, `eventlog.export` |
 | Waits for an offline device | 2 minutes | 15 minutes | 15 minutes |
 | Timeout and lane | 60 seconds, quick | `configure` and `undo` 60 seconds, quick; `clear` 10 minutes, the normal lane | 10 minutes, the normal lane |
 | In the Jobs list | under its filter only | under its filter only | under its filter only |
 | Change lock | no | yes | no |
 
-* **One query open per person and device, two per device.** A new filter,
-  page or refresh from the same person cancels their run still open on
-  that device (ADR-0054's runs the server cancels, which F2 extends); a
-  third open query on one device is refused: "two searches are already
-  running on PC-12".
+* **One query open per person and device, two per device, one running.**
+  A new filter, page or refresh from the same person cancels their run
+  still open on that device (ADR-0054's runs the server cancels, which F2
+  extends); a third open query on one device is refused: "two searches
+  are already open on PC-12". The claim delivers an event log run to
+  a device only while none is running there, so at most one of the quick
+  lane's two slots holds an event log query, and registry reads are not
+  starved by searches.
 * **The Jobs list** gains the filter *Event logs*; without it these jobs
   are left out, since each page is a job. Under `job.view` they show the
   device, who, when, the operation and the status; no channel, filter or
@@ -352,8 +379,19 @@ first assumed:
   (`exec_windows.go:23`), with no cgo. Each function's binding lands with
   the slice that calls it. ADR-0060's collector reuses it.
 * **The query runs on one locked thread** (`runtime.LockOSThread`), since
-  a query handle belongs to the thread that made it; a watchdog
-  goroutine calls `EvtCancel` at the time limit.
+  a query handle belongs to the thread that made it.
+* **Cancelling reaches the query, not only the process.** The agent
+  starts the child with a pipe on its standard input and closes it to
+  cancel (a person's new filter, a server cancel, the run's timeout).
+  Inside the child a watchdog goroutine waits for that end of input or
+  for its own 45-second limit, then calls `EvtCancel` on the handles the
+  query thread is using, as Microsoft describes (the operation returns
+  `ERROR_CANCELLED`); the query thread writes the lines it has and its
+  last line, and the child exits. The agent waits 5 seconds after
+  closing the pipe before the job object ends the child, so that the
+  Event Log service is told to stop rather than left scanning for a
+  client that is gone. Whether the service stops work for a killed
+  client is measured ([Testing](#testing)).
 
 ### Channels
 The `channels` operation lists every channel (`EvtOpenChannelEnum`), up to
@@ -367,14 +405,30 @@ The `channels` operation lists every channel (`EvtOpenChannelEnum`), up to
   console can say how far back the computer's history goes;
 * *Unavailable: access denied* where Windows refuses (`ERROR_ACCESS_DENIED`).
 
+With the list comes the computer's `CrashOnAuditFail` value, read from
+`HKLM\SYSTEM\CurrentControlSet\Control\Lsa`, shown on the Security log's
+page and used by [Channel settings](#channel-settings): with 1, a
+computer whose Security log fills and cannot overwrite stops with
+`STOP 0xC0000244`, and the value becomes 2, after which "only
+administrators may log on" (Microsoft's pages on the policy and on the
+value, [References](#references)).
+
 The console groups them: *Windows Logs* (Application, Security, Setup,
 System, ForwardedEvents), then the others by provider, split at the `/`
 of a name such as `Company-Product-Component/Operational` (the naming
 convention Microsoft's channel schema describes); Analytic and Debug
-channels behind *Show analytic and debug logs*. The Security log is listed for everyone, marked *needs permission
-to see the Security log* for those without `log.view_sensitive`. The list
-is kept by the console for its session and refreshed on request; it costs
-about a second of the run (to be measured).
+channels behind *Show analytic and debug logs*. The Security log is
+listed for everyone, marked *needs permission to see the Security log*
+for those without `log.view_sensitive`. The list is kept by the console
+for its session and refreshed on request; it costs about a second of the
+run (to be measured).
+
+**Channel names are compared ignoring case**, by the server and the
+agent (Unicode simple case folding), and a query's channels are
+deduplicated the same way before it is built, so that `SECURITY` or
+`security` is the Security log for every rule and no channel is read
+twice; whether Windows itself opens a channel by any case is to be
+confirmed, and does not matter once both checks fold case.
 
 ### Queries
 
@@ -385,7 +439,7 @@ The server builds the query from typed filters; nobody sends XPath
 
 | Filter | Into | Limits |
 |---|---|---|
-| Logs | one query per channel | 1 to 10 channels, names checked against Windows' rules |
+| Logs | one query per channel | 1 to 10 channels, names checked against Windows' rules, compared and deduplicated ignoring case; the Security log and its archives (`Archive-Security-*`) refused by the server before anything is sent, without `log.view_sensitive` |
 | Level | `Level=1 or Level=2 …`; *Information* is 0 or 4, as Event Viewer counts it (to be confirmed) | the six levels |
 | Event IDs | `EventID=…`, ranges as `EventID>=a and EventID<=b`; exclusions in a `Suppress` | up to 32 IDs or ranges to include and 32 to exclude |
 | Provider | `Provider[@Name='…']` | up to 16 |
@@ -446,12 +500,29 @@ merged, and shown oldest first.
 * **A page** holds up to 100 events, and stops earlier at 1.75 MiB of
   event lines, so that the whole result stays under F2's 2 MiB.
 * **The cursor** is, per channel, the last record number returned; the
-  next page adds `EventRecordID < n` for that channel. Record numbers only
-  grow within a log, so events written while the person reads appear at
+  next page adds `EventRecordID < n` for that channel (`> n` for an
+  Analytic or Debug channel, read oldest first). If record numbers only
+  grow within a log (to be confirmed: Microsoft's pages describe the
+  field, not its order), events written while the person reads appear at
   the next refresh, not in the middle of the pages, and none repeats.
-  The cursor is the server's: a page's input carries the query's ID, and
-  the server checks it is a query of the same person on the same device,
-  made within the hour, with the same filters.
+* **A cleared or wrapped log is noticed.** With each channel's position
+  the cursor keeps the log's creation time and its oldest record number
+  (`EvtGetLogInfo`'s `EvtLogCreationTime` and
+  `EvtLogOldestRecordNumber`), read when the first page ran. When the
+  creation time has changed, the next page says *This log was cleared
+  since the first page* and offers to start again; when the oldest
+  record has passed the cursor, *Events after T were overwritten since
+  the first page*. Analytic and Debug channels, for which Windows gives
+  no oldest record, are checked by creation time where Windows gives it,
+  and otherwise say they cannot tell.
+* **The cursor is the server's.** The console names the previous page's
+  run, never a cursor. A definer function, owned by `easyrmm_owner` with
+  `search_path = pg_catalog, public, pg_temp` like ADR-0067's, checks
+  that the caller asked for that run, on the same device, within the
+  hour, and returns its stored filters and the cursor from its stored
+  result; the server builds the next page's input from those. The
+  filters are therefore the same by construction, and `easyrmm_app` gains
+  no grant on the input or the result.
 * **Refresh** runs the first page again and shows *Read at* with the
   computer's clock.
 
@@ -464,17 +535,34 @@ bound stopped it:
 | Events returned | 100 per page | the page is full; *More* continues |
 | Bytes | 1.75 MiB of event lines (F2's result is at most 2 MiB) | the page stops with what fits |
 | Events read | 100,000 per page (1,000,000 per summary) | *Searched N events back to T; more may match* |
-| Time | the builtin stops itself at 45 seconds of the run's 60 (30 for `channels`, `event` and `provider`), cancelling `EvtNext` with `EvtCancel` | as above |
+| Time | the builtin stops itself at 45 seconds of the run's 60 (30 for `channels`, `event` and `provider`), cancelling with `EvtCancel` | as above |
 | Memory | F2's 512 MiB job-object limit; batches of 32 handles closed after each is written; at most 256 providers' metadata cached | the child is stopped by the job object, and the lines written so far are sent |
-| One event | message 4,096 characters and each value 1,024 in a page; the `event` operation gives message up to 256 KiB, values up to 64 KiB, XML up to 1 MiB | the value is cut and marked |
+| One event | its line as encoded (below): 32 KiB in a page, 1.5 MiB from the `event` operation; at most 256 values | the event is cut and marked, and the cursor moves past it |
+
+**One budget per event, on the encoded line.** The builtin writes each
+line with Go's JSON encoder with `SetEscapeHTML(false)`, so that `<`,
+`>` and `&` in the XML are not written as six-byte escapes, and measures
+the line as encoded, the base64 of `raw` values ([Fields](#fields))
+included, before writing it. An event keeps at most 256 values; those
+after are dropped and counted. A line over its budget is cut in this
+order until it fits: the message to 4,096 characters, then each value to
+1,024, each cut made alike in the fields and in the XML and marked in
+both, so that the server's comparison still holds; last, the event is
+sent as its `System` element alone, with no data or message, marked *too
+large for the list: open it*. The `event` operation does the same at
+1.5 MiB, cutting the message at 256 KiB and values at 64 KiB, and ends
+at *too large to show here*, offering the `.evtx` export to those who
+may (slice 5). Every cut is marked, and an event however large takes one
+line and moves the cursor: it never stops a page or holds it on the
+same event.
 
 **The Event Log service's own work is outside the job object.** Windows
 filters events in the Event Log service, so a query over a large log costs
 that service's processor time until the page fills, the log ends or the
 builtin cancels; the job object does not count it. Bounded by the time
-limit, one query per person and device, and two per device; slice 1
-measures it on a log filled to 256 MiB on the runners
-([Testing](#testing)).
+limit, the cancel that reaches the query, one query running per device
+and two open; slice 1 measures it on a log filled to 256 MiB on the
+runners ([Testing](#testing)).
 
 ### Events
 
@@ -497,13 +585,19 @@ Each event in a page carries:
   unnamed values in order; `UserData` flattened to paths and values;
   binary data as hexadecimal;
 * the message, or why there is none (below);
-* the names of fields withheld ([Sensitive data](#sensitive-data)).
+* the names of fields withheld ([Sensitive data](#sensitive-data));
+* **its XML** as Windows renders it (`EvtRenderEventXml`), with only the
+  values the caller may not see replaced by a fixed marker. The fields
+  above are the builtin's reading of that XML, and the server reads the
+  XML again for itself ([Where it is enforced](#where-it-is-enforced)).
 
-Strings with NUL characters or lone surrogates go as ADR-0067's results
-carry them: the displayed text with replacement characters, and the exact
-UTF-16 bytes beside it, so that nothing reaches `jsonb` that it refuses
-and nothing is silently changed. The `event` operation adds the XML as
-Windows renders it (`EvtRenderEventXml`), unchanged.
+**NUL characters and lone surrogates** follow ADR-0067's rule: PostgreSQL's
+`jsonb` refuses `\u0000` and lone surrogates, so a string holding either
+is sent as `raw` (base64 of its UTF-16 bytes) with a `display` text in
+which each such character is a visible escape, and a flag; it is shown
+read-only, copied and exported as the display text, and the server's
+decoder refuses a result with a `\u0000` or lone surrogate escape
+anywhere.
 
 #### Messages
 * **`EvtFormatMessage`** with the provider's metadata, opened once per
@@ -573,29 +667,49 @@ confirm ([Owner questions](#owner-questions)).*
   `ScriptBlockText` (4104); `TaskContent` and `TaskContentNew` (4698 to
   4702); `ImagePath` (7045); `ServiceFileName` (4697); 5861's `CONSUMER`
   and `PossibleCause`; Sysmon 19's `Query` and 20's `Destination`.
+* **Matched on leaf names**, at any depth: an `EventData/Data` element by
+  its `Name`, and any element under `UserData` by its own name, since some
+  events keep their values there (5861's `CONSUMER` is in `UserData`).
 * **And what repeats them**: an event with a sensitive field is shown
-  without its message and without its XML, since both repeat the field,
-  as ADR-0060 keeps it without its message.
+  without its message, and its XML with those values and its
+  `RenderingInfo` message replaced by the marker, since the message
+  repeats the field, as ADR-0060 keeps such an event without its
+  message.
 
 Without the permission, each such field shows *hidden: needs permission to
-see command lines and scripts*, the message and XML *hidden* likewise;
-the event's other fields are shown.
+see command lines and scripts*, the message *hidden* likewise; the
+event's other fields, and its XML with the marker, are shown.
 
 #### Fields added to the list
-On demand reaches channels ADR-0060 does not collect by default. Two are
-known to hold command lines and parameter values, so the list gains, for
-every user of it (ADR-0060 included):
+On demand reaches channels ADR-0060 does not collect by default, some
+known to hold command lines, parameter values and addresses with tokens.
+The list gains, for every user of it (ADR-0060 included); each field's
+name, and what each event records, is to be confirmed on the runners or
+ADR-0054's machines before the slice ships:
 
 * **PowerShell module logging, 4103**, in the PowerShell Operational logs:
-  its `Payload` and `ContextInfo` fields (field names to be confirmed on
-  the runners), which hold the cmdlets' parameters and the host's command
-  line;
+  its `Payload` and `ContextInfo` fields, which hold the cmdlets'
+  parameters and the host's command line;
 * **the *Windows PowerShell* log**, whose classic events (400, 403, 600,
-  800) carry the host's command line in unnamed values (to be confirmed):
-  every value of every event in it.
+  800) carry the host's command line in unnamed values: every value of
+  every event in it;
+* **Shell-Core 9707 and 9708** (the Shell-Core Operational log's run-key
+  commands): `Command`;
+* **Sysmon 13** (a registry value set): `Details`, the value's data;
+* **the BITS client's** Operational log: `url`, which can carry a
+  download's token.
 
-The list only ever grows by review, and a custom source can mark more
-fields, never fewer (ADR-0060's rule).
+The last three names are common words that other providers use for
+harmless values, so they match only within their provider (Shell-Core,
+Sysmon, the BITS client); ADR-0060's names match in every provider. The
+list only ever grows by review, and a custom source can mark more fields,
+never fewer (ADR-0060's rule).
+
+**The classification is not a boundary.** It keeps known command lines,
+scripts and URLs out of casual sight, in lists, exports and copies, and
+out of bulk reading; it cannot find every secret an application writes,
+and a Technician can read any log through the terminal
+([What this does not fix](#what-this-does-not-fix)).
 
 #### Where it is enforced
 * **The input says** whether the person asked for sensitive data:
@@ -604,16 +718,34 @@ fields, never fewer (ADR-0060's rule).
   Security log or *Show command lines and scripts*. It is off by
   default for those who may.
 * **On the computer**, with `sensitive: false`, the builtin refuses the
-  Security channel, drops every event whose channel is Security (from
-  ForwardedEvents, say), and writes sensitive fields, and the message and
-  XML of their events, as withheld; the text match skips them. Sensitive
-  values never reach the result file.
-* **On the server**, with its own rules: a result for an input without
-  `sensitive` that holds a Security event fails the run and is recorded as
-  `eventlog.refused_on_device`; sensitive values, messages and XML the
-  server's list classifies, which an agent of an older release let
-  through, are removed before the result is stored, and counted on the
-  run. A result is stored only after this check.
+  Security channel and its archives (`Archive-Security-*`), drops every
+  event whose channel is Security (from ForwardedEvents, say), and writes
+  sensitive values, and the message of their events, as withheld, in the
+  fields and in the XML; the text match skips them. Sensitive values
+  never reach the result file.
+* **On the server**, with its own rules, reading each event from its XML:
+  * **the XML is parsed** with `encoding/xml` by `internal/eventrules`;
+    the channel, the IDs, the time and the data's names and values are
+    taken from it, and the fields the builtin reported must equal them,
+    or the run fails and is recorded as `eventlog.refused_on_device`. An
+    event cut to its `System` element is checked on that element and
+    carries no data;
+  * **a Security event** in a result for an input without `sensitive`, or
+    an event from a log, channel or time the input did not ask for,
+    fails the run the same way;
+  * **values the server's list classifies** and an older agent's list
+    let through are replaced by the marker, in the fields and the XML,
+    with the event's message, before the result is stored, and counted on
+    the run;
+  * **on a text query, an event the server had to redact is dropped**,
+    since the text may have matched what was redacted, and its presence
+    alone would say so; the page says how many were dropped.
+
+  A result is stored only after this check.
+* **What the server's check cannot catch.** It catches an agent with
+  older rules or a bug. An agent that is compromised runs as SYSTEM on the
+  computer, can read every log there itself, and can write XML that
+  passes; the server's check is not a defence against it.
 * **When it is read**, the definer function asks for `log.view_sensitive`
   again if the input had `sensitive: true`, so someone who lost the
   permission within the hour no longer reads it (an amendment of
@@ -628,7 +760,9 @@ In ADR-0065's words, for each page and channel:
 |---|---|---|
 | Events returned | *Reported* | the events |
 | The whole range searched, nothing matched | *Reported* | *No events match from T1 to T2* |
+| The same, but the log's oldest event is after T1 | *Reported* | *No events match; this log begins at T_oldest*, so nothing before it can be known from the computer |
 | A bound reached before the range's start | *Reported*, incomplete | *Searched N events back to T; more may match* and *Continue* |
+| The log cleared, or overwritten past the cursor, since the first page | *Reported*, incomplete | *This log was cleared since the first page*, or *events after T were overwritten*, and *Start again* |
 | The channel is not on the computer (`ERROR_EVT_CHANNEL_NOT_FOUND`) | *Not found* | *No log named X on PC-12* |
 | An event asked for by its record is no longer there | *Not found* | *This event is no longer in the log: it was overwritten or cleared* |
 | Windows refuses access (`ERROR_ACCESS_DENIED`) | *Unavailable* | *Access denied to X* |
@@ -642,7 +776,10 @@ In ADR-0065's words, for each page and channel:
 
 This is the requirement's "distinguish between events that could not be
 retrieved and events that do not exist": *No events match* is said only
-when the whole range was searched.
+when the whole range was searched, and with the log's first event when
+the log does not reach back to the range's start. An Analytic or Debug
+channel, whose oldest event Windows does not report, says *the log's
+start is unknown*.
 
 ### Permissions
 *Decided in review.*
@@ -651,8 +788,8 @@ when the whole range was searched.
 |---|---|---|---|
 | `eventlog.view` | the Logs tab, every channel but Security, without sensitive fields | Technicians and above, at their sites | 1 |
 | `log.view_sensitive` | ADR-0060's: the Security log and sensitive fields, in this mode and in ADR-0060's | Organization Administrators and above, from organization-wide grants only | 1 |
-| `eventlog.manage` | channel settings, and clearing any log but Security | Site Administrators and above, at their sites | 4 |
-| `eventlog.clear_security` | clearing the Security log | Organization Administrators and above, from organization-wide grants only | 6 |
+| `eventlog.manage` | settings of every channel but Security, and clearing them | Site Administrators and above, at their sites | 4 |
+| `eventlog.clear_security` | clearing the Security log, and any change to its settings (size, retention, archiving) | Organization Administrators and above, from organization-wide grants only | 4 (settings), 6 (clearing) |
 
 * **Reading a result** needs `job.view_sensitive` as well, by F2's rule.
 * **Organization-wide only**: `log.view_sensitive` and
@@ -661,13 +798,36 @@ when the whole range was searched.
 * **Why Technicians may query.** A Technician holds `device.terminal` at
   the same sites (`rbac.go:145-148`), a SYSTEM shell from which every log
   can be read; the viewer adds structure, bounds and a record of each
-  query. ADR-0060's `log.view` is for fleet search and history and stays
-  at Site Administrators, so on-demand queries get a permission of their
-  own rather than lowering it (plan).
+  query. On-demand queries get a permission of their own (plan).
+* **What that gives Technicians that ADR-0060 keeps for `log.view`.**
+  ADR-0060 puts sign-in and process events behind `log.view` (Site
+  Administrators and above) in its store. Outside the Security log, such
+  events are in other channels: remote desktop sign-ins in the Terminal
+  Services logs, process starts in Sysmon's. On demand, a Technician sees
+  them for one computer at a time, without sensitive fields, as they could
+  through the terminal. That is a widening of who sees them through the
+  console, not only through a shell, and it is stated as such: ADR-0060's
+  [Privacy](0060-collecting-logs.md#privacy) section and
+  [PRIVACY.md](../../../PRIVACY.md) gain it in slice 1 (*On demand,
+  Technicians and above see one computer's events, sign-ins and process
+  starts outside the Security log included, without command lines and
+  scripts; each query is recorded*), and the owner is asked
+  ([Owner questions](#owner-questions)). What stays at `log.view` is
+  ADR-0060's: search across devices and sites, and history after a
+  computer's own log has moved on or the computer is gone.
+* **One tab, two answers** (slice 3): a Technician holding `eventlog.view`
+  but not `log.view` sees an event under *On the computer* and not under
+  *Collected*. The tab says so (*Collected events need permission to see
+  sign-in and process events*) rather than showing an empty list; the
+  owner question covers it.
 * **Why the Security log needs more than `log.view`.** This mode shows the
   original message and XML that ADR-0060 drops, so it is stricter than
   `log.view` for the Security log (plan, Risks). A Site Administrator
   sees collected sign-ins under ADR-0060 and not the Security log here.
+* **Why the Security log's settings take `eventlog.clear_security`.**
+  Shrinking it or changing how it fills loses its history as surely as
+  clearing it, and the wrong retention can stop the computer
+  ([Channel settings](#channel-settings)).
 * **Why management is not a Technician's.** Reading is what
   troubleshooting needs. Settings change what the computer keeps, and a
   clear destroys the record of other people's actions; neither is a
@@ -684,10 +844,10 @@ when the whole range was searched.
 | Action | When | Details |
 |---|---|---|
 | `eventlog.query` | a query's first page, a `channels`, `event`, `provider`, `summary` or `export` operation is created | device; operation; channels; levels, IDs, providers, tasks, the keywords mask, the time range; the text's length, not the text; whether sensitive data was asked for; the limits |
-| `eventlog.refused` | the server refuses a request (the Security log without the permission, a refused channel name, a cursor not the caller's) | what was asked and the rule, within ADR-0063's bound |
+| `eventlog.refused` | the server refuses a request (the Security log or its archives without the permission, a refused channel name, a previous page not the caller's) | what was asked and the rule, within ADR-0063's bound |
 | `eventlog.refused_on_device` | a result breaks the rules (a Security event when none was allowed, the wrong channel or range) | the rule broken; the system as actor, the person who asked in the details |
 | `eventlog.export` | an export is downloaded (slices 2 and 5) | format, event count, size, whether sensitive, the query's record |
-| `eventlog.configure` | a channel setting is changed or undone (slice 4) | device, channel, setting, value before and after, when the session stepped up, the warnings shown |
+| `eventlog.configure` | a channel setting is changed or undone (slice 4) | device, channel, setting, value before and after, `CrashOnAuditFail` as read, when the session stepped up, the warnings shown, the typed confirmation matched where one is asked |
 | `eventlog.clear` | a clear is created (slice 6) | device, channel, record count and size before, the backup's name, size and SHA-256 once reported, the typed confirmation matched, when the session stepped up |
 
 * **No event data in any record.** The audit log outlives results, is
@@ -717,11 +877,13 @@ when the whole range was searched.
   and writes what it has, with the cursor where it stopped. If it is
   stopped anyway, the lines it wrote are sent (F2).
 * **Leaving.** When the person changes the filter or leaves the tab, their
-  open run is cancelled; the agent calls `EvtCancel`, then the job object
-  ends the child.
+  open run is cancelled: the agent closes the child's input, the child
+  cancels its query with `EvtCancel` and exits, and after 5 seconds the
+  job object ends it if it has not
+  ([One set of rules, one reader](#one-set-of-rules-one-reader)).
 * **Load on the computer.** The child is in the run's job object (memory,
   cancel); the Event Log service's own work is not
-  ([Bounds](#bounds)). Two queries at most per device.
+  ([Bounds](#bounds)). One query running per device, two open.
 
 ### The console
 *Decided in review.*
@@ -776,10 +938,21 @@ Slice 2. *Decided in review.*
 * **Archived logs**: the `Archive-<channel>-<timestamp>.evtx` files
   auto-backup writes in `%windir%\System32\winevt\Logs` are listed with
   their channel and can be searched like it, through `EvtQueryFilePath`.
-  Only those names in that folder: a query never names another path.
+  Only those names in that folder: a query never names another path. An
+  archive belongs to the channel its name gives, compared ignoring case,
+  so `Archive-Security-*` is refused by the server before anything is
+  sent, and by the builtin again, to a caller without
+  `log.view_sensitive`.
 * **Saved searches**: a person's own filters with a name, up to 50 each,
   in a table under row-level security by user; never results. Shared
   ones are the presets; others are not built until asked.
+* **A saved search never keeps the text.** It keeps every other filter
+  and that it had text, and the text is typed again each time it is
+  run. The text is what a person hunts for: a user's name, an address,
+  sometimes a password seen in a log. A saved search lives until it is
+  deleted, while a query's text lives an hour with its result and is
+  recorded only as a length; keeping it for an hour instead would make
+  a saved search forget itself, which is no saving.
 
 ### Export
 *Decided in review.*
@@ -787,37 +960,70 @@ Slice 2. *Decided in review.*
 * **Slice 2, CSV and JSON lines**, of the selected events or of a filter,
   built by the server from results it holds and checked:
   * **selected events**, from the person's own result, within its hour;
-  * **a filter**, through an `export` operation that writes compact events
-    (fields, data and the message cut to 1,024 characters, no XML) up to
-    F2's 2 MiB: a few thousand events, and the file says where it stopped
+  * **a filter**, through an `export` operation that writes compact
+    events, a page's lines with each held to 8 KiB as encoded (cut in
+    the page's order, [Bounds](#bounds)), up to F2's 2 MiB: a few
+    hundred to a few thousand events, and the file says where it stopped
     and offers the next part.
   CSV cells beginning with `=`, `+`, `-`, `@`, a tab or a carriage return
   get a leading `'`, as ADR-0060's exports do. Only what the person may
   see; recorded as `eventlog.export`.
-* **Slice 5, files**: F2 gains a file a run hands back, for `.evtx` and for
-  large exports.
+* **Slice 5, files**: F2 gains a file a run hands back, for `.evtx`, for
+  large exports and for a clear's backup.
+  * **Sized before it is made.** The builtin reads the log's size
+    (`EvtGetLogInfo`) and the free space where it will write, and stops
+    with *the export would need N; narrow the time range* or *not enough
+    free space on C:* before exporting anything; it measures the file
+    again before uploading.
   * **The capability** `job.files`. The builtin writes the file in the
-    run's private folder; the agent compresses it with gzip and uploads it
-    after the run, in signed requests of 1 MiB to a new agent endpoint,
-    with the SHA-256 of the whole in the result.
+    run's private folder; the agent compresses it and uploads it after
+    the run, in signed requests of 1 MiB to a new agent endpoint, each
+    stored by one short transaction in a staging table, with the
+    SHA-256 of the whole in the result.
   * **Stored in PostgreSQL**, in rows of 1 MiB under row-level security,
     as signed builds are kept as `bytea`
     (`server/migrations/00026_signed_agent_builds.sql:19`) and as
-    ADR-0066 (accepted, not merged) keeps attachments: one place to back
-    up and restore.
-  * **At most 64 MiB compressed** per file; the builtin measures before
-    uploading and stops with *the export would be N; narrow the time
-    range*. One export at a time per device, three per person. Kept 24
-    hours, then purged.
+    [ADR-0066](0066-customer-documentation-and-assets.md#attachments-and-diagrams)
+    keeps attachments: one place to back up and restore.
+  * **At most 64 MiB compressed** per file. One export at a time per
+    device, three per person. Kept 24 hours, then purged.
+  * **A limit for the deployment**, as ADR-0066 has for attachments: the
+    files kept and staged together at most 10 GiB by default, set by
+    Super Administrators (`settings.manage`); a notice at 80% (ADR-0053),
+    and at 100% new exports and backup uploads are refused
+    (`409 storage_full`) with the reason shown. The backup guide counts
+    them beside attachments.
   * **`.evtx`**: `EvtExportLog` with the query into a new file, then
     `EvtArchiveExportedLog` so that the messages travel with it, both
-    packed in one `.zip`. A `.evtx` cannot be masked, so every `.evtx`
-    needs `log.view_sensitive` and step-up.
-  * **JSON lines of up to 100,000 events** (ADR-0060's export bound), which
-    the server decompresses, checks line by line with its rules as it
-    checks a result, and stores again; CSV made from it on download.
-  * **Downloads** as ADR-0066 serves attachments: as a download only,
-    recorded first.
+    packed by the agent in one `.zip`. If the Event Log service, not
+    the builtin, writes the exported file (slice 6's test finds out for
+    clears), it is exported into the backup folder below and moved. The
+    server checks its size and SHA-256 and never unpacks it. A `.evtx`
+    cannot be masked, so every `.evtx` needs `log.view_sensitive` and
+    step-up.
+  * **JSON lines of up to 100,000 events** (ADR-0060's export bound),
+    gzip-compressed, which the server checks line by line with its rules
+    as it checks a result before anyone may download it:
+    * **bounded**: at most 100,000 lines and 100,000 × 8 KiB of
+      decompressed bytes (about 781 MiB); past either, or at a line over
+      8 KiB, the check stops, the file is refused, its staged chunks are
+      deleted and the run says why;
+    * **in the background**: a worker in the server reads the staged
+      chunks and writes the checked, compressed output one chunk of
+      1 MiB per short transaction, holding no transaction while it
+      decompresses or checks; the file becomes downloadable in a last
+      short transaction that writes its size and SHA-256. A server that
+      stops midway starts the file's check again;
+    * **records apart**: any audit record the check writes
+      (`eventlog.refused_on_device`) is appended in its own short
+      transaction, never inside a long one, as ADR-0066 appends a
+      download's record before streaming.
+
+    CSV is made from it on download.
+  * **Downloads** as ADR-0066 serves attachments: as a download only, the
+    `eventlog.export` record first in its own short transaction, then
+    chunks each read in a short transaction of their own, with the
+    SHA-256 checked as the file streams.
 
 ### Channel settings
 Slice 4, after step-up (ADR-0055's slice 5b2, plan step 17). *Decided in
@@ -830,15 +1036,49 @@ review.*
   *do not overwrite* (retention on, auto-backup off);
   enabling or disabling a channel other than Application, System and
   Security, which Windows does not allow. Not offered: access lists, the
-  file's path, isolation, Analytic and Debug publishing settings.
+  file's path, isolation, Analytic and Debug publishing settings, and
+  `CrashOnAuditFail` itself, which is a security policy and Group
+  Policy's.
 * **How**: `EvtOpenChannelConfig`, `EvtSetChannelConfigProperty`,
   `EvtSaveChannelConfig`; the result carries each value before and after,
-  and *Undo* sets the old values back.
+  and *Undo* sets the old values back, under the same rules as the
+  change.
+* **A full Security log can stop the computer.** With the policy *Audit:
+  Shut down system immediately if unable to log security audits*
+  (`CrashOnAuditFail`) on, "if the security log is full and an existing
+  entry can't be overwritten", Windows stops with `STOP: C0000244 {Audit
+  Failed}`, and afterwards only administrators may sign in until the log
+  is cleared and the value reset; Microsoft calls the combination with
+  *Do not overwrite events* a denial of service an attacker can cause by
+  generating events. So:
+  * **the Security log is offered only *overwrite as needed***. *Do not
+    overwrite* and *archive when full* are refused for it outright,
+    whatever `CrashOnAuditFail` says: the policy can be turned on later
+    by Group Policy, and archives grow without limit (Microsoft: "no
+    limit to the number of backup files");
+  * **any change to the Security log's settings** needs
+    `eventlog.clear_security`, not `eventlog.manage`
+    ([Permissions](#permissions));
+  * **shrinking the Security log is treated as a clear**: the same
+    permission, step-up, and the device's and the log's names typed,
+    since a smaller log overwrites its oldest events sooner. Whether
+    Windows applies a smaller maximum at once or at the next clear is to
+    be confirmed on the runners, and the console says which;
+  * **`CrashOnAuditFail` is shown** on the Security log's page as the
+    agent read it ([Channels](#channels)): 1, *this computer stops if
+    its Security log fills and cannot overwrite*; 2, *it has stopped for
+    that reason: only administrators can sign in*, with the log's
+    settings beside it. Where the Security log is set not to overwrite
+    (by Group Policy, say) and the value is 1 or 2, the page says so in
+    red and offers *overwrite as needed*;
+  * **other channels: *do not overwrite* is refused while
+    `CrashOnAuditFail` is 1 or 2**, decided in review although the policy
+    concerns security audits, so that no setting made through EasyRMM
+    adds a log that stops recording on such a computer.
 * **Warnings shown before the change**, and recorded:
-  * *do not overwrite* stops a full log from recording; for the Security
-    log it is refused without auto-backup (whether it can halt a computer
-    with the policy that shuts down when auditing fails is to be
-    confirmed);
+  * *do not overwrite* makes the log sequential (Microsoft's
+    `retention`), so a full log records nothing more until it is cleared
+    (to be confirmed on the runners, with the test log);
   * *archive when full* keeps every archive, with no limit (Microsoft);
     the console shows the free space on the log's volume;
   * enabling an Analytic or Debug channel clears its events and takes an
@@ -858,11 +1098,30 @@ review.*
 ### Clearing a log
 Slice 6, after slice 5. *Decided in review.*
 
-* **Always saved first**: `EvtClearLog` with a backup path, a new `.evtx`
-  in `%ProgramData%\EasyRMM\eventlog-backups`, a folder only SYSTEM and
-  Administrators can read; refused when the volume lacks the log's size
-  plus 1 GiB. The agent deletes backups after 30 days; until then they
-  can be downloaded through slice 5 (`log.view_sensitive`, step-up).
+* **Sized first.** The builtin reads the log's size (`EvtGetLogInfo`) and
+  the free space on the backup folder's volume, and refuses the clear
+  unless the space exceeds the log's size by 1 GiB.
+* **Always saved on the computer first**: `EvtClearLog` with a backup
+  path, a new `.evtx` named `EasyRMM-cleared-<channel>-<UTC time>.evtx`,
+  in `%windir%\System32\winevt\Logs\EasyRMM-backups`. That folder sits
+  where Windows writes its own archives (Microsoft's `autoBackup`), so
+  the Event Log service can write beside them; the agent creates it with
+  an access list of its own, not inherited: SYSTEM and Administrators,
+  and the Event Log service's SID (`NT SERVICE\EventLog`, the name to be
+  confirmed) with full control, as Microsoft's Eventlog Key page asks
+  for a file the service is given. Whether the backup is written by the
+  service or by the calling process is to be confirmed by slice 6's
+  test, which drops the service's entry if it is not needed.
+* **No backup, no clear.** If `EvtClearLog` fails, the builtin reads the
+  record count again and reports the log as not cleared; a clear that
+  emptied the log without its backup (not expected, to be confirmed by
+  the test that makes the folder unwritable) is reported as a failure,
+  in red, with the record.
+* **Kept on the computer for 30 days**, then deleted by the agent. A
+  backup of at most 64 MiB compressed is also uploaded through slice 5's
+  files, for download (`log.view_sensitive`, step-up); a larger one is
+  not, and the console names the file left on the computer, to be
+  fetched through the device's files (`device.files`) by someone who may.
 * **Admin and Operational channels only.**
 * **Step-up, and the device's and the log's names typed.**
 * **`eventlog.clear_security` for the Security log**: Organization
@@ -959,16 +1218,27 @@ answers *unsupported*.
   owner question if wanted.
 
 ### What this does not fix
-* **A Technician still has the terminal**, and can read the Security log
-  with `wevtutil` as SYSTEM. The viewer's split binds the viewer, as
-  ADR-0060's binds its search.
+* **A Technician still reaches every log another way**: the terminal
+  (`device.terminal`), a script (`script.run`) and the device's files
+  (`device.files`, the `.evtx` files themselves), all as SYSTEM, the
+  Security log and command lines included. The viewer's split binds the
+  viewer, as ADR-0060's binds its search. Hiding sensitive fields guards
+  against casual exposure, on screens, in exports, copies and bulk
+  reading; it is not a boundary against a Technician who means to read
+  them.
 * **The classification catches field names**, not every secret: an
   application that writes a password into its message is shown to
   Technicians.
+* **The server's check catches older rules and bugs**, not a compromised
+  agent ([Where it is enforced](#where-it-is-enforced)).
 * **The Event Log service's work** during a query is outside the job
   object.
 * **Results stay in database backups** made within their hour, as
-  ADR-0063 says of output.
+  ADR-0063 says of output; slice 5's files, `.evtx` included, stay in
+  backups made within their 24 hours, and a `.evtx` holds the Security
+  log and command lines unmasked.
+* **A clear's backup stays on the computer** for 30 days, readable by its
+  administrators.
 * **The computer's logs wrap**; history beyond them is ADR-0060's.
 * **Group Policy sets back** channel settings it owns; the console warns.
 * **Rules reach the computer with the agent's update**: a field added to
@@ -1013,7 +1283,7 @@ Feature 9 of the owner's requirements, bullet by bullet.
 | Export filtered results | Export (slices 2 and 5) | A result's worth in slice 2; up to 100,000 events and `.evtx` in slice 5 |
 | View raw XML | Fields (slice 1) | New |
 | Copy event details | The console (slice 1) | New |
-| Save frequently used searches | Saved searches (slice 2) | New: personal; presets shared |
+| Save frequently used searches | Saved searches (slice 2) | New: personal, keeping every filter but the text, which is typed again; presets shared |
 | Identify recurring event IDs | Counts (slice 2); With ADR-0060 (slice 3) | New |
 | Compare event occurrences over time | Counts (slice 2); With ADR-0060 (slice 3) | New |
 | Unexpected shutdowns | Presets (slice 2) | New |
@@ -1033,7 +1303,7 @@ Feature 9 of the owner's requirements, bullet by bullet.
 | Preserve the original event timestamp and details | Times; Fields | Kept as recorded; XML unchanged |
 | Distinguish events that could not be retrieved from events that do not exist | States | *No events match* only after the whole range; *incomplete*, *Unavailable*, *Unknown*, *Not found* apart |
 | Support supported Windows versions | Windows versions | The agent's: Windows 10 and Server 2016 and later, x64 and ARM64 |
-| "Event Log Management" (the title) | Channel settings (4); Export (5); Clearing (6) | Later slices; clearing is an owner question |
+| "Event Log Management" (the title) | Channel settings (4); Export (5); Clearing (6) | Later slices; settings and clearing are an owner question |
 
 The requirements' overall expectations, where they bear on this feature:
 
@@ -1060,10 +1330,12 @@ level it touches.
      query builder, inputs and results v1); `eventlog.view` and
      `log.view_sensitive` with the site-scope rule; the `eventlog_query`
      kind and its settings; the definer function's second permission;
-     the refusal bound; `eventlog.query`, `eventlog.refused`,
-     `eventlog.refused_on_device`;
+     the definer function that builds a next page; the refusal bound;
+     `eventlog.query`, `eventlog.refused`, `eventlog.refused_on_device`;
+     ADR-0060's Privacy section and PRIVACY.md amended;
    * **the builtin**: `agent/winevent` and `builtin eventlog` with
-     `channels`, `query`, `event` and `provider`;
+     `channels` (and `CrashOnAuditFail`), `query`, `event` and
+     `provider`; cancelling through the child's input;
      `builtin.eventlog.v1`;
    * **the console**: the Logs tab, *On the computer*.
 
@@ -1077,13 +1349,16 @@ level it touches.
 3. **With ADR-0060** (after step 26): both modes in one tab; *Open on the
    computer*; trends from ADR-0060's counts.
 4. **Channel settings** (among step 28, after step-up at step 17):
-   `eventlog_manage`, `eventlog.manage`, `eventlog.configure`, undo, the
-   change lock.
-5. **Files**: `job.files`, the agent's upload, storage and purge;
-   `eventlog_export`; `.evtx`; JSON lines up to 100,000 events.
-6. **Clearing** (after 5): `clear`, `eventlog.clear_security`,
-   `eventlog.clear`, ADR-0060's detection amended. Built only if the
-   owner wants it ([Owner questions](#owner-questions)).
+   `eventlog_manage`, `eventlog.manage`, and `eventlog.clear_security` for
+   the Security log's settings; `eventlog.configure`, undo, the change
+   lock, the rules for a full Security log. Built only if the owner wants
+   it ([Owner questions](#owner-questions)).
+5. **Files**: `job.files`, the agent's upload, staging, the background
+   check, storage, the deployment's limit and purge; `eventlog_export`;
+   `.evtx`; JSON lines up to 100,000 events.
+6. **Clearing** (after 5): `clear`, its backup on the computer and its
+   upload, `eventlog.clear`, ADR-0060's detection amended. Built only if
+   the owner wants it.
 
 ## Consequences
 * Technicians can read a Windows computer's event logs from the console,
@@ -1095,7 +1370,14 @@ level it touches.
   to update it.
 * `log.view_sensitive` and the classification of sensitive fields exist
   before ADR-0060 is built, which reuses them; the list gains 4103's
-  fields and the *Windows PowerShell* log.
+  fields, the *Windows PowerShell* log, Shell-Core's `Command`, Sysmon
+  13's `Details` and the BITS client's `url`.
+* Technicians see one computer's sign-in and process events outside the
+  Security log on demand, which ADR-0060 keeps for `log.view` in its
+  store; ADR-0060's Privacy section and PRIVACY.md say so.
+* A computer's Security log can be set only to overwrite through EasyRMM,
+  so no setting made here can stop a computer that audits with
+  `CrashOnAuditFail`.
 * Permissions gain `eventlog.view` and `log.view_sensitive`, then
   `eventlog.manage` and `eventlog.clear_security`; the audit log gains the
   six actions above; the refusal bound counts `eventlog.refused`.
@@ -1103,7 +1385,8 @@ level it touches.
   `eventlog_export`; F2 gains a second permission per input and, in slice
   5, files a run hands back.
 * A query's Event Log service work is not capped by the job object;
-  measured, bounded by time and by two queries per device.
+  measured, bounded by time, by a cancel that reaches the query and by
+  one query running per device.
 * No PowerShell runs for the viewer, so it writes nothing into the
   PowerShell logs it reads.
 
@@ -1113,7 +1396,8 @@ level it touches.
   * **Permissions**: every role on every endpoint; `log.view_sensitive`
     from a site-scoped grant ignored; a query asking for the Security log
     without it refused (`403`, recorded within the bound, counted with
-    ADR-0063's actions).
+    ADR-0063's actions); the Security log's settings refused with
+    `eventlog.manage` alone.
   * **Results**: an input and its result read by the person who asked and
     refused to another Technician of the site, through `/result` and
     `/arguments`; a sensitive result refused to its asker once the
@@ -1121,10 +1405,18 @@ level it touches.
     not before.
   * **The server's check**: results as an agent sends them, built in the
     test: a Security event in a result for an input without `sensitive`
-    failing the run and recorded; a `CommandLine` value, the message and
-    the XML of its event removed before storing and counted; an event
-    from a channel not asked for, or outside the range, failing the run;
-    a cursor not the caller's refused.
+    failing the run and recorded; a `CommandLine` value and the message
+    of its event replaced by the marker, in the fields and the XML,
+    before storing, and counted; on a text query, that event dropped
+    and counted; reported fields that differ from the event's XML (a
+    channel, a name, a value) failing the run; an event from a channel
+    not asked for, or outside the range, failing the run; `\u0000` and
+    a lone surrogate escape refused; `SECURITY` and
+    `Archive-Security-1` treated as the Security log.
+  * **The next page**: built from the stored input and result through the
+    definer function; a previous page of another person, another device
+    or over an hour old refused; `easyrmm_app` holding no grant on
+    `job_inputs` or `job_runs.result`.
   * **The query builder**: a table of filters and the structured queries
     they make; quotes, `&`, `<` and `>` in providers; channel names with
     each refused character; the limits; *Information* as 0 or 4.
@@ -1141,12 +1433,35 @@ level it touches.
   `agent/winevent` and the builtin, writing real events and reading them
   back:
   * **a test source**, registered under a random name with
-    `x/sys/windows/svc/eventlog` (`InstallAsEventCreate`) and removed
-    after: information, warnings and errors with known IDs and a random
-    marker; queries by ID, range, exclusion, level, provider, time and
-    text; newest first; pages with the cursor while the test keeps
-    writing, with no event twice and none missing; a task category
-    written with `ReportEvent` and found by its number;
+    `x/sys/windows/svc/eventlog` (`InstallAsEventCreate`, which registers
+    sources only under the Application log, `install.go:23` in `x/sys`)
+    and removed after: information, warnings and errors with known IDs
+    and a random marker; queries by ID, range, exclusion, level,
+    provider, time and text; newest first; pages with the cursor while
+    the test keeps writing, with no event twice and none missing; a task
+    category written with `ReportEvent` and found by its number;
+  * **a test log of its own**, for everything that changes or fills a
+    log: a key `HKLM\SYSTEM\CurrentControlSet\Services\EventLog\<random>`
+    with a source under it, as Microsoft's Eventlog Key page describes
+    custom logs, its `MaxSize` set by the test, removed after. Whether
+    the Event Log service opens it without a restart is to be confirmed;
+    if not, the test uses `wevtutil im` with a test manifest instead.
+    Application, System and Security are never cleared, filled or resized
+    on a runner;
+  * **cursors and clears**: the test log cleared between two pages,
+    giving *cleared since the first page*; a log whose oldest event is
+    after the range's start, giving *this log begins at T*; whether
+    record numbers restart after a clear, recorded;
+  * **cancelling**: a query over the filled test log cancelled through
+    the child's input in the middle of `EvtNext`, the child gone within
+    the 5 seconds and the Event Log service's processor time printed for
+    the 10 seconds after; then the same with the child killed by the job
+    object without cancelling, to measure whether the service goes on
+    working for a client that has gone;
+  * **sizes and strings**: an event with a 1 MiB value, cut and marked in
+    a page, with the next event found by the cursor; an event with 300
+    values; a value with NUL and a lone surrogate, sent as `raw` with
+    its display text;
   * **several logs**: the test source's events with Service Control
     Manager's in System, from a test service started and stopped, merged
     by time;
@@ -1165,26 +1480,44 @@ level it touches.
     for the list;
   * **Protected Event Logging** with a test certificate: a 4104 shown as
     encrypted (to be confirmed on both images);
-  * **bounds**: a classic test log filled to 256 MiB, searched for text
-    that is not there: the page stopping at 45 seconds with the cursor and
-    how far back it searched, the child's memory peak, and the Event Log
-    service's processor time during the scan, printed; 100 events and the
-    byte bound; an event with a 1 MiB value;
+  * **bounds**: the test log filled to 256 MiB, searched for text that
+    is not there: the page stopping at 45 seconds with the cursor and how
+    far back it searched, the child's memory peak, and the Event Log
+    service's processor time during the scan, printed; 100 events and
+    the byte bound;
   * **channels**: every channel listed; an Analytic channel found on the
     image by its type, listed and its state shown;
   * **times**: fixed UTC instants in winter and summer converted for a
     zone with daylight saving set on the runner with `tzutil`;
   * **no PowerShell** and no `wevtutil` started by the builtin;
-  * **slices 4 to 6** on the test log: sizes, retention modes, undo;
-    Application, System and Security refused for enabling; an export and
-    an archived export read back; a clear with its backup read back,
-    and 104 written (confirming it).
+  * **slice 4** on the test log: sizes, retention modes, undo;
+    Application, System and Security refused for enabling; for the
+    Security log, *do not overwrite* and *archive when full* refused
+    without sending anything, and a smaller size asking for the
+    confirmation (the change itself not made on a runner);
+    `CrashOnAuditFail` read and shown; with it set to 1 on the runner
+    and set back after, *do not overwrite* refused for the test log;
+  * **slices 5 and 6** on the test log: an export and an archived export
+    read back; free space checked first; a clear with its backup written
+    into the backup folder created with SYSTEM and Administrators only,
+    then again without the Event Log service's entry, recording which
+    writes the file; a clear with the folder made unwritable refused and
+    the log still full; a backup over 64 MiB kept on the computer and
+    named, not uploaded; 104 written (confirming it).
+* **Integration tests of slice 5's files**: gzip files built in the test
+  that decompress past 100,000 × 8 KiB, hold 100,001 lines or one line
+  over 8 KiB, each refused and its staged chunks deleted; the check run
+  in its worker while a test reads `pg_stat_activity` and finds no
+  transaction of it open longer than one chunk's; the refusal record
+  written in its own transaction; the deployment's limit giving
+  `409 storage_full`; a server stopped midway restarting the check.
 * **Machine tests**, with ADR-0054's Windows machines under KVM: a domain
   account's SID resolved, and one unresolved with the domain controller
   stopped; ForwardedEvents through a Windows Event Collector subscription
   between two machines, with and without `RenderingInfo`; Sysmon's events
-  (1, 19, 20); Group Policy setting a log's size; App Control on, the
-  builtin still working.
+  (1, 13, 19, 20); Shell-Core 9707 and BITS client events, recording the
+  new sensitive fields' names; Group Policy setting a log's size; App
+  Control on, the builtin still working.
 * **Page tests** (`web/src/pages/devices/`): the tab only for Windows and
   `eventlog.view`; every state; hidden fields; the Security log marked for
   those without the permission; the time zone switch.
@@ -1221,11 +1554,25 @@ it ships:
 * forwarded events without `RenderingInfo`;
 * classic providers' categories in their metadata, and
   `EvtOpenPublisherEnum`;
-* 4103's field names and the *Windows PowerShell* log's layout;
+* 4103's field names and the *Windows PowerShell* log's layout, and the
+  names of Shell-Core 9707 and 9708's `Command`, Sysmon 13's `Details` and
+  the BITS client's `url`;
 * the error a query gets when the Event Log service is stopped;
 * the presets' candidate IDs;
 * Windows 10 and Windows Server 2016, 2019 and 2022, beyond CI's images;
-* whether *do not overwrite* on a full Security log can halt a computer;
+* that record numbers only grow within a log, and whether they restart
+  after a clear;
+* that a clear changes the log's creation time (`EvtLogCreationTime`);
+* whether Windows opens a channel by a name in any case;
+* whether the Event Log service or the calling process writes the files
+  of `EvtClearLog` and `EvtExportLog`, and the name of the service's SID;
+* whether a smaller maximum size takes effect at once or at the next
+  clear;
+* that a full sequential log (*do not overwrite*) records no new events;
+* that the Event Log service opens a custom log created under the
+  `EventLog` key without a restart;
+* whether the Event Log service stops working for a client that was
+  killed in the middle of `EvtNext`;
 * `Win32_NTLogEvent`'s reach (only in *Not chosen*).
 
 ## Owner questions
@@ -1233,16 +1580,27 @@ it ships:
    Decided in review: Technicians and above query a computer's logs on
    demand with `eventlog.view`, without the Security log and sensitive
    fields, which need `log.view_sensitive` (Organization Administrators
-   and above, organization-wide grants), so ADR-0060's `log.view` is not
-   lowered. Is that the split you want, or should Site Administrators,
-   who hold `log.view`, also read the Security log here without
-   sensitive fields?
+   and above, organization-wide grants). Two consequences to confirm:
+   * **Technicians see sign-in and process events** outside the Security
+     log (remote desktop sign-ins, Sysmon's process starts), one computer
+     at a time and without command lines, which ADR-0060 keeps for
+     `log.view` (Site Administrators and above) in its store. ADR-0060's
+     Privacy section and PRIVACY.md would say so;
+   * **the tab of slice 3 answers differently by role**: a Technician
+     sees such an event under *On the computer* and not under
+     *Collected*, told why.
+
+   Is that the split you want? Or should on-demand queries need
+   `log.view` (Site Administrators and above), keeping Technicians to the
+   terminal; or should Site Administrators also read the Security log
+   here without sensitive fields?
 2. **Managing logs.** The requirement's bullets ask for reading; only its
    title says management. Are channel settings and clearing wanted? If
-   so, decided in review: settings and clearing other logs at Site
-   Administrators and above, clearing the Security log at Organization
-   Administrators and above with a permission of its own, each with
-   step-up. Should either sit elsewhere?
+   so, decided in review: settings and clearing of other logs at Site
+   Administrators and above; the Security log's settings, which are only
+   ever *overwrite as needed* and a size, and its clearing at
+   Organization Administrators and above with a permission of its own;
+   each with step-up. Should either sit elsewhere?
 3. **Linux.** An on-demand view of a Linux computer's journal and syslog
    files is not in the requirement; ADR-0060 collects the journal. Is one
    wanted?
@@ -1282,6 +1640,13 @@ it ships:
   https://learn.microsoft.com/en-us/windows/win32/api/winevt/ne-winevt-evt_channel_config_property_id
 * EVT_CHANNEL_TYPE:
   https://learn.microsoft.com/en-us/windows/win32/api/winevt/ne-winevt-evt_channel_type
+* Audit: Shut down system immediately if unable to log security audits:
+  https://learn.microsoft.com/en-us/previous-versions/windows/it-pro/windows-10/security/threat-protection/security-policy-settings/audit-shut-down-system-immediately-if-unable-to-log-security-audits
+* Can't access Web sites when security event log is full
+  (`CrashOnAuditFail`'s values):
+  https://learn.microsoft.com/en-us/troubleshoot/developer/webapps/iis/health-diagnostic-performance/users-cannot-access-web-sites-when-log-full
+* Eventlog Key (custom logs, `MaxSize`, `Retention`, `File`):
+  https://learn.microsoft.com/en-us/windows/win32/eventlog/eventlog-key
 * ChannelType complex type:
   https://learn.microsoft.com/en-us/windows/win32/wes/eventmanifestschema-channeltype-complextype
 * ChannelLoggingType complex type:
