@@ -11,7 +11,7 @@ import { useToast } from "../../components/Toast";
 import { Badge, Button, Field, IconButton, InlineError, Input, KeyValueList, SelectField, TextareaField, TextField } from "../../components/ui";
 import { countryName, countryOptions } from "../../lib/countries";
 import { copyHours, hoursOrNull, MAX_PERIODS_PER_DAY, summarizeHours, WEEKDAYS } from "../../lib/hours";
-import { mailtoHref, telHref, websiteHref } from "../../lib/links";
+import { EMAIL_INPUT, mailtoHref, telHref, websiteHref } from "../../lib/links";
 
 /** Open or closed now, by the business hours; nothing when none are kept. */
 export function OpenNowBadge({ openNow }: { openNow: boolean | null }) {
@@ -215,7 +215,7 @@ export function OrganizationDetailsDialog({ open, onClose, organization: o }: { 
       <form onSubmit={submit} className="flex flex-col gap-3.5">
         <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
           <TextField label="Main phone" type="tel" value={form.mainPhone} onChange={(e) => set("mainPhone", e.target.value)} error={fieldError(save.error, "mainPhone")} maxLength={50} autoFocus />
-          <TextField label="Main email" type="email" value={form.mainEmail} onChange={(e) => set("mainEmail", e.target.value)} error={fieldError(save.error, "mainEmail")} maxLength={254} />
+          <TextField label="Main email" {...EMAIL_INPUT} value={form.mainEmail} onChange={(e) => set("mainEmail", e.target.value)} error={fieldError(save.error, "mainEmail")} maxLength={254} />
         </div>
         <TextField
           label="Website"

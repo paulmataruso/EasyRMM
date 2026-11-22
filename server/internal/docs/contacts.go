@@ -308,30 +308,43 @@ func lockLevel(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, siteID *uuid.UUI
 }
 
 // demotePrimary makes the level's primary contact, other than except,
-// secondary, and returns its ID, or nil when there was none.
-func demotePrimary(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, siteID *uuid.UUID, except uuid.UUID) (*uuid.UUID, error) {
-	var id uuid.UUID
+// secondary, and returns it (its IDs and emergency flag), or nil when there
+// was none.
+func demotePrimary(ctx context.Context, tx pgx.Tx, orgID uuid.UUID, siteID *uuid.UUID, except uuid.UUID) (*Contact, error) {
+	x := Contact{OrganizationID: orgID, SiteID: siteID, Priority: PrioritySecondary}
 	err := tx.QueryRow(ctx, `UPDATE contacts SET priority = 'secondary'
 		WHERE organization_id = $1 AND site_id IS NOT DISTINCT FROM $2 AND priority = 'primary' AND id <> $3
-		RETURNING id`, orgID, siteID, except).Scan(&id)
+		RETURNING id, emergency`, orgID, siteID, except).Scan(&x.ID, &x.Emergency)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	return &id, nil
+	return &x, nil
+}
+
+// recordDemotion records that demoted, the primary contact before primary,
+// is now secondary: a change of its own, made by the same person. It is
+// written before primary's record, which names demoted in turn.
+func (s *Service) recordDemotion(ctx context.Context, tx pgx.Tx, c access.Caller, demoted *Contact, primary uuid.UUID) error {
+	if demoted == nil {
+		return nil
+	}
+	d := contactDetails([]string{"priority"}, demoted.fields(), nil)
+	d["primaryId"] = primary.String()
+	return s.audit.Write(ctx, tx, contactEvent(c, "contact.update", demoted, d))
 }
 
 // contactDetails are an audit record's details: identifiers and choices,
 // never a name, an address, a number or a note (ADR-0066, "Audit").
-func contactDetails(fields []string, f contactFields, demoted *uuid.UUID) map[string]any {
+func contactDetails(fields []string, f contactFields, demoted *Contact) map[string]any {
 	d := map[string]any{"priority": f.priority, "emergency": f.emergency}
 	if fields != nil {
 		d["fields"] = fields
 	}
 	if demoted != nil {
-		d["previousPrimaryId"] = demoted.String()
+		d["previousPrimaryId"] = demoted.ID.String()
 	}
 	return d
 }
@@ -372,7 +385,7 @@ func (s *Service) CreateContact(ctx context.Context, c access.Caller, orgID uuid
 		if n >= MaxContactsAtLevel {
 			return apperr.Conflict("too_many_contacts", "This already has 1,000 contacts, the most one organization or site can have.")
 		}
-		var demoted *uuid.UUID
+		var demoted *Contact
 		if f.priority == PriorityPrimary {
 			var err error
 			if demoted, err = demotePrimary(ctx, tx, orgID, in.SiteID, uuid.Nil); err != nil {
@@ -383,6 +396,9 @@ func (s *Service) CreateContact(ctx context.Context, c access.Caller, orgID uuid
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
 			orgID, in.SiteID, f.name, f.jobTitle, f.email, f.officePhone, f.mobilePhone, f.note, f.priority, f.emergency).Scan(&id)
 		if err != nil {
+			return err
+		}
+		if err := s.recordDemotion(ctx, tx, c, demoted, id); err != nil {
 			return err
 		}
 		set := f.changed(contactFields{priority: PriorityNone})
@@ -463,7 +479,7 @@ func (s *Service) UpdateContact(ctx context.Context, c access.Caller, id uuid.UU
 		if len(fields) == 0 {
 			return nil
 		}
-		var demoted *uuid.UUID
+		var demoted *Contact
 		if f.priority == PriorityPrimary && before.priority != PriorityPrimary {
 			if demoted, err = demotePrimary(ctx, tx, cur.OrganizationID, cur.SiteID, id); err != nil {
 				return err
@@ -472,6 +488,9 @@ func (s *Service) UpdateContact(ctx context.Context, c access.Caller, id uuid.UU
 		if _, err := tx.Exec(ctx, `UPDATE contacts SET name = $2, job_title = $3, email = $4, office_phone = $5, mobile_phone = $6,
 			note = $7, priority = $8, emergency = $9 WHERE id = $1`,
 			id, f.name, f.jobTitle, f.email, f.officePhone, f.mobilePhone, f.note, f.priority, f.emergency); err != nil {
+			return err
+		}
+		if err := s.recordDemotion(ctx, tx, c, demoted, id); err != nil {
 			return err
 		}
 		return s.audit.Write(ctx, tx, contactEvent(c, "contact.update", cur, contactDetails(fields, f, demoted)))

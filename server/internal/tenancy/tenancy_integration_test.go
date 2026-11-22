@@ -150,7 +150,7 @@ func TestOrganizationLifecycleAndValidation(t *testing.T) {
 		kept.Timezone != "Europe/Paris" {
 		t.Fatalf("time zone left out: %v %+v", err, kept)
 	}
-	for _, bad := range []string{"Local", "Mars/Olympus", strings.Repeat("A", 65)} {
+	for _, bad := range []string{"Local", "Mars/Olympus", strings.Repeat("A", 65), "Europe//Paris"} {
 		_, err := e.svc.UpdateOrganization(ctx, e.sys, w.orgA.ID, tenancy.OrganizationInput{Name: "Acme Corp", Timezone: bad})
 		wantField(t, err, "timezone", "bad time zone "+bad)
 	}
@@ -528,8 +528,11 @@ func TestScopedCallers(t *testing.T) {
 
 func TestValidTimezone(t *testing.T) {
 	for tz, want := range map[string]bool{
-		"UTC": true, "Europe/London": true, "America/Argentina/Buenos_Aires": true,
+		"UTC": true, "Europe/London": true, "America/Argentina/Buenos_Aires": true, "US/Eastern": true,
 		"": false, "Local": false, "Not/AZone": false, "../../etc/passwd": false,
+		// Spellings the system opens as Europe/London, each of which would
+		// be one more zone to keep.
+		"Europe//London": false, "Europe/./London": false, "./Europe/London": false, ".//Europe//./London": false,
 	} {
 		if got := tenancy.ValidTimezone(tz); got != want {
 			t.Errorf("ValidTimezone(%q) = %v, want %v", tz, got, want)

@@ -1,7 +1,11 @@
 package docs
 
 import (
+	"archive/zip"
 	"encoding/json"
+	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -9,8 +13,9 @@ import (
 
 func iv(start, end string) Interval { return Interval{Start: start, End: end} }
 
-// TestZone checks that a time zone is read from the system's database once
-// and kept (L8): a list of organizations asks for each one's.
+// TestZone checks that a time zone is read once and kept (L8): a list of
+// organizations asks for each one's. Only names in the database are kept,
+// so that the cache cannot grow with the ways one name can be spelled.
 func TestZone(t *testing.T) {
 	first := Zone("Europe/London")
 	if first.String() != "Europe/London" {
@@ -22,8 +27,59 @@ func TestZone(t *testing.T) {
 	if Zone("Mars/Olympus_Mons") != time.UTC {
 		t.Error("an unknown zone is not UTC")
 	}
-	if _, kept := zones.Load("Mars/Olympus_Mons"); kept {
-		t.Error("an unknown zone was kept")
+	// The system opens these as Europe/London; they are read, not kept.
+	for _, name := range []string{"Europe//London", "Europe/./London", "./Europe/London"} {
+		if got := Zone(name); got == first || got.String() != name {
+			t.Errorf("Zone(%q) = %v", name, got)
+		}
+		if ValidZone(name) {
+			t.Errorf("ValidZone(%q)", name)
+		}
+	}
+	n := len(zones)
+	for i := range 100 {
+		Zone(strings.Repeat("./", i) + "Europe/London")
+	}
+	if len(zones) != n || n != len(strings.Fields(zoneNames)) {
+		t.Errorf("%d zones held, %d named", len(zones), len(strings.Fields(zoneNames)))
+	}
+}
+
+// TestZoneNames checks the list against the time zone database of the Go
+// release building the server. After a Go upgrade that changes it, copy the
+// names in GOROOT/lib/time/zoneinfo.zip into zoneNames.
+func TestZoneNames(t *testing.T) {
+	goroot, err := exec.Command("go", "env", "GOROOT").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := zip.OpenReader(filepath.Join(strings.TrimSpace(string(goroot)), "lib", "time", "zoneinfo.zip"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	var inZip []string
+	for _, f := range r.File {
+		inZip = append(inZip, f.Name)
+	}
+	slices.Sort(inZip)
+	listed := strings.Fields(zoneNames)
+	slices.Sort(listed)
+	if !slices.Equal(inZip, listed) {
+		t.Fatalf("zoneNames differs from Go's zoneinfo.zip (%d names, %d listed)", len(inZip), len(listed))
+	}
+	for _, name := range listed {
+		if !ValidZone(name) {
+			t.Errorf("ValidZone(%q)", name)
+		}
+		if _, err := time.LoadLocation(name); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	for _, bad := range []string{"", "Local", "europe/london", "Europe/London/", "/Europe/London", "Europe/../Europe/London", "posixrules", "localtime"} {
+		if ValidZone(bad) {
+			t.Errorf("ValidZone(%q)", bad)
+		}
 	}
 }
 

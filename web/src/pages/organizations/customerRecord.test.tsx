@@ -69,10 +69,13 @@ describe("the organization's record", () => {
     await user.clear(within(form).getByLabelText("Saturday period 1 closes"));
     await user.type(within(form).getByLabelText("Saturday period 1 closes"), "12:00");
     await user.click(within(form).getByRole("button", { name: "Remove Friday period 1" }));
+    await user.clear(within(form).getByLabelText("Main email"));
+    await user.type(within(form).getByLabelText("Main email"), "zoë@example.com");
     await user.click(within(form).getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Contact information saved.")).toBeInTheDocument();
-    const body = server.call("PUT /organizations/:id/details").body as { businessHours: BusinessHours; mainPhone: string };
+    const body = server.call("PUT /organizations/:id/details").body as { businessHours: BusinessHours; mainPhone: string; mainEmail: string };
     expect(body.mainPhone).toBe("+1 555 0100");
+    expect(body.mainEmail).toBe("zoë@example.com");
     expect(body.businessHours.saturday).toEqual([{ start: "09:00", end: "12:00" }]);
     expect(body.businessHours.friday).toEqual([]);
   });
@@ -204,9 +207,13 @@ describe("the organization's record", () => {
     const edit = await dialog("Edit contact");
     await user.clear(within(edit).getByLabelText("Mobile phone"));
     await user.type(within(edit).getByLabelText("Mobile phone"), "555 0123");
+    // The server judges an address; a browser's email check would refuse
+    // letters beyond ASCII before the @, which the server takes.
+    await user.clear(within(edit).getByLabelText("Email"));
+    await user.type(within(edit).getByLabelText("Email"), "zoë@example.com");
     await user.click(within(edit).getByRole("button", { name: "Save changes" }));
     expect(await screen.findByText("Contact updated.")).toBeInTheDocument();
-    expect(server.call("PATCH /contacts/:id").body).toEqual({ mobilePhone: "555 0123" });
+    expect(server.call("PATCH /contacts/:id").body).toEqual({ mobilePhone: "555 0123", email: "zoë@example.com" });
   });
 
   it("deletes an organization's contacts with it only once their count is confirmed", async () => {

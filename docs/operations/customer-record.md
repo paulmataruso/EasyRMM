@@ -47,6 +47,11 @@ The organization's hours are in its time zone. A site either keeps hours of
 its own, in the site's time zone, or uses the organization's, read in the
 site's time zone: a 09:00 opening is 09:00 wherever the site is.
 
+A time zone is a name from the IANA time zone database, written as the
+database writes it, such as `Europe/London` or `US/Eastern`; the console
+offers the list. The server takes the names in the copy of the database
+it is built with and refuses other spellings, such as `Europe//London`.
+
 *Open now* and *Closed now* are worked out when the page loads. Around a
 change to or from daylight saving time, a period that starts in the skipped
 hour begins when the hour ends, and one that starts in a repeated hour
@@ -74,8 +79,11 @@ A site's name, time zone and notes stay under the site's own **Edit**
 
 ## Contacts
 
-Contacts are the customer's staff, not EasyRMM accounts: they cannot sign
-in. Each has a name (required), a job title, an email, an office and a
+A contact is a record of one of the customer's staff, not an EasyRMM
+account: it does not sign in, and EasyRMM never emails or messages it.
+Someone who also uses the console, such as a customer's IT person with a
+site-scoped role, has an account of their own, separate from the contact.
+Each contact has a name (required), a job title, an email, an office and a
 mobile phone, and a note of up to 2,000 characters.
 
 * **At the organization or a site.** The organization's **Contacts** tab
@@ -83,8 +91,9 @@ mobile phone, and a note of up to 2,000 characters.
   site's, 100 at a time. A site's page lists its own.
 * **Primary and secondary.** There is at most one primary contact for the
   organization and one for each site. Making someone primary makes the
-  current primary secondary; the audit record of the change names the
-  contact that was primary (`previousPrimaryId`).
+  current primary secondary, and the audit log records both changes: the
+  new primary's record names the one before (`previousPrimaryId`), and
+  that contact's own record names the new one (`primaryId`).
 * **Emergency** is a flag of its own, so a primary contact can also be the
   one to call in an emergency.
 * At most 1,000 contacts for the organization itself and 1,000 for each
@@ -132,7 +141,8 @@ them, but only after you confirm what goes. The first **Delete** says, for
 example, *This site holds 2 contacts and 1 place, which would be deleted
 with it*; **Delete site and its documentation** confirms those counts. If
 someone adds or removes one in between, EasyRMM asks again with the new
-counts. The audit record of the deletion keeps the counts.
+counts. The audit record of the deletion keeps the counts; the contacts
+and places deleted with it get no records of their own.
 
 Through the API, the confirmation is the counts as query parameters:
 `DELETE /api/v1/sites/{id}?contacts=2&places=1`. Without them, a site or
@@ -146,14 +156,28 @@ either, as before.
 Every change is recorded: *Changed contact information*, *Changed address
 and hours*, *Added contact*, *Changed contact*, *Deleted contact*, *Added
 place*, *Changed place* and *Deleted place*, under the **Contacts** and
-**Places** areas of the audit log. The records name the fields that
-changed, not their values. A contact's record also keeps the contact's
-priority (primary, secondary or none), whether they are an emergency
-contact, and, when they became the primary contact, which contact was
-primary before; it never keeps their name, job title, email address,
-phone numbers or note. The audit log is kept for
-`EASYRMM_AUDIT_RETENTION` and cannot be edited, so personal data is kept
-out of it.
+**Places** areas of the audit log. Besides who made the change, when, and
+at which organization and site, a record keeps only:
+
+* **Contact information, address and hours**: the names of the fields that
+  changed, not their values.
+* **A contact**: the names of the fields that were set or changed (none
+  for a deletion), and the contact's priority (primary, secondary or none)
+  and emergency flag as they are after the change, or were before a
+  deletion. A new primary contact's record names the one before
+  (`previousPrimaryId`), which gets a *Changed contact* record of its own
+  with `priority` changed to secondary and the new primary's ID
+  (`primaryId`). Never the contact's name, job title, email address, phone
+  numbers or note.
+* **A place**: its kind (building, floor, room, rack or other) and the ID
+  of the place it is inside (`parentId`, left out at the top of the site),
+  as they are after the change, or were before a deletion, and for a
+  change the names of the fields that changed. Never the place's name.
+* **Deleting a site or an organization**: the number of contacts and
+  places deleted with it, which get no records of their own.
+
+The audit log is kept for `EASYRMM_AUDIT_RETENTION` and cannot be edited,
+so personal data is kept out of it.
 
 ## Export and backup
 
@@ -162,7 +186,8 @@ with its organization and site, and downloads as CSV. Each download is
 recorded in the audit log, with `searched` when it was searched but not
 the search itself, which may be a name or an email address. The record is
 in the database, so the database dump in
-[Backup and restore](backup-restore.md) holds it.
+[Backup and restore](backup-restore.md) holds it: a contact deleted in
+EasyRMM stays in the dumps made before, until those are deleted.
 
 ## API
 

@@ -239,6 +239,13 @@ func TestContacts(t *testing.T) {
 	if created[0].TargetID != cid.ID.String() || created[0].Details["previousPrimaryId"] != ann.ID.String() {
 		t.Fatalf("the new primary's audit entry %+v", created[0])
 	}
+	// The contact made secondary has a record of its own, written first.
+	demotedAnn := e.entries("contact.update")[0]
+	if d, _ := json.Marshal(demotedAnn.Details); demotedAnn.TargetID != ann.ID.String() || demotedAnn.ID > created[0].ID ||
+		demotedAnn.OrganizationID == nil || *demotedAnn.OrganizationID != e.acme || demotedAnn.SiteID != nil ||
+		string(d) != `{"emergency":true,"fields":["priority"],"primaryId":"`+cid.ID.String()+`","priority":"secondary"}` {
+		t.Fatalf("the demoted contact's audit entry %+v %s", demotedAnn, d)
+	}
 
 	// Changes: what a patch names, cleaned; making a contact primary demotes
 	// the other; a change that changes nothing is not recorded.
@@ -781,8 +788,14 @@ func TestConcurrentEdits(t *testing.T) {
 	if a, b := state(ann.ID), state(bob.ID); a != "primary 555 0199" || b != "secondary " {
 		t.Fatalf("Ann %q, Bob %q", a, b)
 	}
-	if d := e.entries("contact.update")[0].Details; d["previousPrimaryId"] != bob.ID.String() {
+	updates := e.entries("contact.update")
+	if d := updates[0].Details; d["previousPrimaryId"] != bob.ID.String() {
 		t.Fatalf("the demotion is not recorded: %v", d)
+	}
+	// Bob's own record, at his site, names the contact that replaced him.
+	if b := updates[1]; b.TargetID != bob.ID.String() || b.SiteID == nil || *b.SiteID != e.hq ||
+		b.Details["priority"] != "secondary" || b.Details["primaryId"] != ann.ID.String() {
+		t.Fatalf("Bob's demotion record %+v", b)
 	}
 
 	// A second primary written by something that skips the lock, such as a

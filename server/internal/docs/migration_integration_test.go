@@ -11,6 +11,7 @@ import (
 	"github.com/pressly/goose/v3"
 
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/docs"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
 	"github.com/paulmataruso/easyrmm/server/migrations"
 )
@@ -115,8 +116,36 @@ func TestCustomerRecordMigration(t *testing.T) {
 	if err := super.QueryRow(ctx, `SELECT count(*) FROM pg_tables WHERE tablename IN ('contacts', 'site_places')`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("%d tables after down: %v", n, err)
 	}
+	// Time zones stored before 00036, when any name the server could open
+	// was taken: each spelling of a zone becomes the zone's name.
+	zoned := id(`INSERT INTO organizations (name, timezone) VALUES ('Zoned', './Europe/London') RETURNING id`)
+	spelled := id(`INSERT INTO sites (organization_id, name, timezone) VALUES ($1, 'Spelled', './/America//./New_York') RETURNING id`, zoned)
+	plain := id(`INSERT INTO sites (organization_id, name, timezone) VALUES ($1, 'Plain', 'Etc/GMT+5') RETURNING id`, zoned)
 	if _, err := provider.UpTo(ctx, 36); err != nil {
 		t.Fatal(err)
+	}
+	for table, want := range map[string]map[string]string{
+		"organizations": {zoned: "Europe/London"},
+		"sites":         {spelled: "America/New_York", plain: "Etc/GMT+5"},
+	} {
+		for row, tz := range want {
+			if got := id(`SELECT timezone FROM `+table+` WHERE id = $1`, row); got != tz {
+				t.Errorf("%s %s: time zone %q, want %q", table, row, got, tz)
+			}
+		}
+	}
+	rows, err := super.Query(ctx, `SELECT timezone FROM organizations UNION SELECT timezone FROM sites`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tz := range stored {
+		if !docs.ValidZone(tz) {
+			t.Errorf("a time zone the server would refuse is stored: %q", tz)
+		}
 	}
 	var forced bool
 	if err := super.QueryRow(ctx, `SELECT bool_and(relrowsecurity AND relforcerowsecurity) FROM pg_class WHERE relname IN ('contacts', 'site_places')`).Scan(&forced); err != nil || !forced {

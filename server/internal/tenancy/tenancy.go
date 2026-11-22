@@ -11,7 +11,6 @@ import (
 	"errors"
 	"strings"
 	"time"
-	_ "time/tzdata" // site time zones must validate in minimal containers
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -216,14 +215,9 @@ func (in *DeviceGroupInput) normalize() error {
 	return f.Err()
 }
 
-// ValidTimezone reports whether tz is an IANA time zone name.
-func ValidTimezone(tz string) bool {
-	if tz == "" || tz == "Local" || len(tz) > 64 {
-		return false
-	}
-	_, err := time.LoadLocation(tz)
-	return err == nil
-}
+// ValidTimezone reports whether tz is a name in the IANA time zone
+// database, exactly as the database writes it (docs.ValidZone).
+func ValidTimezone(tz string) bool { return docs.ValidZone(tz) }
 
 // ---------------------------------------------------------------------------
 // Organizations

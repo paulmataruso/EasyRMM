@@ -154,11 +154,16 @@ All notable changes to this project are documented here. The format follows
   held by Technicians and above, at the organization or site where the
   role is; site-scoped people see their sites' contacts and places, not
   the organization's own contacts, which row-level security enforces in
-  PostgreSQL. Every change is audited by field name, without values; a
-  contact's record keeps its priority and emergency flag, never its name,
-  email address, phone numbers or note. Email addresses are plain ones
-  only: characters such as `?` and `&`, which would add headers to a
-  `mailto:` link, are refused. A **Contacts** report exports them as CSV.
+  PostgreSQL. Every change is audited without the text typed in: the
+  records name the fields that changed, and keep a contact's priority and
+  emergency flag and a place's kind and the ID of the place it is inside
+  (`parentId`), never a contact's name, job title, email address, phone
+  numbers or note, or a place's name. A new primary contact and the one it
+  replaces each get a record, naming the other by ID. Email addresses are
+  plain ones only: characters such as `?` and `&`, which would add headers
+  to a `mailto:` link, are refused; letters beyond ASCII, as in
+  `zoë@example.com`, are taken, the server and not the browser judging
+  them. A **Contacts** report exports them as CSV.
   Contacts are personal data of the customer's staff:
   [PRIVACY.md](PRIVACY.md) says what is kept and why. See
   [The customer record](docs/operations/customer-record.md).
@@ -292,9 +297,20 @@ All notable changes to this project are documented here. The format follows
 - **Deleting a site or an organization that holds contacts or places**
   needs them confirmed: the first try answers `409 documentation_exists`
   with their counts, and the console then offers **Delete site and its
-  documentation**. Through the API, send the counts back as query
-  parameters (`?contacts=2&places=1`). Sites and organizations without
-  any are deleted as before.
+  documentation** on a site's page, or **Delete organization and
+  contacts** on an organization's. Through the API, send the counts back as
+  query parameters (`?contacts=2&places=1`). Sites and organizations
+  without any are deleted as before. The deletion's audit record keeps the
+  counts; the contacts and places deleted with it get no records of their
+  own.
+- **Time zones must be names from the time zone database, as it writes
+  them.** An organization's or site's time zone is one of the IANA names
+  in the copy of the database the server is built with, such as
+  `Europe/London` or `US/Eastern`, every one the console offers among
+  them. Other spellings the system opens as the same zone, such as
+  `Europe//London` or `./Europe/London`, were accepted and are now refused
+  with the field named; upgrading rewrites any stored one as the name it
+  stood for.
 - **A downloaded report's audit record no longer quotes a search that can
   name a person.** For **Device inventory**, whose names are often their
   users', the two patch reports and **Contacts**, the record says

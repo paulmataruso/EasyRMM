@@ -5,29 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"sync"
 	"time"
 )
-
-// zones holds each time zone Zone has loaded, by name. The names are the
-// IANA ones organizations and sites are checked against, so it stays as
-// small as that list.
-var zones sync.Map
-
-// Zone is the time zone of an IANA name, read from the system's database
-// once and kept: every organization and site in a list asks for its own.
-// A name the system does not know is UTC, and is not kept.
-func Zone(name string) *time.Location {
-	if loc, ok := zones.Load(name); ok {
-		return loc.(*time.Location)
-	}
-	loc, err := time.LoadLocation(name)
-	if err != nil {
-		return time.UTC
-	}
-	kept, _ := zones.LoadOrStore(name, loc)
-	return kept.(*time.Location)
-}
 
 // Business hours (ADR-0066, "The customer record").
 const (

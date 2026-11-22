@@ -37,6 +37,18 @@ ALTER TABLE sites
     ADD COLUMN business_hours   jsonb CHECK (jsonb_typeof(business_hours) = 'object' AND pg_column_size(business_hours) <= 8192),
     ADD COLUMN after_hours_note text NOT NULL DEFAULT '' CHECK (length(after_hours_note) <= 2000);
 
+-- Time zones: from now on the server takes only the names in the IANA
+-- database, as the database writes them. Before, it took any name it could
+-- open, so "Europe//London", "Europe/./London" or "./Europe/London" may be
+-- stored for Europe/London: each becomes the name it stood for. Down leaves
+-- them so, since they are the same zones. Both tables force row-level
+-- security, on their owner too.
+SELECT set_config('easyrmm.scope_all', 'on', true);
+UPDATE organizations SET timezone = ltrim(regexp_replace(regexp_replace(timezone, '(^|/)\.(?=/|$)', '', 'g'), '/{2,}', '/', 'g'), '/')
+    WHERE timezone ~ '//|(^|/)\.(/|$)';
+UPDATE sites SET timezone = ltrim(regexp_replace(regexp_replace(timezone, '(^|/)\.(?=/|$)', '', 'g'), '/{2,}', '/', 'g'), '/')
+    WHERE timezone ~ '//|(^|/)\.(/|$)';
+
 -- ---------------------------------------------------------------------------
 -- Places within a site
 -- ---------------------------------------------------------------------------

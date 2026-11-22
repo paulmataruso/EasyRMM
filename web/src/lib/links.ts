@@ -2,6 +2,13 @@
 // is made safe here, not where it is shown, so that no page links a value as typed.
 
 /**
+ * An input for an email address in the customer record. Text with an email keyboard, not type="email": the
+ * browser's check refuses letters beyond ASCII before the @, as in zoë@example.com, which the server takes. The
+ * server alone judges an address, and its message shows under the field.
+ */
+export const EMAIL_INPUT = { type: "text", inputMode: "email", autoCapitalize: "none", spellCheck: false } as const;
+
+/**
  * A mailto: link to one address. The server accepts only plain addresses, but each part is percent-encoded all
  * the same, so that a ? or & can never start a header such as bcc (RFC 6068).
  */

@@ -9,7 +9,7 @@ import type { Contact, ContactInput, ContactPriority, Site } from "../../api/typ
 import { ConfirmDialog, Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, Card, EmptyState, ErrorState, IconButton, InlineError, SelectField, Spinner, TableWrap, TextareaField, TextField } from "../../components/ui";
-import { mailtoHref } from "../../lib/links";
+import { EMAIL_INPUT, mailtoHref } from "../../lib/links";
 
 const PRIORITY_LABELS: Record<ContactPriority, string> = { primary: "Primary", secondary: "Secondary", none: "None" };
 
@@ -311,7 +311,7 @@ function ContactDialog({ open, onClose, organizationId, contact, levels }: {
           <TextField label="Name" value={form.name} onChange={(e) => set("name", e.target.value)} error={fieldError(save.error, "name")} required maxLength={200} autoFocus />
           <TextField label="Job title" value={form.jobTitle} onChange={(e) => set("jobTitle", e.target.value)} error={fieldError(save.error, "jobTitle")} maxLength={200} />
         </div>
-        <TextField label="Email" type="email" value={form.email} onChange={(e) => set("email", e.target.value)} error={fieldError(save.error, "email")} maxLength={254} />
+        <TextField label="Email" {...EMAIL_INPUT} value={form.email} onChange={(e) => set("email", e.target.value)} error={fieldError(save.error, "email")} maxLength={254} />
         <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
           <TextField label="Office phone" type="tel" value={form.officePhone} onChange={(e) => set("officePhone", e.target.value)} error={fieldError(save.error, "officePhone")} maxLength={50} />
           <TextField label="Mobile phone" type="tel" value={form.mobilePhone} onChange={(e) => set("mobilePhone", e.target.value)} error={fieldError(save.error, "mobilePhone")} maxLength={50} />

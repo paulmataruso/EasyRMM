@@ -82,7 +82,7 @@ says only that there was one (`searched`), since the audit log cannot be
 edited.
 
 The console reads them from
-`GET /api/v1/reports/{devices|software|health|alerts|patch-compliance|patch-installations}`
+`GET /api/v1/reports/{devices|software|health|alerts|patch-compliance|patch-installations|contacts}`
 (JSON) and `…/csv`, with `organizationId`, `siteId`, `platform`, `q`,
 `offlineDays`, `diskPercent`, `days`, `severity`, `compliance`, `category`
 and `result` as query parameters.

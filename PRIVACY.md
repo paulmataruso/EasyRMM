@@ -35,7 +35,7 @@ server.
 | **MeshAgent** (installed beside the agent) | What MeshCentral needs to open remote desktop, terminal and file sessions that technicians start; MeshCentral's own device information | Remote access, through the MeshCentral server in the same deployment |
 | **EasyPatch agent** (patching) | Operating system and hardware details, Windows Update settings, available, installed and failed updates, installed applications (for application updates on Windows), whether a restart is pending, and the **number** of signed-in users (not their names), to decide when to restart | Patching and patch reports |
 | **Server and console** | Accounts of the people who use the console: name, email address, a password hash, second-factor secrets (encrypted) and security keys' public keys; their sign-in sessions with IP address and browser; an audit log of who did what, from where, including remote sessions | Signing in, permissions and accountability |
-| **The customer record** (typed in by technicians) | For each customer organization: its main phone, email, website and business hours, and each site's address and hours. Contacts, the customer's staff: name, job title, email, office and mobile phone, a note, and whether they are the primary, secondary or emergency contact | Reaching the right person at a customer, and knowing when they are open |
+| **The customer record** (typed in by technicians) | For each customer organization: its main phone, email, website, business hours and after-hours instructions; for each site: its address, hours and after-hours instructions. The instructions are free text and may name people to call and their numbers. Places within each site, such as buildings, floors, rooms and racks, by name. Contacts, the customer's staff: name, job title, email, office and mobile phone, a note, and whether they are the primary, secondary or emergency contact | Reaching the right person at a customer, knowing when they are open, and finding where equipment is |
 
 **In the browser** the console sets only the cookies needed to sign in
 (the session, a short-lived single sign-on cookie and the remote-access
@@ -50,14 +50,25 @@ them, and every read is recorded in the audit log; Read-Only users see that
 a script ran and how it ended, not what it printed
 ([Scripts and jobs](docs/operations/scripts-and-jobs.md#who-sees-output-and-arguments)).
 
-**Contacts** are people at the operator's customers who do not use
-EasyRMM: the software never contacts them, and they cannot sign in. Only
-people with `doc.view` at the customer's organization, or at the contact's
-site, can read them; a site's people see that site's contacts and not the
-organization's own. The audit log records that a contact was added,
-changed or deleted, which fields changed, the contact's priority
-(primary, secondary or none) and whether they are an emergency contact,
-but not their name, job title, email address, phone numbers or note.
+**Contacts** are records of people at the operator's customers, not
+EasyRMM accounts, and EasyRMM never emails or messages them. Someone at a
+customer who also uses the console has an account of their own as well,
+described in the row on accounts above. Only people with `doc.view` at
+the customer's organization, or at the contact's site, can read contacts;
+a site's people see that site's contacts and not the organization's own.
+
+The audit log records each contact added, changed or deleted, by its ID:
+which fields were set or changed, the contact's priority (primary,
+secondary or none) and whether they are an emergency contact, but not
+their name, job title, email address, phone numbers or note. When a
+contact becomes the primary one, the contact it replaces gets a record of
+its own for its change to secondary. Contacts deleted with their site or
+organization get no records of their own; the record of that deletion
+keeps how many contacts and places were deleted with it, and nothing else
+about them. Changes to the rest of the customer record are recorded by
+the names of the fields that changed, not their values; a place's record
+keeps its kind and the ID of the place it is inside, not its name.
+
 Contacts are kept until someone deletes them, or deletes their site or
 organization, and can be exported with the **Contacts** report; the
 audit log records each export, and that it was searched, but not what
@@ -69,6 +80,10 @@ the audit log are kept for the periods set in the deployment's `.env`
 `EASYRMM_JOB_OUTPUT_RETENTION`, 30 days by default, `EASYRMM_JOB_RETENTION`,
 `EASYRMM_AUDIT_RETENTION`), and devices and accounts until someone removes
 them. A run's output can also be removed at once from its page.
+EasyRMM makes no backups of its own. A backup the operator makes
+([Backup and restore](docs/operations/backup-restore.md)) keeps the data
+as it was when the backup was made, including contacts deleted since,
+until the operator deletes that backup.
 
 ## Connections it makes on its own
 
