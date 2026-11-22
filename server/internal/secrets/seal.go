@@ -12,11 +12,14 @@ package secrets
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -48,7 +51,9 @@ type Key struct {
 // Sealer seals and opens values with a key ring.
 type Sealer struct {
 	primary string
-	aeads   map[string]cipher.AEAD
+	// derive is the primary key, which DeriveKey derives keys from.
+	derive []byte
+	aeads  map[string]cipher.AEAD
 }
 
 // NewSealer builds a Sealer. The first key is the primary key used for new
@@ -57,7 +62,7 @@ func NewSealer(keys ...Key) (*Sealer, error) {
 	if len(keys) == 0 {
 		return nil, errors.New("secrets: at least one key is required")
 	}
-	s := &Sealer{primary: keys[0].ID, aeads: make(map[string]cipher.AEAD, len(keys))}
+	s := &Sealer{primary: keys[0].ID, derive: slices.Clone(keys[0].Raw), aeads: make(map[string]cipher.AEAD, len(keys))}
 	for _, k := range keys {
 		if !keyIDPattern.MatchString(k.ID) {
 			return nil, fmt.Errorf("secrets: invalid key id %q (want 1-16 lowercase letters or digits)", k.ID)
@@ -114,6 +119,13 @@ func (s *Sealer) Open(sealed string, associatedData []byte) ([]byte, error) {
 		return nil, ErrDecrypt
 	}
 	return plaintext, nil
+}
+
+// DeriveKey derives a 32-byte key for one use, named by info, from the
+// primary key with HKDF-SHA-256, so that the key itself is never used for
+// anything but sealing. Each use has its own info, and so its own key.
+func (s *Sealer) DeriveKey(info string) ([]byte, error) {
+	return hkdf.Key(sha256.New, s.derive, nil, info, KeySize)
 }
 
 // NeedsReseal reports whether a sealed value was produced by a key other than

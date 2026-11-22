@@ -12,7 +12,24 @@ automatically at server start-up (goose, advisory-locked).
 
 The Docker deployment creates both roles and the database on first start
 (`docker/postgres/init/`). For an external PostgreSQL, run the same script as
-a superuser. **`easyrmm_owner` should own the database**: migration 00029
+a superuser.
+
+**`easyrmm_owner` must be able to create tables in the `public` schema.**
+Every migration that adds a table needs it. Since PostgreSQL 15, `public`
+belongs to `pg_database_owner`, so only the database's owner, or a role
+granted it, may create there. Two ways:
+
+* **`easyrmm_owner` owns the database** (recommended; the Docker
+  deployment's `docker/postgres/init/10-easyrmm.sh` creates it so):
+  `ALTER DATABASE easyrmm OWNER TO easyrmm_owner;` as a superuser.
+* **Another role owns it**, and `easyrmm_owner` is granted `CREATE` on
+  `public`: as that owner or a superuser, connected to the database,
+  `GRANT USAGE, CREATE ON SCHEMA public TO easyrmm_owner;`.
+
+Without either, the first migration that creates a table fails with
+`permission denied for schema public`, and the server does not start.
+
+**`easyrmm_owner` should own the database** in any case: migration 00029
 revokes `TEMPORARY` from `easyrmm_app` and `PUBLIC`, which only the
 database's owner can do. Under any other owner it skips the revoke and
 the server logs a warning, `database migration: database … is not owned
@@ -21,7 +38,8 @@ by easyrmm_owner`, whose hint gives the statements to run as a superuser:
 `ALTER DATABASE easyrmm OWNER TO easyrmm_owner;`. When `easyrmm_app` still
 holds `TEMPORARY` after the revoke, through a grant by another role or a
 role it belongs to, the warning says so and how to find and revoke it.
-The server starts either way.
+The server starts either way: under another owner with `CREATE` on `public`
+granted, every migration runs, and 00029 warns with the statements to run.
 
 ## Tenant isolation (row-level security)
 
@@ -354,6 +372,19 @@ so **a new `SECURITY DEFINER` function must end its `search_path` with
 `easyrmm_app` and `PUBLIC` (see Roles for when it cannot): the server never
 creates temporary tables, and the install scripts no longer grant it.
 Warnings a migration raises reach the server's log with their hints.
+
+## The mail server in the console (migration 00030)
+
+The mail server super administrators set in the console, and the limits on
+the mail EasyRMM sends through whichever mail server is in force
+(ADR-0053, [Mail](../operations/mail.md)).
+
+| Table | Notes |
+|---|---|
+| `mail_server` | Always one row (`id` is always true), so the limits hold before anyone sets them. The console's mail server, if any (an empty `host` means none): port, security (`starttls`, `tls`, or `none`, which the service allows only to loopback), how it signs in (`none` or `password`), the user name, the password sealed with `EASYRMM_SECRET_KEY` (additional data: the column), the sender's address and name, and who changed it and when. The limits, 30 a minute and 9,000 a day by default, with who changed them and when; and when the last test message went (one every 30 seconds). `.env`'s mail server is never stored. Platform scope only |
+| `mail_sends` | One row per message sent, or being sent, in the last 24 hours: when, and its `kind`: `reset` for a password reset the person asked for, which may use the whole day's limit; `admin` for an invitation or a password link an administrator sent (`sent_by`), which stops at 90% of it; `other`, which stops at 80%. Invitations and password emails record the `account_id` they went to and its `organization_id` (null for none or several, and for admin mail when a super administrator sent it), which the limits per account, per organization and per administrator count ([Mail](../operations/mail.md#limits-on-invitations-and-password-emails)). Taken under an advisory lock across servers; a message the mail server refuses is removed again, and rows older than 24 hours are deleted. No foreign keys: a row outlives a deleted user or organization for at most a day. `easyrmm_app` cannot change a row. Platform scope only |
+| `mail_engine_given` | One row: an HMAC-SHA-256 of the mail server the patching engine is given, keyed by a key derived from `EASYRMM_SECRET_KEY`, by the one of EasyRMM's servers that gives it (under a session advisory lock), and when it was recorded; never the mail server or its password. The other servers compare theirs with it. Platform scope only |
+| `mail_waits` | One row per message to someone's own account waiting for room under the minute's limit, on any server, until when it gives up: other mail stands back while one waits. Removed when the wait ends; a row a stopped server leaves runs out at `until` and is deleted. Platform scope only |
 
 ## Backups
 

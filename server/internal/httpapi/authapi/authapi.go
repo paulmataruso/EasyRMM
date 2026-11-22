@@ -157,9 +157,9 @@ func (a *API) view(id *httpapi.Identity) SessionView {
 	return v
 }
 
-func (a *API) options(w http.ResponseWriter, _ *http.Request) error {
+func (a *API) options(w http.ResponseWriter, r *http.Request) error {
 	httpapi.WriteJSON(w, http.StatusOK, map[string]any{
-		"passwordResetAvailable": a.svc.ResetAvailable(),
+		"passwordResetAvailable": a.svc.ResetAvailable(r.Context()),
 		"mfaRequired":            a.svc.Config().RequireMFA,
 		"passwordMinLength":      auth.MinPasswordLength,
 		"webauthn":               a.svc.WebAuthn(),

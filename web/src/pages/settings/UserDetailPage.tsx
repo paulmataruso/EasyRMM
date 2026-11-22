@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { KeyRound, Lock, LockOpen, Pencil, Trash2, UserCheck, UserX } from "lucide-react";
 import { api, fieldError } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
-import type { InviteResult, User } from "../../api/types";
+import type { InviteResult, MailProblem, User } from "../../api/types";
 import { CodeBlock, OneTimeNotice } from "../../components/Copy";
 import { ConfirmDialog, Dialog } from "../../components/Dialog";
 import { describeAssignment, UserStatusBadge } from "../../components/StatusBadges";
@@ -11,6 +11,7 @@ import { useToast } from "../../components/Toast";
 import { Alert, Button, Card, ErrorState, InlineError, KeyValueList, PageHeader, Spinner, TextField } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { AssignmentEditor, draftComplete, fromDraft, toDraft, type DraftAssignment } from "./AssignmentEditor";
+import { whyNotEmailed } from "./mailProblem";
 
 type Confirm = "disable" | "enable" | "unlock" | "reset-mfa" | "delete" | null;
 
@@ -21,7 +22,7 @@ export function UserDetailPage() {
   const user = useApi<User>(`/users/${id}`);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [editingName, setEditingName] = useState(false);
-  const [link, setLink] = useState<{ url: string; invite: boolean } | null>(null);
+  const [link, setLink] = useState<{ url: string; invite: boolean; problem?: MailProblem; reason?: string } | null>(null);
 
   const action = useApiMutation(
     (kind: Exclude<Confirm, null>) =>
@@ -49,7 +50,7 @@ export function UserDetailPage() {
     onSuccess: (res) => {
       const invite = !(user.data?.passwordSet ?? true);
       if (res.emailed) toast.success(`${invite ? "Invitation" : "Password reset link"} emailed to ${user.data?.email}.`);
-      else if (res.link) setLink({ url: res.link, invite });
+      else if (res.link) setLink({ url: res.link, invite, problem: res.mailProblem, reason: res.mailReason });
     },
   });
 
@@ -183,7 +184,7 @@ export function UserDetailPage() {
         {link && (
           <div className="flex flex-col gap-3.5">
             <OneTimeNotice title="Copy this link now. It is shown only once.">
-              Email is not configured on this server, so send it to {u.email} yourself. The link works once
+              {whyNotEmailed(link.problem, u.email, link.reason)} The link works once
               {link.invite ? " and expires in 72 hours." : " and expires soon."}
             </OneTimeNotice>
             <CodeBlock code={link.url} />

@@ -5,5 +5,4 @@ package auth
 func (s *Service) ResetLimits() {
 	s.ipLimit = NewKeyedLimiter(6e9, 10, 100_000)
 	s.mfaLimit = NewKeyedLimiter(6e9, 10, 100_000)
-	s.resetLimit = NewKeyedLimiter(20*60e9, 3, 100_000)
 }

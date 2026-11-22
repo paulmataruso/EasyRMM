@@ -56,6 +56,9 @@ type Server struct {
 	// call and then answer 502, as when the connection drops after
 	// EasyPatch saved the change: the caller cannot tell it happened.
 	LoseReply func(method, path string) bool
+	// Hang, when it returns true for a call, has the server not answer it
+	// until the caller gives up, as an engine that hangs.
+	Hang func(method, path string) bool
 
 	// Packages is what agent-packages lists; NewEngine fills in the
 	// engine's own, and one older Windows package.
@@ -513,8 +516,14 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	hang := s.Hang != nil && s.Hang(r.Method, r.URL.Path)
 	s.requests = append(s.requests, Request{Method: r.Method, Path: r.URL.Path, Body: body})
+	if hang {
+		s.mu.Unlock()
+		<-r.Context().Done()
+		return
+	}
+	defer s.mu.Unlock()
 	if s.Down {
 		problem(w, http.StatusServiceUnavailable, "", "The database is not available.")
 		return
