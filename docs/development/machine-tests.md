@@ -114,9 +114,28 @@ binary started as LocalSystem by `scripts/ci/run-as-system.ps1`:
 
 * `internal/winpolicy` (`query_windows_test.go`): the ownership reader
   started on its own with a request file, as the agent will start it.
+* `internal/winpolicy` (`planted_windows_test.go`): owners the runners do
+  not have, planted as each leaves its sign and removed afterwards, with
+  the reader's answer before and after: an MDM enrolment (and one that
+  cannot be read), the audit policy extension's history and copy, the
+  local Group Policy object's `Registry.pol`, another vendor's filtering
+  platform provider with an inbound filter (in a dynamic session, which
+  Windows removes when it ends), a stand-in for OSConfig's module in Program
+  Files, in a folder Users may change and outside the trusted folders,
+  and Azure machine configuration's service.
 * `server/internal/jobs` (`hardening_windows_test.go`): the hardening
   script's `check all`, its result read as the server reads it, and the
-  Hardening folder's refusals.
+  Hardening folder's refusals; and every value of the registry keys check
+  reads, the security policy (`secedit /export`) and the audit policy
+  (`auditpol /backup`), the same before and after `check all`.
+
+CI's job *Agent tests on Windows* runs the tests named `OnWindows` as the
+runner's administrator: the reader's functions and the hardening
+script's one by one (`functions_windows_test.go`,
+`hardening_functions_windows_test.go`), on what is hard to make in a
+whole run: `Registry.pol` files, filtering platform states, text with
+control characters, a service that cannot be read, and failed sign-ins
+(made with `LogonUser`) for the exposure rule.
 
 Runners have no domain, so the domain scenario runs on Windows guests
 under KVM, not on GitHub yet (ADR-0054 says why, and what CI should do).

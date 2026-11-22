@@ -177,10 +177,21 @@ and Administrators can open, and removes it.
   MDM, Defender for Endpoint, a Configuration Manager client, DSC
   correcting drift, Azure machine configuration, OSConfig's active
   scenarios (Windows Server 2025, where its module is installed), Tamper
-  Protection; and the reasons apply would be *check only* on this
-  computer. OSConfig names its settings without their registry values, so
-  while one of its scenarios is active every setting is *check only* with
-  the reason `osconfig`.
+  Protection, another antivirus or firewall; and the reasons apply would
+  be *check only* on this computer. OSConfig names its settings without
+  their registry values, so while one of its scenarios is active every
+  setting is *check only* with the reason `osconfig`. EasyRMM imports
+  OSConfig's module only from Program Files or System32 and only where
+  no one but SYSTEM, Administrators and TrustedInstaller can change it;
+  a copy anywhere else, or one others can change, makes every setting
+  *check only* (`osconfig`) as well. A value a Group Policy object deletes
+  is *managed elsewhere*, with the value `deleted`.
+* **Exposure** (the `accounts` module): whether the Security log, as far
+  back as it reaches up to 7 days, shows failed sign-ins from public
+  addresses or 10 or more for one account within 15 minutes; the accounts
+  and addresses, and how far back the log was read (at most 5,000 failed
+  sign-ins, newest first). Apply will set no lockout on an exposed
+  computer unless `lockoutExposed` is given.
 * **Each setting**: its value, what EasyRMM wants, and its state: *in
   place*; *not in place* (apply would change it); *managed elsewhere*
   (another owner holds it, named under `managed` with its policy and
@@ -221,12 +232,14 @@ are the only changes a check makes. A check never creates the folder.
 ### Not verified yet
 
 * The MDM reader is built against the registry and WMI layout Microsoft
-  documents and has not run on a computer enrolled in Intune: an enrolled
-  computer's settings that an MDM can set are *check only*, with the
-  reason `mdm`.
+  documents and has not run on a computer enrolled in Intune: on an
+  enrolled computer every setting no other owner holds is *check only*,
+  with the reason `mdm`, and the Policy CSP policy that may set it.
 * Defender for Endpoint, a Configuration Manager client, Azure machine
   configuration and another vendor's antivirus or firewall are found by
-  their services and Windows Security Center, not yet on real computers.
+  their services, Windows Security Center and (another firewall on a
+  server) the filtering platform's providers, not yet on real computers;
+  CI plants their signs on its runners.
 * TLS 1.0 and 1.1 on build 26100 and later are *unknown* where no value
   is set: Microsoft's pages disagree on whether they are off by default.
 
@@ -238,3 +251,5 @@ are the only changes a check makes. A check never creates the folder.
 | Every Windows module *Not supported*, naming `%ProgramData%\EasyRMM\Hardening` | Someone other than SYSTEM or Administrators owns it or may write to it, or it is a link. Remove it as an administrator; nothing in it was trusted |
 | Every Windows module *Not supported*, naming Constrained Language Mode | App Control for Business or AppLocker restricts PowerShell on the computer. EasyRMM does not work around it |
 | Windows settings *Check only*, reason `group_policy_record_off` | Group Policy's *Turn off Resultant Set of Policy logging* is set, or the record could not be read: EasyRMM cannot tell what Group Policy sets |
+| Windows settings *Check only*, reason `unreadable` | A record EasyRMM needs could not be read (the platform's notes say which: the MDM enrolments, Group Policy's histories or the local policy file, Security Center, the filtering platform, Defender's status). Check the computer's health; EasyRMM does not guess the owner |
+| Firewall settings *Check only*, reason `other_firewall` | On a server, another vendor's filtering platform provider filters inbound traffic (the notes name it): another firewall may manage the computer's firewall |

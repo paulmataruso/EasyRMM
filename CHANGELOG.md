@@ -147,9 +147,16 @@ All notable changes to this project are documented here. The format follows
   reports on. For each setting it reports the value, what EasyRMM wants,
   and who else owns it: Group Policy (read from Windows' own record of what
   it applied), registry preference items, an MDM, Defender for Endpoint, a
-  Configuration Manager client, DSC, Azure machine configuration, OSConfig
-  or Tamper Protection. Where EasyRMM cannot tell, the setting is *check only*, with
-  the reason. The platform says which Windows it is, its role, how it is
+  Configuration Manager client, DSC, Azure machine configuration, OSConfig,
+  Tamper Protection, or another antivirus or firewall (on servers, another
+  vendor's filtering platform provider). A value a Group Policy object
+  deletes is Group Policy's. Where EasyRMM cannot tell, the setting is
+  *check only*, with the reason, a record that could not be read
+  included. On a computer enrolled in an MDM every value no other owner
+  holds is *check only*, until the MDM reader is proven on an
+  Intune-enrolled computer. The accounts module reports whether the
+  computer is exposed: failed sign-ins from public addresses, or 10 or
+  more for one account within 15 minutes. The platform says which Windows it is, its role, how it is
   joined, and whether apply will be supported there. Each module lists
   the NIST SP 800-53, SP 800-171 and ISO/IEC 27001 controls that DISA's and
   NIST's published mappings relate it to, with their sources. Every run
