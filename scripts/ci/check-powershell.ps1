@@ -43,9 +43,14 @@ foreach ($s in $scripts) {
         $failed = $true
     }
     if ($desktop -and (Test-Path -LiteralPath $desktop)) {
-        $parse = '$t = $null; $e = $null; $null = [System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$t, [ref]$e); ' +
-            'foreach ($x in $e) { [Console]::WriteLine(\"{0}: {1}\", $x.Extent.StartLineNumber, $x.Message) }; exit $e.Count'
-        $out = & $desktop -NoLogo -NoProfile -NonInteractive -Command $parse $s.FullName
+        # Encoded, with the path inside it: PowerShell 7 quotes a native
+        # command's arguments in a way Windows PowerShell's -Command does
+        # not undo.
+        $path = $s.FullName.Replace("'", "''")
+        $parse = '$t = $null; $e = $null; $null = [System.Management.Automation.Language.Parser]::ParseFile(''' + $path + ''', [ref]$t, [ref]$e); ' +
+            'foreach ($x in $e) { ''{0}: {1}'' -f $x.Extent.StartLineNumber, $x.Message }; exit $e.Count'
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($parse))
+        $out = & $desktop -NoLogo -NoProfile -NonInteractive -EncodedCommand $encoded
         if ($LASTEXITCODE -ne 0) {
             Write-Host "$($s.FullName) (Windows PowerShell 5.1): $out"
             $failed = $true
