@@ -267,9 +267,21 @@ func TestEasyPatchAPI(t *testing.T) {
 			Status string `json:"status"`
 		} `json:"summary"`
 		DeviceName string `json:"deviceName"`
+		Device     struct {
+			OrganizationName string `json:"organizationName"`
+			Platform         string `json:"platform"`
+			Endpoint         *struct {
+				Hostname string `json:"hostname"`
+			} `json:"endpoint"`
+		} `json:"device"`
+		Origin *struct {
+			Action string `json:"action"`
+		} `json:"origin"`
+		UpdateFacts map[string]json.RawMessage `json:"updateFacts"`
 	}
 	admin.expect(http.StatusOK, "GET", "/api/v1/patching/jobs/"+jobs.Items[0].ID, nil, &job)
-	if job.DeviceName != "web-01" || job.Summary.Status != "Queued" {
+	if job.DeviceName != "web-01" || job.Summary.Status != "Queued" || job.Device.OrganizationName == "" || job.Device.Platform == "" ||
+		job.Device.Endpoint == nil || job.Device.Endpoint.Hostname == "" || job.UpdateFacts == nil {
 		t.Fatalf("job: %+v", job)
 	}
 	wantStatus(t, admin.do("GET", "/api/v1/patching/jobs/nope", nil), http.StatusNotFound, "not_found")

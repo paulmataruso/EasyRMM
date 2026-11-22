@@ -3,9 +3,10 @@ import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { PatchActionResult, PatchAvailablePlan, PatchFleet, PatchJobDetail, PatchJobView, PatchScope, RestartPlan } from "../../api/types";
 import { baseRoutes, installFakeApi, ok, sessionView, type FakeHandler, type FakeReply } from "../../test/fakeApi";
-import { org, site } from "../../test/fixtures";
+import { org, patchJobFacts, site } from "../../test/fixtures";
 import { renderApp, renderWithProviders } from "../../test/render";
-import { InstallDialog, PatchJobDialog, RestartDialog } from "./PatchDialogs";
+import { InstallDialog, RestartDialog } from "./PatchDialogs";
+import { PatchJobDialog } from "./PatchJobDialog";
 
 // Patch all (ADR-0030): an install or restart of every device of an organization or site, from the Patching overview
 // and the organization and site pages; a restart asked for with an install; and how a job shows that restart.
@@ -697,6 +698,7 @@ describe("a job's restart after its install", () => {
       deviceId: "d1",
       deviceName: "WEB-01",
       canManage: true,
+      ...patchJobFacts(),
       ...extra,
     };
   }

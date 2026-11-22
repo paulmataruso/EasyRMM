@@ -680,6 +680,14 @@ type JobDetailView struct {
 	// after an install, is that install's job.
 	RestartAfter *RestartAfterView `json:"restartAfter"`
 	RestartFor   *uuid.UUID        `json:"restartFor"`
+	// Device is the device as EasyRMM and the engine know it; Origin, how
+	// EasyRMM started the job (nil when it did not); UpdateFacts, what the
+	// engine knows of the job's updates on the device, and
+	// UpdateFactsError, why that could not be read.
+	Device           JobDevice                 `json:"device"`
+	Origin           *JobOrigin                `json:"origin"`
+	UpdateFacts      map[uuid.UUID]UpdateFacts `json:"updateFacts"`
+	UpdateFactsError *string                   `json:"updateFactsError"`
 }
 
 // linkedDevices reads the linked devices of the given endpoints that the
@@ -836,17 +844,11 @@ func (s *Service) job(ctx context.Context, c access.Caller, id uuid.UUID) (JobDe
 
 // Job reads one job of a device the caller may see.
 func (s *Service) Job(ctx context.Context, c access.Caller, id uuid.UUID) (JobDetailView, error) {
-	j, d, _, _, err := s.job(ctx, c, id)
+	j, d, _, cl, err := s.job(ctx, c, id)
 	if err != nil {
 		return JobDetailView{}, err
 	}
-	j.Items, j.Events = orEmpty(j.Items), orEmpty(j.Events)
-	after, install, err := s.restartAfter(ctx, c, id)
-	if err != nil {
-		return JobDetailView{}, err
-	}
-	return JobDetailView{JobDetail: j, DeviceID: d.id, DeviceName: d.name, CanManage: c.Can(rbac.PermPatchManage, d.resource()),
-		RestartAfter: after, RestartFor: install}, nil
+	return s.jobView(ctx, c, cl, j, d)
 }
 
 // CancelJob cancels a job of a device the caller may manage patching of.
@@ -867,12 +869,7 @@ func (s *Service) CancelJob(ctx context.Context, c access.Caller, id uuid.UUID) 
 		Details: map[string]any{"device": d.name, "jobId": id.String(), "jobType": j.Summary.Type}}); err != nil {
 		return JobDetailView{}, err
 	}
-	j.Items, j.Events = orEmpty(j.Items), orEmpty(j.Events)
-	after, install, err := s.restartAfter(ctx, c, id)
-	if err != nil {
-		return JobDetailView{}, err
-	}
-	return JobDetailView{JobDetail: j, DeviceID: d.id, DeviceName: d.name, CanManage: true, RestartAfter: after, RestartFor: install}, nil
+	return s.jobView(ctx, c, cl, j, d)
 }
 
 // ---------------------------------------------------------------- actions

@@ -379,18 +379,58 @@ engine) and when they were requested (the last 24 hours, 7 days or 30
 days). The tab shows the newest 200 jobs that match and says when older
 ones are left out; narrow the filters to find them.
 
-Open a job for its updates, events and progress: when it was requested and
-by whom (or how it started), when a scheduled job starts, until when a
-queued job waits for its device, when it was sent to the device (and how
-many times), started and finished, and the job it runs again when it is a
-retry. A running job can be cancelled; until the device stops, the job says
-the cancellation was asked for. A job whose device stopped reporting says
-it ran out of time. An install asked to restart its device afterwards shows
-that choice and what became of it, linked to the restart; that restart
-links back to its install. A job that failed, was cancelled or expired, or left
-some updates uninstalled, can be run again with **Retry**; the new job
-opens in its place. A retry is refused while the same job is already
-queued.
+Open a job to see it in full; it refreshes while it runs.
+
+* **At the top**: its status and progress, how many updates installed and
+  failed, how long it took (or has been running), whether the device needs a
+  restart to finish, when it was requested and by whom (or how it started),
+  until when a queued job waits for its device, and the patching engine's
+  error with what its code means.
+* **How it started**, from EasyRMM's audit log: who asked and when, as what
+  (an install, a scan, a retry, a restart...), and for an install, the
+  updates it was asked for (what the policy approves, every available
+  update with or without feature upgrades, or the updates chosen) and when
+  it was scheduled for. A job that was part of a **Patch all** or **Update
+  all now** names its organization or site and the request's id, which
+  every device's job of that request shares. A retry links the job it runs
+  again; a restart EasyRMM asked for after an install is shown as
+  EasyRMM's, linked to the install. A job EasyRMM has no record of starting
+  says whether the device's patch policy or the engine started it, or that
+  it was started in the engine itself.
+* **Device**: linked to its page, with its organization and site, its
+  operating system (and build, and a badge when it gets only extended
+  security updates or none any more), the versions of the EasyRMM and
+  EasyPatch agents (and whether the EasyPatch agent is outdated), whether the
+  engine sees it online and when it last checked in, and a pending restart.
+  When the engine cannot be read, the job says so.
+* **Restart after the install**: on an install asked to restart its device
+  afterwards, that choice and what became of it, linked to the restart; that
+  restart links back to its install.
+* **Updates**: their totals (by status, their size, how many fix exploited
+  flaws, how many need a restart), then each update with its KB or its
+  package and the version it replaces, its classification and severity,
+  size and release date, the CVEs it fixes (the first 5, the rest on
+  request), whether CISA lists it as exploited and by when it must be
+  fixed, its advisories, why it was skipped, its error, and its state on
+  the device now (an update that failed in the job may have installed
+  since). A Windows
+  Update error code is shown in hex (`0x80240022`) with what it means and
+  what to try, or as an *unknown code*; a code that is not one
+  (`apt_exit_100`) is shown as the agent reported it, beside its message.
+  These details come from the engine's lists of the device's updates: an
+  update no longer listed has none, and when the lists cannot be read the
+  job says so. The first 25 updates are shown, the rest on request.
+* **Timeline**: when the job was requested, sent to the device (and how
+  many times), accepted, started, asked to cancel and finished, in order
+  with the engine's events; the first 20 entries, the rest on request.
+
+The engine keeps no output of patch jobs, so there is no log to show.
+
+A running job can be cancelled; until the device stops, the job says the
+cancellation was asked for. A job whose device stopped reporting says it
+ran out of time. A job that failed, was cancelled or expired, or left some
+updates uninstalled, can be run again with **Retry**; the new job opens in
+its place. A retry is refused while the same job is already queued.
 
 ### Alerts
 

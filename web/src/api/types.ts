@@ -2362,6 +2362,72 @@ export interface PatchJobDetail {
   restartAfter?: PatchRestartAfter | null;
   /** On a restart EasyRMM asked for after an install: the install job's id. */
   restartFor?: string | null;
+  /** The device the job ran on, as EasyRMM and the patching engine know it. */
+  device: PatchJobDevice;
+  /** How EasyRMM started the job, from its audit log; null when it did not, or the record is gone. */
+  origin: PatchJobOrigin | null;
+  /** What the engine knows of each of the job's updates on the device, by update GUID; an update absent is no longer listed. */
+  updateFacts: Record<string, PatchJobUpdateFacts>;
+  /** Why updateFacts could not be read, when they could not. */
+  updateFactsError: string | null;
+}
+
+/** The device a job ran on. */
+export interface PatchJobDevice {
+  organizationName: string;
+  siteName: string;
+  platform: Platform;
+  /** The operating system as EasyRMM's agent reported it; "" when none did. */
+  os: string;
+  /** The EasyRMM agent's version; null without one. */
+  agentVersion: string | null;
+  /** The device as the patching engine knows it; null when the engine could not be read. */
+  endpoint: {
+    hostname: string;
+    operatingSystem: string;
+    osBuild: string;
+    /** Supported, ExtendedSecurityUpdates, Unsupported or Unknown. */
+    osSupportStatus: string;
+    /** The EasyPatch agent's version. */
+    agentVersion: string;
+    agentOutdated: boolean;
+    online: boolean;
+    lastCheckInAt: string | null;
+    rebootPending: boolean;
+  } | null;
+}
+
+/** How EasyRMM started a job: the audit record that names it. */
+export interface PatchJobOrigin {
+  /** patch.install, patch.scan, patch.restart, patch.retry, patch.remove_update... */
+  action: string;
+  /** Who asked, by email; EasyRMM's component when `system`. */
+  by: string;
+  system: boolean;
+  at: string;
+  /** The organization or site of the Patch all the job was part of, and the request its devices' jobs share. */
+  patchAll: string | null;
+  requestId: string | null;
+  /** What an install was asked for: "all eligible", "all available", or how many updates were chosen. */
+  updates: string | null;
+  featureUpgrades: boolean | null;
+  scheduledAt: string | null;
+}
+
+/** What the patching engine knows of one of a job's updates on its device. */
+export interface PatchJobUpdateFacts {
+  kbNumbers: string[];
+  msrcSeverity: string;
+  sizeBytes: number | null;
+  releaseDate: string | null;
+  cveIds: string[];
+  knownExploited: boolean;
+  /** CISA's date for fixing it (YYYY-MM-DD), when it is known exploited. */
+  kevDueDate: string;
+  supportUrl: string;
+  /** The update's state on the device now. */
+  state: PatchUpdateState;
+  package: { name: string; version: string; installedVersion: string; repository: string; advisories: string[] } | null;
 }
 
 /** A restart asked for with an install, and what became of it. */

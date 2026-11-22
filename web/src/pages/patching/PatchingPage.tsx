@@ -7,7 +7,8 @@ import { OrganizationSelect, SearchInput, SiteSelect } from "../../components/Fi
 import { Alert, Button, Card, cx, EmptyState, ErrorState, Field, PageHeader, Segmented, Select, Spinner, TableWrap, Tabs, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
-import { AgentInstallDialog, InstallDialog, PatchJobDialog, RestartDialog, useScan } from "./PatchDialogs";
+import { AgentInstallDialog, InstallDialog, RestartDialog, useScan } from "./PatchDialogs";
+import { PatchJobDialog } from "./PatchJobDialog";
 import {
   activityText,
   COMPLIANCE,

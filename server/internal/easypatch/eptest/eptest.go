@@ -6,6 +6,7 @@
 package eptest
 
 import (
+	"cmp"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -154,6 +155,12 @@ type Job struct {
 	RetryOf *uuid.UUID
 	// RebootRequired says the job's updates need a restart.
 	RebootRequired bool
+	// Trigger is how the job started: Manual (when empty), Scheduled or
+	// System.
+	Trigger string
+	// Items are the job's updates as its detail shows them: those chosen
+	// for an install of chosen updates; one pending update otherwise.
+	Items []map[string]any
 }
 
 // Request is a call the server received.
@@ -370,6 +377,16 @@ func (s *Server) SetJobStatus(id uuid.UUID, status string) {
 	}
 }
 
+// AddJob adds a job the engine started on its own, as a policy's schedule
+// (trigger Scheduled) or the engine (System) does.
+func (s *Server) AddJob(endpoint uuid.UUID, typ, trigger string) uuid.UUID {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	j := s.newJob(s.endpoints[endpoint], typ, nil)
+	j.Trigger = trigger
+	return j.ID
+}
+
 // SetJobRebootRequired says whether a job's updates need a restart, as its
 // agent's report would.
 func (s *Server) SetJobRebootRequired(id uuid.UUID, required bool) {
@@ -490,7 +507,7 @@ func (j *Job) summary() map[string]any {
 	}
 	return map[string]any{
 		"id": j.ID, "endpointId": j.Endpoint, "hostname": j.Hostname, "organizationId": j.Org, "organizationName": "Acme Patch",
-		"type": j.Type, "status": j.Status, "trigger": "Manual", "requestedBy": "token:easyrmm", "createdAt": j.CreatedAt,
+		"type": j.Type, "status": j.Status, "trigger": cmp.Or(j.Trigger, "Manual"), "requestedBy": "token:easyrmm", "createdAt": j.CreatedAt,
 		"startedAt": nil, "completedAt": completed, "expiresAt": j.CreatedAt.Add(7 * 24 * time.Hour), "progressPercent": nil,
 		"phase": nil, "progressMessage": nil, "errorCode": nil, "errorMessage": nil, "rebootRequired": j.RebootRequired, "timedOut": false,
 		"cancelRequested": j.Status == StatusCanceled, "itemCount": 0, "succeededCount": 0, "failedCount": 0,
@@ -498,15 +515,40 @@ func (j *Job) summary() map[string]any {
 }
 
 func (j *Job) detail() map[string]any {
+	items := j.Items
+	if items == nil {
+		items = []map[string]any{jobItem(map[string]any{"updateGuid": uuid.New(), "title": "openssl", "category": "Security"})}
+	}
 	return map[string]any{
 		"summary": j.summary(), "installMode": nil, "notBefore": j.NotBefore, "deliveredAt": nil, "acknowledgedAt": nil,
 		"lastProgressAt": nil, "deliveryCount": 0, "retryOfJobId": nil, "cancelRequestedAt": nil,
-		"items": []map[string]any{{"updateGuid": uuid.New(), "title": "openssl", "kbNumber": nil, "category": "Security",
-			"status": "Pending", "skipReason": nil, "resultCode": nil, "errorCode": nil, "errorMessage": nil, "rebootRequired": false,
-			"downloadPercent": nil, "installPercent": nil, "startedAt": nil, "completedAt": nil}},
+		"items": items,
 		"events": []map[string]any{{"id": 1, "endpointId": j.Endpoint, "hostname": j.Hostname, "type": "JobCreated",
 			"severity": "Info", "message": "Job queued.", "jobId": j.ID, "createdAt": j.CreatedAt}},
 	}
+}
+
+// jobItem is an update of a job, pending, from the update as an endpoint's
+// list shows it.
+func jobItem(u map[string]any) map[string]any {
+	return map[string]any{"updateGuid": u["updateGuid"], "title": u["title"], "kbNumber": nil, "category": u["category"],
+		"status": "Pending", "skipReason": nil, "resultCode": nil, "errorCode": nil, "errorMessage": nil, "rebootRequired": false,
+		"downloadPercent": nil, "installPercent": nil, "startedAt": nil, "completedAt": nil}
+}
+
+// chosenItems are the items of an install of chosen updates: each one the
+// endpoint lists, those still to install or installed.
+func (e *Endpoint) chosenItems(guids []any) []map[string]any {
+	items := []map[string]any{}
+	for _, g := range guids {
+		for _, u := range slices.Concat(e.Updates, e.InstalledItems) {
+			if fmt.Sprint(u["updateGuid"]) == fmt.Sprint(g) {
+				items = append(items, jobItem(u))
+				break
+			}
+		}
+	}
+	return items
 }
 
 func problem(w http.ResponseWriter, status int, code, detail string) {
@@ -842,7 +884,11 @@ func (s *Server) serveEndpoint(w http.ResponseWriter, r *http.Request, e *Endpoi
 			problem(w, 409, "nothing_to_install", fmt.Sprintf("%s has no eligible updates.", e.Hostname))
 			return
 		}
-		reply(w, 202, s.newJob(e, "InstallUpdates", scheduled(body)).summary())
+		j := s.newJob(e, "InstallUpdates", scheduled(body))
+		if guids, _ := body["updateGuids"].([]any); body["mode"] == "Selected" {
+			j.Items = e.chosenItems(guids)
+		}
+		reply(w, 202, j.summary())
 	case r.Method == http.MethodGet && sub == "install-preview":
 		s.preview(w, e, r.URL.Query().Get("mode"), r.URL.Query().Get("updateGuids"))
 	case r.Method != http.MethodGet && s.readOnlyCall:

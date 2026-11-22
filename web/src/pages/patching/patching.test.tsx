@@ -16,7 +16,7 @@ import type {
   RestartPlan,
 } from "../../api/types";
 import { baseRoutes, fail, installFakeApi, noContent, ok, sessionView, unreportedRoutes, type FakeHandler, type FakeReply } from "../../test/fakeApi";
-import { device } from "../../test/fixtures";
+import { device, patchJobFacts } from "../../test/fixtures";
 import { renderApp, renderWithProviders } from "../../test/render";
 import { activityText, maintenanceText, requester } from "./patchText";
 import { RestartDialog } from "./PatchDialogs";
@@ -394,6 +394,7 @@ describe("patching page", () => {
       deviceId: "d1",
       deviceName: "WEB-01",
       canManage: true,
+      ...patchJobFacts(),
     };
     const server = installFakeApi(
       patchingRoutes({
@@ -593,6 +594,7 @@ describe("patching page", () => {
       deviceId: "d1",
       deviceName: "WEB-01",
       canManage: true,
+      ...patchJobFacts(),
     });
     const server = installFakeApi(
       patchingRoutes({
@@ -683,6 +685,7 @@ describe("patching page", () => {
           deviceId: "d1",
           deviceName: "WEB-01",
           canManage: true,
+          ...patchJobFacts(),
         } satisfies PatchJobDetail),
       }),
     );
@@ -711,6 +714,7 @@ describe("patching page", () => {
           deviceId: "d1",
           deviceName: "WEB-01",
           canManage: false,
+          ...patchJobFacts(),
         } satisfies PatchJobDetail),
       }),
     );
