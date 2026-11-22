@@ -1,17 +1,47 @@
 # ADR-0054: Hardening Windows computers and servers
 
-* Status: Proposed (2026-11-21), revised after its independent review and
-  again after that review's check, the same day. Not implemented.
+* Status: Accepted (2026-11-22, after an independent review and its check). Not implemented.
+* Revised (2026-11-21) after its independent review and again after that
+  review's check. On acceptance, brought up to date with the ADRs merged
+  since (ADR-0060, and ADR-0063 to ADR-0068), each where it touches this
+  ADR; where one changes something decided here, the section says so.
+* Amends: [ADR-0017](0017-scripts-and-jobs.md), with W2: batch IDs, job
+  retention per kind, one audit row per organization per daily batch, and
+  runs the server cancels (see [The job](#the-job)).
 * Builds on: [ADR-0051](0051-hardening-linux-computers.md) (the `hardening`
   job, its modes, results, permission and console),
   [ADR-0017](0017-scripts-and-jobs.md) (scripts and jobs),
+  [ADR-0063](0063-who-sees-job-output-and-arguments.md) (implemented: who
+  sees a run's output and a job's arguments, and how long output is kept),
   [ADR-0028](0028-software-deployment.md) (a fixed script compiled into the
   server, its input as arguments) and [ADR-0020](0020-windows-agent.md)
   (the Windows agent).
-* Shares with log collection's ADR (ADR-0060, proposed): Windows audit
-  policy, which log collection sets from one table that this ADR's check
-  compares against, and the reader of who owns a setting (*policy
-  ownership*), built once, in this ADR's W1, for both.
+* Shares with [ADR-0060](0060-collecting-logs.md) (log collection;
+  proposed, not implemented): Windows audit policy, which log collection
+  sets from one table that this ADR's check compares against, and the
+  reader of who owns a setting (*policy ownership*), built once, in this
+  ADR's W1, for both.
+* Used by later ADRs, each accepted; none implemented except ADR-0065's
+  slice 1 (PR #86):
+  * [ADR-0067](0067-remote-registry-editor.md) (the registry editor, and
+    F2): before a write it shows W1's ownership reader's answer and
+    whether W2's manifest lists the value; F2 extends W2's job amendments
+    per kind; and it amends [One change at a time](#the-job) so that
+    registry changes take the same lock.
+  * [ADR-0068](0068-remote-event-viewer.md) (the event viewer): before a
+    change to a log's settings it shows W1's reader's answer; its queries
+    use the server's cancel, as F2 extends it; and it amends One change
+    at a time so that `eventlog_manage` takes the same lock.
+  * [ADR-0064](0064-remote-powershell-management.md) (remote PowerShell),
+    [ADR-0065](0065-hardware-health.md) (hardware health), ADR-0067 and
+    ADR-0068 leave their Windows paths that CI's runners cannot show
+    unverified until this ADR's Windows machines under KVM, or real
+    computers, show them (see [Testing](#testing)). ADR-0064's, ADR-0067's
+    and ADR-0068's Windows test jobs run as LocalSystem through a
+    scheduled task, as this ADR's tests do.
+
+  This ADR gains an *Amended by* line for ADR-0067 and for ADR-0068 when
+  each is implemented, as they say.
 
 ## Context
 Most computers an MSP manages run Windows. The owner asked for automatic
@@ -308,6 +338,10 @@ reason above for its not naming CIS recommendations.
   Bypass -File`, as LocalSystem, inside a job object). No PowerShell 7, no
   modules installed from the PowerShell Gallery, no `Add-Type` (it
   compiles C# at run time and is refused in Constrained Language Mode).
+  [ADR-0064](0064-remote-powershell-management.md) adds a `pwsh` shell
+  that runs PowerShell 7 where it is installed; EasyRMM's own hardening
+  script keeps the `powershell` shell, Windows PowerShell 5.1, as
+  ADR-0064 says.
   Language-neutral throughout: accounts and groups by SID (Administrators
   `S-1-5-32-544`, the Guest account by its RID, 501, the built-in
   Administrator by 500), audit subcategories by GUID, event fields by their
@@ -334,7 +368,11 @@ reason above for its not naming CIS recommendations.
   not send one while another hardening, software or patch job for that
   device is queued or running, and holds those until it ends, so that a
   feature removal and an update never run together. ADR-0051's jobs get
-  the same when it is next amended.
+  the same when it is next amended. ADR-0067 and ADR-0068 extend the lock,
+  once they are built, to registry changes (`registry_change`) and to a
+  log's settings and clearing (`eventlog_manage`): none runs beside a
+  hardening apply or undo on the same device; their reads never wait for
+  it.
 * **A daily check** on every device where EasyRMM's values are in place,
   so that an owner that arrives later is seen (see Managed elsewhere). It
   is an ordinary signed `hardening` job in `check` mode, never apply or
@@ -361,6 +399,16 @@ reason above for its not naming CIS recommendations.
     with one row per organization per daily batch instead of one
     `device.script_run` per run; and the server may cancel a run itself,
     as above.
+  * **Since then.** [ADR-0063](0063-who-sees-job-output-and-arguments.md)
+    keeps a run's output for `EASYRMM_JOB_OUTPUT_RETENTION` (30 days by
+    default) and leaves retention per kind to the first kind that needs
+    it: its purge then gains the kind in its condition and a time per
+    kind. [ADR-0067](0067-remote-registry-editor.md)'s F2 extends these
+    amendments per kind and adds no second set, and ADR-0068's queries
+    use the server's cancel as F2 extends it. **Changed by ADR-0067**: if
+    F2 is built before W2, F2 builds job retention per kind and the
+    server's cancel, and W2 extends them. The MSP plan's order has W2
+    first (its step 8; F2 is step 15).
 
 ### Before anything changes
 The script first checks, and stops with every module *not supported* and
@@ -424,9 +472,13 @@ If Group Policy sets PowerShell's execution policy to `AllSigned`, the
 script does not start at all: Group Policy "overrides the execution
 policies set in PowerShell in all scopes". The job fails with PowerShell's
 message, which the server recognises and shows as *Group Policy allows only
-signed scripts*. This is true of every PowerShell job EasyRMM runs today;
-signing EasyRMM's scripts depends on code signing, which is on hold (see
-Open questions).
+signed scripts*, in its own words, quoting nothing from the output
+([ADR-0063](0063-who-sees-job-output-and-arguments.md)). This is true of
+every PowerShell job EasyRMM runs, in either edition (ADR-0064). ADR-0067's
+and ADR-0068's builtins, Go code in the agent, are not stopped by it,
+though ADR-0067's owner warning, which runs this ADR's reader, then says
+*cannot tell*. Signing EasyRMM's scripts depends on code signing, which is
+on hold (see Open questions).
 
 ### Managed elsewhere
 A setting that another owner holds is never written. The check lists it
@@ -471,6 +523,11 @@ a setting is written once, in W1, as a PowerShell script in a Go package
 of its own (`internal/winpolicy`, beside `internal/agentproto`). The
 server includes it in the hardening script; the agent carries the same file
 for *Configure logging*, which builds no reader of its own (ADR-0060).
+ADR-0067's registry editor and ADR-0068's log settings show its answer
+before a change: ADR-0067's `registry` builtin starts the agent's copy as a
+child process of its own, with the values' paths in a file, and shows
+*cannot tell* where PowerShell cannot run it. W1 builds the reader so that
+it can be started that way.
 For each registry value, security setting and audit subcategory it
 returns exactly one of three results:
 
@@ -1261,11 +1318,11 @@ WN25-00-000250; `laps` WN11-SO-000280, WN25-00-000020.
 
 ### Audit policy
 **Log collection owns Windows audit policy.** Its *Configure logging*
-(`logs.configure`, ADR-0060, proposed) sets the advanced audit
-subcategories, `SCENoApplyLegacyAuditPolicy` (subcategories override
-categories), command lines in process creation events, PowerShell script
-block logging and the event logs' sizes, from the agent, leaving what an
-owner holds; domain controllers only when chosen
+(`logs.configure`, ADR-0060, proposed and not implemented) sets the
+advanced audit subcategories, `SCENoApplyLegacyAuditPolicy` (subcategories
+override categories), command lines in process creation events,
+PowerShell script block logging and the event logs' sizes, from the
+agent, leaving what an owner holds; domain controllers only when chosen
 (`logs.configure.domainControllers`). Hardening sets none of these, so
 the two never fight over a value or over whose undo puts it back.
 
@@ -1375,7 +1432,9 @@ As in ADR-0051, with Windows' places and tools:
   platform is now check only or the reader *cannot tell*, leaving every
   value in the unreadable owner's place (see Before anything changes). A
   successful undo consumes the record; the next apply takes a fresh one.
-  Applying twice changes nothing the second time.
+  Applying twice changes nothing the second time. ADR-0067's registry
+  editor, before a write, shows whether this manifest lists the value, and
+  warns that changing it leaves hardening's undo for that value.
 * **Firewall settings that were not configured** in the local store
   (Windows' defaults) are put back as not configured, never written as an
   explicit *Block* or *Allow*. Microsoft documents `NotConfigured` as
@@ -1478,6 +1537,10 @@ As in ADR-0051, with Windows' places and tools:
 * As for other jobs, every device needs the permission, an EasyRMM agent
   and a supported platform, or nothing runs. Viewing results needs
   `device.view`.
+* **A run's raw output and a job's argument values** need
+  `job.view_sensitive` (Technicians and above,
+  [ADR-0063](0063-who-sees-job-output-and-arguments.md)); a device's
+  findings, and a job's mode, modules and options, do not.
 
 ### The rest
 * **Audit**: `device.hardening`, with the mode, modules, options and job;
@@ -1514,7 +1577,11 @@ As in ADR-0051, with Windows' places and tools:
   on Windows* job keeps its tests and its `windows-latest`. The script runs
   as LocalSystem, as the agent's service would run it, through a scheduled
   task. For each module: check, apply, check, apply again (no change),
-  undo, check, with every recorded value as before.
+  undo, check, with every recorded value as before. ADR-0064's Windows
+  test job (the MSP plan's step 6, before W1), ADR-0067's and ADR-0068's
+  run the agent's own tests the same way, as LocalSystem through a
+  scheduled task, each in a job of its own over `windows-latest` and
+  `windows-11-arm`.
 * **What runners cannot show**: restarts; domains and Group Policy from a
   domain; traffic from outside; MDM; and whatever the runner images change
   themselves. `Configure-WindowsDefender.ps1` "Disables Windows Defender"
@@ -1556,6 +1623,16 @@ As in ADR-0051, with Windows' places and tools:
     virtualization-based security inside a nested guest probably cannot
     run. The fallback is a self-hosted runner the owner provides, or the
     same scenarios run by hand on the owner's machines and recorded.
+  * **Other ADRs wait for these machines.** ADR-0064, ADR-0065, ADR-0067
+    and ADR-0068 plan Windows tests on them: Windows with and without
+    PowerShell 7, `AllSigned` from Group Policy and Constrained Language
+    Mode (ADR-0064); QEMU's NVMe and AHCI disks under Windows' own drivers
+    (ADR-0065); Group Policy setting a value back, a domain account's
+    hive and App Control (ADR-0067); a domain account's SID, event
+    forwarding between two machines, Sysmon's events and Group Policy
+    setting a log's size (ADR-0068). The MSP plan builds feature 12's pair
+    of domain controllers in the same harness. So W1's decision, or its
+    fallback, decides how those are verified too.
 * **Scenarios, one or more per guard**, as in ADR-0051:
   * Persistence, first of all (see How settings are written): on Server
     2016, Server 2025 and Windows 11 domain members, every administrative
@@ -1682,6 +1759,10 @@ As in ADR-0051, with Windows' places and tools:
   questions).
 
 ## Slices
+The [MSP plan's order](../feature-plan-msp.md#order), decided in review,
+places W1, W2 and W3 at its steps 7, 8 and 9: after F0 (ADR-0063) and
+remote PowerShell's slice 1, and before notifications.
+
 * **W1, check.** The script's skeleton (platform, role, language mode, the
   Hardening folder's check as in PR #61, the manifest and its lock file,
   the JSON result); the ownership reader in `internal/winpolicy`
@@ -1690,11 +1771,13 @@ As in ADR-0051, with Windows' places and tools:
   Endpoint, Configuration Manager, DSC, Azure machine configuration,
   OSConfig, Tamper Protection, other antivirus and firewalls) and
   ADR-0060's audit table as data beside it, for log
-  collection to reuse; `check` for every module; on the server, the
+  collection to reuse, and startable as ADR-0067 starts it (see Policy
+  ownership); `check` for every module; on the server, the
   Windows platform, module names, options and result fields, and the
   related-controls tables with the tool that generates them; the static
   checks and the runner matrix in check mode; the KVM decision, proved
-  with one Server image and the domain scenario, or recorded with why not;
+  with one Server image and the domain scenario, or recorded with why not
+  (ADR-0064, ADR-0065, ADR-0067 and ADR-0068 wait for it too);
   the MDM reader on a real Intune-enrolled Windows 11.
 * **W2, apply and undo**, module by module, each with its runner tests and,
   where it needs a restart, a domain, Defender active or outside traffic,
@@ -1706,9 +1789,10 @@ As in ADR-0051, with Windows' places and tools:
   `name-resolution`, `smb`, `ntlm`, `uac`, `firewall`, `rdp`,
   `smb-signing`, `lsa-protection`, `tls`; the report-only modules have no
   apply. With them: the undo copy of the script; the harvest, with the
-  first two-step module; the daily check, with `defender`; one change at
-  a time on the server; each change and its time in the result, for log
-  collection.
+  first two-step module; the daily check and its amendments to ADR-0017,
+  with `defender` (extending what F2 built, if F2 came first: see The
+  job); one change at a time on the server; each change and its time in
+  the result, for log collection.
 * **W3, the console.** Linux hardening's H3 (a device's **Hardening** tab,
   the fleet column and filter, apply and undo from **Jobs**) with Windows'
   modules: their risks and options, the owner of each setting managed
@@ -1769,10 +1853,20 @@ As in ADR-0051, with Windows' places and tools:
 * Where Group Policy allows only signed scripts or App Control constrains
   PowerShell, nothing runs, as for every PowerShell job today. An EDR may
   stop the script unless the MSP allows it by its hash.
+* W1 and W2 carry more than hardening: ADR-0067's registry writes and
+  ADR-0068's log settings use the ownership reader, and registry changes
+  and `eventlog_manage` the device lock; F2 extends W2's job amendments;
+  log collection's *Configure logging* waits for the reader; and the
+  Windows paths of ADR-0064, ADR-0065, ADR-0067 and ADR-0068 that the
+  runners cannot show stay unverified until the Windows machines under
+  KVM, or real computers, show them.
 * The script follows Windows releases, Microsoft's baselines and DISA's
   STIG releases; each new build is tested before apply is allowed on it.
 
 ## Open questions for the owner
+Until the owner answers these, this ADR's proposed defaults apply; most of
+them only matter at W2 (apply).
+
 * **CIS.** Buy the CIS SecureSuite Product Vendor Membership (from $6,000
   a year at the lowest revenue band, "Subject to change") and have the
   feature certified every year before it is sold, distributed or marketed,
@@ -1802,7 +1896,9 @@ As in ADR-0051, with Windows' places and tools:
   NTLMv1, for the NTLM guard; in the KVM machines or on the owner's?
 * **A self-hosted runner** for the Windows guests, since their images may
   not be cached where pull requests can restore them and building them on
-  GitHub's runners in each run may prove too slow?
+  GitHub's runners in each run may prove too slow? The same guests now
+  carry the Windows machine tests of ADR-0064, ADR-0065, ADR-0067 and
+  ADR-0068 (see Testing).
 * **LGPO.exe on a hosted runner**: its terms allow use "on your devices
   to develop and test your programs". Does a GitHub-hosted runner count
   as one of "your devices"? Until that is answered, the persistence
@@ -1813,8 +1909,14 @@ As in ADR-0051, with Windows' places and tools:
 * **Check only for computers with Configuration Manager, DSC or Azure
   machine configuration** until their readers exist: acceptable, or should
   those readers come first?
-* **Order**: this plan puts the work after the updater's edge channel;
-  sooner, straight after Linux hardening?
+* **The evaluation media's terms** (https://aka.ms/useterms): do they
+  allow test machines built from Microsoft's evaluation media, by script,
+  on CI or on the owner's own server? W1's machine tests used them on the
+  owner's Proxmox server; the terms have not been read against that use.
+* **Order**: the MSP plan's order, decided in review, puts W1 to W3 at
+  its steps 7 to 9, after the updater's edge channel (step 4), F0
+  (step 5) and remote PowerShell's slice 1 (step 6); sooner, straight
+  after Linux hardening?
 
 ## References
 CIS:

@@ -121,7 +121,7 @@ So a request for a run does not mean that someone looked at its output.
 * ADR-0047 shows a token again by opening it and writing the audit record
   in one transaction, so a read is never returned without its record
   (`revealSecret` in `server/internal/agents/tokens.go`).
-* ADR-0054 (proposed) keeps its daily hardening checks for 7 days, not for
+* ADR-0054 (accepted 2026-11-22) keeps its daily hardening checks for 7 days, not for
   `EASYRMM_JOB_RETENTION`.
 * A keystore for BitLocker and LUKS recovery keys is planned in the
   security feature work. It has no ADR yet, and nothing of it is built.
