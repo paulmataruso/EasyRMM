@@ -83,7 +83,7 @@ func TestMachine(t *testing.T) {
 			h.State, h.Reason, h.Route, h.Detail, p.State, p.Reason, p.Protocol, p.Route, p.Detail)
 		checkHealth(t, h)
 		checkHealth(t, p)
-		if p.State == agentproto.FactRead || (refusedReason[p.Reason] && p.Detail != "") {
+		if p.State == agentproto.FactRead || refusalRecorded(p) {
 			answered++
 		}
 	}
@@ -105,6 +105,46 @@ func TestMachine(t *testing.T) {
 // refusedReason are a driver's or a device's refusal.
 var refusedReason = map[string]bool{
 	agentproto.ReasonStorageDriver: true, agentproto.ReasonDeviceRefused: true, agentproto.ReasonProtocolNotRead: true,
+}
+
+// failureText is a failure as the reader writes it into the detail of
+// virtual_machine: state, reason in brackets, then what was refused.
+var failureText = regexp.MustCompile(`^\w+ \((\w+)\): .`)
+
+// refusalRecorded reports whether the disk's driver or the disk refused
+// it, with the refusal recorded: as its own reason, or, on a virtual
+// machine, as the detail of virtual_machine, which is how the reader
+// reports a refusal there (CI's runners are virtual machines).
+func refusalRecorded(h agentproto.DiskHealth) bool {
+	if h.Reason == agentproto.ReasonVirtualMachine {
+		m := failureText.FindStringSubmatch(h.Detail)
+		return m != nil && refusedReason[m[1]]
+	}
+	return refusedReason[h.Reason] && h.Detail != ""
+}
+
+// TestRefusalRecorded checks what the machine test takes as a recorded refusal.
+func TestRefusalRecorded(t *testing.T) {
+	onVM := func(f *failure) agentproto.DiskHealth {
+		return agentproto.DiskHealth{State: agentproto.FactUnsupported, Reason: agentproto.ReasonVirtualMachine, Detail: f.Error()}
+	}
+	for _, c := range []struct {
+		name string
+		h    agentproto.DiskHealth
+		want bool
+	}{
+		{"refused", agentproto.DiskHealth{State: agentproto.FactUnavailable, Reason: agentproto.ReasonStorageDriver, Detail: "Incorrect function."}, true},
+		{"refused without a word", agentproto.DiskHealth{State: agentproto.FactUnavailable, Reason: agentproto.ReasonStorageDriver}, false},
+		{"refused on a virtual machine", onVM(fail(agentproto.FactUnavailable, agentproto.ReasonStorageDriver, "NVMe: Incorrect function.")), true},
+		{"device refused on a virtual machine", onVM(fail(agentproto.FactUnavailable, agentproto.ReasonDeviceRefused, "aborted")), true},
+		{"refused on a virtual machine without a word", onVM(fail(agentproto.FactUnavailable, agentproto.ReasonStorageDriver, "")), false},
+		{"failed on a virtual machine", onVM(fail(agentproto.FactUnavailable, agentproto.ReasonIOError, "short read")), false},
+		{"an emulated disk", agentproto.DiskHealth{State: agentproto.FactUnsupported, Reason: agentproto.ReasonVirtualDisk, Detail: "an emulated disk's model"}, false},
+	} {
+		if got := refusalRecorded(c.h); got != c.want {
+			t.Errorf("%s: refusalRecorded(%+v) = %v, want %v", c.name, c.h, got, c.want)
+		}
+	}
 }
 
 // probePlan reads every disk, NVMe first and then ATA: on Linux through

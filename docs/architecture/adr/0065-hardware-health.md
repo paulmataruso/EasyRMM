@@ -1544,9 +1544,13 @@ this order, each when its inputs exist.
   confirmed*).
   *Amended 2026-11-22, decided in review:* slice 1's step runs as the
   runner's elevated administrator, not LocalSystem, on
-  `windows-latest` only. The runner's two disks are Azure virtual NVMe
-  disks, which the NVMe path reads; they are not drives. The test also
-  passes on a driver's refusal, so it does not by itself show a read.
+  `windows-latest` only. The runner's two disks are Azure virtual disks:
+  NVMe ones, which the NVMe path reads, or, on some runners, Hyper-V's
+  virtual SCSI disks (*Msft Virtual Disk*), whose driver refuses both
+  pass-throughs (the NVMe query with *Incorrect function*); they are not
+  drives. The test also passes on a driver's refusal, which on a virtual
+  machine the reader records as the detail of *unsupported
+  (virtual_machine)*, so it does not by itself show a read.
   `IOCTL_ATA_PASS_THROUGH` and `GetDevicePowerState` have not completed
   a successful call anywhere yet.
 * **Windows machines under KVM**, when ADR-0054's W1 builds them: QEMU's
