@@ -435,9 +435,10 @@ func TestPurge(t *testing.T) {
 	sample(day+` + interval '3 hours'`, "unknown", false, nil, nil, nil)
 	sample(day+` + interval '4 hours'`, "healthy", true, v(35), v(3), v(11))
 	sample(`date_trunc('day', now() - interval '9 days', 'UTC') + interval '5 hours'`, "unknown", false, nil, nil, nil)
-	// A day thinned long ago, past EASYRMM_HARDWARE_RETENTION.
+	// Days thinned long ago, past EASYRMM_HARDWARE_RETENTION.
 	f.exec(`INSERT INTO device_disk_health_samples (device_id, disk_key, at, daily, state, judged)
-		VALUES ($1, $2, date_trunc('day', now() - interval '800 days', 'UTC'), true, 'healthy', true)`, dev, k)
+		SELECT $1, $2, date_trunc('day', now() - make_interval(days => d), 'UTC'), true, 'healthy', true
+		FROM unnest(ARRAY[800, 803]) d`, dev, k)
 	// The day that crosses EASYRMM_METRICS_RETENTION is not thinned until
 	// it is whole.
 	sample(`date_trunc('day', now() - interval '7 days', 'UTC') + interval '1 second'`, "healthy", true, v(31), v(0), v(1))
@@ -461,6 +462,10 @@ func TestPurge(t *testing.T) {
 	}
 	if n := f.count(`SELECT count(*) FROM device_disk_health_samples WHERE daily`); n != 2 {
 		t.Errorf("%d daily rows, want the two thinned days", n)
+	}
+	// Each day was thinned in a transaction of its own.
+	if n := f.count(`SELECT count(DISTINCT xmin::text) FROM device_disk_health_samples WHERE daily`); n != 2 {
+		t.Errorf("the two days were thinned in %d transactions", n)
 	}
 	if n := f.count(`SELECT count(*) FROM device_disk_health_samples WHERE NOT daily`); n != 2 {
 		t.Errorf("%d full rows, want today's reading and the crossing day's", n)

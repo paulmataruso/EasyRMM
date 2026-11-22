@@ -141,43 +141,100 @@ func diskKeys(ctx context.Context, tx pgx.Tx, disks []agentproto.DiskHealth) ([]
 // Purge thins readings older than EASYRMM_METRICS_RETENTION to one row per
 // disk per UTC day, the day's worst state, its highest temperature and its
 // last counts and wear, and removes those days past
-// EASYRMM_HARDWARE_RETENTION. Only whole days are thinned, each once.
+// EASYRMM_HARDWARE_RETENTION. Only whole days are thinned, each once. Each
+// day is a transaction of its own, so a backlog (a server that was down, a
+// retention made shorter) is never one long transaction holding its rows.
 func (s *Service) Purge(ctx context.Context) error {
 	var thinned, removed int64
-	err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `WITH gone AS (
-				DELETE FROM device_disk_health_samples
-				WHERE NOT daily AND at < date_trunc('day', now() - $1::interval, 'UTC')
-				RETURNING *
-			)
-			INSERT INTO device_disk_health_samples (device_id, disk_key, at, daily, state, judged, temperature, temperature_limit, wear,
-				reallocated, media_errors, pending, uncorrectable, drive_errors, power_on_hours)
-			SELECT device_id, disk_key, date_trunc('day', at, 'UTC'), true,
-				(array_agg(state ORDER BY array_position($2::text[], state)))[1], bool_or(judged), max(temperature),
-				(array_agg(temperature_limit ORDER BY at DESC) FILTER (WHERE temperature_limit IS NOT NULL))[1],
-				(array_agg(wear ORDER BY at DESC) FILTER (WHERE wear IS NOT NULL))[1],
-				(array_agg(reallocated ORDER BY at DESC) FILTER (WHERE reallocated IS NOT NULL))[1],
-				(array_agg(media_errors ORDER BY at DESC) FILTER (WHERE media_errors IS NOT NULL))[1],
-				(array_agg(pending ORDER BY at DESC) FILTER (WHERE pending IS NOT NULL))[1],
-				(array_agg(uncorrectable ORDER BY at DESC) FILTER (WHERE uncorrectable IS NOT NULL))[1],
-				(array_agg(drive_errors ORDER BY at DESC) FILTER (WHERE drive_errors IS NOT NULL))[1],
-				(array_agg(power_on_hours ORDER BY at DESC) FILTER (WHERE power_on_hours IS NOT NULL))[1]
-			FROM gone
-			GROUP BY device_id, disk_key, date_trunc('day', at, 'UTC')
-			ON CONFLICT DO NOTHING`, interval(s.full), worstFirst)
-		if err != nil {
-			return err
-		}
-		thinned = tag.RowsAffected()
-		tag, err = tx.Exec(ctx, `DELETE FROM device_disk_health_samples WHERE daily AND at < now() - $1::interval`, interval(s.retention))
-		removed = tag.RowsAffected()
-		return err
-	})
-	if err == nil && (thinned > 0 || removed > 0) {
+	thin, err := s.purgeDays(ctx, `SELECT date_trunc('day', min(at), 'UTC'), date_trunc('day', now() - $1::interval, 'UTC')
+		FROM device_disk_health_samples WHERE NOT daily AND at < date_trunc('day', now() - $1::interval, 'UTC')`, s.full)
+	if err == nil {
+		thinned, err = s.eachDay(ctx, thin, s.thinDay)
+	}
+	var drop []time.Time
+	if err == nil {
+		drop, err = s.purgeDays(ctx, `SELECT date_trunc('day', min(at), 'UTC'), now() - $1::interval
+			FROM device_disk_health_samples WHERE daily AND at < now() - $1::interval`, s.retention)
+	}
+	if err == nil {
+		removed, err = s.eachDay(ctx, drop, func(ctx context.Context, tx pgx.Tx, from, to time.Time) (int64, error) {
+			tag, err := tx.Exec(ctx, `DELETE FROM device_disk_health_samples WHERE daily AND at >= $1 AND at < $2`, from, to)
+			return tag.RowsAffected(), err
+		})
+	}
+	if thinned > 0 || removed > 0 {
 		s.log.Info("hardware: thinned and removed disk health samples", "days_kept", thinned, "days_removed", removed,
 			"retention", s.retention.String())
 	}
 	return err
+}
+
+// purgeDays returns the bounds of the UTC days a purge works through, from
+// the first day of the rows q finds to q's end, which is not crossed: q
+// selects the first row's day and the end, given a retention.
+func (s *Service) purgeDays(ctx context.Context, q string, retention time.Duration) ([]time.Time, error) {
+	var first *time.Time
+	var end time.Time
+	if err := s.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, q, interval(retention)).Scan(&first, &end)
+	}); err != nil || first == nil {
+		return nil, err
+	}
+	bounds := []time.Time{*first}
+	for day := *first; day.Before(end); {
+		day = day.Add(24 * time.Hour)
+		bounds = append(bounds, minTime(day, end))
+	}
+	return bounds, nil
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
+}
+
+// eachDay runs do for each day between bounds, each in a transaction of
+// its own, and adds up the rows it reports.
+func (s *Service) eachDay(ctx context.Context, bounds []time.Time,
+	do func(ctx context.Context, tx pgx.Tx, from, to time.Time) (int64, error)) (int64, error) {
+	var total int64
+	for i := 1; i < len(bounds); i++ {
+		if err := s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
+			n, err := do(ctx, tx, bounds[i-1], bounds[i])
+			total += n
+			return err
+		}); err != nil {
+			return total, err
+		}
+	}
+	return total, nil
+}
+
+// thinDay makes one day's readings one row per disk.
+func (s *Service) thinDay(ctx context.Context, tx pgx.Tx, from, to time.Time) (int64, error) {
+	tag, err := tx.Exec(ctx, `WITH gone AS (
+			DELETE FROM device_disk_health_samples
+			WHERE NOT daily AND at >= $1 AND at < $2
+			RETURNING *
+		)
+		INSERT INTO device_disk_health_samples (device_id, disk_key, at, daily, state, judged, temperature, temperature_limit, wear,
+			reallocated, media_errors, pending, uncorrectable, drive_errors, power_on_hours)
+		SELECT device_id, disk_key, date_trunc('day', at, 'UTC'), true,
+			(array_agg(state ORDER BY array_position($3::text[], state)))[1], bool_or(judged), max(temperature),
+			(array_agg(temperature_limit ORDER BY at DESC) FILTER (WHERE temperature_limit IS NOT NULL))[1],
+			(array_agg(wear ORDER BY at DESC) FILTER (WHERE wear IS NOT NULL))[1],
+			(array_agg(reallocated ORDER BY at DESC) FILTER (WHERE reallocated IS NOT NULL))[1],
+			(array_agg(media_errors ORDER BY at DESC) FILTER (WHERE media_errors IS NOT NULL))[1],
+			(array_agg(pending ORDER BY at DESC) FILTER (WHERE pending IS NOT NULL))[1],
+			(array_agg(uncorrectable ORDER BY at DESC) FILTER (WHERE uncorrectable IS NOT NULL))[1],
+			(array_agg(drive_errors ORDER BY at DESC) FILTER (WHERE drive_errors IS NOT NULL))[1],
+			(array_agg(power_on_hours ORDER BY at DESC) FILTER (WHERE power_on_hours IS NOT NULL))[1]
+		FROM gone
+		GROUP BY device_id, disk_key, date_trunc('day', at, 'UTC')
+		ON CONFLICT DO NOTHING`, from, to, worstFirst)
+	return tag.RowsAffected(), err
 }
 
 // worstFirst orders states from the worst, for a day's worst state and a
