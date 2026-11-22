@@ -229,6 +229,8 @@ export interface InviteResult {
   emailed: boolean;
   /** Why the link was not emailed, when it was not. */
   mailProblem?: MailProblem;
+  /** The limit that stopped it, in words, when one did. */
+  mailReason?: string;
 }
 
 /** Why a link was not emailed: there is no mail server, or it did not take the message. */
@@ -666,14 +668,15 @@ export interface MailServerView {
   inForce: "env" | "console" | "none";
   env?: MailServer;
   console?: MailServer;
+  /** What of .env's mail server the patching engine will not take; EasyRMM still sends with it. */
+  envProblem?: string;
   limits: {
     perMinute: number;
     perDay: number;
     updatedAt?: string;
     updatedBy?: string;
-    /** Fixed: the invitations and password links one administrator may email an hour, and one organization's accounts get a day. */
-    adminPerHour: number;
-    organizationPerDay: number;
+    /** The limits on invitations and password emails, which follow the day's limit. */
+    account: AccountMailLimits;
   };
   usage: {
     lastMinute: number;
@@ -685,6 +688,22 @@ export interface MailServerView {
     /** Where other mail stops: 80% of the day's limit. */
     otherDayLimit: number;
   };
+}
+
+/** Each is the smaller of a fixed number and a share of the day's limit (ADR-0053). */
+export interface AccountMailLimits {
+  /** Invitations and password links one administrator may email an hour. */
+  adminPerHour: number;
+  /** Invitations and password links administrators other than super administrators may email to one organization's accounts a day. */
+  organizationPerDay: number;
+  /** Password emails, resets people ask for and administrators' links together, to one account. */
+  accountPerHour: number;
+  accountPerDay: number;
+  /** Password resets people ask for, on the whole platform, an hour. */
+  resetsPerHour: number;
+  /** Password resets people ask for, to one organization's accounts. */
+  organizationResetsPerHour: number;
+  organizationResetsPerDay: number;
 }
 
 export interface MailServerInput {

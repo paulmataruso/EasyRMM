@@ -275,6 +275,32 @@ describe("users and invitations", () => {
     expect(await within(form).findByText(message)).toBeInTheDocument();
   });
 
+  it("shows the link, with the reason, when the organization's limit stops the email", async () => {
+    const user = userEvent.setup();
+    const reason =
+      "This organization's accounts have been emailed 500 invitations and password links in the last 24 hours, the most one organization may; more can be emailed in 3 hours.";
+    installFakeApi({
+      ...routes,
+      "POST /users": ok({
+        user: person("u-new", "Riley Chen", "riley@example.com"),
+        link: "https://rmm.example.com/welcome#token=abc",
+        emailed: false,
+        mailProblem: "not_sent",
+        mailReason: reason,
+      }),
+    });
+    renderApp("/settings?invite=1");
+    const form = await dialog("Invite user");
+    await user.type(within(form).getByLabelText(/^Email/), "riley@example.com");
+    await user.type(within(form).getByLabelText(/^Name/), "Riley Chen");
+    await user.selectOptions(await within(form).findByLabelText("Role"), "technician");
+    await user.selectOptions(within(form).getByLabelText("Organization"), "o1");
+    await user.click(within(form).getByRole("button", { name: "Send invitation" }));
+    const notice = await dialog("Send this invitation link");
+    expect(within(notice).getByText("https://rmm.example.com/welcome#token=abc")).toBeInTheDocument();
+    expect(within(notice).getByText(/It was not emailed: This organization's accounts have been emailed 500 .* Send it to riley@example\.com yourself\./)).toBeInTheDocument();
+  });
+
   it("offers super administrator only to super administrators", async () => {
     installFakeApi({
       ...routes,

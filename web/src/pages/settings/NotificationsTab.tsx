@@ -36,6 +36,11 @@ export function NotificationsTab() {
         <InForce view={v} />
         {v.inForce === "env" && v.env ? (
           <>
+            {v.envProblem && (
+              <Alert tone="danger" title="The patching engine cannot be given .env's mail server">
+                {v.envProblem}
+              </Alert>
+            )}
             <EnvServer server={v.env} />
             {v.console && <UnusedConsoleServer server={v.console} />}
           </>
@@ -382,6 +387,7 @@ function TestMessage({ input }: { input: () => MailServerInput | undefined }) {
 function Limits({ view }: { view: MailServerView }) {
   const toast = useToast();
   const { limits, usage } = view;
+  const account = limits.account;
   const [perMinute, setPerMinute] = useState(String(limits.perMinute));
   const [perDay, setPerDay] = useState(String(limits.perDay));
   const save = useApiMutation((body: { perMinute: number; perDay: number }) => api.put<MailServerView>(`${PATH}/limits`, body), {
@@ -445,10 +451,14 @@ function Limits({ view }: { view: MailServerView }) {
           counted. The defaults, 30 a minute and 9,000 a day, stay under Exchange Online&apos;s limits; set your own mail server&apos;s.
         </p>
         <p>
-          Invitations and password resets go first, and wait up to a minute for room. Password resets people ask for may use the whole day. Invitations and password links
-          administrators send stop at {formatNumber(usage.adminDayLimit)}, 90% of the day&apos;s limit, at {formatNumber(limits.adminPerHour)} an hour per administrator, and at{" "}
-          {formatNumber(limits.organizationPerDay)} a day per organization. Other mail stops at {formatNumber(usage.otherDayLimit)}, 80%.
+          Invitations and password resets go first, and wait up to a minute for room. Password resets people ask for may use the whole day, at most{" "}
+          {formatNumber(account.resetsPerHour)} an hour, and to one organization&apos;s accounts {formatNumber(account.organizationResetsPerHour)} an hour and{" "}
+          {formatNumber(account.organizationResetsPerDay)} a day. Invitations and password links administrators send stop at {formatNumber(usage.adminDayLimit)}, 90% of the
+          day&apos;s limit, at {formatNumber(account.adminPerHour)} an hour per administrator, and at {formatNumber(account.organizationPerDay)} a day per organization. One
+          account gets at most {formatNumber(account.accountPerHour)} password emails an hour and {formatNumber(account.accountPerDay)} a day. Other mail stops at{" "}
+          {formatNumber(usage.otherDayLimit)}, 80%.
         </p>
+        <p>The limits on invitations and password emails follow the day&apos;s limit: each is the smaller of a fixed number and a share of the day.</p>
         {limits.updatedAt && (
           <p className="text-xs">
             Changed <span title={formatDateTime(limits.updatedAt)}>{formatRelative(limits.updatedAt)}</span>

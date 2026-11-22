@@ -8,7 +8,11 @@ import { whyNotEmailed } from "./mailProblem";
 
 const NONE: MailServerView = {
   inForce: "none",
-  limits: { perMinute: 30, perDay: 9000, adminPerHour: 60, organizationPerDay: 500 },
+  limits: {
+    perMinute: 30,
+    perDay: 9000,
+    account: { adminPerHour: 60, organizationPerDay: 500, accountPerHour: 3, accountPerDay: 10, resetsPerHour: 30, organizationResetsPerHour: 10, organizationResetsPerDay: 90 },
+  },
   usage: { lastMinute: 0, lastDay: 0, accountLastDay: 0, adminDayLimit: 8100, otherDayLimit: 7200 },
 };
 
@@ -156,6 +160,7 @@ describe("mail server settings", () => {
     expect(await main().findByText("The mail server comes from .env")).toBeInTheDocument();
     expect(main().getByText("relay.example.com:25")).toBeInTheDocument();
     expect(main().getByText("EasyRMM <rmm@example.com>")).toBeInTheDocument();
+    expect(main().queryByText("The patching engine cannot be given .env's mail server")).not.toBeInTheDocument();
     expect(main().queryByLabelText(/^Server/)).not.toBeInTheDocument();
     expect(main().queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
 
@@ -164,6 +169,18 @@ describe("mail server settings", () => {
     await user.click(main().getByRole("button", { name: "Send test message" }));
     expect(await main().findByText("Test message sent")).toBeInTheDocument();
     expect(server.callsTo("POST /settings/mail-server/test")[0]!.body).toEqual({ to: "ops@example.com" });
+  });
+
+  it("says when .env's mail server is longer than the patching engine takes", async () => {
+    const envProblem =
+      "EASYRMM_SMTP_PASSWORD is longer than 512 characters, the most the patching engine takes. EasyRMM sends with it, but the patching engine cannot be given this mail server, so patching sends no email or reports. Shorten it in .env and restart EasyRMM.";
+    installFakeApi(routes({ ...NONE, inForce: "env", env: STORED, envProblem }));
+    renderApp("/settings?tab=notifications");
+
+    expect(await screen.findByRole("heading", { name: "Notifications", level: 1 })).toBeInTheDocument();
+    const alert = (await main().findByText("The patching engine cannot be given .env's mail server")).closest<HTMLElement>('[role="alert"]')!;
+    expect(within(alert).getByText(/EASYRMM_SMTP_PASSWORD is longer than 512 characters/)).toBeInTheDocument();
+    expect(main().getByText("smtp.example.com:587")).toBeInTheDocument();
   });
 
   it("removes the console's mail server while .env's is in force, which changes nothing that is sent", async () => {
@@ -203,6 +220,8 @@ describe("mail server settings", () => {
     expect(main().getByText(/12 invitations and password resets/)).toBeInTheDocument();
     expect(main().getByText(/administrators send stop at 8,100, 90% of the day's limit, at 60 an hour per administrator, and at 500 a day per organization/)).toBeInTheDocument();
     expect(main().getByText(/Other mail stops at 7,200, 80%/)).toBeInTheDocument();
+    expect(main().getByText(/ask for may use the whole day, at most 30 an hour, and to one organization's accounts 10 an hour and 90 a day/)).toBeInTheDocument();
+    expect(main().getByText(/One account gets at most 3 password emails an hour and 10 a day/)).toBeInTheDocument();
 
     await user.clear(main().getByLabelText(/^A minute/));
     await user.type(main().getByLabelText(/^A minute/), "100");
@@ -233,5 +252,7 @@ describe("mail server settings", () => {
     expect(whyNotEmailed("no_mail_server", "sam@example.com")).toBe("EasyRMM has no mail server, so send it to sam@example.com yourself.");
     expect(whyNotEmailed(undefined, "sam@example.com")).toBe("EasyRMM has no mail server, so send it to sam@example.com yourself.");
     expect(whyNotEmailed("not_sent", "sam@example.com")).toBe("The mail server did not take the message, so send it to sam@example.com yourself.");
+    const reason = "This account has been emailed 3 password emails in the last hour, the most one account may; more can be emailed in 60 minutes.";
+    expect(whyNotEmailed("not_sent", "sam@example.com", reason)).toBe(`It was not emailed: ${reason} Send it to sam@example.com yourself.`);
   });
 });

@@ -22,7 +22,7 @@ export function UserDetailPage() {
   const user = useApi<User>(`/users/${id}`);
   const [confirm, setConfirm] = useState<Confirm>(null);
   const [editingName, setEditingName] = useState(false);
-  const [link, setLink] = useState<{ url: string; invite: boolean; problem?: MailProblem } | null>(null);
+  const [link, setLink] = useState<{ url: string; invite: boolean; problem?: MailProblem; reason?: string } | null>(null);
 
   const action = useApiMutation(
     (kind: Exclude<Confirm, null>) =>
@@ -50,7 +50,7 @@ export function UserDetailPage() {
     onSuccess: (res) => {
       const invite = !(user.data?.passwordSet ?? true);
       if (res.emailed) toast.success(`${invite ? "Invitation" : "Password reset link"} emailed to ${user.data?.email}.`);
-      else if (res.link) setLink({ url: res.link, invite, problem: res.mailProblem });
+      else if (res.link) setLink({ url: res.link, invite, problem: res.mailProblem, reason: res.mailReason });
     },
   });
 
@@ -184,7 +184,7 @@ export function UserDetailPage() {
         {link && (
           <div className="flex flex-col gap-3.5">
             <OneTimeNotice title="Copy this link now. It is shown only once.">
-              {whyNotEmailed(link.problem, u.email)} The link works once
+              {whyNotEmailed(link.problem, u.email, link.reason)} The link works once
               {link.invite ? " and expires in 72 hours." : " and expires soon."}
             </OneTimeNotice>
             <CodeBlock code={link.url} />
