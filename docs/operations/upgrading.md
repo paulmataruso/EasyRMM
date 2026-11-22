@@ -33,7 +33,11 @@ installs the updater on a host that lacks it.
    Look for *Security*, *Removed*, and new settings for `.env`.
 2. **Back up**, as in [Backup and restore](backup-restore.md). The server
    applies database migrations when it starts, and only forward. To go back
-   to the previous release you restore this backup.
+   to the previous release you restore this backup. With Authentik, the
+   backup must include Authentik's database and directory, as the guide's
+   commands do: a release can bring a newer Authentik, which migrates its
+   own database forward too, and without them a restore loses everyone's
+   sign-in.
 3. **Decide how agents follow.** The new server image carries new agent
    builds, and by default every agent updates itself, a few at a time. To
    try the release on a few devices first, set **Settings → Agent updates**
@@ -118,11 +122,14 @@ pages, watch them on **Settings → Agent updates**, then switch back to
 ## Going back
 
 Migrations do not run backwards, so the previous release cannot run on the
-upgraded database:
-1. Stop the stack: `sudo docker compose down`.
-2. Restore the backup from before the upgrade with the previous release's
-   files, as in [Backup and restore](backup-restore.md#restore-onto-a-new-host).
-   Everything done after the backup is lost.
+upgraded database. Restore the backup from before the upgrade over the
+upgraded deployment, as in
+[Restore in place](backup-restore.md#restore-in-place), with the previous
+release's files: from a clone, `git checkout` the previous tag once the
+deployment is stopped; from a bundle, restore in the previous release's
+`deploy/` directory. With Authentik, its database and directory come back
+too. Everything done after the backup is lost. The upgraded deployment is
+set aside, not deleted, and is the way back if the restore fails.
 
 Agents that already updated keep the new build until the server tells them
 otherwise. With **Automatically**, the restored server puts its own build

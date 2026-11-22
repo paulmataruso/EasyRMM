@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Check, Copy, Download, ShieldAlert } from "lucide-react";
 import { Button, cx } from "./ui";
 
@@ -26,15 +26,17 @@ export async function copyText(text: string): Promise<boolean> {
 
 export function CopyButton({ text, label = "Copy", size = "sm", className }: { text: string; label?: string; size?: "sm" | "md"; className?: string }) {
   const [copied, setCopied] = useState<boolean | null>(null);
+  // The label goes back after a moment, on a timer the button clears when it unmounts.
+  useEffect(() => {
+    if (copied === null) return;
+    const timer = window.setTimeout(() => setCopied(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
   return (
     <Button
       size={size}
       className={className}
-      onClick={async () => {
-        const ok = await copyText(text);
-        setCopied(ok);
-        window.setTimeout(() => setCopied(null), 1800);
-      }}
+      onClick={async () => setCopied(await copyText(text))}
       icon={copied ? <Check className="size-3.5 text-ok" aria-hidden /> : <Copy className="size-3.5" aria-hidden />}
       aria-live="polite"
     >

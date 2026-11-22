@@ -17,10 +17,18 @@ enforce that higher roles are strict supersets of lower ones.
 |---|:-:|:-:|:-:|:-:|:-:|
 | `org.view`, `site.view`, `device.view`, `script.view`, `job.view`, `software.view`, `patch.view`, `monitoring.view`, `alert.view`, `report.view` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `device.edit`, `device.remote_desktop`, `device.terminal`, `device.files` | | ✓ | ✓ | ✓ | ✓ |
-| `script.run`, `job.manage`, `software.manage`, `patch.manage`, `alert.manage` | | ✓ | ✓ | ✓ | ✓ |
+| `script.run`, `job.manage`, `job.view_sensitive`, `software.manage`, `patch.manage`, `alert.manage` | | ✓ | ✓ | ✓ | ✓ |
 | `site.manage`, `device.retire`, `script.manage`, `monitoring.manage`, `enrollment.manage`, `user.view`, `audit.view` | | | ✓ | ✓ | ✓ |
 | `org.manage`, `user.manage`, `patch.configure` | | | | ✓ | ✓ |
 | `org.create`, `settings.manage` | | | | | ✓ |
+
+`job.view_sensitive` opens what a run printed and a job's argument values,
+which can hold secrets; `job.view` shows the jobs and runs without them.
+Read-Only does not hold it: it is the natural role for a customer's own
+staff, and a script's output is where a technician's recovery password or
+token ends up. Every read is recorded in the audit log
+([Scripts and jobs](../operations/scripts-and-jobs.md#who-sees-output-and-arguments),
+[ADR-0063](../architecture/adr/0063-who-sees-job-output-and-arguments.md)).
 
 ## Granting roles
 

@@ -40,6 +40,8 @@ type fixture struct {
 	branch uuid.UUID
 	globex uuid.UUID
 	plant  uuid.UUID
+	// at is the audit log's clock when set.
+	at time.Time
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -48,7 +50,13 @@ func newFixture(t *testing.T) *fixture {
 	f := &fixture{t: t, ctx: context.Background(), db: inst.DB, sys: access.System("test"), super: inst.SuperDSN}
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	f.key = pub
-	f.svc = New(inst.DB, audit.New(inst.DB, nil), priv, 90*24*time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	clock := func() time.Time {
+		if !f.at.IsZero() {
+			return f.at
+		}
+		return time.Now()
+	}
+	f.svc = New(inst.DB, audit.New(inst.DB, clock), priv, 90*24*time.Hour, 30*24*time.Hour, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	f.svc.pollWait = 200 * time.Millisecond
 	f.acme = f.id(`INSERT INTO organizations (name) VALUES ('Acme') RETURNING id`)
 	f.hq = f.id(`INSERT INTO sites (organization_id, name) VALUES ($1, 'HQ') RETURNING id`, f.acme)
@@ -443,9 +451,13 @@ func TestJobFromCreationToResult(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != StatusSucceeded || *got.ExitCode != 0 || *got.Stdout != "hello world\n" || len(*got.Stderr) != agentproto.MaxStreamBytes ||
-		!got.StderrTruncated || got.StdoutTruncated || got.Error != "xy" || got.FinishedAt == nil || got.Job.Body != "echo $1" || got.CanCancel {
+	if got.Status != StatusSucceeded || *got.ExitCode != 0 || got.Error != "xy" || got.FinishedAt == nil || got.Job.Body != "echo $1" || got.CanCancel ||
+		!got.CanViewOutput || got.StdoutBytes != len("hello world\n") || got.StderrBytes != agentproto.MaxStreamBytes || got.OutputRemovedAt != nil {
 		t.Errorf("finished run %+v", got)
+	}
+	out, err := f.svc.ReadOutput(f.ctx, tech, run.ID)
+	if err != nil || out.Stdout != "hello world\n" || len(out.Stderr) != agentproto.MaxStreamBytes || !out.StderrTruncated || out.StdoutTruncated {
+		t.Errorf("output %+v, %v", out, err)
 	}
 	if st, _ := f.svc.Start(f.ctx, pc, run.ID); st.Proceed {
 		t.Error("a finished run started again")
@@ -462,7 +474,7 @@ func TestJobFromCreationToResult(t *testing.T) {
 		t.Errorf("open jobs %+v", open)
 	}
 	runs, _ := f.svc.ListRuns(f.ctx, tech, RunQuery{DeviceID: pc})
-	if len(runs) != 1 || runs[0].Stdout != nil {
+	if len(runs) != 1 || runs[0].RunDetail != nil || runs[0].Job != nil {
 		t.Errorf("device runs %+v", runs)
 	}
 }
@@ -675,12 +687,12 @@ func TestCancelExpireAndLose(t *testing.T) {
 	}
 
 	// Retention removes finished jobs once they are old enough.
-	if n, err := f.svc.Purge(f.ctx); err != nil || n != 0 {
-		t.Errorf("purged a new job: %d %v", n, err)
+	if p, err := f.svc.Purge(f.ctx); err != nil || p.Jobs != 0 {
+		t.Errorf("purged a new job: %+v %v", p, err)
 	}
 	f.asOwner(`UPDATE jobs SET created_at = now() - interval '91 days'`)
-	if n, err := f.svc.Purge(f.ctx); err != nil || n != 1 {
-		t.Errorf("purge: %d %v", n, err)
+	if p, err := f.svc.Purge(f.ctx); err != nil || p.Jobs != 1 {
+		t.Errorf("purge: %+v %v", p, err)
 	}
 	if f.str(`SELECT count(*)::text FROM job_runs`) != "0" {
 		t.Error("runs outlived their job")

@@ -233,19 +233,38 @@ Authentik's settings are in `.env`: `EASYRMM_AUTHENTIK_HOSTNAME`,
 `EASYRMM_AUTHENTIK_ADMIN_EMAIL`, and the secrets
 `EASYRMM_AUTHENTIK_CLIENT_SECRET`, `AUTHENTIK_SECRET_KEY` and
 `AUTHENTIK_DB_PASSWORD`. Its data is the `authentik` database in the same
-PostgreSQL, and `/srv/easyrmm/authentik/`; back both up with the rest.
+PostgreSQL, and `/srv/easyrmm/authentik/`; back both up with the rest, as
+in [Backup and restore](../operations/backup-restore.md). A backup without
+them loses everyone's sign-in and the key that signs EasyRMM's ID tokens.
 Settings → Single sign-on shows the Authentik provider as set by the
-deployment, so it is changed only through `.env`. EasyRMM's edge holds
-Authentik's name with its own certificate, so `--with-authentik` does not
-work with TLS offload. Authentik listens on loopback only:
+deployment, so it is changed only through `.env` (below). EasyRMM's edge
+holds Authentik's name with its own certificate, so `--with-authentik` does
+not work with TLS offload. Authentik listens on loopback only:
 `127.0.0.1:18280` and `18243` (its server) and `18281` (its worker).
+
+**Changing `EASYRMM_PUBLIC_URL`.** Edit it in `.env`, then run
+`sudo docker compose up -d` (not `docker compose restart`, which keeps the
+old settings). The `authentik-setup` service then runs again with the new
+`.env`: it finds that Authentik still uses the old URL for EasyRMM's
+redirect URI, for where an invitation's sign-up goes on to, and for the
+application's link, applies EasyRMM's blueprint again, and checks that
+Authentik then uses the new one. A changed
+`EASYRMM_AUTHENTIK_CLIENT_SECRET` is taken the same way. Authentik's worker
+does not do this by itself: it applies the blueprint again only when the
+file changes. Applying takes a minute or more; signing in at the new URL
+works once `authentik-setup` has finished:
+`sudo docker compose ps -a authentik-setup` shows `Exited (0)`. If the
+check fails, it stops with an error instead; see
+`sudo docker compose logs authentik-setup`. When `.env` changed nothing
+Authentik holds, `authentik-setup` applies nothing.
 
 ## Retention
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `EASYRMM_AUDIT_RETENTION` | `8760h` (365 days) | How long audit records are kept; at least `720h` (30 days). While [audit forwarding](../operations/audit-forwarding.md) is on, records the collector has not received are kept longer |
-| `EASYRMM_JOB_RETENTION` | `2160h` (90 days) | How long finished jobs and their script output are kept; at least `24h`. See [Scripts and jobs](../operations/scripts-and-jobs.md) |
+| `EASYRMM_JOB_RETENTION` | `2160h` (90 days) | How long finished jobs, their runs and their arguments are kept; at least `24h`. See [Scripts and jobs](../operations/scripts-and-jobs.md#retention) |
+| `EASYRMM_JOB_OUTPUT_RETENTION` | `720h` (30 days), or `EASYRMM_JOB_RETENTION` when that is shorter | How long a run's output is kept after it arrived; then it is emptied and the run kept. At least `24h` and at most `EASYRMM_JOB_RETENTION`. See [Who sees output and arguments](../operations/scripts-and-jobs.md#who-sees-output-and-arguments) |
 | `EASYRMM_METRICS_RETENTION` | `168h` (7 days) | How long per-minute device measurements are kept for charts; at least `24h`. See [Inventory and health](../operations/inventory.md) |
 | `EASYRMM_ALERT_RETENTION` | `2160h` (90 days) | How long resolved alerts are kept; at least `24h`. See [Alerts](../operations/alerts.md) |
 

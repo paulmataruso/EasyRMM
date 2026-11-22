@@ -85,10 +85,10 @@ func TestHardeningAPI(t *testing.T) {
 	}
 
 	var job struct {
-		ID         string   `json:"id"`
-		Kind       string   `json:"kind"`
-		ScriptName string   `json:"scriptName"`
-		Args       []string `json:"args"`
+		ID         string `json:"id"`
+		Kind       string `json:"kind"`
+		ScriptName string `json:"scriptName"`
+		ArgCount   int    `json:"argCount"`
 		Hardening  *struct {
 			Mode    string   `json:"mode"`
 			Modules []string `json:"modules"`
@@ -96,8 +96,15 @@ func TestHardeningAPI(t *testing.T) {
 	}
 	tech.expect(http.StatusCreated, "POST", path, map[string]any{"deviceIds": []string{device}, "mode": "check", "modules": []string{"kernel", "ssh"}}, &job)
 	if job.Kind != "hardening" || job.ScriptName != "Check hardening: ssh, kernel" || job.Hardening == nil || job.Hardening.Mode != "check" ||
-		!slices.Equal(job.Hardening.Modules, []string{"ssh", "kernel"}) || !slices.Equal(job.Args, []string{"check", "ssh,kernel"}) {
+		!slices.Equal(job.Hardening.Modules, []string{"ssh", "kernel"}) || job.ArgCount != 2 {
 		t.Errorf("job %+v", job)
+	}
+	var args struct {
+		Args []string `json:"args"`
+	}
+	tech.expect(http.StatusOK, "GET", "/api/v1/jobs/"+job.ID+"/arguments", nil, &args)
+	if !slices.Equal(args.Args, []string{"check", "ssh,kernel"}) {
+		t.Errorf("arguments %+v", args)
 	}
 
 	poll, err := ac.Poll(ctx)

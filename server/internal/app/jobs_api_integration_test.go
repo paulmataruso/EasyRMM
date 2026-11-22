@@ -29,25 +29,27 @@ type scriptView struct {
 }
 
 type runView struct {
-	ID         string  `json:"id"`
-	DeviceName string  `json:"deviceName"`
-	Status     string  `json:"status"`
-	ExitCode   *int    `json:"exitCode"`
-	Stdout     *string `json:"stdout"`
-	CanCancel  bool    `json:"canCancel"`
-	Job        *struct {
+	ID            string `json:"id"`
+	DeviceName    string `json:"deviceName"`
+	Status        string `json:"status"`
+	ExitCode      *int   `json:"exitCode"`
+	CanCancel     bool   `json:"canCancel"`
+	CanViewOutput bool   `json:"canViewOutput"`
+	StdoutBytes   *int   `json:"stdoutBytes"`
+	Job           *struct {
 		Body string `json:"body"`
 	} `json:"job"`
 }
 
 type jobView struct {
-	ID        string         `json:"id"`
-	Args      []string       `json:"args"`
-	Counts    map[string]int `json:"counts"`
-	Total     int            `json:"total"`
-	Finished  bool           `json:"finished"`
-	CanCancel bool           `json:"canCancel"`
-	Runs      []runView      `json:"runs"`
+	ID               string         `json:"id"`
+	ArgCount         int            `json:"argCount"`
+	CanViewArguments bool           `json:"canViewArguments"`
+	Counts           map[string]int `json:"counts"`
+	Total            int            `json:"total"`
+	Finished         bool           `json:"finished"`
+	CanCancel        bool           `json:"canCancel"`
+	Runs             []runView      `json:"runs"`
 }
 
 // TestJobsAPI runs a script on an enrolled device through the console API and
@@ -128,7 +130,7 @@ func TestJobsAPI(t *testing.T) {
 	wantStatus(t, tech.do("POST", "/api/v1/jobs", map[string]any{"scriptId": sc.ID, "deviceIds": []string{}}), http.StatusUnprocessableEntity, "validation_failed")
 	var job jobView
 	tech.expect(http.StatusCreated, "POST", "/api/v1/jobs", map[string]any{"scriptId": sc.ID, "deviceIds": []string{device}, "args": []string{"-p"}}, &job)
-	if job.Total != 1 || job.Counts["queued"] != 1 || len(job.Runs) != 1 || job.Args[0] != "-p" {
+	if job.Total != 1 || job.Counts["queued"] != 1 || len(job.Runs) != 1 || job.ArgCount != 1 || !job.CanViewArguments {
 		t.Fatalf("job %+v", job)
 	}
 	run := job.Runs[0].ID
@@ -184,16 +186,24 @@ func TestJobsAPI(t *testing.T) {
 	}
 	wantStatus(t, tech.do("GET", "/api/v1/jobs/nope", nil), http.StatusNotFound, "not_found")
 	var runs struct{ Items []runView }
-	tech.expect(http.StatusOK, "GET", "/api/v1/job-runs?deviceId="+device, nil, &runs)
-	if len(runs.Items) != 1 || runs.Items[0].Stdout != nil {
-		t.Errorf("device runs %+v", runs.Items)
+	listed := tech.expect(http.StatusOK, "GET", "/api/v1/job-runs?deviceId="+device, nil, &runs)
+	if len(runs.Items) != 1 || strings.Contains(string(listed.body), `"stdout`) || strings.Contains(string(listed.body), "canViewOutput") {
+		t.Errorf("device runs %s", listed.body)
 	}
 	wantStatus(t, tech.do("GET", "/api/v1/job-runs", nil), http.StatusUnprocessableEntity, "validation_failed")
 	wantStatus(t, tech.do("GET", "/api/v1/job-runs?deviceId=nope", nil), http.StatusUnprocessableEntity, "validation_failed")
 	var r runView
 	tech.expect(http.StatusOK, "GET", "/api/v1/job-runs/"+run, nil, &r)
-	if r.Status != "succeeded" || r.ExitCode == nil || *r.ExitCode != 0 || r.Stdout == nil || *r.Stdout != "up 3 days\n" || r.Job == nil || r.Job.Body != "uptime \"$@\"" {
+	if r.Status != "succeeded" || r.ExitCode == nil || *r.ExitCode != 0 || !r.CanViewOutput || r.StdoutBytes == nil || *r.StdoutBytes != 10 ||
+		r.Job == nil || r.Job.Body != "uptime \"$@\"" {
 		t.Errorf("run %+v", r)
+	}
+	var out struct {
+		Stdout string `json:"stdout"`
+	}
+	tech.expect(http.StatusOK, "GET", "/api/v1/job-runs/"+run+"/output", nil, &out)
+	if out.Stdout != "up 3 days\n" {
+		t.Errorf("output %+v", out)
 	}
 	wantStatus(t, tech.do("GET", "/api/v1/job-runs/nope", nil), http.StatusNotFound, "not_found")
 

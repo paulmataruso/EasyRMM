@@ -71,6 +71,7 @@ const SUPER_PERMISSIONS: SessionView["permissions"] = [
     "script.run",
     "job.view",
     "job.manage",
+    "job.view_sensitive",
     "software.view",
     "software.manage",
     "patch.view",

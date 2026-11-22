@@ -8,6 +8,80 @@ All notable changes to this project are documented here. The format follows
 
 ### Security
 
+- **Read-Only users no longer see what scripts printed or the arguments
+  they were given, and every read is recorded.** A run's output and a
+  job's argument values can hold a recovery password, a token or a key.
+  Until now everyone with `job.view`, Read-Only included, could read them
+  on the run's and the job's pages, and nothing recorded who did
+  ([ADR-0063](docs/architecture/adr/0063-who-sees-job-output-and-arguments.md)).
+  Now:
+  - a new permission, `job.view_sensitive`, held by Technicians and above
+    where their role is, opens them. Read-Only still sees every job and
+    run, its status, exit code, error and timings, the script as run and
+    how many arguments it had; the console says *Hidden: needs permission
+    to see job output* where the output would be;
+  - output and argument values leave every job and run answer of the API,
+    for everyone, and come only from `GET /api/v1/job-runs/{id}/output`
+    and `GET /api/v1/jobs/{id}/arguments`. Each read is recorded in the
+    audit log (*Viewed job output*, *Viewed job arguments*) in the same
+    transaction, super administrators' included; a refused read is
+    recorded as denied, at most once per user and run in 10 minutes and at
+    most 20 times per user in 10 minutes. After 20, that user's further
+    refusals are not recorded until the 10 minutes pass, so a gap in the
+    denied records is not proof that nobody tried. The server's database
+    role can no longer select them directly. Scripts
+    that read `stdout`, `stderr` or `args` from the run and job answers
+    move to the new endpoints; `/api/v1` has no written compatibility
+    policy, and the console is its only client in this repository;
+  - output is kept for `EASYRMM_JOB_OUTPUT_RETENTION`, 30 days by default
+    (or `EASYRMM_JOB_RETENTION` when that is shorter), counted from when it
+    arrived; the job and its runs stay for `EASYRMM_JOB_RETENTION`. **The
+    first purge after the upgrade empties output that arrived more than 30
+    days before.** Set `EASYRMM_JOB_OUTPUT_RETENTION=2160h` to keep 90 days
+    as before;
+  - **Remove output** on a run's page empties its output at once, for
+    Technicians and above, recorded as *Removed job output*;
+  - a refused hardening result no longer quotes a module name from the
+    script's output in the run's error or the server's log.
+
+  Reads before the upgrade left no record. Treat a secret that a job
+  printed, or that was passed as an argument, within the job retention
+  before the upgrade as seen by every Read-Only user of its site, and
+  change it. For BitLocker, add a new recovery password, then remove the
+  old one. A console tab left open across the upgrade can go blank on a
+  job's page, and says "Nothing was written" on a run's page, until it is
+  reloaded. From this release on, a console page that fails to render
+  offers **Reload** instead of going blank.
+
+  **The upgrade fills in the output sizes of every run that has output,**
+  in one pass, while `job_runs` and `jobs` are locked: jobs and runs
+  cannot be read or written until the migration ends. Measured on a test
+  database: 3 seconds for 50,000 runs with 1 KB of output each, and under
+  a second for 5,000 runs with 16 KB each. It needs free disk about the
+  size of the runs with output as stored in the table, 69 MB for those
+  50,000 runs; output large enough to be stored apart (TOAST) is not
+  copied, 1 MB for the 5,000. `VACUUM`, which autovacuum runs, makes that
+  space reusable.
+- **Functions that run as the database owner no longer look in a
+  session's temporary schema first.** EasyRMM's `SECURITY DEFINER`
+  functions, which run as `easyrmm_owner`, did not name `pg_temp` in their
+  `search_path`. PostgreSQL then searches a session's temporary objects
+  before its own for tables and types, so a database session of the
+  server's role, for example through a flaw in the server, could have had
+  its own code run as the owner. This covered the audit log's functions
+  (`easyrmm_audit_append`, `easyrmm_audit_verify`, `easyrmm_purge_audit`)
+  as well as the new ones above. Now:
+  - every such function names `pg_temp` last (migration 00029 for the
+    older ones), and a test fails the build for one that does not;
+  - the server's role and `PUBLIC` can no longer create temporary tables
+    in EasyRMM's database. The server never used them.
+
+  The revoke needs `easyrmm_owner` to own the database, as the Docker
+  install and the documented external setup make it. Under another owner,
+  or when the server's role keeps the right through another grant, the
+  upgrade still pins the functions, leaves `TEMPORARY` in place, and logs
+  a warning with the statements to run as a superuser
+  ([database.md](docs/architecture/database.md)).
 - **The Windows agent checks its state folder before reading it.** Any
   user may create folders under ProgramData, and the agent protected
   `%ProgramData%\EasyRMM\Agent` only when it saved an enrollment. A
@@ -192,6 +266,50 @@ All notable changes to this project are documented here. The format follows
   MeshCentral origin it serves into MeshCentral's `allowedOrigin`; when
   they change, the next start rewrites the list and MeshCentral restarts
   with it (ADR-0016, amended).
+- **Changing `EASYRMM_PUBLIC_URL` moves the bundled Authentik with it.**
+  After the URL was changed in `.env` and `docker compose up -d` run,
+  Authentik's worker did not apply EasyRMM's blueprint again, since it does
+  so only when the file changes, and the URL comes from `.env`. The
+  provider kept the old redirect URI, so signing in at the new URL failed
+  at Authentik, and an invitation's sign-up and the application's link
+  still went to the old one. At every start, `authentik-setup` now compares
+  what the blueprint takes from `.env` (the URL and the client secret) with
+  what Authentik holds, applies the blueprint again when they differ, and
+  stops with an error unless they then match. When nothing changed, nothing
+  is applied. The Authentik end-to-end test changes the URL and signs in at
+  the new one.
+- **Backups keep Authentik.** With `setup.sh --with-authentik`, Authentik
+  keeps everyone's sign-in in its own database, `authentik`, in the same
+  PostgreSQL, and `akadmin`'s password and its files in
+  `/srv/easyrmm/authentik`. The backup guide dumped only EasyRMM's and the
+  patching engine's databases. A restore from it therefore started a new,
+  empty Authentik: every user, password and second factor gone, a new key
+  signing EasyRMM's ID tokens, and users made again refused by EasyRMM,
+  whose accounts stay linked to their old identities. The guide now backs
+  both up when Authentik is installed, and restores them in order: the
+  `authentik` role and database from `authentik-db-init`, then the dump,
+  and only then Authentik's first start. It also extracts the data
+  directories with `tar --numeric-owner`, so that their owners survive a
+  host where the same user names have other numbers. The upgrade guide
+  says the same. The restore drill has an Authentik variant
+  (`backup-restore.sh --authentik`): the administrator made from
+  `setup.sh`'s invitation signs in through Authentik before the backup and
+  after the restore, as the same user, with the same signing key.
+- **Restoring over a deployment on the same host has its own steps.** The
+  restore steps expect an empty data root and an empty PostgreSQL, but
+  nothing said how to get there on a host that still has the deployment,
+  and *Going back* after an upgrade sent operators straight to them. Run
+  over the existing deployment, they overwrite its `.env` and cannot load
+  the dumps into the databases already there, and deleting the data root
+  to start clean throws away the way back. *Restore in place*, in the
+  backup guide, stops the deployment, sets its data root (PostgreSQL's
+  data with it) and `.env` aside under a timestamp, restores, and puts the
+  set-aside deployment back if the restore fails; it also covers a data
+  root that is a mount point. *Going back* points to it. The restore drill
+  has an in-place variant (`backup-restore.sh --in-place`, with or without
+  `--authentik`), which also checks that the set-aside data root is
+  unchanged, puts it back, and checks that what changed after the backup
+  returns.
 - **The release's agents are the same files the server hands out.** The
   release bundle built them with the commit stamped in and the server's image
   without, so their bytes differed, and a Windows agent an operator signed
@@ -208,6 +326,10 @@ All notable changes to this project are documented here. The format follows
   file already passed to the server.
 - Taking the database down past migration 12 removed no software jobs:
   row-level security hid them from the migration. It now sees every row.
+- Toasts and copy buttons clear their timers when they leave the page. A
+  closed toast, or a copy button in a dialog closed straight after copying,
+  left a timer that later updated a component already gone; at the end of a
+  unit-test file, that update threw `window is not defined` and failed the run.
 
 ## [1.0.0-rc.4] - 2026-11-21
 

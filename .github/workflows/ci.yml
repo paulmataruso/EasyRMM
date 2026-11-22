@@ -51,9 +51,17 @@ jobs:
   # EasyRMM's side of the patching engine (server/internal/easypatch/) counts for
   # EasyRMM and the EasyPatch server; this file counts for everything. The
   # merge queue, manual runs, and anything this cannot work out run all.
+  #
+  # A push is compared with the last commit whose run on main passed, not
+  # with the push before it: a run that failed, or that GitHub cancelled
+  # while it waited because a newer push replaced it, tested nothing, and
+  # what it changed must still be tested and published by a later run.
   changes:
     name: Changed files
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     outputs:
       easyrmm: ${{ steps.diff.outputs.easyrmm }}
       easypatch_server: ${{ steps.diff.outputs.easypatch_server }}
@@ -70,7 +78,9 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
         run: |
           classify() {
             case $1 in
@@ -100,13 +110,30 @@ jobs:
                 easypatch_agent=true ;;
             esac
           }
+          # The newest commit before HEAD, on HEAD's history, whose run of
+          # this workflow on this branch passed; none if there is none in the
+          # last 50 or the list cannot be had, and then everything runs.
+          last_passed() {
+            local head shas sha
+            head=$(git rev-parse HEAD)
+            shas=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?branch=$BRANCH&event=push&status=success&per_page=50" \
+              --jq '.workflow_runs[].head_sha') || return 0
+            for sha in $shas; do
+              [ "$sha" != "$head" ] || continue
+              if git cat-file -e "$sha^{commit}" 2>/dev/null && git merge-base --is-ancestor "$sha" HEAD; then
+                echo "$sha"
+                return 0
+              fi
+            done
+          }
           case $EVENT in
             pull_request) base=$PR_BASE ;;  # HEAD is the merge commit
-            push) base=$PUSH_BEFORE ;;
+            push)
+              base=$(last_passed)
+              echo "Compared with ${base:-nothing}: the last commit whose run on $BRANCH passed."
+              ;;
             *) base= ;;
           esac
-          # A new branch has no "before" (all zeros).
-          case $base in *[!0]*) ;; *) base= ;; esac
           if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null &&
             files=$(git diff --name-only --no-renames "$base" HEAD) && [ -n "$files" ]; then
             easyrmm=false easypatch_server=false easypatch_agent=false contract=false machines=false
@@ -646,8 +673,10 @@ jobs:
 
   # Relative links and anchors in every Markdown file, for every change: a
   # moved or renamed file breaks links in documents the change never touched.
+  # And the workflows' jobs: none may be skipped by a job it never needed,
+  # as the edge publish once was (check-job-conditions.py).
   docs:
-    name: Documentation links
+    name: Documentation links and workflow conditions
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -655,6 +684,10 @@ jobs:
         with:
           persist-credentials: false
       - run: python3 -I scripts/ci/check-md-links.py .
+      - name: Workflow job conditions
+        run: |
+          scripts/ci/check-job-conditions_test.sh
+          python3 -I scripts/ci/check-job-conditions.py .github/workflows/*.yml
 
   result:
     name: CI result
@@ -698,9 +731,16 @@ jobs:
   publish:
     name: Publish the edge build
     needs: [version, docker, contract-release, bundle-release, edge-bundle, result]
+    # !cancelled() and the needs named one by one: without a status check
+    # GitHub skips a job when any job before it, needed or not, was skipped,
+    # and result needs the jobs a push skips when it changes nothing of
+    # theirs (scripts/ci/check-job-conditions.py).
     if: >-
+      !cancelled() &&
       github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM' &&
-      needs.result.result == 'success'
+      needs.result.result == 'success' && needs.version.result == 'success' && needs.docker.result == 'success' &&
+      needs.contract-release.result == 'success' && needs.bundle-release.result == 'success' &&
+      needs.edge-bundle.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -879,7 +919,11 @@ jobs:
   edge-test:
     name: Edge build verified
     needs: [version, docker, publish]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM'
+    # As publish's: the needs named, since jobs before them may be skipped.
+    if: >-
+      !cancelled() &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM' &&
+      needs.version.result == 'success' && needs.docker.result == 'success' && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -965,7 +1009,12 @@ jobs:
   edge-tag:
     name: Move edge
     needs: [version, docker, publish, edge-test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM'
+    # As publish's: the needs named, since jobs before them may be skipped.
+    if: >-
+      !cancelled() &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'paulmataruso/EasyRMM' &&
+      needs.version.result == 'success' && needs.docker.result == 'success' && needs.publish.result == 'success' &&
+      needs.edge-test.result == 'success'
     concurrency:
       group: edge-tag
       cancel-in-progress: false

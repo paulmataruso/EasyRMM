@@ -11,14 +11,18 @@ Both drills need root (`setup.sh` sets the data directories' owners),
 Docker Compose, curl, jq and openssl. They serve on `127.0.0.2` (set
 `DRILL_ADDR` to change it), so they do not collide with anything on the
 host's own addresses. They also use PostgreSQL's `127.0.0.1:15432` and the
-server's loopback ports, so stop any other EasyRMM deployment on the host
-first. Each run builds the server image from the checkout. Set
-`DRILL_IMAGE` to use an image you already have.
+server's loopback ports, Authentik's too with `--authentik`, so stop any
+other EasyRMM deployment on the host first. Each run builds the server
+image from the checkout. Set `DRILL_IMAGE` to use an image you already
+have.
 
 ## Backup and restore
 
 ```bash
 sudo scripts/drill/backup-restore.sh /tmp/easyrmm-drill
+sudo scripts/drill/backup-restore.sh --authentik /tmp/easyrmm-drill-authentik
+sudo scripts/drill/backup-restore.sh --in-place /tmp/easyrmm-drill-in-place
+sudo scripts/drill/backup-restore.sh --authentik --in-place /tmp/easyrmm-drill-both
 ```
 
 1. It deploys a source host and gives it real state: first-run setup, an
@@ -34,7 +38,42 @@ sudo scripts/drill/backup-restore.sh /tmp/easyrmm-drill
    * the audit chain verifies;
    * a site created after the backup is gone;
    * the same agent, never re-enrolled, reconnects and runs a new job;
-   * MeshCentral's identity is unchanged.
+   * MeshCentral's identity is unchanged;
+   * the patching engine has the same organization and data-protection
+     keys.
+
+With `--authentik`, the source host is set up with `setup.sh
+--with-authentik`, with Authentik at `auth.drill.invalid` on the same edge,
+and there is no first-run setup. The administrator's account is made in
+Authentik from the invitation `setup.sh` printed, with a password and an
+authenticator app, and signs in to EasyRMM through Authentik, then signs in
+again from EasyRMM's sign-in page. The drill goes through Authentik's flows
+as the browser does, through the edge, answering each stage through
+Authentik's flow API. After the restore it also checks that:
+* the administrator signs in through Authentik with the same email,
+  password and authenticator app, to the same EasyRMM account, through the
+  link EasyRMM made before the backup;
+* Authentik has the same user, with the same subject (what EasyRMM links
+  the account to), and a user made in Authentik after the backup is gone;
+* the provider's signing key is unchanged: the same key pair by name, key
+  id and SHA-256 fingerprint, read from Authentik and from the keys it
+  publishes to EasyRMM;
+* `akadmin`'s password file is the backup's, owned by Authentik's user, and
+  still opens `akadmin`.
+
+With `--in-place`, with or without `--authentik`, the drill restores over
+the running deployment instead, in its own checkout, with the steps in
+[Restore in place](../operations/backup-restore.md#restore-in-place). It
+stops the deployment, sets the data root and `.env` aside, restores, and
+makes the same checks. It then checks that:
+* the set-aside data root, PostgreSQL's data with it, is as it was when the
+  deployment stopped: every entry's owner, mode, size and time, and every
+  file's contents; the set-aside `.env` too;
+* the guide's way back works: the restored deployment set aside, the
+  set-aside one put back and started, the same checks pass again, and
+  what changed after the backup is back: the site and, with
+  `--authentik`, the Authentik user. The agent, which ran a job on the
+  restored deployment, runs another on the one put back.
 
 It prints each step to `report.txt` in the working directory, with the
 stack's output in `compose.log`.
@@ -42,6 +81,18 @@ stack's output in `compose.log`.
 The agent's container has no systemd, so MeshAgent is not installed there.
 MeshAgent reconnecting is checked only when the device reports one; the
 drill checks MeshCentral's identity in every case.
+
+### Runs
+
+| Date | Variant | Outcome |
+|---|---|---|
+| 2026-11-16 | Plain | The first run found that the guide's database commands failed and that a fresh deployment did not start; both were fixed |
+| 2026-11-19 | Plain, with the patching engine in every deployment | Passed: the engine's database and keys backed up and restored with the guide's steps |
+| 2026-11-21 | `--authentik`, Authentik 2026.8.5 | Passed twice, in 11 and 10 minutes. The backup held Authentik's database (3.1 MB) and directory. After the restore, the administrator signed in through Authentik with the same email, password and authenticator app, as the same Authentik user with the same subject. They reached the same EasyRMM account, through the link made before the backup. The provider's signing key was the same, by Authentik's record and by the keys it publishes. `akadmin`'s password file was the backup's and still opened `akadmin`, and an Authentik user made after the backup was gone. The agent, MeshCentral and patching engine checks passed as in the plain variant |
+| 2026-11-21 | Plain, with the guide's Authentik steps | Passed twice: the backup had no Authentik files, and the restore, with `tar --numeric-owner`, passed every check. Two attempts in between failed after the restore, on a host loaded by other work (a load average of 16 to 150 on 16 cores): the device list ran into PostgreSQL's statement timeout, with even `DISCARD ALL` taking 35 seconds in the second. The run after them, with the load back under 15, passed |
+| 2026-11-21 | `--in-place` | Passed in 3.5 minutes. The data root (2,232 entries, PostgreSQL's data among them) and `.env` were set aside, and were unchanged after the restore, entry by entry and file by file. The restored deployment passed the plain variant's checks. After the guide's way back, the deployment put back passed them too, with the site made after the backup back and the agent running a job on it |
+| 2026-11-21 | `--authentik --in-place` | Passed in 14 minutes. As `--in-place`, with 4,004 entries set aside and unchanged, and with Authentik's checks after the restore and again after the way back: the same user, subject, authenticator app and signing key both times, and the Authentik user made after the backup gone after the restore and back after the way back |
+| 2026-11-21 | Plain and `--authentik`, after the restore steps and checks became shared with `--in-place` | Both passed, in 2 and 9 minutes, with every check as before |
 
 ## Load and soak
 

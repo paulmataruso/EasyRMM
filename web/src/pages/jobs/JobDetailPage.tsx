@@ -2,8 +2,8 @@ import { useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { CircleStop, RotateCcw } from "lucide-react";
 import { api } from "../../api/client";
-import { useApi, useApiMutation, usePrefetch } from "../../api/hooks";
-import type { HardeningJob, Job, JobRun, Script, SoftwareAction } from "../../api/types";
+import { auditedRead, useApi, useApiMutation, usePrefetch } from "../../api/hooks";
+import type { HardeningJob, Job, JobArguments, JobRun, Script, SoftwareAction } from "../../api/types";
 import { useAuth } from "../../auth/AuthContext";
 import { ConfirmDialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
@@ -18,6 +18,15 @@ import { MANAGERS, VERBS } from "../software/softwareText";
 
 /** Refresh every few seconds until every run has ended. */
 const OPEN_INTERVAL = 3_000;
+
+/**
+ * A library script job's argument values, for a caller who may read them. Each read is audited, so they are asked for
+ * once while the page is open, apart from the job (ADR-0063); the details and Run again share the one request.
+ */
+function useJobArguments(j: Job) {
+  const readable = j.kind === "script" && (j.argCount ?? 0) > 0 && j.canViewArguments === true;
+  return useApi<JobArguments>(readable ? `/jobs/${j.id}/arguments` : null, undefined, auditedRead(["job-arguments", j.id]));
+}
 
 export function JobDetailPage() {
   const { id = "" } = useParams();
@@ -91,7 +100,7 @@ export function JobDetailPage() {
             items={[
               ["Status", <JobStateBadge key="s" job={j} />],
               ["Progress", <StatusBreakdown key="p" job={j} />],
-              ...(j.software ? softwareDetails(j.software) : j.hardening ? hardeningDetails(j.hardening) : scriptDetails(j)),
+              ...(j.software ? softwareDetails(j.software) : j.hardening ? hardeningDetails(j.hardening) : scriptDetails(j, <ScriptArguments key="a" job={j} />)),
               ["Timeout", formatSeconds(j.timeoutSeconds)],
               ...(!j.finished ? [["Waits until", formatDateTime(j.expiresAt)] as [string, string]] : []),
               ["Started", formatDateTime(j.createdAt)],
@@ -121,7 +130,7 @@ export function JobDetailPage() {
 type Row = [string, ReactNode];
 
 /** What a library script job ran. */
-function scriptDetails(j: Job): Row[] {
+function scriptDetails(j: Job, args: ReactNode): Row[] {
   return [
     [
       "Script",
@@ -136,23 +145,33 @@ function scriptDetails(j: Job): Row[] {
       ),
     ],
     ["Shell", SHELL_NAMES[j.shell] ?? j.shell],
-    [
-      "Arguments",
-      j.args.length === 0 ? (
-        <span key="a" className="text-muted">
-          None
-        </span>
-      ) : (
-        <ol key="a" className="flex flex-wrap gap-1">
-          {j.args.map((a, i) => (
-            <li key={i}>
-              <Mono className="whitespace-pre-wrap">{a === "" ? " " : a}</Mono>
-            </li>
-          ))}
-        </ol>
-      ),
-    ],
+    ["Arguments", args],
   ];
+}
+
+/** A script job's arguments: none, hidden without job.view_sensitive, or the values. */
+function ScriptArguments({ job }: { job: Job }) {
+  const args = useJobArguments(job);
+  const count = job.argCount ?? 0;
+  if (count === 0) return <span className="text-muted">None</span>;
+  if (!job.canViewArguments) {
+    return (
+      <span className="text-muted">
+        {plural(count, "argument")}. Hidden: needs permission to see job arguments (<code className="font-mono text-xs">job.view_sensitive</code>).
+      </span>
+    );
+  }
+  if (args.isPending) return <span className="text-muted">Loading…</span>;
+  if (args.isError) return <ErrorState error={args.error} onRetry={() => void args.refetch()} />;
+  return (
+    <ol className="flex flex-wrap gap-1">
+      {args.data.args.map((a, i) => (
+        <li key={i}>
+          <Mono className="whitespace-pre-wrap">{a === "" ? " " : a}</Mono>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 /** What a software job asked for (ADR-0028). */
@@ -227,7 +246,11 @@ function ScriptAgain({ job }: { job: Job }) {
   const [open, setOpen] = useState(false);
   // The script may be gone, or out of the caller's reach; then there is nothing to offer.
   const script = useApi<Script>(job.scriptId && can("script.run") ? `/scripts/${job.scriptId}` : null);
+  const args = useJobArguments(job);
   if (!script.data?.canRun) return null;
+  // Running it without the arguments it had would run something else: not offered until they are read, nor where hidden.
+  const preset = (job.argCount ?? 0) === 0 ? [] : args.data?.args;
+  if (!preset) return null;
   return (
     <>
       <Button icon={<RotateCcw className="size-4" aria-hidden />} onClick={() => setOpen(true)}>
@@ -237,7 +260,7 @@ function ScriptAgain({ job }: { job: Job }) {
         open={open}
         onClose={() => setOpen(false)}
         script={script.data}
-        preset={{ deviceIds: (job.runs ?? []).map((r) => r.deviceId), args: job.args, timeoutSeconds: job.timeoutSeconds, sha256: job.sha256 }}
+        preset={{ deviceIds: (job.runs ?? []).map((r) => r.deviceId), args: preset, timeoutSeconds: job.timeoutSeconds, sha256: job.sha256 }}
       />
     </>
   );
