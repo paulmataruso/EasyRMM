@@ -41,7 +41,7 @@ func TestImageTable(t *testing.T) {
 		}
 		files[img.file()] = true
 	}
-	want := []string{"debian-12", "debian-13", "ubuntu-22.04", "ubuntu-24.04", "rocky-8", "rocky-9", "alma-9", "fedora-45"}
+	want := []string{"debian-12", "debian-13", "ubuntu-22.04", "ubuntu-24.04", "ubuntu-26.04", "rocky-8", "rocky-9", "rocky-10", "alma-9", "alma-10", "fedora-45"}
 	if !slices.Equal(Images(), want) {
 		t.Errorf("images %v, want %v", Images(), want)
 	}

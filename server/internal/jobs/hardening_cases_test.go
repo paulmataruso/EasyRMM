@@ -3,6 +3,8 @@ package jobs
 import (
 	"slices"
 	"testing"
+
+	"github.com/paulmataruso/easyrmm/internal/vmtest"
 )
 
 // machineCase is what the machine test (hardening_vm_test.go) expects of a
@@ -135,6 +137,28 @@ var machineCases = map[string]map[string]map[string]machineCase{
 	},
 }
 
+// machineReleaseCases: where one release differs from its family (image,
+// then module, then mode), its cases in place of the family's.
+var machineReleaseCases = map[string]map[string]map[string]machineCase{
+	// Ubuntu 26.04's sudo is sudo-rs, which the script does not apply to.
+	"ubuntu-26.04": {
+		"sudo": {
+			HardeningCheck: {Want: []string{HardeningNotSupported}},
+			HardeningApply: {Want: []string{HardeningSkipped}, After: []string{HardeningNotSupported}},
+			HardeningUndo:  {Want: []string{HardeningNothingToUndo}},
+		},
+	},
+}
+
+// machineCaseFor is the case for a module in MODE on IMAGE, of FAMILY.
+func machineCaseFor(image, family, module, mode string) (machineCase, bool) {
+	if c, ok := machineReleaseCases[image][module][mode]; ok {
+		return c, true
+	}
+	c, ok := machineCases[module][mode][family]
+	return c, ok
+}
+
 // TestEveryModuleHasMachineCases fails when a module, mode and family has
 // no case in the machine test (ADR-0051), or a case names a state or
 // outcome the script does not report.
@@ -170,6 +194,21 @@ func TestEveryModuleHasMachineCases(t *testing.T) {
 	for module := range machineCases {
 		if !slices.Contains(HardeningModules, module) {
 			t.Errorf("machine cases for %q, which is not a module", module)
+		}
+	}
+	for image, modules := range machineReleaseCases {
+		if !slices.Contains(vmtest.Images(), image) {
+			t.Errorf("machine cases for %q, which is not a machine image", image)
+		}
+		for module, modes := range modules {
+			if !slices.Contains(HardeningModules, module) {
+				t.Errorf("%s: machine cases for %q, which is not a module", image, module)
+			}
+			for _, mode := range []string{HardeningCheck, HardeningApply, HardeningUndo} {
+				if c, ok := modes[mode]; !ok || len(c.Want) == 0 || (mode == HardeningApply) != (len(c.After) > 0) {
+					t.Errorf("%s, %s: no whole case for %s", image, module, mode)
+				}
+			}
 		}
 	}
 }

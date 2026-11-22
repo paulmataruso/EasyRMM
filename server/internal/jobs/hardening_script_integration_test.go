@@ -54,10 +54,22 @@ func TestCheckInContainers(t *testing.T) {
 			scriptJournal(t, c)
 			scriptApplyUndo(t, c)
 			scriptInterrupted(t, c)
+			scriptStepsStopped(t, c)
+			scriptTimeLimit(t, c)
 			scriptFailures(t, c)
 			scriptPackagesLeft(t, c)
+			scriptPackageStamps(t, c)
+			scriptConffiles(t, c)
+			scriptHalfInstalledBefore(t, c)
+			scriptNoRemove(t, c)
 			scriptRollbackLeaves(t, c)
 			scriptModuleStream(t, c)
+			scriptStreams(t, c)
+			scriptMarker(t, c)
+			scriptGenerated(t, c)
+			scriptLinks(t, c)
+			scriptFirewallNeedsFail2ban(t, c)
+			scriptUSBFstab(t, c)
 			scriptPackageRecovery(t, c)
 			scriptDanglingUnitLink(t, c)
 			scriptPlatforms(t, c)
@@ -88,12 +100,20 @@ func scriptPlatforms(t *testing.T, c *scriptContainer) {
 		{"ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"25.10\"", HardeningPlatform{ID: "ubuntu", VersionID: "25.10", Family: "debian", Support: "unsupported"}},
 		{"ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"18.04\"", HardeningPlatform{ID: "ubuntu", VersionID: "18.04", Family: "debian", Support: "unsupported"}},
 		{"ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"8.10\"", HardeningPlatform{ID: "rocky", VersionID: "8.10", Family: "rhel", Support: "full"}},
+		{"ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"10.3\"", HardeningPlatform{ID: "rocky", VersionID: "10.3", Family: "rhel", Support: "full"}},
 		{"ID=\"almalinux\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"10.0\"", HardeningPlatform{ID: "almalinux", VersionID: "10.0", Family: "rhel", Support: "full"}},
-		{"ID=\"rhel\"\nID_LIKE=\"fedora\"\nVERSION_ID=\"9.6\"", HardeningPlatform{ID: "rhel", VersionID: "9.6", Family: "rhel", Support: "full"}},
+		// Releases in their support that CI's machines do not test: checked
+		// only.
+		{"ID=\"almalinux\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"8.10\"", HardeningPlatform{ID: "almalinux", VersionID: "8.10", Family: "rhel", Support: "check_only"}},
+		{"ID=\"rhel\"\nID_LIKE=\"fedora\"\nVERSION_ID=\"9.6\"", HardeningPlatform{ID: "rhel", VersionID: "9.6", Family: "rhel", Support: "check_only"}},
+		{"ID=\"rhel\"\nID_LIKE=\"fedora\"\nVERSION_ID=\"10.0\"", HardeningPlatform{ID: "rhel", VersionID: "10.0", Family: "rhel", Support: "check_only"}},
+		{"ID=\"rhel\"\nID_LIKE=\"fedora\"\nVERSION_ID=\"7.9\"", HardeningPlatform{ID: "rhel", VersionID: "7.9", Family: "rhel", Support: "unsupported"}},
 		{"ID=\"rocky\"\nID_LIKE=\"rhel centos fedora\"\nVERSION_ID=\"11.0\"", HardeningPlatform{ID: "rocky", VersionID: "11.0", Family: "rhel", Support: "check_only"}},
 		{"ID=\"centos\"\nID_LIKE=\"rhel fedora\"\nVERSION_ID=\"7\"", HardeningPlatform{ID: "centos", VersionID: "7", Family: "rhel", Support: "unsupported"}},
 		{"ID=\"ol\"\nID_LIKE=\"fedora\"\nVERSION_ID=\"9.4\"", HardeningPlatform{ID: "ol", VersionID: "9.4", Family: "rhel", Support: "unsupported"}},
-		{"ID=fedora\nVERSION_ID=43", HardeningPlatform{ID: "fedora", VersionID: "43", Family: "fedora", Support: "full"}},
+		{"ID=fedora\nVERSION_ID=45", HardeningPlatform{ID: "fedora", VersionID: "45", Family: "fedora", Support: "full"}},
+		{"ID=fedora\nVERSION_ID=43", HardeningPlatform{ID: "fedora", VersionID: "43", Family: "fedora", Support: "check_only"}},
+		{"ID=fedora\nVERSION_ID=44", HardeningPlatform{ID: "fedora", VersionID: "44", Family: "fedora", Support: "check_only"}},
 		{"ID=fedora\nVERSION_ID=46", HardeningPlatform{ID: "fedora", VersionID: "46", Family: "fedora", Support: "check_only"}},
 		{"ID=fedora\nVERSION_ID=42", HardeningPlatform{ID: "fedora", VersionID: "42", Family: "fedora", Support: "unsupported"}},
 		{"ID=\"amzn\"\nID_LIKE=\"fedora\"\nVERSION_ID=\"2023\"", HardeningPlatform{ID: "amzn", VersionID: "2023", Family: "fedora", Support: "unsupported"}},
@@ -217,6 +237,12 @@ func scriptUsageErrors(t *testing.T, c *scriptContainer) {
 		{"check", "all", "trusted=1:2:3:4:5:6:7:8:9"},
 		{"check", "all", "trusted=example.com"},
 		{"check", "all", "trusted=10.0.0.0/8 10.1.0.0/16"},
+		{"check", "all", "time-limit="},
+		{"check", "all", "time-limit=59"},
+		{"check", "all", "time-limit=14401"},
+		{"check", "all", "time-limit=0600"},
+		{"check", "all", "time-limit=1h"},
+		{"undo", "all", "time-limit=600", "epel"},
 	} {
 		out, errOut, code := c.run(t, append([]string{"sh", scriptPath}, args...)...)
 		if code != 2 || strings.TrimSpace(errOut) == "" || strings.Contains(out, HardeningResultPrefix) {
@@ -581,8 +607,8 @@ func scriptPackagesLeft(t *testing.T, c *scriptContainer) {
 	}
 	for _, tc := range cases {
 		pkg := strings.TrimSpace(c.sh(t, name+tc.pkg))
-		c.sh(t, "rm -rf "+stateDir+" && mkdir -p "+stateDir+"/modules/sudo && printf 'format 1\\npkg\\t%s\\n' "+pkg+" >"+stateDir+
-			"/modules/sudo/manifest && date >"+stateDir+"/modules/sudo/done")
+		c.sh(t, "rm -rf "+stateDir)
+		c.record(t, "sudo", "pkg\t"+c.token(t, tc.pkg))
 		if tc.refuse != "" {
 			c.sh(t, "printf '%s\\n' '#!/bin/sh' 'case \" $* \" in "+strings.ReplaceAll(tc.refuse, "'", `'"'"'`)+" esac' 'exec /usr/bin/"+manager+
 				" \"$@\"' >/usr/local/sbin/"+manager+" && chmod 0755 /usr/local/sbin/"+manager)
@@ -678,12 +704,13 @@ func scriptPackageRecovery(t *testing.T, c *scriptContainer) {
 	}
 }
 
-// recoveryUndo records PKG as installed by the sudo module, and runs undo
-// of it with SCRIPT (the script, or the copy that waits less).
-func (c *scriptContainer) recoveryUndo(t *testing.T, script, pkg string) HardeningModuleResult {
+// recoveryUndo records a package, as TOKEN names it (c.token), as installed
+// by the sudo module, and runs undo of it with SCRIPT (the script, or the
+// copy that waits less).
+func (c *scriptContainer) recoveryUndo(t *testing.T, script, token string) HardeningModuleResult {
 	t.Helper()
-	c.sh(t, "rm -rf "+stateDir+" && mkdir -p "+stateDir+"/modules/sudo && printf 'format 1\\npkg\\t%s\\n' "+pkg+" >"+stateDir+
-		"/modules/sudo/manifest && date >"+stateDir+"/modules/sudo/done")
+	c.sh(t, "rm -rf "+stateDir)
+	c.record(t, "sudo", "pkg\t"+token)
 	out, errOut, code := c.run(t, "sh", script, "undo", "sudo")
 	if code != 0 {
 		t.Fatalf("undo sudo: exit %d\nstdout:\n%s\nstderr:\n%s", code, out, errOut)
@@ -711,13 +738,15 @@ func wantRefused(t *testing.T, m HardeningModuleResult, pkg, what, name, pid, us
 	}
 }
 
-// wantRecovered: undo that recovered the database and removed PKG.
-func wantRecovered(t *testing.T, m HardeningModuleResult, pkg, why string) {
+// wantRecovered: undo that recovered the database, configuring PACKAGES
+// that dpkg had left half installed, and removed PKG.
+func wantRecovered(t *testing.T, m HardeningModuleResult, pkg, why string, packages ...string) {
 	t.Helper()
 	if m.Outcome != HardeningUndone || m.Recorded || m.PackageRecovery == nil ||
-		*m.PackageRecovery != (HardeningPackageRecovery{Outcome: HardeningRecovered, Reason: why}) ||
+		m.PackageRecovery.Outcome != HardeningRecovered || m.PackageRecovery.Reason != why ||
+		!slices.Equal(m.PackageRecovery.Packages, packages) ||
 		!slices.Contains(m.Done, why) || !slices.Contains(m.Done, "Removed the packages it installed: "+pkg) {
-		t.Errorf("undo after the package database was left unusable: %+v", m)
+		t.Errorf("undo after the package database was left unusable: %+v, want %q configuring %q", m, why, packages)
 	}
 }
 
@@ -748,15 +777,19 @@ func scriptDpkgRecovery(t *testing.T, c *scriptContainer) {
 			t.Fatalf("apt-get check after dpkg was killed: exit %d\n%s%s", code, out, errOut)
 		}
 	}
-	const why = "dpkg was interrupted: dpkg --configure -a put it right before the package step"
+	// The recovery configures the package the killed dpkg left half
+	// installed, running its postinst, and says so (dpkg --audit's list).
+	const why = "dpkg was interrupted: dpkg --configure -a put it right before the package step; " +
+		"it configured the packages dpkg had left half installed, running their maintainer scripts: easyrmm-test-pkg"
 
 	pid := hold()
 	c.writeShortWait(t)
-	wantRefused(t, c.recoveryUndo(t, shortWait, pkg), pkg, "dpkg was interrupted", "dpkg", pid, "held its lock")
+	wantRefused(t, c.recoveryUndo(t, shortWait, c.token(t, pkg)), pkg, "dpkg was interrupted", "dpkg", pid, "held its lock")
 	// The dpkg that held the lock still runs, in its postinst.
 	c.sh(t, "grep -qs 'easyrmm-test-pkg[.]postinst' /proc/[0-9]*/cmdline && test \"$(cut -d' ' -f3 /proc/"+pid+"/stat)\" = S")
 	interrupt(pid)
-	wantRecovered(t, c.recoveryUndo(t, scriptPath, pkg), pkg, why)
+	// Recorded as the interrupted installation left it (installed again).
+	wantRecovered(t, c.recoveryUndo(t, scriptPath, c.token(t, pkg)), pkg, why, "easyrmm-test-pkg")
 	c.sh(t, "! dpkg-query -W easyrmm-test-pkg >/dev/null 2>&1 && apt-get check >/dev/null")
 	c.wantGone(t, stateDir)
 
@@ -769,7 +802,8 @@ func scriptDpkgRecovery(t *testing.T, c *scriptContainer) {
 	m := scriptModule(t, parseScriptOutcome(t, c.script(t, "apply", "integrity"), HardeningApply, []string{"integrity"}), "integrity")
 	c.sh(t, "rm -f /usr/local/sbin/apt-get")
 	if m.Outcome != HardeningOutcomeFailed || m.OutcomeReason != "AIDE could not be installed: E: stopped by the test; what this run changed was put back." ||
-		m.PackageRecovery == nil || *m.PackageRecovery != (HardeningPackageRecovery{Outcome: HardeningRecovered, Reason: why}) || m.Recorded {
+		m.PackageRecovery == nil || m.PackageRecovery.Outcome != HardeningRecovered || m.PackageRecovery.Reason != why ||
+		!slices.Equal(m.PackageRecovery.Packages, []string{"easyrmm-test-pkg"}) || m.Recorded {
 		t.Errorf("apply after dpkg was interrupted: %+v", m)
 	}
 	c.sh(t, "apt-get check >/dev/null && dpkg --purge easyrmm-test-pkg >/dev/null && rm -rf "+stateDir+" "+shortWait+
@@ -777,17 +811,54 @@ func scriptDpkgRecovery(t *testing.T, c *scriptContainer) {
 }
 
 func scriptRpmRecovery(t *testing.T, c *scriptContainer) {
-	// rootfiles: a package nothing needs, of five files.
+	rpmRecovery(t, c)
+	// rpm --rebuilddb, after the environment goes, ends by renaming the
+	// database's directory, which the container's overlay filesystem
+	// refuses: with /var/lib on a volume, as on a computer's own
+	// filesystem, it rebuilds the database.
+	rpmRebuild(t, startScriptContainer(t, c.image, c.scriptFile, "--mount", "type=volume,dst=/var/lib"))
+}
+
+// rpmRebuild: where rpm --rebuilddb can rename the database's directory,
+// the recovery rebuilds the database, and the rebuild's directory goes. A
+// stand-in rpm answers DB_RUNRECOVERY to queries until rpm --rebuilddb
+// runs: on a volume, an rpm killed as rpmRecovery kills it leaves the next
+// one waiting on its lock instead.
+func rpmRebuild(t *testing.T, c *scriptContainer) {
+	const pkg = "rootfiles.noarch"
+	c.sh(t, "rpm -q rootfiles >/dev/null && rpm -q rpm >/dev/null && test -e /var/lib/rpm/__db.001 && test \"$(stat -f -c %T /var/lib)\" != overlayfs")
+	token := c.token(t, "rootfiles")
+	c.sh(t, "touch /tmp/easyrmm-runrecovery")
+	c.standIn(t, "rpm", `*" -q "*) if [ -e /tmp/easyrmm-runrecovery ]; then echo 'error: rpmdb: BDB0087 DB_RUNRECOVERY: Fatal error, run database recovery' >&2; exit 1; fi ;;`+
+		"\n"+`*" --rebuilddb "*) rm -f /tmp/easyrmm-runrecovery ;;`)
+	m := c.recoveryUndo(t, scriptPath, token)
+	c.sh(t, "rm -f /usr/local/sbin/rpm")
+	wantRecovered(t, m, pkg, "rpm's database needed recovering (DB_RUNRECOVERY): removing /var/lib/rpm/__db.* and rpm --rebuilddb put it right before the package step")
+	c.sh(t, "! rpm -q rootfiles >/dev/null && test ! -e /tmp/easyrmm-runrecovery && ! ls -d /var/lib/rpmrebuilddb.* >/dev/null 2>&1 && dnf -q -C check")
+	c.wantGone(t, stateDir)
+}
+
+func rpmRecovery(t *testing.T, c *scriptContainer) {
+	// rootfiles: a package nothing needs, of five files. Its token is read
+	// while rpm still works.
 	const pkg = "rootfiles.noarch"
 	c.sh(t, "rpm -q rootfiles >/dev/null && rpm -e --test rootfiles")
+	token := c.token(t, "rootfiles")
 	// An rpm removing tzdata (some 1,900 files) is killed as soon as it
 	// has its database open, as a time limit does: every rpm and dnf
-	// command fails after it.
-	c.sh(t, `rpm -e --nodeps tzdata >/dev/null 2>&1 & p=$!; i=0
-		until grep -qs '/var/lib/rpm/__db\.' /proc/$p/maps; do i=$((i + 1)); [ $i -lt 20000 ] || exit 1; done
-		kill -9 $p; wait $p; true`)
-	if out, errOut, code := c.run(t, "rpm", "-q", "rpm"); code == 0 || !strings.Contains(out+errOut, "DB_RUNRECOVERY") {
-		t.Fatalf("rpm -q after rpm was killed: exit %d\n%s%s", code, out, errOut)
+	// command fails after it. A kill that came too soon (rpm still works,
+	// tzdata still installed) is tried again, up to ten times.
+	for try := 1; ; try++ {
+		c.sh(t, `rpm -e --nodeps tzdata >/dev/null 2>&1 & p=$!; i=0
+			until grep -qs '/var/lib/rpm/__db\.' /proc/$p/maps; do i=$((i + 1)); [ $i -lt 20000 ] || break; done
+			kill -9 $p; wait $p; true`)
+		out, errOut, code := c.run(t, "rpm", "-q", "rpm")
+		if code != 0 && strings.Contains(out+errOut, "DB_RUNRECOVERY") {
+			break
+		}
+		if _, _, still := c.run(t, "rpm", "-q", "tzdata"); code != 0 || still != 0 || try == 10 {
+			t.Fatalf("rpm -q after rpm was killed (try %d): exit %d\n%s%s", try, code, out, errOut)
+		}
 	}
 	// Another process has the database's environment open.
 	docker(t, "exec", "-d", c.name, "/usr/libexec/platform-python", "-c",
@@ -796,10 +867,22 @@ func scriptRpmRecovery(t *testing.T, c *scriptContainer) {
 	pid := strings.TrimSpace(c.sh(t, "grep -l '/var/lib/rpm/__db\\.001' /proc/[0-9]*/maps | cut -d/ -f3"))
 	c.writeShortWait(t)
 	const what = "rpm's database needed recovering (DB_RUNRECOVERY)"
-	wantRefused(t, c.recoveryUndo(t, shortWait, pkg), pkg, what, "platform-python", pid, "had it open")
+	wantRefused(t, c.recoveryUndo(t, shortWait, token), pkg, what, "platform-python", pid, "had it open")
 	c.sh(t, "kill -9 "+pid)
-	c.waitUntil(t, "! grep -qs '/var/lib/rpm/__db\\.001' /proc/[0-9]*/maps", "the environment to be let go")
-	wantRecovered(t, c.recoveryUndo(t, scriptPath, pkg), pkg, what+": removing /var/lib/rpm/__db.* put it right before the package step")
+	c.waitUntil(t, "! grep -qs ' /var/lib/rpm/__db\\.001' /proc/[0-9]*/maps", "the environment to be let go")
+	// A file of the same name elsewhere, mapped by another process, is
+	// another file (device and inode): the recovery does not wait for it.
+	c.sh(t, "mkdir -p /var/tmp/easyrmm-other/var/lib/rpm && cp /var/lib/rpm/__db.001 /var/tmp/easyrmm-other/var/lib/rpm/__db.001")
+	docker(t, "exec", "-d", c.name, "/usr/libexec/platform-python", "-c",
+		"import mmap, time; f = open('/var/tmp/easyrmm-other/var/lib/rpm/__db.001', 'rb'); m = mmap.mmap(f.fileno(), 0, prot=mmap.PROT_READ); time.sleep(600)")
+	c.waitUntil(t, "grep -qs '/var/tmp/easyrmm-other/var/lib/rpm/__db\\.001' /proc/[0-9]*/maps", "the other file to be mapped")
+	why := what + ": removing /var/lib/rpm/__db.* and rpm --rebuilddb put it right before the package step"
+	if strings.TrimSpace(c.sh(t, "stat -f -c %T /var/lib")) == "overlayfs" {
+		why = what + ": removing /var/lib/rpm/__db.* put it right before the package step " +
+			"(rpm --rebuilddb then failed: error: failed to replace old database with new database!; rpm reads the database without it)"
+	}
+	wantRecovered(t, c.recoveryUndo(t, shortWait, token), pkg, why)
+	c.sh(t, "for p in $(grep -l '/var/tmp/easyrmm-other' /proc/[0-9]*/maps | cut -d/ -f3); do kill -9 $p; done; rm -rf /var/tmp/easyrmm-other")
 	c.sh(t, "! rpm -q rootfiles >/dev/null && rpm -q tzdata >/dev/null && dnf -q -C check && rm -f "+shortWait)
 	c.wantGone(t, stateDir)
 }
@@ -825,13 +908,13 @@ func scriptDanglingUnitLink(t *testing.T, c *scriptContainer) {
 }
 
 type scriptContainer struct {
-	name  string
-	cache map[string]bool
+	name, image, scriptFile string
+	cache                   map[string]bool
 }
 
 // startScriptContainer runs IMAGE with no network and the script mounted
-// read-only, removed when the test ends.
-func startScriptContainer(t *testing.T, image, script string) *scriptContainer {
+// read-only, and EXTRA docker run options, removed when the test ends.
+func startScriptContainer(t *testing.T, image, script string, extra ...string) *scriptContainer {
 	t.Helper()
 	if _, _, err := dockerRun(10*time.Second, "image", "inspect", image); err != nil {
 		if out, errOut, err := dockerRun(10*time.Minute, "pull", "-q", image); err != nil {
@@ -842,9 +925,9 @@ func startScriptContainer(t *testing.T, image, script string) *scriptContainer {
 	if _, err := rand.Read(b); err != nil {
 		t.Fatal(err)
 	}
-	c := &scriptContainer{name: "easyrmm-testhardening-" + hex.EncodeToString(b), cache: map[string]bool{}}
-	docker(t, "run", "-d", "--rm", "--network", "none", "--name", c.name,
-		"-v", script+":"+scriptPath+":ro", image, "sleep", "infinity")
+	c := &scriptContainer{name: "easyrmm-testhardening-" + hex.EncodeToString(b), image: image, scriptFile: script, cache: map[string]bool{}}
+	args := append([]string{"run", "-d", "--rm", "--network", "none", "--name", c.name, "-v", script + ":" + scriptPath + ":ro"}, extra...)
+	docker(t, append(args, image, "sleep", "infinity")...)
 	t.Cleanup(func() { _, _, _ = dockerRun(time.Minute, "rm", "-f", c.name) })
 	return c
 }

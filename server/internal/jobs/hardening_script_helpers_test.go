@@ -21,11 +21,13 @@ var families = map[string]string{
 }
 
 // The platforms the script reports full support for, by os-release ID: an
-// independent copy of the script's table, for the images and machines tested here.
+// independent copy of the script's table, for the images and machines tested
+// here. It is exactly the releases CI's machine tests apply and undo every
+// module on (internal/vmtest's images); the rest are checked only.
 var fullSupport = map[string][]string{
 	"debian": {"12", "13"}, "ubuntu": {"22.04", "24.04", "26.04"},
-	"rocky": {"8", "9", "10"}, "almalinux": {"8", "9", "10"}, "rhel": {"8", "9", "10"},
-	"fedora": {"43", "44", "45"},
+	"rocky": {"8", "9", "10"}, "almalinux": {"9", "10"},
+	"fedora": {"45"},
 }
 
 // fullySupported reports whether the table above lists a release, whole
@@ -88,7 +90,7 @@ func parseScriptOutcome(t *testing.T, stdout, mode string, wantModules []string)
 			}
 		}
 		switch m.Outcome {
-		case HardeningSkipped, HardeningRefused, HardeningOutcomeFailed, HardeningNothingToUndo:
+		case HardeningSkipped, HardeningRefused, HardeningOutcomeFailed, HardeningNothingToUndo, HardeningNotRun:
 			if m.OutcomeReason == "" {
 				t.Errorf("%s: %s without a reason", m.Module, m.Outcome)
 			}
@@ -99,7 +101,7 @@ func parseScriptOutcome(t *testing.T, stdout, mode string, wantModules []string)
 		}
 		// Skipped exactly when the check rules the module out.
 		notHere := slices.Contains([]string{HardeningNotApplicable, HardeningManagedElsewhere, HardeningNotSupported}, m.State)
-		if mode == HardeningApply && notHere != (m.Outcome == HardeningSkipped) {
+		if mode == HardeningApply && m.Outcome != HardeningNotRun && notHere != (m.Outcome == HardeningSkipped) {
 			t.Errorf("%s: %s, and apply's outcome is %s", m.Module, m.State, m.Outcome)
 		}
 	}

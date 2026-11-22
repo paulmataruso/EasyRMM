@@ -76,7 +76,7 @@ EASYRMM_VM_IMAGE=debian-12,rocky-9 make test-vm VM_PARALLEL=2
 
 | Setting | Default | |
 |---|---|---|
-| `EASYRMM_VM_IMAGE` | every image | Images to boot, by name, separated by commas: `debian-12`, `debian-13`, `ubuntu-22.04`, `ubuntu-24.04`, `rocky-8`, `rocky-9`, `alma-9`, `fedora-45` |
+| `EASYRMM_VM_IMAGE` | every image | Images to boot, by name, separated by commas: `debian-12`, `debian-13`, `ubuntu-22.04`, `ubuntu-24.04`, `ubuntu-26.04`, `rocky-8`, `rocky-9`, `rocky-10`, `alma-9`, `alma-10`, `fedora-45` |
 | `EASYRMM_VM_CACHE` | `/var/tmp/easyrmm-vmtest` | Downloaded images (`images/`) and the running machines' disks (`run/`). Keep it off `/tmp`, which is often a small tmpfs |
 | `EASYRMM_VM_LOG_DIR` | none | When set, each machine's serial console log is copied there when it stops |
 | `VM_PARALLEL` (make) | 2 | Machines booting at once |

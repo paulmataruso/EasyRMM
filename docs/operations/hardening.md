@@ -85,8 +85,8 @@ computer is, if it is one:
 
 | Support | Means |
 |---|---|
-| Tested | Debian 12 and 13; Ubuntu 22.04, 24.04 and 26.04; Rocky Linux, AlmaLinux and Red Hat Enterprise Linux 8, 9 and 10; Fedora 43, 44 and 45 |
-| Check only | A newer release of those, not yet tested, or one out of its standard support (Debian 11, Ubuntu 20.04), which needs upgrading first. Checks report on it; nothing will be applied or undone |
+| Tested | Debian 12 and 13; Ubuntu 22.04, 24.04 and 26.04; Rocky Linux 8, 9 and 10; AlmaLinux 9 and 10; Fedora 45: the releases EasyRMM's machine tests apply and undo every module on |
+| Check only | A release in its support that those tests do not cover (AlmaLinux 8; Red Hat Enterprise Linux 8, 9 and 10; Fedora 43 and 44), a newer release, or one out of its standard support (Debian 11, Ubuntu 20.04), which needs upgrading first. Checks report on it; nothing will be applied or undone |
 | Not supported | Any other distribution or release. Checks report what they can |
 
 **Checks** lists the device's latest hardening runs, with their status and,
@@ -131,16 +131,21 @@ stricter: a value already stricter than EasyRMM's stays. A second apply
 changes nothing. It refuses what would lock you out or stop the computer
 from starting, and says why: password sign-in off where no account that may
 sign in has an SSH key, say, or USB storage off where a mounted filesystem is
-on a USB disk. It leaves alone a firewall the computer already has. A module
+on a USB disk, or `/etc/fstab` mounts one at boot without `nofail`. It
+leaves alone a firewall the computer already has. A module
 that fails part way is put back as it was, but for packages it installed
 that cannot be removed (others need them, or the package manager fails):
 the result names those and says why. Packages a module needs
 (nftables, fail2ban, auditd, AIDE, chrony or systemd-timesyncd) come from
 the computer's own repositories, without recommended packages; on Ubuntu
 22.04, AIDE comes with mailutils, which its configuration package needs in
-place of a mail server. AIDE's first
+place of a mail server. An installation never removes a package: one that
+would (a conflict) fails, and the module is put back. AIDE's first
 database is built after the job ends, in `easyrmm-aide-init.service`; the
-next check says whether it finished.
+next check says whether it finished. fail2ban bans for an hour, longer for
+repeat offenders, up to a day. A file apply changes that is a symbolic link
+stays one, and where SELinux labels files, each keeps its label, through
+apply and undo.
 
 Apply's options:
 
@@ -157,8 +162,15 @@ records on the computer, in `/var/lib/easyrmm-hardening/`, the files,
 modes, kernel values, services, packages and rules it changes. Undo puts back
 each one that is still as apply left it, leaves what someone changed since,
 and says what it left and why. It removes the packages apply installed when
-that removes nothing else; a package an installation upgraded stays
-upgraded. It rebuilds the initramfs after taking out usb-storage's file,
+that removes nothing else, and only those still at the version apply
+installed: one upgraded or installed again since stays. On Debian and
+Ubuntu it purges a package only while its configuration files are as
+installed; it removes one whose files someone changed, and keeps those
+files. A package an installation upgraded as a dependency stays upgraded.
+Files that a program apply started made (AIDE's database, the audit rules'
+backup) go only as they were made. Undo of the firewall alone is refused
+while fail2ban, which bans with it, is applied: the result names fail2ban
+(`undoWith`); undo both. It rebuilds the initramfs after taking out usb-storage's file,
 and after taking out kernel-modules' file when a rebuild since apply
 (usb-storage's, or a kernel update's) took that file in. A successful undo
 removes the record, so a second one finds nothing to undo. Undo takes no
@@ -186,11 +198,18 @@ What each module's apply or undo did:
 | Undone | Everything apply recorded is as it was before |
 | Partly undone | **Done** lists what was put back, and what was left and why |
 | Nothing to undo | EasyRMM has no record of applying the module on the computer |
+| Not run | The job's time ran out before the module; the module's last finding stays. Run the apply or undo again for it |
 
-A job stopped, or out of its 30 minutes, in the middle of a module leaves it
-*Half applied*: applying it again finishes it, and undo reverses it.
-Installing packages on a slow computer takes a while, so apply fewer
-modules at a time there.
+Apply and undo run for at most an hour (a check, 30 minutes), and the
+script works to that limit: it stops a step that would run past it, starts
+no module with less than a minute left, and starts no package step without
+the time it needs (five minutes to install, two to remove), failing the
+module instead, which is put back. The modules after it are *Not run*. A
+run canceled (**Stop job** or **Stop run**) stops the step it is in, and
+the script releases the computer for the next run. A run canceled or out
+of time in the middle of a module leaves it *Half applied*: applying
+it again finishes it, and undo reverses it. Installing packages on a slow
+computer takes a while, so apply fewer modules at a time there.
 
 A package step cut short can leave the package database unusable, so that
 every later one fails: dpkg *interrupted* on Debian and Ubuntu, and on Red
@@ -202,8 +221,14 @@ touch it; if it is still there, the module fails and names it. Otherwise
 they recover the database: `dpkg --configure -a`, non-interactive, keeping
 changed configuration files, for at most ten minutes; on RHEL 8, removing
 the database's environment files, `/var/lib/rpm/__db.*`, which rpm makes
-again (the database itself is in other files). The module's finding records it
-(`packageRecovery`: `recovered` or `failed`, with why), **Done** says so,
+again (the database itself is in other files), then `rpm --rebuilddb`
+(which a Docker container's filesystem refuses; the finding says so, and
+the database rpm had is used).
+`dpkg --configure -a` finishes every package dpkg left half installed, by
+whichever run or person, running their maintainer scripts: the finding
+names them. The module's finding records it
+(`packageRecovery`: `recovered` or `failed`, with why, and `packages`, those
+it configured), **Done** says so,
 and the audit log records it as *Package database recovery*, by the
 device's agent. A recovery that fails fails the module with its reason; an
 undo that fails this way keeps its record, so it can be run again.
@@ -215,7 +240,9 @@ undo that fails this way keeps its record, so it can be run again.
 | No **Hardening** tab | The device is not Linux, or has no EasyRMM agent |
 | No **Run check…** | You do not hold `script.run` on the device |
 | A run *Failed*: "The script finished, but its output does not end with a result." | The script stopped before its last line: the run's output shows where (it needs `job.view_sensitive`) |
-| A run *Timed out* | The check took more than 30 minutes, which a computer under heavy load can. Run it again, or check fewer modules |
+| A run *Timed out* | The check took more than 30 minutes, or an apply or undo more than an hour, which a computer under heavy load can. Run it again, or with fewer modules |
+| A module *Failed*: "not enough of the job's time was left to …", and others *Not run* | The job's time ran out. Run the apply or undo again for those modules |
+| An undo of the firewall *Refused*: "Undo fail2ban with it." | fail2ban is applied too, and bans with the firewall. Undo both |
 | A module *Not applicable* in a container | The host owns what it hardens. Check the host |
 | A module *Half applied* | An apply or undo was stopped part way. Apply the module again to finish it, or undo it |
 | A module *Failed*: "dpkg was interrupted, and … still held its lock" | Another package manager was running. Let it finish, then run the apply or undo again |

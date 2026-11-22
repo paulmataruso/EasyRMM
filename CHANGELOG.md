@@ -198,7 +198,20 @@ All notable changes to this project are documented here. The format follows
   database a killed rpm left needing recovery, once no other package
   manager is using it; the area's result and the audit log record it, and
   an area whose recovery fails, or that waited five minutes for another
-  package manager, fails and says why. Undo also runs
+  package manager, fails and says why, naming the packages the recovery
+  finished. Apply and undo run for up to an hour (a check, 30 minutes),
+  and the script works to that limit: it stops a step that would run past
+  it, fails an area whose package step lacks the time it needs, and does
+  not run the areas after it (*Not run*). Canceling a run stops the step it
+  is in. Undo removes only packages still at the version apply installed,
+  keeps their configuration files where someone changed them, removes
+  generated files only as they were made, keeps symbolic links and SELinux
+  labels, and refuses the firewall alone while fail2ban bans with it; an
+  installation never removes a package; fail2ban's bans stop growing at a
+  day; USB storage is refused where `/etc/fstab` needs a USB disk to boot.
+  Apply and undo run on the releases CI's machine tests cover (Debian 12
+  and 13, Ubuntu 22.04, 24.04 and 26.04, Rocky Linux 8, 9 and 10, AlmaLinux
+  9 and 10, Fedora 45); other supported releases are checked only. Undo also runs
   on the computer without the agent:
   `sh /var/lib/easyrmm-hardening/easyrmm-hardening.sh undo all`. Each
   device's latest result now carries, per area, what apply or undo did and

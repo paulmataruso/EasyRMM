@@ -172,7 +172,7 @@ func leftAccount(line string) bool {
 // hardenMachine is TestHardeningOnMachines on one image.
 func hardenMachine(t *testing.T, image string) {
 	vm := vmtest.Boot(t, image, vmtest.Options{Forward: []int{22}})
-	m := &hardeningMachine{t: t, vm: vm}
+	m := &hardeningMachine{t: t, vm: vm, image: image}
 	if state, err := vm.WaitBooted(t.Context()); err != nil {
 		t.Fatal(err)
 	} else if state != "running" {
@@ -302,6 +302,7 @@ for u in ssh.service sshd.service; do systemctl try-reload-or-restart "$u" 2>/de
 			t.Errorf("%s checks %s after undo, %s before apply", r.Module, r.State, was.State)
 		}
 	}
+	m.keepsLabels()
 }
 
 // Where the test puts the script on each machine.
@@ -323,6 +324,7 @@ func machineOptions(module, family string) []string {
 type hardeningMachine struct {
 	t      *testing.T
 	vm     *vmtest.VM
+	image  string
 	family string
 }
 
@@ -338,19 +340,30 @@ func (m *hardeningMachine) run(script string, timeout time.Duration) string {
 	return strings.TrimSpace(string(stdout))
 }
 
-// script runs the hardening script; it must exit 0 with a result the
-// server accepts. Emulated machines install packages slowly: an hour.
+// script runs the hardening script with the time limit the server gives a
+// job of MODE (time-limit, as the server passes it); it must exit 0 with a
+// result the server accepts, within that limit. How long each run took is
+// logged: the limits are chosen from these runs (ADR-0051).
 func (m *hardeningMachine) script(mode string, modules []string, options ...string) *hardeningResult {
 	m.t.Helper()
+	limit := time.Duration(Hardening{Mode: mode}.timeout()) * time.Second
 	args := append([]string{"sh", machineScript, mode, strings.Join(modules, ",")}, options...)
-	return parseScriptOutcome(m.t, m.run(strings.Join(args, " "), time.Hour), mode, modules)
+	args = append(args, "time-limit="+strconv.Itoa(int(limit.Seconds())))
+	start := time.Now()
+	out := m.run(strings.Join(args, " "), limit+time.Minute)
+	took := time.Since(start)
+	m.t.Logf("time  %-6s %-30s %s of %s", mode, strings.Join(modules, ","), took.Round(time.Second), limit)
+	if took > limit {
+		m.t.Errorf("%s %s took %s, longer than the job's %s", mode, strings.Join(modules, ","), took.Round(time.Second), limit)
+	}
+	return parseScriptOutcome(m.t, out, mode, modules)
 }
 
 // want checks a state or outcome against the module's case for MODE on
 // this family.
 func (m *hardeningMachine) want(r HardeningModuleResult, mode, got string) {
 	m.t.Helper()
-	c, ok := machineCases[r.Module][mode][m.family]
+	c, ok := machineCaseFor(m.image, m.family, r.Module, mode)
 	if !ok {
 		m.t.Errorf("%s: no case for %s on %s", r.Module, mode, m.family)
 		return
@@ -363,7 +376,7 @@ func (m *hardeningMachine) want(r HardeningModuleResult, mode, got string) {
 // wantAfter checks the state the check found after MODE.
 func (m *hardeningMachine) wantAfter(r HardeningModuleResult, mode string) {
 	m.t.Helper()
-	c := machineCases[r.Module][mode][m.family]
+	c, _ := machineCaseFor(m.image, m.family, r.Module, mode)
 	if !slices.Contains(c.After, r.State) {
 		m.t.Errorf("%s after %s: %s (%s; missing %q), want one of %q", r.Module, mode, r.State, r.Reason, r.Missing, c.After)
 	}
@@ -426,6 +439,31 @@ func (m *hardeningMachine) keepsAuditd(before bool) {
 	}
 }
 
+// keepsLabels: where SELinux labels files, a file apply changes and undo
+// puts back keeps the label it had, set by hand or the policy's (ADR-0051).
+// /etc/fstab, which shared-memory changes, is labeled etc_runtime_t here,
+// not the policy's etc_t, then labeled by the policy again.
+func (m *hardeningMachine) keepsLabels() {
+	m.t.Helper()
+	if m.run("if selinuxenabled 2>/dev/null; then echo yes; fi", time.Minute) != "yes" {
+		if m.family != "debian" {
+			m.t.Errorf("SELinux is off on %s", m.image)
+		}
+		return
+	}
+	const label = "stat -c %C /etc/fstab | cut -d: -f3"
+	m.run("chcon -t etc_runtime_t /etc/fstab", time.Minute)
+	r := scriptModule(m.t, m.script(HardeningApply, []string{"shared-memory"}), "shared-memory")
+	if got := m.run(label, time.Minute); r.Outcome != HardeningApplied || got != "etc_runtime_t" {
+		m.t.Errorf("shared-memory applied over a labeled /etc/fstab: %s %q, the label %s", r.Outcome, r.Done, got)
+	}
+	r = scriptModule(m.t, m.script(HardeningUndo, []string{"shared-memory"}), "shared-memory")
+	if got := m.run(label, time.Minute); r.Outcome != HardeningUndone || got != "etc_runtime_t" {
+		m.t.Errorf("shared-memory undone over a labeled /etc/fstab: %s %q, the label %s", r.Outcome, r.Done, got)
+	}
+	m.run("restorecon /etc/fstab", time.Minute)
+}
+
 func (m *hardeningMachine) restart() {
 	m.t.Helper()
 	if err := m.vm.Restart(m.t.Context()); err != nil {
@@ -443,6 +481,10 @@ func (m *hardeningMachine) restart() {
 // to read cannot ban it again.
 func (m *hardeningMachine) bans() {
 	m.t.Helper()
+	// Repeat offenders' bans grow, up to a day.
+	if got := m.run("fail2ban-client get sshd bantime.maxtime | tail -n 1", time.Minute); got != "86400" {
+		m.t.Errorf("the sshd jail's bantime.maxtime: %q, want 86400 (a day)", got)
+	}
 	const outside = "10.0.2.2"
 	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(m.vm.HostPort(22)))
 	for i := 0; i < 12; i++ {

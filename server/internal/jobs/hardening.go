@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -48,8 +49,15 @@ var hardeningModes = map[string]struct{ label, verb string }{
 	HardeningUndo:  {"Undo hardening", "undo hardening"},
 }
 
-// HardeningTimeout is how long a hardening job may run (ADR-0051).
-const HardeningTimeout = 30 * 60
+// hardeningTimeouts is how long a hardening job may run, in seconds, by
+// mode (ADR-0051): a check only reads; apply and undo install and remove
+// packages, whose steps alone may take up to 35 minutes (a refresh of 10,
+// an installation of 25) on a slow mirror, and keep time for a rollback.
+// The script gets the limit (time-limit) and keeps every step within it.
+var hardeningTimeouts = map[string]int{HardeningCheck: 30 * 60, HardeningApply: 60 * 60, HardeningUndo: 60 * 60}
+
+// timeout is the job's time limit.
+func (h Hardening) timeout() int { return hardeningTimeouts[h.Mode] }
 
 // MaxJobBody is the largest script a job may carry: the jobs table's limit,
 // above a library script's MaxBody, for EasyRMM's own scripts.
@@ -213,7 +221,8 @@ func prefixes(in []string) (out []string, bad bool) {
 	return out, false
 }
 
-// args are the script's arguments: the mode, the modules, then each option.
+// args are the script's arguments: the mode, the modules, each option, then
+// the job's time limit, which every mode takes.
 func (h Hardening) args() []string {
 	a := []string{h.Mode, strings.Join(h.Modules, ",")}
 	list := func(name string, v []string) {
@@ -232,7 +241,7 @@ func (h Hardening) args() []string {
 			a = append(a, sw.name)
 		}
 	}
-	return a
+	return append(a, "time-limit="+strconv.Itoa(h.timeout()))
 }
 
 // label names the job for job lists: "Check hardening: ssh, firewall".
@@ -259,7 +268,7 @@ func (s *Service) CreateHardeningJob(ctx context.Context, c access.Caller, in Ha
 	h := in.Hardening
 	sp := &spec{
 		kind: KindHardening, hardening: &h, name: h.label(), shell: agentproto.ShellSh, body: hardeningScript, args: h.args(),
-		timeout: HardeningTimeout, auditAction: "device.hardening",
+		timeout: h.timeout(), auditAction: "device.hardening",
 		details: map[string]any{"mode": h.Mode, "modules": h.Modules, "options": h.Options},
 	}
 	r := rule{perm: rbac.PermDeviceHarden, verb: hardeningModes[h.Mode].verb, platforms: []string{"linux"}, runsOn: "Hardening runs on"}
@@ -330,6 +339,9 @@ type HardeningFinding struct {
 	// package database left unusable by a step stopped part way, and
 	// recovered it (ADR-0051).
 	PackageRecovery *HardeningPackageRecovery `json:"packageRecovery,omitempty"`
+	// UndoWith names the modules an undo refused without: undone together
+	// (the console selects them with this one), it runs.
+	UndoWith []string `json:"undoWith,omitempty"`
 }
 
 // HardeningPackageRecovery is a package database recovered before a
@@ -339,7 +351,22 @@ type HardeningPackageRecovery struct {
 	// Outcome is recovered or failed; Reason says what was found and done.
 	Outcome string `json:"outcome"`
 	Reason  string `json:"reason"`
+	// Packages are those dpkg had left half installed, which dpkg
+	// --configure -a configured, running their maintainer scripts: whatever
+	// run left them (at most 50).
+	Packages []string `json:"packages,omitempty"`
 }
+
+// maxRecoveryPackages bounds a recovery's packages: as many names, and as
+// many bytes of them, as the script reports at most.
+const (
+	maxRecoveryPackages     = 50
+	maxRecoveryPackageBytes = 2000
+)
+
+// debianPackage is a Debian package's name, with its architecture where
+// dpkg gives one.
+var debianPackage = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]*(:[a-z0-9-]+)?$`)
 
 // Outcomes of a package database recovery.
 const (
@@ -347,8 +374,10 @@ const (
 	HardeningRecoveryFailed = "failed"
 )
 
-// Outcomes of apply and undo.
+// Outcomes of apply and undo. NotRun is a module the job's time ran out
+// before: nothing was checked, and the device keeps the state it had.
 const (
+	HardeningNotRun        = "not_run"
 	HardeningApplied       = "applied"
 	HardeningUnchanged     = "unchanged"
 	HardeningUndone        = "undone"
@@ -362,10 +391,12 @@ const (
 // hardeningOutcomes are the outcomes each mode may report.
 var hardeningOutcomes = map[string][]string{
 	HardeningCheck: {""},
-	HardeningApply: {HardeningApplied, HardeningUnchanged, HardeningRefused, HardeningSkipped, HardeningOutcomeFailed},
+	HardeningApply: {
+		HardeningApplied, HardeningUnchanged, HardeningRefused, HardeningSkipped, HardeningOutcomeFailed, HardeningNotRun,
+	},
 	HardeningUndo: {
 		HardeningUndone, HardeningPartlyUndone, HardeningNothingToUndo, HardeningRefused, HardeningSkipped,
-		HardeningOutcomeFailed,
+		HardeningOutcomeFailed, HardeningNotRun,
 	},
 }
 
@@ -446,6 +477,8 @@ func parseHardeningResult(stdout string, h Hardening) (*hardeningResult, error) 
 		case m.PackageRecovery != nil && (r.Mode == HardeningCheck ||
 			!slices.Contains([]string{HardeningRecovered, HardeningRecoveryFailed}, m.PackageRecovery.Outcome)):
 			return fail("module " + m.Module + " reports a package recovery that is not described as expected")
+		case len(m.UndoWith) > 0 && (r.Mode != HardeningUndo || m.Outcome != HardeningRefused || !undoWithValid(m.Module, m.UndoWith)):
+			return fail("module " + m.Module + " names modules to undo it with that are not described as expected")
 		}
 		seen[m.Module] = true
 	}
@@ -468,7 +501,7 @@ func (f HardeningFinding) valid(firewall bool) bool {
 	if !shortText(f.Reason, maxFindingText) || !shortText(f.OutcomeReason, maxFindingText) {
 		return false
 	}
-	if p := f.PackageRecovery; p != nil && (p.Reason == "" || !shortText(p.Reason, maxFindingText)) {
+	if p := f.PackageRecovery; p != nil && (p.Reason == "" || !shortText(p.Reason, maxFindingText) || !recoveryPackagesValid(p.Packages)) {
 		return false
 	}
 	for _, l := range lists {
@@ -480,6 +513,34 @@ func (f HardeningFinding) valid(firewall bool) bool {
 				return false
 			}
 		}
+	}
+	return true
+}
+
+// recoveryPackagesValid: package names, within their limits, each once.
+func recoveryPackagesValid(names []string) bool {
+	if len(names) > maxRecoveryPackages {
+		return false
+	}
+	n, seen := 0, map[string]bool{}
+	for _, p := range names {
+		if !debianPackage.MatchString(p) || seen[p] {
+			return false
+		}
+		seen[p] = true
+		n += len(p) + 1
+	}
+	return n <= maxRecoveryPackageBytes
+}
+
+// undoWithValid: other modules, each once.
+func undoWithValid(module string, with []string) bool {
+	seen := map[string]bool{module: true}
+	for _, w := range with {
+		if !slices.Contains(HardeningModules, w) || seen[w] {
+			return false
+		}
+		seen[w] = true
 	}
 	return true
 }
@@ -517,6 +578,10 @@ func (s *Service) recordHardening(ctx context.Context, tx pgx.Tx, device, run, j
 		return err
 	}
 	for _, m := range r.Modules {
+		// Not run: not checked either, so what the device had stands.
+		if m.Outcome == HardeningNotRun {
+			continue
+		}
 		if _, err := tx.Exec(ctx, `INSERT INTO device_hardening (device_id, module, state, detail, job_id, checked_at)
 				VALUES ($1, $2, $3, $4, $5, $6)
 				ON CONFLICT (device_id, module) DO UPDATE SET state = EXCLUDED.state, detail = EXCLUDED.detail,
@@ -533,11 +598,15 @@ func (s *Service) recordHardening(ctx context.Context, tx pgx.Tx, device, run, j
 // that an apply or undo recovered, or failed to, before a package step
 // (ADR-0051): a change the job did not name.
 func (s *Service) auditPackageRecovery(ctx context.Context, tx pgx.Tx, device, run, job uuid.UUID, r *hardeningResult) error {
-	var modules []map[string]string
+	var modules []map[string]any
 	outcome := audit.Success
 	for _, m := range r.Modules {
 		if p := m.PackageRecovery; p != nil {
-			modules = append(modules, map[string]string{"module": m.Module, "outcome": p.Outcome, "reason": p.Reason})
+			e := map[string]any{"module": m.Module, "outcome": p.Outcome, "reason": p.Reason}
+			if len(p.Packages) > 0 {
+				e["packages"] = p.Packages
+			}
+			modules = append(modules, e)
 			if p.Outcome == HardeningRecoveryFailed {
 				outcome = audit.Failure
 			}

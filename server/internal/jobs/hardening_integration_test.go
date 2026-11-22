@@ -33,10 +33,11 @@ func TestHardeningJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantArgs := []string{"check", "ssh,firewall", "allow-tcp=8443"}
+	// The job's time limit goes to the script too.
+	wantArgs := []string{"check", "ssh,firewall", "allow-tcp=8443", "time-limit=1800"}
 	if job.Kind != KindHardening || job.Hardening == nil || !slices.Equal(job.Hardening.Modules, []string{"ssh", "firewall"}) ||
 		job.Software != nil || job.ScriptID != nil || job.ScriptName != "Check hardening: ssh, firewall" || job.Shell != agentproto.ShellSh ||
-		job.Body != hardeningScript || job.ArgCount != len(wantArgs) || job.TimeoutSeconds != HardeningTimeout || job.Total != 2 {
+		job.Body != hardeningScript || job.ArgCount != len(wantArgs) || job.TimeoutSeconds != 30*60 || job.Total != 2 {
 		t.Errorf("job %+v", job)
 	}
 	if args, err := f.svc.ReadArguments(f.ctx, tech, job.ID); err != nil || !slices.Equal(args.Args, wantArgs) {
@@ -53,7 +54,7 @@ func TestHardeningJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Script != hardeningScript || p.Shell != agentproto.ShellSh || !slices.Equal(p.Args, wantArgs) || p.TimeoutSeconds != HardeningTimeout {
+	if p.Script != hardeningScript || p.Shell != agentproto.ShellSh || !slices.Equal(p.Args, wantArgs) || p.TimeoutSeconds != 30*60 {
 		t.Errorf("payload %+v", p)
 	}
 	audited := f.str(`SELECT details::text FROM audit_log WHERE action = 'device.hardening' AND device_id = $1`, lnx)
@@ -236,10 +237,12 @@ func TestHardeningJobs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if applied.ScriptName != "Apply hardening: ssh, firewall" || applied.ArgCount != 3 {
+	// Apply and undo may run an hour: package steps.
+	if applied.ScriptName != "Apply hardening: ssh, firewall" || applied.ArgCount != 4 || applied.TimeoutSeconds != 60*60 {
 		t.Errorf("apply job %+v", applied)
 	}
-	if args, err := f.svc.ReadArguments(f.ctx, siteAdmin, applied.ID); err != nil || !slices.Equal(args.Args, []string{"apply", "ssh,firewall", "allow-tcp=443"}) {
+	if args, err := f.svc.ReadArguments(f.ctx, siteAdmin, applied.ID); err != nil ||
+		!slices.Equal(args.Args, []string{"apply", "ssh,firewall", "allow-tcp=443", "time-limit=3600"}) {
 		t.Errorf("apply job's arguments %+v, %v", args, err)
 	}
 	f.svc.now = func() time.Time { return time.Now().Add(2 * time.Minute) }
@@ -256,21 +259,30 @@ func TestHardeningJobs(t *testing.T) {
 		Mode: HardeningUndo, Modules: []string{"ssh"}, Options: HardeningOptions{AllowTCP: []string{"443"}},
 	}})
 	fieldErr(t, err, "options", "no options")
-	undone, err := f.svc.CreateHardeningJob(f.ctx, siteAdmin, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: HardeningUndo, Modules: []string{"ssh"}}})
+	undone, err := f.svc.CreateHardeningJob(f.ctx, siteAdmin, HardeningInput{DeviceIDs: []uuid.UUID{lnx}, Hardening: Hardening{Mode: HardeningUndo, Modules: []string{"ssh", "firewall"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if args, err := f.svc.ReadArguments(f.ctx, siteAdmin, undone.ID); err != nil ||
+		!slices.Equal(args.Args, []string{"undo", "ssh,firewall", "time-limit=3600"}) || undone.TimeoutSeconds != 60*60 {
+		t.Errorf("undo job's arguments %+v, %v; job %+v", args, err, undone)
+	}
 	f.svc.now = func() time.Time { return time.Now().Add(3 * time.Minute) }
-	// The undo found dpkg interrupted, and recovered it first: kept with
-	// the module, and audited as the agent's.
-	const recovery = "dpkg was interrupted: dpkg --configure -a put it right before the package step"
+	// The undo found dpkg interrupted, and recovered it first, configuring
+	// a package another run had left half installed: kept with the module,
+	// and audited as the agent's. Then the job's time ran out before the
+	// firewall, which keeps what was known of it.
+	const recovery = "dpkg was interrupted: dpkg --configure -a put it right before the package step; it configured the packages dpkg had left half installed, running their maintainer scripts: nginx-common"
 	finish(lnx, runOf(undone, lnx), HardeningResultPrefix+`{"version":1,"mode":"undo","platform":`+platform+`,"modules":[`+
 		`{"module":"ssh","state":"partly","missing":["LoginGraceTime 30"],"outcome":"undone","done":["Removed 00-easyrmm-hardening.conf"],`+
-		`"packageRecovery":{"outcome":"recovered","reason":"`+recovery+`"}}]}`)
+		`"packageRecovery":{"outcome":"recovered","reason":"`+recovery+`","packages":["nginx-common"]}},`+
+		`{"module":"firewall","state":"failed","reason":"Not checked: the job's time ran out before this module.","outcome":"not_run",`+
+		`"outcomeReason":"Not run: the job's time ran out before this module; run undo again for it."}]}`)
 	h, _ = f.svc.DeviceHardening(f.ctx, viewer, lnx)
 	if len(h.Modules) != 2 || h.Modules[0].Outcome != HardeningUndone || h.Modules[0].Recorded || h.Modules[0].State != HardeningPartly ||
-		h.Modules[1].Outcome != HardeningSkipped || *h.Modules[1].JobID != applied.ID ||
-		h.Modules[0].PackageRecovery == nil || h.Modules[0].PackageRecovery.Reason != recovery {
+		h.Modules[1].Outcome != HardeningSkipped || h.Modules[1].State != HardeningManagedElsewhere || *h.Modules[1].JobID != applied.ID ||
+		h.Modules[0].PackageRecovery == nil || h.Modules[0].PackageRecovery.Reason != recovery ||
+		!slices.Equal(h.Modules[0].PackageRecovery.Packages, []string{"nginx-common"}) {
 		t.Errorf("after undo: %+v", h)
 	}
 	audited = f.str(`SELECT details::text FROM audit_log WHERE action = 'device.hardening' AND details->>'jobId' = $1`, undone.ID.String())
@@ -282,9 +294,9 @@ func TestHardeningJobs(t *testing.T) {
 	}
 	audited = f.str(`SELECT concat_ws(' ', actor_type, actor_id, actor_label, outcome, target_type, target_id = $2, details->>'jobId' = $3,
 			details->>'mode', details->>'family', details->'modules'->0->>'module', details->'modules'->0->>'outcome',
-			details->'modules'->0->>'reason' = $4)
+			details->'modules'->0->>'reason' = $4, details->'modules'->0->'packages'->>0)
 		FROM audit_log WHERE action = 'device.package_recovery' AND device_id = $1`, lnx, runOf(undone, lnx).String(), undone.ID.String(), recovery)
-	if want := "agent " + lnx.String() + " HQ-LNX success job_run t t undo debian ssh recovered t"; audited != want {
+	if want := "agent " + lnx.String() + " HQ-LNX success job_run t t undo debian ssh recovered t nginx-common"; audited != want {
 		t.Errorf("package recovery audit %q, want %q", audited, want)
 	}
 

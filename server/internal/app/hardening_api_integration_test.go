@@ -104,14 +104,14 @@ func TestHardeningAPI(t *testing.T) {
 	}
 	tech.expect(http.StatusCreated, "POST", path, map[string]any{"deviceIds": []string{device}, "mode": "check", "modules": []string{"kernel", "ssh"}}, &job)
 	if job.Kind != "hardening" || job.ScriptName != "Check hardening: ssh, kernel" || job.Hardening == nil || job.Hardening.Mode != "check" ||
-		!slices.Equal(job.Hardening.Modules, []string{"ssh", "kernel"}) || job.ArgCount != 2 {
+		!slices.Equal(job.Hardening.Modules, []string{"ssh", "kernel"}) || job.ArgCount != 3 {
 		t.Errorf("job %+v", job)
 	}
 	var args struct {
 		Args []string `json:"args"`
 	}
 	tech.expect(http.StatusOK, "GET", "/api/v1/jobs/"+job.ID+"/arguments", nil, &args)
-	if !slices.Equal(args.Args, []string{"check", "ssh,kernel"}) {
+	if !slices.Equal(args.Args, []string{"check", "ssh,kernel", "time-limit=1800"}) {
 		t.Errorf("arguments %+v", args)
 	}
 
@@ -123,7 +123,7 @@ func TestHardeningAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Shell != agentproto.ShellSh || !slices.Equal(p.Args, []string{"check", "ssh,kernel"}) {
+	if p.Shell != agentproto.ShellSh || !slices.Equal(p.Args, []string{"check", "ssh,kernel", "time-limit=1800"}) || p.TimeoutSeconds != 1800 {
 		t.Errorf("payload: shell %s, args %q", p.Shell, p.Args)
 	}
 	if st, err := ac.Start(ctx, p.RunID); err != nil || !st.Proceed {

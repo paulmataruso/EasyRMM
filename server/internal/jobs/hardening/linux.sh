@@ -10,8 +10,9 @@
 #   apply  applies the chosen modules, keeping a record of what it changed,
 #          then checks them;
 #   undo   reverses the chosen modules from that record, then checks them.
-# Apply and undo run only on the releases this script was tested on
-# (FULL_SUPPORT below); elsewhere every module is reported as not supported.
+# Apply and undo run only on the releases CI's machine tests run this script
+# on (FULL_SUPPORT below); elsewhere every module is reported as not
+# supported, and apply and undo refuse with the reason.
 #
 # Arguments, which are never part of this script's text. The EasyRMM server
 # accepts only the names and forms below, and this script checks them again:
@@ -29,7 +30,9 @@
 #   password-off        turn password sign-in to SSH off
 #   epel                let fail2ban come from EPEL on Rocky Linux and
 #                       AlmaLinux (on RHEL itself EPEL must be there already)
-# Undo takes the same options and ignores them.
+#   time-limit=SECONDS  the job's time limit, which the server gives every
+#                       mode (see "Time" below); without it (by hand), none
+# Undo takes no option but time-limit.
 #
 # Output: progress lines, then as the last line of stdout
 #   EASYRMM-HARDENING-RESULT-V1 {"version":1,"mode":"check",...}
@@ -65,6 +68,16 @@
 # A module with an intent and no done mark was interrupted (a timeout or a
 # cancel killed the job): check reports it as half_applied, and undo
 # reverses what it recorded.
+#
+# Time: the agent stops a job at its time limit (SIGTERM to the script's
+# process group, SIGKILL 10 seconds later), as it does a cancel. Every
+# command that could take long runs through t, with a limit of its own and
+# never past the job's: apply's and undo's steps stop WORK_RESERVE before
+# the end, which a rollback and the result may use; a package step is not
+# started without its minimum left. A module that runs out of time fails,
+# and those after it are reported as not run (outcome not_run). On SIGTERM
+# the steps running through t, each in a process group of its own
+# (timeout's), are stopped with the script, and the lock released.
 #
 # Benchmarks: comments name the DISA Red Hat Enterprise Linux 9 STIG rule a
 # setting follows, by its ID, where one exists; each ID was checked against
@@ -113,21 +126,28 @@ nl='
 '
 tab=$(printf '\t')
 
-# The platforms apply and undo are tested on (ADR-0051, "Platforms"), one
+# The platforms apply and undo run on (ADR-0051, "Platforms"): exactly the
+# releases CI's machine tests apply and undo every module on, one
 # distribution a line: its ID in os-release, then its releases. A release
 # without a dot matches every point release of it (Rocky Linux 9.4 is 9).
 FULL_SUPPORT='
 debian 12 13
 ubuntu 22.04 24.04 26.04
 rocky 8 9 10
-almalinux 8 9 10
+almalinux 9 10
+fedora 45
+'
+# Releases in their standard support that CI does not test, which check
+# reports on but apply and undo refuse; and so are newer releases of the
+# distributions here and above, until they are tested.
+UNTESTED='
+almalinux 8
 rhel 8 9 10
-fedora 43 44 45
+fedora 43 44
 '
 # Releases out of their standard support, which check reports on but apply
-# and undo refuse. Newer releases of the distributions above are check only
-# as well, until they are tested.
-CHECK_ONLY='
+# and undo refuse: they need upgrading before hardening.
+OUT_OF_SUPPORT='
 debian 11
 ubuntu 20.04
 '
@@ -136,7 +156,7 @@ say() { printf '%s\n' "$*"; }
 
 usage() {
 	printf 'linux.sh: %s\n' "$1" >&2
-	printf 'Usage: sh linux.sh check|apply|undo <all|module,...> [allow-tcp=LIST] [allow-udp=LIST] [trusted=LIST] [root-password-off] [password-off] [epel]\n' >&2
+	printf 'Usage: sh linux.sh check|apply|undo <all|module,...> [allow-tcp=LIST] [allow-udp=LIST] [trusted=LIST] [root-password-off] [password-off] [epel] [time-limit=SECONDS]\n' >&2
 	exit 2
 }
 
@@ -150,16 +170,176 @@ text_has() {
 	printf '%s\n' "$th_text" 2>/dev/null | grep -q "$@"
 }
 
+# The job's time (see "Time" above), in seconds since the epoch: JOB_END
+# leaves END_RESERVE for the result, WORK_END WORK_RESERVE before that for
+# a rollback. T_END is the end t keeps commands to: WORK_END while apply or
+# undo changes a module, JOB_END otherwise (a check, a rollback). All empty
+# without time-limit.
+START_S=$(date +%s)
+END_RESERVE=20
+# At most this much, and a sixth of the job's time, is kept for a rollback.
+WORK_RESERVE=300
+JOB_END=
+WORK_END=
+T_END=
+# The least time a module, and each kind of step, starts with.
+MODULE_MIN=60
+PKG_INSTALL_MIN=300
+PKG_REMOVE_MIN=120
+PKG_RECOVER_MIN=120
+INITRAMFS_MIN=180
+# Set once a step found too little time left, or was stopped at the job's
+# end: the modules after it are not run.
+OUT_OF_TIME=no
+# The module undo needs to undo with this one (undo_module), for the result.
+M_UNDO_WITH=
+# Whether t's last command (in this shell) was stopped at the job's end
+# rather than at its own limit.
+T_CAPPED=no
+# The step t runs now (in this shell), until it ends: its timeout's PID.
+T_PID=
+LOCK_HELD=no
+LOCK_DIR=$STATE_DIR/lock
+# t's command while the lock is held: it records its own PID and start
+# (its /proc stat line) in the lock, then becomes timeout, which puts
+# itself in a process group of its own; so a step is never out of sight of
+# the trap that stops it, or of a later run's lock.
+# shellcheck disable=SC2016 # expanded by the sh that runs it
+T_RUN='d=$1; shift; read -r s </proc/$$/stat; printf "%s\n" "$s" >"$d/t.$$" 2>/dev/null; exec timeout -k 5 "$@"'
+
 # t SECONDS COMMAND...: runs a command that could hang (a stuck daemon, a
-# hung network mount) with a time limit.
+# hung network mount, a package manager) with a time limit, never past
+# T_END: a command that would start with no time left does not start, and
+# fails as a command out of time does (124).
 t() {
 	t_s=$1
 	shift
-	if have timeout; then
-		timeout -k 5 "$t_s" "$@"
-	else
-		"$@"
+	T_CAPPED=no
+	if [ -n "$T_END" ]; then
+		t_left=$((T_END - $(date +%s)))
+		if [ "$t_left" -lt 1 ]; then
+			T_CAPPED=yes
+			OUT_OF_TIME=yes
+			return 124
+		fi
+		if [ "$t_s" -gt "$t_left" ]; then
+			t_s=$t_left
+			T_CAPPED=yes
+		fi
 	fi
+	if ! have timeout; then
+		"$@"
+		return
+	fi
+	# In the background, so that a signal reaches the trap while it runs;
+	# set here, so that a subshell (a command substitution, a pipeline)
+	# stops its own step too.
+	trap on_signal TERM INT HUP
+	if [ "$LOCK_HELD" = yes ]; then
+		sh -c "$T_RUN" sh "$LOCK_DIR" "$t_s" "$@" &
+	else
+		timeout -k 5 "$t_s" "$@" &
+	fi
+	T_PID=$!
+	wait "$T_PID"
+	t_rc=$?
+	[ "$LOCK_HELD" = no ] || rm -f "$LOCK_DIR/t.$T_PID"
+	T_PID=
+	if [ "$T_CAPPED" = yes ] && [ "$t_rc" -eq 124 ]; then
+		OUT_OF_TIME=yes
+	else
+		T_CAPPED=no
+	fi
+	return "$t_rc"
+}
+
+# time_left: the seconds left until T_END, or nothing without a time limit.
+time_left() {
+	[ -z "$T_END" ] || printf '%s' $((T_END - $(date +%s)))
+}
+# minutes SECONDS: "N minutes" or "N seconds", for reasons.
+minutes() {
+	if [ "$1" -ge 120 ]; then printf '%s minutes' $(($1 / 60)); else printf '%s seconds' "$1"; fi
+}
+# need_time SECONDS WHAT: whether at least SECONDS are left for WHAT; if
+# not, PKG_ERR says so, and the run is out of time.
+need_time() {
+	nt_left=$(time_left)
+	[ -n "$nt_left" ] && [ "$nt_left" -lt "$1" ] || return 0
+	[ "$nt_left" -ge 0 ] || nt_left=0
+	OUT_OF_TIME=yes
+	PKG_ERR="not enough of the job's time was left to $2 ($(minutes "$nt_left") left, at least $(minutes "$1") needed)"
+	return 1
+}
+
+# shellcheck disable=SC2329 # stop_steps runs it, from the trap
+# proc_stat_field PID N: field N of /proc/PID/stat, counted after the
+# command's name (state is 3, the process group 5, the start time 22).
+proc_stat_field() {
+	sed -n 's/^.*) //p' "/proc/$1/stat" 2>/dev/null | awk -v n="$2" '{ print $(n - 2) }'
+}
+# group_runs PGID START: whether a process, not a zombie, of that process
+# group runs that started no earlier than START (its leader's start: a
+# group whose leader is gone, or a PID used again, does not count before).
+group_runs() {
+	for gr_s in /proc/[0-9]*/stat; do
+		sed -n 's/^.*) //p' "$gr_s" 2>/dev/null
+	done | awk -v g="$1" -v s="$2" '$1 != "Z" && $3 == g && $20 >= s { f = 1; exit } END { exit !f }'
+}
+# t_steps: "PGID START" of each step t runs in the lock's sight, one a line.
+t_steps() {
+	for ts_f in "$LOCK_DIR"/t.*; do
+		[ -f "$ts_f" ] || continue
+		ts_p=${ts_f##*/t.}
+		case $ts_p in '' | *[!0-9]*) continue ;; esac
+		ts_s=$(sed -n 's/^.*) //p' "$ts_f" 2>/dev/null | awk '{ print $20 }')
+		case $ts_s in '' | *[!0-9]*) continue ;; esac
+		printf '%s %s\n' "$ts_p" "$ts_s"
+	done
+}
+# stop_steps: on SIGTERM, SIGINT or SIGHUP (a cancel, or the job's time
+# limit), stops the steps running through t, each a process group of its
+# own: SIGTERM, up to 5 seconds, then SIGKILL (the agent's own SIGKILL
+# comes 10 seconds after its SIGTERM).
+# shellcheck disable=SC2329 # the trap runs it
+stop_steps() {
+	ss_g=
+	if [ "$LOCK_HELD" = yes ]; then
+		ss_g=$(t_steps | while read -r ss_p ss_s; do
+			# Only a group still led by the step that started it.
+			[ "$(proc_stat_field "$ss_p" 22)" != "$ss_s" ] || printf '%s ' "$ss_p"
+		done)
+	fi
+	[ -z "$T_PID" ] || in_words "$T_PID" "$ss_g" || ss_g="$ss_g $T_PID"
+	[ -n "${ss_g# }" ] || return 0
+	for ss_p in $ss_g; do kill -TERM -"$ss_p" 2>/dev/null || kill -TERM "$ss_p" 2>/dev/null; done
+	ss_n=0
+	while [ "$ss_n" -lt 5 ]; do
+		ss_live=no
+		for ss_p in $ss_g; do
+			[ "$(proc_stat_field "$ss_p" 3)" = Z ] || [ ! -e "/proc/$ss_p" ] || ss_live=yes
+		done
+		[ "$ss_live" = yes ] || break
+		sleep 1
+		ss_n=$((ss_n + 1))
+	done
+	for ss_p in $ss_g; do kill -KILL -"$ss_p" 2>/dev/null; done
+	return 0
+}
+# shellcheck disable=SC2329 # the trap runs it
+on_signal() {
+	# A subshell stops its own step; the run itself stops every step, and
+	# releases the lock.
+	os_self=
+	read -r os_self _ </proc/self/stat 2>/dev/null
+	if [ -n "$os_self" ] && [ "$os_self" != "$$" ]; then
+		LOCK_HELD=no
+		stop_steps
+		exit 143
+	fi
+	stop_steps
+	release
+	exit 143
 }
 
 # in_words WORD LIST: whether WORD is one of the space-separated LIST.
@@ -180,8 +360,13 @@ esac
 [ $# -ge 2 ] || usage 'no modules given.'
 MODULES_ARG=$2
 shift 2
-# Undo reverses what the record says, whatever the options were.
-[ "$MODE" != undo ] || [ $# -eq 0 ] || usage 'undo takes no options: it reverses what EasyRMM recorded.'
+# Undo reverses what the record says, whatever the options were: it takes
+# the job's time limit only.
+if [ "$MODE" = undo ]; then
+	for arg in "$@"; do
+		case $arg in time-limit=*) ;; *) usage 'undo takes no options: it reverses what EasyRMM recorded.' ;; esac
+	done
+fi
 
 valid_port() {
 	case $1 in '' | 0* | *[!0-9]*) return 1 ;; esac
@@ -273,6 +458,7 @@ OPT_TRUSTED=
 OPT_ROOT_PASSWORD_OFF=no
 OPT_PASSWORD_OFF=no
 OPT_EPEL=no
+OPT_TIME_LIMIT=
 # A list option given twice adds to the first.
 add_opt() {
 	eval "ao_old=\$$1"
@@ -292,12 +478,26 @@ for arg in "$@"; do
 		valid_cidrs "${arg#*=}" || usage "trusted takes IPv4 and IPv6 addresses or CIDR ranges, such as 10.0.0.0/8,2001:db8::/32: ${arg#*=}"
 		add_opt OPT_TRUSTED "${arg#*=}"
 		;;
+	time-limit=*)
+		# A minute to four hours: the time limits the agent accepts.
+		case ${arg#*=} in '' | 0* | *[!0-9]* | ??????*) usage "time-limit takes seconds, from 60 to 14400: ${arg#*=}" ;; esac
+		[ "${arg#*=}" -ge 60 ] && [ "${arg#*=}" -le 14400 ] || usage "time-limit takes seconds, from 60 to 14400: ${arg#*=}"
+		OPT_TIME_LIMIT=${arg#*=}
+		;;
 	root-password-off) OPT_ROOT_PASSWORD_OFF=yes ;;
 	password-off) OPT_PASSWORD_OFF=yes ;;
 	epel) OPT_EPEL=yes ;;
 	*) usage "unknown option: $arg" ;;
 	esac
 done
+
+if [ -n "$OPT_TIME_LIMIT" ]; then
+	JOB_END=$((START_S + OPT_TIME_LIMIT - END_RESERVE))
+	[ "$WORK_RESERVE" -le $((OPT_TIME_LIMIT / 6)) ] || WORK_RESERVE=$((OPT_TIME_LIMIT / 6))
+	WORK_END=$((JOB_END - WORK_RESERVE))
+	T_END=$JOB_END
+fi
+trap on_signal TERM INT HUP
 
 SELECTED=
 case $MODULES_ARG in
@@ -368,9 +568,10 @@ ver_ge() {
 }
 
 # support_of TABLE: whether this release is in TABLE (prints "in"), newer than
-# every release there ("newer"), or neither (nothing).
+# every release there ("newer"), or neither (nothing). TABLE may name a
+# distribution on more than one line.
 support_of() {
-	so_line=$(printf '%s\n' "$1" | sed -n "s/^$OS_ID //p" | head -n 1)
+	so_line=$(printf '%s\n' "$1" | awk -v id="$OS_ID" '$1 == id { for (i = 2; i <= NF; i++) printf "%s ", $i }')
 	[ -n "$so_line" ] && [ -n "$OS_VERSION" ] || return 0
 	so_newer=yes
 	for so_v in $so_line; do
@@ -389,12 +590,19 @@ support_of() {
 
 case $OS_VERSION in *[!0-9.]*) OS_VERSION_OK=no ;; *) OS_VERSION_OK=yes ;; esac
 SUPPORT=unsupported
+# Why apply and undo refuse here.
+SUPPORT_WHY="This distribution or release is not supported: apply and undo run on the releases EasyRMM's tests apply and undo them on."
 if [ "$OS_VERSION_OK" = yes ]; then
-	case $(support_of "$FULL_SUPPORT") in
-	in) SUPPORT=full ;;
-	newer) SUPPORT=check_only ;;
-	*) [ "$(support_of "$CHECK_ONLY")" != in ] || SUPPORT=check_only ;;
-	esac
+	if [ "$(support_of "$FULL_SUPPORT")" = in ]; then
+		SUPPORT=full
+		SUPPORT_WHY=
+	elif case $(support_of "$FULL_SUPPORT$UNTESTED") in in | newer) true ;; *) false ;; esac then
+		SUPPORT=check_only
+		SUPPORT_WHY='This release is checked only: apply and undo are not tested on this release.'
+	elif [ "$(support_of "$OUT_OF_SUPPORT")" = in ]; then
+		SUPPORT=check_only
+		SUPPORT_WHY='This release is checked only: it is out of its standard support, and needs upgrading before hardening.'
+	fi
 fi
 
 # systemd-detect-virt where it is installed; its "container-other" (older
@@ -1373,7 +1581,7 @@ f2b_banaction() {
 f2b_changes() {
 	fc_trusted='127.0.0.1/8, ::1'
 	[ -z "$OPT_TRUSTED" ] || fc_trusted="$fc_trusted, $(printf '%s' "$OPT_TRUSTED" | sed 's/,/, /g')"
-	change 'Jail sshd: 5 failures in 10 minutes bans the address for an hour, longer for repeat offenders'
+	change 'Jail sshd: 5 failures in 10 minutes bans the address for an hour, longer for repeat offenders, up to a day'
 	change "Never banned: $fc_trusted"
 	if [ ! -e /var/log/auth.log ] && [ ! -e /var/log/secure ]; then
 		change 'Read failed sign-ins from the journal (backend = systemd): there is no auth.log or secure file'
@@ -1865,6 +2073,26 @@ usb_disks_in_use() {
 		lsblk -nrp -o MOUNTPOINT "$ud_d" 2>/dev/null | grep -q . && printf '%s\n' "$ud_d"
 	done
 }
+# usb_fstab: the entries of /etc/fstab mounted at boot without nofail (a
+# filesystem or swap the boot waits for) on a USB disk, mounted now or not:
+# "SPEC (MOUNTPOINT)". A device named by UUID, label or the like is found
+# with blkid; what it is built on (a partition's disk, LVM's and
+# encryption's devices) with lsblk -s.
+usb_fstab() {
+	[ -r /etc/fstab ] || return 0
+	awk '$1 !~ /^#/ && NF >= 2 && $4 !~ /(^|,)(noauto|nofail)(,|$)/ { print $1, $2 }' /etc/fstab |
+		while read -r uf_spec uf_mp; do
+			uf_dev=
+			case $uf_spec in
+			UUID=* | LABEL=* | PARTUUID=* | PARTLABEL=*)
+				have blkid && uf_dev=$(blkid -l -o device -t "$uf_spec" 2>/dev/null | head -n 1)
+				;;
+			/dev/*) uf_dev=$(readlink -f "$uf_spec" 2>/dev/null) ;;
+			esac
+			[ -n "$uf_dev" ] || continue
+			lsblk -nrspo TRAN "$uf_dev" 2>/dev/null | grep -qx usb && printf '%s (%s)\n' "$uf_spec" "$uf_mp"
+		done
+}
 
 check_usb_storage() {
 	if [ "$IN_CONTAINER" = yes ]; then
@@ -1894,8 +2122,11 @@ check_usb_storage() {
 		return
 	fi
 	us_disks=$(usb_disks_in_use | tr '\n' ' ')
+	us_fstab=$(usb_fstab | tr '\n' ';' | sed -e 's/;$//' -e 's/;/; /g')
 	if [ -n "$us_disks" ]; then
 		change "Refused: a mounted filesystem or swap is on a USB disk (${us_disks% }), and the computer would not boot without usb-storage"
+	elif [ -n "$us_fstab" ]; then
+		change "Refused: /etc/fstab mounts a filesystem or swap on a USB disk at boot, without nofail ($us_fstab), and the computer would not boot without usb-storage"
 	else
 		change 'Keep usb-storage from loading, in /etc/modprobe.d and the initramfs: USB disks and backup drives stop working'
 		todo usb-storage
@@ -2291,19 +2522,27 @@ check_integrity() {
 # reverses them in the opposite order. "-" stands for nothing (no file, no
 # copy), "?" for not known yet (the job was killed between a change and its
 # record).
-#   file PATH ORIGINAL ORIGINAL-SHA256 AFTER-SHA256
+#   file PATH ORIGINAL ORIGINAL-SHA256 AFTER-SHA256 CONTEXT
 #       a file apply wrote; ORIGINAL is its copy under files/, or "-" when
-#       apply created it
+#       apply created it; CONTEXT its SELinux context then ("-" without
+#       SELinux), which undo puts back with chcon. A symbolic link stays
+#       one: apply and undo write the file it points to.
 #   dir PATH                     a directory apply created
 #   line PATH TEXT               a line apply added at the top of PATH
 #   mode PATH BEFORE OWNER AFTER a mode apply narrowed (owners never change)
 #   sysctl NAME BEFORE AFTER     a kernel parameter's live value
 #   unit UNIT ENABLED ACTIVE ENABLED-AFTER ACTIVE-AFTER
 #       a systemd unit's state before apply changed it, and after
-#   pkg PACKAGE...               the packages an installation added
+#   pkg TOKEN...                 the packages an installation added, each
+#                                with its version and install time (PKG_TOKEN)
+#   conffile PACKAGE PATH MD5    a configuration file of one, as installed
+#   stream PATH ORIGINAL ORIGINAL-SHA256 AFTER-SHA256
+#       a dnf module stream's file an installation made or changed
 #   pending PACKAGE...           an installation that did not finish
 #   table inet-easyrmm SHA256    the firewall table as apply loaded it
-#   gen PATH                     a file that a program apply started makes
+#   gen PATH SHA256              a file that a program apply started made,
+#                                as it made it ("?": not known when apply
+#                                ended; see undo_gen)
 #   selinux - BEFORE AFTER       SELinux's mode (permissive, enforcing)
 #   mount PATH BEFORE AFTER      a mount's options
 # The first apply of a module keeps each original; a later one adds only
@@ -2338,12 +2577,24 @@ PKG_STUCK=
 # and what it found and did.
 M_RECOV=
 M_RECOV_WHY=
-# The packages pkg_install added (NAME=rc: configuration files were left
-# from an earlier removal).
+# The packages pkg_install added, as tokens (PKG_TOKEN).
 PKG_NEW=
+# The packages dpkg had left half installed that its recovery configured.
+M_RECOV_PKGS=
+# After pkg_remove_alone: what it left and why, one a line; whether a
+# package stays (a module stream it needs stays too).
+PKG_NOTES=
+PKG_KEPT=no
+# Where pkg_remove_alone reads conffile records: the module's record, or
+# the auditd marker.
+PKG_CONF_SRC=
 # Set while undo of audit runs: auditd's packages and unit are the
 # marker's (undo_audit_after).
 AUDIT_UNDO=no
+# Set while undo runs: whether it stopped AIDE's baseline being built
+# (undo_integrity_before); the generated files it left (undo_gen).
+GEN_STOPPED=no
+GEN_LEFT=
 
 now_utc() { date -u '+%Y-%m-%dT%H:%M:%SZ'; }
 
@@ -2427,9 +2678,9 @@ tx_save() {
 	if [ -e "$1" ]; then
 		TX_N=$((TX_N + 1))
 		cp -p "$1" "$TX_DIR/$TX_N" || return 1
-		tx_push "put_copy $TX_DIR/$TX_N $1"
+		tx_push "put_copy $TX_DIR/$TX_N $1 $(file_context "$1")"
 	else
-		tx_push "rm -f $1"
+		tx_push "rm -f $(real_path "$1")"
 	fi
 }
 # tx_rollback: puts back what this run changed, and the record as it was.
@@ -2438,6 +2689,10 @@ tx_save() {
 # this run stopped part way leaves dpkg interrupted).
 tx_rollback() {
 	TX_LEFT=
+	PKG_KEPT=no
+	# A rollback may use the time kept for it.
+	tr_end=$T_END
+	T_END=$JOB_END
 	tr_oifs=$IFS
 	IFS=$nl
 	set -f
@@ -2446,13 +2701,19 @@ tx_rollback() {
 		set +f
 		PKG_ERR=
 		eval "$tr_c" >/dev/null 2>&1 && tr_rc=0 || tr_rc=$?
-		case $tr_c in 'pkg_remove_alone '*)
-			tr_p=$(printf '%s' "${tr_c#pkg_remove_alone }" | sed 's/=rc//g')
+		case $tr_c in
+		'pkg_remove_alone '*)
+			# shellcheck disable=SC2086 # tokens, one word each
+			tr_p=$(pkg_token_names ${tr_c#pkg_remove_alone } | tr '\n' ' ' | sed 's/ $//')
 			case $tr_rc in
 			0) ;;
 			1) TX_LEFT="${TX_LEFT:+$TX_LEFT; }the packages it installed ($tr_p) stay, because removing them would remove other packages too" ;;
 			*) TX_LEFT="${TX_LEFT:+$TX_LEFT; }the packages it installed ($tr_p) stay: the package manager could not remove them$(pkg_why)" ;;
 			esac
+			[ -z "$PKG_NOTES" ] || TX_LEFT="${TX_LEFT:+$TX_LEFT; }left as it is: $(printf '%s' "$PKG_NOTES" | tr '\n' ';' | sed 's/;/; /g')"
+			;;
+		'stream_back '*)
+			[ "$tr_rc" -eq 0 ] || [ -z "$STREAM_NOTE" ] || TX_LEFT="${TX_LEFT:+$TX_LEFT; }$STREAM_NOTE stays"
 			;;
 		esac
 		IFS=$nl
@@ -2461,6 +2722,7 @@ tx_rollback() {
 	set +f
 	IFS=$tr_oifs
 	TX_STACK=
+	T_END=$tr_end
 	if [ "$TX_HAD" = no ]; then
 		rm -rf "$MD"
 	else
@@ -2497,37 +2759,76 @@ refuse() {
 	M_WHY=$1$(tx_left_note)
 }
 
-# put_copy COPY PATH: puts a kept copy back, with its mode and owner.
+# real_path PATH: the file PATH names: the one a symbolic link points to,
+# so that writing it keeps the link a link.
+real_path() {
+	if [ -L "$1" ]; then readlink -f "$1"; else printf '%s' "$1"; fi
+}
+selinux_on() { [ -e /sys/fs/selinux/enforce ]; }
+# file_context PATH: the SELinux context of the file PATH names, or "-"
+# (no SELinux, no file).
+file_context() {
+	fc_c=
+	! selinux_on || fc_c=$(stat -L -c %C "$1" 2>/dev/null)
+	case $fc_c in '' | '?' | *[!A-Za-z0-9_.:,-]*) printf - ;; *) printf '%s' "$fc_c" ;; esac
+}
+# set_context PATH CONTEXT: puts a recorded context back ("-": SELinux's
+# label for a new file, where SELinux is).
+set_context() {
+	if [ "${2:--}" = - ]; then
+		relabel "$1"
+	elif have chcon; then
+		chcon "$2" "$1" 2>/dev/null || relabel "$1"
+	fi
+	return 0
+}
+# put_copy COPY PATH [CONTEXT]: puts a kept copy back, with its mode and
+# owner, and the SELinux context it had (CONTEXT, recorded with it).
 put_copy() {
-	if cp -p "$1" "$2.easyrmm-new" && mv -f "$2.easyrmm-new" "$2"; then
-		relabel "$2"
+	pc_p=$(real_path "$2")
+	if cp -p "$1" "$pc_p.easyrmm-new" && mv -f "$pc_p.easyrmm-new" "$pc_p"; then
+		set_context "$pc_p" "${3:--}"
 		return 0
 	fi
-	rm -f "$2.easyrmm-new"
+	rm -f "$pc_p.easyrmm-new"
 	return 1
 }
 # put_file PATH MODE CONTENT: writes a file of EasyRMM's own, owned by root,
-# whole or not at all.
+# whole or not at all, with the context of the file it replaces, if any.
 put_file() {
-	rm -f "$1.easyrmm-new"
-	if (umask 077 && printf '%s' "$3" >"$1.easyrmm-new") && chown root:root "$1.easyrmm-new" &&
-		chmod "$2" "$1.easyrmm-new" && mv -f "$1.easyrmm-new" "$1"; then
-		relabel "$1"
+	pf_p=$(real_path "$1")
+	rm -f "$pf_p.easyrmm-new"
+	if (umask 077 && printf '%s' "$3" >"$pf_p.easyrmm-new") && chown root:root "$pf_p.easyrmm-new" &&
+		chmod "$2" "$pf_p.easyrmm-new" && keep_context "$pf_p" && mv -f "$pf_p.easyrmm-new" "$pf_p"; then
+		[ "$KC_KEPT" = yes ] || relabel "$pf_p"
 		return 0
 	fi
-	rm -f "$1.easyrmm-new"
+	rm -f "$pf_p.easyrmm-new"
 	return 1
 }
-# replace_with PATH: puts PATH.easyrmm-new in PATH's place, with PATH's mode
-# and owner.
+# replace_with PATH: puts PATH.easyrmm-new in the place of the file PATH
+# names, with its mode, owner and SELinux context.
 replace_with() {
-	if chown --reference="$1" "$1.easyrmm-new" && chmod --reference="$1" "$1.easyrmm-new" &&
-		mv -f "$1.easyrmm-new" "$1"; then
-		relabel "$1"
+	rw_p=$(real_path "$1")
+	[ "$rw_p" = "$1" ] || mv -f "$1.easyrmm-new" "$rw_p.easyrmm-new" || {
+		rm -f "$1.easyrmm-new"
+		return 1
+	}
+	if chown --reference="$rw_p" "$rw_p.easyrmm-new" && chmod --reference="$rw_p" "$rw_p.easyrmm-new" &&
+		keep_context "$rw_p" && mv -f "$rw_p.easyrmm-new" "$rw_p"; then
+		[ "$KC_KEPT" = yes ] || relabel "$rw_p"
 		return 0
 	fi
-	rm -f "$1.easyrmm-new"
+	rm -f "$rw_p.easyrmm-new"
 	return 1
+}
+# keep_context PATH: PATH.easyrmm-new gets the SELinux context of PATH, if
+# there is one; KC_KEPT says whether.
+keep_context() {
+	KC_KEPT=no
+	selinux_on && [ -e "$1" ] && have chcon || return 0
+	chcon --reference="$1" "$1.easyrmm-new" 2>/dev/null && KC_KEPT=yes
+	return 0
 }
 
 # rec_file PATH: before apply changes PATH. Its original is kept the first
@@ -2539,9 +2840,9 @@ rec_file() {
 	if [ -e "$1" ]; then
 		cp -p "$1" "$MD/files/$rf_id" || return 1
 		tx_push "rm -f $MD/files/$rf_id"
-		rec_add "file$tab$1${tab}files/$rf_id$tab$(sha "$1")$tab?"
+		rec_add "file$tab$1${tab}files/$rf_id$tab$(sha "$1")$tab?$tab$(file_context "$1")"
 	else
-		rec_add "file$tab$1$tab-$tab-$tab?"
+		rec_add "file$tab$1$tab-$tab-$tab?$tab-"
 	fi
 }
 after_file() { rec_set file "$1" 5 "$(sha "$1")"; }
@@ -2649,11 +2950,20 @@ daemon_reload() { [ "$SYSTEMD_UP" = no ] || t 120 systemctl daemon-reload >/dev/
 # architecture (name:arch on Debian and Ubuntu, name.arch elsewhere), so
 # that a package an installation upgraded is not taken for one it added;
 # an imported signing key, which has no architecture, by its full name.
+# Installed means in any state but not installed: dpkg's half-installed,
+# unpacked and half-configured packages too (iU, iF and the like), so that
+# one a stopped run left is never taken for one an installation added.
 # pkg_names rc lists those removed with their configuration files left
 # (Debian and Ubuntu only).
 pkg_names() {
 	case $FAMILY in
-	debian) dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' 2>/dev/null | awk -v s="${1:-ii}" '$1 == s { print $2 }' ;;
+	debian)
+		# shellcheck disable=SC2016 # dpkg-query's fields, not the shell's
+		dpkg-query -W -f='${db:Status-Abbrev} ${binary:Package}\n' 2>/dev/null | awk -v rc="${1:-}" '
+		{ s = substr($1, 2, 1) }
+		rc == "" && s != "n" && s != "c" { print $2 }
+		rc != "" && s == "c" { print $2 }'
+		;;
 	*) [ $# -gt 0 ] || rpm -qa --qf '%{NAME}%|ARCH?{.%{ARCH}}:{-%{VERSION}-%{RELEASE}}|\n' 2>/dev/null ;;
 	esac | sort -u
 }
@@ -2663,14 +2973,69 @@ pkg_installed() {
 	*) rpm -q "$1" >/dev/null 2>&1 ;;
 	esac
 }
+# pkg_stamp NAME: the installed package's version and when it was installed
+# (seconds since the epoch), "VERSION/TIME": dpkg's version and the time it
+# last unpacked the package (its file list, which dpkg writes then), rpm's
+# epoch, version and release and its install time. Nothing when it is not
+# installed. Apply records each package it installed with its stamp; undo
+# removes only a package whose stamp is the same (not upgraded or installed
+# again since).
+pkg_stamp() {
+	case $FAMILY in
+	debian)
+		# shellcheck disable=SC2016
+		ps_v=$(dpkg-query -W -f='${Version}' "$1" 2>/dev/null) || return 0
+		ps_t=$(stat -c %Y "/var/lib/dpkg/info/$1.list" 2>/dev/null) || ps_t=0
+		;;
+	*)
+		ps_v=$(rpm -q --qf '%|EPOCH?{%{EPOCH}:}:{}|%{VERSION}-%{RELEASE} %{INSTALLTIME}\n' "$1" 2>/dev/null | head -n 1) || return 0
+		ps_t=${ps_v##* }
+		ps_v=${ps_v% *}
+		;;
+	esac
+	[ -n "$ps_v" ] || return 0
+	printf '%s/%s' "$ps_v" "$ps_t"
+}
+# A package as a record names it, "NAME/VERSION/TIME" (pkg_stamp), then
+# "=rc" for one whose configuration files were left from an earlier removal
+# (undo keeps them). Read back from a record, a token must match this, or
+# nothing of the record is used: the record is root's alone, but a token is
+# a word the script runs a package manager with.
+PKG_TOKEN='[A-Za-z0-9][A-Za-z0-9.+_:-]*/[A-Za-z0-9.+~:^_-]+/[0-9]+(=rc)?'
+# pkg_tokens_ok TOKEN...: whether every token is one.
+pkg_tokens_ok() {
+	[ $# -gt 0 ] || return 1
+	printf '%s\n' "$@" | grep -Evqx "$PKG_TOKEN" && return 1
+	return 0
+}
+# pkg_conffiles NAME...: the configuration files dpkg keeps for the
+# packages (Debian and Ubuntu), as records: "conffile NAME PATH MD5", with
+# the MD5 of the file as it is now ("-" where there is none). Undo purges a
+# package only while each is as apply left it.
+pkg_conffiles() {
+	[ "$FAMILY" = debian ] || return 0
+	for pc_n in "$@"; do
+		# shellcheck disable=SC2016
+		dpkg-query -W -f='${Conffiles}\n' "$pc_n" 2>/dev/null | awk '$1 ~ /^\// && $NF != "obsolete" { print $1 }' |
+			while IFS= read -r pc_f; do
+				pc_m=-
+				[ ! -f "$pc_f" ] || pc_m=$(md5sum <"$pc_f" | cut -c1-32)
+				printf 'conffile%s%s%s%s%s%s\n' "$tab" "$pc_n" "$tab" "$pc_f" "$tab" "$pc_m"
+			done
+	done
+}
 # pkg_why: why the last installation or removal failed, for a reason (""
 # or ": ...").
 pkg_why() { [ -z "$PKG_ERR" ] || printf ': %s' "$PKG_ERR"; }
 # pkg_failed EXIT MINUTES: PKG_ERR for a package manager that exited EXIT,
 # from $TX_DIR/pkg.log or from its time limit.
 pkg_failed() {
-	case $1 in
-	124 | 137)
+	case $T_CAPPED:$1 in
+	yes:124 | yes:137)
+		PKG_ERR="the package manager was stopped at the end of the job's time"
+		[ "$FAMILY" != debian ] || PKG_ERR="$PKG_ERR (the next package step runs dpkg --configure -a to finish what it left)"
+		;;
+	*:124 | *:137)
 		PKG_ERR="the package manager did not finish in $2 minutes and was stopped"
 		[ "$FAMILY" != debian ] || PKG_ERR="$PKG_ERR (the next package step runs dpkg --configure -a to finish what it left)"
 		;;
@@ -2689,7 +3054,8 @@ pkg_failed() {
 # * rpm on RHEL 8, killed while it writes, leaves its Berkeley DB
 #   database's environment (/var/lib/rpm/__db.*: locks and caches, not the
 #   database) failing every rpm and dnf command (DB_RUNRECOVERY) until those
-#   files are removed, and rpm makes them again; rpm --rebuilddb fails too.
+#   files are removed, and rpm makes them again (rpm --rebuilddb fails too
+#   until then; after, it rebuilds what the killed rpm may have left).
 #   RHEL 9 and Fedora keep the database in SQLite, which a killed rpm leaves
 #   usable: the next rpm or dnf command runs, and finds a package it was
 #   removing still installed. Nothing there needs recovering.
@@ -2711,7 +3077,9 @@ pkgdb_interrupted() {
 # pkgdb_users: the processes using the package database now, "NAME (PID
 # N)", separated by commas: those holding dpkg's locks (apt and dpkg lock
 # them with fcntl, which /proc/locks lists by inode, and keep them open),
-# or with rpm's database environment mapped.
+# or with rpm's database environment mapped: the files themselves, by
+# device and inode (a file of the same name elsewhere, or in a container's
+# own /var/lib/rpm, is another file).
 pkgdb_users() {
 	case $FAMILY in
 	debian)
@@ -2728,7 +3096,22 @@ pkgdb_users() {
 				done
 		done
 		;;
-	*) grep -l '/var/lib/rpm/__db\.' /proc/[0-9]*/maps 2>/dev/null | cut -d/ -f3 ;;
+	*)
+		pu_files=$(stat -c '%d %i' /var/lib/rpm/__db.[0-9]* 2>/dev/null)
+		[ -z "$pu_files" ] || grep -l '__db\.' /proc/[0-9]*/maps 2>/dev/null | while read -r pu_m; do
+			# maps gives the device as major:minor in hexadecimal; stat, the
+			# number the kernel makes of them.
+			awk -v files="$pu_files" '
+			function hex(h,   i, n) { n = 0; h = tolower(h); for (i = 1; i <= length(h); i++) n = n * 16 + index("0123456789abcdef", substr(h, i, 1)) - 1; return n }
+			BEGIN { n = split(files, f, "\n"); for (i = 1; i <= n; i++) want[f[i]] = 1 }
+			{
+				split($4, d, ":"); maj = hex(d[1]); mn = hex(d[2])
+				dev = (mn % 256) + maj * 256 + int(mn / 256) * 1048576
+				if ((dev " " $5) in want) { found = 1; exit }
+			}
+			END { exit !found }' "$pu_m" 2>/dev/null && printf '%s\n' "$pu_m" | cut -d/ -f3
+		done
+		;;
 	esac | sort -un | while read -r pu_p; do
 		printf '%s (PID %s)\n' "$(cat "/proc/$pu_p/comm" 2>/dev/null)" "$pu_p"
 	done | tr '\n' ',' | sed -e 's/,$//' -e 's/,/, /g'
@@ -2737,9 +3120,13 @@ pkgdb_users() {
 # unusable (pkgdb_interrupted). A process still using it (apt,
 # unattended-upgrades, dnf) is waited for as apt waits for its lock, and
 # never touched. Once none is, dpkg --configure -a finishes what dpkg left,
-# keeping changed configuration files; on RHEL 8 the environment's files
-# go. M_RECOV says that recovery ran, and how it ended. Returns 1 (PKG_ERR
-# says why) while the database stays unusable.
+# keeping changed configuration files: it configures every package dpkg left
+# half installed, whichever run left it, running their maintainer scripts;
+# M_RECOV_PKGS names them (dpkg --audit's list, before). On RHEL 8 the
+# environment's files go, and rpm --rebuilddb rebuilds the indexes the
+# killed rpm may have left half written. M_RECOV says that recovery ran,
+# and how it ended. Returns 1 (PKG_ERR says why) while the database stays
+# unusable.
 pkg_ready() {
 	pkgdb_interrupted || return 0
 	if [ -n "$PKG_STUCK" ]; then
@@ -2754,7 +3141,7 @@ pkg_ready() {
 		;;
 	*)
 		py_what="rpm's database needed recovering (DB_RUNRECOVERY)"
-		py_fix='removing /var/lib/rpm/__db.*'
+		py_fix='removing /var/lib/rpm/__db.* and rpm --rebuilddb'
 		py_use='had it open'
 		;;
 	esac
@@ -2765,31 +3152,49 @@ pkg_ready() {
 			PKG_ERR=$PKG_STUCK
 			return 1
 		fi
+		need_time "$PKG_RECOVER_MIN" "recover the package database ($py_what; $py_u $py_use)" || return 1
 		sleep 5
 		py_w=$((py_w + 5))
 		# What used it may have recovered it (unattended-upgrades runs
 		# dpkg --configure -a).
 		pkgdb_interrupted || return 0
 	done
+	need_time "$PKG_RECOVER_MIN" "recover the package database ($py_what)" || return 1
 	: >"$TX_DIR/pkg.log"
+	M_RECOV_PKGS=
+	py_rb=0
 	case $FAMILY in
 	debian)
+		M_RECOV_PKGS=$(dpkg_audit_names)
 		py_lim=$PKG_RECOVER_LIMIT
 		t "$py_lim" env DEBIAN_FRONTEND=noninteractive dpkg --force-confdef --force-confold --configure -a </dev/null
 		;;
 	*)
-		py_lim=60
-		rm -f /var/lib/rpm/__db.[0-9]* && t "$py_lim" rpm -q rpm
+		py_lim=$PKG_RECOVER_LIMIT
+		# rpm --rebuilddb ends by renaming the database's directory, which
+		# an overlay filesystem (a Docker container's) refuses: rpm then
+		# keeps the database it had, which reads without the environment.
+		rm -f /var/lib/rpm/__db.[0-9]* && {
+			t "$py_lim" rpm --rebuilddb || py_rb=$?
+			t 60 rpm -q rpm
+		}
 		;;
 	esac >"$TX_DIR/pkg.log" 2>&1 && py_rc=0 || py_rc=$?
+	py_did=
+	[ -z "$M_RECOV_PKGS" ] || py_did="; it configured the packages dpkg had left half installed, running their maintainer scripts: $(printf '%s' "$M_RECOV_PKGS" | sed 's/ /, /g')"
 	if [ "$py_rc" -eq 0 ]; then
 		M_RECOV=recovered
-		M_RECOV_WHY="$py_what: $py_fix put it right before the package step"
+		M_RECOV_WHY="$py_what: $py_fix put it right before the package step$py_did"
+		if [ "$py_rb" -ne 0 ]; then
+			py_e=$(grep -E '^error' "$TX_DIR/pkg.log" | head -n 1 | cut -c1-160)
+			M_RECOV_WHY="$py_what: removing /var/lib/rpm/__db.* put it right before the package step (rpm --rebuilddb then failed${py_e:+: $py_e}; rpm reads the database without it)"
+		fi
 		did "$M_RECOV_WHY"
 		return 0
 	fi
-	case $py_rc in
-	124 | 137) py_why="it did not finish in $py_lim seconds and was stopped" ;;
+	case $T_CAPPED:$py_rc in
+	yes:124 | yes:137) py_why="it was stopped at the end of the job's time" ;;
+	*:124 | *:137) py_why="it did not finish in $py_lim seconds and was stopped" ;;
 	*)
 		py_why=$(grep -E '^(dpkg: |E: |error)' "$TX_DIR/pkg.log" | head -n 1 | cut -c1-160)
 		[ -n "$py_why" ] || py_why=$(tail -n 1 "$TX_DIR/pkg.log" | cut -c1-160)
@@ -2797,27 +3202,39 @@ pkg_ready() {
 	esac
 	M_RECOV=failed
 	PKG_STUCK="$py_what, and $py_fix did not put it right: $py_why"
-	M_RECOV_WHY=$PKG_STUCK
+	M_RECOV_WHY=$PKG_STUCK$py_did
 	PKG_ERR=$PKG_STUCK
 	return 1
 }
+# dpkg_audit_names: the packages dpkg --audit lists (left half installed,
+# unpacked, awaiting triggers and the like), separated by spaces: at most
+# 50 names and 2,000 characters, each a package name.
+dpkg_audit_names() {
+	t 60 dpkg --audit 2>/dev/null | sed -n 's/^ \([a-z0-9][a-z0-9+.-]*\(:[a-z0-9-]*\)\{0,1\}\) .*/\1/p' |
+		awk '!s[$0]++ && n < 50 && l + length($0) + 1 <= 2000 { printf "%s%s", (n ? " " : ""), $0; n++; l += length($0) + 1 }'
+}
 
 # pkg_install PACKAGE...: installs them, refreshing the package lists first,
-# and records every package that installation added: NAME=rc for one whose
-# configuration files were left from an earlier removal, which undo keeps.
+# and records every package that installation added (a token each, see
+# PKG_TOKEN) and, on Debian and Ubuntu, their configuration files as they
+# are now (pkg_conffiles). It never removes a package: an installation that
+# would (a conflict) fails, as apt-get --no-remove and dnf without
+# --allowerasing do.
 pkg_install() {
 	PKG_ERR=
 	pkg_ready || return 1
+	need_time "$PKG_INSTALL_MIN" "install $*" || return 1
 	intent || return 1
 	pkg_names >"$TX_DIR/before" && pkg_names rc >"$TX_DIR/rc" || return 1
-	pkg_modules >"$TX_DIR/modules-before"
+	pkg_streams_before
 	rec_add "pending$tab$*"
 	pi_rc=0
+	pi_min=10
 	if [ "$PKG_REFRESHED" = no ]; then
 		case $FAMILY in
 		debian) t 600 apt-get -q -o DPkg::Lock::Timeout="$PKG_LOCK_WAIT" update ;;
 		*) t 600 dnf -q -y makecache ;;
-		esac >"$TX_DIR/pkg.log" 2>&1 || pi_rc=1
+		esac >"$TX_DIR/pkg.log" 2>&1 || pi_rc=$?
 		PKG_REFRESHED=yes
 	fi
 	# Without recommended packages: fail2ban's and AIDE's would bring a mail
@@ -2825,44 +3242,105 @@ pkg_install() {
 	# package manager half way leaves packages half configured (aide-common
 	# alone sets up some 150 configuration files).
 	if [ "$pi_rc" -eq 0 ]; then
+		pi_min=25
 		case $FAMILY in
 		debian)
 			t 1500 env DEBIAN_FRONTEND=noninteractive apt-get -q -y -o DPkg::Lock::Timeout="$PKG_LOCK_WAIT" --no-install-recommends \
-				-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "$@"
+				--no-remove -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install "$@"
 			;;
 		*) t 1500 dnf -q -y --setopt=install_weak_deps=False install "$@" ;;
 		esac >>"$TX_DIR/pkg.log" 2>&1 || pi_rc=$?
 	fi
 	pkg_names >"$TX_DIR/after"
-	pi_new=$(comm -13 "$TX_DIR/before" "$TX_DIR/after" | awk -v rc="$TX_DIR/rc" '
-		BEGIN { while ((getline l < rc) > 0) c[l] = 1 }
-		{ printf "%s%s%s", (NR > 1 ? " " : ""), $0, ($0 in c ? "=rc" : "") }')
+	PKG_NEW=
+	for pi_n in $(comm -13 "$TX_DIR/before" "$TX_DIR/after"); do
+		pi_s=$(pkg_stamp "$pi_n")
+		pi_tok="$pi_n/${pi_s:-0/0}"
+		grep -qxF -- "$pi_n" "$TX_DIR/rc" && pi_tok="$pi_tok=rc"
+		pkg_tokens_ok "$pi_tok" || pi_tok="$pi_n/unknown/0"
+		PKG_NEW="${PKG_NEW:+$PKG_NEW }$pi_tok"
+	done
 	awk -F "$tab" -v p="pending$tab$*" '$0 == p && !d { d = 1; next } { print }' "$MANIFEST" >"$MANIFEST.new" &&
 		mv -f "$MANIFEST.new" "$MANIFEST"
-	PKG_NEW=$pi_new
-	if [ -n "$pi_new" ]; then
-		rec_add "pkg$tab$pi_new"
-		tx_push "pkg_remove_alone $pi_new"
+	# A module stream dnf enabled or changed for a package (RHEL 8's
+	# python36, for fail2ban): recorded before the packages, so that undo
+	# puts it back after removing them, and only if it removed them all.
+	pkg_streams_after
+	if [ -n "$PKG_NEW" ]; then
+		rec_add "pkg$tab$PKG_NEW"
+		# shellcheck disable=SC2046,SC2086 # tokens and names, one word each
+		pkg_conffiles $(pkg_token_names $PKG_NEW) >>"$MANIFEST"
+		tx_push "pkg_remove_alone $PKG_NEW"
 	fi
-	# A module stream dnf enabled for a package (RHEL 8's python36, for
-	# fail2ban): its file goes before the packages.
-	for pi_m in $(pkg_modules | LC_ALL=C comm -13 "$TX_DIR/modules-before" -); do
-		rec_has gen "$pi_m" || rec_add "gen$tab$pi_m"
-		tx_push "rm -f $pi_m"
-	done
 	[ "$pi_rc" -eq 0 ] || {
-		pkg_failed "$pi_rc" 25
+		pkg_failed "$pi_rc" "$pi_min"
 		return 1
 	}
 }
-# pkg_modules: the files of dnf's module streams that are set (enabled or
-# disabled), one a line; nothing on Debian and Ubuntu. A glob, not find:
-# a minimal installation may have no findutils.
+# pkg_token_names TOKEN...: the packages' names, one a line.
+pkg_token_names() { printf '%s\n' "$@" | cut -d/ -f1; }
+
+# dnf's module streams: the files under /etc/dnf/modules.d that say which
+# stream of a module is enabled (or disabled); none on Debian and Ubuntu. A
+# glob, not find: a minimal installation may have no findutils.
 pkg_modules() {
 	[ "$FAMILY" != debian ] || return 0
 	for pm_f in /etc/dnf/modules.d/*.module; do
-		[ ! -e "$pm_f" ] || printf '%s\n' "$pm_f"
+		[ ! -f "$pm_f" ] || [ -L "$pm_f" ] || printf '%s\n' "$pm_f"
 	done | LC_ALL=C sort
+}
+# pkg_streams_before: each stream file as it is before an installation,
+# kept in the run's directory ("PATH SHA" in streams, the copies beside).
+pkg_streams_before() {
+	rm -rf "$TX_DIR/streams" && mkdir -p "$TX_DIR/streams" || return 0
+	pb_n=0
+	for pb_f in $(pkg_modules); do
+		pb_n=$((pb_n + 1))
+		cp -p "$pb_f" "$TX_DIR/streams/$pb_n" && printf '%s %s %s\n' "$pb_f" "$(sha "$pb_f")" "$pb_n" >>"$TX_DIR/streams/list"
+	done
+}
+# pkg_streams_after: records each stream file the installation made or
+# changed ("stream PATH ORIGINAL ORIGINAL-SHA AFTER-SHA", ORIGINAL its copy
+# under files/ or "-" when it made it), and what puts it back if the run
+# fails.
+pkg_streams_after() {
+	for pa_f in $(pkg_modules); do
+		pa_line=$(awk -v f="$pa_f" '$1 == f' "$TX_DIR/streams/list" 2>/dev/null)
+		pa_now=$(sha "$pa_f")
+		if [ -z "$pa_line" ]; then
+			tx_push "stream_back $pa_f - $pa_now"
+			rec_has stream "$pa_f" || rec_add "stream$tab$pa_f$tab-$tab-$tab$pa_now"
+			continue
+		fi
+		# shellcheck disable=SC2086 # a path, a sum and a number
+		set -- $pa_line
+		[ "$2" != "$pa_now" ] || continue
+		tx_push "stream_back $pa_f $TX_DIR/streams/$3 $pa_now"
+		rec_has stream "$pa_f" && continue
+		pa_id=$(printf '%s' "$pa_f" | sha256sum | cut -c1-16)
+		cp -p "$TX_DIR/streams/$3" "$MD/files/$pa_id" && rec_add "stream$tab$pa_f${tab}files/$pa_id$tab$2$tab$pa_now"
+	done
+}
+# stream_back PATH COPY AFTER-SHA: a module stream's file put back as it was
+# before an installation (COPY, or none: "-"), if it is still as the
+# installation left it, and the packages that installation added are gone
+# (PKG_KEPT: some stayed, which need the stream). Says what it did, or why
+# it left it, in STREAM_NOTE.
+stream_back() {
+	STREAM_NOTE=
+	if [ "$PKG_KEPT" = yes ]; then
+		STREAM_NOTE="$1, the module stream the packages that stay need"
+		return 1
+	fi
+	if [ "$(sha "$1")" != "$3" ]; then
+		STREAM_NOTE="$1, changed since apply"
+		return 1
+	fi
+	if [ "$2" = - ]; then
+		rm -f "$1" && STREAM_NOTE="Removed $1"
+	else
+		put_copy "$2" "$1" && STREAM_NOTE="Put back $1"
+	fi
 }
 # pkg_removable PACKAGE...: whether removing them would remove nothing else
 # (simulated: apt-get -s, rpm -e --test). Names without =rc. Returns 1 when
@@ -2920,29 +3398,90 @@ pkg_remove() {
 		return 1
 	}
 }
-# pkg_remove_alone PACKAGE...: removes those still installed (NAME=rc:
-# keeping its configuration files), if that removes nothing else. Returns 1
-# when it would have, 2 when the package manager failed, 3 when the package
-# database could not be used (PKG_ERR says why): first, as on RHEL 8 rpm
-# lists nothing until it is recovered.
+# pkg_remove_alone TOKEN...: removes the packages the tokens (PKG_TOKEN)
+# name that are still installed as the installation left them, if that
+# removes nothing else. NAME=rc keeps its configuration files; so, on Debian
+# and Ubuntu, does a package one of whose configuration files changed since
+# apply (pkg_conf_changed): removed, not purged. A package upgraded or
+# installed again since (another stamp) is left. PKG_NOTES says, one a
+# line, what it left and why; PKG_KEPT is yes once a package stays. Returns
+# 1 when removing them would remove other packages, 2 when the package
+# manager failed or the tokens are not ones, 3 when the package database
+# could not be used or too little of the job's time was left (PKG_ERR says
+# why): first, as on RHEL 8 rpm lists nothing until it is recovered.
 pkg_remove_alone() {
 	PKG_ERR=
-	pkg_ready || return 3
+	PKG_NOTES=
+	PKG_REMOVED=
+	if ! pkg_tokens_ok "$@"; then
+		PKG_ERR='the record names its packages in a form this script does not know'
+		PKG_KEPT=yes
+		return 2
+	fi
+	if ! pkg_ready; then
+		PKG_KEPT=yes
+		return 3
+	fi
 	pa_have=
 	pa_purge=
+	pa_conf=
 	pa_now=$(pkg_names)
-	for pa_p in "$@"; do
-		text_has "$pa_now" -xF "${pa_p%=rc}" || continue
-		pa_have="$pa_have ${pa_p%=rc}"
-		[ "${pa_p%=rc}" != "$pa_p" ] || pa_purge="$pa_purge,$pa_p"
+	for pa_t in "$@"; do
+		pa_n=${pa_t%%/*}
+		text_has "$pa_now" -xF "$pa_n" || continue
+		pa_s=${pa_t#*/}
+		pa_s=${pa_s%=rc}
+		pa_cur=$(pkg_stamp "$pa_n")
+		if [ "$pa_cur" != "$pa_s" ]; then
+			if [ "${pa_cur%/*}" != "${pa_s%/*}" ]; then
+				pkg_note "the package $pa_n, upgraded since apply (now ${pa_cur%/*}, then ${pa_s%/*})"
+			else
+				pkg_note "the package $pa_n, installed again since apply"
+			fi
+			PKG_KEPT=yes
+			continue
+		fi
+		pa_have="$pa_have $pa_n"
+		[ "${pa_t%=rc}" = "$pa_t" ] || continue
+		pa_ch=$(pkg_conf_changed "$pa_n")
+		if [ -n "$pa_ch" ]; then
+			pa_conf="$pa_conf${nl}the configuration files of $pa_n, changed since apply ($pa_ch): the package was removed and they were kept"
+		else
+			pa_purge="$pa_purge,$pa_n"
+		fi
 	done
 	[ -n "$pa_have" ] || return 0
+	if ! need_time "$PKG_REMOVE_MIN" "remove$pa_have"; then
+		PKG_KEPT=yes
+		return 3
+	fi
 	# shellcheck disable=SC2086 # package names, one word each
-	pkg_removable $pa_have || return
+	pkg_removable $pa_have && pa_rc=0 || pa_rc=$?
+	if [ "$pa_rc" -ne 0 ]; then
+		PKG_KEPT=yes
+		return "$pa_rc"
+	fi
 	# shellcheck disable=SC2086
-	pkg_remove "${pa_purge#,}" $pa_have || return 2
+	if ! pkg_remove "${pa_purge#,}" $pa_have; then
+		PKG_KEPT=yes
+		return 2
+	fi
 	PKG_REMOVED=${pa_have# }
+	[ -z "$pa_conf" ] || pkg_note "${pa_conf#"$nl"}"
 	return 0
+}
+pkg_note() { PKG_NOTES="${PKG_NOTES:+$PKG_NOTES$nl}$1"; }
+# pkg_conf_changed NAME: the package's configuration files that are not as
+# apply recorded them (conffile records in PKG_CONF_SRC), separated by
+# commas. One removed since counts as unchanged: nothing of it is left to
+# keep.
+pkg_conf_changed() {
+	awk -F "$tab" -v n="$1" '$1 == "conffile" && $2 == n && NF == 4 { print $3 "\t" $4 }' "${PKG_CONF_SRC:-$MANIFEST}" 2>/dev/null |
+		while IFS=$tab read -r pc_f pc_m; do
+			case $pc_f in /*) ;; *) continue ;; esac
+			[ -f "$pc_f" ] || continue
+			[ "$(md5sum <"$pc_f" | cut -c1-32)" = "$pc_m" ] || printf '%s\n' "$pc_f"
+		done | tr '\n' ',' | sed -e 's/,$//' -e 's/,/, /g'
 }
 
 # Mounts: mount_options PATH is the options PATH is mounted with now;
@@ -2983,9 +3522,9 @@ undo_file() {
 	fi
 	tx_save "$1" || return 1
 	if [ "$2" = - ]; then
-		rm -f "$1" && did "Removed $1"
+		rm -f "$(real_path "$1")" && did "Removed $1"
 	else
-		put_copy "$MD/$2" "$1" && did "Put back $1"
+		put_copy "$MD/$2" "$1" "$5" && did "Put back $1"
 	fi
 }
 undo_dir() {
@@ -3083,20 +3622,70 @@ undo_unit() {
 	did "$1 back to $(unit_states "$1" | sed 's/ /, /')"
 }
 undo_pkg() {
-	if [ "$AUDIT_UNDO" = yes ]; then
-		[ -f "$AUDITD_MARKER" ] || left "the packages it installed ($*): $AUDITD_MARKER, which says EasyRMM installed auditd, is gone"
+	up_names=$(pkg_token_names "$@" | tr '\n' ' ' | sed 's/ $//')
+	if ! pkg_tokens_ok "$@"; then
+		left "the packages it installed: the record names them in a form this script does not know"
 		return 0
 	fi
-	PKG_REMOVED=
+	if [ "$AUDIT_UNDO" = yes ]; then
+		[ -f "$AUDITD_MARKER" ] || left "the packages it installed ($up_names): $AUDITD_MARKER, which says EasyRMM installed auditd, is gone"
+		return 0
+	fi
+	PKG_CONF_SRC=$MANIFEST
 	pkg_remove_alone "$@" && up_rc=0 || up_rc=$?
 	case $up_rc in
 	0) [ -z "$PKG_REMOVED" ] || did "Removed the packages it installed: $PKG_REMOVED" ;;
-	1) left "the packages it installed ($*), because removing them would remove other packages too" ;;
-	2) left "the packages it installed ($*): the package manager could not remove them$(pkg_why)" ;;
-	# Kept, with the record, for an undo once the package database works.
-	*) abort "the packages it installed ($*) could not be removed$(pkg_why)" daemon_reload ;;
+	1) left "the packages it installed ($up_names), because removing them would remove other packages too" ;;
+	2) left "the packages it installed ($up_names): the package manager could not remove them$(pkg_why)" ;;
+	# Kept, with the record, for an undo once the package database works
+	# (or with more time).
+	*) abort "the packages it installed ($up_names) could not be removed$(pkg_why)" daemon_reload ;;
 	esac
+	pkg_left_notes
 }
+# pkg_left_notes: says what pkg_remove_alone left, and why.
+pkg_left_notes() {
+	[ -n "$PKG_NOTES" ] || return 0
+	[ -z "$M_OUTCOME" ] || return 0
+	pl_oifs=$IFS
+	IFS=$nl
+	for pl_n in $PKG_NOTES; do left "$pl_n"; done
+	IFS=$pl_oifs
+}
+# undo_stream PATH ORIGINAL ORIGINAL-SHA AFTER-SHA: after the packages.
+undo_stream() {
+	[ "$(sha "$1")" != "$3" ] || return 0
+	if [ "$2" = - ]; then us_c=-; else us_c=$MD/$2; fi
+	if stream_back "$1" "$us_c" "$4"; then
+		did "$STREAM_NOTE"
+	else
+		left "$STREAM_NOTE"
+	fi
+}
+# undo_gen PATH SHA: a file a program apply started made, removed if it is
+# as that program made it. AIDE's baseline, built after apply ended, is
+# "?": its sums, which the command that built it wrote, say (gen_sum); one
+# still being built when undo stopped it is removed as it is.
+undo_gen() {
+	[ -e "$1" ] || return 0
+	ug_want=$2
+	[ "$ug_want" != '?' ] || ug_want=$(gen_sum "$1")
+	if [ -n "$ug_want" ] && [ "$ug_want" != '?' ]; then
+		if [ "$(sha "$1")" != "$ug_want" ]; then
+			GEN_LEFT="$GEN_LEFT $1"
+			left "$1, changed since apply made it"
+			return 0
+		fi
+	elif [ "$GEN_STOPPED" != yes ]; then
+		GEN_LEFT="$GEN_LEFT $1"
+		left "$1: whether it changed since apply made it is not known"
+		return 0
+	fi
+	rm -f "$1" && did "Removed $1"
+}
+# gen_sum PATH: the SHA-256 the gen-sums file records for PATH.
+gen_sum() { awk -v f="$1" '$2 == f && $1 ~ /^[0-9a-f]+$/ && length($1) == 64 { s = $1 } END { print s }' "$MD/files/gen-sums" 2>/dev/null; }
+
 undo_table() {
 	have nft && t 30 nft list table inet easyrmm >/dev/null 2>&1 || return 0
 	if [ "$1" != '?' ] && [ "$(fw_table_sha)" != "$1" ]; then
@@ -3143,19 +3732,26 @@ undo_records() {
 		IFS=$ur_oifs
 		set +f
 		case $1:$# in
-		file:5) undo_file "$2" "$3" "$4" "$5" ;;
+		file:6) undo_file "$2" "$3" "$4" "$5" "$6" ;;
 		dir:2) undo_dir "$2" ;;
 		line:3) undo_line "$2" "$3" ;;
 		mode:5) undo_mode "$2" "$3" "$4" "$5" ;;
 		sysctl:4) undo_sysctl "$2" "$3" "$4" ;;
 		unit:6) undo_unit "$2" "$3" "$4" "$5" "$6" ;;
 		pkg:2)
-			# shellcheck disable=SC2086 # package names, one word each
-			undo_pkg $2
+			# Words, never patterns (undo_pkg checks each is a token).
+			set -f
+			# shellcheck disable=SC2086 # tokens, one word each
+			set -- $2
+			set +f
+			undo_pkg "$@"
 			;;
+		# Read by undo_pkg.
+		conffile:4) ;;
+		stream:5) undo_stream "$2" "$3" "$4" "$5" ;;
 		pending:2) left "the packages of an installation that was interrupted ($2): remove them by hand if they are not wanted" ;;
 		table:3) undo_table "$3" ;;
-		gen:2) [ ! -e "$2" ] || { rm -f "$2" && did "Removed $2"; } ;;
+		gen:3) undo_gen "$2" "$3" ;;
 		selinux:4) undo_selinux "$3" "$4" ;;
 		mount:4) undo_mount "$2" "$3" "$4" ;;
 		*) left "a record this script does not know ($1)" ;;
@@ -3462,13 +4058,21 @@ apply_fail2ban() {
 	case $af_find in '' | -*) af_find=600 ;; *) [ "$af_find" -ge 600 ] || af_find=600 ;; esac
 	af_time=$(f2b_seconds "$(f2b_known "$af_dump" bantime)")
 	case $af_time in -1) ;; '' | -*) af_time=3600 ;; *) [ "$af_time" -ge 3600 ] || af_time=3600 ;; esac
+	# Repeat offenders' bans grow (bantime.increment) up to a day, or the
+	# longer time configured: without a cap they grow without end, and an
+	# office behind one address that mistypes a password now and then is
+	# locked out for weeks.
+	af_maxt=86400
+	[ "$af_time" = -1 ] || [ "$af_time" -le "$af_maxt" ] || af_maxt=$af_time
+	af_cmax=$(f2b_seconds "$(f2b_known "$af_dump" bantime.maxtime)")
+	case $af_cmax in '' | -*) ;; *) [ "$af_cmax" -le "$af_maxt" ] || af_maxt=$af_cmax ;; esac
 	# Never banned: loopback, what the configuration already leaves alone,
 	# the ranges given now and those an earlier apply wrote.
 	af_ignore="$af_ignore $(f2b_ignored "$af_dump")"
 	[ -z "$OPT_TRUSTED" ] || af_ignore="$af_ignore $(printf '%s' "$OPT_TRUSTED" | tr ',' ' ')"
 	# shellcheck disable=SC2086 # addresses and ranges, one word each
 	af_ignore=$(printf '%s\n' $af_ignore | awk '!s[$0]++' | tr '\n' ' ' | sed 's/ $//')
-	af_conf="${af_head}maxretry = $af_max${nl}findtime = $af_find${nl}bantime = $af_time${nl}bantime.increment = true$nl"
+	af_conf="${af_head}maxretry = $af_max${nl}findtime = $af_find${nl}bantime = $af_time${nl}bantime.increment = true${nl}bantime.maxtime = $af_maxt$nl"
 	af_conf="${af_conf}ignoreip = $af_ignore$nl$af_tail"
 	if ! write_own "$F2B_FILE" 0644 "$af_conf"; then
 		abort "$F2B_FILE could not be written"
@@ -3478,7 +4082,7 @@ apply_fail2ban() {
 		abort "fail2ban's configuration test failed: $(printf '%s\n' "$af_err" | grep -i error | head -n 2 | tr '\n' ' ')"
 		return
 	fi
-	did "Wrote $F2B_FILE: jail sshd on port ${af_ports:-ssh}, $af_max failures in $af_find seconds bans for $af_time seconds, longer for repeat offenders; never banned: $af_ignore; banned with $af_ban"
+	did "Wrote $F2B_FILE: jail sshd on port ${af_ports:-ssh}, $af_max failures in $af_find seconds bans for $af_time seconds, longer for repeat offenders up to $af_maxt seconds; never banned: $af_ignore; banned with $af_ban"
 	unit_put fail2ban.service enabled -
 	# Restarted, not reloaded: fail2ban 1.1 (Debian 13) reloads a jail whose
 	# ban action changed into one with no action at all.
@@ -3494,7 +4098,7 @@ apply_fail2ban() {
 	af_act=
 	until t 20 fail2ban-client status sshd >/dev/null 2>&1 && af_act=$(f2b_jail_actions | tr '\n' ' ' | sed 's/ $//') && [ -n "$af_act" ]; do
 		af_n=$((af_n + 1))
-		if [ "$af_n" -gt 60 ]; then
+		if [ "$af_n" -gt 60 ] || [ "$OUT_OF_TIME" = yes ]; then
 			if t 20 fail2ban-client status sshd >/dev/null 2>&1; then
 				abort 'the sshd jail started with no ban action (journalctl -u fail2ban says why)' 'unit_active fail2ban.service && t 120 systemctl restart fail2ban.service'
 			else
@@ -3604,17 +4208,37 @@ audit_shipped() {
 		;;
 	esac
 }
-# audit_mark PACKAGES: the marker, after the audit module installed auditd.
+# audit_mark TOKEN...: the marker, after the audit module installed auditd:
+# the packages, as tokens (PKG_TOKEN), then their configuration files
+# (pkg_conffiles). Written only into a directory of root's alone (marker_dir_ok).
 audit_mark() {
 	mk_dir=${AUDITD_MARKER%/*}
-	if [ ! -d "$mk_dir" ]; then
+	if [ ! -e "$mk_dir" ] && [ ! -L "$mk_dir" ]; then
 		mkdir -m 0755 "$mk_dir" || return 1
 		tx_push "rmdir $mk_dir"
 	fi
+	marker_dir_ok || return 1
 	tx_push "rm -f $AUDITD_MARKER"
-	printf '# EasyRMM hardening (ADR-0051) installed auditd with these packages. Whoever removes\n# auditd last (when no other rules file needs it) removes them and this file.\n%s\n' "$1" >"$AUDITD_MARKER.new" &&
-		mv -f "$AUDITD_MARKER.new" "$AUDITD_MARKER"
+	mk_names=$(pkg_token_names "$@")
+	# shellcheck disable=SC2086 # package names, one word each
+	{
+		printf '# EasyRMM hardening (ADR-0051) installed auditd with these packages. Whoever removes\n# auditd last (when no other rules file needs it) removes them and this file.\n%s\n' "$*" &&
+			pkg_conffiles $mk_names
+	} >"$AUDITD_MARKER.new" && mv -f "$AUDITD_MARKER.new" "$AUDITD_MARKER"
 }
+# marker_dir_ok: whether the marker's directory is a directory, not a
+# symbolic link, owned by root and written by root alone: anyone else could
+# put a link in its place, or another file.
+marker_dir_ok() {
+	md_d=${AUDITD_MARKER%/*}
+	[ -d "$md_d" ] && [ ! -L "$md_d" ] || return 1
+	md_s=$(stat -c '%u:%g %a' "$md_d" 2>/dev/null) || return 1
+	[ "${md_s% *}" = 0:0 ] || return 1
+	case ${md_s#* } in *[2367]? | *[2367]) return 1 ;; esac
+	return 0
+}
+# marker_tokens: the marker's package tokens, one a line.
+marker_tokens() { sed -n '/^#/d; /^conffile	/d; p' "$AUDITD_MARKER" 2>/dev/null | tr ' ' '\n' | grep .; }
 audit_load() { t 120 augenrules --load >/dev/null 2>&1; }
 
 apply_audit() {
@@ -3625,8 +4249,9 @@ apply_audit() {
 			abort "$aa_p could not be installed$(pkg_why)"
 			return
 		fi
-		if [ -n "$PKG_NEW" ] && ! audit_mark "$PKG_NEW"; then
-			abort "$AUDITD_MARKER could not be written"
+		# shellcheck disable=SC2086 # tokens, one word each
+		if [ -n "$PKG_NEW" ] && ! audit_mark $PKG_NEW; then
+			abort "$AUDITD_MARKER could not be written (${AUDITD_MARKER%/*} must be a directory, not a link, that root owns and root alone may write)"
 			return
 		fi
 		did "Installed $aa_p; $AUDITD_MARKER says EasyRMM did"
@@ -3652,8 +4277,8 @@ apply_audit() {
 		abort "$AUDIT_FILE could not be written"
 		return
 	fi
-	# Undo removes $AUDIT_PREV where this apply made it.
-	[ "$aa_prev" = no ] || rec_has gen "$AUDIT_PREV" || rec_add "gen$tab$AUDIT_PREV"
+	# Undo removes $AUDIT_PREV where this apply made it, as it made it.
+	[ "$aa_prev" = no ] || rec_has gen "$AUDIT_PREV" || rec_add "gen$tab$AUDIT_PREV$tab?"
 	if audit_immutable; then
 		did "Wrote $AUDIT_FILE; the loaded rules are immutable, so these load at the next restart (and undo cannot unload them before one)"
 		return
@@ -3662,17 +4287,27 @@ apply_audit() {
 		abort 'augenrules --load did not load the rules'
 		return
 	fi
+	[ "$aa_prev" = no ] || [ ! -f "$AUDIT_PREV" ] || rec_set gen "$AUDIT_PREV" 3 "$(sha "$AUDIT_PREV")"
 	did "Wrote $AUDIT_FILE and loaded it with augenrules --load: changes to accounts, sudoers, SSH and PAM configuration, the time, kernel modules, mounts, and commands run with raised privileges"
 }
 undo_audit_after() {
 	if have augenrules; then
+		# Loading the rules makes $AUDIT_PREV again: one undo left (changed
+		# since apply) is kept as it is.
+		ua_keep=no
+		if in_words "$AUDIT_PREV" "$GEN_LEFT" && [ -f "$AUDIT_PREV" ]; then
+			cp -p "$AUDIT_PREV" "$TX_DIR/audit.rules.prev" && ua_keep=yes
+		fi
 		if audit_immutable; then
 			did 'The loaded audit rules are immutable: they stay loaded until the next restart'
 		elif ! audit_load; then
 			left 'the audit rules loaded now: augenrules --load failed'
 		fi
-		# Loading them made $AUDIT_PREV again, after the record removed it.
-		! rec_has gen "$AUDIT_PREV" || rm -f "$AUDIT_PREV"
+		if [ "$ua_keep" = yes ]; then
+			put_copy "$TX_DIR/audit.rules.prev" "$AUDIT_PREV"
+		elif rec_has gen "$AUDIT_PREV" && ! in_words "$AUDIT_PREV" "$GEN_LEFT"; then
+			rm -f "$AUDIT_PREV"
+		fi
 	fi
 	# auditd, if EasyRMM installed it and no other rules file needs it. An
 	# auditd that was there before is never removed.
@@ -3682,20 +4317,33 @@ undo_audit_after() {
 		left "auditd, which EasyRMM installed: other rules files need it ($ua_fo); $AUDITD_MARKER stays, for whoever removes the last of them"
 		return 0
 	fi
-	ua_pk=$(sed '/^#/d' "$AUDITD_MARKER" | tr '\n' ' ')
-	PKG_REMOVED=
-	# shellcheck disable=SC2086 # package names, one word each
-	pkg_remove_alone $ua_pk && ua_rc=0 || ua_rc=$?
+	if ! marker_dir_ok; then
+		left "auditd, which EasyRMM installed: ${AUDITD_MARKER%/*} is not a directory, not a link, that root owns and root alone may write, so $AUDITD_MARKER is not read"
+		return 0
+	fi
+	# Split into words with globbing off: words, never patterns.
+	set -f
+	# shellcheck disable=SC2046 # tokens, one word each
+	set -- $(marker_tokens)
+	set +f
+	if ! pkg_tokens_ok "$@"; then
+		left "auditd, which EasyRMM installed: $AUDITD_MARKER names its packages in a form this script does not know, so they were left"
+		return 0
+	fi
+	ua_pk=$(pkg_token_names "$@" | tr '\n' ' ' | sed 's/ $//')
+	PKG_CONF_SRC=$AUDITD_MARKER
+	pkg_remove_alone "$@" && ua_rc=0 || ua_rc=$?
 	case $ua_rc in
 	0)
 		rm -f "$AUDITD_MARKER"
 		rmdir "${AUDITD_MARKER%/*}" 2>/dev/null
 		did "Removed the packages EasyRMM installed for auditd${PKG_REMOVED:+: $PKG_REMOVED}, and $AUDITD_MARKER"
 		;;
-	1) left "auditd, which EasyRMM installed: removing its packages (${ua_pk% }) would remove other packages too" ;;
-	2) left "auditd, which EasyRMM installed: the package manager could not remove its packages (${ua_pk% })$(pkg_why)" ;;
-	*) abort "the packages EasyRMM installed for auditd (${ua_pk% }) could not be removed$(pkg_why)" audit_load ;;
+	1) left "auditd, which EasyRMM installed: removing its packages ($ua_pk) would remove other packages too" ;;
+	2) left "auditd, which EasyRMM installed: the package manager could not remove its packages ($ua_pk)$(pkg_why)" ;;
+	*) abort "the packages EasyRMM installed for auditd ($ua_pk) could not be removed$(pkg_why)" audit_load ;;
 	esac
+	pkg_left_notes
 }
 
 # permissions
@@ -3845,16 +4493,20 @@ initramfs_update() {
 	*) iu_cmd='dracut -f --regenerate-all' ;;
 	esac
 	iu_rc=0
-	if have "${iu_cmd%% *}"; then
+	if ! have "${iu_cmd%% *}"; then
+		iu_rc=127
+	elif ! need_time "$INITRAMFS_MIN" "rebuild the initramfs"; then
+		IU_ERR=$PKG_ERR
+		return 1
+	else
 		# shellcheck disable=SC2086 # the command and its arguments
 		t 1200 $iu_cmd >"$TX_DIR/initramfs.log" 2>&1 || iu_rc=$?
-	else
-		iu_rc=127
 	fi
-	case $iu_rc in
-	0) IU_ERR= ;;
-	124 | 137) IU_ERR="$iu_cmd did not finish in 20 minutes and was stopped" ;;
-	127) IU_ERR="${iu_cmd%% *} is not installed" ;;
+	case $T_CAPPED:$iu_rc in
+	*:0) IU_ERR= ;;
+	yes:124 | yes:137) IU_ERR="$iu_cmd was stopped at the end of the job's time" ;;
+	*:124 | *:137) IU_ERR="$iu_cmd did not finish in 20 minutes and was stopped" ;;
+	*:127) IU_ERR="${iu_cmd%% *} is not installed" ;;
 	*) IU_ERR="$iu_cmd failed: $(tail -n 1 "$TX_DIR/initramfs.log" | cut -c1-160)" ;;
 	esac
 	[ "$iu_rc" -eq 0 ]
@@ -4132,8 +4784,11 @@ apply_integrity() {
 	fi
 	text_has "$M_TODO" -x baseline || return 0
 	# Outside the job: the baseline can take longer than the job may run.
-	for ai_db in /var/lib/aide/aide.db /var/lib/aide/aide.db.gz /var/lib/aide/aide.db.new /var/lib/aide/aide.db.new.gz; do
-		[ -e "$ai_db" ] || rec_has gen "$ai_db" || rec_add "gen$tab$ai_db"
+	# The files the baseline makes are recorded as "?": the command that
+	# builds them writes their sums beside the record once it has (undo_gen).
+	ai_dbs='/var/lib/aide/aide.db /var/lib/aide/aide.db.gz /var/lib/aide/aide.db.new /var/lib/aide/aide.db.new.gz'
+	for ai_db in $ai_dbs; do
+		[ -e "$ai_db" ] || rec_has gen "$ai_db" || rec_add "gen$tab$ai_db$tab?"
 	done
 	case $FAMILY in
 	debian) ai_cmd=$(command -v aideinit) && ai_cmd="$ai_cmd --yes --force" ;;
@@ -4142,6 +4797,8 @@ apply_integrity() {
 		abort "the baseline could not be started: $(if [ "$FAMILY" = debian ]; then echo aideinit; else echo aide; fi) is missing"
 		return
 	}
+	ai_sums=$MD/files/gen-sums
+	ai_cmd="$ai_cmd && for f in $ai_dbs; do [ ! -f \"\$f\" ] || printf '%s %s\\n' \"\$(sha256sum <\"\$f\" | cut -c1-64)\" \"\$f\"; done >$ai_sums.new && mv -f $ai_sums.new $ai_sums"
 	t 30 systemctl reset-failed "$AIDE_INIT_UNIT.service" >/dev/null 2>&1
 	if ! t 60 systemd-run --unit="$AIDE_INIT_UNIT" --description='EasyRMM hardening: the AIDE baseline' \
 		--property=Nice=19 --property=IOSchedulingClass=idle sh -c "$ai_cmd" >/dev/null 2>&1; then
@@ -4150,8 +4807,12 @@ apply_integrity() {
 	fi
 	did "Started building AIDE's baseline in $AIDE_INIT_UNIT, outside the job's time limit; the next check reports whether it finished"
 }
+# A baseline still being built is stopped: what it made so far is apply's
+# (GEN_STOPPED), and goes.
 undo_integrity_before() {
-	[ "$SYSTEMD_UP" = no ] || {
+	[ "$SYSTEMD_UP" = no ] && return 0
+	! unit_active "$AIDE_INIT_UNIT.service" || GEN_STOPPED=yes
+	{
 		t 120 systemctl stop "$AIDE_INIT_UNIT.service"
 		t 30 systemctl reset-failed "$AIDE_INIT_UNIT.service"
 	} >/dev/null 2>&1
@@ -4208,9 +4869,30 @@ finish_change() {
 	keep "D_$fc_v" "$fc_done"
 	keep "PR_$fc_v" "$M_RECOV"
 	keep "PW_$fc_v" "$M_RECOV_WHY"
+	keep "PK_$fc_v" "$M_RECOV_PKGS"
+	keep "UW_$fc_v" "$M_UNDO_WITH"
 	M_RECOV=
 	M_RECOV_WHY=
+	M_RECOV_PKGS=
+	M_UNDO_WITH=
 	say "$CUR: $fc_out. $fc_why"
+}
+
+# time_ran_out: a module that failed once the job's time ran out says so.
+time_ran_out() {
+	[ "$OUT_OF_TIME" = yes ] && [ "$M_OUTCOME" = failed ] || return 0
+	case $M_WHY in *"job's time"*) ;; *) M_WHY="The job's time ran out: $M_WHY" ;; esac
+}
+# not_run MODULE: a module not run because the job's time ran out; nothing
+# was checked, so the server keeps what it knew of it.
+not_run() {
+	begin_module "$1"
+	M_STATE=failed
+	reason "Not checked: the job's time ran out before this module."
+	M_OUTCOME=not_run
+	M_WHY="Not run: the job's time ran out before this module; run $MODE again for it."
+	M_DONE=
+	finish_change
 }
 
 # check_said PREFIX: the first of the check's changes that starts with
@@ -4239,6 +4921,8 @@ apply_module() {
 				M_OUTCOME=failed
 				M_WHY="$TX_DIR could not be written."
 			else
+				# The changes stop where the time kept for a rollback starts.
+				T_END=$WORK_END
 				case $1 in
 				ssh) apply_ssh ;;
 				firewall) apply_firewall ;;
@@ -4255,6 +4939,8 @@ apply_module() {
 				mac) apply_mac ;;
 				integrity) apply_integrity ;;
 				esac
+				T_END=$JOB_END
+				time_ran_out
 			fi
 		fi
 		if [ -z "$M_OUTCOME" ]; then
@@ -4302,15 +4988,25 @@ undo_module() {
 	elif [ -z "$um_format" ] || [ "$um_format" -gt "$FORMAT" ]; then
 		M_OUTCOME=refused
 		M_WHY="The record was written by a later release of this script (format ${um_format:-unknown}); undo with that release."
+	elif [ "$1" = firewall ] && [ -s "$STATE_DIR/modules/fail2ban/manifest" ]; then
+		# Undo runs the modules last first: fail2ban, chosen too, is undone
+		# by now, and its record gone.
+		M_OUTCOME=refused
+		M_WHY="fail2ban, which EasyRMM applied too, bans with the firewall this module set up (nftables, which its apply may have installed): undone alone, fail2ban's bans could silently do nothing. Undo fail2ban with it."
+		M_UNDO_WITH=fail2ban
 	elif ! tx_begin || ! intent; then
 		M_OUTCOME=failed
 		M_WHY="$STATE_DIR could not be written."
 	else
 		AUDIT_UNDO=no
+		PKG_KEPT=no
+		GEN_STOPPED=no
+		GEN_LEFT=
 		case $1 in
 		integrity) undo_integrity_before ;;
 		audit) AUDIT_UNDO=yes ;;
 		esac
+		T_END=$WORK_END
 		undo_records
 		[ -n "$M_OUTCOME" ] || case $1 in
 		ssh) undo_ssh_after ;;
@@ -4323,6 +5019,8 @@ undo_module() {
 		shared-memory) undo_shared_memory_after ;;
 		integrity) undo_integrity_after ;;
 		esac
+		T_END=$JOB_END
+		time_ran_out
 		if [ -z "$M_OUTCOME" ]; then
 			# Undone: the record is used up, and the next apply takes
 			# fresh copies.
@@ -4338,30 +5036,46 @@ undo_module() {
 
 # Apply and undo run one at a time on a computer. The lock names the run
 # that holds it: its process ID and start time (so that a later process
-# given the same ID does not hold it).
-LOCK_DIR=$STATE_DIR/lock
-LOCK_HELD=no
+# given the same ID does not hold it), and the boot it ran in; and each
+# step t runs (t.PID, see T_RUN), which may outlive a run killed outright.
 # proc_start PID: the process's start time, if it runs (a zombie does not).
 proc_start() {
 	sed -n 's/^.*) \([^ ]*\)\( [^ ]*\)\{18\} \([0-9]*\) .*$/\1 \3/p' "/proc/$1/stat" 2>/dev/null | awk '$1 != "Z" { print $2 }'
 }
+boot_id() { cat /proc/sys/kernel/random/boot_id 2>/dev/null; }
 take_lock() {
 	if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-		tl_id=$(cat "$LOCK_DIR/pid" 2>/dev/null)
-		case $tl_id in
-		[0-9]*' '[0-9]*)
-			[ "$(proc_start "${tl_id% *}")" != "${tl_id#* }" ] || return 1
-			;;
-		*)
-			# Taken a moment ago, or by a run killed before it wrote its
-			# number: stale after ten minutes.
-			[ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +10 2>/dev/null)" ] || return 1
-			;;
-		esac
+		! lock_busy || return 1
 		rm -rf "$LOCK_DIR" && mkdir "$LOCK_DIR" 2>/dev/null || return 1
 	fi
 	LOCK_HELD=yes
-	printf '%s %s\n' "$$" "$(proc_start $$)" >"$LOCK_DIR/pid"
+	printf '%s %s %s\n' "$$" "$(proc_start $$)" "$(boot_id)" >"$LOCK_DIR/pid"
+}
+# lock_busy: whether the run that holds the lock still runs, or a step it
+# started through t does: a run killed outright (SIGKILL) leaves its steps
+# running, each in a process group of its own, until they end.
+lock_busy() {
+	lb_pid=
+	lb_start=
+	lb_boot=
+	read -r lb_pid lb_start lb_boot <"$LOCK_DIR/pid" 2>/dev/null
+	case $lb_pid:$lb_start in
+	*[!0-9:]* | :* | *:)
+		# Taken a moment ago, or by a run killed before it wrote its
+		# number: stale after ten minutes.
+		[ -n "$(find "$LOCK_DIR" -maxdepth 0 -mmin +10 2>/dev/null)" ] || return 0
+		return 1
+		;;
+	esac
+	# Nothing from before a restart runs.
+	[ -z "$lb_boot" ] || [ "$lb_boot" = "$(boot_id)" ] || return 1
+	[ "$(proc_start "$lb_pid")" != "$lb_start" ] || return 0
+	t_steps | {
+		while read -r lb_g lb_s; do
+			! group_runs "$lb_g" "$lb_s" || exit 0
+		done
+		exit 1
+	}
 }
 release() {
 	[ "$LOCK_HELD" = yes ] || return 0
@@ -4382,11 +5096,7 @@ change_all() {
 		# shellcheck disable=SC2086 # module names, one word each
 		ca_mods=$(printf '%s\n' $SELECTED | awk '{ l[NR] = $0 } END { for (i = NR; i > 0; i--) print l[i] }')
 	fi
-	ca_why=
-	case $SUPPORT in
-	check_only) ca_why="This release is checked only: $MODE runs on the releases EasyRMM was tested on." ;;
-	unsupported) ca_why="This distribution or release is not supported: $MODE runs on the releases EasyRMM was tested on." ;;
-	esac
+	ca_why=$SUPPORT_WHY
 	if [ -z "$ca_why" ]; then
 		if ! (umask 077 && mkdir -p "$STATE_DIR/modules") || ! chmod 700 "$STATE_DIR"; then
 			ca_why="$STATE_DIR could not be created."
@@ -4415,20 +5125,27 @@ change_all() {
 		return
 	fi
 	trap 'release' EXIT
-	trap 'exit 143' TERM INT HUP
 	# A copy of this script, for undo on the computer without the agent.
 	if [ -f "$0" ] && [ "$(sha "$0")" != "$(sha "$STATE_DIR/easyrmm-hardening.sh")" ]; then
 		cp "$0" "$STATE_DIR/easyrmm-hardening.sh.new" && chmod 700 "$STATE_DIR/easyrmm-hardening.sh.new" &&
 			mv -f "$STATE_DIR/easyrmm-hardening.sh.new" "$STATE_DIR/easyrmm-hardening.sh"
 	fi
 	for ca_m in $ca_mods; do
+		# A module starts with at least MODULE_MIN of the job's time left.
+		if [ -n "$WORK_END" ] && [ $((WORK_END - $(date +%s))) -lt "$MODULE_MIN" ]; then
+			OUT_OF_TIME=yes
+		fi
+		if [ "$OUT_OF_TIME" = yes ]; then
+			not_run "$ca_m"
+			continue
+		fi
 		case $MODE in
 		apply) apply_module "$ca_m" ;;
 		undo) undo_module "$ca_m" ;;
 		esac
 	done
 	release
-	trap - EXIT TERM INT HUP
+	trap - EXIT
 }
 
 # ---------------------------------------------------------------------------
@@ -4502,7 +5219,16 @@ render_module() {
 		[ -z "$rm_a" ] || rm_out="$rm_out,\"done\":$rm_a"
 		# The package database's recovery before a package step (pkg_ready).
 		rm_a=$(kept "PR_$rm_v")
-		[ -z "$rm_a" ] || rm_out="$rm_out,\"packageRecovery\":{\"outcome\":\"$rm_a\",\"reason\":$(jstr "$(kept "PW_$rm_v")" 300)}"
+		if [ -n "$rm_a" ]; then
+			rm_out="$rm_out,\"packageRecovery\":{\"outcome\":\"$rm_a\",\"reason\":$(jstr "$(kept "PW_$rm_v")" 300)"
+			# shellcheck disable=SC2046 # package names, one word each
+			rm_a=$(jarr "$(printf '%s\n' $(kept "PK_$rm_v"))" "$2" 64 no)
+			[ -z "$rm_a" ] || rm_out="$rm_out,\"packages\":$rm_a"
+			rm_out="$rm_out}"
+		fi
+		# The modules to undo with this one (undo_module).
+		rm_a=$(kept "UW_$rm_v")
+		[ -z "$rm_a" ] || rm_out="$rm_out,\"undoWith\":[\"$rm_a\"]"
 	fi
 	[ "$(kept "RC_$rm_v")" != yes ] || rm_out="$rm_out,\"recorded\":true"
 	printf '%s}' "$rm_out"
