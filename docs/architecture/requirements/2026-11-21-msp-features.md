@@ -8,9 +8,10 @@
   product.* Nothing inside it was added, corrected or reworded.
 * **Added**: this header, and the
   [addendum](#addendum-the-owners-later-messages) after the requirements,
-  which quotes the owner's four later messages: about a keystore, about
-  warranty data from the vendors' own tools, and about where the keys are
-  kept and interactive PowerShell.
+  which quotes the owner's later messages: about a keystore, about
+  warranty data from the vendors' own tools, about where the keys are
+  kept and interactive PowerShell, and (2026-11-22) about a Software
+  section and a quick uninstall.
 * **The owner's instruction on the twelve**: "Add this to the plan, and
   start doing them one by one".
 
@@ -807,8 +808,8 @@ The following expectations apply across the feature set:
 
 # Addendum: the owner's later messages
 
-Not part of the requirements above. The owner's own words, 2026-11-21,
-after the twelve, in the order they came.
+Not part of the requirements above. The owner's own words, from
+2026-11-21 and 2026-11-22, after the twelve, in the order they came.
 
 ## The keystore
 
@@ -840,3 +841,19 @@ secure on-host protection its ADR chooses, and interactive PowerShell
 (requirement 6) uses MeshCentral's terminal, audited per session, with
 typed input not recorded. Both are in the
 [plan](../feature-plan-msp.md).
+
+## A Software section, and a quick uninstall
+
+On 2026-11-22, about requirement 5:
+
+> One thing to add. We should have a seperate navbar for Install, update or remove software. also when a user types a package name, it should automaticly show matchins names. So if i start typeing Notepad, it should should all possable matchs(Like Notepad++) got it? add that to the plan
+
+Then:
+
+> Also in the Software list for a device, we we get a quck uninstall icon next to the software name
+
+Both are in the plan's
+[feature 5](../feature-plan-msp.md#5-software-catalog-and-deployment-policies):
+a *Software* entry in the main menu with Install, Update and Remove, a
+search that shows matching packages as their names are typed, and an
+uninstall icon beside each program in a device's software list.
