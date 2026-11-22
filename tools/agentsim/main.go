@@ -4,6 +4,8 @@
 // real agent does, over its own TLS connection:
 //   - a heartbeat with facts and metrics every heartbeatSeconds;
 //   - an inventory upload when the server's hash differs from its own;
+//   - a hardware report with its two disks' health 2 minutes after it
+//     starts and every 30 minutes (plus up to a minute) after that;
 //   - a job long poll held open at all times.
 //
 // A delivered job is checked against the pinned job-signing key, started,
@@ -224,6 +226,7 @@ type device struct {
 	jobKey ed25519.PublicKey
 	inv    []byte
 	hash   string
+	hw     []byte
 }
 
 func newDevice(o options, n int, id identity, st *stats) (*device, error) {
@@ -244,12 +247,16 @@ func newDevice(o options, n int, id identity, st *stats) (*device, error) {
 		return nil, err
 	}
 	d.hash = inv.Hash()
+	if d.hw, err = json.Marshal(hardware(n)); err != nil {
+		return nil, err
+	}
 	return d, nil
 }
 
 func (d *device) run(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Go(func() { d.poll(ctx) })
+	wg.Go(func() { d.hardware(ctx) })
 	// A fleet's heartbeats are spread over the interval, not in step.
 	interval := time.Minute
 	sleep(ctx, time.Duration(random(float64(interval))))
@@ -276,6 +283,25 @@ func (d *device) run(ctx context.Context) {
 		sleep(ctx, interval-interval/10+time.Duration(random(float64(interval)/5)))
 	}
 	wg.Wait()
+}
+
+// hardware sends the device's hardware report as the real agent does: 2
+// minutes after it starts, then every 30 minutes plus up to a minute.
+func (d *device) hardware(ctx context.Context) {
+	wait := 2 * time.Minute
+	for {
+		sleep(ctx, wait)
+		if ctx.Err() != nil {
+			return
+		}
+		start := time.Now()
+		err := d.c.Hardware(ctx, d.hw)
+		if ctx.Err() != nil {
+			return
+		}
+		d.st.record("hardware", time.Since(start), err)
+		wait = 30*time.Minute + time.Duration(random(float64(time.Minute)))
+	}
 }
 
 // poll keeps a job long poll open, as the real agent does.
@@ -341,7 +367,12 @@ func inventory(n int, host string, packages int) *agentproto.Inventory {
 		OS: agentproto.OSInfo{
 			Name: "Ubuntu 24.04.3 LTS", ID: "ubuntu", Version: "24.04", Kernel: "6.8.0-88-generic", Timezone: "UTC",
 		},
-		Disks: []agentproto.Disk{{Name: "vda", Model: "QEMU HARDDISK", Serial: fmt.Sprintf("SIMDISK%05d", n), SizeBytes: 128 << 30, Kind: "ssd"}},
+		Disks: []agentproto.Disk{
+			{Name: "nvme0n1", Model: "SIM NVMe SSD 1TB", Serial: fmt.Sprintf("SIMNVME%05d", n), SizeBytes: 1000 << 30, Kind: "nvme",
+				Firmware: &agentproto.TextFact{State: agentproto.FactRead, Value: "3B2QGXA7"}},
+			{Name: "sda", Model: "SIM SATA HDD 4TB", Serial: fmt.Sprintf("SIMHDD%05d", n), SizeBytes: 4000 << 30, Kind: "hdd",
+				Firmware: &agentproto.TextFact{State: agentproto.FactRead, Value: "82.00A82"}},
+		},
 		Interfaces: []agentproto.Interface{{
 			Name: "ens3", MAC: fmt.Sprintf("52:54:00:%02x:%02x:%02x", n>>16&0xff, n>>8&0xff, n&0xff),
 			Addresses: []string{fmt.Sprintf("10.%d.%d.%d/16", 64+n>>16&0x3f, n>>8&0xff, n&0xff)}, Up: true, SpeedMbps: 10000,
@@ -358,13 +389,46 @@ func inventory(n int, host string, packages int) *agentproto.Inventory {
 	return inv
 }
 
+// hardware is the device's disks' health as the agent reads it: an NVMe
+// drive and a SATA hard disk with a full SMART attribute table (30
+// attributes, the most a table holds), both healthy. It is the same for
+// the same device.
+func hardware(n int) agentproto.HardwareReport {
+	read := agentproto.Read
+	notKept := agentproto.NotRead(agentproto.FactUnsupported, agentproto.ReasonNotKept)
+	at := time.Now().UTC()
+	nvme := agentproto.DiskHealth{
+		Name: "nvme0n1", Model: "SIM NVMe SSD 1TB", Serial: fmt.Sprintf("SIMNVME%05d", n), State: agentproto.FactRead,
+		Protocol: agentproto.ProtocolNVMe, Route: "nvme", ReadAt: at,
+		CriticalWarning: read(0), SMARTStatus: notKept, Thresholds: notKept, Temperature: read(38), TemperatureLimit: read(82),
+		Wear: read(3), AvailableSpare: read(100), AvailableSpareThreshold: read(10), MediaErrors: read(0),
+		ReallocatedSectors: notKept, PendingSectors: notKept, UncorrectableSectors: notKept, DriveErrors: read(12),
+		PowerOnHours: read(int64(4000 + n%1000)), DataWritten: read(45_000_000), UnsafeShutdowns: read(23), PowerMode: notKept,
+	}
+	ata := agentproto.DiskHealth{
+		Name: "sda", Model: "SIM SATA HDD 4TB", Serial: fmt.Sprintf("SIMHDD%05d", n), State: agentproto.FactRead,
+		Protocol: agentproto.ProtocolATA, Route: "sg", ReadAt: at,
+		CriticalWarning: notKept, SMARTStatus: read(agentproto.SMARTPassed), Thresholds: read(agentproto.MaxAttributes),
+		Temperature: read(34), TemperatureLimit: read(60), Wear: notKept, AvailableSpare: notKept, AvailableSpareThreshold: notKept,
+		MediaErrors: notKept, ReallocatedSectors: read(0), PendingSectors: read(0), UncorrectableSectors: read(0), DriveErrors: read(0),
+		PowerOnHours: read(int64(30000 + n%1000)), DataWritten: notKept, UnsafeShutdowns: notKept, PowerMode: read(0xFF),
+	}
+	for i := range agentproto.MaxAttributes {
+		threshold := uint8(i % 60)
+		ata.Attributes = append(ata.Attributes, agentproto.Attribute{
+			ID: uint8(i + 1), Flags: uint16(0x32 | i%2), Value: 100, Worst: 99, Threshold: &threshold, Raw: uint64(i) * 1_000_003,
+		})
+	}
+	return agentproto.HardwareReport{Disks: []agentproto.DiskHealth{nvme, ata}}
+}
+
 func metrics(n int) *agentproto.Metrics {
 	return &agentproto.Metrics{
 		CPUPercent: 5 + random(30), MemoryTotal: 16 << 30, MemoryUsed: 4<<30 + uint64(random(4<<30)),
 		Load1: random(2), Load5: 0.8, Load15: 0.6, UptimeSeconds: int64(86400 + n), Processes: 180 + int(random(40)),
 		Filesystems: []agentproto.Filesystem{
-			{Mount: "/", Device: "/dev/vda1", Type: "ext4", TotalBytes: 120 << 30, UsedBytes: 40 << 30},
-			{Mount: "/boot/efi", Device: "/dev/vda15", Type: "vfat", TotalBytes: 105 << 20, UsedBytes: 6 << 20},
+			{Mount: "/", Device: "/dev/nvme0n1p2", Type: "ext4", TotalBytes: 120 << 30, UsedBytes: 40 << 30},
+			{Mount: "/boot/efi", Device: "/dev/nvme0n1p1", Type: "vfat", TotalBytes: 105 << 20, UsedBytes: 6 << 20},
 		},
 	}
 }

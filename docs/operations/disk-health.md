@@ -174,6 +174,11 @@ disappears.
   reading with its index: 336 readings for the week and 730 days); 1,000
   devices with two disks each take about 0.6 GiB of database space, and the
   [backups](backup-restore.md) grow by the same.
+* **Traffic**: each reading is one report of about 1 KiB for an NVMe disk
+  and 3 KiB for an ATA disk with a full attribute table, so a device with
+  one of each sends about 4 KiB every 30 minutes, about 200 KiB a day.
+  The server takes at most one report in 10 minutes from a device, with
+  bursts of 6.
 * Removing a device removes its disks' readings and history.
 
 ## Troubleshooting
