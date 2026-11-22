@@ -218,9 +218,9 @@ describe("a patching alert's card", () => {
   const section = (dialog: HTMLElement, name: string) => within(dialog).getByRole("region", { name });
   const value = (scope: HTMLElement, term: string) => within(scope).getByText(term).nextElementSibling as HTMLElement;
 
-  async function openCard(title: string) {
+  async function openCard(title: string, path = "/patching?tab=alerts") {
     const user = userEvent.setup();
-    await open("/patching?tab=alerts");
+    await open(path);
     const button = await main().findByRole("button", { name: `${title}, details` });
     await user.click(button);
     return { user, button, dialog: await screen.findByRole("dialog", { name: title }) };
@@ -279,6 +279,46 @@ describe("a patching alert's card", () => {
     await user.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(button).toHaveFocus();
+  });
+
+  it("shows an alert acknowledged from the card once the Open filter no longer lists it", async () => {
+    let acknowledged = false;
+    installFakeApi(
+      patchingRoutes(TECH, {
+        "GET /patching/alerts": () => ok({ items: acknowledged ? ALERTS.filter((a) => a.id !== "a2") : ALERTS, capped: false }),
+        "POST /patching/alerts/acknowledge": () => {
+          acknowledged = true;
+          return ok({ acknowledged: 1 });
+        },
+      }),
+    );
+    const title = "DB-01 has been offline for 26 hours";
+    const { user, dialog } = await openCard(title, "/patching?tab=alerts&show=open");
+    await user.click(within(dialog).getByRole("button", { name: `Acknowledge ${title}` }));
+    await waitFor(() => expect(value(section(dialog, "Times"), "Acknowledged")).toHaveTextContent(/by alex@example\.com$/));
+    expect(within(section(dialog, "Summary")).getByText("Acknowledged")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: `Acknowledge ${title}` })).not.toBeInTheDocument();
+    expect(within(main().getByRole("table", { name: "Patching alerts" })).queryByText(title)).not.toBeInTheDocument();
+  });
+
+  it("says in the card why acknowledging failed", async () => {
+    installFakeApi(patchingRoutes(TECH, { "POST /patching/alerts/acknowledge": fail(503, "easypatch_unavailable", "EasyPatch did not answer.") }));
+    const title = "DB-01 has been offline for 26 hours";
+    const { user, dialog } = await openCard(title);
+    await user.click(within(dialog).getByRole("button", { name: `Acknowledge ${title}` }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("EasyPatch did not answer.");
+    // Opening the card again starts without it.
+    await user.click(within(dialog).getAllByRole("button", { name: "Close" }).at(-1)!);
+    await user.click(main().getByRole("button", { name: `${title}, details` }));
+    expect(within(await screen.findByRole("dialog", { name: title })).queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("closes when a link in it leads elsewhere on the page", async () => {
+    installFakeApi(patchingRoutes(TECH));
+    const { user, dialog } = await openCard("2 updates Acme needs are on hold");
+    await user.click(within(section(dialog, "What to do next")).getByRole("link", { name: "Acme's patching alerts" }));
+    await waitFor(() => expect(screen.getByTestId("location").textContent).toBe("/patching?tab=alerts&organizationId=o1"));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("shows an organization's own alert, with where to look", async () => {

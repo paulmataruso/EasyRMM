@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import { BellOff, CheckCheck, X } from "lucide-react";
 import { api } from "../../api/client";
 import { useApi, useApiMutation } from "../../api/hooks";
@@ -33,7 +33,8 @@ const SHOW = [
 export function PatchAlerts() {
   const url = useUrlState();
   const toast = useToast();
-  const { can } = useAuth();
+  const { can, session } = useAuth();
+  const location = useLocation();
   const organizationId = url.get("organizationId");
   const show = url.get("show");
   const severity = url.get("severity");
@@ -68,10 +69,25 @@ export function PatchAlerts() {
     },
   });
   const device = deviceId ? items.find((a) => a.deviceId === deviceId)?.deviceName : null;
-  // The alert whose card is open: its row as the list last loaded it, or as it was if the list no longer has it.
+  // The alert whose card is open: its row as the list last loaded it, or as the card last knew it once the list no
+  // longer has it (acknowledged under the Open filter, say). The card stays open only on the address it opened on, so
+  // a link in it that leads elsewhere on this page closes it.
   const [card, setCard] = useState<PatchAlert | null>(null);
-  const [cardOpen, setCardOpen] = useState(false);
+  const [openOn, setOpenOn] = useState<string | null>(null);
   const shown = card ? (items.find((a) => a.id === card.id) ?? card) : null;
+  const acknowledgeShown = () => {
+    if (!shown) return;
+    acknowledge.mutate([shown.id], {
+      // EasyPatch answers with a count only: one means it is acknowledged now, by this user.
+      onSuccess: (r) =>
+        setCard({
+          ...shown,
+          canAcknowledge: false,
+          ...(r.acknowledged > 0 ? { status: "Acknowledged" as const, acknowledgedAt: new Date().toISOString(), acknowledgedBy: session?.user.email ?? null } : {}),
+        }),
+    });
+  };
+  const cardError = shown && acknowledge.isError && acknowledge.variables?.length === 1 && acknowledge.variables[0] === shown.id ? acknowledge.error.message : null;
 
   return (
     <>
@@ -189,7 +205,8 @@ export function PatchAlerts() {
                     onAcknowledge={() => acknowledge.mutate([a.id])}
                     onOpen={() => {
                       setCard(a);
-                      setCardOpen(true);
+                      setOpenOn(location.key);
+                      acknowledge.reset();
                     }}
                     busy={acknowledge.isPending}
                   />
@@ -207,10 +224,11 @@ export function PatchAlerts() {
       )}
       <PatchAlertCard
         alert={shown}
-        open={cardOpen}
-        onClose={() => setCardOpen(false)}
-        onAcknowledge={() => shown && acknowledge.mutate([shown.id])}
+        open={openOn === location.key}
+        onClose={() => setOpenOn(null)}
+        onAcknowledge={acknowledgeShown}
         busy={acknowledge.isPending}
+        error={cardError}
       />
     </>
   );

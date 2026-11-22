@@ -1,13 +1,13 @@
 // A patching alert's card, like an EasyRMM alert's (alerts/AlertDetail.tsx): everything the engine records about one
 // alert. The engine has no endpoint for one alert, so the card is built from its row in Patching → Alerts, as the list
 // last loaded it, and shows only what that row holds.
-import { useId, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { Link } from "react-router";
 import type { PatchAlert, PatchAlertRuleKind } from "../../api/types";
-import { CodeBlock } from "../../components/Copy";
 import { Dialog } from "../../components/Dialog";
 import { Badge, Button, KeyValueList } from "../../components/ui";
-import { formatDateTime, formatDuration, formatRelative } from "../../lib/format";
+import { formatDuration } from "../../lib/format";
+import { linkClass, muted, RawDetails, Section, When } from "../alerts/cardParts";
 import { acknowledgedBy, PatchSeverityBadge, RULE_KINDS } from "./patchAlertText";
 
 /** What to check for each type of rule, from docs/operations/patching.md. */
@@ -58,41 +58,20 @@ const STATE: Record<PatchAlert["status"], { label: string; tone: "accent" | "neu
   Resolved: { label: "Resolved", tone: "ok" },
 };
 
-const linkClass = "font-medium break-words text-accent hover:underline";
-const muted = (text: string) => <span className="text-muted">{text}</span>;
-
-function When({ at }: { at: string }) {
-  return (
-    <>
-      <time dateTime={at}>{formatDateTime(at)}</time> <span className="text-muted">({formatRelative(at)})</span>
-    </>
-  );
-}
-
-function Section({ title, children }: { title: string; children: ReactNode }) {
-  const id = useId();
-  return (
-    <section aria-labelledby={id} className="flex min-w-0 flex-col gap-2">
-      <h3 id={id} className="text-sm font-semibold">
-        {title}
-      </h3>
-      {children}
-    </section>
-  );
-}
-
 /** Where the alert is: its device, an endpoint with no EasyRMM device, or the whole organization. */
 function patchAlertWhere(a: PatchAlert): string {
   return a.deviceId ? (a.deviceName ?? a.hostname ?? "a device") : a.hostname ? a.hostname : `${a.organizationName}, the whole organization`;
 }
 
 /** The card for one patching alert; alert is the row as last loaded, kept while the card closes. */
-export function PatchAlertCard({ alert: a, open, onClose, onAcknowledge, busy }: {
+export function PatchAlertCard({ alert: a, open, onClose, onAcknowledge, busy, error }: {
   alert: PatchAlert | null;
   open: boolean;
   onClose: () => void;
   onAcknowledge: () => void;
   busy: boolean;
+  /** Why acknowledging it from the card failed. */
+  error?: string | null;
 }) {
   const kind = a ? RULE_KINDS[a.ruleType] : undefined;
   return (
@@ -104,6 +83,11 @@ export function PatchAlertCard({ alert: a, open, onClose, onAcknowledge, busy }:
       description={a ? `${kind?.label ?? a.ruleType} · ${patchAlertWhere(a)}` : undefined}
       footer={
         <>
+          {error && (
+            <p role="alert" className="mr-auto text-sm text-danger">
+              {error}
+            </p>
+          )}
           {a?.canAcknowledge && (
             <Button variant="primary" onClick={onAcknowledge} loading={busy} aria-label={`Acknowledge ${a.title}`}>
               Acknowledge
@@ -206,12 +190,7 @@ function Details({ alert: a }: { alert: PatchAlert }) {
           )}
         </p>
       </Section>
-      <details className="group rounded-lg border border-line">
-        <summary className="cursor-pointer px-3 py-2 text-sm font-medium select-none">Raw details (JSON)</summary>
-        <div className="border-t border-line p-3">
-          <CodeBlock code={JSON.stringify(a, null, 2)} />
-        </div>
-      </details>
+      <RawDetails value={a} />
     </div>
   );
 }
