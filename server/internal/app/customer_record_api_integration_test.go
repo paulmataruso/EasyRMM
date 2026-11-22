@@ -55,6 +55,8 @@ func TestCustomerRecordAPI(t *testing.T) {
 	admin.expect(http.StatusCreated, "POST", "/api/v1/organizations/"+acme+"/sites", map[string]string{"name": "Branch"}, &branch)
 	// The address is the customer record's now, not site management's.
 	wantStatus(t, admin.do("PUT", "/api/v1/sites/"+hq.ID, map[string]string{"name": "HQ", "address": "1 Example Road"}), http.StatusUnprocessableEntity, "validation_failed")
+	wantStatus(t, admin.do("POST", "/api/v1/organizations/"+acme+"/sites", map[string]string{"name": "Annex", "address": "1 Example Road"}),
+		http.StatusUnprocessableEntity, "validation_failed")
 
 	// The organization's and the site's details.
 	var org struct {
@@ -127,6 +129,21 @@ func TestCustomerRecordAPI(t *testing.T) {
 		t.Fatalf("patched %+v", hal)
 	}
 	wantStatus(t, admin.do("PATCH", "/api/v1/contacts/"+hal.ID, map[string]any{"siteId": branch.ID}), http.StatusUnprocessableEntity, "validation_failed")
+	// The organization's overview lists the primary and emergency contacts
+	// only (M2).
+	admin.expect(http.StatusOK, "GET", "/api/v1/organizations/"+acme+"/contacts?key=true", nil, &page)
+	if contactNames(page) != "Ann Example,Hal Desk" {
+		t.Fatalf("the key contacts %+v", page)
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/organizations/"+acme+"/contacts?key=true&siteId="+branch.ID, nil, &page)
+	if contactNames(page) != "" {
+		t.Fatalf("the branch's key contacts %+v", page)
+	}
+	admin.expect(http.StatusOK, "GET", "/api/v1/organizations/"+acme+"/contacts?key=false", nil, &page)
+	if contactNames(page) != "Ann Example,Bea Branch,Hal Desk" {
+		t.Fatalf("key=false %+v", page)
+	}
+	wantStatus(t, admin.do("GET", "/api/v1/organizations/"+acme+"/contacts?key=yes", nil), http.StatusUnprocessableEntity, "validation_failed")
 	for _, c := range []struct{ m, p string }{
 		{"GET", "/api/v1/organizations/nope/contacts"}, {"POST", "/api/v1/organizations/nope/contacts"},
 		{"PATCH", "/api/v1/contacts/nope"}, {"DELETE", "/api/v1/contacts/nope"},

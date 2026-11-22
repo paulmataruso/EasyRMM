@@ -48,6 +48,7 @@ describe("the organization's record", () => {
       ...baseRoutes(sessionView({ isSuperAdmin: false, permissions: [...DOC] })),
       "GET /organizations/:id": ok(NORTHWIND),
       "GET /organizations/:id/sites": ok({ items: [HEAD_OFFICE] }),
+      "GET /organizations/:id/contacts": ok({ items: [] }),
       "PUT /organizations/:id/details": (r) => ok({ ...NORTHWIND, ...(r.body as object) }),
       "GET /audit": ok({ items: [] }),
     });
@@ -56,6 +57,7 @@ describe("the organization's record", () => {
     expect(within(card).getByText("Open now")).toBeInTheDocument();
     expect(within(card).getByRole("link", { name: "+1 555 0100" })).toHaveAttribute("href", "tel:+15550100");
     expect(within(card).getByRole("link", { name: "help@example.com" })).toHaveAttribute("href", "mailto:help@example.com");
+    expect(within(card).getByRole("link", { name: "https://example.com" })).toHaveAttribute("href", "https://example.com/");
     expect(within(card).getByText("Mon–Fri")).toBeInTheDocument();
     expect(within(card).getByText("Sat–Sun")).toBeInTheDocument();
     // The site's address in the list comes from its fields, not the free text.
@@ -75,12 +77,54 @@ describe("the organization's record", () => {
     expect(body.businessHours.friday).toEqual([]);
   });
 
+  it("shows the primary and emergency contacts, and whether each site is open, on the overview", async () => {
+    const server = installFakeApi({
+      ...baseRoutes(sessionView({ isSuperAdmin: false, permissions: [...DOC] })),
+      "GET /organizations/:id": ok(NORTHWIND),
+      "GET /organizations/:id/sites": ok({ items: [HEAD_OFFICE, site("s2", "o1", "Warehouse", { openNow: true })] }),
+      "GET /organizations/:id/contacts": ok({
+        items: [
+          contact("c1", "Pat Example", { priority: "primary", email: "pat+it@example.com", jobTitle: "Office manager" }),
+          contact("c2", "Sam Example", { siteId: "s1", siteName: "Head office", emergency: true, mobilePhone: "555 0199" }),
+        ],
+      }),
+    });
+    renderApp("/organizations/o1");
+    const key = (await screen.findByRole("heading", { name: "Primary and emergency contacts" })).closest("section")!;
+    const people = await within(key).findAllByRole("listitem");
+    expect(people.map((p) => p.textContent)).toEqual([
+      expect.stringMatching(/^Pat Example.*Organization.*Primary.*Office manager.*pat\+it@example\.com$/),
+      expect.stringMatching(/^Sam Example.*Head office.*Emergency.*Mobile: 555 0199$/),
+    ]);
+    // An address in a mailto: link is encoded part by part.
+    expect(within(key).getByRole("link", { name: "pat+it@example.com" })).toHaveAttribute("href", "mailto:pat%2Bit@example.com");
+    expect(server.call("GET /organizations/:id/contacts").query.get("key")).toBe("true");
+
+    const rows = within(screen.getByRole("table")).getAllByRole("row").slice(1);
+    expect(within(rows[0]!).getByText("Closed now")).toBeInTheDocument();
+    expect(within(rows[0]!).getByText(/^1 Example Road, Springfield, 00000, /)).toBeInTheDocument();
+    expect(within(rows[1]!).getByText("Open now")).toBeInTheDocument();
+  });
+
+  it("links a website only over http or https", async () => {
+    installFakeApi({
+      ...baseRoutes(sessionView({ isSuperAdmin: false, permissions: [...DOC] })),
+      "GET /organizations/:id": ok({ ...NORTHWIND, website: "javascript:alert(1)" }),
+      "GET /organizations/:id/sites": ok({ items: [] }),
+      "GET /organizations/:id/contacts": ok({ items: [] }),
+    });
+    renderApp("/organizations/o1");
+    const card = (await screen.findByRole("heading", { name: /Contact information/ })).closest("section")!;
+    expect(within(card).getByText("javascript:alert(1)").closest("a")).toBeNull();
+  });
+
   it("puts the server's problem with the hours under them", async () => {
     const user = userEvent.setup();
     installFakeApi({
       ...baseRoutes(sessionView({ isSuperAdmin: false, permissions: [...DOC] })),
       "GET /organizations/:id": ok(NORTHWIND),
       "GET /organizations/:id/sites": ok({ items: [] }),
+      "GET /organizations/:id/contacts": ok({ items: [] }),
       "PUT /organizations/:id/details": fail(422, "validation_failed", "Check the details.", {
         businessHours: "Periods of opening overlap. Make each end before the next begins.",
       }),
@@ -89,8 +133,12 @@ describe("the organization's record", () => {
     const card = (await screen.findByRole("heading", { name: /Contact information/ })).closest("section")!;
     await user.click(within(card).getByRole("button", { name: "Edit" }));
     const form = await dialog("Edit contact information");
+    const hours = within(form).getByRole("group", { name: "Business hours" });
+    expect(hours).toHaveAccessibleDescription("Up to four periods a day. A period that ends at or before it starts runs past midnight.");
     await user.click(within(form).getByRole("button", { name: "Save" }));
     expect(await within(form).findByText("Periods of opening overlap. Make each end before the next begins.")).toBeInTheDocument();
+    // The problem is read out with the hours.
+    expect(hours).toHaveAccessibleDescription("Periods of opening overlap. Make each end before the next begins.");
   });
 
   it("lists contacts a page at a time and adds one to a site", async () => {
@@ -113,6 +161,7 @@ describe("the organization's record", () => {
         added = contact("c9", body.name, { siteId: body.siteId, siteName: "Head office" });
         return { status: 201, body: added };
       },
+      "PATCH /contacts/:id": (r) => ok({ ...first[0]!, ...(r.body as object) }),
       "GET /audit": ok({ items: [] }),
     });
     renderApp("/organizations/o1?tab=contacts");
@@ -149,6 +198,15 @@ describe("the organization's record", () => {
       priority: "secondary",
       emergency: true,
     });
+
+    // An edit sends what it changed and nothing else, so that it leaves alone what others changed since.
+    await user.click(screen.getByRole("button", { name: "Edit Pat Example" }));
+    const edit = await dialog("Edit contact");
+    await user.clear(within(edit).getByLabelText("Mobile phone"));
+    await user.type(within(edit).getByLabelText("Mobile phone"), "555 0123");
+    await user.click(within(edit).getByRole("button", { name: "Save changes" }));
+    expect(await screen.findByText("Contact updated.")).toBeInTheDocument();
+    expect(server.call("PATCH /contacts/:id").body).toEqual({ mobilePhone: "555 0123" });
   });
 
   it("deletes an organization's contacts with it only once their count is confirmed", async () => {
@@ -157,6 +215,7 @@ describe("the organization's record", () => {
       ...baseRoutes(sessionView()),
       "GET /organizations/:id": ok(NORTHWIND),
       "GET /organizations/:id/sites": ok({ items: [] }),
+      "GET /organizations/:id/contacts": ok({ items: [] }),
       "DELETE /organizations/:id": (r) =>
         r.query.get("contacts") === "2"
           ? noContent
@@ -276,6 +335,13 @@ describe("the site's record", () => {
     renderApp("/sites/s1");
     const list = await screen.findByRole("list", { name: "Places at Head office" });
     expect(within(list).getAllByRole("listitem")).toHaveLength(4);
+    // Each place is a list item in the list of the place it is inside, so a screen reader says how deep it is.
+    const nesting = (name: string) => {
+      let lists = 0;
+      for (let el = within(list).getByText(name).parentElement; el && el !== list.parentElement; el = el.parentElement) if (el.tagName === "UL") lists++;
+      return lists;
+    };
+    expect(["Main", "Ground", "Server room", "Rack A"].map(nesting)).toEqual([1, 2, 3, 4]);
     // Nothing goes inside a rack four deep.
     expect(within(list).queryByRole("button", { name: "Add a place inside Rack A" })).not.toBeInTheDocument();
 
@@ -291,12 +357,18 @@ describe("the site's record", () => {
     // Moving Ground, three levels tall, leaves only the site itself and Main as parents.
     await user.click(screen.getByRole("button", { name: "Edit Ground" }));
     form = await dialog("Edit place");
-    const options = within(within(form).getByLabelText("Inside")).getAllByRole("option").map((o) => o.textContent?.trim());
-    expect(options).toEqual(["The site itself", "Main (Building)"]);
+    const options = () => within(within(form).getByLabelText("Inside")).getAllByRole("option").map((o) => o.textContent);
+    expect(options()).toEqual(["The site itself", "Main (Building)"]);
     await user.selectOptions(within(form).getByLabelText("Inside"), "");
     await user.click(within(form).getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(server.callsTo("PATCH /places/:id")).toHaveLength(1));
-    expect(server.call("PATCH /places/:id").body).toEqual({ parentId: null, kind: "floor", name: "Ground" });
+    // Only the move is sent: the kind and the name are as they were.
+    expect(server.call("PATCH /places/:id").body).toEqual({ parentId: null });
+
+    // Each parent is named by its path, so that two rooms of one name on different floors can be told apart.
+    await user.click(screen.getByRole("button", { name: "Edit First" }));
+    form = await dialog("Edit place");
+    expect(options()).toEqual(["The site itself", "Main (Building)", "Main › Ground (Floor)", "Main › Ground › Server room (Room)"]);
   });
 
   it("says why a place with places inside cannot be deleted", async () => {

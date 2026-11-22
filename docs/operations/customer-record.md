@@ -9,17 +9,29 @@ pages, search and the asset record come in later releases.
 
 ## The organization
 
-An organization's **Overview** shows **Contact information**: the main
-phone, email and website, the business hours with *Open now* or *Closed
-now*, and after-hours instructions. **Edit** (with `doc.manage` at the
-organization) changes them.
+An organization's **Overview** shows:
+
+* **Contact information**: the main phone, email and website, the
+  business hours with *Open now* or *Closed now*, and after-hours
+  instructions. **Edit** (with `doc.manage` at the organization) changes
+  them.
+* **Primary and emergency contacts**: the organization's primary contact,
+  each site's, and every emergency contact, with how to reach them; the
+  first 50, and the rest on the **Contacts** tab.
+* **Sites**, each with its address and *Open now* or *Closed now*.
+
+The fields:
 
 * **Phone numbers** are kept as typed, up to 50 characters, and need at
   least one digit. EasyRMM does not reformat or dial them; the console
   links them for a phone or softphone on the technician's computer.
-* **Email** is one address, up to 254 characters.
+* **Email** is one plain address, up to 254 characters: before the `@`,
+  letters, digits and `. _ + - '` only; after it, a domain such as
+  `example.com`. Characters the standard allows besides, such as `?`, `&`
+  and `=`, are refused, because in a `mailto:` link they start headers
+  such as `bcc`.
 * **Website** is an `https` or `http` address; `example.com` is saved as
-  `https://example.com`.
+  `https://example.com`. The console links nothing else.
 * **After-hours instructions** are plain text, up to 2,000 characters.
 
 ## Business hours
@@ -77,6 +89,10 @@ mobile phone, and a note of up to 2,000 characters.
   one to call in an emergency.
 * At most 1,000 contacts for the organization itself and 1,000 for each
   site.
+* **Two people editing at once.** An edit sends only the fields it
+  changed, and the server applies them to the contact as it is when the
+  edit arrives: one person changing a phone number does not undo another
+  making a different contact primary.
 
 ## Places
 
@@ -88,8 +104,10 @@ places.
 
 **Edit** on a place moves it, with the places inside it, as long as none
 ends up more than four deep; a place cannot go inside itself or a place
-inside it. A place with places inside it is deleted only once they have
-been moved or deleted.
+inside it. The **Inside** list names each place by where it is, such as
+*Main › Floor 1 (Floor)*, and a move made by someone else in the meantime
+is built on, not undone. A place with places inside it is deleted only
+once they have been moved or deleted.
 
 ## Who can see and change what
 
@@ -120,7 +138,7 @@ Through the API, the confirmation is the counts as query parameters:
 `DELETE /api/v1/sites/{id}?contacts=2&places=1`. Without them, a site or
 organization holding any answers `409 documentation_exists`, with the
 counts in the error's `counts`; with counts that no longer hold, `409
-documentation_changed`. A site with device groups is refused before
+documentation_changed`. A site with devices is refused before
 either, as before.
 
 ## Audit
@@ -129,16 +147,22 @@ Every change is recorded: *Changed contact information*, *Changed address
 and hours*, *Added contact*, *Changed contact*, *Deleted contact*, *Added
 place*, *Changed place* and *Deleted place*, under the **Contacts** and
 **Places** areas of the audit log. The records name the fields that
-changed, not their values, and not a contact's name: the audit log is kept
-for `EASYRMM_AUDIT_RETENTION` and cannot be edited, so personal data is
-kept out of it.
+changed, not their values. A contact's record also keeps the contact's
+priority (primary, secondary or none), whether they are an emergency
+contact, and, when they became the primary contact, which contact was
+primary before; it never keeps their name, job title, email address,
+phone numbers or note. The audit log is kept for
+`EASYRMM_AUDIT_RETENTION` and cannot be edited, so personal data is kept
+out of it.
 
 ## Export and backup
 
 The **Contacts** report under **Reports** lists every contact you can see,
 with its organization and site, and downloads as CSV. Each download is
-recorded in the audit log. The record is in the database, so the database
-dump in [Backup and restore](backup-restore.md) holds it.
+recorded in the audit log, with `searched` when it was searched but not
+the search itself, which may be a name or an email address. The record is
+in the database, so the database dump in
+[Backup and restore](backup-restore.md) holds it.
 
 ## API
 
@@ -146,7 +170,7 @@ dump in [Backup and restore](backup-restore.md) holds it.
 |---|---|
 | `PUT /api/v1/organizations/{id}/details` | `doc.manage` at the organization |
 | `PUT /api/v1/sites/{id}/details` | `doc.manage` at the site |
-| `GET /api/v1/organizations/{id}/contacts` (`siteId`, `limit` 1–1,000 (200 by default), `after`) | `doc.view`; rows the caller cannot see are left out |
+| `GET /api/v1/organizations/{id}/contacts` (`siteId`, `key=true` for the primary and emergency contacts only, `limit` 1–1,000 (200 by default), `after`) | `doc.view`; rows the caller cannot see are left out |
 | `POST /api/v1/organizations/{id}/contacts` (`siteId` in the body, or none for the organization) | `doc.manage` where the contact goes |
 | `PATCH`, `DELETE /api/v1/contacts/{id}` | `doc.manage` where the contact is |
 | `GET`, `POST /api/v1/sites/{id}/places` | `doc.view`, `doc.manage` at the site |
@@ -155,3 +179,10 @@ dump in [Backup and restore](backup-restore.md) holds it.
 The organization's and site's answers carry the record's fields, empty for
 a caller without `doc.view`, with `openNow` (null without hours) and
 `canManageDocumentation`.
+
+`PATCH` changes the fields the body names and leaves the others. EasyRMM
+takes its changes to one organization's or site's record one at a time.
+A change that meets one written to the database directly, outside
+EasyRMM, such as a second primary contact or a removed parent place,
+answers `409 primary_changed` or `409 places_changed`: read the record
+again and retry.

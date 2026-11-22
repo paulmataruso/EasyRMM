@@ -67,10 +67,19 @@ so; narrow it with the filters.
 * Numbers are in the unit the header names: GiB, %, days, hours.
 * A cell that would start with `=`, `+`, `-` or `@` begins with an
   apostrophe, so that a name chosen on a managed computer cannot run as a
-  formula when the file is opened.
+  formula when the file is opened. That includes a phone number written
+  with its country code, such as `'+1 555 0100`: phone numbers are free
+  text, so one can hold a formula too, and a spreadsheet would read even a
+  real one as a sum or drop its `+`. Some spreadsheets show the
+  apostrophe; remove it before dialling or importing the number elsewhere.
 
 Each download is recorded in the audit log as *Downloaded report*, with the
-report, its filters and the number of rows.
+report, its filters and the number of rows. The search is recorded as
+`q` for **Installed software**, where it is a program's name. Where it can
+be a person's name or email address (**Device inventory**, whose names are
+often their users', the two patch reports, and **Contacts**), the record
+says only that there was one (`searched`), since the audit log cannot be
+edited.
 
 The console reads them from
 `GET /api/v1/reports/{devices|software|health|alerts|patch-compliance|patch-installations}`

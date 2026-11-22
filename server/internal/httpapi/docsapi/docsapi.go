@@ -5,6 +5,7 @@ package docsapi
 import (
 	"net/http"
 
+	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/docs"
 	"github.com/paulmataruso/easyrmm/server/internal/httpapi"
 )
@@ -44,8 +45,16 @@ func (a *API) listContacts(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	var key bool
+	switch r.URL.Query().Get("key") {
+	case "", "false":
+	case "true":
+		key = true
+	default:
+		return apperr.Invalid("key", "Use true or false.")
+	}
 	items, next, err := a.svc.ListContacts(r.Context(), httpapi.Caller(r), orgID,
-		docs.ContactQuery{SiteID: siteID, After: r.URL.Query().Get("after"), Limit: limit})
+		docs.ContactQuery{SiteID: siteID, Key: key, After: r.URL.Query().Get("after"), Limit: limit})
 	if err != nil {
 		return err
 	}

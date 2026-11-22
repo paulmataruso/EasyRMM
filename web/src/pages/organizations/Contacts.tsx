@@ -9,6 +9,7 @@ import type { Contact, ContactInput, ContactPriority, Site } from "../../api/typ
 import { ConfirmDialog, Dialog } from "../../components/Dialog";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, Card, EmptyState, ErrorState, IconButton, InlineError, SelectField, Spinner, TableWrap, TextareaField, TextField } from "../../components/ui";
+import { mailtoHref } from "../../lib/links";
 
 const PRIORITY_LABELS: Record<ContactPriority, string> = { primary: "Primary", secondary: "Secondary", none: "None" };
 
@@ -26,8 +27,61 @@ function ContactBadges({ contact: c }: { contact: Contact }) {
   );
 }
 
+/** How to reach a contact: the email address and the phone numbers, one to a line. */
+function Reach({ contact: c }: { contact: Contact }) {
+  return (
+    <>
+      {c.email && (
+        <a href={mailtoHref(c.email)} className="block break-all text-accent hover:underline">
+          {c.email}
+        </a>
+      )}
+      {c.officePhone && <span className="block whitespace-nowrap">Office: {c.officePhone}</span>}
+      {c.mobilePhone && <span className="block whitespace-nowrap">Mobile: {c.mobilePhone}</span>}
+      {!c.email && !c.officePhone && !c.mobilePhone && <span className="text-muted">—</span>}
+    </>
+  );
+}
+
+/** The most key contacts the overview shows. */
+const KEY_CONTACTS = 50;
+
+/**
+ * The primary contacts, the organization's and each site's, and the emergency ones, for the organization's overview
+ * (ADR-0066). The rest are on the Contacts tab.
+ */
+export function KeyContactsCard({ organizationId, className }: { organizationId: string; className?: string }) {
+  const list = useList<Contact>(`/organizations/${organizationId}/contacts`, { key: true, limit: KEY_CONTACTS });
+  return (
+    <Card title="Primary and emergency contacts" className={className}>
+      {list.isPending ? (
+        <Spinner />
+      ) : list.isError ? (
+        <ErrorState error={list.error} onRetry={() => void list.refetch()} compact />
+      ) : list.items.length === 0 ? (
+        <p className="text-sm text-muted">No primary or emergency contact yet.</p>
+      ) : (
+        <ul className="flex flex-col gap-3" aria-label="Primary and emergency contacts">
+          {list.items.map((c) => (
+            <li key={c.id} className="text-sm">
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="font-medium">{c.name}</span>
+                <span className="text-xs text-muted">{levelName(c)}</span>
+                <ContactBadges contact={c} />
+              </p>
+              {c.jobTitle && <p className="text-xs text-muted">{c.jobTitle}</p>}
+              <Reach contact={c} />
+            </li>
+          ))}
+        </ul>
+      )}
+      {list.next && <p className="mt-3 text-xs text-muted">The first {KEY_CONTACTS} are shown. The Contacts tab lists them all.</p>}
+    </Card>
+  );
+}
+
 /** A list of contacts, with editing for those the caller may manage. */
-export function ContactsTable({ items, showLevel, onEdit, onDelete }: {
+function ContactsTable({ items, showLevel, onEdit, onDelete }: {
   items: Contact[];
   showLevel: boolean;
   onEdit: (c: Contact) => void;
@@ -60,14 +114,7 @@ export function ContactsTable({ items, showLevel, onEdit, onDelete }: {
               </td>
               {showLevel && <td className="hidden whitespace-nowrap sm:table-cell">{levelName(c)}</td>}
               <td className="text-sm">
-                {c.email && (
-                  <a href={`mailto:${c.email}`} className="block break-all text-accent hover:underline">
-                    {c.email}
-                  </a>
-                )}
-                {c.officePhone && <span className="block whitespace-nowrap">Office: {c.officePhone}</span>}
-                {c.mobilePhone && <span className="block whitespace-nowrap">Mobile: {c.mobilePhone}</span>}
-                {!c.email && !c.officePhone && !c.mobilePhone && <span className="text-muted">—</span>}
+                <Reach contact={c} />
               </td>
               <td className="hidden max-w-xs md:table-cell">
                 <span className="line-clamp-3 whitespace-pre-wrap text-muted">{c.note || "—"}</span>
@@ -196,6 +243,18 @@ function blank(siteId: string | null): ContactInput {
   return { siteId, name: "", jobTitle: "", email: "", officePhone: "", mobilePhone: "", note: "", priority: "none", emergency: false };
 }
 
+const EDITABLE = ["name", "jobTitle", "email", "officePhone", "mobilePhone", "note", "priority", "emergency"] as const;
+
+/**
+ * What an edit changed, and nothing else: a field the form left alone is not sent, so that it cannot undo what
+ * someone else changed since the form was opened, such as making another contact primary.
+ */
+function contactChanges(before: Contact, form: ContactInput): Partial<ContactInput> {
+  const out: Partial<ContactInput> = {};
+  for (const k of EDITABLE) if (form[k] !== before[k]) Object.assign(out, { [k]: form[k] });
+  return out;
+}
+
 function ContactDialog({ open, onClose, organizationId, contact, levels }: {
   open: boolean;
   onClose: () => void;
@@ -215,7 +274,8 @@ function ContactDialog({ open, onClose, organizationId, contact, levels }: {
     } else setForm(blank(firstLevel));
   }, [open, contact, firstLevel]);
   const save = useApiMutation(
-    (req: ContactInput) => (contact ? api.patch<Contact>(`/contacts/${contact.id}`, req) : api.post<Contact>(`/organizations/${organizationId}/contacts`, req)),
+    (req: ContactInput) =>
+      contact ? api.patch<Contact>(`/contacts/${contact.id}`, contactChanges(contact, req)) : api.post<Contact>(`/organizations/${organizationId}/contacts`, req),
     {
       invalidate: [`/organizations/${organizationId}/contacts`, "/audit"],
       onSuccess: (c) => {

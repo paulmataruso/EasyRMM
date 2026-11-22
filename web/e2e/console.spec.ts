@@ -248,8 +248,11 @@ test("the customer record: contact information, hours, an address, places and co
   await expect(page.getByRole("row", { name: /Lee Example/ })).toContainText("Emergency");
   await expect(page.getByRole("row", { name: /Pat Example/ })).toContainText("Secondary");
 
-  // The clinic's address, its places, and the organization's hours in its own time zone.
+  // The overview names the primary and emergency contacts: Pat, now secondary, is on the Contacts tab only.
   await page.getByRole("tab", { name: "Overview" }).click();
+  await expect(card(/Primary and emergency contacts/).getByRole("listitem")).toHaveText([/Lee Example.*Primary.*Emergency/, /Kim Example.*Downtown clinic/]);
+
+  // The clinic's address, its places, and the organization's hours in its own time zone.
   await page.getByRole("main").getByRole("link", { name: "Downtown clinic" }).click();
   await card(/Address and hours/).getByRole("button", { name: "Edit" }).click();
   const address = page.getByRole("dialog", { name: "Edit address and hours" });
@@ -273,8 +276,13 @@ test("the customer record: contact information, hours, an address, places and co
   const places = page.getByRole("list", { name: "Places at Downtown clinic" });
   await expect(places.getByRole("listitem")).toHaveText([/Main building/, /Comms room/]);
 
-  // A site holding documentation is deleted only once what goes with it is confirmed.
+  // Back on the organization, the clinic shows its address and whether it is open.
   await page.getByRole("navigation", { name: "Breadcrumb" }).getByRole("link", { name: "Contoso Dental Group" }).click();
+  const clinic = page.getByRole("row", { name: /Downtown clinic/ });
+  await expect(clinic).toContainText("1 Example Road, Springfield, ");
+  await expect(clinic.getByText(/^(Open|Closed) now$/)).toBeVisible();
+
+  // A site holding documentation is deleted only once what goes with it is confirmed.
   await page.getByRole("button", { name: "Add site" }).click();
   const popUp = page.getByRole("dialog", { name: "New site" });
   await popUp.getByLabel(/^Name/).fill("Pop-up clinic");

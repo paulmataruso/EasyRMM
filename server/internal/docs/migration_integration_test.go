@@ -93,7 +93,18 @@ func TestCustomerRecordMigration(t *testing.T) {
 		}
 	}
 
-	if _, err := provider.DownTo(ctx, 31); err != nil {
+	// Down to the migration before 00036, whichever that is once the
+	// migrations numbered before it have merged.
+	var before int64
+	for _, src := range provider.ListSources() {
+		if src.Version < 36 {
+			before = max(before, src.Version)
+		}
+	}
+	if before == 0 {
+		t.Fatal("no migration before 00036")
+	}
+	if _, err := provider.DownTo(ctx, before); err != nil {
 		t.Fatal(err)
 	}
 	var n int

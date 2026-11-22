@@ -490,17 +490,44 @@ func TestContactsReport(t *testing.T) {
 	}
 
 	// Exporting is recorded once per organization, without a contact's
-	// name, address or number.
+	// name, address or number, nor the search, which here is an email
+	// address (M1): only that there was one.
 	if _, err := f.svc.Export(f.ctx, admin, "contacts", Query{Search: "example"}); err != nil {
 		t.Fatal(err)
 	}
 	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'report.export' AND target_id = 'contacts'`); n != "2" {
 		t.Errorf("%s export entries, want one per organization", n)
 	}
+	if _, err := f.svc.Export(f.ctx, admin, "contacts", Query{Search: "zoe@example.com"}); err != nil {
+		t.Fatal(err)
+	}
 	details := f.str(`SELECT string_agg(details::text, ' ') FROM audit_log WHERE action = 'report.export' AND target_id = 'contacts'`)
-	for _, leak := range []string{"Zoe", "zoe@", "555", "Calls back"} {
+	for _, leak := range []string{"Zoe", "zoe", "555", "Calls back", `"q"`, "example"} {
 		if strings.Contains(details, leak) {
 			t.Errorf("the export's audit entry holds %q: %s", leak, details)
+		}
+	}
+	if n := f.str(`SELECT count(*)::text FROM audit_log WHERE action = 'report.export' AND target_id = 'contacts' AND details->>'searched' = 'true'`); n != "3" {
+		t.Errorf("%s export entries say a search was used, want 3", n)
+	}
+}
+
+// TestDeviceSearchStaysOutOfTheAuditLog checks that a device report's
+// search, often a person's name in a device's, is not recorded word for
+// word (M1), while a search of package names still is.
+func TestDeviceSearchStaysOutOfTheAuditLog(t *testing.T) {
+	f := newFixture(t)
+	admin := f.user("admin@example.com", rbac.Assignment{Role: rbac.RoleSuperAdmin})
+	for name, private := range map[string]bool{"devices": true, "software": false, "contacts": true} {
+		if _, err := f.svc.Export(f.ctx, admin, name, Query{Search: "jane.doe"}); err != nil {
+			t.Fatal(err)
+		}
+		details := f.str(`SELECT details::text FROM audit_log WHERE action = 'report.export' AND target_id = $1`, name)
+		if strings.Contains(details, "jane.doe") == private {
+			t.Errorf("%s: %s", name, details)
+		}
+		if strings.Contains(details, `"searched": true`) != private {
+			t.Errorf("%s does not say a search was used: %s", name, details)
 		}
 	}
 }

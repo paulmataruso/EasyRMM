@@ -13,7 +13,7 @@ import { useRowKeys } from "../../lib/rowKeys";
 import { useUrlState } from "../../lib/urlState";
 import { PolicyPanel } from "../patching/PolicyEditor";
 import { TagsField } from "../patching/Tags";
-import { ContactsPanel } from "./Contacts";
+import { ContactsPanel, KeyContactsCard } from "./Contacts";
 import { addressLines, confirmedCounts, OpenNowBadge, OrganizationDetailsDialog, OrganizationRecord } from "./CustomerRecord";
 import { OrganizationFormDialog } from "./OrganizationsPage";
 import { SiteFormDialog } from "./SiteFormDialog";
@@ -169,7 +169,16 @@ export function OrganizationDetailPage() {
                             >
                               {s.name}
                             </Link>
-                            {addressLines(s).length > 0 && <p className="max-w-52 truncate text-xs text-muted sm:max-w-md">{addressLines(s).join(", ")}</p>}
+                            {s.openNow !== null && (
+                              <span className="ml-2 align-middle">
+                                <OpenNowBadge openNow={s.openNow} />
+                              </span>
+                            )}
+                            {addressLines(s).length > 0 && (
+                              <address className="max-w-52 truncate text-xs not-italic text-muted sm:max-w-md" title={addressLines(s).join(", ")}>
+                                {addressLines(s).join(", ")}
+                              </address>
+                            )}
                           </td>
                           <td className="hidden whitespace-nowrap sm:table-cell">{s.timezone}</td>
                           <td className="text-right tabular-nums">{s.deviceGroupCount}</td>
@@ -204,6 +213,7 @@ export function OrganizationDetailPage() {
               <OrganizationRecord organization={o} />
             </Card>
           )}
+          {documented && <KeyContactsCard organizationId={o.id} />}
           <Card title="Details">
             <KeyValueList
               narrow

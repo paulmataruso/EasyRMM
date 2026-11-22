@@ -16,13 +16,9 @@ export const WEEKDAYS: readonly { day: Weekday; short: string; long: string }[] 
 /** The most periods the server keeps for one day. */
 export const MAX_PERIODS_PER_DAY = 4;
 
-export function noHours(): BusinessHours {
-  return { monday: [], tuesday: [], wednesday: [], thursday: [], friday: [], saturday: [], sunday: [] };
-}
-
 /** A copy safe to edit; null becomes a week with nothing open. */
 export function copyHours(hours: BusinessHours | null): BusinessHours {
-  const out = noHours();
+  const out: BusinessHours = { monday: [], tuesday: [], wednesday: [], thursday: [], friday: [], saturday: [], sunday: [] };
   for (const { day } of WEEKDAYS) out[day] = (hours?.[day] ?? []).map((p) => ({ ...p }));
   return out;
 }

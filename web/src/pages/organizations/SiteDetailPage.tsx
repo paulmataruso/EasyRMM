@@ -264,7 +264,7 @@ export function SiteDetailPage() {
         confirmText={s.name}
       >
         <p>
-          This permanently deletes <strong>{s.name}</strong> from {s.organizationName}. A site must have no device groups before it can be
+          This permanently deletes <strong>{s.name}</strong> from {s.organizationName}. A site must have no devices before it can be
           deleted. Its contacts and places are deleted with it once you confirm them.
         </p>
       </ConfirmDialog>

@@ -2,7 +2,33 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { COUNTRY_CODES, countryName, countryOptions } from "./countries";
-import { copyHours, hoursOrNull, noHours, summarizeHours } from "./hours";
+import { copyHours, hoursOrNull, summarizeHours } from "./hours";
+import { mailtoHref, telHref, websiteHref } from "./links";
+
+const noHours = () => copyHours(null);
+
+describe("links", () => {
+  it("encodes an address in a mailto: link so that it cannot add headers", () => {
+    expect(mailtoHref("help@example.com")).toBe("mailto:help@example.com");
+    expect(mailtoHref("o'brien+it@example.com")).toBe("mailto:o'brien%2Bit@example.com");
+    expect(mailtoHref("x?bcc=evil@example.com")).toBe("mailto:x%3Fbcc%3Devil@example.com");
+    expect(mailtoHref("a@example.com&cc=evil@example.com")).toBe("mailto:a%40example.com%26cc%3Devil@example.com");
+    expect(mailtoHref("x?bcc=evil")).toBe("mailto:x%3Fbcc%3Devil");
+  });
+
+  it("dials the digits", () => {
+    expect(telHref("+44 20 5550 0100")).toBe("tel:+442055500100");
+    expect(telHref("(555) 0100 ext. 12")).toBe("tel:555010012");
+  });
+
+  it("links a website only over http or https", () => {
+    expect(websiteHref("https://example.com/support")).toBe("https://example.com/support");
+    expect(websiteHref("http://example.com")).toBe("http://example.com/");
+    for (const bad of ["javascript:alert(1)", "JavaScript:alert(1)", "data:text/html,x", "ftp://example.com", "example.com", ""]) {
+      expect(websiteHref(bad)).toBeNull();
+    }
+  });
+});
 
 describe("countries", () => {
   it("offers exactly the codes the server accepts", () => {

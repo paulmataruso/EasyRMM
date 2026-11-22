@@ -26,8 +26,9 @@ func likePattern(s string) string {
 // --- Device inventory --------------------------------------------------------
 
 var devicesReport = definition{
-	title: "Device inventory",
-	perm:  rbac.PermDeviceView,
+	title:         "Device inventory",
+	perm:          rbac.PermDeviceView,
+	privateSearch: true,
 	columns: []Column{
 		{"organization", "Organization", TypeText},
 		{"site", "Site", TypeText},
@@ -342,8 +343,9 @@ var contactPriorities = map[string]string{"primary": "Primary", "secondary": "Se
 // organization's own, with no site, then each site's. They are personal
 // data, and exporting them is recorded like every export.
 var contactsReport = definition{
-	title: "Contacts",
-	perm:  rbac.PermDocView,
+	title:         "Contacts",
+	perm:          rbac.PermDocView,
+	privateSearch: true,
 	columns: []Column{
 		{"organization", "Organization", TypeText},
 		{"site", "Site", TypeText},

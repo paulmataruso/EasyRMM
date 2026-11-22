@@ -9,6 +9,24 @@ import (
 
 func iv(start, end string) Interval { return Interval{Start: start, End: end} }
 
+// TestZone checks that a time zone is read from the system's database once
+// and kept (L8): a list of organizations asks for each one's.
+func TestZone(t *testing.T) {
+	first := Zone("Europe/London")
+	if first.String() != "Europe/London" {
+		t.Fatalf("Zone = %v", first)
+	}
+	if again := Zone("Europe/London"); again != first {
+		t.Error("the zone was loaded again")
+	}
+	if Zone("Mars/Olympus_Mons") != time.UTC {
+		t.Error("an unknown zone is not UTC")
+	}
+	if _, kept := zones.Load("Mars/Olympus_Mons"); kept {
+		t.Error("an unknown zone was kept")
+	}
+}
+
 func TestHoursNormalize(t *testing.T) {
 	h := Hours{Monday: []Interval{iv("13:00", "17:00"), iv("08:30", "12:00")}, Friday: []Interval{iv("22:00", "02:00")}}
 	open, problem := h.Normalize()

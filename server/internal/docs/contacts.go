@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,6 +15,7 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/access"
 	"github.com/paulmataruso/easyrmm/server/internal/apperr"
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
+	"github.com/paulmataruso/easyrmm/server/internal/database"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 )
 
@@ -181,6 +183,9 @@ type ContactQuery struct {
 	// SiteID limits the list to one site's contacts; uuid.Nil lists the
 	// organization's own and every site's.
 	SiteID uuid.UUID
+	// Key keeps the primary and the emergency contacts only, for the
+	// organization's overview.
+	Key bool
 	// After is the Next of the page before; empty for the first.
 	After string
 	// Limit is the most contacts a page holds.
@@ -233,8 +238,9 @@ func (s *Service) ListContacts(ctx context.Context, c access.Caller, orgID uuid.
 		rows, err := tx.Query(ctx, `SELECT `+contactColumns+`, `+contactOrder+contactFrom+`
 			WHERE c.organization_id = $1 AND ($2::uuid IS NULL OR c.site_id = $2)
 			  AND ($3 = '' OR (`+contactOrder+`) > ($4::boolean, $5::text, $6::uuid, $7::int, $8::text, $9::uuid))
+			  AND (NOT $11 OR c.priority = 'primary' OR c.emergency)
 			ORDER BY `+contactOrder+` LIMIT $10`,
-			orgID, site, q.After, after.AtSite, after.SiteName, after.SiteID, after.Rank, after.Name, after.ID, q.Limit+1)
+			orgID, site, q.After, after.AtSite, after.SiteName, after.SiteID, after.Rank, after.Name, after.ID, q.Limit+1, q.Key)
 		if err != nil {
 			return err
 		}
@@ -384,23 +390,13 @@ func (s *Service) CreateContact(ctx context.Context, c access.Caller, orgID uuid
 		return s.audit.Write(ctx, tx, contactEvent(c, "contact.create", x, contactDetails(set, f, demoted)))
 	})
 	if err != nil {
-		return nil, err
+		return nil, mapContactWriteError(err)
 	}
 	return s.getContact(ctx, c, id)
 }
 
-// UpdateContact changes a contact. Making it the primary contact makes the
-// one before it secondary. A change that changes nothing is not recorded.
-func (s *Service) UpdateContact(ctx context.Context, c access.Caller, id uuid.UUID, p ContactPatch) (*Contact, error) {
-	cur, err := s.getContact(ctx, c, id)
-	if err != nil {
-		return nil, err
-	}
-	if err := c.Require(rbac.PermDocManage, level(cur.OrganizationID, cur.SiteID)); err != nil {
-		return nil, err
-	}
-	before := cur.fields()
-	f := before
+// apply sets the fields a patch names; the others keep their values.
+func (p ContactPatch) apply(f contactFields) contactFields {
 	for _, set := range []struct {
 		from *string
 		to   *string
@@ -416,32 +412,67 @@ func (s *Service) UpdateContact(ctx context.Context, c access.Caller, id uuid.UU
 		f.emergency = *p.Emergency
 	}
 	f.clean()
-	if err := f.check(); err != nil {
+	return f
+}
+
+// errPrimaryChanged answers a write that would make a second primary
+// contact. The lock on the level rules that out among EasyRMM's own
+// writes; only a write made in the database directly can cause it.
+var errPrimaryChanged = apperr.Conflict("primary_changed", "Another contact became the primary one at the same time. Reload and try again.")
+
+// mapContactWriteError turns the database's refusal of a second primary
+// contact into a conflict.
+func mapContactWriteError(err error) error {
+	if database.IsUniqueViolation(err) && strings.HasPrefix(database.ConstraintName(err), "contacts_primary_") {
+		return errPrimaryChanged
+	}
+	return err
+}
+
+// UpdateContact changes the fields a patch names. Making the contact the
+// primary one makes the one before it secondary. The patch is applied to
+// the contact as it is once its level is locked, so a change made since the
+// caller read it is kept, not overwritten. A change that changes nothing is
+// not recorded.
+func (s *Service) UpdateContact(ctx context.Context, c access.Caller, id uuid.UUID, p ContactPatch) (*Contact, error) {
+	cur, err := s.getContact(ctx, c, id)
+	if err != nil {
 		return nil, err
 	}
-	fields := f.changed(before)
-	if len(fields) == 0 {
-		return cur, nil
+	if err := c.Require(rbac.PermDocManage, level(cur.OrganizationID, cur.SiteID)); err != nil {
+		return nil, err
+	}
+	// Each field is checked on its own, so a patch that passes here passes
+	// on the contact as it is once locked; a refusal takes no lock.
+	checked := p.apply(cur.fields())
+	if err := checked.check(); err != nil {
+		return nil, err
 	}
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		// The level is the contact's for good: a contact never moves.
 		if err := lockLevel(ctx, tx, cur.OrganizationID, cur.SiteID); err != nil {
 			return err
 		}
+		locked, err := scanContact(tx.QueryRow(ctx, `SELECT `+contactColumns+contactFrom+` WHERE c.id = $1 FOR UPDATE OF c`, id))
+		if err != nil {
+			return err
+		}
+		before := locked.fields()
+		f := p.apply(before)
+		fields := f.changed(before)
+		if len(fields) == 0 {
+			return nil
+		}
 		var demoted *uuid.UUID
 		if f.priority == PriorityPrimary && before.priority != PriorityPrimary {
-			var err error
 			if demoted, err = demotePrimary(ctx, tx, cur.OrganizationID, cur.SiteID, id); err != nil {
 				return err
 			}
 		}
-		tag, err := tx.Exec(ctx, `UPDATE contacts SET name = $2, job_title = $3, email = $4, office_phone = $5, mobile_phone = $6,
+		if _, err := tx.Exec(ctx, `UPDATE contacts SET name = $2, job_title = $3, email = $4, office_phone = $5, mobile_phone = $6,
 			note = $7, priority = $8, emergency = $9 WHERE id = $1`,
-			id, f.name, f.jobTitle, f.email, f.officePhone, f.mobilePhone, f.note, f.priority, f.emergency)
-		if err != nil {
+			id, f.name, f.jobTitle, f.email, f.officePhone, f.mobilePhone, f.note, f.priority, f.emergency); err != nil {
 			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return pgx.ErrNoRows
 		}
 		return s.audit.Write(ctx, tx, contactEvent(c, "contact.update", cur, contactDetails(fields, f, demoted)))
 	})
@@ -449,7 +480,7 @@ func (s *Service) UpdateContact(ctx context.Context, c access.Caller, id uuid.UU
 		return nil, apperr.NotFound()
 	}
 	if err != nil {
-		return nil, err
+		return nil, mapContactWriteError(err)
 	}
 	return s.getContact(ctx, c, id)
 }

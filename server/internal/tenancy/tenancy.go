@@ -262,11 +262,7 @@ func openNow(h *docs.Hours, tz string) *bool {
 	if h == nil {
 		return nil
 	}
-	loc, err := time.LoadLocation(tz)
-	if err != nil {
-		loc = time.UTC
-	}
-	open := h.OpenAt(time.Now(), loc)
+	open := h.OpenAt(time.Now(), docs.Zone(tz))
 	return &open
 }
 

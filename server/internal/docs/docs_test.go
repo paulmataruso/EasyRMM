@@ -32,7 +32,14 @@ func TestValidators(t *testing.T) {
 		"": true, "help@example.com": true, "Ann.Example+it@sub.example.com": true,
 		"help@example": false, "Ann <ann@example.com>": false, "a@example.com, b@example.com": false,
 		"not an address": false, "@example.com": false, "ann@": false,
-		strings.Repeat("a", 243) + "@example.com": false, strings.Repeat("a", 242) + "@example.com": true,
+		"o'brien@example.com": true, "zoë@exämple.com": true, "a-b_c@mail-1.example.com": true,
+		strings.Repeat("a", 64) + "@example.com": true, strings.Repeat("a", 65) + "@example.com": false,
+		"a@" + strings.Repeat("b", 249) + ".com": false, "a@" + strings.Repeat("b", 248) + ".com": true,
+		// What a mailto: link would read as more than an address (L2).
+		"x?bcc=evil@example.com": false, "a&b@example.com": false, "a=b@example.com": false, "a%40b@example.com": false,
+		"a@example.com?subject=x": false, "a@ex_ample.com": false, "a@b@example.com": false,
+		".a@example.com": false, "a.@example.com": false, "a..b@example.com": false,
+		"a@-example.com": false, "a@example-.com": false, "a@example..com": false, "a b@example.com": false,
 	} {
 		if got := ValidEmail(s); got != want {
 			t.Errorf("ValidEmail(%q) = %v", s, got)

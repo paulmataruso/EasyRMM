@@ -98,11 +98,18 @@ func checkPlace(kind, name string) error {
 // mapPlaceWriteError turns the database's refusals into what people can
 // act on.
 func mapPlaceWriteError(err error) error {
-	if database.IsUniqueViolation(err) && database.ConstraintName(err) == "site_places_name_key" {
+	switch {
+	case database.IsUniqueViolation(err) && database.ConstraintName(err) == "site_places_name_key":
 		return apperr.Invalid("name", "There is already a place with this name here.")
+	case database.IsForeignKeyViolation(err) && database.ConstraintName(err) == "site_places_site_id_parent_id_parent_depth_fkey":
+		// A parent went, or moved, under this write: only a writer that
+		// skips the lock on the site, such as a restore, can do that.
+		return errPlacesChanged
 	}
 	return err
 }
+
+var errPlacesChanged = apperr.Conflict("places_changed", "The places here changed at the same time. Reload and try again.")
 
 // siteOf reads the organization of a site the caller can see.
 func (s *Service) siteOf(ctx context.Context, c access.Caller, siteID uuid.UUID) (uuid.UUID, error) {
@@ -269,18 +276,9 @@ func (s *Service) CreatePlace(ctx context.Context, c access.Caller, siteID uuid.
 	return s.getPlace(ctx, c, id)
 }
 
-// UpdatePlace renames a place, changes its kind, or moves it with the
-// places inside it to another place of its site or to the top. A change
-// that changes nothing is not recorded.
-func (s *Service) UpdatePlace(ctx context.Context, c access.Caller, id uuid.UUID, p PlacePatch) (*Place, error) {
-	cur, err := s.getPlace(ctx, c, id)
-	if err != nil {
-		return nil, err
-	}
-	if err := c.Require(rbac.PermDocManage, rbac.Site(cur.OrganizationID, cur.SiteID)); err != nil {
-		return nil, err
-	}
-	kind, name, parent := cur.Kind, cur.Name, cur.ParentID
+// apply sets what a patch names; the rest is the place's.
+func (p PlacePatch) apply(cur *Place) (kind, name string, parent *uuid.UUID) {
+	kind, name, parent = cur.Kind, cur.Name, cur.ParentID
 	if p.Kind != nil {
 		kind = *p.Kind
 	}
@@ -290,38 +288,62 @@ func (s *Service) UpdatePlace(ctx context.Context, c access.Caller, id uuid.UUID
 	if p.ParentID.Set {
 		parent = p.ParentID.ID
 	}
-	if err := checkPlace(kind, name); err != nil {
+	return kind, name, parent
+}
+
+// check checks the kind and the name the place would have.
+func (p PlacePatch) check(cur *Place) error {
+	kind, name, _ := p.apply(cur)
+	return checkPlace(kind, name)
+}
+
+// UpdatePlace renames a place, changes its kind, or moves it with the
+// places inside it to another place of its site or to the top. The patch
+// is applied to the place as it is once its site is locked, so a move made
+// since the caller read it is built on, not undone. A change that changes
+// nothing is not recorded.
+func (s *Service) UpdatePlace(ctx context.Context, c access.Caller, id uuid.UUID, p PlacePatch) (*Place, error) {
+	cur, err := s.getPlace(ctx, c, id)
+	if err != nil {
 		return nil, err
 	}
-	var fields []string
-	if kind != cur.Kind {
-		fields = append(fields, "kind")
+	if err := c.Require(rbac.PermDocManage, rbac.Site(cur.OrganizationID, cur.SiteID)); err != nil {
+		return nil, err
 	}
-	if name != cur.Name {
-		fields = append(fields, "name")
-	}
-	moved := !sameID(parent, cur.ParentID)
-	if moved {
-		fields = append(fields, "parentId")
-	}
-	if len(fields) == 0 {
-		return cur, nil
+	// The kind and the name are checked each on its own, so a patch that
+	// passes here passes on the place as it is once locked; a refusal takes
+	// no lock.
+	if err := p.check(cur); err != nil {
+		return nil, err
 	}
 	err = s.db.InTx(ctx, c.Scope, func(tx pgx.Tx) error {
+		// A place never leaves its site.
 		if err := lockLevel(ctx, tx, cur.OrganizationID, &cur.SiteID); err != nil {
 			return err
 		}
-		if moved {
-			if err := movePlace(ctx, tx, cur, parent); err != nil {
-				return err
-			}
-		}
-		tag, err := tx.Exec(ctx, `UPDATE site_places SET kind = $2, name = $3 WHERE id = $1`, id, kind, name)
+		locked, err := scanPlace(tx.QueryRow(ctx, `SELECT `+placeColumns+` FROM site_places WHERE id = $1 FOR UPDATE`, id))
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() == 0 {
-			return pgx.ErrNoRows
+		kind, name, parent := p.apply(&locked)
+		var fields []string
+		if kind != locked.Kind {
+			fields = append(fields, "kind")
+		}
+		if name != locked.Name {
+			fields = append(fields, "name")
+		}
+		if !sameID(parent, locked.ParentID) {
+			fields = append(fields, "parentId")
+			if err := movePlace(ctx, tx, &locked, parent); err != nil {
+				return err
+			}
+		}
+		if len(fields) == 0 {
+			return nil
+		}
+		if _, err := tx.Exec(ctx, `UPDATE site_places SET kind = $2, name = $3 WHERE id = $1`, id, kind, name); err != nil {
+			return err
 		}
 		d := placeDetails(kind, parent)
 		d["fields"] = fields

@@ -12,7 +12,6 @@ package docs
 
 import (
 	"context"
-	"net/mail"
 	"net/url"
 	"strconv"
 	"strings"
@@ -112,21 +111,44 @@ func ValidPhone(s string) bool {
 	return s == "" || (!tooLong(s, MaxPhoneLength) && strings.ContainsFunc(s, unicode.IsDigit))
 }
 
-// ValidEmail reports whether s is empty or one bare address, such as
-// help@example.com, with a dot in its domain.
+// ValidEmail reports whether s is empty or one plain address, such as
+// help@example.com: before the @, letters, digits and . _ + - ' only, at
+// most 64 of them, with no dot at either end or two in a row; after it, a
+// domain of at least two labels of letters, digits and hyphens. The rules
+// are narrower than RFC 5322, which allows ? & = and more before the @: an
+// address goes into mailto: links, where those characters start headers
+// such as bcc.
 func ValidEmail(s string) bool {
 	if s == "" {
 		return true
 	}
-	if len(s) > MaxEmailLength || strings.ContainsAny(s, " <>\",;") {
+	if len(s) > MaxEmailLength {
 		return false
 	}
-	addr, err := mail.ParseAddress(s)
-	if err != nil || addr.Address != s {
+	local, domain, ok := strings.Cut(s, "@")
+	if !ok || local == "" || tooLong(local, 64) || strings.HasPrefix(local, ".") || strings.HasSuffix(local, ".") || strings.Contains(local, "..") {
 		return false
 	}
-	at := strings.LastIndexByte(s, '@')
-	return at > 0 && strings.Contains(s[at:], ".")
+	for _, r := range local {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune("._+-'", r) {
+			return false
+		}
+	}
+	labels := strings.Split(domain, ".")
+	if len(labels) < 2 {
+		return false
+	}
+	for _, l := range labels {
+		if l == "" || strings.HasPrefix(l, "-") || strings.HasSuffix(l, "-") {
+			return false
+		}
+		for _, r := range l {
+			if !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // NormalizeWebsite checks a website address and gives it as stored: an

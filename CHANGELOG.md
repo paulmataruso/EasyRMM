@@ -141,9 +141,11 @@ All notable changes to this project are documented here. The format follows
 - **The customer record** (ADR-0066, slice 1, the first of its three pull
   requests). An organization's **Overview** shows its main phone, email,
   website, business hours with *Open now* or *Closed now*, and
-  after-hours instructions; a **Contacts** tab lists the people to call at
-  the customer, the organization's own and each site's, with one primary
-  for the organization and one per site, secondary, and an emergency flag.
+  after-hours instructions, its primary and emergency contacts, and each
+  site with its address and whether it is open now; a **Contacts** tab
+  lists the people to call at the customer, the organization's own and
+  each site's, with one primary for the organization and one per site,
+  secondary, and an emergency flag.
   A site's page shows its address as fields (two lines, city, region,
   postal code, country) beside the free text, its own hours or the
   organization's in the site's time zone, its contacts, and **Places**:
@@ -152,10 +154,14 @@ All notable changes to this project are documented here. The format follows
   held by Technicians and above, at the organization or site where the
   role is; site-scoped people see their sites' contacts and places, not
   the organization's own contacts, which row-level security enforces in
-  PostgreSQL. Every change is audited by field name, without values or a
-  contact's name. A **Contacts** report exports them as CSV. Contacts are
-  personal data of the customer's staff: [PRIVACY.md](PRIVACY.md) says
-  what is kept and why. See [The customer record](docs/operations/customer-record.md).
+  PostgreSQL. Every change is audited by field name, without values; a
+  contact's record keeps its priority and emergency flag, never its name,
+  email address, phone numbers or note. Email addresses are plain ones
+  only: characters such as `?` and `&`, which would add headers to a
+  `mailto:` link, are refused. A **Contacts** report exports them as CSV.
+  Contacts are personal data of the customer's staff:
+  [PRIVACY.md](PRIVACY.md) says what is kept and why. See
+  [The customer record](docs/operations/customer-record.md).
 - **Disk health** (ADR-0065, slice 1). The EasyRMM agent reads each disk's
   own health record every 30 minutes, NVMe's health log and ATA's SMART
   with a fixed list of read-only commands, on Windows and Linux, and sends
@@ -277,7 +283,8 @@ All notable changes to this project are documented here. The format follows
 - **A site's address moves to its details.** The free-text address is
   edited under **Address and hours** on the site's page, with
   `doc.manage`, instead of in the site's **Edit**: `PUT /api/v1/sites/{id}`
-  no longer takes `address` (it answers `422` with the field named) and
+  and `POST /api/v1/organizations/{id}/sites` no longer take `address`
+  (they answer `422` with the field named) and
   `PUT /api/v1/sites/{id}/details` does. Existing addresses are kept as
   they are; nothing is read from them into the new fields. Without
   `doc.view`, a site's and an organization's answers carry empty
@@ -288,6 +295,11 @@ All notable changes to this project are documented here. The format follows
   documentation**. Through the API, send the counts back as query
   parameters (`?contacts=2&places=1`). Sites and organizations without
   any are deleted as before.
+- **A downloaded report's audit record no longer quotes a search that can
+  name a person.** For **Device inventory**, whose names are often their
+  users', the two patch reports and **Contacts**, the record says
+  `"searched": true` instead of the search text (`q`); **Installed
+  software** still records it.
 - **Upgrading adds five shared alert policies** for disk health, only
   **Disk failing** turned on. **Where a shared policy already has one of
   their names** (case aside), the new one is added as *… (disk health)*,

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -34,13 +35,16 @@ type env struct {
 	sys              access.Caller
 	acme, hq, branch uuid.UUID
 	globex, plant    uuid.UUID
+	// superDSN connects as the superuser, to watch other sessions wait.
+	superDSN string
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	inst := testdb.New(t)
 	al := audit.New(inst.DB, nil)
-	e := &env{t: t, ctx: context.Background(), db: inst.DB, svc: docs.New(inst.DB, al), audit: al, sys: access.System("test")}
+	e := &env{t: t, ctx: context.Background(), db: inst.DB, svc: docs.New(inst.DB, al), audit: al, sys: access.System("test"),
+		superDSN: inst.SuperDSN}
 	ten := tenancy.New(inst.DB, al)
 	org := func(name string) uuid.UUID {
 		o, err := ten.CreateOrganization(e.ctx, e.sys, tenancy.OrganizationInput{Name: name})
@@ -132,6 +136,47 @@ func names(cs []docs.Contact) []string {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// raced runs write while another transaction makes change and holds it
+// uncommitted: write reads what was there before, then waits on a lock
+// change holds, and goes on once change commits. change takes whatever
+// locks it means write to wait on.
+func (e *env) raced(change func(tx pgx.Tx) error, write func() error) error {
+	e.t.Helper()
+	watch, err := pgx.Connect(e.ctx, e.superDSN)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	defer func() { _ = watch.Close(context.Background()) }()
+	done := make(chan error, 1)
+	var early error
+	err = e.db.InTx(e.ctx, database.System, func(tx pgx.Tx) error {
+		if err := change(tx); err != nil {
+			return err
+		}
+		go func() { done <- write() }()
+		for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+			select {
+			case early = <-done:
+				return errors.New("the write did not wait")
+			default:
+			}
+			var waiting bool
+			if err := watch.QueryRow(e.ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity
+				WHERE datname = current_database() AND wait_event_type = 'Lock')`).Scan(&waiting); err != nil {
+				return err
+			}
+			if waiting {
+				return nil
+			}
+		}
+		return errors.New("the write never waited")
+	})
+	if err != nil {
+		e.t.Fatalf("%v (the write: %v)", err, early)
+	}
+	return <-done
+}
 
 func TestContacts(t *testing.T) {
 	e := newEnv(t)
@@ -243,6 +288,18 @@ func TestContacts(t *testing.T) {
 	all, _, _ := e.svc.ListContacts(e.ctx, e.sys, e.acme, docs.ContactQuery{})
 	if !slices.Equal(paged, names(all)) || len(paged) != 5 {
 		t.Fatalf("pages %v, whole %v", paged, names(all))
+	}
+
+	// The overview's key contacts: the primary ones and the emergency ones.
+	if _, err := e.svc.UpdateContact(e.ctx, e.sys, bob.ID, docs.ContactPatch{Emergency: ptr(true)}); err != nil {
+		t.Fatal(err)
+	}
+	key, _, err := e.svc.ListContacts(e.ctx, e.sys, e.acme, docs.ContactQuery{Key: true})
+	if got := names(key); err != nil || !slices.Equal(got, []string{"Ann Example", "Bob Example", "Hal Desk"}) {
+		t.Fatalf("key contacts %v %v", got, err)
+	}
+	if _, err := e.svc.UpdateContact(e.ctx, e.sys, bob.ID, docs.ContactPatch{Emergency: ptr(false)}); err != nil {
+		t.Fatal(err)
 	}
 	_, _, err = e.svc.ListContacts(e.ctx, e.sys, e.acme, docs.ContactQuery{After: "not-a-cursor"})
 	wantField(t, err, "after", "a bad cursor")
@@ -662,4 +719,122 @@ func TestCounts(t *testing.T) {
 	if n := e.count(`SELECT count(*) FROM site_places`) + e.count(`SELECT count(*) FROM contacts WHERE site_id IS NOT NULL`); n != 0 {
 		t.Fatalf("%d rows outlived their site", n)
 	}
+}
+
+// TestConcurrentEdits checks that a change is applied to the record as it
+// is once its level is locked, not as the caller read it (L1), and that
+// what the database refuses under a writer that skips the lock is a
+// conflict, not a server error.
+func TestConcurrentEdits(t *testing.T) {
+	e := newEnv(t)
+	lockHQ := func(tx pgx.Tx) error {
+		_, err := tx.Exec(e.ctx, `SELECT 1 FROM sites WHERE id = $1 FOR NO KEY UPDATE`, e.hq)
+		return err
+	}
+	exec := func(tx pgx.Tx, sql string, args ...any) error {
+		_, err := tx.Exec(e.ctx, sql, args...)
+		return err
+	}
+	state := func(id uuid.UUID) string {
+		t.Helper()
+		var s string
+		if err := e.db.ReadTx(e.ctx, database.System, func(tx pgx.Tx) error {
+			return tx.QueryRow(e.ctx, `SELECT priority || ' ' || mobile_phone FROM contacts WHERE id = $1`, id).Scan(&s)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		return s
+	}
+
+	// Ann was the site's primary contact when her phone number was edited;
+	// Bob became it before the edit was saved. The edit keeps Bob's place.
+	ann := e.contact(e.sys, e.acme, docs.ContactInput{SiteID: &e.hq, Name: "Ann Example", Priority: "primary", MobilePhone: "555 0101"})
+	bob := e.contact(e.sys, e.acme, docs.ContactInput{SiteID: &e.hq, Name: "Bob Example"})
+	err := e.raced(func(tx pgx.Tx) error {
+		if err := lockHQ(tx); err != nil {
+			return err
+		}
+		return exec(tx, `UPDATE contacts SET priority = CASE WHEN id = $1 THEN 'secondary' ELSE 'primary' END WHERE id IN ($1, $2)`, ann.ID, bob.ID)
+	}, func() error {
+		_, err := e.svc.UpdateContact(e.ctx, e.sys, ann.ID, docs.ContactPatch{MobilePhone: ptr("555 0199")})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("an edit after another made a new primary: %v", err)
+	}
+	if a, b := state(ann.ID), state(bob.ID); a != "secondary 555 0199" || b != "primary " {
+		t.Fatalf("Ann %q, Bob %q", a, b)
+	}
+	if f, _ := json.Marshal(e.entries("contact.update")[0].Details); string(f) != `{"emergency":false,"fields":["mobilePhone"],"priority":"secondary"}` {
+		t.Fatalf("the edit's audit details %s", f)
+	}
+
+	// Making Ann primary again while the lock is held demotes Bob, who is
+	// the primary contact by the time the change is made.
+	err = e.raced(lockHQ, func() error {
+		_, err := e.svc.UpdateContact(e.ctx, e.sys, ann.ID, docs.ContactPatch{Priority: ptr("primary")})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, b := state(ann.ID), state(bob.ID); a != "primary 555 0199" || b != "secondary " {
+		t.Fatalf("Ann %q, Bob %q", a, b)
+	}
+	if d := e.entries("contact.update")[0].Details; d["previousPrimaryId"] != bob.ID.String() {
+		t.Fatalf("the demotion is not recorded: %v", d)
+	}
+
+	// A second primary written by something that skips the lock, such as a
+	// restore, is a conflict.
+	err = e.raced(func(tx pgx.Tx) error {
+		return exec(tx, `INSERT INTO contacts (organization_id, site_id, name, priority) VALUES ($1, $2, 'Dee Example', 'primary')`, e.acme, e.branch)
+	}, func() error {
+		_, err := e.svc.CreateContact(e.ctx, e.sys, e.acme, docs.ContactInput{SiteID: &e.branch, Name: "Eve Example", Priority: "primary"})
+		return err
+	})
+	wantCode(t, err, apperr.KindConflict, "primary_changed", "a second primary written past the lock")
+
+	// Main has Floor 1 in it, and Annex is beside it. Floor 1 was moved to
+	// the top while another person moved it into Annex: the second move
+	// starts from where the first left it.
+	main := e.place(e.sys, e.hq, nil, "building", "Main")
+	floor := e.place(e.sys, e.hq, &main.ID, "floor", "Floor 1")
+	room := e.place(e.sys, e.hq, &floor.ID, "room", "Room 101")
+	annex := e.place(e.sys, e.hq, nil, "building", "Annex")
+	err = e.raced(func(tx pgx.Tx) error {
+		if err := lockHQ(tx); err != nil {
+			return err
+		}
+		return exec(tx, `WITH RECURSIVE sub AS (SELECT id FROM site_places WHERE id = $1
+				UNION ALL SELECT p.id FROM site_places p JOIN sub ON p.parent_id = sub.id)
+			UPDATE site_places SET depth = depth - 1, parent_id = CASE WHEN id = $1 THEN NULL ELSE parent_id END
+			WHERE id IN (SELECT id FROM sub)`, floor.ID)
+	}, func() error {
+		_, err := e.svc.UpdatePlace(e.ctx, e.sys, floor.ID, docs.PlacePatch{ParentID: docs.OptionalID{Set: true, ID: &annex.ID}})
+		return err
+	})
+	if err != nil {
+		t.Fatalf("a move after another: %v", err)
+	}
+	places, err := e.svc.ListPlaces(e.ctx, e.sys, e.hq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	depths := map[uuid.UUID]int{}
+	for _, p := range places {
+		depths[p.ID] = p.Depth
+	}
+	if depths[floor.ID] != 2 || depths[room.ID] != 3 {
+		t.Fatalf("depths after two moves: %v", depths)
+	}
+
+	// A parent deleted by something that skips the lock is a conflict.
+	err = e.raced(func(tx pgx.Tx) error {
+		return exec(tx, `DELETE FROM site_places WHERE id = $1`, main.ID)
+	}, func() error {
+		_, err := e.svc.UpdatePlace(e.ctx, e.sys, room.ID, docs.PlacePatch{ParentID: docs.OptionalID{Set: true, ID: &main.ID}})
+		return err
+	})
+	wantCode(t, err, apperr.KindConflict, "places_changed", "a move into a place deleted past the lock")
 }

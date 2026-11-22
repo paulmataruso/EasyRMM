@@ -55,10 +55,13 @@ EasyRMM: the software never contacts them, and they cannot sign in. Only
 people with `doc.view` at the customer's organization, or at the contact's
 site, can read them; a site's people see that site's contacts and not the
 organization's own. The audit log records that a contact was added,
-changed or deleted, and which fields changed, but not the contact's name
-or the values. Contacts are kept until someone deletes them, or deletes
-their site or organization, and can be exported with the **Contacts**
-report ([The customer record](docs/operations/customer-record.md)).
+changed or deleted, which fields changed, the contact's priority
+(primary, secondary or none) and whether they are an emergency contact,
+but not their name, job title, email address, phone numbers or note.
+Contacts are kept until someone deletes them, or deletes their site or
+organization, and can be exported with the **Contacts** report; the
+audit log records each export, and that it was searched, but not what
+was searched for ([The customer record](docs/operations/customer-record.md)).
 
 **Retention** is up to the operator: metrics, alerts, job output, jobs and
 the audit log are kept for the periods set in the deployment's `.env`

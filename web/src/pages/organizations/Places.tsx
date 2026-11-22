@@ -38,6 +38,23 @@ function height(places: Place[], place: Place): number {
   return Math.max(...places.filter((p) => inside.has(p.id)).map((p) => p.depth)) - place.depth + 1;
 }
 
+/** Where a place is, from the top of the site: "Main › Floor 1". */
+function placePath(byId: Map<string, Place>, place: Place): string {
+  const names = [place.name];
+  for (let p = place.parentId ? byId.get(place.parentId) : undefined; p; p = p.parentId ? byId.get(p.parentId) : undefined) names.unshift(p.name);
+  return names.join(" › ");
+}
+
+/** The places inside each place, by its ID, and those at the top under "". The list is in tree order, so each stays in it. */
+function childrenOf(places: Place[]): Map<string, Place[]> {
+  const out = new Map<string, Place[]>();
+  for (const p of places) {
+    const key = p.parentId ?? "";
+    out.set(key, [...(out.get(key) ?? []), p]);
+  }
+  return out;
+}
+
 export function PlacesCard({ site, className }: { site: Site; className?: string }) {
   const toast = useToast();
   const list = useList<Place>(`/sites/${site.id}/places`);
@@ -51,6 +68,37 @@ export function PlacesCard({ site, className }: { site: Site; className?: string
     },
   });
   const manage = site.canManageDocumentation;
+  const children = childrenOf(list.items);
+
+  // A list within a list for the places inside a place, so that a screen reader says how deep each is.
+  const tree = (parentId: string, label?: string) => (
+    <ul className={label ? "divide-y divide-line" : "divide-y divide-line border-t border-line"} aria-label={label}>
+      {(children.get(parentId) ?? []).map((p) => (
+        <li key={p.id}>
+          <div className="flex items-center gap-2 py-1.5 pr-4" style={{ paddingLeft: `${p.depth}rem` }}>
+            <Badge>{placeKindLabel(p.kind)}</Badge>
+            <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
+            {manage && (
+              <span className="whitespace-nowrap">
+                {p.depth < MAX_DEPTH && (
+                  <IconButton label={`Add a place inside ${p.name}`} onClick={() => setForm({ open: true, parentId: p.id })}>
+                    <Plus className="size-4" aria-hidden />
+                  </IconButton>
+                )}
+                <IconButton label={`Edit ${p.name}`} onClick={() => setForm({ open: true, place: p })}>
+                  <Pencil className="size-4" aria-hidden />
+                </IconButton>
+                <IconButton label={`Delete ${p.name}`} onClick={() => setDeleting(p)} className="hover:text-danger">
+                  <Trash2 className="size-4" aria-hidden />
+                </IconButton>
+              </span>
+            )}
+          </div>
+          {children.has(p.id) && tree(p.id)}
+        </li>
+      ))}
+    </ul>
+  );
 
   return (
     <Card
@@ -74,29 +122,7 @@ export function PlacesCard({ site, className }: { site: Site; className?: string
           Where things are within the site: buildings, floors, rooms and racks.
         </EmptyState>
       ) : (
-        <ul className="divide-y divide-line" aria-label={`Places at ${site.name}`}>
-          {list.items.map((p) => (
-            <li key={p.id} className="flex items-center gap-2 py-1.5 pr-4" style={{ paddingLeft: `${p.depth}rem` }}>
-              <Badge>{placeKindLabel(p.kind)}</Badge>
-              <span className="min-w-0 flex-1 truncate font-medium">{p.name}</span>
-              {manage && (
-                <span className="whitespace-nowrap">
-                  {p.depth < MAX_DEPTH && (
-                    <IconButton label={`Add a place inside ${p.name}`} onClick={() => setForm({ open: true, parentId: p.id })}>
-                      <Plus className="size-4" aria-hidden />
-                    </IconButton>
-                  )}
-                  <IconButton label={`Edit ${p.name}`} onClick={() => setForm({ open: true, place: p })}>
-                    <Pencil className="size-4" aria-hidden />
-                  </IconButton>
-                  <IconButton label={`Delete ${p.name}`} onClick={() => setDeleting(p)} className="hover:text-danger">
-                    <Trash2 className="size-4" aria-hidden />
-                  </IconButton>
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
+        tree("", `Places at ${site.name}`)
       )}
       <PlaceDialog
         open={form.open}
@@ -127,6 +153,18 @@ export function PlacesCard({ site, className }: { site: Site; className?: string
   );
 }
 
+/**
+ * What an edit changed, and nothing else, so that a stale form cannot move a place back to where it was when the
+ * form opened.
+ */
+function placeChanges(before: Place, form: PlaceInput): Partial<PlaceInput> {
+  const out: Partial<PlaceInput> = {};
+  if (form.kind !== before.kind) out.kind = form.kind;
+  if (form.name !== before.name) out.name = form.name;
+  if (form.parentId !== before.parentId) out.parentId = form.parentId;
+  return out;
+}
+
 function PlaceDialog({ open, onClose, site, places, place, parentId }: {
   open: boolean;
   onClose: () => void;
@@ -141,7 +179,7 @@ function PlaceDialog({ open, onClose, site, places, place, parentId }: {
     if (open) setForm(place ? { parentId: place.parentId, kind: place.kind, name: place.name } : { parentId, kind: parentId ? "room" : "building", name: "" });
   }, [open, place, parentId]);
   const save = useApiMutation(
-    (req: PlaceInput) => (place ? api.patch<Place>(`/places/${place.id}`, req) : api.post<Place>(`/sites/${site.id}/places`, req)),
+    (req: PlaceInput) => (place ? api.patch<Place>(`/places/${place.id}`, placeChanges(place, req)) : api.post<Place>(`/sites/${site.id}/places`, req)),
     {
       invalidate: [`/sites/${site.id}/places`, "/audit"],
       onSuccess: (p) => {
@@ -160,6 +198,7 @@ function PlaceDialog({ open, onClose, site, places, place, parentId }: {
   const moving = place ? withInside(places, place) : new Set<string>();
   const levels = place ? height(places, place) : 1;
   const parents = places.filter((p) => !moving.has(p.id) && p.depth + levels <= MAX_DEPTH);
+  const byId = new Map(places.map((p) => [p.id, p]));
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -181,7 +220,7 @@ function PlaceDialog({ open, onClose, site, places, place, parentId }: {
           <option value="">The site itself</option>
           {parents.map((p) => (
             <option key={p.id} value={p.id}>
-              {`${"  ".repeat(p.depth - 1)}${p.name} (${placeKindLabel(p.kind)})`}
+              {`${placePath(byId, p)} (${placeKindLabel(p.kind)})`}
             </option>
           ))}
         </SelectField>

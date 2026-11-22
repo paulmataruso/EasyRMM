@@ -11,6 +11,7 @@ import { useToast } from "../../components/Toast";
 import { Badge, Button, Field, IconButton, InlineError, Input, KeyValueList, SelectField, TextareaField, TextField } from "../../components/ui";
 import { countryName, countryOptions } from "../../lib/countries";
 import { copyHours, hoursOrNull, MAX_PERIODS_PER_DAY, summarizeHours, WEEKDAYS } from "../../lib/hours";
+import { mailtoHref, telHref, websiteHref } from "../../lib/links";
 
 /** Open or closed now, by the business hours; nothing when none are kept. */
 export function OpenNowBadge({ openNow }: { openNow: boolean | null }) {
@@ -42,15 +43,26 @@ function link(href: string, text: string) {
   );
 }
 
+/** A website as a link that opens apart, or as text when it is not an http or https address. */
+function website(address: string) {
+  const href = websiteHref(address);
+  if (!href) return <span className="break-all">{address}</span>;
+  return (
+    <a href={href} target="_blank" rel="noreferrer noopener" className="break-all text-accent hover:underline">
+      {address}
+    </a>
+  );
+}
+
 /** The organization's contact information and hours. */
 export function OrganizationRecord({ organization: o }: { organization: Organization }) {
   return (
     <KeyValueList
       narrow
       items={[
-        ["Main phone", o.mainPhone ? link(`tel:${o.mainPhone.replace(/[^\d+]/g, "")}`, o.mainPhone) : none],
-        ["Main email", o.mainEmail ? link(`mailto:${o.mainEmail}`, o.mainEmail) : none],
-        ["Website", o.website ? <a href={o.website} target="_blank" rel="noreferrer noopener" className="break-all text-accent hover:underline">{o.website}</a> : none],
+        ["Main phone", o.mainPhone ? link(telHref(o.mainPhone), o.mainPhone) : none],
+        ["Main email", o.mainEmail ? link(mailtoHref(o.mainEmail), o.mainEmail) : none],
+        ["Website", o.website ? website(o.website) : none],
         ["Business hours", o.businessHours ? <HoursList hours={o.businessHours} /> : none],
         ["After hours", o.afterHoursNote ? <span className="whitespace-pre-wrap">{o.afterHoursNote}</span> : none],
       ]}
@@ -101,7 +113,7 @@ export function HoursEditor({ value, onChange, error }: { value: BusinessHours; 
     onChange(next);
   };
   return (
-    <fieldset className="flex flex-col gap-2" aria-describedby={`${id}-hint`}>
+    <fieldset className="flex flex-col gap-2" aria-describedby={error ? `${id}-error` : `${id}-hint`}>
       <legend className="mb-1 text-xs font-medium text-muted">Business hours</legend>
       {WEEKDAYS.map(({ day, long }) => (
         <div key={day} className="flex flex-wrap items-center gap-x-3 gap-y-1.5" role="group" aria-label={long}>
@@ -159,7 +171,9 @@ export function HoursEditor({ value, onChange, error }: { value: BusinessHours; 
         </Button>
       </div>
       {error ? (
-        <p className="text-xs text-danger">{error}</p>
+        <p id={`${id}-error`} className="text-xs text-danger">
+          {error}
+        </p>
       ) : (
         <p id={`${id}-hint`} className="text-xs text-subtle">
           Up to four periods a day. A period that ends at or before it starts runs past midnight.
