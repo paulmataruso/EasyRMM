@@ -598,6 +598,14 @@ func TestEnvLikeCompose(t *testing.T) {
 		{line: `EASYRMM_SMTP_FROM="Smith & Jones IT <rmm@example.com>"`, key: from, want: "Smith & Jones IT <rmm@example.com>"},
 		{line: `EASYRMM_SMTP_FROM="Ops \\ \x Desk <rmm@example.com>"`, key: from, want: `Ops \ \x Desk <rmm@example.com>`},
 		{line: `EASYRMM_SMTP_FROM='O\'Brien \ IT <rmm@example.com>'`, key: from, want: `O'Brien \ IT <rmm@example.com>`},
+		// In double quotes Compose decodes \n, \t and others: setup.sh
+		// refuses them where it reads a value; the updater reads only plain
+		// values.
+		{line: `EASYRMM_SMTP_FROM="Ops\nDesk <rmm@example.com>"`, key: from, want: "Ops\nDesk <rmm@example.com>", shErr: `holds \n, which Compose reads as another character`},
+		{line: `EASYRMM_SMTP_FROM="Ops\tDesk <rmm@example.com>"`, key: from, want: "Ops\tDesk <rmm@example.com>", shErr: `holds \t, which Compose reads as another character`},
+		{line: `EASYRMM_SMTP_FROM="Ops \\ Desk <rmm@example.com>"`, key: from, want: `Ops \ Desk <rmm@example.com>`},
+		{line: `EASYRMM_SMTP_FROM='Ops\nDesk <rmm@example.com>'`, key: from, want: `Ops\nDesk <rmm@example.com>`},
+		{line: `EASYRMM_DATA_ROOT="/srv/easy\nrmm"`, key: root, want: "/srv/easy\nrmm", goErr: "is not plain", shErr: "holds a backslash, a $ or a quote"},
 		{line: `EASYRMM_SMTP_PASSWORD='p#ss w$rd'`, key: password, want: "p#ss w$rd"},
 		{line: `EASYRMM_SMTP_PASSWORD=p#ss\w0rd`, key: password, want: `p#ss\w0rd`},
 		{line: `EASYRMM_SMTP_PASSWORD="a\\b$$c"`, key: password, want: `a\b$c`},

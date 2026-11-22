@@ -228,9 +228,11 @@ All notable changes to this project are documented here. The format follows
   attempt cut short (killed, or the host restarted) is finished by the
   next run from what it recorded, which is on the disk before each step
   begins. A command of its killed by a signal brings the previous version
-  back at once without counting against the version; after two attempts
-  at one version cut short so, automatic upgrades wait for an operator,
-  and `status` says why. A step it cannot record from step 5 on, a command
+  back at once without counting against the version, and the updater's
+  own process ending during the stop or the backup is finished so by the
+  next run; after two attempts at one version cut short so, automatic
+  upgrades wait for an operator, and `status` says why, so that no version
+  takes the server down every night. A step it cannot record from step 5 on, a command
   killed once a stop was asked for, or bringing the previous version back
   cut short, stops it where it is, the server held, for the next run.
   systemd's stop (`KillMode=mixed`) and Ctrl-C reach the updater alone,

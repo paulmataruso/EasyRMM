@@ -392,16 +392,22 @@ in review):*
   `TimeoutStopSec=30min`, what is left of a held start and the engine's
   worker's, bounds how long a reboot waits; systemd then kills everything,
   and the next run settles the attempt. A stop recorded during an attempt
-  keeps the next run from counting it against the version.
+  keeps the next run from counting it against the version. A stop asked
+  for before step 3 ends the attempt, not counted against the version,
+  also when it kills a command the check runs (which then fails with the
+  signal, not with the context's cancellation).
 * **A command killed by a signal** (one the updater's own context did not
   send: the out-of-memory killer, someone's `kill`) after the stop is not
   the version failing. The previous version comes back at once, as for a
   failure: before step 5 where it stopped, from step 5 on from the backup.
   The attempt is counted as cut short (`cutShort`, in `state.json` and
   `status.json`), as one cut short by a stop asked for, or by a record not
-  written, is; after two at one version, each of which took the server
+  written, is, and as one whose own process ended, unexplained, during
+  steps 3 and 4 (a panic, the out-of-memory killer on a large tree) is,
+  once the next run has started the previous version again and done
+  nothing else. After two at one version, each of which took the server
   down, automatic runs wait with it until an operator asks for it, and
-  `status` says why. The attempt stops where it is instead, the server
+  `status` says why: no version takes the server down every night. The attempt stops where it is instead, the server
   held, its record saying why (`interrupted`), for the next run to finish,
   only when bringing the previous version back would not be sound or would
   not end: a step not recorded from step 5 on (below), a command killed
@@ -415,10 +421,13 @@ in review):*
   hold is written again then: the attempt may have lifted it to start a
   version, or not yet written it; it lies in the data root's `updater/`,
   which no backup holds and no restore replaces. The same holds for a
-  restore's stages: the discarded head, and the restore's end. A stage is
-  undone only when `state.json` still says the stage before; once
-  `state.json` records it, it is begun, whether or not `status.json` could
-  say so, and one `state.json` was renamed to record but whose directory
+  restore's stages: the discarded head, and the restore's end. Every
+  record of the attempt (its steps, the new version's directory, the
+  backup's directory, the discarded head, the restore's end and the
+  attempt's end) is made so: a stage is undone only when `state.json`
+  still says the stage before; once `state.json` records it, it is begun,
+  whether or not `status.json` could say so (at the confirm, the hold is
+  lifted); and one `state.json` was renamed to record but whose directory
   could not be synced stops the attempt at it.
 * **Durability.** Every file the updater writes is synced, renamed into
   place and its directory synced. The backup's filesystem is synced
@@ -453,23 +462,35 @@ in review):*
 * **Links in the data root.** A link at any depth that leads out of the
   data root, where the host follows it, is refused at step 1; links are
   never followed to copy what they lead to. Links that lead into it are
-  copied as links.
+  copied as links. The check runs while the services still run: a link a
+  service plants after it and before the stop is backed up, and restored,
+  as a link. Nothing the updater does with the data root after the check
+  follows it (`cp` copies a link as a link; a restore moves entries aside
+  and copies them as they are), and Docker follows a link only on the way
+  to a directory it mounts, while no service mounts a directory on the way
+  to another's (`deploy/docker-compose.yml`); so it reaches nothing a
+  service could not already reach. Left as it is (decided in review).
 * **Paths.** Only root may change the way to the bundle directory: each
   directory on it is root's and only root writes it (or it is sticky); a
   link on it is root's, and the way to where it leads is checked the same,
   element by element. Mount points are compared with the data root by
   name, and with where a link to it leads, without resolving the host's
   every mount point.
-* **`.env` by Compose's rules.** The updater and `setup.sh` read a value
+* **`.env` by Compose's rules.** The updater and `setup.sh` take a value
   unquoted (up to a `" #"` comment, blanks trimmed), or in single or double
-  quotes that end on the line, a backslash escaping the next character,
-  and only a comment after them; so a sender with a name may be quoted.
-  Either refuses what Compose would read otherwise (`export`, blanks
-  before the key or around `=`, a quoted value over more lines, text after
-  the closing quote, control characters), and a backslash, `$` or quote in
-  a setting it reads; the updater's must also be plain and set once. A
-  test runs the same lines through both and through `docker compose
-  config`.
+  quotes that end on the line with only a comment after them; so a sender
+  with a name may be quoted. Either refuses what Compose would read
+  otherwise (`export`, blanks before the key or around `=`, a quoted value
+  over more lines, text after the closing quote, control characters). What
+  each reads of a value is narrower than Compose's rules: the updater reads
+  only its own settings, which must be plain and set once; `setup.sh`
+  refuses a backslash, `$` or quote in the settings it reads, and, where it
+  reads another (a secret it fills), takes off a backslash
+  before the quote, or before a backslash in double quotes, keeps any other
+  backslash, and refuses the escapes Compose decodes in double quotes
+  (`\n`, `\t` and the others) rather than misread them. Neither reads
+  Compose's `$` substitution. A test runs the same lines through both and
+  through `docker compose config` (compose-go v2.16.2, Compose v5.7.0).
 * **`setup.sh`**, run as root, holds the updater's lock for its whole run,
   every `.env` edit and the data root's directories included, and changes
   nothing while an attempt runs. The updater hands its own lock, open, to

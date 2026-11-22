@@ -157,7 +157,8 @@ alerts do not fire for it
 A failure before step 3 changes nothing that runs. These are tried again
 at the next attempt: failing to reach the network or the registry, a disk
 without room, the host not as step 1 needs it, and a stop asked for before
-step 3. Any other failure marks the version failed.
+step 3, with whatever fails because of it (a command it kills). Any other
+failure marks the version failed.
 
 A disk that runs out of room once the deployment has stopped (in the
 backup, or under the new images) does not mark the version failed either.
@@ -220,7 +221,10 @@ it says so; run the command again. The timer's run five minutes after the
 host starts does it unattended:
 * before step 3, the attempt ends failed, and nothing that runs changed;
 * during steps 3 and 4, an incomplete backup is removed and the previous
-  version starts again;
+  version starts again. The version is not marked failed, but the attempt
+  counts as cut short (below): a process that ends there every time (a
+  large data root and too little memory) does not take the server down
+  every night;
 * after the backup, the backup is restored as above, and the new version
   is marked failed. A restore cut short is done again: what the first one
   moved aside stays, and the copies it left, worth nothing beside the
@@ -255,7 +259,8 @@ sound, or not end:
 `status` and `status.json` (the attempt's `interrupted`) say why. The new
 version is not counted as failed for an attempt cut short before step 5,
 nor for one cut short by the updater itself (above) or by a stop someone
-asked for ([below](#stopping-an-attempt)); those two count as cut short.
+asked for ([below](#stopping-an-attempt)); those two count as cut short,
+as does a process that ended during steps 3 and 4.
 Until the next run, `status` says that no updater runs and the
 attempt did not end. A confirmed upgrade cut short before `hold` was
 removed is restored, since the updater did not record it; one cut short
@@ -451,7 +456,9 @@ one of:
 * unquoted: up to a space followed by `#`, which starts a comment, the
   blanks around it trimmed (`$` starts a variable; write `$$` for a `$`);
 * in double quotes, which end on the same line: `\"` is a quote, `\\` a
-  backslash, `$$` a `$`;
+  backslash, `$$` a `$`. Compose also reads `\n`, `\t` and other escapes
+  as other characters; `setup.sh` refuses them where it reads a value:
+  write the character itself, or use single quotes;
 * in single quotes, which end on the same line: as written, but `\'`
   for a quote.
 

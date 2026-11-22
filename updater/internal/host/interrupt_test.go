@@ -362,6 +362,60 @@ func failSaves(t *testing.T, when func(*State) bool) func() {
 	return mend
 }
 
+// Once state.json records a stage of the attempt, the stage is begun:
+// status.json, which the console reads, failing to say so stops nothing
+// and undoes nothing. Each record: a step, the new version's directory, the
+// backup's directory, the discarded database's head, and the attempt's end
+// (at the confirm, the hold is lifted).
+func TestStatusNotWritten(t *testing.T) {
+	for name, tc := range map[string]struct {
+		recorded func(a *Attempt) bool
+		// failStart has the new version fail its held start: the backup
+		// is restored.
+		failStart bool
+	}{
+		"a step":                      {recorded: func(a *Attempt) bool { return a.Step == StepSetUp }},
+		"the new version's directory": {recorded: func(a *Attempt) bool { return a.NewDeploy != "" }},
+		"the backup's directory":      {recorded: func(a *Attempt) bool { return a.Backup != "" }},
+		"the discarded head":          {recorded: func(a *Attempt) bool { return a.Discarded != nil }, failStart: true},
+		"the confirmed end":           {recorded: func(a *Attempt) bool { return a.Result == ResultSucceeded }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newTestHost(t, "v1.0.0", release.ChannelStable)
+			h.offer("v1.1.0", nil)
+			if tc.failStart {
+				h.docker.fail = failing(func(dir, call string) bool {
+					return dir == h.deploy("v1.1.0") && call == "compose exec -T server easyrmm-server healthcheck"
+				})
+			}
+			was := syncDir
+			t.Cleanup(func() { syncDir = was })
+			failed := 0
+			syncDir = func(dir string) error {
+				if dir == string(h.statusDir()) && failed == 0 && tc.recorded(h.state().Attempt) {
+					failed++
+					return errors.New("input/output error")
+				}
+				return was(dir)
+			}
+			err := h.upgrade(Request{Automatic: true})
+			h.docker.fail = nil
+			st := h.state()
+			want, running := ResultSucceeded, "v1.1.0"
+			if tc.failStart {
+				want, running = ResultRolledBack, "v1.0.0"
+			}
+			if failed != 1 || st.Attempt.Result != want || h.docker.running["server"] != h.deploy(running) || h.statusDir().Held() {
+				t.Fatalf("got %v, failed %d times, attempt %+v, running %v, held %v", err, failed, st.Attempt, h.docker.running, h.statusDir().Held())
+			}
+			// The next write says it.
+			if status := readFile(t, h.statusDir().path(StatusFile)); !strings.Contains(status, `"result": "`+want+`"`) {
+				t.Errorf("status.json:\n%s", status)
+			}
+		})
+	}
+}
+
 // The updater never changes the data root (starting the new version, or
 // restoring) unless the step that says so is recorded: the next run
 // finishes an attempt by its record. Before the set-up a step it cannot
@@ -394,26 +448,6 @@ func TestUnrecordedStep(t *testing.T) {
 		}
 		if got := readFile(t, filepath.Join(h.dataRoot, "server", "data")); got != "the data of v1.0.0" || h.docker.running["server"] != h.deploy("v1.0.0") || h.state().HasFailed("v1.1.0") {
 			t.Errorf("the data root holds %q, running %v, failed %v", got, h.docker.running, h.state().Failed)
-		}
-	})
-	// state.json says the step began; status.json, which the console
-	// reads, could not be written: the step is begun, and the attempt goes
-	// on.
-	t.Run("status.json", func(t *testing.T) {
-		h := newTestHost(t, "v1.0.0", release.ChannelStable)
-		h.offer("v1.1.0", nil)
-		was := syncDir
-		t.Cleanup(func() { syncDir = was })
-		failed := 0
-		syncDir = func(dir string) error {
-			if dir == string(h.statusDir()) && h.state().Attempt.Step == StepSetUp && failed == 0 {
-				failed++
-				return errors.New("input/output error")
-			}
-			return was(dir)
-		}
-		if err := h.upgrade(Request{Automatic: true}); err != nil || failed != 1 || h.state().Running != "v1.1.0" {
-			t.Fatalf("got %v, failed %d times, state %+v", err, failed, h.state())
 		}
 	})
 	// state.json says the step began, its directory not synced: after a

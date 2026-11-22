@@ -141,9 +141,12 @@ check_env() {
 # env_value KEY [FILE]: KEY's value in .env, or FILE, read as check_env
 # reads it (the last, if KEY is there twice). In quotes, a backslash before
 # the quote or, in double quotes, before a backslash is taken off, as Compose
-# does; Compose's ${...} and $$ are not read.
+# does, and any other backslash kept, as Compose keeps it; but in double
+# quotes Compose also decodes \a \b \f \n \r \t \v \$ and \0 (octal), which
+# env_value refuses rather than misreads. Compose's ${...} and $$ are not
+# read: check_env refuses a $ in what setup.sh reads.
 env_value() {
-  local value quote out=''
+  local value quote out='' decoded="abfnrtv\$0"
   value=$(sed -n "s/^$1=//p" "${2:-.env}" | tail -n 1)
   value=${value#"${value%%[![:blank:]]*}"}
   case "$value" in
@@ -151,6 +154,9 @@ env_value() {
       quote=${value:0:1}
       value=${value:1}
       while [[ -n "$value" && "${value:0:1}" != "$quote" ]]; do
+        if [[ "$quote" == \" && "${value:0:1}" == \\ && -n "${value:1:1}" && "$decoded" == *"${value:1:1}"* ]]; then
+          die "${2:-.env}: $1's double-quoted value holds \\${value:1:1}, which Compose reads as another character and setup.sh does not read: write the character itself, or quote the value with single quotes (docs/operations/updater.md#env)"
+        fi
         if [[ "${value:0:1}" == \\ && ( "${value:1:1}" == "$quote" || ( "$quote" == \" && "${value:1:1}" == \\ ) ) ]]; then
           value=${value:1}
         fi
@@ -470,7 +476,11 @@ fi
 # leaves it alone otherwise. Secrets later versions need reach an older .env
 # this way without touching the ones that protect existing data.
 fill_secret() {
-  if [[ -n "$(env_value "$1")" ]]; then
+  local value
+  # Not in a condition: env_value's refusal stops setup.sh rather than
+  # leave a secret it could not read to be replaced.
+  value=$(env_value "$1")
+  if [[ -n "$value" ]]; then
     return
   elif grep -q "^$1=" .env; then
     sed -i "s|^$1=.*|$1=$2|" .env

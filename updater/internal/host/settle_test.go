@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -252,33 +254,64 @@ func TestInterruptedHeldStartAfterAReboot(t *testing.T) {
 	}
 }
 
-// An attempt killed during its backup leaves an incomplete backup, which
-// the next run removes before it starts the previous version again.
+// An attempt whose process ends during its backup (a panic, the
+// out-of-memory killer on a large tree) leaves an incomplete backup, which
+// the next run removes before it starts the previous version again; that
+// run does nothing else. Not the version failing, but the server was down
+// until then: it counts as cut short, and once a version's attempts end so
+// twice, automatic runs wait for an operator rather than take the server
+// down every night.
 func TestInterruptedBackup(t *testing.T) {
 	h := newTestHost(t, "v1.0.0", release.ChannelStable)
 	h.offer("v1.1.0", nil)
-	h.crashAt(Request{Automatic: true}, func(_, call string) bool { return strings.HasPrefix(call, "ps -q") }, nil)
-	// What the process recorded once its backup was under way.
-	st := h.state()
-	st.Attempt.Step = StepBackup
-	st.Attempt.Backup = filepath.Join(h.u.Config.BackupDir, "20261121T030000Z-v1.0.0")
-	writeFile(t, filepath.Join(st.Attempt.Backup, "data", "server", "data"), "half copied", 0o600)
-	if err := st.save(h.u.StateDir); err != nil {
+	for times := 1; times <= maxCutShort; times++ {
+		h.crashAt(Request{Automatic: true}, func(_, call string) bool { return strings.HasPrefix(call, "ps -q") }, nil)
+		// What the process recorded once its backup was under way.
+		st := h.state()
+		st.Attempt.Step = StepBackup
+		st.Attempt.Backup = filepath.Join(h.u.Config.BackupDir, "20261121T030000Z-v1.0.0")
+		writeFile(t, filepath.Join(st.Attempt.Backup, "data", "server", "data"), "half copied", 0o600)
+		if err := st.save(h.u.StateDir); err != nil {
+			t.Fatal(err)
+		}
+		// The next night's run.
+		h.now = time.Date(2026, 11, 21+times, 3, 0, 0, 0, time.UTC)
+		stops := h.docker.called("compose stop")
+		if err := h.upgrade(Request{Automatic: true}); err != nil {
+			t.Fatal(err)
+		}
+		after := h.state()
+		if a := after.Attempt; a.ID != st.Attempt.ID || a.Result != ResultRolledBack || after.HasFailed("v1.1.0") || h.docker.running["server"] != h.deploy("v1.0.0") || h.statusDir().Held() {
+			t.Fatalf("attempt %+v, running %v", a, h.docker.running)
+		}
+		if h.docker.called("compose stop") != stops {
+			t.Error("the run that finished the attempt tried again")
+		}
+		if c := after.CutShort; c == nil || c.Version != "v1.1.0" || c.Times != times || !strings.Contains(c.Last, "the updater's process ended during the backup step") {
+			t.Fatalf("cut short %+v", c)
+		}
+		if _, err := os.Stat(st.Attempt.Backup); err == nil {
+			t.Error("the incomplete backup is left")
+		}
+	}
+	// Twice: the timer's runs wait for an operator, and status says why.
+	stops, last := h.docker.called("compose stop"), h.state().Attempt.ID
+	if err := h.upgrade(Request{Automatic: true}); err != nil || h.docker.called("compose stop") != stops || h.state().Attempt.ID != last {
+		t.Errorf("the timer's next run: %v, stopped %d more times, attempt %+v", err, h.docker.called("compose stop")-stops, h.state().Attempt)
+	}
+	s, err := h.u.Status(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.upgrade(Request{Automatic: true}); err != nil {
-		t.Fatal(err)
+	var out strings.Builder
+	s.Write(&out)
+	if !strings.Contains(out.String(), "Cut short:   v1.1.0's attempts were cut short 2 times once the deployment had stopped, the last by: the updater's process ended during the backup step") ||
+		!strings.Contains(out.String(), "automatic upgrades wait until it is asked for by hand: easyrmm-updater upgrade v1.1.0") {
+		t.Errorf("status:\n%s", out.String())
 	}
-	st = h.state()
-	if st.Attempt.Result != ResultRolledBack || st.HasFailed("v1.1.0") || h.docker.running["server"] != h.deploy("v1.0.0") {
-		t.Errorf("attempt %+v, running %v", st.Attempt, h.docker.running)
-	}
-	if _, err := os.Stat(st.Attempt.Backup); err == nil {
-		t.Error("the incomplete backup is left")
-	}
-	// Not counted against the version: the next automatic run upgrades.
-	if err := h.upgrade(Request{Automatic: true}); err != nil || h.state().Running != "v1.1.0" {
-		t.Errorf("the next run: %v, running %s", err, h.state().Running)
+	// Asked for by hand, it is tried.
+	if err := h.upgrade(Request{}); err != nil || h.state().Running != "v1.1.0" {
+		t.Errorf("the operator's run: %v, running %s", err, h.state().Running)
 	}
 }
 
@@ -486,13 +519,18 @@ func TestConfirmLiftsTheHoldLast(t *testing.T) {
 
 // A stop asked for (Ctrl-C, systemd's stop) ends an attempt that has not
 // stopped the deployment, changing nothing and not counting against the
-// version; once it has, the attempt runs on to its end.
+// version; once it has, the attempt runs on to its end. A docker call it
+// kills in the check fails with the signal: that too is the stop's.
 func TestStopAskedFor(t *testing.T) {
 	for name, tc := range map[string]struct {
 		at      func(h *testHost, dir, call string) bool
+		killed  bool // the call fails, killed with the attempt's context
 		running string
 	}{
 		"before the stop": {at: func(_ *testHost, _, call string) bool { return call == "compose pull --quiet" }, running: "v1.0.0"},
+		"in the check": {at: func(h *testHost, dir, call string) bool {
+			return dir == h.deploy("v1.1.0") && call == "compose config --images"
+		}, killed: true, running: "v1.0.0"},
 		"after the stop": {at: func(h *testHost, dir, call string) bool {
 			return dir == h.deploy("v1.1.0") && strings.HasPrefix(call, "compose up")
 		}, running: "v1.1.0"},
@@ -503,10 +541,20 @@ func TestStopAskedFor(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			h.docker.fail = func(dir string, args []string) error {
-				if tc.at(h, dir, strings.Join(args, " ")) {
-					cancel()
+				if !tc.at(h, dir, strings.Join(args, " ")) {
+					return nil
 				}
-				return nil
+				if !tc.killed {
+					cancel()
+					return nil
+				}
+				// As ExecRunner sees it: the command killed by its context.
+				cmd := exec.CommandContext(ctx, "sleep", "10")
+				if err := cmd.Start(); err != nil {
+					t.Fatal(err)
+				}
+				cancel()
+				return asKilled(ctx, fmt.Errorf("docker %s: %w", strings.Join(args, " "), cmd.Wait()))
 			}
 			err := h.u.Upgrade(ctx, Request{By: "a test"})
 			st := h.state()

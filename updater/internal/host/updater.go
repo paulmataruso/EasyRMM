@@ -265,7 +265,9 @@ func (u *Updater) end(st *State, d *deployment, result string, reason error) {
 	}
 }
 
-// finish records how an attempt ended, and returns a failure to record it.
+// finish records how an attempt ended, and returns a failure to record it
+// in state.json (record): the confirm lifts the hold only once state.json
+// records the new version, whether or not status.json says so.
 func (u *Updater) finish(st *State, d *deployment, result string, reason error) error {
 	a := st.Attempt
 	t := u.now()
@@ -277,7 +279,7 @@ func (u *Updater) finish(st *State, d *deployment, result string, reason error) 
 		a.Step = StepFinished
 		u.Log.Info("attempt ended", "result", result, "attempt", a.ID)
 	}
-	return u.save(st, d)
+	return u.record(st, d, "the attempt's end", func() {})
 }
 
 // save writes the state and the status the server reads.
@@ -668,11 +670,13 @@ func (up *upgrade) run(ctx context.Context) error {
 	// the deployment stopped, is not, so that automatic upgrades do not take
 	// the server down every hour. A version that ran out of room once the
 	// deployment stopped waits for an operator, as one cut short too often
-	// does.
+	// does. A failure before the stop, once a stop was asked for, is the
+	// stop's: it kills the command running (a docker call in the check
+	// fails with the signal, not with context.Canceled).
 	var transient *transientError
 	var stop *StopError
 	switch {
-	case errors.As(err, &transient), errors.As(err, &stop), noSpace(err), errors.Is(err, context.Canceled), interruption(err):
+	case errors.As(err, &transient), errors.As(err, &stop), noSpace(err), errors.Is(err, context.Canceled), interruption(err), asked && !up.stopped:
 	default:
 		st.MarkFailed(up.target.String())
 	}
@@ -779,11 +783,9 @@ func (up *upgrade) steps(ctx context.Context) error {
 	meta := BackupMeta{Version: up.running.String(), Deployment: d.dir, DataRoot: d.dataRoot, Taken: u.now()}
 	dir := backupDirFor(u.Config.BackupDir, meta)
 	b, err := takeBackup(ctx, dir, meta, u.Config.Path, up.dataSize+up.treeSize, func() error {
+		was := st.Attempt.Backup
 		st.Attempt.Backup = dir
-		if err := u.save(st, d); err != nil {
-			return &unsavedError{what: "the backup's directory", err: err}
-		}
-		return nil
+		return u.record(st, d, "the backup's directory", func() { st.Attempt.Backup = was })
 	})
 	if err != nil {
 		return fmt.Errorf("backing up: %w", err)
@@ -955,10 +957,11 @@ func (up *upgrade) unpack(archive string) error {
 			return err
 		}
 	}
-	st.Unpacked = append(st.Unpacked, dir)
+	unpacked, was := st.Unpacked, st.Attempt.NewDeploy
+	st.Unpacked = append(slices.Clip(st.Unpacked), dir)
 	st.Attempt.NewDeploy = filepath.Join(dir, "deploy")
-	if err := u.save(st, up.d); err != nil {
-		return &unsavedError{what: "the new version's directory", err: err}
+	if err := u.record(st, up.d, "the new version's directory", func() { st.Unpacked, st.Attempt.NewDeploy = unpacked, was }); err != nil {
+		return err
 	}
 	root, err := unpackBundle(archive, parent, top)
 	if err != nil {

@@ -58,12 +58,13 @@ func (u *Updater) restore(ctx context.Context, st *State, d *deployment, p resto
 		if err != nil {
 			u.Log.Warn("the discarded database's audit chain could not be read: its head is recorded as unknown, and audit IDs skip a margin", "error", err)
 		}
+		was := a.Discarded
 		a.Discarded = head
 		if err := u.Docker.Stop(ctx, stopDir); err != nil {
 			return fmt.Errorf("stopping %s's PostgreSQL: %w", p.discarded, err)
 		}
-		if err := u.save(st, d); err != nil {
-			return &unsavedError{what: "the discarded database's audit chain head", err: err}
+		if err := u.record(st, d, "the discarded database's audit chain head", func() { a.Discarded = was }); err != nil {
+			return err
 		}
 	}
 	// The same for every restore of the attempt: one done again finds what
