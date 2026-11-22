@@ -27,6 +27,13 @@
   [MSP feature plan](../feature-plan-msp.md#f4-one-set-of-maintenance-windows-per-site):
   maintenance windows gain a purpose, added by that plan's feature 11,
   not by this ADR's slices (see **Maintenance windows, per site**).
+* Amended 2026-11-21 by
+  [ADR-0065](0065-hardware-health.md#notifications), before slice 4 is
+  built: alerts gain a check and a subject (one alert per disk); the
+  condition filter gains `disk_health` and its checks; an incident
+  carries over only on the same policy, device, kind, check and
+  subject; and `key` is the same for every alert of one condition on
+  one device and subject.
 * Part of [the feature plan](../feature-plan.md): F2 and feature 7. Where
   this ADR departs from the plan, the plan lists it.
 
