@@ -207,8 +207,9 @@ func TestPatchAllBatches(t *testing.T) {
 		t.Fatalf("sent %d", got)
 	}
 
-	// The first batch's reply is lost: it is reported as not known, and the
-	// second batch still goes.
+	// Batches of 200: the engine starts a bulk request's jobs one after
+	// another. The first batch's reply is lost: it is reported as not
+	// known, and the next batches still go.
 	calls := 0
 	f.ep.Set(func() {
 		f.ep.LoseReply = func(method, path string) bool {
@@ -220,25 +221,26 @@ func TestPatchAllBatches(t *testing.T) {
 		}
 	})
 	res, err := f.svc.Install(ctx, f.admin, InstallInput{All: true, OrganizationID: big})
-	if err != nil || res.Succeeded != 2 || res.Failed != MaxBulk || len(res.Results) != n || len(res.Batches) != 2 ||
-		res.Batches[0].Devices != MaxBulk || res.Batches[0].Sent != 0 || res.Batches[0].Error == "" ||
-		res.Batches[1] != (Batch{Devices: 2, Sent: 2}) || !strings.HasPrefix(res.Results[0].Message, "Not known") {
+	if err != nil || res.Succeeded != n-patchAllBatch || res.Failed != patchAllBatch || len(res.Results) != n || len(res.Batches) != 6 ||
+		res.Batches[0].Devices != patchAllBatch || res.Batches[0].Sent != 0 || res.Batches[0].Error == "" || !res.Batches[0].Unknown ||
+		res.Batches[1] != (Batch{Devices: patchAllBatch, Sent: patchAllBatch}) || res.Batches[5] != (Batch{Devices: 2, Sent: 2}) ||
+		!strings.HasPrefix(res.Results[0].Message, "Not known") {
 		t.Fatalf("batches: %d %d %+v, %v", res.Succeeded, res.Failed, res.Batches, err)
 	}
 	reqs := f.ep.RequestsTo("POST", "/api/v1/endpoints/bulk/install-updates")
-	if len(reqs) != 2 || len(reqs[0].Body["endpointIds"].([]any)) != MaxBulk || len(reqs[1].Body["endpointIds"].([]any)) != 2 {
+	if len(reqs) != 6 || len(reqs[0].Body["endpointIds"].([]any)) != patchAllBatch || len(reqs[5].Body["endpointIds"].([]any)) != 2 {
 		t.Fatalf("requests: %d", len(reqs))
 	}
 	all := f.audits("patch.install_all")
-	if len(all) != 1 || all[0].Details["devices"] != float64(n) || all[0].Details["succeeded"] != float64(2) ||
-		len(all[0].Details["batches"].([]any)) != 2 {
+	if len(all) != 1 || all[0].Details["devices"] != float64(n) || all[0].Details["succeeded"] != float64(n-patchAllBatch) ||
+		len(all[0].Details["batches"].([]any)) != 6 || all[0].Details["batches"].([]any)[0].(map[string]any)["unknown"] != true {
 		t.Fatalf("audit: %+v", all)
 	}
 
 	// A batch the engine refuses says so.
 	f.ep.Set(func() { f.ep.LoseReply, f.ep.ReadOnly = nil, true })
 	res, err = f.svc.Install(ctx, f.admin, InstallInput{All: true, OrganizationID: big})
-	if err != nil || res.Succeeded != 0 || len(res.Batches) != 2 || !strings.HasPrefix(res.Results[0].Message, "Not sent") {
+	if err != nil || res.Succeeded != 0 || len(res.Batches) != 6 || res.Batches[0].Unknown || !strings.HasPrefix(res.Results[0].Message, "Not sent") {
 		t.Fatalf("refused: %d %+v, %v", res.Succeeded, res.Batches, err)
 	}
 	if all = f.audits("patch.install_all"); len(all) != 2 {
@@ -267,6 +269,7 @@ func TestRestartAll(t *testing.T) {
 		t.Fatalf("audit: %+v", got)
 	}
 	// Ticked, it restarts.
+	f.finishRestarts()
 	res, err = f.svc.Restart(ctx, f.admin, RestartInput{Targets: Targets{All: true, OrganizationID: f.acme}, ConfirmServers: []uuid.UUID{f.db}})
 	if err != nil || res.Succeeded != 2 {
 		t.Fatalf("with the server: %+v, %v", res, err)
@@ -351,8 +354,9 @@ func TestInstallAvailableSends(t *testing.T) {
 	// Feature upgrades when asked for; the whole organization, where db-01
 	// has nothing to install.
 	res, err = f.svc.Install(ctx, f.admin, InstallInput{All: true, OrganizationID: f.acme, Updates: UpdatesAvailable, Features: true})
-	if err != nil || res.Succeeded != 2 || res.Results[0].DeviceID != f.db || res.Results[0].JobID != nil ||
-		!strings.Contains(res.Results[0].Message, "Nothing to install") || res.Results[1].JobID == nil || len(res.Batches) != 0 {
+	if err != nil || res.Succeeded != 1 || res.UpToDate != 1 || res.Results[0].DeviceID != f.db || res.Results[0].JobID != nil ||
+		!res.Results[0].UpToDate || !strings.Contains(res.Results[0].Message, "Already up to date") || res.Results[1].JobID == nil ||
+		len(res.Batches) != 0 {
 		t.Fatalf("all: %+v, %v", res, err)
 	}
 	reqs = f.ep.RequestsTo("POST", "/api/v1/endpoints/"+f.e1.ID.String()+"/install-updates")
@@ -361,7 +365,8 @@ func TestInstallAvailableSends(t *testing.T) {
 	}
 	got := f.audits("patch.install")
 	if len(got) != 3 || got[0].Details["updates"] != "all available" || got[0].Details["updateCount"] != float64(1) ||
-		got[2].Action != "patch.install_all" || got[2].Details["featureUpgrades"] != true {
+		got[2].Action != "patch.install_all" || got[2].Details["featureUpgrades"] != true || got[2].Details["upToDate"] != float64(1) ||
+		got[2].Details["succeeded"] != float64(1) {
 		t.Fatalf("audit: %+v", got)
 	}
 
@@ -397,6 +402,17 @@ func (f *patchingFixture) restartJobs() []eptest.Job {
 		}
 	}
 	return out
+}
+
+// finishRestarts has the devices run the restarts asked of them: the
+// engine refuses another restart of a device while one is queued or
+// running (eptest's duplicate guard, as JobService.CreateAsync).
+func (f *patchingFixture) finishRestarts() {
+	for _, j := range f.restartJobs() {
+		if active(j.Status) {
+			f.ep.SetJobStatus(j.ID, "Completed")
+		}
+	}
 }
 
 func (f *patchingFixture) sweep(svc *Service) int {
@@ -532,6 +548,7 @@ func TestRestartAfterInstallConditions(t *testing.T) {
 
 	// The install waits for a restart to go on: one restart then, and the
 	// last when it has finished.
+	f.finishRestarts()
 	job = f.installWithRestart(AfterInstall{Condition: conditionAlways})
 	f.ep.SetJobStatus(job, "WaitingForReboot")
 	f.sweep(f.svc)
@@ -543,6 +560,7 @@ func TestRestartAfterInstallConditions(t *testing.T) {
 	if reqs = f.ep.RequestsTo("POST", "/api/v1/endpoints/bulk/restart"); reqs[1].Body["restart"].(map[string]any)["condition"] != conditionPending {
 		t.Fatalf("midway restart: %+v", reqs[1])
 	}
+	f.ep.SetJobStatus(*midway, "Completed")
 	f.ep.SetJobStatus(job, "Completed")
 	f.sweep(f.svc)
 	state, _, restart, _, _ = f.restartRowOf(job)
@@ -584,6 +602,7 @@ func TestRestartAfterInstallServersAndDevices(t *testing.T) {
 	if d, _ := f.svc.Job(f.ctx, f.tech, job); d.RestartAfter == nil || !d.RestartAfter.Server {
 		t.Fatalf("ticked job: %+v", d.RestartAfter)
 	}
+	f.finishRestarts()
 
 	// An agent that cannot restart, an endpoint the engine no longer has,
 	// and an install it no longer has.
@@ -596,7 +615,7 @@ func TestRestartAfterInstallServersAndDevices(t *testing.T) {
 	}
 	f.ep.Set(func() { f.e1.CannotRestart = false })
 	job = f.installWithRestart(AfterInstall{Condition: conditionAlways})
-	f.exec(`UPDATE easypatch_install_restarts SET install_job_id = $2 WHERE install_job_id = $1`, job, uuid.Nil)
+	f.exec(`UPDATE easypatch_install_restarts SET install_job_id = $2, install_job_ids = ARRAY[$2::uuid] WHERE install_job_id = $1`, job, uuid.Nil)
 	f.sweep(f.svc)
 	if state, msg, _, _, _ := f.restartRowOf(uuid.Nil); state != afterSkipped || !strings.Contains(msg, "no longer has the install") {
 		t.Fatalf("no install: %s %q", state, msg)
@@ -661,6 +680,7 @@ func TestRestartAfterInstallSurvives(t *testing.T) {
 	// The engine took the restart but its answer was lost: the claim stays,
 	// no server asks again while it may be in flight, and once it is stale
 	// the restart found in the engine is adopted, not asked for again.
+	f.finishRestarts()
 	job = f.installWithRestart(AfterInstall{Condition: conditionAlways})
 	f.ep.SetJobStatus(job, "Completed")
 	f.ep.Set(func() { f.ep.LoseReply = func(_, path string) bool { return path == "/api/v1/endpoints/bulk/restart" } })
@@ -686,6 +706,7 @@ func TestRestartAfterInstallSurvives(t *testing.T) {
 
 	// A server stopped after claiming, before asking: the engine has no
 	// restart, so it is asked for, once.
+	f.finishRestarts()
 	job = f.installWithRestart(AfterInstall{Condition: conditionAlways})
 	f.ep.SetJobStatus(job, "Completed")
 	f.exec(`UPDATE easypatch_install_restarts SET claimed_at = now() - interval '5 minutes', claimed_for = 'final' WHERE install_job_id = $1`, job)
@@ -695,10 +716,13 @@ func TestRestartAfterInstallSurvives(t *testing.T) {
 		t.Fatalf("resent: %s %v %d", state, claimed, len(f.restartJobs()))
 	}
 
-	// The engine down: nothing changes, and the next pass goes on.
+	// The engine down: the pass says so, nothing changes, and the next
+	// pass goes on.
 	job = f.installWithRestart(AfterInstall{Condition: conditionAlways})
 	f.ep.Set(func() { f.ep.Down = true })
-	f.sweep(f.svc)
+	if _, err := f.svc.SweepRestarts(f.ctx); err == nil || !strings.Contains(err.Error(), "503") {
+		t.Fatalf("down: %v", err)
+	}
 	f.ep.Set(func() { f.ep.Down = false })
 	if state, _, _, _, claimed := f.restartRowOf(job); state != afterWaiting || claimed {
 		t.Fatalf("down: %s %v", state, claimed)

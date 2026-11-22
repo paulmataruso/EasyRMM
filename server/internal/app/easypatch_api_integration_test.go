@@ -328,7 +328,9 @@ func TestEasyPatchAPI(t *testing.T) {
 	}
 	wantStatus(t, admin.do("POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "scheduledAt": "2026-01-01T00:00:00Z"}),
 		http.StatusUnprocessableEntity, "validation_failed")
-	// How users are asked, and whether a restart need be pending.
+	// How users are asked, and whether a restart need be pending, once the
+	// first restart ran: the engine refuses another while one is queued.
+	ep.SetJobStatus(uuid.MustParse(res.Results[0].JobID), "Completed")
 	admin.expect(http.StatusOK, "POST", "/api/v1/patching/restart", map[string]any{"deviceIds": []string{device}, "confirmServers": []string{device},
 		"mode": "PromptWithDeadline", "deadlineMinutes": 120, "expiresAfterMinutes": 60}, &res)
 	if res.Succeeded != 1 {

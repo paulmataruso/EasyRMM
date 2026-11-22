@@ -137,10 +137,16 @@ The owner asked, on 2026-11-22, in these words:
   sites. A device enrolled between the dialog and the request is included;
   the result gives the counts as sent.
 * **No silent truncation.** An install of what each policy allows goes to the
-  engine in batches of at most 1,000 (its bulk limit), whatever the size of
-  the organization. A batch the engine refuses, or does not answer, is
-  reported device by device (refused: not sent; no answer: not known, see
-  Jobs), and the next batch still goes. Requests that read every device
+  engine in batches of 200, whatever the size of the organization (decided
+  in review): the engine takes 1,000 endpoints in one bulk request, but
+  starts their jobs one after another, each with its own install preview
+  and commit (`EndpointEndpoints.BulkAsync`, `JobService.CreateAsync`), and
+  EasyRMM waits 30 seconds for an answer. A batch the engine refuses, or
+  does not answer, is reported device by device and in the batch (refused:
+  not sent; no answer: not known, see Jobs), and the next batch still goes.
+  Each batch is sent, and what it started saved, whatever becomes of the
+  request: a closed tab leaves no install without its restart choice, and
+  no further batch is sent once the request has ended. Requests that read every device
   first have a limit and refuse above it, saying so: every available update
   and a restart after the install reach at most 1,000 devices, a restart
   that need not be pending at most 100 (as for chosen devices).
@@ -177,22 +183,45 @@ The owner asked, on 2026-11-22, in these words:
     agent checks again before it restarts;
   * **Failed, cancelled or expired installs never restart**, whatever the
     choice: a failed install has nothing to finish, and restarting a
-    computer for it would only interrupt its user;
+    computer for it would only interrupt its user. **An install the engine
+    timed out is waited for**: the engine fails a job whose agent stopped
+    reporting for 12 hours, and the agent's late result still replaces that
+    (`MaintenanceTasks.cs`, `JobTransitions.AgentMayTransition`), so EasyRMM
+    reads it again until it settles or the 40 days pass;
   * an install that **waits for a restart** to go on gets one restart then
-    (only if pending), and the last when it has finished;
-  * asking is claimed in the database first, so one of EasyRMM's servers
-    asks. A claim a stopped server left behind is settled, once it is two
-    minutes old, from the engine's restart jobs for the endpoint since then
-    (one already recorded for another install does not count): found, it is
-    adopted; not found, the restart is asked for again;
+    (only if pending), and another each time it waits again after one ran
+    and it reported since, **at most 3** (decided in review): past that the
+    job says to restart the device by hand. The last restart follows when it
+    has finished;
+  * the engine refuses a second restart of an endpoint while one is queued
+    or running, whenever either is to start (its duplicate key is
+    `restart`). The one it names is read: one that starts within five
+    minutes is the install's restart. **One scheduled for later is neither
+    adopted nor cancelled** (decided in review): it is someone's choice, so
+    the job and the audit trail say that a restart is already scheduled for
+    that time, and that the install finishes when it runs;
+  * asking is claimed in the database first, on the state the server read
+    (no claim, no final restart, as many restarts while it waited), so
+    exactly one of EasyRMM's servers asks, even when another read the
+    install before. A claim a stopped server left behind is settled, once it
+    is two minutes old, from the engine's restart jobs for the endpoint
+    since then (one already recorded for another install does not count):
+    found, it is adopted; not found, the restart is asked for again;
+  * the restarts move on beside the patching loop, not in it: a pass takes
+    at most 45 seconds and ends after three failures of the engine in a
+    row, the rest waiting for the next pass, so a slow engine holds up
+    neither the engine's sync nor the device links;
   * the device is read again when the restart is asked for: a server not
     ticked by name, an agent that cannot restart, patching stopped, or the
     endpoint changed, and it is not restarted, with the reason recorded;
-  * EasyRMM gives up on an install that has not ended in 40 days (the engine
-    expires one waiting for a restart after 30);
+  * EasyRMM gives up on an install that has not ended in 40 days from when
+    it was to start (the engine expires one waiting for a restart after 30);
   * the restart is asked for on behalf of the person who asked for the
     install, and audited as `patch.restart` by EasyRMM's patching component,
-    naming that person and the install job.
+    naming that person and the install job. **Once that person is deleted,
+    the restart is not asked for**, and the job says why;
+  * finished restarts are pruned after 180 days, as long as the engine keeps
+    a finished job by default (`RetentionJobsDays`).
 * The install job's detail shows the choice and what became of it; the
   restart's detail links back to the install.
 
@@ -203,14 +232,24 @@ The owner asked, on 2026-11-22, in these words:
 * **Every available update** is each update the engine reports missing or
   failed on the device, but not those excluded on it (counted, with the
   devices, and linked), held, or application updates the policy does not
-  approve. Updates still in the policy's rollout delay are included, and
-  counted. Drivers are included. **Feature upgrades are left out** unless
+  approve (an application update the policy approves but holds in its
+  rollout delay is approved). Updates still in the policy's rollout delay
+  are included, and counted, with a tick, **on by default** (decided in
+  review), to leave them out. Drivers are included. **Feature upgrades are left out** unless
   ticked: they are large, change the operating system's version and
   restart more than once, so they are a choice of their own. The dialog
   reads every device first (`POST /api/v1/patching/install/plan`) and says
-  what "all" includes. Each device's updates install as chosen updates.
+  what "all" includes. Each device's updates install as chosen updates. The
+  engine has no install of every available update (its modes are the
+  policy's eligible updates and chosen ones) and takes at most 500 chosen
+  updates in one install (`JobService.CreateAsync`), so **a device with more
+  installs them in several jobs of at most 500**, which the engine runs one
+  after another, and its restart waits for them all (decided in review).
+  The result says so per device. A device with nothing to install is
+  reported as already up to date, not as a job.
 * **Windows first**: Windows devices are included; Linux devices only when
-  ticked, with their count.
+  ticked, with their count. The platforms are always named in the request,
+  so a device enrolled since on another platform cannot slip in.
 * The audit names the site or organization, the scope, the presets and the
   counts.
 

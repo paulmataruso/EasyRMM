@@ -2501,7 +2501,7 @@ export interface PatchAvailablePlan {
   held: number;
   /** Left out: application updates the policy does not approve. */
   notApproved: number;
-  /** Included although still in their rollout delay. */
+  /** Still in their rollout delay: included unless skipDelayed was asked for. */
   deferred: number;
   /** Devices whose updates could not be read. */
   errors: { deviceId: string; deviceName: string; message: string }[];
@@ -2526,6 +2526,8 @@ export interface PatchActionInput extends PatchTargets {
   updates?: "policy" | "available";
   /** With available: feature upgrades too. */
   features?: boolean;
+  /** With available: leave out the updates still in the policy's rollout delay. */
+  skipDelayed?: boolean;
   restart?: AfterInstallRestart;
   /** Servers ticked by name: only these restart after the install; other servers install but do not restart. */
   confirmServers?: string[];
@@ -2534,11 +2536,20 @@ export interface PatchActionInput extends PatchTargets {
 export interface PatchActionResult {
   succeeded: number;
   failed: number;
-  results: { deviceId: string; deviceName: string; ok: boolean; jobId?: string; message?: string }[];
+  /** Devices with nothing to install: no job, and no failure. */
+  upToDate?: number;
+  /**
+   * Each device's outcome. jobIds lists its jobs when there are several (more updates than one install takes), jobId
+   * being the last.
+   */
+  results: { deviceId: string; deviceName: string; ok: boolean; jobId?: string; jobIds?: string[]; upToDate?: boolean; message?: string }[];
   /** On all of an organization or site: the scope as it was when the request ran. */
   scope?: PatchScope;
-  /** On all of an organization or site: each batch sent to the patching engine (at most 1,000 devices). */
-  batches?: { devices: number; sent: number; error?: string }[];
+  /**
+   * On all of an organization or site: each batch sent to the patching engine. error says why it was not taken;
+   * unknown, that the engine did not answer, so whether it took the batch is not known.
+   */
+  batches?: { devices: number; sent: number; error?: string; unknown?: boolean }[];
   /** Devices that restart once their install has finished. */
   restartAfter?: number;
 }

@@ -890,14 +890,21 @@ type ActionItem struct {
 	DeviceName string     `json:"deviceName"`
 	OK         bool       `json:"ok"`
 	JobID      *uuid.UUID `json:"jobId,omitempty"`
-	Message    string     `json:"message,omitempty"`
+	// JobIDs are the device's jobs when there are several (an install of
+	// more updates than one job takes), JobID the last of them.
+	JobIDs []uuid.UUID `json:"jobIds,omitempty"`
+	// UpToDate is a device with nothing to install: no job, and no failure.
+	UpToDate bool   `json:"upToDate,omitempty"`
+	Message  string `json:"message,omitempty"`
 }
 
 // ActionResult is the outcome of a scan or an install.
 type ActionResult struct {
-	Succeeded int          `json:"succeeded"`
-	Failed    int          `json:"failed"`
-	Results   []ActionItem `json:"results"`
+	Succeeded int `json:"succeeded"`
+	Failed    int `json:"failed"`
+	// UpToDate counts the devices that had nothing to install.
+	UpToDate int          `json:"upToDate,omitempty"`
+	Results  []ActionItem `json:"results"`
 	// Scope is a Patch all's organization or site, as resolved when the
 	// request ran; Batches, each request it made to the engine.
 	Scope   *ScopeView `json:"scope,omitempty"`
@@ -908,9 +915,12 @@ type ActionResult struct {
 }
 
 func (r *ActionResult) add(it ActionItem) {
-	if it.OK {
+	switch {
+	case it.UpToDate:
+		r.UpToDate++
+	case it.OK:
 		r.Succeeded++
-	} else {
+	default:
 		r.Failed++
 	}
 	r.Results = append(r.Results, it)
@@ -1070,9 +1080,11 @@ type InstallInput struct {
 	// only.
 	UpdateIDs []uuid.UUID `json:"updateIds"`
 	// Updates is UpdatesPolicy (the default) or UpdatesAvailable; Features
-	// adds feature upgrades to every available update.
-	Updates  string `json:"updates"`
-	Features bool   `json:"features"`
+	// adds feature upgrades to every available update, and SkipDelayed
+	// leaves out those still in the policy's rollout delay.
+	Updates     string `json:"updates"`
+	Features    bool   `json:"features"`
+	SkipDelayed bool   `json:"skipDelayed"`
 	// ScheduledAt installs later: the jobs wait until then.
 	ScheduledAt *time.Time `json:"scheduledAt"`
 	// Restart restarts each device once its install has finished.
@@ -1097,10 +1109,12 @@ func (in *InstallInput) check(now time.Time) (*RestartOptions, error) {
 	f := apperr.Fields{}
 	f.Check(in.Updates == UpdatesPolicy || in.Updates == UpdatesAvailable, "updates", "Choose the updates the policy allows, or every available update.")
 	f.Check(!in.Features || in.Updates == UpdatesAvailable, "features", "Feature upgrades go with every available update.")
+	f.Check(!in.SkipDelayed || in.Updates == UpdatesAvailable, "skipDelayed", "Leaving out updates in the rollout delay goes with every available update.")
 	if len(in.UpdateIDs) > 0 {
 		f.Check(len(in.DeviceIDs) == 1 && !in.All, "updateIds", "Choose updates on one device at a time.")
 		f.Check(in.Updates == UpdatesPolicy, "updateIds", "Choose updates, or every available update, not both.")
-		f.Check(len(in.UpdateIDs) <= 1000, "updateIds", "Choose at most 1,000 updates.")
+		f.Check(len(in.UpdateIDs) <= MaxSelected, "updateIds", fmt.Sprintf("Choose at most %d updates: the patching engine takes no more in one install.",
+			MaxSelected))
 	}
 	if in.ScheduledAt != nil {
 		switch {
@@ -1182,7 +1196,7 @@ func (s *Service) Install(ctx context.Context, c access.Caller, in InstallInput)
 	}
 	details := map[string]any{"updates": "all eligible"}
 	if in.Updates == UpdatesAvailable {
-		details["updates"], details["featureUpgrades"] = "all available", in.Features
+		details["updates"], details["featureUpgrades"], details["rolloutDelayed"] = "all available", in.Features, !in.SkipDelayed
 	}
 	if len(in.UpdateIDs) > 0 {
 		details["updates"] = len(in.UpdateIDs)
@@ -1197,29 +1211,38 @@ func (s *Service) Install(ctx context.Context, c access.Caller, in InstallInput)
 	if sc != nil {
 		details["patchAll"], details["requestId"] = sc.view.where(), request.String()
 	}
+	// Each restart choice is saved as soon as the engine has started its
+	// install, whatever becomes of the request.
+	var keep *restartKeeper
+	if restart != nil {
+		keep = &restartKeeper{s: s, c: c, o: *restart, confirm: in.ConfirmServers, scheduledAt: in.ScheduledAt}
+	}
 	switch {
 	case len(in.UpdateIDs) > 0:
-		err = s.installChosen(ctx, c, cl, devices, in, &res, details)
+		err = s.installChosen(ctx, c, cl, devices, in, &res, details, keep)
 	case in.Updates == UpdatesAvailable:
-		err = s.installAvailable(ctx, c, cl, devices, in, &res, details)
+		err = s.installAvailable(ctx, c, cl, devices, in, &res, details, keep)
 	case sc != nil:
 		res.Batches, err = s.batches(ctx, c, devices, &res, "patch.install", details, func(actx context.Context, ids []uuid.UUID) (BulkResult, error) {
 			return cl.BulkInstall(actx, ids, in.ScheduledAt, c.Actor.Label)
-		})
+		}, keep.keep)
 	default:
-		actx := s.as(ctx, c, RoleAdmin, orgsOf(devices)...)
-		err = s.bulk(ctx, c, devices, &res, "patch.install", details, func(ids []uuid.UUID) (BulkResult, error) {
+		sctx, cancel := detached(ctx)
+		defer cancel()
+		actx := s.as(sctx, c, RoleAdmin, orgsOf(devices)...)
+		start := len(res.Results)
+		err = s.bulk(sctx, c, devices, &res, "patch.install", details, func(ids []uuid.UUID) (BulkResult, error) {
 			return cl.BulkInstall(actx, ids, in.ScheduledAt, c.Actor.Label)
 		})
+		err = errors.Join(err, keep.keep(sctx, devices, res.Results[start:]))
 	}
 	s.fleet.clear()
-	if restart != nil {
-		n, rerr := s.keepRestarts(ctx, c, devices, res.Results, *restart, in.ConfirmServers)
-		res.RestartAfter = &n
-		err = errors.Join(err, rerr)
-	}
+	res.RestartAfter = keep.count()
 	if sc != nil {
-		err = errors.Join(err, s.recordAll(ctx, c, "patch.install_all", sc, request, &res, details, map[string]any{"platforms": platformText(in.Platforms)}))
+		// What was sent is audited, whatever became of the request.
+		rctx, cancel := detached(ctx)
+		defer cancel()
+		err = errors.Join(err, s.recordAll(rctx, c, "patch.install_all", sc, request, &res, details, map[string]any{"platforms": platformText(in.Platforms)}))
 	}
 	if err != nil && len(res.Results) == 0 {
 		return ActionResult{}, err
@@ -1229,11 +1252,13 @@ func (s *Service) Install(ctx context.Context, c access.Caller, in InstallInput)
 
 // installChosen installs chosen updates on one device.
 func (s *Service) installChosen(ctx context.Context, c access.Caller, cl *Client, devices []deviceRow, in InstallInput, res *ActionResult,
-	details map[string]any) error {
+	details map[string]any, keep *restartKeeper) error {
 	if len(devices) != 1 {
 		return nil
 	}
 	d := devices[0]
+	ctx, cancel := detached(ctx)
+	defer cancel()
 	j, err := cl.Install(s.as(ctx, c, RoleAdmin, orgOf(d)...), *d.endpointID, in.UpdateIDs, in.ScheduledAt, c.Actor.Label)
 	if err != nil {
 		if !IsStatus(err, http.StatusConflict) && !IsStatus(err, http.StatusBadRequest) {
@@ -1242,13 +1267,15 @@ func (s *Service) installChosen(ctx context.Context, c access.Caller, cl *Client
 		res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, Message: message(epError(err))})
 		return nil
 	}
-	res.add(ActionItem{DeviceID: d.id, DeviceName: d.name, OK: true, JobID: &j.ID})
+	it := ActionItem{DeviceID: d.id, DeviceName: d.name, OK: true, JobID: &j.ID}
+	res.add(it)
 	det := map[string]any{"device": d.name, "endpointId": d.endpointID.String(), "jobId": j.ID.String()}
 	for k, v := range details {
 		det[k] = v
 	}
-	return s.record(ctx, []audit.Event{{Actor: c.Actor, Action: "patch.install", OrganizationID: d.organizationID, SiteID: d.siteID,
-		DeviceID: d.id, TargetType: "device", TargetID: d.id.String(), Outcome: audit.Success, Details: det}})
+	return errors.Join(keep.keep(ctx, devices, []ActionItem{it}),
+		s.record(ctx, []audit.Event{{Actor: c.Actor, Action: "patch.install", OrganizationID: d.organizationID, SiteID: d.siteID,
+			DeviceID: d.id, TargetType: "device", TargetID: d.id.String(), Outcome: audit.Success, Details: det}}))
 }
 
 // recordAll audits a Patch all once, for its organization or site: what it
@@ -1257,6 +1284,9 @@ func (s *Service) recordAll(ctx context.Context, c access.Caller, action string,
 	details, extra map[string]any) error {
 	det := map[string]any{"requestId": request.String(), "organization": sc.view.OrganizationName, "devices": len(sc.devices),
 		"succeeded": res.Succeeded, "failed": res.Failed, "skipped": sc.view.skippedDetails()}
+	if res.UpToDate > 0 {
+		det["upToDate"] = res.UpToDate
+	}
 	for k, v := range details {
 		if k != "patchAll" && k != "requestId" {
 			det[k] = v
@@ -1276,7 +1306,7 @@ func (s *Service) recordAll(ctx context.Context, c access.Caller, action string,
 	if sc.view.SiteID != nil {
 		ev.SiteID, ev.TargetType, ev.TargetID, det["site"] = *sc.view.SiteID, "site", sc.view.SiteID.String(), sc.view.SiteName
 	}
-	if res.Succeeded == 0 && len(sc.devices) > 0 {
+	if res.Succeeded == 0 && res.UpToDate == 0 && len(sc.devices) > 0 {
 		ev.Outcome = audit.Failure
 	}
 	return s.record(ctx, []audit.Event{ev})

@@ -260,17 +260,25 @@ now…**.
 
 "Every device" is read when you confirm, not when the dialog opened: a
 device enrolled in between is included, and the result gives the counts as
-sent. An install of what each policy allows goes to the engine 1,000
+sent. An install of what each policy allows goes to the engine 200
 devices at a time, however many there are; the result lists each batch, and
 a batch the engine refuses or does not answer is reported device by device
 (refused: not sent; no answer: not known, check [Jobs](#jobs) before
-sending it again) while the next still goes.
+sending it again) while the next still goes. A batch that was sent is
+recorded, with each device's restart choice, even if you close the page;
+no further batch goes once the request has ended.
 
 **Every available update** is each update the engine reports missing or
 failed on the device, except those excluded on it, held, and application
 updates the policy does not approve. Updates still in the policy's rollout
-delay and drivers are included. Feature upgrades (a new version of
-Windows) are left out unless you tick them. Before you confirm, the dialog
+delay are included unless you untick **Include updates still in the
+rollout delay**; drivers are included. Feature upgrades (a new version of
+Windows) are left out unless you tick them. The engine takes at most 500
+chosen updates in one install, so a device with more gets several jobs of
+at most 500, which run one after another; the result says so. A device
+with nothing to install is counted as already up to date. The request
+always names the platforms ticked, so a device enrolled meanwhile on
+another platform is not included. Before you confirm, the dialog
 reads every device and says what would install, by category, and what is
 left out: how many excluded updates (with the devices that have them,
 linked to their updates), held, not approved, and devices whose updates
@@ -574,14 +582,23 @@ server installs and is not restarted.
 The engine cannot restart a computer when an install ends, so EasyRMM does:
 every minute it reads each install it waits for, and asks the engine for
 the restart once the install has **completed** (some updates may have
-failed). **A failed, cancelled or expired install never restarts the
-device.** An install that waits for a restart to go on gets one then, and
-the last when it has finished. The choice is kept in EasyRMM's database: a
-restart of EasyRMM's server neither loses it nor asks for it twice. EasyRMM
+failed), and, for a device whose updates were split, once every one of its
+jobs has. **A failed, cancelled or expired install never restarts the
+device.** One the engine timed out, because its agent stopped reporting, is
+waited for: the agent's late result can still complete it. An install that
+waits for a restart to go on gets one then, and another each time it waits
+again, at most three; after that its job says to restart the device by
+hand. The last restart follows when it has finished. If the device already
+has a restart scheduled for later, EasyRMM neither cancels it nor asks for
+another: the job says when it is, and the install finishes then. The choice
+is kept in EasyRMM's database: a restart of EasyRMM's server, or several
+servers, neither loses it nor asks for it twice. EasyRMM
 reads the device again first and does not restart it if it became a server
 nobody ticked, its agent cannot restart, its patching was stopped or its
 EasyPatch agent changed; the install's job says so. It stops waiting for an
-install that has not ended within 40 days.
+install that has not ended within 40 days of when it was to start, and
+does not restart on behalf of someone deleted since. Finished restarts are
+kept for 180 days.
 
 ### Policies
 
@@ -943,12 +960,14 @@ EasyRMM user who asked for the install, or EasyRMM for an automatic one.
   at once; one only where a restart is pending, 1,000. So does a restart
   after an install: when done, 100 devices; if the updates need it, 1,000.
 * Patch all installing what each policy allows has no device limit: it goes
-  to the engine 1,000 devices at a time. Every available update reads each
+  to the engine 200 devices at a time. Every available update reads each
   device's updates first and reaches at most 1,000 devices; choose a site
-  beyond that. At most 1,000 updates install on a device at once; the
-  result says when there were more.
+  beyond that. At most 500 updates install in one job, the engine's limit:
+  chosen updates beyond that are refused, and every available update splits
+  them into several jobs.
 * Each minute, EasyRMM reads at most 500 installs waiting to restart their
-  device; the rest wait for the next minute.
+  device, for at most 45 seconds, and stops early after three failures of
+  the engine in a row; the rest wait for the next minute.
 * The device list is cached for 30 seconds; a scan or install refreshes it.
 * An organization, a site or a device has at most 20 tags of its own.
 * The patch installations report reads at most 5,000 rows and says so;

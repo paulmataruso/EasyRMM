@@ -2,6 +2,7 @@ package easypatch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -26,8 +27,10 @@ const excludedListed = 50
 // AvailableInput chooses the devices whose available updates are counted.
 type AvailableInput struct {
 	Targets
-	// Features counts feature upgrades in.
-	Features bool `json:"features"`
+	// Features counts feature upgrades in; SkipDelayed leaves out those
+	// still in the policy's rollout delay.
+	Features    bool `json:"features"`
+	SkipDelayed bool `json:"skipDelayed"`
 }
 
 // CategoryCount is how many updates of an engine category would install.
@@ -69,7 +72,8 @@ type AvailablePlan struct {
 	// asked for.
 	Features int `json:"features"`
 	// Excluded, Held and NotApproved count the updates left out; Deferred,
-	// those included although the policy's rollout delay holds them back.
+	// those the policy's rollout delay holds back, included unless asked
+	// not to be.
 	Excluded    ExcludedCount `json:"excluded"`
 	Held        int           `json:"held"`
 	NotApproved int           `json:"notApproved"`
@@ -89,7 +93,7 @@ type available struct {
 }
 
 // readAvailable reads each device's available updates from the engine.
-func (s *Service) readAvailable(ctx context.Context, c access.Caller, cl *Client, devices []deviceRow, features bool) []available {
+func (s *Service) readAvailable(ctx context.Context, c access.Caller, cl *Client, devices []deviceRow, features, skipDelayed bool) []available {
 	out := make([]available, len(devices))
 	now := s.now()
 	forEach(len(devices), func(i int) {
@@ -103,21 +107,31 @@ func (s *Service) readAvailable(ctx context.Context, c access.Caller, cl *Client
 			return
 		}
 		for _, u := range list {
+			// The engine marks an excluded update Excluded while it is
+			// missing or failed; one installed keeps its state
+			// (ComplianceService.ApplyRequirementFlags).
+			installable := u.State == "Missing" || u.State == "Failed"
+			delayed := u.DeferredUntil != nil && u.DeferredUntil.After(now)
 			switch {
-			case u.IsExcluded || u.State == "Excluded":
+			case u.State == "Excluded" || (u.IsExcluded && installable):
 				a.excluded++
-			case u.State != "Missing" && u.State != "Failed":
+			case !installable:
 			case u.HoldReason != "":
 				a.held++
-			case u.Category == "Application" && !u.IsRequired:
+			case u.Category == "Application" && !u.IsRequired && u.DeferredUntil == nil:
+				// The policy approves an application update it requires, or
+				// one it holds back for its rollout delay only
+				// (UpdateRequirement.Evaluate).
 				a.notApproved++
 			case u.Category == "Feature" && !features:
 				a.features++
+			case delayed && skipDelayed:
+				a.delayed++
 			default:
 				if u.Category == "Feature" {
 					a.features++
 				}
-				if u.DeferredUntil != nil && u.DeferredUntil.After(now) {
+				if delayed {
 					a.delayed++
 				}
 				a.categories[u.Category]++
@@ -160,7 +174,7 @@ func (s *Service) PlanAvailable(ctx context.Context, c access.Caller, in Availab
 		return AvailablePlan{}, availableLimit()
 	}
 	categories := map[string]int{}
-	for _, a := range s.readAvailable(ctx, c, cl, devices, in.Features) {
+	for _, a := range s.readAvailable(ctx, c, cl, devices, in.Features, in.SkipDelayed) {
 		if a.err != nil {
 			plan.Errors = append(plan.Errors, DeviceError{DeviceID: a.device.id, DeviceName: a.device.name, Message: message(a.err)})
 			continue
@@ -213,12 +227,18 @@ func availableLimit() error {
 }
 
 // installAvailable installs every available update on each device, as
-// chosen updates, a few devices at a time.
+// chosen updates, a few devices at a time. The engine takes at most
+// MaxSelected chosen updates in one install, so a device with more installs
+// them in several jobs, which it runs one after another (the engine gives
+// an endpoint one install at a time, JobService.LeaseForCheckInAsync). Each
+// device's installs are sent, and their restart kept, whatever becomes of
+// the request; once it has ended, no further device is sent.
 func (s *Service) installAvailable(ctx context.Context, c access.Caller, cl *Client, devices []deviceRow, in InstallInput, res *ActionResult,
-	details map[string]any) error {
-	found := s.readAvailable(ctx, c, cl, devices, in.Features)
+	details map[string]any, keep *restartKeeper) error {
+	found := s.readAvailable(ctx, c, cl, devices, in.Features, in.SkipDelayed)
 	items := make([]ActionItem, len(found))
-	events := make([]*audit.Event, len(found))
+	events := make([][]audit.Event, len(found))
+	kept := make([]error, len(found))
 	forEach(len(found), func(i int) {
 		a := found[i]
 		d := a.device
@@ -228,37 +248,72 @@ func (s *Service) installAvailable(ctx context.Context, c access.Caller, cl *Cli
 			items[i].Message = "Its updates could not be read: " + cut(message(a.err), 400)
 			return
 		case len(a.updates) == 0:
-			items[i].OK, items[i].Message = true, "Nothing to install: it has no available update."
+			items[i].OK, items[i].UpToDate, items[i].Message = true, true, "Already up to date: it has no available update."
+			return
+		case ctx.Err() != nil:
+			items[i].Message = "Not sent: the request ended before this device was sent."
 			return
 		}
-		updates := a.updates
-		if len(updates) > 1000 {
-			updates = updates[:1000]
-			items[i].Message = fmt.Sprintf("Installs 1,000 of its %s updates; install again for the rest.", thousands(len(a.updates)))
-		}
-		j, err := cl.Install(s.as(ctx, c, RoleAdmin, orgOf(d)...), *d.endpointID, updates, in.ScheduledAt, c.Actor.Label)
-		if err != nil {
-			if !IsStatus(err, http.StatusConflict) && !IsStatus(err, http.StatusBadRequest) {
-				s.noteError(err)
+		sctx, cancel := detached(ctx)
+		defer cancel()
+		actx := s.as(sctx, c, RoleAdmin, orgOf(d)...)
+		var jobs []uuid.UUID
+		var failure error
+		sent := 0
+		parts := (len(a.updates) + MaxSelected - 1) / MaxSelected
+		for lo := 0; lo < len(a.updates); lo += MaxSelected {
+			part := a.updates[lo:min(lo+MaxSelected, len(a.updates))]
+			j, err := cl.Install(actx, *d.endpointID, part, in.ScheduledAt, c.Actor.Label)
+			if err != nil {
+				failure = err
+				break
 			}
-			items[i].Message = cut(message(epError(err)), 500)
+			jobs, sent = append(jobs, j.ID), sent+len(part)
+			det := map[string]any{"device": d.name, "endpointId": d.endpointID.String(), "jobId": j.ID.String()}
+			for k, v := range details {
+				det[k] = v
+			}
+			det["updateCount"] = len(part)
+			if parts > 1 {
+				det["part"] = fmt.Sprintf("%d of %d", len(jobs), parts)
+			}
+			events[i] = append(events[i], audit.Event{Actor: c.Actor, Action: "patch.install", OrganizationID: d.organizationID, SiteID: d.siteID,
+				DeviceID: d.id, TargetType: "device", TargetID: d.id.String(), Outcome: audit.Success, Details: det})
+		}
+		if failure != nil && !IsStatus(failure, http.StatusConflict) && !IsStatus(failure, http.StatusBadRequest) {
+			s.noteError(failure)
+		}
+		switch {
+		case len(jobs) == 0:
+			items[i].Message = cut(message(epError(failure)), 500)
 			return
+		case failure != nil:
+			items[i].Message = cut(fmt.Sprintf("Installs %s of its %s updates, in %s; the patching engine did not take the rest: %s",
+				thousands(sent), thousands(len(a.updates)), plural(len(jobs), "job"), message(epError(failure))), 500)
+		case len(jobs) > 1:
+			items[i].Message = fmt.Sprintf("Installs its %s updates in %d jobs of at most %d, one after another.",
+				thousands(len(a.updates)), len(jobs), MaxSelected)
 		}
-		items[i].OK, items[i].JobID = true, &j.ID
-		det := map[string]any{"device": d.name, "endpointId": d.endpointID.String(), "jobId": j.ID.String()}
-		for k, v := range details {
-			det[k] = v
+		items[i].OK, items[i].JobID = true, &jobs[len(jobs)-1]
+		if len(jobs) > 1 {
+			items[i].JobIDs = jobs
 		}
-		det["updateCount"] = len(updates)
-		events[i] = &audit.Event{Actor: c.Actor, Action: "patch.install", OrganizationID: d.organizationID, SiteID: d.siteID,
-			DeviceID: d.id, TargetType: "device", TargetID: d.id.String(), Outcome: audit.Success, Details: det}
+		kept[i] = keep.keep(sctx, []deviceRow{d}, []ActionItem{items[i]})
 	})
 	var list []audit.Event
 	for i, it := range items {
 		res.add(it)
-		if events[i] != nil {
-			list = append(list, *events[i])
-		}
+		list = append(list, events[i]...)
 	}
-	return s.record(ctx, list)
+	rctx, cancel := detached(ctx)
+	defer cancel()
+	return errors.Join(append(kept, s.record(rctx, list))...)
+}
+
+// plural writes a count of things: 1 job, 2 jobs.
+func plural(n int, what string) string {
+	if n == 1 {
+		return "1 " + what
+	}
+	return thousands(n) + " " + what + "s"
 }

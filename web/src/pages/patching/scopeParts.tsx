@@ -87,8 +87,11 @@ export function usePlatforms(scope: PatchScope | undefined, open: boolean, other
     setChosen: (next: Set<Platform>) => setChosen(next),
     /** Devices on the chosen platforms. */
     count,
-    /** The platforms to send: none when every platform is chosen, so devices enrolled since are included. */
-    platforms: every ? undefined : byPlatform.filter((p) => has(p.platform)).map((p) => p.platform),
+    /**
+     * The platforms to send: none when every platform is chosen and others start ticked, so devices enrolled since are
+     * included; otherwise each one, so a device enrolled since on a platform left unticked at first cannot slip in.
+     */
+    platforms: every && others ? undefined : byPlatform.filter((p) => has(p.platform)).map((p) => p.platform),
     /**
      * Ticks are worth showing: more than one platform, or one that starts unticked. That stays so once it is ticked,
      * so it can be unticked again.
@@ -165,9 +168,11 @@ export function scopeTargets(t: ScopeTarget, platforms: Platform[] | undefined):
 }
 
 /** What installing every available update would do, summed over the devices, with what is left out and why. */
-export function AvailablePlanView({ plan, onRetry }: {
+export function AvailablePlanView({ plan, onRetry, skipDelayed }: {
   plan: { isPending: boolean; isIdle: boolean; isError: boolean; error: Error | null; data: PatchAvailablePlan | undefined };
   onRetry: () => void;
+  /** The updates still in the rollout delay are left out. */
+  skipDelayed: boolean;
 }) {
   if (plan.isPending || plan.isIdle) return <Spinner label="Checking what would be installed…" />;
   if (plan.isError) return <ErrorState error={plan.error} onRetry={onRetry} compact />;
@@ -196,7 +201,7 @@ export function AvailablePlanView({ plan, onRetry }: {
           )}
         </div>
       )}
-      {(p.features > 0 || p.excluded.count > 0 || p.held > 0 || p.notApproved > 0) && (
+      {(p.features > 0 || p.excluded.count > 0 || p.held > 0 || p.notApproved > 0 || (skipDelayed && p.deferred > 0)) && (
         <div>
           <p className="font-medium">Left out</p>
           <ul className="mt-0.5 list-disc space-y-0.5 pl-5 text-muted">
@@ -204,6 +209,7 @@ export function AvailablePlanView({ plan, onRetry }: {
             {p.excluded.count > 0 && <li>{plural(p.excluded.count, "update")} excluded on their devices</li>}
             {p.held > 0 && <li>{plural(p.held, "update")} on hold</li>}
             {p.notApproved > 0 && <li>{plural(p.notApproved, "application update")} the patch policy does not approve</li>}
+            {skipDelayed && p.deferred > 0 && <li>{plural(p.deferred, "update")} still in the rollout delay, as chosen above</li>}
           </ul>
         </div>
       )}
@@ -225,7 +231,7 @@ export function AvailablePlanView({ plan, onRetry }: {
           )}
         </div>
       )}
-      {p.deferred > 0 && (
+      {!skipDelayed && p.deferred > 0 && (
         <p className="text-muted">
           {plural(p.deferred, "update")} {p.deferred === 1 ? "is" : "are"} still in the rollout delay; installing now installs{" "}
           {p.deferred === 1 ? "it" : "them"} anyway.
