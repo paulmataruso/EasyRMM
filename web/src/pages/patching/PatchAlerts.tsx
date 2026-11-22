@@ -10,6 +10,7 @@ import { useToast } from "../../components/Toast";
 import { Button, Card, cx, EmptyState, ErrorState, Spinner, TableWrap, Toolbar } from "../../components/ui";
 import { formatDateTime, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
+import { PatchAlertCard } from "./PatchAlertCard";
 import { PatchAlertState, PatchSeverityBadge, RULE_KIND_ORDER, RULE_KINDS, SEVERITIES } from "./patchAlertText";
 import { FilterSelect } from "./patchText";
 
@@ -67,6 +68,10 @@ export function PatchAlerts() {
     },
   });
   const device = deviceId ? items.find((a) => a.deviceId === deviceId)?.deviceName : null;
+  // The alert whose card is open: its row as the list last loaded it, or as it was if the list no longer has it.
+  const [card, setCard] = useState<PatchAlert | null>(null);
+  const [cardOpen, setCardOpen] = useState(false);
+  const shown = card ? (items.find((a) => a.id === card.id) ?? card) : null;
 
   return (
     <>
@@ -182,6 +187,10 @@ export function PatchAlerts() {
                       })
                     }
                     onAcknowledge={() => acknowledge.mutate([a.id])}
+                    onOpen={() => {
+                      setCard(a);
+                      setCardOpen(true);
+                    }}
                     busy={acknowledge.isPending}
                   />
                 ))}
@@ -196,6 +205,13 @@ export function PatchAlerts() {
           )}
         </>
       )}
+      <PatchAlertCard
+        alert={shown}
+        open={cardOpen}
+        onClose={() => setCardOpen(false)}
+        onAcknowledge={() => shown && acknowledge.mutate([shown.id])}
+        busy={acknowledge.isPending}
+      />
     </>
   );
 }
@@ -227,12 +243,14 @@ function Where({ a }: { a: PatchAlert }) {
   );
 }
 
-function AlertRow({ alert: a, showSelect, selected, onSelect, onAcknowledge, busy }: {
+function AlertRow({ alert: a, showSelect, selected, onSelect, onAcknowledge, onOpen, busy }: {
   alert: PatchAlert;
   showSelect: boolean;
   selected: boolean;
   onSelect: (on: boolean) => void;
   onAcknowledge: () => void;
+  /** Opens the alert's card. */
+  onOpen: () => void;
   busy: boolean;
 }) {
   return (
@@ -245,7 +263,15 @@ function AlertRow({ alert: a, showSelect, selected, onSelect, onAcknowledge, bus
       <td>
         <div className="flex flex-col items-start gap-1">
           <PatchSeverityBadge severity={a.severity} />
-          <span className="max-w-xl font-medium">{a.title}</span>
+          <button
+            type="button"
+            onClick={onOpen}
+            aria-label={`${a.title}, details`}
+            title="Show the alert's details"
+            className="max-w-xl rounded-sm text-left font-medium break-words hover:text-accent"
+          >
+            {a.title}
+          </button>
           {a.details && <span className="max-w-xl text-xs whitespace-pre-line text-muted">{a.details}</span>}
           <span className="text-xs text-muted">
             {RULE_KINDS[a.ruleType]?.label ?? a.ruleType}

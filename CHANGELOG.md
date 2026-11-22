@@ -330,7 +330,10 @@ All notable changes to this project are documented here. The format follows
   acknowledgement; what it means and what to do next; the policy's other
   alerts on the device; and the raw JSON to copy. The card has its own
   address; **Close**, Escape and **Back** close it. An alert older than
-  the measurements kept charts what is kept, and says so. The API adds
+  the measurements kept charts what is kept, and says so. Patching alerts
+  get a card too: select a title under **Patching → Alerts** for its
+  device or organization, times, what it means, what to do next and its
+  JSON ([Patching alerts](docs/operations/patching.md#alerts)). The API adds
   `GET /api/v1/alerts/{id}/metrics`, and `policyId` and `subject` filters
   on `GET /api/v1/alerts`. See
   [An alert's card](docs/operations/alerts.md#an-alerts-card).
