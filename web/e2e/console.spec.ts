@@ -660,6 +660,29 @@ test("a failing disk shows on the device and across the fleet, opens an alert, a
   await page.getByRole("button", { name: "Flash active alerts" }).click();
   await expect(name).toHaveCSS("animation-name", "alert-active-pulse");
 
+  // The alert's name opens its card, at an address of its own: the disk and its facts, what to do, and the policy's
+  // alerts on this disk, read from the server. Back closes it; the address opens it again; Escape closes it in place.
+  await alert.getByRole("link", { name: "Disk failing on dt-reception-01, details" }).click();
+  const alertCard = page.getByRole("dialog", { name: "Disk failing" });
+  await expect(page).toHaveURL(/\/alerts\?alert=[0-9a-f-]{36}$/);
+  await expect(alertCard.getByRole("region", { name: "Summary" })).toContainText("nvme0n1 · Samsung SSD 990 PRO 2TB");
+  await expect(alertCard.getByRole("region", { name: "Why it opened" })).toContainText("A disk's own verdict is failing");
+  await expect(alertCard.getByRole("table", { name: "Facts" }).getByRole("row", { name: /Critical warning/ })).toContainText("Failing: NVMe critical warning");
+  await expect(alertCard.getByRole("region", { name: "History" })).toContainText("The only alert this policy has raised on this disk");
+  await expect(alertCard.getByRole("region", { name: "What to do next" }).getByRole("link", { name: "Hardware: Disks" })).toHaveAttribute(
+    "href",
+    `/devices/${agent.deviceId}?tab=hardware`,
+  );
+  const cardAddress = page.url();
+  await page.goBack();
+  await expect(alertCard).toBeHidden();
+  await expect(page).toHaveURL(/\/alerts$/);
+  await page.goto(cardAddress);
+  await expect(alertCard.getByRole("region", { name: "Times" })).toContainText("Not acknowledged");
+  await page.keyboard.press("Escape");
+  await expect(alertCard).toBeHidden();
+  await expect(page).toHaveURL(/\/alerts$/);
+
   // On the device's page, the alert's row pulses and the Alerts card counts it.
   await page.goto(`/devices/${agent.deviceId}`);
   const card = page.getByRole("heading", { name: /^Alerts \d+ active$/ }).locator("xpath=ancestor::section[1]");

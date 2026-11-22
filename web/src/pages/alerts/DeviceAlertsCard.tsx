@@ -4,6 +4,7 @@ import type { AlertEntry } from "../../api/types";
 import { Card, EmptyState, ErrorState, Spinner } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { AlertActions, useAlertAction } from "./AlertActions";
+import { AlertLink } from "./alertLink";
 import { ActiveCount, AlertFlashToggle, conditionText, DiskSubject, risingHint, SeverityBadge, valueText } from "./alertText";
 
 /** A device's active alerts, to acknowledge or resolve in place. Each pulses in red, and the title counts them
@@ -45,7 +46,9 @@ export function DeviceAlertsCard({ deviceId }: { deviceId: string }) {
             <li key={a.id} className="alert-active-pulse alert-active-pulse--row flex flex-col gap-2 px-4 py-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium">{a.name}</p>
+                  <AlertLink id={a.id} label={`${a.name}, details`} title="Show the alert's details" className="block text-sm font-medium break-words hover:underline">
+                    {a.name}
+                  </AlertLink>
                   <DiskSubject alert={a} />
                   <p className="text-xs text-muted">
                     <span className="font-medium text-fg tabular-nums">{valueText(a)}</span> · {conditionText(a)}

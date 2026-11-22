@@ -9,6 +9,7 @@ import { Badge, Button, cx, EmptyState, ErrorState, Field, PageHeader, Select, S
 import { formatDateTime, formatNumber, formatRelative, plural } from "../../lib/format";
 import { useUrlState } from "../../lib/urlState";
 import { AlertActions, useAlertAction } from "./AlertActions";
+import { AlertLink } from "./alertLink";
 import { AlertFlashToggle, conditionText, DiskSubject, policyScope, resolutionText, risingHint, SeverityBadge, valueText } from "./alertText";
 import { PolicyDialog, useCanWritePolicies } from "./PolicyDialog";
 
@@ -166,7 +167,9 @@ function AlertList() {
                       <div className="mb-1 sm:hidden">
                         <SeverityBadge severity={a.severity} />
                       </div>
-                      <p className="font-medium">{a.name}</p>
+                      <AlertLink id={a.id} label={`${a.name} on ${a.deviceName}, details`} title="Show the alert's details" className="font-medium break-words hover:text-accent">
+                        {a.name}
+                      </AlertLink>
                       <DiskSubject alert={a} />
                       <p className="text-xs text-muted">{conditionText(a)}</p>
                       {a.canManage && risingHint(a) && <p className="mt-0.5 max-w-md text-xs text-muted">{risingHint(a)}</p>}

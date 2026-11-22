@@ -196,7 +196,7 @@ func Build(ctx context.Context, cfg *config.Config, db *database.DB, log *slog.L
 	d.Agents.SetJobKey(d.Jobs.PublicKey())
 	d.Inventory = inventory.New(db, cfg.MetricsRetention, log)
 	d.Hardware = hardware.New(db, cfg.MetricsRetention, cfg.HardwareRetention, log)
-	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, log)
+	d.Monitoring = monitoring.New(db, auditLog, cfg.AlertRetention, cfg.MetricsRetention, log)
 	d.Reports = reports.New(db, auditLog)
 	d.AuditFwd = auditfwd.New(db, auditLog, sealer, cfg.PublicURL.Hostname(), Version, log)
 	d.EasyPatch = easypatch.New(db, auditLog, Version, log)
