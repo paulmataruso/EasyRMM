@@ -253,11 +253,13 @@ func (s *Service) tryTake(ctx context.Context, ch charge) (int64, *LimitError, e
 		if err != nil {
 			return err
 		}
-		if refused = c.refusal(ch); refused != nil {
-			return nil
+		// A refusal is an answer, not a failure: the transaction commits
+		// the clean-up above, and nothing is counted.
+		if refused = c.refusal(ch); refused == nil {
+			return tx.QueryRow(ctx, `INSERT INTO mail_sends (kind, sent_by, organization_id) VALUES ($1, $2, $3) RETURNING id`,
+				string(ch.kind), ch.admin, ch.organization).Scan(&id)
 		}
-		return tx.QueryRow(ctx, `INSERT INTO mail_sends (kind, sent_by, organization_id) VALUES ($1, $2, $3) RETURNING id`,
-			string(ch.kind), ch.admin, ch.organization).Scan(&id)
+		return nil
 	})
 	return id, refused, err
 }
