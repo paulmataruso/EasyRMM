@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryKey, type UseQueryResult } from "@tanstack/react-query";
 import { api, type QueryParams } from "./client";
-import type { List, Organization, Site } from "./types";
+import type { DeviceAlertCount, List, Organization, Site } from "./types";
 
 /** Query keys are the path segments plus the params object, so invalidating ['users', id]
  * refreshes everything under /users/{id}. */
@@ -102,6 +102,14 @@ export function useOrganizations() {
 export function useWaitingDevices(enabled: boolean): number {
   const q = useApi<{ waiting: number }>(enabled ? "/enrollment-requests/waiting" : null, undefined, { refetchInterval: 30_000, staleTime: 5_000 });
   return enabled ? (q.data?.waiting ?? 0) : 0;
+}
+
+/**
+ * Active and critical alerts on each device that has any (GET /alerts/devices): the menu's alerts tree and the alerts
+ * page share the one query, so a device's name can pulse in both without a request per row.
+ */
+export function useDeviceAlertCounts(enabled: boolean) {
+  return useList<DeviceAlertCount>(enabled ? "/alerts/devices" : null, undefined, { refetchInterval: 30_000 });
 }
 
 export function useSites(organizationId?: string | null) {

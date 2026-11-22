@@ -308,6 +308,19 @@ All notable changes to this project are documented here. The format follows
   kept for resets people ask for, and other mail stops at 80%. Every
   change and test is audited (`mail_server.*`), from and to. See
   [Mail](docs/operations/mail.md).
+- **Active alerts pulse in red in the console.** On a device's page,
+  every active alert in the **Alerts** card pulses slowly in red (a
+  resolved one never does), and the card's title shows how many are
+  active. On the **Alerts** page and in the menu's **Alerts** tree, the
+  name of a device with an active critical alert pulses too, with the
+  critical icon beside it. One cycle takes 1.8 seconds, only text colour
+  and a soft tint change, every state keeps 4.5:1 contrast in both themes,
+  and with reduce motion turned on the red holds still. **Stop flashing**,
+  on the Alerts page and a device's Alerts card, holds it still in this
+  browser too. A disk's panel on the Hardware tab pulses and counts its
+  open alerts the same way. Severity badges, icons and counts keep saying
+  the same in words. See
+  [What pulses in red](docs/operations/alerts.md#what-pulses-in-red).
 
 ### Changed
 

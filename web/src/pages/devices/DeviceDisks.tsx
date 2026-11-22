@@ -8,7 +8,7 @@ import type { Device, Disk, DiskAlert, DiskHealth, DiskHealthDetail } from "../.
 import { Dialog } from "../../components/Dialog";
 import { Badge, Card, Dot, EmptyState, ErrorState, KeyValueList, Mono, Spinner, TableWrap } from "../../components/ui";
 import { formatDateTime, formatRelative, formatSize } from "../../lib/format";
-import { CHECK_NAMES, SeverityBadge } from "../alerts/alertText";
+import { ActiveCount, CHECK_NAMES, SeverityBadge } from "../alerts/alertText";
 import {
   ATTRIBUTES,
   deviceDiskHealth,
@@ -349,8 +349,9 @@ function DiskPanelBody({ deviceId, disk: d, firmware, detail }: {
       {detail.data && detail.data.alerts !== null && (
         <section aria-labelledby={alertsId} className="flex flex-col gap-2">
           <div className="flex items-baseline justify-between gap-2">
-            <h3 id={alertsId} className="text-sm font-semibold">
-              Open alerts
+            <h3 id={alertsId} className="flex items-center gap-2 text-sm font-semibold">
+              {"Open alerts "}
+              {detail.data.alerts.length > 0 && <ActiveCount count={detail.data.alerts.length} />}
             </h3>
             <Link to={`/alerts?deviceId=${deviceId}&status=all`} className="text-xs text-accent hover:underline">
               The device's alerts
@@ -359,7 +360,8 @@ function DiskPanelBody({ deviceId, disk: d, firmware, detail }: {
           {detail.data.alerts.length === 0 ? (
             <p className="text-sm text-muted">No open alerts on this disk.</p>
           ) : (
-            <ul className="divide-y divide-line rounded-lg border border-line">
+            // Each is active, so each pulses as on the Overview's Alerts card (index.css, "Active alerts").
+            <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line">
               {detail.data.alerts.map((a) => (
                 <DiskAlertItem key={a.id} alert={a} />
               ))}
@@ -413,7 +415,7 @@ function HistoryTable({ days, labelledBy }: { days: DiskHealthDetail["history"];
 function DiskAlertItem({ alert: a }: { alert: DiskAlert }) {
   const check = Object.hasOwn(CHECK_NAMES, a.checkName) ? CHECK_NAMES[a.checkName as keyof typeof CHECK_NAMES] : a.checkName;
   return (
-    <li className="flex items-start justify-between gap-3 px-3 py-2.5 text-sm">
+    <li className="alert-active-pulse alert-active-pulse--row flex items-start justify-between gap-3 px-3 py-2.5 text-sm">
       <span className="min-w-0">
         <span className="block font-medium">{a.name}</span>
         <span className="block text-xs text-muted">
