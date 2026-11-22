@@ -27,13 +27,19 @@ interface Props<T extends { at: string }> {
   stale?: boolean;
   /** Each point is a day (at local midnight): the tooltip and table show dates without times. */
   daily?: boolean;
+  /** A value to compare against, drawn as a dashed line and named in the legend: an alert policy's threshold. */
+  reference?: { value: number; label: string };
+  /** A period to mark, shaded and named in the legend: while an alert was open. to null runs to the chart's end. */
+  band?: { from: string; to: string | null; label: string };
 }
 
 const MARGIN = { top: 10, right: 14, bottom: 24, left: 40 };
 
 /**
  * A line chart over time with one value axis: hairline grid, 2px lines, a legend, a crosshair that
- * snaps to the nearest point with every series' value, keyboard travel, and a data table.
+ * snaps to the nearest point with every series' value, keyboard travel, and a data table. A reference value (a
+ * threshold) draws as a dashed line, and a band (when an alert was open) as a soft shade behind the grid; the legend
+ * names both, so neither rests on colour.
  */
 export function TimeChart<T extends { at: string }>({
   data,
@@ -47,6 +53,8 @@ export function TimeChart<T extends { at: string }>({
   height = 200,
   stale,
   daily = false,
+  reference,
+  band,
 }: Props<T>) {
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(640);
@@ -117,6 +125,8 @@ export function TimeChart<T extends { at: string }>({
     e.preventDefault();
   };
 
+  const clampX = (t: number) => x(Math.min(Math.max(t, t0), t1));
+  const bandX = band ? { start: clampX(new Date(band.from).getTime()), end: clampX(band.to ? new Date(band.to).getTime() : t1) } : null;
   const hovered = active !== null ? points[active] : undefined;
   const point = hovered?.p;
   const px = hovered ? x(hovered.t) : 0;
@@ -132,6 +142,18 @@ export function TimeChart<T extends { at: string }>({
             {latest && <span className="font-medium text-fg tabular-nums">{format(s.value(latest.p))}</span>}
           </li>
         ))}
+        {reference && (
+          <li className="flex items-center gap-1.5">
+            <span className="w-3.5 border-t-2 border-dashed border-fg" aria-hidden />
+            {reference.label}
+          </li>
+        )}
+        {band && (
+          <li className="flex items-center gap-1.5">
+            <span className="h-2.5 w-3.5 rounded-xs bg-danger-soft ring-1 ring-danger/40" aria-hidden />
+            {band.label}
+          </li>
+        )}
       </ul>
       <div
         ref={box}
@@ -146,6 +168,9 @@ export function TimeChart<T extends { at: string }>({
         onPointerLeave={() => setActive(null)}
       >
         <svg width={width} height={height} className="block max-w-full" aria-hidden>
+          {bandX && bandX.end > bandX.start && (
+            <rect data-band x={bandX.start} width={bandX.end - bandX.start} y={MARGIN.top} height={plotH} fill="var(--danger-soft)" />
+          )}
           {grid.map((v) => (
             <g key={v}>
               <line x1={MARGIN.left} x2={width - MARGIN.right} y1={y(v)} y2={y(v)} stroke="var(--line)" strokeWidth={1} shapeRendering="crispEdges" />
@@ -159,6 +184,19 @@ export function TimeChart<T extends { at: string }>({
               {t.label}
             </text>
           ))}
+          {reference && (
+            <line
+              data-reference
+              x1={MARGIN.left}
+              x2={width - MARGIN.right}
+              y1={y(reference.value)}
+              y2={y(reference.value)}
+              stroke="var(--fg)"
+              strokeWidth={1.5}
+              strokeDasharray="5 4"
+              shapeRendering="crispEdges"
+            />
+          )}
           {paths.map(({ s, d, lone }) => (
             <g key={s.key}>
               <path d={d} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />

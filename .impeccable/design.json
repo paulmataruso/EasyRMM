@@ -672,7 +672,7 @@
       "name": "Time Chart",
       "kind": "custom",
       "refersTo": "TimeChart (web/src/components/TimeChart.tsx)",
-      "description": "EasyRMM addition: a percentage line chart over time with a legend, hairline grid, 2px series lines, a crosshair tooltip, keyboard travel and a data table.",
+      "description": "EasyRMM addition: a percentage line chart over time with a legend, hairline grid, 2px series lines, a crosshair tooltip, keyboard travel and a data table. In an alert's card, a dashed fg threshold line and a danger-soft band for the time the alert was open, both named in the legend.",
       "html": "<div class=\"ds-chart\"><div class=\"ds-legend\"><span><i style=\"background:var(--series-1)\"></i>Processor <b>9%</b></span><span><i style=\"background:var(--series-2)\"></i>Memory <b>38%</b></span><span><i style=\"background:var(--series-3)\"></i>Fullest disk <b>71%</b></span></div><svg width=\"260\" height=\"80\"><line x1=\"0\" x2=\"260\" y1=\"10\" y2=\"10\" stroke=\"var(--line)\"/><line x1=\"0\" x2=\"260\" y1=\"75\" y2=\"75\" stroke=\"var(--line)\"/><polyline points=\"0,70 60,66 120,60 180,68 260,64\" fill=\"none\" stroke=\"var(--series-1)\" stroke-width=\"2\"/><polyline points=\"0,50 260,50\" fill=\"none\" stroke=\"var(--series-2)\" stroke-width=\"2\"/><polyline points=\"0,28 260,28\" fill=\"none\" stroke=\"var(--series-3)\" stroke-width=\"2\"/></svg></div>",
       "css": ".ds-chart{font:12px ui-sans-serif, system-ui, sans-serif;color:var(--muted);} .ds-legend{display:flex;gap:16px;margin-bottom:8px;} .ds-legend i{display:inline-block;width:14px;height:2px;border-radius:9999px;margin-right:6px;vertical-align:middle;} .ds-legend b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums;margin-left:4px;}"
     },

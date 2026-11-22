@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -807,6 +808,114 @@ func TestAlerts(t *testing.T) {
 	f.exec(`DELETE FROM devices WHERE id = $1`, other)
 	if left := f.count(`SELECT count(*) FROM alerts`); left != 3 {
 		t.Fatalf("%d alerts left after removing a device", left)
+	}
+}
+
+// TestAlertDetail covers what an alert's card reads besides the alert: its
+// measurements, and the policy's earlier openings on the device, each only
+// for those who may see the device's alerts.
+func TestAlertDetail(t *testing.T) {
+	f := newFixture(t)
+	f.exec(`UPDATE alert_policies SET enabled = false WHERE kind <> 'disk'`)
+	hqTech := f.user("hqtech@example.com", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: f.acme, SiteID: f.hq})
+	branchTech := f.user("branch@example.com", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: f.acme, SiteID: f.branch})
+	viewer := f.user("viewer@example.com", rbac.Assignment{Role: rbac.RoleReadOnly, OrganizationID: f.acme})
+	globexTech := f.user("globex@example.com", rbac.Assignment{Role: rbac.RoleTechnician, OrganizationID: f.globex})
+	pc := f.device(f.acme, f.hq, "pc", 0)
+	press := f.device(f.globex, f.plant, "press", 0)
+	f.samples(pc, 20, 5, 20, 97)
+	f.samples(press, 20, 5, 20, 99)
+	if r := f.evaluate(); r.Opened != 2 {
+		t.Fatalf("opened %d", r.Opened)
+	}
+	disk := f.alertOn(pc, "Disk almost full")
+
+	// The measurement over the alert's window: the policy's 5 minutes before
+	// it opened and at least 15 minutes either side, averaged by the minute.
+	m, err := f.svc.AlertMetrics(f.ctx, hqTech, disk.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Metric != KindDisk || m.Threshold == nil || *m.Threshold != 90 || m.BucketSeconds != 60 ||
+		m.From.After(disk.OpenedAt.Add(-20*time.Minute)) || len(m.Samples) < 15 {
+		t.Fatalf("metrics = %+v", m)
+	}
+	for _, p := range m.Samples {
+		if p.Value != 97 || p.At.Before(m.From.Add(-time.Minute)) || p.At.After(m.To) {
+			t.Fatalf("sample %+v outside %s to %s", p, m.From, m.To)
+		}
+	}
+	// Another device's measurements never mix in, and its alert is not
+	// another organization's to read; nor another site's.
+	if m, err := f.svc.AlertMetrics(f.ctx, viewer, disk.ID); err != nil || len(m.Samples) == 0 {
+		t.Fatalf("read-only user of the organization: %v", err)
+	}
+	for name, c := range map[string]access.Caller{"other organization": globexTech, "other site": branchTech} {
+		if _, err := f.svc.AlertMetrics(f.ctx, c, disk.ID); !errors.Is(err, apperr.ErrNotFound) {
+			t.Fatalf("%s: %v", name, err)
+		}
+	}
+	if m, err := f.svc.AlertMetrics(f.ctx, globexTech, f.alertOn(press, "Disk almost full").ID); err != nil || m.Samples[0].Value != 99 {
+		t.Fatalf("Globex's own alert: %+v %v", m, err)
+	}
+	if _, err := f.svc.AlertMetrics(f.ctx, f.super, uuid.New()); !errors.Is(err, apperr.ErrNotFound) {
+		t.Fatalf("unknown alert: %v", err)
+	}
+	// Offline and disk health alerts are not measured.
+	offline := f.id(`INSERT INTO alerts (policy_id, device_id, name, kind, threshold, minutes, severity, value, last_value)
+		SELECT id, $1, name, kind, threshold, minutes, severity, 20, 20 FROM alert_policies WHERE kind = 'offline' RETURNING id`, pc)
+	if _, err := f.svc.AlertMetrics(f.ctx, f.super, offline); !conflict(err, "alert_has_no_metrics") {
+		t.Fatalf("offline alert: %v", err)
+	}
+
+	// The policy's earlier openings on the device: resolved by hand while
+	// the condition holds, it opens again.
+	if _, err := f.svc.Resolve(f.ctx, hqTech, disk.ID); err != nil {
+		t.Fatal(err)
+	}
+	if r := f.evaluate(); r.Opened != 1 {
+		t.Fatalf("re-opened %d", r.Opened)
+	}
+	policy := *disk.PolicyID
+	list := func(c access.Caller, q AlertQuery) []*Alert {
+		t.Helper()
+		q.Status, q.Limit = FilterAll, 20
+		l, _, err := f.svc.ListAlerts(f.ctx, c, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return l
+	}
+	if got := list(hqTech, AlertQuery{DeviceID: pc, PolicyID: policy}); len(got) != 2 || got[1].ID != disk.ID || got[0].Status != StatusOpen {
+		t.Fatalf("the policy's alerts on pc: %+v", got)
+	}
+	// The shared policy covers Globex too, which Acme's technician never sees.
+	if got := list(hqTech, AlertQuery{PolicyID: policy}); len(got) != 2 {
+		t.Fatalf("the policy's alerts for an Acme technician: %d", len(got))
+	}
+	if got := list(globexTech, AlertQuery{PolicyID: policy}); len(got) != 1 || got[0].DeviceID != press {
+		t.Fatalf("the policy's alerts for a Globex technician: %+v", got)
+	}
+	if got := list(globexTech, AlertQuery{DeviceID: pc, PolicyID: policy}); len(got) != 0 {
+		t.Fatalf("Acme's alerts for a Globex technician: %+v", got)
+	}
+	if got := list(f.super, AlertQuery{PolicyID: policy, Subject: "0123456789abcdef"}); len(got) != 0 {
+		t.Fatalf("another disk's alerts: %+v", got)
+	}
+	// A disk health policy's alerts, one per disk.
+	failing := f.id(`SELECT id FROM alert_policies WHERE check_name = 'failing'`)
+	for _, subject := range []string{"disk-a", "disk-b"} {
+		f.exec(`INSERT INTO alerts (policy_id, device_id, name, kind, check_name, minutes, severity, subject, subject_label, value, last_value)
+			VALUES ($1, $2, 'Disk failing', 'disk_health', 'failing', 30, 'critical', $3, $3, 1, 1)`, failing, pc, subject)
+	}
+	if got := list(hqTech, AlertQuery{DeviceID: pc, PolicyID: failing, Subject: "disk-b"}); len(got) != 1 || got[0].Subject != "disk-b" {
+		t.Fatalf("one disk's alerts: %+v", got)
+	}
+	if got := list(hqTech, AlertQuery{DeviceID: pc, PolicyID: failing}); len(got) != 2 {
+		t.Fatalf("the policy's disk alerts: %+v", got)
+	}
+	if _, _, err := f.svc.ListAlerts(f.ctx, f.super, AlertQuery{Subject: strings.Repeat("x", 65), Limit: 10}); !invalid(err, "subject") {
+		t.Fatalf("long subject: %v", err)
 	}
 }
 

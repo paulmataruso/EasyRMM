@@ -5,7 +5,7 @@ import { keyFor } from "./api/hooks";
 import type { AuthOptions } from "./api/types";
 import { useAuth, type AuthStage } from "./auth/AuthContext";
 import { keyAvailability } from "./auth/webauthn";
-import { AppLayout, AuthShell } from "./components/Layout";
+import { AlertCard, AppLayout, AuthShell } from "./components/Layout";
 import { Button, ErrorState, Spinner } from "./components/ui";
 import {
   afterSignIn,
@@ -56,7 +56,7 @@ const RunDetailPage = page(() => import("./pages/jobs/RunDetailPage").then((m) =
 
 /** Fetches every page now. Tests call it so that pages render at once. */
 export function preloadPages(): Promise<unknown> {
-  return Promise.all(pages.map((p) => p.preload()));
+  return Promise.all([...pages, AlertCard].map((p) => p.preload()));
 }
 
 const stageRoutes: Record<Exclude<AuthStage, "loading" | "error" | "ready">, string> = {

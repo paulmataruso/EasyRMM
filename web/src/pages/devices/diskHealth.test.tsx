@@ -224,7 +224,8 @@ describe("a disk's panel", () => {
     const alerts = within(panel).getByRole("heading", { name: "Open alerts 1 active" }).closest("section") as HTMLElement;
     expect(within(alerts).getByRole("listitem")).toHaveClass("alert-active-pulse", "alert-active-pulse--row");
     expect(within(alerts).getByTitle("1 active alert")).toHaveClass("alert-active-pulse");
-    expect(within(alerts).getByText("Disk failing", { selector: "span.font-medium" })).toBeInTheDocument();
+    // The alert's name opens its card over the device's page.
+    expect(within(alerts).getByRole("link", { name: "Disk failing, details" })).toHaveAttribute("href", "/devices/d1?tab=hardware&alert=a9");
     expect(within(alerts).getByText("Critical")).toBeInTheDocument();
     expect(within(alerts).getByRole("link", { name: "The device's alerts" })).toHaveAttribute("href", "/alerts?deviceId=d1&status=all");
 

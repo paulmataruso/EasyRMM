@@ -9,6 +9,7 @@ import { Button, Card, cx, Dot, EmptyState, ErrorState, PageHeader, Spinner, Sta
 import { canQuickConnect, QuickConnectPanel } from "../nav/QuickConnect";
 import { formatDateTime, formatNumber, formatRelative, plural } from "../lib/format";
 import { AlertActions, useAlertAction } from "./alerts/AlertActions";
+import { AlertLink } from "./alerts/alertLink";
 import { SeverityBadge, valueText } from "./alerts/alertText";
 
 export function DashboardPage() {
@@ -190,7 +191,9 @@ function ActiveAlertsCard({ total }: { total: number }) {
             <li key={a.id} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5 text-sm">
               <SeverityBadge severity={a.severity} />
               <span className="min-w-0 flex-1">
-                <span className="font-medium">{a.name}</span>
+                <AlertLink id={a.id} label={`${a.name} on ${a.deviceName}, details`} title="Show the alert's details" className="font-medium hover:text-accent">
+                  {a.name}
+                </AlertLink>
                 <span className="text-muted"> on </span>
                 <Link to={`/devices/${a.deviceId}`} className="font-medium break-words hover:text-accent">
                   {a.deviceName}

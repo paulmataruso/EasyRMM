@@ -1317,6 +1317,17 @@ export interface AlertEntry {
   canManage: boolean;
 }
 
+/** The measurement a processor, memory or disk use alert watches, around its window (GET /alerts/{id}/metrics): from
+ * the policy's minutes before it opened until it resolved or now, with some time either side. */
+export interface AlertMetrics {
+  metric: "cpu" | "memory" | "disk";
+  threshold: number | null;
+  from: string;
+  to: string;
+  bucketSeconds: number;
+  samples: { at: string; value: number }[];
+}
+
 /** Active alerts on one device (GET /alerts/devices), for the alerts tree. */
 export interface DeviceAlertCount {
   deviceId: string;

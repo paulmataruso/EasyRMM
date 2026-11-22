@@ -266,6 +266,18 @@ All notable changes to this project are documented here. The format follows
   open alerts the same way. Severity badges, icons and counts keep saying
   the same in words. See
   [What pulses in red](docs/operations/alerts.md#what-pulses-in-red).
+- **A detailed card for every alert.** Select an alert's name wherever
+  alerts are listed (the **Alerts** page, a device's **Alerts** card, the
+  dashboard and a disk's panel) for everything recorded about it: its
+  device, site and organization; the condition, policy and values that
+  opened it; a chart of the measurement around it with the threshold and
+  the time it was open; for disk health, the disk's facts; its times and
+  acknowledgement; what it means and what to do next; the policy's other
+  alerts on the device; and the raw JSON to copy. The card has its own
+  address, and **Back** closes it. The API adds
+  `GET /api/v1/alerts/{id}/metrics`, and `policyId` and `subject` filters
+  on `GET /api/v1/alerts`. See
+  [An alert's card](docs/operations/alerts.md#an-alerts-card).
 
 ### Changed
 
