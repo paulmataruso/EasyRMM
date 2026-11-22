@@ -294,14 +294,13 @@ func TestUntrustedInstallAsSystem(t *testing.T) {
 
 	// Compressed by Windows (compact /exe): still plain files, and used.
 	out, err := exec.Command(filepath.Join(system32(), "compact.exe"), "/c", "/exe:xpress4k", pwsh, dll).CombinedOutput() //nolint:gosec // the test's own copy
-	if err != nil {
-		t.Fatalf("compact: %v\n%s", err, out)
+	if err != nil || strings.Count(string(out), "[OK]") != 2 {
+		t.Fatalf("compact did not compress them: %v\n%s", err, out)
 	}
 	for _, f := range []string{pwsh, dll} {
 		name, _ := windows.UTF16PtrFromString(f)
-		if a, err := windows.GetFileAttributes(name); err != nil || a&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
-			t.Fatalf("compact left %s without its reparse point (%#x %v):\n%s", f, a, err, out)
-		}
+		a, err := windows.GetFileAttributes(name)
+		t.Logf("compressed %s: attributes %#x (%v)", filepath.Base(f), a, err)
 	}
 	if p := find(); !p.Usable {
 		t.Errorf("compressed: %+v", p)
@@ -317,8 +316,10 @@ func TestUntrustedInstallAsSystem(t *testing.T) {
 // The copy's powershell.config.json names its shared module folder: one in
 // the test's Program Files is used; one that does not exist, or whose
 // folder Users may empty, makes the copy found and blocked, and a run
-// fails without falling back; a configuration file Users may change is
-// refused unread.
+// fails without falling back. SYSTEM's own powershell.config.json, outside
+// the install, that Users may change blocks the copy too, refused unread;
+// $PSHOME's is one of the install's own files, so Users changing it makes
+// the copy found and not used.
 func TestModuleFoldersAsSystem(t *testing.T) {
 	systemTest(t)
 	roots, err := Roots()
@@ -396,8 +397,50 @@ func TestModuleFoldersAsSystem(t *testing.T) {
 	blocked("a configured folder whose folder Users may empty", open+` can be replaced, or what it holds deleted, by BUILTIN\Users`)
 
 	names(shared)
+	docs, err := windows.KnownFolderPath(windows.FOLDERID_Documents, windows.KF_FLAG_DONT_VERIFY)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := filepath.Join(docs, "PowerShell", "powershell.config.json")
+	if _, err := os.Lstat(own); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("SYSTEM already has %s (%v); the test would change it", own, err)
+	}
+	var made []string
+	for d := filepath.Dir(own); ; d = filepath.Dir(d) {
+		if _, err := os.Lstat(d); err == nil {
+			break
+		}
+		made = append(made, d)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(own)
+		for _, d := range made {
+			_ = os.Remove(d)
+		}
+	})
+	if err := os.MkdirAll(filepath.Dir(own), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(own, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	icacls(t, own, "/grant", "*S-1-5-32-545:(M)")
+	blocked("SYSTEM's own configuration Users may change", "PowerShell 7 would read its configuration from "+own+", and "+own+" can be changed by BUILTIN\\Users")
+	if err := os.Remove(own); err != nil {
+		t.Fatal(err)
+	}
+	if p := find(); !p.Usable || p.Blocked {
+		t.Fatalf("SYSTEM's configuration removed: %+v", p)
+	}
+
 	icacls(t, config, "/grant", "*S-1-5-32-545:(M)")
-	blocked("a configuration Users may change", "PowerShell 7 would read its configuration from "+config+", and "+config+" can be changed by")
+	if p := find(); p.Usable || p.Blocked || !strings.HasPrefix(p.Reason, config+" can be changed by BUILTIN\\Users") {
+		t.Errorf("the install's own configuration Users may change: %+v", p)
+	}
+	var missing *NotFound
+	if _, err := ForRun([]string{root}); !errors.As(err, &missing) {
+		t.Errorf("a run, the install's own configuration Users may change: %v", err)
+	}
 }
 
 func icacls(t *testing.T, path string, args ...string) {

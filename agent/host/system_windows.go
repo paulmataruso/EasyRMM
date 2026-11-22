@@ -333,11 +333,20 @@ func entryProblem(p string, links, exclusive bool) (string, error) {
 // reads as it would without them: files compressed by its overlay filter
 // (compact /exe, IO_REPARSE_TAG_WOF) and by data deduplication
 // (IO_REPARSE_TAG_DEDUP). Every other tag is a link, a junction, a
-// placeholder or something the agent does not know (ADR-0064).
+// placeholder or something the agent does not know (ADR-0064). Where the
+// overlay filter runs, as on CI's runners, it hides its reparse point, and
+// a compressed file reads as a plain file before its tag is looked at.
 const (
 	reparseWOF   = 0x80000017
 	reparseDedup = 0x80000013
 )
+
+// reparseRefused reports whether a reparse point with tag makes an entry
+// fail the check: always for a folder, and for a file unless the tag is
+// one of the two above.
+func reparseRefused(tag uint32, folder bool) bool {
+	return folder || (tag != reparseWOF && tag != reparseDedup)
+}
 
 const (
 	inspectAccess = windows.FILE_READ_ATTRIBUTES | windows.READ_CONTROL
@@ -410,7 +419,7 @@ func handleProblem(h windows.Handle, p string, links, busy bool) (string, error)
 		if err != nil {
 			return "", &fs.PathError{Op: "read the reparse tag of", Path: p, Err: err}
 		}
-		if folder || (tag != reparseWOF && tag != reparseDedup) {
+		if reparseRefused(tag, folder) {
 			return "is a link, junction or other reparse point", nil
 		}
 	}

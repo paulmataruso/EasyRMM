@@ -235,7 +235,8 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
   a new `pwsh` shell in the newest usable one, with a module path of
   checked folders only. A script says what happens where PowerShell 7 is
   missing: the run fails (the default), or it runs in Windows PowerShell
-  5.1. Every run records the program, its edition, version and
+  5.1; never where an install is found but what it would load fails the
+  check. Every run records the program, its edition, version and
   architecture, shown on the run and in every download.
 * **Downloads.** One stream as text, one run as JSON, a whole job as a
   ZIP, through ADR-0063's audited output reads, one record per run; and
@@ -383,6 +384,12 @@ asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
     compression) and `IO_REPARSE_TAG_DEDUP` (Data Deduplication). A file
     with one of those two tags passes as a plain file; every other reparse
     point still fails, and a folder that is a reparse point always does.
+    On CI's runners (2026-11-22), where Windows' overlay filter runs, a
+    file `compact /exe` compressed shows no reparse point at all
+    (attributes `0x20`, tag 0) and passes as any plain file does; the two
+    tags are what such a file shows where the filter is not attached, so
+    which tags pass is tested on the rule itself, not on a file that
+    carries one, and no deduplicated file was tested.
 * **The module path of a `pwsh` run.** PowerShell 7 imports a module by
   name from the folders in `PSModulePath`, and imports one on its own
   when a script uses a command that no loaded module has and a module
@@ -1475,8 +1482,10 @@ endpoint its downloads use.
     run holds `pwsh.exe` and the libraries, writes refused, until it lets
     go; the copy compressed with `compact /c /exe:xpress4k` is still
     used; a configured module folder that does not exist, one whose
-    parent Users may empty, and a configuration Users may change each
-    make the copy *blocked*, and the run fails without falling back; a
+    parent Users may empty, and SYSTEM's own `powershell.config.json`
+    opened to Users each make the copy *blocked*, and the run fails
+    without falling back, while `$PSHOME`'s opened to Users makes it
+    *found, not used*, as one of the install's own files; a
     folder opened to Users in Windows PowerShell's or PowerShell 7's
     shared module folder fails a run that allows the fallback; the
     compatibility session's module path. The statements of
@@ -1488,7 +1497,8 @@ endpoint its downloads use.
   administrator), *added after the review of PR #90*: a file open to
   write fails the check and one open to read does not; held files cannot
   be written or renamed and a failed check holds nothing; a file
-  compressed with `compact` passes and a junction does not; the folders
+  compressed with `compact` passes and a junction does not, and the
+  reparse tags a file may carry (`TestReparseTags`); the folders
   above, with a planted `DELETE_CHILD`, `WRITE_DAC`, `DELETE` and owner,
   `ProgramData`'s create right for a missing folder, and Windows' own
   module folders passing.

@@ -149,9 +149,11 @@ func TestCheckTreeHolding(t *testing.T) {
 	}
 }
 
-// TestCheckTreeCompressedFiles: a file Windows compressed (compact /exe,
-// its overlay filter's reparse point) is a plain file; other reparse
-// points, a junction here, still fail.
+// TestCheckTreeCompressedFiles: a file Windows compressed (compact /exe) is
+// a plain file; other reparse points, a junction here, still fail. Windows'
+// overlay filter hides a compressed file's reparse point (seen on CI's
+// runners: the file reads as a plain file, its tag 0), so the tags a
+// file may carry are tested apart (TestReparseTags).
 func TestCheckTreeCompressedFiles(t *testing.T) {
 	elevated(t)
 	dir := installLike(t)
@@ -160,19 +162,19 @@ func TestCheckTreeCompressedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := exec.Command(filepath.Join(os.Getenv("SystemRoot"), `System32\compact.exe`), "/c", "/exe:xpress4k", big).CombinedOutput() //nolint:gosec // the test's own file
-	if err != nil {
-		t.Fatalf("compact: %v\n%s", err, out)
+	if err != nil || !bytes.Contains(out, []byte("[OK]")) || !bytes.Contains(out, []byte("1 files within 1 directories were compressed")) {
+		t.Fatalf("compact did not compress it: %v\n%s", err, out)
 	}
 	name, _ := windows.UTF16PtrFromString(big)
 	h, err := windows.CreateFile(name, inspectAccess, shareAll, nil, windows.OPEN_EXISTING, inspectFlags, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var info windows.ByHandleFileInformation
+	_ = windows.GetFileInformationByHandle(h, &info)
 	tag, err := reparseTag(h)
 	_ = windows.CloseHandle(h)
-	if err != nil || tag != reparseWOF {
-		t.Fatalf("compact left the tag %#x (%v):\n%s", tag, err, out)
-	}
+	t.Logf("compressed: attributes %#x, reparse tag %#x (%v)", info.FileAttributes, tag, err)
 	if err := CheckTree(dir, false); err != nil {
 		t.Errorf("with a compressed library: %v", err)
 	}
@@ -183,6 +185,30 @@ func TestCheckTreeCompressedFiles(t *testing.T) {
 	j := filepath.Join(dir, "j")
 	junction(t, j, t.TempDir())
 	wantUntrusted(t, "a junction", CheckTree(dir, false), j, "is a link, junction or other reparse point")
+}
+
+// TestReparseTags: a file with the overlay filter's or deduplication's tag
+// is a plain file; any other tag, and any folder that is a reparse point,
+// is refused.
+func TestReparseTags(t *testing.T) {
+	for _, c := range []struct {
+		tag     uint32
+		folder  bool
+		refused bool
+	}{
+		{reparseWOF, false, false},
+		{reparseDedup, false, false},
+		{reparseWOF, true, true},
+		{reparseDedup, true, true},
+		{windows.IO_REPARSE_TAG_SYMLINK, false, true},
+		{windows.IO_REPARSE_TAG_MOUNT_POINT, true, true},
+		{0x9000001A, false, true}, // a cloud files placeholder
+		{0, false, true},
+	} {
+		if got := reparseRefused(c.tag, c.folder); got != c.refused {
+			t.Errorf("tag %#x, folder %v: refused %v", c.tag, c.folder, got)
+		}
+	}
 }
 
 // TestCheckAbove: what would let someone else put another folder in a
