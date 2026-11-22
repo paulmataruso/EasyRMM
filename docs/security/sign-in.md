@@ -127,12 +127,17 @@ started before EasyRMM recorded this have none.
 **Forgot password** answers the same way whether or not the address has an
 account, and answers before looking it up; the e-mail goes out afterwards,
 so the time taken reveals nothing either. Each account gets at most three
-reset e-mails at once and then one every 20 minutes, however many addresses
-ask; a password link an administrator emails counts against the same
-limit, and is refused with `429` past it. Administrators' invitations and
-password links are also limited to 60 an hour each and 500 a day per
-organization, and stop before the last 10% of the mail server's day, which
-is kept for resets people ask for ([Mail](../operations/mail.md)). A reset link works once, for 30 minutes (`EASYRMM_PASSWORD_RESET_TTL`),
+password e-mails an hour and ten a day, however many addresses ask and on
+whichever of EasyRMM's servers; password links administrators email count
+against the same limit, and past it come back to the administrator
+unsent, with the reason. Resets people ask for are also limited per
+organization, by the hour and the day, and on the whole platform by the
+hour, so that someone who knows, or made, many addresses cannot use up
+the mail server's day; the limits are counted in the database and follow
+the day's limit ([Mail](../operations/mail.md#limits-on-invitations-and-password-emails)).
+Administrators' invitations and password links are limited per
+administrator and per organization, and stop before the last 10% of the
+mail server's day, which is kept for resets people ask for. A reset link works once, for 30 minutes (`EASYRMM_PASSWORD_RESET_TTL`),
 and only the newest link works. Someone invited who has not chosen a
 password yet is sent a new invitation link instead, valid for 72 hours.
 
@@ -159,7 +164,7 @@ Confirm who is asking before you reset.
 | `auth.mfa_enroll` | An authenticator app is set up, or a wrong password was entered to start set-up |
 | `auth.password_change` | A password change (successes, and wrong current passwords with `signedOut` when the session ended) |
 | `auth.recovery_codes_regenerate` | New recovery codes (successes and wrong passwords) |
-| `auth.password_reset_request` | A reset e-mail for an account (`invitation` when a new invitation was sent; `denied` past the per-account limit) |
+| `auth.password_reset_request` | A reset e-mail for an account (`invitation` when a new invitation was sent; `denied`, with the `limit`, when a limit on account mail stopped it) |
 | `auth.webauthn_add` | A security key or passkey is added (its name, whether it is synced), or a registration is refused (with the reason, or a wrong password) |
 | `auth.webauthn_remove` | A security key or passkey is removed by its owner (or a wrong password) |
 | `user.mfa_reset` | An administrator resets someone's second factor (with how many keys were removed) |

@@ -235,16 +235,33 @@ All notable changes to this project are documented here. The format follows
   checks as EasyRMM's other outbound connections. When an invitation's or
   password link's email does not go, the console now says why: no mail
   server, or the mail server did not take it.
-- **Invitations and password links administrators email are limited**:
-  60 an hour per administrator, 500 a day per organization, and a password
-  link counts against the limit on password emails to one account that
-  password reset has. Past one, the invitation or link is refused with
-  `429` and a message that says when to try again, and the refusal is
-  audited. Without a mail server, links come back as before, unlimited.
+- **Invitations and password emails are limited**, so that no one
+  administrator, organization or attacker can use up the mail server's
+  day: per administrator an hour, per organization a day, per account
+  (3 an hour and 10 a day, resets and administrators' links together),
+  and password resets people ask for per organization and on the whole
+  platform. Each limit is the smaller of a fixed number and a share of
+  the day's limit, and all are counted in the database, across servers
+  (see the [Mail](docs/operations/mail.md#limits-on-invitations-and-password-emails)
+  guide for the numbers). Past the administrator's own limit, an
+  invitation or link is refused with `429` and a message that says when
+  to try again, and the refusal is audited; past the account's or the
+  organization's, it comes back to the administrator unsent, with the
+  reason. A super administrator's invitations and links count only
+  against their own limit. Without a mail server, links come back as
+  before, unlimited.
+- **Every `429` carries `Retry-After`.**
 - **The patching engine's mail server comes from EasyRMM alone**: a mail
   server set in the engine itself is overwritten within a minute, and
   when EasyRMM cannot give the engine its own three passes in a row, the
-  engine's is removed and Patching → Notifications says why.
+  engine's is removed and Patching → Notifications says why. With several
+  servers, one at a time gives it; another whose mail server differs logs
+  an error and says so, rather than giving the engine its own in turn.
+  The webhook switch no longer fails when EasyRMM's mail server cannot be
+  read, and an engine that hangs no longer holds it up.
+- **`.env`'s SMTP password and sender's name are checked** against the
+  lengths the patching engine takes. Longer, EasyRMM still starts and
+  sends, logs an error and shows it on the Mail server page.
 - **Password reset checks the address's limit before anything else**, and
   whether reset is offered is kept for five seconds, so requests anyone
   may send seldom reach the database.

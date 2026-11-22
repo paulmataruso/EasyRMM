@@ -407,11 +407,30 @@ What exists, and what it means here:
   they count, but ahead of every notification, and notifications stop at
   80% of the day's budget, so the rest is always there for them. Of that
   rest, invitations and password links administrators send stop at 90%,
-  at 60 an hour per administrator and 500 a day per organization, so the
-  last 10% is always there for password resets people ask for, whatever
-  one tenant's administrators send (decided in review of #82, which
-  found that one organization's administrator could use up every
-  tenant's resets).
+  so the last 10% is always there for password resets people ask for,
+  whatever one tenant's administrators send (decided in review of #82,
+  which found that one organization's administrator could use up every
+  tenant's resets). Within those shares, each is limited further, every
+  limit `min(constant, fraction × per_day)` and at least 1, so that a low
+  day's limit cannot be used up by one of them either (decided in review
+  of #82, which found that resets people ask for got round the shares:
+  an organization admin could invite addresses they control and have
+  each reset, at the 100% share, until the platform's day was gone):
+  one administrator's mail, `min(60, per_day/150)` an hour (kept up all
+  day, 16% of the day); one organization's administrators' mail,
+  `min(500, per_day/18)` a day (5.6%), not counting super
+  administrators'; one account's password emails of any kind, 3 an hour
+  and 10 a day; resets people ask for, `min(60, per_day/300)` an hour on
+  the whole platform (kept up all day, 8%, under the 10% kept for them),
+  and to one organization's accounts a third of that hour and
+  `min(100, per_day/100)` a day (1%), accounts in no organization or
+  several counting together. All are counted in `mail_sends`, across
+  servers. Only the administrator's own limit refuses an administrator's
+  link (`429`, with `Retry-After`, as every `429`); past the account's or
+  the organization's, it is made and comes back unsent, with the reason,
+  so that no one who can ask for resets can keep an administrator from
+  helping someone. The figures and why are in
+  [Mail](../../operations/mail.md#limits-on-invitations-and-password-emails).
 * **The mail server's circuit**: after 5 failures in a row to connect or
   sign in, notification email pauses for 1 minute, doubling to 15, with one
   message tried at a time; attempts are not counted while paused (the 24
@@ -716,7 +735,16 @@ channels now, its syslog destinations with log forwarding later.
   carry, is changed with EasyRMM's mail server in force, under the same
   lock, never with the engine's copy; and after three failed passes in a
   row the engine's mail server is removed, and Settings → Patching says
-  why. The engine signs in with a password
+  why. One of EasyRMM's servers at a time runs `syncMail`, chosen by a
+  session advisory lock on a connection of its own, so that servers whose
+  mail servers differ do not give the engine theirs in turn; it records
+  a salted Argon2id digest of the mail server it gives
+  (`mail_engine_given`), never the password, and each other server logs
+  an error once per change, and says so on Settings → Patching, when its
+  own differs. The lock is taken with the request's context, each engine
+  call under it is bounded at 10 seconds, and the webhook switch goes
+  ahead when EasyRMM's mail server cannot be read, giving the engine none
+  with it (decided in review of #82). The engine signs in with a password
   only, so while the mail server signs in with an application, `syncMail`
   gives the engine none, as when EasyRMM has none (`Mail`, `engine.go`):
   patching's email and monthly reports stop until slice 6. While an

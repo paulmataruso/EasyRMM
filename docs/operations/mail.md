@@ -16,7 +16,13 @@ Mail server** says which:
   settings are the mail server. The console shows them read-only and can
   still send a test message; changing them means changing `.env` and
   restarting the server. Remove `EASYRMM_SMTP_HOST` to hand the mail server
-  to the console.
+  to the console. Every EasyRMM server must have the same `EASYRMM_SMTP_*`
+  settings (see [The patching engine](#the-patching-engine)). A password
+  longer than 512 characters, or a sender's name longer than 100, as the
+  patching engine counts them (UTF-16 units), does not stop the server
+  from starting or sending, so that a deployment that had one survives an
+  upgrade; but the engine cannot be given it, so the server logs an error
+  at start and the page shows it. Shorten it and restart.
 * **The console**: otherwise, the mail server a super administrator sets
   under Settings → Notifications. It applies at once, without a restart.
 * **None**: neither is set.
@@ -92,34 +98,84 @@ a minute and stops a mailbox that sends to more than 10,000 recipients in
 * **Invitations and password resets go first.** They wait up to a minute
   for room under the minute's limit, and other mail on every server
   stands back while one waits.
-* **Password resets people ask for** may use the whole day's limit.
+* **Password resets people ask for** may use the whole day's limit, but
+  are limited by the hour and per organization (below), so that they
+  cannot use it up.
 * **Invitations and password links administrators send** stop at 90% of
   the day's limit, so that the last 10% is kept for resets people ask for
-  whatever administrators send. They are also limited, whatever the
-  mail server's limits:
-  * **60 an hour per administrator**: one a minute for an hour is more than
-    anyone inviting a team or sending links by hand needs, and it stops a
-    script or a stolen session at 1,440 a day.
-  * **500 a day per organization**, counting the account's organization,
-    whoever sends: enough to bring on a customer of several hundred people
-    in a day, and under 6% of the default 9,000 a day, so that no customer
-    can use up the platform's mail.
-  * **The account's own limit**: a password link counts against the limit
-    password reset has on one account (three, then one every 20 minutes),
-    which the person's own resets share.
-
-  Past one of them, the invitation or link is refused before anything is
-  made (`429` with `admin_mail_limited`, `organization_mail_limited` or
-  `account_mail_limited`, and a message that says when to try again), and
-  the refusal is in the audit log, at most once a minute per administrator
-  and limit. Without a mail server, links come back to the administrator
-  and nothing limits them.
+  whatever administrators send.
 * **Other mail** (today, the test message) does not wait, and stops at 80%
   of the day's limit, so that the rest is kept for invitations and password
   resets.
 * A message the mail server refuses does not count.
-* The page shows the last minute's and the last 24 hours' counts, and how
-  many of them were invitations and password resets.
+* The page shows the last minute's and the last 24 hours' counts, how
+  many of them were invitations and password resets, and the limits below
+  at the day's limit set.
+
+### Limits on invitations and password emails
+Whatever the mail server's limits, invitations and password emails are also
+limited, so that no one administrator, organization or attacker can use
+up the platform's mail. Each limit, except the account's own, is the
+smaller of a fixed number and a share of the day's limit, and at least 1,
+so that a low day's limit cannot be used up by one of them either. All of
+them are counted in the database, across all of EasyRMM's servers.
+
+| Limit | The smaller of | At 9,000 a day (the default) | At 500 a day |
+|-------|----------------|------------------------------|--------------|
+| One administrator's invitations and password links, an hour | 60, a 150th of the day | 60 | 3 |
+| Invitations and password links to one organization's accounts, a day | 500, an 18th of the day | 500 | 27 |
+| Password emails to one account, of any kind | 3 an hour and 10 a day | 3 and 10 | 3 and 10 |
+| Password resets people ask for, on the whole platform, an hour | 60, a 300th of the day | 30 | 1 |
+| Password resets people ask for to one organization's accounts, an hour | a third of the platform's hour | 10 | 1 |
+| Password resets people ask for to one organization's accounts, a day | 100, a 100th of the day | 90 | 5 |
+
+Why these numbers (decided in review of #82):
+
+* **One administrator**: one a minute for an hour is more than anyone
+  inviting a team or sending links by hand needs. Kept up all day, it is
+  24 hours × a 150th, 16% of the day, so one administrator, a script or a
+  stolen session cannot use up the day.
+* **One organization**: enough to bring on a customer of several hundred
+  people in a day, and at most 5.6% of the day, so that no customer's
+  administrators can use up the platform's mail. A super administrator's
+  invitations and links are not counted against an organization, only
+  against their own hourly limit.
+* **One account**: a person who has forgotten their password needs one
+  email, and a few more if one goes astray; ten a day is far beyond
+  that. Resets the person asks for and links administrators email count
+  together.
+* **Resets, platform-wide**: kept up all day, 24 hours × a 300th is 8% of
+  the day, less than the 10% kept for resets, so resets, however many
+  addresses someone knows or made, never use up the day, or the room kept
+  for them.
+* **Resets, per organization**: a third of the platform's hour, so that
+  the rest is there for the others, and at most 1% of the day. An
+  organization admin who invites a hundred addresses they control and
+  has each of them reset, or someone who knows a customer's addresses,
+  spends at most that. Accounts in no organization, or in several, count
+  together as one organization here.
+
+Someone who knows addresses in three or more organizations can still use
+up the platform's hour of resets, and so hold up other people's resets
+until the hour has passed; they cannot use up the day. Resets are also
+limited per client address on each server.
+
+How each is refused:
+
+* **A reset someone asks for** past a limit is not sent; the answer on the
+  sign-in page is the same as ever, and the refusal is in the audit log
+  (`auth.password_reset_request`, `denied`, with the limit).
+* **An invitation or a password link** past the administrator's own hourly
+  limit is refused before anything is made: `429 admin_mail_limited`, with
+  `Retry-After` and a message that says when to try again; the refusal is
+  in the audit log, at most once a minute per administrator and limit.
+* Past **the account's or the organization's limit**, the invitation or
+  link is still made, and comes back to the administrator unsent, with
+  the reason, to pass on, as when there is no mail server: anyone who
+  can ask for resets to an account must not be able to keep an
+  administrator from helping its owner.
+* Without a mail server, links come back to the administrator and nothing
+  limits them.
 
 Patching's email and monthly reports are sent by the patching engine
 itself, and are not counted (see below).
@@ -138,7 +194,25 @@ engine's mail settings with its own and gives them again when they differ,
 so **a mail server set in the engine itself is overwritten** within a
 minute. The engine's switch for webhooks to private networks carries the
 mail server with it, and EasyRMM sends its own mail server in force with
-that switch, never the engine's copy back.
+that switch, never the engine's copy back. When EasyRMM cannot read its
+own mail server then, the switch still changes, the engine is given no
+mail server with it, and Settings → Patching → Notifications says why,
+until a pass can give it again. Each call to the engine for its mail
+settings gives up after 10 seconds, so an engine that hangs does not hold
+up the switch or the passes.
+
+With several EasyRMM servers, **one at a time gives the engine its mail
+server**: whichever holds a PostgreSQL advisory lock, on a connection of
+its own. When it stops, or its connection drops, another takes over at
+its next pass. It records a salted Argon2id digest of the mail server it
+gives in the database, never the mail server or its password. Each other
+server compares its own mail server with that digest, and when they
+differ (for example, `.env` set differently on one server), it logs an
+error once per change, and its Settings → Patching → Notifications says
+so; the engine keeps the one it was given. Give every server the same
+`EASYRMM_SMTP_*` settings. The webhook switch, changed on such a server,
+gives the engine that server's mail server, until the next pass of the
+server that gives it, within a minute.
 
 When EasyRMM cannot give the engine its mail server three passes in a row
 (a pass runs every minute, and at once after a change), because it cannot
@@ -158,7 +232,8 @@ Each change is in the audit log, under **Mail server**:
 | `mail_server.delete` | The console's mail server is removed, and whether it was in force (not while `.env`'s was) |
 | `mail_server.limits_update` | The limits are changed, from and to |
 | `mail_server.test` | A test message: to whom, through which server, from `.env` or the console, as which sender (address, name, sign-in and user name; never the password), and the error when it did not go |
-| `user.invite`, `user.password_link` (denied) | An invitation or a password link refused under the limits on account mail, with the limit; at most once a minute per administrator and limit |
+| `user.invite`, `user.password_link` (denied) | An invitation or a password link refused under the administrator's own limit, with the limit; at most once a minute per administrator and limit. A failure when the limits could not be read |
+| `auth.password_reset_request` (denied) | A reset someone asked for, not sent under a limit on account mail, with the limit |
 
 ## API
 Super administrators (`settings.manage` on the platform):
@@ -169,7 +244,16 @@ Super administrators (`settings.manage` on the platform):
 | `PUT /api/v1/settings/mail-server` | Sets the console's mail server; an empty `password` keeps the stored one while `host`, `port`, `security` and `username` stay the same. `409 mail_server_from_env` while `.env` sets one |
 | `DELETE /api/v1/settings/mail-server` | Removes the console's mail server and its stored password; `404` when there is none. Allowed while `.env` sets one, which stays in force |
 | `PUT /api/v1/settings/mail-server/limits` | `perMinute` (1 to 10,000) and `perDay` (1 to 1,000,000, at least `perMinute`) |
-| `POST /api/v1/settings/mail-server/test` | `to`, and `server` with the form's settings to test them before saving (refused with `409` while `.env` sets the mail server). `429 test_rate_limited` with `Retry-After` within 30 seconds of the last test |
+| `POST /api/v1/settings/mail-server/test` | `to`, and `server` with the form's settings to test them before saving (refused with `409` while `.env` sets the mail server). `429 test_rate_limited` within 30 seconds of the last test |
+
+The view's `limits.account` holds the limits on invitations and password
+emails at the day's limit set, and `envProblem` what of `.env`'s mail
+server the patching engine cannot be given. An invitation
+(`POST /api/v1/users`) or a password link
+(`POST /api/v1/users/{id}/password-link`) that comes back unsent has
+`emailed: false`, the `link`, `mailProblem` (`no_mail_server` or
+`not_sent`) and, when a limit stopped it, `mailReason` in words. Every
+`429` EasyRMM answers carries `Retry-After`, in seconds.
 
 ## Troubleshooting
 
@@ -183,7 +267,11 @@ Super administrators (`settings.manage` on the platform):
 | `does not offer STARTTLS` | The port is for TLS from the first byte (465), or the server offers no encryption. Choose TLS, or a relay on the same machine |
 | Sign-in refused (`535`) | The user name or password, and that the mailbox may sign in over SMTP. Exchange Online is retiring passwords over SMTP ([ADR-0053](../architecture/adr/0053-one-notification-sender.md)); a relay on the same machine is the way until signing in with an application comes |
 | `Not sent: the limit of … messages a day is reached` | Raise the limit, or wait until the oldest of them is 24 hours old |
-| An invitation or a password link is refused with "the most one administrator may" or "the most one organization may" | The limits on administrators' account mail (see [Limits](#limits)); the message says when to try again. Without a mail server, links come back instead |
+| An invitation or a password link is refused with "the most one administrator may" | The administrator's own hourly limit (see [Limits on invitations and password emails](#limits-on-invitations-and-password-emails)); the message says when to try again |
+| An invitation or a password link comes back with "It was not emailed:" and a limit | The account's or the organization's limit; send the link yourself, or wait as the message says |
+| A password reset someone asked for does not arrive | The audit log's `auth.password_reset_request` (denied) says which limit stopped it |
+| The server logs "This server's mail server … is not the one another of EasyRMM's servers gives the patching engine" | The servers' `EASYRMM_SMTP_*` settings differ. Make them the same and restart the one that differs |
+| "EASYRMM_SMTP_PASSWORD is longer than 512 characters" at start | The engine cannot be given `.env`'s mail server; shorten the password or the sender's name and restart |
 | Patching's email does not arrive but test messages do | Settings → Patching → Notifications shows the engine's mail server, or why the engine has none; check the channel's last message there |
 | A mail server set in the patching engine went back | EasyRMM is the mail server's one source and overwrites the engine's within a minute. Set it under Settings → Notifications |
 
