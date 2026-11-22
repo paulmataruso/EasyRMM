@@ -6,10 +6,11 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"io"
+	"log/slog"
 	"net/netip"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -21,9 +22,12 @@ import (
 	"github.com/paulmataruso/easyrmm/server/internal/audit"
 	"github.com/paulmataruso/easyrmm/server/internal/auth"
 	"github.com/paulmataruso/easyrmm/server/internal/database"
+	"github.com/paulmataruso/easyrmm/server/internal/mailer"
+	"github.com/paulmataruso/easyrmm/server/internal/mailserver"
 	"github.com/paulmataruso/easyrmm/server/internal/rbac"
 	"github.com/paulmataruso/easyrmm/server/internal/secrets"
 	"github.com/paulmataruso/easyrmm/server/internal/testdb"
+	"github.com/paulmataruso/easyrmm/server/internal/testmail"
 )
 
 const goodPassword = "orbit-violet-canyon-42"
@@ -33,20 +37,29 @@ type env struct {
 	svc    *auth.Service
 	audit  *audit.Logger
 	hasher *auth.Hasher
-	now    time.Time
-	mail   *fakeMailer
+	sealer *secrets.Sealer
+	cfg    auth.Config
+	// dsn connects to the test database as the superuser.
+	dsn string
+	now time.Time
+	// mail sends through mp, a real SMTP server (Mailpit).
+	mail *mailserver.Service
+	mp   *testmail.Mailpit
 }
 
-type fakeMailer struct {
-	mu   sync.Mutex
-	sent []string
-}
-
-func (f *fakeMailer) Send(_ context.Context, to, subject, body string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.sent = append(f.sent, to+"|"+subject+"|"+body)
-	return nil
+// newMail is a mail server service sending through Mailpit's plain server.
+func newMail(t *testing.T, db *database.DB, auditLog *audit.Logger, sealer *secrets.Sealer) (*mailserver.Service, *testmail.Mailpit) {
+	t.Helper()
+	mp := testmail.New(t)
+	mail, err := mailserver.New(db, auditLog, sealer, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mail.Update(context.Background(), audit.SystemActor("test"), mailserver.Input{Host: mp.Host, Port: mp.Port, Security: mailer.None,
+		SignIn: mailserver.SignInPassword, Username: mp.Username, Password: mp.Password, FromAddress: mp.From}); err != nil {
+		t.Fatal(err)
+	}
+	return mail, mp
 }
 
 func newEnv(t *testing.T, mutate func(*auth.Config)) *env {
@@ -63,11 +76,23 @@ func newEnv(t *testing.T, mutate func(*auth.Config)) *env {
 	if mutate != nil {
 		mutate(&cfg)
 	}
-	e := &env{db: inst.DB, audit: audit.New(inst.DB, nil), now: time.Now(), mail: &fakeMailer{}}
+	e := &env{db: inst.DB, audit: audit.New(inst.DB, nil), now: time.Now(), sealer: sealer, cfg: cfg, dsn: inst.SuperDSN}
+	e.mail, e.mp = newMail(t, inst.DB, e.audit, sealer)
 	e.hasher = auth.NewHasher(auth.Argon2Params{MemoryKiB: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLen: 16, KeyLen: 32}, 4)
 	e.svc = auth.NewService(inst.DB, e.audit, e.hasher, sealer, e.mail, cfg)
 	e.svc.SetClock(func() time.Time { return e.now })
 	return e
+}
+
+// server is another of EasyRMM's servers on the same database, with its
+// own mail server service and its own memory.
+func (e *env) server(t *testing.T) *auth.Service {
+	t.Helper()
+	mail, err := mailserver.New(e.db, e.audit, e.sealer, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return auth.NewService(e.db, e.audit, e.hasher, e.sealer, mail, e.cfg)
 }
 
 func (e *env) createUser(t *testing.T, email string) uuid.UUID {
@@ -405,10 +430,15 @@ func TestPasswordResetFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.svc.Wait()
-	if len(e.mail.sent) != 1 {
-		t.Fatalf("expected exactly one e-mail, got %d", len(e.mail.sent))
+	sent := e.mp.Received("reset@example.com")
+	if len(sent) != 1 || len(e.mp.Received("unknown@example.com")) != 0 {
+		t.Fatalf("expected exactly one e-mail, got %d", len(sent))
 	}
-	_, after, ok := strings.Cut(e.mail.sent[0], "#token=")
+	if sent[0].Subject != "Reset your EasyRMM password" || !strings.Contains(sent[0].Text, "within 30 minutes") ||
+		!strings.Contains(sent[0].HTML, ">Choose a new password</a>") {
+		t.Fatalf("e-mail %+v", sent[0])
+	}
+	_, after, ok := strings.Cut(sent[0].Text, "#token=")
 	if !ok {
 		t.Fatal("reset link missing")
 	}
@@ -614,8 +644,35 @@ func TestStateGuards(t *testing.T) {
 	if _, _, err := e.svc.Authenticate(ctx, strings.Repeat("a", 200)); !errors.Is(err, auth.ErrInvalidSession) {
 		t.Fatal("oversized token accepted")
 	}
-	if !e.svc.ResetAvailable() || !e.svc.Config().RequireMFA {
+	if !e.svc.ResetAvailable(ctx) || !e.svc.Config().RequireMFA {
 		t.Fatal("unexpected service configuration")
+	}
+}
+
+// EmailLink sends account mail, and says why not when it cannot.
+func TestEmailLink(t *testing.T) {
+	e := newEnv(t, nil)
+	ctx := context.Background()
+	to := e.mp.Address("person")
+	letter := mailer.Letter{Subject: "You have been invited to EasyRMM", Before: []string{"Welcome."},
+		Link: &mailer.Link{Label: "Set up your account", URL: "https://rmm.example.com/welcome#token=abc"}}
+	by := mailer.AccountMail{Admin: uuid.New()}
+	if got, why := e.svc.EmailLink(ctx, to, letter, by); got != "" || why != "" {
+		t.Fatalf("EmailLink: %q %q", got, why)
+	}
+	if sent := e.mp.Wait(to, 1); sent[0].Subject != letter.Subject || !strings.Contains(sent[0].HTML, `href="https://rmm.example.com/welcome#token=abc"`) {
+		t.Fatalf("e-mail %+v", sent[0])
+	}
+	// The mail server's reply is logged, not given as the reason.
+	if got, why := e.svc.EmailLink(ctx, testmail.Refused, letter, by); got != auth.MailNotSent || why != "" {
+		t.Fatalf("EmailLink to a refused recipient: %q %q", got, why)
+	}
+	letter.Link.URL = "javascript:alert(1)"
+	if got, _ := e.svc.EmailLink(ctx, to, letter, by); got != auth.MailNotSent {
+		t.Fatalf("EmailLink with a bad link: %q", got)
+	}
+	if len(e.mp.Received(to)) != 1 {
+		t.Fatal("a letter with a bad link was sent")
 	}
 }
 
@@ -627,11 +684,45 @@ func TestPasswordResetWithoutMailerAndWithWeakPassword(t *testing.T) {
 	hasher := auth.NewHasher(auth.Argon2Params{MemoryKiB: 8 * 1024, Iterations: 1, Parallelism: 1, SaltLen: 16, KeyLen: 32}, 0)
 	svc := auth.NewService(inst.DB, audit.New(inst.DB, nil), hasher, sealer, nil, auth.DefaultConfig())
 	ctx := context.Background()
-	if svc.ResetAvailable() {
+	if svc.ResetAvailable(ctx) {
 		t.Fatal("reset reported available without a mailer")
 	}
 	if err := svc.RequestPasswordReset(ctx, "x@example.com", meta); !errors.Is(err, auth.ErrResetUnavailable) {
 		t.Fatalf("want ErrResetUnavailable, got %v", err)
+	}
+	letter := mailer.Letter{Subject: "s", Link: &mailer.Link{Label: "x", URL: "https://rmm.example.com/welcome#token=x"}}
+	if got, _ := svc.EmailLink(ctx, "x@example.com", letter, mailer.AccountMail{}); got != auth.MailNotConfigured {
+		t.Fatalf("EmailLink without a mailer: %q", got)
+	}
+	// A mail server service with no mail server set: none in force.
+	none, err := mailserver.New(inst.DB, audit.New(inst.DB, nil), sealer, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc = auth.NewService(inst.DB, audit.New(inst.DB, nil), hasher, sealer, none, auth.DefaultConfig())
+	if got, _ := svc.EmailLink(ctx, "x@example.com", letter, mailer.AccountMail{}); svc.ResetAvailable(ctx) || got != auth.MailNotConfigured {
+		t.Fatal("reset reported available without a mail server")
+	}
+	if err := svc.RequestPasswordReset(ctx, "x@example.com", meta); !errors.Is(err, auth.ErrResetUnavailable) {
+		t.Fatalf("want ErrResetUnavailable, got %v", err)
+	}
+	// The address's limit comes before the database: past it, the answer
+	// is the limit, not whether reset is available.
+	for range 20 {
+		if err := svc.RequestPasswordReset(ctx, "x@example.com", meta); errors.Is(err, auth.ErrRateLimited) {
+			break
+		} else if !errors.Is(err, auth.ErrResetUnavailable) {
+			t.Fatal(err)
+		}
+	}
+	if err := svc.RequestPasswordReset(ctx, "x@example.com", meta); !errors.Is(err, auth.ErrRateLimited) {
+		t.Fatalf("past the address's limit: %v", err)
+	}
+	// Nothing limits links that come back to the administrator.
+	for range 5 {
+		if err := svc.AdminLinkRoom(ctx, mailer.AccountMail{Admin: uuid.New(), Account: uuid.New()}); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	e := newEnv(t, nil)

@@ -31,6 +31,9 @@ linters:
         linters: [gosec, noctx]
       - path: server/internal/testdb/
         linters: [gosec]
+      # Test helper: reads make test-mail's env.json and Mailpit's API.
+      - path: server/internal/testmail/
+        linters: [gosec, noctx]
       # The agent's Windows files call Windows APIs that take pointers to
       # documented structures; those conversions are the API boundary and
       # are reviewed with the structures. Other gosec rules still apply.

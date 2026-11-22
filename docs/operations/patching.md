@@ -615,13 +615,13 @@ Reports made on a schedule are listed with the others, marked
 *Scheduled*, with whether the email was sent.
 
 **Where email comes from.** EasyRMM gives the engine its own mail server,
-the `EASYRMM_SMTP_` settings in `.env` that also send invitations and
-password resets, each time EasyRMM starts (`EASYRMM_SMTP_TLS`:
-`starttls`, `implicit` or `none`; `EASYRMM_SMTP_FROM` may carry a name, as
-`EasyRMM <rmm@example.com>`). Without `EASYRMM_SMTP_HOST`, **Email** and
-schedules say that EasyRMM has no mail server to send reports with. The
-engine sends reports only over STARTTLS or TLS, so `EASYRMM_SMTP_TLS=none`
-is refused for reports.
+the one that also sends invitations and password resets: the console's
+(Settings → **Notifications** → Mail server) or `.env`'s `EASYRMM_SMTP_*`
+settings, which win when `EASYRMM_SMTP_HOST` is set ([Mail](mail.md)). It
+gives it at start and again at once after every change, without a restart.
+Without a mail server, **Email** and schedules say that EasyRMM has no mail
+server to send reports with. The engine sends reports only over STARTTLS
+or TLS, so a mail server without encryption is refused for reports.
 
 ### Engine settings
 
@@ -845,9 +845,12 @@ EasyRMM user who asked for the install, or EasyRMM for an automatic one.
   20 channels. A channel has a name of at most 100 characters, at most 20
   email recipients, or a webhook address of at most 2,048 characters.
   Messages show 50 a page, up to page 10,000.
-* Real email and webhook delivery of alerts has not been tested against a
-  mail server or a webhook receiver: the bundle test runs without either,
-  and checks that the message is queued and why it could not be sent.
+* Real email delivery is tested against Mailpit on loopback: the bundle
+  test sets it as the mail server in the console and an email channel's
+  test arrives. Alerts and reports by email, and webhook delivery, are not
+  tested against a mail server or a webhook receiver: the bundle test
+  checks that an alert's message is queued, and why it could not be sent
+  without a mail server.
 * An OS lifecycle entry's product has at most 64 characters, its edition
   group and version 50 and its notes 1,000; builds go from 1 to 1,000,000.
 * The EasyPatch Linux agent needs systemd: it runs apt in transient
@@ -924,7 +927,7 @@ intervals plus two minutes is stalled. Every engine response carries an
 | No email or chat message | The rule needs channels. Then check the channel's last message under Settings → **Patching** → Notifications |
 | `A stored notification secret cannot be decrypted` | The worker does not see the engine's keys in `${EASYRMM_DATA_ROOT}/easypatch/keys`. If they were lost, enter the webhook addresses again |
 | Webhook refused: private network addresses | Turn on **Allow webhooks to private network addresses** if that is intended |
-| Reports are not emailed | EasyRMM has no mail server (`EASYRMM_SMTP_HOST`), or `EASYRMM_SMTP_TLS=none`: reports go only over STARTTLS or TLS. Reports over 15 MB are not emailed |
+| Reports are not emailed | EasyRMM has no mail server (Settings → Notifications → Mail server, or `EASYRMM_SMTP_HOST`), or it is used without encryption: reports go only over STARTTLS or TLS. Reports over 15 MB are not emailed |
 | A scheduled report was not sent | The schedule must be on with recipients. Months that ended before it was turned on are skipped. Organizations east of UTC wait until the month has ended in UTC |
 | Names show as empty boxes in a PDF | The embedded font covers Latin, Greek and Cyrillic only |
 | No CVEs or *Exploited in the wild* anywhere | Settings → **Patching** → Server, *Vulnerability data*: `easypatch-worker` needs outbound HTTPS to `www.cisa.gov`, `raw.githubusercontent.com`, `api.msrc.microsoft.com` and, with Debian devices, `security-tracker.debian.org`. Failed downloads are retried hourly |

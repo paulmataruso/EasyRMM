@@ -1,6 +1,7 @@
 # ADR-0053: One notification sender, and notifications for device alerts
 
-* Status: Proposed (2026-11-21). Not implemented.
+* Status: Proposed (2026-11-21). Slice 1 implemented (PR #82); the other
+  slices not implemented.
 * Revised after two independent reviews and a check of the second
   revision (2026-11-21). Decisions made in review on sharing platform
   channels, `alerts.acknowledged`, `.env`'s mail server, the old signature
@@ -404,7 +405,42 @@ What exists, and what it means here:
   platform. **Account mail goes first**: invitations, password resets and
   other mail to people's own accounts go through the same limiter, so
   they count, but ahead of every notification, and notifications stop at
-  90% of the day's budget, so the rest is always there for them.
+  80% of the day's budget, so the rest is always there for them. Of that
+  rest, invitations and password links administrators send stop at 90%,
+  so the last 10% is always there for password resets people ask for,
+  whatever one tenant's administrators send (decided in review of #82,
+  which found that one organization's administrator could use up every
+  tenant's resets). Within those shares, each is limited further, every
+  limit `min(constant, fraction × per_day)` and at least 1, so that a low
+  day's limit cannot be used up by one of them either (decided in review
+  of #82, which found that resets people ask for got round the shares:
+  an organization admin could invite addresses they control and have
+  each reset, at the 100% share, until the platform's day was gone):
+  one administrator's mail, `min(60, per_day/150)` an hour (kept up all
+  day, 16% of the day); one organization's administrators' mail,
+  `min(500, per_day/18)` a day (5.6%), not counting super
+  administrators'; one account's password emails of any kind, 3 at
+  once, then one every 20 minutes (a token bucket worked out from the
+  account's emails in `mail_sends`); resets people ask for,
+  `min(60, per_day/300)` an hour on the whole platform (kept up all day,
+  8% at 300 a day or more, under the 10% kept for them), and to one
+  organization's accounts a third of that hour, accounts in no
+  organization or several counting together. No limit a day holds
+  resets people ask for (decided in review of #82, which found that day
+  caps let anyone who knew a few addresses keep an organization's
+  resets, or one account's, refused for a day): someone who asks for
+  resets to addresses they know can delay an organization's by the
+  hour, never by the day. All are counted in `mail_sends`, across
+  servers. A reset takes its room under the limits before its link is
+  made, in a step of its own, and never holds a database connection
+  while it waits for another (decided in review of #82, which found
+  that a reset held a row lock while the limits' read waited for a
+  second connection, so that concurrent resets drained the pool). Only the administrator's own limit refuses an administrator's
+  link (`429`, with `Retry-After`, as every `429`); past the account's or
+  the organization's, it is made and comes back unsent, with the reason,
+  so that no one who can ask for resets can keep an administrator from
+  helping someone. The figures and why are in
+  [Mail](../../operations/mail.md#limits-on-invitations-and-password-emails).
 * **The mail server's circuit**: after 5 failures in a row to connect or
   sign in, notification email pauses for 1 minute, doubling to 15, with one
   message tried at a time; attempts are not counted while paused (the 24
@@ -702,7 +738,34 @@ channels now, its syslog destinations with log forwarding later.
     it.
 * **The engine follows at once**: until slice 6 retires its email,
   `syncMail` gives the engine the mail server in force at start **and on
-  every change**, not once per start. The engine signs in with a password
+  every change**, not once per start. EasyRMM is its one source (decided
+  in review of #82): each pass compares the engine's mail settings with
+  EasyRMM's and gives them again on any difference, so one set in the
+  engine is overwritten; the engine's webhook switch, which its settings
+  carry, is changed with EasyRMM's mail server in force, under the same
+  lock, never with the engine's copy; and after three failed passes in a
+  row the engine's mail server is removed, and Settings → Patching says
+  why. One of EasyRMM's servers at a time runs `syncMail`, chosen by a
+  session advisory lock on a connection of its own, so that servers whose
+  mail servers differ do not give the engine theirs in turn. Its ping is
+  bounded at 5 seconds, and its connection has TCP keepalives and a TCP
+  user timeout on both ends, so that a leader whose connection died
+  without a word is noticed in about 30 seconds; a pooler in transaction
+  mode is not supported. It records an HMAC-SHA-256 of the mail server
+  it gives (`mail_engine_given`), keyed by a key derived from the secret
+  key with HKDF (its own label), never the mail server, so that someone
+  who reads the database cannot guess the password from it; each other
+  server logs an error once per change, and says so on Settings →
+  Patching, when its own differs. The webhook switch changed on another
+  server keeps the engine's mail settings, sending no password, so that
+  the engine keeps the one it has. Each server reads and then changes the
+  engine's mail settings (a pass, the removal after failures, the
+  webhook switch) holding one transaction-level advisory lock shared by
+  all servers, so that no two such changes interleave. The lock is taken
+  with the request's context, each engine call under it is bounded at 10
+  seconds, and the webhook switch goes ahead when EasyRMM's mail server
+  cannot be read, leaving the engine's as it is, never removing it
+  (decided in review of #82). The engine signs in with a password
   only, so while the mail server signs in with an application, `syncMail`
   gives the engine none, as when EasyRMM has none (`Mail`, `engine.go`):
   patching's email and monthly reports stop until slice 6. While an
@@ -776,8 +839,9 @@ never taken from a value.
 * **Filters**, each dimension in one of two modes, ***any*** or ***list***:
   organizations (platform rules only), sites, device groups, kind of
   device (servers, workstations), severity (warning, critical) and
-  condition (offline, processor, memory, disk, *agent removed without a
-  request*).
+  condition (offline, processor, memory, disk, disk health with its check
+  as a second choice, *any* or a list of checks (ADR-0065), *agent
+  removed without a request*).
   * Lists are rows with composite foreign keys that cascade: sites as
     `(organization_id, site_id)` to `sites`, device groups as
     `(site_id, device_group_id)` to `device_groups`, as `device_groups`
@@ -817,7 +881,8 @@ never taken from a value.
   resolves its alerts and the next evaluation opens new ones with new IDs.
   The payload's `id` is the **incident's**: the alert's own ID, carried
   over to an alert that opens on the same policy and device, **with the
-  same kind**, within 5 minutes of a `policy_changed` resolution, or, after
+  same kind, check and subject** (ADR-0065: one alert per disk), within 5
+  minutes of a `policy_changed` resolution, or, after
   a restart, before ADR-0052's start delay for that policy has passed,
   whichever is later. The planner holds `policy_changed` resolutions that
   long; when a successor opens, neither is sent, and the incident goes on:
@@ -885,8 +950,9 @@ never taken from a value.
   a count would never be ticketed.
 * **For PSA tools**: `id` is stable from opened through reminders and
   acknowledgement to resolved, and across a policy change as above; `key`
-  is the same for every alert of one condition on one device, so a tool
-  can tell a recurrence; site events have the outage's ID.
+  is the same for every alert of one condition on one device and subject
+  (a disk, ADR-0065; empty for the other kinds), so a tool can tell a
+  recurrence; site events have the outage's ID.
 * **Sources**: a rule is about device alerts or about notices. Patching
   alerts keep the engine's rules (below).
 

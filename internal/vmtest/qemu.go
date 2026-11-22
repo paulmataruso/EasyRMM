@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +29,78 @@ type machine struct {
 	seedDS   string
 	seedISO  string // or the seed on a CD-ROM
 	forward  []int
+	disks    []machineDisk
+}
+
+// machineDisk is an Options disk and its backing file.
+type machineDisk struct {
+	Disk
+	file string
+}
+
+// diskID is what QEMU takes as a device's id.
+var diskID = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]{0,31}$`)
+
+// diskFiles checks the disks and creates each one's sparse backing file in
+// dir.
+func diskFiles(dir string, disks []Disk) ([]machineDisk, error) {
+	var out []machineDisk
+	seen := map[string]bool{}
+	for _, d := range disks {
+		switch {
+		case !diskID.MatchString(d.ID) || seen[d.ID]:
+			return nil, fmt.Errorf("disk id %q: missing, repeated or not a QEMU id", d.ID)
+		case d.Kind != DiskNVMe && d.Kind != DiskSATA:
+			return nil, fmt.Errorf("disk %s: kind %q", d.ID, d.Kind)
+		case d.Kind == DiskNVMe && d.Model != "":
+			return nil, fmt.Errorf("disk %s: QEMU's NVMe controller has no model property", d.ID)
+		case d.Kind == DiskNVMe && d.Serial == "":
+			return nil, fmt.Errorf("disk %s: QEMU's NVMe controller needs a serial", d.ID)
+		}
+		seen[d.ID] = true
+		file := filepath.Join(dir, d.ID+".raw")
+		f, err := os.Create(file) //nolint:gosec // the harness's own files
+		if err != nil {
+			return nil, err
+		}
+		err = f.Truncate(64 << 20)
+		if cerr := f.Close(); err == nil {
+			err = cerr
+		}
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, machineDisk{Disk: d, file: file})
+	}
+	return out, nil
+}
+
+// diskArgs attaches the disks: each NVMe controller with its namespace,
+// and the SATA disks on one AHCI controller of their own, beside the one
+// built into the q35 machine.
+func diskArgs(disks []machineDisk) []string {
+	var args []string
+	port := 0
+	for _, d := range disks {
+		args = append(args, "-drive", "if=none,id="+d.ID+"-drive,format=raw,cache=unsafe,file="+optValue(d.file))
+		if d.Kind == DiskNVMe {
+			args = append(args, "-device", "nvme,id="+d.ID+",drive="+d.ID+"-drive,serial="+optValue(d.Serial))
+			continue
+		}
+		if port == 0 {
+			args = append(args, "-device", "ahci,id=ahci1")
+		}
+		dev := fmt.Sprintf("ide-hd,id=%s,bus=ahci1.%d,drive=%s-drive", d.ID, port, d.ID)
+		if d.Model != "" {
+			dev += ",model=" + optValue(d.Model)
+		}
+		if d.Serial != "" {
+			dev += ",serial=" + optValue(d.Serial)
+		}
+		args = append(args, "-device", dev)
+		port++
+	}
+	return args
 }
 
 // usableKVM reports whether /dev/kvm can be opened for QEMU.
@@ -68,7 +141,8 @@ func qemuArgs(m machine) []string {
 		"-smp", strconv.Itoa(m.cpus),
 		"-m", strconv.Itoa(m.memoryMB),
 		"-drive", "if=none,id=disk0,format=qcow2,cache=unsafe,discard=unmap,file=" + optValue(m.disk),
-		"-device", "virtio-blk-pci,drive=disk0",
+		// The firmware boots the system disk, never a test's blank disks.
+		"-device", "virtio-blk-pci,drive=disk0,bootindex=0",
 		"-netdev", netdev,
 		"-device", "virtio-net-pci,netdev=net0",
 		"-object", "rng-random,id=rng0,filename=/dev/urandom",
@@ -80,6 +154,7 @@ func qemuArgs(m machine) []string {
 		"-serial", "chardev:console",
 		"-qmp", "unix:" + optValue(m.qmpSocket()) + ",server=on,wait=off",
 	}
+	args = append(args, diskArgs(m.disks)...)
 	if m.seedISO != "" {
 		return append(args,
 			"-drive", "if=none,id=seed,format=raw,readonly=on,file="+optValue(m.seedISO),

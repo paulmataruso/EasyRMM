@@ -4,7 +4,7 @@ import type { AlertEntry } from "../../api/types";
 import { Card, EmptyState, ErrorState, Spinner } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { AlertActions, useAlertAction } from "./AlertActions";
-import { conditionText, SeverityBadge, valueText } from "./alertText";
+import { conditionText, DiskSubject, risingHint, SeverityBadge, valueText } from "./alertText";
 
 /** A device's active alerts, to acknowledge or resolve in place. */
 export function DeviceAlertsCard({ deviceId }: { deviceId: string }) {
@@ -35,9 +35,11 @@ export function DeviceAlertsCard({ deviceId }: { deviceId: string }) {
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-sm font-medium">{a.name}</p>
+                  <DiskSubject alert={a} />
                   <p className="text-xs text-muted">
                     <span className="font-medium text-fg tabular-nums">{valueText(a)}</span> · {conditionText(a)}
                   </p>
+                  {a.canManage && risingHint(a) && <p className="mt-0.5 text-xs text-muted">{risingHint(a)}</p>}
                 </div>
                 <SeverityBadge severity={a.severity} />
               </div>

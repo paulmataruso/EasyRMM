@@ -106,6 +106,9 @@ does, over its own TLS connection:
 * a heartbeat with metrics every minute;
 * its inventory, about 21 KB with 300 packages, uploaded when the server's
   copy differs;
+* a hardware report with its two disks' health (an NVMe drive and a SATA
+  disk with 30 SMART attributes, about 4 KB) 2 minutes after it starts
+  and every 30 minutes after that;
 * a job long poll held open at all times.
 
 A delivered job is checked against the pinned job key, started, and reported

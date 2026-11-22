@@ -27,6 +27,7 @@ function routes(extra: Record<string, unknown> = {}) {
     "GET /devices/:id/inventory": ok({ inventory: inventory(), metrics: metrics() }),
     "GET /devices/:id/metrics": ok(history()),
     "GET /devices/:id/software": ok({ items: PACKAGES }),
+    "GET /devices/:id/disks": ok({ items: [] }),
     ...extra,
   } as Parameters<typeof installFakeApi>[0];
 }
