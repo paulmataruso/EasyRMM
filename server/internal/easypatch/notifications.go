@@ -401,11 +401,13 @@ type NotificationSettings struct {
 
 // SetNotificationSettings changes whether webhooks may go to private
 // networks. EasyPatch replaces its notification settings at once, so the
-// mail server goes with the switch: EasyRMM's in force, read under the lock
-// syncMail holds, never the engine's copy, which may be a mail server
-// EasyRMM no longer has. On a server whose mail server is not the one the
-// engine was given (compareMail), that is its own, until the server that
-// gives the engine its mail server gives it again, within a pass.
+// mail server goes with the switch. On the server that gives the engine its
+// mail server, that is EasyRMM's in force, read under the lock syncMail
+// holds, never the engine's copy, which may be a mail server EasyRMM no
+// longer has. On another, it is the engine's, without a password, so that
+// the engine keeps the one it has: that server's own may not be the one
+// given (compareMail), and whatever such a change mixes is in what the
+// engine shows, which the next pass of the server that gives it repairs.
 func (s *Service) SetNotificationSettings(ctx context.Context, c access.Caller, in NotificationSettings) (NotificationsView, error) {
 	cl, err := s.notifications(ctx, c)
 	if err != nil {
@@ -432,6 +434,17 @@ func (s *Service) setPrivateWebhooks(ctx context.Context, c access.Caller, cl *C
 	if m.AllowPrivateNetworkWebhooks == allow {
 		return nil
 	}
+	lead, err := s.leadsMail(ctx)
+	if err != nil {
+		return err
+	}
+	if !lead {
+		if err := e.setMailSettings(st, cl, m.unchanged(allow)); err != nil {
+			s.noteError(err)
+			return epError(err)
+		}
+		return s.recordSwitch(ctx, c, m.AllowPrivateNetworkWebhooks, allow)
+	}
 	// EasyRMM's mail server unreadable (a password sealed with another
 	// key) does not stop the switch: no mail server goes with it, as when
 	// passes cannot give one, and the console says why.
@@ -451,9 +464,13 @@ func (s *Service) setPrivateWebhooks(ctx context.Context, c access.Caller, cl *C
 		return epError(err)
 	}
 	e.mailGiven = &cfg
+	return s.recordSwitch(ctx, c, m.AllowPrivateNetworkWebhooks, allow)
+}
+
+func (s *Service) recordSwitch(ctx context.Context, c access.Caller, from, to bool) error {
 	return s.record(ctx, []audit.Event{{Actor: c.Actor, Action: "patch.notifications_update", TargetType: "easypatch_notifications",
 		TargetID: "settings", Outcome: audit.Success, Details: map[string]any{"changes": map[string]any{"allowPrivateNetworkWebhooks": map[string]any{
-			"from": m.AllowPrivateNetworkWebhooks, "to": allow}}}}})
+			"from": from, "to": to}}}}})
 }
 
 // ChannelRequest is a channel as EasyRMM takes it.

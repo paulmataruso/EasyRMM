@@ -210,9 +210,10 @@ server compares its own mail server with that digest, and when they
 differ (for example, `.env` set differently on one server), it logs an
 error once per change, and its Settings → Patching → Notifications says
 so; the engine keeps the one it was given. Give every server the same
-`EASYRMM_SMTP_*` settings. The webhook switch, changed on such a server,
-gives the engine that server's mail server, until the next pass of the
-server that gives it, within a minute.
+`EASYRMM_SMTP_*` settings. The webhook switch, changed on a server that
+does not give the engine its mail server, keeps the engine's mail
+settings as they are, its password included, and changes only the
+switch.
 
 When EasyRMM cannot give the engine its mail server three passes in a row
 (a pass runs every minute, and at once after a change), because it cannot

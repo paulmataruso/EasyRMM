@@ -146,6 +146,13 @@ func (cfg MailConfig) mailSettings(current MailSettings) MailSettingsInput {
 	return in
 }
 
+// unchanged is the engine's mail settings m as they are, the password kept
+// (none sent), with the webhook switch set to allow.
+func (m MailSettings) unchanged(allow bool) MailSettingsInput {
+	return MailSettingsInput{SMTPHost: m.SMTPHost, SMTPPort: m.SMTPPort, SMTPSecurity: m.SMTPSecurity, SMTPUsername: m.SMTPUsername,
+		FromAddress: m.FromAddress, FromName: m.FromName, SMTPSkipCertificateCheck: m.SMTPSkipCertificateCheck, AllowPrivateNetworkWebhooks: allow}
+}
+
 // mailFailLimit is how many reconcile passes in a row may fail to give the
 // engine EasyRMM's mail server before the engine's is removed, so that it
 // does not go on sending through one EasyRMM may no longer have.

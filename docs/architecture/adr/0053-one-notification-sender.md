@@ -741,10 +741,13 @@ channels now, its syslog destinations with log forwarding later.
   a salted Argon2id digest of the mail server it gives
   (`mail_engine_given`), never the password, and each other server logs
   an error once per change, and says so on Settings → Patching, when its
-  own differs. The lock is taken with the request's context, each engine
-  call under it is bounded at 10 seconds, and the webhook switch goes
-  ahead when EasyRMM's mail server cannot be read, giving the engine none
-  with it (decided in review of #82). The engine signs in with a password
+  own differs. The webhook switch changed on another server keeps the
+  engine's mail settings, sending no password, so that the engine keeps
+  the one it has; anything a concurrent change mixes is in what the
+  engine shows, which the next pass repairs. The lock is taken with the
+  request's context, each engine call under it is bounded at 10 seconds,
+  and the webhook switch goes ahead when EasyRMM's mail server cannot be
+  read, giving the engine none with it (decided in review of #82). The engine signs in with a password
   only, so while the mail server signs in with an application, `syncMail`
   gives the engine none, as when EasyRMM has none (`Mail`, `engine.go`):
   patching's email and monthly reports stop until slice 6. While an

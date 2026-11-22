@@ -106,6 +106,26 @@ func TestOneServerGivesTheEngineItsMailServer(t *testing.T) {
 		t.Fatalf("the second server: %q, logged %d times", problem(two), logTwo.count(differs))
 	}
 
+	// The webhook switch changed on the second server keeps the engine's
+	// mail server, its password included, and the first finds nothing to
+	// repair.
+	if v, err := two.SetNotificationSettings(ctx, f.admin, NotificationSettings{AllowPrivateNetworkWebhooks: true}); err != nil || !v.AllowPrivateNetworkWebhooks {
+		t.Fatalf("the switch on the second server: %+v, %v", v, err)
+	}
+	holds("the switch on the second server", a)
+	if r := f.engine.RequestsTo("PUT", mailSettingsPath); len(r) != before+1 {
+		t.Fatalf("%d pushes for the switch", len(r)-before)
+	} else if r[len(r)-1].Body["smtpPassword"] != nil {
+		t.Fatal("the second server's switch sent a password")
+	}
+	pass(one)
+	if puts() != before+1 {
+		t.Fatal("the first server gave the engine its mail server again after the switch")
+	}
+	if m := f.engine.Mail(); m["allowPrivateNetworkWebhooks"] != true {
+		t.Fatalf("the switch is lost: %v", m)
+	}
+
 	// The database holds a salted digest, never the mail server.
 	var salt, digest []byte
 	if err := f.db.ReadTx(ctx, database.System, func(tx pgx.Tx) error {
