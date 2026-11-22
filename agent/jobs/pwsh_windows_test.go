@@ -85,6 +85,7 @@ func TestPwshAsSystem(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	run.Release()
 	t.Logf("choosing PowerShell 7 and checking it and its module folders took %s; module folders %q", run.Took, run.Modules)
 
 	// A pwsh.exe on the PATH, in a folder of the system drive's root, which

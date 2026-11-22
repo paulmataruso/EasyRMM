@@ -80,11 +80,17 @@ func (s *Service) Record(ctx context.Context, deviceID uuid.UUID, body []byte) (
 	for i, p := range pkgs {
 		names[i], versions[i], arches[i], publishers[i] = p.Name, p.Version, p.Arch, p.Publisher
 	}
+	ps7, blocked := powerShell7(inv.PowerShell)
 	err = s.db.InTx(ctx, database.System, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO device_inventory (device_id, hash, data, package_manager, package_count, received_at)
 			VALUES ($1, $2, $3, $4, $5, now())
 			ON CONFLICT (device_id) DO UPDATE SET hash = $2, data = $3, package_manager = $4, package_count = $5, received_at = now()`,
 			deviceID, hash, data, inv.PackageManager, len(pkgs)); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE devices SET powershell7 = $2, powershell7_blocked = $3
+			WHERE id = $1 AND (powershell7 IS DISTINCT FROM $2 OR powershell7_blocked IS DISTINCT FROM $3)`,
+			deviceID, ps7, blocked); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM device_software WHERE device_id = $1`, deviceID); err != nil {
@@ -102,6 +108,30 @@ func (s *Service) Record(ctx context.Context, deviceID uuid.UUID, body []byte) (
 		return "", fmt.Errorf("inventory: storing: %w", err)
 	}
 	return hash, nil
+}
+
+// powerShell7 is what the device list says of PowerShell 7 from an
+// inventory's PowerShell list (ADR-0064): whether it lists a usable
+// install, nil when it lists no PowerShell; and where none is usable but
+// one is blocked, why a run fails, the first blocked install's reason, or
+// nil.
+func powerShell7(list []agentproto.PowerShellInstall) (usable *bool, blocked *string) {
+	if list == nil {
+		return nil, nil
+	}
+	found := false
+	for _, p := range list {
+		if p.Edition == agentproto.EditionCore && p.Usable {
+			found = true
+			return &found, nil
+		}
+	}
+	for _, p := range list {
+		if p.Edition == agentproto.EditionCore && p.Blocked {
+			return &found, &p.Reason
+		}
+	}
+	return &found, nil
 }
 
 // RecordMetrics stores a heartbeat's metrics as the device's latest and as
@@ -259,9 +289,12 @@ func cleanPowerShell(in []agentproto.PowerShellInstall) []agentproto.PowerShellI
 		if arch != agentproto.ArchX64 && arch != agentproto.ArchARM64 && arch != agentproto.ArchX86 {
 			arch = ""
 		}
+		// Only a PowerShell 7 install is blocked, and a blocked one is not
+		// usable.
+		blocked := p.Blocked && p.Edition == agentproto.EditionCore
 		out = append(out, agentproto.PowerShellInstall{
 			Edition: p.Edition, Version: text(p.Version, agentproto.MaxInterpreterVersion), Arch: arch, Path: path,
-			Preview: p.Preview, Store: p.Store, Usable: p.Usable, Reason: text(p.Reason, maxLong),
+			Preview: p.Preview, Store: p.Store, Usable: p.Usable && !blocked, Reason: text(p.Reason, maxLong), Blocked: blocked,
 		})
 	}
 	return out

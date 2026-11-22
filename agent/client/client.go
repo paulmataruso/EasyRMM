@@ -36,11 +36,18 @@ type Client struct {
 	// level is the protocol level of the last heartbeat answer, 1 for an
 	// answer without one; known is closed at the first answer. Request
 	// fields added after level 2 are sent only while level is 2 or higher
-	// (ADR-0009).
+	// (ADR-0009). Nothing waits for the first answer after knownBy.
 	level     atomic.Int32
 	known     chan struct{}
 	knownOnce sync.Once
+	knownBy   time.Time
 }
+
+// LevelWait bounds how long after a client is made a result waits for the
+// first heartbeat answer: a result is reported in the job loop, which must
+// not stall when heartbeats fail. Past it a result is sent as to a server
+// of level 1 (ADR-0064).
+const LevelWait = 30 * time.Second
 
 // Options configure a Client.
 type Options struct {
@@ -79,11 +86,12 @@ func New(o Options) (*Client, error) {
 		rt = t
 	}
 	return &Client{
-		base:  u,
-		http:  &http.Client{Transport: rt, Timeout: 5 * time.Minute},
-		now:   time.Now,
-		agent: "easyrmm-agent/" + o.Version,
-		known: make(chan struct{}),
+		base:    u,
+		http:    &http.Client{Transport: rt, Timeout: 5 * time.Minute},
+		now:     time.Now,
+		agent:   "easyrmm-agent/" + o.Version,
+		known:   make(chan struct{}),
+		knownBy: time.Now().Add(LevelWait),
 	}, nil
 }
 
@@ -339,13 +347,20 @@ func (c *Client) Start(ctx context.Context, runID string) (*agentproto.StartResp
 // Result reports how a run ended. The program it started goes only to a
 // server of protocol level 2 or higher; a result that names one waits for
 // this process's first heartbeat answer to know the level, so a result kept
-// across a restart still carries it (ADR-0064).
+// across a restart still carries it (ADR-0064), until LevelWait after the
+// client was made: then it goes without, as to a server of level 1.
 func (c *Client) Result(ctx context.Context, runID string, r agentproto.ResultRequest) error {
 	if r.Interpreter != nil {
-		select {
-		case <-c.known:
-		case <-ctx.Done():
-			return ctx.Err()
+		if wait := time.Until(c.knownBy); wait > 0 {
+			t := time.NewTimer(wait)
+			select {
+			case <-c.known:
+			case <-t.C:
+			case <-ctx.Done():
+				t.Stop()
+				return ctx.Err()
+			}
+			t.Stop()
 		}
 		if !c.newFields() {
 			r.Interpreter = nil

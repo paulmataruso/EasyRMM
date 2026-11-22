@@ -23,7 +23,8 @@ func windowsFacts(host, version string) agentproto.Facts {
 // the agent API with signed requests (ADR-0064): the poll's accepts kept
 // for the build that sent it and deciding what is delivered and what may be
 // created, the program a run used shown to Read-Only, the PowerShell
-// installs an inventory reports.
+// installs an inventory reports, and what the device says of them: usable,
+// or blocked and why.
 func TestPowerShell7API(t *testing.T) {
 	h := newHarness(t, false)
 	admin, _ := setUp(t, h)
@@ -64,8 +65,9 @@ func TestPowerShell7API(t *testing.T) {
 
 	type deviceView struct {
 		Agent *struct {
-			Accepts     []string `json:"accepts"`
-			PowerShell7 *bool    `json:"powerShell7"`
+			Accepts            []string `json:"accepts"`
+			PowerShell7        *bool    `json:"powerShell7"`
+			PowerShell7Blocked string   `json:"powerShell7Blocked"`
 		} `json:"agent"`
 	}
 	device := func() deviceView {
@@ -129,8 +131,8 @@ func TestPowerShell7API(t *testing.T) {
 	if _, err := pc.ac.Inventory(ctx, inv); err != nil {
 		t.Fatal(err)
 	}
-	if d := device(); d.Agent.PowerShell7 == nil || !*d.Agent.PowerShell7 {
-		t.Errorf("powerShell7 %v", d.Agent.PowerShell7)
+	if d := device(); d.Agent.PowerShell7 == nil || !*d.Agent.PowerShell7 || d.Agent.PowerShell7Blocked != "" {
+		t.Errorf("powerShell7 %v %q", d.Agent.PowerShell7, d.Agent.PowerShell7Blocked)
 	}
 	var invView struct {
 		Inventory struct {
@@ -232,5 +234,27 @@ func TestPowerShell7API(t *testing.T) {
 	viewer.expect(http.StatusOK, "GET", "/api/v1/job-runs/"+job.Runs[0].ID, nil, &run)
 	if run.Status != "sent" || run.Held != "" {
 		t.Errorf("delivered: %+v", run)
+	}
+
+	// --- PowerShell 7 found, but what it loads fails the agent's check -----
+	why := `PowerShell 7 would load modules from C:\Program Files\PowerShell\Modules, and C:\Program Files\PowerShell\Modules\Tools ` +
+		`can be changed by BUILTIN\Users: not used, since what it loads must be changeable by administrators only. ` +
+		`Scripts that allow Windows PowerShell 5.1 do not run in it instead.`
+	inv, err = json.Marshal(agentproto.Inventory{OS: agentproto.OSInfo{ID: "windows", Name: "Windows Server 2025"}, PowerShell: []agentproto.PowerShellInstall{
+		{Edition: agentproto.EditionDesktop, Version: "5.1.26100.7019", Arch: "x64", Path: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, Usable: true},
+		{Edition: agentproto.EditionCore, Version: "7.6.10", Arch: "x64", Path: `C:\Program Files\PowerShell\7\pwsh.exe`, Blocked: true, Reason: why},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pc.ac.Inventory(ctx, inv); err != nil {
+		t.Fatal(err)
+	}
+	if d := device(); d.Agent.PowerShell7 == nil || *d.Agent.PowerShell7 || d.Agent.PowerShell7Blocked != why {
+		t.Errorf("blocked: powerShell7 %v %q", d.Agent.PowerShell7, d.Agent.PowerShell7Blocked)
+	}
+	viewer.expect(http.StatusOK, "GET", "/api/v1/devices/"+pc.id+"/inventory", nil, &invView)
+	if ps := invView.Inventory.PowerShell; len(ps) != 2 || ps[1].Usable || !ps[1].Blocked || ps[1].Reason != why {
+		t.Errorf("inventory's blocked PowerShell %+v", ps)
 	}
 }

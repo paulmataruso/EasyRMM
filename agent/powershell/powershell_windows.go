@@ -52,13 +52,21 @@ func containsFold(list []string, s string) bool {
 
 // Discover lists Windows PowerShell and every PowerShell 7 install found in
 // roots, at most agentproto.MaxPowerShell, as the inventory reports them:
-// each usable one's whole install is checked (checkInstall), and took is
-// how long the checks took.
+// each one a run could choose is checked as a run checks it (check), so
+// the inventory says what a run would do, and took is how long the checks
+// took.
 func Discover(roots []string) (list []agentproto.PowerShellInstall, took time.Duration) {
-	list = []agentproto.PowerShellInstall{Desktop()}
-	found, took := discover(roots, true)
-	list = append(list, found...)
-	order(list, nativeArch())
+	native := nativeArch()
+	list = append([]agentproto.PowerShellInstall{Desktop()}, candidates(roots, native)...)
+	start := time.Now()
+	for i := range list {
+		if list[i].Edition == agentproto.EditionCore && list[i].Usable {
+			c, _ := check(&list[i], false)
+			c.release()
+		}
+	}
+	took = time.Since(start)
+	order(list, native)
 	return list[:min(len(list), agentproto.MaxPowerShell)], took
 }
 
@@ -163,12 +171,10 @@ func system32() string {
 	return `C:\Windows\System32`
 }
 
-// discover finds the PowerShell 7 installs in roots. The installs a run
-// could use have their whole install checked: all of them with all, else
-// in the order a run prefers them until one passes, as a run needs only
-// that one.
-func discover(roots []string, all bool) ([]agentproto.PowerShellInstall, time.Duration) {
-	native := nativeArch()
+// candidates lists the PowerShell 7 installs in roots with what their files
+// say of them, those a run may choose marked usable before anything is
+// checked (assess), in the order a run prefers them.
+func candidates(roots []string, native string) []agentproto.PowerShellInstall {
 	var list []agentproto.PowerShellInstall
 	for _, root := range roots {
 		list = append(list, installsIn(root)...)
@@ -180,22 +186,7 @@ func discover(roots []string, all bool) ([]agentproto.PowerShellInstall, time.Du
 		}
 	}
 	order(list, native)
-	start := time.Now()
-	for i := range list {
-		if !list[i].Usable {
-			continue
-		}
-		if err := checkInstall(list[i].Path); err != nil {
-			list[i].Usable, list[i].Reason = false, untrustedReason(err)
-			continue
-		}
-		if !all {
-			break
-		}
-	}
-	took := time.Since(start)
-	order(list, native)
-	return list, took
+	return list
 }
 
 // installsIn lists the installs in root\PowerShell, with what their files
@@ -342,23 +333,97 @@ func nativeArch() string {
 	return agentproto.ArchX64
 }
 
-// checkInstall checks what a PowerShell 7 install is and loads: Program
-// Files and its PowerShell folder themselves, the install's folder and
-// everything in it, and PowerShell's shared module folder with everything
-// in it where it exists (ADR-0064).
-func checkInstall(pwsh string) error {
+// checked is what a run uses of an install that passed its check: the
+// install's program and libraries, held open, and the module folders.
+type checked struct {
+	held               *host.Held
+	modules, windowsPS []string
+}
+
+func (c *checked) release() {
+	if c != nil {
+		c.held.Close()
+	}
+}
+
+// check checks an install a run could choose, as a run does (ADR-0064):
+// the install itself (checkInstall), then what a run of it loads from
+// outside it (checkModules). An install that fails its own check is marked
+// not usable, and a run tries the next one, or falls back to Windows
+// PowerShell where the script allows it; nil is returned. One whose own
+// files pass but whose module folders or configuration fail is marked
+// blocked, not usable, and that failure is returned: a run that would have
+// used it fails, without the fallback, since Windows PowerShell loads from
+// Windows PowerShell's folders too. hold keeps the install's program and
+// libraries open while the result is used (checkInstall).
+func check(p *agentproto.PowerShellInstall, hold bool) (*checked, error) {
+	held, err := checkInstall(p.Path, hold)
+	if err != nil {
+		p.Usable, p.Reason = false, untrustedReason(err)
+		return nil, nil
+	}
+	mods, windowsPS, err := checkModules(filepath.Dir(p.Path))
+	if err != nil {
+		held.Close()
+		p.Usable, p.Blocked, p.Reason = false, true, blockedReason(err)
+		return nil, err
+	}
+	return &checked{held: held, modules: mods, windowsPS: windowsPS}, nil
+}
+
+// checkInstall checks what a PowerShell 7 install is and runs: Program
+// Files and its PowerShell folder themselves, the folders above the install
+// (host.CheckAbove), and the install's folder and everything in it, its
+// own module folder included. With hold, its program and libraries (.dll)
+// stay open, through the handles they were checked through, until the
+// returned Held is closed: no one may write them meanwhile (ADR-0064).
+func checkInstall(pwsh string, hold bool) (*host.Held, error) {
 	install := filepath.Dir(pwsh)
 	parent := filepath.Dir(install) // <Program Files>\PowerShell
 	root := filepath.Dir(parent)    // <Program Files>
 	for _, p := range []string{root, parent} {
 		if err := host.CheckEntry(p, false); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	if err := host.CheckTree(install, false); err != nil {
-		return err
+	if err := host.CheckAbove(install); err != nil {
+		return nil, err
 	}
-	return checkIfThere(filepath.Join(parent, "Modules"), false)
+	var which func(string) bool
+	if hold {
+		which = func(p string) bool {
+			return strings.EqualFold(p, pwsh) || strings.EqualFold(filepath.Ext(p), ".dll")
+		}
+	}
+	return host.CheckTreeHolding(install, false, which)
+}
+
+// checkModules checks what a run of the PowerShell 7 in psHome loads from
+// outside its install: its configuration, and the folders it may load
+// modules from (moduleFolders), each with the folders above it
+// (host.CheckAbove) and, where it exists, everything in it. It returns the
+// folders, and Windows PowerShell's two, which a run's PSModulePath names.
+func checkModules(psHome string) (all, windowsPS []string, err error) {
+	all, windowsPS, err = moduleFolders(psHome)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, m := range all {
+		if within(m, psHome) {
+			continue // checked with the install
+		}
+		// Windows keeps the modules it puts in Windows PowerShell's two
+		// folders as hard links into its component store (WinSxS), as seen
+		// on CI's runners; nowhere else are hard links allowed.
+		links := slices.ContainsFunc(windowsPS, func(w string) bool { return strings.EqualFold(filepath.Clean(m), filepath.Clean(w)) })
+		if err := host.CheckAbove(m); err != nil {
+			return nil, nil, fmt.Errorf("PowerShell 7 would load modules from %s, and %w", m, err)
+		}
+		if err := checkIfThere(m, links); err != nil {
+			return nil, nil, fmt.Errorf("PowerShell 7 would load modules from %s, and %w", m, err)
+		}
+	}
+	return all, windowsPS, nil
 }
 
 // checkIfThere checks a folder and what it holds when it exists.
@@ -376,6 +441,12 @@ func untrustedReason(err error) string {
 		return u.Path + " " + u.Reason + ": not used, since what it runs and loads must be changeable by administrators only."
 	}
 	return "Could not be checked: " + err.Error() + "."
+}
+
+// blockedReason says why an install whose own files pass is not used:
+// what a run of it would load does not.
+func blockedReason(err error) string {
+	return capitalize(err.Error()) + ": not used, since what it loads must be changeable by administrators only. Scripts that allow Windows PowerShell 5.1 do not run in it instead."
 }
 
 func capitalize(s string) string {
@@ -400,55 +471,61 @@ type Run struct {
 	Env []string
 	// Took is how long the checks took.
 	Took time.Duration
+
+	held *host.Held
 }
 
-// ForRun chooses the PowerShell 7 a pwsh run uses from roots, checks it and
-// the folders the run may load modules from, and says how to start it. It
-// returns a *NotFound when no install is usable, and an *host.Untrusted
-// for a module folder that fails.
+// Release lets go of the install's program and libraries, held open since
+// their check so that no one changes them before the run's process is
+// created. Call it once that process is created, or will not be.
+func (r *Run) Release() { r.held.Close() }
+
+// ForRun chooses the PowerShell 7 a pwsh run uses from roots: the first, in
+// the order a run prefers them, that passes check, its program and
+// libraries held open until Release. It returns a *NotFound when no
+// install is usable, which a script may fall back from, and another error
+// when an install whose own files pass would load from a folder, or read a
+// configuration, that fails, which it may not.
 func ForRun(roots []string) (*Run, error) {
 	start := time.Now()
-	list, _ := discover(roots, false)
-	c := chosen(list)
-	if c == nil {
-		looked := make([]string, len(roots))
-		for i, r := range roots {
-			looked[i] = filepath.Join(r, "PowerShell")
-		}
-		return nil, &NotFound{Looked: looked, Found: list}
-	}
-	run := &Run{Interpreter: agentproto.Interpreter{Edition: c.Edition, Version: c.Version, Arch: c.Arch, Path: c.Path}}
-	mods, windowsPS, err := moduleFolders(filepath.Dir(c.Path))
-	if err != nil {
-		return nil, fmt.Errorf("%w; the script was not run", err)
-	}
-	run.Modules = mods
-	install := filepath.Dir(c.Path)
-	shared := filepath.Join(filepath.Dir(install), "Modules")
-	for _, m := range mods {
-		// The install and its shared module folder were just checked.
-		if within(m, install) || strings.EqualFold(filepath.Clean(m), shared) {
+	list := candidates(roots, nativeArch())
+	var blocked error
+	for i := range list {
+		if !list[i].Usable {
 			continue
 		}
-		// Windows keeps its own files as hard links into its component
-		// store (WinSxS): System32's, and the modules it puts in Windows
-		// PowerShell's folder in Program Files (seen on CI's runners). The
-		// system account's profile is in System32 too.
-		links := inSystem32(m) || slices.ContainsFunc(windowsPS, func(w string) bool { return strings.EqualFold(filepath.Clean(m), filepath.Clean(w)) })
-		if err := checkIfThere(m, links); err != nil {
-			return nil, fmt.Errorf("PowerShell 7 would load modules from %s, and %w; the script was not run", m, err)
+		c, err := check(&list[i], true)
+		if err != nil {
+			if blocked == nil {
+				blocked = err
+			}
+			continue
 		}
+		if c == nil {
+			continue
+		}
+		p := list[i]
+		return &Run{
+			Interpreter: agentproto.Interpreter{Edition: p.Edition, Version: p.Version, Arch: p.Arch, Path: p.Path},
+			Modules:     c.modules,
+			Env: []string{
+				"PSModulePath=" + strings.Join(c.windowsPS, ";"),
+				"POWERSHELL_TELEMETRY_OPTOUT=1",
+				"POWERSHELL_UPDATECHECK=Off",
+			},
+			Took: time.Since(start),
+			held: c.held,
+		}, nil
 	}
-	run.Env = []string{
-		"PSModulePath=" + strings.Join(windowsPS, ";"),
-		"POWERSHELL_TELEMETRY_OPTOUT=1",
-		"POWERSHELL_UPDATECHECK=Off",
+	if blocked != nil {
+		return nil, fmt.Errorf("%w; the script was not run", blocked)
 	}
-	run.Took = time.Since(start)
-	return run, nil
+	looked := make([]string, len(roots))
+	for i, r := range roots {
+		looked[i] = filepath.Join(r, "PowerShell")
+	}
+	return nil, &NotFound{Looked: looked, Found: list}
 }
-
-func inSystem32(p string) bool { return within(p, system32()) }
 
 // within reports whether p is dir or below it, ignoring case as Windows
 // does.
@@ -488,17 +565,31 @@ func moduleFolders(psHome string) (all, windowsPS []string, err error) {
 }
 
 // configured is the module folders a powershell.config.json names, or def
-// when there is no such file or it names none. The file and its folder
-// must pass the check first.
+// when there is no such file or it names none. Whoever could put the file
+// there could name any folder, so its folder and those above it are
+// checked whether it exists or not, and the file before it is read. A
+// folder the file names must exist: one that does not could be made later
+// by whoever may (ADR-0064).
 func configured(file, def string) ([]string, error) {
+	fail := func(err error) error {
+		return fmt.Errorf("PowerShell 7 would read its configuration from %s, and %w", file, err)
+	}
+	dir := filepath.Dir(file)
+	if err := host.CheckAbove(dir); err != nil {
+		return nil, fail(err)
+	}
+	if _, err := os.Lstat(dir); err == nil {
+		if err := host.CheckEntry(dir, false); err != nil {
+			return nil, fail(err)
+		}
+	}
 	if _, err := os.Lstat(file); errors.Is(err, fs.ErrNotExist) {
 		return []string{def}, nil
+	} else if err != nil {
+		return nil, err
 	}
-	links := inSystem32(file)
-	for _, p := range []string{filepath.Dir(file), file} {
-		if err := host.CheckEntry(p, links); err != nil {
-			return nil, fmt.Errorf("PowerShell 7 would read its configuration from %s, and %w", file, err)
-		}
+	if err := host.CheckEntry(file, false); err != nil {
+		return nil, fail(err)
 	}
 	b, err := os.ReadFile(file) //nolint:gosec // checked above: only administrators may change it
 	if err != nil {
@@ -519,7 +610,11 @@ func configured(file, def string) ([]string, error) {
 		if !filepath.IsAbs(f) {
 			return nil, fmt.Errorf("%s names the module folder %q, which is not a full path", file, f)
 		}
-		out = append(out, filepath.Clean(f))
+		f = filepath.Clean(f)
+		if _, err := os.Lstat(f); errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("%s names the module folder %s, which does not exist", file, f)
+		}
+		out = append(out, f)
 	}
 	if len(out) == 0 {
 		return []string{def}, nil

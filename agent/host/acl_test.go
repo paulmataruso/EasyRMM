@@ -92,6 +92,76 @@ func TestOthersMayWrite(t *testing.T) {
 	}
 }
 
+// TestReplacingFromAbove: the rights that let someone put another folder in
+// a checked one's place, from the folders above it (ADR-0064). A drive's
+// root as Windows sets it up lets users add a folder and nothing else; what
+// is only passed on, what is denied and what the administration holds do
+// not count.
+func TestReplacingFromAbove(t *testing.T) {
+	const (
+		system, admins, users, authenticated = "S-1-5-18", "S-1-5-32-544", "S-1-5-32-545", "S-1-5-11"
+		inherit                              = 0x1 | 0x2
+		fullControl                          = 0x1f01ff
+		readExecute                          = 0x1200a9
+		modify                               = 0x1301bf
+	)
+	// C:\ on Windows 11 and Server 2025.
+	root := []aclEntry{
+		{kind: aceAllowed, flags: inherit, mask: fullControl, who: system},
+		{kind: aceAllowed, flags: inherit | aceInheritOnly, mask: 0x10000000, who: admins},
+		{kind: aceAllowed, mask: fullControl, who: admins},
+		{kind: aceAllowed, flags: inherit, mask: readExecute, who: users},
+		// Modify, as generic rights, for what users create in it.
+		{kind: aceAllowed, flags: inherit | aceInheritOnly, mask: 0xe0010000, who: authenticated},
+		{kind: aceAllowed, mask: 0x4, who: authenticated},
+	}
+	for _, rights := range []uint32{replaceInRights, replaceRights} {
+		if who, ok := grantee(root, rights, false); ok {
+			t.Errorf("C:\\ lets %q replace (%#x)", who, rights)
+		}
+	}
+	if who, ok := grantee(root, createInRights, false); !ok || who != authenticated {
+		t.Errorf("C:\\ lets %q %v add a folder", who, ok)
+	}
+
+	for name, c := range map[string]struct {
+		e      aclEntry
+		rights uint32
+	}{
+		"delete what a folder holds": {aclEntry{kind: aceAllowed, mask: 0x40, who: users}, replaceInRights},
+		"change a folder's list":     {aclEntry{kind: aceAllowed, mask: 0x40000, who: users}, replaceInRights},
+		"take a folder over":         {aclEntry{kind: aceAllowed, mask: 0x80000, who: users}, replaceInRights},
+		"full control of a folder":   {aclEntry{kind: aceAllowed, mask: fullControl, who: users}, replaceInRights},
+		"generic all on a folder":    {aclEntry{kind: aceAllowed, mask: 0x10000000, who: users}, replaceInRights},
+		"modify a folder":            {aclEntry{kind: aceAllowed, mask: modify, who: users}, replaceRights},
+		"delete a folder":            {aclEntry{kind: aceAllowed, mask: 0x10000, who: users}, replaceRights},
+		"add a folder":               {aclEntry{kind: aceAllowed, mask: 0x4, who: users}, createInRights},
+		"generic write":              {aclEntry{kind: aceAllowed, mask: 0x40000000, who: users}, createInRights},
+		"in an entry kept elsewhere": {aclEntry{kind: 0x5, mask: 0x40}, replaceInRights},
+	} {
+		acl := []aclEntry{{kind: aceAllowed, mask: fullControl, who: admins}, c.e}
+		if _, ok := grantee(acl, c.rights, false); !ok {
+			t.Errorf("%s: not counted", name)
+		}
+	}
+	for name, c := range map[string]struct {
+		e      aclEntry
+		rights uint32
+	}{
+		"add files to a folder":       {aclEntry{kind: aceAllowed, mask: 0x2 | 0x4, who: users}, replaceInRights},
+		"only passed on":              {aclEntry{kind: aceAllowed, flags: inherit | aceInheritOnly, mask: fullControl, who: users}, replaceInRights},
+		"denied":                      {aclEntry{kind: aceDenied, mask: fullControl, who: users}, replaceRights},
+		"the system":                  {aclEntry{kind: aceAllowed, mask: fullControl, who: system}, replaceRights},
+		"read and run":                {aclEntry{kind: aceAllowed, mask: readExecute, who: users}, createInRights},
+		"write data to the folder":    {aclEntry{kind: aceAllowed, mask: 0x2, who: users}, createInRights},
+		"the creators, passed on all": {aclEntry{kind: aceAllowed, flags: inherit | aceInheritOnly, mask: 0x10000000, who: "S-1-3-0"}, replaceInRights},
+	} {
+		if who, ok := grantee([]aclEntry{c.e}, c.rights, false); ok {
+			t.Errorf("%s: counted for %q", name, who)
+		}
+	}
+}
+
 // TestSameEntries: the order of an access list's entries does not matter;
 // anything else about them does.
 func TestSameEntries(t *testing.T) {

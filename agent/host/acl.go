@@ -30,6 +30,26 @@ const (
 // include these (GENERIC_ALL, GENERIC_WRITE).
 const writeRights uint32 = 0x2 | 0x4 | 0x10 | 0x40 | 0x100 | 0x10000 | 0x40000 | 0x80000 | 0x10000000 | 0x40000000
 
+// The rights that let someone put another entry in a checked folder's
+// place, from the folders above it (ADR-0064: the folders above a
+// PowerShell install and above each module folder):
+//
+//   - replaceInRights, on a folder above it: delete what the folder holds
+//     (0x40), change its access list (WRITE_DAC) or owner (WRITE_OWNER),
+//     and GENERIC_ALL;
+//   - replaceRights, on the folder itself and each one on the way to it:
+//     delete or rename it (DELETE), change its access list or owner, and
+//     GENERIC_ALL;
+//   - createInRights, on the nearest folder that exists, where the folder
+//     does not: add a folder (0x4), and GENERIC_WRITE, which includes it
+//     (GENERIC_ALL is in the others). A drive's root lets every user add a
+//     folder, and does not count.
+const (
+	replaceInRights uint32 = 0x40 | 0x40000 | 0x80000 | 0x10000000
+	replaceRights   uint32 = 0x10000 | 0x40000 | 0x80000 | 0x10000000
+	createInRights  uint32 = 0x4 | 0x40000000
+)
+
 // trustedInstaller is the NT SERVICE\TrustedInstaller account, which owns
 // many of Windows' own folders.
 const trustedInstaller = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464"
@@ -70,11 +90,18 @@ func othersMayWrite(acl []aclEntry, folder bool) bool {
 // only passed on to what a folder holds counts on a folder, since what the
 // folder holds later gets it, and grants nothing on a file.
 func writer(acl []aclEntry, folder bool) (who string, ok bool) {
+	return grantee(acl, writeRights, folder)
+}
+
+// grantee finds the first entry that grants any of rights to anyone but the
+// administration, as writer does; passedOn says whether an entry only
+// passed on to what a folder holds counts.
+func grantee(acl []aclEntry, rights uint32, passedOn bool) (who string, ok bool) {
 	for _, e := range acl {
 		switch {
 		case e.kind == aceDenied, e.kind == aceDeniedObject, e.kind == aceDeniedCallback, e.kind == aceDeniedCallbackObject:
-		case e.mask&writeRights == 0:
-		case !folder && e.flags&aceInheritOnly != 0:
+		case e.mask&rights == 0:
+		case !passedOn && e.flags&aceInheritOnly != 0:
 		case (e.kind == aceAllowed || e.kind == aceAllowedCallback) && (slices.Contains(administration, e.who) || slices.Contains(creators, e.who)):
 		default:
 			return e.who, true

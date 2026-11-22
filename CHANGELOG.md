@@ -175,7 +175,18 @@ All notable changes to this project are documented here. The format follows
   check off. Where no usable PowerShell 7 is found the run fails without
   running the script, unless its author set **Where PowerShell 7 is
   missing** to Windows PowerShell 5.1 (`pwshFallback`, copied into each
-  job). Migration 00033 adds the shell and the new columns
+  job). The check also refuses a folder above the install or a module
+  folder that someone else could replace, a module folder the
+  configuration names that does not exist, and a file open in another
+  program that may write it; files Windows compressed or deduplicated are
+  plain files. A run holds `pwsh.exe` and the install's libraries open,
+  unwritable, until its process is created. After fixing an install's
+  permissions, restart the computer. An install whose module folders or
+  configuration fail is *found, not usable*, and its runs fail without
+  falling back to Windows PowerShell 5.1, which loads from the same
+  module folders. Migration 00033 adds the shell and the new columns, its
+  checks unvalidated; migration 00034 validates them and fills each
+  device's PowerShell 7 flag from its stored inventory
   ([guide](docs/operations/scripts-and-jobs.md#powershell-7)).
 - **Every run records the program it used**: edition, version,
   architecture and path, read from the file just before it starts, and
@@ -186,17 +197,20 @@ All notable changes to this project are documented here. The format follows
   version*.
 - **A Windows device's PowerShell installs**: the inventory lists Windows
   PowerShell and each PowerShell 7 found, and the **Hardware** tab shows
-  which one PowerShell 7 scripts run in and why each other is not used.
-  The run dialog warns how many chosen devices reported no usable
-  PowerShell 7 and what the script does there.
+  which one PowerShell 7 scripts run in and why each other is not used,
+  or *Found, not usable* with the reason. The run dialog warns how many
+  chosen devices reported no usable PowerShell 7 and what the script does
+  there.
 - **Agents say which jobs they take.** The agent's poll lists the job
   capabilities its build takes (`accepts`; `job.pwsh` from Windows agents),
   kept on the device for that build. A PowerShell 7 job is sent only to an
   agent that listed it; starting one on a device whose agent cannot, or has
   not said, is refused with the reason, the device picker leaves such
   devices out, and a run left waiting says why and expires with that
-  reason. The agent sends the list, its PowerShell installs and a run's
-  program only to a server of protocol level 2 or higher (ADR-0009).
+  reason, as does a run the agent took before changing versions. The agent
+  sends the list, its PowerShell installs and a run's program only to a
+  server of protocol level 2 or higher (ADR-0009); a result waits at most
+  until 30 seconds after the agent started to learn the level.
   **Agents of 1.0.0-rc.4 and earlier never list it: update them to run
   PowerShell 7 scripts.** Every other job runs on them as before: the
   integration tests run the rc.4 agent, built from its tag, on Linux

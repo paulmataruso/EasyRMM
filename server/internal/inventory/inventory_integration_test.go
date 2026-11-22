@@ -213,15 +213,24 @@ func TestRecordCleansAndReplaces(t *testing.T) {
 }
 
 // TestPowerShellInstalls: the inventory's powerShell (ADR-0064) is kept,
-// cleaned and bounded; without it, it reads as not reported.
+// cleaned and bounded; without it, it reads as not reported. The device
+// keeps what the device list says of it: a usable PowerShell 7 or not, and
+// why a run fails where none is usable and one is blocked.
 func TestPowerShellInstalls(t *testing.T) {
 	f := newFixture(t)
 	pc := f.device(f.acme, f.hq, "HQ-WIN")
 	super := f.user("super@example.com", rbac.Assignment{Role: rbac.RoleSuperAdmin})
+	flags := func() string {
+		t.Helper()
+		return f.str(`SELECT coalesce(powershell7::text, 'null') || ' ' || coalesce(powershell7_blocked, 'null') FROM devices WHERE id = $1`, pc)
+	}
 
 	f.record(pc, agentproto.Inventory{PackageManager: "windows"})
 	if got, _ := f.svc.Get(f.ctx, super, pc); got == nil || got.Inventory == nil || got.Inventory.PowerShell != nil {
 		t.Fatalf("an inventory without powerShell = %+v", got)
+	}
+	if fl := flags(); fl != "null null" {
+		t.Errorf("without powerShell: %q", fl)
 	}
 
 	list := []agentproto.PowerShellInstall{
@@ -253,11 +262,42 @@ func TestPowerShellInstalls(t *testing.T) {
 	if !ps[3].Store || ps[3].Usable || ps[4].Version != "8.0" {
 		t.Errorf("a Store install, then the unknown edition and the empty path dropped: %+v %+v", ps[3], ps[4])
 	}
+	if fl := flags(); fl != "true null" {
+		t.Errorf("with a usable PowerShell 7: %q", fl)
+	}
+
+	// Blocked: its module folders fail the agent's check. Never usable, and
+	// never Windows PowerShell; the first one's reason is kept for the list.
+	why := "PowerShell 7 would load modules from C:\\Program Files\\PowerShell\\Modules, and it can be changed by BUILTIN\\Users: not used.\n" + strings.Repeat("b", 600)
+	f.record(pc, agentproto.Inventory{PackageManager: "windows", PowerShell: []agentproto.PowerShellInstall{
+		{Edition: "Desktop", Version: "5.1.26100.1", Arch: "x64", Path: `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`, Usable: true, Blocked: true},
+		{Edition: "Core", Version: "7.6.10", Arch: "x86", Path: `C:\Program Files (x86)\PowerShell\7\pwsh.exe`, Reason: "An x86 build."},
+		{Edition: "Core", Version: "7.6.10", Arch: "x64", Path: `C:\Program Files\PowerShell\7\pwsh.exe`, Usable: true, Blocked: true, Reason: why},
+		{Edition: "Core", Version: "7.5.4", Arch: "x64", Path: `C:\Program Files\PowerShell\7.5\pwsh.exe`, Blocked: true, Reason: "Another."},
+	}})
+	got, _ = f.svc.Get(f.ctx, super, pc)
+	ps = got.Inventory.PowerShell
+	if len(ps) != 4 || !ps[0].Usable || ps[0].Blocked || ps[1].Blocked || ps[2].Usable || !ps[2].Blocked || !ps[3].Blocked {
+		t.Errorf("blocked installs kept: %+v", ps)
+	}
+	kept := text(why, 500)
+	if fl := flags(); fl != "false "+kept || len([]rune(kept)) != 500 {
+		t.Errorf("with a blocked PowerShell 7: %q", fl)
+	}
+	// Another install usable: runs use it, and nothing is blocked.
+	f.record(pc, agentproto.Inventory{PackageManager: "windows", PowerShell: append(ps[:3:3],
+		agentproto.PowerShellInstall{Edition: "Core", Version: "7.5.4", Arch: "x64", Path: `C:\Program Files\PowerShell\7.5\pwsh.exe`, Usable: true})})
+	if fl := flags(); fl != "true null" {
+		t.Errorf("with a usable PowerShell 7 beside a blocked one: %q", fl)
+	}
 
 	// An empty list is kept as reported: none found.
 	f.record(pc, agentproto.Inventory{PackageManager: "windows", PowerShell: []agentproto.PowerShellInstall{}})
 	if got, _ := f.svc.Get(f.ctx, super, pc); got.Inventory.PowerShell == nil || len(got.Inventory.PowerShell) != 0 {
 		t.Errorf("an empty list = %#v", got.Inventory.PowerShell)
+	}
+	if fl := flags(); fl != "false null" {
+		t.Errorf("none found: %q", fl)
 	}
 }
 

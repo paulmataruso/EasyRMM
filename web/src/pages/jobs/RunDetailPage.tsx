@@ -10,7 +10,7 @@ import { useToast } from "../../components/Toast";
 import { Alert, Button, buttonClasses, Card, ErrorState, KeyValueList, PageHeader, Spinner } from "../../components/ui";
 import { formatDateTime, formatRelative } from "../../lib/format";
 import { OutputView, RunStatusBadge } from "../scripts/parts";
-import { formatElapsed, HELD_TEXT, isOpen, programNote, programText, runElapsed } from "../scripts/scriptText";
+import { formatElapsed, HELD_SENT_TEXT, HELD_TEXT, isOpen, programNote, programText, runElapsed } from "../scripts/scriptText";
 
 const ERROR_TONE: Partial<Record<RunStatus, "danger" | "warn" | "info">> = {
   failed: "danger",
@@ -24,6 +24,7 @@ const ERROR_TONE: Partial<Record<RunStatus, "danger" | "warn" | "info">> = {
 function waitingFor(r: JobRun): string | null {
   if (r.status === "queued" && r.held) return `${HELD_TEXT[r.held]} It is waited for until ${formatDateTime(r.expiresAt)}.`;
   if (r.status === "queued") return `Waiting for ${r.deviceName} to pick it up. Offline devices are waited for until ${formatDateTime(r.expiresAt)}.`;
+  if (r.status === "sent" && r.held) return `${HELD_SENT_TEXT[r.held]} It is waited for until ${formatDateTime(r.expiresAt)}.`;
   if (r.status === "sent") return `${r.deviceName} has the script and is about to start it.`;
   if (r.status === "running") {
     return r.cancelRequested

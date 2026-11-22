@@ -197,7 +197,8 @@ suggesting `Program Files\PowerShell\7`; the MSIX (the Microsoft Store's
 package) is "installed for a single user"; a .NET global tool lives in
 the user's profile. Since PowerShell 7.6.0, `winget install --id
 Microsoft.PowerShell` installs the MSIX unless `--installer-type wix`
-asks for the MSI, and PowerShell 7.7 has no MSI.
+asks for the MSI, and PowerShell 7.7, stable since 2026-11-10, has no MSI
+(*Store installs*, under Decision).
 
 **Test harnesses.**
 
@@ -291,16 +292,34 @@ asks for the MSI, and PowerShell 7.7 has no MSI.
     installed for, is not something Microsoft's guide describes, and it
     has not been tried.
 
-  This weighs more with each release: `winget install --id
-  Microsoft.PowerShell` installs the MSIX by default since 7.6.0, and 7.7
-  has no MSI. A computer that took PowerShell 7 from winget's default
-  reports a Store install, and `pwsh` scripts fail there, or fall back,
-  until an MSI or ZIP install is in Program Files; the console and the
-  guide say so and give `winget install --id Microsoft.PowerShell
-  --installer-type wix`. Slice 1 starts a Store install's `pwsh.exe` as
-  SYSTEM on the runner and records what happens; with that result,
-  whether Store installs are run is decided again in review before
-  PowerShell 7.7 is released as stable.
+  This weighs more with each release. *Amended in slice 1 (checked
+  2026-11-22):* PowerShell 7.7 was released as stable on 2026-11-10, and
+  it has no MSI. Its GitHub release, `v7.7.0`, published
+  2026-11-10T20:18Z, offers for Windows only ZIPs (x64, ARM64, x86 and
+  two framework-dependent ones) and an MSIX bundle,
+  `PowerShell-7.7.0.msixbundle`, as its asset list read through GitHub's
+  API on 2026-11-22 shows
+  ([release `v7.7.0`](https://github.com/PowerShell/PowerShell/releases/tag/v7.7.0)).
+  Microsoft announced it on 2026-04-10: "MSI isn't planned for future
+  releases, including PowerShell 7.7 GA and beyond", adding that MSIX
+  does not yet support "execution by system-level services (like Task
+  Scheduler)" (PowerShell Team blog,
+  [*PowerShell MSI package deprecation and preview updates*](https://devblogs.microsoft.com/powershell/powershell-msi-deprecation/)).
+  `winget install --id Microsoft.PowerShell` installs the MSIX by default
+  since 7.6.0. A computer that took PowerShell 7 from winget's default, or
+  7.7 from its installer, reports a Store install, and `pwsh` scripts fail
+  there, or fall back, until an MSI (7.6) or a ZIP is in Program Files;
+  the console and the guide say so and give `winget install --id
+  Microsoft.PowerShell --installer-type wix` for 7.6.
+
+  On CI's runners, on 2026-11-22, the test as LocalSystem started the
+  Store package's `pwsh.exe` (`Microsoft.PowerShell-LTS` 7.6.10, x64 on
+  `windows-latest` and ARM64 on `windows-11-arm`) and it ran: it printed
+  `7.6.10`, the computer's account as its user name and its
+  `WindowsApps` folder as `$PSHOME`. That is recorded, not relied on:
+  Store installs are still not run. Whether they should be is being
+  re-reviewed separately, with this result and Microsoft's statement
+  above; an amendment of this ADR follows this pull request.
 * **Where it does not look**: the `PATH`, the user's folders, a .NET
   global tool (in a user's profile) and a ZIP unpacked anywhere but the
   folders above. Each is a place a non-administrator may be able to
@@ -327,6 +346,43 @@ asks for the MSI, and PowerShell 7.7 has no MSI.
   module path and the execution policy. Program Files as Windows sets it
   up and the MSI's files are expected to pass; slice 1 checks both on
   the runners and measures how long the check takes.
+
+  *Amended after the review of PR #90 (decided in review):*
+  * **The folders above.** For the install's folder, each module folder
+    and the folder of each configuration file, every existing folder above
+    it, up to the drive's root, is checked for the rights that would let
+    someone put another folder in its place: deleting the folder itself,
+    deleting what its parent holds (`DELETE_CHILD`), and changing the
+    access list or the owner of either (`WRITE_DAC`, `WRITE_OWNER`).
+    Where the folder does not exist yet, its first existing parent must
+    also let no one else create folders in it. The drive's root is checked
+    for the replacing rights only: every user may create folders in `C:\`
+    as Windows sets it up, and each folder the agent checks by default is
+    below `Program Files` or `System32`
+    (`host.CheckAbove`, `agent/host/system_windows.go`).
+  * **Files open to write.** An access list is checked when a file is
+    opened, so a program that opened a file to write before the list was
+    fixed can still write it. The check opens each file of the install and
+    of the module folders to read while denying others writes; that open
+    fails while another program holds the file open to write or delete,
+    and the install is then *found, not used*: "… is open in another
+    program that may write to it". For a run, `pwsh.exe` and the install's
+    libraries (`.dll`) stay open that way from their check until Windows
+    has created the run's process (`CreateProcess` returned), so no one
+    can write, replace or delete them in between; then the agent lets go.
+    After fixing an install's permissions, restart the computer: a restart
+    closes every handle opened before the fix. Not claimed: a writable
+    mapping of a file made before the fix, whose handle was then closed;
+    that open does not see it, and no test shows otherwise. The open has a
+    cost: a user who may read a file may also open it denying everyone
+    else, and while they hold it the check fails. That stops `pwsh` runs,
+    or makes them fall back, for as long as they hold it; it gives them no
+    way to change what runs.
+  * **Files Windows compresses or deduplicates** are reparse points whose
+    tag says so: `IO_REPARSE_TAG_WOF` (`compact /exe`, Windows' own
+    compression) and `IO_REPARSE_TAG_DEDUP` (Data Deduplication). A file
+    with one of those two tags passes as a plain file; every other reparse
+    point still fails, and a folder that is a reparse point always does.
 * **The module path of a `pwsh` run.** PowerShell 7 imports a module by
   name from the folders in `PSModulePath`, and imports one on its own
   when a script uses a command that no loaded module has and a module
@@ -348,12 +404,42 @@ asks for the MSI, and PowerShell 7.7 has no MSI.
   * before each run, every one of the five that exists is checked as the
     install is, everything in it included. One that fails fails the run,
     naming the entry. In System32, Windows keeps many of its own files
-    as hard links into its component store (`WinSxS`), so there a file
-    may have more than one link; owner and access list are checked all
-    the same. *Amended in slice 1:* so does Windows PowerShell's folder
-    in Program Files, `Program Files\WindowsPowerShell\Modules`, whose
-    in-box modules (`Microsoft.PowerShell.Operation.Validation` among
-    them) are hard links too on both CI runners;
+    as hard links into its component store (`WinSxS`), so in Windows
+    PowerShell's folder there a file may have more than one link; owner
+    and access list are checked all the same. *Amended in slice 1:* so
+    does Windows PowerShell's folder in Program Files,
+    `Program Files\WindowsPowerShell\Modules`, whose in-box modules
+    (`Microsoft.PowerShell.Operation.Validation` among them) are hard
+    links too on both CI runners. *Narrowed after the review of PR #90:*
+    those two folders only; SYSTEM's profile, which is in System32 too,
+    has no such exception, nor do configuration files;
+  * *amended after the review of PR #90 (decided in review):* a folder a
+    `powershell.config.json` names must exist, or the run fails naming
+    it, since whoever may create it later could fill it; and each module
+    folder is checked with the folders above it, as the install is;
+  * *amended after the review of PR #90 (decided in review):* an install
+    whose own files pass while a module folder or configuration file of
+    its run fails is *blocked*: the run fails without falling back to
+    Windows PowerShell 5.1, whatever the script allows. Windows PowerShell
+    loads from Windows PowerShell's two module folders too, so the
+    fallback would load a folder that fails there as well, and one rule
+    for every such failure keeps what a run does predictable. Discovery
+    runs the same checks, so the inventory reports the install as blocked
+    with the reason (`blocked`, below), the Hardware tab says *found, not
+    usable*, and the run dialog warns that the script fails there;
+  * **Windows PowerShell's compatibility session.** A module that only
+    Windows PowerShell can load (`ServerManager`, `AppLocker`, …) is
+    loaded by PowerShell 7 in a `powershell.exe` 5.1 process of its own
+    when a script imports it or uses its commands (implicit
+    compatibility); it stays on, as scripts rely on it. *Checked after the
+    review of PR #90:* on 2026-11-22, on both runners, a `pwsh` run as
+    LocalSystem imported `ServerManager` (`windows-latest`) or `AppLocker`
+    (`windows-11-arm`) and printed that process's `$env:PSModulePath`: it
+    was exactly the run's two Windows PowerShell folders, which the run
+    checks, and the machine-wide entries did not come back. So no other
+    folder needs checking; `TestPwshCompatibilitySessionAsSystem` asserts
+    it on every CI run, with a folder planted in the computer's and in
+    SYSTEM's `PSModulePath`;
   * folders other products added to the machine's `PSModulePath` are
     left out. A script that needs a module from one imports it by its
     full path, in the script, where its reviewer sees it. The guide says
@@ -411,10 +497,22 @@ asks for the MSI, and PowerShell 7.7 has no MSI.
   version, architecture, path, *preview*, *Store install*, and *usable*
   or the reason it is not. The server's `cleanInventory` keeps it,
   bounded, in the same release. The field follows ADR-0009's rule for
-  new request fields.
+  new request fields. *Amended after the review of PR #90 (decided in
+  review):* each entry also says whether it is *blocked* (above), which a
+  server of the release before ignores. The device's row keeps what the
+  device list shows: `powershell7`, whether a usable install is listed
+  (NULL without a list), and `powershell7_blocked`, why a run fails where
+  none is usable and one is blocked, both written with the inventory.
+  Reading them from the inventory for every row of the device list cost
+  more than a few milliseconds: on a seeded list of 10,000 devices with
+  inventories, on the development host's PostgreSQL, the list took 231 ms
+  with that join and 119 ms without. Migration 00034 fills `powershell7`
+  from the inventories already stored, since an agent sends its inventory
+  only when it changes.
 * **Every state is explicit** on the device's page: *installed* with
   version and path; *not found*; *found, not used* with the reason
   (*Store install*, an entry others may change, preview, x86, version 6);
+  *found, not usable* with the reason for a blocked install;
   *could not be read* with the error; and *not reported* for an agent too
   old to report.
 
@@ -515,7 +613,11 @@ asks for the MSI, and PowerShell 7.7 has no MSI.
   last heartbeat answer, and put `accepts` in its polls only while that
   level is 2 or higher. A process's first poll may go out before its
   first heartbeat answer and so carry no list; its next poll, within 25
-  seconds, does.
+  seconds, does. *Amended after the review of PR #90 (decided in
+  review):* a result with `interpreter` waits for that first answer, at
+  most until 30 seconds after the agent started; with no answer by then it
+  is sent as to a level-1 server, without `interpreter`, so a server that
+  does not answer heartbeats cannot hold up the job loop.
 * **The claim** delivers a `pwsh` run only in answer to a poll whose
   `accepts` lists `job.pwsh`; otherwise the run stays queued, and the
   device's other runs are delivered as now.
@@ -542,6 +644,10 @@ asks for the MSI, and PowerShell 7.7 has no MSI.
     (*Targets*).
   * A run left queued because the device's polls stopped listing
     `job.pwsh` says so on its page, and expires with that reason.
+    *Amended after the review of PR #90:* so does a run delivered to an
+    agent that then changes builds before starting it, as a rollback
+    does. It is not delivered again until that build's poll lists
+    `job.pwsh`; its page says so instead of *about to start*.
 * **Not ADR-0058's `capabilities`.** ADR-0058 (proposed) puts the signed
   messages an agent takes in its heartbeat, for instructions the
   heartbeat answer carries. Jobs go out in the poll, so the poll says
@@ -549,10 +655,15 @@ asks for the MSI, and PowerShell 7.7 has no MSI.
   list the same names for the console; the claim keeps reading the
   poll's.
 * **During a rolling upgrade** of several server instances sharing a
-  database, an older instance knows nothing of `accepts` and may deliver
-  a `pwsh` run to an agent that refuses it; the run fails with the
-  agent's reason ("the job is malformed. It was not run.") and nothing
-  runs.
+  database, an instance of the release before knows nothing of
+  `accepts`, `requires` or `pwsh_fallback`: it delivers a `pwsh` run to
+  whichever agent polls it, with no `pwshFallback` in the payload. An
+  agent of the release before refuses it ("the job is malformed. It was
+  not run.") and nothing runs. *Amended after the review of PR #90:* an
+  agent of this release runs it as a script that does not fall back, so
+  where no usable PowerShell 7 is found the run fails instead of running
+  in Windows PowerShell 5.1. Upgrade every instance before running `pwsh`
+  scripts.
 
 ### One-off commands
 *Decided in review.*
@@ -1358,7 +1469,29 @@ endpoint its downloads use.
     environment, and stopping a run stopping everything it started; with
     ADR-0060's slice 0, the job object from the start as well;
   * live output sent and skipped from a real script that prints faster
-    than 32 KiB in 2 seconds.
+    than 32 KiB in 2 seconds;
+  * *added after the review of PR #90:* a library of the copy held open
+    to write makes it *found, not used*, and a run falls back from it; a
+    run holds `pwsh.exe` and the libraries, writes refused, until it lets
+    go; the copy compressed with `compact /c /exe:xpress4k` is still
+    used; a configured module folder that does not exist, one whose
+    parent Users may empty, and a configuration Users may change each
+    make the copy *blocked*, and the run fails without falling back; a
+    folder opened to Users in Windows PowerShell's or PowerShell 7's
+    shared module folder fails a run that allows the fallback; the
+    compatibility session's module path. The statements of
+    `agent/powershell/powershell_windows.go` that the two test binaries
+    run are measured from their coverage profiles, and the job fails below
+    a floor (`backend-tests.yml`): `scripts/ci/check-coverage.sh` measures
+    the Linux build only, which does not compile that file.
+* **Agent tests on CI's *Agent tests on Windows* job** (as the runner's
+  administrator), *added after the review of PR #90*: a file open to
+  write fails the check and one open to read does not; held files cannot
+  be written or renamed and a failed check holds nothing; a file
+  compressed with `compact` passes and a junction does not; the folders
+  above, with a planted `DELETE_CHILD`, `WRITE_DAC`, `DELETE` and owner,
+  `ProgramData`'s create right for a missing folder, and Windows' own
+  module folders passing.
 * **The winget check**, in the same job, before the tests: the step, as
   the runner's administrator, checks that winget is there (the images'
   lists do not name it) and fails if not; then `winget install --id

@@ -230,26 +230,55 @@ jobs:
           if ($LASTEXITCODE) { throw "icacls /reset ended with $LASTEXITCODE" }
           icacls $modules /setowner '*S-1-5-32-544' /T /C /Q
           if ($LASTEXITCODE) { throw "icacls /setowner ended with $LASTEXITCODE" }
+      # Both measure agent/powershell, whose Windows half only these tests
+      # reach: see its floor below.
       - name: Build the tests
         run: |
-          go test -c -o "$env:RUNNER_TEMP\powershell.test.exe" ./agent/powershell
+          go test -c -cover -coverpkg=./agent/powershell -o "$env:RUNNER_TEMP\powershell.test.exe" ./agent/powershell
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          go test -c -o "$env:RUNNER_TEMP\jobs.test.exe" ./agent/jobs
+          go test -c -cover -coverpkg=./agent/powershell -o "$env:RUNNER_TEMP\jobs.test.exe" ./agent/jobs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Discovery and the whole install's check, as LocalSystem
         run: |
           Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
           ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\powershell.test.exe" `
-            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem' -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\powershell" `
+            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem', "-test.coverprofile=$env:RUNNER_TEMP\powershell-cover.txt" -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\powershell" `
             -Environment 'EASYRMM_TEST_SYSTEM=1', "EASYRMM_TEST_PWSH_X86=$env:EASYRMM_TEST_PWSH_X86", "EASYRMM_TEST_PWSH_STORE=$env:EASYRMM_TEST_PWSH_STORE"
           exit $LASTEXITCODE
       - name: pwsh runs, as LocalSystem
         run: |
           Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
           ./scripts/ci/run-as-system.ps1 -Program "$env:RUNNER_TEMP\jobs.test.exe" `
-            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem' -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\jobs" `
+            -Arguments '-test.v', '-test.count=1', '-test.run=AsSystem', "-test.coverprofile=$env:RUNNER_TEMP\jobs-cover.txt" -WorkingDirectory "$env:GITHUB_WORKSPACE\agent\jobs" `
             -Environment 'EASYRMM_TEST_SYSTEM=1'
           exit $LASTEXITCODE
+      # The Windows half of agent/powershell runs only here, as LocalSystem,
+      # so its floor is kept here rather than in check-coverage.sh: the
+      # statements of powershell_windows.go that either test binary ran.
+      # Raise it as coverage grows; never lower it.
+      - name: Coverage floor of PowerShell 7's Windows code
+        run: |
+          $floor = 0.0
+          $blocks = @{}
+          foreach ($name in 'powershell-cover.txt', 'jobs-cover.txt') {
+            foreach ($l in Get-Content -Path (Join-Path $env:RUNNER_TEMP $name)) {
+              if ($l -match '/agent/powershell/powershell_windows\.go:(\S+) (\d+) (\d+)$') {
+                $key = $Matches[1]
+                if (-not $blocks.ContainsKey($key)) { $blocks[$key] = [pscustomobject]@{ Statements = [int]$Matches[2]; Hit = $false } }
+                if ([int64]$Matches[3] -gt 0) { $blocks[$key].Hit = $true }
+              }
+            }
+          }
+          $total = 0
+          $covered = 0
+          foreach ($b in $blocks.Values) {
+            $total += $b.Statements
+            if ($b.Hit) { $covered += $b.Statements }
+          }
+          if ($total -eq 0) { throw 'No coverage of powershell_windows.go was recorded.' }
+          $percent = [math]::Round(100.0 * $covered / $total, 1)
+          Write-Output "agent/powershell/powershell_windows.go: $percent% of $total statements as LocalSystem (floor $floor%)"
+          if ($percent -lt $floor) { throw "Below the floor of $floor%." }
 
   build:
     name: Build server

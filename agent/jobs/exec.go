@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/paulmataruso/easyrmm/internal/agentproto"
@@ -25,11 +26,13 @@ var (
 
 // program is what a run starts: the program, what the run's result
 // reports of it, read just before it starts (ADR-0064), and what the run's
-// environment adds.
+// environment adds. release, where set, lets go of the files held open
+// since their check, once the process is created or will not be.
 type program struct {
-	path string
-	info agentproto.Interpreter
-	env  []string
+	path    string
+	info    agentproto.Interpreter
+	env     []string
+	release func()
 }
 
 // Execute runs a job's script in a private directory under workRoot and
@@ -46,6 +49,12 @@ func Execute(ctx context.Context, p agentproto.JobPayload, workRoot string) agen
 	if err != nil {
 		return fail(sentence(err.Error()))
 	}
+	release := sync.OnceFunc(func() {
+		if prog.release != nil {
+			prog.release()
+		}
+	})
+	defer release()
 	if err := os.MkdirAll(workRoot, 0o700); err != nil {
 		return fail("Could not prepare a working directory: " + err.Error())
 	}
@@ -72,6 +81,7 @@ func Execute(ctx context.Context, p agentproto.JobPayload, workRoot string) agen
 	// soon after the script itself exits.
 	cmd.WaitDelay = 5 * time.Second
 	g, err := start(cmd)
+	release()
 	if err != nil {
 		return fail("Could not start " + prog.path + ": " + err.Error())
 	}

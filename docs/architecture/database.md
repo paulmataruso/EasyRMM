@@ -357,6 +357,29 @@ so **a new `SECURITY DEFINER` function must end its `search_path` with
 creates temporary tables, and the install scripts no longer grant it.
 Warnings a migration raises reach the server's log with their hints.
 
+## PowerShell 7 (migrations 00033 and 00034)
+
+The `pwsh` shell, the program each run used, and what each device's agent
+and inventory say of PowerShell 7 (ADR-0064).
+
+| Table or column | Notes |
+|---|---|
+| `scripts.shell`, `jobs.shell` | Gain `pwsh` |
+| `scripts.pwsh_fallback`, `jobs.pwsh_fallback` | Whether a `pwsh` script may run in Windows PowerShell 5.1 where no usable PowerShell 7 is found; only a `pwsh` row may set it. A job keeps its script's |
+| `jobs.requires` | The capabilities an agent's poll must list for the job to be sent to it (`job.pwsh` for `pwsh`); at most 32, no NULLs |
+| `job_runs.program_*` | The program the agent started, as it read it: `Desktop` or `Core`, version (64), `x64`, `arm64` or `x86`, path (520), and whether it fell back |
+| `devices.agent_accepts`, `agent_accepts_build` | The last list the agent's poll reported, with the build that reported it; another build's list counts as not reported |
+| `devices.powershell7`, `powershell7_blocked` | What the device list says of PowerShell 7, written with each inventory: whether it lists a usable install (NULL when it lists no PowerShell), and, where none is usable and one is blocked, why a run fails (at most 500 characters, only with `powershell7` false) |
+
+00033 adds every check `NOT VALID`, so it changes the tables under their
+exclusive lock briefly without reading their rows; new and changed rows are
+checked at once. 00034, in a transaction of its own, validates them (`SHARE
+UPDATE EXCLUSIVE`, which lets the server read and write the tables
+meanwhile) and fills `powershell7` from the inventories already stored, as
+an agent sends its inventory only when it changes. 00034's down leaves the
+checks validated; 00033's down removes them with the columns and deletes
+`pwsh` scripts and jobs.
+
 ## Backups
 
 See `docs/operations/backup-restore.md` (written with the Docker deployment).

@@ -43,9 +43,11 @@ var pwshRoots = powershell.Roots
 
 // interpreter finds a shell's program: Windows PowerShell 5.1 and cmd.exe,
 // both part of Windows, or for pwsh the PowerShell 7 chosen at this moment,
-// its install and module folders checked (ADR-0064). Where none is usable a
-// pwsh script runs in Windows PowerShell 5.1 if it allows that, recorded as
-// a fallback, and fails if not.
+// its install and module folders checked, and its program and libraries
+// held open until the run's process is created (ADR-0064). Where none is
+// usable a pwsh script runs in Windows PowerShell 5.1 if it allows that,
+// recorded as a fallback, and fails if not; where an install passes but
+// what it would load does not, the script fails either way.
 func interpreter(p agentproto.JobPayload) (program, error) {
 	switch p.Shell {
 	case agentproto.ShellPowerShell:
@@ -71,7 +73,7 @@ func interpreter(p agentproto.JobPayload) (program, error) {
 		if err != nil {
 			return program{}, err
 		}
-		return program{path: run.Interpreter.Path, info: run.Interpreter, env: run.Env}, nil
+		return program{path: run.Interpreter.Path, info: run.Interpreter, env: run.Env, release: run.Release}, nil
 	}
 	return program{}, fmt.Errorf("%s scripts do not run on Windows", p.Shell)
 }

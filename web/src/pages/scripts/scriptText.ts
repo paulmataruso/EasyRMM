@@ -85,11 +85,24 @@ export const CAP_PWSH = "job.pwsh";
  */
 export function pwshWarning(s: Pick<Script, "shell" | "pwshFallback">, devices: Pick<Device, "agent">[]): string | null {
   if (s.shell !== "pwsh") return null;
-  const n = devices.filter((d) => d.agent?.powerShell7 === false).length;
-  if (n === 0) return null;
+  const without = devices.filter((d) => d.agent?.powerShell7 === false);
+  const blocked = without.filter((d) => d.agent?.powerShell7Blocked);
+  const missing = without.length - blocked.length;
   const what = s.pwshFallback ? "this script runs in Windows PowerShell 5.1 there" : "this script fails there";
-  if (devices.length === 1) return `The device reported no usable PowerShell 7 at its last inventory; ${what}.`;
-  return `${n} of ${devices.length} devices reported no usable PowerShell 7 at their last inventory; ${what}.`;
+  if (devices.length === 1) {
+    const why = blocked[0]?.agent?.powerShell7Blocked;
+    if (why) return `PowerShell 7 was found at the device's last inventory, not usable: ${why} This script fails there.`;
+    return missing ? `The device reported no usable PowerShell 7 at its last inventory; ${what}.` : null;
+  }
+  const parts: string[] = [];
+  if (missing) parts.push(`${missing} of ${devices.length} devices reported no usable PowerShell 7 at their last inventory; ${what}.`);
+  if (blocked.length) {
+    parts.push(
+      `${blocked.length} of ${devices.length} devices have PowerShell 7 found, not usable: its module folders or configuration fail the agent's check, ` +
+        `so this script fails there${s.pwshFallback ? " without running in Windows PowerShell 5.1" : ""}. Their Hardware tab says why.`,
+    );
+  }
+  return parts.length ? parts.join(" ") : null;
 }
 
 /** What a PowerShell 7 script does where no usable PowerShell 7 is found. */
@@ -134,6 +147,17 @@ export const HELD_TEXT: Record<NonNullable<JobRun["held"]>, string> = {
   unable: "The device's agent says it cannot run PowerShell 7 scripts, so the run is not sent. Update the agent; otherwise the run expires.",
   unreported:
     "The device's agent has not yet said whether it can run PowerShell 7 scripts, so the run is not sent. An agent says so within a minute of starting; update it if it does not.",
+};
+
+/**
+ * Why a delivered run that has not started is not sent again (JobRun.held): the agent changed versions after taking it,
+ * as a rollback does, and the version it runs now has not said it can run PowerShell 7 scripts.
+ */
+export const HELD_SENT_TEXT: Record<NonNullable<JobRun["held"]>, string> = {
+  unable:
+    "The device took the script, but its agent has since changed to a version that cannot run PowerShell 7 scripts, so the run will not start. Update the agent; otherwise the run expires.",
+  unreported:
+    "The device took the script, but its agent has since changed versions and has not yet said whether it can run PowerShell 7 scripts, so the run is not sent again until it does.",
 };
 
 /** "45 seconds", "5 minutes", "1 hour 30 minutes". */

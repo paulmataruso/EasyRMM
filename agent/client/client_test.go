@@ -509,6 +509,28 @@ func TestNewFieldsFollowTheServersLevel(t *testing.T) {
 	if err := fresh.Result(quick, "r4", agentproto.ResultRequest{Status: agentproto.RunFailed, Error: "x"}); err != nil {
 		t.Errorf("a result without a program: %v", err)
 	}
+
+	// Without any heartbeat answer, a result that names its program waits
+	// until LevelWait after the client was made, then goes as to a server
+	// of level 1; later ones do not wait.
+	if time.Until(fresh.knownBy) > LevelWait || LevelWait > time.Minute {
+		t.Errorf("waits until %s", fresh.knownBy)
+	}
+	fresh.knownBy = time.Now().Add(200 * time.Millisecond)
+	start := time.Now()
+	if err := fresh.Result(quick, "r5", result); err != nil || strings.Contains(s.last("result"), "interpreter") {
+		t.Errorf("past the wait: %v, result sent %s", err, s.last("result"))
+	}
+	if took := time.Since(start); took < 150*time.Millisecond || took > 4*time.Second {
+		t.Errorf("waited %s", took)
+	}
+	start = time.Now()
+	if err := fresh.Result(quick, "r6", result); err != nil || time.Since(start) > time.Second {
+		t.Errorf("a later result: %v after %s", err, time.Since(start))
+	}
+	if fresh.Level() != 0 {
+		t.Errorf("level %d with no answer", fresh.Level())
+	}
 }
 
 func TestUnreachableServer(t *testing.T) {

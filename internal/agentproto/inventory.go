@@ -67,6 +67,12 @@ type PowerShellInstall struct {
 	// or why it could not be read.
 	Usable bool   `json:"usable"`
 	Reason string `json:"reason,omitempty"`
+	// Blocked says it is not usable although its own files pass: what a
+	// run of it would load from outside it, its module folders or its
+	// configuration, does not. A run that would have used it fails, and a
+	// script that allows Windows PowerShell does not run there instead
+	// (ADR-0064). Servers that do not know it ignore it.
+	Blocked bool `json:"blocked,omitempty"`
 }
 
 // EasyPatchAgent is the EasyPatch agent's own account of its enrollment, from

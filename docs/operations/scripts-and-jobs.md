@@ -294,20 +294,51 @@ standard user can change:
   Administrators, SYSTEM and TrustedInstaller, and none may be a link,
   junction or other reparse point. So must the module folders and
   configuration files the run reads (below), except that in Windows
-  PowerShell's two module folders a file may have more than one hard link,
-  as Windows keeps its own modules there. An install that fails is not
-  used, and the device says which file and why.
+  PowerShell's two module folders, and only there, a file may have more
+  than one hard link, as Windows keeps its own modules there. Files
+  Windows compressed (`compact /exe`) or deduplicated count as plain
+  files.
+* **The folders above them**, up to the drive's root, must not let anyone
+  else replace them: delete them, delete what they hold, or change their
+  permissions or owner. Where a module folder does not exist yet, no one
+  else may create folders where it would be. The drive's root may let
+  users create folders, as `C:\` does by default.
+* **No one may be writing them**: a program that opened a file to write
+  before its permissions were fixed could still change it, so a file open
+  in another program that may write to it fails the check. From the check
+  until Windows has created the run's process, the agent holds `pwsh.exe`
+  and the install's libraries open so that no one can change them.
+
+An install that fails is not used, and the device says which file and why.
+**After fixing permissions, restart the computer**: a program that opened a
+file before the fix keeps what it opened until it closes it, and a restart
+closes everything. A user who can read a file can also hold it open so that
+the check fails; that stops PowerShell 7 runs on the device while they hold
+it (or makes them fall back), and gives them no way to change what runs.
 
 A device's **Hardware** tab lists Windows PowerShell and every PowerShell 7
 the agent found: the one PowerShell 7 scripts run in, and why each other is
 not used. An agent of an earlier release reports none and says so.
 
+**Found, not usable**: an install whose own files pass, while a module
+folder or configuration file its runs would read does not, is *blocked*.
+PowerShell 7 scripts fail there, **and do not fall back to Windows
+PowerShell 5.1 even where the script allows it**: Windows PowerShell loads
+from Windows PowerShell's module folders too, so a folder that fails would
+be loaded by the fallback as well. The Hardware tab says *Found, not
+usable* with the reason, and the run dialog warns that the script fails
+there. Fix what the reason names, restart the computer, and the next
+inventory (within the hour, or after the next job) shows the result.
+
 **Microsoft Store installs are not run.** Since PowerShell 7.6, `winget
 install --id Microsoft.PowerShell` installs the Store (MSIX) package by
 default. Install the MSI instead, from Microsoft's release page or with
 `winget install --id Microsoft.PowerShell --installer-type wix` (for a
-release that has an MSI: PowerShell 7.7 has none; unpack its ZIP into
-`Program Files\PowerShell\7` as an administrator).
+release that has an MSI: PowerShell 7.7, stable since 2026-11-10, has
+none, only ZIPs and the MSIX; unpack its ZIP into
+`Program Files\PowerShell\7` as an administrator). Whether Store installs
+should be run is being reviewed again
+([ADR-0064](../architecture/adr/0064-remote-powershell-management.md#powershell-7-on-the-computer)).
 
 ### Where PowerShell 7 is missing
 
@@ -325,13 +356,18 @@ Each `pwsh` script says what happens on a device with no usable PowerShell
   `&&`, the ternary operator) stops a script before it starts, but commands
   that behave differently (the encodings of `Out-File` and `Set-Content`,
   `ConvertFrom-Json`, web requests) change what it does without an error.
+  It does not apply where PowerShell 7 is found but blocked (above): the
+  run fails with "PowerShell 7 would load modules from …; the script was
+  not run." or "PowerShell 7 would read its configuration from …".
 
 The setting is part of the script, copied into each job; whoever runs the
 script sees it and cannot change it. A job is not refused because a
 device's last inventory listed no usable PowerShell 7, since that can be an
 hour old and the agent decides when the run starts; the run dialog warns
 instead ("3 of 40 devices reported no usable PowerShell 7 at their last
-inventory; this script fails there").
+inventory; this script fails there", and for blocked installs "2 of 40
+devices have PowerShell 7 found, not usable: …, so this script fails
+there").
 
 ### Agents that cannot run it
 
@@ -349,7 +385,16 @@ server keeps that for the build that said it:
   PowerShell 7 scripts. Every other job runs on them as before;
 * after an agent updates, it says again within a minute of starting. A run
   waiting for an agent that stopped taking PowerShell 7 jobs says why on its
-  page, and expires with that reason.
+  page, and expires with that reason. So does a run an agent took and had
+  not started when it changed versions, as a rollback after a failed update
+  does: it is not sent again until the version it runs says it takes
+  PowerShell 7 scripts;
+* **while upgrading several server instances that share a database**, one
+  still on the release before sends PowerShell 7 jobs to any agent and
+  without their **Where PowerShell 7 is missing** setting: an agent of the
+  release before refuses them ("the job is malformed"), and an agent of
+  this release runs them as scripts that do not fall back. Upgrade every
+  instance before running PowerShell 7 scripts.
 
 ### How it runs
 
@@ -358,13 +403,17 @@ As a Windows PowerShell 5.1 script does (see
 `pwsh.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File
 script.ps1 <arguments>` and three changes to the environment:
 
-* **Modules** load from the system's folders only. PowerShell 7 builds its
+* **Modules** load from five checked folders only. PowerShell 7 builds its
   module path from the system account's own folder, `Program
   Files\PowerShell\Modules` (or what the install's `powershell.config.json`
-  names), its own `Modules` and Windows PowerShell's two, in `Program Files`
-  and `System32`; the agent checks each like the install, and sets
-  `PSModulePath` to Windows PowerShell's two, so the system environment's
-  `PSModulePath` and anything it names are not used.
+  names, which must exist), its own `Modules` and Windows PowerShell's two,
+  in `Program Files` and `System32`; the agent checks each like the
+  install, and sets `PSModulePath` to Windows PowerShell's two, so the
+  system environment's `PSModulePath` and anything it names are not used.
+  A module only Windows PowerShell can load (`ServerManager`, for
+  example) still works: PowerShell 7 loads it in a Windows PowerShell 5.1
+  process of its own, whose module path is those same two Windows
+  PowerShell folders (seen on CI's runners).
 * `POWERSHELL_TELEMETRY_OPTOUT=1`: otherwise PowerShell 7 sends usage data
   to Microsoft when it starts.
 * `POWERSHELL_UPDATECHECK=Off`.
@@ -396,7 +445,7 @@ this agent's version*.
 | Status | Meaning |
 |---|---|
 | Queued | Waiting for the device to pick it up |
-| Delivered | The device has it and is about to start it. Not started within 2 minutes, it is delivered again |
+| Delivered | The device has it and is about to start it. Not started within 2 minutes, it is delivered again. A PowerShell 7 run whose agent changed versions meanwhile waits until that version says it takes PowerShell 7 scripts, and its page says so |
 | Running | Running on the device |
 | Succeeded | Exited with code 0 |
 | Failed | Exited with another code, was killed by a signal, or could not start (for example, the interpreter is not installed) |
@@ -436,7 +485,10 @@ kept. The audit log keeps its own record of every run for
 | *Failed* with "… is not installed on this device." | Install the interpreter (`python3`, `bash`) or pick another shell |
 | A PowerShell script ends with code 1 and its error in standard error | The script threw an error that nothing caught. Check standard error; `$ErrorActionPreference = 'Stop'` at the top makes every error stop the script |
 | *Failed* with "PowerShell 7 is not installed on this device" or "No PowerShell 7 on this device can run scripts" | No usable PowerShell 7 was found. The device's **Hardware** tab lists what the agent found and why each is not used. Install the MSI (a Store install is not run), or let the script fall back to Windows PowerShell 5.1 if it was written for both |
-| "… can be changed by …: not used" on the device or the run | A file or folder of the install lets someone other than administrators change it. Restore the install's permissions (reinstalling the MSI does) |
+| "… can be changed by …: not used" on the device or the run | A file or folder of the install lets someone other than administrators change it. Restore the install's permissions (reinstalling the MSI does), then restart the computer |
+| "… is open in another program that may write to it: not used" | A program holds that file open to write it, or holds it so that no one else may. Close it, or restart the computer |
+| *Found, not usable* on the Hardware tab, or *Failed* with "PowerShell 7 would read its configuration from …" or "… names the module folder …, which does not exist" | What a PowerShell 7 run would load fails the check, so it fails there even for scripts that allow Windows PowerShell 5.1. Fix what the reason names (for a folder the configuration names, create it as an administrator or remove it from `powershell.config.json`), then restart the computer |
+| "… can be replaced, or what it holds deleted, by …" or "… lets … create folders in it" | A folder above the install or a module folder lets someone else replace it. As an administrator, remove that account's right (`icacls "<the folder named>" /remove:g "<the account named>"`), or for an owner, make Administrators the owner (`icacls "<the folder named>" /setowner *S-1-5-32-544`), then restart the computer |
 | *Failed* with "PowerShell 7 would load modules from …, and … can be changed by …; the script was not run" | A module some installer put in one of the module folders lets users change it, so any user could change what a SYSTEM script loads. Remove that module, or, as an administrator, give it the folder's permissions back: `icacls "<the folder named>" /reset /T` and `icacls "<the folder named>" /setowner *S-1-5-32-544 /T`. GitHub's Windows runner images ship `ImageHelpers` this way |
 | "… agent cannot run PowerShell 7 scripts" or "… has not yet said whether it can" | The device's agent is from an earlier release, or has just started. Update the agent |
 | A PowerShell 7 script fails under Group Policy's execution policy, `AllSigned` or Constrained Language Mode | The computer's policy stops scripts in that edition; PowerShell's error is in standard error. Sign the script or change the policy |

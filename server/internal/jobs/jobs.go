@@ -94,9 +94,11 @@ type Run struct {
 	// when it reported none: the run did not start, or its agent is too
 	// old to say (ADR-0064). Everyone who sees the run sees it.
 	Program *Program `json:"program"`
-	// Held says why a queued run is not delivered: HeldUnable when the
-	// device's agent said it cannot run it, HeldUnreported when the build
-	// it runs has not said yet. Empty otherwise.
+	// Held says why a queued run is not delivered, or a delivered run that
+	// has not started is not delivered again: HeldUnable when the device's
+	// agent said it cannot run it, HeldUnreported when the build it runs
+	// has not said yet. A delivered run is held when the agent changed
+	// builds after taking it, as a rollback does. Empty otherwise.
 	Held string `json:"held,omitempty"`
 	// Job and RunDetail are filled in by GetRun only.
 	Job *Job `json:"job,omitempty"`
@@ -139,7 +141,7 @@ type Program struct {
 	Fallback bool `json:"fallback,omitempty"`
 }
 
-// Why a queued run waits (Run.Held).
+// Why a queued or delivered run waits (Run.Held).
 const (
 	HeldUnable     = "unable"
 	HeldUnreported = "unreported"
@@ -151,7 +153,7 @@ const (
 const acceptsNow = `(CASE WHEN d.agent_accepts_build IS NOT DISTINCT FROM coalesce(d.agent_sha256, d.agent_version) THEN d.agent_accepts END)`
 
 // heldSQL is the SQL form of Run.Held, for a run r of job j on device d.
-const heldSQL = `CASE WHEN r.status <> 'queued' OR j.requires <@ coalesce(` + acceptsNow + `, '{}') THEN ''
+const heldSQL = `CASE WHEN r.status NOT IN ('queued', 'sent') OR j.requires <@ coalesce(` + acceptsNow + `, '{}') THEN ''
 	WHEN ` + acceptsNow + ` IS NULL THEN 'unreported' ELSE 'unable' END`
 
 func (r *Run) open() bool {

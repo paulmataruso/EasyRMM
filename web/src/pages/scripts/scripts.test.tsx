@@ -317,11 +317,12 @@ describe("scripts", () => {
 
   it("runs a PowerShell 7 script only where the agent can, and warns where it reported none", async () => {
     const user = userEvent.setup();
-    const windows = (accepts: string[] | null, powerShell7: boolean | null) => ({
+    const windows = (accepts: string[] | null, powerShell7: boolean | null, powerShell7Blocked?: string) => ({
       platform: "windows" as const,
-      agent: { ...AGENT, accepts, powerShell7 },
+      agent: { ...AGENT, accepts, powerShell7, powerShell7Blocked },
       canRunScripts: true,
     });
+    const why = "PowerShell 7 would load modules from C:\\Program Files\\PowerShell\\Modules, and it can be changed by BUILTIN\\Users: not used.";
     let fallback = false;
     installFakeApi({
       ...baseRoutes(ADMIN),
@@ -334,6 +335,7 @@ describe("scripts", () => {
           device("d3", "PC-03", windows(["job.pwsh"], null)), // no inventory yet: no warning
           device("d4", "PC-04", windows([], true)), // an agent that cannot
           device("d5", "PC-05", windows(null, null)), // an agent that has not said
+          device("d6", "PC-06", windows(["job.pwsh"], false, why)), // found, blocked
         ],
       }),
     });
@@ -341,14 +343,21 @@ describe("scripts", () => {
     await user.click(await screen.findByRole("button", { name: "Run" }));
     let dialog = await screen.findByRole("dialog", { name: "Run Uptime" });
     const list = await within(dialog).findByRole("list", { name: "Devices" });
-    expect(within(list).getAllByRole("checkbox")).toHaveLength(3);
+    expect(within(list).getAllByRole("checkbox")).toHaveLength(4);
     expect(within(list).queryByText("PC-04")).not.toBeInTheDocument();
     expect(within(list).queryByText("PC-05")).not.toBeInTheDocument();
     expect(within(dialog).getByText(/2 other devices where it could run are not listed: an agent that cannot run PowerShell 7 scripts yet/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("checkbox", { name: "All" }));
-    expect(within(dialog).getByText("1 of 3 devices reported no usable PowerShell 7 at their last inventory; this script fails there.")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "1 of 4 devices reported no usable PowerShell 7 at their last inventory; this script fails there. 1 of 4 devices have PowerShell 7 found, not usable: its module folders or configuration fail the agent's check, so this script fails there. Their Hardware tab says why.",
+      ),
+    ).toBeInTheDocument();
     await user.click(within(list).getByRole("checkbox", { name: /PC-02/ }));
     expect(within(dialog).queryByText(/reported no usable PowerShell 7/)).not.toBeInTheDocument();
+    expect(within(dialog).getByText(/^1 of 3 devices have PowerShell 7 found, not usable/)).toBeInTheDocument();
+    await user.click(within(list).getByRole("checkbox", { name: /PC-06/ }));
+    expect(within(dialog).queryByText(/PowerShell 7 found, not usable/)).not.toBeInTheDocument();
     unmount();
 
     // A script that falls back says what happens there instead.
@@ -356,8 +365,14 @@ describe("scripts", () => {
     renderApp("/scripts/sc7");
     await user.click(await screen.findByRole("button", { name: "Run" }));
     dialog = await screen.findByRole("dialog", { name: "Run Uptime" });
-    await user.click(within(await within(dialog).findByRole("list", { name: "Devices" })).getByRole("checkbox", { name: /PC-02/ }));
+    const devices = await within(dialog).findByRole("list", { name: "Devices" });
+    await user.click(within(devices).getByRole("checkbox", { name: /PC-02/ }));
     expect(within(dialog).getByText("The device reported no usable PowerShell 7 at its last inventory; this script runs in Windows PowerShell 5.1 there.")).toBeInTheDocument();
+    // Blocked: the fallback does not apply.
+    await user.click(within(devices).getByRole("checkbox", { name: /PC-06/ }));
+    expect(within(dialog).getByText(/1 of 2 devices have PowerShell 7 found, not usable: .* so this script fails there without running in Windows PowerShell 5\.1\./)).toBeInTheDocument();
+    await user.click(within(devices).getByRole("checkbox", { name: /PC-02/ }));
+    expect(within(dialog).getByText(`PowerShell 7 was found at the device's last inventory, not usable: ${why} This script fails there.`)).toBeInTheDocument();
   });
 
   it("warns when a script installs system updates itself while EasyPatch patches devices", async () => {

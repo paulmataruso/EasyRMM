@@ -3,6 +3,7 @@
 package jobs
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -238,6 +239,72 @@ func TestPwshJobsFollowWhatThePollAccepts(t *testing.T) {
 	}
 	if e := f.str(`SELECT error FROM job_runs WHERE job_id = $1`, plain.ID); e != "The device did not pick up the job before it expired." {
 		t.Errorf("another run expired with %q", e)
+	}
+}
+
+// TestDeliveredRunHeldAfterRollback: a pwsh run delivered to an agent that
+// then changes builds, as a rollback does, before starting it is held as a
+// queued run is: not delivered again to a build that has not said it
+// accepts job.pwsh, and expiring with the reason (ADR-0064).
+func TestDeliveredRunHeldAfterRollback(t *testing.T) {
+	f := newFixture(t)
+	super := f.user("super@example.com", rbac.Assignment{Role: rbac.RoleSuperAdmin})
+	strict, _ := f.svc.CreateScript(f.ctx, super, ScriptInput{Name: "Strict", Shell: "pwsh", Body: "$PSVersionTable"})
+	pc := f.device(f.hq, "PC-12", "windows")
+	poll := func(accepts []string) int {
+		t.Helper()
+		resp, err := f.svc.Poll(f.ctx, pc, accepts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(resp.Jobs)
+	}
+	poll([]string{agentproto.CapJobPwsh})
+	job, err := f.svc.CreateJob(f.ctx, super, JobInput{ScriptID: strict.ID, DeviceIDs: []uuid.UUID{pc}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := job.Runs[0].ID
+	if n := poll([]string{agentproto.CapJobPwsh}); n != 1 {
+		t.Fatalf("delivered %d", n)
+	}
+	held := func() (string, string) {
+		t.Helper()
+		r, err := f.svc.GetRun(f.ctx, super, run)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r.Status, r.Held
+	}
+	if s, h := held(); s != StatusSent || h != "" {
+		t.Errorf("delivered: %s held %q", s, h)
+	}
+
+	// The agent rolls back to a build from before job.pwsh, which polls
+	// without a list, past the time a run is delivered again.
+	f.exec(`UPDATE devices SET agent_version = '1.0.0', agent_sha256 = $2 WHERE id = $1`, pc, strings.Repeat("b", 64))
+	f.exec(`UPDATE job_runs SET sent_at = now() - $2::interval WHERE id = $1`, run, fmt.Sprintf("%d seconds", int(RedeliverAfter.Seconds())+1))
+	if n := poll(nil); n != 0 {
+		t.Fatal("delivered again to a build that did not say it accepts job.pwsh")
+	}
+	if s, h := held(); s != StatusSent || h != HeldUnreported {
+		t.Errorf("after the rollback: %s held %q", s, h)
+	}
+	if n := poll([]string{}); n != 0 {
+		t.Fatal("delivered again to a build that does not accept job.pwsh")
+	}
+	if s, h := held(); s != StatusSent || h != HeldUnable {
+		t.Errorf("a build that cannot: %s held %q", s, h)
+	}
+	f.exec(`UPDATE job_runs SET expires_at = now() - interval '1 second' WHERE id = $1`, run)
+	if swept, err := f.svc.Sweep(f.ctx); err != nil || swept.Expired != 1 {
+		t.Fatalf("sweep %+v %v", swept, err)
+	}
+	if e := f.str(`SELECT error FROM job_runs WHERE id = $1`, run); !strings.Contains(e, "cannot run PowerShell 7 scripts, so the run waited until it expired") {
+		t.Errorf("expired with %q", e)
+	}
+	if s, h := held(); s != StatusExpired || h != "" {
+		t.Errorf("expired: %s held %q", s, h)
 	}
 }
 

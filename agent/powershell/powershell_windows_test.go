@@ -200,6 +200,7 @@ func TestUntrustedInstallAsSystem(t *testing.T) {
 	if err != nil || !strings.EqualFold(run.Interpreter.Path, pwsh) {
 		t.Fatalf("a run of the copy: %+v %v", run, err)
 	}
+	run.Release()
 
 	// The deepest file in the copy, opened to Users.
 	deep := ""
@@ -239,6 +240,164 @@ func TestUntrustedInstallAsSystem(t *testing.T) {
 	if _, err := ForRun([]string{root}); !errors.As(err, &missing) {
 		t.Errorf("a run with a junction in the install: %v", err)
 	}
+	if err := os.Remove(junction); err != nil {
+		t.Fatal(err)
+	}
+
+	// A library held open by a program that may write to it: found, not
+	// used, and a run falls back where the script allows it. The largest,
+	// which Windows compresses below.
+	dll, size := "", int64(0)
+	if err := filepath.WalkDir(install, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !strings.EqualFold(filepath.Ext(p), ".dll") {
+			return nil
+		}
+		if fi, err := d.Info(); err == nil && fi.Size() > size {
+			dll, size = p, fi.Size()
+		}
+		return nil
+	}); err != nil || dll == "" {
+		t.Fatalf("no library in the copy (%v)", err)
+	}
+	w, err := os.OpenFile(dll, os.O_WRONLY, 0) //nolint:gosec // the test's own copy
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := find(); p.Usable || p.Blocked || p.Reason != dll+" is open in another program that may write to it: not used, since what it runs and loads must be changeable by administrators only." {
+		t.Errorf("with %s open to write: %+v", dll, p)
+	}
+	if _, err := ForRun([]string{root}); !errors.As(err, &missing) {
+		t.Errorf("a run with a library open to write: %v", err)
+	}
+	_ = w.Close()
+
+	// A run holds the program and the libraries until it lets go.
+	run, err = ForRun([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{pwsh, dll} {
+		if w, err := os.OpenFile(f, os.O_WRONLY, 0); err == nil { //nolint:gosec // as above
+			_ = w.Close()
+			t.Errorf("%s opened to write while a run holds it", f)
+		}
+	}
+	run.Release()
+	if w, err := os.OpenFile(dll, os.O_WRONLY, 0); err != nil { //nolint:gosec // as above
+		t.Errorf("let go: %v", err)
+	} else {
+		_ = w.Close()
+	}
+
+	// Compressed by Windows (compact /exe): still plain files, and used.
+	out, err := exec.Command(filepath.Join(system32(), "compact.exe"), "/c", "/exe:xpress4k", pwsh, dll).CombinedOutput() //nolint:gosec // the test's own copy
+	if err != nil {
+		t.Fatalf("compact: %v\n%s", err, out)
+	}
+	for _, f := range []string{pwsh, dll} {
+		name, _ := windows.UTF16PtrFromString(f)
+		if a, err := windows.GetFileAttributes(name); err != nil || a&windows.FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+			t.Fatalf("compact left %s without its reparse point (%#x %v):\n%s", f, a, err, out)
+		}
+	}
+	if p := find(); !p.Usable {
+		t.Errorf("compressed: %+v", p)
+	}
+	if run, err := ForRun([]string{root}); err != nil {
+		t.Errorf("a run of the compressed copy: %v", err)
+	} else {
+		run.Release()
+	}
+}
+
+// TestModuleFoldersAsSystem: what a run loads from outside the install.
+// The copy's powershell.config.json names its shared module folder: one in
+// the test's Program Files is used; one that does not exist, or whose
+// folder Users may empty, makes the copy found and blocked, and a run
+// fails without falling back; a configuration file Users may change is
+// refused unread.
+func TestModuleFoldersAsSystem(t *testing.T) {
+	systemTest(t)
+	roots, err := Roots()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	root := filepath.Join(roots[0], "EasyRMM test "+hex.EncodeToString(b))
+	install := filepath.Join(root, `PowerShell\7`)
+	if err := copyTree(filepath.Join(roots[0], `PowerShell\7`), install); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	pwsh := filepath.Join(install, "pwsh.exe")
+	config := filepath.Join(install, "powershell.config.json")
+	find := func() agentproto.PowerShellInstall {
+		t.Helper()
+		list, _ := Discover([]string{root})
+		for _, p := range list {
+			if strings.EqualFold(p.Path, pwsh) {
+				return p
+			}
+		}
+		t.Fatalf("the copy was not found: %+v", list)
+		return agentproto.PowerShellInstall{}
+	}
+	names := func(folder string) {
+		t.Helper()
+		body := `{"PSModulePath": "` + strings.ReplaceAll(folder, `\`, `\\`) + `"}`
+		if err := os.WriteFile(config, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blocked := func(what, reason string) {
+		t.Helper()
+		if p := find(); p.Usable || !p.Blocked || !strings.Contains(p.Reason, reason) ||
+			!strings.HasSuffix(p.Reason, "Scripts that allow Windows PowerShell 5.1 do not run in it instead.") {
+			t.Errorf("%s: %+v", what, p)
+		}
+		_, err := ForRun([]string{root})
+		var missing *NotFound
+		if err == nil || errors.As(err, &missing) || !strings.Contains(err.Error(), reason) || !strings.HasSuffix(err.Error(), "; the script was not run") {
+			t.Errorf("a run, %s: %v", what, err)
+		}
+	}
+
+	shared := filepath.Join(root, "Modules here")
+	if err := os.Mkdir(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	names(shared)
+	if p := find(); !p.Usable || p.Blocked {
+		t.Fatalf("a configured folder in Program Files: %+v", p)
+	}
+	run, err := ForRun([]string{root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run.Release()
+	if len(run.Modules) != 5 || !strings.EqualFold(run.Modules[1], shared) {
+		t.Errorf("module folders %q, want the configured one second", run.Modules)
+	}
+
+	gone := filepath.Join(root, "Not made")
+	names(gone)
+	blocked("a configured folder that does not exist", config+" names the module folder "+gone+", which does not exist")
+
+	open := filepath.Join(root, "Open")
+	if err := os.MkdirAll(filepath.Join(open, "Modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	icacls(t, open, "/grant", "*S-1-5-32-545:(DC)")
+	names(filepath.Join(open, "Modules"))
+	blocked("a configured folder whose folder Users may empty", open+` can be replaced, or what it holds deleted, by BUILTIN\Users`)
+
+	names(shared)
+	icacls(t, config, "/grant", "*S-1-5-32-545:(M)")
+	blocked("a configuration Users may change", "PowerShell 7 would read its configuration from "+config+", and "+config+" can be changed by")
 }
 
 func icacls(t *testing.T, path string, args ...string) {

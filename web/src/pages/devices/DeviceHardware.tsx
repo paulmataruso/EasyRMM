@@ -97,6 +97,7 @@ function PowerShellCard({ installs }: { installs: PowerShellInstall[] | undefine
     );
   }
   const chosen = installs.find((i) => i.edition === "Core" && i.usable);
+  const blocked = !chosen && installs.some((i) => i.edition === "Core" && i.blocked);
   return (
     <Card title="PowerShell" padded={false}>
       <TableWrap className="rounded-none border-0">
@@ -129,7 +130,14 @@ function PowerShellCard({ installs }: { installs: PowerShellInstall[] | undefine
           </tbody>
         </table>
       </TableWrap>
-      {!chosen && (
+      {blocked && (
+        <p className="border-t border-line px-4 py-3 text-xs text-muted">
+          PowerShell 7 was found, not usable: what it would load fails the agent&rsquo;s check, as its reason says. PowerShell 7 scripts fail here, and
+          do not run in Windows PowerShell 5.1 instead, since Windows PowerShell loads from the same module folders. Make what the reason names
+          changeable by administrators only, then restart the computer; the next inventory shows the result.
+        </p>
+      )}
+      {!chosen && !blocked && (
         <p className="border-t border-line px-4 py-3 text-xs text-muted">
           No usable PowerShell 7 was found, so PowerShell 7 scripts fail here, or run in Windows PowerShell 5.1 where the script allows it. Install it with
           Microsoft&rsquo;s MSI, or with <Mono>winget install --id Microsoft.PowerShell --installer-type wix</Mono>; a Microsoft Store install is not used.
@@ -145,7 +153,7 @@ function InstallState({ install: i, chosen }: { install: PowerShellInstall; chos
   if (i.usable) return <span className="text-muted">Installed, not chosen: an older version or another architecture</span>;
   return (
     <>
-      <Badge tone="warn">Not used</Badge>
+      {i.blocked ? <Badge tone="danger">Found, not usable</Badge> : <Badge tone="warn">Not used</Badge>}
       {i.reason && <span className="mt-1 block text-xs break-words text-muted">{i.reason}</span>}
     </>
   );

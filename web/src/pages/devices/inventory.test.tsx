@@ -204,6 +204,18 @@ describe("device hardware", () => {
     expect(screen.getByText("winget install --id Microsoft.PowerShell --installer-type wix")).toBeInTheDocument();
     second.unmount();
 
+    // Found, but what it loads fails the agent's check: blocked, and no fallback.
+    const why =
+      "PowerShell 7 would load modules from C:\\Program Files\\WindowsPowerShell\\Modules, and C:\\Program Files\\WindowsPowerShell\\Modules\\Tools can be changed by BUILTIN\\Users: not used, since what it loads must be changeable by administrators only. Scripts that allow Windows PowerShell 5.1 do not run in it instead.";
+    installFakeApi(at([desktop, { ...found[1]!, usable: false, blocked: true, reason: why }, found[3]!]));
+    const third = renderApp("/devices/d1?tab=hardware");
+    const blockedCard = (await screen.findByRole("heading", { name: "PowerShell" })).closest("section") as HTMLElement;
+    const blockedRows = within(blockedCard.querySelector("tbody") as HTMLElement).getAllByRole("row");
+    expect(blockedRows[1]).toHaveTextContent(/PowerShell 7\.6\.10, 64-bit.*Found, not usable.*Modules\\Tools can be changed by BUILTIN\\Users/);
+    expect(within(blockedCard).getByText(/PowerShell 7 scripts fail here, and do not run in Windows PowerShell 5\.1 instead/)).toBeInTheDocument();
+    expect(within(blockedCard).queryByText(/No usable PowerShell 7 was found/)).not.toBeInTheDocument();
+    third.unmount();
+
     // An agent too old to report them.
     installFakeApi(at(undefined));
     renderApp("/devices/d1?tab=hardware");

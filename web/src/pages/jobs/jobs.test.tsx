@@ -463,8 +463,28 @@ describe("jobs", () => {
     expect(screen.queryByText(/Waiting for PC-04 to pick it up/)).not.toBeInTheDocument();
     unmount();
     held = "unreported";
-    renderApp("/jobs/j7/runs/r4");
+    const second = renderApp("/jobs/j7/runs/r4");
     expect(await screen.findByText(/has not yet said whether it can run PowerShell 7 scripts, so the run is not sent/)).toBeInTheDocument();
+    second.unmount();
+  });
+
+  it("says why a delivered PowerShell 7 run does not start after the agent changed versions", async () => {
+    let held: "unable" | "unreported" | undefined = "unable";
+    installFakeApi({
+      ...baseRoutes(TECHNICIAN),
+      "GET /job-runs/:id": () => ok(jobRun("r5", "d5", "PC-05", "sent", { held, job: job("j7", "Uptime", { shell: "pwsh" }) })),
+    });
+    const { unmount } = renderApp("/jobs/j7/runs/r5");
+    expect(await screen.findByText(/The device took the script, but its agent has since changed to a version that cannot run PowerShell 7 scripts, so the run will not start\./)).toBeInTheDocument();
+    expect(screen.queryByText(/about to start/)).not.toBeInTheDocument();
+    unmount();
+    held = "unreported";
+    const second = renderApp("/jobs/j7/runs/r5");
+    expect(await screen.findByText(/has since changed versions and has not yet said whether it can run PowerShell 7 scripts, so the run is not sent again until it does\./)).toBeInTheDocument();
+    second.unmount();
+    held = undefined;
+    renderApp("/jobs/j7/runs/r5");
+    expect(await screen.findByText("PC-05 has the script and is about to start it.")).toBeInTheDocument();
   });
 });
 
